@@ -1,3 +1,4 @@
 //! EchoWell gameplay modules.
 
+pub mod combat;
 pub mod platformer;
