@@ -84,11 +84,13 @@ pub mod post;
 pub mod primitives;
 pub mod probe_loader;
 /// PRT64 cluster volume (`.prtbin`): order-7 SH transport vectors, 64-way tree.
+pub mod prt_runtime;
 pub mod prt_volume;
 #[cfg(test)]
 mod prt_volume_tests;
 #[cfg(feature = "pathtrace")]
 pub mod pt_pass;
+pub mod render_debug;
 pub mod render_graph;
 pub mod render_graph_report;
 pub mod render_pass;
@@ -164,6 +166,7 @@ pub use post::PostPass;
 pub use probe_loader::{load_probe_volume, save_probe_volume, ProbeVolumeData};
 #[cfg(feature = "pathtrace")]
 pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
+pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
     DrawItem, DrawState, GiMode, InternalScaleMode, ParticleDrawItem, PassInfo, PassKind,

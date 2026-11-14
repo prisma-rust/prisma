@@ -9,6 +9,8 @@
 
 #[cfg(feature = "gi-bake")]
 mod bake_gi;
+#[cfg(feature = "gi-bake")]
+mod bake_prt;
 mod heightmap;
 mod migrate;
 mod scene_pack;
@@ -21,6 +23,8 @@ pub use bake_gi::gi_bake_dispatch_groups;
 pub use bake_gi::unpack_baked_probe_volume;
 #[cfg(feature = "gi-bake")]
 pub use bake_gi::BakeGiConfig;
+#[cfg(feature = "gi-bake")]
+pub use bake_prt::{bake_prt, BakePrtConfig, BakePrtReport};
 pub use heightmap::{generate_eroded_heightmap, generate_terrain, ErosionParams, Heightmap};
 pub use migrate::{migrate_legacy_config, resolve_scene_manifest, MigrationSummary};
 pub use scene_pack::{
