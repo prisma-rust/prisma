@@ -85,17 +85,29 @@ impl Default for SponzaTuningHook {
             _ => (RenderMode::PathTrace, GiMode::Sharc),
         };
 
+        let auto_exposure = std::env::var("SPONZA_AUTO_EXPOSURE")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(!matches!(render_mode, RenderMode::Raster));
+        let tonemap_mode = std::env::var("SPONZA_TONEMAP_MODE")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(if matches!(render_mode, RenderMode::Raster) {
+                2
+            } else {
+                1
+            });
+
         Self {
             locked: false,
             was_locked: false,
             show: true,
             selected_index: 0,
             render_mode,
-            auto_exposure: true,
+            auto_exposure,
             gi_mode,
             bounces: 4,
             ray_max_distance: 1000.0,
-            tonemap_mode: 1, // ACES
+            tonemap_mode,
             sharc_enable_clear: false,
             sharc_enable_update: true,
             sharc_enable_resolve: true,
@@ -125,6 +137,15 @@ impl SponzaTuningHook {
             RenderMode::PathTrace => RenderMode::Raster,
             _ => RenderMode::PathTrace,
         };
+        if self.render_mode == RenderMode::Raster {
+            self.gi_mode = GiMode::Off;
+            self.auto_exposure = false;
+            self.tonemap_mode = 2;
+        } else {
+            self.gi_mode = GiMode::Sharc;
+            self.auto_exposure = true;
+            self.tonemap_mode = 1;
+        }
         self.request_reset = true;
     }
 
