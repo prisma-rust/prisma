@@ -1,5 +1,7 @@
 use super::*;
 use prism_render::culling::Aabb;
+use prism_scene::components::SkinnedMeshRenderer;
+use prism_scene::ShadowCastingMode;
 
 fn unit_bind() -> Aabb {
     Aabb::new([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5])
@@ -61,7 +63,13 @@ fn the_cull_uses_the_skinned_box_not_the_bind_pose() {
     let mut world = prism_ecs::World::new();
     let entity = world.spawn();
     world.insert(entity, LocalToWorld(glam::Mat4::IDENTITY));
-    world.insert(entity, SkinnedMeshRenderer::default());
+    world.insert(
+        entity,
+        SkinnedMeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
+    );
     world.insert(
         entity,
         crate::scene::runtime_components::MeshRef {

@@ -73,7 +73,9 @@ pub fn append_skinned_draw_items_with_frustums(
                 None => *bind,
             });
         let world_bounds = local_bounds.and_then(|local| local.transformed(&model));
-        if !visible_in_frustums(frustums, world_bounds.as_ref()) {
+        let mode = skinned.shadow_casting_mode;
+        let visible_in_main_pass = visible_in_frustums(frustums, world_bounds.as_ref());
+        if !visible_in_main_pass && !mode.casts_shadows() {
             continue;
         }
 
@@ -83,7 +85,6 @@ pub fn append_skinned_draw_items_with_frustums(
         let material_ref = world.get::<MaterialRef>(entity);
         let material_slots = world.get::<MaterialSlots>(entity);
         let submeshes = world.get::<MeshSubmeshes>(entity);
-        let mode = skinned.shadow_casting_mode;
 
         let has_submeshes = submeshes.is_some_and(|submeshes| !submeshes.submeshes.is_empty());
         if has_submeshes {
@@ -98,7 +99,7 @@ pub fn append_skinned_draw_items_with_frustums(
                     model,
                     material,
                     cast_shadow: mode.casts_shadows(),
-                    visible_in_main_pass: mode.visible_in_main_pass(),
+                    visible_in_main_pass: visible_in_main_pass && mode.visible_in_main_pass(),
                     cast_shadow_two_sided: mode.casts_two_sided_shadows(),
                     state,
                     world_bounds,
@@ -121,7 +122,7 @@ pub fn append_skinned_draw_items_with_frustums(
                 model,
                 material,
                 cast_shadow: mode.casts_shadows(),
-                visible_in_main_pass: mode.visible_in_main_pass(),
+                visible_in_main_pass: visible_in_main_pass && mode.visible_in_main_pass(),
                 cast_shadow_two_sided: mode.casts_two_sided_shadows(),
                 state,
                 world_bounds,

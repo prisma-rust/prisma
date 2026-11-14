@@ -1093,13 +1093,27 @@ fn unit_bounds() -> prism_render::culling::Aabb {
 fn a_mesh_outside_the_camera_frustum_is_culled() {
     let mut world = World::new();
     // 两个实体共用同一个网格句柄：区别只在模型矩阵。
-    spawn_mesh(
+    let front = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
     );
-    spawn_mesh(
+    let back = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 5.0)),
+    );
+    world.insert(
+        front,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
+    );
+    world.insert(
+        back,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
     );
     let mut bounds = MeshBounds::default();
     bounds.insert(MeshHandle::default(), unit_bounds());
@@ -1150,13 +1164,27 @@ fn culling_keeps_the_rest_of_the_extraction_rules() {
 fn a_mesh_visible_only_through_a_second_camera_is_kept() {
     let mut world = World::new();
     // 主相机看 −Z，第二台相机看 +Z：两个实体各自只被其中一台看到。
-    spawn_mesh(
+    let front_entity = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
     );
-    spawn_mesh(
+    let back_entity = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 5.0)),
+    );
+    world.insert(
+        front_entity,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
+    );
+    world.insert(
+        back_entity,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
     );
     let mut bounds = MeshBounds::default();
     bounds.insert(MeshHandle::default(), unit_bounds());
@@ -1172,6 +1200,49 @@ fn a_mesh_visible_only_through_a_second_camera_is_kept() {
     let mut both = Vec::new();
     scene_render_system_into_with_frustums(&world, &[front, back], &mut both);
     assert_eq!(both.len(), 2, "第二台相机视野里的实体不能被主相机剔掉");
+}
+
+#[test]
+fn an_off_camera_shadow_caster_is_kept_for_shadow_rendering() {
+    let mut world = World::new();
+    let front = spawn_mesh(
+        &mut world,
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
+    );
+    let back = spawn_mesh(
+        &mut world,
+        glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 5.0)),
+    );
+    world.insert(
+        front,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::Off,
+            ..Default::default()
+        },
+    );
+    world.insert(
+        back,
+        MeshRenderer {
+            shadow_casting_mode: ShadowCastingMode::On,
+            ..Default::default()
+        },
+    );
+
+    let mut bounds = MeshBounds::default();
+    bounds.insert(MeshHandle::default(), unit_bounds());
+    world.insert_resource(bounds);
+
+    let frustum = camera_frustum();
+    let mut out = Vec::new();
+    scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
+
+    assert_eq!(out.len(), 2, "阴影 caster 即使在主相机视锥外也必须保留");
+    let off_camera = out
+        .iter()
+        .find(|item| item.model[3][2] > 0.0)
+        .expect("视锥外的 caster 应存在");
+    assert!(off_camera.cast_shadow);
+    assert!(!off_camera.visible_in_main_pass);
 }
 
 #[test]
