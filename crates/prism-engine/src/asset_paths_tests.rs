@@ -237,7 +237,14 @@ fn build_scenes_steps_use_the_project_dir_and_workspace_manifest() {
 
     let steps = build_scenes_steps(&assets);
     assert!(steps[0].starts_with("cd "), "{}", steps[0]);
-    assert!(steps[0].ends_with("projects/demo"), "{}", steps[0]);
+    // `canonicalize` returns a verbatim `\\?\C:\...` path on Windows, so compare
+    // path components instead of the raw string's separators.
+    let cd_dir = steps[0].trim_start_matches("cd ");
+    assert!(
+        std::path::Path::new(cd_dir).ends_with("projects/demo"),
+        "{}",
+        steps[0]
+    );
     assert_eq!(
         steps[1],
         "cargo run -q --manifest-path ../../Cargo.toml -p prism-build-pipeline -- build-scenes"
