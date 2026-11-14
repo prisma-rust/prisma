@@ -2240,7 +2240,7 @@ mod tests {
             .collect();
         let ids: std::collections::HashSet<_> = rooms.iter().map(|room| room.id.as_str()).collect();
 
-        assert_eq!(rooms.len(), 2);
+        assert_eq!(rooms.len(), 5);
         assert!(rooms.iter().all(|room| room_ids_resolve(room, &ids)));
         assert_eq!(rooms[0].geometry.tiles.len(), 20 * 12);
         assert_eq!(rooms[1].geometry.tiles.len(), 20 * 12);
