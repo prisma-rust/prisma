@@ -33,13 +33,13 @@ pub const VELOCITY_TEX_BINDING: u32 = 1; // COMBINED_IMAGE_SAMPLER
 pub const TEMPORAL_SAMPLER_SET: u32 = 2;
 pub const TEMPORAL_SAMPLER_BINDING: u32 = 2; // COMBINED_IMAGE_SAMPLER
 
-/// Push-constant struct (auto-generated from Slang `GtaoPush`).
+/// GPU layout struct (auto-generated from Slang `GtaoPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 88 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct GtaoPush {
     /// offset 0, size 64
     pub inv_proj: [[f32; 4]; 4],
@@ -54,3 +54,13 @@ pub struct GtaoPush {
     /// offset 84, size 4
     pub validHistory: f32,
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<GtaoPush>() == 88);
+    assert!(::std::mem::offset_of!(GtaoPush, inv_proj) == 0);
+    assert!(::std::mem::offset_of!(GtaoPush, viewport) == 64);
+    assert!(::std::mem::offset_of!(GtaoPush, radius) == 72);
+    assert!(::std::mem::offset_of!(GtaoPush, mode) == 76);
+    assert!(::std::mem::offset_of!(GtaoPush, historyStrength) == 80);
+    assert!(::std::mem::offset_of!(GtaoPush, validHistory) == 84);
+};

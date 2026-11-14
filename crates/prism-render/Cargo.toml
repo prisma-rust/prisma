@@ -17,7 +17,7 @@ default = [
     "ibl",
     "skybox",
     "shadows",
-    "gtao",
+    # "gtao",
 ]
 # UI 叠加总开关（字形图集 + 管线 + 屏幕空间四边形）。纯 3D/无 UI 项目可关：
 # 关掉后 `ui_overlay` 只保留输入数据结构，渲染侧忽略 UI 命令。

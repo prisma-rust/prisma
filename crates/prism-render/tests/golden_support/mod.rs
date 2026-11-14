@@ -291,6 +291,7 @@ fn frame_data(
         // identity light matrix; both drivers then agree on the lit surface.
         shadow_strength: 0.0,
         _pad2: [0.0; 3],
+        _pad2b: [0.0; 4],
         light_view_proj1: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],

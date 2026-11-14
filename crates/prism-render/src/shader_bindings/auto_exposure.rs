@@ -21,13 +21,13 @@ pub const HISTOGRAM_OUTPUT_BINDING: u32 = 1; // UNIFORM_BUFFER
 pub const ADAPTED_LUMINANCE_SET: u32 = 0;
 pub const ADAPTED_LUMINANCE_BINDING: u32 = 2; // UNIFORM_BUFFER
 
-/// Push-constant struct (auto-generated from Slang `AutoExposurePush`).
+/// GPU layout struct (auto-generated from Slang `AutoExposurePush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 48 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct AutoExposurePush {
     /// offset 0, size 8
     pub sourceSize: [u32; 2],
@@ -52,3 +52,18 @@ pub struct AutoExposurePush {
     /// offset 44, size 4
     pub exposureScale: f32,
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<AutoExposurePush>() == 48);
+    assert!(::std::mem::offset_of!(AutoExposurePush, sourceSize) == 0);
+    assert!(::std::mem::offset_of!(AutoExposurePush, minLogLuminance) == 8);
+    assert!(::std::mem::offset_of!(AutoExposurePush, logLuminanceRange) == 12);
+    assert!(::std::mem::offset_of!(AutoExposurePush, recipLogLuminanceRange) == 16);
+    assert!(::std::mem::offset_of!(AutoExposurePush, lowPercentile) == 20);
+    assert!(::std::mem::offset_of!(AutoExposurePush, highPercentile) == 24);
+    assert!(::std::mem::offset_of!(AutoExposurePush, adaptationSpeedUp) == 28);
+    assert!(::std::mem::offset_of!(AutoExposurePush, adaptationSpeedDown) == 32);
+    assert!(::std::mem::offset_of!(AutoExposurePush, frameTime) == 36);
+    assert!(::std::mem::offset_of!(AutoExposurePush, resetAdaptation) == 40);
+    assert!(::std::mem::offset_of!(AutoExposurePush, exposureScale) == 44);
+};

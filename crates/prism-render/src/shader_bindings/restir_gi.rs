@@ -62,3 +62,53 @@ pub const GI_HISTORY_SET: u32 = 3;
 pub const GI_HISTORY_BINDING: u32 = 4; // COMBINED_IMAGE_SAMPLER
 pub const GB_SAMPLER_SET: u32 = 3;
 pub const GB_SAMPLER_BINDING: u32 = 5; // COMBINED_IMAGE_SAMPLER
+
+/// GPU layout struct (auto-generated from Slang `RestirGiFrame`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 336 bytes and every field sits
+/// where the shader expects it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct RestirGiFrame {
+    /// offset 0, size 64
+    pub invViewProj: [[f32; 4]; 4],
+    /// offset 64, size 64
+    pub invViewRot: [[f32; 4]; 4],
+    /// offset 128, size 16
+    pub cameraPos: [f32; 4],
+    /// offset 144, size 16
+    pub lightDir: [f32; 4],
+    /// offset 160, size 16
+    pub lightColor: [f32; 4],
+    /// offset 176, size 16
+    pub viewport: [f32; 4],
+    /// offset 192, size 16
+    pub params: [f32; 4],
+    /// offset 208, size 16
+    pub giParams: [f32; 4],
+    /// offset 224, size 16
+    pub sharcParams: [f32; 4],
+    /// offset 240, size 16
+    pub sharcCameraPos: [f32; 4],
+    /// offset 256, size 64
+    pub prevViewProj: [[f32; 4]; 4],
+    /// offset 320, size 16
+    pub prevCameraPos: [f32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<RestirGiFrame>() == 336);
+    assert!(::std::mem::offset_of!(RestirGiFrame, invViewProj) == 0);
+    assert!(::std::mem::offset_of!(RestirGiFrame, invViewRot) == 64);
+    assert!(::std::mem::offset_of!(RestirGiFrame, cameraPos) == 128);
+    assert!(::std::mem::offset_of!(RestirGiFrame, lightDir) == 144);
+    assert!(::std::mem::offset_of!(RestirGiFrame, lightColor) == 160);
+    assert!(::std::mem::offset_of!(RestirGiFrame, viewport) == 176);
+    assert!(::std::mem::offset_of!(RestirGiFrame, params) == 192);
+    assert!(::std::mem::offset_of!(RestirGiFrame, giParams) == 208);
+    assert!(::std::mem::offset_of!(RestirGiFrame, sharcParams) == 224);
+    assert!(::std::mem::offset_of!(RestirGiFrame, sharcCameraPos) == 240);
+    assert!(::std::mem::offset_of!(RestirGiFrame, prevViewProj) == 256);
+    assert!(::std::mem::offset_of!(RestirGiFrame, prevCameraPos) == 320);
+};

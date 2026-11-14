@@ -23,16 +23,22 @@ pub const BINDLESS_SRVS_BINDING: u32 = 1; // UNIFORM_BUFFER
 pub const SPRITE_LIGHTS_SET: u32 = 1;
 pub const SPRITE_LIGHTS_BINDING: u32 = 0; // UNIFORM_BUFFER
 
-/// Push-constant struct (auto-generated from Slang `SpritePush`).
+/// GPU layout struct (auto-generated from Slang `SpritePush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 80 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SpritePush {
     /// offset 0, size 64
     pub viewProj: [[f32; 4]; 4],
     /// offset 64, size 16
     pub lightParams: [f32; 4],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<SpritePush>() == 80);
+    assert!(::std::mem::offset_of!(SpritePush, viewProj) == 0);
+    assert!(::std::mem::offset_of!(SpritePush, lightParams) == 64);
+};

@@ -510,6 +510,7 @@ fn render_one_frame(
         exposure: scene.exposure,
         shadow_strength: scene.shadow_strength,
         _pad2: [0.0; 3],
+        _pad2b: [0.0; 4],
         _pad3: [0.0; 2],
         prev_view_proj: [
             [1.0, 0.0, 0.0, 0.0],

@@ -1263,6 +1263,8 @@ pub struct GraphFrame<'a> {
     /// Swapchain or offscreen target images for the current frame. Forwarded
     /// so passes like `PostPass` can publish `FINAL_COLOR_H`.
     pub swapchain_images: &'a [vk::Image],
+    /// When true, freezes temporal accumulation, jitter, and history ping-ponging.
+    pub freeze_temporal: bool,
     /// Active render mode (Raster vs PathTrace). Passes check this to decide
     /// whether to run (ForwardPass skips in PT 众数 PathTracePass skips in
     /// Raster mode).
@@ -1821,6 +1823,7 @@ impl RenderGraphBuilder {
             lifecycles,
             last_barrier_probe: Instant::now(),
             pass_dump: crate::pass_dump::PassDump::from_env(),
+            debug_control: crate::render_debug::RenderDebugControl::from_env(),
             hdr_readback_requested: false,
             pending_hdr_readback: None,
         };
@@ -1873,6 +1876,8 @@ pub struct RenderGraph {
     last_barrier_probe: Instant,
     /// `PRISMREV_PASS_DUMP` state; a no-op unless the env var is set.
     pass_dump: crate::pass_dump::PassDump,
+    /// Diagnostic controls for pass bypass, pessimistic barrier, and temporal freeze.
+    debug_control: crate::render_debug::RenderDebugControl,
     /// Set by [`Self::request_hdr_readback`]; consumed at the end of
     /// [`Self::execute_with_timer`], which records a copy of the path tracer's
     /// linear output into a host-visible staging buffer.
@@ -2118,6 +2123,28 @@ impl RenderGraph {
         };
 
         for (pass_idx, pass) in self.passes.iter_mut().enumerate() {
+            if self.debug_control.is_pass_bypassed(pass.name()) {
+                log::debug!("RenderGraph: bypassing pass '{}'", pass.name());
+                continue;
+            }
+
+            if self.debug_control.pessimistic_barrier {
+                let mem_barrier = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::DependencyFlags::empty(),
+                        &[mem_barrier],
+                        &[],
+                        &[],
+                    );
+                }
+            }
+
             // Build and emit barriers for this pass's read edges, then
             // update the tracker with write edges after the pass executes.
             let (barriers, src_stage, dst_stage) = self.state_tracker.build_read_barriers(
@@ -2175,6 +2202,23 @@ impl RenderGraph {
             if timed {
                 if let Some(timer) = timer.as_deref_mut() {
                     timer.end_pass(ctx.device, ctx.cmd, ctx.frame_index);
+                }
+            }
+
+            if self.debug_control.pessimistic_barrier {
+                let mem_barrier = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::DependencyFlags::empty(),
+                        &[mem_barrier],
+                        &[],
+                        &[],
+                    );
                 }
             }
 
@@ -2547,6 +2591,21 @@ impl RenderGraph {
         filter: Option<Vec<String>>,
     ) {
         self.pass_dump = crate::pass_dump::PassDump::new(dir, target_frame, filter);
+    }
+
+    /// Access the diagnostic debug control settings (immutable).
+    pub fn debug_control(&self) -> &crate::render_debug::RenderDebugControl {
+        &self.debug_control
+    }
+
+    /// Access the diagnostic debug control settings (mutable).
+    pub fn debug_control_mut(&mut self) -> &mut crate::render_debug::RenderDebugControl {
+        &mut self.debug_control
+    }
+
+    /// Replace the diagnostic debug control settings.
+    pub fn set_debug_control(&mut self, control: crate::render_debug::RenderDebugControl) {
+        self.debug_control = control;
     }
 
     /// Ask the next [`Self::execute_with_timer`] to copy the path tracer's linear

@@ -111,7 +111,7 @@ impl SkyboxPass {
         cmd: vk::CommandBuffer,
         render_pass: vk::RenderPass,
         _extent: vk::Extent2D,
-        inv_view_rot: &[[f32; 4]; 4],
+        inv_view_proj_rot: &[[f32; 4]; 4],
         params: SkyboxSettings,
     ) -> Result<()> {
         self.ensure_pipeline(device)?;
@@ -226,12 +226,12 @@ impl SkyboxPass {
                 &[],
             );
 
-            // Push the inverse view rotation plus the sky parameters; the block
+            // Push the combined inverse projection/view rotation plus the sky parameters; the block
             // layout and size come from the Slang reflection.
             let push = bindings::SkyboxPush {
-                invViewRot: *inv_view_rot,
+                invViewProjRot: *inv_view_proj_rot,
                 params: [params.rotation, params.intensity.max(0.0), 0.0, 0.0],
-                ..Default::default()
+                _pad1: [0.0; 4],
             };
             device.cmd_push_constants(
                 cmd,

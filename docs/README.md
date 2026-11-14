@@ -101,6 +101,7 @@ docs/
   │
   ├── lessons-learned.md                  # [L5 经验沉淀] Vulkan 渲染循环与工程踩坑根因库
   ├── rendering-pipeline-investigation.md # [L5 诊断方法] 渲染异常排查决策树与二分诊断方法论
+  ├── rendering-debug-isolation.md        # [L5 诊断方法] 渲染异常四维隔离分析（Pass/材质/同步/时域）与操作指南
   │
   ├── shadertoy-inspirations.md           # [L6 调研灵感] 常见图形效果与 Shadertoy 算法笔记
   └── showcase-video.md                   # [L6 展示资料] 引擎自动化展示视频技术脚本与参数
@@ -136,6 +137,7 @@ docs/
 | | [`build-guide-termux.md`](build-guide-termux.md) | 移动端终端原生编译、静态检查验证例外 | Termux 终端环境 |
 | **排障排查** | [`lessons-learned.md`](lessons-learned.md) | Vulkan 同步、Framebuffer 顺序、信号量复用 | `docs/lessons-learned.md` |
 | | [`rendering-pipeline-investigation.md`](rendering-pipeline-investigation.md) | 画面异常二分法、黑屏排查、环境解耦 | `crates/prism-render/tests/` |
+| | [`rendering-debug-isolation.md`](rendering-debug-isolation.md) | 四维正交隔离（Pass旁路/材质覆写/悲观屏障/时域冻结）SOP | `crates/prism-render/src/render_debug.rs` |
 | **展示灵感** | [`shadertoy-inspirations.md`](shadertoy-inspirations.md) | 噪声、体积云、着色器灵感公式 | `assets/shaders/` |
 | | [`showcase-video.md`](showcase-video.md) | 自动化合成视频脚本、动效与音频规范 | `scripts/showcase_video_simple.py` |
 

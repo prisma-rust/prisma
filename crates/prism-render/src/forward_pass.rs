@@ -2456,17 +2456,50 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
+            // Establish the camera viewport before any draw, including the skybox.
+            // The preceding shadow pass uses a different viewport and scissor.
+            unsafe {
+                ctx.device.cmd_set_viewport(
+                    ctx.cmd,
+                    0,
+                    &[vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: self.extent.width as f32,
+                        height: self.extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    }],
+                );
+                ctx.device.cmd_set_scissor(
+                    ctx.cmd,
+                    0,
+                    &[vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: self.extent,
+                    }],
+                );
+            }
+
             // 绘制 the skybox 第一个 (background) for cameras whose clear
             // flags ask for it. It uses its own 管线 + IBL env set and writes
             // no depth, so scene geometry always occludes it.
             if camera.draw_skybox && camera.has_camera {
+                let mut inv_view_proj_rot = [[0.0_f32; 4]; 4];
+                for (c, column) in inv_view_proj_rot.iter_mut().enumerate() {
+                    for (r, value) in column.iter_mut().enumerate() {
+                        *value = (0..4)
+                            .map(|k| ctx.frame.inv_view_rot[k][r] * ctx.frame.inv_projection[c][k])
+                            .sum();
+                    }
+                }
                 if let Some(skybox) = ctx.frame.skybox {
                     if let Err(e) = self.skybox.draw(
                         ctx.device,
                         ctx.cmd,
                         self.render_pass.unwrap(),
                         self.extent,
-                        &camera.inv_view,
+                        &inv_view_proj_rot,
                         skybox,
                     ) {
                         log::warn!("SkyboxPass draw failed (skybox skipped): {e:#}");
@@ -2546,27 +2579,6 @@ impl RenderPassNode for ForwardPass {
             }
 
             unsafe {
-                ctx.device.cmd_set_viewport(
-                    ctx.cmd,
-                    0,
-                    &[vk::Viewport {
-                        x: 0.0,
-                        y: 0.0,
-                        width: self.extent.width as f32,
-                        height: self.extent.height as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0,
-                    }],
-                );
-                ctx.device.cmd_set_scissor(
-                    ctx.cmd,
-                    0,
-                    &[vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: self.extent,
-                    }],
-                );
-
                 // 纯 2D 模式跳过 3D 不透明/透明网格绘制、线框覆层与高亮外轮廓
                 if ctx.frame.render_mode != crate::RenderMode::Sprites2D {
                     // 循环开始前刚绑定的是默认（不透明）管线；只有遇到别的状态才重绑

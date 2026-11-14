@@ -252,19 +252,19 @@ fn layout_push_fields(fields: &[StructField]) -> Result<(Vec<PushMember>, u64)> 
     Ok((members, cursor))
 }
 
-/// Generate a Rust struct definition from reflected push constant fields.
-fn emit_push_struct(struct_name: &str, fields: &[StructField]) -> Result<String> {
+/// Generate a Rust struct definition from reflected GPU buffer / push constant fields.
+fn emit_struct(struct_name: &str, fields: &[StructField]) -> Result<String> {
     let (members, total) = layout_push_fields(fields)?;
     let mut out = String::new();
     out.push_str(&format!(
-        "\n/// Push-constant struct (auto-generated from Slang `{struct_name}`).\n\
+        "\n/// GPU layout struct (auto-generated from Slang `{struct_name}`).\n\
          ///\n\
          /// Field offsets are the reflected std140 ones — alignment holes are emitted as\n\
          /// explicit `_pad_*` fillers, so `size_of` is {total} bytes and every field sits\n\
          /// where the shader expects it.\n"
     ));
     out.push_str(
-        "#[repr(C)]\n#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]\n",
+        "#[repr(C)]\n#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]\n",
     );
     out.push_str(&format!("pub struct {struct_name} {{\n"));
     for member in &members {
@@ -288,6 +288,28 @@ fn emit_push_struct(struct_name: &str, fields: &[StructField]) -> Result<String>
         }
     }
     out.push_str("}\n");
+
+    // Static layout assertions: compile-time guarantee of bit-identical std140 layout
+    out.push_str("\nconst _: () = {\n");
+    out.push_str(&format!(
+        "    assert!(::std::mem::size_of::<{struct_name}>() == {total});\n"
+    ));
+    for member in &members {
+        match member {
+            PushMember::Field { name, offset, .. } => {
+                out.push_str(&format!(
+                    "    assert!(::std::mem::offset_of!({struct_name}, {name}) == {offset});\n"
+                ));
+            }
+            PushMember::Pad { offset, .. } => {
+                out.push_str(&format!(
+                    "    assert!(::std::mem::offset_of!({struct_name}, _pad_{offset}) == {offset});\n"
+                ));
+            }
+        }
+    }
+    out.push_str("};\n");
+
     Ok(out)
 }
 
@@ -308,6 +330,48 @@ fn push_constant_structs(refl: &Reflection) -> Vec<(&str, &[StructField])> {
         let element = p.ty.as_ref()?.element_type.as_ref()?;
         let name = element.name.as_deref().unwrap_or("PushConstants");
         let fields = element.fields.as_deref()?;
+        Some((name, fields))
+    }
+
+    let mut found: Vec<(&str, &[StructField])> = Vec::new();
+    let params = refl
+        .parameters
+        .iter()
+        .chain(refl.entry_points.iter().flat_map(|ep| ep.parameters.iter()));
+    for p in params {
+        if let Some((name, fields)) = pick(p) {
+            if !found.iter().any(|(known, _)| *known == name) {
+                found.push((name, fields));
+            }
+        }
+    }
+    found
+}
+
+/// All GPU buffer structs (PushConstant and UniformBuffer) declared by a reflection document.
+fn shader_buffer_structs(refl: &Reflection) -> Vec<(&str, &[StructField])> {
+    fn pick(p: &Parameter) -> Option<(&str, &[StructField])> {
+        let is_buffer = p.binding.as_ref().is_some_and(|b| {
+            b.kind == "pushConstantBuffer"
+                || b.kind == "pushConstant"
+                || b.kind == "descriptorTableSlot"
+                || b.kind == "uniform"
+        });
+        if !is_buffer {
+            return None;
+        }
+        let element = p.ty.as_ref()?.element_type.as_ref()?;
+        let fields = element.fields.as_deref()?;
+        let name = element.name.as_deref().unwrap_or_else(|| {
+            if p.binding
+                .as_ref()
+                .is_some_and(|b| b.kind.starts_with("push"))
+            {
+                "PushConstants"
+            } else {
+                "UniformBuffer"
+            }
+        });
         Some((name, fields))
     }
 
@@ -522,12 +586,12 @@ fn process_file(path: &Path) -> Result<(String, String)> {
         }
     }
 
-    // --- Auto-generated push-constant struct definitions ---
-    // Scan global and entry-point parameters for push-constant buffers whose
-    // types carry struct field info; emit a #[repr(C)] Rust struct for each.
-    // This replaces the hand-written push-constant structs in the engine.
-    for (struct_name, fields) in push_constant_structs(&refl) {
-        out.push_str(&emit_push_struct(struct_name, fields)?);
+    // --- Auto-generated GPU buffer / push-constant struct definitions ---
+    // Scan global and entry-point parameters for buffer types (PushConstants and
+    // UniformBuffers) whose types carry struct field info; emit a #[repr(C)] Rust
+    // struct with std140 layout padding and compile-time offset assertions for each.
+    for (struct_name, fields) in shader_buffer_structs(&refl) {
+        out.push_str(&emit_struct(struct_name, fields)?);
     }
 
     Ok((mod_name, out))
@@ -663,7 +727,7 @@ mod tests {
     fn reflected_offsets_are_reproduced_for_every_committed_shader() {
         let mut blocks = 0;
         for (file, refl) in committed_reflections() {
-            for (name, fields) in push_constant_structs(&refl) {
+            for (name, fields) in shader_buffer_structs(&refl) {
                 let (members, total) = layout_push_fields(fields)
                     .unwrap_or_else(|error| panic!("{file} :: {name}: {error}"));
 
@@ -719,7 +783,7 @@ mod tests {
             other => panic!("unexpected layout: {other:?}"),
         }
 
-        let text = emit_push_struct("Padding", &fields).unwrap();
+        let text = emit_struct("Padding", &fields).unwrap();
         assert!(text.contains("pub _pad_4: [u8; 12],"), "{text}");
     }
 
@@ -747,7 +811,8 @@ mod tests {
         assert_eq!(offset_of("material_slot"), Some(64));
         assert_eq!(offset_of("reactive_mask"), Some(96));
         assert_eq!(offset_of("splat_tiling"), Some(116));
-        assert_eq!(total, 120, "{name}");
+        assert_eq!(offset_of("gi_mode"), Some(120));
+        assert_eq!(total, 124, "{name}");
 
         let holes: u64 = members
             .iter()
@@ -762,7 +827,7 @@ mod tests {
     #[test]
     fn emitted_types_never_exceed_the_reflected_field_size() {
         for (file, refl) in committed_reflections() {
-            for (name, fields) in push_constant_structs(&refl) {
+            for (name, fields) in shader_buffer_structs(&refl) {
                 for reflected in fields {
                     let (natural, _) = rust_layout(&reflected.ty);
                     let reserved = u64::from(reflected.binding.size.unwrap_or(natural as u32));

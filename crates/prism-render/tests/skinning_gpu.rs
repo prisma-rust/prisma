@@ -90,6 +90,7 @@ fn frame_data() -> FrameUBOData {
         exposure: 1.0,
         shadow_strength: 0.0,
         _pad2: [0.0; 3],
+        _pad2b: [0.0; 4],
         light_view_proj1: IDENTITY,
         shadow_split: 0.0,
         shadow_cascade_count: 1,

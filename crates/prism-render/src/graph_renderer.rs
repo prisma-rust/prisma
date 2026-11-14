@@ -3420,7 +3420,11 @@ impl GraphRenderer {
                     m
                 },
                 view_proj: frame_data.view_proj,
-                view_proj_jitter: self.taa_jitter_ndc,
+                view_proj_jitter: if self.graph.debug_control().freeze_temporal {
+                    [0.0, 0.0]
+                } else {
+                    self.taa_jitter_ndc
+                },
                 lights,
                 ao_view,
                 gi_view,
@@ -3432,6 +3436,7 @@ impl GraphRenderer {
                 inv_projection,
                 swapchain_views,
                 swapchain_images,
+                freeze_temporal: self.graph.debug_control().freeze_temporal,
                 render_mode: *render_mode,
                 pt_max_bounces: *pt_max_bounces,
                 pt_ray_max_distance: *pt_ray_max_distance,
@@ -4142,6 +4147,21 @@ impl GraphRenderer {
     ) {
         self.graph
             .configure_pass_dump(dir.into(), target_frame, filter);
+    }
+
+    /// Access the diagnostic debug control settings (immutable).
+    pub fn debug_control(&self) -> &crate::render_debug::RenderDebugControl {
+        self.graph.debug_control()
+    }
+
+    /// Access the diagnostic debug control settings (mutable).
+    pub fn debug_control_mut(&mut self) -> &mut crate::render_debug::RenderDebugControl {
+        self.graph.debug_control_mut()
+    }
+
+    /// Replace the diagnostic debug control settings.
+    pub fn set_debug_control(&mut self, control: crate::render_debug::RenderDebugControl) {
+        self.graph.set_debug_control(control);
     }
 
     /// 帧提交之后调用：等待本次提交的围栏、读回像素、写 PNG。

@@ -58,6 +58,7 @@ fn frame_data() -> FrameUBOData {
         exposure: 1.0,
         shadow_strength: 0.0,
         _pad2: [0.0; 3],
+        _pad2b: [0.0; 4],
         _pad3: [0.0; 2],
         prev_view_proj: [
             [1.0, 0.0, 0.0, 0.0],

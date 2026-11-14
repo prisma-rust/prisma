@@ -14,9 +14,8 @@
 // Sets (must match `SkyboxPass::ensure_pipeline`):
 //   set 0, binding 0 - IBL environment cubemap (SamplerCube, combined)
 //
-// Push constants: SkyboxPush (128 bytes) - `invViewRot` (the inverse of the
-// view matrix's rotation, i.e. the world<-view rotation) is used to turn the
-// view-space look direction into a world-space cubemap sample direction.
+// Push constants: SkyboxPush (96 bytes) - `invViewProjRot` reconstructs a
+// world-space cubemap sample direction from the current pixel.
 //
 // Compile:
 //   slangc skybox.slang -profile spirv_1_5 -target spirv \
@@ -29,12 +28,11 @@ import common;
 [[vk::binding(0, 0)]]
 SamplerCube envCube;
 
-// Push constants: `invViewRot` = inverse of the view rotation (world <- view).
-// Because the view matrix is a rigid transform, this is the transpose of its
-// upper-left 3x3. Packed as a mat4 with the translation row zeroed.
+// Push constants: `invViewProjRot` combines inverse projection with the
+// inverse view rotation and is packed as a mat4.
 public struct SkyboxPush
 {
-    public float4x4 invViewRot;  // world <- view rotation
+    public float4x4 invViewProjRot;
     // x = background yaw rotation (radians), y = intensity multiplier.
     public float4   params;
     public float4   _pad1;
@@ -61,14 +59,10 @@ public void vertexMain(
     // the LESS test against the cleared depth (1.0). Depth writes are disabled
     // by the pipeline, so scene geometry (which writes depth) always occludes.
     clipPos = float4(ndc, 0.0, 1.0);
-    // View-space look direction for this pixel: (ndc.x, -ndc.y, -1). Vulkan
-    // NDC has y=-1 at the TOP, so flip it to match view-space +Y up. The -Z
-    // matches the engine's view convention (camera looks down -Z). This is a
-    // cheap approximation that ignores projection/FOV; for a skybox at
-    // infinity the direction is what matters and the slight FOV distortion is
-    // visually acceptable. Rotate into world space for cubemap sampling.
-    float3 viewDir = float3(ndc.x, -ndc.y, -1.0);
-    worldDir = mul(pc.invViewRot, float4(viewDir, 0.0)).xyz;
+    // Unproject the far-plane point using the same Vulkan NDC convention as
+    // the camera. This preserves the camera FOV and aspect ratio.
+    float4 worldPoint = mul(pc.invViewProjRot, float4(ndc, 1.0, 1.0));
+    worldDir = worldPoint.xyz / max(abs(worldPoint.w), 1e-6);
 }
 
 [shader("fragment")]

@@ -309,19 +309,88 @@ pub struct FrameUBOData {
     pub shadow_strength: f32, // offset 256
     /// std140 tail pad before the CSM fields.
     pub _pad2: [f32; 3], // offset 260..271
+    /// std140 aligns a mat4 member to 16 bytes, and the scalar tail above leaves
+    /// the cursor at 288 for the next matrix - so a 16-byte hole sits between
+    /// them. Laying the matrix out at 272 instead shifted every following field
+    /// by 16 bytes in the uploaded buffer while the shader kept reading them at
+    /// their std140 offsets (reflection: 288 / 352 / 356 / 368, total 432).
+    pub _pad2b: [f32; 4], // offset 272..287
     /// Far cascade light-space VP (#526 CSM). The shadow map is a 2×1 atlas;
     /// cascade 0 occupies the left half and this matrix the right half.
-    pub light_view_proj1: [[f32; 4]; 4], // offset 272..335
+    pub light_view_proj1: [[f32; 4]; 4], // offset 288..351
     /// Camera-forward distance where cascade 0 ends and cascade 1 starts.
-    pub shadow_split: f32, // offset 336
+    pub shadow_split: f32, // offset 352
     /// 1 = single shadow map (legacy), 2 = two-cascade atlas.
-    pub shadow_cascade_count: u32, // offset 340
+    pub shadow_cascade_count: u32, // offset 356
     /// std140 tail pad before `prev_view_proj`.
-    pub _pad3: [f32; 2], // offset 344..351
+    pub _pad3: [f32; 2], // offset 360..367
     /// Previous frame's unjittered view-projection (#883 Phase 2). Used by the
     /// vertex stage to write per-object motion vectors into `FORWARD_VELOCITY_H`.
-    pub prev_view_proj: [[f32; 4]; 4], // offset 352..415
+    pub prev_view_proj: [[f32; 4]; 4], // offset 368..431
 }
+
+/// Compile-time verification that hand-written `FrameUBOData` matches the Slang
+/// reflection std140 layout byte-for-byte. Any shift in offsets or sizes fails
+/// the build immediately.
+const _: () = {
+    use crate::shader_bindings::scene_frag::FrameUBO as ReflectedFrameUBO;
+    assert!(std::mem::size_of::<FrameUBOData>() == std::mem::size_of::<ReflectedFrameUBO>());
+    assert!(
+        std::mem::offset_of!(FrameUBOData, view_proj)
+            == std::mem::offset_of!(ReflectedFrameUBO, viewProj)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, camera_position)
+            == std::mem::offset_of!(ReflectedFrameUBO, cameraPosition)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, light_direction)
+            == std::mem::offset_of!(ReflectedFrameUBO, lightDirection)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, light_color)
+            == std::mem::offset_of!(ReflectedFrameUBO, lightColor)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, view) == std::mem::offset_of!(ReflectedFrameUBO, view)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, light_view_proj)
+            == std::mem::offset_of!(ReflectedFrameUBO, lightViewProj)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, tonemap_mode)
+            == std::mem::offset_of!(ReflectedFrameUBO, tonemapMode)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, viewport_size)
+            == std::mem::offset_of!(ReflectedFrameUBO, viewportW)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, exposure)
+            == std::mem::offset_of!(ReflectedFrameUBO, exposure)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, shadow_strength)
+            == std::mem::offset_of!(ReflectedFrameUBO, shadowStrength)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, light_view_proj1)
+            == std::mem::offset_of!(ReflectedFrameUBO, lightViewProj1)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, shadow_split)
+            == std::mem::offset_of!(ReflectedFrameUBO, shadowSplit)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, shadow_cascade_count)
+            == std::mem::offset_of!(ReflectedFrameUBO, shadowCascadeCount)
+    );
+    assert!(
+        std::mem::offset_of!(FrameUBOData, prev_view_proj)
+            == std::mem::offset_of!(ReflectedFrameUBO, prevViewProj)
+    );
+};
 
 /// Per-frame UBO buffer and its descriptor set.
 ///

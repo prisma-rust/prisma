@@ -13,16 +13,22 @@ pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
 /// Push-constant block size in bytes (reflected).
 pub const PUSH_CONSTANT_SIZE: u32 = 128;
 
-/// Push-constant struct (auto-generated from Slang `GizmoPush`).
+/// GPU layout struct (auto-generated from Slang `GizmoPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 128 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct GizmoPush {
     /// offset 0, size 64
     pub viewProj: [[f32; 4]; 4],
     /// offset 64, size 64
     pub model: [[f32; 4]; 4],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<GizmoPush>() == 128);
+    assert!(::std::mem::offset_of!(GizmoPush, viewProj) == 0);
+    assert!(::std::mem::offset_of!(GizmoPush, model) == 64);
+};

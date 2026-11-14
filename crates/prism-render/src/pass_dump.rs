@@ -360,6 +360,13 @@ fn log_stats(
         return;
     }
 
+    if nan > 0 {
+        log::error!(
+            "pass dump: {} has {nan} NON-FINITE (NaN/Inf) samples! Check upstream shading/math.",
+            path.display()
+        );
+    }
+
     log::info!(
         "pass dump: {} min={min:.6} mean={:.6} max={max:.6} non_finite={nan}",
         path.display(),

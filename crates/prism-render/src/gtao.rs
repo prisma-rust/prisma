@@ -1043,8 +1043,10 @@ impl RenderPassNode for GtaoPass {
             mode: 0,
             // #883 Phase 3: 0.85 keeps most of the history while still
             // converging within a few frames after disocclusion.
-            historyStrength: 0.85,
-            validHistory: if self.history_valid[(i + 1) % 2] {
+            historyStrength: if ctx.frame.freeze_temporal { 0.0 } else { 0.85 },
+            validHistory: if ctx.frame.freeze_temporal {
+                0.0
+            } else if self.history_valid[(i + 1) % 2] {
                 1.0
             } else {
                 0.0

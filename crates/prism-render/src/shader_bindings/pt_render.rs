@@ -62,13 +62,36 @@ pub const BINDLESS_SRVS_BINDING: u32 = 1; // UNIFORM_BUFFER
 pub const ENV_CUBE_SET: u32 = 2;
 pub const ENV_CUBE_BINDING: u32 = 0; // COMBINED_IMAGE_SAMPLER
 
-/// Push-constant struct (auto-generated from Slang `PtPush`).
+/// GPU layout struct (auto-generated from Slang `PtGuides`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 192 bytes and every field sits
+/// where the shader expects it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct PtGuides {
+    /// offset 0, size 64
+    pub viewProj: [[f32; 4]; 4],
+    /// offset 64, size 64
+    pub prevViewProj: [[f32; 4]; 4],
+    /// offset 128, size 64
+    pub worldToView: [[f32; 4]; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<PtGuides>() == 192);
+    assert!(::std::mem::offset_of!(PtGuides, viewProj) == 0);
+    assert!(::std::mem::offset_of!(PtGuides, prevViewProj) == 64);
+    assert!(::std::mem::offset_of!(PtGuides, worldToView) == 128);
+};
+
+/// GPU layout struct (auto-generated from Slang `PtPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 176 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct PtPush {
     /// offset 0, size 64
     pub inv_view_proj: [[f32; 4]; 4],
@@ -99,3 +122,21 @@ pub struct PtPush {
     /// offset 160, size 16
     pub sharc_camera_pos: [f32; 4],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<PtPush>() == 176);
+    assert!(::std::mem::offset_of!(PtPush, inv_view_proj) == 0);
+    assert!(::std::mem::offset_of!(PtPush, camera_pos) == 64);
+    assert!(::std::mem::offset_of!(PtPush, light_dir) == 80);
+    assert!(::std::mem::offset_of!(PtPush, light_color) == 96);
+    assert!(::std::mem::offset_of!(PtPush, params) == 112);
+    assert!(::std::mem::offset_of!(PtPush, ray_max_distance) == 128);
+    assert!(::std::mem::offset_of!(PtPush, max_iterations) == 132);
+    assert!(::std::mem::offset_of!(PtPush, num_lights) == 136);
+    assert!(::std::mem::offset_of!(PtPush, num_emissive) == 140);
+    assert!(::std::mem::offset_of!(PtPush, sharc_scene_scale) == 144);
+    assert!(::std::mem::offset_of!(PtPush, sharc_capacity) == 148);
+    assert!(::std::mem::offset_of!(PtPush, sharc_flags) == 152);
+    assert!(::std::mem::offset_of!(PtPush, sharc_roughness_threshold) == 156);
+    assert!(::std::mem::offset_of!(PtPush, sharc_camera_pos) == 160);
+};
