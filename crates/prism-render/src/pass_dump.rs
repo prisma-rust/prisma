@@ -191,7 +191,10 @@ pub(crate) fn texel_size(format: vk::Format) -> u64 {
         vk::Format::R32_SFLOAT | vk::Format::D32_SFLOAT => 4,
         vk::Format::R32G32_SFLOAT => 8,
         vk::Format::R32G32B32A32_SFLOAT => 16,
-        vk::Format::R8G8B8A8_UNORM | vk::Format::B8G8R8A8_UNORM => 4,
+        vk::Format::R8G8B8A8_UNORM
+        | vk::Format::B8G8R8A8_UNORM
+        | vk::Format::R8G8B8A8_SRGB
+        | vk::Format::B8G8R8A8_SRGB => 4,
         _ => 4,
     }
 }
@@ -238,7 +241,7 @@ fn read_channel(pixels: &[u8], base: usize, channel: usize, format: vk::Format) 
                 0.0
             }
         }
-        vk::Format::R8G8B8A8_UNORM => {
+        vk::Format::R8G8B8A8_UNORM | vk::Format::R8G8B8A8_SRGB => {
             let offset = base + channel;
             if channel < 4 && offset < pixels.len() {
                 pixels[offset] as f32 / 255.0
@@ -246,7 +249,7 @@ fn read_channel(pixels: &[u8], base: usize, channel: usize, format: vk::Format) 
                 0.0
             }
         }
-        vk::Format::B8G8R8A8_UNORM => {
+        vk::Format::B8G8R8A8_UNORM | vk::Format::B8G8R8A8_SRGB => {
             let ch_idx = match channel {
                 0 => 2,
                 1 => 1,
@@ -423,13 +426,13 @@ fn decode_to_rgba(
 
     match kind {
         DumpKind::RawRgba8 => {
-            if format == vk::Format::R8G8B8A8_UNORM {
+            if format == vk::Format::R8G8B8A8_UNORM || format == vk::Format::R8G8B8A8_SRGB {
                 let bytes = count * 4;
                 if pixels.len() >= bytes {
                     out.copy_from_slice(&pixels[..bytes]);
                     return out;
                 }
-            } else if format == vk::Format::B8G8R8A8_UNORM {
+            } else if format == vk::Format::B8G8R8A8_UNORM || format == vk::Format::B8G8R8A8_SRGB {
                 for i in 0..count {
                     let base = i * 4;
                     if base + 3 < pixels.len() {

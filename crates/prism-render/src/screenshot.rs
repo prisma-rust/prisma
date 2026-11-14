@@ -208,6 +208,19 @@ impl ScreenshotCapture {
             );
         }
 
+        let (dst_stage, dst_access) = if current_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        {
+            (
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            )
+        } else {
+            (
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::AccessFlags::empty(),
+            )
+        };
+
         let restore_layout = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
             .new_layout(current_layout)
@@ -216,12 +229,12 @@ impl ScreenshotCapture {
             .image(image)
             .subresource_range(range)
             .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+            .dst_access_mask(dst_access);
         unsafe {
             device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                dst_stage,
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],

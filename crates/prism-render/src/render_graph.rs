@@ -1260,6 +1260,9 @@ pub struct GraphFrame<'a> {
     /// (mirroring `ForwardPass::ensure_target`), instead of relying on
     /// `GraphRenderer` to call `set_target` every frame.
     pub swapchain_views: &'a [vk::ImageView],
+    /// Swapchain or offscreen target images for the current frame. Forwarded
+    /// so passes like `PostPass` can publish `FINAL_COLOR_H`.
+    pub swapchain_images: &'a [vk::Image],
     /// Active render mode (Raster vs PathTrace). Passes check this to decide
     /// whether to run (ForwardPass skips in PT 众数 PathTracePass skips in
     /// Raster mode).
@@ -2300,16 +2303,44 @@ impl RenderGraph {
                 log::trace!("pass dump: {name} was not published this frame");
                 continue;
             };
-            let extent = self
+            let default_extent = if handle == FINAL_COLOR_H {
+                ctx.extent
+            } else {
+                ctx.render_extent
+            };
+            let (format, extent) = self
                 .graph_resources
                 .resources
                 .get(&handle)
-                .and_then(|r| match r.res_type {
-                    ResourceType::ColorAttachment { extent, .. } => Some(extent),
-                    ResourceType::DepthAttachment { extent, .. } => Some(extent),
-                    _ => None,
+                .map(|r| match r.res_type {
+                    ResourceType::ColorAttachment {
+                        format: fmt,
+                        extent,
+                        ..
+                    } => {
+                        let ext = if extent.width > 0 && extent.height > 0 {
+                            extent
+                        } else {
+                            default_extent
+                        };
+                        (fmt, ext)
+                    }
+                    ResourceType::DepthAttachment { extent, .. } => {
+                        let ext = if extent.width > 0 && extent.height > 0 {
+                            extent
+                        } else {
+                            default_extent
+                        };
+                        (format, ext)
+                    }
+                    _ => (format, default_extent),
                 })
-                .unwrap_or(ctx.render_extent);
+                .unwrap_or((format, default_extent));
+
+            if extent.width == 0 || extent.height == 0 {
+                log::warn!("pass dump: {name} has zero extent ({extent:?}), skipping");
+                continue;
+            }
 
             let state = self.state_tracker.get(handle, ctx.image_index);
             let layout = if state.layout == vk::ImageLayout::UNDEFINED {

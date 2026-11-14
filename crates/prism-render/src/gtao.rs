@@ -747,7 +747,11 @@ fn create_ao_image(
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::OPTIMAL)
-        .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+        .usage(
+            vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_SRC,
+        )
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
     let image =
         unsafe { device.create_image(&image_info, None) }.context("GtaoPass: create AO image")?;
@@ -946,9 +950,9 @@ impl RenderPassNode for GtaoPass {
         );
         graph.write_usage(ResourceUsage {
             handle: GTAO_AO_H,
-            access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
     }
 

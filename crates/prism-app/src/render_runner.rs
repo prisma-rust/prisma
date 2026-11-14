@@ -281,7 +281,10 @@ pub fn render_thread_main(
         let frame_plan = screenshot.as_ref().filter(|plan| {
             !screenshot_done
                 && plan.fires_on(frame_count + 1)
-                && (!packet.draw_items.is_empty() || frame_count >= 300)
+                && (!packet.draw_items.is_empty()
+                    || !packet.sprite_items.is_empty()
+                    || renderer.is_headless()
+                    || frame_count >= 300)
         });
         let presented = match render_one_frame(
             &mut renderer,

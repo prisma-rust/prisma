@@ -952,11 +952,21 @@ impl App {
     /// 启动事件循环（桌面入口，自建 winit EventLoop）。
     ///
     /// 内部构造 EventLoop 并交给 [`Self::run_on`]；致命错误直接 panic。
+    /// 若环境变量设置了 `PRISMREV_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
     #[cfg(feature = "winit-backend")]
-    pub fn run(self) {
+    pub fn run(mut self) {
         // 兜底：`App::hosted` 之外的构造路径也要在事件循环前有 logger（幂等）。
         crate::logging::init_player_logging();
         Self::log_asset_root();
+
+        if let Some(frames) = Self::headless_frames_from_env() {
+            log::info!("headless mode requested via PRISMREV_HEADLESS ({frames} frames)");
+            let (w, h) = self.default_headless_extent();
+            self.run_headless(frames, w, h)
+                .expect("fatal headless application error");
+            return;
+        }
+
         let event_loop = winit::event_loop::EventLoop::new().expect("failed to create event loop");
         self.run_on(event_loop).expect("fatal application error");
     }
@@ -983,8 +993,87 @@ impl App {
     pub fn run(mut self) {
         crate::logging::init_player_logging();
         Self::log_asset_root();
+
+        if let Some(frames) = Self::headless_frames_from_env() {
+            log::info!("headless mode requested via PRISMREV_HEADLESS ({frames} frames)");
+            let (w, h) = self.default_headless_extent();
+            self.run_headless(frames, w, h)
+                .expect("fatal headless application error");
+            return;
+        }
+
         self.build_plugins();
         self.run_win32().expect("fatal application error");
+    }
+
+    fn headless_frames_from_env() -> Option<u32> {
+        let env_val = std::env::var("PRISMREV_HEADLESS").ok()?;
+        let val = env_val.trim();
+        if val.is_empty() || val == "0" || val.eq_ignore_ascii_case("false") {
+            return None;
+        }
+        if let Ok(n) = val.parse::<u32>() {
+            return Some(n.max(1));
+        }
+        let explicit = std::env::var("PRISMREV_HEADLESS_FRAMES")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok());
+        if let Some(n) = explicit {
+            return Some(n.max(1));
+        }
+        let pass_dump = std::env::var("PRISMREV_PASS_DUMP_FRAME")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map(|f| f + 5);
+        if let Some(n) = pass_dump {
+            return Some(n);
+        }
+        let screenshot = std::env::var("PRISMREV_SCREENSHOT_FRAME")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map(|f| f + 5);
+        if let Some(n) = screenshot {
+            return Some(n);
+        }
+        Some(60)
+    }
+
+    fn default_headless_extent(&self) -> (u32, u32) {
+        if let Ok(size_str) = std::env::var("PRISMREV_SCREENSHOT_SIZE") {
+            let normalized = size_str.trim().replace(['X', ',', '*'], "x");
+            if let Some((w, h)) = normalized.split_once('x') {
+                if let (Ok(w), Ok(h)) = (w.trim().parse::<u32>(), h.trim().parse::<u32>()) {
+                    if w > 0 && h > 0 {
+                        return (w, h);
+                    }
+                }
+            }
+        }
+        let win_cfg = self.window_config();
+        (win_cfg.width.max(1), win_cfg.height.max(1))
+    }
+
+    /// Run the application headlessly for `frames` ticks without creating a window.
+    pub fn run_headless(&mut self, frames: u32, width: u32, height: u32) -> anyhow::Result<()> {
+        self.build_plugins();
+        self.start_hosted(width, height);
+        for index in 0..frames.max(1) {
+            self.host_tick(true);
+            for _ in 0..100 {
+                if let Some(failure) = self.render_failure() {
+                    anyhow::bail!("render thread failed: {failure}");
+                }
+                if self.take_hosted_frame().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if (index + 1) % 50 == 0 || index + 1 == frames {
+                log::info!("headless tick: {} / {frames} frames", index + 1);
+            }
+        }
+        self.shutdown_hosted();
+        Ok(())
     }
 
     /// 日志可用之后打一行资产根目录（#985）。

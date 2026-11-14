@@ -2258,6 +2258,7 @@ impl GraphRenderer {
         self.swapchain
             .as_ref()
             .map(|s| s.extent)
+            .or_else(|| self.offscreen.as_ref().map(|o| o.extent()))
             .unwrap_or_default()
     }
 
@@ -3357,6 +3358,12 @@ impl GraphRenderer {
                 (None, Some(ov)) => ov.as_slice(),
                 (None, None) => &[],
             };
+            let offscreen_images = self.offscreen.as_ref().map(|o| [o.image()]);
+            let swapchain_images: &[vk::Image] = match (&self.swapchain, &offscreen_images) {
+                (Some(sw), _) => sw.images.as_slice(),
+                (None, Some(oi)) => oi.as_slice(),
+                (None, None) => &[],
+            };
             // Skinned draws (#560 P0-3): push this frame's palette into the
             // per-frame bone SSBO before the graph runs.
             if let Some(forward) = self.graph.pass_mut::<ForwardPass>() {
@@ -3424,6 +3431,7 @@ impl GraphRenderer {
                 proj32,
                 inv_projection,
                 swapchain_views,
+                swapchain_images,
                 render_mode: *render_mode,
                 pt_max_bounces: *pt_max_bounces,
                 pt_ray_max_distance: *pt_ray_max_distance,
@@ -3890,21 +3898,31 @@ impl GraphRenderer {
                 );
                 match capture {
                     Ok(capture) => {
-                        let image = self
-                            .swapchain
-                            .as_ref()
-                            .map(|sw| sw.images[image_index as usize]);
-                        match image {
-                            Some(image) => match capture.record_copy(
-                                device,
-                                cmd,
-                                image,
+                        let (image, current_layout) = if let Some(ref sw) = self.swapchain {
+                            (
+                                sw.images.get(image_index as usize).copied(),
                                 vk::ImageLayout::PRESENT_SRC_KHR,
-                            ) {
-                                Ok(()) => self.screenshot = Some(capture),
-                                Err(err) => record = Err(err),
-                            },
-                            None => record = Err(anyhow::anyhow!("screenshot: no swapchain")),
+                            )
+                        } else if let Some(ref offscreen) = self.offscreen {
+                            (
+                                Some(offscreen.image()),
+                                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                            )
+                        } else {
+                            (None, vk::ImageLayout::UNDEFINED)
+                        };
+                        match image {
+                            Some(image) => {
+                                match capture.record_copy(device, cmd, image, current_layout) {
+                                    Ok(()) => self.screenshot = Some(capture),
+                                    Err(err) => record = Err(err),
+                                }
+                            }
+                            None => {
+                                record = Err(anyhow::anyhow!(
+                                    "screenshot: no swapchain or offscreen target"
+                                ))
+                            }
                         }
                     }
                     Err(err) => record = Err(err),
@@ -4113,6 +4131,17 @@ impl GraphRenderer {
             size,
             scale,
         });
+    }
+
+    /// Programmatically configure pass dump for automated tests or headless runs.
+    pub fn configure_pass_dump(
+        &mut self,
+        dir: impl Into<std::path::PathBuf>,
+        target_frame: u64,
+        filter: Option<Vec<String>>,
+    ) {
+        self.graph
+            .configure_pass_dump(dir.into(), target_frame, filter);
     }
 
     /// 帧提交之后调用：等待本次提交的围栏、读回像素、写 PNG。

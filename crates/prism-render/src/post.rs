@@ -1155,9 +1155,9 @@ impl RenderPassNode for PostPass {
             dest,
             &push,
         );
-        if let Some(&img) = self.target_images.get(ctx.image_index as usize) {
+        if let Some(&img) = ctx.frame.swapchain_images.get(ctx.image_index as usize) {
             resources.set_image(FINAL_COLOR_H, img);
-            if let Some(&view) = self.target_views.get(ctx.image_index as usize) {
+            if let Some(&view) = ctx.frame.swapchain_views.get(ctx.image_index as usize) {
                 resources.set_image_view(FINAL_COLOR_H, view);
             }
         }
