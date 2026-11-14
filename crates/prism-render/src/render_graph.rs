@@ -2318,7 +2318,10 @@ impl RenderGraph {
                         extent,
                         ..
                     } => {
-                        let ext = if extent.width > 0 && extent.height > 0 {
+                        // ForwardPass (and other passes that manage their own textures)
+                        // registers a 1x1 placeholder extent during setup. Fall back
+                        // to the frame render extent when the declared extent is <= 1.
+                        let ext = if extent.width > 1 && extent.height > 1 {
                             extent
                         } else {
                             default_extent
@@ -2326,7 +2329,7 @@ impl RenderGraph {
                         (fmt, ext)
                     }
                     ResourceType::DepthAttachment { extent, .. } => {
-                        let ext = if extent.width > 0 && extent.height > 0 {
+                        let ext = if extent.width > 1 && extent.height > 1 {
                             extent
                         } else {
                             default_extent
