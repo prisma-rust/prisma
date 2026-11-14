@@ -101,10 +101,10 @@ pub fn propagate_dynamic_lights_q8_12(
                 continue;
             }
             let atten = 1.0 / (1.0 + dist_sq / (light.radius * light.radius).max(1e-4));
-            for ch in 0..3 {
+            for (ch, s) in slot.iter_mut().enumerate() {
                 let contrib = light.color[ch] * atten * transfer_gain;
                 let q = (contrib * Q8_12_SCALE).round() as i32;
-                slot[ch] = slot[ch].saturating_add(q);
+                *s = s.saturating_add(q);
             }
         }
     }
