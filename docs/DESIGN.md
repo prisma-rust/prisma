@@ -217,6 +217,14 @@ ShadowMapPass → ForwardPass → GtaoPass → RestirGiPass → PostPass
 - **开关**：`restir_gi_scale`（分辨率倍率）、`restir_gi_rays_per_pixel`、`restir_gi_spatial_samples`、`restir_gi_max_history`、`restir_gi_temporal_reuse`、`restir_gi_spatial_reuse`、`restir_gi_max_secondary_dist`，逐字段经 `prism-engine::render_settings` → `prism-app::render_runner` 透传。
 - **不变量**：`RestirGiPass` 只声明图边（读 4 个 G-buffer、写 `restir_gi_color`），不碰 `ForwardPass` 的附件；关掉 feature 时 `ForwardPass` 的 set 4 binding 1 保持 null，push constant `gi_mode` 恒 0。
 
+### 6.9 PRT64 与 64 叉树（后续阶段）
+
+> 本节到 §6.8 为止描述的是**已落地**的 SH 探针体积与 ReSTIR 路径。更高阶的预计算辐射度传输
+> （PRT64）、64 叉树分块流式、Cluster-Major 动态光传播属于**下一阶段**，其数据契约
+> （`.prtbin` 头部与 cluster 载荷）、Pass 1–4 拓扑、防漏光机制与 M1–M4 验收口径全部记录在
+> [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md)。本节不复述那些内容，改规格以该文为准；
+> §6.1 的三类生命周期与 §6.4 的 `E/π` 量纲约束对它**继续生效**。
+
 *相关文档：`docs/lessons-learned.md`（§21/§29 framebuffer 销毁顺序、§30 CI 漂移）。*
 
 ## 7. 纹理管线（Texture Pipeline）
