@@ -3,7 +3,7 @@ name = "prism-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Application layer and main loop for PrismaRev"
+description = "Application layer and main loop for Prisma"
 
 [features]
 default = ["pathtrace", "sharc", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "group-3d", "group-2d", "group-ui"]

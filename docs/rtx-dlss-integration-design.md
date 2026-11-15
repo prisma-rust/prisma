@@ -1,4 +1,4 @@
-# PrismaRev RTX 神经渲染接入设计（DLSS / 光线重构 / 帧生成）
+# Prisma RTX 神经渲染接入设计（DLSS / 光线重构 / 帧生成）
 
 > 目标：在**不破坏 mobile-first 与能力驱动降级**的前提下，把 NVIDIA RTX 神经渲染三件套接进 RenderGraph：
 > DLSS-SR（超分）、DLSS-RR（光线重构）、DLSS-G（帧生成）。

@@ -1882,7 +1882,7 @@ mod tests {
 
     #[test]
     fn loads_and_runs_project_module_when_configured() {
-        let Some(path) = std::env::var_os("PRISMREV_TEST_PROJECT_MODULE") else {
+        let Some(path) = std::env::var_os("PRISMA_TEST_PROJECT_MODULE") else {
             return;
         };
         let module = ProjectModule::load(path).expect("project module should load");

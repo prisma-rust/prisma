@@ -165,7 +165,7 @@ impl Default for AppSettingsData {
     fn default() -> Self {
         Self {
             company: "Excurs1ons".into(),
-            name: "PrismaRev".into(),
+            name: "Prisma".into(),
             version: "0.1.0".into(),
         }
     }
@@ -185,7 +185,7 @@ pub struct WindowSettingsData {
 impl Default for WindowSettingsData {
     fn default() -> Self {
         Self {
-            title: "PrismaRev".into(),
+            title: "Prisma".into(),
             width: 1600,
             height: 900,
             resizable: true,
@@ -486,7 +486,7 @@ mod tests {
         .unwrap();
 
         let mut data = read_project_settings(&dir).unwrap();
-        assert_eq!(data.app.name, "PrismaRev");
+        assert_eq!(data.app.name, "Prisma");
         data.app.name = "DemoGame".into();
         data.window.width = 1280;
         data.build.profile = "debug".into();

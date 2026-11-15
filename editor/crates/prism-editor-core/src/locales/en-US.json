@@ -74,7 +74,7 @@
     "history": "Undo History",
     "help": "Help",
     "shortcuts": "Keyboard Shortcuts",
-    "about": "About PrismaRev Editor"
+    "about": "About Prisma Editor"
   },
   "toolbar": {
     "currentScene": "Current Scene",
@@ -359,7 +359,7 @@
     "tooltip": "Index of editor shortcuts"
   },
   "about": {
-    "title": "About PrismaRev Editor",
+    "title": "About Prisma Editor",
     "subtitle": "Tauri 2 + Vue 3 · Backend prism-editor-api",
     "version": "Version: {version}",
     "description": "From-scratch high performance Vulkan cross-platform game engine editor."

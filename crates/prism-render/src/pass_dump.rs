@@ -8,8 +8,8 @@
 //!
 //! Enable with:
 //!
-//! * `PRISMREV_PASS_DUMP=<dir>` — output directory (required).
-//! * `PRISMREV_PASS_DUMP_FRAME=<n>` — 1-based render frame to capture on,
+//! * `PRISMA_PASS_DUMP=<dir>` — output directory (required).
+//! * `PRISMA_PASS_DUMP_FRAME=<n>` — 1-based render frame to capture on,
 //!   default `200` (late enough for path-tracing geometry uploads to land).
 //!
 //! Output lands in `<dir>/frame_<n>/<handle>.png`. Values are gamma encoded for
@@ -55,7 +55,7 @@ pub(crate) struct PendingDump {
 
 /// Dump state owned by [`crate::render_graph::RenderGraph`].
 ///
-/// When `PRISMREV_PASS_DUMP` is unset every method is a cheap no-op, which is
+/// When `PRISMA_PASS_DUMP` is unset every method is a cheap no-op, which is
 /// the normal case.
 pub(crate) struct PassDump {
     dir: Option<PathBuf>,
@@ -69,19 +69,19 @@ pub(crate) struct PassDump {
 impl PassDump {
     /// Read the dump configuration from the environment.
     pub(crate) fn from_env() -> Self {
-        let dir = std::env::var("PRISMREV_PASS_DUMP")
+        let dir = std::env::var("PRISMA_PASS_DUMP")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 
-        let target_frame = std::env::var("PRISMREV_PASS_DUMP_FRAME")
+        let target_frame = std::env::var("PRISMA_PASS_DUMP_FRAME")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(200);
 
-        let filter = std::env::var("PRISMREV_PASS_DUMP_PASSES")
+        let filter = std::env::var("PRISMA_PASS_DUMP_PASSES")
             .ok()
             .map(|s| {
                 s.split(',')

@@ -7,7 +7,7 @@
 //! prism-editor-mcp --project projects/fishing
 //! ```
 //!
-//! The project root can also come from `PRISMREV_PROJECT`; when neither is
+//! The project root can also come from `PRISMA_PROJECT`; when neither is
 //! given, it walks up looking for `assets/`.
 //!
 //! Design boundary: this process does **not** link engine / render and does

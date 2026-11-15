@@ -32,7 +32,7 @@ use prism_scene::ComponentRegistry;
 /// 源码改动后等待多久再编译（引擎式 debounce）。
 const COMPILE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// 可以直接指向预编译好的模块（测试 / 非 Cargo 项目）。
-const MODULE_ENV: &str = "PRISMREV_PROJECT_MODULE";
+const MODULE_ENV: &str = "PRISMA_PROJECT_MODULE";
 
 /// 一条要写进 Console 的项目模块事件。
 #[derive(Clone, Debug)]
@@ -111,7 +111,7 @@ const DIRTY_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 
 /// 工程存档（#984）：编辑器 Play 的存档写在工程目录下，不碰真实用户数据。
 ///
-/// 玩家侧用 `prism_engine::user_data`（`%APPDATA%/PrismaRev/<project>` 之类），
+/// 玩家侧用 `prism_engine::user_data`（`%APPDATA%/Prisma/<project>` 之类），
 /// 编辑器这里固定 `<project>/target/play-data/player_data.json` —— 删掉
 /// `target/` 就等于清空 Play 存档，不会污染玩家真正的进度。
 pub struct ProjectSave {
@@ -289,7 +289,7 @@ pub struct ProjectModuleDriver {
     available: bool,
     /// 上一次 tick 把模块判成故障（panic / 返回错误）：暂停调用，等重新加载。
     faulted: bool,
-    /// `PRISMREV_PROJECT_MODULE` 指定的预构建模块（只尝试加载一次）。
+    /// `PRISMA_PROJECT_MODULE` 指定的预构建模块（只尝试加载一次）。
     prebuilt: Option<PathBuf>,
     events: Vec<ProjectEvent>,
     /// 工程一次性音效（#987）：编辑器 Play 下模块通过 ABI 回调把声音交给它。
@@ -1360,11 +1360,11 @@ mod tests {
 
     /// 端到端：用真实 `.scene.json` 驱动 `projects/template` 的 preview 模块。
     ///
-    /// 需要先构建模块并设置 `PRISMREV_TEST_PROJECT_MODULE`；没有设置时跳过，
+    /// 需要先构建模块并设置 `PRISMA_TEST_PROJECT_MODULE`；没有设置时跳过，
     /// 和 `prism-runtime-host` 的同名环境测试一致。
     #[test]
     fn preview_module_drives_the_intro_scene_when_configured() {
-        let Some(module_path) = std::env::var_os("PRISMREV_TEST_PROJECT_MODULE") else {
+        let Some(module_path) = std::env::var_os("PRISMA_TEST_PROJECT_MODULE") else {
             return;
         };
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -1395,7 +1395,7 @@ mod tests {
 
     #[test]
     fn poll_loads_a_prebuilt_module_when_configured() {
-        let Some(module_path) = std::env::var_os("PRISMREV_TEST_PROJECT_MODULE") else {
+        let Some(module_path) = std::env::var_os("PRISMA_TEST_PROJECT_MODULE") else {
             return;
         };
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -1411,7 +1411,7 @@ mod tests {
 
     #[test]
     fn driver_stages_and_reloads_a_prebuilt_module_when_configured() {
-        let Some(module_path) = std::env::var_os("PRISMREV_TEST_PROJECT_MODULE") else {
+        let Some(module_path) = std::env::var_os("PRISMA_TEST_PROJECT_MODULE") else {
             return;
         };
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");

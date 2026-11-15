@@ -8,7 +8,7 @@
 //! poll until the 对话框 is dismissed (or activity finishes) and 块 the
 //! calling 线程 with a condvar.
 //!
-//! The 完整 错误 text is also written to logcat (tag `PrismaRev`) and copied
+//! The 完整 错误 text is also written to logcat (tag `Prisma`) and copied
 //! to the 系统 clipboard via `ClipboardManager`.
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -249,7 +249,7 @@ fn copy_to_clipboard_jni(
     }
 
     let clip_data_class = env.find_class(jni_str!("android/content/ClipData"))?;
-    let label = env.new_string("PrismaRev Crash Log")?;
+    let label = env.new_string("Prisma Crash Log")?;
     let text_j = env.new_string(text)?;
     let clip = env
         .call_static_method(

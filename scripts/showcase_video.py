@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-PrismaRev 引擎展示视频制作脚本
+Prisma 引擎展示视频制作脚本
 
-使用 moviepy 生成一个展示 PrismaRev 引擎特性的视频：
+使用 moviepy 生成一个展示 Prisma 引擎特性的视频：
 - 标题序列
 - 引擎截图轮播（从预渲染的关键帧）
 - 特性标注叠加
@@ -39,7 +39,7 @@ VIDEO_HEIGHT = 1080
 FPS = 30
 TOTAL_DURATION = 120  # 2 分钟
 
-# 颜色方案（参考 PrismaRev 的工程属性：Vulkan 蓝 + 琥珀强调）
+# 颜色方案（参考 Prisma 的工程属性：Vulkan 蓝 + 琥珀强调）
 BG_COLOR = (5, 7, 12)  # 深空蓝
 SURFACE_1 = (10, 13, 18)
 SURFACE_2 = (15, 19, 28)
@@ -146,9 +146,9 @@ def capture_engine_screenshots(scenes: List[str], output_dir: Path) -> List[Path
             screenshot_path = output_dir / f"scene_{i}_frame_{frame}.png"
             
             env = os.environ.copy()
-            env['PRISMREV_SCREENSHOT'] = str(screenshot_path)
-            env['PRISMREV_SCREENSHOT_FRAME'] = str(frame)
-            env['PRISMREV_SCREENSHOT_SIZE'] = f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}"
+            env['PRISMA_SCREENSHOT'] = str(screenshot_path)
+            env['PRISMA_SCREENSHOT_FRAME'] = str(frame)
+            env['PRISMA_SCREENSHOT_SIZE'] = f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}"
             env['RUST_LOG'] = 'warn'
             
             try:
@@ -300,7 +300,7 @@ def create_end_card(duration: float) -> VideoClip:
     bg_clip = VideoClip(make_frame, duration=duration)
     
     # GitHub 链接
-    github_text = "github.com/yourusername/PrismaRev"
+    github_text = "github.com/yourusername/Prisma"
     github_clip = TextClip(
         github_text,
         fontsize=40,
@@ -326,10 +326,10 @@ def main():
     
     screenshots_dir = output_dir / "screenshots"
     audio_path = output_dir / "ambient.wav"
-    video_path = output_dir / "prismarev_showcase.mp4"
+    video_path = output_dir / "prisma_showcase.mp4"
     
     print("=" * 60)
-    print("PrismaRev Showcase Video Generator")
+    print("Prisma Showcase Video Generator")
     print("=" * 60)
     
     # 1. 捕获截图
@@ -353,7 +353,7 @@ def main():
         # 开场标题
         VideoScene(
             duration=4.0,
-            title="PrismaRev",
+            title="Prisma",
             subtitle="A Modern Mobile-First Game Engine",
             features=[],
             screenshot_path=None
@@ -461,7 +461,7 @@ def main():
             title="Screenshot & Automation",
             subtitle="Built-In Capture System",
             features=[
-                "PRISMREV_SCREENSHOT env var",
+                "PRISMA_SCREENSHOT env var",
                 "Configurable resolution/frame",
                 "MCP server for editor automation",
                 "CDP-driven UI testing"
@@ -483,7 +483,7 @@ def main():
     
     # 创建标题卡
     title_card = create_title_card(
-        "PrismaRev",
+        "Prisma",
         "A Modern Mobile-First Game Engine",
         4.0
     )

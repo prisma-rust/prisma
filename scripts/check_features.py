@@ -83,7 +83,7 @@ MATRIX: list[tuple[str, list[str]]] = [
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev feature matrix check")
+    parser = argparse.ArgumentParser(description="Prisma feature matrix check")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 

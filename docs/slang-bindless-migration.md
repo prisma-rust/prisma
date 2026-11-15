@@ -1,6 +1,6 @@
 # Slang 工具链 + Bindless 迁移指南
 
-本文档记录 PrismaRev 引入 **Slang shader 工具链** 与 **Bindless（descriptor-indexing）纹理表** 的过程，以及现在维护它们要用到的命令和文件位置。
+本文档记录 Prisma 引入 **Slang shader 工具链** 与 **Bindless（descriptor-indexing）纹理表** 的过程，以及现在维护它们要用到的命令和文件位置。
 
 > 背景：最初改动在 Termux/aarch64 上开发，那里 `cargo check`/`cargo test -p prism-render` 全绿，但官方 `slangc` 是 glibc 二进制、无法在 Termux 原生运行。因此 shader 编译（`.slang -> .spv` + 反射 JSON）在桌面/CI 完成；`.spv` 与生成的 Rust 绑定 checked-in 后手机端照常构建。
 

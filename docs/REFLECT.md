@@ -1,6 +1,6 @@
 # 反射层与 RTTIBin
 
-PrismaRev 把“工具格式”和“运行时格式”分开：RTTIBin 自带完整 schema，供编辑器、
+Prisma 把“工具格式”和“运行时格式”分开：RTTIBin 自带完整 schema，供编辑器、
 独立 player 和外部工具使用；shipped RSCN 只存类型 id + schema 指纹，字段布局来自
 编译进运行时的 `TypeDesc`。两者共用同一份反射描述。
 

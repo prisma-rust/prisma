@@ -719,7 +719,7 @@ public float3 TraceRadiance(
 
         // Inline ray query WITHOUT RAY_FLAG_FORCE_OPAQUE: this surfaces every
         // triangle as a non-opaque candidate so we can alpha-test it in the
-        // proceed loop. PrismaRev has no any-hit shader (ray-query only), so
+        // proceed loop. Prisma has no any-hit shader (ray-query only), so
         // alpha-masked / blend materials (e.g. Sponza dirt_decal) must be
         // culled here - otherwise their transparent texels render as solid
         // black geometry. Opaque materials (alpha >= 0.5) are committed and

@@ -52,7 +52,7 @@ pub fn inspect_bytes(data: &[u8]) -> (&'static str, Value, Vec<String>) {
         Some(b"RMAT") => inspect_material(data),
         _ => (
             "unknown",
-            json!({ "note": "not a cooked PrismaRev asset (magic not recognised)" }),
+            json!({ "note": "not a cooked Prisma asset (magic not recognised)" }),
             vec!["unknown asset magic".to_string()],
         ),
     }

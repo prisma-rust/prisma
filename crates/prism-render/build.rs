@@ -10,12 +10,12 @@
 //!      reference (over thirty of them) and never says what to do.
 //!
 //! Env knobs (all optional):
-//!   `PRISMREV_SHADER_AUTOCOMPILE`  `0` disables running `compile.sh` (default: enabled)
-//!   `PRISMREV_SHADER_REBUILD`      `1` always runs `compile.sh` (default: only when a
+//!   `PRISMA_SHADER_AUTOCOMPILE`  `0` disables running `compile.sh` (default: enabled)
+//!   `PRISMA_SHADER_REBUILD`      `1` always runs `compile.sh` (default: only when a
 //!                                  `.spv` is missing or older than the `.slang` source)
-//!   `PRISMREV_SHADER_SCRIPT`       `compile.sh` to run (default `<repo>/assets/shaders/compile.sh`)
-//!   `PRISMREV_SHADER_HINT`         replaces the failure text
-//!   `PRISMREV_SHADER_HINT_FILE`    file holding that text (wins over `PRISMREV_SHADER_HINT`)
+//!   `PRISMA_SHADER_SCRIPT`       `compile.sh` to run (default `<repo>/assets/shaders/compile.sh`)
+//!   `PRISMA_SHADER_HINT`         replaces the failure text
+//!   `PRISMA_SHADER_HINT_FILE`    file holding that text (wins over `PRISMA_SHADER_HINT`)
 //!   `SLANGC`                       handed to `compile.sh`
 //!
 //! Hint text may use the placeholders `{repo}`, `{shaders}` and `{missing}`.
@@ -36,21 +36,21 @@ fn main() {
         .nth(2)
         .map_or_else(|| manifest.clone(), Path::to_path_buf);
     let shaders = repo.join("assets").join("shaders");
-    let script = env::var_os("PRISMREV_SHADER_SCRIPT")
+    let script = env::var_os("PRISMA_SHADER_SCRIPT")
         .map_or_else(|| shaders.join("compile.sh"), PathBuf::from);
 
     let runtime = scan(&manifest.join("src"));
     let test_only = scan(&manifest.join("tests"));
 
-    let auto = env_flag("PRISMREV_SHADER_AUTOCOMPILE", true);
-    let force = env_flag("PRISMREV_SHADER_REBUILD", false);
+    let auto = env_flag("PRISMA_SHADER_AUTOCOMPILE", true);
+    let force = env_flag("PRISMA_SHADER_REBUILD", false);
     let missing_now = missing_of(&runtime);
     let stale = missing_now.is_empty() && !force && slang_is_newer(&shaders, &runtime);
 
     let want_compile = !missing_now.is_empty() || force || stale;
     let mut note = None;
     if want_compile && !auto {
-        note = Some("automatic compilation is off (PRISMREV_SHADER_AUTOCOMPILE=0)".to_string());
+        note = Some("automatic compilation is off (PRISMA_SHADER_AUTOCOMPILE=0)".to_string());
     } else if want_compile {
         if let Some(slangc) = find_slangc(&repo) {
             let what = if missing_now.is_empty() {
@@ -168,16 +168,16 @@ fn fail(repo: &Path, shaders: &Path, missing: &[PathBuf], note: Option<&str>) ->
 }
 
 fn hint_text() -> String {
-    if let Some(path) = env::var_os("PRISMREV_SHADER_HINT_FILE") {
+    if let Some(path) = env::var_os("PRISMA_SHADER_HINT_FILE") {
         match fs::read_to_string(&path) {
             Ok(text) => return text.trim_end().to_string(),
             Err(err) => eprintln!(
-                "cargo:warning=prism-render: cannot read PRISMREV_SHADER_HINT_FILE {}: {err}",
+                "cargo:warning=prism-render: cannot read PRISMA_SHADER_HINT_FILE {}: {err}",
                 Path::new(&path).display()
             ),
         }
     }
-    if let Some(text) = env::var_os("PRISMREV_SHADER_HINT") {
+    if let Some(text) = env::var_os("PRISMA_SHADER_HINT") {
         return text.to_string_lossy().trim_end().to_string();
     }
     DEFAULT_HINT.to_string()
@@ -198,7 +198,7 @@ restore them, or regenerate them after editing a `.slang`:
        cp /tmp/spirv/*.spv {shaders}/
 
 `cargo build` runs `compile.sh` on its own when it can find a `slangc`
-(set PRISMREV_SHADER_AUTOCOMPILE=0 to turn that off)."#;
+(set PRISMA_SHADER_AUTOCOMPILE=0 to turn that off)."#;
 
 /// Collect every `.spv` path referenced from `include_bytes!` under `dir`.
 fn scan(dir: &Path) -> Vec<PathBuf> {

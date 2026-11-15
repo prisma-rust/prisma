@@ -170,7 +170,7 @@ Pass 1 **每帧处理全部 cluster**，不做「变化量低于阈值就复用�
 | 项 | 门限 | 测量 |
 |---|---|---|
 | `EvaluatePRT64` 全链路 | **≤ 0.30 ms** @ 1080p，骁龙 7+ Gen 2 | `VK_EXT_host_query_reset` 时间戳，Pass 1–4 求和；口径见 §7.1 |
-| 静态太阳 / 天光旋转 | 无可见卡顿（P99 帧时 ≤ 该场景中位数 × 1.2） | `PRISMREV_BENCH_REPORT` 的 P50 / P99 |
+| 静态太阳 / 天光旋转 | 无可见卡顿（P99 帧时 ≤ 该场景中位数 × 1.2） | `PRISMA_BENCH_REPORT` 的 P50 / P99 |
 | 1080p 全屏 | 渲染分辨率 == 输出分辨率，1:1，无上采样 | 分辨率断言 + 逐像素 golden image |
 
 ## 5. M3：动态光源与防漏光
@@ -225,7 +225,7 @@ Pass 1 **每帧处理全部 cluster**，不做「变化量低于阈值就复用�
   不决定区块「有多准」——已加载区块的精度与分辨率不随流式预算变化。
 - **预算与淘汰**：`MemoryBudget` 取 `min(显存预算, settings.ini 上限)`，LRU 淘汰非可见区块；
   淘汰在帧末归还到 pool，不在帧中 `vkFreeMemory`（避开 [lessons-learned.md](lessons-learned.md) 的 device-lost 陷阱）。
-- **稳定性**：`PRISMREV_BENCH_REPORT` 基线 + 30 分钟资源计数比对。
+- **稳定性**：`PRISMA_BENCH_REPORT` 基线 + 30 分钟资源计数比对。
 
 ### 验收
 
@@ -249,7 +249,7 @@ Pass 1 **每帧处理全部 cluster**，不做「变化量低于阈值就复用�
 | M1 端到端耗时 | `bake-prt` 进程 wall clock，排除首次 `scenes.pak` 构建、驱动初始化与 shader 编译 | 工具内计时报表 |
 | M1 输出体积 | `.prtbin` 落盘字节总数（头部 + 节点表 + 载荷） | 文件大小；`leaf_count` 断言先行失败 |
 | M2 `EvaluatePRT64` | Pass 1–4 GPU 时间戳之和，1080p，**全分辨率 1:1 采样** | `VK_EXT_host_query_reset` 分段计时 |
-| M2 旋转流畅度 | 太阳 / 天光连续旋转下的帧时分布 | `PRISMREV_BENCH_REPORT` 的 P50 / P99 |
+| M2 旋转流畅度 | 太阳 / 天光连续旋转下的帧时分布 | `PRISMA_BENCH_REPORT` 的 P50 / P99 |
 | M3 16 动态光 | Pass 1–3 GPU 时间戳之和，16 光全部在视锥内且全部可见 | 同上，按 pass 分桶 |
 | M3 薄墙串光 | 20 cm 墙两侧等距相机的间接光亮度比 | golden image 逐像素比较 |
 | M4 切块开销 | 主线程帧作用域分配的 P99 | 分配计数器（非 GC 语言，统计 allocator 调用） |
@@ -307,7 +307,7 @@ Pass 1 **每帧处理全部 cluster**，不做「变化量低于阈值就复用�
 | **E** | `feat/prt-dynamic-lights` | Pass 2 全量传播 + Q8.12 定点 `InterlockedAdd` + Proxy OBB 剔除 | 16 光基准；拖尾与溢出断言 |
 | **F** | `feat/prt-leak-fix` | 叶子单侧判据 + resolve 门控 + `leak_bias` 边界 clamp | 20 cm 薄墙 golden image |
 | **G** | `feat/prt-streaming` | 64 树区块异步加载 / 卸载 + `MemoryBudget` + 帧预算队列 | 30 min 稳定性 + P99 分配 |
-| **H** | `feat/prt-bench` | `PRISMREV_BENCH_REPORT` 增加 `gi.*` 分段字段与口径标注 | 报告 schema 单测 |
+| **H** | `feat/prt-bench` | `PRISMA_BENCH_REPORT` 增加 `gi.*` 分段字段与口径标注 | 报告 schema 单测 |
 
 依赖顺序：A → B → C → D → E → F → G，H 可并行。**A 的格式契约一旦合入，后续 PR 只能在其上扩展版本号，
 不得就地改写字段语义**（1.0 前允许直接升版本，不写兼容读取）。

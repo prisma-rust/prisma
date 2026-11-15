@@ -11,7 +11,7 @@
     <application
         android:allowBackup="false"
         android:hasCode="true"
-        android:label="PrismaRev"
+        android:label="Prisma"
         android:theme="@style/Theme.PrismaGame">
 
         <!-- 游戏本体：GameActivity 加载 libtemplate_core.so，再调用 android_main。

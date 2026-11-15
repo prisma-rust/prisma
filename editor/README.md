@@ -1,6 +1,6 @@
 # editor
 
-PrismaRev 的 **egui 编辑器**（egui + ash Vulkan）。独立 workspace，不挂根 workspace。
+Prisma 的 **egui 编辑器**（egui + ash Vulkan）。独立 workspace，不挂根 workspace。
 
 - 沿用经典桌面编辑器布局：菜单栏 / 主工具栏 /
   状态栏 + split-tree docking（可拖 splitter、tab 切换、浮动窗口）。
@@ -31,7 +31,7 @@ cargo run -p prism-editor-egui
 
 | 变量 | 作用 |
 |---|---|
-| `PRISMREV_EDITOR_DEMO` | 指定 fixture JSON 路径 |
+| `PRISMA_EDITOR_DEMO` | 指定 fixture JSON 路径 |
 | `RUST_LOG` | 日志级别（默认 `warn`） |
 
 ## 截图 / 被 MCP 驱动

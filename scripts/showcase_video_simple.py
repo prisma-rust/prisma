@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PrismaRev 引擎展示视频制作脚本（简化版）
+Prisma 引擎展示视频制作脚本（简化版）
 
 不依赖引擎截图，纯动效展示特性清单
 """
@@ -201,7 +201,7 @@ def make_end_card(duration: float) -> VideoClip:
     bg = VideoClip(make_gradient_bg(SURFACE_1, BG), duration=duration)
     
     logo_txt = TextClip(
-        font=FONT_PATH, text="PrismaRev", font_size=80, color=tuple(ACCENT_GREEN)
+        font=FONT_PATH, text="Prisma", font_size=80, color=tuple(ACCENT_GREEN)
     ).with_duration(duration).with_position(('center', H * 0.35)).with_effects([vfx.FadeIn(0.5)])
     
     tagline = TextClip(
@@ -210,7 +210,7 @@ def make_end_card(duration: float) -> VideoClip:
     ).with_duration(duration).with_position(('center', H * 0.50)).with_effects([vfx.FadeIn(0.8)])
     
     github = TextClip(
-        font=FONT_PATH, text="github.com/YourUsername/PrismaRev",
+        font=FONT_PATH, text="github.com/YourUsername/Prisma",
         font_size=32, color=tuple(ACCENT_CYAN)
     ).with_duration(duration).with_position(('center', H * 0.62)).with_effects([vfx.FadeIn(1.0)])
     
@@ -222,15 +222,15 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     audio_path = output_dir / "ambient.wav"
-    video_path = output_dir / "prismarev_showcase.mp4"
+    video_path = output_dir / "prisma_showcase.mp4"
     
     print("=" * 60)
-    print("PrismaRev Showcase Video Generator")
+    print("Prisma Showcase Video Generator")
     print("=" * 60)
     
     # 场景定义
     scenes = [
-        ("title", "PrismaRev", "A Modern Mobile-First Game Engine", [], 4.0),
+        ("title", "Prisma", "A Modern Mobile-First Game Engine", [], 4.0),
         
         ("feature", "Mobile-First Architecture",
          "Optimized for TBDR GPUs · Vulkan Powered",
@@ -307,7 +307,7 @@ def main():
         ("feature", "Built-In Automation",
          "Screenshot · MCP · CDP Integration",
          [
-             "PRISMREV_SCREENSHOT env capture",
+             "PRISMA_SCREENSHOT env capture",
              "MCP server for editor automation",
              "CDP-driven UI testing",
              "Deterministic frame capture"

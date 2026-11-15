@@ -1,4 +1,4 @@
-//! PrismaRev 平台应用层
+//! Prisma 平台应用层
 //!
 //! 拥有事件循环、窗口和帧编排——连接平台输入、引擎（ECS/逻辑）和
 //! 渲染器（Vulkan）的胶水层。
@@ -145,7 +145,7 @@ pub use android_assets::init_android_assets;
 ///
 /// 优先 `assets/settings.ini`；不存在时回退读旧的 `assets/settings.toml`
 /// （并提示迁移）。路径经 `prism_engine::asset_paths` 解析（cwd / 可执行文件
-/// 目录 / 父目录 / `PRISMREV_ASSET_ROOT`），因此从任意目录启动 exe 都能读到配置。
+/// 目录 / 父目录 / `PRISMA_ASSET_ROOT`），因此从任意目录启动 exe 都能读到配置。
 pub fn load_config() -> AppConfig {
     for (name, legacy) in [("settings.ini", false), ("settings.toml", true)] {
         let Some(path) = prism_engine::asset_paths::asset_path(name) else {
@@ -235,10 +235,10 @@ where
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(level)
-            .with_tag("PrismaRev"),
+            .with_tag("Prisma"),
     );
 
-    log::info!("PrismaRev Android starting");
+    log::info!("Prisma Android starting");
 
     prism_engine::crash_dialog::register_android_app(&android_app);
     struct AndroidAppGuard;

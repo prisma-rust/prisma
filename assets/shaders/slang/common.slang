@@ -1,4 +1,4 @@
-// Shared types for the PrismaRev forward pipeline.
+// Shared types for the Prisma forward pipeline.
 //
 // Slang module: `import common;` from other .slang files.
 //

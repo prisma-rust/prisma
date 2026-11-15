@@ -1,6 +1,6 @@
 # 贡献指南
 
-PrismaRev 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android 优先**，桌面与移动共用一套
+Prisma 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android 优先**，桌面与移动共用一套
 数据导向 ECS 管线。开始之前请先读：
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — 架构与渲染分层（改渲染 / 架构前必读）。

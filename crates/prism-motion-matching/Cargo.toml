@@ -2,7 +2,7 @@
 name = "prism-motion-matching"
 version = "0.1.0"
 edition = "2021"
-description = "Motion matching features, database and search for PrismaRev (#560 P3)"
+description = "Motion matching features, database and search for Prisma (#560 P3)"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

@@ -1,6 +1,6 @@
 # egui 编辑器（`editor/`）
 
-PrismaRev 的编辑器（egui + ash），当前也是唯一编辑器。
+Prisma 的编辑器（egui + ash），当前也是唯一编辑器。
 
 设计目标只有两条：
 
@@ -126,7 +126,7 @@ Game View 的 Play 执行**用户项目自己的 gameplay 代码**，不是只�
 - 输入：Play 时 Game view 把键鼠转发给引擎 `InputManager`，`InputSnapshot.keys`
   是**按住**语义（fishing 的 `input.key(SPACE)` 需要持续收线）。
 - 没有 `preview-module` feature 的项目（任何还没改造的用户工程）只跑引擎，并在
-  Console 说明原因；`PRISMREV_PROJECT_MODULE=/path/libgame.so` 可直接加载
+  Console 说明原因；`PRISMA_PROJECT_MODULE=/path/libgame.so` 可直接加载
   预构建模块（测试 / 非 Cargo 项目）。
 - `projects/template` 与 `projects/fishing` 的 `preview-module` 必须显式打开
   `prism-scene` 的三组组件（3D / 2D / UI）：模块是独立 workspace，拿不到引擎侧的
@@ -325,7 +325,7 @@ Game View 的 Play 执行**用户项目自己的 gameplay 代码**，不是只�
   资产的增删也在同一次焦点变化时重新扫描。
 - **渲染图（Render Graph）**：Scene view 出首帧（以及每 60 帧）把当前图导出成
   `<工程>/target/prism-render-graph.json`，面板直接读它——不需要任何环境变量；
-  游戏进程要同样的报告时设 `PRISMREV_RENDER_GRAPH_REPORT=<path>`。
+  游戏进程要同样的报告时设 `PRISMA_RENDER_GRAPH_REPORT=<path>`。
   面板还会显示上一帧总 GPU 时间与按成本排序的 per-pass 表（#518；设备不报时间戳时
   整段隐藏，不用 CPU 墙钟冒充），以及**纹理 / 网格 / 材质的驻留量**与估算字节
   （#518 Phase 2，数据来自渲染器管理器，旧报告没有该字段时同样隐藏）。

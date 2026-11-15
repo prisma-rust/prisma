@@ -1,4 +1,4 @@
-# PrismaRev — Agent Instructions
+# Prisma — Agent Instructions
 
 From-scratch Rust game engine; **Vulkan** rendering, **Android** + desktop, **data-oriented ECS**.
 Documentation map: [`docs/README.md`](docs/README.md).
@@ -112,13 +112,13 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 ## 运行时自动化与诊断辅助
 
-- **内置截屏（`PRISMREV_SCREENSHOT`）**：
-  - `PRISMREV_SCREENSHOT=<path>` 在第 N 帧（默认 90，由 `_FRAME` 控制）将输出写入 PNG；支持 `_SIZE=1920x1080` 或 `_SCALE=2`（最近邻缩放）。
+- **内置截屏（`PRISMA_SCREENSHOT`）**：
+  - `PRISMA_SCREENSHOT=<path>` 在第 N 帧（默认 90，由 `_FRAME` 控制）将输出写入 PNG；支持 `_SIZE=1920x1080` 或 `_SCALE=2`（最近邻缩放）。
   - 用于独立游戏进程与自动化流水线；编辑器视口截图走控制通道 `editor_capture`，不要给编辑器设环境变量。
-- **帧时间基准报告（`PRISMREV_BENCH_REPORT`）**：
-  - `PRISMREV_BENCH_REPORT=<path>` 在采样满 N 帧（默认 600，预热 120 帧）后输出 JSON 统计分布（分位数、low 统计与直方图）。
-- **开发期资产热重载（`PRISMREV_HOT_RELOAD`）**：
-  - `PRISMREV_HOT_RELOAD=1` 开启 `.pak` 监听与重载，旧 GPU 资源回收（#495）。编辑器松散资产监听详见 [`docs/editor-egui.md`](docs/editor-egui.md)。
+- **帧时间基准报告（`PRISMA_BENCH_REPORT`）**：
+  - `PRISMA_BENCH_REPORT=<path>` 在采样满 N 帧（默认 600，预热 120 帧）后输出 JSON 统计分布（分位数、low 统计与直方图）。
+- **开发期资产热重载（`PRISMA_HOT_RELOAD`）**：
+  - `PRISMA_HOT_RELOAD=1` 开启 `.pak` 监听与重载，旧 GPU 资源回收（#495）。编辑器松散资产监听详见 [`docs/editor-egui.md`](docs/editor-egui.md)。
 
 ## Shaders 与绑定系统
 
@@ -167,7 +167,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 ## Asset root resolution (runtime, do not regress)
 
 - **路径解析单点实现**：统一走 `prism_engine::asset_paths`，严禁新增 cwd 相对路径。
-- **命中顺序**：`PRISMREV_ASSET_ROOT` → cwd 及其各级父目录 → 可执行文件目录及其各级父目录；必须包含实际存在的 `assets/` 目录。
+- **命中顺序**：`PRISMA_ASSET_ROOT` → cwd 及其各级父目录 → 可执行文件目录及其各级父目录；必须包含实际存在的 `assets/` 目录。
 
 ## 项目配置文件（settings.ini / scenes.json，do not regress）
 

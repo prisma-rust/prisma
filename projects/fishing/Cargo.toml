@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Cozy Fishing — 2D 像素钓鱼游戏（用户项目）"
 
-# 独立 workspace（与 projects/template 同构），不挂根 PrismaRev workspace。
+# 独立 workspace（与 projects/template 同构），不挂根 Prisma workspace。
 [workspace]
 
 [lib]

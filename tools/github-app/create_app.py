@@ -36,8 +36,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 GITHUB_API = "https://api.github.com"
-DEFAULT_REPO = "Excurs1ons/PrismaRev"
-DEFAULT_NAME = "prismrev-agent"
+DEFAULT_REPO = "Excurs1ons/Prisma"
+DEFAULT_NAME = "prisma-agent"
 
 
 @dataclass
@@ -59,7 +59,7 @@ def exchange_code(code: str) -> dict:
         method="POST",
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "PrismaRev-app-setup",
+            "User-Agent": "Prisma-app-setup",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
@@ -101,7 +101,7 @@ def record_installation(out_dir: Path, installation_id: int) -> None:
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
-    server_version = "PrismaRevAppSetup/1.0"
+    server_version = "PrismaAppSetup/1.0"
 
     def log_message(self, fmt: str, *args) -> None:
         # Do not log callback codes or query strings.
@@ -216,7 +216,7 @@ def main() -> int:
     parser.add_argument("--repo", default=DEFAULT_REPO, help="Repository shown in the App URL")
     parser.add_argument(
         "--out",
-        default=str(Path.home() / ".prismrev" / "github-app"),
+        default=str(Path.home() / ".prisma" / "github-app"),
         help="Directory for the private key and metadata (outside the repository)",
     )
     parser.add_argument("--port", type=int, default=0, help="Callback port (0 picks a free port)")

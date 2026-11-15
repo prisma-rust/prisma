@@ -20,7 +20,7 @@ use serde::Serialize;
 use crate::render_graph::{PassInfo, PassKind, RenderGraphSnapshot, RenderMode, ResourceHandle};
 
 /// 游戏进程写报告的输出路径环境变量键（编辑器自己写本地文件，不看它）。
-pub const ENV_KEY: &str = "PRISMREV_RENDER_GRAPH_REPORT";
+pub const ENV_KEY: &str = "PRISMA_RENDER_GRAPH_REPORT";
 
 /// 每多少帧刷新一次报告（≈1 秒 @60fps；图结构变化不频繁）。
 pub const REFRESH_INTERVAL_FRAMES: u64 = 60;

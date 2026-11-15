@@ -1,4 +1,4 @@
-# PrismaRev 从拉取到编译（Termux / Android 实测流程）
+# Prisma 从拉取到编译（Termux / Android 实测流程）
 
 适用于**没有 slangc** 的主机（Termux/Android）。桌面机流程更简单：装 slangc 后
 `bash assets/shaders/compile.sh` 再 `cargo build` 即可，跳过第 3 节的 CI 步骤。
@@ -26,8 +26,8 @@ pkg install cargo-ndk          # 或 cargo install cargo-ndk
 ## 2. 拉取
 
 ```bash
-git clone https://github.com/Excurs1ons/PrismaRev.git
-cd PrismaRev
+git clone https://github.com/Excurs1ons/Prisma.git
+cd Prisma
 ```
 
 注意：`assets/shaders/*.spv` **已入库**，克隆下来就能直接 `cargo build`，不必先有

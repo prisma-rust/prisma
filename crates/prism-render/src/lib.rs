@@ -1,4 +1,4 @@
-//! PrismaRev Vulkan 渲染后端
+//! Prisma Vulkan 渲染后端
 //!
 //! 基于 [`ash`]（轻量 Vulkan 绑定）构建。里程碑 2 提供了完整的
 //! 光栅化管线：渲染 pass、图形管线、网格缓冲区、
@@ -17,7 +17,7 @@
 //! | mesh | 顶点/索引缓冲区与网格类型 |
 //! | pipeline | 图形管线 |
 //! | descriptor | 描述符集合、布局、池、UBO |
-//! Vulkan renderer for PrismaRev — the GPU half of the engine.
+//! Vulkan renderer for Prisma — the GPU half of the engine.
 //! Architecture: [`render_graph::RenderGraph`] drives [`RenderPassNode`] exec.
 
 // Crate-level lint enforcement (applies only to this crate, not deps).
@@ -73,7 +73,7 @@ mod math;
 pub mod mesh;
 pub mod offscreen;
 pub mod particle_pass;
-/// `PRISMREV_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
+/// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
 pub(crate) mod pass_dump;
 pub mod pipeline;
 /// pass 级 feature（`shadows` / `gtao`）关闭时的 1×1 占位资源，以及

@@ -52,7 +52,7 @@ const LEGACY_INDEPENDENT_LIGHTS_VERSION: u32 = 2;
 ///
 /// 以前 `scene_state_path()` 直接用 [`crate::config::app_data_dir`]，而那个函数
 /// 拿的是 `AppConfig::default()` —— 所有项目都写进
-/// `%APPDATA%/Excurs1ons/PrismaRev/scene_state.json`，互相覆盖（#484）。
+/// `%APPDATA%/Excurs1ons/Prisma/scene_state.json`，互相覆盖（#484）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SaveDirectory(pub std::path::PathBuf);
 

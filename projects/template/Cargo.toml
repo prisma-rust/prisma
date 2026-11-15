@@ -3,9 +3,9 @@ name = "template"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "PrismaRev 用户游戏项目（模板工程）——桌面二进制 `template`，由 launcher/ spawn"
+description = "Prisma 用户游戏项目（模板工程）——桌面二进制 `template`，由 launcher/ spawn"
 
-# 独立 workspace（仿 launcher/ 先例），不挂根 PrismaRev workspace。
+# 独立 workspace（仿 launcher/ 先例），不挂根 Prisma workspace。
 [workspace]
 
 # 桌面二进制是 `template`；Android / 编辑器用的是同一个 cdylib，但**库名单独取**

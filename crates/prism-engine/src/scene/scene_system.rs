@@ -759,7 +759,7 @@ fn manifest_style_path(current: &str, resolved: &str) -> String {
 }
 
 /// 不依赖当前工作目录地定位场景清单：
-/// 按 [`crate::asset_paths::search_roots`] 的顺序（`PRISMREV_ASSET_ROOT`、
+/// 按 [`crate::asset_paths::search_roots`] 的顺序（`PRISMA_ASSET_ROOT`、
 /// 当前目录及其父目录、可执行文件目录及其父目录），先找
 /// `assets/scenes.json`，再回退旧项目的 `assets/scenes.toml`。
 ///

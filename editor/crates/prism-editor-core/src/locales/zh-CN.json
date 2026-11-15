@@ -74,7 +74,7 @@
     "history": "撤销历史",
     "help": "帮助",
     "shortcuts": "键盘快捷键",
-    "about": "关于 PrismaRev Editor"
+    "about": "关于 Prisma Editor"
   },
   "toolbar": {
     "currentScene": "当前场景",
@@ -359,7 +359,7 @@
     "tooltip": "编辑器常用快捷键索引"
   },
   "about": {
-    "title": "关于 PrismaRev Editor",
+    "title": "关于 Prisma Editor",
     "subtitle": "Tauri 2 + Vue 3 · 数据层 prism-editor-api",
     "version": "版本：{version}",
     "description": "从零构建的高性能 Vulkan 跨平台游戏引擎编辑器。场景与预制体编辑、模块化分屏停靠、进程内视口、场景烘焙与流水线构建。"

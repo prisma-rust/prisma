@@ -22,7 +22,7 @@ pub struct WindowConfig {
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            title: "PrismaRev".into(),
+            title: "Prisma".into(),
             width: 1600,
             height: 900,
             min_width: None,

@@ -67,7 +67,7 @@ impl ProbeVolumeData {
     }
 }
 
-/// Magic bytes identifying a PrismaRev probe-volume file.
+/// Magic bytes identifying a Prisma probe-volume file.
 pub const MAGIC: &[u8; 4] = b"PRPV";
 /// Current (and only supported) file format version.
 pub const VERSION: u32 = 2;

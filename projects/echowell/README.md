@@ -2,7 +2,7 @@
 
 `EchoWell` 是按需求文档制作的 2D 灰盒平台跳跃切片，目前包含 320×180 的“回声之井”和“蓄水池”两间相连房间。角色使用固定 60 Hz 模拟，包含土狼时间、跳跃输入缓冲、可变跳跃高度、空中冲刺、能力水晶、能力门、尖刺死亡和 0.5 秒重生。
 
-玩法代码在用户项目侧，直接复用 PrismaRev 已有的 `SpriteRenderer`、`SpriteAnimation`、`Tilemap`、`ParticleEmitter2D`、`Light2D`、正交相机、输入快照、UI quad 和存档接口。`assets/player.json` 是可热替换的移动参数；`assets/rooms.json` 维护房间 ID、边界、瓦片、碰撞、出口目标、落点和能力条件。冲刺水晶解锁后可穿过井室出口，房间切换保留速度与永久能力；当前房间 ID 写入存档，死亡后回到当前房间入口。`assets/scenes/well.scene.json` 保存基础相机，房间实体由玩法系统按稳定名称生成，便于后续接 Tiled / Aseprite cooker。
+玩法代码在用户项目侧，直接复用 Prisma 已有的 `SpriteRenderer`、`SpriteAnimation`、`Tilemap`、`ParticleEmitter2D`、`Light2D`、正交相机、输入快照、UI quad 和存档接口。`assets/player.json` 是可热替换的移动参数；`assets/rooms.json` 维护房间 ID、边界、瓦片、碰撞、出口目标、落点和能力条件。冲刺水晶解锁后可穿过井室出口，房间切换保留速度与永久能力；当前房间 ID 写入存档，死亡后回到当前房间入口。`assets/scenes/well.scene.json` 保存基础相机，房间实体由玩法系统按稳定名称生成，便于后续接 Tiled / Aseprite cooker。
 
 碰撞约定：玩家、尖刺、能力门和水晶都以碰撞 AABB 的中心作为实体位置，使用中心 pivot，并把精灵 quad 缩放到对应碰撞尺寸；预置 scene 实体也会在运行时套用这套对齐规则。
 

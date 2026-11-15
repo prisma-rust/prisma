@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 pub const USER_DATA_VERSION: u32 = 1;
 
 /// 覆盖用户数据根目录的环境变量（Android 宿主 / 便携版 / 测试用）。
-pub const ENV_OVERRIDE: &str = "PRISMREV_USER_DATA";
+pub const ENV_OVERRIDE: &str = "PRISMA_USER_DATA";
 
 /// 落盘的文件名：放在每个工程自己的目录下。
 pub const FILE_NAME: &str = "player_data.json";
@@ -99,7 +99,7 @@ impl UserData {
 
 /// 用户数据根目录（每个工程一个子目录）。
 ///
-/// 顺序：`PRISMREV_USER_DATA` → 平台惯例目录。返回的路径**不保证存在**，
+/// 顺序：`PRISMA_USER_DATA` → 平台惯例目录。返回的路径**不保证存在**，
 /// 由 [`UserStore::flush`] 按需创建。
 pub fn user_data_dir(project: &str) -> PathBuf {
     let root = if let Some(override_dir) = std::env::var_os(ENV_OVERRIDE) {
@@ -108,12 +108,12 @@ pub fn user_data_dir(project: &str) -> PathBuf {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("PrismaRev")
+            .join("Prisma")
     } else if cfg!(target_os = "macos") {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("Library/Application Support/PrismaRev")
+            .join("Library/Application Support/Prisma")
     } else {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
@@ -123,7 +123,7 @@ pub fn user_data_dir(project: &str) -> PathBuf {
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join(".local/share")
             })
-            .join("prismrev")
+            .join("prisma")
     };
     root.join(sanitize(project))
 }

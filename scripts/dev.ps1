@@ -1,4 +1,4 @@
-﻿# PrismaRev 开发启动器（RustRover / 终端通用）
+﻿# Prisma 开发启动器（RustRover / 终端通用）
 #
 #   .\scripts\dev.ps1                # 编译着色器(有 slangc 时) -> 重打场景包 -> 运行游戏
 #   .\scripts\dev.ps1 -Target editor # 启动 Tauri 编辑器 (pnpm -C editor tauri dev)

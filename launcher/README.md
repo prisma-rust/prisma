@@ -1,11 +1,11 @@
-# PrismaRev Android 启动壳
+# Prisma Android 启动壳
 
 APK 里的「开始游戏」页 + 打包配置。这个 Tauri 工程只做一件事：拉起游戏。
 
 - **Android**：`launch_game` 通过 Kotlin plugin 启动 `com.prisma.MainActivity`
   （`GameActivity`，`android.app.lib_name = template_core` → `libtemplate_core.so`）。
 - **桌面**：`launch_game` 拉起本地游戏二进制，方便不打包也能验证启动页与
-  `PRISMREV_LAUNCH_CONFIG` 参数传递。
+  `PRISMA_LAUNCH_CONFIG` 参数传递。
 
 APK 里有两个 Activity（两个进程）：
 
@@ -41,12 +41,12 @@ cd launcher
 pnpm build
 ```
 
-后端检查 / 测试（独立 workspace，不挂根 PrismaRev workspace）：
+后端检查 / 测试（独立 workspace，不挂根 Prisma workspace）：
 
 ```sh
 cd launcher/src-tauri
 cargo test
 ```
 
-游戏二进制定位不查 `PATH`：`PRISMREV_GAME_BIN` → 启动壳同目录的 `template[.exe]` →
+游戏二进制定位不查 `PATH`：`PRISMA_GAME_BIN` → 启动壳同目录的 `template[.exe]` →
 `projects/template/target/{debug,release}/template[.exe]`。

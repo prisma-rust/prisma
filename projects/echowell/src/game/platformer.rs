@@ -1,6 +1,6 @@
 //! EchoWell 的确定性平台跳跃切片。
 //!
-//! 玩法状态放在项目侧，渲染和输入仍由 PrismaRev 提供。`step` 是纯状态更新
+//! 玩法状态放在项目侧，渲染和输入仍由 Prisma 提供。`step` 是纯状态更新
 //! 入口，测试和输入回放都调用它；`tick` 只负责把状态绑定到场景实体。
 
 use prism_game_api::physics2d::{move_and_slide, Aabb2, MoveResult2};

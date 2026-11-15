@@ -95,7 +95,7 @@ use crate::event::{Key, Modifiers, PlatformEvent};
 use crate::window::PlatformWindow;
 
 const WHEEL_DELTA: f32 = 120.0;
-const CLASS_NAME: &str = "PrismaRevWindow";
+const CLASS_NAME: &str = "PrismaWindow";
 /// Event-queue cap, so a flood of window messages (high-DPI mouse) cannot exhaust
 /// memory.
 const MAX_QUEUED_EVENTS: usize = 4096;

@@ -155,7 +155,7 @@ fn optional_packages_stay_out_of_the_top_level_scan() {
     assert_eq!(split, vec!["optional_audio.pak"]);
 }
 
-/// 测试期间设置 `PRISMREV_ASSET_ROOT`，结束时恢复原值。
+/// 测试期间设置 `PRISMA_ASSET_ROOT`，结束时恢复原值。
 struct EnvRoot {
     previous: Option<std::ffi::OsString>,
 }

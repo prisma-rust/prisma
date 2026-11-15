@@ -1,4 +1,4 @@
-# PrismaRev 移动端光追 + 实时 GI 模块化管线设计
+# Prisma 移动端光追 + 实时 GI 模块化管线设计
 
 > 目标:移动端优先、画面质量优先、稳定 60fps。模块化渲染特性(光追可开关、GI 可切换)。
 > 移植参考:TruvisRenderer 的 SHARC world-space radiance cache(v1.6, NVIDIA RTXGI 移植)与 RayQuery inline 用法。
@@ -102,7 +102,7 @@ struct SharcPackedData { float16_t4 radianceData; uint sampleData; uint sampleDa
 ```
 
 ### 4.2 移植文件映射
-| Truvis 源 | PrismaRev 目标 |
+| Truvis 源 | Prisma 目标 |
 |-----------|---------------|
 | `sharc_common.slangi` | `shaders/slang/sharc/common.slang` |
 | `sharc_hash_grid.slangi` | `shaders/slang/sharc/hash_grid.slang` |
@@ -159,7 +159,7 @@ Rust 侧 `TextureHandle` 改为 `struct { u32 index }` + `INVALID` 常量。
 3. **TLAS 构建**:从 PrismaECS mesh 建 BLAS/TLAS(acceleration-structure 模块) [完成]
 4. **RayQuery 阴影**:`RayQueryPass` + `rt/ray_query.slang`(阴影先,最稳) [完成]
 5. **RayQuery 反射**:扩展 `RayQueryPass`(反射) [完成]
-6. **SHARC GI (RTXGI v1.6)**:模块化 `rtxgi` feature + `sharc.rs` (1M entries Hash Grid + Resolve Pass) + Vulkan 1.2+ `buffer_device_address` / 64位原子操作支持 [完成]
+6. **SHARC GI (RTXGI v1.6)**:模块化 `sharc` feature + `sharc.rs` (1M entries Hash Grid + Resolve Pass) + Vulkan 1.2+ `buffer_device_address` / 64位原子操作支持 [完成]
 7. **Sponza 验证与 Goldenframe 对比**:`projects/sponza` 用户项目接入 + 调参 UI + 离屏实测渲染与 RTXGI 官方参考图量化对比 [完成]
 8. **Lighting 合成与降噪扩展**:direct(±RT) + IBL + SHARC 混合 [推进中]
 9. **CI 扩展**:SHARC/GI shader 编译 + drift guard(复用现有 slang workflow) [完成]
@@ -170,7 +170,7 @@ Rust 侧 `TextureHandle` 改为 `struct { u32 index }` + `INVALID` 常量。
 
 - **架构隔离**：渲染管线改动与 RTXGI 接入严格属于引擎层（`crates/prism-render` 中的 `sharc.rs` 与 `render_graph`），用户项目 `projects/sponza` 仅包含资产与调参 UI（`tuning_ui.rs`），不越权污染管线逻辑。
 - **Goldenframe 规范对比**：
-  - 测试套件：`crates/prism-render/tests/rtxgi_sponza_golden.rs`
+  - 测试套件：`crates/prism-render/tests/sharc_sponza_golden.rs`
   - 差分阈值：通道容差 12，4 倍增益热力图生成。
   - 产出构件：`sponza_raster.actual.png`、`sponza_pt_cache_off.actual.png`、`sponza_pt_sharc_on.actual.png`、`sponza_sharc_diff.diff.png`、`sponza_raster_vs_pt.diff.png`、`rtxgi_reference_diff.diff.png`。
   - RTXGI 官方参考图对比（1920x940）：变动像素 94.32%，平均差分 103.752，有效验证 SHARC 对间接光照 Monte Carlo 方差的平滑收敛能力。

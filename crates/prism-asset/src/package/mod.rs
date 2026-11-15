@@ -1,6 +1,6 @@
 //! # prism-asset::package
 //!
-//! PrismaRev 资源管道的 `.pak` 二进制归档格式
+//! Prisma 资源管道的 `.pak` 二进制归档格式
 //!
 //! ## 格式概览
 //!

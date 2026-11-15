@@ -1,4 +1,4 @@
-//! PrismaRev 的模块化渲染通道图。
+//! Prisma 的模块化渲染通道图。
 //!
 //! 取代旧版整体式渲染器。每个渲染阶段（GBuffer、RayQuery、SHARC GI、Lighting、Post）
 //! 是一个 [`RenderPassNode`]，声明其输入/输出和一个执行方法。
@@ -1874,7 +1874,7 @@ pub struct RenderGraph {
     /// Last time the `BARRIER_PROBE` trace lines were emitted; throttled to
     /// once per second so the log isn't flooded at frame rate.
     last_barrier_probe: Instant,
-    /// `PRISMREV_PASS_DUMP` state; a no-op unless the env var is set.
+    /// `PRISMA_PASS_DUMP` state; a no-op unless the env var is set.
     pass_dump: crate::pass_dump::PassDump,
     /// Diagnostic controls for pass bypass, pessimistic barrier, and temporal freeze.
     debug_control: crate::render_debug::RenderDebugControl,
@@ -2107,7 +2107,7 @@ impl RenderGraph {
     ) -> Result<()> {
         self.graph_resources.clear_frame();
 
-        // `PRISMREV_PASS_DUMP`: decide once per frame whether to snapshot the
+        // `PRISMA_PASS_DUMP`: decide once per frame whether to snapshot the
         // published attachments at the end. A no-op unless the env var is set.
         let capture = self.pass_dump.should_capture();
 
@@ -2246,7 +2246,7 @@ impl RenderGraph {
     }
 
     /// Copy the graph's published color attachments into host-visible buffers
-    /// for `PRISMREV_PASS_DUMP` (see [`crate::pass_dump`]).
+    /// for `PRISMA_PASS_DUMP` (see [`crate::pass_dump`]).
     ///
     /// Runs after every pass has executed, so each image is in the layout the
     /// state tracker recorded for its last write.

@@ -1,6 +1,6 @@
 //! # prism-asset::core
 //!
-//! PrismaRev 资源管道的基础类型
+//! Prisma 资源管道的基础类型
 //!
 //! 提供管道中所有其他 crate 共享的原始构建块：
 //! [`AssetId`]、[`AssetGuid`]、[`AssetType`]、[`Handle<T>`]、

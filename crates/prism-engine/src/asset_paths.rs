@@ -8,7 +8,7 @@
 //!
 //! 本模块定义**唯一**的资源根解析规则（[`asset_root`]），运行时各处共用：
 //!
-//! 1. `PRISMREV_ASSET_ROOT`（指向包含 `assets/` 的目录）——显式覆盖，便于测试/绿色版；
+//! 1. `PRISMA_ASSET_ROOT`（指向包含 `assets/` 的目录）——显式覆盖，便于测试/绿色版；
 //! 2. 当前工作目录及其所有父目录；
 //! 3. 可执行文件所在目录及其所有父目录（覆盖「从别处用绝对路径启动」）。
 //!
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 显式指定资源根目录（**包含 `assets/` 的目录**）的环境变量。
-pub const ASSET_ROOT_ENV: &str = "PRISMREV_ASSET_ROOT";
+pub const ASSET_ROOT_ENV: &str = "PRISMA_ASSET_ROOT";
 
 /// 资源子目录名，所有 `assets/...` 相对路径都挂在它下面。
 const ASSET_DIR_NAME: &str = "assets";

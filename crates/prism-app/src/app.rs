@@ -168,7 +168,7 @@ pub struct App {
 
     // ---------- 每帧状态 ----------
     display_aspect: f32,
-    /// 开发期资产热重载（#495）：`PRISMREV_HOT_RELOAD` 打开时轮询 `.pak`。
+    /// 开发期资产热重载（#495）：`PRISMA_HOT_RELOAD` 打开时轮询 `.pak`。
     ///
     /// 发布版默认关（不建线程、不做任何 stat）；打开后重建 `.pak` 不用退出
     /// 再进游戏。旧 GPU 句柄不会立即释放（渲染器还没有按句柄回收的接口），
@@ -344,7 +344,7 @@ impl App {
         // 以前 `scene_state_path()` 用默认配置，所有项目共用一个目录（#484）。
         if let Some(dir) = prism_engine::config::app_data_dir_for(&config) {
             // 玩家存档（#984）与场景存档同目录：都跟着 `[app] company/name` 走。
-            // 设了 `PRISMREV_USER_DATA` 时改用它（便携版 / Android 宿主）。
+            // 设了 `PRISMA_USER_DATA` 时改用它（便携版 / Android 宿主）。
             let player_data = if std::env::var_os(prism_engine::user_data::ENV_OVERRIDE).is_some() {
                 prism_engine::user_data::save_path(&config.app.name)
             } else {
@@ -952,7 +952,7 @@ impl App {
     /// 启动事件循环（桌面入口，自建 winit EventLoop）。
     ///
     /// 内部构造 EventLoop 并交给 [`Self::run_on`]；致命错误直接 panic。
-    /// 若环境变量设置了 `PRISMREV_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
+    /// 若环境变量设置了 `PRISMA_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
     #[cfg(feature = "winit-backend")]
     pub fn run(mut self) {
         // 兜底：`App::hosted` 之外的构造路径也要在事件循环前有 logger（幂等）。
@@ -960,7 +960,7 @@ impl App {
         Self::log_asset_root();
 
         if let Some(frames) = Self::headless_frames_from_env() {
-            log::info!("headless mode requested via PRISMREV_HEADLESS ({frames} frames)");
+            log::info!("headless mode requested via PRISMA_HEADLESS ({frames} frames)");
             let (w, h) = self.default_headless_extent();
             self.run_headless(frames, w, h)
                 .expect("fatal headless application error");
@@ -973,10 +973,10 @@ impl App {
 
     /// 在已构建的 winit EventLoop 上运行（Android 入口用）。
     ///
-    /// 启动前解析启动配置（`PRISMREV_LAUNCH_CONFIG` env）并设置日志级别。
+    /// 启动前解析启动配置（`PRISMA_LAUNCH_CONFIG` env）并设置日志级别。
     ///
     /// Android 的 `android_main` 应在调用本函数 **之前** 自行注入
-    /// `PRISMREV_LAUNCH_CONFIG` env（从 files 目录读取）。
+    /// `PRISMA_LAUNCH_CONFIG` env（从 files 目录读取）。
     #[cfg(feature = "winit-backend")]
     pub fn run_on(mut self, event_loop: winit::event_loop::EventLoop<()>) -> anyhow::Result<()> {
         crate::logging::init_player_logging();
@@ -995,7 +995,7 @@ impl App {
         Self::log_asset_root();
 
         if let Some(frames) = Self::headless_frames_from_env() {
-            log::info!("headless mode requested via PRISMREV_HEADLESS ({frames} frames)");
+            log::info!("headless mode requested via PRISMA_HEADLESS ({frames} frames)");
             let (w, h) = self.default_headless_extent();
             self.run_headless(frames, w, h)
                 .expect("fatal headless application error");
@@ -1007,7 +1007,7 @@ impl App {
     }
 
     fn headless_frames_from_env() -> Option<u32> {
-        let env_val = std::env::var("PRISMREV_HEADLESS").ok()?;
+        let env_val = std::env::var("PRISMA_HEADLESS").ok()?;
         let val = env_val.trim();
         if val.is_empty() || val == "0" || val.eq_ignore_ascii_case("false") {
             return None;
@@ -1015,20 +1015,20 @@ impl App {
         if let Ok(n) = val.parse::<u32>() {
             return Some(n.max(1));
         }
-        let explicit = std::env::var("PRISMREV_HEADLESS_FRAMES")
+        let explicit = std::env::var("PRISMA_HEADLESS_FRAMES")
             .ok()
             .and_then(|v| v.trim().parse::<u32>().ok());
         if let Some(n) = explicit {
             return Some(n.max(1));
         }
-        let pass_dump = std::env::var("PRISMREV_PASS_DUMP_FRAME")
+        let pass_dump = std::env::var("PRISMA_PASS_DUMP_FRAME")
             .ok()
             .and_then(|v| v.trim().parse::<u32>().ok())
             .map(|f| f + 5);
         if let Some(n) = pass_dump {
             return Some(n);
         }
-        let screenshot = std::env::var("PRISMREV_SCREENSHOT_FRAME")
+        let screenshot = std::env::var("PRISMA_SCREENSHOT_FRAME")
             .ok()
             .and_then(|v| v.trim().parse::<u32>().ok())
             .map(|f| f + 5);
@@ -1039,7 +1039,7 @@ impl App {
     }
 
     fn default_headless_extent(&self) -> (u32, u32) {
-        if let Ok(size_str) = std::env::var("PRISMREV_SCREENSHOT_SIZE") {
+        if let Ok(size_str) = std::env::var("PRISMA_SCREENSHOT_SIZE") {
             let normalized = size_str.trim().replace(['X', ',', '*'], "x");
             if let Some((w, h)) = normalized.split_once('x') {
                 if let (Ok(w), Ok(h)) = (w.trim().parse::<u32>(), h.trim().parse::<u32>()) {
@@ -1269,7 +1269,7 @@ impl App {
         if self.fatal_error.is_some() {
             let message = self.take_fatal_message();
             let _choice =
-                prism_engine::crash_dialog::show_crash_dialog("PrismaRev - Fatal Error", &message);
+                prism_engine::crash_dialog::show_crash_dialog("Prisma - Fatal Error", &message);
         }
         Ok(())
     }
@@ -1662,7 +1662,7 @@ impl App {
 
     /// 开发期资产热重载：`.pak` 重建后换掉 reader 并让实体重新解析（#495）。
     ///
-    /// 只在 [`spawn_pak_watcher`] 建了轮询线程时生效（`PRISMREV_HOT_RELOAD`
+    /// 只在 [`spawn_pak_watcher`] 建了轮询线程时生效（`PRISMA_HOT_RELOAD`
     /// 打开）。和编辑器一样分三步：`on_pak_changed` 换文件字节 → 重载路径清单
     /// → `invalidate_assets` 把实体打回待解析，下一帧 `pump_asset_requests`
     /// 会重新上传。
@@ -1897,7 +1897,7 @@ impl App {
     fn show_fatal_dialog(&mut self, event_loop: &ActiveEventLoop) {
         let message = self.take_fatal_message();
         let _choice =
-            prism_engine::crash_dialog::show_crash_dialog("PrismaRev - Fatal Error", &message);
+            prism_engine::crash_dialog::show_crash_dialog("Prisma - Fatal Error", &message);
         event_loop.exit();
     }
 }
@@ -2090,7 +2090,7 @@ impl ApplicationHandler for App {
     }
 }
 
-/// `PRISMREV_HOT_RELOAD` 的取值是否表示「打开」（#495）。
+/// `PRISMA_HOT_RELOAD` 的取值是否表示「打开」（#495）。
 ///
 /// 接受 `1` / `true` / `yes` / `on`（大小写、首尾空白都忽略）；其它值（含 `0`、
 /// 空串、未设置）一律算关。发布版默认关，所以运行时既不起线程也不 stat 文件。
@@ -2104,12 +2104,12 @@ fn hot_reload_enabled(raw: Option<&str>) -> bool {
     .unwrap_or(false)
 }
 
-/// `PRISMREV_HOT_RELOAD=1` 时给 `assets/` 下所有 `.pak` 建一个轮询器（#495）。
+/// `PRISMA_HOT_RELOAD=1` 时给 `assets/` 下所有 `.pak` 建一个轮询器（#495）。
 ///
 /// 发布版默认不建：没有线程、没有 stat，行为与之前完全一致。接受 `1` / `true` /
 /// `yes` / `on`（大小写无关），其它值（含 `0`、空串）都当关。
 fn spawn_pak_watcher() -> Option<prism_engine::scene::hot_reload::HotReloadWatcher> {
-    let raw = std::env::var("PRISMREV_HOT_RELOAD").ok();
+    let raw = std::env::var("PRISMA_HOT_RELOAD").ok();
     if !hot_reload_enabled(raw.as_deref()) {
         return None;
     }

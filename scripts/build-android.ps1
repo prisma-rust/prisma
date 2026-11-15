@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Build PrismaRev for Android arm64-v8a.
+    Build Prisma for Android arm64-v8a.
 
 .DESCRIPTION
     `-Project template`（默认）：launcher + 游戏的完整 APK——编译 `projects/template`

@@ -28,7 +28,7 @@ async function play() {
       <div class="mobile-grid"></div>
     </div>
     <section class="mobile-content">
-      <h1 class="mobile-title">PrismaRev</h1>
+      <h1 class="mobile-title">Prisma</h1>
       <p class="mobile-subtitle">Vulkan 实时渲染引擎</p>
       <button
         class="mobile-play"

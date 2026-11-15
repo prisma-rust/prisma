@@ -17,7 +17,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-/// Magic bytes identifying a PrismaRev PRT volume.
+/// Magic bytes identifying a Prisma PRT volume.
 pub const MAGIC: &[u8; 4] = b"PRTB";
 /// On-disk format version.
 pub const VERSION: u16 = 1;

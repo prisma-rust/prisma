@@ -1,4 +1,4 @@
-﻿# PrismaRev 一键构建脚本 (Windows)
+﻿# Prisma 一键构建脚本 (Windows)
 # 用法: 在 PowerShell 中 cd 到本目录后执行  .\run.ps1
 # 需要: 已安装 Vulkan SDK (默认 D:\VulkanSDK\1.4.350.0，自带 slangc) 和 Rust
 $ErrorActionPreference = "Stop"
@@ -35,7 +35,7 @@ if (Get-Command slangc -ErrorAction SilentlyContinue) {
 # 构建整个 workspace（渲染 / ECS / 引擎 / 资产管线均以库形式构建）。
 # 注意：桌面可执行入口已迁移到 launcher/（Tauri 独立 workspace），
 # 根 workspace 没有可运行的 bin，`cargo run` 不再适用。
-Write-Host "构建 PrismaRev (debug)..."
+Write-Host "构建 Prisma (debug)..."
 cargo build
 if ($LASTEXITCODE -ne 0) { Write-Error "构建失败"; exit 1 }
 

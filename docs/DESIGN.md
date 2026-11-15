@@ -1,6 +1,6 @@
-# PrismaRev 设计目标与设计原则
+# Prisma 设计目标与设计原则
 
-> 本文件是 PrismaRev 的**权威设计蓝图（source of truth for intent）**。
+> 本文件是 Prisma 的**权威设计蓝图（source of truth for intent）**。
 > 代码会变，但这里的约束不可违背。新增渲染特性、pass、平台支持前，
 > 先对照本文确认方向一致。具体的特性设计见 `docs/` 下的分文档
 > （如 `mobile-raytracing-gi-design.md`）。
@@ -424,7 +424,7 @@ impl TextureFormat { fn is_compressed()->bool; fn compressed_byte_len()->usize; 
 
 - **不**在运行时做 BC/ASTC 编码。编码慢（秒级/张），必须在离线工具做。
 - **不**把 KTX2 产物进 git。太大，靠 SHA256 保证一致性。
-- **不**用 Basis Universal UASTC 跨平台单编码。画质略损，且 PrismaRev 桌面/移动都支持 ASTC（桌面现代 GPU 全支持），不需要"一次编码到处转"。多平台产物分别生成更清晰。
+- **不**用 Basis Universal UASTC 跨平台单编码。画质略损，且 Prisma 桌面/移动都支持 ASTC（桌面现代 GPU 全支持），不需要"一次编码到处转"。多平台产物分别生成更清晰。
 - **不**用神经纹理压缩（NTC / Adreno 神经纹理）。无标准扩展、无跨厂商工具链，留待 Khronos 标准化。
 - **不**为 BC1/BC2/BC3 单独支持。BC2/BC3 是 DX9 时代格式被 BC7 取代；BC1 仅极致体积场景用，移动端 ASTC 12×12 已覆盖该 niche。
 
@@ -912,7 +912,7 @@ prism-scene::rscn::encode_scene
 
 - **[G5] CookProfile 集成到引擎设置** ⏳ **配置已就绪**：`CookProfile` 5 档 + `settings_hash` 已实现，`--profile` CLI 透传待接入 `AppConfig` 启动参数。
 
-- **[G6] 热重载管道** ✅ **编辑器 + 播放器都已接线**：`ResourceManager::on_pak_changed` 换掉陈旧 reader（`Handle` 保持有效），`HotReloadWatcher` 总是随 `runtime` 编译。编辑器在 500ms 轮询里重开重建的 `.pak` 并 `invalidate_assets`；播放器（`prism-app`）在 `PRISMREV_HOT_RELOAD=1` 时做同一件事（发布版默认关，不起线程也不 stat）。剩余：旧 GPU 句柄按句柄回收、松散资产（`assets/` 下未打包的文件）热重载、播放器侧端到端画面验证。
+- **[G6] 热重载管道** ✅ **编辑器 + 播放器都已接线**：`ResourceManager::on_pak_changed` 换掉陈旧 reader（`Handle` 保持有效），`HotReloadWatcher` 总是随 `runtime` 编译。编辑器在 500ms 轮询里重开重建的 `.pak` 并 `invalidate_assets`；播放器（`prism-app`）在 `PRISMA_HOT_RELOAD=1` 时做同一件事（发布版默认关，不起线程也不 stat）。剩余：旧 GPU 句柄按句柄回收、松散资产（`assets/` 下未打包的文件）热重载、播放器侧端到端画面验证。
 
 > **里程碑建议**：G1+G2+G3 为"闭环 MVP"✅ 实现 已打通（可手动端到端），G4+G5 为"开发体验完善"⏳，G6 为"编辑器体验"✅ 实现。
 
@@ -1226,7 +1226,7 @@ cp target/release/template /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后�
 | | `ui-fontdue`（默认） | `ui-directwrite` |
 |---|---|---|
 | 平台 | 全平台 | 仅 Windows（其它目标开它 = `compile_error!`） |
-| 字形来源 | `fontdue` 读系统字体文件（msyh/Noto/DejaVu…）；`PRISMREV_UI_FONT` 可指定项目自带字体 | 系统 `IDWriteFactory` → `IDWriteBitmapRenderTarget`（GDI interop） |
+| 字形来源 | `fontdue` 读系统字体文件（msyh/Noto/DejaVu…）；`PRISMA_UI_FONT` 可指定项目自带字体 | 系统 `IDWriteFactory` → `IDWriteBitmapRenderTarget`（GDI interop） |
 | 字体族 | 按路径候选表 | `Microsoft YaHei` → `Microsoft YaHei UI` → `SimHei` → `Arial` → 兜底 `Segoe UI` |
 | 度量 | `horizontal_line_metrics` | `DWRITE_FONT_METRICS` |
 | 表单 | `fontdue::Font::rasterize` 直接给覆盖度 | 位图刷白 + 黑色灰度 AA 画字形，覆盖度 = `255 − R` |

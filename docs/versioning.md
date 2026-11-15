@@ -1,6 +1,6 @@
 # 版本号规范
 
-适用于 `prisma-rev` 仓库的产品版本（引擎、编辑器、启动壳、构建工具）。
+适用于 `prisma` 仓库的产品版本（引擎、编辑器、启动壳、构建工具）。
 用户游戏项目（`projects/*`）的版本、格式版本和 ABI 版本是**另外三件事**，见第 5 节。
 
 ## 1. SemVer 规则
@@ -74,7 +74,7 @@ python scripts/version.py tag                   # 打印应打的 tag：v0.2.0
 3. 运行 `python scripts/version.py bump <major|minor|patch>`（或 `set X.Y.Z`）。
 4. 运行 `cargo check` 刷新 `Cargo.lock`；确认没有意外依赖变化。
 5. 提交：`chore(release): 0.2.0`（版本号 + CHANGELOG 可以同提交）。
-6. 打 annotated tag：`git tag -a v0.2.0 -m "PrismaRev 0.2.0"`；
+6. 打 annotated tag：`git tag -a v0.2.0 -m "Prisma 0.2.0"`；
    `python scripts/version.py tag` 打印正确的 tag。
 7. 推送分支和 tag；创建 GitHub Release，release notes 从 `CHANGELOG.md` 取。
 8. 文档站点工作流按 tag 自动归档到 `/v0.2.0/`（站点上线后；见第 6 节）。

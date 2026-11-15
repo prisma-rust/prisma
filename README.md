@@ -1,4 +1,4 @@
-# PrismaRev
+# Prisma
 
 > 从零打造的现代纯 Rust 游戏引擎。**Vulkan** 渲染，**Android 优先** + 桌面跨平台，**数据导向 ECS** 架构。
 
@@ -113,5 +113,5 @@ cargo test --manifest-path editor/Cargo.toml
 
 ## 📄 开源许可证
 
-PrismaRev 采用双重开源许可协议：
+Prisma 采用双重开源许可协议：
 - MIT OR Apache-2.0

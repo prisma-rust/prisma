@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print GitHub Milestones summary for prisma-rust/prisma-rev."""
+"""Print GitHub Milestones summary for prisma-rust/prisma."""
 
 import json
 import subprocess
@@ -8,7 +8,7 @@ import sys
 
 def main() -> int:
     res = subprocess.run(
-        ["gh", "api", "repos/prisma-rust/prisma-rev/milestones?state=all"],
+        ["gh", "api", "repos/prisma-rust/prisma/milestones?state=all"],
         capture_output=True,
         text=True,
         check=False,

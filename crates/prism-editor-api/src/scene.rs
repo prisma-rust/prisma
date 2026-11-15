@@ -540,7 +540,7 @@ pub fn template_scene_doc(id: &str) -> serde_json::Value {
                     "prism_engine::ui::Text": merge(
                         component_default("prism_engine::ui::Text"),
                         json!({
-                            "content": "PrismaRev",
+                            "content": "Prisma",
                             "font_size": 84.0,
                             "color": [0.91, 0.925, 0.957, 1.0],
                             "alignment": "Center",

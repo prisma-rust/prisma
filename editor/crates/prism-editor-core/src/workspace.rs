@@ -742,7 +742,7 @@ impl Workspace {
         workspace.log(
             LogSource::Editor,
             LogLevel::Info,
-            "PrismaRev egui 编辑器已启动",
+            "Prisma egui 编辑器已启动",
         );
         workspace
     }
@@ -5937,7 +5937,7 @@ fn default_panels() -> Vec<PanelInfo> {
         ("tools", "离线工具"),
         ("history", "撤销历史"),
         ("shortcuts", "键盘快捷键"),
-        ("about", "关于 PrismaRev Editor"),
+        ("about", "关于 Prisma Editor"),
     ]
     .iter()
     .map(|(id, title)| PanelInfo::new(id, title))

@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-pub const ENV_KEY: &str = "PRISMREV_RENDER_GRAPH_REPORT";
+pub const ENV_KEY: &str = "PRISMA_RENDER_GRAPH_REPORT";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]

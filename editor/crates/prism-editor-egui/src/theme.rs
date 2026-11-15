@@ -188,7 +188,7 @@ mod tests {
 ///
 /// 都找不到时保留 egui 的内置字体，不影响功能。
 pub fn install_fonts(ctx: &egui::Context) {
-    if std::env::var("PRISMREV_EDITOR_NO_CJK").is_ok() {
+    if std::env::var("PRISMA_EDITOR_NO_CJK").is_ok() {
         return;
     }
 

@@ -1,4 +1,4 @@
-# PrismaRev Sponza Path Tracing & SHaRC
+# Prisma Sponza Path Tracing & SHaRC
 
 这是与 `projects/fishing/` 同属用户项目目录的独立 workspace，演示引擎的实时路径追踪管线与 NVIDIA RTXGI (SHARC v1.6) 全局光照。
 

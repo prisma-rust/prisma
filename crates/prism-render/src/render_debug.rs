@@ -1,11 +1,11 @@
 //! Diagnostic and isolation tools for rendering anomalies.
 //!
 //! Provides knobs to isolate:
-//! 1. Vulkan barriers & synchronization hazards (`PRISMREV_PESSIMISTIC_BARRIER=1`)
-//! 2. Pass execution & bypass (`PRISMREV_BYPASS_PASSES=gtao,taa`)
-//! 3. Temporal accumulation & jitter (`PRISMREV_FREEZE_TEMPORAL=1`)
-//! 4. Material diagnostic overrides (`PRISMREV_MATERIAL_OVERRIDE=normal|depth|...`)
-//! 5. Geometry draw call bisection (`PRISMREV_DEBUG_DRAW_RANGE=0..10`)
+//! 1. Vulkan barriers & synchronization hazards (`PRISMA_PESSIMISTIC_BARRIER=1`)
+//! 2. Pass execution & bypass (`PRISMA_BYPASS_PASSES=gtao,taa`)
+//! 3. Temporal accumulation & jitter (`PRISMA_FREEZE_TEMPORAL=1`)
+//! 4. Material diagnostic overrides (`PRISMA_MATERIAL_OVERRIDE=normal|depth|...`)
+//! 5. Geometry draw call bisection (`PRISMA_DEBUG_DRAW_RANGE=0..10`)
 
 /// Material override modes for diagnostic shading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,11 +62,11 @@ pub struct RenderDebugControl {
 
 impl RenderDebugControl {
     pub fn from_env() -> Self {
-        let pessimistic_barrier = std::env::var("PRISMREV_PESSIMISTIC_BARRIER")
+        let pessimistic_barrier = std::env::var("PRISMA_PESSIMISTIC_BARRIER")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        let bypassed_passes = std::env::var("PRISMREV_BYPASS_PASSES")
+        let bypassed_passes = std::env::var("PRISMA_BYPASS_PASSES")
             .map(|s| {
                 s.split(',')
                     .map(|p| p.trim().to_ascii_lowercase())
@@ -75,23 +75,21 @@ impl RenderDebugControl {
             })
             .unwrap_or_default();
 
-        let freeze_temporal = std::env::var("PRISMREV_FREEZE_TEMPORAL")
+        let freeze_temporal = std::env::var("PRISMA_FREEZE_TEMPORAL")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        let material_override = std::env::var("PRISMREV_MATERIAL_OVERRIDE")
+        let material_override = std::env::var("PRISMA_MATERIAL_OVERRIDE")
             .ok()
             .and_then(|s| MaterialOverride::parse(&s));
 
-        let draw_range = std::env::var("PRISMREV_DEBUG_DRAW_RANGE")
-            .ok()
-            .and_then(|s| {
-                let s = s.trim();
-                let (start, end) = s.split_once("..")?;
-                let start = start.trim().parse::<usize>().ok()?;
-                let end = end.trim().parse::<usize>().ok()?;
-                Some((start, end))
-            });
+        let draw_range = std::env::var("PRISMA_DEBUG_DRAW_RANGE").ok().and_then(|s| {
+            let s = s.trim();
+            let (start, end) = s.split_once("..")?;
+            let start = start.trim().parse::<usize>().ok()?;
+            let end = end.trim().parse::<usize>().ok()?;
+            Some((start, end))
+        });
 
         Self {
             pessimistic_barrier,

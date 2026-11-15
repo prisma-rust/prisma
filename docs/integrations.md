@@ -1,6 +1,6 @@
 # 自动化与外部协作（GitHub / Discord / agent）
 
-PrismaRev 的协作分三层：**人**、**AI agent**、**外部渠道（Discord）**。本文定义它们之间的契约。
+Prisma 的协作分三层：**人**、**AI agent**、**外部渠道（Discord）**。本文定义它们之间的契约。
 流程规范见 [`ai-workflow.md`](ai-workflow.md)，这里只讲自动化怎么接线。
 
 ```
@@ -89,7 +89,7 @@ issue / PR / CI 消息加 `@silent`，不打扰频道；`allowed_mentions` 为�
 
 ## 5. Discord 入站（Kira 等价 bot）
 
-Discord 里的 bug 报告需要一个**外部 bot** 转成 issue。Horizon 用 Kira；PrismaRev 的等价物
+Discord 里的 bug 报告需要一个**外部 bot** 转成 issue。Horizon 用 Kira；Prisma 的等价物
 按下面的契约实现（bot 本体不在本仓库，token 也绝不进仓库）：
 
 - 用**专用 bot 账号**（不是维护者本人），只申请 `issues: write` 所需的 GitHub 权限。

@@ -568,7 +568,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
 
     let report_text = format!(
         "==========================================================\n\
-         PrismaRev RTXGI SHARC Sponza Golden Frame Comparison Report\n\
+         Prisma RTXGI SHARC Sponza Golden Frame Comparison Report\n\
          ==========================================================\n\
          Adapter: {adapter}\n\
          Resolution: {SIZE}x{SIZE} ({} pixels)\n\
@@ -577,7 +577,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
          PT SHARC On:   {}\n\
          Diff Heatmap:  {}\n\
          \n\
-         [PrismaRev Real Render Goldenframe Metrics]\n\
+         [Prisma Real Render Goldenframe Metrics]\n\
          1. Raster vs Path Tracing:\n\
             - Total Pixels:   {}\n\
             - Changed Pixels: {} ({:.2}%)\n\

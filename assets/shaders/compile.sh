@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile PrismaRev Slang shaders to SPIR-V + emit reflection JSON.
+# Compile Prisma Slang shaders to SPIR-V + emit reflection JSON.
 #
 # This runs on a DESKTOP / CI host (Windows/Linux/macOS x86_64), NOT on the
 # Termux/aarch64 device — the official slangc prebuilts are glibc/MSVC binaries.
@@ -149,7 +149,7 @@ mkdir -p "$REFL"
 # Scratch space for .spv and reflection output. Nothing lands in the repo until
 # slangc succeeded, so a crashed compiler can never leave a truncated .spv that
 # still looks shippable.
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/prismrev-shaders.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/prisma-shaders.XXXXXX")"
 FAILED_STAGE=""
 
 cleanup() {

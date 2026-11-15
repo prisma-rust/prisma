@@ -65,7 +65,7 @@ def build(features: list[str]) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev subsystem binary-size ledger")
+    parser = argparse.ArgumentParser(description="Prisma subsystem binary-size ledger")
     parser.add_argument("--json", action="store_true", help="只输出 JSON")
     args = parser.parse_args()
 

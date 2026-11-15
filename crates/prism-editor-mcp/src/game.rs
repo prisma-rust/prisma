@@ -4,7 +4,7 @@
 //! The game is a **child process** (`cargo run --release` or a direct exe).
 //! Reader threads collect stdout/stderr into a ring buffer, and `game_logs`
 //! returns the last N lines. Screenshots reuse the engine's
-//! `PRISMREV_SCREENSHOT*` environment variables: spawn the process, wait for
+//! `PRISMA_SCREENSHOT*` environment variables: spawn the process, wait for
 //! the PNG to land, then stop it.
 
 use std::collections::VecDeque;
@@ -207,15 +207,15 @@ impl GameHost {
 
         let mut env = vec![
             (
-                "PRISMREV_SCREENSHOT".to_string(),
+                "PRISMA_SCREENSHOT".to_string(),
                 target.display().to_string(),
             ),
-            ("PRISMREV_SCREENSHOT_FRAME".to_string(), frame.to_string()),
+            ("PRISMA_SCREENSHOT_FRAME".to_string(), frame.to_string()),
         ];
         if let Some(size) = args.get("size").and_then(Value::as_str) {
-            env.push(("PRISMREV_SCREENSHOT_SIZE".to_string(), size.to_string()));
+            env.push(("PRISMA_SCREENSHOT_SIZE".to_string(), size.to_string()));
         } else if let Some(scale) = args.get("scale").and_then(Value::as_f64) {
-            env.push(("PRISMREV_SCREENSHOT_SCALE".to_string(), scale.to_string()));
+            env.push(("PRISMA_SCREENSHOT_SCALE".to_string(), scale.to_string()));
         }
 
         self.spawn(root, args, &env)?;

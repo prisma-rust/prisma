@@ -1,4 +1,4 @@
-//! PrismaRev 编辑器（egui + ash Vulkan）。
+//! Prisma 编辑器（egui + ash Vulkan）。
 //!
 //! 与 Web 编辑器（Tauri + Vue）共享同一份数据层（`prism-editor-core`），
 //! 与 Web 编辑器共享同一套布局 / 文档 / 撤销模型。关键差异在视口：
@@ -42,7 +42,7 @@ impl AppCreator<Arc<Mutex<Allocator>>> for EditorCreator {
         let app = match app::EditorApp::new(&cc) {
             Ok(app) => app,
             Err(error) => {
-                panic!("failed to create PrismaRev editor: {error:#}");
+                panic!("failed to create Prisma editor: {error:#}");
             }
         };
         let render_state = app.render_state();
@@ -68,7 +68,7 @@ fn main() -> std::process::ExitCode {
         clear_color: [0.055, 0.06, 0.07, 1.0],
         viewport_builder: Some(
             egui::ViewportBuilder::default()
-                .with_title("PrismaRev Editor")
+                .with_title("Prisma Editor")
                 .with_inner_size(egui::vec2(1440.0, 900.0))
                 .with_min_inner_size(egui::vec2(900.0, 600.0)),
         ),

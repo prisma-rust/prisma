@@ -1,4 +1,4 @@
-//! PrismaRev Android 启动壳的 Tauri 外壳。
+//! Prisma Android 启动壳的 Tauri 外壳。
 //!
 //! 这里只保留 APK 的「开始游戏」页：
 //!
@@ -104,7 +104,7 @@ fn get_device_info() -> Result<serde_json::Value, String> {
 
 /// 启动游戏：移动端通过 Kotlin plugin 启动 GameActivity；桌面端拉起
 /// `template` 二进制。`config` 为可选 LaunchConfig JSON（场景 / 日志级别等），
-/// 经 `PRISMREV_LAUNCH_CONFIG` env（桌面）或 files 目录文件（Android）传递。
+/// 经 `PRISMA_LAUNCH_CONFIG` env（桌面）或 files 目录文件（Android）传递。
 #[cfg(mobile)]
 #[tauri::command]
 fn launch_game(state: tauri::State<NativeApi>, config: Option<String>) -> Result<(), String> {
@@ -155,5 +155,5 @@ pub fn run() {
             get_device_info,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running PrismaRev launcher");
+        .expect("error while running Prisma launcher");
 }

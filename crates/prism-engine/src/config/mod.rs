@@ -364,7 +364,7 @@ fn default_company() -> String {
 }
 
 fn default_app_name() -> String {
-    "PrismaRev".to_string()
+    "Prisma".to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +454,7 @@ impl WindowConfig {
 }
 
 fn default_title() -> String {
-    "PrismaRev".to_string()
+    "Prisma".to_string()
 }
 
 const fn default_width() -> u32 {
@@ -642,7 +642,7 @@ mod tests {
         let cfg = AppConfig::from_ini("[window]\nwidth = 1024\nheight = 576\n");
         assert_eq!(cfg.window.width, 1024);
         assert_eq!(cfg.window.height, 576);
-        assert_eq!(cfg.window.title, "PrismaRev");
+        assert_eq!(cfg.window.title, "Prisma");
     }
 
     #[test]
@@ -810,7 +810,7 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 /// Returns the platform-specific data directory for the application
-/// (e.g., `%APPDATA%\Excurs1ons\PrismaRev\` on Windows
+/// (e.g., `%APPDATA%\Excurs1ons\Prisma\` on Windows
 ///
 /// Reads company/app name from the default [`AppConfig`] (it does **not** read
 /// `settings.ini`; callers with a loaded config should use

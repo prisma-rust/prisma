@@ -1,4 +1,4 @@
-//! Slang reflection -> Rust binding codegen for PrismaRev.
+//! Slang reflection -> Rust binding codegen for Prisma.
 //!
 //! Reads the `reflection/*.json` emitted by `slangc -reflection-json`
 //! (see `shaders/compile.sh`) and generates a Rust module describing each

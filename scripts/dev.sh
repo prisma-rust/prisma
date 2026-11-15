@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PrismaRev dev launcher (Linux / macOS) — the bash counterpart of scripts/dev.ps1.
+# Prisma dev launcher (Linux / macOS) — the bash counterpart of scripts/dev.ps1.
 #
 #   scripts/dev.sh                  # projects/template
 #   scripts/dev.sh sponza           # projects/sponza

@@ -3,7 +3,7 @@
 //! 字体有两条来源（#583）：
 //!
 //! * **系统默认字体**：启动时按 [`FONT_CANDIDATES`] 找第一个可用文件，或读
-//!   `PRISMREV_UI_FONT`。找不到时不再直接放弃——工程可能自带字体，所以实例照常
+//!   `PRISMA_UI_FONT`。找不到时不再直接放弃——工程可能自带字体，所以实例照常
 //!   创建，只是 `font` 为空且没有注册字体时文字仍然被丢弃（quad 背景照常绘制）。
 //! * **工程自带字体**：宿主把 `assets/fonts/*.ttf|otf` 的字节经
 //!   [`TextRasterizer::register_font`] 注册进来，`Text.font` 写相对路径即可选用。
@@ -60,7 +60,7 @@ fn first_available<T>(
 
 /// 加载第一个可用的系统字体（fontdue 只接受单字体；ttc 走 collection_index）。
 ///
-/// `PRISMREV_UI_FONT` 可以显式指定字体文件：Android / 精简系统上候选路径可能都不
+/// `PRISMA_UI_FONT` 可以显式指定字体文件：Android / 精简系统上候选路径可能都不
 /// 存在，那时游戏要能自带一份字体，而不是默默丢掉所有文字。
 fn load_system_font() -> Option<Font> {
     let load = |path: &str, collection_index: u32| {
@@ -75,17 +75,17 @@ fn load_system_font() -> Option<Font> {
         .ok()
     };
 
-    if let Some(path) = std::env::var_os("PRISMREV_UI_FONT") {
+    if let Some(path) = std::env::var_os("PRISMA_UI_FONT") {
         let path = path.to_string_lossy().into_owned();
         match load(&path, 0) {
             Some(font) => {
-                log::info!("ui overlay: loaded font {path} (PRISMREV_UI_FONT)");
+                log::info!("ui overlay: loaded font {path} (PRISMA_UI_FONT)");
                 return Some(font);
             }
             // 显式指定的字体用不了就照常找候选字体，但必须说清楚，否则
             // 「字体没换」和「字体根本没加载」在日志里长得一样。
             None => log::warn!(
-                "ui overlay: PRISMREV_UI_FONT={path} could not be loaded — falling back to system fonts"
+                "ui overlay: PRISMA_UI_FONT={path} could not be loaded — falling back to system fonts"
             ),
         }
     }
@@ -113,7 +113,7 @@ impl FontdueRasterizer {
             // 生命周期都没注册，文字仍然一个都不画——这里必须留下线索。
             log::warn!(
                 "ui overlay: no usable system UI font (tried {} candidates) — text falls back to \
-                 project fonts registered via `assets/fonts/`; set PRISMREV_UI_FONT to override",
+                 project fonts registered via `assets/fonts/`; set PRISMA_UI_FONT to override",
                 FONT_CANDIDATES.len()
             );
         }

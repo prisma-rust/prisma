@@ -19,7 +19,7 @@
 //!
 //! 字体来源（#583）：
 //!
-//! * `font = None`（组件里 `font` 为空）= 系统默认字体（`PRISMREV_UI_FONT` /
+//! * `font = None`（组件里 `font` 为空）= 系统默认字体（`PRISMA_UI_FONT` /
 //!   内置候选路径）。
 //! * `font = Some(path)` = 工程自带字体，由宿主用 [`TextRasterizer::register_font`]
 //!   注册过字节；找不到（未注册 / 解析失败）时回落到系统默认字体并只 warn 一次。

@@ -24,7 +24,7 @@ val tauriProperties = Properties().apply {
 //     keyAlias=...
 //     keyPassword=...
 //
-// 或环境变量 PRISMREV_ANDROID_KEYSTORE / _KEYSTORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD。
+// 或环境变量 PRISMA_ANDROID_KEYSTORE / _KEYSTORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD。
 // 缺材料时 debug 构建照常，release 构建会在任务图确定后直接失败并说明缺什么。
 val keystoreProperties = Properties().apply {
     val propFile = rootProject.file("keystore.properties")
@@ -38,10 +38,10 @@ val signingValue: (String, String) -> String? = { property, env ->
         ?: System.getenv(env)?.takeIf { it.isNotBlank() }
 }
 
-val rawStorePath = signingValue("storeFile", "PRISMREV_ANDROID_KEYSTORE")
-val releaseStorePassword = signingValue("storePassword", "PRISMREV_ANDROID_KEYSTORE_PASSWORD")
-val releaseKeyAlias = signingValue("keyAlias", "PRISMREV_ANDROID_KEY_ALIAS")
-val releaseKeyPassword = signingValue("keyPassword", "PRISMREV_ANDROID_KEY_PASSWORD")
+val rawStorePath = signingValue("storeFile", "PRISMA_ANDROID_KEYSTORE")
+val releaseStorePassword = signingValue("storePassword", "PRISMA_ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "PRISMA_ANDROID_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "PRISMA_ANDROID_KEY_PASSWORD")
 val releaseStoreFile: File? = rawStorePath?.let {
     val candidate = File(it)
     if (candidate.isAbsolute) candidate else rootProject.file(it)
@@ -56,8 +56,8 @@ gradle.taskGraph.whenReady {
         throw GradleException(
             "缺少 Android 发布签名材料。请在 launcher/src-tauri/gen/android/keystore.properties " +
             "填写 storeFile / storePassword / keyAlias / keyPassword，或设置 " +
-            "PRISMREV_ANDROID_KEYSTORE、PRISMREV_ANDROID_KEYSTORE_PASSWORD、" +
-            "PRISMREV_ANDROID_KEY_ALIAS、PRISMREV_ANDROID_KEY_PASSWORD。" +
+            "PRISMA_ANDROID_KEYSTORE、PRISMA_ANDROID_KEYSTORE_PASSWORD、" +
+            "PRISMA_ANDROID_KEY_ALIAS、PRISMA_ANDROID_KEY_PASSWORD。" +
             "debug 构建（--debug）不需要这些。"
         )
     }

@@ -10,7 +10,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
 /// 直接指定游戏二进制的环境变量；设置后必须指向真实存在的文件。
-pub const GAME_BIN_ENV: &str = "PRISMREV_GAME_BIN";
+pub const GAME_BIN_ENV: &str = "PRISMA_GAME_BIN";
 
 /// 游戏 crate 相对仓库根的位置。
 const GAME_CRATE_DIR: &str = "projects/template";
@@ -119,7 +119,7 @@ impl RunningGame {
 
         let mut cmd = Command::new(&binary);
         if let Some(config) = config {
-            cmd.env("PRISMREV_LAUNCH_CONFIG", config);
+            cmd.env("PRISMA_LAUNCH_CONFIG", config);
         }
         // 不吞游戏的输出：只把 stdin 接到 null，stdout/stderr 照常继承启动器的控制台。
         cmd.stdin(Stdio::null());
@@ -138,7 +138,7 @@ mod tests {
     /// 每个测试用独立的临时目录，测试结束不清理也无妨（位于系统临时目录下）。
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("prismrev-launcher-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("prisma-launcher-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("创建临时目录");
         dir

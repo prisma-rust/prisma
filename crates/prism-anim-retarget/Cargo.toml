@@ -2,7 +2,7 @@
 name = "prism-anim-retarget"
 version = "0.1.0"
 edition = "2021"
-description = "Pose retargeting between skeletons for PrismaRev (#560 P5)"
+description = "Pose retargeting between skeletons for Prisma (#560 P5)"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

@@ -262,7 +262,7 @@ pub struct MeshRenderer {
     pub shadow_casting_mode: ShadowCastingMode,
     /// 剔除模式 = 材质/渲染器的 `CullMode`（着色器属性 `_Cull`）。
     ///
-    /// 把它放在 `Material` 上；PrismaRev 的材质目前只有 PBR 参数，
+    /// 把它放在 `Material` 上；Prisma 的材质目前只有 PBR 参数，
     /// 所以先落在渲染器上，语义仍是「这一个绘制用哪一面」。
     pub cull_mode: CullMode,
     /// 渲染队列 = `Material.renderQueue`（`int`，不是枚举）。

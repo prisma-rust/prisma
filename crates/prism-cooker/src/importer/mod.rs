@@ -1,6 +1,6 @@
 //! # prism-cooker::importer
 //!
-//! PrismaRev 资源管道的导入器框架
+//! Prisma 资源管道的导入器框架
 //!
 //! 导入器将源文件（`.png`、`.gltf`、`.obj`、`.wav` 等）转换为中间数据，
 //! 随后由烹饪器转换为运行时格式。

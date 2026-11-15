@@ -4018,7 +4018,7 @@ impl GraphRenderer {
 
     /// 帧结束阶段：推进帧级状态并执行延迟回收。
     pub fn end_frame(&mut self, _ctx: &FrameCtx, _presented: bool) -> anyhow::Result<()> {
-        // `PRISMREV_PASS_DUMP`: the previous `present` waited on the frame
+        // `PRISMA_PASS_DUMP`: the previous `present` waited on the frame
         // fence, so the readback buffers are safe to map and encode here.
         self.graph.flush_pass_dump(&self.runtime.context.device)?;
         Ok(())

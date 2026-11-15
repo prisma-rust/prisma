@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PrismaRev 提交前自检：一条命令，一个可粘贴到 PR 的 Markdown 块。
+"""Prisma 提交前自检：一条命令，一个可粘贴到 PR 的 Markdown 块。
 
     python scripts/pr_ready.py                 # 完整自检（默认）
     python scripts/pr_ready.py --quick         # 快速回路：只做 fmt + clippy
@@ -575,7 +575,7 @@ def editor_checks(changed: list[str], quick: bool) -> list[Check]:
 # 主流程
 # --------------------------------------------------------------------------- #
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev pre-PR self-check")
+    parser = argparse.ArgumentParser(description="Prisma pre-PR self-check")
     parser.add_argument("--base", help="比较基准（默认 origin/master）")
     parser.add_argument("--quick", action="store_true", help="只做 fmt + clippy，不跑测试")
     parser.add_argument("--all", action="store_true", help="检查所有 workspace 与独立项目")
@@ -615,7 +615,7 @@ def main() -> int:
         default_crates = sorted(crates)
     else:
         default_crates = sorted(crates - (SKIP_BY_DEFAULT - directly_changed))
-    eprint(f"PrismaRev self-check — base {base}, {len(changed)} changed file(s)")
+    eprint(f"Prisma self-check — base {base}, {len(changed)} changed file(s)")
     eprint(f"  touched crates: {', '.join(default_crates) or '(none)'}")
 
     checks: list[Check] = [whitespace_check(), artifact_guard(changed)]
