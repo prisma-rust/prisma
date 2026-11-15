@@ -290,8 +290,9 @@ fn find_slangc(repo: &Path) -> Option<PathBuf> {
         }
     }
     let local = repo
+        .join(".local")
         .join("tools")
-        .join("slang-dl")
+        .join("slang")
         .join("bin")
         .join("slangc");
     for candidate in [local.clone(), local.with_extension("exe")] {

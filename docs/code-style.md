@@ -198,7 +198,7 @@ python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 
 字符串里的中文（UI 文案、错误信息）不会被标记；生成文件
 （`crates/prism-render/src/shader_bindings/`、`launcher/src-tauri/gen/`、
-`tools/slang/`）会被跳过。
+`.local/tools/slang/`）会被跳过。
 
 ## 9. 迁移与门禁
 

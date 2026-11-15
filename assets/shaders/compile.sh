@@ -21,14 +21,14 @@
 #
 # Requires `slangc` from a Slang release (2026.21+). Lookup order:
 #   $SLANGC            — explicit override
-#   tools/slang-dl/bin — the local prebuilt download (Windows/Linux)
+#   .local/tools/slang/bin — the local prebuilt download (Windows/Linux)
 #   PATH               — system install
 #
 #   bash assets/shaders/compile.sh                     # build + verify reflection
 #   bash assets/shaders/compile.sh --write-reflection  # adopt the new reflection
 #
 # Env:
-#   SLANGC              slangc binary (default: tools/slang-dl, then PATH)
+#   SLANGC              slangc binary (default: .local/tools/slang, then PATH)
 #   SLANG_PROFILE       SPIR-V profile (default: spirv_1_4)
 #   SLANGC_MIN_VERSION  minimum accepted slangc release (default: 2026.21;
 #                       `0` disables the check — only for throwaway experiments)
@@ -40,7 +40,7 @@ OUT="$HERE"                      # .spv land next to the existing GLSL .spv
 REFL="$HERE/reflection"
 SLANGC="${SLANGC:-}"
 if [ -z "$SLANGC" ]; then
-  local_slangc="$HERE/../../tools/slang-dl/bin/slangc"
+  local_slangc="$HERE/../../.local/tools/slang/bin/slangc"
   if [ -x "$local_slangc.exe" ]; then
     local_slangc="$local_slangc.exe"
   fi
@@ -76,7 +76,7 @@ done
 if ! command -v "$SLANGC" >/dev/null 2>&1 && [ ! -x "$SLANGC" ]; then
   echo "ERROR: slangc not found. Install a Slang release or set SLANGC=/path/to/slangc" >&2
   echo "  $SLANG_DOWNLOAD" >&2
-  echo "  e.g. tools/slang-dl/bin/slangc (desktop only — glibc binary won't run under Termux)" >&2
+  echo "  e.g. .local/tools/slang/bin/slangc (desktop only — glibc binary won't run under Termux)" >&2
   exit 1
 fi
 

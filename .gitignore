@@ -65,12 +65,9 @@ app_out.log
 # Debug frame captures
 frame_*.ppm
 
-# Prebuilt slang toolchain (downloaded by CI via curl; glibc binary, not used
-# on Termux). Never commit the 60+ MB release tree — it is fetched at build time.
-tools/slang/
-# Same rule for the newer download directory: it holds the whole release tree
-# (240 MB of headers, libs and the zip), none of which belongs in the repo.
-tools/slang-dl/
+# Prebuilt slang toolchain lives only at .local/tools/slang/ (release tree
+# plus the download zip, ~240 MB). .local/ is ignored as a whole, so it needs
+# no rule of its own; CI downloads its own copy into the runner tool cache.
 
 # Compiled SPIR-V is committed: a clone has to build without slangc, and the
 # reflection JSON next to it is committed for the same reason. CI recompiles

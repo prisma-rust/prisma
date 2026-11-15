@@ -160,7 +160,7 @@ Vulkan 渲染循环的核心是**同步原语的正确配对**。最容易出错
 **教训**：
 - 编译后必须过 `spirv-val`；这种错误在 debug validation 下才会暴露，release 不校验但驱动行为未定义。`compile.sh` 末尾的 gate 就是干这个的。
 - 2025.x / 2026.13 的产物需要剥离非法 `ArrayStride`（只删"元素是 `OpTypeImage`/`OpTypeSampler` 的运行时数组"，**SSBO / struct 数组的合法 stride 必须保留**）。这段后处理（`fix_spirv.py`）已在升级到 Slang 2026.21 后删除；不要再手动加回来，直接升级编译器。
-- 任何环境都优先用 `tools/slang-dl/bin/slangc`（2026.21+），`compile.sh` 会自动探测。2025.11 另有 `scene_frag.slang` 段错误，同样只能靠升级解决。
+- 任何环境都优先用 `.local/tools/slang/bin/slangc`（2026.21+），`compile.sh` 会自动探测。2025.11 另有 `scene_frag.slang` 段错误，同样只能靠升级解决。
 
 **手编陷阱**：不要绕过 `compile.sh` 直接手调 `slangc`（尤其是旧版本 + `-emit-spirv-directly`），否则会吐出带非法 `ArrayStride` 的 spv。统一用 `bash assets/shaders/compile.sh`（或 `run.ps1`）；手编后至少跑一次 `spirv-val.exe <file>.spv` 再提交。
 

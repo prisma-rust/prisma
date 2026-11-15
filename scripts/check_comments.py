@@ -47,7 +47,7 @@ ISSUE_RE = re.compile(r"(#\d+|https?://\S+|issues?/\d+)")
 EXCLUDED_PREFIXES = (
     "crates/prism-render/src/shader_bindings/",
     "launcher/src-tauri/gen/",
-    "tools/slang/",
+    ".local/tools/slang/",
 )
 
 MODULE_FILES = {"lib.rs", "main.rs", "mod.rs"}
