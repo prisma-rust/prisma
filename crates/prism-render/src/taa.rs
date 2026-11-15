@@ -30,17 +30,8 @@ use crate::render_pass::find_memory_type;
 use crate::shader;
 use crate::shader_bindings::taa as bindings;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct TaaParams {
-    inv_view_proj: [[f32; 4]; 4],
-    prev_view_proj: [[f32; 4]; 4],
-    resolution: [f32; 2],
-    strength: f32,
-    valid_history: f32,
-}
-
-const _: () = assert!(std::mem::size_of::<TaaParams>() == 144);
+// GPU layout comes from the Slang reflection; never mirror it by hand.
+use crate::shader_bindings::taa::TaaParams;
 
 pub struct TaaPass {
     extent: vk::Extent2D,
@@ -441,11 +432,11 @@ impl RenderPassNode for TaaPass {
             self.history_valid = [false; 2];
         }
         let params = TaaParams {
-            inv_view_proj,
-            prev_view_proj,
+            invViewProj: inv_view_proj,
+            prevViewProj: prev_view_proj,
             resolution: [self.extent.width as f32, self.extent.height as f32],
             strength: ctx.settings.taa_strength.clamp(0.0, 0.95),
-            valid_history: if valid { 1.0 } else { 0.0 },
+            validHistory: if valid { 1.0 } else { 0.0 },
         };
         self.upload_params(ctx.device, frame, &params)?;
         self.prev_view_proj = Some(view_proj);

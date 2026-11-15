@@ -919,32 +919,32 @@ impl EngineHost {
             .set_taa(self.settings.taa, self.settings.taa_strength);
         let scene = &self.packet.scene;
         let mut frame_data = FrameUBOData {
-            view_proj: scene.view_proj.to_cols_array_2d(),
-            camera_position: [
+            viewProj: scene.view_proj.to_cols_array_2d(),
+            cameraPosition: [
                 scene.eye.x,
                 scene.eye.y,
                 scene.eye.z,
                 scene.lights.len() as f32,
             ],
-            light_direction: scene.light_direction.to_array(),
-            light_color: scene.light_color.to_array(),
+            lightDirection: scene.light_direction.to_array(),
+            lightColor: scene.light_color.to_array(),
             view: scene.view.to_cols_array_2d(),
-            light_view_proj: scene.light_view_proj.to_cols_array_2d(),
-            light_view_proj1: scene.light_view_proj1.to_cols_array_2d(),
-            shadow_split: scene.shadow_split,
-            shadow_cascade_count: scene.shadow_cascade_count,
-            tonemap_mode: self.settings.tonemap_mode,
-            viewport_size: [extent.width as f32, extent.height as f32],
+            lightViewProj: scene.light_view_proj.to_cols_array_2d(),
+            lightViewProj1: scene.light_view_proj1.to_cols_array_2d(),
+            shadowSplit: scene.shadow_split,
+            shadowCascadeCount: scene.shadow_cascade_count,
+            tonemapMode: self.settings.tonemap_mode,
+            viewportW: extent.width as f32,
+            viewportH: extent.height as f32,
             exposure: scene.exposure,
-            shadow_strength: scene.shadow_strength,
-            _pad2: [0.0; 3],
-            _pad3: [0.0; 2],
-            prev_view_proj: [
+            shadowStrength: scene.shadow_strength,
+            prevViewProj: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
+            ..Default::default()
         };
         self.renderer.apply_taa_jitter(&mut frame_data);
 

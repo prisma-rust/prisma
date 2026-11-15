@@ -245,24 +245,22 @@ fn frame_data(
     sun_color: [f32; 4],
 ) -> FrameUBOData {
     FrameUBOData {
-        view_proj,
-        // `push.camera_pos.xyz` 是主射线的起点，测试把相机钉在原点。
-        camera_position: [0.0, 0.0, 0.0, 0.0],
-        light_direction: sun_direction,
-        light_color: sun_color,
+        viewProj: view_proj,
+        cameraPosition: [0.0, 0.0, 0.0, 0.0],
+        lightDirection: sun_direction,
+        lightColor: sun_color,
         view: view_proj,
-        light_view_proj: view_proj,
-        light_view_proj1: view_proj,
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        tonemap_mode: 2,
-        viewport_size: [SIZE as f32, SIZE as f32],
+        lightViewProj: view_proj,
+        lightViewProj1: view_proj,
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        _pad2b: [0.0; 4],
-        _pad3: [0.0; 2],
-        prev_view_proj: view_proj,
+        shadowStrength: 0.0,
+        prevViewProj: view_proj,
+        ..Default::default()
     }
 }
 

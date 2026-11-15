@@ -58,6 +58,9 @@ struct TypeInfo {
     /// For struct types (constantBuffer → elementType → struct with fields).
     #[serde(default, rename = "elementType")]
     element_type: Option<StructTypeInfo>,
+    /// For structured buffers (resource → resultType → struct with fields).
+    #[serde(default, rename = "resultType")]
+    result_type: Option<StructTypeInfo>,
 }
 
 /// Info about a struct type nested inside a parameter's type.
@@ -154,6 +157,17 @@ fn field_type_to_rust(ft: &FieldType) -> String {
             format!("[[{elem}; {cols}]; {rows}]")
         }
         _ => "u32".into(),
+    }
+}
+
+/// Whether a reflected field type contains a scalar Rust cannot express as POD.
+fn field_type_contains_unsupported(ft: &FieldType) -> bool {
+    match ft.kind.as_str() {
+        "scalar" => matches!(ft.scalar_type.as_deref(), Some("float16")),
+        _ => ft
+            .element_type
+            .as_deref()
+            .is_some_and(field_type_contains_unsupported),
     }
 }
 
@@ -255,6 +269,13 @@ fn layout_push_fields(fields: &[StructField]) -> Result<(Vec<PushMember>, u64)> 
 /// Generate a Rust struct definition from reflected GPU buffer / push constant fields.
 fn emit_struct(struct_name: &str, fields: &[StructField]) -> Result<String> {
     let (members, total) = layout_push_fields(fields)?;
+    // std140 rounds every struct up to a 16-byte boundary; matching that in
+    // `repr(C)` keeps `align_of` honest for records used as SSBO elements.
+    let repr = if total % 16 == 0 {
+        "#[repr(C, align(16))]"
+    } else {
+        "#[repr(C)]"
+    };
     let mut out = String::new();
     out.push_str(&format!(
         "\n/// GPU layout struct (auto-generated from Slang `{struct_name}`).\n\
@@ -263,9 +284,9 @@ fn emit_struct(struct_name: &str, fields: &[StructField]) -> Result<String> {
          /// explicit `_pad_*` fillers, so `size_of` is {total} bytes and every field sits\n\
          /// where the shader expects it.\n"
     ));
-    out.push_str(
-        "#[repr(C)]\n#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]\n",
-    );
+    out.push_str(&format!(
+        "{repr}\n#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]\n"
+    ));
     out.push_str(&format!("pub struct {struct_name} {{\n"));
     for member in &members {
         match member {
@@ -360,7 +381,8 @@ fn shader_buffer_structs(refl: &Reflection) -> Vec<(&str, &[StructField])> {
         if !is_buffer {
             return None;
         }
-        let element = p.ty.as_ref()?.element_type.as_ref()?;
+        let ty = p.ty.as_ref()?;
+        let element = ty.element_type.as_ref().or(ty.result_type.as_ref())?;
         let fields = element.fields.as_deref()?;
         let name = element.name.as_deref().unwrap_or_else(|| {
             if p.binding
@@ -591,6 +613,14 @@ fn process_file(path: &Path) -> Result<(String, String)> {
     // UniformBuffers) whose types carry struct field info; emit a #[repr(C)] Rust
     // struct with std140 layout padding and compile-time offset assertions for each.
     for (struct_name, fields) in shader_buffer_structs(&refl) {
+        // Skip types Rust cannot lay out yet (e.g. `float16`, which is still an
+        // unstable primitive). Such structs stay hand-written or unmodelled.
+        if fields
+            .iter()
+            .any(|f| field_type_contains_unsupported(&f.ty))
+        {
+            continue;
+        }
         out.push_str(&emit_struct(struct_name, fields)?);
     }
 

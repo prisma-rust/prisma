@@ -280,21 +280,22 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let eye = [0.0, 2.0, 7.0];
     let (view_proj, view) = camera_sponza(eye);
     let frame_data = FrameUBOData {
-        view_proj,
-        camera_position: [eye[0], eye[1], eye[2], 0.0],
-        light_direction: [0.4, 0.75, 0.5, 2.0], // Sunlight streaming into atrium
-        light_color: [1.0, 0.95, 0.88, 0.3],    // Warm sunlight
-        view,
-        light_view_proj: [
+        viewProj: view_proj,
+        cameraPosition: [eye[0], eye[1], eye[2], 0.0],
+        lightDirection: [0.4, 0.75, 0.5, 2.0],
+        lightColor: [1.0, 0.95, 0.88, 0.3],
+        view: view,
+        lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemap_mode: 1, // ACES
-        viewport_size: [SIZE as f32, SIZE as f32],
+        tonemapMode: 1,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength: 0.8,
+        shadowStrength: 0.8,
         ..Default::default()
     };
 
@@ -310,7 +311,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
         .render(
             &draw_items,
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -349,7 +350,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -394,7 +395,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -468,7 +469,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -523,7 +524,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,

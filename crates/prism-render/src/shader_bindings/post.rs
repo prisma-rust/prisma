@@ -30,8 +30,8 @@ pub const ADAPTED_LUMINANCE_BINDING: u32 = 4; // UNIFORM_BUFFER
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 144 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct MotionBlurData {
     /// offset 0, size 64
     pub invViewProj: [[f32; 4]; 4],
@@ -57,7 +57,7 @@ const _: () = {
 /// explicit `_pad_*` fillers, so `size_of` is 88 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct PostPush {
     /// offset 0, size 4
     pub tonemapMode: u32,

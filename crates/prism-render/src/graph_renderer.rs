@@ -2210,11 +2210,11 @@ impl GraphRenderer {
             self.taa_frame = 0;
             [0.0, 0.0]
         };
-        let width = frame_data.viewport_size[0].max(1.0);
-        let height = frame_data.viewport_size[1].max(1.0);
+        let width = frame_data.viewportW.max(1.0);
+        let height = frame_data.viewportH.max(1.0);
         let jitter_ndc = [jitter[0] * 4.0 / width, jitter[1] * 4.0 / height];
-        frame_data.view_proj[3][0] += jitter_ndc[0];
-        frame_data.view_proj[3][1] += jitter_ndc[1];
+        frame_data.viewProj[3][0] += jitter_ndc[0];
+        frame_data.viewProj[3][1] += jitter_ndc[1];
         self.taa_jitter_ndc = jitter_ndc;
     }
 
@@ -3283,12 +3283,12 @@ impl GraphRenderer {
             // resolves the implicit single-camera path).
             camera.view_proj
         } else {
-            let mut vp = frame_data.view_proj;
+            let mut vp = frame_data.viewProj;
             vp[3][0] -= self.taa_jitter_ndc[0];
             vp[3][1] -= self.taa_jitter_ndc[1];
             vp
         };
-        frame_data.prev_view_proj = self.prev_camera_view_proj.unwrap_or(prev_vp);
+        frame_data.prevViewProj = self.prev_camera_view_proj.unwrap_or(prev_vp);
         let light_view_proj = *light_view_proj;
         let light_view_proj1 = *light_view_proj1;
         let shadow_split = *shadow_split;
@@ -3321,10 +3321,10 @@ impl GraphRenderer {
                     .enumerate()
                 {
                     let mut data = frame_data;
-                    let light_count = data.camera_position[3];
-                    data.view_proj = camera.view_proj;
+                    let light_count = data.cameraPosition[3];
+                    data.viewProj = camera.view_proj;
                     data.view = camera.view;
-                    data.camera_position =
+                    data.cameraPosition =
                         [camera.eye[0], camera.eye[1], camera.eye[2], light_count];
                     data.exposure = camera.exposure;
                     if let Err(error) = ubo.update(device, &data, slot) {
@@ -3419,7 +3419,7 @@ impl GraphRenderer {
                     m[3][3] = 1.0;
                     m
                 },
-                view_proj: frame_data.view_proj,
+                view_proj: frame_data.viewProj,
                 view_proj_jitter: if self.graph.debug_control().freeze_temporal {
                     [0.0, 0.0]
                 } else {
@@ -3441,9 +3441,9 @@ impl GraphRenderer {
                 pt_max_bounces: *pt_max_bounces,
                 pt_ray_max_distance: *pt_ray_max_distance,
                 pt_max_iterations: *pt_max_iterations,
-                camera_pos: frame_data.camera_position,
-                light_dir: frame_data.light_direction,
-                light_color: frame_data.light_color,
+                camera_pos: frame_data.cameraPosition,
+                light_dir: frame_data.lightDirection,
+                light_color: frame_data.lightColor,
                 exposure: *exposure,
                 pt_lights,
                 pt_accum_dirty: *pt_accum_dirty,
@@ -3651,7 +3651,7 @@ impl GraphRenderer {
                         .pending_view_proj
                         .get_mut(image_index as usize)
                     {
-                        *slot = Some(frame_data.view_proj);
+                        *slot = Some(frame_data.viewProj);
                     }
                 }
             }
@@ -4062,8 +4062,8 @@ impl GraphRenderer {
         // request so a runtime settings edit cannot make the shader sample a
         // cascade that was never allocated.
         let mut frame_data = *frame_data;
-        frame_data.shadow_cascade_count = frame_data
-            .shadow_cascade_count
+        frame_data.shadowCascadeCount = frame_data
+            .shadowCascadeCount
             .clamp(1, self.settings.shadow_cascade_count.clamp(1, 2));
         // #883: subpixel jitter for TAA. The graph frame carries the applied
         // NDC offset so `TaaPass` can recover the unjittered camera matrix.
@@ -4079,9 +4079,9 @@ impl GraphRenderer {
             frame_data: &frame_data,
             cameras: &[],
             light_view_proj,
-            light_view_proj1: frame_data.light_view_proj1,
-            shadow_split: frame_data.shadow_split,
-            shadow_cascade_count: frame_data.shadow_cascade_count,
+            light_view_proj1: frame_data.lightViewProj1,
+            shadow_split: frame_data.shadowSplit,
+            shadow_cascade_count: frame_data.shadowCascadeCount,
             inv_projection,
             debug_flags,
             wireframe,

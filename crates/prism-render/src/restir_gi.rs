@@ -32,43 +32,20 @@ use crate::shader_bindings::restir_gi as bindings;
 /// Bytes per reservoir element (must match `RestirGiReservoir` in restir_gi.slang).
 pub const RESERVOIR_BYTES: vk::DeviceSize = 64;
 
-/// GPU-side reservoir. Mirrors `RestirGiReservoir` in restir_gi.slang.
-#[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct RestirGiReservoir {
-    /// xyz = sampled unit direction, w = age in frames.
-    pub direction: [f32; 4],
-    /// rgb = radiance estimate, w = RIS target pdf.
-    pub radiance: [f32; 4],
-    /// x = M (sample count), y = W (weight), z = hit distance, w unused.
-    pub stats: [f32; 4],
-    /// xyz = secondary hit position (used for spatial validation).
-    pub hit_pos: [f32; 4],
-}
+/// GPU-side reservoir, laid out by the Slang `RestirGiReservoir` reflection.
+///
+/// `direction` is the sampled unit direction with its age in `.w`; `radiance`
+/// the estimate with the RIS target pdf in `.w`; `stats` carries M, W and the
+/// hit distance; `hitPos.xyz` is the secondary hit used for spatial validation.
+pub use crate::shader_bindings::restir_gi::RestirGiReservoir;
 
-/// Per-frame constants. Mirrors `RestirGiFrame` in restir_gi.slang (336 bytes).
-#[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct RestirGiFrame {
-    pub inv_view_proj: [[f32; 4]; 4],
-    pub inv_view_rot: [[f32; 4]; 4],
-    pub camera_pos: [f32; 4],
-    pub light_dir: [f32; 4],
-    pub light_color: [f32; 4],
-    /// xy = GI extent, zw = full render extent.
-    pub viewport: [f32; 4],
-    /// x = frame index, y = reset flag, z = rays/pixel, w = max history.
-    pub params: [f32; 4],
-    /// x = spatial samples, y = max secondary distance, z/w = reuse toggles.
-    pub gi_params: [f32; 4],
-    /// x = SHaRC scene scale, y = capacity, z = flags, w = roughness threshold.
-    pub sharc_params: [f32; 4],
-    pub sharc_camera_pos: [f32; 4],
-    pub prev_view_proj: [[f32; 4]; 4],
-    pub prev_camera_pos: [f32; 4],
-}
-
-const _: () = assert!(std::mem::size_of::<RestirGiFrame>() == 336);
+/// Per-frame constants, laid out by the Slang `RestirGiFrame` reflection.
+///
+/// xy of `viewport` is the GI extent and zw the full render extent; `params`
+/// carries frame index, reset flag, rays per pixel and max history; `giParams`
+/// the spatial sample count, max secondary distance and reuse toggles;
+/// `sharcParams` the SHaRC scale, capacity, flags and roughness threshold.
+pub use crate::shader_bindings::restir_gi::RestirGiFrame;
 const _: () =
     assert!(std::mem::size_of::<RestirGiReservoir>() as vk::DeviceSize == RESERVOIR_BYTES);
 
@@ -812,11 +789,11 @@ impl RestirGiPass {
             && self.sharc_resolved.is_some();
         let camera_pos = frame.camera_pos;
         let constants = RestirGiFrame {
-            inv_view_proj: mat_inverse(&frame.view_proj),
-            inv_view_rot: frame.inv_view_rot,
-            camera_pos,
-            light_dir: frame.light_dir,
-            light_color: frame.light_color,
+            invViewProj: mat_inverse(&frame.view_proj),
+            invViewRot: frame.inv_view_rot,
+            cameraPos: camera_pos,
+            lightDir: frame.light_dir,
+            lightColor: frame.light_color,
             viewport: [
                 gi_extent.width as f32,
                 gi_extent.height as f32,
@@ -829,7 +806,7 @@ impl RestirGiPass {
                 ctx.settings.restir_gi_rays_per_pixel.max(1) as f32,
                 ctx.settings.restir_gi_max_history.max(1) as f32,
             ],
-            gi_params: [
+            giParams: [
                 ctx.settings.restir_gi_spatial_samples as f32,
                 ctx.settings.restir_gi_max_secondary_dist.max(0.0),
                 if ctx.settings.restir_gi_temporal_reuse {
@@ -843,7 +820,7 @@ impl RestirGiPass {
                     0.0
                 },
             ],
-            sharc_params: [
+            sharcParams: [
                 ctx.settings.sharc_scene_scale,
                 self.sharc_capacity as f32,
                 if sharc_enabled {
@@ -855,9 +832,9 @@ impl RestirGiPass {
             ],
             // The cache is keyed off the camera that produced the samples, so
             // the sharc camera position mirrors the current one.
-            sharc_camera_pos: camera_pos,
-            prev_view_proj: self.prev_view_proj,
-            prev_camera_pos: self.prev_camera_pos,
+            sharcCameraPos: camera_pos,
+            prevViewProj: self.prev_view_proj,
+            prevCameraPos: self.prev_camera_pos,
         };
         frame_constants.upload(&constants);
 

@@ -127,30 +127,27 @@ fn try_create_headless() -> Option<GraphRenderer> {
 
 fn frame_data(shadow_strength: f32) -> FrameUBOData {
     FrameUBOData {
-        view_proj: camera_view_proj(),
-        camera_position: [0.0, 2.5, 6.0, 0.0],
-        // `lightDirection` points *toward* the light: straight up, so the
-        // receiver plane (normal +Y) is fully lit.
-        light_direction: [0.0, 1.0, 0.0, 1.0],
-        light_color: [1.0, 1.0, 1.0, 1.0],
+        viewProj: camera_view_proj(),
+        cameraPosition: [0.0, 2.5, 6.0, 0.0],
+        lightDirection: [0.0, 1.0, 0.0, 1.0],
+        lightColor: [1.0, 1.0, 1.0, 1.0],
         view: IDENTITY,
-        light_view_proj: light_view_proj(),
-        tonemap_mode: 2, // passthrough: compare raw HDR -> RGBA8 bytes
-        viewport_size: [SIZE as f32, SIZE as f32],
+        lightViewProj: light_view_proj(),
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength,
-        _pad2: [0.0; 3],
-        _pad2b: [0.0; 4],
-        light_view_proj1: IDENTITY,
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowStrength: shadow_strength,
+        lightViewProj1: IDENTITY,
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     }
 }
 

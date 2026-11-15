@@ -184,14 +184,14 @@ impl FrameHarness {
         // Mirror the frame's directional light so path-trace frames are lit.
         let pt_lights = [PtAnalyticLight::directional(
             [
-                frame_data.light_direction[0],
-                frame_data.light_direction[1],
-                frame_data.light_direction[2],
+                frame_data.lightDirection[0],
+                frame_data.lightDirection[1],
+                frame_data.lightDirection[2],
             ],
             [
-                frame_data.light_color[0],
-                frame_data.light_color[1],
-                frame_data.light_color[2],
+                frame_data.lightColor[0],
+                frame_data.lightColor[1],
+                frame_data.lightColor[2],
             ],
         )];
 
@@ -210,7 +210,7 @@ impl FrameHarness {
             .render(
                 items,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0, // debug flags
                 1, // ACES tonemap
@@ -268,45 +268,42 @@ fn frame_data(
     camera_position: [f32; 3],
 ) -> FrameUBOData {
     FrameUBOData {
-        view_proj,
-        camera_position: [
+        viewProj: view_proj,
+        cameraPosition: [
             camera_position[0],
             camera_position[1],
             camera_position[2],
             0.0,
         ],
-        light_direction: [0.3, 0.8, 0.5, 0.8],
-        light_color: [1.0, 0.98, 0.95, 0.25],
-        view,
-        light_view_proj: [
+        lightDirection: [0.3, 0.8, 0.5, 0.8],
+        lightColor: [1.0, 0.98, 0.95, 0.25],
+        view: view,
+        lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemap_mode: 1,
-        viewport_size: [size as f32, size as f32],
+        tonemapMode: 1,
+        viewportW: size as f32,
+        viewportH: size as f32,
         exposure: 1.0,
-        // The shadow pass still runs, but the box must not be darkened by the
-        // identity light matrix; both drivers then agree on the lit surface.
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        _pad2b: [0.0; 4],
-        light_view_proj1: [
+        shadowStrength: 0.0,
+        lightViewProj1: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     }
 }
 

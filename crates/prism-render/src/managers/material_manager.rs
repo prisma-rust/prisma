@@ -76,77 +76,12 @@ impl MaterialAlphaMode {
 /// Alpha cutoff used when a material carries none (glTF default).
 pub const DEFAULT_ALPHA_CUTOFF: f32 = 0.5;
 
-/// Shader-visible material record. The Slang `GpuMaterial` struct in
-/// `shaders/slang/scene_frag.slang` mirrors this exactly; field order and
-/// size are pinned by the static assertion below.
+/// Shader-visible material record, laid out by the Slang `GpuMaterial`
+/// reflection in `scene_frag.slang`.
 ///
-/// Layout (112 bytes, 16-byte aligned):
-///   @0   base_color[4]                          (float4)
-///   @16  metallic_roughness_emissive[4]          (float4: x=metallic, y=roughness, z=emissive, w=emissive_strength)
-///   @32  albedo_idx, normal_idx, mr_idx, emissive_idx  (4 x uint)
-///   @48  transmission_factor[4]                  (float4: x=transmission, y=ior, z=translucency, w=anisotropy)
-///   @64  clearcoat[4]                            (float4: x=clearcoat, y=clearcoat_roughness, z=reserved, w=reserved)
-///   @80  transmission_tex_idx, occlusion_idx     (2 x uint)
-///   @88  normal_scale, occlusion_strength         (2 x float)
-///   @96  alpha_cutoff, alpha_mode                 (float, uint)
-///   @104 padding                                  (2 x float, keeps the record 16-byte aligned)
-#[repr(C, align(16))]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GpuMaterial {
-    /// Linear-space base color (rgba). When an albedo texture is bound it is
-    /// created as `R8G8B8A8_SRGB`, so the hardware converts the sampled value
-    /// to linear and no manual sRGB decode is needed in the shader; this scalar
-    /// factor is always linear (per glTF spec).
-    pub base_color: [f32; 4],
-    /// Packed metallic/roughness/emissive/emissive_strength: x=metallic,
-    /// y=roughness, z=emissive intensity, w=emissive_strength multiplier.
-    pub metallic_roughness_emissive: [f32; 4],
-    /// Bindless SRV slot of the albedo (base color) texture. Use
-    /// `TextureHandle::INVALID.0` for "no texture, use the scalar
-    /// base_color" - the shader will fall back to the scalar.
-    pub albedo_idx: u32,
-    /// Bindless SRV slot of the tangent-space normal map. `INVALID` for
-    /// "no normal map" - the shader uses the geometric normal.
-    pub normal_idx: u32,
-    /// Bindless SRV slot of the packed metallic-roughness texture
-    /// (glTF: G=roughness, B=metallic). `INVALID` for "use the scalar
-    /// metallic + roughness fields".
-    pub metallic_roughness_idx: u32,
-    /// Bindless SRV slot of the emissive texture. `INVALID` for "use the
-    /// scalar emissive field".
-    pub emissive_idx: u32,
-    // ---- Second 48-byte block (advanced PBR) ----
-    /// Packed transmission/ior/translucency/anisotropy.
-    /// x=transmission factor, y=index of refraction, z=translucency, w=anisotropy.
-    pub transmission_factor: [f32; 4],
-    /// Packed clearcoat parameters.
-    /// x=clearcoat factor, y=clearcoat roughness, z=reserved, w=reserved.
-    pub clearcoat: [f32; 4],
-    /// Bindless SRV slot of the transmission texture (reserved, 0xFFFFFFFF if none).
-    pub transmission_tex_idx: u32,
-    /// Bindless SRV slot of the occlusion texture (R channel). 0xFFFFFFFF if
-    /// none; the shader attenuates IBL diffuse+specular by `mix(1, tex.r,
-    /// occlusion_strength)` and never touches direct lighting.
-    pub occlusion_idx: u32,
-    /// Normal map strength (scales decoded tangent-space normal xy before
-    /// normalize). 1.0 = verbatim.
-    pub normal_scale: f32,
-    /// Occlusion strength (lerp factor between 1.0 and the occlusion texture's
-    /// R channel, applied to IBL diffuse+specular only). Defaults to 1.0.
-    pub occlusion_strength: f32,
-    /// Alpha test threshold for `Mask` materials (`alpha >= cutoff` passes).
-    pub alpha_cutoff: f32,
-    /// Alpha semantics: 0 = Opaque, 1 = Mask, 2 = Blend (see
-    /// [`MaterialAlphaMode`]). Only `Mask` consults `alpha_cutoff`; opaque
-    /// geometry is normally not even reported as a non-opaque candidate.
-    pub alpha_mode: u32,
-    /// Padding so the record stays 16-byte aligned (matches the Slang struct).
-    pub alpha_pad: [f32; 2],
-}
-
-// Static assertions for size and alignment.
-const _: [(); 112] = [(); std::mem::size_of::<GpuMaterial>()];
-const _: [(); 16] = [(); std::mem::align_of::<GpuMaterial>()];
+/// `base_color` is linear; bindless SRV slots use `u32::MAX` for "no texture",
+/// so the shader falls back to the scalar fields.
+pub use crate::shader_bindings::scene_frag::GpuMaterial;
 
 /// Plain-data material description used at the manager boundary. The
 /// engine layer translates `prism_asset::MaterialData` into this; the

@@ -26,8 +26,8 @@ pub const ADAPTED_LUMINANCE_BINDING: u32 = 2; // UNIFORM_BUFFER
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 48 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct AutoExposurePush {
     /// offset 0, size 8
     pub sourceSize: [u32; 2],

@@ -39,7 +39,7 @@ pub const TEMPORAL_SAMPLER_BINDING: u32 = 2; // COMBINED_IMAGE_SAMPLER
 /// explicit `_pad_*` fillers, so `size_of` is 88 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct GtaoPush {
     /// offset 0, size 64
     pub inv_proj: [[f32; 4]; 4],

@@ -751,31 +751,27 @@ pub fn render_system(
     // 2. Build the per-frame UBO.
     // FrameUBOData is #[repr(C)] GPU data — convert glam → raw arrays at this boundary.
     let frame_data = FrameUBOData {
-        view_proj: view_proj.to_cols_array_2d(),
-        camera_position: [eye.x, eye.y, eye.z, light_count],
-        light_direction: light_direction.to_array(),
-        light_color: light_color.to_array(),
+        viewProj: view_proj.to_cols_array_2d(),
+        cameraPosition: [eye.x, eye.y, eye.z, light_count],
+        lightDirection: light_direction.to_array(),
+        lightColor: light_color.to_array(),
         view: view.to_cols_array_2d(),
-        light_view_proj: light_view_proj.to_cols_array_2d(),
-        light_view_proj1: scene.light_view_proj1.to_cols_array_2d(),
-        shadow_split: scene.shadow_split,
-        shadow_cascade_count: scene.shadow_cascade_count,
-        tonemap_mode: settings.tonemap_mode,
-        viewport_size: {
-            let e = renderer.extent();
-            [e.width as f32, e.height as f32]
-        },
+        lightViewProj: light_view_proj.to_cols_array_2d(),
+        lightViewProj1: scene.light_view_proj1.to_cols_array_2d(),
+        shadowSplit: scene.shadow_split,
+        shadowCascadeCount: scene.shadow_cascade_count,
+        tonemapMode: settings.tonemap_mode,
+        viewportW: renderer.extent().width as f32,
+        viewportH: renderer.extent().height as f32,
         exposure: *exposure,
-        shadow_strength: *shadow_strength,
-        _pad2: [0.0; 3],
-        _pad2b: [0.0; 4],
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowStrength: *shadow_strength,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     };
 
     // 2.5. 统一脏分派计划（DESIGN §9 / #1157）：
@@ -824,9 +820,9 @@ pub fn render_system(
         frame_data: &frame_data,
         cameras: &scene.cameras,
         light_view_proj: light_view_proj.to_cols_array_2d(),
-        light_view_proj1: frame_data.light_view_proj1,
-        shadow_split: frame_data.shadow_split,
-        shadow_cascade_count: frame_data.shadow_cascade_count,
+        light_view_proj1: frame_data.lightViewProj1,
+        shadow_split: frame_data.shadowSplit,
+        shadow_cascade_count: frame_data.shadowCascadeCount,
         inv_projection: inv_projection.to_cols_array_2d(),
         debug_flags: settings.debug_flags,
         wireframe: settings.wireframe,

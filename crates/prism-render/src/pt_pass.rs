@@ -43,15 +43,8 @@ use crate::shader_bindings;
 /// surface occupied last frame, which is the motion vector TAA/DLSS-RR expects.
 /// `world_to_view` rotates the world-space shading normal into the view space
 /// both DLSS-RR and NRD expect for their normal guides.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct PtGuides {
-    view_proj: [[f32; 4]; 4],
-    prev_view_proj: [[f32; 4]; 4],
-    world_to_view: [[f32; 4]; 4],
-}
-
-const _: () = assert!(std::mem::size_of::<PtGuides>() == 192);
+// GPU layout comes from the Slang reflection; never mirror it by hand.
+use crate::shader_bindings::pt_render::PtGuides;
 
 /// GPU push-constant block size for PtPush (std140 rounds to 16-byte boundary).
 /// The auto-generated `shader_bindings::pt_render::PtPush` reflects to 176
@@ -1484,9 +1477,9 @@ impl PtInner {
         }
         world_to_view[3][3] = 1.0;
         let guides = PtGuides {
-            view_proj: ctx.frame.view_proj,
-            prev_view_proj,
-            world_to_view,
+            viewProj: ctx.frame.view_proj,
+            prevViewProj: prev_view_proj,
+            worldToView: world_to_view,
         };
         unsafe {
             ptr::copy_nonoverlapping(

@@ -63,13 +63,196 @@ pub const GI_HISTORY_BINDING: u32 = 4; // COMBINED_IMAGE_SAMPLER
 pub const GB_SAMPLER_SET: u32 = 3;
 pub const GB_SAMPLER_BINDING: u32 = 5; // COMBINED_IMAGE_SAMPLER
 
+/// GPU layout struct (auto-generated from Slang `PtInstanceMeta`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 16 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct PtInstanceMeta {
+    /// offset 0, size 4
+    pub material_slot: u32,
+    /// offset 4, size 4
+    pub index_base: u32,
+    /// offset 8, size 4
+    pub vertex_base: u32,
+    /// offset 12, size 4
+    pub _pad: u32,
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<PtInstanceMeta>() == 16);
+    assert!(::std::mem::offset_of!(PtInstanceMeta, material_slot) == 0);
+    assert!(::std::mem::offset_of!(PtInstanceMeta, index_base) == 4);
+    assert!(::std::mem::offset_of!(PtInstanceMeta, vertex_base) == 8);
+    assert!(::std::mem::offset_of!(PtInstanceMeta, _pad) == 12);
+};
+
+/// GPU layout struct (auto-generated from Slang `GpuMaterial`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 112 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct GpuMaterial {
+    /// offset 0, size 16
+    pub base_color: [f32; 4],
+    /// offset 16, size 16
+    pub metallic_roughness_emissive: [f32; 4],
+    /// offset 32, size 4
+    pub albedo_idx: u32,
+    /// offset 36, size 4
+    pub normal_idx: u32,
+    /// offset 40, size 4
+    pub metallic_roughness_idx: u32,
+    /// offset 44, size 4
+    pub emissive_idx: u32,
+    /// offset 48, size 16
+    pub transmission_factor: [f32; 4],
+    /// offset 64, size 16
+    pub clearcoat: [f32; 4],
+    /// offset 80, size 4
+    pub transmission_tex_idx: u32,
+    /// offset 84, size 4
+    pub occlusion_idx: u32,
+    /// offset 88, size 4
+    pub normal_scale: f32,
+    /// offset 92, size 4
+    pub occlusion_strength: f32,
+    /// offset 96, size 4
+    pub alpha_cutoff: f32,
+    /// offset 100, size 4
+    pub alpha_mode: u32,
+    /// offset 104, size 8
+    pub alpha_pad: [f32; 2],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<GpuMaterial>() == 112);
+    assert!(::std::mem::offset_of!(GpuMaterial, base_color) == 0);
+    assert!(::std::mem::offset_of!(GpuMaterial, metallic_roughness_emissive) == 16);
+    assert!(::std::mem::offset_of!(GpuMaterial, albedo_idx) == 32);
+    assert!(::std::mem::offset_of!(GpuMaterial, normal_idx) == 36);
+    assert!(::std::mem::offset_of!(GpuMaterial, metallic_roughness_idx) == 40);
+    assert!(::std::mem::offset_of!(GpuMaterial, emissive_idx) == 44);
+    assert!(::std::mem::offset_of!(GpuMaterial, transmission_factor) == 48);
+    assert!(::std::mem::offset_of!(GpuMaterial, clearcoat) == 64);
+    assert!(::std::mem::offset_of!(GpuMaterial, transmission_tex_idx) == 80);
+    assert!(::std::mem::offset_of!(GpuMaterial, occlusion_idx) == 84);
+    assert!(::std::mem::offset_of!(GpuMaterial, normal_scale) == 88);
+    assert!(::std::mem::offset_of!(GpuMaterial, occlusion_strength) == 92);
+    assert!(::std::mem::offset_of!(GpuMaterial, alpha_cutoff) == 96);
+    assert!(::std::mem::offset_of!(GpuMaterial, alpha_mode) == 100);
+    assert!(::std::mem::offset_of!(GpuMaterial, alpha_pad) == 104);
+};
+
+/// GPU layout struct (auto-generated from Slang `PtAnalyticLight`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 48 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct PtAnalyticLight {
+    /// offset 0, size 16
+    pub position_kind: [f32; 4],
+    /// offset 16, size 16
+    pub direction_params: [f32; 4],
+    /// offset 32, size 16
+    pub color_params: [f32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<PtAnalyticLight>() == 48);
+    assert!(::std::mem::offset_of!(PtAnalyticLight, position_kind) == 0);
+    assert!(::std::mem::offset_of!(PtAnalyticLight, direction_params) == 16);
+    assert!(::std::mem::offset_of!(PtAnalyticLight, color_params) == 32);
+};
+
+/// GPU layout struct (auto-generated from Slang `PtEmissiveTri`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 84 bytes and every field sits
+/// where the shader expects it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct PtEmissiveTri {
+    /// offset 0, size 16
+    pub v0: [f32; 4],
+    /// offset 16, size 16
+    pub v1: [f32; 4],
+    /// offset 32, size 16
+    pub v2: [f32; 4],
+    /// offset 48, size 16
+    pub normal: [f32; 4],
+    /// offset 64, size 16
+    pub radiance: [f32; 4],
+    /// offset 80, size 4
+    pub area: f32,
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<PtEmissiveTri>() == 84);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, v0) == 0);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, v1) == 16);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, v2) == 32);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, normal) == 48);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, radiance) == 64);
+    assert!(::std::mem::offset_of!(PtEmissiveTri, area) == 80);
+};
+
+/// GPU layout struct (auto-generated from Slang `RestirGiReservoir`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 64 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct RestirGiReservoir {
+    /// offset 0, size 16
+    pub direction: [f32; 4],
+    /// offset 16, size 16
+    pub radiance: [f32; 4],
+    /// offset 32, size 16
+    pub stats: [f32; 4],
+    /// offset 48, size 16
+    pub hitPos: [f32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<RestirGiReservoir>() == 64);
+    assert!(::std::mem::offset_of!(RestirGiReservoir, direction) == 0);
+    assert!(::std::mem::offset_of!(RestirGiReservoir, radiance) == 16);
+    assert!(::std::mem::offset_of!(RestirGiReservoir, stats) == 32);
+    assert!(::std::mem::offset_of!(RestirGiReservoir, hitPos) == 48);
+};
+
+/// GPU layout struct (auto-generated from Slang `SharcAccumulationData`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 16 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct SharcAccumulationData {
+    /// offset 0, size 16
+    pub data: [u32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<SharcAccumulationData>() == 16);
+    assert!(::std::mem::offset_of!(SharcAccumulationData, data) == 0);
+};
+
 /// GPU layout struct (auto-generated from Slang `RestirGiFrame`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 336 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct RestirGiFrame {
     /// offset 0, size 64
     pub invViewProj: [[f32; 4]; 4],

@@ -23,13 +23,36 @@ pub const BINDLESS_SRVS_BINDING: u32 = 1; // UNIFORM_BUFFER
 pub const SPRITE_LIGHTS_SET: u32 = 1;
 pub const SPRITE_LIGHTS_BINDING: u32 = 0; // UNIFORM_BUFFER
 
+/// GPU layout struct (auto-generated from Slang `SpriteLight`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 48 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct SpriteLight {
+    /// offset 0, size 16
+    pub positionRange: [f32; 4],
+    /// offset 16, size 16
+    pub colorKind: [f32; 4],
+    /// offset 32, size 16
+    pub direction: [f32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<SpriteLight>() == 48);
+    assert!(::std::mem::offset_of!(SpriteLight, positionRange) == 0);
+    assert!(::std::mem::offset_of!(SpriteLight, colorKind) == 16);
+    assert!(::std::mem::offset_of!(SpriteLight, direction) == 32);
+};
+
 /// GPU layout struct (auto-generated from Slang `SpritePush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 80 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SpritePush {
     /// offset 0, size 64
     pub viewProj: [[f32; 4]; 4],

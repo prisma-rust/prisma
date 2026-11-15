@@ -53,14 +53,8 @@ const _: () = assert!(
 /// `prevViewProj` projects that point into the previous frame. `resolution`
 /// converts the normalized velocity into pixels for the trail clamp. Laid out
 /// to match `MotionBlurData` in `post.slang`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct MotionBlurUniform {
-    inv_view_proj: [[f32; 4]; 4],
-    prev_view_proj: [[f32; 4]; 4],
-    resolution: [f32; 2],
-    _pad: [f32; 2],
-}
+// GPU layout comes from the Slang reflection; never mirror it by hand.
+use crate::shader_bindings::post::MotionBlurData as MotionBlurUniform;
 
 /// Fullscreen-triangle tonemap pass: HDR scene color -> sRGB swapchain.
 pub struct PostPass {
@@ -642,10 +636,10 @@ impl PostPass {
             return Ok(());
         }
         let uniform = MotionBlurUniform {
-            inv_view_proj,
-            prev_view_proj,
+            invViewProj: inv_view_proj,
+            prevViewProj: prev_view_proj,
             resolution,
-            _pad: [0.0; 2],
+            ..Default::default()
         };
         let size = std::mem::size_of::<MotionBlurUniform>() as vk::DeviceSize;
         let ptr = unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }

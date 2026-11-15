@@ -78,29 +78,27 @@ fn try_create_headless() -> Option<GraphRenderer> {
 
 fn frame_data() -> FrameUBOData {
     FrameUBOData {
-        view_proj: view_proj(),
-        camera_position: [0.0, 0.0, 3.0, 0.0],
-        // Overhead key light so the cube is lit even with no ECS lights.
-        light_direction: [0.0, -1.0, 0.0, 1.0],
-        light_color: [1.0, 1.0, 1.0, 0.6],
+        viewProj: view_proj(),
+        cameraPosition: [0.0, 0.0, 3.0, 0.0],
+        lightDirection: [0.0, -1.0, 0.0, 1.0],
+        lightColor: [1.0, 1.0, 1.0, 0.6],
         view: IDENTITY,
-        light_view_proj: IDENTITY,
-        tonemap_mode: 2, // passthrough: compare raw HDR -> RGBA8 bytes
-        viewport_size: [SIZE as f32, SIZE as f32],
+        lightViewProj: IDENTITY,
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        _pad2b: [0.0; 4],
-        light_view_proj1: IDENTITY,
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowStrength: 0.0,
+        lightViewProj1: IDENTITY,
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     }
 }
 

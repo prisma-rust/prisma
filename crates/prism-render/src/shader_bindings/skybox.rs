@@ -22,8 +22,8 @@ pub const ENV_CUBE_BINDING: u32 = 0; // COMBINED_IMAGE_SAMPLER
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 96 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SkyboxPush {
     /// offset 0, size 64
     pub invViewProjRot: [[f32; 4]; 4],

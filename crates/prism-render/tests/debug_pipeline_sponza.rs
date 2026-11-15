@@ -242,21 +242,22 @@ fn test_sponza_pipeline_debug_passes() {
     let (view_proj, view) = camera_view_proj(eye, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], aspect);
 
     let frame_data = FrameUBOData {
-        view_proj,
-        camera_position: [eye[0], eye[1], eye[2], 0.0],
-        light_direction: [0.2, 0.95, 0.0, 3.2],
-        light_color: [1.0, 0.96, 0.90, 0.1],
-        view,
-        light_view_proj: [
+        viewProj: view_proj,
+        cameraPosition: [eye[0], eye[1], eye[2], 0.0],
+        lightDirection: [0.2, 0.95, 0.0, 3.2],
+        lightColor: [1.0, 0.96, 0.90, 0.1],
+        view: view,
+        lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemap_mode: 0, // Reinhard
-        viewport_size: [WIDTH as f32, HEIGHT as f32],
+        tonemapMode: 0,
+        viewportW: WIDTH as f32,
+        viewportH: HEIGHT as f32,
         exposure: 1.0,
-        shadow_strength: 0.8,
+        shadowStrength: 0.8,
         ..Default::default()
     };
 
@@ -269,7 +270,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &[],
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -356,7 +357,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &[quad_item],
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -444,7 +445,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &sponza_draws,
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -480,7 +481,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &sponza_draws,
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -516,7 +517,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &sponza_draws,
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -555,7 +556,7 @@ fn test_sponza_pipeline_debug_passes() {
         .render(
             &sponza_draws,
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -608,7 +609,7 @@ fn test_sponza_pipeline_debug_passes() {
             .render(
                 &sponza_draws,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -657,7 +658,7 @@ fn test_sponza_pipeline_debug_passes() {
             .render(
                 &sponza_draws,
                 &frame_data,
-                frame_data.light_view_proj,
+                frame_data.lightViewProj,
                 [[0.0; 4]; 4],
                 0,
                 1,
