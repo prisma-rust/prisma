@@ -13,6 +13,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 - **合进 `master` 必须一个任务 = 一个分支 = 一个 PR**；默认 diff < ~500 行。**`dev` 是开发集成分支，允许直接提交、直接 push**，但提交仍需原子并自检，`dev` 合进 `master` 走 PR。
 - **合并前必须跑 `python scripts/pr_ready.py`**，Markdown 块贴进 PR；红灯严禁合并。
 - **AI 产出必须显式标注**：PR / issue 首行声明工具与身份，每条评论以 `🤖 Agent:` 开头，commit 正文写清 what/why，严禁冒充人类。
+- **commit 信息保持简短**：标题说清改了什么；正文只在必要时用 1–3 行写清原因，严禁长篇大论——验证输出、过程分析、逐文件复述一律放 PR 或回复里，不要塞进提交信息。
 - **对外文本严禁内部简写**：PR、issue、commit 均面向公共审查，只用通用表述；中英文与数字间留空格，代码用行内标识符（详见 [`docs/ai-workflow.md`](docs/ai-workflow.md) §4.5）。
 - **Issue 规则与查重**：提 issue 前按 [`docs/agent-issues.md`](docs/agent-issues.md) 查重（**只比对 open issue**，不比对 closed；纯架构取舍严禁作为“重复造轮子”报 issue）。接手 issue 必须先评论认领再调查（`🤖 Agent: claiming` + `agent/working`）。
 - **代码注释只用英文**：严禁冗余复述代码，规范见 [`docs/code-style.md`](docs/code-style.md)；注释 PR 跑 `python scripts/check_comment_only.py --base origin/master`。
