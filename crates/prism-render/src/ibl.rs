@@ -84,6 +84,15 @@ const ENV_CUBE_CACHE_FILE: &str = "cube_512.bin";
 /// Bump when cubemap/convolution math changes so stale on-disk caches are ignored.
 #[cfg(feature = "ibl")]
 const IBL_CACHE_VERSION: u32 = 2;
+/// Disk cache master switch.
+///
+/// `IBL_CACHE_DIR` is relative to the working directory, so a test run, the
+/// editor and a game each baked their own copy of the same maps. Until the
+/// cache root is resolved once and shared, every load is a miss and every save
+/// is dropped, so no new `assets/ibr` tree appears in a crate or project
+/// directory. Flip this back on only together with the path fix.
+#[cfg(feature = "ibl")]
+const IBL_DISK_CACHE_ENABLED: bool = false;
 #[cfg(feature = "ibl")]
 const IRRADIANCE_CACHE_FILE: &str = "irradiance_64.bin";
 #[cfg(feature = "ibl")]
@@ -1558,6 +1567,9 @@ impl Drop for IblResources {
 /// Ensure the IBL cache subdirectory exists, creating it if needed.
 #[cfg(feature = "ibl")]
 fn ensure_cache_dir(subdir: &str) -> Option<std::path::PathBuf> {
+    if !IBL_DISK_CACHE_ENABLED {
+        return None;
+    }
     let path = std::path::PathBuf::from(IBL_CACHE_DIR).join(subdir);
     std::fs::create_dir_all(&path).ok()?;
     Some(path)
@@ -1585,6 +1597,9 @@ fn env_content_hash(bytes: &[u8]) -> String {
 /// Save `data` (f32 slice) to `path` as `u32 LE count + f32 LE × count`.
 #[cfg(feature = "ibl")]
 fn save_f32_cache(path: &Path, data: &[f32]) {
+    if !IBL_DISK_CACHE_ENABLED {
+        return;
+    }
     use std::io::Write;
     let count = data.len() as u32;
     let bytes: &[u8] = bytemuck::cast_slice(data);
@@ -1601,6 +1616,9 @@ fn save_f32_cache(path: &Path, data: &[f32]) {
 /// error (missing file, wrong size, I/O error).
 #[cfg(feature = "ibl")]
 fn load_f32_cache(path: &Path) -> Option<Vec<f32>> {
+    if !IBL_DISK_CACHE_ENABLED {
+        return None;
+    }
     let raw = std::fs::read(path).ok()?;
     if raw.len() < 4 {
         return None;
