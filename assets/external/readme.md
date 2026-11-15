@@ -1,1 +1,0 @@
-This path should be ignored.

@@ -129,5 +129,5 @@ Flags：`PARTIALLY_BOUND | UPDATE_AFTER_BIND | VARIABLE_DESCRIPTOR_COUNT`，配�
 > `.spv` 是 checked-in 且被 `include_bytes!` 编进 Rust 的，所以 shaders job 的 drift guard 是硬保证——谁改了 `.slang` 忘了重编并提交 `.spv`，CI 直接挂。
 
 ## 资产
-`assets/fbx/`：`coord.fbm/`、`coord.fbx`、`cornell-box.fbx`、`cube-coord.fbx`。
+`assets/fbx/`：`coord.fbm/`、`coord.fbx`、`cornell-box.fbx`、`cube-coord.fbx`。这些是坐标系数值验证用的样本，没有代码加载，已移到本地的 `.local/assets/fbx/`。
 `sponza.zip`(110MB)/`sponza-1.zip`(99MB) 因 GitHub 大文件限制未拷；需要时在桌面/CI 用 `just fetch-res` 等价流程拉取（见 TruvisRenderer `resources.toml`）。
