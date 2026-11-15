@@ -1,0 +1,233 @@
+{
+  "entities": [
+    {
+      "components": {
+        "prism_engine::scene::Skybox": {
+          "enabled": true,
+          "env_asset": 0,
+          "hdr_path": "../valley_of_desolation_1k.hdr",
+          "intensity": 1,
+          "rotation_degrees": 0
+        }
+      },
+      "name": "Skybox",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::Gizmo": {
+          "enabled": true,
+          "scale": 1
+        }
+      },
+      "name": "Gizmo",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::Camera": {
+          "aspect": 1.777,
+          "enabled": true,
+          "exposure": 1,
+          "far": 1000,
+          "fov_y_degrees": 60,
+          "near": 0.01
+        }
+      },
+      "name": "Camera",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          -0.06894800066947937,
+          0,
+          0,
+          0.9976199865341188
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          0,
+          2.5,
+          18
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::DirectionalLight": {
+          "ambient": 1,
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "euler_xyz": [
+            0,
+            0,
+            0
+          ],
+          "intensity": 100000
+        }
+      },
+      "name": "Sun",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.2
+          ],
+          "intensity": 150,
+          "range": 12
+        }
+      },
+      "name": "PointLightRed",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          2,
+          3,
+          2
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::PointLight": {
+          "color": [
+            0.2,
+            1,
+            0.2
+          ],
+          "intensity": 150,
+          "range": 12
+        }
+      },
+      "name": "PointLightGreen",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          -2,
+          3,
+          -2
+        ]
+      }
+    },
+    {
+      "components": {
+        "prism_engine::scene::PointLight": {
+          "color": [
+            0.2,
+            0.2,
+            1
+          ],
+          "intensity": 150,
+          "range": 12
+        }
+      },
+      "name": "PointLightBlue",
+      "parent": null,
+      "transform": {
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "translation": [
+          0,
+          4,
+          4
+        ]
+      }
+    }
+  ],
+  "version": 1
+}

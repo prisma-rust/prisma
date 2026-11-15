@@ -1,0 +1,19 @@
+{
+  "scenes": [
+    {
+      "name": "intro",
+      "path": "scenes/intro.rscn",
+      "enabled": true
+    },
+    {
+      "name": "default",
+      "path": "scenes/default.rscn",
+      "enabled": true
+    },
+    {
+      "name": "sponza",
+      "path": "scenes/sponza.scene.json",
+      "enabled": false
+    }
+  ]
+}

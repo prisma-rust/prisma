@@ -41,10 +41,15 @@ if ($LASTEXITCODE -ne 0) { Write-Error "构建失败"; exit 1 }
 
 # 生成运行时场景包：scenes.json -> cooked RSCN -> assets/scenes.pak。
 # 游戏运行时只从该 .pak 的路径清单解析场景，因此开发启动前也必须生成。
-if (Test-Path "assets/scenes.json") {
-    Write-Host "构建场景包 (assets/scenes.pak)..."
-    cargo run -q -p prism-build-pipeline -- build-scenes
-    if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+# 每个工程的 manifest 在自己的 assets/ 下，仓库根只放引擎输入（shaders、GI 探针）。
+$SceneProject = "projects/template"
+if (Test-Path "$SceneProject/assets/scenes.json") {
+    Write-Host "构建场景包 ($SceneProject/assets/scenes.pak)..."
+    Push-Location $SceneProject
+    try {
+        cargo run -q --manifest-path (Join-Path $PWD "../../Cargo.toml") -p prism-build-pipeline -- build-scenes
+        if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+    } finally { Pop-Location }
 }
 
 Write-Host ""

@@ -47,14 +47,15 @@ if [ ! -f "$PROJECT_DIR/Cargo.toml" ]; then
     exit 2
 fi
 
-# `build-scenes` resolves `assets/` against the current directory, so it has to run
-# where the manifest lives: a project with its own `assets/scenes.json` packages
-# into its own directory, one without (projects/template) reuses the repo-root assets.
-if [ -f "$PROJECT_DIR/assets/scenes.json" ]; then
-    ASSET_ROOT="$PROJECT_DIR"
-else
-    ASSET_ROOT="$ROOT"
+# `build-scenes` resolves `assets/` against the current directory, so it runs where
+# the project's own manifest lives. Every project carries `assets/scenes.json`, so a
+# missing one is a configuration error rather than a reason to fall back to the repo
+# root (which only holds engine inputs: shaders and the GI probe volume).
+if [ ! -f "$PROJECT_DIR/assets/scenes.json" ]; then
+    echo "no scene manifest: $PROJECT_DIR/assets/scenes.json" >&2
+    exit 2
 fi
+ASSET_ROOT="$PROJECT_DIR"
 
 if [ "$BUILD_SHADERS" = 1 ]; then
     echo "==> recompiling Slang shaders"

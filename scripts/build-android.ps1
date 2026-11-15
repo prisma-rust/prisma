@@ -41,7 +41,8 @@ if ($Project -ne "template") {
 
 $AndroidDir  = Join-Path $ProjectRoot "launcher\src-tauri\gen\android"
 $JniLibsDir  = Join-Path $AndroidDir "app\src\main\jniLibs"
-$GameManifest = Join-Path $ProjectRoot "projects\$Project\Cargo.toml"
+$GameProjectDir = Join-Path $ProjectRoot "projects\$Project"
+$GameManifest = Join-Path $GameProjectDir "Cargo.toml"
 
 # ---- Prerequisites ---------------------------------------------------------
 
@@ -144,8 +145,8 @@ $AndroidAssets = Join-Path $AndroidDir "app\src\main\assets"
 $AndroidGameAssets = Join-Path $AndroidAssets "game"
 New-Item -ItemType Directory -Force -Path $AndroidGameAssets | Out-Null
 
-Write-Host "Building scene package (assets/scenes.pak)..."
-Push-Location $ProjectRoot
+Write-Host "Building scene package (projects/$Project/assets/scenes.pak)..."
+Push-Location $GameProjectDir
 try {
     cargo run -q -p prism-build-pipeline -- build-scenes
     if ($LASTEXITCODE -ne 0) {
@@ -158,8 +159,8 @@ try {
 
 # 运行时挂载 `assets/` 下的**全部** `.pak`（#530），所以按扩展名复制，
 # 不再写死 `scenes.pak`——以后按内容分包不用改脚本。
-$Paks = Get-ChildItem (Join-Path $ProjectRoot "assets") -Filter *.pak -File
-$Manifests = Get-ChildItem (Join-Path $ProjectRoot "assets") -Filter *.pak.meta.json -File
+$Paks = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak -File
+$Manifests = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak.meta.json -File
 if ($Paks.Count -eq 0) {
     Write-Error "no .pak produced under assets/ — the APK would contain no assets"
     exit 1
@@ -170,13 +171,13 @@ Write-Host "Copied $($Paks.Count) package(s) into the APK assets."
 
 # 新格式 `settings.ini`；旧项目还只有 `settings.toml` 时照样带上（引擎会回退读）。
 foreach ($Name in @("settings.ini", "settings.toml")) {
-    $Settings = Join-Path $ProjectRoot "assets\$Name"
+    $Settings = Join-Path $GameProjectDir "assets\$Name"
     if (Test-Path $Settings) {
         Copy-Item $Settings (Join-Path $AndroidGameAssets $Name) -Force
     }
 }
 
-$Environment = Join-Path $ProjectRoot "assets\valley_of_desolation_1k.hdr"
+$Environment = Join-Path $GameProjectDir "assets\valley_of_desolation_1k.hdr"
 if (Test-Path $Environment) {
     Copy-Item $Environment $AndroidGameAssets -Force
 }

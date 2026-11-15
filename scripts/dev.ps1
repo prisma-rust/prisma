@@ -5,12 +5,12 @@
 #
 # 常用开关：
 #   -SkipShaders   不重编 Slang（只改了 .rs 时省几秒）
-#   -SkipScenes    不重打 assets/scenes.pak（没改场景/预制体时可用）
+#   -SkipScenes    不重打 projects/template/assets/scenes.pak（没改场景/预制体时可用）
 #   -Release       游戏用 --release 构建
 #
 # 说明：根 workspace 没有可运行的 bin，游戏二进制在 projects/template（独立 workspace），
-# 且它按 **当前工作目录** 找 `assets/scenes.pak` / `assets/settings.toml`，
-# 所以本脚本固定在仓库根目录启动。
+# 它按 cwd 及其父目录找 `assets/scenes.pak` / `assets/settings.ini`；工程的资产在自己
+# 的 assets/ 下，所以场景包要在 projects/template 里构建。
 param(
     [ValidateSet("game", "editor")]
     [string]$Target = "game",
@@ -62,9 +62,13 @@ if (-not $SkipShaders) {
 }
 
 if (-not $SkipScenes) {
-    Write-Host "重打场景包 (assets/scenes.pak)..." -ForegroundColor Cyan
-    cargo run -q -p prism-build-pipeline -- build-scenes
-    if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+    # 场景清单在每个工程自己的 assets/ 下，仓库根只放引擎输入。
+    Write-Host "重打场景包 (projects/template/assets/scenes.pak)..." -ForegroundColor Cyan
+    Push-Location "projects/template"
+    try {
+        cargo run -q --manifest-path "../../Cargo.toml" -p prism-build-pipeline -- build-scenes
+        if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+    } finally { Pop-Location }
 }
 
 $cargoArgs = @("run", "--manifest-path", "projects/template/Cargo.toml", "--bin", "template")
