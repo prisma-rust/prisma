@@ -42,6 +42,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 - **严禁人工猜测/数括号修复闭合符号错位**：若编辑后出现未闭合符号或括号不匹配，切勿自行拼凑或逐行数括号，直接向用户寻求协助。
 - **大文件修改优先使用 Python 脚本**：文件过大超出编辑工具行数时，编写临时 Python 脚本执行确定性替换，严禁在 shell 中尝试不可靠的多行字符串替换。
+- **临时脚本统一放在 `.local/temp/scripts/`**：所有一次性脚本（`.sh`、`.ps1`、`.cmd`、`.bat`、`.py` 等）按用途分类放进 `.local/temp/scripts/<分类>/`（如 `render/`、`assets/`、`git/`），严禁散落在仓库根目录、`scripts/` 或源码目录；`.local/` 已被 `.gitignore` 忽略，任务结束即删，`scripts/` 只放长期维护的仓库工具。
 
 ## Termux / aarch64 ARM 验证例外（用户已明确授权）
 
