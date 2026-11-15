@@ -555,7 +555,7 @@ fn short_component(component: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc::{SceneDoc, TransformJson};
+    use crate::doc::SceneDoc;
     use serde_json::json;
 
     fn doc_with_camera() -> (SceneDoc, u32) {

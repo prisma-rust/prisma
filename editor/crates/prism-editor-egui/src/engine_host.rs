@@ -99,6 +99,10 @@ pub struct EngineHost {
     pak_mtime: Option<std::time::SystemTime>,
     /// 上一次检查资产变更的时间（500ms 轮询节流，见 [`EngineHost::poll_asset_changes`]）。
     asset_check_at: Instant,
+    /// Project root used to resolve loose scene asset paths such as GI probe volumes.
+    project_root: Option<PathBuf>,
+    /// Last GI probe volume state applied to the renderer `(path, mtime, enabled)`.
+    loaded_gi: Option<(Option<PathBuf>, Option<std::time::SystemTime>, bool)>,
 }
 
 /// 编辑器地面网格只在 Scene 视图出现。
@@ -174,11 +178,20 @@ impl EngineHost {
             env_path: None,
             pak_mtime: resource_package_mtime(),
             asset_check_at: Instant::now(),
+            project_root: None,
+            loaded_gi: None,
         })
+    }
+
+    /// Set the workspace project root so loose relative paths resolve reliably.
+    pub fn set_project_root(&mut self, root: Option<PathBuf>) {
+        self.project_root = root;
+        self.loaded_gi = None;
     }
 
     /// 给 Game view 挂上用户项目模块的驱动器（Scene view 不跑项目代码）。
     pub fn attach_project_module(&mut self, root: &Path) {
+        self.project_root = Some(root.to_path_buf());
         if self.kind != ViewKind::Game || self.project.is_some() {
             return;
         }
@@ -232,10 +245,6 @@ impl EngineHost {
 
     pub fn kind(&self) -> ViewKind {
         self.kind
-    }
-
-    pub fn is_loaded(&self) -> bool {
-        self.scene_loaded
     }
 
     pub fn input_mut(&mut self) -> &mut InputManager {
@@ -345,10 +354,6 @@ impl EngineHost {
         Some([sprite.size[0] as f32, sprite.size[1] as f32])
     }
 
-    pub fn world_mut(&mut self) -> &mut World {
-        self.engine.world_mut()
-    }
-
     pub fn world(&self) -> &World {
         self.engine.world()
     }
@@ -364,10 +369,6 @@ impl EngineHost {
         if let Some(entity) = entity {
             world.remove::<prism_engine::scene::systems::terrain::TerrainData>(entity);
         }
-    }
-
-    pub fn entities(&self) -> &[Entity] {
-        &self.entities
     }
 
     /// 文档下标对应的 UI 屏幕矩形，以及它用来定位的父矩形（#429）。
@@ -465,6 +466,7 @@ impl EngineHost {
             .insert_resource(prism_engine::ui::ScreenSize::new(self.width, self.height));
 
         self.refresh_scene_environment();
+        self.refresh_scene_gi();
 
         let count = entities.len();
         self.entities = entities;
@@ -614,10 +616,6 @@ impl EngineHost {
         self.paused = paused;
     }
 
-    pub fn is_paused(&self) -> bool {
-        self.paused
-    }
-
     pub fn step(&mut self) {
         self.paused = true;
         self.step_pending = true;
@@ -657,6 +655,69 @@ impl EngineHost {
             log::warn!("set scene environment failed: {error:#}");
         }
         self.env_path = env_path;
+    }
+
+    /// Force-reload baked GI probe volumes from disk (e.g. after running GI Bake).
+    pub fn invalidate_gi_cache(&mut self) {
+        self.loaded_gi = None;
+        self.refresh_scene_gi();
+    }
+
+    fn resolve_gi_volume_path(&self, raw: Option<&str>) -> Option<PathBuf> {
+        let rel = raw
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("assets/gi/probe_volume.bin");
+        let path = PathBuf::from(rel);
+        if path.is_absolute() {
+            return Some(path);
+        }
+        let mut candidates = Vec::new();
+        if let Some(root) = self.project_root.as_ref() {
+            candidates.push(root.join(&path));
+            candidates.push(root.join("assets").join(&path));
+        }
+        candidates.push(path);
+        for candidate in &candidates {
+            if candidate.is_file() {
+                return Some(candidate.clone());
+            }
+        }
+        candidates.into_iter().next()
+    }
+
+    /// Synchronize scene `GiConfig` probe volume into `GraphRenderer` (when enabled).
+    fn refresh_scene_gi(&mut self) {
+        let gi = self
+            .engine
+            .world()
+            .query::<prism_scene::GiConfig>()
+            .next()
+            .map(|(_, cfg)| (cfg.enabled, cfg.volume.clone()));
+        let (enabled, raw_volume) = gi.unwrap_or((false, None));
+        let resolved = if enabled {
+            self.resolve_gi_volume_path(raw_volume.as_deref())
+        } else {
+            None
+        };
+        let mtime = resolved
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()));
+        let key = (resolved.clone(), mtime, enabled);
+        if self.loaded_gi.as_ref() == Some(&key) {
+            return;
+        }
+        if enabled {
+            if let Some(ref path) = resolved {
+                if path.is_file() {
+                    let loaded = self.renderer.load_probe_volume_file(path, None);
+                    if loaded {
+                        log::info!("editor host loaded GI probe volume: {}", path.display());
+                    }
+                }
+            }
+        }
+        self.loaded_gi = Some(key);
     }
 
     /// 执行项目代码请求的换场（#482）。在 tick 的引擎 update 之后调用。
@@ -701,6 +762,7 @@ impl EngineHost {
         self.asset_resolver
             .forget_missing_entities(self.engine.world_mut());
         self.refresh_scene_environment();
+        self.refresh_scene_gi();
         self.pump_assets();
     }
 
@@ -1058,13 +1120,6 @@ impl EngineHost {
         self.renderer.copy_offscreen_to_readback()?;
         let pixels = self.renderer.readback_pixels()?;
         prism_render::screenshot::save_rgba_png(path, extent.width, extent.height, &pixels, None)
-    }
-
-    pub fn shutdown(&mut self) {
-        // 项目 session 必须先于引擎销毁：模块回调借用了宿主世界。
-        self.project = None;
-        self.engine.pre_shutdown();
-        self.engine.post_shutdown();
     }
 }
 

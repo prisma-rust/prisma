@@ -54,124 +54,137 @@ pub fn component_card_with_assets(
     presets: &[String],
 ) {
     egui::Frame::group(ui.style())
-        .inner_margin(egui::Margin::symmetric(6, 4))
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .corner_radius(egui::CornerRadius::same(2))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(component.display_name())
-                        .strong()
-                        .size(12.0),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button(icons::X)
-                        .on_hover_text("Remove Component")
-                        .clicked()
-                    {
-                        actions.push(CardAction::Remove(component.name.clone()));
-                    }
-                    // 组件顺序是文档的一部分（#512）：这两个箭头走一次撤销步。
-                    if ui
-                        .small_button(icons::CARET_DOWN)
-                        .on_hover_text("Move Down")
-                        .clicked()
-                    {
-                        actions.push(CardAction::MoveDown(component.name.clone()));
-                    }
-                    if ui
-                        .small_button(icons::CARET_UP)
-                        .on_hover_text("Move Up")
-                        .clicked()
-                    {
-                        actions.push(CardAction::MoveUp(component.name.clone()));
-                    }
-                    if ui
-                        .small_button(icons::COPY)
-                        .on_hover_text("Copy Component")
-                        .clicked()
-                    {
-                        actions.push(CardAction::Copy(component.name.clone()));
-                    }
-                    // `…` 菜单（#418）：Copy / Paste Values / 顺序 / Reset / Remove。
-                    // Paste 的启用状态由调用方在应用时判断（剪贴板可能不是这个类型）。
-                    ui.menu_button(icons::DOTS_THREE, |ui| {
-                        if ui.button("Copy Component").clicked() {
-                            actions.push(CardAction::Copy(component.name.clone()));
-                            ui.close();
-                        }
-                        if ui.button("Paste Values").clicked() {
-                            actions.push(CardAction::Paste(component.name.clone()));
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Move Up").clicked() {
-                            actions.push(CardAction::MoveUp(component.name.clone()));
-                            ui.close();
-                        }
-                        if ui.button("Move Down").clicked() {
-                            actions.push(CardAction::MoveDown(component.name.clone()));
-                            ui.close();
-                        }
-                        ui.separator();
-                        // Reset 写回 schema 的 defaultJson（整份组件 = 一个撤销步）。
-                        let default = component.default_json.clone();
-                        if ui
-                            .add_enabled(default.is_some(), egui::Button::new("Reset"))
-                            .on_hover_text("Restore every field to the schema default")
-                            .clicked()
-                        {
-                            if let Some(default) = default {
-                                set("", default);
+            egui::Frame::new()
+                .fill(ui.visuals().faint_bg_color)
+                .inner_margin(egui::Margin::symmetric(6, 3))
+                .corner_radius(egui::CornerRadius::same(2))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(component.display_name())
+                                .strong()
+                                .size(12.0),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .small_button(icons::X)
+                                .on_hover_text("Remove Component")
+                                .clicked()
+                            {
+                                actions.push(CardAction::Remove(component.name.clone()));
                             }
-                            ui.close();
-                        }
-                        ui.separator();
-                        // 组件预设（#418）：保存当前值 / 套用已有预设。
-                        ui.menu_button("Presets", |ui| {
-                            ui.menu_button("Save Preset…", |ui| {
-                                let id = egui::Id::new(("preset-name", component.name.as_str()));
-                                let mut name = ui
-                                    .data(|data| data.get_temp::<String>(id))
-                                    .unwrap_or_default();
-                                if ui.text_edit_singleline(&mut name).changed() {
-                                    ui.data_mut(|data| data.insert_temp(id, name.clone()));
+                            // 组件顺序是文档的一部分（#512）：这两个箭头走一次撤销步。
+                            if ui
+                                .small_button(icons::CARET_DOWN)
+                                .on_hover_text("Move Down")
+                                .clicked()
+                            {
+                                actions.push(CardAction::MoveDown(component.name.clone()));
+                            }
+                            if ui
+                                .small_button(icons::CARET_UP)
+                                .on_hover_text("Move Up")
+                                .clicked()
+                            {
+                                actions.push(CardAction::MoveUp(component.name.clone()));
+                            }
+                            if ui
+                                .small_button(icons::COPY)
+                                .on_hover_text("Copy Component")
+                                .clicked()
+                            {
+                                actions.push(CardAction::Copy(component.name.clone()));
+                            }
+                            // `…` 菜单（#418）：Copy / Paste Values / 顺序 / Reset / Remove。
+                            // Paste 的启用状态由调用方在应用时判断（剪贴板可能不是这个类型）。
+                            ui.menu_button(icons::DOTS_THREE, |ui| {
+                                if ui.button("Copy Component").clicked() {
+                                    actions.push(CardAction::Copy(component.name.clone()));
+                                    ui.close();
                                 }
-                                let trimmed = name.trim().to_string();
+                                if ui.button("Paste Values").clicked() {
+                                    actions.push(CardAction::Paste(component.name.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button("Move Up").clicked() {
+                                    actions.push(CardAction::MoveUp(component.name.clone()));
+                                    ui.close();
+                                }
+                                if ui.button("Move Down").clicked() {
+                                    actions.push(CardAction::MoveDown(component.name.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                // Reset 写回 schema 的 defaultJson（整份组件 = 一个撤销步）。
+                                let default = component.default_json.clone();
                                 if ui
-                                    .add_enabled(!trimmed.is_empty(), egui::Button::new("Save"))
+                                    .add_enabled(default.is_some(), egui::Button::new("Reset"))
+                                    .on_hover_text("Restore every field to the schema default")
                                     .clicked()
                                 {
-                                    actions.push(CardAction::SavePreset {
-                                        component: component.name.clone(),
-                                        name: trimmed,
-                                        value: value.clone(),
+                                    if let Some(default) = default {
+                                        set("", default);
+                                    }
+                                    ui.close();
+                                }
+                                ui.separator();
+                                // 组件预设（#418）：保存当前值 / 套用已有预设。
+                                ui.menu_button("Presets", |ui| {
+                                    ui.menu_button("Save Preset…", |ui| {
+                                        let id =
+                                            egui::Id::new(("preset-name", component.name.as_str()));
+                                        let mut name = ui
+                                            .data(|data| data.get_temp::<String>(id))
+                                            .unwrap_or_default();
+                                        if ui.text_edit_singleline(&mut name).changed() {
+                                            ui.data_mut(|data| data.insert_temp(id, name.clone()));
+                                        }
+                                        let trimmed = name.trim().to_string();
+                                        if ui
+                                            .add_enabled(
+                                                !trimmed.is_empty(),
+                                                egui::Button::new("Save"),
+                                            )
+                                            .clicked()
+                                        {
+                                            actions.push(CardAction::SavePreset {
+                                                component: component.name.clone(),
+                                                name: trimmed,
+                                                value: value.clone(),
+                                            });
+                                            ui.data_mut(|data| data.remove::<String>(id));
+                                            ui.close();
+                                        }
                                     });
-                                    ui.data_mut(|data| data.remove::<String>(id));
+                                    if presets.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new("no presets").weak().size(10.0),
+                                        );
+                                    } else {
+                                        for preset in presets {
+                                            if ui.button(preset).clicked() {
+                                                actions.push(CardAction::ApplyPreset {
+                                                    component: component.name.clone(),
+                                                    name: preset.clone(),
+                                                });
+                                                ui.close();
+                                            }
+                                        }
+                                    }
+                                });
+                                if ui.button("Remove Component").clicked() {
+                                    actions.push(CardAction::Remove(component.name.clone()));
                                     ui.close();
                                 }
                             });
-                            if presets.is_empty() {
-                                ui.label(egui::RichText::new("no presets").weak().size(10.0));
-                            } else {
-                                for preset in presets {
-                                    if ui.button(preset).clicked() {
-                                        actions.push(CardAction::ApplyPreset {
-                                            component: component.name.clone(),
-                                            name: preset.clone(),
-                                        });
-                                        ui.close();
-                                    }
-                                }
-                            }
                         });
-                        if ui.button("Remove Component").clicked() {
-                            actions.push(CardAction::Remove(component.name.clone()));
-                            ui.close();
-                        }
                     });
                 });
-            });
-            ui.separator();
+            ui.add_space(3.0);
 
             let fields = component.fields.clone();
             for field in &fields {
@@ -537,16 +550,7 @@ pub fn number_parser(text: &str) -> Option<f64> {
     prism_editor_core::expr::parse_number_or_expression(text)
 }
 
-/// 画一个可拖动的字段标签，返回**这一帧**拖动产生的增量（已按 `speed` 与修饰键换算）。
-///
-/// Unity 的 `EditorGUIUtility.DragZoneRect`：把数值字段左边的文字变成拖动热区，
-/// 左右拖就能连续调值，不用去够右边那个小把手（#479）。按住 Shift 精调（×0.1），
-/// 按住 Alt 粗调（×10）。
-pub fn drag_label(ui: &mut Ui, text: &str, speed: f32) -> f32 {
-    let response = ui
-        .add(egui::Label::new(egui::RichText::new(text).size(11.0)).sense(egui::Sense::drag()))
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-        .on_hover_text("Drag to change");
+fn drag_delta_from_response(ui: &Ui, response: &egui::Response, speed: f32) -> f32 {
     if !response.dragged() {
         return 0.0;
     }
@@ -562,6 +566,85 @@ pub fn drag_label(ui: &mut Ui, text: &str, speed: f32) -> f32 {
         delta *= 10.0;
     }
     delta * speed
+}
+
+/// Unity-inspired axis pill color (`X` red, `Y` green, `Z` blue, `W` amber).
+pub fn axis_badge_color(axis: usize) -> egui::Color32 {
+    match axis {
+        0 => egui::Color32::from_rgb(218, 86, 82),
+        1 => egui::Color32::from_rgb(96, 192, 86),
+        2 => egui::Color32::from_rgb(78, 144, 232),
+        _ => egui::Color32::from_rgb(214, 172, 82),
+    }
+}
+
+/// Draw a compact, color-coded scrubbable axis badge (`X` / `Y` / `Z` / `W`).
+pub fn scrubbable_axis_badge(
+    ui: &mut Ui,
+    label: &str,
+    axis: usize,
+    value: &mut f32,
+    speed: f32,
+) -> bool {
+    let accent = axis_badge_color(axis);
+    let desired = egui::vec2(14.0, 17.0);
+    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.dragged() || response.hovered() {
+            accent
+        } else {
+            accent.linear_multiply(0.75)
+        };
+        ui.painter().rect_filled(rect, 2.0_f32, fill);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::monospace(9.5),
+            egui::Color32::from_rgb(18, 20, 24),
+        );
+    }
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text("Drag to adjust (Shift=fine, Alt=fast)");
+    let delta = drag_delta_from_response(ui, &response, speed);
+    if delta == 0.0 {
+        return false;
+    }
+    *value += delta;
+    true
+}
+
+/// 画一个可拖动的字段标签，返回**这一帧**拖动产生的增量（已按 `speed` 与修饰键换算）。
+///
+/// Unity 的 `EditorGUIUtility.DragZoneRect`：把数值字段左边的文字变成拖动热区，
+/// 左右拖就能连续调值，不用去够右边那个小把手（#479）。按住 Shift 精调（×0.1），
+/// 按住 Alt 粗调（×10）。
+pub fn drag_label(ui: &mut Ui, text: &str, speed: f32) -> f32 {
+    let response = ui
+        .add(egui::Label::new(egui::RichText::new(text).size(11.0)).sense(egui::Sense::drag()))
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text("Drag to change");
+    drag_delta_from_response(ui, &response, speed)
+}
+
+/// Draw a fixed-width scrubbable label so inspector rows stay horizontally aligned.
+pub fn aligned_scrubbable_label(
+    ui: &mut Ui,
+    text: &str,
+    width: f32,
+    value: &mut f32,
+    speed: f32,
+) -> bool {
+    let mut changed = false;
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 18.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            changed = scrubbable_label(ui, text, value, speed);
+        },
+    );
+    changed
 }
 
 /// [`drag_label`] 的单值版本：拖动标签直接改 `value`，返回是否变了。
@@ -835,13 +918,19 @@ fn field_row_at(
                 }
                 let _ = scratch;
                 for (axis, item) in values.iter_mut().enumerate() {
+                    let axis_name = ["X", "Y", "Z", "W"].get(axis).copied().unwrap_or("");
+                    let badge_changed = if !axis_name.is_empty() && len >= 2 && len <= 4 {
+                        scrubbable_axis_badge(ui, axis_name, axis, item, 0.01)
+                    } else {
+                        false
+                    };
                     let response = ui.add(
                         egui::DragValue::new(item)
                             .speed(0.01)
                             .custom_parser(number_parser),
                     );
                     field_context_menu(&response, &name, value, set);
-                    if response.changed() {
+                    if badge_changed || response.changed() {
                         let mut next = value.clone();
                         if let Some(array) = next.as_array_mut() {
                             if let Some(slot) = array.get_mut(axis) {
@@ -866,18 +955,24 @@ fn field_row_at(
             ui.horizontal(|ui| {
                 ui.label(label);
                 for axis in 0..3 {
+                    let badge_changed = scrubbable_axis_badge(
+                        ui,
+                        ["X", "Y", "Z"][axis],
+                        axis,
+                        &mut degrees[axis],
+                        0.5,
+                    );
                     let response = ui
                         .add(
                             egui::DragValue::new(&mut degrees[axis])
                                 .speed(0.5)
                                 .max_decimals(2)
                                 .suffix("°")
-                                .prefix(["X ", "Y ", "Z "][axis])
                                 .custom_parser(number_parser),
                         )
                         .on_hover_text("Type an expression: 90/2, 45+15");
                     field_context_menu(&response, &name, value, set);
-                    if response.changed() {
+                    if badge_changed || response.changed() {
                         let quat = vm::euler_degrees_to_quat(degrees);
                         set(
                             &name,

@@ -10,12 +10,16 @@
 //! 静止的视口零 GPU 工作（保留上一帧纹理）。
 
 use std::collections::HashSet;
-use std::time::Instant;
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime};
 
 use ash::vk;
 use egui::{Align, Layout, Rect, Sense, Vec2};
 use egui_ash::ImageRegistry;
-use prism_editor_core::{viewport_math as vm, SelectMode, TransformJson, Workspace};
+use prism_editor_core::{
+    emit_prt_probe_gizmos, unit_ring_points, viewport_math as vm, GizmoCommand, GizmoContext,
+    GizmoFilter, GizmoRegistry, PrtProbeVolume, SelectMode, TransformJson, Workspace,
+};
 use prism_engine::input::{ElementState, KeyCode, MouseButton};
 use prism_engine::scene::systems::terrain::{Heightfield, SculptMode};
 use serde_json::Value;
@@ -104,6 +108,7 @@ fn drag_translate_step(
 }
 
 /// 组件图标是否显示（#416）：相机 / 光源可以各自关掉，互不影响。
+#[allow(dead_code)]
 fn icon_visible(workspace: &Workspace, is_camera: bool, is_light: bool) -> bool {
     (is_camera && workspace.show_camera_icons) || (is_light && workspace.show_light_icons)
 }
@@ -665,6 +670,9 @@ pub struct ViewportState {
     pub sculpt: bool,
     sculpt_last: Option<Instant>,
     gizmo: Option<GizmoDrag>,
+    hovered_gizmo_axis: Option<usize>,
+    gizmo_registry: GizmoRegistry,
+    probe_volume_cache: Option<(PathBuf, Option<SystemTime>, Option<PrtProbeVolume>)>,
     ui_drag: Option<UiAnchorDrag>,
     /// UI 锚点拖动时只写 anchors，不补偿 margin / 宽高（#429 raw mode）。
     pub raw_ui_edit: bool,
@@ -725,6 +733,9 @@ impl ViewportState {
             sculpt: false,
             sculpt_last: None,
             gizmo: None,
+            hovered_gizmo_axis: None,
+            gizmo_registry: GizmoRegistry::with_builtins(),
+            probe_volume_cache: None,
             ui_drag: None,
             raw_ui_edit: false,
             orbit_last_pos: None,
@@ -745,6 +756,86 @@ impl ViewportState {
 
     pub fn flying_camera(&self) -> bool {
         self.flying_camera
+    }
+
+    /// Mutable access to the Unity-style component gizmo drawer registry.
+    #[allow(dead_code)]
+    pub fn gizmo_registry_mut(&mut self) -> &mut GizmoRegistry {
+        &mut self.gizmo_registry
+    }
+
+    /// Clear any cached CPU PRT probe volume so the next frame reloads from disk.
+    pub fn invalidate_probe_cache(&mut self) {
+        self.probe_volume_cache = None;
+    }
+
+    /// Currently cached PRT probe volume loaded for Scene View visualization.
+    pub fn cached_probe_volume(&self) -> Option<&PrtProbeVolume> {
+        self.probe_volume_cache
+            .as_ref()
+            .and_then(|entry| entry.2.as_ref())
+    }
+
+    fn resolve_probe_volume_path(workspace: &Workspace) -> Option<PathBuf> {
+        const GI: &str = "prism_engine::scene::GiConfig";
+        let mut declared: Option<String> = None;
+        for entity in &workspace.document().doc.entities {
+            if !entity.active() {
+                continue;
+            }
+            if let Some(cfg) = entity.component(GI) {
+                let path = cfg
+                    .get("volume")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                if cfg.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+                    declared = path.or_else(|| Some("assets/gi/probe_volume.bin".to_string()));
+                    break;
+                }
+                if declared.is_none() {
+                    declared = path;
+                }
+            }
+        }
+        let rel = declared.unwrap_or_else(|| "assets/gi/probe_volume.bin".to_string());
+        let p = PathBuf::from(&rel);
+        if p.is_absolute() {
+            return p.is_file().then_some(p);
+        }
+        let mut candidates = Vec::new();
+        if let Some(root) = workspace.project_root.as_ref() {
+            candidates.push(root.join(&p));
+            candidates.push(root.join("assets").join(&p));
+        }
+        candidates.push(p);
+        candidates.into_iter().find(|c| c.is_file())
+    }
+
+    fn ensure_probe_volume(&mut self, workspace: &Workspace) -> Option<&PrtProbeVolume> {
+        let Some(path) = Self::resolve_probe_volume_path(workspace) else {
+            self.probe_volume_cache = None;
+            return None;
+        };
+        let mtime = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        let cache_hit =
+            self.probe_volume_cache
+                .as_ref()
+                .is_some_and(|(cached_path, cached_mtime, _)| {
+                    cached_path == &path && *cached_mtime == mtime
+                });
+        if !cache_hit {
+            let parsed = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| PrtProbeVolume::from_bytes(&bytes).ok());
+            self.probe_volume_cache = Some((path, mtime, parsed));
+        }
+        self.probe_volume_cache
+            .as_ref()
+            .and_then(|entry| entry.2.as_ref())
     }
 
     /// 把 egui 的键盘 / 鼠标状态转成引擎 `InputManager` 事件。
@@ -1399,9 +1490,28 @@ impl ViewportState {
             }
         }
 
-        // 3) gizmo / 选中标记。
+        // 3) gizmo / selection overlays.
         let mut document_changed = false;
         let frame = vm::camera_frame(&workspace.camera);
+        let alt = ui.input(|input| input.modifiers.alt);
+        let local_of = |pos: egui::Pos2| (pos.x - rect.min.x, pos.y - rect.min.y);
+        let sculpting = self.kind() == ViewKind::Scene && self.sculpt && !alt;
+        if self.kind() == ViewKind::Scene {
+            if let Some(drag) = self.gizmo.as_ref() {
+                self.hovered_gizmo_axis = Some(drag.axis);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            } else if !sculpting && !alt {
+                self.hovered_gizmo_axis = response.hover_pos().and_then(|pos| {
+                    self.gizmo_hit_at(workspace, &frame, rect, local_of(pos))
+                        .map(|(axis, _, _)| axis)
+                });
+                if self.hovered_gizmo_axis.is_some() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
+            } else {
+                self.hovered_gizmo_axis = None;
+            }
+        }
         let mut icon_hits: Vec<(usize, egui::Pos2)> = Vec::new();
         if self.kind() == ViewKind::Scene {
             // 选中描边画在图标 / gizmo 之下：它属于对象本身，不该盖住手柄。
@@ -1429,9 +1539,6 @@ impl ViewportState {
         //    · LMB 拖空白 → 框选
         //    · Alt+LMB / RMB / MMB 拖 → 轨道
         //    · 滚轮 → 缩放；双击 → 聚焦选中项
-        let alt = ui.input(|input| input.modifiers.alt);
-        let local_of = |pos: egui::Pos2| (pos.x - rect.min.x, pos.y - rect.min.y);
-        let sculpting = self.kind() == ViewKind::Scene && self.sculpt && !alt;
 
         // Terrain 笔刷：左键拖动时用相机射线命中选中地形的 `.raw`，改完让
         // 引擎丢掉 `TerrainData`，下一帧从磁盘重建网格（#517）。
@@ -1961,7 +2068,7 @@ impl ViewportState {
                 let (Some(from), Some(to)) = (screen[*parent], screen[*child]) else {
                     continue;
                 };
-                painter.line_segment([from, to], egui::Stroke::new(1.6, bone));
+                painter.line_segment([from, to], egui::Stroke::new(1.6_f32, bone));
             }
             for (index, point) in screen.iter().enumerate() {
                 let Some(point) = point else {
@@ -2133,291 +2240,574 @@ impl ViewportState {
         }
     }
 
-    /// 引擎的 SceneView Gizmos：相机画视锥、光源画图标与范围。
-    ///
-    /// 引擎只画实体本身（网格 / 光栅化结果），编辑器侧的「组件图标」由 egui 覆盖层
-    /// 画在视口图像上：世界坐标 → 屏幕坐标用和点选同一套 `vm::project`。
+    /// SceneView Gizmos executed through [`GizmoRegistry`] plus PRT probe visualization.
     fn draw_component_icons(
-        &self,
+        &mut self,
         painter: &egui::Painter,
         rect: Rect,
         workspace: &Workspace,
         frame: &vm::CameraFrame,
     ) -> Vec<(usize, egui::Pos2)> {
-        use egui::Color32;
-
-        const CAMERA: &str = "prism_engine::scene::Camera";
-        const LIGHT: &str = "prism_engine::scene::Light";
-        const POINT: &str = "prism_engine::scene::PointLight";
-        const SPOT: &str = "prism_engine::scene::SpotLight";
-        const DIRECTIONAL: &str = "prism_engine::scene::DirectionalLight";
-
-        fn number(
-            entity: &prism_editor_core::EntityJson,
-            component: &str,
-            field: &str,
-        ) -> Option<f32> {
-            entity
-                .component(component)
-                .and_then(|value| value.get(field))
-                .and_then(|value| value.as_f64())
-                .map(|value| value as f32)
-        }
-        fn flag(entity: &prism_editor_core::EntityJson, component: &str, field: &str) -> bool {
-            entity
-                .component(component)
-                .and_then(|value| value.get(field))
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false)
-        }
-        fn color(entity: &prism_editor_core::EntityJson, component: &str, alpha: u8) -> Color32 {
-            let channel = |index: usize| {
-                entity
-                    .component(component)
-                    .and_then(|value| value.get("color"))
-                    .and_then(|value| value.get(index))
-                    .and_then(|value| value.as_f64())
-                    .unwrap_or(1.0)
-                    .clamp(0.0, 1.0) as f32
-            };
-            // 场景里的光是线性 RGB，图标按 sRGB 近似，暗光也保持可见。
-            let to_srgb = |c: f32| (c.max(0.05).powf(1.0 / 2.2) * 255.0).min(255.0) as u8;
-            Color32::from_rgba_unmultiplied(
-                to_srgb(channel(0)),
-                to_srgb(channel(1)),
-                to_srgb(channel(2)),
-                alpha,
-            )
-        }
-
         let doc = &workspace.document().doc;
         let (width, height) = (rect.width(), rect.height());
-        let world_len = vm::gizmo_world_length(&workspace.camera, rect.height());
+        let world_len = vm::gizmo_world_length(&workspace.camera, height);
+        let aspect = if width > 0.0 && height > 0.0 {
+            width / height
+        } else {
+            16.0 / 9.0
+        };
+        let hidden_entities = workspace.hidden_entity_ids();
+
+        let mut gizmos = GizmoContext::new();
+        let filter = GizmoFilter {
+            show_cameras: workspace.show_camera_icons,
+            show_lights: workspace.show_light_icons,
+            show_colliders: workspace.show_collider_gizmos,
+            show_audio: workspace.show_audio_gizmos,
+            prt: &workspace.prt_gizmos,
+        };
+        self.gizmo_registry.collect_scene(
+            doc,
+            &workspace.selection,
+            &hidden_entities,
+            None,
+            aspect,
+            world_len,
+            &filter,
+            &mut gizmos,
+        );
+
+        let should_load_prt = workspace.prt_gizmos.enabled
+            || workspace.selection.iter().any(|&idx| {
+                doc.entities
+                    .get(idx)
+                    .is_some_and(|e| e.has_component("prism_engine::scene::GiConfig"))
+            });
+        if should_load_prt {
+            let prt_settings = workspace.prt_gizmos.clone();
+            let focus_world = workspace.gizmo_center_world();
+            if let Some(volume) = self.ensure_probe_volume(workspace) {
+                emit_prt_probe_gizmos(volume, &prt_settings, focus_world, frame.eye, &mut gizmos);
+            }
+        }
+
+        Self::render_gizmo_commands(painter, rect, frame, gizmos.commands())
+    }
+
+    fn render_gizmo_commands(
+        painter: &egui::Painter,
+        rect: Rect,
+        frame: &vm::CameraFrame,
+        commands: &[GizmoCommand],
+    ) -> Vec<(usize, egui::Pos2)> {
+        use egui::Color32;
+
+        let (width, height) = (rect.width(), rect.height());
+        let project_pt = |p: [f32; 3]| -> Option<egui::Pos2> {
+            vm::project(p, frame, width, height).map(|(x, y, _)| rect.min + egui::vec2(x, y))
+        };
+        let to_c32 = |c: [u8; 4]| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+        let unit_ring = unit_ring_points(24);
         let mut hits = Vec::new();
+        let mut sh_mesh = egui::Mesh::default();
 
-        for (index, entity) in doc.entities.iter().enumerate() {
-            if !entity.active() {
-                continue;
-            }
-            let is_camera = entity.has_component(CAMERA);
-            let is_light = entity.has_component(LIGHT)
-                || entity.has_component(POINT)
-                || entity.has_component(SPOT)
-                || entity.has_component(DIRECTIONAL);
-            if !is_camera && !is_light {
-                continue;
-            }
-            if !icon_visible(workspace, is_camera, is_light) {
-                continue;
-            }
-            let position = vm::world_position(doc, index);
-            let Some((sx, sy, _)) = vm::project(position, frame, width, height) else {
-                continue;
-            };
-            let center = rect.min + egui::vec2(sx, sy);
-            if !rect.expand(48.0).contains(center) {
-                continue;
-            }
-            let selected = workspace.selection.contains(&index);
-            let alpha = if selected { 255 } else { 180 };
-            hits.push((index, center));
-
-            let rotation = vm::world_rotation(doc, index);
-            let basis = vm::basis_from_quat(rotation);
-            // 相机 / 聚光灯都看 -Z（与引擎的相机约定一致）。
-            let forward = [-basis[2][0], -basis[2][1], -basis[2][2]];
-            let stroke =
-                |color: Color32| egui::Stroke::new(if selected { 1.6_f32 } else { 1.1_f32 }, color);
-
-            if is_camera {
-                let color = Color32::from_rgba_unmultiplied(150, 185, 225, alpha);
-                // 用相机自己的 near/far 和投影模式画取景范围：
-                // - 透视：near/far 两个矩形 + 四条侧棱；
-                // - 正交：同样两个矩形，但尺寸由 orthographic_size 决定（#601）。
-                let orthographic = flag(entity, CAMERA, "orthographic");
-                let near = number(entity, CAMERA, "near")
-                    .filter(|value| value.is_finite() && *value > 0.0)
-                    .unwrap_or(0.1);
-                let far = number(entity, CAMERA, "far")
-                    .filter(|value| value.is_finite() && *value > near)
-                    .unwrap_or(1000.0);
-                let aspect = if width > 0.0 && height > 0.0 {
-                    width / height
-                } else {
-                    16.0 / 9.0
-                };
-                let (near_hw, near_hh, far_hw, far_hh) = if orthographic {
-                    let half_height = number(entity, CAMERA, "orthographic_size")
-                        .filter(|value| value.is_finite() && *value > 0.0)
-                        .unwrap_or(5.0);
-                    (
-                        half_height * aspect,
-                        half_height,
-                        half_height * aspect,
-                        half_height,
-                    )
-                } else {
-                    let fov = number(entity, CAMERA, "fov_y_degrees")
-                        .filter(|value| value.is_finite() && *value > 0.0)
-                        .unwrap_or(60.0);
-                    let half_tan = (fov.to_radians() * 0.5).tan();
-                    (
-                        half_tan * near * aspect,
-                        half_tan * near,
-                        half_tan * far * aspect,
-                        half_tan * far,
-                    )
-                };
-                let corner = |distance: f32, hw: f32, hh: f32, du: f32, dv: f32| {
-                    let point = [
-                        position[0]
-                            + forward[0] * distance
-                            + basis[0][0] * hw * du
-                            + basis[1][0] * hh * dv,
-                        position[1]
-                            + forward[1] * distance
-                            + basis[0][1] * hw * du
-                            + basis[1][1] * hh * dv,
-                        position[2]
-                            + forward[2] * distance
-                            + basis[0][2] * hw * du
-                            + basis[1][2] * hh * dv,
+        for cmd in commands {
+            match cmd {
+                GizmoCommand::Line {
+                    start,
+                    end,
+                    color,
+                    width: w,
+                } => {
+                    if let (Some(a), Some(b)) = (project_pt(*start), project_pt(*end)) {
+                        painter.line_segment([a, b], egui::Stroke::new(*w, to_c32(*color)));
+                    }
+                }
+                GizmoCommand::WireBox {
+                    center,
+                    half_extents,
+                    rotation,
+                    color,
+                    width: w,
+                } => {
+                    Self::draw_wire_box_cmd(
+                        painter,
+                        &project_pt,
+                        *center,
+                        *half_extents,
+                        *rotation,
+                        egui::Stroke::new(*w, to_c32(*color)),
+                    );
+                }
+                GizmoCommand::WireSphere {
+                    center,
+                    radius,
+                    rotation,
+                    color,
+                    width: w,
+                } => {
+                    let q =
+                        glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3])
+                            .normalize();
+                    let ax = (q * glam::Vec3::X).to_array();
+                    let ay = (q * glam::Vec3::Y).to_array();
+                    let az = (q * glam::Vec3::Z).to_array();
+                    let stroke = egui::Stroke::new(*w, to_c32(*color));
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        *center,
+                        ax,
+                        ay,
+                        *radius,
+                        stroke,
+                    );
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        *center,
+                        ax,
+                        az,
+                        *radius,
+                        stroke,
+                    );
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        *center,
+                        ay,
+                        az,
+                        *radius,
+                        stroke,
+                    );
+                }
+                GizmoCommand::WireCapsule {
+                    center,
+                    radius,
+                    half_height,
+                    axis: _,
+                    rotation,
+                    color,
+                    width: w,
+                } => {
+                    let q =
+                        glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3])
+                            .normalize();
+                    let ax = (q * glam::Vec3::X).to_array();
+                    let ay = (q * glam::Vec3::Y).to_array();
+                    let az = (q * glam::Vec3::Z).to_array();
+                    let stroke = egui::Stroke::new(*w, to_c32(*color));
+                    let top = [
+                        center[0] + ay[0] * *half_height,
+                        center[1] + ay[1] * *half_height,
+                        center[2] + ay[2] * *half_height,
                     ];
-                    vm::project(point, frame, width, height)
-                        .map(|(x, y, _)| rect.min + egui::vec2(x, y))
-                };
-                let near_corners = [
-                    corner(near, near_hw, near_hh, -1.0, -1.0),
-                    corner(near, near_hw, near_hh, 1.0, -1.0),
-                    corner(near, near_hw, near_hh, 1.0, 1.0),
-                    corner(near, near_hw, near_hh, -1.0, 1.0),
-                ];
-                let far_corners = [
-                    corner(far, far_hw, far_hh, -1.0, -1.0),
-                    corner(far, far_hw, far_hh, 1.0, -1.0),
-                    corner(far, far_hw, far_hh, 1.0, 1.0),
-                    corner(far, far_hw, far_hh, -1.0, 1.0),
-                ];
-                for corners in [&near_corners, &far_corners] {
-                    for pair in 0..4 {
-                        if let (Some(a), Some(b)) = (corners[pair], corners[(pair + 1) % 4]) {
-                            painter.line_segment([a, b], stroke(color));
-                        }
-                    }
-                }
-                for pair in 0..4 {
-                    if let (Some(a), Some(b)) = (near_corners[pair], far_corners[pair]) {
-                        painter.line_segment([a, b], stroke(color));
-                    }
-                }
-                // 机身：一个小方框 + 镜头一侧的横线。
-                let body = egui::Rect::from_center_size(center, egui::vec2(11.0, 8.0));
-                painter.rect_filled(body, 0.0, Color32::from_rgba_unmultiplied(28, 34, 44, 220));
-                painter.rect_stroke(
-                    body,
-                    egui::CornerRadius::ZERO,
-                    stroke(color),
-                    egui::StrokeKind::Inside,
-                );
-                painter.line_segment(
-                    [body.right_top(), body.right_bottom()],
-                    stroke(Color32::from_rgba_unmultiplied(120, 200, 150, alpha)),
-                );
-                continue;
-            }
-
-            // ---- 光源 ----
-            let (light_type, component) = if entity.has_component(LIGHT) {
-                let kind = entity
-                    .component(LIGHT)
-                    .and_then(|value| value.get("light_type"))
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("Point");
-                let kind = match kind {
-                    "Directional" | "Sun" => 0,
-                    "Spot" => 2,
-                    _ => 1,
-                };
-                (kind, LIGHT)
-            } else if entity.has_component(DIRECTIONAL) {
-                (0, DIRECTIONAL)
-            } else if entity.has_component(SPOT) {
-                (2, SPOT)
-            } else {
-                (1, POINT)
-            };
-            let color = color(entity, component, alpha);
-            let radius = if selected { 7.5 } else { 6.0 };
-            match light_type {
-                0 => {
-                    // 平行光：中间太阳 + 8 条光线 + 指向。
-                    painter.circle_filled(center, radius, color);
-                    for step in 0..8 {
-                        let angle = step as f32 * std::f32::consts::TAU / 8.0;
-                        let dir = egui::vec2(angle.cos(), angle.sin());
-                        painter.line_segment(
-                            [center + dir * (radius + 2.0), center + dir * (radius + 6.0)],
-                            stroke(color),
-                        );
-                    }
-                    if let Some(tip) = vm::project(
-                        [
-                            position[0] + forward[0] * world_len * 1.2,
-                            position[1] + forward[1] * world_len * 1.2,
-                            position[2] + forward[2] * world_len * 1.2,
-                        ],
-                        frame,
-                        width,
-                        height,
-                    )
-                    .map(|(x, y, _)| rect.min + egui::vec2(x, y))
-                    {
-                        painter.line_segment([center + (tip - center) * 0.12, tip], stroke(color));
-                    }
-                }
-                2 => {
-                    // 聚光灯：圆 + 锥（外锥角的一半）。
-                    painter.circle_stroke(center, radius, stroke(color));
-                    let half = number(entity, component, "spot_angle")
-                        .or_else(|| {
-                            number(entity, component, "outer_cone_angle").map(f32::to_degrees)
-                        })
-                        .unwrap_or(60.0)
-                        .to_radians()
-                        * 0.5;
-                    let far = world_len * 1.2;
-                    for sign in [-1.0_f32, 1.0] {
-                        let (sin, cos) = (half * sign).sin_cos();
-                        let point = [
-                            position[0] + (forward[0] * cos + basis[0][0] * sin) * far,
-                            position[1] + (forward[1] * cos + basis[0][1] * sin) * far,
-                            position[2] + (forward[2] * cos + basis[0][2] * sin) * far,
+                    let bot = [
+                        center[0] - ay[0] * *half_height,
+                        center[1] - ay[1] * *half_height,
+                        center[2] - ay[2] * *half_height,
+                    ];
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        top,
+                        ax,
+                        az,
+                        *radius,
+                        stroke,
+                    );
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        bot,
+                        ax,
+                        az,
+                        *radius,
+                        stroke,
+                    );
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        top,
+                        ax,
+                        ay,
+                        *radius,
+                        stroke,
+                    );
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        bot,
+                        ax,
+                        ay,
+                        *radius,
+                        stroke,
+                    );
+                    for dir in [ax, [-ax[0], -ax[1], -ax[2]], az, [-az[0], -az[1], -az[2]]] {
+                        let a = [
+                            top[0] + dir[0] * *radius,
+                            top[1] + dir[1] * *radius,
+                            top[2] + dir[2] * *radius,
                         ];
-                        if let Some((x, y, _)) = vm::project(point, frame, width, height) {
-                            painter
-                                .line_segment([center, rect.min + egui::vec2(x, y)], stroke(color));
+                        let b = [
+                            bot[0] + dir[0] * *radius,
+                            bot[1] + dir[1] * *radius,
+                            bot[2] + dir[2] * *radius,
+                        ];
+                        if let (Some(pa), Some(pb)) = (project_pt(a), project_pt(b)) {
+                            painter.line_segment([pa, pb], stroke);
                         }
                     }
                 }
-                _ => {
-                    // 点光：圆 + 中心点 + 四个方向短线（引擎的点光图标）。
-                    painter.circle_stroke(center, radius, stroke(color));
-                    painter.circle_filled(center, 2.0, color);
-                    for dir in [
-                        egui::vec2(0.0, -1.0),
-                        egui::vec2(0.0, 1.0),
-                        egui::vec2(-1.0, 0.0),
-                        egui::vec2(1.0, 0.0),
-                    ] {
-                        painter.line_segment(
-                            [center + dir * (radius + 2.0), center + dir * (radius + 5.0)],
-                            stroke(color),
+                GizmoCommand::WireCone {
+                    apex,
+                    direction,
+                    length,
+                    half_angle_rad,
+                    basis_x,
+                    basis_y,
+                    color,
+                    width: w,
+                } => {
+                    let stroke = egui::Stroke::new(*w, to_c32(*color));
+                    let dist = *length * half_angle_rad.cos();
+                    let ring_r = *length * half_angle_rad.sin();
+                    let ring_center = [
+                        apex[0] + direction[0] * dist,
+                        apex[1] + direction[1] * dist,
+                        apex[2] + direction[2] * dist,
+                    ];
+                    Self::draw_wire_ring_cmd(
+                        painter,
+                        &project_pt,
+                        &unit_ring,
+                        ring_center,
+                        *basis_x,
+                        *basis_y,
+                        ring_r,
+                        stroke,
+                    );
+                    if let Some(p_apex) = project_pt(*apex) {
+                        for (du, dv) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                            let edge = [
+                                ring_center[0] + (basis_x[0] * du + basis_y[0] * dv) * ring_r,
+                                ring_center[1] + (basis_x[1] * du + basis_y[1] * dv) * ring_r,
+                                ring_center[2] + (basis_x[2] * du + basis_y[2] * dv) * ring_r,
+                            ];
+                            if let Some(pe) = project_pt(edge) {
+                                painter.line_segment([p_apex, pe], stroke);
+                            }
+                        }
+                    }
+                }
+                GizmoCommand::WireFrustum {
+                    origin,
+                    basis,
+                    near,
+                    far,
+                    near_half,
+                    far_half,
+                    color,
+                    width: w,
+                } => {
+                    let forward = [-basis[2][0], -basis[2][1], -basis[2][2]];
+                    let corner = |dist: f32, hw: f32, hh: f32, du: f32, dv: f32| {
+                        project_pt([
+                            origin[0]
+                                + forward[0] * dist
+                                + basis[0][0] * hw * du
+                                + basis[1][0] * hh * dv,
+                            origin[1]
+                                + forward[1] * dist
+                                + basis[0][1] * hw * du
+                                + basis[1][1] * hh * dv,
+                            origin[2]
+                                + forward[2] * dist
+                                + basis[0][2] * hw * du
+                                + basis[1][2] * hh * dv,
+                        ])
+                    };
+                    let near_c = [
+                        corner(*near, near_half[0], near_half[1], -1.0, -1.0),
+                        corner(*near, near_half[0], near_half[1], 1.0, -1.0),
+                        corner(*near, near_half[0], near_half[1], 1.0, 1.0),
+                        corner(*near, near_half[0], near_half[1], -1.0, 1.0),
+                    ];
+                    let far_c = [
+                        corner(*far, far_half[0], far_half[1], -1.0, -1.0),
+                        corner(*far, far_half[0], far_half[1], 1.0, -1.0),
+                        corner(*far, far_half[0], far_half[1], 1.0, 1.0),
+                        corner(*far, far_half[0], far_half[1], -1.0, 1.0),
+                    ];
+                    let stroke = egui::Stroke::new(*w, to_c32(*color));
+                    for ring in [&near_c, &far_c] {
+                        for pair in 0..4 {
+                            if let (Some(a), Some(b)) = (ring[pair], ring[(pair + 1) % 4]) {
+                                painter.line_segment([a, b], stroke);
+                            }
+                        }
+                    }
+                    for pair in 0..4 {
+                        if let (Some(a), Some(b)) = (near_c[pair], far_c[pair]) {
+                            painter.line_segment([a, b], stroke);
+                        }
+                    }
+                }
+                GizmoCommand::ScreenBadge {
+                    world_pos,
+                    icon,
+                    bg,
+                    border,
+                    fg,
+                    pickable,
+                    entity_index,
+                } => {
+                    let Some(center) = project_pt(*world_pos) else {
+                        continue;
+                    };
+                    if !rect.expand(48.0).contains(center) {
+                        continue;
+                    }
+                    if *pickable {
+                        if let Some(idx) = entity_index {
+                            hits.push((*idx, center));
+                        }
+                    }
+                    let chip = egui::Rect::from_center_size(center, egui::vec2(24.0, 16.0));
+                    painter.rect_filled(chip, 3.0_f32, to_c32(*bg));
+                    painter.rect_stroke(
+                        chip,
+                        3.0_f32,
+                        egui::Stroke::new(1.2_f32, to_c32(*border)),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        chip.center(),
+                        egui::Align2::CENTER_CENTER,
+                        icon.glyph(),
+                        egui::FontId::monospace(8.5),
+                        to_c32(*fg),
+                    );
+                }
+                GizmoCommand::SolidSphere {
+                    center,
+                    radius,
+                    fill,
+                    outline,
+                } => {
+                    let Some(sc) = project_pt(*center) else {
+                        continue;
+                    };
+                    let px_r = Self::project_sphere_radius(
+                        frame, *center, *radius, width, height, sc, rect.min,
+                    );
+                    if !rect.expand(px_r + 8.0).contains(sc) {
+                        continue;
+                    }
+                    painter.circle_filled(sc, px_r, to_c32(*fill));
+                    if let Some(out) = outline {
+                        painter.circle_stroke(sc, px_r, egui::Stroke::new(1.4_f32, to_c32(*out)));
+                    }
+                }
+                GizmoCommand::ShProbeSphere {
+                    center,
+                    radius,
+                    sh,
+                    exposure,
+                    outline,
+                } => {
+                    let Some(sc) = project_pt(*center) else {
+                        continue;
+                    };
+                    let px_r = Self::project_sphere_radius(
+                        frame, *center, *radius, width, height, sc, rect.min,
+                    );
+                    if !rect.expand(px_r + 8.0).contains(sc) {
+                        continue;
+                    }
+                    Self::append_sh_sphere_mesh(&mut sh_mesh, sc, px_r, frame, sh, *exposure);
+                    if let Some(out) = outline {
+                        painter.circle_stroke(
+                            sc,
+                            px_r + 1.0,
+                            egui::Stroke::new(1.5_f32, to_c32(*out)),
                         );
+                    }
+                }
+                GizmoCommand::WorldLabel {
+                    world_pos,
+                    text,
+                    color,
+                } => {
+                    if let Some(pos) = project_pt(*world_pos) {
+                        if rect.expand(32.0).contains(pos) {
+                            painter.text(
+                                pos,
+                                egui::Align2::LEFT_BOTTOM,
+                                text,
+                                egui::FontId::proportional(10.0),
+                                to_c32(*color),
+                            );
+                        }
                     }
                 }
             }
         }
+
+        if !sh_mesh.is_empty() {
+            painter.add(egui::Shape::mesh(sh_mesh));
+        }
+
         hits
+    }
+
+    fn project_sphere_radius(
+        frame: &vm::CameraFrame,
+        center: [f32; 3],
+        world_radius: f32,
+        width: f32,
+        height: f32,
+        screen_center: egui::Pos2,
+        origin: egui::Pos2,
+    ) -> f32 {
+        let edge_world = [
+            center[0] + frame.right[0] * world_radius,
+            center[1] + frame.right[1] * world_radius,
+            center[2] + frame.right[2] * world_radius,
+        ];
+        if let Some((ex, ey, _)) = vm::project(edge_world, frame, width, height) {
+            let edge = origin + egui::vec2(ex, ey);
+            return (edge - screen_center).length().clamp(4.0, 28.0);
+        }
+        8.0
+    }
+
+    fn append_sh_sphere_mesh(
+        mesh: &mut egui::Mesh,
+        center: egui::Pos2,
+        px_radius: f32,
+        frame: &vm::CameraFrame,
+        sh: &[[f32; 3]; 9],
+        exposure: f32,
+    ) {
+        let eval_color = |nx: f32, ny: f32, nz: f32| -> egui::Color32 {
+            let world_n = [
+                frame.right[0] * nx - frame.up[0] * ny - frame.forward[0] * nz,
+                frame.right[1] * nx - frame.up[1] * ny - frame.forward[1] * nz,
+                frame.right[2] * nx - frame.up[2] * ny - frame.forward[2] * nz,
+            ];
+            let irr = PrtProbeVolume::eval_sh9_irradiance(world_n, sh);
+            let rgb = PrtProbeVolume::irradiance_to_srgb8(irr, exposure);
+            egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+        };
+
+        const SEGS: usize = 12;
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(center, eval_color(0.0, 0.0, 1.0));
+
+        // Inner mid-latitude ring (r = 0.58 R) + outer rim ring (r = 1.0 R).
+        let r_mid = 0.58_f32;
+        let z_mid = (1.0 - r_mid * r_mid).sqrt();
+        for (ring_r, nz) in [(r_mid, z_mid), (1.0_f32, 0.08_f32)] {
+            for i in 0..SEGS {
+                let a = i as f32 * std::f32::consts::TAU / SEGS as f32;
+                let (sa, ca) = a.sin_cos();
+                let pos = center + egui::vec2(ca * px_radius * ring_r, sa * px_radius * ring_r);
+                mesh.colored_vertex(pos, eval_color(ca * ring_r, sa * ring_r, nz));
+            }
+        }
+
+        let inner_start = base + 1;
+        let outer_start = inner_start + SEGS as u32;
+        for i in 0..SEGS {
+            let next = (i + 1) % SEGS;
+            let i0 = inner_start + i as u32;
+            let i1 = inner_start + next as u32;
+            let o0 = outer_start + i as u32;
+            let o1 = outer_start + next as u32;
+            mesh.add_triangle(base, i0, i1);
+            mesh.add_triangle(i0, o0, o1);
+            mesh.add_triangle(i0, o1, i1);
+        }
+    }
+
+    fn draw_wire_ring_cmd(
+        painter: &egui::Painter,
+        project_pt: &impl Fn([f32; 3]) -> Option<egui::Pos2>,
+        unit_ring: &[[f32; 2]],
+        center: [f32; 3],
+        axis_u: [f32; 3],
+        axis_v: [f32; 3],
+        radius: f32,
+        stroke: egui::Stroke,
+    ) {
+        let mut prev = None;
+        let mut first = None;
+        for &[c, s] in unit_ring {
+            let p = [
+                center[0] + (axis_u[0] * c + axis_v[0] * s) * radius,
+                center[1] + (axis_u[1] * c + axis_v[1] * s) * radius,
+                center[2] + (axis_u[2] * c + axis_v[2] * s) * radius,
+            ];
+            let proj = project_pt(p);
+            if first.is_none() {
+                first = proj;
+            }
+            if let (Some(a), Some(b)) = (prev, proj) {
+                painter.line_segment([a, b], stroke);
+            }
+            prev = proj;
+        }
+        if let (Some(a), Some(b)) = (prev, first) {
+            painter.line_segment([a, b], stroke);
+        }
+    }
+
+    fn draw_wire_box_cmd(
+        painter: &egui::Painter,
+        project_pt: &impl Fn([f32; 3]) -> Option<egui::Pos2>,
+        center: [f32; 3],
+        half: [f32; 3],
+        rotation: [f32; 4],
+        stroke: egui::Stroke,
+    ) {
+        let q =
+            glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]).normalize();
+        let c = glam::Vec3::from_array(center);
+        let mut corners = [None; 8];
+        for (i, corner) in corners.iter_mut().enumerate() {
+            let sx = if i & 1 != 0 { half[0] } else { -half[0] };
+            let sy = if i & 2 != 0 { half[1] } else { -half[1] };
+            let sz = if i & 4 != 0 { half[2] } else { -half[2] };
+            let world = c + q * glam::Vec3::new(sx, sy, sz);
+            *corner = project_pt(world.to_array());
+        }
+        const EDGES: [(usize, usize); 12] = [
+            (0, 1),
+            (2, 3),
+            (4, 5),
+            (6, 7),
+            (0, 2),
+            (1, 3),
+            (4, 6),
+            (5, 7),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
+        ];
+        for (a, b) in EDGES {
+            if let (Some(pa), Some(pb)) = (corners[a], corners[b]) {
+                painter.line_segment([pa, pb], stroke);
+            }
+        }
     }
 
     fn draw_gizmo(
@@ -2435,17 +2825,30 @@ impl ViewportState {
         let origin = rect.min;
         let (width, height) = (rect.width(), rect.height());
         let colors = [
-            egui::Color32::from_rgb(232, 74, 74),
-            egui::Color32::from_rgb(110, 200, 80),
-            egui::Color32::from_rgb(80, 140, 235),
+            egui::Color32::from_rgb(235, 82, 82),
+            egui::Color32::from_rgb(108, 206, 86),
+            egui::Color32::from_rgb(84, 148, 240),
         ];
+        let highlight = egui::Color32::from_rgb(255, 214, 72);
         for axis in 0..3 {
             let active = self
                 .gizmo
                 .as_ref()
                 .map(|drag| drag.axis == axis)
                 .unwrap_or(false);
-            let width_px = if active { 3.5_f32 } else { 2.0_f32 };
+            let hovered = self.hovered_gizmo_axis == Some(axis);
+            let axis_color = if active || hovered {
+                highlight
+            } else {
+                colors[axis]
+            };
+            let width_px = if active {
+                3.6_f32
+            } else if hovered {
+                2.8_f32
+            } else {
+                2.1_f32
+            };
             match self.tool {
                 GizmoTool::Rotate => {
                     if let Some((cx, cy, radius)) = vm::ring_screen_radius_oriented(
@@ -2461,7 +2864,7 @@ impl ViewportState {
                             painter.circle_stroke(
                                 origin + egui::vec2(cx, cy),
                                 radius,
-                                egui::Stroke::new(width_px, colors[axis]),
+                                egui::Stroke::new(width_px, axis_color),
                             );
                         }
                     }
@@ -2479,16 +2882,30 @@ impl ViewportState {
                     };
                     let a = origin + egui::vec2(start.0, start.1);
                     let b = origin + egui::vec2(end.0, end.1);
-                    painter.line_segment([a, b], egui::Stroke::new(width_px, colors[axis]));
+                    painter.line_segment([a, b], egui::Stroke::new(width_px, axis_color));
                     if self.tool == GizmoTool::Scale {
-                        let half = if active { 5.0 } else { 4.0 };
-                        painter.rect_filled(
-                            egui::Rect::from_center_size(b, egui::vec2(half * 2.0, half * 2.0)),
-                            0.0,
-                            colors[axis],
+                        let half = if active || hovered { 5.2 } else { 4.2 };
+                        let cap =
+                            egui::Rect::from_center_size(b, egui::vec2(half * 2.0, half * 2.0));
+                        painter.rect_filled(cap, 1.5, axis_color);
+                        painter.rect_stroke(
+                            cap,
+                            1.5_f32,
+                            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(20, 22, 26)),
+                            egui::StrokeKind::Inside,
                         );
                     } else {
-                        painter.circle_filled(b, if active { 5.0 } else { 4.0 }, colors[axis]);
+                        let dir = (b - a).normalized();
+                        let perp = egui::vec2(-dir.y, dir.x);
+                        let len = if active || hovered { 10.5 } else { 8.5 };
+                        let side = if active || hovered { 4.5 } else { 3.6 };
+                        let tip = b + dir * 2.5;
+                        let base_center = tip - dir * len;
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![tip, base_center + perp * side, base_center - perp * side],
+                            axis_color,
+                            egui::Stroke::new(0.8_f32, egui::Color32::from_rgb(20, 22, 26)),
+                        ));
                     }
                 }
             }
