@@ -67,8 +67,8 @@ pub fn solve_pbik(joints: &mut [PbikJoint], effectors: &[PbikEffector], iteratio
                 continue;
             }
             let corr = (len - rest) / (len * w_sum);
-            for k in 0..3 {
-                let d = delta[k] * corr;
+            for (k, component) in delta.iter().enumerate() {
+                let d = component * corr;
                 joints[i].position[k] -= d * w_i;
                 joints[p].position[k] += d * w_p;
             }
@@ -91,9 +91,21 @@ mod tests {
     #[test]
     fn pbik_reaches_effector_and_preserves_bone_lengths() {
         let mut joints = vec![
-            PbikJoint { position: [0.0, 0.0, 0.0], parent: None, inv_mass: 0.0 },
-            PbikJoint { position: [0.0, 1.0, 0.0], parent: Some(0), inv_mass: 1.0 },
-            PbikJoint { position: [0.0, 2.0, 0.0], parent: Some(1), inv_mass: 1.0 },
+            PbikJoint {
+                position: [0.0, 0.0, 0.0],
+                parent: None,
+                inv_mass: 0.0,
+            },
+            PbikJoint {
+                position: [0.0, 1.0, 0.0],
+                parent: Some(0),
+                inv_mass: 1.0,
+            },
+            PbikJoint {
+                position: [0.0, 2.0, 0.0],
+                parent: Some(1),
+                inv_mass: 1.0,
+            },
         ];
         let effectors = [PbikEffector {
             joint_index: 2,

@@ -284,7 +284,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
         cameraPosition: [eye[0], eye[1], eye[2], 0.0],
         lightDirection: [0.4, 0.75, 0.5, 2.0],
         lightColor: [1.0, 0.95, 0.88, 0.3],
-        view: view,
+        view,
         lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],

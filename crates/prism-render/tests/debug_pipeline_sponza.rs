@@ -246,7 +246,7 @@ fn test_sponza_pipeline_debug_passes() {
         cameraPosition: [eye[0], eye[1], eye[2], 0.0],
         lightDirection: [0.2, 0.95, 0.0, 3.2],
         lightColor: [1.0, 0.96, 0.90, 0.1],
-        view: view,
+        view,
         lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],

@@ -38,7 +38,12 @@ pub struct EnemyEntity {
 }
 
 impl EnemyEntity {
-    pub fn new(id: impl Into<String>, position: [f32; 2], health: i32, behavior: EnemyBehavior) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        position: [f32; 2],
+        health: i32,
+        behavior: EnemyBehavior,
+    ) -> Self {
         Self {
             id: id.into(),
             position,

@@ -86,7 +86,6 @@ pub mod probe_loader;
 /// PRT64 cluster volume (`.prtbin`): order-7 SH transport vectors, 64-way tree.
 pub mod prt_runtime;
 pub mod prt_volume;
-pub mod rtxgi_suite;
 #[cfg(test)]
 mod prt_volume_tests;
 #[cfg(feature = "pathtrace")]
@@ -103,6 +102,7 @@ pub mod restir_gi;
 pub(crate) mod retire;
 pub mod rt_pass;
 pub mod rt_scheduler;
+pub mod rtxgi_suite;
 pub mod scene_scope;
 pub mod screenshot;
 pub mod shader;

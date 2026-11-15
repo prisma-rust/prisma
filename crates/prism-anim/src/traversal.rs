@@ -35,7 +35,11 @@ pub fn choose_traversal(probe: &TraversalProbe, speed: f32) -> TraversalAction {
     if probe.obstacle_height < 0.35 || probe.obstacle_height > 2.6 {
         return TraversalAction::None;
     }
-    if probe.obstacle_height <= 1.25 && probe.obstacle_depth <= 0.9 && probe.has_clear_landing && speed >= 2.0 {
+    if probe.obstacle_height <= 1.25
+        && probe.obstacle_depth <= 0.9
+        && probe.has_clear_landing
+        && speed >= 2.0
+    {
         return TraversalAction::Vault;
     }
     if probe.obstacle_height <= 1.25 {
@@ -48,7 +52,10 @@ pub fn choose_traversal(probe: &TraversalProbe, speed: f32) -> TraversalAction {
 }
 
 /// Compute MotionWarping targets for the chosen traversal action.
-pub fn compute_warp_targets(probe: &TraversalProbe, action: TraversalAction) -> Vec<MotionWarpTarget> {
+pub fn compute_warp_targets(
+    probe: &TraversalProbe,
+    action: TraversalAction,
+) -> Vec<MotionWarpTarget> {
     match action {
         TraversalAction::None => Vec::new(),
         TraversalAction::Vault => vec![
@@ -121,9 +128,7 @@ impl TraversalState {
         match self {
             TraversalState::Idle => {}
             TraversalState::Active {
-                elapsed,
-                duration,
-                ..
+                elapsed, duration, ..
             } => {
                 *elapsed += dt;
                 if *elapsed >= *duration {
@@ -157,11 +162,26 @@ mod tests {
 
     #[test]
     fn chooser_selects_expected_traversal_actions() {
-        assert_eq!(choose_traversal(&sample_probe(0.2, 0.5, true), 3.0), TraversalAction::None);
-        assert_eq!(choose_traversal(&sample_probe(1.0, 0.6, true), 3.0), TraversalAction::Vault);
-        assert_eq!(choose_traversal(&sample_probe(1.0, 1.5, true), 3.0), TraversalAction::MantleLow);
-        assert_eq!(choose_traversal(&sample_probe(1.8, 1.0, true), 1.0), TraversalAction::MantleHigh);
-        assert_eq!(choose_traversal(&sample_probe(2.4, 1.0, true), 1.0), TraversalAction::Climb);
+        assert_eq!(
+            choose_traversal(&sample_probe(0.2, 0.5, true), 3.0),
+            TraversalAction::None
+        );
+        assert_eq!(
+            choose_traversal(&sample_probe(1.0, 0.6, true), 3.0),
+            TraversalAction::Vault
+        );
+        assert_eq!(
+            choose_traversal(&sample_probe(1.0, 1.5, true), 3.0),
+            TraversalAction::MantleLow
+        );
+        assert_eq!(
+            choose_traversal(&sample_probe(1.8, 1.0, true), 1.0),
+            TraversalAction::MantleHigh
+        );
+        assert_eq!(
+            choose_traversal(&sample_probe(2.4, 1.0, true), 1.0),
+            TraversalAction::Climb
+        );
     }
 
     #[test]

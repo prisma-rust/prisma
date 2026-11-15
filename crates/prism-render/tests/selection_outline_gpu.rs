@@ -63,7 +63,7 @@ fn frame_data(view_proj: [[f32; 4]; 4], view: [[f32; 4]; 4]) -> FrameUBOData {
         cameraPosition: [0.0, 0.0, 3.0, 0.0],
         lightDirection: [0.3, 0.8, 0.5, 0.8],
         lightColor: [1.0, 0.98, 0.95, 0.25],
-        view: view,
+        view,
         lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
