@@ -27,10 +27,11 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
+    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
     match env {
-        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), layout),
+        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), cache, layout),
         None => IblResources::new_empty(context, command_pool, queue, layout),
     }
 }
@@ -41,9 +42,11 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
+    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
-    let _ = env; // 无 IBL 构建：忽略环境贴图，始终用中性立方体。
+    // 无 IBL 构建：忽略环境贴图与缓存根，始终用中性立方体。
+    let _ = (env, cache);
     IblResources::new_empty(context, command_pool, queue, layout)
 }
 use crate::managers::{
@@ -286,6 +289,10 @@ pub struct GraphRenderer {
     // 描述符 集合 handle stored in `forward_pass`. Explicitly destroyed
     // in `destroy()` so the device handle is valid during cleanup.
     ibl: IblResources,
+    /// Absolute root of the IBL disk cache, injected by the host. Defaults to
+    /// disabled: without a host-resolved directory there is no correct place to
+    /// write convolution output, so nothing is cached on disk.
+    ibl_cache: crate::ibl::IblCacheDir,
     /// Scene-level GI probe volume resources (set 5). Survives swapchain
     /// recreation; only rebuilt on scene/level change.
     scene_scope: SceneScope,
@@ -805,6 +812,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
+            ibl_cache: crate::ibl::IblCacheDir::disabled(),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -1070,11 +1078,14 @@ impl GraphRenderer {
 
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout (headless)")?;
+        // 构造期还没有宿主注入的缓存根：显式 disabled，真实缓存由
+        // `set_ibl_cache` + `set_environment` 建立。
         let ibl = make_ibl(
             context.clone(),
             runtime.command_pool,
             context.graphics_queue,
             env_bytes,
+            &crate::ibl::IblCacheDir::disabled(),
             ibl_ds_layout,
         )
         .context("create IBL resources (headless)")?;
@@ -1319,6 +1330,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
+            ibl_cache: crate::ibl::IblCacheDir::disabled(),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -1732,6 +1744,15 @@ impl GraphRenderer {
         self.ibl.descriptor_set_layout
     }
 
+    /// Point the IBL disk cache at `cache`.
+    ///
+    /// The root is resolved once by the host (typically from the executable
+    /// directory) and injected here; the renderer never derives it itself.
+    /// Takes effect on the next [`Self::set_environment`] call.
+    pub fn set_ibl_cache(&mut self, cache: crate::ibl::IblCacheDir) {
+        self.ibl_cache = cache;
+    }
+
     /// 按场景重建 IBL。`env_bytes = Some(hdr)` 跑完整 CPU 预卷积；
     /// `None` 重建为廉价中性空 IBL（与 `new_empty` 等价）。用于在「场景切换」
     /// 时按需构建/移除光照，而不在引擎启动期无条件加载 3D IBL/GI。
@@ -1755,6 +1776,7 @@ impl GraphRenderer {
             self.runtime.command_pool,
             self.runtime.context.graphics_queue,
             env_bytes,
+            &self.ibl_cache,
             self.ibl.descriptor_set_layout,
         )
         .context("rebuild IBL resources for scene")?;

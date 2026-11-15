@@ -176,6 +176,17 @@ pub fn render_thread_main(
             return;
         }
     };
+    // 运行期缓存根由宿主解析一次后注入：渲染层不认识 target/ 布局，
+    // 也不允许自己按 cwd 拼路径。解析失败（拿不到可执行文件目录）时
+    // 保持默认 disabled，只是每次重算 IBL 卷积。
+    match prism_engine::cache_paths::cache_dir(prism_engine::cache_paths::CacheKind::Ibl) {
+        Some(dir) => {
+            log::info!("IBL cache root: {}", dir.display());
+            renderer.set_ibl_cache(prism_render::ibl::IblCacheDir::new(dir));
+        }
+        None => log::warn!("IBL cache: executable directory unavailable; disk cache disabled"),
+    }
+
     shared.mark("renderer_built");
     log::info!("Render thread: renderer built");
 

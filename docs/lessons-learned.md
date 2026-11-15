@@ -546,7 +546,7 @@ gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经�
 
 #### 32.2 磁盘缓存设计
 
-**核心思路**：将 CPU 卷积结果缓存到 `assets/ibr/` 目录，下一步扩展启动跳过计算直接加载 f32 原始数据回 `Vec<f32>`，Vulkan 上传管线（f16 转换 + staging buffer + submit）保持不变。
+**核心思路**：将 CPU 卷积结果缓存到磁盘，下一步扩展启动跳过计算直接加载 f32 原始数据回 `Vec<f32>`，Vulkan 上传管线（f16 转换 + staging buffer + submit）保持不变。（缓存根后来统一到 `<exe dir>/cache/ibl/`，见本节末「缓存根」段落。）
 
 **缓存 key 方案**：
 
@@ -557,20 +557,26 @@ gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经�
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `assets/ibr/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, 独立于 HDR |
-| `assets/ibr/<hash>/cube_512.bin` | ~24 MB | 6×512×512×4 floats |
-| `assets/ibr/<hash>/irradiance_64.bin` | ~393 KB | 6×64×64×4 floats |
-| `assets/ibr/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
+| `<cache>/ibl/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, 独立于 HDR |
+| `<cache>/ibl/<hash>/cube_512.bin` | ~24 MB | 6×512×512×4 floats |
+| `<cache>/ibl/<hash>/irradiance_64.bin` | ~393 KB | 6×64×64×4 floats |
+| `<cache>/ibl/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
 | **总计** | **~28.5 MB** | 每 HDR 环境占 ~28MB 磁盘 |
 
-**实现位置**：仅在 `crates/prism-render/src/ibl.rs` 内新增 5 个辅助函数（`ensure_cache_dir` / `cache_path` / `env_content_hash` / `save_f32_cache` / `load_f32_cache`），不新增外部依赖（只用 `std::hash::DefaultHasher` + `std::fs`），不改动任何其他文件。
+**实现位置**：`crates/prism-render/src/ibl.rs` 内的 5 个辅助函数（`ensure_cache_dir` / `cache_path` / `env_content_hash` / `save_f32_cache` / `load_f32_cache`）。
+
+**缓存根（后续修正）**：最初缓存写死成相对工作目录的 `assets/ibr`，导致每个 crate / 工程目录各生成一份（实测仓库里同时存在 6 份、共 197 MB，命中率为 0）。
+现在缓存根由 `prism_engine::cache_paths` 统一解析为**可执行文件同目录下的 `cache/`**（即 `target/<profile>/cache/`，按类别分子目录 `ibl/` / `shader/` / `gi/`），经 `GraphRenderer::set_ibl_cache` 注入渲染层。
+
+`prism-render` 不依赖 `prism-engine`（依赖方向是 `engine → render`），所以走注入而不是直接调用；渲染层自己绝不拼路径。
+缓存也不再进 `assets/`：那是只读构建输入（装到 `Program Files` 后不可写，Android 上更在 APK 内）。
 
 #### 32.3 改动的权衡
 
 | 取舍 | 选择 | 理由 |
 |------|------|------|
 | 存储格式 | f32 原始数组（非 f16） | 写回时直接可用，不需转换；28MB 可接受 |
-| Hash 算法 | SipHash-1-3 而非 FNV/SHA | Rust std 内置，确定性，碰撞概率可忽略 |
+| Hash 算法 | FNV-1a 而非 `DefaultHasher` | `DefaultHasher` 的算法跨 Rust 版本不保证稳定，升级工具链会静默让全部缓存失效并留下孤儿目录；FNV-1a 与 `prism-reflect` 的 `TypeId` 同源 |
 | 缓存粒度 | 逐文件（9 个文件）而非单一大包 | 增量失效：换 HDR 只重建 env 相关，保留 BRDF LUT |
 | 加载时机 | 同步阻塞（startup） | 当前 IBL 必须就绪才能渲染第一帧；异步下一步扩展 PR |
 | 错误处理 | 任何 I/O 失败回退到重新计算 | 幂等：计算结果与缓存内容一致 |
