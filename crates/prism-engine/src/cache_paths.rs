@@ -29,7 +29,11 @@ use std::path::{Path, PathBuf};
 /// 缓存根目录名（可执行文件同目录下）。
 pub const CACHE_ROOT_DIR_NAME: &str = "cache";
 
-/// 测试二进制所在的子目录名：从这里上跳一层，与同 profile 的普通二进制共用缓存。
+/// Cargo 构建目录名：缓存根按它定位，确保落在可丢弃的产物目录里。
+const TARGET_DIR_NAME: &str = "target";
+
+/// Cargo 放测试二进制的子目录名（仅测试断言用）。
+#[cfg(test)]
 const TEST_BINARY_DIR_NAME: &str = "deps";
 
 /// 运行期缓存的类别。每类一个一级子目录，互不干扰，可各自整目录删除。
@@ -69,12 +73,26 @@ pub fn cache_dir(kind: CacheKind) -> Option<PathBuf> {
     Some(cache_root()?.join(kind.dir_name()))
 }
 
-/// 测试二进制在 `deps/` 下；上跳一层，让测试与同 profile 的普通二进制共用缓存。
+/// Cargo 的 profile 目录（`target/debug`、`target/release`）。
+///
+/// 可执行文件不一定直接躺在 profile 目录里：普通二进制在 `target/debug`，
+/// 测试二进制在 `target/debug/deps`，有些运行器还会再套一层哈希目录
+/// （`target/debug/deps/<hash>/`）。这些位置都应该共用同一份缓存，所以向上找
+/// 名为 `target` 的祖先，取它下面的第一段子目录名作为 profile。
+///
+/// 找不到 `target` 时退回可执行文件目录本身（安装后的发布包即属此列）。
 fn profile_dir(exe_dir: &Path) -> PathBuf {
-    if exe_dir.file_name().and_then(|name| name.to_str()) == Some(TEST_BINARY_DIR_NAME) {
-        if let Some(parent) = exe_dir.parent() {
-            return parent.to_path_buf();
+    let mut current = Some(exe_dir);
+    while let Some(dir) = current {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(TARGET_DIR_NAME) {
+            return exe_dir
+                .strip_prefix(dir)
+                .ok()
+                .and_then(|relative| relative.components().next())
+                .map(|first| dir.join(first))
+                .unwrap_or_else(|| dir.to_path_buf());
         }
+        current = dir.parent();
     }
     exe_dir.to_path_buf()
 }
@@ -90,18 +108,44 @@ mod tests {
             root.file_name().and_then(|name| name.to_str()),
             Some(CACHE_ROOT_DIR_NAME)
         );
-        // 测试二进制在 deps/ 下，缓存必须落在 profile 目录而不是 deps/ 里。
+        // 缓存必须落在 target/<profile>/ 下：可丢弃、随 cargo clean 一起消失。
+        // 测试二进制的实际层级随 cargo 版本和运行器而变，所以只断言「某个祖先是
+        // target」，不写死有几层。
+        let profile = root.parent().expect("profile dir");
+        assert!(
+            profile.ancestors().any(|dir| {
+                dir.file_name().and_then(|name| name.to_str()) == Some(TARGET_DIR_NAME)
+            }),
+            "cache root {:?} is not under a target/ directory",
+            root
+        );
+        // 并且绝不能落在 deps/ 里——那是测试二进制目录，不是共享 profile。
         assert_ne!(
-            root.parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str()),
+            profile.file_name().and_then(|name| name.to_str()),
             Some(TEST_BINARY_DIR_NAME)
         );
-        // 并且必须在 target/<profile>/ 下：可丢弃、随 cargo clean 一起消失。
-        let profile = root.parent().and_then(Path::parent).expect("profile dir");
+    }
+
+    #[test]
+    fn profile_dir_unwraps_nested_test_directories() {
+        // cargo 会把测试二进制放在 deps/ 下，有的运行器再套一层哈希目录。
+        let cases = [
+            ("/w/target/debug", "/w/target/debug"),
+            ("/w/target/debug/deps", "/w/target/debug"),
+            ("/w/target/debug/deps/ef4c05d3ab9ba736", "/w/target/debug"),
+            ("/w/target/release", "/w/target/release"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                profile_dir(Path::new(input)),
+                PathBuf::from(expected),
+                "profile_dir({input})"
+            );
+        }
+        // 不在 target/ 下时原样返回（安装后的发布包走这条路）。
         assert_eq!(
-            profile.file_name().and_then(|name| name.to_str()),
-            Some("target")
+            profile_dir(Path::new("/opt/game")),
+            PathBuf::from("/opt/game")
         );
     }
 
