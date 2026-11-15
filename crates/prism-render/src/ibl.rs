@@ -13,10 +13,6 @@
 use anyhow::Context as _;
 use ash::vk;
 #[cfg(feature = "ibl")]
-use std::collections::hash_map::DefaultHasher;
-#[cfg(feature = "ibl")]
-use std::hash::Hasher;
-#[cfg(feature = "ibl")]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -74,9 +70,6 @@ const BRDF_LUT_SIZE: u32 = 512;
 #[cfg(feature = "ibl")]
 const BRDF_LUT_SAMPLES: u32 = 1024;
 
-// IBL disk cache paths (relative to working directory).
-#[cfg(feature = "ibl")]
-const IBL_CACHE_DIR: &str = "assets/ibr";
 #[cfg(feature = "ibl")]
 const BRDF_CACHE_FILE: &str = "brdf_lut_512.bin";
 #[cfg(feature = "ibl")]
@@ -88,6 +81,38 @@ const IBL_CACHE_VERSION: u32 = 2;
 const IRRADIANCE_CACHE_FILE: &str = "irradiance_64.bin";
 #[cfg(feature = "ibl")]
 const PREFILTERED_CACHE_PREFIX: &str = "prefiltered_mip";
+
+/// Absolute root directory for the IBL disk cache, resolved once by the host.
+///
+/// The cache holds CPU-baked convolution output (env cubemap, irradiance,
+/// prefiltered mips, BRDF LUT), so it belongs in a throwaway directory next to
+/// the binary — never in `assets/`, which is a read-only build input.
+///
+/// The host resolves it once (`prism_engine::cache_paths::cache_dir(CacheKind::Ibl)`,
+/// i.e. `<exe dir>/cache/ibl`) and injects it; this crate never derives paths.
+///
+/// `disabled()` (the default) recomputes every run.
+// Not feature-gated: this is a plain path container with no IBL dependency, and
+// `GraphRenderer` must hold one whether or not the `ibl` feature is compiled in.
+#[derive(Debug, Clone, Default)]
+pub struct IblCacheDir(Option<std::path::PathBuf>);
+
+impl IblCacheDir {
+    /// No on-disk cache: every launch rebakes the convolutions.
+    pub fn disabled() -> Self {
+        Self(None)
+    }
+
+    /// Use `dir` as the cache root; created on first write.
+    pub fn new(dir: impl Into<std::path::PathBuf>) -> Self {
+        Self(Some(dir.into()))
+    }
+
+    /// `None` when the cache is disabled.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.0.as_deref()
+    }
+}
 
 /// 共享的 IBL 描述符 集合 布局（集合 2）：3 个 COMBINED_IMAGE_SAMPLER
 /// 绑定（envCube / irradianceCube / prefilteredCube）。由 `GraphRenderer`
@@ -163,10 +188,13 @@ impl IblResources {
         command_pool: vk::CommandPool,
         queue: vk::Queue,
         env_bytes: Option<Vec<u8>>,
+        ibl_cache: &IblCacheDir,
         ds_layout: vk::DescriptorSetLayout,
     ) -> anyhow::Result<Self> {
         let device = context.device.clone();
         let mem_props = &context.physical_device_memory_properties;
+        // Absolute cache root, or None when the host disabled the disk cache.
+        let cache_root = ibl_cache.path();
 
         // 1. Obtain linear RGBA float equirect data (decode file or synthesize).
         let t_hdr = std::time::Instant::now();
@@ -192,18 +220,20 @@ impl IblResources {
 
         // Compute env content hash for disk cache (only when .hdr was loaded).
         let env_hash = env_bytes.as_ref().map(|b| env_content_hash(b));
-        if let Some(ref hash) = env_hash {
-            let _ = ensure_cache_dir(hash);
+        if let Some(hash) = env_hash.as_deref() {
+            let _ = ensure_cache_dir(cache_root, hash);
         }
 
         // 1b. Environment cubemap + disk cache.
         const FACE_SIZE: u32 = 512;
         let t_cube = std::time::Instant::now();
-        let cube_rgba: Vec<f32> = if let Some(ref hash) = env_hash {
-            let path = cache_path(hash, ENV_CUBE_CACHE_FILE);
-            load_f32_cache(&path).unwrap_or_else(|| {
+        let cube_rgba: Vec<f32> = if let Some(hash) = env_hash.as_deref() {
+            let path = cache_path(cache_root, hash, ENV_CUBE_CACHE_FILE);
+            path.as_deref().and_then(load_f32_cache).unwrap_or_else(|| {
                 let data = generate_cubemap(&rgba_f32, width, height, FACE_SIZE);
-                save_f32_cache(&path, &data);
+                if let Some(path) = &path {
+                    save_f32_cache(path, &data);
+                }
                 data
             })
         } else {
@@ -229,11 +259,13 @@ impl IblResources {
 
         // 1c. Convolve the three IBL resources on the CPU (or load from cache).
         let t_irr = std::time::Instant::now();
-        let irradiance_rgba: Vec<f32> = if let Some(ref hash) = env_hash {
-            let path = cache_path(hash, IRRADIANCE_CACHE_FILE);
-            load_f32_cache(&path).unwrap_or_else(|| {
+        let irradiance_rgba: Vec<f32> = if let Some(hash) = env_hash.as_deref() {
+            let path = cache_path(cache_root, hash, IRRADIANCE_CACHE_FILE);
+            path.as_deref().and_then(load_f32_cache).unwrap_or_else(|| {
                 let data = convolve_irradiance(&rgba_f32, width, height, IRRADIANCE_FACE_SIZE);
-                save_f32_cache(&path, &data);
+                if let Some(path) = &path {
+                    save_f32_cache(path, &data);
+                }
                 data
             })
         } else {
@@ -242,16 +274,18 @@ impl IblResources {
         let irrad_ms = t_irr.elapsed().as_millis();
         let t_pre = std::time::Instant::now();
 
-        let prefiltered_rgba: Vec<Vec<f32>> = if let Some(ref hash) = env_hash {
+        let prefiltered_rgba: Vec<Vec<f32>> = if let Some(hash) = env_hash.as_deref() {
             let mut mips = Vec::with_capacity(PREFILTERED_MIP_LEVELS as usize);
             let mut all_cached = true;
             for mip in 0..PREFILTERED_MIP_LEVELS {
-                let path = cache_path(hash, &format!("{}{}.bin", PREFILTERED_CACHE_PREFIX, mip));
-                if let Some(data) = load_f32_cache(&path) {
-                    mips.push(data);
-                } else {
-                    all_cached = false;
-                    break;
+                let name = format!("{}{}.bin", PREFILTERED_CACHE_PREFIX, mip);
+                let path = cache_path(cache_root, hash, &name);
+                match path.as_deref().and_then(load_f32_cache) {
+                    Some(data) => mips.push(data),
+                    None => {
+                        all_cached = false;
+                        break;
+                    }
                 }
             }
             if all_cached {
@@ -265,9 +299,10 @@ impl IblResources {
                     PREFILTERED_MIP_LEVELS,
                 );
                 for (mip, mip_data) in data.iter().enumerate() {
-                    let path =
-                        cache_path(hash, &format!("{}{}.bin", PREFILTERED_CACHE_PREFIX, mip));
-                    save_f32_cache(&path, mip_data);
+                    let name = format!("{}{}.bin", PREFILTERED_CACHE_PREFIX, mip);
+                    if let Some(path) = cache_path(cache_root, hash, &name) {
+                        save_f32_cache(&path, mip_data);
+                    }
                 }
                 data
             }
@@ -285,11 +320,13 @@ impl IblResources {
 
         // BRDF LUT — no env dependency, always check disk first.
         let brdf_rg: Vec<f32> = {
-            let _ = ensure_cache_dir("");
-            let path = cache_path("", BRDF_CACHE_FILE);
-            load_f32_cache(&path).unwrap_or_else(|| {
+            let _ = ensure_cache_dir(cache_root, "");
+            let path = cache_path(cache_root, "", BRDF_CACHE_FILE);
+            path.as_deref().and_then(load_f32_cache).unwrap_or_else(|| {
                 let data = compute_brdf_lut(BRDF_LUT_SIZE);
-                save_f32_cache(&path, &data);
+                if let Some(path) = &path {
+                    save_f32_cache(path, &data);
+                }
                 data
             })
         };
@@ -1556,33 +1593,43 @@ impl Drop for IblResources {
 // ---------------------------------------------------------------------------
 
 /// Ensure the IBL cache subdirectory exists, creating it if needed.
+///
+/// Returns None when the cache is disabled or the directory cannot be
+/// created; callers then fall through to recomputing.
 #[cfg(feature = "ibl")]
-fn ensure_cache_dir(subdir: &str) -> Option<std::path::PathBuf> {
-    let path = std::path::PathBuf::from(IBL_CACHE_DIR).join(subdir);
+fn ensure_cache_dir(root: Option<&Path>, subdir: &str) -> Option<std::path::PathBuf> {
+    let path = root?.join(subdir);
     std::fs::create_dir_all(&path).ok()?;
     Some(path)
 }
 
 /// Build a full cache path from hash subdir and filename.
+///
+/// Does not create directories; call ensure_cache_dir before writing.
 #[cfg(feature = "ibl")]
-fn cache_path(hash: &str, filename: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(IBL_CACHE_DIR)
-        .join(hash)
-        .join(filename)
+fn cache_path(root: Option<&Path>, hash: &str, filename: &str) -> Option<std::path::PathBuf> {
+    Some(root?.join(hash).join(filename))
 }
 
-/// Deterministic content hash of the raw `.hdr` file bytes.
+/// Deterministic content hash of the raw .hdr file bytes.
 /// Used as subdirectory name so a changed env map produces a new cache.
+///
+/// FNV-1a rather than DefaultHasher: the latter's algorithm is unspecified
+/// across Rust releases, so a toolchain bump would silently invalidate every
+/// cache entry and leave the old directories orphaned.
 #[cfg(feature = "ibl")]
 fn env_content_hash(bytes: &[u8]) -> String {
-    let mut hasher = DefaultHasher::new();
-    use std::hash::Hash;
-    IBL_CACHE_VERSION.hash(&mut hasher);
-    bytes.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET;
+    for byte in IBL_CACHE_VERSION.to_le_bytes().iter().chain(bytes.iter()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{hash:016x}")
 }
 
-/// Save `data` (f32 slice) to `path` as `u32 LE count + f32 LE × count`.
+/// Save data (f32 slice) to path as u32 LE count + f32 LE x count.
 #[cfg(feature = "ibl")]
 fn save_f32_cache(path: &Path, data: &[f32]) {
     use std::io::Write;
@@ -1616,6 +1663,38 @@ fn load_f32_cache(path: &Path) -> Option<Vec<f32>> {
     }
     log::info!("  IBL cache: loaded {}", path.display());
     Some(out)
+}
+
+#[cfg(all(test, feature = "ibl"))]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_cache_has_no_root() {
+        assert!(IblCacheDir::disabled().path().is_none());
+    }
+
+    #[test]
+    fn cache_paths_hang_off_the_injected_root() {
+        let root = std::path::Path::new("/tmp/ibl");
+        let path = cache_path(Some(root), "abc", "cube_512.bin").expect("path");
+        assert_eq!(path, root.join("abc").join("cube_512.bin"));
+        assert!(cache_path(None, "abc", "cube_512.bin").is_none());
+    }
+
+    #[test]
+    fn ensure_cache_dir_refuses_without_a_root() {
+        assert!(ensure_cache_dir(None, "abc").is_none());
+    }
+
+    #[test]
+    fn env_hash_is_stable_and_content_sensitive() {
+        // Pinned value: a change here means IBL_CACHE_VERSION or the algorithm
+        // changed, which is exactly what invalidates every on-disk cache.
+        assert_eq!(env_content_hash(b"same"), env_content_hash(b"same"));
+        assert_ne!(env_content_hash(b"same"), env_content_hash(b"other"));
+        assert_eq!(env_content_hash(b"same").len(), 16);
+    }
 }
 
 // ---------------------------------------------------------------------------

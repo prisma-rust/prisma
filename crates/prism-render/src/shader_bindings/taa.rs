@@ -23,3 +23,32 @@ pub const VELOCITY_TEX_SET: u32 = 0;
 pub const VELOCITY_TEX_BINDING: u32 = 4; // COMBINED_IMAGE_SAMPLER
 pub const NORMAL_TEX_SET: u32 = 0;
 pub const NORMAL_TEX_BINDING: u32 = 5; // COMBINED_IMAGE_SAMPLER
+
+/// GPU layout struct (auto-generated from Slang `TaaParams`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 144 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct TaaParams {
+    /// offset 0, size 64
+    pub invViewProj: [[f32; 4]; 4],
+    /// offset 64, size 64
+    pub prevViewProj: [[f32; 4]; 4],
+    /// offset 128, size 8
+    pub resolution: [f32; 2],
+    /// offset 136, size 4
+    pub strength: f32,
+    /// offset 140, size 4
+    pub validHistory: f32,
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<TaaParams>() == 144);
+    assert!(::std::mem::offset_of!(TaaParams, invViewProj) == 0);
+    assert!(::std::mem::offset_of!(TaaParams, prevViewProj) == 64);
+    assert!(::std::mem::offset_of!(TaaParams, resolution) == 128);
+    assert!(::std::mem::offset_of!(TaaParams, strength) == 136);
+    assert!(::std::mem::offset_of!(TaaParams, validHistory) == 140);
+};

@@ -1,4 +1,4 @@
-//! Build-time shader resource budget check for PrismaRev.
+//! Build-time shader resource budget check for Prisma.
 //!
 //! Folds every descriptor and push-constant block in the committed Slang
 //! reflection JSONs into one row per shader module and compares that row with

@@ -12,7 +12,7 @@
 cargo run -p prism-editor-mcp -- --project projects/fishing
 ```
 
-项目根也可以用 `PRISMREV_PROJECT` 指定；都没给时从 cwd 向上找 `assets/`。
+项目根也可以用 `PRISMA_PROJECT` 指定；都没给时从 cwd 向上找 `assets/`。
 传输是 stdio，一行一条 JSON-RPC 消息；握手、协议版本协商和 notifications 由
 [`rmcp`](https://docs.rs/rmcp) 负责，这个 crate 只提供工具表与调用分发。
 
@@ -66,7 +66,7 @@ cargo run -p prism-editor-mcp -- --project projects/fishing
 参数：`path`（必填）、`size`（`1920x1080`）、`scale`（窗口倍数）、`frame`
 （默认 120）、`timeout_ms`、`command`、`env`。
 
-它复用引擎的内置截图（`PRISMREV_SCREENSHOT*`，见 `AGENTS.md`），所以抓的是
+它复用引擎的内置截图（`PRISMA_SCREENSHOT*`，见 `AGENTS.md`），所以抓的是
 **屏幕上那一帧**；缩放是最近邻，像素画放大不糊。
 
 `command` 默认 `cargo run --release`，在项目根目录执行。想跳过 cargo 的启动
@@ -89,7 +89,7 @@ editor 启动 → 监听 127.0.0.1:<随机端口> → 写 <项目根>/target/edi
 MCP 工具        → 读端口文件 → TCP 一行 JSON 请求 / 一行 JSON 回执
 ```
 
-- 只监听回环；端口文件在编辑器退出时删除（`PRISMREV_EDITOR_CONTROL` 可覆盖成端口号）。
+- 只监听回环；端口文件在编辑器退出时删除（`PRISMA_EDITOR_CONTROL` 可覆盖成端口号）。
 - 请求在 UI 线程处理，所以截图和界面状态是**同一帧**的。
 - 失败走 MCP 的 `isError`，文本是控制通道的原始 JSON 回执，带 `kind`
   （`bad_request` / `not_ready` / `denied` / `internal`）与 `message`：

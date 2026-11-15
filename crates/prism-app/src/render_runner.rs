@@ -176,6 +176,17 @@ pub fn render_thread_main(
             return;
         }
     };
+    // 运行期缓存根由宿主解析一次后注入：渲染层不认识 target/ 布局，
+    // 也不允许自己按 cwd 拼路径。解析失败（拿不到可执行文件目录）时
+    // 保持默认 disabled，只是每次重算 IBL 卷积。
+    match prism_engine::cache_paths::cache_dir(prism_engine::cache_paths::CacheKind::Ibl) {
+        Some(dir) => {
+            log::info!("IBL cache root: {}", dir.display());
+            renderer.set_ibl_cache(prism_render::ibl::IblCacheDir::new(dir));
+        }
+        None => log::warn!("IBL cache: executable directory unavailable; disk cache disabled"),
+    }
+
     shared.mark("renderer_built");
     log::info!("Render thread: renderer built");
 
@@ -281,7 +292,10 @@ pub fn render_thread_main(
         let frame_plan = screenshot.as_ref().filter(|plan| {
             !screenshot_done
                 && plan.fires_on(frame_count + 1)
-                && (!packet.draw_items.is_empty() || frame_count >= 300)
+                && (!packet.draw_items.is_empty()
+                    || !packet.sprite_items.is_empty()
+                    || renderer.is_headless()
+                    || frame_count >= 300)
         });
         let presented = match render_one_frame(
             &mut renderer,
@@ -338,8 +352,8 @@ pub fn render_thread_main(
 
         if frame_plan.is_some() {
             screenshot_done = true;
-            if std::env::var("PRISMREV_EXIT_ON_SCREENSHOT").is_ok() {
-                log::info!("PRISMREV_EXIT_ON_SCREENSHOT: screenshot finished, exiting process");
+            if std::env::var("PRISMA_EXIT_ON_SCREENSHOT").is_ok() {
+                log::info!("PRISMA_EXIT_ON_SCREENSHOT: screenshot finished, exiting process");
                 std::process::exit(0);
             }
         }
@@ -361,7 +375,9 @@ pub fn render_thread_main(
 
         frame_stats.push_frame(
             frame_time_ms,
-            gpu_timings.supported.then_some(gpu_timings.total_ms),
+            gpu_timings
+                .supported
+                .then_some(gpu_timings.frame_or_total_ms()),
         );
         if frame_count.is_multiple_of(30) {
             frame_stats_summary = frame_stats.summary();
@@ -372,7 +388,9 @@ pub fn render_thread_main(
         if let Some(collector) = bench.as_mut() {
             let complete = collector.sample(
                 frame_time_ms,
-                gpu_timings.supported.then_some(gpu_timings.total_ms),
+                gpu_timings
+                    .supported
+                    .then_some(gpu_timings.frame_or_total_ms()),
             );
             if complete && !bench_report_written {
                 bench_report_written = true;
@@ -484,32 +502,32 @@ fn render_one_frame(
     renderer.set_taa(settings.taa, settings.taa_strength);
     renderer.set_anf_sr(settings.anf_sr, settings.anf_sharpness);
     let mut frame_data = FrameUBOData {
-        view_proj: scene.view_proj.to_cols_array_2d(),
-        camera_position: [
+        viewProj: scene.view_proj.to_cols_array_2d(),
+        cameraPosition: [
             scene.eye[0],
             scene.eye[1],
             scene.eye[2],
             scene.lights.len() as f32,
         ],
-        light_direction: scene.light_direction.to_array(),
-        light_color: scene.light_color.to_array(),
+        lightDirection: scene.light_direction.to_array(),
+        lightColor: scene.light_color.to_array(),
         view: scene.view.to_cols_array_2d(),
-        light_view_proj: scene.light_view_proj.to_cols_array_2d(),
-        light_view_proj1: scene.light_view_proj1.to_cols_array_2d(),
-        shadow_split: scene.shadow_split,
-        shadow_cascade_count: scene.shadow_cascade_count,
-        tonemap_mode: settings.tonemap_mode,
-        viewport_size: [extent.width as f32, extent.height as f32],
+        lightViewProj: scene.light_view_proj.to_cols_array_2d(),
+        lightViewProj1: scene.light_view_proj1.to_cols_array_2d(),
+        shadowSplit: scene.shadow_split,
+        shadowCascadeCount: scene.shadow_cascade_count,
+        tonemapMode: settings.tonemap_mode,
+        viewportW: extent.width as f32,
+        viewportH: extent.height as f32,
         exposure: scene.exposure,
-        shadow_strength: scene.shadow_strength,
-        _pad2: [0.0; 3],
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowStrength: scene.shadow_strength,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     };
     renderer.apply_taa_jitter(&mut frame_data);
 
@@ -538,6 +556,7 @@ fn render_one_frame(
         let renderer_settings = renderer.settings_mut();
         renderer_settings.auto_exposure = settings.auto_exposure;
         renderer_settings.gi_mode = settings.gi_mode;
+        renderer_settings.sharc_capacity = settings.sharc_capacity;
         renderer_settings.sharc_scene_scale = settings.sharc_scene_scale;
         renderer_settings.sharc_enable_update = settings.sharc_enable_update;
         renderer_settings.sharc_enable_resolve = settings.sharc_enable_resolve;
@@ -546,6 +565,13 @@ fn render_one_frame(
         renderer_settings.sharc_downscale_factor = settings.sharc_downscale_factor;
         renderer_settings.sharc_accumulation_frame_num = settings.sharc_accumulation_frame_num;
         renderer_settings.sharc_stale_frame_num = settings.sharc_stale_frame_num;
+        renderer_settings.restir_gi_scale = settings.restir_gi_scale;
+        renderer_settings.restir_gi_rays_per_pixel = settings.restir_gi_rays_per_pixel;
+        renderer_settings.restir_gi_spatial_samples = settings.restir_gi_spatial_samples;
+        renderer_settings.restir_gi_max_history = settings.restir_gi_max_history;
+        renderer_settings.restir_gi_temporal_reuse = settings.restir_gi_temporal_reuse;
+        renderer_settings.restir_gi_spatial_reuse = settings.restir_gi_spatial_reuse;
+        renderer_settings.restir_gi_max_secondary_dist = settings.restir_gi_max_secondary_dist;
     }
 
     let ctx = match renderer.begin_frame()? {

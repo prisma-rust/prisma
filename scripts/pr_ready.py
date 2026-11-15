@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PrismaRev 提交前自检：一条命令，一个可粘贴到 PR 的 Markdown 块。
+"""Prisma 提交前自检：一条命令，一个可粘贴到 PR 的 Markdown 块。
 
     python scripts/pr_ready.py                 # 完整自检（默认）
     python scripts/pr_ready.py --quick         # 快速回路：只做 fmt + clippy
@@ -16,7 +16,7 @@
   * 改到 shader/reflection/bindings：在临时目录重跑 shader-bindgen，比对是否漂移；
   * 改到 editor/：cargo test（独立 workspace，含数据层与 egui 壳）；
   * 改到 projects/*、launcher/：各自 cargo check（独立 workspace）；
-  * 拦截生成物 / 签名材料（.spv、.pak、keystore 等）和空白错误。
+  * 拦截生成物 / 签名材料（.pak、keystore 等）和空白错误（.spv 已入库，不拦）。
 
 stdout 只输出 Markdown；进度和失败详情走 stderr。任何检查失败 → 退出码 1。
 """
@@ -49,11 +49,10 @@ WORKSPACE_WIDE = {
 WORKSPACE_PREFIXES = (".cargo/",)
 
 # CI 的 desktop job 不覆盖 prism-app（它只作为用户项目依赖被构建）。
-# 本地默认也跳过，除非它自己改动或 --all；projects/prisma 的 check 会覆盖它。
+# 本地默认也跳过，除非它自己改动或 --all；projects/template 的 check 会覆盖它。
 SKIP_BY_DEFAULT = {"prism-app"}
 
 BAD_SUFFIXES = (
-    ".spv",
     ".pak",
     ".pak.meta.json",
     ".keystore",
@@ -576,7 +575,7 @@ def editor_checks(changed: list[str], quick: bool) -> list[Check]:
 # 主流程
 # --------------------------------------------------------------------------- #
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev pre-PR self-check")
+    parser = argparse.ArgumentParser(description="Prisma pre-PR self-check")
     parser.add_argument("--base", help="比较基准（默认 origin/master）")
     parser.add_argument("--quick", action="store_true", help="只做 fmt + clippy，不跑测试")
     parser.add_argument("--all", action="store_true", help="检查所有 workspace 与独立项目")
@@ -616,7 +615,7 @@ def main() -> int:
         default_crates = sorted(crates)
     else:
         default_crates = sorted(crates - (SKIP_BY_DEFAULT - directly_changed))
-    eprint(f"PrismaRev self-check — base {base}, {len(changed)} changed file(s)")
+    eprint(f"Prisma self-check — base {base}, {len(changed)} changed file(s)")
     eprint(f"  touched crates: {', '.join(default_crates) or '(none)'}")
 
     checks: list[Check] = [whitespace_check(), artifact_guard(changed)]
@@ -656,7 +655,7 @@ def main() -> int:
 
     if not args.quick:
         standalone = [
-            ("projects/prisma", "projects/prisma/"),
+            ("projects/template", "projects/template/"),
             ("projects/fishing", "projects/fishing/"),
             ("projects/sponza", "projects/sponza/"),
             ("launcher", "launcher/"),
@@ -749,8 +748,8 @@ def main() -> int:
 
     if failed and not shutil.which("slangc"):
         eprint("")
-        eprint("提示：本机没有 slangc。编译依赖 assets/shaders/*.spv；")
-        eprint("     请先运行 scripts/run.ps1，或 bash assets/shaders/compile.sh。")
+        eprint("提示：本机没有 slangc。assets/shaders/*.spv 已入库，")
+        eprint("     若报缺文件，先把工作区恢复干净，或 bash assets/shaders/compile.sh 重新生成。")
 
     eprint("")
     eprint("PASS" if not failed else "FAIL")

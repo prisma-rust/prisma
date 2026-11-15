@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 打 game-only Android APK（无 launcher / 无 Tauri / 无 WebView）。
 #
-#   bash scripts/build-android-game.sh                      # projects/prisma，debug
+#   bash scripts/build-android-game.sh                      # projects/template，debug
 #   bash scripts/build-android-game.sh fishing              # projects/fishing，debug
 #   bash scripts/build-android-game.sh fishing release       # release（未签名，需自行 apksigner）
 #   bash scripts/build-android-game.sh debug --skip-cargo    # 只重打包（.so 已就绪）
@@ -52,7 +52,7 @@ while [ $# -gt 0 ]; do
 done
 MODE="${MODE:-debug}"
 
-PROJECT_DIR=$(prism_project_dir "$ROOT" "${PROJECT:-prisma}")
+PROJECT_DIR=$(prism_project_dir "$ROOT" "${PROJECT:-template}")
 PROJECT_NAME=$(prism_project_name "$PROJECT_DIR")
 LIB_NAME=$(prism_lib_name "$PROJECT_DIR")
 ANDROID_DIR="$PROJECT_DIR/android"
@@ -127,10 +127,10 @@ export RANLIB_aarch64_linux_android="${RANLIB_aarch64_linux_android:-ranlib}"
 
 printf 'sdk.dir=%s\n' "$SDK" > "$ANDROID_DIR/local.properties"
 
-# ---- shader 产物（.spv 不入库）--------------------------------------------
+# ---- shader 产物（.spv 已入库，正常不会缺）--------------------------------
 if ! ls "$ROOT"/assets/shaders/*.spv >/dev/null 2>&1 && ! ls "$ROOT"/assets/shaders/slang/*.spv >/dev/null 2>&1; then
-    echo "缺少 .spv：先在有 slangc 的机器上 bash assets/shaders/compile.sh，" >&2
-    echo "或从 CI 的 spirv artifact 下载（见 docs/build-guide-termux.md §3）。" >&2
+    echo "缺少 .spv：它们已入库，先 git checkout -- assets/shaders 恢复；" >&2
+    echo "确实要重新生成时用 bash assets/shaders/compile.sh（见 docs/build-guide-termux.md §3）。" >&2
     exit 1
 fi
 

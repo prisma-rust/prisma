@@ -16,6 +16,7 @@
 //! **组件空间**（也就是 `Skeleton::world_matrices` 输出的空间），不是世界空间。
 
 pub mod foot;
+pub mod pbik;
 pub mod two_bone;
 
 pub use foot::{

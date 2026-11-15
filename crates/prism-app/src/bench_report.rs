@@ -7,9 +7,9 @@
 //! fixed number of samples, then writes one JSON file in the
 //! `prism-bench-report` format.
 //!
-//! - `PRISMREV_BENCH_REPORT=<path>` enables the export and names the file.
-//! - `PRISMREV_BENCH_WARMUP=<n>` frames recorded but dropped (default 120).
-//! - `PRISMREV_BENCH_FRAMES=<n>` frames sampled before the report is written
+//! - `PRISMA_BENCH_REPORT=<path>` enables the export and names the file.
+//! - `PRISMA_BENCH_WARMUP=<n>` frames recorded but dropped (default 120).
+//! - `PRISMA_BENCH_FRAMES=<n>` frames sampled before the report is written
 //!   (default 600).
 //!
 //! The report is written once, from the render thread, on the frame that
@@ -23,11 +23,11 @@ use std::path::{Path, PathBuf};
 use prism_render::frame_stats::{BenchMetadata, FrameStats, FrameStatsSummary};
 
 /// Environment variable that names the report file.
-pub const REPORT_ENV: &str = "PRISMREV_BENCH_REPORT";
+pub const REPORT_ENV: &str = "PRISMA_BENCH_REPORT";
 /// Environment variable with the number of warm-up frames to drop.
-pub const WARMUP_ENV: &str = "PRISMREV_BENCH_WARMUP";
+pub const WARMUP_ENV: &str = "PRISMA_BENCH_WARMUP";
 /// Environment variable with the number of sampled frames.
-pub const FRAMES_ENV: &str = "PRISMREV_BENCH_FRAMES";
+pub const FRAMES_ENV: &str = "PRISMA_BENCH_FRAMES";
 
 const DEFAULT_WARMUP: u32 = 120;
 const DEFAULT_FRAMES: u32 = 600;
@@ -41,7 +41,7 @@ pub struct BenchPlan {
 }
 
 impl BenchPlan {
-    /// Reads the plan from the environment; `None` when `PRISMREV_BENCH_REPORT`
+    /// Reads the plan from the environment; `None` when `PRISMA_BENCH_REPORT`
     /// is unset or empty.
     pub fn from_env() -> Option<Self> {
         let path = std::env::var_os(REPORT_ENV).filter(|value| !value.is_empty())?;

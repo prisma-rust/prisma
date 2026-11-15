@@ -2,6 +2,7 @@ use super::*;
 use crate::scene::runtime_components::{MaterialRef, MeshRef};
 use prism_render::render_graph::DrawItem;
 use prism_scene::components::{LocalToWorld, SceneAssetId, SkinnedMeshRenderer};
+use prism_scene::ShadowCastingMode;
 
 fn bones(count: usize) -> Vec<glam::Mat4> {
     (0..count)
@@ -17,6 +18,7 @@ fn spawn_skinned(world: &mut prism_ecs::World, palette: Option<usize>) -> prism_
         SkinnedMeshRenderer {
             skinned_mesh_path: "char/hero.rskin".into(),
             material_path: "char/hero.mat.json".into(),
+            shadow_casting_mode: ShadowCastingMode::Off,
             ..Default::default()
         },
     );

@@ -8,6 +8,7 @@
 mod golden_support;
 
 use golden_support::{draw_item, FrameHarness, FrameOptions};
+use prism_render::RenderMode;
 
 fn changed(a: &[u8], b: &[u8]) -> usize {
     a.as_chunks::<4>()
@@ -101,4 +102,100 @@ fn taa_handles_object_motion_and_reactive_transparency() {
     let b = harness.render_draws(std::slice::from_ref(&transparent), FrameOptions::default());
     assert_eq!(a.len(), b.len());
     assert_ne!(a, b, "moving transparent geometry must still update");
+}
+/// Path-trace mode resolves the traced image with the guides the tracer writes,
+/// not with the raster G-buffer (#883 follow-up).
+#[test]
+fn taa_resolves_the_path_traced_image() {
+    let Some(mut harness) = FrameHarness::new(256) else {
+        return;
+    };
+    let item = draw_item(harness.mesh_handle());
+    let pt_options = FrameOptions {
+        render_mode: RenderMode::PathTrace,
+        ..FrameOptions::default()
+    };
+
+    // The tracer accumulates, so let it settle before comparing frames.
+    let mut untemporal = Vec::new();
+    for _ in 0..8 {
+        untemporal = harness.render_draws(std::slice::from_ref(&item), pt_options);
+    }
+    assert_eq!(untemporal.len(), 256 * 256 * 4);
+
+    // A traced frame must not be a flat clear: the box has to be visible.
+    let lit = untemporal
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] > 8 || p[1] > 8 || p[2] > 8)
+        .count();
+    assert!(lit > 100, "path tracer should light part of the frame");
+
+    // Turning TAA on in path-trace mode must still produce a full frame. This
+    // is the regression guard for the `!is_pt` gate that used to keep the
+    // temporal resolve out of path-trace mode entirely.
+    harness.set_taa(true, 0.9);
+    let mut temporal = Vec::new();
+    for _ in 0..8 {
+        temporal = harness.render_draws(std::slice::from_ref(&item), pt_options);
+    }
+    assert_eq!(temporal.len(), 256 * 256 * 4);
+    let resolved_lit = temporal
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] > 8 || p[1] > 8 || p[2] > 8)
+        .count();
+    assert!(
+        resolved_lit > 100,
+        "the resolved path-traced frame should still show the scene"
+    );
+
+    // Disabling TAA must fall back to the raw traced image again.
+    harness.set_taa(false, 0.9);
+    let mut again = Vec::new();
+    for _ in 0..8 {
+        again = harness.render_draws(std::slice::from_ref(&item), pt_options);
+    }
+    assert_eq!(again.len(), 256 * 256 * 4);
+}
+
+/// The temporal resolve has to run *after* the tracer that feeds it, and the
+/// tracer has to publish every guide the resolve reads. Both are easy to break
+/// silently: the graph never reorders passes, and a missing guide only shows up
+/// as a subtle ghosting artifact.
+#[test]
+fn the_resolve_runs_after_the_tracer_and_reads_its_guides() {
+    use prism_render::render_graph::{PT_DEPTH_H, PT_NORMAL_ROUGHNESS_H, PT_VELOCITY_H};
+
+    let Some(harness) = FrameHarness::new(64) else {
+        return;
+    };
+    let snapshot = harness.graph().snapshot();
+
+    let pt = snapshot
+        .passes
+        .iter()
+        .find(|p| p.name == "PathTracePass")
+        .expect("path tracer registered");
+    let taa = snapshot
+        .passes
+        .iter()
+        .find(|p| p.name == "TaaPass")
+        .expect("taa registered");
+
+    assert!(
+        taa.index > pt.index,
+        "TaaPass (#{}) must run after PathTracePass (#{}) so it can consume this frame's guides",
+        taa.index,
+        pt.index
+    );
+
+    for guide in [PT_DEPTH_H, PT_VELOCITY_H, PT_NORMAL_ROUGHNESS_H] {
+        assert!(
+            pt.outputs.contains(&guide),
+            "PathTracePass must publish {guide:?}"
+        );
+    }
 }

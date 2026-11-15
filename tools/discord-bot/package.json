@@ -1,9 +1,9 @@
 {
-  "name": "prismrev-discord-bot",
+  "name": "prisma-discord-bot",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Discord /bug -> GitHub issue bot for PrismaRev",
+  "description": "Discord /bug -> GitHub issue bot for Prisma",
   "engines": {
     "node": ">=20"
   },

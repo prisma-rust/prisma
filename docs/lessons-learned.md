@@ -1,6 +1,6 @@
 # Vulkan 渲染循环经验教训
 
-在实现 PrismaRev 里程碑 1（桌面 Vulkan 清屏循环）过程中踩过的坑和学到的经验。
+在实现 Prisma 里程碑 1（桌面 Vulkan 清屏循环）过程中踩过的坑和学到的经验。
 
 ## 1. 工具链损坏要彻底清理
 
@@ -97,7 +97,7 @@
 
 **教训**：
 - 用 `std::io::IsTerminal` 检测是否有控制台
-- 无控制台时回退到写文件（`prisma.log`），避免阻塞
+- 无控制台时回退到写文件（`template.log`），避免阻塞
 - 日志 `format` 闭包里加 `buf.flush()` 确保实时落盘，方便诊断崩溃
 
 ## 10. 矩阵乘法与列主序(Column-Major)的陷阱
@@ -160,7 +160,7 @@ Vulkan 渲染循环的核心是**同步原语的正确配对**。最容易出错
 **教训**：
 - 编译后必须过 `spirv-val`；这种错误在 debug validation 下才会暴露，release 不校验但驱动行为未定义。`compile.sh` 末尾的 gate 就是干这个的。
 - 2025.x / 2026.13 的产物需要剥离非法 `ArrayStride`（只删"元素是 `OpTypeImage`/`OpTypeSampler` 的运行时数组"，**SSBO / struct 数组的合法 stride 必须保留**）。这段后处理（`fix_spirv.py`）已在升级到 Slang 2026.21 后删除；不要再手动加回来，直接升级编译器。
-- 任何环境都优先用 `tools/slang-dl/bin/slangc`（2026.21+），`compile.sh` 会自动探测。2025.11 另有 `scene_frag.slang` 段错误，同样只能靠升级解决。
+- 任何环境都优先用 `.local/tools/slang/bin/slangc`（2026.21+），`compile.sh` 会自动探测。2025.11 另有 `scene_frag.slang` 段错误，同样只能靠升级解决。
 
 **手编陷阱**：不要绕过 `compile.sh` 直接手调 `slangc`（尤其是旧版本 + `-emit-spirv-directly`），否则会吐出带非法 `ArrayStride` 的 spv。统一用 `bash assets/shaders/compile.sh`（或 `run.ps1`）；手编后至少跑一次 `spirv-val.exe <file>.spv` 再提交。
 
@@ -388,7 +388,7 @@ GTAO+PostPass 集成时一次性暴露了 5 个验证错误，按修复顺序：
 **教训**：
 - 验证错误按 Vulkan 调用顺序报（创建 -> 记录 -> 提交），**前面的错误可能掩盖后面的**。修一个跑一次，别一次性猜所有错。
 - 错误 4（in-flight descriptor）最初被错误 3（usage 不匹配）的 noise 掩盖 -- 修完 3 才看清 4 是独立问题。每个 VUID 独立排查，别假设"都是 descriptor 引起的"。
-- `RUST_LOG=info,prism_render=trace` + 日志写文件（`target/debug/prisma.log`，main.rs 的 logger 在非终端时自动落盘）是验证渲染管线的标准手段：grep `validation|ERROR|VUID` 计数，grep `ForwardPass:|GtaoPass:|PostPass:` 确认各 pass 都在执行。
+- `RUST_LOG=info,prism_render=trace` + 日志写文件（`target/debug/template.log`，main.rs 的 logger 在非终端时自动落盘）是验证渲染管线的标准手段：grep `validation|ERROR|VUID` 计数，grep `ForwardPass:|GtaoPass:|PostPass:` 确认各 pass 都在执行。
 
 ## 30. CI 漂移 / 工具链类教训（本次修 CI 全绿踩的坑）
 
@@ -546,7 +546,7 @@ gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经�
 
 #### 32.2 磁盘缓存设计
 
-**核心思路**：将 CPU 卷积结果缓存到 `assets/ibr/` 目录，下一步扩展启动跳过计算直接加载 f32 原始数据回 `Vec<f32>`，Vulkan 上传管线（f16 转换 + staging buffer + submit）保持不变。
+**核心思路**：将 CPU 卷积结果缓存到磁盘，下一步扩展启动跳过计算直接加载 f32 原始数据回 `Vec<f32>`，Vulkan 上传管线（f16 转换 + staging buffer + submit）保持不变。（缓存根后来统一到 `<exe dir>/cache/ibl/`，见本节末「缓存根」段落。）
 
 **缓存 key 方案**：
 
@@ -557,20 +557,26 @@ gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经�
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `assets/ibr/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, 独立于 HDR |
-| `assets/ibr/<hash>/cube_512.bin` | ~24 MB | 6×512×512×4 floats |
-| `assets/ibr/<hash>/irradiance_64.bin` | ~393 KB | 6×64×64×4 floats |
-| `assets/ibr/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
+| `<cache>/ibl/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, 独立于 HDR |
+| `<cache>/ibl/<hash>/cube_512.bin` | ~24 MB | 6×512×512×4 floats |
+| `<cache>/ibl/<hash>/irradiance_64.bin` | ~393 KB | 6×64×64×4 floats |
+| `<cache>/ibl/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
 | **总计** | **~28.5 MB** | 每 HDR 环境占 ~28MB 磁盘 |
 
-**实现位置**：仅在 `crates/prism-render/src/ibl.rs` 内新增 5 个辅助函数（`ensure_cache_dir` / `cache_path` / `env_content_hash` / `save_f32_cache` / `load_f32_cache`），不新增外部依赖（只用 `std::hash::DefaultHasher` + `std::fs`），不改动任何其他文件。
+**实现位置**：`crates/prism-render/src/ibl.rs` 内的 5 个辅助函数（`ensure_cache_dir` / `cache_path` / `env_content_hash` / `save_f32_cache` / `load_f32_cache`）。
+
+**缓存根（后续修正）**：最初缓存写死成相对工作目录的 `assets/ibr`，导致每个 crate / 工程目录各生成一份（实测仓库里同时存在 6 份、共 197 MB，命中率为 0）。
+现在缓存根由 `prism_engine::cache_paths` 统一解析为**可执行文件同目录下的 `cache/`**（即 `target/<profile>/cache/`，按类别分子目录 `ibl/` / `shader/` / `gi/`），经 `GraphRenderer::set_ibl_cache` 注入渲染层。
+
+`prism-render` 不依赖 `prism-engine`（依赖方向是 `engine → render`），所以走注入而不是直接调用；渲染层自己绝不拼路径。
+缓存也不再进 `assets/`：那是只读构建输入（装到 `Program Files` 后不可写，Android 上更在 APK 内）。
 
 #### 32.3 改动的权衡
 
 | 取舍 | 选择 | 理由 |
 |------|------|------|
 | 存储格式 | f32 原始数组（非 f16） | 写回时直接可用，不需转换；28MB 可接受 |
-| Hash 算法 | SipHash-1-3 而非 FNV/SHA | Rust std 内置，确定性，碰撞概率可忽略 |
+| Hash 算法 | FNV-1a 而非 `DefaultHasher` | `DefaultHasher` 的算法跨 Rust 版本不保证稳定，升级工具链会静默让全部缓存失效并留下孤儿目录；FNV-1a 与 `prism-reflect` 的 `TypeId` 同源 |
 | 缓存粒度 | 逐文件（9 个文件）而非单一大包 | 增量失效：换 HDR 只重建 env 相关，保留 BRDF LUT |
 | 加载时机 | 同步阻塞（startup） | 当前 IBL 必须就绪才能渲染第一帧；异步下一步扩展 PR |
 | 错误处理 | 任何 I/O 失败回退到重新计算 | 幂等：计算结果与缓存内容一致 |
@@ -1017,3 +1023,20 @@ Rust 的 `include_bytes!` 宏将二进制数据嵌入到只读数据段（`.roda
 **教训**：
 - 涉及着色器矩阵排布问题时，切勿通过反复加减 `transpose()` 盲猜，必须直接反汇编对应的 `.spv` 文件查看具体指令。
 - 只有准确比对着色器内部的内存修饰（`RowMajor`/`ColMajor`）与矢量乘法指令（`OpVectorTimesMatrix` / `OpMatrixTimesVector`），才能正确推导 Host 侧需要传递的数据格式。
+
+## 调查纪律案例：Sponza 相机移动与 M 键（先读调用点，禁止跨 crate 考古）
+
+**问题**：锁定鼠标后 WASD 不按锁定状态生效，`M` 键完全没反应。
+
+**真实翻车复盘与反思**：
+- **错误排查路径**：先 `git blame` 翻提交历史、读 winit 0.30 的 `refresh_os_cursor` 实现、写 PowerShell 探 `GetClipCursor`、后台跑 `sponza.exe` 抓日志、反复压缩上下文。这些没有一条改变了结论，只是把一个简单的条件判断问题拖成了跨 crate 的盲目考古。
+- **正确定位仅需三步**（每步只读一个函数，通过 grep 命中的调用点直接看代码）：
+  1. `projects/sponza/src/tuning_ui.rs` 的 `on_key_pressed` → `Key::Other(VK_M) if !self.locked`，而窗口一拿到焦点就自动锁定，导致该键在游戏运行时永远无法被接收。
+  2. `crates/prism-engine/src/scene/systems/camera.rs` 的 `camera_controller_system` → `look_active` 只挡了 WASD，鼠标看向还留了 `|| 右键` 后门。
+  3. `crates/prism-platform/src/window.rs` 的 `grab_pointer` → 抓取失败只 `log::warn`，照样把 `locked` 置 `true`，导致「锁定」可能处于虚假状态。
+- **状态单真值教训**：指针锁定曾经分散在平台窗口原子量、`InputManager::pointer_locked`、项目钩子自身 `self.locked` 三份状态中，各处分别更新必然出现不同步。**决定「谁接管输入」的关键状态，真值只能在平台层唯一存在，其它消费方每帧同步读取**（如 `InputManager::sync_pointer_lock`）。
+
+**教训**：
+- bug 报告里的行为在代码里几乎总对应一个 `if` 条件或一次状态写入。代码里已经写死的事实，严禁通过探针、blame 或翻外部 crate 源码去反复“证明”。
+- 一个 bug 只读它经过的那条链路；grep 命中的文件读完就停，不要横向全库漫游扫第二遍。
+- 状态类 bug 必须首先确认系统内该布尔值是否存在多份拷贝与缓存。

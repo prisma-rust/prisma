@@ -59,37 +59,37 @@ fn camera() -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
 
 fn frame_data(view_proj: [[f32; 4]; 4], view: [[f32; 4]; 4]) -> FrameUBOData {
     FrameUBOData {
-        view_proj,
-        camera_position: [0.0, 0.0, 3.0, 0.0],
-        light_direction: [0.3, 0.8, 0.5, 0.8],
-        light_color: [1.0, 0.98, 0.95, 0.25],
+        viewProj: view_proj,
+        cameraPosition: [0.0, 0.0, 3.0, 0.0],
+        lightDirection: [0.3, 0.8, 0.5, 0.8],
+        lightColor: [1.0, 0.98, 0.95, 0.25],
         view,
-        light_view_proj: [
+        lightViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemap_mode: 1,
-        viewport_size: [256.0, 256.0],
+        tonemapMode: 1,
+        viewportW: 256.0,
+        viewportH: 256.0,
         exposure: 1.0,
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        light_view_proj1: [
+        shadowStrength: 0.0,
+        lightViewProj1: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     }
 }
 
@@ -133,7 +133,7 @@ fn render_with(
         .render(
             std::slice::from_ref(item),
             &frame_data,
-            frame_data.light_view_proj,
+            frame_data.lightViewProj,
             [[0.0; 4]; 4],
             0,
             1,

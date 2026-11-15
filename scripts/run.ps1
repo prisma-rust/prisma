@@ -1,4 +1,4 @@
-﻿# PrismaRev 一键构建脚本 (Windows)
+﻿# Prisma 一键构建脚本 (Windows)
 # 用法: 在 PowerShell 中 cd 到本目录后执行  .\run.ps1
 # 需要: 已安装 Vulkan SDK (默认 D:\VulkanSDK\1.4.350.0，自带 slangc) 和 Rust
 $ErrorActionPreference = "Stop"
@@ -35,16 +35,21 @@ if (Get-Command slangc -ErrorAction SilentlyContinue) {
 # 构建整个 workspace（渲染 / ECS / 引擎 / 资产管线均以库形式构建）。
 # 注意：桌面可执行入口已迁移到 launcher/（Tauri 独立 workspace），
 # 根 workspace 没有可运行的 bin，`cargo run` 不再适用。
-Write-Host "构建 PrismaRev (debug)..."
+Write-Host "构建 Prisma (debug)..."
 cargo build
 if ($LASTEXITCODE -ne 0) { Write-Error "构建失败"; exit 1 }
 
 # 生成运行时场景包：scenes.json -> cooked RSCN -> assets/scenes.pak。
 # 游戏运行时只从该 .pak 的路径清单解析场景，因此开发启动前也必须生成。
-if (Test-Path "assets/scenes.json") {
-    Write-Host "构建场景包 (assets/scenes.pak)..."
-    cargo run -q -p prism-build-pipeline -- build-scenes
-    if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+# 每个工程的 manifest 在自己的 assets/ 下，仓库根只放引擎输入（shaders、GI 探针）。
+$SceneProject = "projects/template"
+if (Test-Path "$SceneProject/assets/scenes.json") {
+    Write-Host "构建场景包 ($SceneProject/assets/scenes.pak)..."
+    Push-Location $SceneProject
+    try {
+        cargo run -q --manifest-path (Join-Path $PWD "../../Cargo.toml") -p prism-build-pipeline -- build-scenes
+        if ($LASTEXITCODE -ne 0) { Write-Error "场景包构建失败"; exit 1 }
+    } finally { Pop-Location }
 }
 
 Write-Host ""

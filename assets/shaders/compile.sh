@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Compile PrismaRev Slang shaders to SPIR-V + emit reflection JSON.
+# Compile Prisma Slang shaders to SPIR-V + emit reflection JSON.
 #
 # This runs on a DESKTOP / CI host (Windows/Linux/macOS x86_64), NOT on the
 # Termux/aarch64 device — the official slangc prebuilts are glibc/MSVC binaries.
 # On Android the engine ships the pre-compiled .spv produced here.
 #
 # Output per stage:
-#   <name>.<stage>.spv          — SPIR-V for the Vulkan pipeline
+#   <name>.<stage>.spv          — SPIR-V for the Vulkan pipeline (committed)
 #   reflection/<name>.json      — slang reflection (drives Rust binding codegen)
+#
+# Both outputs are checked in: a fresh clone has to build without slangc, and
+# CI recompiles every shader to prove the committed bytes still match the
+# sources. Re-run this script after editing a `.slang` and commit the new
+# `.spv` alongside it.
 #
 # Reflection JSON is committed. The script never overwrites it unless asked:
 # the freshly generated files go to a staging directory and are compared with
@@ -16,14 +21,14 @@
 #
 # Requires `slangc` from a Slang release (2026.21+). Lookup order:
 #   $SLANGC            — explicit override
-#   tools/slang-dl/bin — the local prebuilt download (Windows/Linux)
+#   .local/tools/slang/bin — the local prebuilt download (Windows/Linux)
 #   PATH               — system install
 #
 #   bash assets/shaders/compile.sh                     # build + verify reflection
 #   bash assets/shaders/compile.sh --write-reflection  # adopt the new reflection
 #
 # Env:
-#   SLANGC              slangc binary (default: tools/slang-dl, then PATH)
+#   SLANGC              slangc binary (default: .local/tools/slang, then PATH)
 #   SLANG_PROFILE       SPIR-V profile (default: spirv_1_4)
 #   SLANGC_MIN_VERSION  minimum accepted slangc release (default: 2026.21;
 #                       `0` disables the check — only for throwaway experiments)
@@ -35,7 +40,7 @@ OUT="$HERE"                      # .spv land next to the existing GLSL .spv
 REFL="$HERE/reflection"
 SLANGC="${SLANGC:-}"
 if [ -z "$SLANGC" ]; then
-  local_slangc="$HERE/../../tools/slang-dl/bin/slangc"
+  local_slangc="$HERE/../../.local/tools/slang/bin/slangc"
   if [ -x "$local_slangc.exe" ]; then
     local_slangc="$local_slangc.exe"
   fi
@@ -71,7 +76,7 @@ done
 if ! command -v "$SLANGC" >/dev/null 2>&1 && [ ! -x "$SLANGC" ]; then
   echo "ERROR: slangc not found. Install a Slang release or set SLANGC=/path/to/slangc" >&2
   echo "  $SLANG_DOWNLOAD" >&2
-  echo "  e.g. tools/slang-dl/bin/slangc (desktop only — glibc binary won't run under Termux)" >&2
+  echo "  e.g. .local/tools/slang/bin/slangc (desktop only — glibc binary won't run under Termux)" >&2
   exit 1
 fi
 
@@ -144,7 +149,7 @@ mkdir -p "$REFL"
 # Scratch space for .spv and reflection output. Nothing lands in the repo until
 # slangc succeeded, so a crashed compiler can never leave a truncated .spv that
 # still looks shippable.
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/prismrev-shaders.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/prisma-shaders.XXXXXX")"
 FAILED_STAGE=""
 
 cleanup() {
@@ -321,16 +326,19 @@ emit_reflection gtao vertexMain vertex fragmentMain fragment
 # VK_KHR_ray_query hardware. Output: RWTexture3D coefficient-major depth slices.
 compile_stage gi_bake bakeMain compute
 
-# gi_render: compute shader for offline path-traced image rendering (ray-query).
-# Dispatched per pixel — renders an HDR image directly. Requires
-# VK_KHR_ray_query hardware. Output: RWTexture2D RGBA32F.
-compile_stage gi_render renderMain compute
-
 # pt_render: real-time path tracing compute shader (temporal accumulation).
 # Dispatched per pixel — traces 1 sample/frame, accumulates for convergence.
 # Requires VK_KHR_ray_query hardware. Output: RWTexture2D RGBA32F (accumulated).
 compile_stage pt_render ptMain compute
 emit_reflection pt_render ptMain compute
+
+# pt_reference / pt_sharc_train: the same transport compiled as the cache-free
+# reference and the standalone SHaRC trainer. PT_MODE in pt_render.slang picks
+# the variant; both carry the same bindings and push constants as the consumer.
+compile_stage pt_reference ptMain compute
+emit_reflection pt_reference ptMain compute
+compile_stage pt_sharc_train ptMain compute
+emit_reflection pt_sharc_train ptMain compute
 
 # sharc_resolve: RTXGI SHARC cache resolve kernel (`crates/prism-render/src/sharc.rs`).
 # Dispatched (capacity+255)/256 groups, one thread per hash-grid entry.
@@ -392,6 +400,14 @@ compile_stage rt_preview vertexMain vertex
 compile_stage rt_preview fragmentMain fragment
 emit_reflection rt_preview vertexMain vertex fragmentMain fragment
 
+# restir_gi: screen-space ReSTIR GI compute kernel (crates/prism-render/src/restir_gi.rs).
+# Raster-only path: traces secondary rays from the G-buffer with ray queries, reuses
+# reservoirs temporally + spatially, and terminates rays in the SHaRC cache when the
+# cache is warm. Output: RGBA16F indirect diffuse (already modulated by nothing --
+# the forward pass applies kd * albedo itself).
+compile_stage restir_gi giMain compute
+emit_reflection restir_gi giMain compute
+
 # Hard gate: every emitted module must be valid SPIR-V (#580). Slang can emit
 # illegal layout decorations that only show up as a Vulkan validation error at
 # startup; fail the compile instead of shipping them.
@@ -405,3 +421,12 @@ fi
 settle_reflection
 
 echo "All Slang shaders compiled. SPIR-V in $OUT, reflection JSON in $REFL"
+
+# The .spv are committed, so a recompile that changed them means the shader
+# edit was not committed with its bytecode yet.
+if command -v git >/dev/null 2>&1 && git -C "$HERE" rev-parse --git-dir >/dev/null 2>&1; then
+    if [ -n "$(git -C "$HERE" status --porcelain -- "$OUT")" ]; then
+        echo "note: compiled output differs from the committed files — commit" >&2
+        echo "      the .spv together with the .slang edits." >&2
+    fi
+fi

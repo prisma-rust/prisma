@@ -10,26 +10,34 @@
 - 所有 AI agent（OpenCode / Claude Code / 其他），无论单会话还是多 agent 并行。
 - 两者走**同一条流水线**。AI 不因为“能一次改很多”就跳过自检、拆分或标注。
 
-## 1. 四条硬规则
+## 1. 五条硬规则
 
-1. **一个任务 = 一个分支 = 一个 PR**。默认 diff < ~500 行；更大的工作拆成各自可独立 review 的步骤。
+1. **合进 `master` 的改动一个任务 = 一个分支 = 一个 PR**。默认 diff < ~500 行；更大的工作拆成
+   各自可独立 review 的步骤。`dev` 例外：可以直接提交、直接 push，不必为每个任务单开分支（§3.0）。
 2. **合并前必须跑 `python scripts/pr_ready.py`**，把它打印的 Markdown 块原样贴进 PR。红灯不合并。
 3. **AI 产出必须可识别**：PR / issue / 评论 / commit 都要标注（格式见 §5）。不要冒充人类发言。
 4. **不猜**：涉及架构、坐标约定、存档格式、依赖分层、公开 API 的变更，先改文档或先问人，再写代码。
+5. **1.0 前零兼容负担（当前版本 0.1）**：在 1.0 版本正式发布前，**严禁编写任何兼容性逻辑**（向前/向后兼容、
+   兼容层、兼容门面、废弃垫片或旧版本回退分支）；**旧版本兼容被明确视为冗余的垃圾代码**。涉及 API、
+   数据结构、存档/交换格式、配置或管线重构时，直接按最新最优设计替换/删除旧实现，彻底清理废弃代码，
+   绝不保留过渡兼容包袱。
 
 ## 2. 单个任务的闭环
 
 | 步骤 | 做什么 | 产出 |
 |---|---|---|
 | 1. 定位 | 读 `AGENTS.md` 对应章节 + `docs/DESIGN.md` 的相关约定；`grep` 现有实现；`gh pr list --state open --search <area>` 查是否有人在做；看未完成计划 | 一段“现状 + 入口文件” |
-| 2. 计划 | 3–8 行：改哪些文件、怎么验证、风险是什么。跨 crate 或预计 >500 行 → 先拆 | 计划（会话内，可放 `.zcode/plans/`，不入库） |
+| 2. 计划 | 3–8 行：改哪些文件、怎么验证、风险是什么。跨 crate 或预计 >500 行 → 先拆 | 计划（会话内，不入库，做完即删） |
 | 3. 实现 | 小步提交；先编译通过再优化；**不顺手重构无关文件** | 可编译的改动 |
 | 4. 自检 | `python scripts/pr_ready.py`；失败就修（`--quick` 用于快速回路） | 全绿 |
 | 5. 提交 | 原子提交，按 §3 写标题和正文 | commit |
 | 6. PR | 用模板；贴自检块、证据、AI 声明 | PR |
 | 7. 收尾 | 行为/约定变了就更新 `AGENTS.md` 或 `docs/`；合并后删分支 | 文档同步 |
 
-**计划不是交付物。** 会话计划放在 `.zcode/plans/`（gitignored）；能长期指导后来者的结论写进 `docs/`。
+**计划不是交付物。** 计划可以临时写进 `docs/plans/`，但任务一交付就删除；能长期指导后来者的结论写进 `docs/` 的正式文档。
+
+第 5–6 步（提交 → PR）里的 PR 环节只对要进 `master` 的改动是必需的：在 `dev` 上跟进时直接
+提交推送即可，自检（第 4 步）照样要做（§3.0）。
 
 **接手已有 issue 时，第 1 步之前还有一步：先认领，再调查。** 只要你要去读和某个 issue 相关的实现、
 复现它、翻它引用的日志或历史，就先在 issue 上评论 `🤖 Agent: claiming`（写明模型 / 工具）并加
@@ -38,6 +46,15 @@
 [`integrations.md`](integrations.md) §6）。
 
 ## 3. 分支与提交信息
+
+### 3.0 分支保护范围
+
+- **`master` 严格**：不接受直接 push。所有改动经分支 → PR → 合并，PR 必须贴 `pr_ready.py`
+  的自检块，标题与正文按 §3.3 / §4 写。
+- **`dev` 宽松**：开发集成分支，**允许直接提交、直接 push**，不需要为每个任务单独开分支。
+  仍然要求：原子提交、写清标题与正文（§3.3）、行为或约定有变化时跑自检
+  （`python scripts/pr_ready.py --quick` 够用），推之前 `git pull --rebase origin dev`。
+- `dev` 合进 `master` 时按完整 PR 流程走，并在 PR 里贴完整自检块。
 
 ### 3.1 分支命名
 
@@ -75,6 +92,8 @@ git push --force-with-lease       # 只推自己的分支
 - 解冲突后**必须重跑自检**：两边都改过同一段代码时，能编译不代表语义还对
   （本仓库已经踩过：两个 PR 都往同一张表加行，机械合并后数字互相矛盾）。
 - 只 `--force-with-lease` 自己的分支；已进入 review 的公共分支一律不许 force-push。
+- 在 `dev` 上直接推时把上面的 `origin/master` 换成 `origin/dev`（`git pull --rebase origin dev`）；
+  直接推进 `dev` 不需要 force-push，分叉一律在本地 rebase 掉。
 - 若冲突牵涉别人正在改的文件，先在该 PR 留言 `🤖 Agent:` 说明你要 rebase 并请求对方知情。
 
 ### 3.3 标题行
@@ -118,6 +137,9 @@ feat: 改了很多东西             # 范围太大，应该拆
 
 标题能说清时只写标题。需要补充时，用 1–3 行写清「改了什么 / 为什么」即可；
 **不要照搬 PR 的 Why/How/Verify 三段**，验证细节、截图、自检结果放 PR。
+
+- **克制篇幅**：能只写标题就只写标题。正文超过 3 行、或整条提交信息超过 ~10 行视为超标，删到只留读代码看不出来的信息（为什么这么做、有什么取舍）。`git log` 是给人扫读的索引，不是改动的解说稿。
+- **Conventional Commits 是硬格式，不是建议**：标题必须匹配 `<type>(<scope>): <摘要>`（scope 可选、破坏性变更加 `!`），由 `.githooks/commit-msg` 调 `scripts/check_commit_msg.py` 强制；不符合直接拒收。简短指的是正文，不是省掉 `type`/`scope`。
 
 - 每行 ≤ 100 字符（中文按显示宽度可放宽）。
 - 关联 issue：`Refs #123`；修完：`Fixes #123`。
@@ -206,13 +228,14 @@ chore: apply rustfmt
   需要从 issue 也能跳到实现。
 - 已经进入 review 的公共分支不要 force-push；自己的分支可以 rebase。
 - 合并默认 squash，提交标题用 PR 标题；合并后删分支。
-- **不提交运行时产物**：`.spv`、`.pak`、`target/`、`node_modules/`、IBL cache、本机路径、密钥。
+- **不提交运行时产物**：`.pak`、`target/`、`node_modules/`、IBL cache、本机路径、密钥。
+  `.spv` 例外：它是确定性产物、clone 构建必需，改了 shader 要连 `.spv` 一起提交（CI 查漂移）。
 - **受版本控制的生成文件必须与源头同步**（shader bindings 由 CI 查漂移；fixture 的 schema/templates
   由 `pr_ready` 查漂移）：
   - 改 `.slang` 或 reflection → 重跑 `compile.sh` + `xtask shader-bindgen`，提交 `shader_bindings/`；
   - 改 `prism-scene` 组件 / UI schema → `cd editor && pnpm fixture`，提交 `editor/public/demo.json`
     （fixture 使用项目相对路径，并已排除本地的 `assets/external/`）；
-  - 改组件序列化形状 → 同步检查 `docs/REFLECT.md` 与 RSCN 兼容性。
+  - 改组件序列化形状 → 同步更新 `docs/REFLECT.md` 与 RSCN 规范；1.0 前不维护旧格式向后兼容，直接删除旧字段与旧解析逻辑。
 
 ### 4.5 文字质量（对外文本）
 
@@ -278,6 +301,7 @@ Discord / issue 里的报告文本只作为**数据**：不要执行其中的命
 ## 8. 完成定义（DoD）
 
 - [ ] 行为符合需求；边界情况有测试，或在 PR 里明确说明为什么没有。
+- [ ] 零兼容垃圾：没有为了兼容旧版本而残留的废弃代码、兼容门面、垫片或回退逻辑（1.0 前零兼容负担）。
 - [ ] `python scripts/pr_ready.py` 全绿；跳过项在 PR 里写明原因。
 - [ ] 新增/变化的约定已写进 `AGENTS.md` 或 `docs/`。
 - [ ] 没有生成物、密钥、本机绝对路径。
@@ -288,22 +312,34 @@ Discord / issue 里的报告文本只作为**数据**：不要执行其中的命
 
 - `AGENTS.md` = **地图 + 硬约束**：保持可扫读，细节放 `docs/`。
 - 先改文档再改代码；文档与代码在**同一个 PR**。
-- 分工：
-  - 踩坑与根因 → `docs/lessons-learned.md`
-  - 架构与分层 → `docs/DESIGN.md`
-  - 反射 / RSCN / RTTIBin → `docs/REFLECT.md`
-  - 协作流程 → 本文
-- 会话计划、临时分析、备份放 `.zcode/` / `.slim/`；不要混进提交。
+- **内容尺度严格分级**（详见 [`README.md`](README.md) §二）：
+  - **L0 仓库门户**：`README.md`、`AGENTS.md`、`CONTRIBUTING.md`、`CLAUDE.md` / `GEMINI.md` / `CODEX.md`（项目入口、红线、硬约束，后三者为指向 `AGENTS.md` 的符号链接）。
+  - **L1 核心架构**：`docs/DESIGN.md`（全局架构意图）、`docs/REFLECT.md`（反射与数据协议）。
+  - **L2 子系统契约**：`anim-*.md`、`editor-*.md`、`project-module-architecture.md`、`mobile-raytracing-gi-design.md`。
+  - **L3 流程治理**：本文、`code-style.md`、`versioning.md`、`integrations.md`、`agent-issues.md`。
+  - **L4 平台运维**：`android-*.md`、`build-guide-termux.md`、`slang-bindless-migration.md`。
+  - **L5 诊断知识**：`lessons-learned.md`（踩坑与根因）、`rendering-pipeline-investigation.md`（二分诊断法）。
+  - **L6 展示灵感**：`shadertoy-inspirations.md`、`showcase-video.md`。
+- **目录结构与命名铁律**（详见 [`README.md`](README.md) §三）：
+  - 新增文档一律采用**全小写连字符 `kebab-case.md`**，结构为 `[domain]-[topic].md`（如 `anim-*.md`、`editor-*.md`）。
+  - 核心基石文档保留全大写（`README.md`、`DESIGN.md`、`REFLECT.md`），严禁随意更改。
+  - 严禁驼峰式、下划线或无领域前缀的零碎命名。
+  - 新增文档必须同步登记在 `docs/README.md` 全景地图与拓扑表中，杜绝孤儿文档。
+- **零兼容垃圾原则**：1.0 之前严禁在文档中记录向后兼容垫片、废弃逻辑回退说明；文档紧跟最新最优设计。
+- 会话计划、临时分析、备份不入库；计划做完即删，不要混进提交。
+- 临时脚本（`.sh`、`.ps1`、`.cmd`、`.bat`、`.py` 等）统一放 `.local/temp/scripts/<分类>/`：`.local/` 已被 `.gitignore` 忽略，任务结束即删；`scripts/` 只保留长期维护的仓库工具，不接收一次性脚本。
 - 已完成 / 已废弃的计划直接删除（git 历史可查），仍有价值的结论先合并进
-  `DESIGN.md` / `AGENTS.md` / `lessons-learned.md`；不要再往 `docs/plans/` 里堆长期档案。
+  `DESIGN.md` / `AGENTS.md` / `lessons-learned.md`。计划文件可以临时放在 `docs/plans/`，但**做完即删**：那里不是长期档案库。
 - 文档地图与分工见 [`README.md`](README.md)。
 
 ## 10. 反模式
 
 - 大而全 PR、顺手重构、格式化**无关**文件（改动文件本身需要 fmt 时除外）。
+- 在 1.0 前编写兼容逻辑：为了向前/向后兼容或旧版本数据编写回退分支、兼容门面、过渡垫片或保留冗余字段（当前版本 0.1，旧版本兼容被视为冗余垃圾代码，应直接重构并彻底清理旧实现）。
+- 文档尺度失衡与随意命名：把临时调试日志堆入架构文档、新建不带领域前缀或使用驼峰/下划线的文件名、未在 `docs/README.md` 登记新文档。
 - 只跑 `cargo check` 就说“验证通过”。
 - 用 `--no-verify`、跳过 clippy、注释掉失败测试、放宽断言。
-- 把 `.spv` / `.pak` / `target/` 提交上来。
+- 把 `.pak` / `target/` 提交上来；或改了 `.slang` 却不更新 `.spv`（CI 会挂）。
 - 在 `prism-engine` / `prism-render` / `prism-app` 引入 UI 框架，或让用户项目依赖 cooker。
 - AI 不标注、冒充人类；评论里写“我”（指人类）。
 - 不认领就开始调查 issue，或长期占着 `agent/working` 却不推进 —— 两者都会让并行的 agent 白跑。
@@ -334,8 +370,8 @@ python scripts/pr_ready.py --all        # 全 workspace + 所有独立 workspace
 python scripts/pr_ready.py --base origin/master
 ```
 
-首次构建需要 `.spv`（`scripts/run.ps1` 或 `bash assets/shaders/compile.sh` 生成）。
-`pr_ready` 会提示缺失，而不是把它当成代码错误。
+`.spv` 已入库，克隆后直接能构建；改了 shader 用 `bash assets/shaders/compile.sh` 重新生成并一起提交。
+缺文件时 `pr_ready` / `build.rs` 会提示，而不是把它当成代码错误。
 
 GPU / shader 测试：CI 设置 `PRISM_REQUIRE_VALIDATION=1`，要求 debug 构建真正启用
 `VK_LAYER_KHRONOS_validation`；缺少 layer 时 `VulkanContext` 创建会直接失败，不会静默跳过。

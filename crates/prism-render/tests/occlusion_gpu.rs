@@ -85,22 +85,22 @@ fn draw_item(
 
 fn frame_data(view_proj: [[f32; 4]; 4]) -> FrameUBOData {
     FrameUBOData {
-        view_proj,
-        camera_position: [0.0, 0.0, 0.0, 0.0],
-        light_direction: [0.3, 0.8, 0.5, 0.8],
-        light_color: [1.0, 1.0, 1.0, 1.0],
+        viewProj: view_proj,
+        cameraPosition: [0.0, 0.0, 0.0, 0.0],
+        lightDirection: [0.3, 0.8, 0.5, 0.8],
+        lightColor: [1.0, 1.0, 1.0, 1.0],
         view: view_proj,
-        light_view_proj: view_proj,
-        light_view_proj1: view_proj,
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        tonemap_mode: 2,
-        viewport_size: [SIZE as f32, SIZE as f32],
+        lightViewProj: view_proj,
+        lightViewProj1: view_proj,
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        _pad3: [0.0; 2],
-        prev_view_proj: view_proj,
+        shadowStrength: 0.0,
+        prevViewProj: view_proj,
+        ..Default::default()
     }
 }
 

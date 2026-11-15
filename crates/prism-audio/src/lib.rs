@@ -1,4 +1,4 @@
-//! PrismaRev audio subsystem.
+//! Prisma audio subsystem.
 //!
 //! Built on [Firewheel](https://github.com/BillyDM/firewheel), a pure-Rust
 //! audio graph engine, with cpal as the backend. Supports Windows, macOS,

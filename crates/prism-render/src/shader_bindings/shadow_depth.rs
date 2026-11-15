@@ -17,13 +17,13 @@ pub const PUSH_CONSTANT_SIZE: u32 = 156;
 pub const BONES_SET: u32 = 0;
 pub const BONES_BINDING: u32 = 3; // UNIFORM_BUFFER
 
-/// Push-constant struct (auto-generated from Slang `ShadowPush`).
+/// GPU layout struct (auto-generated from Slang `ShadowPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 156 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct ShadowPush {
     /// offset 0, size 64
     pub model: [[f32; 4]; 4],
@@ -36,3 +36,12 @@ pub struct ShadowPush {
     /// offset 144, size 12
     pub _pad: [u32; 3],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<ShadowPush>() == 156);
+    assert!(::std::mem::offset_of!(ShadowPush, model) == 0);
+    assert!(::std::mem::offset_of!(ShadowPush, lightViewProj) == 64);
+    assert!(::std::mem::offset_of!(ShadowPush, bone_offset) == 128);
+    assert!(::std::mem::offset_of!(ShadowPush, _pad_132) == 132);
+    assert!(::std::mem::offset_of!(ShadowPush, _pad) == 144);
+};

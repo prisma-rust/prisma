@@ -1,10 +1,10 @@
-# PrismaRev 展示视频
+# Prisma 展示视频
 
 本项目包含自动化生成的引擎展示视频。
 
 ## 生成的内容
 
-### 视频：`target/showcase/prismarev_showcase.mp4`
+### 视频：`target/showcase/prisma_showcase.mp4`
 
 - **时长**：约 96 秒（1分36秒）
 - **分辨率**：1920×1080 @ 30fps
@@ -13,7 +13,7 @@
 ### 视频结构
 
 1. **标题卡**（4秒）
-   - PrismaRev 品牌标题
+   - Prisma 品牌标题
    - "A Modern Mobile-First Game Engine" 副标题
 
 2. **特性展示片段**（10个场景，每个 9-10 秒）
@@ -22,13 +22,13 @@
    - **Advanced Lighting** — PBR 材质、IBL、CSM 阴影、烘焙 GI
    - **Data-Oriented ECS** — archetype query、反射序列化、RSCN v4
    - **Asset Pipeline** — glTF 导入、纹理压缩、.pak 打包
-   - **Web-Based Editor** — Tauri 2 + Vue 3、组件检查器、预制体系统
+   - **Native Rust Editor** — egui + ash 零拷贝采样、split-tree docking、反射检查器
    - **Bindless Everything** — descriptor indexing、动态批处理
    - **Slang Shaders** — 统一着色器语言、反射驱动绑定
-   - **Built-In Automation** — 截图系统、MCP 服务器、CDP 集成
+   - **Built-In Automation** — 本地 TCP 控制通道、MCP 服务器、原生窗口与离屏抓图
 
 3. **结尾卡**（5秒）
-   - PrismaRev logo
+   - Prisma logo
    - "Modern · Mobile-First · Modular" 标语
    - GitHub 链接
 
@@ -59,7 +59,7 @@
 python scripts/showcase_video_simple.py
 ```
 
-输出位置：`target/showcase/prismarev_showcase.mp4`
+输出位置：`target/showcase/prisma_showcase.mp4`
 
 ### 依赖
 
@@ -136,7 +136,7 @@ threads=4            # 并行编码线程
 可能的改进方向：
 
 1. **实时截图集成**
-   - 使用 `PRISMREV_SCREENSHOT` 捕获引擎实际渲染画面
+   - 使用 `PRISMA_SCREENSHOT` 捕获引擎实际渲染画面
    - 当前为纯动效展示
 
 2. **更复杂的动效**
@@ -155,6 +155,6 @@ threads=4            # 并行编码线程
 
 ## 许可
 
-本视频生成脚本与 PrismaRev 引擎使用相同的许可证（Apache 2.0 / MIT dual license）。
+本视频生成脚本与 Prisma 引擎使用相同的许可证（Apache 2.0 / MIT dual license）。
 
 生成的视频可用于项目宣传、技术演讲、教学等用途。

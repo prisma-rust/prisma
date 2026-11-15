@@ -3,7 +3,7 @@ name = "xtask"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "PrismaRev build tooling — Slang reflection -> Rust binding codegen"
+description = "Prisma build tooling — Slang reflection -> Rust binding codegen"
 
 [[bin]]
 name = "shader-bindgen"

@@ -17,18 +17,25 @@ pub const PUSH_CONSTANT_SIZE: u32 = 96;
 pub const ENV_CUBE_SET: u32 = 0;
 pub const ENV_CUBE_BINDING: u32 = 0; // COMBINED_IMAGE_SAMPLER
 
-/// Push-constant struct (auto-generated from Slang `SkyboxPush`).
+/// GPU layout struct (auto-generated from Slang `SkyboxPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 96 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SkyboxPush {
     /// offset 0, size 64
-    pub invViewRot: [[f32; 4]; 4],
+    pub invViewProjRot: [[f32; 4]; 4],
     /// offset 64, size 16
     pub params: [f32; 4],
     /// offset 80, size 16
     pub _pad1: [f32; 4],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<SkyboxPush>() == 96);
+    assert!(::std::mem::offset_of!(SkyboxPush, invViewProjRot) == 0);
+    assert!(::std::mem::offset_of!(SkyboxPush, params) == 64);
+    assert!(::std::mem::offset_of!(SkyboxPush, _pad1) == 80);
+};

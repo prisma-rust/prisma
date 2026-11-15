@@ -13,13 +13,13 @@ pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
 /// Push-constant block size in bytes (reflected).
 pub const PUSH_CONSTANT_SIZE: u32 = 96;
 
-/// Push-constant struct (auto-generated from Slang `ParticlePush`).
+/// GPU layout struct (auto-generated from Slang `ParticlePush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 96 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct ParticlePush {
     /// offset 0, size 64
     pub viewProj: [[f32; 4]; 4],
@@ -28,3 +28,10 @@ pub struct ParticlePush {
     /// offset 80, size 16
     pub camUp: [f32; 4],
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<ParticlePush>() == 96);
+    assert!(::std::mem::offset_of!(ParticlePush, viewProj) == 0);
+    assert!(::std::mem::offset_of!(ParticlePush, camRight) == 64);
+    assert!(::std::mem::offset_of!(ParticlePush, camUp) == 80);
+};

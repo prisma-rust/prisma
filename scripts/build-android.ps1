@@ -1,26 +1,26 @@
 ﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Build PrismaRev for Android arm64-v8a.
+    Build Prisma for Android arm64-v8a.
 
 .DESCRIPTION
-    `-Project prisma`（默认）：launcher + 游戏的完整 APK——编译 `projects/prisma`
-    的 cdylib（`libprisma.so`）via cargo-ndk，再用 Tauri CLI 组装
+    `-Project template`（默认）：launcher + 游戏的完整 APK——编译 `projects/template`
+    的 cdylib（`libtemplate_core.so`）via cargo-ndk，再用 Tauri CLI 组装
     `launcher/src-tauri/gen/android`（启动器 + GameActivity）。
 
     其他工程：委托给 `scripts/build-android-game.sh <project> [debug|release]`
     打 **game-only** APK（不含 launcher / WebView），宿主由
     `scripts/new-android-game.sh <project>` 生成（#598）。launcher APK 的 manifest
-    固定 `android.app.lib_name = prisma`，所以不能直接换个工程名就打进去。
+    固定 `android.app.lib_name = template_core`，所以不能直接换个工程名就打进去。
 
 .PARAMETER Project
-    `projects/` 下的工程目录名，默认 `prisma`。
+    `projects/` 下的工程目录名，默认 `template`。
 
 .PARAMETER Mode
     只对委托路径生效：`debug`（默认）或 `release`。
 #>
 param(
-    [string]$Project = "prisma",
+    [string]$Project = "template",
     [ValidateSet("debug", "release")]
     [string]$Mode = "debug"
 )
@@ -28,7 +28,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
-if ($Project -ne "prisma") {
+if ($Project -ne "template") {
     $delegate = Join-Path $PSScriptRoot "build-android-game.sh"
     if (-not (Test-Path $delegate)) {
         Write-Error "找不到 $delegate（game-only APK 由它负责）"
@@ -41,7 +41,8 @@ if ($Project -ne "prisma") {
 
 $AndroidDir  = Join-Path $ProjectRoot "launcher\src-tauri\gen\android"
 $JniLibsDir  = Join-Path $AndroidDir "app\src\main\jniLibs"
-$GameManifest = Join-Path $ProjectRoot "projects\$Project\Cargo.toml"
+$GameProjectDir = Join-Path $ProjectRoot "projects\$Project"
+$GameManifest = Join-Path $GameProjectDir "Cargo.toml"
 
 # ---- Prerequisites ---------------------------------------------------------
 
@@ -118,9 +119,9 @@ Write-Host "cargo-ndk platform (API level): $apiLevel  (manifest minSdk = $minSd
 
 # ---- Shaders ---------------------------------------------------------------
 
-# .spv files are include_bytes!-ed at compile time and gitignored; make sure
-# they exist before building (Android hosts have no slangc — compile on a
-# desktop/CI host first, or fetch the CI `spirv` artifact).
+# .spv files are committed and include_bytes!-ed at compile time, so they are
+# normally already present. Recompile only when slangc is available; otherwise
+# use the committed bytecode (Android hosts have no slangc).
 if (Get-Command slangc -ErrorAction SilentlyContinue) {
     Write-Host "Compiling shaders..."
     bash (Join-Path $ProjectRoot "assets\shaders\compile.sh")
@@ -128,7 +129,7 @@ if (Get-Command slangc -ErrorAction SilentlyContinue) {
     $spv = Get-ChildItem (Join-Path $ProjectRoot "assets\shaders\*.spv") -ErrorAction SilentlyContinue
     if (-not $spv) {
         Write-Warning "No .spv files found and slangc is unavailable."
-        Write-Warning "Compile shaders on a desktop host first, or download the CI spirv artifact."
+        Write-Warning "They are committed: restore them with `git checkout -- assets/shaders`."
         exit 1
     }
     Write-Host "Using prebuilt .spv ($($spv.Count) files)."
@@ -144,8 +145,8 @@ $AndroidAssets = Join-Path $AndroidDir "app\src\main\assets"
 $AndroidGameAssets = Join-Path $AndroidAssets "game"
 New-Item -ItemType Directory -Force -Path $AndroidGameAssets | Out-Null
 
-Write-Host "Building scene package (assets/scenes.pak)..."
-Push-Location $ProjectRoot
+Write-Host "Building scene package (projects/$Project/assets/scenes.pak)..."
+Push-Location $GameProjectDir
 try {
     cargo run -q -p prism-build-pipeline -- build-scenes
     if ($LASTEXITCODE -ne 0) {
@@ -158,8 +159,8 @@ try {
 
 # 运行时挂载 `assets/` 下的**全部** `.pak`（#530），所以按扩展名复制，
 # 不再写死 `scenes.pak`——以后按内容分包不用改脚本。
-$Paks = Get-ChildItem (Join-Path $ProjectRoot "assets") -Filter *.pak -File
-$Manifests = Get-ChildItem (Join-Path $ProjectRoot "assets") -Filter *.pak.meta.json -File
+$Paks = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak -File
+$Manifests = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak.meta.json -File
 if ($Paks.Count -eq 0) {
     Write-Error "no .pak produced under assets/ — the APK would contain no assets"
     exit 1
@@ -170,13 +171,13 @@ Write-Host "Copied $($Paks.Count) package(s) into the APK assets."
 
 # 新格式 `settings.ini`；旧项目还只有 `settings.toml` 时照样带上（引擎会回退读）。
 foreach ($Name in @("settings.ini", "settings.toml")) {
-    $Settings = Join-Path $ProjectRoot "assets\$Name"
+    $Settings = Join-Path $GameProjectDir "assets\$Name"
     if (Test-Path $Settings) {
         Copy-Item $Settings (Join-Path $AndroidGameAssets $Name) -Force
     }
 }
 
-$Environment = Join-Path $ProjectRoot "assets\valley_of_desolation_1k.hdr"
+$Environment = Join-Path $GameProjectDir "assets\valley_of_desolation_1k.hdr"
 if (Test-Path $Environment) {
     Copy-Item $Environment $AndroidGameAssets -Force
 }

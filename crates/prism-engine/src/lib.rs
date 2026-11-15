@@ -1,4 +1,4 @@
-//! PrismaRev 引擎库：渲染系统、ECS 组件、资源解析、
+//! Prisma 引擎库：渲染系统、ECS 组件、资源解析、
 //! 场景管理和编辑器集成。
 //!
 //! 这是一个**纯逻辑 crate**——不依赖任何窗口系统。
@@ -14,6 +14,7 @@ pub mod asset_paths;
 pub mod asset_resolver;
 #[cfg(feature = "audio")]
 pub mod audio;
+pub mod cache_paths;
 pub mod calibration_spheres;
 pub mod camera;
 pub mod camera_controller;
@@ -23,7 +24,8 @@ pub mod dirty_router;
 pub mod ecs;
 pub mod engine;
 pub mod input;
-pub mod input_facade;
+pub mod input_actions;
+pub mod input_view;
 pub mod launch_config;
 pub mod physics;
 pub mod physics2d;
@@ -40,5 +42,6 @@ pub mod util;
 
 pub use app::{AppBuilder, DefaultSubsystems, ScheduleLabel, Subsystem, System};
 pub use engine::{orbit_camera_demo_system, Engine};
-pub use input_facade::Input;
+pub use input_actions::{key_code_from_vk, EngineAction, KeyBinding, KeyBindings};
+pub use input_view::Input;
 pub use render_system::{euler_xyz_deg_to_dir, render_system};

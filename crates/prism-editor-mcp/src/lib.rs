@@ -1,4 +1,4 @@
-//! Testable core of the PrismaRev editor MCP server.
+//! Testable core of the Prisma editor MCP server.
 //!
 //! The binary keeps the stdio loop and the process-spawning `game` / editor
 //! hosts; this library exposes the transport types and document tools so
@@ -22,7 +22,7 @@ pub struct ToolDef {
     pub input_schema: Value,
 }
 
-/// Resolves the project root from `--project <path>`, then `PRISMREV_PROJECT`,
+/// Resolves the project root from `--project <path>`, then `PRISMA_PROJECT`,
 /// then by walking up from the cwd looking for `assets/`.
 pub fn resolve_root() -> Result<PathBuf, String> {
     let mut args = std::env::args().skip(1);
@@ -33,14 +33,10 @@ pub fn resolve_root() -> Result<PathBuf, String> {
                 .map_err(|err| format!("项目根 '{value}' 不存在: {err}"));
         }
     }
-    if let Some(value) = std::env::var_os("PRISMREV_PROJECT") {
+    if let Some(value) = std::env::var_os("PRISMA_PROJECT") {
         let value = PathBuf::from(value);
-        return std::fs::canonicalize(&value).map_err(|err| {
-            format!(
-                "PRISMREV_PROJECT 指向的 '{}' 不存在: {err}",
-                value.display()
-            )
-        });
+        return std::fs::canonicalize(&value)
+            .map_err(|err| format!("PRISMA_PROJECT 指向的 '{}' 不存在: {err}", value.display()));
     }
     prism_editor_api::scene::find_project_root()
 }

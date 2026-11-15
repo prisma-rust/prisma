@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 fn temp_asset_root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("prismrev-{tag}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("prisma-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(root.join("assets")).expect("create temp asset root");
     root
 }
@@ -23,7 +23,7 @@ fn player_entry_installs_the_logger_before_mounting_packages() {
 
     // Keep the app away from the real assets and the user's save directory.
     let root = temp_asset_root("startup-log");
-    std::env::set_var("PRISMREV_ASSET_ROOT", &root);
+    std::env::set_var("PRISMA_ASSET_ROOT", &root);
     std::env::set_var(prism_engine::user_data::ENV_OVERRIDE, root.join("user"));
 
     let app = prism_app::App::with_config(prism_engine::config::AppConfig::default());

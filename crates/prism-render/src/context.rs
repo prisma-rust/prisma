@@ -372,9 +372,9 @@ fn create_instance(
     };
 
     let app_info = vk::ApplicationInfo::default()
-        .application_name(c"PrismaRev")
+        .application_name(c"Prisma")
         .application_version(vk::make_api_version(0, 0, 1, 0))
-        .engine_name(c"PrismaRev")
+        .engine_name(c"Prisma")
         .engine_version(vk::make_api_version(0, 0, 1, 0))
         .api_version(api_version);
 

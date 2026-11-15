@@ -11525,7 +11525,7 @@ fn captured_shortcut(ui: &Ui) -> Option<CapturedShortcut> {
 }
 
 pub fn about(ui: &mut Ui) {
-    ui.heading("PrismaRev Editor");
+    ui.heading("Prisma Editor");
     ui.label("egui + ash Vulkan editor with zero-copy Scene / Game viewports.");
     ui.separator();
     ui.label(

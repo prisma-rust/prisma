@@ -1,14 +1,14 @@
 //! 资源目录定位——不依赖进程当前工作目录。
 //!
-//! 桌面端的启动方式不止一种：仓库根 `cargo run`、在 `projects/prisma/` 里运行、
-//! 双击 `target/release/prisma.exe`、launcher 用绝对路径 spawn、快捷方式改过
+//! 桌面端的启动方式不止一种：仓库根 `cargo run`、在 `projects/template/` 里运行、
+//! 双击 `target/release/template.exe`、launcher 用绝对路径 spawn、快捷方式改过
 //! 「起始位置」……而 `.pak` / `settings.ini` / `scenes.json` / 环境贴图此前
 //! 都按 `assets/...` 直接相对 cwd 打开。cwd 不含 `assets/` 时它们全部静默失败，
 //! 表现为黑屏或「没有任何场景」。
 //!
 //! 本模块定义**唯一**的资源根解析规则（[`asset_root`]），运行时各处共用：
 //!
-//! 1. `PRISMREV_ASSET_ROOT`（指向包含 `assets/` 的目录）——显式覆盖，便于测试/绿色版；
+//! 1. `PRISMA_ASSET_ROOT`（指向包含 `assets/` 的目录）——显式覆盖，便于测试/绿色版；
 //! 2. 当前工作目录及其所有父目录；
 //! 3. 可执行文件所在目录及其所有父目录（覆盖「从别处用绝对路径启动」）。
 //!
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 显式指定资源根目录（**包含 `assets/` 的目录**）的环境变量。
-pub const ASSET_ROOT_ENV: &str = "PRISMREV_ASSET_ROOT";
+pub const ASSET_ROOT_ENV: &str = "PRISMA_ASSET_ROOT";
 
 /// 资源子目录名，所有 `assets/...` 相对路径都挂在它下面。
 const ASSET_DIR_NAME: &str = "assets";
@@ -80,6 +80,65 @@ pub fn asset_dir() -> Option<PathBuf> {
 /// → `<root>/assets/scenes.pak`。
 pub fn asset_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
     asset_dir().map(|dir| dir.join(relative.as_ref()))
+}
+
+/// 复制即可执行的两步 `build-scenes` 命令：先 cd 到项目目录，再带完整参数跑
+/// `prism-build-pipeline`。只写 "run build-scenes" 的话，读的人还得猜
+/// `cargo run build-scenes` 之类的错误写法。
+///
+/// `assets_dir` 是项目里那个 `assets/` 目录：工程有自己的 `Cargo.toml` 时用
+/// `Cargo.toml`，`projects/<name>/` 下的工程用 `../../Cargo.toml`（仓库根 workspace）。
+/// 找不到仓库根时退回不带 `--manifest-path` 的形式。
+pub fn build_scenes_steps(assets_dir: &Path) -> [String; 2] {
+    let project = assets_dir.parent().unwrap_or(assets_dir);
+    let project = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    match repo_root_for(&project) {
+        Some(repo) => {
+            let manifest = if repo == project {
+                "Cargo.toml".to_string()
+            } else {
+                let depth = project
+                    .components()
+                    .count()
+                    .saturating_sub(repo.components().count());
+                let mut manifest = "../".repeat(depth.max(1));
+                manifest.push_str("Cargo.toml");
+                manifest
+            };
+            [
+                format!("cd {}", project.display()),
+                format!(
+                    "cargo run -q --manifest-path {manifest} -p prism-build-pipeline -- build-scenes"
+                ),
+            ]
+        }
+        None => [
+            format!("cd {}", project.display()),
+            "cargo run -q -p prism-build-pipeline -- build-scenes".to_string(),
+        ],
+    }
+}
+
+/// [`build_scenes_steps`] 的日志形式（一行，`&&` 连接）。
+pub fn build_scenes_command(assets_dir: &Path) -> String {
+    build_scenes_steps(assets_dir).join(" && ")
+}
+
+fn repo_root_for(project: &Path) -> Option<PathBuf> {
+    let candidates = [project.join("../.."), project.to_path_buf()];
+    for candidate in candidates {
+        let Ok(candidate) = candidate.canonicalize() else {
+            continue;
+        };
+        if candidate.join("Cargo.toml").is_file()
+            && candidate.join("crates/prism-build-pipeline").is_dir()
+        {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

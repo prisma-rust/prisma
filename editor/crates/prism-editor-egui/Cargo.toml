@@ -3,7 +3,7 @@ name = "prism-editor-egui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PrismaRev 的 egui 编辑器：经典布局 + Scene/Game 视口零拷贝"
+description = "Prisma 的 egui 编辑器：经典布局 + Scene/Game 视口零拷贝"
 
 [[bin]]
 name = "prism-editor-egui"

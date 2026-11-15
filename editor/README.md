@@ -1,6 +1,6 @@
 # editor
 
-PrismaRev 的 **egui 编辑器**（egui + ash Vulkan）。独立 workspace，不挂根 workspace。
+Prisma 的 **egui 编辑器**（egui + ash Vulkan）。独立 workspace，不挂根 workspace。
 
 - 沿用经典桌面编辑器布局：菜单栏 / 主工具栏 /
   状态栏 + split-tree docking（可拖 splitter、tab 切换、浮动窗口）。
@@ -23,7 +23,7 @@ cargo run -p prism-editor-egui
 前置条件：
 
 - 桌面 Vulkan 设备（Windows / Linux；Android 需要额外的 winit 后端口径，暂未接）；
-- 已编译的着色器：`bash assets/shaders/compile.sh`（`.spv` 不入库）；
+- 已编译的着色器：`.spv` 已入库，克隆后就有；改了 `assets/shaders/slang/*.slang` 再跑 `bash assets/shaders/compile.sh`；
 - 项目根（含 `assets/`）可从 cwd 或上级目录找到；找不到时用 `editor/public/demo.json`
   的只读 fixture 起界面。
 
@@ -31,7 +31,7 @@ cargo run -p prism-editor-egui
 
 | 变量 | 作用 |
 |---|---|
-| `PRISMREV_EDITOR_DEMO` | 指定 fixture JSON 路径 |
+| `PRISMA_EDITOR_DEMO` | 指定 fixture JSON 路径 |
 | `RUST_LOG` | 日志级别（默认 `warn`） |
 
 ## 截图 / 被 MCP 驱动

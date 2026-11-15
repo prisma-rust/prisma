@@ -81,7 +81,7 @@ def player_tree() -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev player dependency guard")
+    parser = argparse.ArgumentParser(description="Prisma player dependency guard")
     parser.add_argument("--list", action="store_true", help="打印玩家依赖树")
     args = parser.parse_args()
 

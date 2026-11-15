@@ -1,4 +1,4 @@
-//! Platform abstraction for PrismaRev.
+//! Platform abstraction for Prisma.
 //!
 //! Provides the window-system interface, Vulkan surface creation and input event
 //! routing. Contains no application-specific logic — the game loop lives in

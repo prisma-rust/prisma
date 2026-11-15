@@ -22,7 +22,7 @@
 //!
 //! ## Android
 //!
-//! The 错误 text is logged to logcat (tag `PrismaRev`), an `AlertDialog` is
+//! The 错误 text is logged to logcat (tag `Prisma`), an `AlertDialog` is
 //! shown on the UI 线程 via JNI against the `Activity` exposed by
 //! [`android_activity::AndroidApp`], and the calling 线程 waits modally until
 //! the 对话框 is dismissed. The 错误 text is also copied to the Android 系统

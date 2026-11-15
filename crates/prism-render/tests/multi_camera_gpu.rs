@@ -43,28 +43,27 @@ fn try_create() -> Option<GraphRenderer> {
 
 fn frame_data() -> FrameUBOData {
     FrameUBOData {
-        view_proj: IDENTITY,
-        camera_position: [0.0, 0.0, 3.0, 0.0],
-        light_direction: [0.3, 0.8, 0.5, 0.8],
-        light_color: [1.0, 1.0, 1.0, 1.0],
+        viewProj: IDENTITY,
+        cameraPosition: [0.0, 0.0, 3.0, 0.0],
+        lightDirection: [0.3, 0.8, 0.5, 0.8],
+        lightColor: [1.0, 1.0, 1.0, 1.0],
         view: IDENTITY,
-        light_view_proj: IDENTITY,
-        light_view_proj1: IDENTITY,
-        shadow_split: 0.0,
-        shadow_cascade_count: 1,
-        // Passthrough: the readback is the raw clear colour.
-        tonemap_mode: 2,
-        viewport_size: [SIZE as f32, SIZE as f32],
+        lightViewProj: IDENTITY,
+        lightViewProj1: IDENTITY,
+        shadowSplit: 0.0,
+        shadowCascadeCount: 1,
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
         exposure: 1.0,
-        shadow_strength: 0.0,
-        _pad2: [0.0; 3],
-        _pad3: [0.0; 2],
-        prev_view_proj: [
+        shadowStrength: 0.0,
+        prevViewProj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
+        ..Default::default()
     }
 }
 

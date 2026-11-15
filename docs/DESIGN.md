@@ -1,6 +1,6 @@
-# PrismaRev 设计目标与设计原则
+# Prisma 设计目标与设计原则
 
-> 本文件是 PrismaRev 的**权威设计蓝图（source of truth for intent）**。
+> 本文件是 Prisma 的**权威设计蓝图（source of truth for intent）**。
 > 代码会变，但这里的约束不可违背。新增渲染特性、pass、平台支持前，
 > 先对照本文确认方向一致。具体的特性设计见 `docs/` 下的分文档
 > （如 `mobile-raytracing-gi-design.md`）。
@@ -85,7 +85,7 @@
 | 模块化管线 | `prism-render/src/render_graph.rs`（`RenderPassNode` 图）+ `forward_pass.rs` / `shadow_map_pass.rs` / `skybox_pass.rs`。**现状（2026-08-21）**：`RenderGraph::execute()` 统一驱动四个 pass（`ShadowMapPass` -> `ForwardPass` -> `GtaoPass` -> `PostPass`，按注册顺序线性执行）。passes 通过 `read_usage` / `write_usage` 声明图边依赖，graph 据此自动插入跨 pass 的 `vkCmdPipelineBarrier`（layout cache 按 `(handle, image_index)` 跨帧持久，`recreate_swapchain` 时 `reset_layouts`）。跨帧延迟边（GTAO 双缓冲 AO 回喂）与 swapchain->`PRESENT_SRC_KHR` 保留手动，标注为图边界特例。环检测已实现（`validate_edges`），执行顺序不重排（接线顺序见 `GraphRenderer::new`）。`GraphRenderer::prepare` 已接入 `render_system`/`render_runner` 五阶段链（不再空转），资源生命周期区间已声明，TBDR 内存 aliasing 待下一步扩展。|
 | bindless / 全平台统一 | `prism-render/src/bindless.rs`（分离 SRV + 全局 sampler 表） |
 | 资源管理解耦 | 职责拆成三个 crate：`prism-cooker`（Import→Cook，仅构建期）、`prism-scene`（组件 schema + RSCN v4）、`prism-asset`（Package→Runtime，`.pak` + `ResourceManager`）。引擎侧 `GpuAssetResolver` 持 `ResourceManager`，用 `load_with_deps` 从 `.pak` 懒加载，再经 `GraphRenderer::apply_asset_requests` 在渲染线程上传；运行时链路不依赖 cooker。 |
-| 移动端 GI | **Baked probe-volume GI**（2 阶 SH，9 系数 × RGB，`R32G32B32A32_SFLOAT` 3D texture；float16 仅是后续可选压缩），非实时 SHARC。设计见 §6。SHARC 实时 slang 已移除，不再恢复（移动端跑不动每帧 ray 填 cache）。|
+| 移动端 GI | **Baked probe-volume GI**（2 阶 SH，9 系数 × RGB，`R32G32B32A32_SFLOAT` 3D texture；float16 仅是后续可选压缩），设计见 §6。移动端仍不跑实时 SHARC（跑不动每帧 ray 填 cache）。桌面侧另有两条独立于 baked 的实时路径：PT + SHARC（`gi_mode = Sharc`）与光栅 ReSTIR GI（`gi_mode = Restir`，见 §6.8）。|
 | 阴影 / RT | 光栅化阴影贴图：`ShadowMapPass`（深度预渲染，见 `shadow_depth.slang`）+ `ForwardPass`（comparison sampler 采样，见 `scene_frag.slang`） |
 | 能力探测 | `prism-render/src/capabilities.rs`（集中探测，扩展中） |
 | 帧生命周期 | `GraphRenderer` 已提供 `begin_frame` → `prepare` → `execute` → `present` → `end_frame` 阶段（2026-08-21 起 `prepare` 已在 `render_system` 与 `render_runner::render_one_frame` 中实际调用，不再空转）；旧 `render()` 仅作为兼容门面。`prepare` 当前实现脏标记日志与输入校验，下一步扩展在此调度批量上传。细粒度 Runtime/Plugin 拆分仍待 PR-L2。 |
@@ -140,17 +140,23 @@
 ### 6.3 Pass 拓扑（重构后）
 
 ```
-ShadowMapPass → ForwardPass → GtaoPass → PostPass
-   (图边)         (图边)       (图边)
+ShadowMapPass → ForwardPass → GtaoPass → RestirGiPass → PostPass
+   (图边)         (图边)       (图边)        (图边)
 ```
 
-- GI 不是独立 pass：是 `ForwardPass` 内部一个 `if (flag(PBR_FLAG_GI))` 分支，采样 probe volume。
+- **baked GI 不是独立 pass**：是 `ForwardPass` 内部一个 `if (flag(PBR_FLAG_GI))` 分支，采样 probe volume。
+- **实时 ReSTIR GI 是独立 pass**（`RestirGiPass`，见 §6.8）：它要读 G-buffer 追二次射线，塞进 `ForwardPass` 就变成片元里做 ray query，所以单独成节点；`ForwardPass` 只在下一帧按 `gi_mode` 采样它写出的屏幕空间信号。
 - 图边契约：
   - `ShadowMapPass` 写 `shadow_map`（depth） → `ForwardPass` 读。
   - `ForwardPass` 写 `hdr_color` / `normal_mrt` / `depth`（交换链级，按 image_index） →
     `GtaoPass` 读 depth+normal；`PostPass` 读 hdr_color。
   - `GtaoPass` 写 `ao[frame]`（帧级双缓冲） → `ForwardPass`（下一帧读，`ao[(frame+1)%2]`，1-frame latency）。
     **跨帧依赖由 `GtaoPass::setup` 声明"读上一帧 AO / 写本帧 AO"，图据此不把 GTAO 排在它自己读的那个 slot 前面**；首帧上游 view 为 null，shader 不采样（PBR_FLAG_AO 默认 off）。
+  - `ForwardPass` 写 `albedo_roughness`（`SV_Target3`：rgb = base color，a = perceptual roughness） →
+    `RestirGiPass` 读，用于对间接漫反射做 demodulation。
+  - `RestirGiPass` 写 `restir_gi_color`（帧级双缓冲，`restir_gi_scale` 决定分辨率） → `ForwardPass`（下一帧读，1-frame latency，与 AO 同形）。
+    跨帧延迟边同样是"图边声明 + pass 内手工屏障"：`gi_view` 为 null 时 push constant `gi_mode = 0`，shader 退回 probe volume。
+  - `RestirGiPass` 与 `PathTracePass` 是 SHARC 世界空间缓存的**两个平级消费者**：`gi_mode = Sharc` 时缓存由 PT 训练、PT 查询；`gi_mode = Restir` 时由 `RestirGiPass` 自己 deposit 并查询，PT 不参与。
 
 ### 6.4 Baked GI 数据规格（PR-5 更新）
 
@@ -198,6 +204,26 @@ ShadowMapPass → ForwardPass → GtaoPass → PostPass
 
 > **顺序原则**：PR-1/PR-2 先把图接口按"消费者（GI）需求"定下来（§6.1 三类生命周期），PR-3 才真正接入 GI。
 > 不在 PR-1 时空改接口猜 GI 需求（避免第二遍返工）。
+
+### 6.8 实时 ReSTIR GI（光栅路径，独立于 PT）
+
+> 目标：不打开路径追踪也能拿到实时间接漫反射；SHARC 世界空间缓存复用，但**训练者换成光栅 GI 自己**。
+
+- **触发条件**：`RenderSettings::gi_mode = GiMode::Restir` + `RenderMode::Raster` + `prism-render/restir_gi` feature + 设备支持 `VK_KHR_ray_query`。任一不满足即退化为 baked probe volume（`ForwardPass` 的 `gi_mode` push constant 为 0），不报错、不改图结构。
+- **数据流**：`ForwardPass` 的 G-buffer（depth / view-normal / albedo+roughness / velocity）→ `restir_gi.slang` 在 `restir_gi_scale`（默认 0.5）分辨率下重建世界位置，按余弦分布追 `restir_gi_rays_per_pixel` 条二次射线 → 命中点做 NEE + 环境光，miss 写天空 → 时间复用（velocity 重投影 + 深度校验，`restir_gi_max_history` 封顶）+ 空间复用（`restir_gi_spatial_samples` 个邻居）→ 输出 **E(n)/π**（不是出射辐亮度），`ForwardPass` 下一帧按 `kd · albedo · signal` 合成。
+- **/π 约定**：输出与 probe volume 的 `EvalSH9Irradiance / π` 同量纲，所以 `scene_frag.slang` 两条 GI 路径共用同一行合成公式；ReSTIR 分支只替换信号源，specular 仍走 prefiltered env cubemap。
+- **SHARC 复用**：`RestirGiPass` 通过 `set_sharc_buffers()` 拿到与 PT 相同的三个持久缓冲（hash entries / accumulation / resolved），在 `restir_gi.slang` 内做 `SharcInit` / `SharcUpdateHit` / `SharcUpdateMiss` / `SharcGetCachedRadiance`。射线命中已收敛体素时直接取缓存辐亮度并提前终止。缓存的 clear / resolve 仍由 `GraphRenderer` 的共享编排驱动（`SharcTargets` + `SharcResolvePass`），两个消费者只在"谁训练"上互斥。
+- **几何来源**：`RestirGiPass::set_geometry()` 接收与 PT 同形的 `PtGeometryInstance`（`bake_common`），内部 `build_pt_scene()` 建 BLAS/TLAS；`GraphRenderer::prepare` 在 `gi_mode = Restir` 且 pass 尚无几何时调用 `sync_restir_gi_geometry()`，与 `sync_pt_geometry()` 共用 `collect_rt_instances()` 的世界空间顶点变换。
+- **开关**：`restir_gi_scale`（分辨率倍率）、`restir_gi_rays_per_pixel`、`restir_gi_spatial_samples`、`restir_gi_max_history`、`restir_gi_temporal_reuse`、`restir_gi_spatial_reuse`、`restir_gi_max_secondary_dist`，逐字段经 `prism-engine::render_settings` → `prism-app::render_runner` 透传。
+- **不变量**：`RestirGiPass` 只声明图边（读 4 个 G-buffer、写 `restir_gi_color`），不碰 `ForwardPass` 的附件；关掉 feature 时 `ForwardPass` 的 set 4 binding 1 保持 null，push constant `gi_mode` 恒 0。
+
+### 6.9 PRT64 与 64 叉树（后续阶段）
+
+> 本节到 §6.8 为止描述的是**已落地**的 SH 探针体积与 ReSTIR 路径。更高阶的预计算辐射度传输
+> （PRT64）、64 叉树分块流式、Cluster-Major 动态光传播属于**下一阶段**，其数据契约
+> （`.prtbin` 头部与 cluster 载荷）、Pass 1–4 拓扑、防漏光机制与 M1–M4 验收口径全部记录在
+> [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md)。本节不复述那些内容，改规格以该文为准；
+> §6.1 的三类生命周期与 §6.4 的 `E/π` 量纲约束对它**继续生效**。
 
 *相关文档：`docs/lessons-learned.md`（§21/§29 framebuffer 销毁顺序、§30 CI 漂移）。*
 
@@ -398,7 +424,7 @@ impl TextureFormat { fn is_compressed()->bool; fn compressed_byte_len()->usize; 
 
 - **不**在运行时做 BC/ASTC 编码。编码慢（秒级/张），必须在离线工具做。
 - **不**把 KTX2 产物进 git。太大，靠 SHA256 保证一致性。
-- **不**用 Basis Universal UASTC 跨平台单编码。画质略损，且 PrismaRev 桌面/移动都支持 ASTC（桌面现代 GPU 全支持），不需要"一次编码到处转"。多平台产物分别生成更清晰。
+- **不**用 Basis Universal UASTC 跨平台单编码。画质略损，且 Prisma 桌面/移动都支持 ASTC（桌面现代 GPU 全支持），不需要"一次编码到处转"。多平台产物分别生成更清晰。
 - **不**用神经纹理压缩（NTC / Adreno 神经纹理）。无标准扩展、无跨厂商工具链，留待 Khronos 标准化。
 - **不**为 BC1/BC2/BC3 单独支持。BC2/BC3 是 DX9 时代格式被 BC7 取代；BC1 仅极致体积场景用，移动端 ASTC 12×12 已覆盖该 niche。
 
@@ -886,7 +912,7 @@ prism-scene::rscn::encode_scene
 
 - **[G5] CookProfile 集成到引擎设置** ⏳ **配置已就绪**：`CookProfile` 5 档 + `settings_hash` 已实现，`--profile` CLI 透传待接入 `AppConfig` 启动参数。
 
-- **[G6] 热重载管道** ✅ **编辑器 + 播放器都已接线**：`ResourceManager::on_pak_changed` 换掉陈旧 reader（`Handle` 保持有效），`HotReloadWatcher` 总是随 `runtime` 编译。编辑器在 500ms 轮询里重开重建的 `.pak` 并 `invalidate_assets`；播放器（`prism-app`）在 `PRISMREV_HOT_RELOAD=1` 时做同一件事（发布版默认关，不起线程也不 stat）。剩余：旧 GPU 句柄按句柄回收、松散资产（`assets/` 下未打包的文件）热重载、播放器侧端到端画面验证。
+- **[G6] 热重载管道** ✅ **编辑器 + 播放器都已接线**：`ResourceManager::on_pak_changed` 换掉陈旧 reader（`Handle` 保持有效），`HotReloadWatcher` 总是随 `runtime` 编译。编辑器在 500ms 轮询里重开重建的 `.pak` 并 `invalidate_assets`；播放器（`prism-app`）在 `PRISMA_HOT_RELOAD=1` 时做同一件事（发布版默认关，不起线程也不 stat）。剩余：旧 GPU 句柄按句柄回收、松散资产（`assets/` 下未打包的文件）热重载、播放器侧端到端画面验证。
 
 > **里程碑建议**：G1+G2+G3 为"闭环 MVP"✅ 实现 已打通（可手动端到端），G4+G5 为"开发体验完善"⏳，G6 为"编辑器体验"✅ 实现。
 
@@ -1123,13 +1149,13 @@ internal_scale_mode = integer
 
 ### 实测基线
 
-桌面玩家二进制（`projects/prisma` 的 `prisma`，Termux aarch64，`cargo build --release`，
+桌面玩家二进制（`projects/template` 的 `template`，Termux aarch64，`cargo build --release`，
 `lto = "thin"` + `opt-level = 3`）。复现：
 
 ```bash
-cd projects/prisma && cargo build --release
-ls -l target/release/prisma        # 未 strip
-cp target/release/prisma /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后（发布形态）
+cd projects/template && cargo build --release
+ls -l target/release/template        # 未 strip
+cp target/release/template /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后（发布形态）
 ```
 
 | 版本 | 玩家树 crate | 未 strip | strip 后 |
@@ -1176,7 +1202,8 @@ cp target/release/prisma /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后（
 | 砖块 | feature | 默认 | 关掉后省什么 |
 |---|---|---|---|
 | 路径追踪 | `prism-render/pathtrace` | on | `pt_pass.rs`（~1.6k 行）+ 累积/BLAS-TLAS 资源 |
-| RTXGI (SHARC) | `prism-render/rtxgi`（依赖 `pathtrace`） | off | NVIDIA RTXGI SHARC v1.6 世界空间辐射缓存（`sharc.rs` + resolve 计算管线 + 3 个持久 GPU 缓冲） |
+| SHaRC（NVIDIA RTXGI v1.6） | `prism-render/sharc` | on | NVIDIA RTXGI SHARC v1.6 世界空间辐射缓存（`sharc.rs` + resolve 计算管线 + 3 个持久 GPU 缓冲）。**默认开**：不拉新依赖。**不再依赖 `pathtrace`**：缓存有两个平级消费者——PT 训练/查询（`gi_mode = Sharc`）与光栅 ReSTIR GI 自己 deposit/查询（`gi_mode = Restir`，见 §6.8）。关掉 = 两条实时 GI 路径都退化为 baked probe volume（并 warn 一次） |
+| ReSTIR GI（光栅） | `prism-render/restir_gi` | on | `restir_gi.rs` + `restir_gi.slang`（~1.2k 行 Rust + ~590 行 slang）+ 双缓冲 GI 图 + reservoir 缓冲。**不依赖 `pathtrace`**：只要求 `VK_KHR_ray_query`，无 RT 管线的设备也能跑；缺 ray query 时 `gi_mode = Restir` 退回 baked probe volume 并 warn 一次。`sharc` 是**可选**加速：编了就把缓存当弹射终点，没编就只有单次弹射 + 天空 |
 | NRC | `prism-render/nrc`（依赖 `pathtrace`） | off | NVIDIA Neural Radiance Cache 接入 |
 | DLSS | `prism-render/dlss` | off | NVIDIA Streamline / DLSS 超分辨率与光线重构接入 |
 | 音频 | `prism-app/audio` + `prism-engine/audio` | off | cpal + firewheel + symphonia（~60 crate，−3.1 MB） |
@@ -1199,7 +1226,7 @@ cp target/release/prisma /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后（
 | | `ui-fontdue`（默认） | `ui-directwrite` |
 |---|---|---|
 | 平台 | 全平台 | 仅 Windows（其它目标开它 = `compile_error!`） |
-| 字形来源 | `fontdue` 读系统字体文件（msyh/Noto/DejaVu…）；`PRISMREV_UI_FONT` 可指定项目自带字体 | 系统 `IDWriteFactory` → `IDWriteBitmapRenderTarget`（GDI interop） |
+| 字形来源 | `fontdue` 读系统字体文件（msyh/Noto/DejaVu…）；`PRISMA_UI_FONT` 可指定项目自带字体 | 系统 `IDWriteFactory` → `IDWriteBitmapRenderTarget`（GDI interop） |
 | 字体族 | 按路径候选表 | `Microsoft YaHei` → `Microsoft YaHei UI` → `SimHei` → `Arial` → 兜底 `Segoe UI` |
 | 度量 | `horizontal_line_metrics` | `DWRITE_FONT_METRICS` |
 | 表单 | `fontdue::Font::rasterize` 直接给覆盖度 | 位图刷白 + 黑色灰度 AA 画字形，覆盖度 = `255 − R` |
@@ -1238,7 +1265,7 @@ kerning / ligature。需要这些能力要引入 HarfBuzz / `IDWriteTextLayout` 
 
 ### 12.4 体积账本（每块砖值多少字节）
 
-方法：`scripts/size_report.py` 临时改写 `projects/prisma` 的 feature 列表、按同一
+方法：`scripts/size_report.py` 临时改写 `projects/template` 的 feature 列表、按同一
 `release` profile 构建、记录未 strip 二进制大小。差值只来自 feature。
 
 | 砖块 | Δ 二进制（未 strip） | 说明 |
@@ -1292,7 +1319,7 @@ profile、同一 target、同一条构建命令，差值只来自文本后端。
 `panic = "abort"` **不能**进 `release`：editor 在进程内跑引擎，abort 会让整个编辑器
 崩溃而不是让某个视口失败。用法：`cargo build --profile dist`（Android 打包脚本已切到它）。
 
-实测（`projects/prisma`，默认 feature，Termux aarch64）：
+实测（`projects/template`，默认 feature，Termux aarch64）：
 
 | 配置 | 未 strip | strip 后 |
 |---|---|---|
@@ -1342,9 +1369,9 @@ profile、同一 target、同一条构建命令，差值只来自文本后端。
 winit 计数为 0（`cargo tree --target x86_64-pc-windows-gnu | grep -c winit`），
 不是"编进来再被 LTO 删掉"。
 
-实测（`bash scripts/build-dist.sh projects/prisma x86_64-pc-windows-gnu`，dist + strip）：
+实测（`bash scripts/build-dist.sh projects/template x86_64-pc-windows-gnu`，dist + strip）：
 
-| Windows 窗口后端 | `prisma.exe` | 说明 |
+| Windows 窗口后端 | `template.exe` | 说明 |
 |---|---|---|
 | `winit-window`（默认） | 3,146,240 B（3.00 MB） | winit 0.30 + 系统 DLL |
 | `win32-window`（`win32-native`） | **2,978,816 B（2.84 MB）** | −167,424 B（−163.5 KiB / −5.3%） |
@@ -1363,11 +1390,11 @@ winit 计数为 0（`cargo tree --target x86_64-pc-windows-gnu | grep -c winit`�
 
 | 目标 | 产物 | 大小 | text |
 |---|---|---|---|
-| Linux x86_64 / aarch64（x11 + wayland） | `prisma` | 5.12 MB | 4.97 MB |
-| Linux（仅 x11） | `prisma` | 4.07 MB | — |
-| Windows `x86_64-pc-windows-gnu`（winit） | `prisma.exe` | 4.11 MB | 4.09 MB |
-| Windows `x86_64-pc-windows-gnu`（`win32-native`，无 winit） | `prisma.exe` | 见下方「窗口栈按平台裁剪」 | — |
-| Android `aarch64-linux-android` | `libprisma.so` | **3.26 MB** | 3.15 MB |
+| Linux x86_64 / aarch64（x11 + wayland） | `template` | 5.12 MB | 4.97 MB |
+| Linux（仅 x11） | `template` | 4.07 MB | — |
+| Windows `x86_64-pc-windows-gnu`（winit） | `template.exe` | 4.11 MB | 4.09 MB |
+| Windows `x86_64-pc-windows-gnu`（`win32-native`，无 winit） | `template.exe` | 见下方「窗口栈按平台裁剪」 | — |
+| Android `aarch64-linux-android` | `libtemplate_core.so` | **3.26 MB** | 3.15 MB |
 
 - Windows 与「Linux x11-only」几乎一样（4.11 vs 4.07 MB），差值就是 wayland 栈——**印证了
   0.84 MB 的窗口栈只在 Linux 双后端时存在**。
@@ -1452,7 +1479,7 @@ winit 计数为 0（`cargo tree --target x86_64-pc-windows-gnu | grep -c winit`�
 #### 3D pass 级裁剪：代码 −24 KB，但 strip 后文件不变
 
 `ibl`（#543，−64 KB）之后，`shadow_map` / `gtao` / `skybox` 也做成了 feature
-（`skybox` 依赖 `ibl`）。测法：临时把 `projects/prisma` 的 `prism-app` 改成
+（`skybox` 依赖 `ibl`）。测法：临时把 `projects/template` 的 `prism-app` 改成
 `default-features = false, features = ["x11", "group-3d", ...]`，同一 worktree、
 同一 target、`--profile dist`（fat LTO + cu=1 + panic=abort + strip）。
 
@@ -1504,8 +1531,8 @@ build-std 档绝对值更小，但 64 KB 段对齐的结论不变。
 #### 极限体积档：`--size`（竞赛 / 演示用）
 
 ```bash
-bash scripts/build-dist.sh --size projects/prisma
-powershell -File scripts/build-dist.ps1 -Size projects/prisma   # Windows 主机，等价
+bash scripts/build-dist.sh --size projects/template
+powershell -File scripts/build-dist.ps1 -Size projects/template   # Windows 主机，等价
 ```
 
 = `tiny` profile（`opt-level = "z"` + fat LTO + `cu=1` + `panic=abort` + strip）
@@ -1533,8 +1560,8 @@ opt-level = 3
 #### 压缩壳（`--pack`）
 
 ```bash
-bash scripts/build-dist.sh --size --pack projects/prisma   # Linux / macOS 主机
-powershell -File scripts/build-dist.ps1 -Pack projects/prisma   # Windows 主机
+bash scripts/build-dist.sh --size --pack projects/template   # Linux / macOS 主机
+powershell -File scripts/build-dist.ps1 -Pack projects/template   # Windows 主机
 ```
 
 构建完成后对产物跑一次 `upx --best --lzma <bin>`，再打印压缩前后体积与压缩率。

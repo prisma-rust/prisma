@@ -1,6 +1,6 @@
 //! 资产导入器门面。
 //!
-//! PrismaRev 的资产是**按扩展名直接决定由谁处理**的（没有 `.meta`、没有导入数据库、
+//! Prisma 的资产是**按扩展名直接决定由谁处理**的（没有 `.meta`、没有导入数据库、
 //! 没有每资产的导入设置）。这一层把「这个文件由哪个导入器负责」投影成类别名，
 //! 供编辑器展示与工具脚本判断。
 //!
@@ -35,7 +35,7 @@ pub enum ImporterClass {
     Audio,
     /// HDR / EXR 环境贴图 → `ImageImporter`（里也是纹理导入）。
     Environment,
-    /// `.scene.json` → `DefaultImporter`（PrismaRev 的文本场景格式）。
+    /// `.scene.json` → `DefaultImporter`（Prisma 的文本场景格式）。
     Scene,
     /// `.prefab.json` → `DefaultImporter`。
     Prefab,

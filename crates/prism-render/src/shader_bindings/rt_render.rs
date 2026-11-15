@@ -13,14 +13,19 @@ pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
 /// Push-constant block size in bytes (reflected).
 pub const PUSH_CONSTANT_SIZE: u32 = 4;
 
-/// Push-constant struct (auto-generated from Slang `RtRenderPush`).
+/// GPU layout struct (auto-generated from Slang `RtRenderPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 4 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct RtRenderPush {
     /// offset 0, size 4
     pub pattern: u32,
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<RtRenderPush>() == 4);
+    assert!(::std::mem::offset_of!(RtRenderPush, pattern) == 0);
+};

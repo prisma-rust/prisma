@@ -427,7 +427,7 @@ impl EditorApp {
         // `RunOption::viewport_builder` 的 inner_size / title 不会生效。这里用
         // 视口命令补一次，否则一进来就是 800×600 的挤压布局。
         cc.context
-            .send_viewport_cmd(egui::ViewportCommand::Title("PrismaRev Editor".to_owned()));
+            .send_viewport_cmd(egui::ViewportCommand::Title("Prisma Editor".to_owned()));
         cc.context
             .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1440.0, 900.0)));
 
@@ -605,7 +605,7 @@ impl EditorApp {
         app.workspace.log(
             prism_editor_core::LogSource::Editor,
             prism_editor_core::LogLevel::Info,
-            "PrismaRev editor ready — Scene/Game viewports share the egui VkDevice (zero-copy)",
+            "Prisma editor ready — Scene/Game viewports share the egui VkDevice (zero-copy)",
         );
         Ok(app)
     }
@@ -3218,7 +3218,7 @@ impl EditorApp {
                     self.state.confirm = Some(panels::Confirm::new(
                         panels::ConfirmKind::CleanPlayer,
                         "Clean Build",
-                        "清理玩家工程（projects/prisma）的编译产物，下次 Build 会全量重编。\n\
+                        "清理玩家工程（projects/template）的编译产物，下次 Build 会全量重编。\n\
                          不会动仓库根的引擎 target。",
                         "Clean Player",
                     ));
@@ -3663,7 +3663,7 @@ impl EditorApp {
                 self.menu_do(ui, "Editor Guide", |app| {
                     app.state.status = "docs/editor-egui.md".to_string();
                 });
-                self.menu_item(ui, "About PrismaRev", "", Command::About);
+                self.menu_item(ui, "About Prisma", "", Command::About);
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -4540,19 +4540,19 @@ impl EditorApp {
         }
         // 调试开关：完全跳过引擎 / 用户纹理注册，用来区分「UI 自身的渲染问题」与
         // 「引擎离屏图像注册进来的问题」（无窗口/软件 Vulkan 时排查用）。
-        let no_viewport = std::env::var("PRISMREV_EDITOR_NO_VIEWPORT").is_ok();
+        let no_viewport = std::env::var("PRISMA_EDITOR_NO_VIEWPORT").is_ok();
         match tab {
             "sceneView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
                     ui.label(
-                        RichText::new("viewport disabled (PRISMREV_EDITOR_NO_VIEWPORT)").weak(),
+                        RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak(),
                     )
                 });
             }
             "gameView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
                     ui.label(
-                        RichText::new("viewport disabled (PRISMREV_EDITOR_NO_VIEWPORT)").weak(),
+                        RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak(),
                     )
                 });
             }
@@ -6063,7 +6063,7 @@ fn runtime_schema() -> prism_editor_core::Schema {
 }
 
 fn load_workspace() -> Workspace {
-    let candidates: Vec<PathBuf> = std::env::var("PRISMREV_EDITOR_DEMO")
+    let candidates: Vec<PathBuf> = std::env::var("PRISMA_EDITOR_DEMO")
         .ok()
         .map(PathBuf::from)
         .into_iter()

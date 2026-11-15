@@ -1,4 +1,4 @@
-// Shared types for the PrismaRev forward pipeline.
+// Shared types for the Prisma forward pipeline.
 //
 // Slang module: `import common;` from other .slang files.
 //
@@ -26,15 +26,20 @@ public struct FrameUBO
     public float    exposure;        // offset 252 (multiplies all light radiance pre-tonemap)
     public float    shadowStrength;      // offset 256 (Light.shadowStrength; 0 = no shadow)
     public float3   _pad2;           // offset 260..271 (std140 tail pad)
+    // std140 aligns a mat4 member to 16 bytes, and the scalar tail above ends at
+    // 272, so this matrix starts at 288 with a 16-byte hole in between. The Rust
+    // mirror (`FrameUBOData`) must keep that hole; without it every field from
+    // here on lands 16 bytes early in the uploaded buffer while the shader keeps
+    // reading them at these offsets.
     // #526 CSM: the second cascade lives in the right half of the atlas.
-    public float4x4 lightViewProj1;  // offset 272 (far cascade light-space VP)
-    public float    shadowSplit;     // offset 336 (camera-forward distance of the split)
-    public uint     shadowCascadeCount; // offset 340 (1 = single map, 2 = atlas)
-    public float2   _pad3;           // offset 344..351 (std140 tail pad to 352)
+    public float4x4 lightViewProj1;  // offset 288 (far cascade light-space VP)
+    public float    shadowSplit;     // offset 352 (camera-forward distance of the split)
+    public uint     shadowCascadeCount; // offset 356 (1 = single map, 2 = atlas)
+    public float2   _pad3;           // offset 360..367 (std140 tail pad to 368)
     // #883 Phase 2: previous frame's unjittered view-projection. The vertex
     // stage reprojects the previous model position with this to produce the
     // per-object motion vector written to SV_Target2.
-    public float4x4 prevViewProj;    // offset 352..415
+    public float4x4 prevViewProj;    // offset 368..431
 };
 
 // Vertex stream matching mesh.vert input locations 0..4.

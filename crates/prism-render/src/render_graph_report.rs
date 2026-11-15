@@ -20,7 +20,7 @@ use serde::Serialize;
 use crate::render_graph::{PassInfo, PassKind, RenderGraphSnapshot, RenderMode, ResourceHandle};
 
 /// 游戏进程写报告的输出路径环境变量键（编辑器自己写本地文件，不看它）。
-pub const ENV_KEY: &str = "PRISMREV_RENDER_GRAPH_REPORT";
+pub const ENV_KEY: &str = "PRISMA_RENDER_GRAPH_REPORT";
 
 /// 每多少帧刷新一次报告（≈1 秒 @60fps；图结构变化不频繁）。
 pub const REFRESH_INTERVAL_FRAMES: u64 = 60;
@@ -455,6 +455,9 @@ fn pass_kind(pass: &PassInfo) -> &'static str {
         PassKind::Pt => "pt",
         PassKind::Rt => "rt",
         PassKind::Anf => "anf",
+        PassKind::RestirGi => "restir-gi",
+        PassKind::SharcTrain => "sharc-train",
+        PassKind::SharcResolve => "sharc-resolve",
         PassKind::Unknown => "unknown",
     }
 }
@@ -479,6 +482,18 @@ fn resource_name(handle: ResourceHandle) -> String {
         handle if handle == crate::render_graph::FORWARD_COLOR_H.0 => "forward.color".into(),
         handle if handle == crate::render_graph::ANF_COLOR_H.0 => "anf.color".into(),
         handle if handle == crate::render_graph::PT_COLOR_H.0 => "pt.color".into(),
+        handle if handle == crate::render_graph::FORWARD_VELOCITY_H.0 => "forward.velocity".into(),
+        handle if handle == crate::render_graph::FORWARD_ALBEDO_H.0 => "forward.albedo".into(),
+        handle if handle == crate::render_graph::RESTIR_GI_COLOR_H.0 => "restir_gi.color".into(),
+        handle if handle == crate::render_graph::SHARC_HASH_ENTRIES_H.0 => {
+            "sharc.hash_entries".into()
+        }
+        handle if handle == crate::render_graph::SHARC_ACCUMULATION_H.0 => {
+            "sharc.accumulation".into()
+        }
+        handle if handle == crate::render_graph::SHARC_RESOLVED_H.0 => "sharc.resolved".into(),
+        handle if handle == crate::render_graph::GTAO_AO_H.0 => "gtao.ao".into(),
+        handle if handle == crate::render_graph::FINAL_COLOR_H.0 => "final.color".into(),
         handle => format!("resource#{handle}"),
     }
 }

@@ -35,7 +35,7 @@ pub fn timeline_x(time: f32, duration: f32, left: f32, width: f32) -> f32 {
 
 /// 根关节首尾位移与绕 Y 的偏航角（度）。
 ///
-/// PrismaRev 的 forward 是 `-Z`，所以 `atan2(dx, -dz)`：向 -Z 走是 0°，
+/// Prisma 的 forward 是 `-Z`，所以 `atan2(dx, -dz)`：向 -Z 走是 0°，
 /// 向 +X 走是 +90°。垂直位移不参与偏航。
 pub fn root_motion_delta(start: [f32; 3], end: [f32; 3]) -> ([f32; 3], f32) {
     let delta = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];

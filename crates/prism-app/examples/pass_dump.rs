@@ -4,17 +4,17 @@
 //! 用法：
 //! ```bash
 //! cd projects/sponza
-//! PRISMREV_PASS_DUMP=target/diag/passes \
-//! PRISMREV_PASS_DUMP_FRAME=200 \
+//! PRISMA_PASS_DUMP=target/diag/passes \
+//! PRISMA_PASS_DUMP_FRAME=200 \
 //! SPONZA_RENDER_MODE=pt_off \
 //! cargo run --manifest-path ../../crates/prism-app/Cargo.toml \
 //!     --example pass_dump -- assets/scenes/sponza.scene.json 220
 //! ```
 //!
-//! 参数：`<scene.json> [frames]`，`frames` 默认取 `PRISMREV_PASS_DUMP_FRAME`
+//! 参数：`<scene.json> [frames]`，`frames` 默认取 `PRISMA_PASS_DUMP_FRAME`
 //! 之后再多几帧（保证 dump 帧一定被跑到）。
 //!
-//! 与 `PRISMREV_SCREENSHOT` 的区别：那条路径只能在有 swapchain 的窗口化运行里
+//! 与 `PRISMA_SCREENSHOT` 的区别：那条路径只能在有 swapchain 的窗口化运行里
 //! 工作（headless 下会报 `screenshot: no swapchain`），而且只拿最终后处理结果。
 //! 这里 dump 的是渲染图的中间附件，正是定位「相机是否看到几何体」「PT 有没有
 //! 出图」这类问题需要的证据。
@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
         .next()
         .unwrap_or_else(|| "assets/scenes/sponza.scene.json".to_string());
 
-    let dump_frame: u32 = std::env::var("PRISMREV_PASS_DUMP_FRAME")
+    let dump_frame: u32 = std::env::var("PRISMA_PASS_DUMP_FRAME")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(200);
@@ -75,9 +75,9 @@ fn main() -> anyhow::Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(720);
 
-    if std::env::var("PRISMREV_PASS_DUMP").is_err() {
+    if std::env::var("PRISMA_PASS_DUMP").is_err() {
         log::warn!(
-            "PRISMREV_PASS_DUMP is unset; this run renders {} frames and dumps nothing",
+            "PRISMA_PASS_DUMP is unset; this run renders {} frames and dumps nothing",
             frames
         );
     }
@@ -109,12 +109,12 @@ fn main() -> anyhow::Result<()> {
 
     app.shutdown_hosted();
 
-    match std::env::var("PRISMREV_PASS_DUMP") {
+    match std::env::var("PRISMA_PASS_DUMP") {
         Ok(dir) if !dir.trim().is_empty() => println!(
             "pass dump: frames={frames} dir={} subdir=frame_{dump_frame:04}",
             dir.trim()
         ),
-        _ => println!("pass dump: disabled (PRISMREV_PASS_DUMP unset)"),
+        _ => println!("pass dump: disabled (PRISMA_PASS_DUMP unset)"),
     }
     Ok(())
 }

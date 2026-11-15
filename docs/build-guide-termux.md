@@ -1,4 +1,4 @@
-# PrismaRev 从拉取到编译（Termux / Android 实测流程）
+# Prisma 从拉取到编译（Termux / Android 实测流程）
 
 适用于**没有 slangc** 的主机（Termux/Android）。桌面机流程更简单：装 slangc 后
 `bash assets/shaders/compile.sh` 再 `cargo build` 即可，跳过第 3 节的 CI 步骤。
@@ -26,17 +26,21 @@ pkg install cargo-ndk          # 或 cargo install cargo-ndk
 ## 2. 拉取
 
 ```bash
-git clone https://github.com/Excurs1ons/PrismaRev.git
-cd PrismaRev
+git clone https://github.com/Excurs1ons/Prisma.git
+cd Prisma
 ```
 
-注意：`assets/shaders/*.spv` 是 gitignored 的（不入库），克隆下来**没有** `.spv`，
-但 `prism-render` 用 `include_bytes!` 引用它们——直接 `cargo build` 会失败，
-必须先走第 3 节生成/获取 `.spv`。
+注意：`assets/shaders/*.spv` **已入库**，克隆下来就能直接 `cargo build`，不必先有
+`slangc`。只有改了 `assets/shaders/slang/*.slang` 时才需要第 3 节——重新生成 `.spv`
+并把它们一起提交。`crates/prism-render/build.rs` 会在编译前检查：能跑 `slangc` 时自己调
+`assets/shaders/compile.sh`；找不到时报**一条**可照抄的提示（恢复文件 / `compile.sh` /
+CI `spirv` artifact），而不是三十多条 `couldn't read … .spv`。
 
 ## 3. Shader 流程（无 slangc 主机）
 
-### 3a. 首次：从 CI 取预编译产物
+### 3a. 需要新的 `.spv` 时：从 CI 取产物
+
+> 平时用不到：`.spv` 已入库。只有改了 shader 又没装 slangc 时才走这条。
 
 ```bash
 # 触发一次 CI（推送任意提交，或手动跑 workflow）
@@ -90,11 +94,11 @@ cargo test --workspace                 # ~400 测试（含 CRT 状态机单测�
 
 注意：
 
-- 根 workspace **没有可运行的 bin**。桌面入口在 `projects/prisma/`（`prisma` 二进制，
-  独立 workspace：`cd projects/prisma && cargo run`）；编辑器是 `editor/`（Tauri 2 + Vue 3，
+- 根 workspace **没有可运行的 bin**。桌面入口在 `projects/template/`（`template` 二进制，
+  独立 workspace：`cd projects/template && cargo run`）；编辑器是 `editor/`（Tauri 2 + Vue 3，
   需要 `pnpm tauri dev`）；`launcher/` 是 Android 启动壳（独立 workspace），
   桌面 Hub 在独立仓库 [`Excurs1ons/prisma-hub`](https://github.com/Excurs1ons/prisma-hub)。
-- `projects/prisma/`、`projects/sponza/`、`launcher/`、`editor/`、
+- `projects/template/`、`projects/sponza/`、`launcher/`、`editor/`、
   `crates/xtask` 不在根 workspace 的默认覆盖内——
   根 workspace 构建不包含它们，需各自 `cd` 进去单独 build/clippy。
 - 首次全量构建较久（依赖多，磁盘约 2GB+）；`target/` 被外部清理后需重新构建。
@@ -107,7 +111,7 @@ cargo test --workspace                 # ~400 测试（含 CRT 状态机单测�
 
 - **game-only（无 launcher）**：`projects/<p>/android/` + `scripts/build-android-game.sh <project>`
   （宿主用 `scripts/new-android-game.sh <project>` 从 `templates/android-game/` 生成，#598）。
-  打出的 APK 里只有 `GameActivity` + `libprisma.so` + `assets/game/`，不含 Tauri / WebView。
+  打出的 APK 里只有 `GameActivity` + `libtemplate_core.so` + `assets/game/`，不含 Tauri / WebView。
   流程见 [`docs/android-apk.md`](android-apk.md)。
 - **launcher + 游戏（双 Activity）**：Tauri 的 `launcher/src-tauri/gen/android/`，
   `scripts/build-android.ps1`（Windows）。Termux 上也可以直接把新 `.so` 替换进已有 APK
@@ -129,7 +133,7 @@ cargo ndk -P 26 -t arm64-v8a -o <输出目录> build
 | 症状 | 原因 | 解决 |
 |---|---|---|
 | git pull/push 卡死超时 | Termux IPv6 连不上 github.com | `git config --global http.version HTTP/1.1` |
-| 编译报 include_bytes 找不到 .spv | .spv 不入库，本地没有 | 走第 3 节 CI 下载 |
+| 编译报 include_bytes 找不到 .spv | .spv 已入库，多半被删了 | `git checkout -- assets/shaders`（或走第 3 节重新生成） |
 | CI binding drift job 红 | 改了 shader 没重跑 bindgen | 3b 重生成并提交 |
 | `mem::zeroed` 编译/运行报 invalid_value | ash::Device 含函数指针 | 测试构造用 `MaybeUninit` + `#[allow(invalid_value)]` |
 | clippy 报 manual is_multiple_of | Rust 新版 API | 用 `.is_multiple_of(n)` |

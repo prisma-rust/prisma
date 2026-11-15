@@ -1,4 +1,4 @@
-//! Sponza 用户项目：使用引擎公开接口启动实时路径追踪并集成 RTXGI 调参面板。
+//! Sponza 用户项目：使用引擎公开接口启动实时路径追踪并集成 SHaRC 调参面板。
 
 #[cfg(feature = "player")]
 pub mod tuning_ui;
@@ -14,12 +14,18 @@ pub fn build_app() -> prism_app::App {
     use prism_engine::render_settings::{GiMode, RenderMode, RenderSettings};
 
     prism_app::app()
+        // 以前**不注册任何子系统**，`App` 认为渲染关着 → 直接走 headless 分支：
+        // 不建窗口、不启渲染线程，键盘事件根本没人处理（所有快捷键失效）。
         .with_subsystem(prism_app::Subsystem::Render)
         .with_render_settings(|settings: &mut RenderSettings| {
+            let mut auto_exposure = true;
             if let Ok(mode) = std::env::var("SPONZA_RENDER_MODE") {
                 if mode.eq_ignore_ascii_case("raster") {
                     settings.render_mode = RenderMode::Raster;
                     settings.gi_mode = GiMode::Off;
+                    // Disable tonemap curve compression in raster mode: passthrough to exposure only.
+                    settings.tonemap_mode = 2;
+                    auto_exposure = false;
                 } else if mode.eq_ignore_ascii_case("pt_off") {
                     settings.render_mode = RenderMode::PathTrace;
                     settings.gi_mode = GiMode::Off;
@@ -31,12 +37,21 @@ pub fn build_app() -> prism_app::App {
                 settings.render_mode = RenderMode::PathTrace;
                 settings.gi_mode = GiMode::Sharc;
             }
+            if let Ok(tm) = std::env::var("SPONZA_TONEMAP_MODE") {
+                if let Ok(val) = tm.parse::<u32>() {
+                    settings.tonemap_mode = val;
+                }
+            }
+            if let Ok(ae) = std::env::var("SPONZA_AUTO_EXPOSURE") {
+                auto_exposure = ae == "1" || ae.eq_ignore_ascii_case("true");
+            }
             settings.pt_max_bounces = 4;
             settings.pt_max_iterations = 0;
             settings.pt_ray_max_distance = 1000.0;
-            // Sponza 的光照跨度大（室外天光 vs 走廊只剩间接光），打开直方图
-            // 自动曝光；引擎默认关，其他项目保持固定曝光。
-            settings.auto_exposure = true;
+            settings.auto_exposure = auto_exposure;
+            // The tuning hook owns its input stream; do not let engine PBR
+            // isolation shortcuts silently replace the render debug flags.
+            settings.debug_flags = 0;
             // PBR component isolator, same masks the Digit1..0 / Shift+Digit
             // shortcuts set. Bit order matches `PBR_FLAG_NAMES`.
             if let Ok(flags) = std::env::var("SPONZA_DEBUG_FLAGS") {

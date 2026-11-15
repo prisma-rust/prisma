@@ -1,12 +1,15 @@
-//! Sponza RTXGI & Path Tracing interactive tuning UI.
+//! Sponza SHaRC & Path Tracing interactive tuning UI.
 //!
 //! Replicates the sections and controls of the NVIDIA RTXGI SDK
 //! (`Samples/Pathtracer/UI.cpp`):
 //! - **Generic**: Camera coordinates, VSync, Frame time / FPS.
 //! - **Render**: Raster / Path Trace mode, Post (DLSS, Auto Exposure).
-//! - **Path Tracing**: Mode (Reference, SHaRC, NRC), Bounces, Ray Max Distance, Exposure.
-//! - **SHaRC (RTXGI)**: Enable Clear, Update, Resolve, Anti-firefly, Roughness threshold,
+//! - **Path Tracing**: Mode (Reference, SHaRC, ReSTIR GI, NRC), Bounces, Ray Max Distance,
+//!   Exposure.
+//! - **SHaRC**: Enable Clear, Update, Resolve, Anti-firefly, Roughness threshold,
 //!   Downscale factor, Scene scale, Accumulation frame count, Stale frame count.
+//! - **ReSTIR GI**: raster-path real-time GI that reuses the same SHaRC cache; picking it
+//!   also switches the renderer back to raster mode.
 //! - **Lighting / Tonemapping**: Reinhard, ACES, Passthrough.
 //! - **DLSS**: Off, Quality, Balanced, Performance, UltraPerformance, DLAA.
 //!
@@ -15,7 +18,7 @@
 //! - `Up` / `Down` arrows or `W`/`S`: Navigate parameter rows.
 //! - `Left` / `Right` arrows or `A`/`D`: Adjust value down/up.
 //! - `Space` / `Enter`: Toggle boolean / trigger action.
-//! - `1` / `2` / `3`: Quick select GI Mode (1: Reference, 2: SHaRC, 3: NRC).
+//! - `1` / `2` / `3` / `4`: Quick select GI Mode (1: Reference, 2: SHaRC, 3: NRC, 4: ReSTIR GI).
 //! - `T`: Cycle tonemapper (Reinhard -> ACES -> Passthrough).
 //! - `R`: Reset accumulation cache.
 //! - `V`: Toggle VSync.
@@ -31,10 +34,18 @@ use prism_scene::ui::{
 };
 use prism_scene::Active;
 
-const NUM_ITEMS: usize = 16;
+const NUM_ITEMS: usize = 17;
 
 #[derive(Debug)]
 pub struct SponzaTuningHook {
+    /// 指针锁定（相机接管键鼠）时的快照，每帧由 `on_tick` 从窗口同步。
+    ///
+    /// 键盘事件不带锁定信息，而面板按键要走「锁定态归相机、解锁态归面板」的
+    /// 分流，所以这里存一份：事件处理时读到的是上一帧的值，比窗口查询快，
+    /// 也不会在一帧里中途变卦。
+    pub locked: bool,
+    /// 上一帧的锁定状态：用来识别「刚进入锁定态」这一帧。
+    was_locked: bool,
     pub show: bool,
     pub selected_index: usize,
 
@@ -50,6 +61,7 @@ pub struct SponzaTuningHook {
     pub sharc_enable_resolve: bool,
     pub sharc_enable_anti_firefly: bool,
     pub sharc_scene_scale: f32,
+    pub sharc_capacity: u32,
     pub sharc_roughness_threshold: f32,
     pub sharc_downscale_factor: u32,
     pub sharc_accumulation_frame_num: u32,
@@ -73,20 +85,35 @@ impl Default for SponzaTuningHook {
             _ => (RenderMode::PathTrace, GiMode::Sharc),
         };
 
+        let auto_exposure = std::env::var("SPONZA_AUTO_EXPOSURE")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(!matches!(render_mode, RenderMode::Raster));
+        let tonemap_mode = std::env::var("SPONZA_TONEMAP_MODE")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(if matches!(render_mode, RenderMode::Raster) {
+                2
+            } else {
+                1
+            });
+
         Self {
+            locked: false,
+            was_locked: false,
             show: true,
             selected_index: 0,
             render_mode,
-            auto_exposure: true,
+            auto_exposure,
             gi_mode,
             bounces: 4,
             ray_max_distance: 1000.0,
-            tonemap_mode: 1, // ACES
+            tonemap_mode,
             sharc_enable_clear: false,
             sharc_enable_update: true,
             sharc_enable_resolve: true,
             sharc_enable_anti_firefly: true,
             sharc_scene_scale: 50.0,
+            sharc_capacity: 1 << 20,
             sharc_roughness_threshold: 0.4,
             sharc_downscale_factor: 5,
             sharc_accumulation_frame_num: 20,
@@ -110,6 +137,15 @@ impl SponzaTuningHook {
             RenderMode::PathTrace => RenderMode::Raster,
             _ => RenderMode::PathTrace,
         };
+        if self.render_mode == RenderMode::Raster {
+            self.gi_mode = GiMode::Off;
+            self.auto_exposure = false;
+            self.tonemap_mode = 2;
+        } else {
+            self.gi_mode = GiMode::Sharc;
+            self.auto_exposure = true;
+            self.tonemap_mode = 1;
+        }
         self.request_reset = true;
     }
 
@@ -117,7 +153,7 @@ impl SponzaTuningHook {
         match self.selected_index {
             0 => self.cycle_render_mode(),
             1 => {
-                // GI Mode: Off <-> Sharc <-> Nrc
+                // GI Mode: Off -> Sharc -> Restir -> Nrc -> Off
                 self.gi_mode = match self.gi_mode {
                     GiMode::Off => {
                         if increase {
@@ -128,22 +164,33 @@ impl SponzaTuningHook {
                     }
                     GiMode::Sharc => {
                         if increase {
-                            GiMode::Nrc
+                            GiMode::Restir
                         } else {
                             GiMode::Off
+                        }
+                    }
+                    GiMode::Restir => {
+                        if increase {
+                            GiMode::Nrc
+                        } else {
+                            GiMode::Sharc
                         }
                     }
                     GiMode::Nrc => {
                         if increase {
                             GiMode::Off
                         } else {
-                            GiMode::Sharc
+                            GiMode::Restir
                         }
                     }
                 };
-                // GI modes only exist in path tracing, so selecting one also
-                // leaves raster mode.
-                self.render_mode = RenderMode::PathTrace;
+                // Path-traced GI modes live in path tracing; ReSTIR GI is the
+                // raster-path technique, so it flips the mode the other way.
+                self.render_mode = if self.gi_mode == GiMode::Restir {
+                    RenderMode::Raster
+                } else {
+                    RenderMode::PathTrace
+                };
                 self.request_reset = true;
             }
             2 => {
@@ -229,6 +276,16 @@ impl SponzaTuningHook {
                 }
             }
             14 => {
+                // Cache capacity: 2^16 .. 2^23 entries (doubles per step).
+                // Resizing rebuilds the buffers, so the cache restarts empty.
+                if increase {
+                    self.sharc_capacity = (self.sharc_capacity * 2).min(1 << 23);
+                } else {
+                    self.sharc_capacity = (self.sharc_capacity / 2).max(1 << 16);
+                }
+                self.request_reset = true;
+            }
+            15 => {
                 // DLSS Mode
                 self.dlss_mode = match self.dlss_mode {
                     DlssMode::Off => {
@@ -276,105 +333,188 @@ impl SponzaTuningHook {
                 };
                 self.request_reset = true;
             }
-            15 => self.auto_exposure = !self.auto_exposure,
+            16 => self.auto_exposure = !self.auto_exposure,
             _ => {}
         }
     }
 
     fn toggle_parameter(&mut self) {
         match self.selected_index {
-            0 | 1 | 14 => self.adjust_parameter(true),
+            0 | 1 | 15 => self.adjust_parameter(true),
             5 => self.sharc_enable_clear = !self.sharc_enable_clear,
             6 => self.sharc_enable_update = !self.sharc_enable_update,
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
             8 => self.sharc_enable_anti_firefly = !self.sharc_enable_anti_firefly,
-            15 => self.auto_exposure = !self.auto_exposure,
+            16 => self.auto_exposure = !self.auto_exposure,
             _ => {}
         }
     }
 }
 
-impl FrameHook for SponzaTuningHook {
-    fn on_platform_event(&mut self, _window: &PlatformWindow, event: PlatformEvent) -> bool {
-        let PlatformEvent::Key { key, pressed: true } = event else {
-            return false;
-        };
+/// 一次按键的路由结果。
+///
+/// 钩子先于 App 看到事件：返回 `false` 时 App 会走自己的快捷键（F3 / Tab / T /
+/// 数字键 PBR 隔离）**并**把按键交给 InputManager。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyRoute {
+    /// 面板不处理：原样交给 App（含引擎的移动键）。
+    Forward,
+    /// 面板吃掉了这个键（App 的快捷键与引擎的按键状态都不再看到它）。
+    Consume,
+}
 
+/// 面板在锁定态下的可见性。
+///
+/// 两种模式互不重叠：**锁定** = 鼠标隐藏、面板隐藏、WASD 走位；**未锁定** =
+/// 鼠标显示、面板显示、WASD 翻菜单。所以锁定状态**变化的那一帧**直接把面板
+/// 对齐到目标状态（锁上就收起、解锁就展开），中间的帧保留玩家的 F1 / Tab
+/// 开关——每帧无条件写 `show && !locked` 会把钩子刚置上的 `show = true`
+/// 立刻抹掉，F1 / Tab 看上去就是坏的。
+fn panel_visible_after_lock(show: bool, locked: bool, was_locked: bool) -> bool {
+    if locked == was_locked {
+        show
+    } else {
+        !locked
+    }
+}
+
+impl SponzaTuningHook {
+    /// 面板按键不区分按下 / 松开：按一次触发一次。
+    fn on_key_pressed(&mut self, key: Key) -> KeyRoute {
         match key {
+            // 面板开关：任何遮挡键都不能抢它，否则面板一开就再也关不掉。
             Key::F1 | Key::Tab => {
                 self.show = !self.show;
-                return true;
+                return KeyRoute::Consume;
             }
+            // GI 模式是 Sponza 的招牌操作，面板收着也要能用（和顶部状态栏写的
+            // 「[1] Ref [2] SHaRC [3] NRC」一致）。
             Key::Digit1 => {
                 self.gi_mode = GiMode::Off;
                 self.request_reset = true;
-                return true;
+                return KeyRoute::Consume;
             }
             Key::Digit2 => {
                 self.gi_mode = GiMode::Sharc;
                 self.request_reset = true;
-                return true;
+                return KeyRoute::Consume;
             }
             Key::Digit3 => {
                 self.gi_mode = GiMode::Nrc;
                 self.request_reset = true;
-                return true;
+                return KeyRoute::Consume;
             }
+            // ReSTIR GI is a raster-path mode, so the key also leaves PT.
+            Key::Digit4 => {
+                self.gi_mode = GiMode::Restir;
+                self.render_mode = RenderMode::Raster;
+                self.request_reset = true;
+                return KeyRoute::Consume;
+            }
+            // M / R / V 是面板自己的功能键，相机从不读它们
+            // （`camera_controller_system` 只看 WASD / QE / Space / Ctrl / Shift），
+            // 所以锁定与否都不影响按键语义，两个状态下都接收。
+            // 之前按「锁定态归相机」加了 `!self.locked` 守卫，而窗口拿到焦点就自动
+            // 锁定，等于这三个键在游戏里永远收不到——M 不响应就是这么来的。
+            Key::Letter(b'M') => {
+                self.cycle_render_mode();
+                return KeyRoute::Consume;
+            }
+            Key::Letter(b'R') => {
+                self.request_reset = true;
+                return KeyRoute::Consume;
+            }
+            Key::Letter(b'V') => {
+                self.vsync = !self.vsync;
+                return KeyRoute::Consume;
+            }
+            // 色调映射也是面板自己的设置：面板收着时同样可用（状态栏一直显示它）。
             Key::KeyT => {
                 self.tonemap_mode = (self.tonemap_mode + 1) % 3;
-                return true;
+                return KeyRoute::Consume;
             }
-            // Key 'M' (0x4D in Win32 VK): Raster <-> Path Trace
-            Key::Other(0x4D) => {
-                self.cycle_render_mode();
-                return true;
+            // 下面全是**菜单操作**，只属于解锁态。锁定 = 相机接管键鼠，菜单一个键
+            // 都不该收到（以前只挡了 WASD，方向键 / Space / Enter 仍被吃掉，
+            // 锁定态下按空格既不开火也不翻菜单，纯属吞键）。
+            _ if self.locked => KeyRoute::Forward,
+            // 解锁态：WASD 就是菜单导航。面板若被 F1 手动收起，先展开再导航，
+            // 否则按键作用在一个看不见的列表上。
+            Key::KeyW | Key::KeyA | Key::KeyS | Key::KeyD => {
+                self.show = true;
+                self.navigate_with_wasd(key);
+                KeyRoute::Consume
             }
-            // Key 'R' (0x52 in Win32 VK)
-            Key::Other(0x52) => {
-                self.request_reset = true;
-                return true;
-            }
-            // Key 'V' (0x56 in Win32 VK)
-            Key::Other(0x56) => {
-                self.vsync = !self.vsync;
-                return true;
-            }
-            Key::ArrowUp | Key::KeyW if self.show => {
-                if self.selected_index == 0 {
-                    self.selected_index = NUM_ITEMS - 1;
+            // 面板关着时下面这些都没意义：原样交回给 App。
+            _ if !self.show => KeyRoute::Forward,
+            Key::ArrowUp => {
+                self.selected_index = if self.selected_index == 0 {
+                    NUM_ITEMS - 1
                 } else {
-                    self.selected_index -= 1;
-                }
-                return true;
+                    self.selected_index - 1
+                };
+                return KeyRoute::Consume;
             }
-            Key::ArrowDown | Key::KeyS if self.show => {
+            Key::ArrowDown => {
                 self.selected_index = (self.selected_index + 1) % NUM_ITEMS;
-                return true;
+                return KeyRoute::Consume;
             }
-            Key::ArrowLeft | Key::KeyA if self.show => {
+            Key::ArrowLeft => {
                 self.adjust_parameter(false);
-                return true;
+                return KeyRoute::Consume;
             }
-            Key::ArrowRight | Key::KeyD if self.show => {
+            Key::ArrowRight => {
                 self.adjust_parameter(true);
-                return true;
+                return KeyRoute::Consume;
             }
-            Key::Space | Key::Enter if self.show => {
+            Key::Space | Key::Enter => {
                 self.toggle_parameter();
-                return true;
+                return KeyRoute::Consume;
             }
-            _ => false,
+            _ => KeyRoute::Forward,
         }
+    }
+
+    /// 解锁态下 WASD 与方向键同义（面板是唯一在用键盘的地方）。
+    fn navigate_with_wasd(&mut self, key: Key) {
+        match key {
+            Key::KeyW => self.on_key_pressed(Key::ArrowUp),
+            Key::KeyS => self.on_key_pressed(Key::ArrowDown),
+            Key::KeyA => self.on_key_pressed(Key::ArrowLeft),
+            Key::KeyD => self.on_key_pressed(Key::ArrowRight),
+            _ => KeyRoute::Forward,
+        };
+    }
+}
+
+impl FrameHook for SponzaTuningHook {
+    fn on_platform_event(&mut self, window: &PlatformWindow, event: PlatformEvent) -> bool {
+        let PlatformEvent::Key { key, pressed } = event else {
+            return false;
+        };
+        // 锁定状态直接问窗口：`on_tick` 的缓存是上一帧的，而「点一下画面锁定」
+        // 和「Esc 解锁」都发生在帧中间，用旧值会把这一次按键分错流。
+        self.locked = window.is_pointer_locked();
+        if pressed && self.on_key_pressed(key) == KeyRoute::Consume {
+            return true;
+        }
+        // false = 没消费：App 照常走快捷键，并把按键路由进 InputManager（锁定态下
+        // WASD 走的就是这条：面板不管，相机照常移动）。注意消费与否都拦不住
+        // InputManager——所以「解锁态 WASD 不动相机」由引擎侧按指针锁定把关。
+        false
     }
 
     fn on_tick(
         &mut self,
-        _window: &PlatformWindow,
+        window: &PlatformWindow,
         world: &mut World,
         settings: &mut RenderSettings,
         stats: &RenderStats,
         _shared: &RenderShared,
     ) {
+        // 指针锁定 = 相机接管键鼠。平台层是唯一真值来源（App 里那份
+        // `InputManager::pointer_locked` 钩子拿不到），每帧同步一次给键盘分流用。
+        self.locked = window.is_pointer_locked();
+
         // Sync runtime settings to engine
         settings.render_mode = self.render_mode;
         settings.auto_exposure = self.auto_exposure;
@@ -382,11 +522,22 @@ impl FrameHook for SponzaTuningHook {
         settings.pt_max_bounces = self.bounces;
         settings.pt_ray_max_distance = self.ray_max_distance;
         settings.tonemap_mode = self.tonemap_mode;
+        // 锁定后光标是藏起来的，UI 不该再处理悬停 / 点击：否则光标被夹在窗口中央
+        // 时，指针下恰好有按钮就会被「按住」，锁定期间界面一直亮着被按下的样子。
+        if self.locked {
+            world.remove_resource::<prism_engine::ui::UiInputState>();
+        }
+        // 指针锁定 = 在走位看画面，面板收起来（F1 / Tab 随时可以叫回来）。
+        // 只在**刚锁上**那一帧收起：每帧都写 `show && !locked` 会让 F1 彻底失效
+        // ——按下时钩子把 show 置 true，下一帧 on_tick 又抹回 false，面板永远打不开。
+        self.show = panel_visible_after_lock(self.show, self.locked, self.was_locked);
+        self.was_locked = self.locked;
         settings.sharc_enable_clear = self.sharc_enable_clear;
         settings.sharc_enable_update = self.sharc_enable_update;
         settings.sharc_enable_resolve = self.sharc_enable_resolve;
         settings.sharc_enable_anti_firefly = self.sharc_enable_anti_firefly;
         settings.sharc_scene_scale = self.sharc_scene_scale;
+        settings.sharc_capacity = self.sharc_capacity;
         settings.sharc_roughness_threshold = self.sharc_roughness_threshold;
         settings.sharc_downscale_factor = self.sharc_downscale_factor;
         settings.sharc_accumulation_frame_num = self.sharc_accumulation_frame_num;
@@ -534,7 +685,8 @@ impl FrameHook for SponzaTuningHook {
 
                 let gi_str = match self.gi_mode {
                     GiMode::Off => "Reference (PT)",
-                    GiMode::Sharc => "SHaRC (RTXGI)",
+                    GiMode::Sharc => "SHaRC (PT cache)",
+                    GiMode::Restir => "ReSTIR GI (raster)",
                     GiMode::Nrc => "NRC (Neural)",
                 };
 
@@ -562,7 +714,7 @@ impl FrameHook for SponzaTuningHook {
                 let on_off = |v: bool| if v { "ON" } else { "OFF" };
 
                 let content = format!(
-                    "=== Sponza RTXGI / PT Tuning ===\n\
+                    "=== Sponza SHaRC / PT Tuning ===\n\
                      Frame: {:.2} ms ({:.0} FPS) | GPU: {}\n\
                      Accum Samples: {} | [F1] Hide | [R] Reset\n\
                      ----------------------------------------\n\
@@ -571,7 +723,7 @@ impl FrameHook for SponzaTuningHook {
                      {}Max Bounces:        [ {} ]\n\
                      {}Ray Max Dist:       [ {:.0} ]\n\
                      {}Tonemapper:         [ {} ] (Key: T)\n\
-                     --- RTXGI SHaRC Options ----------------\n\
+                     --- SHaRC Options ----------------------\n\
                      {}Enable Clear:       [ {} ]\n\
                      {}Enable Update:      [ {} ]\n\
                      {}Enable Resolve:     [ {} ]\n\
@@ -581,6 +733,7 @@ impl FrameHook for SponzaTuningHook {
                      {}Downscale Factor:   [ {} ]\n\
                      {}Accum Frame Num:    [ {} ]\n\
                      {}Stale Frame Num:    [ {} ]\n\
+                     {}Cache Capacity:     [ {}K ]\n\
                      --- Post / Upscaling -------------------\n\
                      {}DLSS Mode:          [ {} ]\n\
                      {}Auto Exposure:      [ {} ]\n\
@@ -620,8 +773,10 @@ impl FrameHook for SponzaTuningHook {
                     marker(13),
                     self.sharc_stale_frame_num,
                     marker(14),
-                    dlss_str,
+                    self.sharc_capacity / 1024,
                     marker(15),
+                    dlss_str,
+                    marker(16),
                     on_off(self.auto_exposure),
                     on_off(self.vsync),
                 );
@@ -643,6 +798,7 @@ impl FrameHook for SponzaTuningHook {
                 let gi_short = match self.gi_mode {
                     GiMode::Off => "Reference",
                     GiMode::Sharc => "SHaRC",
+                    GiMode::Restir => "ReSTIR",
                     GiMode::Nrc => "NRC",
                 };
                 let mode_short = match self.render_mode {
@@ -651,7 +807,7 @@ impl FrameHook for SponzaTuningHook {
                     _ => "Sprites2D",
                 };
                 let status = format!(
-                    "[F1/Tab] Tuning Panel | Mode: {mode_short} [M] | GI: {gi_short} | Bounces: {} | {:.0} FPS ({:.1} ms) | Samples: {} | [1] Ref [2] SHaRC [3] NRC",
+                    "[F1/Tab] Tuning Panel | Mode: {mode_short} [M] | GI: {gi_short} | Bounces: {} | {:.0} FPS ({:.1} ms) | Samples: {} | [1] Ref [2] SHaRC [3] NRC [4] ReSTIR",
                     self.bounces, fps, ms, samples
                 );
                 if let Some(t) = world.get_mut::<Text>(stext) {
@@ -659,5 +815,89 @@ impl FrameHook for SponzaTuningHook {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{panel_visible_after_lock, KeyRoute, SponzaTuningHook};
+    use prism_platform::Key;
+
+    /// 面板开关必须被钩子吃掉，否则 App 的 Tab（调试目标切换）会同时生效。
+    #[test]
+    fn f1_and_tab_toggle_the_panel_and_are_consumed() {
+        let mut hook = SponzaTuningHook::default();
+        let before = hook.show;
+        assert_eq!(hook.on_key_pressed(Key::F1), KeyRoute::Consume);
+        assert_ne!(hook.show, before, "F1 必须真的切换面板");
+        assert_eq!(hook.on_key_pressed(Key::Tab), KeyRoute::Consume);
+        assert_eq!(hook.show, before, "Tab 与 F1 等价，再按一次切回去");
+    }
+
+    /// 锁定态：WASD 原样交给相机，面板一行都不许动。
+    #[test]
+    fn wasd_goes_to_the_camera_while_locked() {
+        let mut hook = SponzaTuningHook {
+            locked: true,
+            ..SponzaTuningHook::default()
+        };
+        let before = hook.selected_index;
+        for key in [Key::KeyW, Key::KeyA, Key::KeyS, Key::KeyD] {
+            assert_eq!(hook.on_key_pressed(key), KeyRoute::Forward, "{key:?}");
+        }
+        assert_eq!(hook.selected_index, before, "锁定态下 WASD 不许翻菜单");
+    }
+
+    /// 锁定态：菜单键一个都不许吞——面板收着，方向键 / Space 要原样交给游戏。
+    #[test]
+    fn menu_keys_are_forwarded_while_locked() {
+        let mut hook = SponzaTuningHook {
+            locked: true,
+            show: true,
+            ..SponzaTuningHook::default()
+        };
+        let before = hook.selected_index;
+        for key in [
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+            Key::Space,
+            Key::Enter,
+        ] {
+            assert_eq!(hook.on_key_pressed(key), KeyRoute::Forward, "{key:?}");
+        }
+        assert_eq!(hook.selected_index, before, "锁定态下方向键不许翻菜单");
+    }
+
+    /// 未锁定：WASD 只翻菜单，且必须被吃掉——否则相机同时也在动。
+    #[test]
+    fn wasd_drives_the_menu_and_is_consumed_while_unlocked() {
+        let mut hook = SponzaTuningHook {
+            locked: false,
+            ..SponzaTuningHook::default()
+        };
+        let before = hook.selected_index;
+        assert_eq!(hook.on_key_pressed(Key::KeyS), KeyRoute::Consume);
+        assert_ne!(hook.selected_index, before, "未锁定态下 S 应下移选中行");
+    }
+
+    /// 锁定状态一变，面板立刻对齐目标状态；中间的帧保留 F1 / Tab 的开关。
+    #[test]
+    fn panel_follows_the_lock_state() {
+        assert!(!panel_visible_after_lock(true, true, false), "锁上即收起");
+        assert!(panel_visible_after_lock(false, false, true), "解锁即展开");
+        assert!(
+            panel_visible_after_lock(true, true, true),
+            "锁定态下按 F1 打开后必须保持打开"
+        );
+        assert!(
+            !panel_visible_after_lock(false, true, true),
+            "锁定态下保留收起"
+        );
+        assert!(
+            panel_visible_after_lock(true, false, false),
+            "解锁态下保留展开"
+        );
     }
 }

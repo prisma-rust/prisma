@@ -1,4 +1,4 @@
-//! PrismaRev 的模块化渲染通道图。
+//! Prisma 的模块化渲染通道图。
 //!
 //! 取代旧版整体式渲染器。每个渲染阶段（GBuffer、RayQuery、SHARC GI、Lighting、Post）
 //! 是一个 [`RenderPassNode`]，声明其输入/输出和一个执行方法。
@@ -53,6 +53,47 @@ pub const FORWARD_VELOCITY_H: ResourceHandle = ResourceHandle(1006);
 /// ANF-upscaled full-resolution HDR color (#1161). Written by `AnfPass`,
 /// read by `PostPass` instead of `FORWARD_COLOR_H` / `TAA_COLOR_H` when ANF is active.
 pub const ANF_COLOR_H: ResourceHandle = ResourceHandle(1007);
+/// Path-tracer NDC depth ([0,1], same convention as the raster depth buffer).
+/// Written by `PathTracePass` as a storage+sampled image and consumed by
+/// `TaaPass` as the reprojection guide while `render_mode == PathTrace`.
+pub const PT_DEPTH_H: ResourceHandle = ResourceHandle(1008);
+/// Path-tracer screen-space motion vectors in UV units (same convention as
+/// `FORWARD_VELOCITY_H`: `current_uv - previous_uv`). Written by
+/// `PathTracePass` and consumed by `TaaPass`.
+pub const PT_VELOCITY_H: ResourceHandle = ResourceHandle(1009);
+/// Path-tracer surface guides for the neural denoisers (DLSS-RR / NRD):
+/// view-space unit normal in xyz and perceptual roughness in w, matching the
+/// raster G-buffer's SV_Target1 convention but without the reactive mask.
+/// Written by `PathTracePass` as an RGBA16F storage+sampled image.
+pub const PT_NORMAL_ROUGHNESS_H: ResourceHandle = ResourceHandle(1010);
+/// Raster G-buffer surface data for screen-space GI: RGB = base color
+/// (albedo), A = perceptual roughness. Written by `ForwardPass` as an extra
+/// SV_Target3 attachment and read by `RestirGiPass` to demodulate the
+/// secondary bounce, so the GI signal is lighting only.
+pub const FORWARD_ALBEDO_H: ResourceHandle = ResourceHandle(1011);
+/// Screen-space indirect diffuse produced by `RestirGiPass`. Written as a
+/// storage+sampled image at the internal resolution, read by `ForwardPass`
+/// next frame (1-frame latency, same handshake as the GTAO visibility buffer).
+pub const RESTIR_GI_COLOR_H: ResourceHandle = ResourceHandle(1012);
+/// SHaRC hash-map entries (one `u64` per voxel slot). Written by the
+/// `SharcTrain` node and read by `SharcResolve`.
+///
+/// The buffers are owned by `GraphRenderer` (they outlive several passes and
+/// are recreated on a capacity change). The handle exists so the training and
+/// resolve stages show up as declared graph edges instead of unrecorded work
+/// recorded between passes (repair spec §4).
+pub const SHARC_HASH_ENTRIES_H: ResourceHandle = ResourceHandle(1013);
+/// SHaRC per-voxel accumulation counters (`uint4` per slot), written by
+/// `SharcTrain` and normalised by `SharcResolve`.
+pub const SHARC_ACCUMULATION_H: ResourceHandle = ResourceHandle(1014);
+/// SHaRC resolved radiance cache (`float16_t4` radiance + sample data).
+/// Written by `SharcResolve`, sampled by the path tracer and ReSTIR GI.
+pub const SHARC_RESOLVED_H: ResourceHandle = ResourceHandle(1015);
+/// Screen-space ambient occlusion visibility texture (R8_UNORM).
+/// Written by `GtaoPass`, sampled by `ForwardPass` next frame.
+pub const GTAO_AO_H: ResourceHandle = ResourceHandle(1016);
+/// Post-processed tonemapped final color output image (R8G8B8A8_UNORM).
+pub const FINAL_COLOR_H: ResourceHandle = ResourceHandle(1017);
 
 impl ResourceHandle {
     pub const INVALID: ResourceHandle = ResourceHandle(u32::MAX);
@@ -172,6 +213,13 @@ pub enum PassKind {
     Rt,
     /// Qualcomm Adreno Neural Fusion compute pass (`AnfPass`).
     Anf,
+    /// Screen-space ReSTIR indirect diffuse (`RestirGiPass`).
+    RestirGi,
+    /// Standalone SHaRC trainer (`SharcTrainPass`): deposits radiance into the
+    /// world-space cache at its own resolution and writes no screen output.
+    SharcTrain,
+    /// SHaRC accumulation resolve (`SharcResolveNode`).
+    SharcResolve,
     /// Unrecognized pass future / experimental).
     #[default]
     Unknown,
@@ -244,6 +292,12 @@ pub enum GiMode {
     Off,
     /// NVIDIA RTXGI SHARC (Spatially Hashed Radiance Cache).
     Sharc,
+    /// Screen-space ReSTIR GI on the raster path: trace secondary rays from
+    /// the G-buffer, reuse reservoirs in space and time, and terminate the
+    /// bounce in the SHARC cache when it is available. Independent of the path
+    /// tracer; needs the `restir_gi` feature plus `VK_KHR_ray_query`, and
+    /// falls back to `Off` when the device cannot trace rays.
+    Restir,
     /// NVIDIA Neural Radiance Cache.
     Nrc,
 }
@@ -280,7 +334,8 @@ pub struct RenderSettings {
     pub gi_mode: GiMode,
 
     /// SHARC hash-map capacity (number of voxel slots).
-    /// Mobile default: 2^20 (1M). Desktop: 2^23 (8M).
+    /// Desktop GPUs can afford 2^23 (8M); the allocation is rebuilt, and the
+    /// cache cleared, whenever this changes.
     pub sharc_capacity: u32,
 
     /// SHARC scene scale — controls voxel physical size.
@@ -302,6 +357,26 @@ pub struct RenderSettings {
     pub sharc_accumulation_frame_num: u32,
     /// SHARC stale frames before eviction.
     pub sharc_stale_frame_num: u32,
+
+    /// ReSTIR GI internal resolution scale: 0.5 = half res (default),
+    /// 1.0 = full res. The pass traces and resamples at this resolution and
+    /// the forward pass bilinearly upsamples the result.
+    pub restir_gi_scale: f32,
+    /// Secondary rays traced per GI pixel per frame (1 = one ray, cheap;
+    /// 2-4 raises quality linearly in cost).
+    pub restir_gi_rays_per_pixel: u32,
+    /// Spatial resampling taps per pixel (0 disables the spatial reuse).
+    pub restir_gi_spatial_samples: u32,
+    /// Frames a reservoir may survive before it is dropped (0 = reuse
+    /// forever). Guards against stale history after disocclusion.
+    pub restir_gi_max_history: u32,
+    /// Merge the previous frame's reservoir into this frame's samples.
+    pub restir_gi_temporal_reuse: bool,
+    /// Merge neighbour reservoirs inside the current frame.
+    pub restir_gi_spatial_reuse: bool,
+    /// Maximum secondary ray distance in world units; longer hits fall back to
+    /// the environment, which keeps the trace bounded for the cache lookup.
+    pub restir_gi_max_secondary_dist: f32,
 
     /// DLSS upscaling mode.
     pub dlss_mode: DlssMode,
@@ -369,7 +444,10 @@ impl Default for RenderSettings {
             ray_tracing_enabled: false,
             ray_query_resolution_scale: 0.5,
             gi_mode: GiMode::Off,
-            sharc_capacity: 1 << 20,
+            #[cfg(feature = "sharc")]
+            sharc_capacity: crate::sharc::DEFAULT_SHARC_CAPACITY,
+            #[cfg(not(feature = "sharc"))]
+            sharc_capacity: 0,
             sharc_scene_scale: 50.0,
             sharc_enable_clear: false,
             sharc_enable_update: true,
@@ -379,6 +457,13 @@ impl Default for RenderSettings {
             sharc_downscale_factor: 5,
             sharc_accumulation_frame_num: 20,
             sharc_stale_frame_num: 60,
+            restir_gi_scale: 0.5,
+            restir_gi_rays_per_pixel: 1,
+            restir_gi_spatial_samples: 5,
+            restir_gi_max_history: 20,
+            restir_gi_temporal_reuse: true,
+            restir_gi_spatial_reuse: true,
+            restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
             shadow_mode: ShadowMode::Auto,
             shadow_map_size: crate::SHADOW_MAP_SIZE,
@@ -1144,6 +1229,10 @@ pub struct GraphFrame<'a> {
     /// `GtaoPass` last frame. Forwarded via `GraphFrame` so the graph, not
     /// `GraphRenderer`, owns the cross-pass wiring.
     pub ao_view: vk::ImageView,
+    /// Previous-frame ReSTIR GI indirect diffuse (1-frame latency: the forward
+    /// pass reads the result `RestirGiPass` wrote last frame). `null` means GI
+    /// is off, and the forward pass falls back to the baked probe volume.
+    pub gi_view: vk::ImageView,
     /// Tonemap mode for `PostPass` (Reinhard / ACES / ...). Forwarded so
     /// `PostPass::execute` reads it from the graph context.
     pub tonemap_mode: u32,
@@ -1171,6 +1260,11 @@ pub struct GraphFrame<'a> {
     /// (mirroring `ForwardPass::ensure_target`), instead of relying on
     /// `GraphRenderer` to call `set_target` every frame.
     pub swapchain_views: &'a [vk::ImageView],
+    /// Swapchain or offscreen target images for the current frame. Forwarded
+    /// so passes like `PostPass` can publish `FINAL_COLOR_H`.
+    pub swapchain_images: &'a [vk::Image],
+    /// When true, freezes temporal accumulation, jitter, and history ping-ponging.
+    pub freeze_temporal: bool,
     /// Active render mode (Raster vs PathTrace). Passes check this to decide
     /// whether to run (ForwardPass skips in PT 众数 PathTracePass skips in
     /// Raster mode).
@@ -1729,6 +1823,9 @@ impl RenderGraphBuilder {
             lifecycles,
             last_barrier_probe: Instant::now(),
             pass_dump: crate::pass_dump::PassDump::from_env(),
+            debug_control: crate::render_debug::RenderDebugControl::from_env(),
+            hdr_readback_requested: false,
+            pending_hdr_readback: None,
         };
         g.validate_edges();
         g
@@ -1777,8 +1874,16 @@ pub struct RenderGraph {
     /// Last time the `BARRIER_PROBE` trace lines were emitted; throttled to
     /// once per second so the log isn't flooded at frame rate.
     last_barrier_probe: Instant,
-    /// `PRISMREV_PASS_DUMP` state; a no-op unless the env var is set.
+    /// `PRISMA_PASS_DUMP` state; a no-op unless the env var is set.
     pass_dump: crate::pass_dump::PassDump,
+    /// Diagnostic controls for pass bypass, pessimistic barrier, and temporal freeze.
+    debug_control: crate::render_debug::RenderDebugControl,
+    /// Set by [`Self::request_hdr_readback`]; consumed at the end of
+    /// [`Self::execute_with_timer`], which records a copy of the path tracer's
+    /// linear output into a host-visible staging buffer.
+    hdr_readback_requested: bool,
+    /// The recorded copy, waiting for the frame fence before it can be mapped.
+    pending_hdr_readback: Option<crate::hdr_readback::PendingHdrReadback>,
 }
 
 impl RenderGraph {
@@ -2002,7 +2107,7 @@ impl RenderGraph {
     ) -> Result<()> {
         self.graph_resources.clear_frame();
 
-        // `PRISMREV_PASS_DUMP`: decide once per frame whether to snapshot the
+        // `PRISMA_PASS_DUMP`: decide once per frame whether to snapshot the
         // published attachments at the end. A no-op unless the env var is set.
         let capture = self.pass_dump.should_capture();
 
@@ -2018,6 +2123,28 @@ impl RenderGraph {
         };
 
         for (pass_idx, pass) in self.passes.iter_mut().enumerate() {
+            if self.debug_control.is_pass_bypassed(pass.name()) {
+                log::debug!("RenderGraph: bypassing pass '{}'", pass.name());
+                continue;
+            }
+
+            if self.debug_control.pessimistic_barrier {
+                let mem_barrier = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::DependencyFlags::empty(),
+                        &[mem_barrier],
+                        &[],
+                        &[],
+                    );
+                }
+            }
+
             // Build and emit barriers for this pass's read edges, then
             // update the tracker with write edges after the pass executes.
             let (barriers, src_stage, dst_stage) = self.state_tracker.build_read_barriers(
@@ -2078,6 +2205,23 @@ impl RenderGraph {
                 }
             }
 
+            if self.debug_control.pessimistic_barrier {
+                let mem_barrier = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE);
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::DependencyFlags::empty(),
+                        &[mem_barrier],
+                        &[],
+                        &[],
+                    );
+                }
+            }
+
             self.state_tracker
                 .apply_writes(&self.pass_edges[pass_idx], ctx.image_index);
         }
@@ -2087,11 +2231,22 @@ impl RenderGraph {
             self.pass_dump.mark_captured();
         }
 
+        // Linear HDR readback (repair spec §7.2): same slot as the pass dump, so
+        // the copy sees the frame's final image after every pass ran. A frame
+        // without a published `PT_COLOR_H` is not an error - the path tracer is
+        // skipped for raster frames, and the caller can simply ask again.
+        if self.hdr_readback_requested {
+            self.hdr_readback_requested = false;
+            if let Err(err) = self.record_hdr_readback(ctx) {
+                log::warn!("hdr readback: {err}");
+            }
+        }
+
         Ok(())
     }
 
     /// Copy the graph's published color attachments into host-visible buffers
-    /// for `PRISMREV_PASS_DUMP` (see [`crate::pass_dump`]).
+    /// for `PRISMA_PASS_DUMP` (see [`crate::pass_dump`]).
     ///
     /// Runs after every pass has executed, so each image is in the layout the
     /// state tracker recorded for its last write.
@@ -2117,39 +2272,146 @@ impl RenderGraph {
                 crate::pass_dump::DumpKind::Depth,
             ),
             (
+                FORWARD_ALBEDO_H,
+                "forward_albedo",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Albedo,
+            ),
+            (
+                FORWARD_VELOCITY_H,
+                "forward_velocity",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Velocity,
+            ),
+            (
+                GTAO_AO_H,
+                "gtao_ao",
+                vk::Format::R8_UNORM,
+                crate::pass_dump::DumpKind::Grayscale,
+            ),
+            (
+                RESTIR_GI_COLOR_H,
+                "restir_gi_color",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Radiance,
+            ),
+            (
+                TAA_COLOR_H,
+                "taa_color",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Radiance,
+            ),
+            (
+                ANF_COLOR_H,
+                "anf_color",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Radiance,
+            ),
+            (
                 PT_COLOR_H,
                 "pt_color",
                 vk::Format::R32G32B32A32_SFLOAT,
                 crate::pass_dump::DumpKind::Radiance,
             ),
+            (
+                PT_DEPTH_H,
+                "pt_depth",
+                vk::Format::R32_SFLOAT,
+                crate::pass_dump::DumpKind::Depth,
+            ),
+            (
+                PT_VELOCITY_H,
+                "pt_velocity",
+                vk::Format::R32G32_SFLOAT,
+                crate::pass_dump::DumpKind::Velocity,
+            ),
+            (
+                PT_NORMAL_ROUGHNESS_H,
+                "pt_normal_roughness",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Normal,
+            ),
+            (
+                FINAL_COLOR_H,
+                "final_color",
+                vk::Format::R8G8B8A8_UNORM,
+                crate::pass_dump::DumpKind::RawRgba8,
+            ),
         ];
 
         for (handle, name, format, kind) in targets {
-            let Some(image) = self.graph_resources.published_image(handle) else {
-                log::warn!("pass dump: {name} was not published this frame");
-                continue;
-            };
             let Some(path) = self.pass_dump.path_for(name) else {
                 continue;
             };
+            let Some(image) = self.graph_resources.published_image(handle) else {
+                log::trace!("pass dump: {name} was not published this frame");
+                continue;
+            };
+            let default_extent = if handle == FINAL_COLOR_H {
+                ctx.extent
+            } else {
+                ctx.render_extent
+            };
+            let (format, extent) = self
+                .graph_resources
+                .resources
+                .get(&handle)
+                .map(|r| match r.res_type {
+                    ResourceType::ColorAttachment {
+                        format: fmt,
+                        extent,
+                        ..
+                    } => {
+                        // ForwardPass (and other passes that manage their own textures)
+                        // registers a 1x1 placeholder extent during setup. Fall back
+                        // to the frame render extent when the declared extent is <= 1.
+                        let ext = if extent.width > 1 && extent.height > 1 {
+                            extent
+                        } else {
+                            default_extent
+                        };
+                        (fmt, ext)
+                    }
+                    ResourceType::DepthAttachment { extent, .. } => {
+                        let ext = if extent.width > 1 && extent.height > 1 {
+                            extent
+                        } else {
+                            default_extent
+                        };
+                        (format, ext)
+                    }
+                    _ => (format, default_extent),
+                })
+                .unwrap_or((format, default_extent));
+
+            if extent.width == 0 || extent.height == 0 {
+                log::warn!("pass dump: {name} has zero extent ({extent:?}), skipping");
+                continue;
+            }
+
             let state = self.state_tracker.get(handle, ctx.image_index);
             let layout = if state.layout == vk::ImageLayout::UNDEFINED {
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+                if format == vk::Format::D32_SFLOAT {
+                    vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                } else {
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+                }
             } else {
                 state.layout
             };
+            let access = if state.access.is_empty() {
+                if format == vk::Format::D32_SFLOAT {
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+                } else {
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                }
+            } else {
+                state.access
+            };
 
-            if let Err(err) = self.record_dump(
-                ctx,
-                name,
-                image,
-                ctx.render_extent,
-                format,
-                kind,
-                layout,
-                state.access,
-                path,
-            ) {
+            if let Err(err) =
+                self.record_dump(ctx, name, image, extent, format, kind, layout, access, path)
+            {
                 log::warn!("pass dump: {name} failed: {err}");
             }
         }
@@ -2214,10 +2476,12 @@ impl RenderGraph {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?;
 
-        let aspect = if format == vk::Format::D32_SFLOAT {
-            vk::ImageAspectFlags::DEPTH
-        } else {
-            vk::ImageAspectFlags::COLOR
+        let aspect = match format {
+            vk::Format::D32_SFLOAT
+            | vk::Format::D16_UNORM
+            | vk::Format::D32_SFLOAT_S8_UINT
+            | vk::Format::D24_UNORM_S8_UINT => vk::ImageAspectFlags::DEPTH,
+            _ => vk::ImageAspectFlags::COLOR,
         };
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(aspect)
@@ -2319,6 +2583,192 @@ impl RenderGraph {
         self.pass_dump.discard(device);
     }
 
+    /// Programmatically configure pass dump for automated tests or headless runs.
+    pub fn configure_pass_dump(
+        &mut self,
+        dir: std::path::PathBuf,
+        target_frame: u64,
+        filter: Option<Vec<String>>,
+    ) {
+        self.pass_dump = crate::pass_dump::PassDump::new(dir, target_frame, filter);
+    }
+
+    /// Access the diagnostic debug control settings (immutable).
+    pub fn debug_control(&self) -> &crate::render_debug::RenderDebugControl {
+        &self.debug_control
+    }
+
+    /// Access the diagnostic debug control settings (mutable).
+    pub fn debug_control_mut(&mut self) -> &mut crate::render_debug::RenderDebugControl {
+        &mut self.debug_control
+    }
+
+    /// Replace the diagnostic debug control settings.
+    pub fn set_debug_control(&mut self, control: crate::render_debug::RenderDebugControl) {
+        self.debug_control = control;
+    }
+
+    /// Ask the next [`Self::execute_with_timer`] to copy the path tracer's linear
+    /// output (`PT_COLOR_H`, `R32G32B32A32_SFLOAT`) into a host-visible buffer.
+    ///
+    /// The copy happens after every pass ran, so it captures the current frame's
+    /// converged radiance rather than a partially-written accum image. The result
+    /// is retrieved with [`Self::take_hdr_readback`] once the frame fence has
+    /// signalled. Requesting twice before taking replaces the earlier request.
+    pub fn request_hdr_readback(&mut self) {
+        self.hdr_readback_requested = true;
+    }
+
+    /// Whether a linear readback was requested but the buffer has not been
+    /// recorded yet (i.e. the frame has not executed since the request).
+    pub fn hdr_readback_requested(&self) -> bool {
+        self.hdr_readback_requested
+    }
+
+    /// Map and return the pending linear readback, if any.
+    ///
+    /// Call this **after** the frame fence signalled - `GraphRenderer::present`
+    /// already waits for it in headless mode, and windowed frames wait inside
+    /// `end_frame`. Returns `None` when no frame executed since the request, or
+    /// when the path tracer did not publish `PT_COLOR_H` that frame.
+    pub fn take_hdr_readback(
+        &mut self,
+        device: &ash::Device,
+    ) -> anyhow::Result<Option<crate::hdr_readback::HdrReadback>> {
+        match self.pending_hdr_readback.take() {
+            Some(pending) => Ok(Some(pending.take(device)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Drop a pending linear readback without mapping it.
+    pub fn discard_hdr_readback(&mut self, device: &ash::Device) {
+        if let Some(pending) = self.pending_hdr_readback.take() {
+            pending.destroy(device);
+        }
+        self.hdr_readback_requested = false;
+    }
+
+    /// Record the copy for a requested linear readback.
+    ///
+    /// Same shape as [`Self::record_dump`], minus the PNG encode: the graph hands
+    /// the raw f32 texels back to the host. The image is put back into the layout
+    /// the state tracker recorded, so a following frame's barriers stay valid.
+    fn record_hdr_readback(&mut self, ctx: &RenderContext) -> anyhow::Result<()> {
+        use crate::pass_dump::image_bytes;
+
+        let Some(image) = self.graph_resources.published_image(PT_COLOR_H) else {
+            anyhow::bail!("hdr readback: PT_COLOR_H was not published this frame");
+        };
+        if self.pending_hdr_readback.is_some() {
+            // Previous frame's buffer was never taken; drop it so the map does
+            // not leak and the newest frame wins.
+            self.discard_hdr_readback(ctx.device);
+        }
+
+        let format = vk::Format::R32G32B32A32_SFLOAT;
+        let extent = ctx.render_extent;
+        let (buffer, memory) = crate::buffer::create_buffer(
+            ctx.context,
+            image_bytes(extent, format),
+            vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+
+        let state = self.state_tracker.get(PT_COLOR_H, ctx.image_index);
+        let old_layout = if state.layout == vk::ImageLayout::UNDEFINED {
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        } else {
+            state.layout
+        };
+        let old_access = if state.access.is_empty() {
+            vk::AccessFlags::SHADER_WRITE
+        } else {
+            state.access
+        };
+
+        let range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1);
+
+        let to_transfer = vk::ImageMemoryBarrier::default()
+            .old_layout(old_layout)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(range)
+            .src_access_mask(old_access)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+        // Put the image back so the recorded layout still matches reality.
+        let restore = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .new_layout(old_layout)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(range)
+            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(old_access);
+
+        let region = vk::BufferImageCopy::default()
+            .buffer_offset(0)
+            .buffer_row_length(0)
+            .buffer_image_height(0)
+            .image_subresource(
+                vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(0)
+                    .base_array_layer(0)
+                    .layer_count(1),
+            )
+            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+            .image_extent(vk::Extent3D {
+                width: extent.width,
+                height: extent.height,
+                depth: 1,
+            });
+
+        unsafe {
+            ctx.device.cmd_pipeline_barrier(
+                ctx.cmd,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[to_transfer],
+            );
+            ctx.device.cmd_copy_image_to_buffer(
+                ctx.cmd,
+                image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                buffer,
+                &[region],
+            );
+            ctx.device.cmd_pipeline_barrier(
+                ctx.cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[restore],
+            );
+        }
+
+        self.pending_hdr_readback = Some(crate::hdr_readback::PendingHdrReadback {
+            buffer,
+            memory,
+            extent,
+        });
+        log::trace!("hdr readback: recorded {}x{}", extent.width, extent.height);
+        Ok(())
+    }
+
     /// Allocate (or re-use) Vulkan resources for all declared graph resources.
     /// Called once at startup or when the graph topology changes.
     pub fn allocate_resources(
@@ -2418,6 +2868,8 @@ impl RenderGraph {
             }
         }
         self.graph_resources.resources.clear();
+
+        self.discard_hdr_readback(device);
     }
 }
 

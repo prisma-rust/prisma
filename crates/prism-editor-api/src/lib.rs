@@ -1,4 +1,4 @@
-//! PrismaRev 编辑器 / MCP 的**后端数据层**。
+//! Prisma 编辑器 / MCP 的**后端数据层**。
 //!
 //! 这一层刻意保持纯净：只依赖 `prism-scene` / `prism-reflect`，
 //! **不依赖 egui、不依赖 Vulkan / 引擎 / 渲染**。它把「场景 schema」和

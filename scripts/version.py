@@ -236,7 +236,7 @@ def update(version: str, dry_run: bool, quiet: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="PrismaRev version tooling")
+    parser = argparse.ArgumentParser(description="Prisma version tooling")
     parser.add_argument(
         "command",
         nargs="?",

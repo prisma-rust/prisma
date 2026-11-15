@@ -3,10 +3,10 @@
 //! 这是给自动化（CI 截图、编辑器 / MCP 抓图、美术调参）用的最小接口，
 //! 不引入新的公开 API：
 //!
-//! - `PRISMREV_SCREENSHOT=<path>` 启用，写出 PNG（父目录需已存在）。
-//! - `PRISMREV_SCREENSHOT_FRAME=<n>` 在第 n 帧抓（默认 90，给资源上传和动画留时间）。
-//! - `PRISMREV_SCREENSHOT_SIZE=1920x1080` 指定输出分辨率。
-//! - `PRISMREV_SCREENSHOT_SCALE=2` 按窗口分辨率的倍数放大（`SIZE` 优先）。
+//! - `PRISMA_SCREENSHOT=<path>` 启用，写出 PNG（父目录需已存在）。
+//! - `PRISMA_SCREENSHOT_FRAME=<n>` 在第 n 帧抓（默认 90，给资源上传和动画留时间）。
+//! - `PRISMA_SCREENSHOT_SIZE=1920x1080` 指定输出分辨率。
+//! - `PRISMA_SCREENSHOT_SCALE=2` 按窗口分辨率的倍数放大（`SIZE` 优先）。
 //!
 //! 缩放是最近邻，像素画放大不会糊；内容本身仍是窗口那一帧，不重渲染。
 
@@ -22,23 +22,23 @@ pub struct ScreenshotPlan {
 }
 
 impl ScreenshotPlan {
-    /// 从环境变量读取；没有 `PRISMREV_SCREENSHOT` 时返回 `None`。
+    /// 从环境变量读取；没有 `PRISMA_SCREENSHOT` 时返回 `None`。
     pub fn from_env() -> Option<Self> {
-        let raw_path = std::env::var("PRISMREV_SCREENSHOT").ok()?;
+        let raw_path = std::env::var("PRISMA_SCREENSHOT").ok()?;
         let trimmed = raw_path.trim();
         if trimmed.is_empty() {
             return None;
         }
         let path = PathBuf::from(trimmed);
-        let frame = std::env::var("PRISMREV_SCREENSHOT_FRAME")
+        let frame = std::env::var("PRISMA_SCREENSHOT_FRAME")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|frame| *frame > 0)
             .unwrap_or(90);
-        let size = std::env::var("PRISMREV_SCREENSHOT_SIZE")
+        let size = std::env::var("PRISMA_SCREENSHOT_SIZE")
             .ok()
             .and_then(|value| parse_size(&value));
-        let scale = std::env::var("PRISMREV_SCREENSHOT_SCALE")
+        let scale = std::env::var("PRISMA_SCREENSHOT_SCALE")
             .ok()
             .and_then(|value| value.trim().parse::<f32>().ok())
             .filter(|scale| *scale > 0.0);

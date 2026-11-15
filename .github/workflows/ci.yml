@@ -1,6 +1,6 @@
 name: CI
 
-# Full-coverage build/verify pipeline for PrismaRev:
+# Full-coverage build/verify pipeline for Prisma:
 #   - fmt + clippy (fast gate)
 #   - desktop Rust build + test (prism-ecs / prism-render / prism-engine / prism-platform)
 #   - xtask build + shader-binding codegen regression (no-drift check)
@@ -212,18 +212,18 @@ jobs:
         uses: ./.github/actions/setup-slang
 
       - name: Build release player (build-std)
-        run: bash scripts/build-dist.sh projects/prisma
+        run: bash scripts/build-dist.sh projects/template
 
       - name: Record size
         run: |
-          bin="projects/prisma/target/$(rustc -vV | sed -n 's/^host: //p')/dist/prisma"
+          bin="projects/template/target/$(rustc -vV | sed -n 's/^host: //p')/dist/template"
           printf 'dist player: %s bytes\n' "$(stat -c%s "$bin")"
 
       - name: Upload player
         uses: actions/upload-artifact@v4
         with:
-          name: prisma-dist-${{ github.sha }}
-          path: projects/prisma/target/*/dist/prisma
+          name: template-dist-${{ github.sha }}
+          path: projects/template/target/*/dist/template
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -394,8 +394,7 @@ jobs:
           # The generated Rust bindings are committed and MUST match what
           # bindgen produces from the freshly compiled reflection JSON. Any
           # drift means someone edited a shader without regenerating — fail.
-          # (.spv files are not committed; their freshness is enforced by the
-          # compile step above — this job recompiles them on every run.)
+          # (the committed .spv files are checked in the next step.)
           drift=0
           if ! git diff --quiet -- crates/prism-render/src/shader_bindings/; then
             echo "::error::shader_bindings/ is out of date. Run assets/shaders/compile.sh + xtask and commit."
@@ -404,3 +403,17 @@ jobs:
           fi
           if [ "$drift" -ne 0 ]; then exit 1; fi
           echo "Shader bindings are up to date."
+
+      - name: Fail if committed SPIR-V drifts from source
+        run: |
+          # `assets/shaders/*.spv` is committed so a clone builds without
+          # slangc. This job just recompiled every shader, so a changed or
+          # untracked .spv means someone edited a `.slang` without committing
+          # the new bytecode (or bumped slangc).
+          changed=$(git status --porcelain -- assets/shaders)
+          if [ -n "$changed" ]; then
+            echo "::error::assets/shaders is out of date. Run assets/shaders/compile.sh and commit the .spv files."
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+          echo "Committed SPIR-V matches the sources."

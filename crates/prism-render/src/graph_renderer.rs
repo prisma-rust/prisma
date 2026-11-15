@@ -27,10 +27,11 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
+    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
     match env {
-        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), layout),
+        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), cache, layout),
         None => IblResources::new_empty(context, command_pool, queue, layout),
     }
 }
@@ -41,9 +42,11 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
+    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
-    let _ = env; // 无 IBL 构建：忽略环境贴图，始终用中性立方体。
+    // 无 IBL 构建：忽略环境贴图与缓存根，始终用中性立方体。
+    let _ = (env, cache);
     IblResources::new_empty(context, command_pool, queue, layout)
 }
 use crate::managers::{
@@ -286,6 +289,10 @@ pub struct GraphRenderer {
     // 描述符 集合 handle stored in `forward_pass`. Explicitly destroyed
     // in `destroy()` so the device handle is valid during cleanup.
     ibl: IblResources,
+    /// Absolute root of the IBL disk cache, injected by the host. Defaults to
+    /// disabled: without a host-resolved directory there is no correct place to
+    /// write convolution output, so nothing is cached on disk.
+    ibl_cache: crate::ibl::IblCacheDir,
     /// Scene-level GI probe volume resources (set 5). Survives swapchain
     /// recreation; only rebuilt on scene/level change.
     scene_scope: SceneScope,
@@ -322,10 +329,15 @@ pub struct GraphRenderer {
     shadow_view: vk::ImageView,
     /// `shadows` feature 关闭时的 1×1 远深度图（填充 forward 的 set 3）。
     #[cfg(not(feature = "shadows"))]
-    dummy_shadow: crate::dummy::SolidImage,
+    dummy_shadow: crate::placeholder::SolidImage,
     /// `gtao` feature 关闭时的 1×1 白色 AO 图（填充 forward 的 set 4）。
     #[cfg(not(feature = "gtao"))]
-    dummy_ao: crate::dummy::SolidImage,
+    dummy_ao: crate::placeholder::SolidImage,
+    /// set 4 binding 1 (`giTex`) 的 1×1 黑色兜底图。
+    ///
+    /// 该 binding 在 scene_frag 里是无条件声明的，ReSTIR GI 还没产出（pass 未注册 /
+    /// 首帧）时若保持 null 会触发 `vkCmdDrawIndexed` 的 descriptor 有效性校验错误。
+    dummy_gi: crate::placeholder::SolidImage,
     #[allow(dead_code)]
     color_format: vk::Format,
     /// Optional 外部叠加层（宿主 UI 等）rendered on 顶部 of the ECS UI
@@ -334,10 +346,30 @@ pub struct GraphRenderer {
     /// 实现 is injected by the app 层 (eg 编辑器 host) — this 渲染器
     /// knows nothing about the concrete UI framework.
     external_overlay: Option<Box<dyn SwapchainOverlay>>,
-    #[cfg(feature = "rtxgi")]
+    #[cfg(feature = "sharc")]
     sharc_targets: Option<crate::sharc::SharcTargets>,
-    #[cfg(feature = "rtxgi")]
-    sharc_resolve: Option<crate::sharc::SharcResolvePass>,
+    /// Reasons the world-space SHaRC cache no longer describes the scene.
+    ///
+    /// Filled in by the lifecycle hooks ([`Self::invalidate_pt_geometry`],
+    /// [`Self::set_environment`], asset release/upload) and by the frame's
+    /// [`DirtyDispatchPlan`]; consumed by `execute`, which clears the cache
+    /// buffers and then resets this to the default.
+    #[cfg(feature = "sharc")]
+    sharc_invalidation: crate::sharc::SharcInvalidation,
+    /// How many times the world-space SHaRC cache has been cleared since the
+    /// renderer was created (initial allocation included). Lifecycle tests use
+    /// it to observe that an invalidation actually reached the cache.
+    #[cfg(feature = "sharc")]
+    sharc_clear_count: u64,
+    /// The voxel scale the cache was last trained against.
+    ///
+    /// The hash key is derived from world position through
+    /// `sceneScale` (`sharc_hash_grid.slang`), so changing the scale redefines
+    /// which voxel a position lands in without moving any world-space radiance:
+    /// every stored entry becomes a key/value mismatch, which §8 calls a cache
+    /// format change and wants cleared.
+    #[cfg(feature = "sharc")]
+    sharc_cache_scene_scale: Option<f32>,
     /// ECS UI 叠加 (GPU-only) — quads + fontdue glyph text, rendered on 顶部
     /// of the ForwardPass 输出 (below the external overlay). Created lazily
     /// on the 渲染 线程 when the 引擎 sends UI 命令
@@ -511,6 +543,13 @@ impl GraphRenderer {
         }
         .context("create shadow comparison sampler")?;
 
+        let dummy_gi = crate::placeholder::gi_texture_dummy(
+            &context,
+            runtime.command_pool,
+            context.graphics_queue,
+        )
+        .context("create 1x1 dummy GI texture")?;
+
         let resolved = RenderSettings::default().resolve_shadow(&context.rt_caps);
         let settings = RenderSettings {
             shadow_mode: resolved,
@@ -551,7 +590,7 @@ impl GraphRenderer {
             graph
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (shadows off)")?;
-            let dummy = crate::dummy::shadow_map_dummy(
+            let dummy = crate::placeholder::shadow_map_dummy(
                 &context,
                 runtime.command_pool,
                 context.graphics_queue,
@@ -608,8 +647,34 @@ impl GraphRenderer {
                 scene_scope.descriptor_set,
                 scene_scope.descriptor_set_layout,
                 frame_ubo_stride,
+                dummy_gi.view(),
             )
             .context("ForwardPass: set_resources")?;
+
+        // ReSTIR GI pass (raster path, independent of the path tracer). It
+        // builds its own BLAS/TLAS from the draw list and traces secondary
+        // rays with ray queries, so it only exists when the device can do
+        // that; otherwise `gi_mode = Restir` falls back to the baked probe
+        // volume and the warning below says why.
+        #[cfg(feature = "restir_gi")]
+        let restir_gi_pass = if context.rt_caps.has_ray_query() {
+            let mut pass = crate::restir_gi::RestirGiPass::new();
+            pass.set_resources(
+                bindless.set,
+                bindless.layout,
+                ibl.descriptor_set,
+                ibl.descriptor_set_layout,
+                materials_buffer,
+            );
+            log::info!("RestirGiPass registered in render graph");
+            Some(pass)
+        } else {
+            log::warn!(
+                "`restir_gi` 已编译但设备不支持 VK_KHR_ray_query：\
+                 gi_mode = Restir 退回 baked probe volume"
+            );
+            None
+        };
 
         // GTAO pass half-resolution screen-space 环境光遮蔽 Runs after ForwardPass
         // every frame and produces a double-buffered R8 AO texture the scene
@@ -623,9 +688,12 @@ impl GraphRenderer {
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, swapchain_extent)
                 .context("GtaoPass::new")?;
         #[cfg(not(feature = "gtao"))]
-        let dummy_ao =
-            crate::dummy::ao_texture_dummy(&context, runtime.command_pool, context.graphics_queue)
-                .context("create 1x1 dummy AO texture")?;
+        let dummy_ao = crate::placeholder::ao_texture_dummy(
+            &context,
+            runtime.command_pool,
+            context.graphics_queue,
+        )
+        .context("create 1x1 dummy AO texture")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
             "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
@@ -668,7 +736,7 @@ impl GraphRenderer {
         #[cfg(feature = "pathtrace")]
         let pt_pass = if context.rt_caps.acceleration_structure {
             match PathTracePass::new(&context) {
-                Ok(mut pt) => {
+                Ok(pt) => {
                     pt.set_material_resources(materials_buffer, bindless.set, bindless.layout);
                     pt.set_ibl_resources(ibl.descriptor_set, ibl.descriptor_set_layout);
                     log::info!("PathTracePass registered in render graph");
@@ -688,7 +756,7 @@ impl GraphRenderer {
         let rt_scheduler = crate::rt_scheduler::RenderTextureScheduler::new(&context);
 
         // Register all passes into the graph in execution order.
-        // Shadow -> Scene -> GTAO -> RenderTextures -> PathTrace -> Post.
+        // Shadow -> Scene -> GTAO -> RenderTextures -> PathTrace -> Resolve -> Post.
         graph.add_pass(Box::new(forward_pass));
         // 启动路径：同步 per-swapchain-image 槽位数。`ForwardPass::execute` 的
         // `ensure_target` 按 `image_count` 建 framebuffer，`recreate_swapchain`
@@ -699,13 +767,32 @@ impl GraphRenderer {
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
-        graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(anf_pass));
+        // ReSTIR GI reads the forward G-buffer this frame and publishes the
+        // signal the forward pass samples on the next one.
+        #[cfg(feature = "restir_gi")]
+        if let Some(pass) = restir_gi_pass {
+            graph.add_pass(Box::new(pass));
+        }
         graph.add_pass(Box::new(rt_scheduler));
+        // SHaRC is a graph step, not a frame preamble: the trainer deposits
+        // radiance, the resolve collapses it, and only then does the tracer
+        // query it (repair spec §4 — no invisible training or resolve outside
+        // the graph).
+        #[cfg(all(feature = "pathtrace", feature = "sharc"))]
+        if let Some(pt) = &pt_pass {
+            graph.add_pass(Box::new(pt.trainer()));
+        }
+        #[cfg(feature = "sharc")]
+        graph.add_pass(Box::new(crate::sharc::SharcResolveNode::new()));
         #[cfg(feature = "pathtrace")]
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
+        // The temporal resolve runs after the path tracer so it can consume the
+        // traced image and its guides in path-trace mode (#883 follow-up). In the
+        // raster path it still resolves the forward pass output.
+        graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
 
@@ -725,6 +812,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
+            ibl_cache: crate::ibl::IblCacheDir::disabled(),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -741,12 +829,17 @@ impl GraphRenderer {
             dummy_shadow,
             #[cfg(not(feature = "gtao"))]
             dummy_ao,
+            dummy_gi,
             color_format,
             external_overlay: None,
-            #[cfg(feature = "rtxgi")]
+            #[cfg(feature = "sharc")]
             sharc_targets: None,
-            #[cfg(feature = "rtxgi")]
-            sharc_resolve: None,
+            #[cfg(feature = "sharc")]
+            sharc_invalidation: crate::sharc::SharcInvalidation::default(),
+            #[cfg(feature = "sharc")]
+            sharc_clear_count: 0,
+            #[cfg(feature = "sharc")]
+            sharc_cache_scene_scale: None,
             #[cfg(feature = "ui")]
             ui_overlay: None,
             #[cfg(feature = "ui")]
@@ -809,6 +902,24 @@ impl GraphRenderer {
     #[cfg(not(feature = "gtao"))]
     fn ao_view(&mut self, _frame: u32) -> vk::ImageView {
         self.dummy_ao.view()
+    }
+
+    /// 场景 pass 要采样的「上一帧 ReSTIR GI 间接漫反射」视图。
+    ///
+    /// 与 AO 同构：`RestirGiPass` 双缓冲，本帧写 A、下一帧采样 A，所以取
+    /// `gi_view()` 返回的「最近一次已写完」的视图。pass 未注册或本帧未分派
+    /// 时返回 null，前向 pass 会退回 baked probe volume。
+    #[cfg(feature = "restir_gi")]
+    fn gi_view(&mut self) -> vk::ImageView {
+        self.graph
+            .pass_mut::<crate::restir_gi::RestirGiPass>()
+            .map(|pass| pass.gi_view())
+            .unwrap_or_else(vk::ImageView::null)
+    }
+
+    #[cfg(not(feature = "restir_gi"))]
+    fn gi_view(&mut self) -> vk::ImageView {
+        vk::ImageView::null()
     }
 
     /// 离屏渲染目标的尺寸（无窗口宿主模式）；有交换链时返回 `None`。
@@ -967,11 +1078,14 @@ impl GraphRenderer {
 
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout (headless)")?;
+        // 构造期还没有宿主注入的缓存根：显式 disabled，真实缓存由
+        // `set_ibl_cache` + `set_environment` 建立。
         let ibl = make_ibl(
             context.clone(),
             runtime.command_pool,
             context.graphics_queue,
             env_bytes,
+            &crate::ibl::IblCacheDir::disabled(),
             ibl_ds_layout,
         )
         .context("create IBL resources (headless)")?;
@@ -1001,6 +1115,13 @@ impl GraphRenderer {
         }
         .context("create shadow comparison sampler (headless)")?;
 
+        let dummy_gi = crate::placeholder::gi_texture_dummy(
+            &context,
+            runtime.command_pool,
+            context.graphics_queue,
+        )
+        .context("create 1x1 dummy GI texture")?;
+
         // Graph: Shadow -> Scene -> GTAO -> PathTrace -> Post.
         #[cfg(feature = "shadows")]
         let (mut graph, shadow_view) = {
@@ -1025,7 +1146,7 @@ impl GraphRenderer {
             graph
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (headless, shadows off)")?;
-            let dummy = crate::dummy::shadow_map_dummy(
+            let dummy = crate::placeholder::shadow_map_dummy(
                 &context,
                 runtime.command_pool,
                 context.graphics_queue,
@@ -1070,8 +1191,27 @@ impl GraphRenderer {
                 scene_scope.descriptor_set,
                 scene_scope.descriptor_set_layout,
                 frame_ubo_stride,
+                dummy_gi.view(),
             )
             .context("ForwardPass::set_resources (headless)")?;
+
+        // Same ReSTIR GI pass as the windowed path; the offscreen extent is
+        // resolved lazily from `ctx.render_extent` on the first dispatch.
+        #[cfg(feature = "restir_gi")]
+        let restir_gi_pass = if context.rt_caps.has_ray_query() {
+            let mut pass = crate::restir_gi::RestirGiPass::new();
+            pass.set_resources(
+                bindless.set,
+                bindless.layout,
+                ibl.descriptor_set,
+                ibl.descriptor_set_layout,
+                materials_buffer,
+            );
+            log::info!("RestirGiPass registered in render graph (headless)");
+            Some(pass)
+        } else {
+            None
+        };
 
         let frame_count = 2u32;
         // Headless contexts do not enable `VK_KHR_swapchain`, so the offscreen
@@ -1098,9 +1238,12 @@ impl GraphRenderer {
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, offscreen.extent())
                 .context("GtaoPass::new (headless)")?;
         #[cfg(not(feature = "gtao"))]
-        let dummy_ao =
-            crate::dummy::ao_texture_dummy(&context, runtime.command_pool, context.graphics_queue)
-                .context("create 1x1 dummy AO texture (headless)")?;
+        let dummy_ao = crate::placeholder::ao_texture_dummy(
+            &context,
+            runtime.command_pool,
+            context.graphics_queue,
+        )
+        .context("create 1x1 dummy AO texture (headless)")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
             "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
@@ -1118,7 +1261,7 @@ impl GraphRenderer {
         #[cfg(feature = "pathtrace")]
         let pt_pass = if context.rt_caps.acceleration_structure {
             match PathTracePass::new(&context) {
-                Ok(mut pt) => {
+                Ok(pt) => {
                     pt.set_material_resources(materials_buffer, bindless.set, bindless.layout);
                     pt.set_ibl_resources(ibl.descriptor_set, ibl.descriptor_set_layout);
                     log::info!("PathTracePass registered in render graph (headless)");
@@ -1142,13 +1285,25 @@ impl GraphRenderer {
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
-        graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(anf_pass));
+        #[cfg(feature = "restir_gi")]
+        if let Some(pass) = restir_gi_pass {
+            graph.add_pass(Box::new(pass));
+        }
         graph.add_pass(Box::new(rt_scheduler));
+        // Same order as the windowed path: train, resolve, then consume.
+        #[cfg(all(feature = "pathtrace", feature = "sharc"))]
+        if let Some(pt) = &pt_pass {
+            graph.add_pass(Box::new(pt.trainer()));
+        }
+        #[cfg(feature = "sharc")]
+        graph.add_pass(Box::new(crate::sharc::SharcResolveNode::new()));
         #[cfg(feature = "pathtrace")]
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
+        // Same ordering as the windowed path: resolve after the tracer.
+        graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
         if let Some(post_pass) = graph.pass_mut::<crate::post::PostPass>() {
@@ -1175,6 +1330,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
+            ibl_cache: crate::ibl::IblCacheDir::disabled(),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -1191,12 +1347,17 @@ impl GraphRenderer {
             dummy_shadow,
             #[cfg(not(feature = "gtao"))]
             dummy_ao,
+            dummy_gi,
             color_format,
             external_overlay: None,
-            #[cfg(feature = "rtxgi")]
+            #[cfg(feature = "sharc")]
             sharc_targets: None,
-            #[cfg(feature = "rtxgi")]
-            sharc_resolve: None,
+            #[cfg(feature = "sharc")]
+            sharc_invalidation: crate::sharc::SharcInvalidation::default(),
+            #[cfg(feature = "sharc")]
+            sharc_clear_count: 0,
+            #[cfg(feature = "sharc")]
+            sharc_cache_scene_scale: None,
             #[cfg(feature = "ui")]
             ui_overlay: None,
             #[cfg(feature = "ui")]
@@ -1276,6 +1437,26 @@ impl GraphRenderer {
                 &self.runtime.context,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             )
+    }
+
+    /// Ask the next frame to copy the path tracer's **linear** output
+    /// (`PT_COLOR_H`, before tonemapping) into a host-visible buffer.
+    ///
+    /// `readback_pixels` returns tonemapped 8-bit values, which clips every
+    /// radiance above 1.0 into the same white - useless for checking that a
+    /// path-traced frame is linear in its inputs (repair spec §7.2).
+    pub fn request_hdr_readback(&mut self) {
+        self.graph.request_hdr_readback();
+    }
+
+    /// Map the linear readback recorded by the last executed frame, if any.
+    ///
+    /// Call after `present` (headless) or `end_frame` (windowed); both wait for
+    /// the frame fence, so the staging buffer is already safe to map.
+    pub fn take_hdr_readback(
+        &mut self,
+    ) -> anyhow::Result<Option<crate::hdr_readback::HdrReadback>> {
+        self.graph.take_hdr_readback(&self.runtime.context.device)
     }
 
     /// Immutable borrow of the render graph (passes + declared resources +
@@ -1498,6 +1679,25 @@ impl GraphRenderer {
         }
     }
 
+    /// Select the path tracer's transport variant (consumer, cache-free
+    /// reference or SHaRC trainer). Resets accumulation because the variants
+    /// produce different radiance. No-op if PathTracePass isn't in the graph.
+    #[cfg(feature = "pathtrace")]
+    pub fn set_pt_variant(&mut self, variant: crate::pt_pass::PtVariant) {
+        if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
+            pt.set_variant(variant);
+            pt.request_reset();
+        }
+    }
+
+    /// Active path-tracer variant, or `None` when the pass isn't registered.
+    #[cfg(feature = "pathtrace")]
+    pub fn pt_variant(&self) -> Option<crate::pt_pass::PtVariant> {
+        self.graph
+            .pass_ref::<PathTracePass>()
+            .map(|pt| pt.variant())
+    }
+
     /// Current PT frame counter (number of accumulated samples per pixel).
     /// Capped at `pt_max_iterations` when freeze is active (> 0), so the UI
     /// doesn't keep counting after the shader stops accumulating.
@@ -1544,6 +1744,15 @@ impl GraphRenderer {
         self.ibl.descriptor_set_layout
     }
 
+    /// Point the IBL disk cache at `cache`.
+    ///
+    /// The root is resolved once by the host (typically from the executable
+    /// directory) and injected here; the renderer never derives it itself.
+    /// Takes effect on the next [`Self::set_environment`] call.
+    pub fn set_ibl_cache(&mut self, cache: crate::ibl::IblCacheDir) {
+        self.ibl_cache = cache;
+    }
+
     /// 按场景重建 IBL。`env_bytes = Some(hdr)` 跑完整 CPU 预卷积；
     /// `None` 重建为廉价中性空 IBL（与 `new_empty` 等价）。用于在「场景切换」
     /// 时按需构建/移除光照，而不在引擎启动期无条件加载 3D IBL/GI。
@@ -1567,6 +1776,7 @@ impl GraphRenderer {
             self.runtime.command_pool,
             self.runtime.context.graphics_queue,
             env_bytes,
+            &self.ibl_cache,
             self.ibl.descriptor_set_layout,
         )
         .context("rebuild IBL resources for scene")?;
@@ -1588,6 +1798,12 @@ impl GraphRenderer {
         // 销毁旧 IBL（不销毁共享 布局）后接管新的。
         self.ibl.destroy();
         self.ibl = new_ibl;
+        // 天空/IBL 是辐射缓存训练时的入射光来源；换了环境，旧体素里的辐射
+        // 就不再属于这个场景（repair spec §8）。
+        #[cfg(feature = "sharc")]
+        {
+            self.sharc_invalidation.sky = true;
+        }
         Ok(())
     }
 
@@ -1728,6 +1944,14 @@ impl GraphRenderer {
             }
         }
         log::debug!("release_assets: freed {freed} GPU resource(s)");
+        // Released meshes/materials mean the geometry (or its shading) that the
+        // world-space cache was trained on no longer exists.
+        if freed > 0 {
+            #[cfg(feature = "sharc")]
+            {
+                self.sharc_invalidation.geometry = true;
+            }
+        }
     }
 
     /// 暂存资产上传请求，由下一次 `prepare` 统一批量执行（DESIGN §9 / #1157）。
@@ -1822,6 +2046,8 @@ impl GraphRenderer {
                         clearcoat: s[16],
                         clearcoat_roughness: s[17],
                         emissive_strength: s[9],
+                        alpha_mode: mat.alpha_mode,
+                        alpha_cutoff: mat.alpha_cutoff,
                     };
                     self.register_material(input)
                         .ok()
@@ -2006,11 +2232,11 @@ impl GraphRenderer {
             self.taa_frame = 0;
             [0.0, 0.0]
         };
-        let width = frame_data.viewport_size[0].max(1.0);
-        let height = frame_data.viewport_size[1].max(1.0);
+        let width = frame_data.viewportW.max(1.0);
+        let height = frame_data.viewportH.max(1.0);
         let jitter_ndc = [jitter[0] * 4.0 / width, jitter[1] * 4.0 / height];
-        frame_data.view_proj[3][0] += jitter_ndc[0];
-        frame_data.view_proj[3][1] += jitter_ndc[1];
+        frame_data.viewProj[3][0] += jitter_ndc[0];
+        frame_data.viewProj[3][1] += jitter_ndc[1];
         self.taa_jitter_ndc = jitter_ndc;
     }
 
@@ -2054,6 +2280,7 @@ impl GraphRenderer {
         self.swapchain
             .as_ref()
             .map(|s| s.extent)
+            .or_else(|| self.offscreen.as_ref().map(|o| o.extent()))
             .unwrap_or_default()
     }
 
@@ -2179,6 +2406,10 @@ impl GraphRenderer {
         // bogus motion vectors.
         self.prev_camera_view_proj = None;
         self.prev_models.clear();
+        #[cfg(feature = "sharc")]
+        if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
+            resolve.reset_history();
+        }
         // PostPass wraps swapchain views too (its framebuffers target the
         // swapchain directly). Drop them on the same lifecycle.
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
@@ -2291,6 +2522,10 @@ impl GraphRenderer {
         // bogus motion vectors.
         self.prev_camera_view_proj = None;
         self.prev_models.clear();
+        #[cfg(feature = "sharc")]
+        if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
+            resolve.reset_history();
+        }
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.drop_target(&self.runtime.context.device);
         }
@@ -2392,6 +2627,9 @@ impl GraphRenderer {
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { device.begin_command_buffer(cmd, &begin_info) }
                 .context("begin command buffer (headless)")?;
+            if let Some(timer) = self.gpu_timer.as_mut() {
+                timer.begin_frame_span(&device, cmd, 0);
+            }
 
             // Re-use the offscreen target extent as a stand-in.
             let extent = self
@@ -2473,6 +2711,9 @@ impl GraphRenderer {
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { device.begin_command_buffer(cmd, &begin_info) }.context("begin command buffer")?;
+        if let Some(timer) = self.gpu_timer.as_mut() {
+            timer.begin_frame_span(&device, cmd, frame as u32);
+        }
 
         Ok(Some(FrameCtx {
             device,
@@ -2495,7 +2736,7 @@ impl GraphRenderer {
         timer.begin_frame(device, frame_index);
         self.gpu_timings = timer.timings(frame_index).clone();
         if self.gpu_timings.supported {
-            self.gpu_history.push(self.gpu_timings.total_ms);
+            self.gpu_history.push(self.gpu_timings.frame_or_total_ms());
         }
     }
 
@@ -2708,7 +2949,104 @@ impl GraphRenderer {
                 self.sync_pt_geometry(input.draw_items)?;
             }
         }
+        // The ReSTIR GI pass traces the same world-space scene, but it runs in
+        // raster mode, where nothing else uploads geometry. Build its own copy
+        // of the acceleration structures from the same draw list.
+        #[cfg(feature = "restir_gi")]
+        if input.render_mode == crate::render_graph::RenderMode::Raster
+            && self.settings.gi_mode == crate::render_graph::GiMode::Restir
+        {
+            let needs_geom = self
+                .graph
+                .pass_ref::<crate::restir_gi::RestirGiPass>()
+                .map(|pass| !pass.has_geometry())
+                .unwrap_or(false);
+            if needs_geom && !input.draw_items.is_empty() {
+                self.sync_restir_gi_geometry(input.draw_items)?;
+            }
+        }
         Ok(())
+    }
+
+    /// Build the ReSTIR GI ray-tracing scene from the draw list.
+    ///
+    /// Mirrors [`Self::sync_pt_geometry`] but targets [`crate::restir_gi::RestirGiPass`]:
+    /// the GI pass owns its acceleration structures so it stays independent of
+    /// the path tracer (it must work with `pathtrace` compiled out).
+    #[cfg(feature = "restir_gi")]
+    pub fn sync_restir_gi_geometry(
+        &mut self,
+        draw_items: &[crate::render_graph::DrawItem],
+    ) -> anyhow::Result<()> {
+        let instances = self.collect_rt_instances(draw_items);
+        if instances.is_empty() {
+            log::debug!("sync_restir_gi_geometry: no CPU geometry found in draw_items");
+            return Ok(());
+        }
+        if let Some(pass) = self.graph.pass_mut::<crate::restir_gi::RestirGiPass>() {
+            pass.set_geometry(&self.runtime.context, self.runtime.command_pool, &instances)?;
+        }
+        Ok(())
+    }
+
+    /// Build world-space ray-tracing instances from the draw list.
+    ///
+    /// Mirrors the instance construction inside [`Self::sync_pt_geometry`] so the
+    /// ReSTIR GI pass sees exactly the same geometry (same vertex transform, same
+    /// index slice, same material slot and alpha semantics) as the path tracer.
+    #[cfg(feature = "restir_gi")]
+    fn collect_rt_instances(
+        &self,
+        draw_items: &[crate::render_graph::DrawItem],
+    ) -> Vec<crate::bake_common::PtGeometryInstance> {
+        let mut instances = Vec::new();
+        for item in draw_items {
+            let Some((verts, indices)) = self.mesh_manager.get_cpu_geometry(item.mesh) else {
+                continue;
+            };
+            let model = &item.model;
+            let world_vertices: Vec<crate::mesh::Vertex> = verts
+                .iter()
+                .map(|v| {
+                    let p = crate::math::transform_point(model, v.position);
+                    let n = crate::math::transform_vector_normalized(model, v.normal);
+                    let t = crate::math::transform_vector_normalized(
+                        model,
+                        [v.tangent[0], v.tangent[1], v.tangent[2]],
+                    );
+                    crate::mesh::Vertex {
+                        position: p,
+                        normal: n,
+                        color: v.color,
+                        uv: v.uv,
+                        tangent: [t[0], t[1], t[2], v.tangent[3]],
+                    }
+                })
+                .collect();
+            let sub_indices: Vec<u32> = match item.index_count {
+                Some(count) => {
+                    let start = item.index_start as usize;
+                    let count = count as usize;
+                    if start + count <= indices.len() {
+                        indices[start..start + count].to_vec()
+                    } else {
+                        indices.to_vec()
+                    }
+                }
+                None => indices.to_vec(),
+            };
+            let material_slot = item.material.unwrap_or(0);
+            let opaque = item
+                .material
+                .is_some_and(|_| self.material_manager.is_opaque_slot(material_slot));
+            instances.push(crate::bake_common::PtGeometryInstance {
+                vertices: world_vertices,
+                indices: sub_indices,
+                material_slot,
+                opaque,
+            });
+        }
+        instances
     }
 
     /// Upload world-space geometry from draw_items into PathTracePass.
@@ -2752,10 +3090,18 @@ impl GraphRenderer {
                     indices.to_vec()
                 };
 
+                let material_slot = item.material.unwrap_or(0);
+                // Only trust the slot's alpha semantics when the draw item
+                // actually names a material: the `0` fallback is just a shading
+                // default and may belong to an unrelated opaque material.
+                let opaque = item
+                    .material
+                    .is_some_and(|_| self.material_manager.is_opaque_slot(material_slot));
                 instances.push(crate::bake_common::PtGeometryInstance {
                     vertices: world_vertices,
                     indices: sub_indices,
-                    material_slot: item.material.unwrap_or(0),
+                    material_slot,
+                    opaque,
                 });
             }
         }
@@ -2801,11 +3147,69 @@ impl GraphRenderer {
         Ok(())
     }
 
+    /// Number of times the world-space SHaRC cache has been cleared since the
+    /// renderer was created, including the initial allocation.
+    ///
+    /// The cache itself is fully device-local, so this counter is how the
+    /// lifecycle tests (and the editor's diagnostics) observe that an
+    /// invalidation reason reached the cache.
+    #[cfg(feature = "sharc")]
+    pub fn sharc_clear_count(&self) -> u64 {
+        self.sharc_clear_count
+    }
+
+    /// How many frames recorded a real SHaRC training dispatch.
+    ///
+    /// Distinct from "the `SharcTrain` GPU interval was opened": the dispatch is
+    /// skipped whenever the scene, materials or cache buffers are not ready, and
+    /// the interval is recorded either way. Tests asserting that training ran
+    /// must use this, not the GPU timings.
+    #[cfg(feature = "sharc")]
+    pub fn sharc_train_dispatches(&self) -> u64 {
+        // No trainer node exists without the path tracer, so nothing trained.
+        #[cfg(feature = "pathtrace")]
+        {
+            self.graph
+                .pass_ref::<crate::pt_pass::SharcTrainPass>()
+                .map(|trainer| trainer.dispatches())
+                .unwrap_or(0)
+        }
+        #[cfg(not(feature = "pathtrace"))]
+        {
+            0
+        }
+    }
+
+    /// How many frames recorded a real SHaRC resolve dispatch.
+    #[cfg(feature = "sharc")]
+    pub fn sharc_resolve_dispatches(&self) -> u64 {
+        self.graph
+            .pass_ref::<crate::sharc::SharcResolveNode>()
+            .map(|resolve| resolve.dispatches())
+            .unwrap_or(0)
+    }
+
+    /// Whether a SHaRC invalidation reason is queued for the next frame the
+    /// cache is used. Reasons raised while the cache is idle (raster mode, or
+    /// `gi_mode != Sharc`) stay pending until then.
+    #[cfg(feature = "sharc")]
+    pub fn sharc_invalidation_pending(&self) -> bool {
+        self.sharc_invalidation.any()
+    }
+
     /// Invalidate path-tracing geometry, forcing a rebuild on next frame.
+    ///
+    /// Also drops the world-space SHaRC cache: it stores radiance keyed by
+    /// world position, so replacing the geometry leaves radiance that no
+    /// longer belongs to any surface (repair spec §8).
     pub fn invalidate_pt_geometry(&mut self) {
         #[cfg(feature = "pathtrace")]
         if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
             pt.invalidate_geometry();
+        }
+        #[cfg(feature = "sharc")]
+        {
+            self.sharc_invalidation.geometry = true;
         }
     }
 
@@ -2866,10 +3270,33 @@ impl GraphRenderer {
             shadows_enabled,
             ui_overlay,
             show_grid,
-            dispatch_plan: _,
+            dispatch_plan,
         } = input;
         #[cfg(not(feature = "ui"))]
         let _ = ui_overlay;
+        // Fold this frame's dirty plan into the SHaRC world-cache invalidation.
+        //
+        // `instances_dirty` is deliberately *not* consulted: the draw list is
+        // rebuilt every frame after frustum and shadow-caster culling, so its
+        // content (and therefore its signature) changes whenever the camera
+        // moves. The cache keys on world position and only needs reprojection
+        // for that. Genuine geometry changes reach us through
+        // `mesh_releases`/`material_releases` here and through
+        // [`Self::invalidate_pt_geometry`] on scene unload.
+        #[cfg(feature = "sharc")]
+        if let Some(plan) = dispatch_plan {
+            if plan.lights_dirty {
+                self.sharc_invalidation.lights = true;
+            }
+            if plan.sky_dirty {
+                self.sharc_invalidation.sky = true;
+            }
+            if plan.mesh_releases > 0 || plan.material_releases > 0 {
+                self.sharc_invalidation.geometry = true;
+            }
+        }
+        #[cfg(not(feature = "sharc"))]
+        let _ = dispatch_plan;
         // #883 Phase 2: frame_data is copied so we can inject the previous
         // unjittered view-projection without mutating the caller's value.
         let mut frame_data = **frame_data;
@@ -2878,12 +3305,12 @@ impl GraphRenderer {
             // resolves the implicit single-camera path).
             camera.view_proj
         } else {
-            let mut vp = frame_data.view_proj;
+            let mut vp = frame_data.viewProj;
             vp[3][0] -= self.taa_jitter_ndc[0];
             vp[3][1] -= self.taa_jitter_ndc[1];
             vp
         };
-        frame_data.prev_view_proj = self.prev_camera_view_proj.unwrap_or(prev_vp);
+        frame_data.prevViewProj = self.prev_camera_view_proj.unwrap_or(prev_vp);
         let light_view_proj = *light_view_proj;
         let light_view_proj1 = *light_view_proj1;
         let shadow_split = *shadow_split;
@@ -2916,10 +3343,10 @@ impl GraphRenderer {
                     .enumerate()
                 {
                     let mut data = frame_data;
-                    let light_count = data.camera_position[3];
-                    data.view_proj = camera.view_proj;
+                    let light_count = data.cameraPosition[3];
+                    data.viewProj = camera.view_proj;
                     data.view = camera.view;
-                    data.camera_position =
+                    data.cameraPosition =
                         [camera.eye[0], camera.eye[1], camera.eye[2], light_count];
                     data.exposure = camera.exposure;
                     if let Err(error) = ubo.update(device, &data, slot) {
@@ -2944,10 +3371,19 @@ impl GraphRenderer {
                 forward.set_depth_readback(capture);
             }
             let ao_view = self.ao_view(frame as u32);
+            // 上一帧 ReSTIR GI 输出（1 帧延迟）。pass 未注册 / 未分派时为 null，
+            // 前向 pass 的 `gi_mode` push constant 随之为 0，退回 probe volume。
+            let gi_view = self.gi_view();
             let offscreen_views = self.offscreen.as_ref().map(|o| [o.image_view()]);
             let swapchain_views: &[vk::ImageView] = match (&self.swapchain, &offscreen_views) {
                 (Some(sw), _) => sw.views.as_slice(),
                 (None, Some(ov)) => ov.as_slice(),
+                (None, None) => &[],
+            };
+            let offscreen_images = self.offscreen.as_ref().map(|o| [o.image()]);
+            let swapchain_images: &[vk::Image] = match (&self.swapchain, &offscreen_images) {
+                (Some(sw), _) => sw.images.as_slice(),
+                (None, Some(oi)) => oi.as_slice(),
                 (None, None) => &[],
             };
             // Skinned draws (#560 P0-3): push this frame's palette into the
@@ -3005,10 +3441,15 @@ impl GraphRenderer {
                     m[3][3] = 1.0;
                     m
                 },
-                view_proj: frame_data.view_proj,
-                view_proj_jitter: self.taa_jitter_ndc,
+                view_proj: frame_data.viewProj,
+                view_proj_jitter: if self.graph.debug_control().freeze_temporal {
+                    [0.0, 0.0]
+                } else {
+                    self.taa_jitter_ndc
+                },
                 lights,
                 ao_view,
+                gi_view,
                 tonemap_mode,
                 aa_mode,
                 debug_rt,
@@ -3016,13 +3457,15 @@ impl GraphRenderer {
                 proj32,
                 inv_projection,
                 swapchain_views,
+                swapchain_images,
+                freeze_temporal: self.graph.debug_control().freeze_temporal,
                 render_mode: *render_mode,
                 pt_max_bounces: *pt_max_bounces,
                 pt_ray_max_distance: *pt_ray_max_distance,
                 pt_max_iterations: *pt_max_iterations,
-                camera_pos: frame_data.camera_position,
-                light_dir: frame_data.light_direction,
-                light_color: frame_data.light_color,
+                camera_pos: frame_data.cameraPosition,
+                light_dir: frame_data.lightDirection,
+                light_color: frame_data.lightColor,
                 exposure: *exposure,
                 pt_lights,
                 pt_accum_dirty: *pt_accum_dirty,
@@ -3039,35 +3482,116 @@ impl GraphRenderer {
                 .map(|item| (item.entity_id, item.model))
                 .collect();
 
-            #[cfg(feature = "rtxgi")]
-            if self.settings.gi_mode == crate::render_graph::GiMode::Sharc
-                && *render_mode == RenderMode::PathTrace
-            {
+            // SHaRC has two independent consumers now: the path tracer (trains
+            // the cache, then queries it) and the ReSTIR GI pass (deposits and
+            // queries while tracing its secondary rays, no path tracer involved).
+            // Both need the same clear / buffer-handover bookkeeping, so the gate
+            // below covers either mode instead of hard-coding the path-traced one.
+            //
+            // The training and resolve dispatches themselves are graph nodes
+            // (`SharcTrainPass` / `SharcResolveNode`); what stays here is the
+            // cache ownership: allocation, invalidation and the clear.
+            #[cfg(feature = "sharc")]
+            if crate::sharc::sharc_active(self.settings.gi_mode, *render_mode) {
+                // The hash map is sized when it is allocated, so a capacity
+                // change has to rebuild the buffers. Voxel keys are meaningless
+                // across a resize, so the rebuilt cache starts cleared.
+                let capacity = self.settings.sharc_capacity.max(1);
+                let capacity_changed = self
+                    .sharc_targets
+                    .as_ref()
+                    .is_some_and(|targets| targets.capacity != capacity);
                 let mut needs_init_clear = false;
+                if capacity_changed {
+                    // Command buffers from the frames still in flight may
+                    // reference the old buffers. Capacity changes are rare, so
+                    // stalling the device once is the cheap way to be safe.
+                    unsafe { device.device_wait_idle() }.ok();
+                    if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
+                        resolve.clear(device);
+                    }
+                    if let Some(mut targets) = self.sharc_targets.take() {
+                        targets.destroy(&self.runtime.context);
+                    }
+                    log::info!("SHaRC capacity changed to {capacity} entries");
+                }
                 if self.sharc_targets.is_none() {
-                    match crate::sharc::SharcTargets::new(
-                        &self.runtime.context,
-                        crate::sharc::DEFAULT_SHARC_CAPACITY,
-                    ) {
-                        Ok(targets) => match crate::sharc::SharcResolvePass::new(
-                            &self.runtime.context,
-                            &targets,
-                        ) {
-                            Ok(resolve) => {
-                                self.sharc_targets = Some(targets);
-                                self.sharc_resolve = Some(resolve);
-                                needs_init_clear = true;
-                                log::info!("RTXGI SHARC initialized (1M entries)");
+                    match crate::sharc::SharcTargets::new(&self.runtime.context, capacity) {
+                        Ok(targets) => {
+                            // The resolve node owns the descriptor set that binds
+                            // the cache buffers, so rebind it whenever the
+                            // buffers are (re)allocated.
+                            let rebound = self
+                                .graph
+                                .pass_mut::<crate::sharc::SharcResolveNode>()
+                                .map(|resolve| resolve.set_targets(&self.runtime.context, &targets))
+                                .unwrap_or(Ok(()));
+                            match rebound {
+                                Ok(()) => {
+                                    // Hand the buffers to the trainer/consumer.
+                                    #[cfg(feature = "pathtrace")]
+                                    if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
+                                        pt.set_sharc_buffers(
+                                            Some(targets.hash_entries_buffer),
+                                            Some(targets.accumulation_buffer),
+                                            Some(targets.resolved_buffer),
+                                            targets.capacity,
+                                        );
+                                    }
+                                    #[cfg(feature = "restir_gi")]
+                                    if let Some(gi) =
+                                        self.graph.pass_mut::<crate::restir_gi::RestirGiPass>()
+                                    {
+                                        gi.set_sharc_buffers(
+                                            Some(targets.hash_entries_buffer),
+                                            Some(targets.accumulation_buffer),
+                                            Some(targets.resolved_buffer),
+                                            targets.capacity,
+                                        );
+                                    }
+                                    self.sharc_targets = Some(targets);
+                                    needs_init_clear = true;
+                                    log::info!("SHaRC initialized ({capacity} entries)");
+                                }
+                                Err(e) => log::warn!("Failed to create SharcResolvePass: {e:#}"),
                             }
-                            Err(e) => log::warn!("Failed to create SharcResolvePass: {e:#}"),
-                        },
+                        }
                         Err(e) => log::warn!("Failed to create SharcTargets: {e:#}"),
                     }
                 }
 
-                if needs_init_clear || self.settings.sharc_enable_clear {
+                // Consume the recorded lifecycle reasons. A reason that could
+                // not be serviced because SHaRC is idle this frame stays
+                // pending until the cache is used again, which is exactly when
+                // the stale voxels would become visible.
+                let invalidation = std::mem::take(&mut self.sharc_invalidation);
+                if invalidation.any() {
+                    log::debug!(
+                        "SHaRC cache invalidated: geometry={} lights={} sky={}",
+                        invalidation.geometry,
+                        invalidation.lights,
+                        invalidation.sky
+                    );
+                }
+                // A voxel-scale change redefines the hash key for every world
+                // position, so the surviving entries describe the wrong voxels
+                // (repair spec §8: cache format changes clear).
+                let scale = self.settings.sharc_scene_scale;
+                let scale_changed = self
+                    .sharc_cache_scene_scale
+                    .is_some_and(|previous| previous != scale);
+                self.sharc_cache_scene_scale = Some(scale);
+                if scale_changed {
+                    log::info!("SHaRC voxel scale changed to {scale}; clearing the cache");
+                }
+                if needs_init_clear
+                    || invalidation.any()
+                    || scale_changed
+                    || self.settings.sharc_enable_clear
+                {
                     if let Some(targets) = &self.sharc_targets {
                         targets.clear(device, cmd);
+                        self.sharc_clear_count += 1;
                         // Pipeline barrier: TRANSFER_WRITE -> SHADER_READ | SHADER_WRITE
                         let barrier = vk::MemoryBarrier::default()
                             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -3088,96 +3612,37 @@ impl GraphRenderer {
                     }
                     self.settings.sharc_enable_clear = false;
                 }
-
-                if self.settings.sharc_enable_resolve {
-                    if let (Some(targets), Some(resolve)) =
-                        (&self.sharc_targets, &self.sharc_resolve)
-                    {
-                        // The previous frame's path-trace dispatch wrote this
-                        // frame's inputs (hash entries + accumulation). Frame
-                        // boundaries do not order shader writes, so the
-                        // dependency has to be declared here explicitly.
-                        let prior_writes = vk::MemoryBarrier::default()
-                            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                            .dst_access_mask(
-                                vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
-                            );
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                cmd,
-                                vk::PipelineStageFlags::COMPUTE_SHADER,
-                                vk::PipelineStageFlags::COMPUTE_SHADER,
-                                vk::DependencyFlags::empty(),
-                                &[prior_writes],
-                                &[],
-                                &[],
-                            );
-                        }
-                        let push = crate::sharc::SharcResolvePush {
-                            camera_pos: frame_data.camera_position,
-                            camera_pos_prev: self
-                                .prev_camera_view_proj
-                                .map(|_| frame_data.camera_position)
-                                .unwrap_or(frame_data.camera_position),
-                            scene_scale: self.settings.sharc_scene_scale,
-                            capacity: targets.capacity,
-                            accumulation_frame_num: self.settings.sharc_accumulation_frame_num,
-                            stale_frame_num_max: self.settings.sharc_stale_frame_num,
-                            frame_index: frame as u32,
-                            radiance_scale: 1000.0,
-                            enable_anti_firefly: if self.settings.sharc_enable_anti_firefly {
-                                1
-                            } else {
-                                0
-                            },
-                            pad: 0,
-                        };
-                        resolve.execute(device, cmd, &push);
-
-                        // Pipeline barrier: COMPUTE_SHADER write -> subsequent read
-                        let barrier = vk::MemoryBarrier::default()
-                            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
-                            .dst_access_mask(
-                                vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE,
-                            );
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                cmd,
-                                vk::PipelineStageFlags::COMPUTE_SHADER,
-                                vk::PipelineStageFlags::COMPUTE_SHADER
-                                    | vk::PipelineStageFlags::FRAGMENT_SHADER,
-                                vk::DependencyFlags::empty(),
-                                &[barrier],
-                                &[],
-                                &[],
-                            );
-                        }
-                    }
-                }
             }
-
-            // Hand the cache buffers to the path tracer, or clear the handles
-            // when the cache is inactive so the shader never dereferences an
-            // unbound descriptor (it gates on `push.sharc_enabled`).
-            #[cfg(feature = "rtxgi")]
-            {
-                let (hash_entries, accumulation, resolved, capacity) =
-                    match (&self.sharc_targets, self.settings.gi_mode) {
-                        (Some(targets), crate::render_graph::GiMode::Sharc) => (
-                            Some(targets.hash_entries_buffer),
-                            Some(targets.accumulation_buffer),
-                            Some(targets.resolved_buffer),
-                            targets.capacity,
-                        ),
-                        _ => (None, None, None, 0),
-                    };
+            // 设了 `gi_mode = Sharc` 却没编 `sharc`：退化为纯路径追踪，但必须说清楚
+            // 缺哪个 feature（DESIGN §12.3 规则 3：关掉要可诊断，不要静默降级）。
+            // 这个分支每帧都会走到，所以只报一次。
+            #[cfg(all(feature = "pathtrace", not(feature = "sharc")))]
+            if crate::render_graph::GiMode::Sharc == self.settings.gi_mode {
+                static SHARC_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
+                SHARC_MISSING_WARNED.call_once(|| {
+                    log::warn!(
+                        "gi_mode = Sharc 需要 prism-render/sharc，本次构建没有编译 SHaRC；\
+                         已退化为纯路径追踪"
+                    );
+                });
                 if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
-                    pt.set_sharc_buffers(hash_entries, accumulation, resolved, capacity);
+                    pt.set_sharc_buffers(None, None, None, 0);
                 }
             }
-            #[cfg(all(feature = "pathtrace", not(feature = "rtxgi")))]
-            if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
-                pt.set_sharc_buffers(None, None, None, 0);
+            // Resolve is the only stage that normalises the accumulation
+            // counters (see `crate::sharc::training_enabled`). Training with
+            // resolve disabled would keep adding to counters that nothing
+            // resets, so the trainer node skips and the reason is logged once.
+            #[cfg(feature = "sharc")]
+            if self.settings.sharc_enable_update && !self.settings.sharc_enable_resolve {
+                static TRAIN_WITHOUT_RESOLVE_WARNED: std::sync::Once = std::sync::Once::new();
+                TRAIN_WITHOUT_RESOLVE_WARNED.call_once(|| {
+                    log::warn!(
+                        "sharc_enable_update is set but sharc_enable_resolve is not; \
+                         training is skipped because resolve owns the accumulation \
+                         counters. Enable sharc_enable_resolve to train the cache."
+                    );
+                });
             }
 
             let render_ctx = crate::render_graph::RenderContext {
@@ -3208,7 +3673,7 @@ impl GraphRenderer {
                         .pending_view_proj
                         .get_mut(image_index as usize)
                     {
-                        *slot = Some(frame_data.view_proj);
+                        *slot = Some(frame_data.viewProj);
                     }
                 }
             }
@@ -3297,6 +3762,7 @@ impl GraphRenderer {
                                 sw.views[image_index as usize],
                                 ui_overlay.unwrap(),
                                 bindless_set,
+                                ctx.frame_index,
                             )
                             .context("ui overlay record");
                     }
@@ -3375,6 +3841,7 @@ impl GraphRenderer {
                                 view,
                                 ui_overlay.unwrap(),
                                 bindless_set,
+                                ctx.frame_index,
                             )
                             .context("offscreen ui overlay record");
                     }
@@ -3458,16 +3925,31 @@ impl GraphRenderer {
                 );
                 match capture {
                     Ok(capture) => {
-                        let image = self
-                            .swapchain
-                            .as_ref()
-                            .map(|sw| sw.images[image_index as usize]);
+                        let (image, current_layout) = if let Some(ref sw) = self.swapchain {
+                            (
+                                sw.images.get(image_index as usize).copied(),
+                                vk::ImageLayout::PRESENT_SRC_KHR,
+                            )
+                        } else if let Some(ref offscreen) = self.offscreen {
+                            (
+                                Some(offscreen.image()),
+                                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                            )
+                        } else {
+                            (None, vk::ImageLayout::UNDEFINED)
+                        };
                         match image {
-                            Some(image) => match capture.record_copy(device, cmd, image) {
-                                Ok(()) => self.screenshot = Some(capture),
-                                Err(err) => record = Err(err),
-                            },
-                            None => record = Err(anyhow::anyhow!("screenshot: no swapchain")),
+                            Some(image) => {
+                                match capture.record_copy(device, cmd, image, current_layout) {
+                                    Ok(()) => self.screenshot = Some(capture),
+                                    Err(err) => record = Err(err),
+                                }
+                            }
+                            None => {
+                                record = Err(anyhow::anyhow!(
+                                    "screenshot: no swapchain or offscreen target"
+                                ))
+                            }
                         }
                     }
                     Err(err) => record = Err(err),
@@ -3476,6 +3958,11 @@ impl GraphRenderer {
         }
 
         // --- End command buffer (always attempted) ---
+        if record.is_ok() {
+            if let Some(timer) = self.gpu_timer.as_mut() {
+                timer.end_frame_span(device, cmd, ctx.frame_index);
+            }
+        }
         if let Err(end_err) = unsafe { device.end_command_buffer(cmd) } {
             if record.is_ok() {
                 record = Err(anyhow::anyhow!("end command buffer: {end_err:?}"));
@@ -3553,7 +4040,7 @@ impl GraphRenderer {
 
     /// 帧结束阶段：推进帧级状态并执行延迟回收。
     pub fn end_frame(&mut self, _ctx: &FrameCtx, _presented: bool) -> anyhow::Result<()> {
-        // `PRISMREV_PASS_DUMP`: the previous `present` waited on the frame
+        // `PRISMA_PASS_DUMP`: the previous `present` waited on the frame
         // fence, so the readback buffers are safe to map and encode here.
         self.graph.flush_pass_dump(&self.runtime.context.device)?;
         Ok(())
@@ -3597,8 +4084,8 @@ impl GraphRenderer {
         // request so a runtime settings edit cannot make the shader sample a
         // cascade that was never allocated.
         let mut frame_data = *frame_data;
-        frame_data.shadow_cascade_count = frame_data
-            .shadow_cascade_count
+        frame_data.shadowCascadeCount = frame_data
+            .shadowCascadeCount
             .clamp(1, self.settings.shadow_cascade_count.clamp(1, 2));
         // #883: subpixel jitter for TAA. The graph frame carries the applied
         // NDC offset so `TaaPass` can recover the unjittered camera matrix.
@@ -3614,9 +4101,9 @@ impl GraphRenderer {
             frame_data: &frame_data,
             cameras: &[],
             light_view_proj,
-            light_view_proj1: frame_data.light_view_proj1,
-            shadow_split: frame_data.shadow_split,
-            shadow_cascade_count: frame_data.shadow_cascade_count,
+            light_view_proj1: frame_data.lightViewProj1,
+            shadow_split: frame_data.shadowSplit,
+            shadow_cascade_count: frame_data.shadowCascadeCount,
             inv_projection,
             debug_flags,
             wireframe,
@@ -3671,6 +4158,32 @@ impl GraphRenderer {
             size,
             scale,
         });
+    }
+
+    /// Programmatically configure pass dump for automated tests or headless runs.
+    pub fn configure_pass_dump(
+        &mut self,
+        dir: impl Into<std::path::PathBuf>,
+        target_frame: u64,
+        filter: Option<Vec<String>>,
+    ) {
+        self.graph
+            .configure_pass_dump(dir.into(), target_frame, filter);
+    }
+
+    /// Access the diagnostic debug control settings (immutable).
+    pub fn debug_control(&self) -> &crate::render_debug::RenderDebugControl {
+        self.graph.debug_control()
+    }
+
+    /// Access the diagnostic debug control settings (mutable).
+    pub fn debug_control_mut(&mut self) -> &mut crate::render_debug::RenderDebugControl {
+        self.graph.debug_control_mut()
+    }
+
+    /// Replace the diagnostic debug control settings.
+    pub fn set_debug_control(&mut self, control: crate::render_debug::RenderDebugControl) {
+        self.graph.set_debug_control(control);
     }
 
     /// 帧提交之后调用：等待本次提交的围栏、读回像素、写 PNG。
@@ -3747,6 +4260,7 @@ impl GraphRenderer {
         }
         #[cfg(not(feature = "gtao"))]
         self.dummy_ao.destroy(device);
+        self.dummy_gi.destroy(device);
 
         // Destroy PostPass (framebuffers, render pass, pipeline, descriptor
         // set, sampler).
@@ -3771,10 +4285,10 @@ impl GraphRenderer {
             pt.destroy(device);
         }
 
-        #[cfg(feature = "rtxgi")]
+        #[cfg(feature = "sharc")]
         {
-            if let Some(mut resolve) = self.sharc_resolve.take() {
-                resolve.destroy(device);
+            if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
+                resolve.clear(device);
             }
             if let Some(mut targets) = self.sharc_targets.take() {
                 targets.destroy(&self.runtime.context);

@@ -19,14 +19,19 @@ pub const GLOBAL_SAMPLERS_BINDING: u32 = 0; // UNIFORM_BUFFER
 pub const BINDLESS_SRVS_SET: u32 = 0;
 pub const BINDLESS_SRVS_BINDING: u32 = 1; // UNIFORM_BUFFER
 
-/// Push-constant struct (auto-generated from Slang `RtPreviewPush`).
+/// GPU layout struct (auto-generated from Slang `RtPreviewPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
 /// explicit `_pad_*` fillers, so `size_of` is 4 bytes and every field sits
 /// where the shader expects it.
 #[repr(C)]
-#[derive(Clone, Copy, Default, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct RtPreviewPush {
     /// offset 0, size 4
     pub textureHandle: u32,
 }
+
+const _: () = {
+    assert!(::std::mem::size_of::<RtPreviewPush>() == 4);
+    assert!(::std::mem::offset_of!(RtPreviewPush, textureHandle) == 0);
+};

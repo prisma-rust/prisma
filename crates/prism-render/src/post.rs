@@ -34,8 +34,8 @@ use crate::lut::Lut3d;
 use crate::pipeline::{GraphicsPipeline, PipelineDesc};
 use crate::render_graph::{
     GraphResources, PassInfo, PassKind, RenderContext, RenderGraphBuilder, RenderMode,
-    RenderPassNode, RenderSettings, ResourceHandle, ResourceUsage, ANF_COLOR_H, FORWARD_COLOR_H,
-    FORWARD_DEPTH_H, FORWARD_NORMAL_H, PT_COLOR_H, TAA_COLOR_H,
+    RenderPassNode, RenderSettings, ResourceHandle, ResourceType, ResourceUsage, ANF_COLOR_H,
+    FINAL_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, PT_COLOR_H, TAA_COLOR_H,
 };
 use crate::render_pass::find_memory_type;
 use crate::shader;
@@ -53,14 +53,8 @@ const _: () = assert!(
 /// `prevViewProj` projects that point into the previous frame. `resolution`
 /// converts the normalized velocity into pixels for the trail clamp. Laid out
 /// to match `MotionBlurData` in `post.slang`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct MotionBlurUniform {
-    inv_view_proj: [[f32; 4]; 4],
-    prev_view_proj: [[f32; 4]; 4],
-    resolution: [f32; 2],
-    _pad: [f32; 2],
-}
+// GPU layout comes from the Slang reflection; never mirror it by hand.
+use crate::shader_bindings::post::MotionBlurData as MotionBlurUniform;
 
 /// Fullscreen-triangle tonemap pass: HDR scene color -> sRGB swapchain.
 pub struct PostPass {
@@ -80,6 +74,7 @@ pub struct PostPass {
     /// Cached swapchain views the framebuffers were built against (for
     /// rebuild detection, mirroring ForwardPass's 模式
     target_views: Vec<vk::ImageView>,
+    target_images: Vec<vk::Image>,
     extent: vk::Extent2D,
     pipeline: Option<GraphicsPipeline>,
     /// One descriptor set per frame-in-flight so `set_input` can update frame
@@ -366,6 +361,7 @@ impl PostPass {
             final_layout,
             framebuffers: Vec::new(),
             target_views: Vec::new(),
+            target_images: Vec::new(),
             extent: vk::Extent2D {
                 width: 0,
                 height: 0,
@@ -503,6 +499,11 @@ impl PostPass {
         Ok(())
     }
 
+    /// Update the target image handles so `PostPass` can publish `FINAL_COLOR_H`.
+    pub fn set_target_images(&mut self, images: &[vk::Image]) {
+        self.target_images = images.to_vec();
+    }
+
     /// Replace the 3D color-grading LUT (#502).
     ///
     /// Uploads `lut` as an `R32G32B32A32_SFLOAT` 3D image and rebinds it on
@@ -550,6 +551,7 @@ impl PostPass {
             unsafe { device.destroy_framebuffer(fb, None) };
         }
         self.target_views.clear();
+        self.target_images.clear();
         self.extent = vk::Extent2D {
             width: 0,
             height: 0,
@@ -634,10 +636,10 @@ impl PostPass {
             return Ok(());
         }
         let uniform = MotionBlurUniform {
-            inv_view_proj,
-            prev_view_proj,
+            invViewProj: inv_view_proj,
+            prevViewProj: prev_view_proj,
             resolution,
-            _pad: [0.0; 2],
+            ..Default::default()
         };
         let size = std::mem::size_of::<MotionBlurUniform>() as vk::DeviceSize;
         let ptr = unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
@@ -934,6 +936,20 @@ impl RenderPassNode for PostPass {
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
+        graph.create_resource_at(
+            FINAL_COLOR_H,
+            ResourceType::ColorAttachment {
+                format: self.color_format,
+                extent: self.extent,
+                sample_count: vk::SampleCountFlags::TYPE_1,
+            },
+        );
+        graph.write_usage(ResourceUsage {
+            handle: FINAL_COLOR_H,
+            access: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            layout: self.final_layout,
+        });
     }
 
     fn execute(
@@ -958,13 +974,14 @@ impl RenderPassNode for PostPass {
         } else {
             None
         };
-        // TAA output (#883) takes precedence in the raster path when enabled and ANF is off.
-        let taa_view =
-            if ctx.settings.taa && !is_pt && ctx.frame.debug_rt == 0 && anf_view.is_none() {
-                resources.published_view(TAA_COLOR_H)
-            } else {
-                None
-            };
+        // TAA output (#883) takes precedence when enabled and ANF is off. In
+        // path-trace mode the temporal resolve consumes the traced image and its
+        // guides, so the resolved image replaces PT_COLOR_H here.
+        let taa_view = if ctx.settings.taa && ctx.frame.debug_rt == 0 && anf_view.is_none() {
+            resources.published_view(TAA_COLOR_H)
+        } else {
+            None
+        };
         let (handle, image_layout) = if anf_view.is_some() {
             (ANF_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
         } else if taa_view.is_some() {
@@ -1123,7 +1140,7 @@ impl RenderPassNode for PostPass {
                 },
             ],
         };
-        self.execute(
+        let exec_result = self.execute(
             ctx.device,
             ctx.cmd,
             ctx.frame_index,
@@ -1131,7 +1148,14 @@ impl RenderPassNode for PostPass {
             input_image,
             dest,
             &push,
-        )
+        );
+        if let Some(&img) = ctx.frame.swapchain_images.get(ctx.image_index as usize) {
+            resources.set_image(FINAL_COLOR_H, img);
+            if let Some(&view) = ctx.frame.swapchain_views.get(ctx.image_index as usize) {
+                resources.set_image_view(FINAL_COLOR_H, view);
+            }
+        }
+        exec_result
     }
 
     fn graph_info(&self) -> PassInfo {
@@ -1141,8 +1165,8 @@ impl RenderPassNode for PostPass {
             kind: PassKind::Post,
             // 高动态范围 颜色 comes from ForwardPass via FORWARD_COLOR_H.
             inputs: vec![FORWARD_COLOR_H],
-            // PostPass writes the swapchain (not a graph-managed resource).
-            outputs: Vec::new(),
+            // PostPass writes FINAL_COLOR_H (swapchain or offscreen image).
+            outputs: vec![FINAL_COLOR_H],
         }
     }
 

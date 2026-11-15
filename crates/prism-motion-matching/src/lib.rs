@@ -21,6 +21,7 @@
 //! Conventions match the animator: model space is the skeleton root's space, the
 //! entity transform is applied later, and `+Y` is up.
 
+pub mod chooser;
 pub mod database;
 pub mod foot_lock;
 pub mod pose_feature;

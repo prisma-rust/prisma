@@ -1,4 +1,4 @@
-//! PrismaRev ECS core.
+//! Prisma ECS core.
 //!
 //! A minimal, data-oriented Entity-Component-System: entities are cheap
 //! integer handles, components are plain data stored in type-indexed sparse

@@ -78,34 +78,14 @@ pub fn settings_path(root: &Path) -> PathBuf {
     root.join("assets").join("settings.ini")
 }
 
-/// 旧的 `assets/settings.toml`——只读回退，写端不再产出。
-pub fn legacy_settings_path(root: &Path) -> PathBuf {
-    root.join("assets").join("settings.toml")
-}
-
-/// 读取现有配置文档：`settings.ini` 优先，缺失时回退旧 `settings.toml`
-/// （并提示迁移）。两者都没有时返回空文档（= 全部默认值）。
+/// 读取现有配置文档。文件不存在时返回空文档（= 全部默认值）。
 fn read_document(root: &Path) -> Result<IniDocument, String> {
-    for (path, legacy) in [
-        (settings_path(root), false),
-        (legacy_settings_path(root), true),
-    ] {
-        match std::fs::read_to_string(&path) {
-            Ok(text) => {
-                if legacy {
-                    log::warn!(
-                        "{} is deprecated: run `prism-build-pipeline build-scenes` to migrate \
-                         it to settings.ini",
-                        path.display()
-                    );
-                }
-                return Ok(IniDocument::parse(&text));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("无法读取 {}: {error}", path.display())),
-        }
+    let path = settings_path(root);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(IniDocument::parse(&text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(IniDocument::default()),
+        Err(error) => Err(format!("无法读取 {}: {error}", path.display())),
     }
-    Ok(IniDocument::default())
 }
 
 fn write_document(root: &Path, document: &IniDocument) -> Result<(), String> {
@@ -185,7 +165,7 @@ impl Default for AppSettingsData {
     fn default() -> Self {
         Self {
             company: "Excurs1ons".into(),
-            name: "PrismaRev".into(),
+            name: "Prisma".into(),
             version: "0.1.0".into(),
         }
     }
@@ -205,7 +185,7 @@ pub struct WindowSettingsData {
 impl Default for WindowSettingsData {
     fn default() -> Self {
         Self {
-            title: "PrismaRev".into(),
+            title: "Prisma".into(),
             width: 1600,
             height: 900,
             resizable: true,
@@ -476,24 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_toml_settings_are_readable() {
-        let dir = temp_dir("prism-editor-api-settings-legacy");
-        std::fs::write(
-            legacy_settings_path(&dir),
-            "[render]\nrender_mode = \"path_trace\"\ntonomap = 0\ntonemap_mode = 1\n",
-        )
-        .unwrap();
-        let data = read_render_settings(&dir).unwrap();
-        assert_eq!(data.render_mode, "path_trace");
-        assert_eq!(data.tonemap_mode, 1);
-
-        // 写端只产出 settings.ini；旧文件不再被改写。
-        write_render_settings(&dir, &data).unwrap();
-        assert!(settings_path(&dir).is_file());
-        assert!(legacy_settings_path(&dir).is_file());
-    }
-
-    #[test]
     fn passthrough_tonemap_is_a_valid_project_setting() {
         let dir = temp_dir("prism-editor-api-settings-passthrough");
         let data = RenderSettingsData {
@@ -524,7 +486,7 @@ mod tests {
         .unwrap();
 
         let mut data = read_project_settings(&dir).unwrap();
-        assert_eq!(data.app.name, "PrismaRev");
+        assert_eq!(data.app.name, "Prisma");
         data.app.name = "DemoGame".into();
         data.window.width = 1280;
         data.build.profile = "debug".into();

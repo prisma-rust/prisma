@@ -1,6 +1,6 @@
 //! # prism-cook
 //!
-//! Command-line interface for the PrismaRev Resource Pipeline.
+//! Command-line interface for the Prisma Resource Pipeline.
 //!
 //! ## Usage
 //!
@@ -94,7 +94,7 @@ fn kv(key_en: &str, key_cn: &str, value: &str, key_en_width: usize) {
 #[derive(Parser)]
 #[command(
     name = "prism-cook",
-    about = "PrismaRev Resource Pipeline CLI\n资源管线命令行工具"
+    about = "Prisma Resource Pipeline CLI\n资源管线命令行工具"
 )]
 #[command(args_conflicts_with_subcommands = true)]
 struct Cli {

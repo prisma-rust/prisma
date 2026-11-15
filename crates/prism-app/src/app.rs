@@ -87,6 +87,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 #[cfg(feature = "winit-backend")]
 use winit::window::WindowId;
 
+#[cfg(feature = "engine-debug")]
 use crate::debug_hud::DebugHud;
 use crate::hook::FrameHook;
 use crate::render_runner::{render_thread_main, OverlayFactory, RenderTarget};
@@ -161,11 +162,13 @@ pub struct App {
     frame_hook: Option<Box<dyn FrameHook>>,
     render_settings: RenderSettings,
     /// 运行时诊断 HUD（F3；无 UI 框架依赖）。
+    /// 运行时诊断 HUD（F3）。只在编译了引擎调试层时存在。
+    #[cfg(feature = "engine-debug")]
     debug_hud: DebugHud,
 
     // ---------- 每帧状态 ----------
     display_aspect: f32,
-    /// 开发期资产热重载（#495）：`PRISMREV_HOT_RELOAD` 打开时轮询 `.pak`。
+    /// 开发期资产热重载（#495）：`PRISMA_HOT_RELOAD` 打开时轮询 `.pak`。
     ///
     /// 发布版默认关（不建线程、不做任何 stat）；打开后重建 `.pak` 不用退出
     /// 再进游戏。旧 GPU 句柄不会立即释放（渲染器还没有按句柄回收的接口），
@@ -341,7 +344,7 @@ impl App {
         // 以前 `scene_state_path()` 用默认配置，所有项目共用一个目录（#484）。
         if let Some(dir) = prism_engine::config::app_data_dir_for(&config) {
             // 玩家存档（#984）与场景存档同目录：都跟着 `[app] company/name` 走。
-            // 设了 `PRISMREV_USER_DATA` 时改用它（便携版 / Android 宿主）。
+            // 设了 `PRISMA_USER_DATA` 时改用它（便携版 / Android 宿主）。
             let player_data = if std::env::var_os(prism_engine::user_data::ENV_OVERRIDE).is_some() {
                 prism_engine::user_data::save_path(&config.app.name)
             } else {
@@ -371,6 +374,7 @@ impl App {
             platform: None,
             frame_hook: None,
             render_settings,
+            #[cfg(feature = "engine-debug")]
             debug_hud: DebugHud::default(),
             display_aspect: 16.0 / 9.0,
             pak_watcher: spawn_pak_watcher(),
@@ -948,21 +952,31 @@ impl App {
     /// 启动事件循环（桌面入口，自建 winit EventLoop）。
     ///
     /// 内部构造 EventLoop 并交给 [`Self::run_on`]；致命错误直接 panic。
+    /// 若环境变量设置了 `PRISMA_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
     #[cfg(feature = "winit-backend")]
-    pub fn run(self) {
+    pub fn run(mut self) {
         // 兜底：`App::hosted` 之外的构造路径也要在事件循环前有 logger（幂等）。
         crate::logging::init_player_logging();
         Self::log_asset_root();
+
+        if let Some(frames) = Self::headless_frames_from_env() {
+            log::info!("headless mode requested via PRISMA_HEADLESS ({frames} frames)");
+            let (w, h) = self.default_headless_extent();
+            self.run_headless(frames, w, h)
+                .expect("fatal headless application error");
+            return;
+        }
+
         let event_loop = winit::event_loop::EventLoop::new().expect("failed to create event loop");
         self.run_on(event_loop).expect("fatal application error");
     }
 
     /// 在已构建的 winit EventLoop 上运行（Android 入口用）。
     ///
-    /// 启动前解析启动配置（`PRISMREV_LAUNCH_CONFIG` env）并设置日志级别。
+    /// 启动前解析启动配置（`PRISMA_LAUNCH_CONFIG` env）并设置日志级别。
     ///
     /// Android 的 `android_main` 应在调用本函数 **之前** 自行注入
-    /// `PRISMREV_LAUNCH_CONFIG` env（从 files 目录读取）。
+    /// `PRISMA_LAUNCH_CONFIG` env（从 files 目录读取）。
     #[cfg(feature = "winit-backend")]
     pub fn run_on(mut self, event_loop: winit::event_loop::EventLoop<()>) -> anyhow::Result<()> {
         crate::logging::init_player_logging();
@@ -979,8 +993,87 @@ impl App {
     pub fn run(mut self) {
         crate::logging::init_player_logging();
         Self::log_asset_root();
+
+        if let Some(frames) = Self::headless_frames_from_env() {
+            log::info!("headless mode requested via PRISMA_HEADLESS ({frames} frames)");
+            let (w, h) = self.default_headless_extent();
+            self.run_headless(frames, w, h)
+                .expect("fatal headless application error");
+            return;
+        }
+
         self.build_plugins();
         self.run_win32().expect("fatal application error");
+    }
+
+    fn headless_frames_from_env() -> Option<u32> {
+        let env_val = std::env::var("PRISMA_HEADLESS").ok()?;
+        let val = env_val.trim();
+        if val.is_empty() || val == "0" || val.eq_ignore_ascii_case("false") {
+            return None;
+        }
+        if let Ok(n) = val.parse::<u32>() {
+            return Some(n.max(1));
+        }
+        let explicit = std::env::var("PRISMA_HEADLESS_FRAMES")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok());
+        if let Some(n) = explicit {
+            return Some(n.max(1));
+        }
+        let pass_dump = std::env::var("PRISMA_PASS_DUMP_FRAME")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map(|f| f + 5);
+        if let Some(n) = pass_dump {
+            return Some(n);
+        }
+        let screenshot = std::env::var("PRISMA_SCREENSHOT_FRAME")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map(|f| f + 5);
+        if let Some(n) = screenshot {
+            return Some(n);
+        }
+        Some(60)
+    }
+
+    fn default_headless_extent(&self) -> (u32, u32) {
+        if let Ok(size_str) = std::env::var("PRISMA_SCREENSHOT_SIZE") {
+            let normalized = size_str.trim().replace(['X', ',', '*'], "x");
+            if let Some((w, h)) = normalized.split_once('x') {
+                if let (Ok(w), Ok(h)) = (w.trim().parse::<u32>(), h.trim().parse::<u32>()) {
+                    if w > 0 && h > 0 {
+                        return (w, h);
+                    }
+                }
+            }
+        }
+        let win_cfg = self.window_config();
+        (win_cfg.width.max(1), win_cfg.height.max(1))
+    }
+
+    /// Run the application headlessly for `frames` ticks without creating a window.
+    pub fn run_headless(&mut self, frames: u32, width: u32, height: u32) -> anyhow::Result<()> {
+        self.build_plugins();
+        self.start_hosted(width, height);
+        for index in 0..frames.max(1) {
+            self.host_tick(true);
+            for _ in 0..100 {
+                if let Some(failure) = self.render_failure() {
+                    anyhow::bail!("render thread failed: {failure}");
+                }
+                if self.take_hosted_frame().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if (index + 1) % 50 == 0 || index + 1 == frames {
+                log::info!("headless tick: {} / {frames} frames", index + 1);
+            }
+        }
+        self.shutdown_hosted();
+        Ok(())
     }
 
     /// 日志可用之后打一行资产根目录（#985）。
@@ -1176,7 +1269,7 @@ impl App {
         if self.fatal_error.is_some() {
             let message = self.take_fatal_message();
             let _choice =
-                prism_engine::crash_dialog::show_crash_dialog("PrismaRev - Fatal Error", &message);
+                prism_engine::crash_dialog::show_crash_dialog("Prisma - Fatal Error", &message);
         }
         Ok(())
     }
@@ -1378,6 +1471,13 @@ impl App {
             }
 
             if simulate {
+                // 指针锁定只有一个真值（平台窗口），每帧抄进 InputManager：
+                // 抓取被系统拒绝、Esc 解锁、失焦释放都会改窗口状态，这里对齐之后
+                // 相机（引擎）和面板（项目钩子）读到的布尔值不会各说各话。
+                if let Some(platform) = self.platform.as_ref() {
+                    self.input
+                        .sync_pointer_lock(platform.window().is_pointer_locked());
+                }
                 // --- Fixed timestep: integer nanosecond clock, capped catch-up ---
                 const FIXED_STEP: Duration = Duration::from_nanos(16_666_667);
                 engine.begin_frame(&self.input, [surface_w as f32, surface_h as f32]);
@@ -1493,6 +1593,7 @@ impl App {
             );
 
             // 运行时诊断 HUD：追加到 ECS UI 叠加（随后统一由 ui_overlay 绘制）。
+            #[cfg(feature = "engine-debug")]
             if self.debug_hud.show {
                 let (width, height) = self.surface_size();
                 let (width, height) = (width as f32, height as f32);
@@ -1561,7 +1662,7 @@ impl App {
 
     /// 开发期资产热重载：`.pak` 重建后换掉 reader 并让实体重新解析（#495）。
     ///
-    /// 只在 [`spawn_pak_watcher`] 建了轮询线程时生效（`PRISMREV_HOT_RELOAD`
+    /// 只在 [`spawn_pak_watcher`] 建了轮询线程时生效（`PRISMA_HOT_RELOAD`
     /// 打开）。和编辑器一样分三步：`on_pak_changed` 换文件字节 → 重载路径清单
     /// → `invalidate_assets` 把实体打回待解析，下一帧 `pump_asset_requests`
     /// 会重新上传。
@@ -1645,6 +1746,15 @@ impl App {
                     prism_platform::release_pointer(window);
                     self.input.set_locked(false);
                 }
+                // 窗口重新拿到焦点：指针锁定是「点一下才算」的，切换出去再切回来
+                // 要重按一次左键，走位键却没反应，读起来就是「键盘坏了」。这里直接
+                // 恢复锁定（Esc 仍是唯一的解锁手势，见 should_release_pointer_lock）。
+                if focused && !self.input.pointer_locked {
+                    // 以平台的真实结果为准：抓取被系统拒绝时不能再记「已锁定」，
+                    // 否则光标可见可动、相机却照样吃 WASD 和鼠标增量。
+                    let grabbed = prism_platform::grab_pointer(window);
+                    self.input.set_locked(grabbed);
+                }
             }
             PlatformEvent::CursorMoved { x, y } => {
                 apply_window_cursor_move(&mut self.input, x, y);
@@ -1672,8 +1782,8 @@ impl App {
                     other => MouseButton::Other(other),
                 };
                 if pressed && button == MouseButton::Left && !self.input.pointer_locked {
-                    prism_platform::grab_pointer(window);
-                    self.input.set_locked(true);
+                    let grabbed = prism_platform::grab_pointer(window);
+                    self.input.set_locked(grabbed);
                 }
                 self.input.handle_mouse_button(
                     button,
@@ -1685,24 +1795,12 @@ impl App {
                 );
             }
             PlatformEvent::Key { key, pressed } => {
-                // `Other(u32::MAX)` = 平台没给出物理键（winit 的 `Unidentified`）。
-                // 旧实现直接丢弃这类事件，这里保持一致。
-                if key == Key::Other(u32::MAX) {
-                    return true;
-                }
-                let key = engine_key_from_native(key);
-                if should_release_pointer_lock(key, pressed, self.input.pointer_locked) {
+                // 键码换算 + Esc 解锁 + 写进 InputManager 收在 `apply_key_event`，
+                // 单测才能覆盖「平台键 -> 引擎键 -> key_held」整条链路；
+                // 只有真正碰窗口的 release_pointer 留在外面。
+                if apply_key_event(&mut self.input, key, pressed) {
                     prism_platform::release_pointer(window);
-                    self.input.set_locked(false);
                 }
-                self.input.handle_keyboard(
-                    key,
-                    if pressed {
-                        ElementState::Pressed
-                    } else {
-                        ElementState::Released
-                    },
-                );
             }
             PlatformEvent::Modifiers(modifiers) => self.modifiers = modifiers,
             // 尺寸变化同时更新宽高比（渲染线程从平台上下文读真实尺寸）。
@@ -1724,10 +1822,27 @@ impl App {
     ///
     /// 只在按键**按下**时调用；返回 `true` 表示这个键已被吃掉。
     fn handle_shortcut(&mut self, key: Key) -> bool {
-        // 修饰键不在 `Key` 事件里，Shift 取最近一次 `Modifiers` 快照。
+        // 宿主钩子**不在这里**调用：两个事件循环入口（平台事件泵与 winit
+        // `window_event`）都在调本函数之前已经把同一个按键事件原样发给过钩子，
+        // 被消费时直接跳过本函数。这里再转一次等于同一个键按了两次——项目那边
+        // 的「按一次切换一次」就会自己抵消（F1 面板永远打不开）。
+        //
+        // 绑定的查找与「数字键 + Shift = 另一个 PBR 分量」都由引擎的
+        // `KeyBindings` 决定；宿主这里只负责把动作落到 `RenderSettings` 上。
+        // 没绑定的键一律返回 false：不消费，项目的输入原样可用。
+        // 调试层没编译进来时表是空的：F3 / Tab / T / 数字键全部原样留给项目。
         let shift = self.modifiers.shift;
+        let key_bindings = if cfg!(feature = "engine-debug") {
+            prism_engine::KeyBindings::engine_debug(shift)
+        } else {
+            prism_engine::KeyBindings::empty()
+        };
+        let Some(action) = key_bindings.action_for(prism_engine::key_code_from_vk(key.to_vk()))
+        else {
+            return false;
+        };
 
-        if let Some(bit) = Self::pbr_debug_key_to_bit(key, shift) {
+        if let prism_engine::EngineAction::IsolatePbrComponent(bit) = action {
             self.render_settings.debug_flags = if self.render_settings.debug_flags == (1u32 << bit)
             {
                 0
@@ -1742,15 +1857,18 @@ impl App {
             return true;
         }
 
-        match key {
-            Key::F3 => {
-                self.debug_hud.show = !self.debug_hud.show;
-                log::info!(
-                    "runtime HUD = {}",
-                    if self.debug_hud.show { "on" } else { "off" }
-                );
+        match action {
+            prism_engine::EngineAction::ToggleHud => {
+                #[cfg(feature = "engine-debug")]
+                {
+                    self.debug_hud.show = !self.debug_hud.show;
+                    log::info!(
+                        "runtime HUD = {}",
+                        if self.debug_hud.show { "on" } else { "off" }
+                    );
+                }
             }
-            Key::Tab => {
+            prism_engine::EngineAction::CycleDebugTarget => {
                 self.render_settings.debug_rt = (self.render_settings.debug_rt + 1) % 3;
                 let name = match self.render_settings.debug_rt {
                     0 => "normal (HDR tonemap)",
@@ -1760,12 +1878,13 @@ impl App {
                 };
                 log::info!("debug RT = {} ({})", self.render_settings.debug_rt, name);
             }
-            Key::KeyT => {
+            prism_engine::EngineAction::CycleTonemap => {
                 // 0 = Reinhard, 1 = ACES, 2 = passthrough（2D / 像素画）。
                 self.render_settings.tonemap_mode = (self.render_settings.tonemap_mode + 1) % 3;
                 log::info!("tonemap mode = {}", self.render_settings.tonemap_mode);
             }
-            _ => return false,
+            // 上面已经处理过，这里只是把分支写全。
+            prism_engine::EngineAction::IsolatePbrComponent(_) => {}
         }
         true
     }
@@ -1774,34 +1893,11 @@ impl App {
         prism_engine::render_settings::pbr_flag_label(self.render_settings.debug_flags).to_string()
     }
 
-    fn pbr_debug_key_to_bit(key: Key, shift: bool) -> Option<u32> {
-        Some(match (key, shift) {
-            (Key::Digit1, false) => 0,
-            (Key::Digit2, false) => 1,
-            (Key::Digit3, false) => 2,
-            (Key::Digit4, false) => 3,
-            (Key::Digit5, false) => 4,
-            (Key::Digit6, false) => 5,
-            (Key::Digit7, false) => 6,
-            (Key::Digit8, false) => 7,
-            (Key::Digit9, false) => 8,
-            (Key::Digit0, false) => 9,
-            (Key::Digit1, true) => 10,
-            (Key::Digit2, true) => 11,
-            (Key::Digit3, true) => 12,
-            (Key::Digit4, true) => 13,
-            (Key::Digit5, true) => 14,
-            // Shift+6 = 蒙皮权重热图（#560）：不是 PBR 分量，是顶点调试。
-            (Key::Digit6, true) => 15,
-            _ => return None,
-        })
-    }
-
     #[cfg(feature = "winit-backend")]
     fn show_fatal_dialog(&mut self, event_loop: &ActiveEventLoop) {
         let message = self.take_fatal_message();
         let _choice =
-            prism_engine::crash_dialog::show_crash_dialog("PrismaRev - Fatal Error", &message);
+            prism_engine::crash_dialog::show_crash_dialog("Prisma - Fatal Error", &message);
         event_loop.exit();
     }
 }
@@ -1921,23 +2017,12 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // 键盘快捷键（仅按下时触发）。`KeyboardInput` 不带修饰键，
-        // Shift 取自 `self.modifiers`。
-        if let WindowEvent::KeyboardInput {
-            event:
-                winit::event::KeyEvent {
-                    physical_key,
-                    state,
-                    ..
-                },
-            ..
-        } = &event
-        {
-            if *state == winit::event::ElementState::Pressed {
-                if let winit::keyboard::PhysicalKey::Code(code) = physical_key {
-                    self.handle_shortcut(Key::from_winit(*code));
-                }
-            }
+        // 键盘快捷键（仅按下时触发）。这里直接复用上面已经算好的
+        // `platform_event`，不再从 `WindowEvent` 里二次解析按键：两条路径各算一次
+        // 就会各用一套换算（`Key::from_winit` vs `winit_to_vk`），同一个键在
+        // 「平台事件泵」和「winit 事件」下变成两个不同的 `Key`。
+        if let PlatformEvent::Key { key, pressed: true } = platform_event {
+            self.handle_shortcut(key);
         }
     }
 
@@ -2005,7 +2090,7 @@ impl ApplicationHandler for App {
     }
 }
 
-/// `PRISMREV_HOT_RELOAD` 的取值是否表示「打开」（#495）。
+/// `PRISMA_HOT_RELOAD` 的取值是否表示「打开」（#495）。
 ///
 /// 接受 `1` / `true` / `yes` / `on`（大小写、首尾空白都忽略）；其它值（含 `0`、
 /// 空串、未设置）一律算关。发布版默认关，所以运行时既不起线程也不 stat 文件。
@@ -2019,12 +2104,12 @@ fn hot_reload_enabled(raw: Option<&str>) -> bool {
     .unwrap_or(false)
 }
 
-/// `PRISMREV_HOT_RELOAD=1` 时给 `assets/` 下所有 `.pak` 建一个轮询器（#495）。
+/// `PRISMA_HOT_RELOAD=1` 时给 `assets/` 下所有 `.pak` 建一个轮询器（#495）。
 ///
 /// 发布版默认不建：没有线程、没有 stat，行为与之前完全一致。接受 `1` / `true` /
 /// `yes` / `on`（大小写无关），其它值（含 `0`、空串）都当关。
 fn spawn_pak_watcher() -> Option<prism_engine::scene::hot_reload::HotReloadWatcher> {
-    let raw = std::env::var("PRISMREV_HOT_RELOAD").ok();
+    let raw = std::env::var("PRISMA_HOT_RELOAD").ok();
     if !hot_reload_enabled(raw.as_deref()) {
         return None;
     }
@@ -2054,6 +2139,36 @@ fn spawn_pak_watcher() -> Option<prism_engine::scene::hot_reload::HotReloadWatch
             None
         }
     }
+}
+
+/// 把一个平台按键事件落到 [`InputManager`] 上，返回是否需要释放指针锁定。
+///
+/// 平台键码 -> 引擎键码 -> `key_held` 是三条独立的表（winit 物理键、VK、
+/// `KeyCode`），任何一张表漏项都会让「按了没反应」，而这条链路以前只有
+/// 各段自己的单测。把换算与写入收在这里，单测能一次覆盖整条路径；
+/// 真正操作窗口的 `release_pointer` 仍由调用方执行。
+fn apply_key_event(input: &mut InputManager, key: Key, pressed: bool) -> bool {
+    use prism_engine::input::ElementState;
+
+    // `Other(u32::MAX)` = 平台没给出物理键（winit 的 `Unidentified`）。
+    // 旧实现直接丢弃这类事件，这里保持一致。
+    if key == Key::Other(u32::MAX) {
+        return false;
+    }
+    let key = engine_key_from_native(key);
+    let release = should_release_pointer_lock(key, pressed, input.pointer_locked);
+    if release {
+        input.set_locked(false);
+    }
+    input.handle_keyboard(
+        key,
+        if pressed {
+            ElementState::Pressed
+        } else {
+            ElementState::Released
+        },
+    );
+    release
 }
 
 /// Esc 是指针锁定的逃生口：锁定态下它先释放光标，再作为普通按键交给游戏。
@@ -2126,21 +2241,24 @@ fn engine_key_from_native(key: Key) -> prism_engine::input::KeyCode {
         Key::Digit7 => Eng::Digit7,
         Key::Digit8 => Eng::Digit8,
         Key::Digit9 => Eng::Digit9,
-        // 引擎没有字母/T/F1–F12 的专用变体：保留原始虚拟键码，不丢键。
-        Key::KeyT
-        | Key::F1
-        | Key::F2
-        | Key::F3
-        | Key::F4
-        | Key::F5
-        | Key::F6
-        | Key::F7
-        | Key::F8
-        | Key::F9
-        | Key::F10
-        | Key::F11
-        | Key::F12
-        | Key::Other(_) => Eng::Other(key.to_vk()),
+        Key::KeyT => Eng::KeyT,
+        Key::F1 => Eng::F1,
+        Key::F2 => Eng::F2,
+        Key::F3 => Eng::F3,
+        Key::F4 => Eng::F4,
+        Key::F5 => Eng::F5,
+        Key::F6 => Eng::F6,
+        Key::F7 => Eng::F7,
+        Key::F8 => Eng::F8,
+        Key::F9 => Eng::F9,
+        Key::F10 => Eng::F10,
+        Key::F11 => Eng::F11,
+        Key::F12 => Eng::F12,
+        // 字母键进引擎后仍是「原始键码」载荷，但取自 `Key::Letter` 的 ASCII 值，
+        // 与后端无关（两个后端都给出同一个 KeyCode::Other）。
+        Key::Letter(byte) => Eng::Other(u32::from(byte)),
+        // 未建模的键保留原始虚拟键码，不丢键。
+        Key::Other(_) => Eng::Other(key.to_vk()),
     }
 }
 
@@ -2310,8 +2428,10 @@ mod tests {
     /// 未按 Shift 的 1..9、0 覆盖分量 0..9。
     #[test]
     fn plain_digits_select_the_lower_pbr_components() {
+        use prism_engine::EngineAction;
         use prism_platform::Key as K;
-        for (code, bit) in [
+        let bindings = prism_engine::KeyBindings::engine_debug(false);
+        for (key, bit) in [
             (K::Digit1, 0),
             (K::Digit2, 1),
             (K::Digit3, 2),
@@ -2324,9 +2444,9 @@ mod tests {
             (K::Digit0, 9),
         ] {
             assert_eq!(
-                App::pbr_debug_key_to_bit(code, false),
-                Some(bit),
-                "{code:?} without Shift"
+                bindings.action_for(prism_engine::key_code_from_vk(key.to_vk())),
+                Some(EngineAction::IsolatePbrComponent(bit)),
+                "{key:?} without Shift"
             );
         }
     }
@@ -2334,8 +2454,10 @@ mod tests {
     /// 回归防护：Shift 曾经被硬编码成 `false`，分量 10..14 完全不可达。
     #[test]
     fn shift_digits_select_the_upper_pbr_components() {
+        use prism_engine::EngineAction;
         use prism_platform::Key as K;
-        for (code, bit) in [
+        let bindings = prism_engine::KeyBindings::engine_debug(true);
+        for (key, bit) in [
             (K::Digit1, 10),
             (K::Digit2, 11),
             (K::Digit3, 12),
@@ -2345,14 +2467,18 @@ mod tests {
             (K::Digit6, 15),
         ] {
             assert_eq!(
-                App::pbr_debug_key_to_bit(code, true),
-                Some(bit),
-                "{code:?} with Shift"
+                bindings.action_for(prism_engine::key_code_from_vk(key.to_vk())),
+                Some(EngineAction::IsolatePbrComponent(bit)),
+                "{key:?} with Shift"
             );
         }
         // 15 个 debug 位已经用完；Shift+7..0 与普通字母都不该抢快捷键。
-        for code in [K::Digit7, K::Digit8, K::Digit9, K::Digit0, K::KeyA] {
-            assert_eq!(App::pbr_debug_key_to_bit(code, true), None, "{code:?}");
+        for key in [K::Digit7, K::Digit8, K::Digit9, K::Digit0, K::KeyA] {
+            assert_eq!(
+                bindings.action_for(prism_engine::key_code_from_vk(key.to_vk())),
+                None,
+                "{key:?}"
+            );
         }
     }
 
@@ -2386,13 +2512,68 @@ mod tests {
             (K::Digit0, Eng::Digit0),
             (K::Digit5, Eng::Digit5),
             (K::Digit9, Eng::Digit9),
+            (K::KeyT, Eng::KeyT),
+            (K::F1, Eng::F1),
+            (K::F3, Eng::F3),
+            (K::F12, Eng::F12),
         ] {
             assert_eq!(engine_key_from_native(key), expected, "{key:?}");
         }
         // 未列出的键不能丢：退化为原始码（winit 判别值 / Win32 VK）。
         assert_eq!(engine_key_from_native(K::Other(0x5A)), Eng::Other(0x5A));
-        // 引擎没有 F 键变体，用虚拟键码承载。
-        assert_eq!(engine_key_from_native(K::F3), Eng::Other(0x72));
+    }
+
+    /// 端到端：平台按键事件走完换算后必须能在 `InputManager` 里查到，
+    /// 否则相机读 `key_held(KeyW)` 永远是 false（「WASD 不动相机」的根因）。
+    #[test]
+    fn platform_key_events_reach_the_engine_input_state() {
+        use prism_engine::input::KeyCode;
+        use prism_platform::Key as K;
+        let mut input = InputManager::new();
+        for key in [K::KeyW, K::KeyA, K::KeyS, K::KeyD, K::KeyQ, K::KeyE] {
+            assert!(!apply_key_event(&mut input, key, true), "{key:?} 不该解锁");
+            assert!(
+                input.key_held(engine_key_from_native(key)),
+                "{key:?} 按下后不在 key_held 里"
+            );
+            assert!(!apply_key_event(&mut input, key, false), "{key:?} 不该解锁");
+            assert!(
+                !input.key_held(engine_key_from_native(key)),
+                "{key:?} 抬起后仍在 key_held 里"
+            );
+        }
+        // 只走 `LETTER_KEYS` 兜底的那些键同样不能丢。
+        assert!(!apply_key_event(&mut input, K::Letter(b'R'), true));
+        assert!(input.key_held(KeyCode::Other(u32::from(b'R'))));
+    }
+
+    /// Esc 在锁定态下先释放锁定，然后仍作为普通按键交给游戏。
+    #[test]
+    fn escape_unlocks_and_still_reaches_the_game() {
+        use prism_engine::input::KeyCode;
+        use prism_platform::Key as K;
+        let mut input = InputManager::new();
+        input.set_locked(true);
+        assert!(
+            apply_key_event(&mut input, K::Escape, true),
+            "锁定态 Esc 要解锁"
+        );
+        assert!(!input.pointer_locked, "Esc 之后必须已经解锁");
+        assert!(input.key_held(KeyCode::Escape), "解锁不影响 Esc 本身的分发");
+        // 已解锁时再按 Esc 不重复触发。
+        assert!(!apply_key_event(&mut input, K::Escape, true));
+    }
+
+    /// winit 的 `Unidentified`（`Other(u32::MAX)`）必须被丢弃，不能塞进输入表。
+    #[test]
+    fn unidentified_keys_are_dropped() {
+        use prism_engine::input::KeyCode;
+        use prism_platform::Key as K;
+        let mut input = InputManager::new();
+        input.set_locked(true);
+        assert!(!apply_key_event(&mut input, K::Other(u32::MAX), true));
+        assert!(!input.key_held(KeyCode::Other(u32::MAX)));
+        assert!(input.pointer_locked, "丢弃事件不该动锁定状态");
     }
 }
 

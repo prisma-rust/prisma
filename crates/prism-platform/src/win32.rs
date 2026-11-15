@@ -95,7 +95,7 @@ use crate::event::{Key, Modifiers, PlatformEvent};
 use crate::window::PlatformWindow;
 
 const WHEEL_DELTA: f32 = 120.0;
-const CLASS_NAME: &str = "PrismaRevWindow";
+const CLASS_NAME: &str = "PrismaWindow";
 /// Event-queue cap, so a flood of window messages (high-DPI mouse) cannot exhaust
 /// memory.
 const MAX_QUEUED_EVENTS: usize = 4096;
@@ -666,6 +666,11 @@ impl Win32Window {
         }
         lock(&self.state).grab = Some(grab);
         Ok(())
+    }
+
+    /// 光标是否正被 `ClipCursor` 抓在客户区中央（= 指针锁定）。
+    pub(crate) fn is_pointer_locked(&self) -> bool {
+        lock(&self.state).grab.is_some()
     }
 
     pub(crate) fn close_requested(&self) -> bool {

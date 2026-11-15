@@ -56,17 +56,7 @@ const SH_C4: f32 = 0.546274; // 0.25 * sqrt(15/pi)
 /// byte-for-byte (std140: three `vec4` = 48 bytes, 16-byte aligned). Describes
 /// a regular grid of SH probes in world space; producer-agnostic — the same
 /// struct describes a baked grid or a DDGI real-time grid.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ProbeVolumeInfo {
-    /// xyz = world position of probe `(0,0,0)`; w unused. offset 0.
-    pub origin: [f32; 4],
-    /// xyz = world distance between adjacent probes (per axis); w unused.
-    /// offset 16.
-    pub spacing: [f32; 4],
-    /// xyz = probe count per axis (each `>= 1`); w unused. offset 32.
-    pub dims: [u32; 4],
-}
+pub use crate::shader_bindings::scene_frag::ProbeVolumeInfo;
 
 impl ProbeVolumeInfo {
     /// Convenience constructor from 3-component vectors (pads the unused `w`).

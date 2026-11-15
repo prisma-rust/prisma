@@ -3,16 +3,19 @@ name = "prism-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Application layer and main loop for PrismaRev"
+description = "Application layer and main loop for Prisma"
 
 [features]
-default = ["pathtrace", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "group-3d", "group-2d", "group-ui"]
+default = ["pathtrace", "sharc", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "group-3d", "group-2d", "group-ui"]
 legacy-disk-scenes = []
 # Modular building-block toggles: forwarded to prism-render (see docs/DESIGN.md §12).
 pathtrace = ["prism-render/pathtrace"]
-rtxgi = ["prism-render/rtxgi", "pathtrace"]
+sharc = ["prism-render/sharc"]
 nrc = ["prism-render/nrc", "pathtrace"]
 dlss = ["prism-render/dlss"]
+# 调试层标记（透传）：引擎自己只用来给 `RenderSettings` 的调试字段做编译期说明，
+# 真正消费它的是 `prism-app`（F3 HUD / 调试图 / 调试快捷键）。默认关，见 prism-app。
+engine-debug = []
 ui = ["prism-render/ui"]
 # 文本光栅后端（透传）：默认 fontdue；Windows 可选系统 DirectWrite。
 ui-fontdue = ["prism-render/ui-fontdue"]

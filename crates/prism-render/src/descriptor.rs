@@ -170,26 +170,12 @@ pub const GPU_LIGHT_KIND_POINT: f32 = 0.0;
 /// [`GpuLight::color`] 的 `.w` 取值：聚光灯（锥形）。
 pub const GPU_LIGHT_KIND_SPOT: f32 = 1.0;
 
-/// GPU data 布局 for a single local 光源（点光或聚光，64 字节 / 16-byte aligned）。
+/// Point/spot light record, laid out by the Slang `GpuLight` reflection.
 ///
-/// Mirrors the Slang `GpuLight` struct in `scene_frag.slang`.
-/// Stored in a `StructuredBuffer<GpuLight>` at set 0 binding 2.
-///
-/// 以前只有 `position` / `color` 两个 `float4`（32 字节，仅点光）；P3b 加了
-/// `direction` / `params` 以支持聚光锥角 —— `.color.w` 是类型位（见
-/// [`GPU_LIGHT_KIND_POINT`] / [`GPU_LIGHT_KIND_SPOT`]）。
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GpuLight {
-    /// xyz = world position, w = range (attenuation radius)
-    pub position: [f32; 4],
-    /// rgb = radiant intensity, w = kind ([`GPU_LIGHT_KIND_POINT`] / [`GPU_LIGHT_KIND_SPOT`])
-    pub color: [f32; 4],
-    /// xyz = 光源朝向（`transform.forward`）, w = cos(outer half-angle)
-    pub direction: [f32; 4],
-    /// x = cos(inner half-angle)；yzw 保留
-    pub params: [f32; 4],
-}
+/// Stored in a `StructuredBuffer<GpuLight>` at set 0 binding 2. `.position.w` is
+/// the attenuation range, `.color.w` the kind bit (see
+/// [`GPU_LIGHT_KIND_POINT`] / [`GPU_LIGHT_KIND_SPOT`]).
+pub use crate::shader_bindings::scene_frag::GpuLight;
 
 /// [`GpuLight`] 的字节大小（SSBO 步长，与着色器结构体必须一致）。
 pub const GPU_LIGHT_SIZE: usize = std::mem::size_of::<GpuLight>();
@@ -207,21 +193,13 @@ pub enum PtLightKind {
     Area = 3,
 }
 
-/// GPU data layout for a single path-tracer analytic light (48 bytes).
+/// Path-tracer analytic light, laid out by the Slang `PtAnalyticLight`
+/// reflection.
 ///
-/// Mirrors the Slang `PtAnalyticLight` struct in `pt_render.slang`.
-/// The `kind` field selects interpretation of the union-typed payload fields.
-/// Stored in a `StructuredBuffer<PtAnalyticLight>` at PT set 0 binding 8.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PtAnalyticLight {
-    /// .xyz = world position; .w = kind (PtLightKind as u32)
-    pub position_kind: [f32; 4],
-    /// .xyz = direction (for spot/directional); .w = inner_angle cos (spot) or unused
-    pub direction_params: [f32; 4],
-    /// .xyz = linear-space radiance/color; .w = outer_angle cos (spot) or range (point) or area
-    pub color_params: [f32; 4],
-}
+/// `.position_kind.w` selects the interpretation of the union-typed payload
+/// (see [`PtLightKind`]); stored in a `StructuredBuffer<PtAnalyticLight>` at
+/// PT set 0 binding 8.
+pub use crate::shader_bindings::pt_render::PtAnalyticLight;
 
 impl PtAnalyticLight {
     pub fn directional(dir: [f32; 3], radiance: [f32; 3]) -> Self {
@@ -259,69 +237,23 @@ pub struct ReSTIRReservoir {
     pub target_pdf: f32, // π(selected_light) for ReSTIR pdf = W/(M*π(y))
 }
 
-/// GPU data for a single emissive triangle (area light from emissive materials).
+/// Emissive triangle (area light) laid out by the Slang `PtEmissiveTri`
+/// reflection.
 ///
-/// Each triangle is stored as 3 world-space vertices, a shading normal, the
-/// pre-scaled emissive radiance, and the precomputed double-sided area.
-/// Stored in a `StructuredBuffer<PtEmissiveTri>` at PT set 0 binding 9,
-/// used for explicit emissive NEE in the path tracer.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PtEmissiveTri {
-    pub v0: [f32; 4],       // .xyz = vertex 0
-    pub v1: [f32; 4],       // .xyz = vertex 1
-    pub v2: [f32; 4],       // .xyz = vertex 2
-    pub normal: [f32; 4],   // .xyz = shading normal
-    pub radiance: [f32; 4], // .rgb = pre-scaled emissive radiance
-    pub area: f32,          // precomputed triangle area (for PDF)
-}
+/// Three world-space vertices, a shading normal, the pre-scaled emissive
+/// radiance and the precomputed double-sided area; stored in a
+/// `StructuredBuffer<PtEmissiveTri>` at PT set 0 binding 9 for explicit
+/// emissive next-event estimation.
+pub use crate::shader_bindings::pt_render::PtEmissiveTri;
 
-/// GPU data layout for the per-frame uniform buffer.
+/// Per-frame uniform buffer layout, re-exported from the Slang `FrameUBO` reflection
+/// of `common.slang`.
 ///
-/// Mirrors the Slang `FrameUBO` in `shaders/slang/common.slang` byte-for-byte
-/// (std140). The RenderGraph ForwardPass reads `light_view_proj` here for the
-/// shadow-map projection (keeping it out of push constants so the push
-/// constant block stays under Vulkan's 128-byte limit); the legacy shaders
-/// simply ignore the trailing field.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct FrameUBOData {
-    pub view_proj: [[f32; 4]; 4],       // 64 bytes, offset   0
-    pub camera_position: [f32; 4],      // 16 bytes, offset  64 (xyz = camera pos, w = light_count)
-    pub light_direction: [f32; 4], // 16 bytes, offset  80 (w = pre-scaled radiance = lux/(10000*PI))
-    pub light_color: [f32; 4],     // 16 bytes, offset  96 (w = ambient factor)
-    pub view: [[f32; 4]; 4],       // 64 bytes, offset 112 (world -> view)
-    pub light_view_proj: [[f32; 4]; 4], // 64 bytes, offset 176 (light-space VP for shadow map)
-    /// Tonemap operator selector, applied to the final HDR color before the
-    /// SRGB swapchain encode. 0 = Reinhard (`x/(x+1)`), 1 = ACES (Narkowicz).
-    /// Switchable at runtime from the inspector / `T` key. offset 240.
-    pub tonemap_mode: u32, // offset 240
-    /// Scene colour viewport size in pixels (xy). Used by the fragment shader
-    /// to derive screen-space UVs for sampling the screen-space AO texture.
-    pub viewport_size: [f32; 2], // offset 244..251
-    /// Exposure multiplier applied as a uniform scale to the final composed HDR
-    /// color before tonemapping. Default 1.0 = no scaling; inspector slider
-    /// lets the user brighten/darken the entire image uniformly. offset 252.
-    pub exposure: f32, // offset 252
-    /// 阴影强度 = `Light.shadowStrength`（0 = 无阴影，1 = 全强度）。
-    ///
-    /// 着色器在 `sample_shadow` 末尾用 `lerp(1, shadow, shadowStrength)` 应用。
-    pub shadow_strength: f32, // offset 256
-    /// std140 tail pad before the CSM fields.
-    pub _pad2: [f32; 3], // offset 260..271
-    /// Far cascade light-space VP (#526 CSM). The shadow map is a 2×1 atlas;
-    /// cascade 0 occupies the left half and this matrix the right half.
-    pub light_view_proj1: [[f32; 4]; 4], // offset 272..335
-    /// Camera-forward distance where cascade 0 ends and cascade 1 starts.
-    pub shadow_split: f32, // offset 336
-    /// 1 = single shadow map (legacy), 2 = two-cascade atlas.
-    pub shadow_cascade_count: u32, // offset 340
-    /// std140 tail pad before `prev_view_proj`.
-    pub _pad3: [f32; 2], // offset 344..351
-    /// Previous frame's unjittered view-projection (#883 Phase 2). Used by the
-    /// vertex stage to write per-object motion vectors into `FORWARD_VELOCITY_H`.
-    pub prev_view_proj: [[f32; 4]; 4], // offset 352..415
-}
+/// Never hand-write a GPU layout: the generated struct carries the reflected
+/// std140 offsets, the alignment holes and the `size_of` / `offset_of`
+/// assertions, so a shader change regenerates them instead of leaving a stale
+/// mirror behind (a missing `_pad2b` once broke every build of the editor).
+pub use crate::shader_bindings::scene_frag::FrameUBO as FrameUBOData;
 
 /// Per-frame UBO buffer and its descriptor set.
 ///

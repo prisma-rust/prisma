@@ -143,17 +143,18 @@ pub fn scene_render_system_into_with_frustums(
         let world_bounds = bounds
             .and_then(|bounds| bounds.get(mr.render_handle))
             .and_then(|local| local.transformed(&model));
-        if !visible_in_frustums(frustums, world_bounds.as_ref()) {
+        let renderer = world.get::<MeshRenderer>(entity);
+        let mode = renderer
+            .map(|renderer| renderer.shadow_casting_mode)
+            .unwrap_or_default();
+        let visible_in_main_pass = visible_in_frustums(frustums, world_bounds.as_ref());
+        if !visible_in_main_pass && !mode.casts_shadows() {
             continue;
         }
 
         // `MeshRenderer.shadow_casting_mode` / `cull_mode`（
         // `shadowCastingMode` / `CullMode`）。没有该组件的运行时实体按
         // 默认值处理（`On` / `Back`）。
-        let renderer = world.get::<MeshRenderer>(entity);
-        let mode = renderer
-            .map(|renderer| renderer.shadow_casting_mode)
-            .unwrap_or_default();
         let state = draw_state(renderer);
         let material_ref = world.get::<MaterialRef>(entity);
         let material_slots = world.get::<MaterialSlots>(entity);
@@ -189,7 +190,7 @@ pub fn scene_render_system_into_with_frustums(
                     model,
                     material,
                     cast_shadow: mode.casts_shadows(),
-                    visible_in_main_pass: mode.visible_in_main_pass(),
+                    visible_in_main_pass: visible_in_main_pass && mode.visible_in_main_pass(),
                     cast_shadow_two_sided: mode.casts_two_sided_shadows(),
                     state,
                     world_bounds,
@@ -212,7 +213,7 @@ pub fn scene_render_system_into_with_frustums(
                 model,
                 material,
                 cast_shadow: mode.casts_shadows(),
-                visible_in_main_pass: mode.visible_in_main_pass(),
+                visible_in_main_pass: visible_in_main_pass && mode.visible_in_main_pass(),
                 cast_shadow_two_sided: mode.casts_two_sided_shadows(),
                 state,
                 world_bounds,

@@ -31,7 +31,7 @@
                     "name": "SkyboxPush",
                     "fields": [
                         {
-                            "name": "invViewRot",
+                            "name": "invViewProjRot",
                             "type": {
                                 "kind": "matrix",
                                 "rowCount": 4,
@@ -90,7 +90,7 @@
                         "name": "SkyboxPush",
                         "fields": [
                             {
-                                "name": "invViewRot",
+                                "name": "invViewProjRot",
                                 "type": {
                                     "kind": "matrix",
                                     "rowCount": 4,
@@ -181,7 +181,7 @@
                         "name": "SkyboxPush",
                         "fields": [
                             {
-                                "name": "invViewRot",
+                                "name": "invViewProjRot",
                                 "type": {
                                     "kind": "matrix",
                                     "rowCount": 4,
@@ -240,7 +240,7 @@
                             "name": "SkyboxPush",
                             "fields": [
                                 {
-                                    "name": "invViewRot",
+                                    "name": "invViewProjRot",
                                     "type": {
                                         "kind": "matrix",
                                         "rowCount": 4,

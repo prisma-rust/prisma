@@ -59,6 +59,31 @@ enum Command {
         #[arg(long, default_value_t = 3)]
         bounces: u32,
     },
+    /// Offline PRT64 + 64-tree baker (sampling, PCA/k-means clustering, .prtbin export)
+    #[cfg(feature = "gi-bake")]
+    BakePrt {
+        /// Output .prtbin path (default: assets/gi/prt_volume.prtbin)
+        output: Option<PathBuf>,
+        /// Path to .pak resource package (default: assets/scenes.pak)
+        pak: Option<PathBuf>,
+        /// Path to .rscn cooked scene file (default: target/scene_pack/scenes/default.rscn)
+        rscn: Option<PathBuf>,
+        /// Optional JSON report output path
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// 64-tree depth (grid = 4^leaf_grid) [default: 2]
+        #[arg(long, default_value_t = 2)]
+        leaf_grid: u32,
+        /// Initial ray samples per candidate leaf [default: 256]
+        #[arg(long, default_value_t = 256)]
+        samples: u32,
+        /// Maximum cluster count (<= 8600) [default: 8600]
+        #[arg(long, default_value_t = 8600)]
+        max_clusters: u32,
+        /// Sibling merge angle threshold in degrees [default: 12.0]
+        #[arg(long, default_value_t = 12.0)]
+        merge_deg: f32,
+    },
     /// Cook a scene/asset file into cooked format
     Cook {
         /// Input file path
@@ -206,6 +231,31 @@ fn main() -> Result<()> {
                 ..Default::default()
             };
             prism_build_pipeline::bake_gi(&cfg)
+        }
+        #[cfg(feature = "gi-bake")]
+        Command::BakePrt {
+            output,
+            pak,
+            rscn,
+            report,
+            leaf_grid,
+            samples,
+            max_clusters,
+            merge_deg,
+        } => {
+            let cfg = prism_build_pipeline::BakePrtConfig {
+                output_path: output.unwrap_or_else(|| PathBuf::from("assets/gi/prt_volume.prtbin")),
+                pak_path: pak.unwrap_or_else(|| PathBuf::from("assets/scenes.pak")),
+                rscn_path: rscn
+                    .unwrap_or_else(|| PathBuf::from("target/scene_pack/scenes/default.rscn")),
+                report_path: report,
+                leaf_grid,
+                samples_per_leaf: samples,
+                max_clusters,
+                cluster_merge_deg: merge_deg,
+                ..Default::default()
+            };
+            prism_build_pipeline::bake_prt(&cfg).map(|_| ())
         }
         Command::Cook { input, output } => {
             log::info!("cook: {input:?} -> {output:?}");

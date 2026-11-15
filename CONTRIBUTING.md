@@ -1,6 +1,6 @@
 # 贡献指南
 
-PrismaRev 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android 优先**，桌面与移动共用一套
+Prisma 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android 优先**，桌面与移动共用一套
 数据导向 ECS 管线。开始之前请先读：
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — 架构与渲染分层（改渲染 / 架构前必读）。
@@ -17,8 +17,8 @@ PrismaRev 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android �
 | Android NDK（可选） | 打 APK，见 `scripts/build-android.ps1` |
 | Python 3.11+ | `scripts/pr_ready.py` 自检 |
 
-`.spv` **不提交**，由 `scripts/run.ps1` / `bash assets/shaders/compile.sh` 生成；没有 slangc 的
-机器（Termux / Android）从 CI 的 `spirv` artifact 取。
+`assets/shaders/*.spv` **已入库**（确定性产物，约 460 KB），克隆下来就能构建；改了 `.slang` 时用
+`bash assets/shaders/compile.sh` 重新生成，并把 `.spv` 一起提交（CI 会比对，漂移即失败）。
 
 ## 构建与运行
 
@@ -26,8 +26,12 @@ PrismaRev 是从零实现的 Rust 游戏引擎：**Vulkan** 渲染，**Android �
 # 桌面：编译 shader + 整个 workspace + 场景包
 scripts/run.ps1
 
-# 游戏（用户项目，独立 workspace）
-cd projects/prisma && cargo run
+# 游戏（用户项目，独立 workspace）：先打场景包，再跑
+scripts/dev.sh            # = projects/template
+scripts/dev.sh sponza     # = projects/sponza
+
+# 只跑游戏（场景包已经存在时）
+cd projects/template && cargo run
 
 # Android 启动壳（Tauri，独立 workspace）
 cd launcher && pnpm tauri dev
@@ -59,6 +63,12 @@ cargo test --manifest-path editor/Cargo.toml   # 编辑器数据层 + 壳
   不要手改 `editor/`、`launcher/` 里的版本号。
 - 规则、tag 与发布流程见 [`docs/versioning.md`](docs/versioning.md)。
 
+## 分支
+
+- `master`：严格。不接受直接 push，改动经分支 → PR → 合并，PR 必须贴自检块。
+- `dev`：开发集成分支，允许直接提交、直接 push；推之前 `git pull --rebase origin dev`。
+  `dev` 合进 `master` 时按完整 PR 流程走。
+
 ## 提交前自检
 
 ```bash
@@ -69,7 +79,7 @@ python scripts/pr_ready.py --all      # 全 workspace + 所有独立 workspace
 
 它会根据分支改动决定跑什么：改动文件的 rustfmt、受影响 crate 的
 `clippy --all-targets -D warnings` 与测试、shader bindings 漂移、`editor/` 的测试、
-独立 workspace 的 `cargo check`，并拦截 `.spv` / `.pak` / keystore 等生成物。失败即退出非零。
+独立 workspace 的 `cargo check`，并拦截 `.pak` / keystore 等生成物。失败即退出非零。
 
 ## Pull Request
 
@@ -86,10 +96,12 @@ python scripts/pr_ready.py --all      # 全 workspace + 所有独立 workspace
 - 用户项目依赖链保持 **UI 框架无关、编辑器无关**：
   `prisma → prism-app → prism-engine → {prism-scene, prism-ecs, prism-render, prism-asset}`。
   `prism-cooker` / `prism-build-pipeline` 只允许出现在构建侧。
+- **1.0 前禁止编写任何兼容性代码**：当前版本为 0.1，在 1.0 正式发布前不要考虑任何向前/向后兼容逻辑，旧版本兼容被明确视为冗余的垃圾代码。改动公开 API、数据结构或存档格式时直接替换/删除旧逻辑，不留兼容垫片与回退分支。
 - 不要在 `prism-app` / `prism-engine` / `prism-render` 引入 egui 等 UI 框架。
 - `editor/` 是唯一的编辑器壳，允许链接 `prism-engine` / `prism-render`；`prism-editor-api` 只给 MCP / 工具用，不要把 UI 框架带进引擎。
 - 改 `.slang` 后必须重新编译并重跑 `shader-bindgen`；`shader_bindings/` 是提交的生成代码。
-- 不提交 `.spv`、`.pak`、`target/`、`node_modules/`、IBL cache、密钥或本机绝对路径。
+- 不提交 `.pak`、`target/`、`node_modules/`、IBL cache、密钥或本机绝对路径。
+  （`.spv` 例外：它是确定性产物、clone 构建必需，改了 shader 要连 `.spv` 一起提交。）
 
 ## 文档
 

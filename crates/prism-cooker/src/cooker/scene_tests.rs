@@ -286,7 +286,7 @@ fn scene_cooker_topological_sort_depth() {
 
 #[test]
 fn cooks_real_intro_scene_with_ui_components() {
-    let json = include_bytes!("../../../../assets/scenes/intro.scene.json");
+    let json = include_bytes!("../../../../projects/template/assets/scenes/intro.scene.json");
     let (cooker, result) = cook_scene_json(json).unwrap();
     let decoded = rscn::decode_scene(&result.cooked_data, cooker.registry()).unwrap();
     // 4 个 UI 实体 + intro 场景自己的相机（黑场淡入结束后不能露出清屏色，#409）。
@@ -322,7 +322,7 @@ fn cooks_real_intro_scene_with_ui_components() {
 
 #[test]
 fn cooks_real_default_scene() {
-    let json = include_bytes!("../../../../assets/scenes/default.scene.json");
+    let json = include_bytes!("../../../../projects/template/assets/scenes/default.scene.json");
     let (cooker, result) = cook_scene_json(json).unwrap();
     let decoded = rscn::decode_scene(&result.cooked_data, cooker.registry()).unwrap();
     assert_eq!(decoded.entities.len(), 7);

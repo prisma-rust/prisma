@@ -39,8 +39,13 @@ pub struct PlatformWindow {
 }
 
 enum Backend {
+    /// winit 没有「光标是否被抓住」的查询接口，所以这里自己记一份（抓 / 放只发生在
+    /// `grab_pointer` / `release_pointer`，写窗口后原子更新）。
     #[cfg(feature = "winit-backend")]
-    Winit(winit::window::Window),
+    Winit {
+        window: winit::window::Window,
+        pointer_locked: std::sync::atomic::AtomicBool,
+    },
     #[cfg(all(windows, feature = "win32-native"))]
     Win32(crate::win32::Win32Window),
 }
@@ -85,7 +90,10 @@ impl PlatformContext {
 impl PlatformWindow {
     pub(crate) fn from_winit(window: winit::window::Window) -> Self {
         Self {
-            backend: Backend::Winit(window),
+            backend: Backend::Winit {
+                window,
+                pointer_locked: std::sync::atomic::AtomicBool::new(false),
+            },
         }
     }
 }
@@ -101,7 +109,7 @@ impl PlatformWindow {
     fn win32(&self) -> Option<&crate::win32::Win32Window> {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(_) => None,
+            Backend::Winit { .. } => None,
             Backend::Win32(window) => Some(window),
         }
     }
@@ -132,7 +140,7 @@ impl PlatformWindow {
     pub fn inner_size(&self) -> (u32, u32) {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => {
+            Backend::Winit { window, .. } => {
                 let size = window.inner_size();
                 (size.width, size.height)
             }
@@ -145,7 +153,7 @@ impl PlatformWindow {
     pub fn scale_factor(&self) -> f64 {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => window.scale_factor(),
+            Backend::Winit { window, .. } => window.scale_factor(),
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.scale_factor(),
         }
@@ -155,7 +163,7 @@ impl PlatformWindow {
     pub fn request_redraw(&self) {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => window.request_redraw(),
+            Backend::Winit { window, .. } => window.request_redraw(),
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.request_redraw(),
         }
@@ -164,7 +172,7 @@ impl PlatformWindow {
     fn set_cursor_visible(&self, visible: bool) {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => window.set_cursor_visible(visible),
+            Backend::Winit { window, .. } => window.set_cursor_visible(visible),
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.set_cursor_visible(visible),
         }
@@ -173,18 +181,57 @@ impl PlatformWindow {
     fn set_pointer_confined(&self, confined: bool) -> anyhow::Result<()> {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => {
-                let mode = if confined {
-                    winit::window::CursorGrabMode::Confined
-                } else {
-                    winit::window::CursorGrabMode::None
-                };
-                window
-                    .set_cursor_grab(mode)
-                    .map_err(|e| anyhow::anyhow!("{e}"))
+            Backend::Winit { window, .. } => {
+                if !confined {
+                    return window
+                        .set_cursor_grab(winit::window::CursorGrabMode::None)
+                        .map_err(|e| anyhow::anyhow!("{e}"));
+                }
+                // FPS 指针锁定要的是 `Locked`（光标钉在原地，只靠原始增量移动）。
+                // `Confined` 只是把光标夹在窗口矩形里，在 macOS / X11 上仍能自由
+                // 滑动，鼠标看向就会跟着窗口边缘走。系统不支持 `Locked` 时退回
+                // `Confined`（Windows 的 Confined + 隐藏光标也会被夹到 1px），
+                // 两个都失败才算没锁上。
+                match window.set_cursor_grab(winit::window::CursorGrabMode::Locked) {
+                    Ok(()) => Ok(()),
+                    Err(locked_err) => window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                        .map_err(|confined_err| {
+                            anyhow::anyhow!("{locked_err}; confined fallback: {confined_err}")
+                        }),
+                }
             }
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.set_pointer_confined(confined),
+        }
+    }
+
+    /// 光标是否正被抓住（= 指针锁定的**平台侧**真值）。
+    ///
+    /// `prism-app` 另有一份 `InputManager::pointer_locked`，但帧钩子（宿主 UI）拿不到
+    /// `InputManager`；查窗口比让钩子自己再存一份状态更可靠——Esc、失去焦点、点回
+    /// 窗口这些路径都会经过 `grab_pointer` / `release_pointer`。
+    pub fn is_pointer_locked(&self) -> bool {
+        match &self.backend {
+            #[cfg(feature = "winit-backend")]
+            Backend::Winit { pointer_locked, .. } => {
+                pointer_locked.load(std::sync::atomic::Ordering::Relaxed)
+            }
+            #[cfg(all(windows, feature = "win32-native"))]
+            Backend::Win32(window) => window.is_pointer_locked(),
+        }
+    }
+
+    /// 记录锁定状态（只在 `grab_pointer` / `release_pointer` 里调用）。
+    fn set_pointer_locked(&self, locked: bool) {
+        match &self.backend {
+            #[cfg(feature = "winit-backend")]
+            Backend::Winit { pointer_locked, .. } => {
+                pointer_locked.store(locked, std::sync::atomic::Ordering::Relaxed);
+            }
+            // Win32 后端在 `set_pointer_confined` 里同步维护 `state.grab`，无需再记。
+            #[cfg(all(windows, feature = "win32-native"))]
+            Backend::Win32(_) => {}
         }
     }
 
@@ -192,7 +239,7 @@ impl PlatformWindow {
     pub fn raw_display_handle(&self) -> RawDisplayHandle {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => window
+            Backend::Winit { window, .. } => window
                 .display_handle()
                 .expect("get display handle")
                 .as_raw(),
@@ -205,7 +252,9 @@ impl PlatformWindow {
     pub fn raw_window_handle(&self) -> RawWindowHandle {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
-            Backend::Winit(window) => window.window_handle().expect("get window handle").as_raw(),
+            Backend::Winit { window, .. } => {
+                window.window_handle().expect("get window handle").as_raw()
+            }
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.raw_window_handle(),
         }
@@ -258,10 +307,27 @@ pub fn required_vulkan_extensions(window: &PlatformWindow) -> Vec<String> {
 }
 
 /// Grab the cursor (hide + confine) for FPS-style pointer lock.
-pub fn grab_pointer(window: &PlatformWindow) {
+///
+/// Returns whether the lock actually took effect. The OS can refuse the grab
+/// (another window owns it, the window is not focused, a remote session blocks
+/// `ClipCursor`), and a lock flag that stays `true` after a refusal is worse than
+/// no lock at all: the cursor is visible and free, yet the camera keeps eating
+/// WASD and the mouse — the exact "movement ignores whether the pointer is
+/// locked" symptom. So the flag is only raised when the platform accepted the
+/// grab, and a refusal restores the cursor.
+pub fn grab_pointer(window: &PlatformWindow) -> bool {
     window.set_cursor_visible(false);
-    if let Err(e) = window.set_pointer_confined(true) {
-        log::warn!("failed to grab cursor (pointer lock): {e}");
+    match window.set_pointer_confined(true) {
+        Ok(()) => {
+            window.set_pointer_locked(true);
+            true
+        }
+        Err(e) => {
+            log::warn!("failed to grab cursor (pointer lock): {e}");
+            window.set_cursor_visible(true);
+            window.set_pointer_locked(false);
+            false
+        }
     }
 }
 
@@ -271,4 +337,5 @@ pub fn release_pointer(window: &PlatformWindow) {
     if let Err(e) = window.set_pointer_confined(false) {
         log::warn!("failed to release cursor grab: {e}");
     }
+    window.set_pointer_locked(false);
 }

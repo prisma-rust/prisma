@@ -3,7 +3,7 @@
 //! hub（Tauri launcher / Android hub）在拉起游戏前选择启动参数，经统一
 //! 的 JSON 通道传递，引擎侧 [`LaunchConfig::from_env`] 自动读取：
 //!
-//! - **桌面**：launcher 以 `PRISMREV_LAUNCH_CONFIG` env 传入；
+//! - **桌面**：launcher 以 `PRISMA_LAUNCH_CONFIG` env 传入；
 //! - **Android**：hub 把同一份 JSON 写到 app files 目录的
 //!   `launch_config.json`（见 Kotlin `NativePlugin.launch_game`），
 //!   `android_main` 读入后注入 env，与桌面路径统一。
@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 应用层使用的环境变量键。
-pub const ENV_KEY: &str = "PRISMREV_LAUNCH_CONFIG";
+pub const ENV_KEY: &str = "PRISMA_LAUNCH_CONFIG";
 
 /// 启动配置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

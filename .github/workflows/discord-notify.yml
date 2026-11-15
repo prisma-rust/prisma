@@ -86,7 +86,7 @@ jobs:
           request = urllib.request.Request(
               os.environ["WEBHOOK_URL"],
               data=body,
-              headers={"Content-Type": "application/json", "User-Agent": "PrismaRev-CI"},
+              headers={"Content-Type": "application/json", "User-Agent": "Prisma-CI"},
           )
           try:
               urllib.request.urlopen(request, timeout=10).read()

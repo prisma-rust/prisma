@@ -374,17 +374,17 @@ fn quit(host: &EditorHost) -> Result<String, String> {
     Ok(response.to_string())
 }
 
-/// File the editor writes its port to (`PRISMREV_EDITOR_CONTROL` can override it
+/// File the editor writes its port to (`PRISMA_EDITOR_CONTROL` can override it
 /// with a port number).
 fn port_file(root: &Path) -> PathBuf {
-    match std::env::var_os("PRISMREV_EDITOR_CONTROL") {
+    match std::env::var_os("PRISMA_EDITOR_CONTROL") {
         Some(value) => PathBuf::from(value),
         None => root.join("target/editor-egui/control.port"),
     }
 }
 
 fn control_port(root: &Path) -> Result<u16, String> {
-    if let Ok(value) = std::env::var("PRISMREV_EDITOR_CONTROL") {
+    if let Ok(value) = std::env::var("PRISMA_EDITOR_CONTROL") {
         if let Ok(port) = value.trim().parse::<u16>() {
             return Ok(port);
         }

@@ -24,8 +24,8 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            company: "PrismaRev".into(),
-            name: "prisma".into(),
+            company: "Prisma".into(),
+            name: "template".into(),
             version: "0.1.0".into(),
         }
     }
@@ -45,7 +45,7 @@ pub struct WindowSettings {
 impl Default for WindowSettings {
     fn default() -> Self {
         Self {
-            title: "PrismaRev".into(),
+            title: "Prisma".into(),
             width: 1600,
             height: 900,
             resizable: true,

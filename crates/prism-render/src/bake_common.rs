@@ -33,20 +33,17 @@ pub struct PtGeometryInstance {
     pub indices: Vec<u32>,
     /// Index into the `GpuMaterial[]` SSBO (`RenderMaterialManager`).
     pub material_slot: u32,
+    /// True when the material never depends on sampled alpha, so the BLAS can
+    /// be built with the `OPAQUE` geometry flag and traversal skips the
+    /// per-candidate alpha test.
+    pub opaque: bool,
 }
 
-/// Per-instance metadata mirroring `PtInstanceMeta` in `pt_pass.rs` /
-/// `path_integrator.slang` (16 bytes, repr(C)). Written into the
-/// `instance_meta` SSBO and looked up in the shader by
+/// Per-instance metadata laid out by the Slang `PtInstanceMeta` reflection.
+///
+/// Written into the `instance_meta` SSBO and looked up in the shader by
 /// `q.CommittedInstanceID()`.
-#[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PtInstanceMeta {
-    pub material_slot: u32,
-    pub index_base: u32,
-    pub vertex_base: u32,
-    pub _pad: u32,
-}
+pub use crate::shader_bindings::pt_render::PtInstanceMeta;
 
 /// A fully-built ray-traceable scene: combined vertex/index buffers,
 /// per-instance metadata + materials SSBOs, per-instance BLAS, and one TLAS.
@@ -271,6 +268,7 @@ pub fn build_pt_scene(
                 index_addr: ibase_addr + (m.index_base as vk::DeviceAddress) * index_stride,
                 vertex_count: total_verts,
                 tri_count,
+                opaque: inst.opaque,
             }
         })
         .collect();

@@ -71,7 +71,7 @@ editor/src-tauri -> prism-app::App::hosted() -> prism-engine -> scene.json
 
 This is the correct foundation for Scene View, offscreen rendering, pause,
 step, and live document reload. It does not, however, execute user-project
-Rust code such as `projects/prisma/src/lib.rs::build_app` or its registered
+Rust code such as `projects/template/src/lib.rs::build_app` or its registered
 systems.
 
 The project module adds that missing layer. Scene data remains data: unsaved
@@ -286,30 +286,44 @@ first implementation.
 Keep the existing GameActivity contract:
 
 ```text
-GameActivity -> libprisma.so -> project entry -> prism-app / prism-engine
+GameActivity -> libtemplate_core.so -> project entry -> prism-app / prism-engine
 ```
 
-The project adapter can be statically linked into `libprisma.so`. Android
+The project adapter can be statically linked into `libtemplate_core.so`. Android
 should not depend on arbitrary filesystem `.so` discovery unless a later
 plugin marketplace or modding requirement justifies the packaging and
 security cost.
 
-## 8. Build and packaging
+## 8. Build, staging, and packaging
 
-> **Current state:** the manifest sketch below is historical. The implemented
-> flow builds `projects/<p>` with `--no-default-features --features
-> preview-module` into `projects/<p>/target/preview-module/` and stages the
-> cdylib before loading it; see `AGENTS.md`. The principles below still hold:
-> same-profile modules, absolute paths, and explicit diagnostics.
+### 8.1 Module build and staging workflow
 
-Add a project manifest section describing the module contract, for example:
+The editor builds and reloads the preview module using the following rules:
+
+1. **Dedicated target directory**:
+   ```bash
+   cargo build --no-default-features --features preview-module --target-dir projects/<p>/target/preview-module
+   ```
+   The separate target directory ensures the cdylib and the monolithic player binaries/libraries do not overwrite each other or trigger redundant full rebuilds.
+2. **Target collision prevention on MSVC**:
+   Give the lib target its own `[lib] name` (e.g., `sponza` uses `sponza_core`, `template` uses `template_core`) whenever it would collide with the binary name, preventing MSVC PDB conflicts over `<name>.pdb`. `[build] lib_name` in `assets/settings.ini` must match this name (it is also the Android `.so` name).
+3. **Compile timing and staging**:
+   - Compiles trigger after a 350 ms debounce once file edits settle; compilation is deferred while playing.
+   - Failing builds keep the previously running module intact.
+   - On Windows, a loaded DLL cannot be overwritten in place. The built cdylib is staged into `staged/<stem>-<nanos>/<original name>` (unique directory, original filename) and the `.pdb` is copied alongside it. dbghelp resolves symbols using the filename recorded in the PE, so renaming the DLL degrades stack frames to raw export names.
+4. **Off-thread compilation**:
+   Compilation runs off the viewport thread and reports progress through `ViewportSnapshot.build` and `editor_build_status`.
+5. **Full replacement semantics**:
+   Reloading discards and replaces the entire module instance; it is full module replacement, not in-memory hot reload.
+
+### 8.2 Historical contract sketches
 
 ```toml
 [project]
-name = "prisma"
+name = "template"
 
 [preview]
-module = "target/debug/libprisma_project.so"
+module = "target/debug/libtemplate_core_project.so"
 engine = "target/debug/libprism_runtime.so"
 abi = 1
 ```

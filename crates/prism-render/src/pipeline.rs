@@ -1,6 +1,6 @@
 //! 图形管线创建。
 //!
-//! 为标准 PrismaRev 前向渲染路径构建 [`GraphicsPipeline`]：
+//! 为标准 Prisma 前向渲染路径构建 [`GraphicsPipeline`]：
 //! 顶点输入（位置+法线+颜色）、模型变换的推送常量、
 //! 帧 UBO 的单个描述符集、深度测试+背面剔除、
 //! 无多重采样、一个带 Alpha 混合的颜色附件。
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn cull_mode_maps_to_vulkan_and_defaults_to_back() {
-        // 默认与 PrismaRev 既有管线一致（背面剔除）。
+        // 默认与 Prisma 既有管线一致（背面剔除）。
         assert_eq!(CullMode::default(), CullMode::Back);
         assert_eq!(cull_flags(CullMode::Off), vk::CullModeFlags::NONE);
         assert_eq!(cull_flags(CullMode::Front), vk::CullModeFlags::FRONT);

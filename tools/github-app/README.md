@@ -17,11 +17,11 @@ GitHub **没有** “创建 App”的 REST API。唯一的自动化路径是官�
 ## 用法
 
 ```bash
-# 个人账号，默认 App 名 prismrev-agent，凭据写到 ~/.prismrev/github-app
+# 个人账号，默认 App 名 prisma-agent，凭据写到 ~/.prisma/github-app
 python tools/github-app/create_app.py
 
 # 组织账号
-python tools/github-app/create_app.py --owner my-org --owner-type org --name prismrev-agent
+python tools/github-app/create_app.py --owner my-org --owner-type org --name prisma-agent
 
 # 只看 manifest URL，不启动服务器
 python tools/github-app/create_app.py --dry-run
@@ -34,16 +34,16 @@ python tools/github-app/create_app.py --dry-run
 
 - Repository permissions: **Issues: Read and write**、**Metadata: Read-only**
 - 不订阅 webhook（`default_events: []`）
-- Private App，只安装到 `Excurs1ons/PrismaRev`
+- Private App，只安装到 `Excurs1ons/Prisma`
 
-安装时在 GitHub 的安装页**只勾选 PrismaRev**，不要选 “All repositories”。
+安装时在 GitHub 的安装页**只勾选 Prisma**，不要选 “All repositories”。
 
 ## 凭据位置
 
 默认在仓库外：
 
 ```text
-%USERPROFILE%\.prismrev\github-app\
+%USERPROFILE%\.prisma\github-app\
 ├── github-app.pem      # App 私钥（0600）
 ├── github-app.json     # app_id / slug / client secrets / installation_id
 └── create-url.txt      # 本次 manifest URL（可删）
