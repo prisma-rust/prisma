@@ -1,0 +1,9 @@
+{
+  "scenes": [
+    {
+      "name": "lab",
+      "path": "scenes/lab.rscn",
+      "enabled": true
+    }
+  ]
+}
