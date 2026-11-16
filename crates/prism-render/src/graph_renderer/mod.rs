@@ -12,57 +12,12 @@ use anyhow::Context as _;
 use ash::vk;
 
 use crate::context::VulkanContext;
-use crate::descriptor::{
-    DescriptorLayout, DescriptorPool, FrameUBO, FrameUBOData, GpuLight, PtAnalyticLight,
-};
+use crate::descriptor::{FrameUBOData, GpuLight, PtAnalyticLight};
 use crate::external_overlay::{OverlayMessage, SwapchainOverlay};
 use crate::forward_pass::ForwardPass;
 use crate::ibl::IblResources;
 
-/// 构造 IBL 资源。`ibl` feature 关闭时一律返回 1x1 中性灰（descriptor 布局不变，
-/// 前向 pass 照常绑定 set 2），HDR 解码 / 卷积 / 预过滤 / BRDF LUT 全部不参与编译。
-#[cfg(feature = "ibl")]
-fn make_ibl(
-    context: std::sync::Arc<crate::context::VulkanContext>,
-    command_pool: ash::vk::CommandPool,
-    queue: ash::vk::Queue,
-    env: Option<Vec<u8>>,
-    layout: ash::vk::DescriptorSetLayout,
-) -> anyhow::Result<IblResources> {
-    match env {
-        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), layout),
-        None => IblResources::new_empty(context, command_pool, queue, layout),
-    }
-}
-
-#[cfg(not(feature = "ibl"))]
-fn make_ibl(
-    context: std::sync::Arc<crate::context::VulkanContext>,
-    command_pool: ash::vk::CommandPool,
-    queue: ash::vk::Queue,
-    env: Option<Vec<u8>>,
-    layout: ash::vk::DescriptorSetLayout,
-) -> anyhow::Result<IblResources> {
-    // 无 IBL 构建：忽略环境贴图，始终用中性立方体。
-    let _ = env;
-    IblResources::new_empty(context, command_pool, queue, layout)
-}
-
-fn env_bytes_fingerprint(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    let mut hash = FNV_OFFSET;
-    for &b in bytes {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
-use crate::managers::{
-    AssetTextureHandle, MaterialHandle, MaterialUploadInput, MeshHandle, MeshUploadInput,
-    RenderMaterialManager, RenderMeshManager, RenderTextureManager, TextureUploadInput,
-};
-use crate::mesh::Vertex;
+use crate::managers::{MeshHandle, RenderMaterialManager, RenderMeshManager, RenderTextureManager};
 use crate::offscreen::OffscreenTarget;
 #[cfg(feature = "pathtrace")]
 use crate::pt_pass::PathTracePass;
@@ -193,98 +148,22 @@ pub struct FrameInput<'a> {
 }
 
 /// GPU session that owns the long-lived Vulkan runtime objects (device,
-/// command pool, descriptor infrastructure). Survives swapchain recreation
-/// and is the minimum set of fields that must outlive all render passes.
-///
-/// Extracted from [`GraphRenderer`] as the first step toward the dedicated
-/// render-thread separation (PR-L2): once the runtime is self-contained, the
-/// engine can move it (and the [`RenderGraph`]) onto a separate thread without
-/// moving scene-level managers and GUI state.
-pub struct RenderRuntime {
-    pub command_pool: vk::CommandPool,
-    pub command_buffers: Vec<vk::CommandBuffer>,
-    #[allow(dead_code)]
-    pub descriptor_layout: DescriptorLayout,
-    #[allow(dead_code)]
-    pub descriptor_pool: DescriptorPool,
-    pub frame_ubos: Vec<FrameUBO>,
-    /// **Must be the last field** — Rust drops struct fields in declaration
-    /// order, so `context` (which owns the `ash::Device`) is destroyed *last*,
-    /// after all child Vulkan objects (`descriptor_layout`, `descriptor_pool`,
-    /// `frame_ubos`) have been cleaned up. Without this ordering the device is
-    /// freed first and subsequent drops use a dangling handle → access violation.
-    pub context: Arc<VulkanContext>,
-}
-
-impl RenderRuntime {
-    /// Build the runtime from a pre-created Vulkan context.
-    ///
-    /// `cmd_buffer_count` determines how many command buffers to allocate
-    /// (one per swapchain image).
-    fn new(context: Arc<VulkanContext>, cmd_buffer_count: u32) -> anyhow::Result<Self> {
-        let descriptor_layout =
-            DescriptorLayout::new(&context.device).context("create descriptor layout")?;
-        let frame_count = 2u32;
-        let descriptor_pool =
-            DescriptorPool::new(&context.device, frame_count).context("create descriptor pool")?;
-        let descriptor_sets = descriptor_pool
-            .allocate_sets(&context.device, &descriptor_layout, frame_count)
-            .context("allocate descriptor sets")?;
-
-        let frame_ubos = descriptor_sets
-            .into_iter()
-            .map(|set| FrameUBO::new(&context, set))
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("create frame UBOs")?;
-
-        let pool_info = vk::CommandPoolCreateInfo::default()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(context.graphics_queue_family);
-        let command_pool = unsafe { context.device.create_command_pool(&pool_info, None) }
-            .context("create command pool")?;
-
-        let alloc_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(cmd_buffer_count);
-        let command_buffers = unsafe { context.device.allocate_command_buffers(&alloc_info) }
-            .context("allocate command buffers")?;
-
-        Ok(Self {
-            command_pool,
-            command_buffers,
-            descriptor_layout,
-            descriptor_pool,
-            frame_ubos,
-            context, // last — dropped last via declaration order
-        })
-    }
-}
+pub use crate::render_runtime::RenderRuntime;
 
 /// 遮挡剔除粗深度的屏幕块边长（像素）。4×4 在 1080p 下是 480×270 个深度值。
 const OCCLUSION_TILE_SIZE: u32 = 4;
 
-/// 一个交换链图像对应的深度回读缓冲（#1007）。
-struct OcclusionTarget {
-    buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
-    size: vk::DeviceSize,
-}
+mod assets;
+mod occlusion;
+mod telemetry;
+mod temporal;
+mod ui_host;
 
-/// 遮挡剔除的 GPU 侧状态（#1007，路径 A：上一帧粗深度 + 代理盒）。
-#[derive(Default)]
-struct OcclusionState {
-    enabled: bool,
-    /// 判定时向外扩的深度块数，抵消一帧延迟带来的边缘误差。
-    margin_tiles: u32,
-    targets: Vec<Option<OcclusionTarget>>,
-    /// 最近一次成功回读的粗深度及其相机矩阵（上一帧）。
-    tiles: Option<crate::culling::DepthTiles>,
-    tiles_view_proj: Option<[[f32; 4]; 4]>,
-    /// 每个交换链图像上「已记录拷贝、等待读回」的相机矩阵。
-    pending_view_proj: Vec<Option<[[f32; 4]; 4]>>,
-    counts: crate::culling::OcclusionCounts,
-}
+use assets::{env_bytes_fingerprint, make_ibl};
+use occlusion::OcclusionState;
+use telemetry::RenderTelemetry;
+use temporal::TemporalState;
+use ui_host::UiOverlayHost;
 
 pub struct GraphRenderer {
     swapchain: Option<Swapchain>,
@@ -302,6 +181,12 @@ pub struct GraphRenderer {
     /// used to skip redundant `device_wait_idle` + IBL rebuilds when switching
     /// between scenes that share the same environment map.
     env_fingerprint: Option<Option<u64>>,
+    /// Retained environment payload when built in `EnvOnly` (PathTrace) mode,
+    /// so switching to `Raster` later can lazily build the PBR IBL.
+    env_source: Option<Vec<u8>>,
+    /// Whether `self.ibl` currently holds full PBR IBL (irradiance/prefiltered/BRDF)
+    /// rather than empty or `EnvOnly` (PathTrace sky).
+    ibl_has_pbr: bool,
     /// Scene-level GI probe volume resources (set 5). Survives swapchain
     /// recreation; only rebuilt on scene/level change.
     scene_scope: SceneScope,
@@ -315,16 +200,8 @@ pub struct GraphRenderer {
     /// `graph.execute` and reaches into them only for lifecycle ops
     /// (`recreate_swapchain`) via `graph.pass_mut`.
     settings: RenderSettings,
-    /// Monotonic frame counter used by TAA's Halton jitter (#883).
-    taa_frame: u64,
-    /// NDC jitter applied to this frame's camera projection.
-    taa_jitter_ndc: [f32; 2],
-    /// Previous frame's unjittered camera view-projection (#883 Phase 2).
-    prev_camera_view_proj: Option<[[f32; 4]; 4]>,
-    /// Previous frame's model matrix per ECS entity (#883 Phase 2). Used to
-    /// build per-object motion vectors without forcing the engine to track
-    /// previous transforms.
-    prev_models: std::collections::HashMap<u32, [[f32; 4]; 4]>,
+    /// Temporal anti-aliasing jitter and history state (#883).
+    temporal: TemporalState,
     /// Path of the `.cube` LUT currently bound to `PostPass` (#502). `None`
     /// means the pass still holds its startup identity LUT.
     applied_lut: Option<PathBuf>,
@@ -336,25 +213,12 @@ pub struct GraphRenderer {
     // 描述符 集合 in `forward_pass`.
     #[allow(dead_code)]
     shadow_view: vk::ImageView,
-    /// `shadows` feature 关闭时的 1×1 远深度图（填充 forward 的 set 3）。
-    #[cfg(not(feature = "shadows"))]
-    dummy_shadow: crate::placeholder::SolidImage,
-    /// `gtao` feature 关闭时的 1×1 白色 AO 图（填充 forward 的 set 4）。
-    #[cfg(not(feature = "gtao"))]
-    dummy_ao: crate::placeholder::SolidImage,
-    /// set 4 binding 1 (`giTex`) 的 1×1 黑色兜底图。
-    ///
-    /// 该 binding 在 scene_frag 里是无条件声明的，ReSTIR GI 还没产出（pass 未注册 /
-    /// 首帧）时若保持 null 会触发 `vkCmdDrawIndexed` 的 descriptor 有效性校验错误。
-    dummy_gi: crate::placeholder::SolidImage,
+    /// `ForwardPass` 在可选 pass 关闭/未就绪时的 1×1 占位纹理集合。
+    placeholders: crate::placeholder::ForwardPlaceholders,
     #[allow(dead_code)]
     color_format: vk::Format,
-    /// Optional 外部叠加层（宿主 UI 等）rendered on 顶部 of the ECS UI
-    /// 叠加 When present, 执行 records it after the ECS UI overlay and it
-    /// owns the COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR 过渡. The
-    /// 实现 is injected by the app 层 (eg 编辑器 host) — this 渲染器
-    /// knows nothing about the concrete UI framework.
-    external_overlay: Option<Box<dyn SwapchainOverlay>>,
+    /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
+    ui_host: UiOverlayHost,
     #[cfg(feature = "sharc")]
     sharc_targets: Option<crate::sharc::SharcTargets>,
     /// Reasons the world-space SHaRC cache no longer describes the scene.
@@ -379,21 +243,7 @@ pub struct GraphRenderer {
     /// format change and wants cleared.
     #[cfg(feature = "sharc")]
     sharc_cache_scene_scale: Option<f32>,
-    /// ECS UI 叠加 (GPU-only) — quads + fontdue glyph text, rendered on 顶部
-    /// of the ForwardPass 输出 (below the external overlay). Created lazily
-    /// on the 渲染 线程 when the 引擎 sends UI 命令
-    #[cfg(feature = "ui")]
-    ui_overlay: Option<crate::ui_overlay::UiOverlay>,
-    /// Offscreen counterpart of [`Self::ui_overlay`]. It differs only in the
-    /// render-pass final layout (`COLOR_ATTACHMENT_OPTIMAL` instead of
-    /// `PRESENT_SRC_KHR`), so the two paths need separate caches (#597).
-    #[cfg(feature = "ui")]
-    ui_overlay_offscreen: Option<crate::ui_overlay::UiOverlay>,
-    /// 工程自带字体（`Text.font` 的资产路径 → 字体原始字节，#583）。
-    ///
-    /// `UiOverlay` 是懒创建的（第一帧有 UI 命令时才建），所以字体先存在这里，
-    /// 创建 overlay 时灌进去；已经存在的 overlay 直接当场注册。
-    ui_fonts: std::collections::BTreeMap<String, Vec<u8>>,
+
     /// True when no surface is available (headless / CI / server mode).
     is_headless: bool,
     /// A minimized window has a valid surface but no drawable extent. Keep the
@@ -404,16 +254,8 @@ pub struct GraphRenderer {
     offscreen: Option<OffscreenTarget>,
     /// Fence used to synchronize command buffer reuse in headless / offscreen mode.
     headless_fence: vk::Fence,
-    /// 已预约、尚未在 `execute` 里落地的截图请求。
-    pending_screenshot: Option<crate::screenshot::ScreenshotRequest>,
-    /// 已经记录进命令缓冲区、等待帧提交后读回的截图。
-    screenshot: Option<crate::screenshot::ScreenshotCapture>,
-    /// per-pass GPU 时间戳池（#518）；设备不支持时为 `None`。
-    gpu_timer: Option<crate::gpu_timer::GpuTimer>,
-    /// 最近一次读回的 per-pass GPU 时间（延迟一帧）。
-    gpu_timings: crate::gpu_timer::GpuTimings,
-    /// 最近 N 帧的 GPU 总时间（#518 Phase 2 历史曲线）。
-    gpu_history: crate::gpu_timer::GpuHistory,
+    /// GPU 时间戳剖析与截图状态机（#518）。
+    telemetry: RenderTelemetry,
     /// 上一帧深度的粗粒度回读（#1007）。关闭时不分配缓冲、不回读。
     occlusion: OcclusionState,
     /// 暂存的资产上传请求队列（#1157），在 `prepare` 阶段统一刷新。
@@ -447,17 +289,6 @@ pub struct FrameCtx {
     fence: vk::Fence,
     image_available: vk::Semaphore,
     render_finished: vk::Semaphore,
-}
-
-/// 把已登记的工程字体灌进（刚创建的）UI overlay（#583）。
-#[cfg(feature = "ui")]
-fn apply_ui_fonts(
-    fonts: &std::collections::BTreeMap<String, Vec<u8>>,
-    overlay: &mut crate::ui_overlay::UiOverlay,
-) {
-    for (name, bytes) in fonts {
-        overlay.register_font(name, bytes.clone());
-    }
 }
 
 impl GraphRenderer {
@@ -552,12 +383,11 @@ impl GraphRenderer {
         }
         .context("create shadow comparison sampler")?;
 
-        let dummy_gi = crate::placeholder::gi_texture_dummy(
+        let placeholders = crate::placeholder::ForwardPlaceholders::new(
             &context,
             runtime.command_pool,
             context.graphics_queue,
-        )
-        .context("create 1x1 dummy GI texture")?;
+        )?;
 
         let resolved = RenderSettings::default().resolve_shadow(&context.rt_caps);
         let settings = RenderSettings {
@@ -594,23 +424,16 @@ impl GraphRenderer {
         };
 
         #[cfg(not(feature = "shadows"))]
-        let (mut graph, shadow_view, dummy_shadow) = {
+        let (mut graph, shadow_view) = {
             let mut graph = RenderGraphBuilder::new().settings(&settings).build();
             graph
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (shadows off)")?;
-            let dummy = crate::placeholder::shadow_map_dummy(
-                &context,
-                runtime.command_pool,
-                context.graphics_queue,
-            )
-            .context("create 1x1 dummy shadow map")?;
             log::warn!(
                 "`shadows` feature 关闭：实时阴影不可用（set 3 绑定 1x1 远深度图）；\
                  需要阴影请在项目里启用 prism-render/shadows"
             );
-            let view = dummy.view();
-            (graph, view, dummy)
+            (graph, placeholders.shadow_view())
         };
 
         // 创建 forward_pass and wire its resources: IBL 集合 shadow 映射表 视图 +
@@ -656,7 +479,7 @@ impl GraphRenderer {
                 scene_scope.descriptor_set,
                 scene_scope.descriptor_set_layout,
                 frame_ubo_stride,
-                dummy_gi.view(),
+                placeholders.gi_view(),
             )
             .context("ForwardPass: set_resources")?;
 
@@ -696,13 +519,6 @@ impl GraphRenderer {
         let gtao_pass =
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, swapchain_extent)
                 .context("GtaoPass::new")?;
-        #[cfg(not(feature = "gtao"))]
-        let dummy_ao = crate::placeholder::ao_texture_dummy(
-            &context,
-            runtime.command_pool,
-            context.graphics_queue,
-        )
-        .context("create 1x1 dummy AO texture")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
             "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
@@ -810,12 +626,7 @@ impl GraphRenderer {
         graph.add_pass(Box::new(post_pass));
 
         // per-pass GPU 计时（#518）：设备不支持时间戳时是 `None`（面板回退到 CPU 墙钟）。
-        let gpu_timer = crate::gpu_timer::GpuTimer::new(
-            &context.instance,
-            &context.device,
-            context.physical_device,
-            runtime.command_buffers.len(),
-        )?;
+        let telemetry = RenderTelemetry::new(&context, runtime.command_buffers.len())?;
 
         Ok(Self {
             swapchain: Some(swapchain),
@@ -826,25 +637,20 @@ impl GraphRenderer {
             material_manager,
             ibl,
             env_fingerprint: Some(None),
+            env_source: None,
+            ibl_has_pbr: false,
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
             settings,
-            taa_frame: 0,
-            taa_jitter_ndc: [0.0; 2],
-            prev_camera_view_proj: None,
-            prev_models: std::collections::HashMap::new(),
+            temporal: TemporalState::default(),
             applied_lut: None,
             outline_entities: Vec::new(),
             shadow_sampler,
             shadow_view,
-            #[cfg(not(feature = "shadows"))]
-            dummy_shadow,
-            #[cfg(not(feature = "gtao"))]
-            dummy_ao,
-            dummy_gi,
+            placeholders,
             color_format,
-            external_overlay: None,
+            ui_host: UiOverlayHost::default(),
             #[cfg(feature = "sharc")]
             sharc_targets: None,
             #[cfg(feature = "sharc")]
@@ -853,20 +659,12 @@ impl GraphRenderer {
             sharc_clear_count: 0,
             #[cfg(feature = "sharc")]
             sharc_cache_scene_scale: None,
-            #[cfg(feature = "ui")]
-            ui_overlay: None,
-            #[cfg(feature = "ui")]
-            ui_overlay_offscreen: None,
-            ui_fonts: std::collections::BTreeMap::new(),
+
             is_headless: false,
             surface_suspended: false,
             offscreen: None,
             headless_fence: vk::Fence::null(),
-            pending_screenshot: None,
-            screenshot: None,
-            gpu_timer,
-            gpu_timings: Default::default(),
-            gpu_history: Default::default(),
+            telemetry,
             occlusion: OcclusionState {
                 margin_tiles: 1,
                 ..Default::default()
@@ -914,7 +712,7 @@ impl GraphRenderer {
 
     #[cfg(not(feature = "gtao"))]
     fn ao_view(&mut self, _frame: u32) -> vk::ImageView {
-        self.dummy_ao.view()
+        self.placeholders.ao_view()
     }
 
     /// 场景 pass 要采样的「上一帧 ReSTIR GI 间接漫反射」视图。
@@ -951,27 +749,6 @@ impl GraphRenderer {
     /// 离屏渲染目标的尺寸（无窗口宿主模式）；有交换链时返回 `None`。
     pub fn offscreen_extent(&self) -> Option<ash::vk::Extent2D> {
         self.offscreen.as_ref().map(|target| target.extent())
-    }
-
-    /// 注册一个工程自带字体（`.ttf` / `.otf` / `.ttc` 的原始字节，#583）。
-    ///
-    /// 宿主从 `.pak` 读出字节后调用一次即可；名字是 `Text.font` 里写的资产路径。
-    /// UI overlay 是懒创建的，所以这里先把字节存起来，等第一帧真正画 UI 时
-    /// 再灌进图集；已经创建的那一份立即生效。
-    pub fn register_ui_font(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
-        let name = name.into();
-        self.ui_fonts.insert(name.clone(), bytes.clone());
-        #[cfg(feature = "ui")]
-        {
-            if let Some(gpu) = self.ui_overlay.as_mut() {
-                gpu.register_font(&name, bytes.clone());
-            }
-            if let Some(gpu) = self.ui_overlay_offscreen.as_mut() {
-                gpu.register_font(&name, bytes);
-            }
-        }
-        #[cfg(not(feature = "ui"))]
-        let _ = (name, bytes);
     }
 
     /// 离屏颜色图像视图（`R8G8B8A8_UNORM`）。帧结束后先调用
@@ -1105,11 +882,18 @@ impl GraphRenderer {
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout (headless)")?;
         let initial_env_fp = env_bytes.as_deref().map(env_bytes_fingerprint);
+        let initial_scope = if settings.render_mode == RenderMode::PathTrace {
+            crate::ibl::IblScope::EnvOnly
+        } else {
+            crate::ibl::IblScope::Full
+        };
+        let initial_has_pbr = env_bytes.is_some() && initial_scope == crate::ibl::IblScope::Full;
         let ibl = make_ibl(
             context.clone(),
             runtime.command_pool,
             context.graphics_queue,
-            env_bytes,
+            env_bytes.as_deref(),
+            initial_scope,
             ibl_ds_layout,
         )
         .context("create IBL resources (headless)")?;
@@ -1139,12 +923,11 @@ impl GraphRenderer {
         }
         .context("create shadow comparison sampler (headless)")?;
 
-        let dummy_gi = crate::placeholder::gi_texture_dummy(
+        let placeholders = crate::placeholder::ForwardPlaceholders::new(
             &context,
             runtime.command_pool,
             context.graphics_queue,
-        )
-        .context("create 1x1 dummy GI texture")?;
+        )?;
 
         // Graph: Shadow -> Scene -> GTAO -> PathTrace -> Post.
         #[cfg(feature = "shadows")]
@@ -1165,23 +948,16 @@ impl GraphRenderer {
         };
 
         #[cfg(not(feature = "shadows"))]
-        let (mut graph, shadow_view, dummy_shadow) = {
+        let (mut graph, shadow_view) = {
             let mut graph = RenderGraphBuilder::new().settings(&settings).build();
             graph
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (headless, shadows off)")?;
-            let dummy = crate::placeholder::shadow_map_dummy(
-                &context,
-                runtime.command_pool,
-                context.graphics_queue,
-            )
-            .context("create 1x1 dummy shadow map (headless)")?;
             log::warn!(
                 "`shadows` feature 关闭：实时阴影不可用（set 3 绑定 1x1 远深度图）；\
                  需要阴影请在项目里启用 prism-render/shadows"
             );
-            let view = dummy.view();
-            (graph, view, dummy)
+            (graph, placeholders.shadow_view())
         };
 
         let frame_ubo_buffers: Vec<vk::Buffer> =
@@ -1215,7 +991,7 @@ impl GraphRenderer {
                 scene_scope.descriptor_set,
                 scene_scope.descriptor_set_layout,
                 frame_ubo_stride,
-                dummy_gi.view(),
+                placeholders.gi_view(),
             )
             .context("ForwardPass::set_resources (headless)")?;
 
@@ -1261,13 +1037,6 @@ impl GraphRenderer {
         let gtao_pass =
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, offscreen.extent())
                 .context("GtaoPass::new (headless)")?;
-        #[cfg(not(feature = "gtao"))]
-        let dummy_ao = crate::placeholder::ao_texture_dummy(
-            &context,
-            runtime.command_pool,
-            context.graphics_queue,
-        )
-        .context("create 1x1 dummy AO texture (headless)")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
             "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
@@ -1343,12 +1112,7 @@ impl GraphRenderer {
             )?;
         }
 
-        let gpu_timer = crate::gpu_timer::GpuTimer::new(
-            &context.instance,
-            &context.device,
-            context.physical_device,
-            runtime.command_buffers.len(),
-        )?;
+        let telemetry = RenderTelemetry::new(&context, runtime.command_buffers.len())?;
 
         Ok(Self {
             swapchain: None,
@@ -1359,25 +1123,20 @@ impl GraphRenderer {
             material_manager,
             ibl,
             env_fingerprint: Some(initial_env_fp),
+            env_source: env_bytes,
+            ibl_has_pbr: initial_has_pbr,
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
             settings,
-            taa_frame: 0,
-            taa_jitter_ndc: [0.0; 2],
-            prev_camera_view_proj: None,
-            prev_models: std::collections::HashMap::new(),
+            temporal: TemporalState::default(),
             applied_lut: None,
             outline_entities: Vec::new(),
             shadow_sampler,
             shadow_view,
-            #[cfg(not(feature = "shadows"))]
-            dummy_shadow,
-            #[cfg(not(feature = "gtao"))]
-            dummy_ao,
-            dummy_gi,
+            placeholders,
             color_format,
-            external_overlay: None,
+            ui_host: UiOverlayHost::default(),
             #[cfg(feature = "sharc")]
             sharc_targets: None,
             #[cfg(feature = "sharc")]
@@ -1386,18 +1145,10 @@ impl GraphRenderer {
             sharc_clear_count: 0,
             #[cfg(feature = "sharc")]
             sharc_cache_scene_scale: None,
-            #[cfg(feature = "ui")]
-            ui_overlay: None,
-            #[cfg(feature = "ui")]
-            ui_overlay_offscreen: None,
-            ui_fonts: std::collections::BTreeMap::new(),
+
             is_headless: true,
             surface_suspended: false,
-            pending_screenshot: None,
-            screenshot: None,
-            gpu_timer,
-            gpu_timings: Default::default(),
-            gpu_history: Default::default(),
+            telemetry,
             occlusion: OcclusionState {
                 margin_tiles: 1,
                 ..Default::default()
@@ -1526,176 +1277,6 @@ impl GraphRenderer {
         &self.outline_entities
     }
 
-    /// 开关遮挡剔除（#1007）。
-    ///
-    /// 关闭时立即丢弃已回读的粗深度并停止深度拷贝，下一帧回到旧行为。
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        if self.occlusion.enabled == enabled {
-            return;
-        }
-        self.occlusion.enabled = enabled;
-        if !enabled {
-            self.occlusion.tiles = None;
-            self.occlusion.tiles_view_proj = None;
-            self.occlusion.pending_view_proj.fill(None);
-            self.occlusion.counts = Default::default();
-            if let Some(forward) = self.graph.pass_mut::<ForwardPass>() {
-                forward.set_depth_readback(None);
-            }
-        }
-    }
-
-    pub fn occlusion_culling(&self) -> bool {
-        self.occlusion.enabled
-    }
-
-    /// 最近一帧遮挡剔除的统计（报告 / 调试用）。
-    pub fn occlusion_counts(&self) -> crate::culling::OcclusionCounts {
-        self.occlusion.counts
-    }
-
-    /// 上一帧的粗深度与生成它的相机矩阵；没有可用数据时返回 `None`。
-    pub fn occlusion_view(&self) -> Option<(&crate::culling::DepthTiles, [[f32; 4]; 4])> {
-        if !self.occlusion.enabled {
-            return None;
-        }
-        Some((
-            self.occlusion.tiles.as_ref()?,
-            self.occlusion.tiles_view_proj?,
-        ))
-    }
-
-    /// 用上一帧粗深度把关掉的绘制项标记成主通道不可见，并记录统计。
-    ///
-    /// 调用方在把绘制列表交给 `prepare` / `execute` 之前调用；没有可用深度
-    /// （第一帧、关闭、读回失败）时原样返回。
-    pub fn cull_occluded_draws(
-        &mut self,
-        items: &mut [crate::render_graph::DrawItem],
-    ) -> crate::culling::OcclusionCounts {
-        let Some((tiles, view_proj)) = self.occlusion_view() else {
-            self.occlusion.counts = Default::default();
-            return self.occlusion.counts;
-        };
-        let counts = crate::culling::mark_occluded_draws(
-            items,
-            tiles,
-            &view_proj,
-            self.occlusion.margin_tiles,
-        );
-        self.occlusion.counts = counts;
-        counts
-    }
-
-    /// 确保当前图像在 `extent` 下有一个可写的深度回读缓冲。
-    fn ensure_occlusion_target(
-        &mut self,
-        image_index: u32,
-        extent: vk::Extent2D,
-    ) -> Option<vk::Buffer> {
-        let size = u64::from(extent.width) * u64::from(extent.height) * 4;
-        let image_count = self
-            .swapchain
-            .as_ref()
-            .map(|swapchain| swapchain.images.len())
-            .unwrap_or(1);
-        if self.occlusion.targets.len() < image_count {
-            self.occlusion.targets.resize_with(image_count, || None);
-        }
-        if self.occlusion.pending_view_proj.len() < image_count {
-            self.occlusion.pending_view_proj.resize(image_count, None);
-        }
-        if size == 0 || image_index as usize >= self.occlusion.targets.len() {
-            return None;
-        }
-        let slot = &mut self.occlusion.targets[image_index as usize];
-        if let Some(target) = slot.as_ref() {
-            if target.size == size {
-                return Some(target.buffer);
-            }
-        }
-        if let Some(old) = slot.take() {
-            unsafe {
-                self.runtime.context.device.destroy_buffer(old.buffer, None);
-                self.runtime.context.device.free_memory(old.memory, None);
-            }
-        }
-        let (buffer, memory) = crate::buffer::create_buffer(
-            &self.runtime.context,
-            size,
-            vk::BufferUsageFlags::TRANSFER_DST,
-            crate::buffer::MemoryProperties::HOST_VISIBLE
-                | crate::buffer::MemoryProperties::HOST_COHERENT,
-        )
-        .ok()?;
-        *slot = Some(OcclusionTarget {
-            buffer,
-            memory,
-            size,
-        });
-        Some(buffer)
-    }
-
-    fn destroy_occlusion_targets(&mut self) {
-        for slot in &mut self.occlusion.targets {
-            if let Some(target) = slot.take() {
-                unsafe {
-                    self.runtime
-                        .context
-                        .device
-                        .destroy_buffer(target.buffer, None);
-                    self.runtime.context.device.free_memory(target.memory, None);
-                }
-            }
-        }
-        self.occlusion.targets.clear();
-    }
-
-    /// 读回上一帧写入的深度并生成粗深度。`begin_frame` 已经等过该图像的
-    /// 围栏，所以这里映射内存不会和 GPU 抢写。
-    fn collect_occlusion_depth(&mut self, image_index: u32, extent: vk::Extent2D) {
-        if !self.occlusion.enabled {
-            return;
-        }
-        let Some(vp) = self
-            .occlusion
-            .pending_view_proj
-            .get_mut(image_index as usize)
-            .and_then(|slot| slot.take())
-        else {
-            return;
-        };
-        let Some(target) = self
-            .occlusion
-            .targets
-            .get(image_index as usize)
-            .and_then(|slot| slot.as_ref())
-        else {
-            return;
-        };
-        let size = target.size;
-        let memory = target.memory;
-        let sample_count = (extent.width as usize).saturating_mul(extent.height as usize);
-        if sample_count == 0 || size != sample_count as u64 * 4 {
-            return;
-        }
-        let device = &self.runtime.context.device;
-        let ptr = unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) };
-        let Ok(ptr) = ptr else {
-            log::warn!("occlusion: map depth readback failed");
-            return;
-        };
-        let samples = unsafe { std::slice::from_raw_parts(ptr as *const f32, sample_count) };
-        let tiles = crate::culling::DepthTiles::from_samples(
-            [extent.width, extent.height],
-            OCCLUSION_TILE_SIZE,
-            samples,
-        );
-        unsafe { device.unmap_memory(memory) };
-        self.occlusion.tiles_view_proj = tiles.as_ref().map(|_| vp);
-        self.occlusion.tiles = tiles;
-    }
-
     /// Request a path-tracer accumulation reset on the next frame. Call this
     /// when a render parameter that affects traced radiance changes (max
     /// bounces, exposure, light color/direction/intensity, scene reload, ...).
@@ -1752,563 +1333,31 @@ impl GraphRenderer {
     /// 注入外部叠加层（宿主 UI 等）。主线程在启动渲染线程前调用；
     /// overlay 的 GPU 资源由实现方在 `record` 时懒创建。
     pub fn set_external_overlay(&mut self, overlay: Box<dyn SwapchainOverlay>) {
-        self.external_overlay = Some(overlay);
+        self.ui_host.set_external_overlay(overlay);
     }
 
     /// 把一条类型擦除的消息（如"新的宿主 UI 帧"）投递给外部叠加层。
     /// 渲染线程从 shared 通路取出消息后调用；无叠加层时静默丢弃。
     pub fn apply_overlay_message(&mut self, msg: OverlayMessage) {
-        if let Some(overlay) = self.external_overlay.as_mut() {
-            msg(overlay.as_mut());
-        }
-    }
-
-    /// IBL descriptor set + layout for the environment cubemap (set 2).
-    /// Used by PathTracePass and ForwardPass for 高动态范围 sky / 间接 lighting.
-    pub fn ibl_descriptor_set(&self) -> vk::DescriptorSet {
-        self.ibl.descriptor_set
-    }
-    pub fn ibl_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
-        self.ibl.descriptor_set_layout
-    }
-
-    /// 按场景重建 IBL。`env_bytes = Some(data)` 接收离线烘焙的 `PIBL` 或原始 `.hdr`；
-    /// `None` 重建为廉价中性空 IBL（与 `new_empty` 等价）。用于在「场景切换」
-    /// 时按需构建/移除光照，而不在引擎启动期无条件加载 3D IBL/GI。
-    ///
-    /// 共享的 set2 描述符 布局 保持稳定（`self.ibl.descriptor_set_layout`），
-    /// 仅替换 descriptor set 句柄与 BRDF LUT（覆盖同一 bindless 槽），
-    /// forward pass / skybox 管线 布局 无需重建。
-    pub fn set_environment(&mut self, env_bytes: Option<Vec<u8>>) -> anyhow::Result<()> {
-        let fp = env_bytes.as_deref().map(env_bytes_fingerprint);
-        if self.env_fingerprint == Some(fp) {
-            return Ok(());
-        }
-
-        // The previous IBL (and its BRDF LUT view) may still be sampled by
-        // frames that are in flight. Finish them before overwriting the
-        // bindless slot or destroying the old images/samplers; otherwise the
-        // GPU can read freed resources (device-lost / validation error).
-        // Environment switches are rare, so an idle wait is acceptable.
-        unsafe { self.runtime.context.device.device_wait_idle() }
-            .context("wait idle before replacing IBL")?;
-
-        // `None` = 无光照场景（开屏/UI）：走廉价中性空 IBL（new_empty，不卷积，≈0ms）。
-        // 共享 set2 描述符 布局 保持稳定。
-        let new_ibl = make_ibl(
-            self.runtime.context.clone(),
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-            env_bytes,
-            self.ibl.descriptor_set_layout,
-        )
-        .context("rebuild IBL resources for scene")?;
-        // 覆盖同一 bindless 槽的 BRDF LUT（表不增长）。
-        self.texture_manager
-            .bindless_mut()
-            .register_with_handle(self.brdf_bindless_slot, new_ibl.brdf_image_view())
-            .context("overwrite BRDF LUT bindless slot")?;
-
-        // 切换 forward pass / skybox 的 set2（布局共享，不重建管线）。
-        if let Some(fp) = self.graph.pass_mut::<ForwardPass>() {
-            fp.set_ibl(new_ibl.descriptor_set, self.brdf_bindless_slot);
-        }
-        #[cfg(feature = "pathtrace")]
-        if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
-            pt.set_ibl_resources(new_ibl.descriptor_set, self.ibl.descriptor_set_layout);
-        }
-
-        // 销毁旧 IBL（不销毁共享 布局）后接管新的。
-        self.ibl.destroy();
-        self.ibl = new_ibl;
-        self.env_fingerprint = Some(fp);
-        // 天空/IBL 是辐射缓存训练时的入射光来源；换了环境，旧体素里的辐射
-        // 就不再属于这个场景（repair spec §8）。
-        #[cfg(feature = "sharc")]
-        {
-            self.sharc_invalidation.sky = true;
-        }
-        Ok(())
-    }
-
-    pub fn register_mesh(&mut self, input: &MeshUploadInput) -> anyhow::Result<MeshHandle> {
-        self.mesh_manager.register(
-            &self.runtime.context,
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-            input,
-        )
-    }
-
-    /// `register_mesh` 的蒙皮版本（#560 P0-3）：额外上传 joints/weights
-    /// 到第二个顶点缓冲，绘制项要用 `bone_offset` 指向骨骼调色板。
-    pub fn register_mesh_skinned(
-        &mut self,
-        input: &MeshUploadInput,
-        skin: &crate::managers::SkinAttributes,
-    ) -> anyhow::Result<MeshHandle> {
-        self.mesh_manager.register_skinned(
-            &self.runtime.context,
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-            input,
-            skin,
-        )
-    }
-
-    pub fn create_mesh(
-        &self,
-        vertices: &[Vertex],
-        indices: Option<&[u32]>,
-    ) -> anyhow::Result<crate::mesh::Mesh> {
-        crate::mesh::Mesh::new(
-            &self.runtime.context,
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-            vertices,
-            indices,
-        )
-    }
-
-    pub fn register_mesh_into(
-        &mut self,
-        uploader: &mut crate::batch::BatchUploader<'_>,
-        input: &MeshUploadInput,
-    ) -> anyhow::Result<MeshHandle> {
-        self.mesh_manager
-            .register_into(&self.runtime.context, uploader, input)
-    }
-
-    pub fn register_texture(
-        &mut self,
-        input: &TextureUploadInput,
-    ) -> anyhow::Result<AssetTextureHandle> {
-        self.texture_manager.reserve(
-            &self.runtime.context,
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-            input,
-        )
-    }
-
-    pub fn register_texture_into(
-        &mut self,
-        uploader: &mut crate::batch::BatchUploader<'_>,
-        input: &TextureUploadInput,
-    ) -> anyhow::Result<AssetTextureHandle> {
-        self.texture_manager
-            .reserve_into(&self.runtime.context, uploader, input)
-    }
-
-    pub fn register_material(
-        &mut self,
-        input: MaterialUploadInput,
-    ) -> anyhow::Result<MaterialHandle> {
-        self.material_manager.register(input)
-    }
-
-    pub fn texture_srv(&self, handle: AssetTextureHandle) -> crate::bindless::TextureHandle {
-        self.texture_manager.get_srv(handle)
-    }
-
-    pub fn material_slot(&self, handle: MaterialHandle) -> Option<u32> {
-        self.material_manager.slot_of(handle)
-    }
-
-    pub fn flush_materials(&mut self) -> anyhow::Result<()> {
-        self.material_manager.upload(
-            &self.runtime.context,
-            self.runtime.command_pool,
-            self.runtime.context.graphics_queue,
-        )
-    }
-
-    pub fn mesh_manager(&self) -> &RenderMeshManager {
-        &self.mesh_manager
-    }
-
-    /// GPU 侧资产解析：执行主线程准备好的上传请求，返回句柄。
-    ///
-    /// 在渲染线程调用（拥有 `&mut self`）。每个请求独立上传 mesh / 纹理 /
-    /// 材质：纹理先上传取 bindless 槽，再据此组装 `MaterialUploadInput` 上传材质。
-    /// 返回顺序与输入一致，调用方按实体配对写回 `World`。
-    ///
-    /// 输入为空时直接返回，避免无谓地创建 `BatchUploader` 命令缓冲。
-    /// 释放一组主线程判定为不再需要的 GPU 资源（#495）。
-    ///
-    /// 热重载 / 实体销毁 / 组件路径被改写时，`GpuAssetResolver` 会把旧槽位与
-    /// 句柄交回来；这里真正销毁图像、网格与材质槽，避免每次重载都泄漏一份显存。
-    /// 值已经释放过（重复请求、渲染器重启）时静默忽略。
-    pub fn release_assets(&mut self, releases: &[crate::asset_bridge::AssetRelease]) {
-        if releases.is_empty() {
-            return;
-        }
-        let device = self.runtime.context.device.clone();
-        let mut freed = 0usize;
-        for release in releases {
-            if let Some(slot) = release.texture_slot {
-                if self.texture_manager.unregister_srv(slot, &device) {
-                    freed += 1;
-                }
-            }
-            if let Some(handle) = release.mesh_handle {
-                self.mesh_manager.unregister(&device, handle);
-                freed += 1;
-            }
-            let mut material_slots = release.material_slots.clone();
-            if let Some(slot) = release.material_slot {
-                if !material_slots.contains(&slot) {
-                    material_slots.push(slot);
-                }
-            }
-            for slot in material_slots {
-                if self.material_manager.unregister_slot(slot) {
-                    freed += 1;
-                }
-            }
-        }
-        log::debug!("release_assets: freed {freed} GPU resource(s)");
-        // Released meshes/materials mean the geometry (or its shading) that the
-        // world-space cache was trained on no longer exists.
-        if freed > 0 {
-            #[cfg(feature = "sharc")]
-            {
-                self.sharc_invalidation.geometry = true;
-            }
-        }
-    }
-
-    /// 暂存资产上传请求，由下一次 `prepare` 统一批量执行（DESIGN §9 / #1157）。
-    pub fn stage_asset_requests(
-        &mut self,
-        requests: Vec<crate::asset_bridge::AssetResolveRequest>,
-    ) {
-        self.staged_asset_requests.extend(requests);
-    }
-
-    /// 暂存资产释放请求，由下一次 `prepare` 统一批量执行（DESIGN §9 / #1157）。
-    pub fn stage_asset_releases(&mut self, releases: Vec<crate::asset_bridge::AssetRelease>) {
-        self.staged_asset_releases.extend(releases);
-    }
-
-    /// 在 `prepare` 阶段统一收敛并刷新已暂存的批量资产释放与上传（DESIGN §9 / #1157）。
-    pub fn flush_staged_assets(&mut self) -> anyhow::Result<()> {
-        if !self.staged_asset_releases.is_empty() {
-            let releases = std::mem::take(&mut self.staged_asset_releases);
-            self.release_assets(&releases);
-        }
-        if !self.staged_asset_requests.is_empty() {
-            let requests = std::mem::take(&mut self.staged_asset_requests);
-            let _ = self.apply_asset_requests(requests);
-        }
-        Ok(())
-    }
-
-    pub fn apply_asset_requests(
-        &mut self,
-        requests: Vec<crate::asset_bridge::AssetResolveRequest>,
-    ) -> Vec<crate::asset_bridge::AssetResolveResult> {
-        if requests.is_empty() {
-            return Vec::new();
-        }
-
-        let ctx = self.context_arc();
-        let cmd_pool = self.command_pool();
-        let mut uploader = match crate::batch::BatchUploader::new(&ctx, cmd_pool) {
-            Ok(u) => u,
-            Err(e) => {
-                log::error!("apply_asset_requests: BatchUploader::new failed: {e}");
-                return Vec::new();
-            }
-        };
-
-        let mut results = Vec::with_capacity(requests.len());
-        for req in requests {
-            let mesh_handle = match &req.mesh {
-                Some(input) => self
-                    .mesh_manager
-                    .register_skinned_into(
-                        &self.runtime.context,
-                        &mut uploader,
-                        input,
-                        req.skin.as_ref(),
-                    )
-                    .ok(),
-                None => None,
-            };
-
-            let material_slots: Vec<Option<u32>> = req
-                .materials
-                .iter()
-                .map(|material| {
-                    let mat = material.as_ref()?;
-                    let mut slots: [Option<u32>; 5] = [None; 5];
-                    for (i, tex) in mat.textures.iter().enumerate() {
-                        if let Some(t) = tex {
-                            if let Ok(h) = self.register_texture_into(&mut uploader, t) {
-                                slots[i] = Some(self.texture_srv(h).0);
-                            }
-                        }
-                    }
-                    let s = mat.scalars;
-                    let input = crate::managers::MaterialUploadInput {
-                        base_color: [s[0], s[1], s[2], s[3]],
-                        metallic: s[4],
-                        roughness: s[5],
-                        emissive: [s[6], s[7], s[8]],
-                        albedo_tex: slots[0],
-                        normal_tex: slots[1],
-                        metallic_roughness_tex: slots[2],
-                        emissive_tex: slots[3],
-                        occlusion_tex: slots[4],
-                        normal_scale: s[10],
-                        occlusion_strength: s[11],
-                        transmission: s[12],
-                        ior: s[13],
-                        translucency: s[14],
-                        anisotropy: s[15],
-                        clearcoat: s[16],
-                        clearcoat_roughness: s[17],
-                        emissive_strength: s[9],
-                        alpha_mode: mat.alpha_mode,
-                        alpha_cutoff: mat.alpha_cutoff,
-                    };
-                    self.register_material(input)
-                        .ok()
-                        .and_then(|h| self.material_slot(h))
-                })
-                .collect();
-            let material_slot = material_slots.iter().find_map(|slot| *slot);
-
-            let (texture_slot, texture_size) = match &req.texture {
-                Some(input) => {
-                    let size = [input.width, input.height];
-                    match self.register_texture_into(&mut uploader, input) {
-                        Ok(handle) => (Some(self.texture_srv(handle).0), Some(size)),
-                        Err(e) => {
-                            log::warn!("apply_asset_requests: sprite texture upload failed: {e}");
-                            (None, None)
-                        }
-                    }
-                }
-                None => (None, None),
-            };
-
-            results.push(crate::asset_bridge::AssetResolveResult {
-                mesh_handle,
-                material_slot,
-                material_slots,
-                texture_slot,
-                texture_size,
-            });
-        }
-
-        if let Err(e) = uploader.finish(self.graphics_queue()) {
-            log::error!("apply_asset_requests: BatchUploader::finish failed: {e}");
-        }
-        if let Err(e) = self.flush_materials() {
-            log::warn!("apply_asset_requests: flush_materials failed: {e}");
-        }
-
-        results
-    }
-
-    /// Read-only access to the texture manager (owns the bindless texture
-    /// table). Used by the path-trace pass wiring to fetch the shared bindless
-    /// descriptor set + layout.
-    pub fn texture_manager(&self) -> &RenderTextureManager {
-        &self.texture_manager
-    }
-
-    /// Read-only access to the material manager (owns the `GpuMaterial[]`
-    /// SSBO). Used by the path-trace pass to bind the materials SSBO.
-    pub fn material_manager(&self) -> &RenderMaterialManager {
-        &self.material_manager
-    }
-
-    /// Load a pre-parsed probe volume data directly (RM or bytes path).
-    ///
-    /// Returns `true` if the volume was accepted (scene check + validity check
-    /// passed, GPU upload succeeded).
-    pub fn load_probe_volume_data(
-        &mut self,
-        data: crate::probe_loader::ProbeVolumeData,
-        scene_name: Option<&str>,
-    ) -> bool {
-        // Scene binding check: reject a volume baked for a different scene.
-        if let Some(name) = scene_name {
-            if !name.is_empty() && !data.scene_name.is_empty() && data.scene_name != name {
-                log::warn!(
-                    "GraphRenderer: baked GI data is for scene '{}', but loaded scene is \
-                     '{}'; keeping synthetic sky field (rebake to apply)",
-                    data.scene_name,
-                    name
-                );
-                return false;
-            }
-        }
-
-        // All-miss bake check.
-        if data.global_hit_ratio >= 0.0 && data.global_hit_ratio < 0.05 {
-            log::warn!(
-                "GraphRenderer: baked GI data looks invalid (hit_ratio={:.3} < 0.05, \
-                 all rays missed the TLAS); keeping synthetic sky field",
-                data.global_hit_ratio
-            );
-            return false;
-        }
-
-        match self.scene_scope.from_probe_data(&data) {
-            Ok(()) => {
-                log::info!(
-                    "GraphRenderer: loaded baked GI probe volume (dims {:?}, scene='{}', \
-                     hit_ratio={:.3})",
-                    data.dims,
-                    data.scene_name,
-                    data.global_hit_ratio
-                );
-                true
-            }
-            Err(e) => {
-                log::warn!("GraphRenderer: failed to upload baked probe volume: {e:#}");
-                false
-            }
-        }
-    }
-
-    /// Load a baked GI probe volume from a `.bin` file on disk.
-    ///
-    /// Convenience wrapper around [`load_probe_volume_data`] for dev / loose
-    /// files.  The RM path should call [`load_probe_volume_data`] directly
-    /// with bytes parsed via [`probe_loader::load_probe_volume_from_bytes`].
-    pub fn load_probe_volume_file(
-        &mut self,
-        path: &std::path::Path,
-        scene_name: Option<&str>,
-    ) -> bool {
-        let data = match crate::probe_loader::load_probe_volume(path) {
-            Ok(d) => d,
-            Err(e) => {
-                log::info!(
-                    "GraphRenderer: no baked GI at {} ({e}); keeping synthetic sky field",
-                    path.display()
-                );
-                return false;
-            }
-        };
-        self.load_probe_volume_data(data, scene_name)
-    }
-
-    /// Load a decoded PRT64 `.prtbin` volume into `PrtPass`.
-    #[cfg(feature = "prt")]
-    pub fn load_prt_volume(&mut self, volume: crate::prt_volume::PrtVolume) -> bool {
-        if let Some(pass) = self.graph.pass_mut::<crate::prt_pass::PrtPass>() {
-            pass.load_volume(volume);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// No-op when compiled without the `prt` feature.
-    #[cfg(not(feature = "prt"))]
-    pub fn load_prt_volume(&mut self, _volume: crate::prt_volume::PrtVolume) -> bool {
-        false
-    }
-
-    /// Load a PRT64 `.prtbin` file from disk into `PrtPass`.
-    #[cfg(feature = "prt")]
-    pub fn load_prt_volume_file(&mut self, path: &std::path::Path) -> bool {
-        match crate::prt_volume::PrtVolume::load(path) {
-            Ok(vol) => self.load_prt_volume(vol),
-            Err(e) => {
-                log::info!("GraphRenderer: no PRT volume at {} ({e})", path.display());
-                false
-            }
-        }
-    }
-
-    /// No-op when compiled without the `prt` feature.
-    #[cfg(not(feature = "prt"))]
-    pub fn load_prt_volume_file(&mut self, _path: &std::path::Path) -> bool {
-        false
-    }
-
-    /// 设置内部渲染分辨率（#613）：`[0, 0]` = 按窗口分辨率渲染。
-    ///
-    /// 每帧调用是安全的：值没变时直接返回。改动后 `ForwardPass` 会在下一次
-    /// `execute` 发现 extent 不同并重建目标（`ensure_target` 已经按 extent
-    /// 做了失效判断）。
-    /// Load a `.cube` LUT and bind it to `PostPass` (#502).
-    ///
-    /// This is the explicit entry point used by tests and tools; the per-frame
-    /// path calls it lazily from [`Self::prepare`] when `FrameInput::lut_path`
-    /// changes. Parsing/validation errors are returned so callers can report
-    /// them; the per-frame path logs and keeps the previous LUT.
-    pub fn set_lut_cube(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let path = path.as_ref();
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read LUT {}", path.display()))?;
-        let lut = crate::lut::parse_cube(&text)
-            .map_err(|error| anyhow::anyhow!("parse LUT {}: {error}", path.display()))?;
-        let context = &self.runtime.context;
-        if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
-            post.set_lut(context, &lut)?;
-        }
-        self.applied_lut = Some(path.to_path_buf());
-        Ok(())
-    }
-
-    /// Lazily apply `FrameInput::lut_path`. A broken/missing file logs once and
-    /// keeps rendering with the previous LUT instead of failing the frame.
-    fn ensure_lut(&mut self, path: Option<&Path>) -> anyhow::Result<()> {
-        let Some(path) = path else {
-            return Ok(());
-        };
-        if self.applied_lut.as_deref() == Some(path) {
-            return Ok(());
-        }
-        if let Err(error) = self.set_lut_cube(path) {
-            log::warn!(
-                "post LUT {} could not be applied: {error:#}",
-                path.display()
-            );
-            // Remember the failed path so a broken file is not re-read every
-            // frame; editing the path (or reloading the project) retries.
-            self.applied_lut = Some(path.to_path_buf());
-        }
-        Ok(())
+        self.ui_host.apply_overlay_message(msg);
     }
 
     /// Apply this frame's TAA subpixel jitter to `frame_data` and remember the
     /// NDC offset for `TaaPass`. Call once per frame before `prepare` (#883).
     pub fn apply_taa_jitter(&mut self, frame_data: &mut FrameUBOData) {
-        let jitter = if self.settings.taa || self.settings.anf_sr {
-            let j = taa_jitter(self.taa_frame);
-            self.taa_frame = self.taa_frame.wrapping_add(1);
-            j
-        } else {
-            self.taa_frame = 0;
-            [0.0, 0.0]
-        };
-        let width = frame_data.viewportW.max(1.0);
-        let height = frame_data.viewportH.max(1.0);
-        let jitter_ndc = [jitter[0] * 4.0 / width, jitter[1] * 4.0 / height];
-        frame_data.viewProj[3][0] += jitter_ndc[0];
-        frame_data.viewProj[3][1] += jitter_ndc[1];
-        self.taa_jitter_ndc = jitter_ndc;
+        self.temporal
+            .apply_jitter(frame_data, self.settings.taa || self.settings.anf_sr);
     }
 
     /// Enable/disable TAA and set its history weight (#883).
     pub fn set_taa(&mut self, enabled: bool, strength: f32) {
         if !enabled && self.settings.taa {
-            self.taa_frame = 0;
+            self.temporal.taa_frame = 0;
         }
         self.settings.taa = enabled;
         self.settings.taa_strength = strength.clamp(0.0, 0.95);
     }
 
-    /// Enable/disable ANF Super Resolution and configure sharpness (#1161).
     pub fn set_anf_sr(&mut self, enabled: bool, sharpness: f32) {
         self.settings.anf_sr = enabled;
         self.settings.anf_sharpness = sharpness.clamp(0.0, 1.0);
@@ -2463,8 +1512,7 @@ impl GraphRenderer {
         // #883 Phase 2: the previous camera/model history refers to the old
         // extent; clear it so the first frame after a resize does not emit
         // bogus motion vectors.
-        self.prev_camera_view_proj = None;
-        self.prev_models.clear();
+        self.temporal.reset_history();
         #[cfg(feature = "sharc")]
         if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
             resolve.reset_history();
@@ -2478,10 +1526,7 @@ impl GraphRenderer {
         // 销毁旧 image view **之前**释放，否则 framebuffer 会引用已销毁的
         // view（VUID-vkDestroyImageView-imageView-01026），可导致验证错误/
         // device lost。此处 device 已 idle。
-        #[cfg(feature = "ui")]
-        if let Some(gpu) = self.ui_overlay.as_mut() {
-            gpu.on_swapchain_views_changed();
-        }
+        self.ui_host.on_swapchain_pre_recreate();
 
         if let Some(sw) = self.swapchain.as_mut() {
             if !sw.recreate_if_drawable(&self.runtime.context)? {
@@ -2492,9 +1537,8 @@ impl GraphRenderer {
 
         // 通知外部叠加层：per-swapchain framebuffers 已按新 views 重建。
         if let Some(sw) = self.swapchain.as_ref() {
-            if let Some(overlay) = self.external_overlay.as_mut() {
-                overlay.on_swapchain_views_changed(&sw.views, sw.extent);
-            }
+            self.ui_host
+                .on_swapchain_post_recreate(&sw.views, sw.extent);
         }
 
         // 依赖交换链尺寸/图像数的 pass 必须在 `sw.recreate()` **之后**按新值
@@ -2584,8 +1628,7 @@ impl GraphRenderer {
         // #883 Phase 2: the previous camera/model history refers to the old
         // extent; clear it so the first frame after a resize does not emit
         // bogus motion vectors.
-        self.prev_camera_view_proj = None;
-        self.prev_models.clear();
+        self.temporal.reset_history();
         #[cfg(feature = "sharc")]
         if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
             resolve.reset_history();
@@ -2594,15 +1637,7 @@ impl GraphRenderer {
             post.drop_target(&self.runtime.context.device);
         }
         // UI 叠加按 image view 缓存 framebuffer，必须先于旧视图销毁释放。
-        #[cfg(feature = "ui")]
-        {
-            if let Some(gpu) = self.ui_overlay.as_mut() {
-                gpu.on_swapchain_views_changed();
-            }
-            if let Some(gpu) = self.ui_overlay_offscreen.as_mut() {
-                gpu.on_swapchain_views_changed();
-            }
-        }
+        self.ui_host.on_offscreen_pre_recreate();
 
         let context = self.runtime.context.clone();
         let fresh = OffscreenTarget::new(&context, width, height)?;
@@ -2685,7 +1720,7 @@ impl GraphRenderer {
                 }
             }
 
-            self.begin_gpu_timings(&device, 0);
+            self.telemetry.begin_frame_timings(&device, 0);
 
             let cmd = self.runtime.command_buffers[0];
             unsafe { device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty()) }
@@ -2694,9 +1729,7 @@ impl GraphRenderer {
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { device.begin_command_buffer(cmd, &begin_info) }
                 .context("begin command buffer (headless)")?;
-            if let Some(timer) = self.gpu_timer.as_mut() {
-                timer.begin_frame_span(&device, cmd, 0);
-            }
+            self.telemetry.begin_frame_span(&device, cmd, 0);
 
             // Re-use the offscreen target extent as a stand-in.
             let extent = self
@@ -2768,7 +1801,7 @@ impl GraphRenderer {
                 .unwrap_or(extent);
 
         // 上一帧（同一帧槽位）的时间戳结果现在一定写好了（acquire 已等过栅栏）。
-        self.begin_gpu_timings(&device, frame as u32);
+        self.telemetry.begin_frame_timings(&device, frame as u32);
         // 同一张图像的深度回读缓冲也已经写完，可以映射。
         self.collect_occlusion_depth(image_index, render_extent);
 
@@ -2778,9 +1811,7 @@ impl GraphRenderer {
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { device.begin_command_buffer(cmd, &begin_info) }.context("begin command buffer")?;
-        if let Some(timer) = self.gpu_timer.as_mut() {
-            timer.begin_frame_span(&device, cmd, frame as u32);
-        }
+        self.telemetry.begin_frame_span(&device, cmd, frame as u32);
 
         Ok(Some(FrameCtx {
             device,
@@ -2795,30 +1826,18 @@ impl GraphRenderer {
         }))
     }
 
-    /// 读回该帧槽位上一轮的时间戳，并清空它给本帧用（#518）。
-    fn begin_gpu_timings(&mut self, device: &ash::Device, frame_index: u32) {
-        let Some(timer) = self.gpu_timer.as_mut() else {
-            return;
-        };
-        timer.begin_frame(device, frame_index);
-        self.gpu_timings = timer.timings(frame_index).clone();
-        if self.gpu_timings.supported {
-            self.gpu_history.push(self.gpu_timings.frame_or_total_ms());
-        }
-    }
-
     /// 最近一帧的 per-pass GPU 时间。
     ///
     /// `supported = false`（或 `passes` 为空）表示设备不支持时间戳，调用方应回退到
     /// CPU 墙钟（`frame_time_ms`）。结果比当前帧**晚一帧**：Vulkan 的时间戳只在
     /// 提交完成后才可读，延迟读回才不会 stall 管线。
     pub fn gpu_timings(&self) -> &crate::gpu_timer::GpuTimings {
-        &self.gpu_timings
+        self.telemetry.gpu_timings()
     }
 
     /// 最近 N 帧的 GPU 总时间（旧 → 新，#518 Phase 2 历史曲线）。
     pub fn gpu_history(&self) -> &crate::gpu_timer::GpuHistory {
-        &self.gpu_history
+        self.telemetry.gpu_history()
     }
 
     /// 本帧的 draw call 记录（#518 Phase 2 的数据层，不含回放）。
@@ -3004,6 +2023,14 @@ impl GraphRenderer {
 
         // 统一在 prepare 阶段收敛并批量执行暂存的 GPU 资产操作
         self.flush_staged_assets()?;
+
+        if input.render_mode == crate::render_graph::RenderMode::Raster && !self.ibl_has_pbr {
+            if let Some(bytes) = self.env_source.take() {
+                let res = self.rebuild_ibl_with_scope(Some(&bytes), crate::ibl::IblScope::Full);
+                self.env_source = Some(bytes);
+                res?;
+            }
+        }
 
         #[cfg(feature = "pathtrace")]
         if input.render_mode == crate::render_graph::RenderMode::PathTrace {
@@ -3373,11 +2400,11 @@ impl GraphRenderer {
             camera.view_proj
         } else {
             let mut vp = frame_data.viewProj;
-            vp[3][0] -= self.taa_jitter_ndc[0];
-            vp[3][1] -= self.taa_jitter_ndc[1];
+            vp[3][0] -= self.temporal.taa_jitter_ndc[0];
+            vp[3][1] -= self.temporal.taa_jitter_ndc[1];
             vp
         };
-        frame_data.prevViewProj = self.prev_camera_view_proj.unwrap_or(prev_vp);
+        frame_data.prevViewProj = self.temporal.prev_camera_view_proj.unwrap_or(prev_vp);
         let light_view_proj = *light_view_proj;
         let light_view_proj1 = *light_view_proj1;
         let shadow_split = *shadow_split;
@@ -3463,7 +2490,8 @@ impl GraphRenderer {
                 let prev_models: Vec<[[f32; 4]; 4]> = draw_items
                     .iter()
                     .map(|item| {
-                        self.prev_models
+                        self.temporal
+                            .prev_models
                             .get(&item.entity_id)
                             .copied()
                             .unwrap_or(item.model)
@@ -3513,7 +2541,7 @@ impl GraphRenderer {
                 view_proj_jitter: if self.graph.debug_control().freeze_temporal {
                     [0.0, 0.0]
                 } else {
-                    self.taa_jitter_ndc
+                    self.temporal.taa_jitter_ndc
                 },
                 lights,
                 ao_view,
@@ -3544,8 +2572,8 @@ impl GraphRenderer {
                 show_grid: *show_grid,
                 dispatch_plan: input.dispatch_plan,
             };
-            self.prev_camera_view_proj = Some(prev_vp);
-            self.prev_models = draw_items
+            self.temporal.prev_camera_view_proj = Some(prev_vp);
+            self.temporal.prev_models = draw_items
                 .iter()
                 .filter(|item| item.entity_id != u32::MAX)
                 .map(|item| (item.entity_id, item.model))
@@ -3732,7 +2760,7 @@ impl GraphRenderer {
 
             record = self
                 .graph
-                .execute_with_timer(&render_ctx, self.gpu_timer.as_mut())
+                .execute_with_timer(&render_ctx, self.telemetry.gpu_timer_mut())
                 .context("graph execute");
             // 深度拷贝确实记进命令缓冲区后，才把矩阵留给下一帧配对。
             if record.is_ok() && capture.is_some() {
@@ -3771,74 +2799,25 @@ impl GraphRenderer {
                 let bindless_set = self.texture_manager.bindless().set;
                 let bindless_layout = self.texture_manager.bindless().layout;
                 if let Some(sw) = self.swapchain.as_ref() {
-                    // The overlay render pass must use the swapchain's actual
-                    // color format; surfaces fall back to `available[0]`
-                    // (often `R8G8B8A8_*` on Android) when the preferred
-                    // `B8G8R8A8_SRGB` is unavailable.
-                    let color_format = sw.format.format;
-                    if self.ui_overlay.is_none() {
-                        let mut gpu = crate::ui_overlay::UiOverlay::with_color_format(
-                            &self.runtime.context,
-                            self.runtime.command_pool,
-                            color_format,
-                            bindless_layout,
-                        )
-                        .context("create ui overlay")?;
-                        apply_ui_fonts(&self.ui_fonts, &mut gpu);
-                        self.ui_overlay = Some(gpu);
-                    }
-                    if let Some(gpu) = self.ui_overlay.as_mut() {
-                        gpu.set_color_format(color_format)
-                            .context("ui overlay color format")?;
-                        // PostPass leaves the swapchain image in PRESENT; turn it
-                        // back into a color attachment for the UI load pass.
-                        let image = sw.images[image_index as usize];
-                        let barrier = vk::ImageMemoryBarrier::default()
-                            .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .image(image)
-                            .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                base_mip_level: 0,
-                                level_count: 1,
-                                base_array_layer: 0,
-                                layer_count: 1,
-                            })
-                            .src_access_mask(vk::AccessFlags::NONE)
-                            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                cmd,
-                                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[],
-                                std::slice::from_ref(&barrier),
-                            );
-                        }
-                        // #988：UI 使用与 PostPass 相同的目标矩形，跟随
-                        // `internal_resolution` 的整数倍缩放并留在黑边之内。
-                        let dest = crate::render_graph::post_destination(
-                            extent,
-                            render_extent,
-                            self.settings.internal_scale_mode,
-                        );
-                        record = gpu
-                            .record(
-                                &self.runtime.context,
-                                cmd,
-                                extent,
-                                dest,
-                                sw.views[image_index as usize],
-                                ui_overlay.unwrap(),
-                                bindless_set,
-                                ctx.frame_index,
-                            )
-                            .context("ui overlay record");
-                    }
+                    let dest = crate::render_graph::post_destination(
+                        extent,
+                        render_extent,
+                        self.settings.internal_scale_mode,
+                    );
+                    record = self.ui_host.record_ecs_ui_swapchain(
+                        &self.runtime.context,
+                        self.runtime.command_pool,
+                        cmd,
+                        sw.format.format,
+                        sw.images[image_index as usize],
+                        sw.views[image_index as usize],
+                        extent,
+                        dest,
+                        ui_overlay.unwrap(),
+                        bindless_layout,
+                        bindless_set,
+                        ctx.frame_index,
+                    );
                 } else if let Some((image, view, target_extent, color_format)) =
                     self.offscreen.as_ref().map(|target| {
                         (
@@ -3849,75 +2828,25 @@ impl GraphRenderer {
                         )
                     })
                 {
-                    // Headless / editor viewport: no swapchain, so the UI pass
-                    // must end in COLOR_ATTACHMENT_OPTIMAL and use its own
-                    // UiOverlay instance (different final layout).
-                    if self.ui_overlay_offscreen.is_none() {
-                        let mut gpu =
-                            crate::ui_overlay::UiOverlay::with_color_format_and_final_layout(
-                                &self.runtime.context,
-                                self.runtime.command_pool,
-                                color_format,
-                                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                                bindless_layout,
-                            )
-                            .context("create offscreen ui overlay")?;
-                        apply_ui_fonts(&self.ui_fonts, &mut gpu);
-                        self.ui_overlay_offscreen = Some(gpu);
-                    }
-                    if let Some(gpu) = self.ui_overlay_offscreen.as_mut() {
-                        gpu.set_color_format(color_format)
-                            .context("offscreen ui overlay color format")?;
-                        // The graph already leaves the target in
-                        // COLOR_ATTACHMENT_OPTIMAL; this barrier only makes
-                        // its color writes visible to the UI pass.
-                        let barrier = vk::ImageMemoryBarrier::default()
-                            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                            .image(image)
-                            .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                base_mip_level: 0,
-                                level_count: 1,
-                                base_array_layer: 0,
-                                layer_count: 1,
-                            })
-                            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                            .dst_access_mask(
-                                vk::AccessFlags::COLOR_ATTACHMENT_READ
-                                    | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                            );
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                cmd,
-                                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[],
-                                std::slice::from_ref(&barrier),
-                            );
-                        }
-                        // 离屏目标没有交换链缩放，UI 铺满整张图。
-                        let dest = vk::Rect2D {
-                            offset: vk::Offset2D { x: 0, y: 0 },
-                            extent: target_extent,
-                        };
-                        record = gpu
-                            .record(
-                                &self.runtime.context,
-                                cmd,
-                                target_extent,
-                                dest,
-                                view,
-                                ui_overlay.unwrap(),
-                                bindless_set,
-                                ctx.frame_index,
-                            )
-                            .context("offscreen ui overlay record");
-                    }
+                    // 离屏目标没有交换链缩放，UI 铺满整张图。
+                    let dest = vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: target_extent,
+                    };
+                    record = self.ui_host.record_ecs_ui_offscreen(
+                        &self.runtime.context,
+                        self.runtime.command_pool,
+                        cmd,
+                        color_format,
+                        image,
+                        view,
+                        target_extent,
+                        dest,
+                        ui_overlay.unwrap(),
+                        bindless_layout,
+                        bindless_set,
+                        ctx.frame_index,
+                    );
                 }
             }
         }
@@ -3928,61 +2857,50 @@ impl GraphRenderer {
         // 已是 PRESENT_SRC_KHR（graph 末尾 RtPreview 或 ECS UI 的 final
         // layout），叠加 render pass 期望 COLOR_ATTACHMENT_OPTIMAL 初始
         // 布局 → record 前显式转回。无叠加时无需任何转换。
-        if record.is_ok() {
-            let overlay_has_content = self
-                .external_overlay
-                .as_ref()
-                .is_some_and(|o| o.has_content());
-            if overlay_has_content {
-                if let Some(sw) = self.swapchain.as_ref() {
-                    let image = sw.images[image_index as usize];
-                    let barrier = vk::ImageMemoryBarrier::default()
-                        .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                        .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .image(image)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        })
-                        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-                    unsafe {
-                        device.cmd_pipeline_barrier(
-                            cmd,
-                            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
-                            std::slice::from_ref(&barrier),
-                        );
-                    }
+        if record.is_ok() && self.ui_host.has_external_overlay_content() {
+            if let Some(sw) = self.swapchain.as_ref() {
+                let image = sw.images[image_index as usize];
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                    .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                    .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+                unsafe {
+                    device.cmd_pipeline_barrier(
+                        cmd,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        std::slice::from_ref(&barrier),
+                    );
                 }
-                if let Some(sw) = self.swapchain.as_ref() {
-                    if let Some(overlay) = self.external_overlay.as_mut() {
-                        let oc = crate::external_overlay::OverlayRecordCtx {
-                            device,
-                            context: &self.runtime.context,
-                            command_pool: self.runtime.command_pool,
-                            graphics_queue: self.runtime.context.graphics_queue,
-                            cmd,
-                            swapchain_views: &sw.views,
-                            image_index,
-                            extent,
-                            color_format: self.color_format,
-                        };
-                        record = overlay.record(&oc).context("external overlay record");
-                    }
-                } else {
-                    record = Err(anyhow::anyhow!("external overlay: swapchain missing"));
-                }
+                let oc = crate::external_overlay::OverlayRecordCtx {
+                    device,
+                    context: &self.runtime.context,
+                    command_pool: self.runtime.command_pool,
+                    graphics_queue: self.runtime.context.graphics_queue,
+                    cmd,
+                    swapchain_views: &sw.views,
+                    image_index,
+                    extent,
+                    color_format: self.color_format,
+                };
+                record = self.ui_host.record_external_overlay(&oc);
+            } else {
+                record = Err(anyhow::anyhow!("external overlay: swapchain missing"));
             }
-            // 无叠加：image 已是 PRESENT_SRC_KHR，即展示布局，无需转换。
         }
 
         // --- 截图：交换链图像 → host-visible 缓冲区 ---
@@ -3990,51 +2908,29 @@ impl GraphRenderer {
         // 必须放在图像回到 PRESENT_SRC_KHR 之后、`end_command_buffer` 之前：
         // 拷贝本身需要 TRANSFER_SRC_OPTIMAL，记录完再转回展示布局。
         if record.is_ok() {
-            if let Some(request) = self.pending_screenshot.take() {
-                let capture = crate::screenshot::ScreenshotCapture::new(
-                    &self.runtime.context,
-                    extent,
-                    request,
-                );
-                match capture {
-                    Ok(capture) => {
-                        let (image, current_layout) = if let Some(ref sw) = self.swapchain {
-                            (
-                                sw.images.get(image_index as usize).copied(),
-                                vk::ImageLayout::PRESENT_SRC_KHR,
-                            )
-                        } else if let Some(ref offscreen) = self.offscreen {
-                            (
-                                Some(offscreen.image()),
-                                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                            )
-                        } else {
-                            (None, vk::ImageLayout::UNDEFINED)
-                        };
-                        match image {
-                            Some(image) => {
-                                match capture.record_copy(device, cmd, image, current_layout) {
-                                    Ok(()) => self.screenshot = Some(capture),
-                                    Err(err) => record = Err(err),
-                                }
-                            }
-                            None => {
-                                record = Err(anyhow::anyhow!(
-                                    "screenshot: no swapchain or offscreen target"
-                                ))
-                            }
-                        }
-                    }
-                    Err(err) => record = Err(err),
-                }
+            let target = if let Some(ref sw) = self.swapchain {
+                sw.images
+                    .get(image_index as usize)
+                    .copied()
+                    .map(|img| (img, vk::ImageLayout::PRESENT_SRC_KHR))
+            } else {
+                self.offscreen
+                    .as_ref()
+                    .map(|offscreen| (offscreen.image(), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL))
+            };
+            if let Err(err) = self.telemetry.record_screenshot_if_requested(
+                &self.runtime.context,
+                cmd,
+                extent,
+                target,
+            ) {
+                record = Err(err);
             }
         }
 
         // --- End command buffer (always attempted) ---
         if record.is_ok() {
-            if let Some(timer) = self.gpu_timer.as_mut() {
-                timer.end_frame_span(device, cmd, ctx.frame_index);
-            }
+            self.telemetry.end_frame(device, cmd, ctx.frame_index);
         }
         if let Err(end_err) = unsafe { device.end_command_buffer(cmd) } {
             if record.is_ok() {
@@ -4226,11 +3122,7 @@ impl GraphRenderer {
         size: Option<[u32; 2]>,
         scale: Option<f32>,
     ) {
-        self.pending_screenshot = Some(crate::screenshot::ScreenshotRequest {
-            path: path.into(),
-            size,
-            scale,
-        });
+        self.telemetry.request_screenshot(path.into(), size, scale);
     }
 
     /// Programmatically configure pass dump for automated tests or headless runs.
@@ -4266,22 +3158,8 @@ impl GraphRenderer {
         &mut self,
         ctx: &FrameCtx,
     ) -> anyhow::Result<Option<std::path::PathBuf>> {
-        let Some(capture) = self.screenshot.take() else {
-            return Ok(None);
-        };
-        if ctx.fence != vk::Fence::null() {
-            unsafe {
-                self.runtime
-                    .context
-                    .device
-                    .wait_for_fences(&[ctx.fence], true, u64::MAX)
-            }
-            .context("screenshot: wait for fence")?;
-        }
-        let result = capture.finish(&self.runtime.context, self.color_format);
-        let mut capture = capture;
-        unsafe { capture.destroy(&self.runtime.context.device) };
-        result.map(Some)
+        self.telemetry
+            .finish_screenshot(&self.runtime.context, ctx.fence, self.color_format)
     }
 
     pub fn destroy(&mut self) {
@@ -4289,15 +3167,8 @@ impl GraphRenderer {
         let device = &self.runtime.context.device;
         unsafe { device.device_wait_idle() }.ok();
 
-        if let Some(mut capture) = self.screenshot.take() {
-            unsafe { capture.destroy(device) };
-        }
-
+        self.telemetry.destroy(device);
         self.graph.discard_pass_dump(device);
-
-        if let Some(timer) = self.gpu_timer.as_mut() {
-            timer.destroy(device);
-        }
 
         // Destroy IBL resources (env/irradiance/prefiltered cubes, BRDF LUT).
         // 共享的 set2 描述符 布局 由 GraphRenderer 持有，此处单独销毁
@@ -4331,9 +3202,7 @@ impl GraphRenderer {
         if let Some(gtao) = self.graph.pass_mut::<crate::gtao::GtaoPass>() {
             gtao.destroy(device);
         }
-        #[cfg(not(feature = "gtao"))]
-        self.dummy_ao.destroy(device);
-        self.dummy_gi.destroy(device);
+        self.placeholders.destroy(device);
 
         // Destroy PostPass (framebuffers, render pass, pipeline, descriptor
         // set, sampler).
@@ -4381,14 +3250,9 @@ impl GraphRenderer {
         {
             shadow.destroy(device);
         }
-        // `shadows` 关闭时没有 ShadowMapPass，销毁 1×1 dummy 深度图。
-        #[cfg(not(feature = "shadows"))]
-        self.dummy_shadow.destroy(device);
 
         // 销毁外部叠加层（render pass/framebuffers/渲染器）。
-        if let Some(overlay) = self.external_overlay.as_mut() {
-            overlay.destroy();
-        }
+        self.ui_host.destroy();
 
         // Destroy shadow sampler.
         unsafe { device.destroy_sampler(self.shadow_sampler, None) };
@@ -4414,24 +3278,6 @@ impl GraphRenderer {
             self.headless_fence = vk::Fence::null();
         }
     }
-}
-
-/// One Halton sequence value in `[0, 1)` (#883).
-fn halton(mut index: u64, base: u64) -> f32 {
-    let mut result = 0.0;
-    let mut factor = 1.0;
-    while index > 0 {
-        factor /= base as f32;
-        result += factor * (index % base) as f32;
-        index /= base;
-    }
-    result
-}
-
-/// Subpixel TAA jitter in pixels, centred around zero.
-fn taa_jitter(frame: u64) -> [f32; 2] {
-    // Halton(2,3), shifted by -0.5 so the sequence covers [-0.5, 0.5).
-    [halton(frame + 1, 2) - 0.5, halton(frame + 1, 3) - 0.5]
 }
 
 // 安全性 UI 状态已移出渲染线程（主线程持有），

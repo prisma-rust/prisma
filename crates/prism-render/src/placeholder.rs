@@ -418,3 +418,59 @@ fn one_shot(
     }
     result
 }
+
+/// Groups the 1×1 fallback images required by `ForwardPass` when optional
+/// passes (`shadows`, `gtao`, or ReSTIR GI) are inactive or disabled.
+pub(crate) struct ForwardPlaceholders {
+    #[cfg(not(feature = "shadows"))]
+    shadow: SolidImage,
+    #[cfg(not(feature = "gtao"))]
+    ao: SolidImage,
+    gi: SolidImage,
+}
+
+impl ForwardPlaceholders {
+    pub(crate) fn new(
+        context: &VulkanContext,
+        command_pool: vk::CommandPool,
+        queue: vk::Queue,
+    ) -> anyhow::Result<Self> {
+        #[cfg(not(feature = "shadows"))]
+        let shadow = shadow_map_dummy(context, command_pool, queue)
+            .context("create 1x1 dummy shadow map")?;
+        #[cfg(not(feature = "gtao"))]
+        let ao =
+            ao_texture_dummy(context, command_pool, queue).context("create 1x1 dummy AO map")?;
+        let gi =
+            gi_texture_dummy(context, command_pool, queue).context("create 1x1 dummy GI map")?;
+        Ok(Self {
+            #[cfg(not(feature = "shadows"))]
+            shadow,
+            #[cfg(not(feature = "gtao"))]
+            ao,
+            gi,
+        })
+    }
+
+    #[cfg(not(feature = "shadows"))]
+    pub(crate) fn shadow_view(&self) -> vk::ImageView {
+        self.shadow.view()
+    }
+
+    #[cfg(not(feature = "gtao"))]
+    pub(crate) fn ao_view(&self) -> vk::ImageView {
+        self.ao.view()
+    }
+
+    pub(crate) fn gi_view(&self) -> vk::ImageView {
+        self.gi.view()
+    }
+
+    pub(crate) fn destroy(&mut self, device: &ash::Device) {
+        #[cfg(not(feature = "shadows"))]
+        self.shadow.destroy(device);
+        #[cfg(not(feature = "gtao"))]
+        self.ao.destroy(device);
+        self.gi.destroy(device);
+    }
+}
