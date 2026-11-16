@@ -13,8 +13,8 @@ use crate::buffer::create_buffer;
 use crate::compute::ComputePipeline;
 use crate::context::VulkanContext;
 use crate::render_graph::{
-    GiMode, GraphResources, PassInfo, PassKind, RenderContext, RenderGraphBuilder, RenderMode,
-    RenderPassNode, RenderSettings, ResourceType, ResourceUsage, SHARC_ACCUMULATION_H,
+    GraphResources, PassInfo, PassKind, PtGiMode, RasterGiMode, RenderContext, RenderGraphBuilder,
+    RenderMode, RenderPassNode, RenderSettings, ResourceType, ResourceUsage, SHARC_ACCUMULATION_H,
     SHARC_HASH_ENTRIES_H, SHARC_RESOLVED_H,
 };
 
@@ -319,11 +319,11 @@ impl SharcResolvePass {
 /// The cache has two consumers: the path tracer (trains it, then queries it)
 /// and the raster ReSTIR GI pass (terminates its bounces in it). Neither exists
 /// in the other mode, so the resolve has to run under exactly this predicate.
-pub fn sharc_active(gi_mode: GiMode, render_mode: RenderMode) -> bool {
-    match gi_mode {
-        GiMode::Sharc => render_mode == RenderMode::PathTrace,
-        GiMode::Restir => render_mode == RenderMode::Raster,
-        _ => false,
+pub fn sharc_active(pt_gi: PtGiMode, raster_gi: RasterGiMode, render_mode: RenderMode) -> bool {
+    match render_mode {
+        RenderMode::PathTrace => pt_gi == PtGiMode::Sharc,
+        RenderMode::Raster => raster_gi == RasterGiMode::Restir,
+        RenderMode::Sprites2D => false,
     }
 }
 
@@ -445,8 +445,11 @@ impl RenderPassNode for SharcResolveNode {
         // The resolve only runs where the cache is actually in use: path-traced
         // SHaRC, or the raster ReSTIR GI variant that terminates its bounces in
         // the same cache.
-        if !sharc_active(ctx.settings.gi_mode, ctx.frame.render_mode)
-            || !ctx.settings.sharc_enable_resolve
+        if !sharc_active(
+            ctx.settings.pt_gi,
+            ctx.settings.raster_gi,
+            ctx.frame.render_mode,
+        ) || !ctx.settings.sharc_enable_resolve
         {
             return Ok(());
         }

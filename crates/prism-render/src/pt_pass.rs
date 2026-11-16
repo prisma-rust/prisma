@@ -27,7 +27,7 @@ use crate::context::VulkanContext;
 use crate::descriptor::{PtAnalyticLight, ReSTIRReservoir, PT_LIGHT_MAX};
 use crate::math::mat_inverse;
 use crate::render_graph::{
-    GiMode, GraphResources, PassInfo, PassKind, RenderContext, RenderGraphBuilder, RenderMode,
+    GraphResources, PassInfo, PassKind, PtGiMode, RenderContext, RenderGraphBuilder, RenderMode,
     RenderPassNode, RenderSettings, ResourceType, ResourceUsage, PT_COLOR_H, PT_DEPTH_H,
     PT_NORMAL_ROUGHNESS_H, PT_VELOCITY_H, SHARC_ACCUMULATION_H, SHARC_HASH_ENTRIES_H,
     SHARC_RESOLVED_H,
@@ -721,9 +721,11 @@ impl PtInner {
         ibl_layout: vk::DescriptorSetLayout,
     ) {
         self.ibl_set = ibl_set;
-        self.ibl_layout = ibl_layout;
-        // Force pipeline rebuild to pick up the 3-set layout.
-        self.pipeline = None;
+        if self.ibl_layout != ibl_layout {
+            self.ibl_layout = ibl_layout;
+            // Force pipeline rebuild only when the set 2 layout actually changed.
+            self.pipeline = None;
+        }
     }
 
     /// Build (or rebuild) the emissive triangle SSBO from actual geometry +
@@ -1512,7 +1514,7 @@ impl PtInner {
                 // Deposits belong to the training dispatch, so the consumer
                 // only reads the cache.
                 let query = self.sharc_hash_entries.is_some()
-                    && ctx.settings.gi_mode == crate::render_graph::GiMode::Sharc;
+                    && ctx.settings.pt_gi == crate::render_graph::PtGiMode::Sharc;
                 pack_sharc_flags(query, false, ctx.settings.sharc_downscale_factor)
             },
             sharc_roughness_threshold: ctx.settings.sharc_roughness_threshold,
@@ -2129,7 +2131,7 @@ impl RenderPassNode for SharcTrainPass {
         // Only the SHaRC configuration trains the cache; the ReSTIR GI variant
         // runs in raster mode and deposits into the cache itself while tracing
         // its secondary rays.
-        if ctx.settings.gi_mode != GiMode::Sharc || ctx.frame.render_mode != RenderMode::PathTrace {
+        if ctx.settings.pt_gi != PtGiMode::Sharc || ctx.frame.render_mode != RenderMode::PathTrace {
             return Ok(());
         }
         // Resolve is the only stage that normalises the accumulation counters

@@ -176,16 +176,6 @@ pub fn render_thread_main(
             return;
         }
     };
-    // 运行期缓存根由宿主解析一次后注入：渲染层不认识 target/ 布局，
-    // 也不允许自己按 cwd 拼路径。解析失败（拿不到可执行文件目录）时
-    // 保持默认 disabled，只是每次重算 IBL 卷积。
-    match prism_engine::cache_paths::cache_dir(prism_engine::cache_paths::CacheKind::Ibl) {
-        Some(dir) => {
-            log::info!("IBL cache root: {}", dir.display());
-            renderer.set_ibl_cache(prism_render::ibl::IblCacheDir::new(dir));
-        }
-        None => log::warn!("IBL cache: executable directory unavailable; disk cache disabled"),
-    }
     if let Some(prt_path) = prism_engine::asset_paths::asset_path("gi/prt_volume.prtbin") {
         if prt_path.is_file() {
             renderer.load_prt_volume_file(&prt_path);
@@ -560,7 +550,8 @@ fn render_one_frame(
     {
         let renderer_settings = renderer.settings_mut();
         renderer_settings.auto_exposure = settings.auto_exposure;
-        renderer_settings.gi_mode = settings.gi_mode;
+        renderer_settings.raster_gi = settings.raster_gi;
+        renderer_settings.pt_gi = settings.pt_gi;
         renderer_settings.prt_leak_bias = settings.prt_leak_bias;
         renderer_settings.sharc_capacity = settings.sharc_capacity;
         renderer_settings.sharc_scene_scale = settings.sharc_scene_scale;

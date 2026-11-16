@@ -27,7 +27,7 @@ use log::info;
 use prism_app::FrameHook;
 use prism_app::{RenderShared, RenderStats};
 use prism_engine::ecs::{Entity, World};
-use prism_engine::render_settings::{DlssMode, GiMode, RenderMode, RenderSettings};
+use prism_engine::render_settings::{DlssMode, PtGiMode, RasterGiMode, RenderMode, RenderSettings};
 use prism_platform::{Key, PlatformEvent, PlatformWindow};
 use prism_scene::ui::{
     Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
@@ -52,7 +52,8 @@ pub struct SponzaTuningHook {
     // Parameters matching RTXGI Pathtracer UI
     pub render_mode: RenderMode,
     pub auto_exposure: bool,
-    pub gi_mode: GiMode,
+    pub raster_gi: RasterGiMode,
+    pub pt_gi: PtGiMode,
     pub bounces: u32,
     pub ray_max_distance: f32,
     pub tonemap_mode: u32,
@@ -79,10 +80,23 @@ pub struct SponzaTuningHook {
 
 impl Default for SponzaTuningHook {
     fn default() -> Self {
-        let (render_mode, gi_mode) = match std::env::var("SPONZA_RENDER_MODE") {
-            Ok(mode) if mode.eq_ignore_ascii_case("raster") => (RenderMode::Raster, GiMode::Off),
-            Ok(mode) if mode.eq_ignore_ascii_case("pt_off") => (RenderMode::PathTrace, GiMode::Off),
-            _ => (RenderMode::PathTrace, GiMode::Sharc),
+        let (render_mode, raster_gi, pt_gi) = match std::env::var("SPONZA_RENDER_MODE") {
+            Ok(mode) if mode.eq_ignore_ascii_case("raster") => {
+                (RenderMode::Raster, RasterGiMode::BakedProbe, PtGiMode::Off)
+            }
+            Ok(mode) if mode.eq_ignore_ascii_case("prt") => {
+                (RenderMode::Raster, RasterGiMode::Prt, PtGiMode::Off)
+            }
+            Ok(mode) if mode.eq_ignore_ascii_case("pt_off") => (
+                RenderMode::PathTrace,
+                RasterGiMode::BakedProbe,
+                PtGiMode::Off,
+            ),
+            _ => (
+                RenderMode::PathTrace,
+                RasterGiMode::BakedProbe,
+                PtGiMode::Sharc,
+            ),
         };
 
         let auto_exposure = std::env::var("SPONZA_AUTO_EXPOSURE")
@@ -104,7 +118,8 @@ impl Default for SponzaTuningHook {
             selected_index: 0,
             render_mode,
             auto_exposure,
-            gi_mode,
+            raster_gi,
+            pt_gi,
             bounces: 4,
             ray_max_distance: 1000.0,
             tonemap_mode,
@@ -138,11 +153,10 @@ impl SponzaTuningHook {
             _ => RenderMode::PathTrace,
         };
         if self.render_mode == RenderMode::Raster {
-            self.gi_mode = GiMode::Off;
             self.auto_exposure = false;
             self.tonemap_mode = 2;
         } else {
-            self.gi_mode = GiMode::Sharc;
+            self.pt_gi = PtGiMode::Sharc;
             self.auto_exposure = true;
             self.tonemap_mode = 1;
         }
@@ -153,44 +167,55 @@ impl SponzaTuningHook {
         match self.selected_index {
             0 => self.cycle_render_mode(),
             1 => {
-                // GI Mode: Off -> Sharc -> Restir -> Nrc -> Off
-                self.gi_mode = match self.gi_mode {
-                    GiMode::Off => {
-                        if increase {
-                            GiMode::Sharc
-                        } else {
-                            GiMode::Nrc
+                if self.render_mode == RenderMode::Raster {
+                    self.raster_gi = match self.raster_gi {
+                        RasterGiMode::BakedProbe => {
+                            if increase {
+                                RasterGiMode::Restir
+                            } else {
+                                RasterGiMode::Prt
+                            }
                         }
-                    }
-                    GiMode::Sharc => {
-                        if increase {
-                            GiMode::Restir
-                        } else {
-                            GiMode::Off
+                        RasterGiMode::Restir => {
+                            if increase {
+                                RasterGiMode::Prt
+                            } else {
+                                RasterGiMode::BakedProbe
+                            }
                         }
-                    }
-                    GiMode::Restir => {
-                        if increase {
-                            GiMode::Nrc
-                        } else {
-                            GiMode::Sharc
+                        RasterGiMode::Prt => {
+                            if increase {
+                                RasterGiMode::BakedProbe
+                            } else {
+                                RasterGiMode::Restir
+                            }
                         }
-                    }
-                    GiMode::Nrc => {
-                        if increase {
-                            GiMode::Off
-                        } else {
-                            GiMode::Restir
-                        }
-                    }
-                };
-                // Path-traced GI modes live in path tracing; ReSTIR GI is the
-                // raster-path technique, so it flips the mode the other way.
-                self.render_mode = if self.gi_mode == GiMode::Restir {
-                    RenderMode::Raster
+                    };
                 } else {
-                    RenderMode::PathTrace
-                };
+                    self.pt_gi = match self.pt_gi {
+                        PtGiMode::Off => {
+                            if increase {
+                                PtGiMode::Sharc
+                            } else {
+                                PtGiMode::Nrc
+                            }
+                        }
+                        PtGiMode::Sharc => {
+                            if increase {
+                                PtGiMode::Nrc
+                            } else {
+                                PtGiMode::Off
+                            }
+                        }
+                        PtGiMode::Nrc => {
+                            if increase {
+                                PtGiMode::Off
+                            } else {
+                                PtGiMode::Sharc
+                            }
+                        }
+                    };
+                }
                 self.request_reset = true;
             }
             2 => {
@@ -390,23 +415,31 @@ impl SponzaTuningHook {
             // GI 模式是 Sponza 的招牌操作，面板收着也要能用（和顶部状态栏写的
             // 「[1] Ref [2] SHaRC [3] NRC」一致）。
             Key::Digit1 => {
-                self.gi_mode = GiMode::Off;
+                self.pt_gi = PtGiMode::Off;
+                self.render_mode = RenderMode::PathTrace;
                 self.request_reset = true;
                 return KeyRoute::Consume;
             }
             Key::Digit2 => {
-                self.gi_mode = GiMode::Sharc;
+                self.pt_gi = PtGiMode::Sharc;
+                self.render_mode = RenderMode::PathTrace;
                 self.request_reset = true;
                 return KeyRoute::Consume;
             }
             Key::Digit3 => {
-                self.gi_mode = GiMode::Nrc;
+                self.pt_gi = PtGiMode::Nrc;
+                self.render_mode = RenderMode::PathTrace;
                 self.request_reset = true;
                 return KeyRoute::Consume;
             }
-            // ReSTIR GI is a raster-path mode, so the key also leaves PT.
             Key::Digit4 => {
-                self.gi_mode = GiMode::Restir;
+                self.raster_gi = RasterGiMode::Restir;
+                self.render_mode = RenderMode::Raster;
+                self.request_reset = true;
+                return KeyRoute::Consume;
+            }
+            Key::Digit5 => {
+                self.raster_gi = RasterGiMode::Prt;
                 self.render_mode = RenderMode::Raster;
                 self.request_reset = true;
                 return KeyRoute::Consume;
@@ -518,7 +551,8 @@ impl FrameHook for SponzaTuningHook {
         // Sync runtime settings to engine
         settings.render_mode = self.render_mode;
         settings.auto_exposure = self.auto_exposure;
-        settings.gi_mode = self.gi_mode;
+        settings.raster_gi = self.raster_gi;
+        settings.pt_gi = self.pt_gi;
         settings.pt_max_bounces = self.bounces;
         settings.pt_ray_max_distance = self.ray_max_distance;
         settings.tonemap_mode = self.tonemap_mode;
@@ -683,11 +717,18 @@ impl FrameHook for SponzaTuningHook {
                     }
                 };
 
-                let gi_str = match self.gi_mode {
-                    GiMode::Off => "Reference (PT)",
-                    GiMode::Sharc => "SHaRC (PT cache)",
-                    GiMode::Restir => "ReSTIR GI (raster)",
-                    GiMode::Nrc => "NRC (Neural)",
+                let gi_str = match self.render_mode {
+                    RenderMode::Raster => match self.raster_gi {
+                        RasterGiMode::BakedProbe => "Baked Probe (raster)",
+                        RasterGiMode::Restir => "ReSTIR GI (raster)",
+                        RasterGiMode::Prt => "PRT64 (raster)",
+                    },
+                    RenderMode::PathTrace => match self.pt_gi {
+                        PtGiMode::Off => "Reference (PT)",
+                        PtGiMode::Sharc => "SHaRC (PT cache)",
+                        PtGiMode::Nrc => "NRC (Neural)",
+                    },
+                    RenderMode::Sprites2D => "Off (2D)",
                 };
 
                 let tonemap_str = match self.tonemap_mode {
@@ -795,11 +836,18 @@ impl FrameHook for SponzaTuningHook {
             if let Some(stext) = self.status_text_entity {
                 world.set_active(stext, true);
 
-                let gi_short = match self.gi_mode {
-                    GiMode::Off => "Reference",
-                    GiMode::Sharc => "SHaRC",
-                    GiMode::Restir => "ReSTIR",
-                    GiMode::Nrc => "NRC",
+                let gi_short = match self.render_mode {
+                    RenderMode::Raster => match self.raster_gi {
+                        RasterGiMode::BakedProbe => "BakedProbe",
+                        RasterGiMode::Restir => "ReSTIR",
+                        RasterGiMode::Prt => "PRT64",
+                    },
+                    RenderMode::PathTrace => match self.pt_gi {
+                        PtGiMode::Off => "Reference",
+                        PtGiMode::Sharc => "SHaRC",
+                        PtGiMode::Nrc => "NRC",
+                    },
+                    RenderMode::Sprites2D => "Off",
                 };
                 let mode_short = match self.render_mode {
                     RenderMode::PathTrace => "PT",

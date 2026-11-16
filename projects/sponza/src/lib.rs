@@ -11,7 +11,7 @@ pub use tuning_ui::SponzaTuningHook;
 
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
-    use prism_engine::render_settings::{GiMode, RenderMode, RenderSettings};
+    use prism_engine::render_settings::{PtGiMode, RasterGiMode, RenderMode, RenderSettings};
 
     prism_app::app()
         // 以前**不注册任何子系统**，`App` 认为渲染关着 → 直接走 headless 分支：
@@ -22,20 +22,20 @@ pub fn build_app() -> prism_app::App {
             if let Ok(mode) = std::env::var("SPONZA_RENDER_MODE") {
                 if mode.eq_ignore_ascii_case("raster") {
                     settings.render_mode = RenderMode::Raster;
-                    settings.gi_mode = GiMode::Off;
+                    settings.raster_gi = RasterGiMode::BakedProbe;
                     // Disable tonemap curve compression in raster mode: passthrough to exposure only.
                     settings.tonemap_mode = 2;
                     auto_exposure = false;
                 } else if mode.eq_ignore_ascii_case("pt_off") {
                     settings.render_mode = RenderMode::PathTrace;
-                    settings.gi_mode = GiMode::Off;
+                    settings.raster_gi = RasterGiMode::BakedProbe;
                 } else {
                     settings.render_mode = RenderMode::PathTrace;
-                    settings.gi_mode = GiMode::Sharc;
+                    settings.pt_gi = PtGiMode::Sharc;
                 }
             } else {
                 settings.render_mode = RenderMode::PathTrace;
-                settings.gi_mode = GiMode::Sharc;
+                settings.pt_gi = PtGiMode::Sharc;
             }
             if let Ok(tm) = std::env::var("SPONZA_TONEMAP_MODE") {
                 if let Ok(val) = tm.parse::<u32>() {

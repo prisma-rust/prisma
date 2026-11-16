@@ -287,24 +287,28 @@ pub enum ShadowMode {
     Auto,
 }
 
-/// Global Illumination technique selection.
+/// Global Illumination technique for the rasterized PBR pipeline (`RenderMode::Raster`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum GiMode {
+pub enum RasterGiMode {
+    /// Static baked order-2 SH probe volume (or IBL cubemap fallback).
+    #[default]
+    BakedProbe,
+    /// Screen-space ReSTIR GI on the raster path (`RestirGiPass`, requires `VK_KHR_ray_query`).
+    Restir,
+    /// Order-7 PRT64 + 64-way spatial tree (`PrtPass`).
+    Prt,
+}
+
+/// Radiance cache / GI technique for the path-tracing pipeline (`RenderMode::PathTrace`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PtGiMode {
     /// Pure path-traced reference (no radiance cache).
     #[default]
     Off,
     /// NVIDIA RTXGI SHARC (Spatially Hashed Radiance Cache).
     Sharc,
-    /// Screen-space ReSTIR GI on the raster path: trace secondary rays from
-    /// the G-buffer, reuse reservoirs in space and time, and terminate the
-    /// bounce in the SHARC cache when it is available. Independent of the path
-    /// tracer; needs the `restir_gi` feature plus `VK_KHR_ray_query`, and
-    /// falls back to `Off` when the device cannot trace rays.
-    Restir,
     /// NVIDIA Neural Radiance Cache.
     Nrc,
-    /// Order-7 Precomputed Radiance Transfer with 64-way spatial tree (`PrtPass`).
-    Prt,
 }
 
 /// DLSS upscaling mode.
@@ -335,8 +339,11 @@ pub struct RenderSettings {
     /// Setting to 1.0 disables half-resolution (user wants full quality).
     pub ray_query_resolution_scale: f32,
 
-    /// Global Illumination technique mode (Off / SHARC / ReSTIR / NRC / PRT).
-    pub gi_mode: GiMode,
+    /// GI technique for `RenderMode::Raster` (BakedProbe / ReSTIR / PRT).
+    pub raster_gi: RasterGiMode,
+
+    /// Radiance cache / GI technique for `RenderMode::PathTrace` (Off / SHARC / NRC).
+    pub pt_gi: PtGiMode,
 
     /// PRT64 trilinear weight bias to suppress thin-wall light bleeding (default 0.05).
     pub prt_leak_bias: f32,
@@ -451,7 +458,8 @@ impl Default for RenderSettings {
             gbuffer_high_precision: true,
             ray_tracing_enabled: false,
             ray_query_resolution_scale: 0.5,
-            gi_mode: GiMode::Off,
+            raster_gi: RasterGiMode::BakedProbe,
+            pt_gi: PtGiMode::Off,
             prt_leak_bias: crate::prt_runtime::DEFAULT_LEAK_BIAS,
             #[cfg(feature = "sharc")]
             sharc_capacity: crate::sharc::DEFAULT_SHARC_CAPACITY,

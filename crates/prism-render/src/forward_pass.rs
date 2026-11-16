@@ -2568,7 +2568,8 @@ impl RenderPassNode for ForwardPass {
                     &[],
                 );
                 // Set 5: probe volume GI (PRT64 dynamic volume if active, else SceneScope).
-                let set5 = if ctx.settings.gi_mode == crate::render_graph::GiMode::Prt
+                let set5 = if ctx.frame.render_mode == crate::render_graph::RenderMode::Raster
+                    && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
                     && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
                 {
                     ctx.frame.prt_gi_descriptor_set
@@ -2692,11 +2693,18 @@ impl RenderPassNode for ForwardPass {
                             splat_slot3: item.splat_slots[3],
                             splat_tiling: item.splat_tiling,
                             // 0 = baked probe volume / IBL, 1 = ReSTIR GI, 2 = PRT64.
-                            gi_mode: if ctx.settings.gi_mode == crate::render_graph::GiMode::Prt
+                            gi_mode: if ctx.frame.render_mode
+                                == crate::render_graph::RenderMode::Raster
+                                && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
                                 && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
                             {
                                 2
-                            } else if ctx.frame.gi_view != vk::ImageView::null() {
+                            } else if ctx.frame.render_mode
+                                == crate::render_graph::RenderMode::Raster
+                                && ctx.settings.raster_gi
+                                    == crate::render_graph::RasterGiMode::Restir
+                                && ctx.frame.gi_view != vk::ImageView::null()
+                            {
                                 1
                             } else {
                                 0

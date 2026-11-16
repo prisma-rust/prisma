@@ -27,11 +27,10 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
-    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
     match env {
-        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), cache, layout),
+        Some(bytes) => IblResources::new(context, command_pool, queue, Some(bytes), layout),
         None => IblResources::new_empty(context, command_pool, queue, layout),
     }
 }
@@ -42,12 +41,22 @@ fn make_ibl(
     command_pool: ash::vk::CommandPool,
     queue: ash::vk::Queue,
     env: Option<Vec<u8>>,
-    cache: &crate::ibl::IblCacheDir,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
-    // 无 IBL 构建：忽略环境贴图与缓存根，始终用中性立方体。
-    let _ = (env, cache);
+    // 无 IBL 构建：忽略环境贴图，始终用中性立方体。
+    let _ = env;
     IblResources::new_empty(context, command_pool, queue, layout)
+}
+
+fn env_bytes_fingerprint(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 use crate::managers::{
     AssetTextureHandle, MaterialHandle, MaterialUploadInput, MeshHandle, MeshUploadInput,
@@ -289,10 +298,10 @@ pub struct GraphRenderer {
     // 描述符 集合 handle stored in `forward_pass`. Explicitly destroyed
     // in `destroy()` so the device handle is valid during cleanup.
     ibl: IblResources,
-    /// Absolute root of the IBL disk cache, injected by the host. Defaults to
-    /// disabled: without a host-resolved directory there is no correct place to
-    /// write convolution output, so nothing is cached on disk.
-    ibl_cache: crate::ibl::IblCacheDir,
+    /// Fingerprint of the active environment payload (`Some(None)` = empty IBL),
+    /// used to skip redundant `device_wait_idle` + IBL rebuilds when switching
+    /// between scenes that share the same environment map.
+    env_fingerprint: Option<Option<u64>>,
     /// Scene-level GI probe volume resources (set 5). Survives swapchain
     /// recreation; only rebuilt on scene/level change.
     scene_scope: SceneScope,
@@ -813,7 +822,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
-            ibl_cache: crate::ibl::IblCacheDir::disabled(),
+            env_fingerprint: Some(None),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -1086,14 +1095,12 @@ impl GraphRenderer {
 
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout (headless)")?;
-        // 构造期还没有宿主注入的缓存根：显式 disabled，真实缓存由
-        // `set_ibl_cache` + `set_environment` 建立。
+        let initial_env_fp = env_bytes.as_deref().map(env_bytes_fingerprint);
         let ibl = make_ibl(
             context.clone(),
             runtime.command_pool,
             context.graphics_queue,
             env_bytes,
-            &crate::ibl::IblCacheDir::disabled(),
             ibl_ds_layout,
         )
         .context("create IBL resources (headless)")?;
@@ -1339,7 +1346,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
-            ibl_cache: crate::ibl::IblCacheDir::disabled(),
+            env_fingerprint: Some(initial_env_fp),
             scene_scope,
             brdf_bindless_slot: brdf_handle.0,
             graph,
@@ -1753,16 +1760,7 @@ impl GraphRenderer {
         self.ibl.descriptor_set_layout
     }
 
-    /// Point the IBL disk cache at `cache`.
-    ///
-    /// The root is resolved once by the host (typically from the executable
-    /// directory) and injected here; the renderer never derives it itself.
-    /// Takes effect on the next [`Self::set_environment`] call.
-    pub fn set_ibl_cache(&mut self, cache: crate::ibl::IblCacheDir) {
-        self.ibl_cache = cache;
-    }
-
-    /// 按场景重建 IBL。`env_bytes = Some(hdr)` 跑完整 CPU 预卷积；
+    /// 按场景重建 IBL。`env_bytes = Some(data)` 接收离线烘焙的 `PIBL` 或原始 `.hdr`；
     /// `None` 重建为廉价中性空 IBL（与 `new_empty` 等价）。用于在「场景切换」
     /// 时按需构建/移除光照，而不在引擎启动期无条件加载 3D IBL/GI。
     ///
@@ -1770,6 +1768,11 @@ impl GraphRenderer {
     /// 仅替换 descriptor set 句柄与 BRDF LUT（覆盖同一 bindless 槽），
     /// forward pass / skybox 管线 布局 无需重建。
     pub fn set_environment(&mut self, env_bytes: Option<Vec<u8>>) -> anyhow::Result<()> {
+        let fp = env_bytes.as_deref().map(env_bytes_fingerprint);
+        if self.env_fingerprint == Some(fp) {
+            return Ok(());
+        }
+
         // The previous IBL (and its BRDF LUT view) may still be sampled by
         // frames that are in flight. Finish them before overwriting the
         // bindless slot or destroying the old images/samplers; otherwise the
@@ -1785,7 +1788,6 @@ impl GraphRenderer {
             self.runtime.command_pool,
             self.runtime.context.graphics_queue,
             env_bytes,
-            &self.ibl_cache,
             self.ibl.descriptor_set_layout,
         )
         .context("rebuild IBL resources for scene")?;
@@ -1807,6 +1809,7 @@ impl GraphRenderer {
         // 销毁旧 IBL（不销毁共享 布局）后接管新的。
         self.ibl.destroy();
         self.ibl = new_ibl;
+        self.env_fingerprint = Some(fp);
         // 天空/IBL 是辐射缓存训练时的入射光来源；换了环境，旧体素里的辐射
         // 就不再属于这个场景（repair spec §8）。
         #[cfg(feature = "sharc")]
@@ -2984,7 +2987,7 @@ impl GraphRenderer {
         // of the acceleration structures from the same draw list.
         #[cfg(feature = "restir_gi")]
         if input.render_mode == crate::render_graph::RenderMode::Raster
-            && self.settings.gi_mode == crate::render_graph::GiMode::Restir
+            && self.settings.raster_gi == crate::render_graph::RasterGiMode::Restir
         {
             let needs_geom = self
                 .graph
@@ -3524,7 +3527,11 @@ impl GraphRenderer {
             // (`SharcTrainPass` / `SharcResolveNode`); what stays here is the
             // cache ownership: allocation, invalidation and the clear.
             #[cfg(feature = "sharc")]
-            if crate::sharc::sharc_active(self.settings.gi_mode, *render_mode) {
+            if crate::sharc::sharc_active(
+                self.settings.pt_gi,
+                self.settings.raster_gi,
+                *render_mode,
+            ) {
                 // The hash map is sized when it is allocated, so a capacity
                 // change has to rebuild the buffers. Voxel keys are meaningless
                 // across a resize, so the rebuilt cache starts cleared.
@@ -3649,7 +3656,7 @@ impl GraphRenderer {
             // 缺哪个 feature（DESIGN §12.3 规则 3：关掉要可诊断，不要静默降级）。
             // 这个分支每帧都会走到，所以只报一次。
             #[cfg(all(feature = "pathtrace", not(feature = "sharc")))]
-            if crate::render_graph::GiMode::Sharc == self.settings.gi_mode {
+            if crate::render_graph::PtGiMode::Sharc == self.settings.pt_gi {
                 static SHARC_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
                 SHARC_MISSING_WARNED.call_once(|| {
                     log::warn!(

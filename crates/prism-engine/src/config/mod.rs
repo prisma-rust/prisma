@@ -108,8 +108,10 @@ pub struct RenderConfig {
     pub internal_resolution: Option<String>,
     /// 放大方式：`"stretch"`（默认，铺满窗口）或 `"integer"`（整数倍 + 黑边）。
     pub internal_scale_mode: Option<String>,
-    /// Global Illumination mode (`"off"`, `"sharc"`, `"restir"`, `"nrc"`, `"prt"`).
-    pub gi_mode: Option<String>,
+    /// GI technique for `RenderMode::Raster` (`"baked_probe"`, `"restir"`, `"prt"`).
+    pub raster_gi: Option<String>,
+    /// Radiance cache / GI technique for `RenderMode::PathTrace` (`"off"`, `"sharc"`, `"nrc"`).
+    pub pt_gi: Option<String>,
     /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
     pub prt_leak_bias: Option<f32>,
 }
@@ -128,16 +130,27 @@ impl RenderConfig {
                 }
             };
         }
-        if let Some(mode) = &self.gi_mode {
-            settings.gi_mode = match mode.trim().to_ascii_lowercase().as_str() {
-                "off" | "none" => crate::render_settings::GiMode::Off,
-                "sharc" => crate::render_settings::GiMode::Sharc,
-                "restir" | "restir_gi" => crate::render_settings::GiMode::Restir,
-                "nrc" => crate::render_settings::GiMode::Nrc,
-                "prt" | "prt64" => crate::render_settings::GiMode::Prt,
+        if let Some(mode) = &self.raster_gi {
+            settings.raster_gi = match mode.trim().to_ascii_lowercase().as_str() {
+                "baked_probe" | "baked" | "probe" | "off" | "none" => {
+                    crate::render_settings::RasterGiMode::BakedProbe
+                }
+                "restir" | "restir_gi" => crate::render_settings::RasterGiMode::Restir,
+                "prt" | "prt64" => crate::render_settings::RasterGiMode::Prt,
                 other => {
-                    log::warn!("settings: unknown gi_mode '{other}'; using off");
-                    crate::render_settings::GiMode::Off
+                    log::warn!("settings: unknown raster_gi '{other}'; using baked_probe");
+                    crate::render_settings::RasterGiMode::BakedProbe
+                }
+            };
+        }
+        if let Some(mode) = &self.pt_gi {
+            settings.pt_gi = match mode.trim().to_ascii_lowercase().as_str() {
+                "off" | "none" => crate::render_settings::PtGiMode::Off,
+                "sharc" => crate::render_settings::PtGiMode::Sharc,
+                "nrc" => crate::render_settings::PtGiMode::Nrc,
+                other => {
+                    log::warn!("settings: unknown pt_gi '{other}'; using off");
+                    crate::render_settings::PtGiMode::Off
                 }
             };
         }
@@ -328,7 +341,8 @@ impl RenderConfig {
             pt_max_iterations: ini.get_u32("render", "pt_max_iterations"),
             internal_resolution: ini.get("render", "internal_resolution").map(str::to_string),
             internal_scale_mode: ini.get("render", "internal_scale_mode").map(str::to_string),
-            gi_mode: ini.get("render", "gi_mode").map(str::to_string),
+            raster_gi: ini.get("render", "raster_gi").map(str::to_string),
+            pt_gi: ini.get("render", "pt_gi").map(str::to_string),
             prt_leak_bias: ini.get_f32("render", "prt_leak_bias"),
         }
     }
@@ -580,7 +594,8 @@ const KNOWN_KEYS: &[(&str, &[&str])] = &[
             "pt_max_iterations",
             "internal_resolution",
             "internal_scale_mode",
-            "gi_mode",
+            "raster_gi",
+            "pt_gi",
             "prt_leak_bias",
         ],
     ),

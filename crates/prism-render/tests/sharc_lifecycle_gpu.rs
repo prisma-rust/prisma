@@ -12,7 +12,7 @@
 //!
 //! 没有 Vulkan 设备或没有 ray query 时按现有 GPU 测试的约定跳过。
 
-use prism_render::render_graph::{DrawItem, DrawState, GiMode, PostGrade, RenderMode};
+use prism_render::render_graph::{DrawItem, DrawState, PostGrade, PtGiMode, RenderMode};
 use prism_render::{DirtyDispatchPlan, FrameInput, FrameUBOData, GraphRenderer};
 
 const SIZE: usize = 128;
@@ -25,7 +25,7 @@ fn try_create() -> Option<GraphRenderer> {
                 return None;
             }
             // 小容量 + 默认场景尺度：缓存够跑，显存占用可控。
-            renderer.settings_mut().gi_mode = GiMode::Sharc;
+            renderer.settings_mut().pt_gi = PtGiMode::Sharc;
             renderer.settings_mut().sharc_capacity = 1 << 14;
             renderer.settings_mut().sharc_scene_scale = 50.0;
             Some(renderer)

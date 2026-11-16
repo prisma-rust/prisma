@@ -14,7 +14,7 @@ mod golden_support;
 
 use golden_support::format_version;
 use prism_render::managers::{MaterialUploadInput, MeshUploadInput};
-use prism_render::render_graph::{GiMode, PostGrade, RenderMode};
+use prism_render::render_graph::{PostGrade, PtGiMode, RasterGiMode, RenderMode};
 use prism_render::{DrawItem, DrawState, FrameUBOData, GraphRenderer};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -265,7 +265,8 @@ fn test_sponza_pipeline_debug_passes() {
     // Pass 1: Empty Scene (Clear to Dark Slate Blue)
     // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::Raster;
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().raster_gi = RasterGiMode::BakedProbe;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer
         .render(
             &[],
@@ -601,7 +602,8 @@ fn test_sponza_pipeline_debug_passes() {
     println!("Path Tracing TLAS/BLAS built successfully!");
 
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().raster_gi = RasterGiMode::BakedProbe;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer.settings_mut().pt_max_bounces = 3;
 
     for iter in 0..16 {
@@ -647,7 +649,7 @@ fn test_sponza_pipeline_debug_passes() {
     // Pass 9: Sponza Path Tracing with RTXGI SHARC (32 iterations)
     // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
-    renderer.settings_mut().gi_mode = GiMode::Sharc;
+    renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().pt_max_bounces = 4;
     renderer.settings_mut().sharc_enable_clear = true;
     renderer.settings_mut().sharc_enable_update = true;

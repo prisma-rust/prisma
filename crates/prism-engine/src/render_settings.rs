@@ -4,7 +4,7 @@
 //! into a single struct so [`render_system`] has a clean, extensible parameter
 //! instead of a growing list of scalar arguments.
 
-pub use prism_render::{DlssMode, GiMode, InternalScaleMode, RenderMode};
+pub use prism_render::{DlssMode, InternalScaleMode, PtGiMode, RasterGiMode, RenderMode};
 
 /// Debug flag names, ordered by shader bit (`PBR_FLAG_*` in
 /// `scene_frag.slang`). Bit `i` corresponds to `PBR_FLAG_NAMES[i]`.
@@ -96,8 +96,10 @@ pub struct RenderSettings {
     pub pt_ray_max_distance: f32,
     /// Maximum iterations (samples per pixel). 0 = accumulate forever.
     pub pt_max_iterations: u32,
-    /// Global Illumination technique mode (Off, Sharc, Restir, Nrc, Prt).
-    pub gi_mode: GiMode,
+    /// GI technique for `RenderMode::Raster` (BakedProbe, Restir, Prt).
+    pub raster_gi: RasterGiMode,
+    /// Radiance cache / GI technique for `RenderMode::PathTrace` (Off, Sharc, Nrc).
+    pub pt_gi: PtGiMode,
     /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
     pub prt_leak_bias: f32,
     /// SHaRC: Hash-map capacity (number of voxel slots). Changing it
@@ -284,7 +286,8 @@ impl Default for RenderSettings {
             pt_max_bounces: 3,
             pt_ray_max_distance: 1000.0,
             pt_max_iterations: 0,
-            gi_mode: GiMode::Off,
+            raster_gi: RasterGiMode::BakedProbe,
+            pt_gi: PtGiMode::Off,
             prt_leak_bias: prism_render::prt_runtime::DEFAULT_LEAK_BIAS,
             sharc_capacity: 1 << 20,
             sharc_scene_scale: 50.0,

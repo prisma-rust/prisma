@@ -17,8 +17,8 @@ use crate::context::VulkanContext;
 use crate::prt_runtime::{eval_sh64, PrtStreamingManager};
 use crate::prt_volume::{f32_to_f16, PrtVolume, SH_COEFF_COUNT};
 use crate::render_graph::{
-    GiMode, GraphResources, PassInfo, PassKind, RenderContext, RenderGraphBuilder, RenderPassNode,
-    RenderSettings, ResourceType, PRT_GI_VOLUME_H,
+    GraphResources, PassInfo, PassKind, RasterGiMode, RenderContext, RenderGraphBuilder,
+    RenderMode, RenderPassNode, RenderSettings, ResourceType, PRT_GI_VOLUME_H,
 };
 use crate::shader::load_shader_module;
 use crate::shader_bindings::prt as bindings;
@@ -922,7 +922,9 @@ impl RenderPassNode for PrtPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, _resources: &mut GraphResources) -> Result<()> {
-        if ctx.settings.gi_mode != GiMode::Prt {
+        if ctx.frame.render_mode != RenderMode::Raster
+            || ctx.settings.raster_gi != RasterGiMode::Prt
+        {
             return Ok(());
         }
 

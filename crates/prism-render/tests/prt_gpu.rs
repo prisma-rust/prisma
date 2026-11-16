@@ -3,7 +3,7 @@
 //! Skips gracefully when no Vulkan device is present.
 
 use prism_render::prt_volume::{PrtNode, PrtVolume, NO_CHILD, NO_LEAF, SH_COEFF_COUNT};
-use prism_render::render_graph::{GiMode, PostGrade, RenderMode};
+use prism_render::render_graph::{PostGrade, RasterGiMode, RenderMode};
 use prism_render::{FrameInput, FrameUBOData, GpuLight, GraphRenderer};
 
 const SIZE: usize = 128;
@@ -11,7 +11,7 @@ const SIZE: usize = 128;
 fn try_create() -> Option<GraphRenderer> {
     match GraphRenderer::offscreen_new(SIZE as u32, SIZE as u32, None) {
         Ok(mut renderer) => {
-            renderer.settings_mut().gi_mode = GiMode::Prt;
+            renderer.settings_mut().raster_gi = RasterGiMode::Prt;
             renderer.settings_mut().prt_leak_bias = 0.05;
             Some(renderer)
         }
