@@ -713,6 +713,7 @@ impl GraphRenderer {
         // `RenderSettings::taa` is false.
         let taa_pass =
             crate::taa::TaaPass::new(&context, swapchain.extent).context("TaaPass::new")?;
+        #[cfg(feature = "anf")]
         let anf_pass = crate::anf::AnfPass::new(&context, swapchain.extent, swapchain.extent)
             .context("AnfPass::new")?;
 
@@ -776,6 +777,7 @@ impl GraphRenderer {
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
+        #[cfg(feature = "anf")]
         graph.add_pass(Box::new(anf_pass));
         // ReSTIR GI reads the forward G-buffer this frame and publishes the
         // signal the forward pass samples on the next one.
@@ -798,6 +800,7 @@ impl GraphRenderer {
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
+        #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         // The temporal resolve runs after the path tracer so it can consume the
         // traced image and its guides in path-trace mode (#883 follow-up). In the
@@ -932,11 +935,17 @@ impl GraphRenderer {
         vk::ImageView::null()
     }
 
+    #[cfg(feature = "prt")]
     fn prt_gi_descriptor_set(&mut self, frame: u32) -> vk::DescriptorSet {
         self.graph
             .pass_ref::<crate::prt_pass::PrtPass>()
             .and_then(|p| p.gi_volume_descriptor_set(frame))
             .unwrap_or_else(vk::DescriptorSet::null)
+    }
+
+    #[cfg(not(feature = "prt"))]
+    fn prt_gi_descriptor_set(&mut self, _frame: u32) -> vk::DescriptorSet {
+        vk::DescriptorSet::null()
     }
 
     /// 离屏渲染目标的尺寸（无窗口宿主模式）；有交换链时返回 `None`。
@@ -1267,6 +1276,7 @@ impl GraphRenderer {
 
         let taa_pass = crate::taa::TaaPass::new(&context, offscreen.extent())
             .context("TaaPass::new (headless)")?;
+        #[cfg(feature = "anf")]
         let anf_pass = crate::anf::AnfPass::new(&context, offscreen.extent(), offscreen.extent())
             .context("AnfPass::new (headless)")?;
 
@@ -1300,6 +1310,7 @@ impl GraphRenderer {
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
+        #[cfg(feature = "anf")]
         graph.add_pass(Box::new(anf_pass));
         #[cfg(feature = "restir_gi")]
         if let Some(pass) = restir_gi_pass {
@@ -1318,6 +1329,7 @@ impl GraphRenderer {
             graph.add_pass(Box::new(pt));
         }
         // Same ordering as the windowed path: resolve after the tracer.
+        #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(auto_exposure));
@@ -2188,6 +2200,7 @@ impl GraphRenderer {
     }
 
     /// Load a decoded PRT64 `.prtbin` volume into `PrtPass`.
+    #[cfg(feature = "prt")]
     pub fn load_prt_volume(&mut self, volume: crate::prt_volume::PrtVolume) -> bool {
         if let Some(pass) = self.graph.pass_mut::<crate::prt_pass::PrtPass>() {
             pass.load_volume(volume);
@@ -2197,7 +2210,14 @@ impl GraphRenderer {
         }
     }
 
+    /// No-op when compiled without the `prt` feature.
+    #[cfg(not(feature = "prt"))]
+    pub fn load_prt_volume(&mut self, _volume: crate::prt_volume::PrtVolume) -> bool {
+        false
+    }
+
     /// Load a PRT64 `.prtbin` file from disk into `PrtPass`.
+    #[cfg(feature = "prt")]
     pub fn load_prt_volume_file(&mut self, path: &std::path::Path) -> bool {
         match crate::prt_volume::PrtVolume::load(path) {
             Ok(vol) => self.load_prt_volume(vol),
@@ -2206,6 +2226,12 @@ impl GraphRenderer {
                 false
             }
         }
+    }
+
+    /// No-op when compiled without the `prt` feature.
+    #[cfg(not(feature = "prt"))]
+    pub fn load_prt_volume_file(&mut self, _path: &std::path::Path) -> bool {
+        false
     }
 
     /// 设置内部渲染分辨率（#613）：`[0, 0]` = 按窗口分辨率渲染。
@@ -2498,10 +2524,15 @@ impl GraphRenderer {
                     log::warn!("TaaPass recreate_target failed: {e:#}");
                 }
             }
-            let render_extent = self.render_extent();
-            if let Some(anf) = self.graph.pass_mut::<crate::anf::AnfPass>() {
-                if let Err(e) = anf.recreate_target(&self.runtime.context, render_extent, extent) {
-                    log::warn!("AnfPass recreate_target failed: {e:#}");
+            #[cfg(feature = "anf")]
+            {
+                let render_extent = self.render_extent();
+                if let Some(anf) = self.graph.pass_mut::<crate::anf::AnfPass>() {
+                    if let Err(e) =
+                        anf.recreate_target(&self.runtime.context, render_extent, extent)
+                    {
+                        log::warn!("AnfPass recreate_target failed: {e:#}");
+                    }
                 }
             }
             // CRT 调度器的 RenderTextures 跟随 swapchain 尺寸（演示 RT 全屏）。
@@ -2603,10 +2634,13 @@ impl GraphRenderer {
                 log::warn!("TaaPass recreate_target failed (offscreen resize): {e:#}");
             }
         }
-        let render_extent = self.render_extent();
-        if let Some(anf) = self.graph.pass_mut::<crate::anf::AnfPass>() {
-            if let Err(e) = anf.recreate_target(&context, render_extent, extent) {
-                log::warn!("AnfPass recreate_target failed (offscreen resize): {e:#}");
+        #[cfg(feature = "anf")]
+        {
+            let render_extent = self.render_extent();
+            if let Some(anf) = self.graph.pass_mut::<crate::anf::AnfPass>() {
+                if let Err(e) = anf.recreate_target(&context, render_extent, extent) {
+                    log::warn!("AnfPass recreate_target failed (offscreen resize): {e:#}");
+                }
             }
         }
         if let Some(sched) = self

@@ -32,8 +32,9 @@
 )]
 
 pub mod acceleration_structure;
+#[cfg(feature = "anf")]
 pub mod anf;
-#[cfg(test)]
+#[cfg(all(test, feature = "anf"))]
 mod anf_tests;
 /// 主线程(CPU) ↔ 渲染线程(GPU) 资产解析请求/结果桥接类型。
 pub mod asset_bridge;
@@ -83,6 +84,7 @@ pub mod post;
 pub mod primitives;
 pub mod probe_loader;
 /// PRT64 cluster volume (`.prtbin`): order-7 SH transport vectors, 64-way tree.
+#[cfg(feature = "prt")]
 pub mod prt_pass;
 pub mod prt_runtime;
 pub mod prt_volume;
@@ -138,6 +140,7 @@ pub(crate) mod vulkan_compat;
 // SceneDrawItem is the engine<->renderer exchange type for resolved draws.
 pub use graph_renderer::SceneDrawItem;
 
+#[cfg(feature = "anf")]
 pub use anf::{is_qualcomm_adreno, AnfCaps, AnfPass};
 pub use buffer::create_buffer;
 pub use capabilities::RayTracingCaps;

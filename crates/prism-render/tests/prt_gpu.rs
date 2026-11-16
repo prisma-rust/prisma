@@ -1,4 +1,5 @@
-//! End-to-end GPU test for `PrtPass` (`GiMode::Prt`) on a real Vulkan device.
+#![cfg(feature = "prt")]
+//! End-to-end GPU test for `PrtPass` (`RasterGiMode::Prt`) on a real Vulkan device.
 //!
 //! Skips gracefully when no Vulkan device is present.
 
