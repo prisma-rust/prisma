@@ -1310,7 +1310,6 @@ impl GraphRenderer {
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
-        graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         // Same ordering as the windowed path: resolve after the tracer.
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         graph.add_pass(Box::new(taa_pass));
