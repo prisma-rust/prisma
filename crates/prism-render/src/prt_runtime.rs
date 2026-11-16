@@ -242,7 +242,14 @@ impl PrtStreamingManager {
     }
 
     pub fn step_frame(&mut self) -> PrtStreamingStats {
+        self.step_frame_deltas().0
+    }
+
+    /// Advance one frame of streaming, returning `(stats, uploaded_leaves, evicted_leaves)`.
+    pub fn step_frame_deltas(&mut self) -> (PrtStreamingStats, Vec<usize>, Vec<usize>) {
         let cluster_bytes = crate::prt_volume::CLUSTER_SIZE;
+        let mut uploaded_leaves = Vec::new();
+        let mut evicted_leaves = Vec::new();
         let mut uploaded = 0usize;
         while uploaded < self.max_uploads_per_frame {
             let Some(leaf_idx) = self.pending_uploads.pop_front() else {
@@ -260,6 +267,7 @@ impl PrtStreamingManager {
                     self.stats.resident_leaves -= 1;
                     self.stats.resident_bytes -= cluster_bytes;
                     self.stats.evictions += 1;
+                    evicted_leaves.push(evict_idx);
                 }
             }
             if self.stats.resident_bytes + cluster_bytes <= self.memory_budget_bytes {
@@ -268,10 +276,11 @@ impl PrtStreamingManager {
                 self.stats.resident_leaves += 1;
                 self.stats.resident_bytes += cluster_bytes;
                 self.stats.uploads += 1;
+                uploaded_leaves.push(leaf_idx);
             }
             uploaded += 1;
         }
-        self.stats
+        (self.stats, uploaded_leaves, evicted_leaves)
     }
 
     pub fn is_resident(&self, leaf_idx: usize) -> bool {

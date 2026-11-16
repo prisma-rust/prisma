@@ -147,3 +147,111 @@ fn prt_pass_executes_with_dynamic_lights_on_gpu() {
         renderer.end_frame(&ctx, out_of_date).expect("end_frame");
     }
 }
+
+#[test]
+fn prt_16_dynamic_lights_and_overflow_abort_on_gpu() {
+    let Some(mut renderer) = try_create() else {
+        return;
+    };
+    assert!(renderer.load_prt_volume(sample_prt_volume()));
+
+    let mut view_proj = [[0.0f32; 4]; 4];
+    for (i, row) in view_proj.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+
+    let ubo = FrameUBOData {
+        viewProj: view_proj,
+        cameraPosition: [0.0, 1.0, 4.0, 1.0],
+        lightDirection: [0.0, 1.0, 0.0, 0.0],
+        lightColor: [1.0, 0.95, 0.9, 0.2],
+        view: view_proj,
+        lightViewProj: view_proj,
+        tonemapMode: 2,
+        viewportW: SIZE as f32,
+        viewportH: SIZE as f32,
+        exposure: 1.0,
+        shadowStrength: 1.0,
+        lightViewProj1: view_proj,
+        shadowSplit: 15.0,
+        shadowCascadeCount: 1,
+        prevViewProj: view_proj,
+        ..Default::default()
+    };
+
+    let lights_16: Vec<GpuLight> = (0..16)
+        .map(|i| GpuLight {
+            position: [(i as f32) * 0.5 - 4.0, 2.0, 0.0, 12.0],
+            color: [1.0, 0.7, 0.4, 1.5],
+            direction: [0.0, -1.0, 0.0, 0.0],
+            params: [0.0; 4],
+        })
+        .collect();
+
+    let lights_65: Vec<GpuLight> = (0..65)
+        .map(|i| GpuLight {
+            position: [(i as f32) * 0.1, 2.0, 0.0, 12.0],
+            color: [1.0, 0.7, 0.4, 1.0],
+            direction: [0.0, -1.0, 0.0, 0.0],
+            params: [0.0; 4],
+        })
+        .collect();
+
+    for (frame_idx, lights) in [
+        lights_16.as_slice(),
+        lights_16.as_slice(),
+        lights_65.as_slice(),
+        lights_16.as_slice(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ctx = renderer.begin_frame().expect("begin_frame").expect("frame");
+        let input = FrameInput {
+            draw_items: &[],
+            gizmos: &[],
+            sprite_items: &[],
+            sprite_lights: &[],
+            particle_items: &[],
+            bone_matrices: &[],
+            skybox: None,
+            frame_data: &ubo,
+            cameras: &[],
+            light_view_proj: view_proj,
+            light_view_proj1: view_proj,
+            shadow_split: 15.0,
+            shadow_cascade_count: 1,
+            inv_projection: view_proj,
+            debug_flags: 0xFFFF,
+            wireframe: false,
+            shaded_wireframe: false,
+            tonemap_mode: 2,
+            aa_mode: 0,
+            debug_rt: 0,
+            grade: PostGrade::default(),
+            lut_path: None,
+            proj22: view_proj[2][2],
+            proj32: view_proj[3][2],
+            lights,
+            render_mode: RenderMode::Raster,
+            pt_max_bounces: 3,
+            pt_ray_max_distance: 100.0,
+            pt_max_iterations: 0,
+            exposure: 1.0,
+            pt_lights: &[],
+            pt_accum_dirty: false,
+            has_camera: true,
+            camera_orthographic: false,
+            clear_color: [0.1, 0.1, 0.1, 1.0],
+            shadows_enabled: false,
+            ui_overlay: None,
+            show_grid: false,
+            dispatch_plan: None,
+        };
+        renderer.prepare(&ctx, &input).expect("prepare");
+        renderer.execute(&ctx, &input).expect("execute");
+        let out_of_date = renderer.present(&ctx).expect("present");
+        renderer.end_frame(&ctx, out_of_date).expect("end_frame");
+        let _ = frame_idx;
+    }
+}

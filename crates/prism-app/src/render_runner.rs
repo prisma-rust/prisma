@@ -186,6 +186,11 @@ pub fn render_thread_main(
         }
         None => log::warn!("IBL cache: executable directory unavailable; disk cache disabled"),
     }
+    if let Some(prt_path) = prism_engine::asset_paths::asset_path("gi/prt_volume.prtbin") {
+        if prt_path.is_file() {
+            renderer.load_prt_volume_file(&prt_path);
+        }
+    }
 
     shared.mark("renderer_built");
     log::info!("Render thread: renderer built");

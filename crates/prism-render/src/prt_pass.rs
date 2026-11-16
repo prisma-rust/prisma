@@ -64,13 +64,22 @@ impl BufferAlloc {
     }
 
     fn write_bytes(&self, device: &ash::Device, data: &[u8]) -> Result<()> {
+        self.write_bytes_at(device, 0, data)
+    }
+
+    fn write_bytes_at(
+        &self,
+        device: &ash::Device,
+        offset: vk::DeviceSize,
+        data: &[u8],
+    ) -> Result<()> {
         if data.is_empty() {
             return Ok(());
         }
         unsafe {
             let ptr = device.map_memory(
                 self.memory,
-                0,
+                offset,
                 data.len() as vk::DeviceSize,
                 vk::MemoryMapFlags::empty(),
             )?;
@@ -798,6 +807,8 @@ pub struct PrtPass {
     gpu: Option<GpuState>,
     pending_volume: Option<PrtVolume>,
     streaming: Option<PrtStreamingManager>,
+    cpu_clusters: Vec<[u32; 96]>,
+    cpu_valid: Vec<u32>,
     has_written_once: bool,
 }
 
@@ -808,6 +819,8 @@ impl PrtPass {
             gpu: None,
             pending_volume: None,
             streaming: None,
+            cpu_clusters: Vec::new(),
+            cpu_valid: Vec::new(),
             has_written_once: false,
         }
     }
@@ -815,6 +828,27 @@ impl PrtPass {
     /// Stage a decoded `PrtVolume` for GPU upload on the next frame.
     pub fn load_volume(&mut self, volume: PrtVolume) {
         let leaf_count = volume.clusters.len();
+        self.cpu_clusters = volume
+            .clusters
+            .iter()
+            .map(|cluster| {
+                let mut halves = [0u16; SH_COEFF_COUNT * 3];
+                for (c, rgb) in cluster.iter().enumerate() {
+                    halves[c * 3] = f32_to_f16(rgb[0]);
+                    halves[c * 3 + 1] = f32_to_f16(rgb[1]);
+                    halves[c * 3 + 2] = f32_to_f16(rgb[2]);
+                }
+                let mut words = [0u32; 96];
+                for (dst, pair) in words.iter_mut().zip(halves.as_chunks::<2>().0) {
+                    *dst = (pair[0] as u32) | ((pair[1] as u32) << 16);
+                }
+                words
+            })
+            .collect();
+        self.cpu_valid = match &volume.cluster_valid {
+            Some(v) => v.iter().map(|&b| u32::from(b)).collect(),
+            None => vec![1u32; leaf_count],
+        };
         self.streaming = Some(PrtStreamingManager::new(
             leaf_count,
             DEFAULT_STREAMING_BUDGET_BYTES,
@@ -903,6 +937,37 @@ impl RenderPassNode for PrtPass {
 
         if gpu.leaf_count == 0 {
             return Ok(());
+        }
+
+        // Stream newly resident / evicted cluster slices within the frame budget
+        // (zero mid-frame vkFreeMemory; pre-allocated cluster buffer).
+        if let Some(mgr) = &mut self.streaming {
+            let (_stats, uploaded, evicted) = mgr.step_frame_deltas();
+            if let (Some(cbuf), Some(vbuf)) = (&gpu.clusters_buf, &gpu.valid_buf) {
+                for leaf_idx in evicted {
+                    let zero = 0u32;
+                    vbuf.write_bytes_at(
+                        ctx.device,
+                        (leaf_idx * 4) as vk::DeviceSize,
+                        bytemuck::bytes_of(&zero),
+                    )?;
+                }
+                for leaf_idx in uploaded {
+                    if let Some(words) = self.cpu_clusters.get(leaf_idx) {
+                        cbuf.write_bytes_at(
+                            ctx.device,
+                            (leaf_idx * 384) as vk::DeviceSize,
+                            bytemuck::cast_slice(words),
+                        )?;
+                    }
+                    let valid = self.cpu_valid.get(leaf_idx).copied().unwrap_or(1);
+                    vbuf.write_bytes_at(
+                        ctx.device,
+                        (leaf_idx * 4) as vk::DeviceSize,
+                        bytemuck::bytes_of(&valid),
+                    )?;
+                }
+            }
         }
 
         // Check overflow flag from previous frame (explicit error on >64 lights).
@@ -1086,9 +1151,6 @@ impl RenderPassNode for PrtPass {
             );
         }
 
-        if let Some(mgr) = &mut self.streaming {
-            mgr.step_frame();
-        }
         self.has_written_once = true;
         Ok(())
     }

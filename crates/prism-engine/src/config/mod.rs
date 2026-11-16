@@ -108,6 +108,10 @@ pub struct RenderConfig {
     pub internal_resolution: Option<String>,
     /// 放大方式：`"stretch"`（默认，铺满窗口）或 `"integer"`（整数倍 + 黑边）。
     pub internal_scale_mode: Option<String>,
+    /// Global Illumination mode (`"off"`, `"sharc"`, `"restir"`, `"nrc"`, `"prt"`).
+    pub gi_mode: Option<String>,
+    /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
+    pub prt_leak_bias: Option<f32>,
 }
 
 impl RenderConfig {
@@ -123,6 +127,22 @@ impl RenderConfig {
                     RenderMode::Raster
                 }
             };
+        }
+        if let Some(mode) = &self.gi_mode {
+            settings.gi_mode = match mode.trim().to_ascii_lowercase().as_str() {
+                "off" | "none" => crate::render_settings::GiMode::Off,
+                "sharc" => crate::render_settings::GiMode::Sharc,
+                "restir" | "restir_gi" => crate::render_settings::GiMode::Restir,
+                "nrc" => crate::render_settings::GiMode::Nrc,
+                "prt" | "prt64" => crate::render_settings::GiMode::Prt,
+                other => {
+                    log::warn!("settings: unknown gi_mode '{other}'; using off");
+                    crate::render_settings::GiMode::Off
+                }
+            };
+        }
+        if let Some(bias) = self.prt_leak_bias {
+            settings.prt_leak_bias = bias;
         }
         if let Some(flags) = self.debug_flags {
             settings.debug_flags = flags;
@@ -308,6 +328,8 @@ impl RenderConfig {
             pt_max_iterations: ini.get_u32("render", "pt_max_iterations"),
             internal_resolution: ini.get("render", "internal_resolution").map(str::to_string),
             internal_scale_mode: ini.get("render", "internal_scale_mode").map(str::to_string),
+            gi_mode: ini.get("render", "gi_mode").map(str::to_string),
+            prt_leak_bias: ini.get_f32("render", "prt_leak_bias"),
         }
     }
 }
@@ -558,6 +580,8 @@ const KNOWN_KEYS: &[(&str, &[&str])] = &[
             "pt_max_iterations",
             "internal_resolution",
             "internal_scale_mode",
+            "gi_mode",
+            "prt_leak_bias",
         ],
     ),
 ];
