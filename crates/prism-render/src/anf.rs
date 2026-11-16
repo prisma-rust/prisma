@@ -25,12 +25,8 @@ pub fn is_qualcomm_adreno(properties: &vk::PhysicalDeviceProperties) -> bool {
     if properties.vendor_id == QUALCOMM_VENDOR_ID {
         return true;
     }
-    let name_bytes = properties
-        .device_name
-        .iter()
-        .map(|&c| c as u8)
-        .collect::<Vec<_>>();
-    let name_str = std::ffi::CStr::from_bytes_until_nul(&name_bytes)
+    let name_str = properties
+        .device_name_as_c_str()
         .ok()
         .and_then(|s| s.to_str().ok())
         .unwrap_or("");
