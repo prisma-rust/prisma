@@ -96,6 +96,7 @@ docs/
   │
   ├── android-apk.md                      # [L4 平台运维] Android 纯游戏独立 APK 构建与打包
   ├── android-arm64.md                    # [L4 平台运维] aarch64 宿主机构建 Android 工具链替换
+  ├── android-chroot-turnip-gpu.md        # [L4 平台运维] 番外篇：Android chroot 容器直通 Adreno GPU（Turnip + KGSL）
   ├── build-guide-termux.md               # [L4 平台运维] Termux / Android 原生终端编译指南
   ├── slang-bindless-migration.md         # [L4 平台运维] Slang 着色器工具链与 Bindless 资源维护
   │
