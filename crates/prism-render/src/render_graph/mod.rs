@@ -102,6 +102,10 @@ pub const FINAL_COLOR_H: ResourceHandle = ResourceHandle(1017);
 /// PRT64 resolved order-2 SH GI volume (64^3 * 9 layers, RGBA32F), written by
 /// `PrtPass` and sampled by `ForwardPass` next frame (1-frame latency).
 pub const PRT_GI_VOLUME_H: ResourceHandle = ResourceHandle(1018);
+/// HDR color composite produced by `VoxelDdaPass` when voxel chunks are active (R16G16B16A16_SFLOAT).
+pub const VOXEL_COLOR_H: ResourceHandle = ResourceHandle(1019);
+/// Linearized NDC depth composite produced by `VoxelDdaPass` (R32_SFLOAT).
+pub const VOXEL_DEPTH_H: ResourceHandle = ResourceHandle(1020);
 
 impl ResourceHandle {
     pub const INVALID: ResourceHandle = ResourceHandle(u32::MAX);
@@ -216,6 +220,8 @@ pub enum PassKind {
     SharcTrain,
     /// SHaRC accumulation resolve (`SharcResolveNode`).
     SharcResolve,
+    /// Three-tier sparse voxel compute DDA raymarcher (`VoxelDdaPass`).
+    Voxel,
     /// Unrecognized pass future / experimental).
     #[default]
     Unknown,

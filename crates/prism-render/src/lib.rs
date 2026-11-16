@@ -135,6 +135,7 @@ pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
 pub mod ui_overlay;
+pub mod voxel_dda_pass;
 pub(crate) mod vulkan_compat;
 
 // SceneDrawItem is the engine<->renderer exchange type for resolved draws.
@@ -197,3 +198,6 @@ pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
 pub use ui_overlay::UiOverlay;
 pub use ui_overlay::UiOverlayInput;
+pub use voxel_dda_pass::{
+    VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload,
+};

@@ -531,6 +531,11 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
     // ── 音频（作者态；解码与混音在宿主层 `prism-app::scene_audio`）──
     registry.register_reflect_serde::<AudioSource>("prism_engine::scene::AudioSource");
     registry.register_reflect_serde::<Terrain>("prism_engine::scene::Terrain");
+    registry.register_reflect_type::<crate::voxel::VoxelBrick>();
+    registry.register_reflect_serde::<crate::voxel::VoxelChunk>("prism_engine::scene::VoxelChunk");
+    registry.register_reflect_serde::<crate::voxel::VoxelCursorHighlight>(
+        "prism_engine::scene::VoxelCursorHighlight",
+    );
     registry.register_reflect_serde::<PostProcessVolume>("prism_engine::scene::PostProcessVolume");
     // `Animator.layers` 是嵌套结构体；先登记类型，RSCN / 编辑器 schema 才能解析。
     registry.register_reflect_type::<AnimLayer>();

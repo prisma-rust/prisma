@@ -455,7 +455,12 @@ impl RenderPassNode for AutoExposurePass {
         // Declare every candidate HDR input so the graph inserts the barrier
         // into SHADER_READ_ONLY_OPTIMAL whichever one `execute` meters. The
         // same three handles `PostPass` reads, so the layouts are cache hits.
-        for handle in [FORWARD_COLOR_H, PT_COLOR_H, TAA_COLOR_H] {
+        for handle in [
+            FORWARD_COLOR_H,
+            crate::render_graph::VOXEL_COLOR_H,
+            PT_COLOR_H,
+            TAA_COLOR_H,
+        ] {
             graph.read_usage(ResourceUsage {
                 handle,
                 access: vk::AccessFlags::SHADER_READ,
@@ -505,6 +510,16 @@ impl RenderPassNode for AutoExposurePass {
         };
         let (handle, layout) = if taa_view.is_some() {
             (TAA_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        } else if !is_pt
+            && ctx.frame.debug_rt == 0
+            && resources
+                .published_view(crate::render_graph::VOXEL_COLOR_H)
+                .is_some()
+        {
+            (
+                crate::render_graph::VOXEL_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else {
             select_input_target(
                 ctx.frame.debug_rt,

@@ -1,21 +1,30 @@
 //! Emergence sandbox project entry crate.
 //!
-//! Shares the same v3.0 tag simulation state across both the static player
+//! Shares the Procedural Map Gen, v3.0 Multi-Rate Simulation, Three-Tier Voxel
+//! World (`L1 -> L2 -> L3`), and Player Controller across both the static player
 //! binary (`player` feature) and the editor dynamic module (`preview-module`
 //! feature).
 
 #![deny(warnings)]
 
+pub mod materials;
+pub mod player;
+pub mod sim;
 pub mod tags;
+pub mod world_gen;
 
 use prism_game_api::GameWorld;
 
+use crate::materials::MaterialTable;
+use crate::player::PlayerController;
+use crate::sim::SimWorld;
 use crate::tags::{
     BioActivity, EnvPacked, FlowDir, MaterialFlags, MatterState, PhysicalCell, Pressure,
     SignalClockState, StimulusFlags, Temperature, TopologyFlags,
 };
+use crate::world_gen::generate_world;
 
-/// Minimal runtime state driving the initial v3.0 lab cells and clock divider.
+/// Minimal runtime state driving standalone unit verification of `PhysicalCell`.
 pub struct SandboxState {
     accumulator: f32,
     clock_accumulator: f32,
@@ -96,9 +105,47 @@ impl SandboxState {
     }
 }
 
-pub fn sandbox_tick(state: &mut Option<SandboxState>, _world: &mut GameWorld<'_>, dt: f32) {
-    let sandbox = state.get_or_insert_with(SandboxState::new);
-    sandbox.step(dt);
+/// Complete Emergence MVP runtime holding map geometry, physics world, and player state.
+pub struct EmergenceRuntime {
+    pub sim: SimWorld,
+    pub player: PlayerController,
+}
+
+impl EmergenceRuntime {
+    pub fn bootstrap(world: &mut GameWorld<'_>, seed: u64) -> Self {
+        let materials = MaterialTable::load(Some(world));
+        let gen = generate_world(&materials, seed);
+        let mut sim = SimWorld::new(materials, gen.chunks, gen.cells, gen.active);
+        sim.attach_ecs(world);
+        let mut player = PlayerController::new();
+        player.attach_ecs(world, &sim);
+        Self { sim, player }
+    }
+}
+
+/// Fixed simulation system (`60 Hz`): physics kinematics + multi-rate v3.0 cellular ticks + dirty chunk sync.
+pub fn emergence_fixed_tick(
+    state: &mut Option<EmergenceRuntime>,
+    world: &mut GameWorld<'_>,
+    dt: f32,
+) {
+    let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
+    runtime.player.step_physics(world, &runtime.sim, dt);
+    runtime.sim.step(dt);
+    runtime.sim.sync_dirty_chunks(world);
+}
+
+/// Per-frame interaction & camera look system: responsive mouse aim, L1/L2/L3 carve/place, HUD.
+pub fn emergence_frame_tick(
+    state: &mut Option<EmergenceRuntime>,
+    world: &mut GameWorld<'_>,
+    dt: f32,
+) {
+    let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
+    runtime
+        .player
+        .update_look_and_tools(world, &mut runtime.sim, dt);
+    runtime.sim.sync_dirty_chunks(world);
 }
 
 #[cfg(feature = "player")]
@@ -106,7 +153,14 @@ pub fn build_app() -> prism_app::App {
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio);
-    app.add_game_system::<SandboxState, _>("emergence::sandbox_tick", sandbox_tick);
+    app.add_fixed_game_system::<EmergenceRuntime, _>(
+        "emergence::fixed_tick",
+        emergence_fixed_tick,
+    );
+    app.add_game_system::<EmergenceRuntime, _>(
+        "emergence::frame_tick",
+        emergence_frame_tick,
+    );
     app
 }
 
@@ -114,18 +168,28 @@ pub fn build_app() -> prism_app::App {
 mod preview {
     use prism_game_api::GameWorld;
 
-    use crate::{sandbox_tick, SandboxState};
+    use crate::{emergence_fixed_tick, emergence_frame_tick, EmergenceRuntime};
 
     struct PreviewState {
-        sandbox: Option<SandboxState>,
+        runtime: Option<EmergenceRuntime>,
+        fixed_accum: f32,
     }
 
     fn new_state() -> PreviewState {
-        PreviewState { sandbox: None }
+        PreviewState {
+            runtime: None,
+            fixed_accum: 0.0,
+        }
     }
 
     fn tick_state(state: &mut PreviewState, world: &mut GameWorld<'_>, dt: f32) {
-        sandbox_tick(&mut state.sandbox, world, dt);
+        const FIXED_DT: f32 = 1.0 / 60.0;
+        emergence_frame_tick(&mut state.runtime, world, dt);
+        state.fixed_accum += dt.clamp(0.0, 0.1);
+        while state.fixed_accum >= FIXED_DT {
+            state.fixed_accum -= FIXED_DT;
+            emergence_fixed_tick(&mut state.runtime, world, FIXED_DT);
+        }
     }
 
     prism_game_api::export_project! {

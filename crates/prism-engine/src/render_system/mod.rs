@@ -16,7 +16,10 @@ use prism_render::{
     SkyboxSettings, UiOverlayInput, GPU_LIGHT_KIND_POINT, GPU_LIGHT_KIND_SPOT, PT_LIGHT_MAX,
 };
 use prism_scene::CameraClearFlags;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 /// 上一次提示的「被丢弃局部光」数量（数量变化时才 warn，避免刷屏）。
 static LAST_DROPPED_LIGHTS: AtomicUsize = AtomicUsize::new(0);
@@ -324,9 +327,144 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
     // 3. Build the UI overlay from the ECS world (includes UiQuad/TextCmd).
     crate::ui::convert_ui_draw_list_to_overlay_into(world, &mut packet.ui_overlay);
 
+    // 4. Extract three-tier sparse voxel chunks and cursor highlight with version caching.
+    packet.voxel_scene = extract_voxel_scene(world);
+
     // 渲染设置由应用层（`App`）在发送前覆盖；引擎默认值保证独立使用
     // `extract_frame_packet` 时仍然可用。
     packet.settings = RenderSettings::default();
+}
+
+struct VoxelExtractCache {
+    started_at: Instant,
+    chunks: HashMap<u64, (u64, prism_render::VoxelChunkUpload)>,
+}
+
+impl Default for VoxelExtractCache {
+    fn default() -> Self {
+        Self {
+            started_at: Instant::now(),
+            chunks: HashMap::new(),
+        }
+    }
+}
+
+fn encode_voxel_chunk_upload(
+    entity_id: u64,
+    chunk: &prism_scene::VoxelChunk,
+) -> prism_render::VoxelChunkUpload {
+    let l1_count = chunk.l1_cell_count();
+    let mut l1_cells = Vec::with_capacity(l1_count);
+    for idx in 0..l1_count {
+        let r = chunk.l1_brick_ref.get(idx).copied().unwrap_or(0);
+        let rgba = chunk.l1_uniform_rgba.get(idx).copied().unwrap_or(0);
+        let vis = chunk.l1_uniform_visual.get(idx).copied().unwrap_or(0);
+        l1_cells.push([r, rgba, vis, 0]);
+    }
+    let mut brick_occ = Vec::with_capacity(chunk.bricks.len());
+    let mut brick_cells = Vec::with_capacity(chunk.bricks.len() * prism_scene::VOXEL_BRICK_CELLS);
+    for brick in &chunk.bricks {
+        brick_occ.push([brick.occ_lo, brick.occ_hi]);
+        for sub in 0..prism_scene::VOXEL_BRICK_CELLS {
+            let rgba = brick.l2_rgba.get(sub).copied().unwrap_or(0);
+            let vis = brick.l2_visual.get(sub).copied().unwrap_or(0);
+            let lo = brick.l3_mask_lo.get(sub).copied().unwrap_or(0);
+            let hi = brick.l3_mask_hi.get(sub).copied().unwrap_or(0);
+            brick_cells.push([rgba, vis, lo, hi]);
+        }
+    }
+    prism_render::VoxelChunkUpload {
+        entity_id,
+        version: chunk.version,
+        origin_l1: chunk.origin_l1,
+        dims_l1: chunk.dims_l1,
+        l1_cells,
+        brick_occ,
+        brick_cells,
+    }
+}
+
+fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelSceneUpload>> {
+    let mut chunk_entries: Vec<(u64, u64)> = world
+        .query::<prism_scene::VoxelChunk>()
+        .map(|(entity, chunk)| {
+            let key = ((entity.generation() as u64) << 32) | (entity.id() as u64);
+            (key, chunk.version)
+        })
+        .collect();
+    if chunk_entries.is_empty() {
+        return None;
+    }
+    chunk_entries.sort_by_key(|&(id, _)| id);
+
+    let mut cursor: Option<prism_render::VoxelCursorUpload> = None;
+    for (_, hl) in world.query::<prism_scene::VoxelCursorHighlight>() {
+        if hl.active {
+            cursor = Some(prism_render::VoxelCursorUpload {
+                active: true,
+                min: hl.min,
+                max: hl.max,
+                color: hl.color,
+            });
+            break;
+        }
+    }
+
+    if world.get_resource::<VoxelExtractCache>().is_none() {
+        world.insert_resource(VoxelExtractCache::default());
+    }
+
+    // Encode any dirty or newly spawned chunks into the cache first, without aliasing `world`.
+    let mut dirty_updates: Vec<(u64, u64, prism_render::VoxelChunkUpload)> = Vec::new();
+    {
+        let cache = world.get_resource::<VoxelExtractCache>().unwrap();
+        let mut stale_or_missing = Vec::new();
+        for &(entity_key, version) in &chunk_entries {
+            if cache
+                .chunks
+                .get(&entity_key)
+                .is_none_or(|(cached_ver, _)| *cached_ver != version)
+            {
+                stale_or_missing.push(entity_key);
+            }
+        }
+        if !stale_or_missing.is_empty() {
+            for (entity, chunk) in world.query::<prism_scene::VoxelChunk>() {
+                let key = ((entity.generation() as u64) << 32) | (entity.id() as u64);
+                if stale_or_missing.contains(&key) {
+                    dirty_updates.push((
+                        key,
+                        chunk.version,
+                        encode_voxel_chunk_upload(key, chunk),
+                    ));
+                }
+            }
+        }
+    }
+
+    let cache = world.get_resource_mut::<VoxelExtractCache>().unwrap();
+    for (key, version, upload) in dirty_updates {
+        cache.chunks.insert(key, (version, upload));
+    }
+
+    let mut signature = 0xcbf2_9ce4_8422_2325u64;
+    let mut uploads = Vec::with_capacity(chunk_entries.len());
+    for &(entity_key, version) in &chunk_entries {
+        signature ^= entity_key;
+        signature = signature.wrapping_mul(0x1000_0000_01b3);
+        signature ^= version;
+        signature = signature.wrapping_mul(0x1000_0000_01b3);
+        if let Some((_, cached)) = cache.chunks.get(&entity_key) {
+            uploads.push(cached.clone());
+        }
+    }
+    let elapsed_seconds = cache.started_at.elapsed().as_secs_f32();
+    Some(Arc::new(prism_render::VoxelSceneUpload {
+        signature,
+        elapsed_seconds,
+        chunks: uploads,
+        cursor,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +500,8 @@ pub struct FramePacket {
     /// 渲染线程只读——保证 `App::render_settings` 的修改（快捷键、项目配置）
     /// 能真正到达渲染线程。
     pub settings: RenderSettings,
+    /// Three-tier sparse voxel payload extracted for [`prism_render::VoxelDdaPass`].
+    pub voxel_scene: Option<Arc<prism_render::VoxelSceneUpload>>,
     /// 本帧已解析的后处理参数（#502 Phase 2 的体积混合）。
     ///
     /// `None` = 没有宿主解析，`render_system` 直接退回 `settings.post_grade()`；
@@ -715,6 +855,7 @@ pub fn render_system(
         ref ui_overlay,
         ref bone_matrices,
         settings: _,
+        ref voxel_scene,
         grade,
     } = *packet;
 
@@ -861,6 +1002,7 @@ pub fn render_system(
         dispatch_plan: Some(&dispatch_plan),
     };
     // §8 五阶段：prepare 阶段批量同步（当前实现 dirty 日志 + 未来上传点）
+    renderer.set_voxel_scene(voxel_scene.clone());
     renderer.prepare(&ctx, &input).map_err(|e| {
         let _ = renderer.present(&ctx);
         e

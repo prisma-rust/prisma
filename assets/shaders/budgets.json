@@ -200,6 +200,16 @@
       "acceleration_structures": 0,
       "descriptors": 3,
       "push_constant_bytes": 0
+    },
+    "voxel_dda": {
+      "sampled_images": 4,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 1,
+      "storage_buffers": 4,
+      "acceleration_structures": 0,
+      "descriptors": 9,
+      "push_constant_bytes": 0
     }
   }
 }

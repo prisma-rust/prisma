@@ -628,6 +628,7 @@ fn render_one_frame(
     if let Some(plan) = screenshot {
         renderer.request_screenshot(plan.path.clone(), plan.size, plan.scale);
     }
+    renderer.set_voxel_scene(packet.voxel_scene.clone());
     renderer
         .prepare(&ctx, &input)
         .and_then(|_| renderer.execute(&ctx, &input))

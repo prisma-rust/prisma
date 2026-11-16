@@ -591,6 +591,9 @@ impl GraphRenderer {
         if let Some(forward_pass) = graph.pass_mut::<ForwardPass>() {
             forward_pass.set_image_count(swapchain.views.len());
         }
+        graph.add_pass(Box::new(crate::voxel_dda_pass::VoxelDdaPass::new(
+            Arc::clone(&context),
+        )?));
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
         #[cfg(feature = "anf")]
@@ -1077,6 +1080,9 @@ impl GraphRenderer {
             forward_pass.set_image_count(1);
             forward_pass.set_target(&context.device, &context, 1, 0, offscreen.extent())?;
         }
+        graph.add_pass(Box::new(crate::voxel_dda_pass::VoxelDdaPass::new(
+            Arc::clone(&context),
+        )?));
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
         #[cfg(feature = "anf")]
@@ -1568,6 +1574,9 @@ impl GraphRenderer {
                     log::warn!("TaaPass recreate_target failed: {e:#}");
                 }
             }
+            if let Some(voxel) = self.graph.pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>() {
+                voxel.drop_targets();
+            }
             #[cfg(feature = "anf")]
             {
                 let render_extent = self.render_extent();
@@ -1669,6 +1678,9 @@ impl GraphRenderer {
                 log::warn!("TaaPass recreate_target failed (offscreen resize): {e:#}");
             }
         }
+        if let Some(voxel) = self.graph.pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>() {
+            voxel.drop_targets();
+        }
         #[cfg(feature = "anf")]
         {
             let render_extent = self.render_extent();
@@ -1690,6 +1702,19 @@ impl GraphRenderer {
 
         self.graph.reset_layouts();
         Ok(())
+    }
+
+    /// Supply the three-tier sparse voxel scene payload for subsequent frames.
+    pub fn set_voxel_scene(
+        &mut self,
+        scene: Option<Arc<crate::voxel_dda_pass::VoxelSceneUpload>>,
+    ) {
+        if let Some(voxel) = self
+            .graph
+            .pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>()
+        {
+            voxel.set_scene(scene);
+        }
     }
     // -------------------------------------------------------------------
     // Frame lifecycle — phase API

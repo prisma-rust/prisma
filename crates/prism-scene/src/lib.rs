@@ -19,6 +19,7 @@ pub mod render_enums;
 pub mod rscn;
 pub mod terrain;
 pub mod ui;
+pub mod voxel;
 
 pub use components::*;
 pub use helpers::{is_active_in_hierarchy, world_matrix, HierarchyHelper};
@@ -34,6 +35,12 @@ pub use render_enums::{
 };
 pub use rscn::{decode_scene, encode_scene, DecodedEntity, DecodedScene, RscnError};
 pub use terrain::SculptMode;
+pub use voxel::{
+    pack_rgba, pack_visual, raycast_chunks, unpack_rgba, visual_emissive, visual_flags,
+    visual_roughness, VoxelBrick, VoxelChunk, VoxelCursorHighlight, VoxelHit, VoxelTier,
+    VoxelVisualFlags, DEFAULT_CHUNK_DIMS_L1, L1_UNIFORM_REF, VOXEL_BRICK_CELLS, VOXEL_L1_SIZE_M,
+    VOXEL_L2_SIZE_M, VOXEL_L3_SIZE_M, VOXEL_TIER_SUBDIV,
+};
 
 /// Authoring prefix for procedural builtin meshes (`__builtin/box`, …).
 ///

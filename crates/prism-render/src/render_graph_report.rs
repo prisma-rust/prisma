@@ -458,6 +458,7 @@ fn pass_kind(pass: &PassInfo) -> &'static str {
         PassKind::RestirGi => "restir-gi",
         PassKind::SharcTrain => "sharc-train",
         PassKind::SharcResolve => "sharc-resolve",
+        PassKind::Voxel => "voxel",
         PassKind::Unknown => "unknown",
     }
 }
@@ -493,6 +494,8 @@ fn resource_name(handle: ResourceHandle) -> String {
         }
         handle if handle == crate::render_graph::SHARC_RESOLVED_H.0 => "sharc.resolved".into(),
         handle if handle == crate::render_graph::GTAO_AO_H.0 => "gtao.ao".into(),
+        handle if handle == crate::render_graph::VOXEL_COLOR_H.0 => "voxel.color".into(),
+        handle if handle == crate::render_graph::VOXEL_DEPTH_H.0 => "voxel.depth".into(),
         handle if handle == crate::render_graph::FINAL_COLOR_H.0 => "final.color".into(),
         handle => format!("resource#{handle}"),
     }

@@ -686,6 +686,12 @@ pub struct ViewportState {
     forwarded_keys: HashSet<KeyCode>,
     /// Game view 是否已经把左键当成按住转发（离开视口也能收到 release）。
     forwarded_left_down: bool,
+    /// Whether Game view currently holds the forwarded secondary (right) mouse button.
+    forwarded_right_down: bool,
+    /// Whether Game view currently holds the forwarded middle mouse button.
+    forwarded_middle_down: bool,
+    /// Whether the pointer was inside Game view on the previous frame (prevents entry jump deltas).
+    forwarded_cursor_inside: bool,
     /// 渲染图报告的输出路径（只有 Scene view 设；`None` = 不写）。
     pub report_path: Option<std::path::PathBuf>,
     /// Game 视图的预览分辨率（Scene 视图忽略它）。
@@ -744,6 +750,9 @@ impl ViewportState {
             pick_cycle: None,
             forwarded_keys: HashSet::new(),
             forwarded_left_down: false,
+            forwarded_right_down: false,
+            forwarded_middle_down: false,
+            forwarded_cursor_inside: false,
             report_path: None,
             target: GameResolution::default(),
             project_resolution: None,
@@ -844,24 +853,26 @@ impl ViewportState {
     /// 轨道相机不走这里。只在 Play 中转发，停止 Play 时清空遗留状态。
     fn forward_game_input(&mut self, ui: &egui::Ui, rect: Rect, response: &egui::Response) {
         if self.kind() != ViewKind::Game || !self.host.is_simulating() {
-            self.forwarded_keys.clear();
-            self.forwarded_left_down = false;
+            self.reset_forwarded_input();
             return;
         }
 
-        let (mut keys_down, modifiers, hover_pos, primary_down) = ui.input(|input| {
-            let keys = input
-                .keys_down
-                .iter()
-                .filter_map(|key| engine_key(*key))
-                .collect::<HashSet<_>>();
-            (
-                keys,
-                input.modifiers,
-                input.pointer.hover_pos(),
-                input.pointer.primary_down(),
-            )
-        });
+        let (mut keys_down, modifiers, hover_pos, primary_down, secondary_down, middle_down) = ui
+            .input(|input| {
+                let keys = input
+                    .keys_down
+                    .iter()
+                    .filter_map(|key| engine_key(*key))
+                    .collect::<HashSet<_>>();
+                (
+                    keys,
+                    input.modifiers,
+                    input.pointer.hover_pos(),
+                    input.pointer.primary_down(),
+                    input.pointer.secondary_down(),
+                    input.pointer.middle_down(),
+                )
+            });
         // egui 的 `Key` 不区分左右修饰键；按修饰状态补成 ABI 的 Left 位。
         if modifiers.shift {
             keys_down.insert(KeyCode::ShiftLeft);
@@ -873,31 +884,42 @@ impl ViewportState {
             keys_down.insert(KeyCode::AltLeft);
         }
 
+        let dragging =
+            self.forwarded_left_down || self.forwarded_right_down || self.forwarded_middle_down;
         if let Some(position) = hover_pos {
-            if rect.contains(position) {
+            let inside = rect.contains(position);
+            if inside || dragging {
                 let local = game_cursor(rect, position, self.extent);
-                self.host
-                    .input_mut()
-                    .set_mouse_position([local[0] as f64, local[1] as f64]);
+                let pos = [local[0] as f64, local[1] as f64];
+                if self.forwarded_cursor_inside || dragging {
+                    self.host.input_mut().handle_mouse_move(pos);
+                } else {
+                    self.host.input_mut().set_mouse_position(pos);
+                }
+                self.forwarded_cursor_inside = inside;
+            } else {
+                self.forwarded_cursor_inside = false;
             }
+        } else {
+            self.forwarded_cursor_inside = false;
         }
 
-        // 左键：第一次按下必须发生在视口里；一旦开始转发，松开可以在视口外。
-        let held = if self.forwarded_left_down {
-            primary_down
-        } else {
-            primary_down && response.hovered()
-        };
-        if held != self.forwarded_left_down {
-            let state = if held {
-                ElementState::Pressed
-            } else {
-                ElementState::Released
-            };
-            self.host
-                .input_mut()
-                .handle_mouse_button(MouseButton::Left, state);
-            self.forwarded_left_down = held;
+        let hovered = response.hovered();
+        for (button, raw_down, tracked) in [
+            (MouseButton::Left, primary_down, &mut self.forwarded_left_down),
+            (MouseButton::Right, secondary_down, &mut self.forwarded_right_down),
+            (MouseButton::Middle, middle_down, &mut self.forwarded_middle_down),
+        ] {
+            let held = if *tracked { raw_down } else { raw_down && hovered };
+            if held != *tracked {
+                let state = if held {
+                    ElementState::Pressed
+                } else {
+                    ElementState::Released
+                };
+                self.host.input_mut().handle_mouse_button(button, state);
+                *tracked = held;
+            }
         }
 
         let pressed: Vec<KeyCode> = keys_down
@@ -930,6 +952,9 @@ impl ViewportState {
     pub fn reset_forwarded_input(&mut self) {
         self.forwarded_keys.clear();
         self.forwarded_left_down = false;
+        self.forwarded_right_down = false;
+        self.forwarded_middle_down = false;
+        self.forwarded_cursor_inside = false;
     }
 
     /// 重新渲染并（必要时）重新注册纹理。返回是否成功出帧。

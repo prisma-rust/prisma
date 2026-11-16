@@ -936,6 +936,12 @@ impl RenderPassNode for PostPass {
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
+        graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::VOXEL_COLOR_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
         graph.create_resource_at(
             FINAL_COLOR_H,
             ResourceType::ColorAttachment {
@@ -986,6 +992,16 @@ impl RenderPassNode for PostPass {
             (ANF_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
         } else if taa_view.is_some() {
             (TAA_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        } else if !is_pt
+            && ctx.frame.debug_rt == 0
+            && resources
+                .published_view(crate::render_graph::VOXEL_COLOR_H)
+                .is_some()
+        {
+            (
+                crate::render_graph::VOXEL_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else {
             select_input_target(ctx.frame.debug_rt, is_pt, has_camera, has_pt_view)
         };

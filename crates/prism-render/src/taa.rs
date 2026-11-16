@@ -371,6 +371,18 @@ impl RenderPassNode for TaaPass {
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
+        graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::VOXEL_COLOR_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
+        graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::VOXEL_DEPTH_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
         graph.write_usage(ResourceUsage {
             handle: TAA_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -399,10 +411,35 @@ impl RenderPassNode for TaaPass {
         // normal texture is only read for its alpha reactive flag, which the
         // raster G-buffer still supplies in path-trace mode.
         let is_pt = ctx.frame.render_mode == RenderMode::PathTrace;
-        let (color_handle, depth_handle, velocity_handle) = if is_pt {
-            (PT_COLOR_H, PT_DEPTH_H, PT_VELOCITY_H)
+        let has_voxel = !is_pt
+            && ctx.frame.debug_rt == 0
+            && resources
+                .published_view(crate::render_graph::VOXEL_COLOR_H)
+                .is_some()
+            && resources
+                .published_view(crate::render_graph::VOXEL_DEPTH_H)
+                .is_some();
+        let (color_handle, depth_handle, velocity_handle, depth_layout) = if is_pt {
+            (
+                PT_COLOR_H,
+                PT_DEPTH_H,
+                PT_VELOCITY_H,
+                vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            )
+        } else if has_voxel {
+            (
+                crate::render_graph::VOXEL_COLOR_H,
+                crate::render_graph::VOXEL_DEPTH_H,
+                FORWARD_VELOCITY_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else {
-            (FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_VELOCITY_H)
+            (
+                FORWARD_COLOR_H,
+                FORWARD_DEPTH_H,
+                FORWARD_VELOCITY_H,
+                vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            )
         };
         let Some(color_view) = resources.published_view(color_handle) else {
             return Ok(());
@@ -448,7 +485,7 @@ impl RenderPassNode for TaaPass {
         let depth_info = vk::DescriptorImageInfo::default()
             .image_view(depth_view)
             .sampler(self.sampler)
-            .image_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            .image_layout(depth_layout);
         let history_info = vk::DescriptorImageInfo::default()
             .image_view(self.views[prev])
             .sampler(self.sampler)

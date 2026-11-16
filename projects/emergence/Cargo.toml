@@ -18,7 +18,15 @@ required-features = ["player"]
 
 [features]
 default = ["player"]
-player = ["dep:prism-app", "dep:prism-engine", "prism-game-api/host", "prism-app/audio"]
+player = [
+    "dep:prism-app",
+    "dep:prism-engine",
+    "prism-game-api/host",
+    "prism-app/audio",
+    "prism-scene/group-3d",
+    "prism-scene/group-2d",
+    "prism-scene/group-ui",
+]
 preview-module = [
     "dep:prism-project-api",
     "prism-game-api/plugin",
