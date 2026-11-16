@@ -61,6 +61,16 @@
       "descriptors": 5,
       "push_constant_bytes": 88
     },
+    "prt": {
+      "sampled_images": 1,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 1,
+      "storage_buffers": 9,
+      "acceleration_structures": 0,
+      "descriptors": 11,
+      "push_constant_bytes": 0
+    },
     "pt_reference": {
       "sampled_images": 7,
       "sampled_image_arrays": 1,

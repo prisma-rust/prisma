@@ -84,6 +84,7 @@ pub mod post;
 pub mod primitives;
 pub mod probe_loader;
 /// PRT64 cluster volume (`.prtbin`): order-7 SH transport vectors, 64-way tree.
+pub mod prt_pass;
 pub mod prt_runtime;
 pub mod prt_volume;
 #[cfg(test)]

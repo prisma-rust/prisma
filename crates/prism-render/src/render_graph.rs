@@ -94,6 +94,9 @@ pub const SHARC_RESOLVED_H: ResourceHandle = ResourceHandle(1015);
 pub const GTAO_AO_H: ResourceHandle = ResourceHandle(1016);
 /// Post-processed tonemapped final color output image (R8G8B8A8_UNORM).
 pub const FINAL_COLOR_H: ResourceHandle = ResourceHandle(1017);
+/// PRT64 resolved order-2 SH GI volume (64^3 * 9 layers, RGBA32F), written by
+/// `PrtPass` and sampled by `ForwardPass` next frame (1-frame latency).
+pub const PRT_GI_VOLUME_H: ResourceHandle = ResourceHandle(1018);
 
 impl ResourceHandle {
     pub const INVALID: ResourceHandle = ResourceHandle(u32::MAX);
@@ -300,6 +303,8 @@ pub enum GiMode {
     Restir,
     /// NVIDIA Neural Radiance Cache.
     Nrc,
+    /// Order-7 Precomputed Radiance Transfer with 64-way spatial tree (`PrtPass`).
+    Prt,
 }
 
 /// DLSS upscaling mode.
@@ -330,8 +335,11 @@ pub struct RenderSettings {
     /// Setting to 1.0 disables half-resolution (user wants full quality).
     pub ray_query_resolution_scale: f32,
 
-    /// Global Illumination technique mode (Off / SHARC / NRC).
+    /// Global Illumination technique mode (Off / SHARC / ReSTIR / NRC / PRT).
     pub gi_mode: GiMode,
+
+    /// PRT64 trilinear weight bias to suppress thin-wall light bleeding (default 0.05).
+    pub prt_leak_bias: f32,
 
     /// SHARC hash-map capacity (number of voxel slots).
     /// Desktop GPUs can afford 2^23 (8M); the allocation is rebuilt, and the
@@ -444,6 +452,7 @@ impl Default for RenderSettings {
             ray_tracing_enabled: false,
             ray_query_resolution_scale: 0.5,
             gi_mode: GiMode::Off,
+            prt_leak_bias: crate::prt_runtime::DEFAULT_LEAK_BIAS,
             #[cfg(feature = "sharc")]
             sharc_capacity: crate::sharc::DEFAULT_SHARC_CAPACITY,
             #[cfg(not(feature = "sharc"))]
@@ -1233,6 +1242,9 @@ pub struct GraphFrame<'a> {
     /// pass reads the result `RestirGiPass` wrote last frame). `null` means GI
     /// is off, and the forward pass falls back to the baked probe volume.
     pub gi_view: vk::ImageView,
+    /// Previous-frame PRT64 `set 5` descriptor set (`probeVolume` + `probeInfo`),
+    /// bound by `ForwardPass` when `gi_mode == GiMode::Prt` (1-frame latency).
+    pub prt_gi_descriptor_set: vk::DescriptorSet,
     /// Tonemap mode for `PostPass` (Reinhard / ACES / ...). Forwarded so
     /// `PostPass::execute` reads it from the graph context.
     pub tonemap_mode: u32,

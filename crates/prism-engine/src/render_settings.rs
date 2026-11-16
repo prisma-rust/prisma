@@ -96,8 +96,10 @@ pub struct RenderSettings {
     pub pt_ray_max_distance: f32,
     /// Maximum iterations (samples per pixel). 0 = accumulate forever.
     pub pt_max_iterations: u32,
-    /// Global Illumination technique mode (Off, Sharc, Nrc).
+    /// Global Illumination technique mode (Off, Sharc, Restir, Nrc, Prt).
     pub gi_mode: GiMode,
+    /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
+    pub prt_leak_bias: f32,
     /// SHaRC: Hash-map capacity (number of voxel slots). Changing it
     /// rebuilds the cache buffers, which clears all cached radiance.
     pub sharc_capacity: u32,
@@ -283,6 +285,7 @@ impl Default for RenderSettings {
             pt_ray_max_distance: 1000.0,
             pt_max_iterations: 0,
             gi_mode: GiMode::Off,
+            prt_leak_bias: prism_render::prt_runtime::DEFAULT_LEAK_BIAS,
             sharc_capacity: 1 << 20,
             sharc_scene_scale: 50.0,
             sharc_enable_clear: false,

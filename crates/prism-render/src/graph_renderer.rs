@@ -789,6 +789,7 @@ impl GraphRenderer {
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
+        graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         // The temporal resolve runs after the path tracer so it can consume the
         // traced image and its guides in path-trace mode (#883 follow-up). In the
         // raster path it still resolves the forward pass output.
@@ -920,6 +921,13 @@ impl GraphRenderer {
     #[cfg(not(feature = "restir_gi"))]
     fn gi_view(&mut self) -> vk::ImageView {
         vk::ImageView::null()
+    }
+
+    fn prt_gi_descriptor_set(&mut self, frame: u32) -> vk::DescriptorSet {
+        self.graph
+            .pass_ref::<crate::prt_pass::PrtPass>()
+            .and_then(|p| p.gi_volume_descriptor_set(frame))
+            .unwrap_or_else(vk::DescriptorSet::null)
     }
 
     /// 离屏渲染目标的尺寸（无窗口宿主模式）；有交换链时返回 `None`。
@@ -1302,7 +1310,9 @@ impl GraphRenderer {
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
+        graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         // Same ordering as the windowed path: resolve after the tracer.
+        graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         graph.add_pass(Box::new(taa_pass));
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
@@ -2173,6 +2183,27 @@ impl GraphRenderer {
             }
         };
         self.load_probe_volume_data(data, scene_name)
+    }
+
+    /// Load a decoded PRT64 `.prtbin` volume into `PrtPass`.
+    pub fn load_prt_volume(&mut self, volume: crate::prt_volume::PrtVolume) -> bool {
+        if let Some(pass) = self.graph.pass_mut::<crate::prt_pass::PrtPass>() {
+            pass.load_volume(volume);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Load a PRT64 `.prtbin` file from disk into `PrtPass`.
+    pub fn load_prt_volume_file(&mut self, path: &std::path::Path) -> bool {
+        match crate::prt_volume::PrtVolume::load(path) {
+            Ok(vol) => self.load_prt_volume(vol),
+            Err(e) => {
+                log::info!("GraphRenderer: no PRT volume at {} ({e})", path.display());
+                false
+            }
+        }
     }
 
     /// 设置内部渲染分辨率（#613）：`[0, 0]` = 按窗口分辨率渲染。
@@ -3374,6 +3405,7 @@ impl GraphRenderer {
             // 上一帧 ReSTIR GI 输出（1 帧延迟）。pass 未注册 / 未分派时为 null，
             // 前向 pass 的 `gi_mode` push constant 随之为 0，退回 probe volume。
             let gi_view = self.gi_view();
+            let prt_gi_descriptor_set = self.prt_gi_descriptor_set(ctx.frame_index);
             let offscreen_views = self.offscreen.as_ref().map(|o| [o.image_view()]);
             let swapchain_views: &[vk::ImageView] = match (&self.swapchain, &offscreen_views) {
                 (Some(sw), _) => sw.views.as_slice(),
@@ -3450,6 +3482,7 @@ impl GraphRenderer {
                 lights,
                 ao_view,
                 gi_view,
+                prt_gi_descriptor_set,
                 tonemap_mode,
                 aa_mode,
                 debug_rt,

@@ -9,6 +9,7 @@ pub mod gtao;
 pub mod mesh_vert;
 pub mod particles;
 pub mod post;
+pub mod prt;
 pub mod pt_reference;
 pub mod pt_render;
 pub mod pt_sharc_train;

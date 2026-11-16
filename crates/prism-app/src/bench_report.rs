@@ -123,6 +123,7 @@ impl BenchCollector {
             extent,
             warmup_frames: self.plan.warmup_frames,
             scene: None,
+            gi: None,
         }
     }
 

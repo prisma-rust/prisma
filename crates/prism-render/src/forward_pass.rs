@@ -2567,13 +2567,20 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&ao_set),
                     &[],
                 );
-                // 集合 5: probe 音量 全局光照 (scene-level, 静态).
+                // Set 5: probe volume GI (PRT64 dynamic volume if active, else SceneScope).
+                let set5 = if ctx.settings.gi_mode == crate::render_graph::GiMode::Prt
+                    && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
+                {
+                    ctx.frame.prt_gi_descriptor_set
+                } else {
+                    self.gi_descriptor_set
+                };
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
                     scene_layout,
                     5,
-                    std::slice::from_ref(&self.gi_descriptor_set),
+                    std::slice::from_ref(&set5),
                     &[],
                 );
             }
@@ -2684,9 +2691,20 @@ impl RenderPassNode for ForwardPass {
                             splat_slot2: item.splat_slots[2],
                             splat_slot3: item.splat_slots[3],
                             splat_tiling: item.splat_tiling,
-                            // 1 = sample the screen-space ReSTIR GI signal
-                            // (set 4 binding 1); 0 = baked probe volume / IBL.
-                            gi_mode: u32::from(ctx.frame.gi_view != vk::ImageView::null()),
+                            // 0 = baked probe volume / IBL, 1 = ReSTIR GI, 2 = PRT64.
+                            gi_mode: if ctx.settings.gi_mode == crate::render_graph::GiMode::Prt
+                                && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
+                            {
+                                2
+                            } else if ctx.frame.gi_view != vk::ImageView::null() {
+                                1
+                            } else {
+                                0
+                            },
+                            prt_leak_bias: ctx
+                                .settings
+                                .prt_leak_bias
+                                .clamp(0.0, crate::prt_runtime::MAX_LEAK_BIAS),
                         };
                         ctx.device.cmd_push_constants(
                             ctx.cmd,

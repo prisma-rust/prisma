@@ -408,6 +408,12 @@ emit_reflection rt_preview vertexMain vertex fragmentMain fragment
 compile_stage restir_gi giMain compute
 emit_reflection restir_gi giMain compute
 
+# prt: PRT64 + 64-tree runtime GI compute passes (crates/prism-render/src/prt_pass.rs).
+compile_stage prt clusterEvalMain compute prt_cluster_eval
+compile_stage prt propagateMain compute prt_propagate
+compile_stage prt resolveVolumeMain compute prt_resolve_volume
+emit_reflection prt resolveVolumeMain compute
+
 # Hard gate: every emitted module must be valid SPIR-V (#580). Slang can emit
 # illegal layout decorations that only show up as a Vulkan validation error at
 # startup; fail the compile instead of shipping them.

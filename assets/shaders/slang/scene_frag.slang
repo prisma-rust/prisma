@@ -158,7 +158,8 @@ struct PbrBindlessPush
     uint     splat_slot2;
     uint     splat_slot3;
     float    splat_tiling;    // 0 = no texture splat
-    uint     gi_mode;         // 0 = baked probe volume / IBL, 1 = screen-space ReSTIR GI
+    uint     gi_mode;         // 0 = baked probe volume / IBL, 1 = screen-space ReSTIR GI, 2 = PRT64
+    float    prt_leak_bias;   // PRT64 trilinear weight bias (default 0.05)
 };
 [[vk::push_constant]]
 PbrBindlessPush pc;
@@ -838,6 +839,7 @@ SceneOutput fragmentMain(MeshVaryings in)
         }
         else
         {
+            float leak_bias = (pc.gi_mode == 2u) ? pc.prt_leak_bias : 0.0;
             // — Diffuse: probes at surface normal (irradiance SH, A_l factors) —
         // E(n) = ∑ c_lm * A_l * Y_lm(n) where A_l = [PI, 2*PI/3, PI/4]
         // are the Ramamoorthi & Hanrahan cosine-convolution factors applied
@@ -845,7 +847,7 @@ SceneOutput fragmentMain(MeshVaryings in)
         // Lambertian BRDF = kd * albedo / PI, so we divide E(n) by PI:
         //   gi_diffuse = kd * (E(n) / PI) * albedo
         float3 gi_irradiance = SampleProbeVolumeIrradiance(
-            probeVolume, probeInfo, in.worldPos, n);
+            probeVolume, probeInfo, in.worldPos, n, leak_bias);
         gi_diffuse = kd_ibl * (gi_irradiance / PI) * albedo;
         diffuse_ibl = ibl_intensity * gi_diffuse;
 
@@ -859,7 +861,7 @@ SceneOutput fragmentMain(MeshVaryings in)
         {
             float3 r = reflect(-v, n);
             float3 gi_radiance = SampleProbeVolumeRadiance(
-                probeVolume, probeInfo, in.worldPos, r);
+                probeVolume, probeInfo, in.worldPos, r, leak_bias);
             float2 brdf = sample_brdf_lut(max(dot(n, v), 0.0), roughness);
             specular_ibl = ibl_intensity * gi_radiance * (f_ibl * brdf.x + brdf.y);
         }

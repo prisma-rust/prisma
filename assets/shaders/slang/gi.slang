@@ -121,7 +121,8 @@ public float3 ProbeVolumeWorldToCoord(float3 world_pos, ProbeVolumeInfo info)
 //   0 = EvalSH9Radiance  (specular / debug)
 //   1 = EvalSH9Irradiance (diffuse)
 float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
-                           float3 world_pos, float3 dir, uint mode)
+                           float3 world_pos, float3 dir, uint mode,
+                           float leak_bias = 0.0)
 {
     float3 coord = ProbeVolumeWorldToCoord(world_pos, info);
     int3 dims = int3(info.dims.xyz);
@@ -136,6 +137,7 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
     for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
         sh[coeff] = float3(0.0);
 
+    float w_sum = 0.0;
     int dz = dims.z;
     for (uint idx = 0u; idx < 8u; idx++)
     {
@@ -145,14 +147,24 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
         float w = (di == 0 ? 1.0 - t.x : t.x)
                 * (dj == 0 ? 1.0 - t.y : t.y)
                 * (dk == 0 ? 1.0 - t.z : t.z);
-        if (w == 0.0)
+        if (leak_bias > 0.0)
+            w = max(w - leak_bias, 0.0);
+        if (w <= 0.0)
             continue;
+        w_sum += w;
         int3 p = base + int3(di, dj, dk);
         for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
         {
             int z = int(coeff) * dz + p.z;
             sh[coeff] += volume.Load(int4(p.x, p.y, z, 0)).rgb * w;
         }
+    }
+
+    if (leak_bias > 0.0 && w_sum > 1e-5)
+    {
+        float inv_w = 1.0 / w_sum;
+        for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
+            sh[coeff] *= inv_w;
     }
 
     // Select the SH evaluation function based on mode.
@@ -167,9 +179,10 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
 /// Sample IRRADIANCE from the probe volume. Returns E(n) = ∫ L(ω) max(0, n·ω) dω.
 /// The caller multiplies by kd * albedo / PI for the Lambertian diffuse BRDF.
 public float3 SampleProbeVolumeIrradiance(Texture3D volume, ProbeVolumeInfo info,
-                                          float3 world_pos, float3 normal)
+                                          float3 world_pos, float3 normal,
+                                          float leak_bias = 0.0)
 {
-    return SampleProbeVolumeSH(volume, info, world_pos, normal, 1u);
+    return SampleProbeVolumeSH(volume, info, world_pos, normal, 1u, leak_bias);
 }
 
 /// Sample RADIANCE from the probe volume. Returns L(ω) ≈ Σ c_lm * Y_lm(ω),
@@ -177,7 +190,8 @@ public float3 SampleProbeVolumeIrradiance(Texture3D volume, ProbeVolumeInfo info
 /// input for the split-sum specular approximation (replaces the prefiltered
 /// environment map).
 public float3 SampleProbeVolumeRadiance(Texture3D volume, ProbeVolumeInfo info,
-                                        float3 world_pos, float3 dir)
+                                        float3 world_pos, float3 dir,
+                                        float leak_bias = 0.0)
 {
-    return SampleProbeVolumeSH(volume, info, world_pos, dir, 0u);
+    return SampleProbeVolumeSH(volume, info, world_pos, dir, 0u, leak_bias);
 }
