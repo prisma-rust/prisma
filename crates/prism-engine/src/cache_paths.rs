@@ -1,6 +1,6 @@
 //! 运行期生成物缓存目录解析——与构建输入（`assets/`）严格区分。
 //!
-//! IBL 预卷积、BRDF LUT、着色器 / 管线缓存这类**可以随时删除、删了重算**的产物
+//! 着色器 / 管线缓存这类**依赖本机驱动/硬件、可以随时删除重算**的运行期产物
 //! 不能写进 `assets/`：那是只读的构建输入目录（装到 `Program Files` 后不可写，
 //! Android 上更在 APK 内）。它们也不该占用用户配置目录（`%APPDATA%`，通常在系统盘）。
 //!
@@ -8,7 +8,6 @@
 //!
 //! ```text
 //! <可执行文件目录>/cache/
-//!     ibl/        IBL 预卷积 + BRDF LUT
 //!     shader/     管线缓存（未来）
 //!     gi/         GI / 辐射缓存（未来）
 //! ```
@@ -39,8 +38,6 @@ const TEST_BINARY_DIR_NAME: &str = "deps";
 /// 运行期缓存的类别。每类一个一级子目录，互不干扰，可各自整目录删除。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
-    /// IBL 预卷积产物与 BRDF LUT。
-    Ibl,
     /// 管线缓存（`VkPipelineCache` 落盘）。
     Shader,
     /// GI / 辐射缓存。
@@ -51,7 +48,6 @@ impl CacheKind {
     /// 子目录名。
     pub fn dir_name(self) -> &'static str {
         match self {
-            Self::Ibl => "ibl",
             Self::Shader => "shader",
             Self::Gi => "gi",
         }
@@ -152,7 +148,7 @@ mod tests {
     #[test]
     fn every_kind_gets_its_own_subdirectory() {
         let root = cache_root().expect("cache root");
-        for kind in [CacheKind::Ibl, CacheKind::Shader, CacheKind::Gi] {
+        for kind in [CacheKind::Shader, CacheKind::Gi] {
             let dir = cache_dir(kind).expect("cache dir");
             assert_eq!(dir.parent(), Some(root.as_path()));
             assert_eq!(

@@ -86,11 +86,24 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+] }
+
 [target.'cfg(target_os = "android")'.dependencies]
 # 默认特性 `regex` 只为 RUST_LOG 的正则过滤；Android 上它同样会拉进整套 regex 引擎。
 android_logger = { version = "0.15", default-features = false }
 ndk = "0.9"
+jni = "0.22"
+android-activity = { version = "0.6", features = ["game-activity"] }
 
 [dev-dependencies]
 # `examples/hosted_png.rs` 只写 PNG。
 image = { workspace = true, features = ["png"] }
+jni = "0.22"

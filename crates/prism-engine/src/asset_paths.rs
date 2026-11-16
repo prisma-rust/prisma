@@ -24,6 +24,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// 显式指定资源根目录（**包含 `assets/` 的目录**）的环境变量。
 pub const ASSET_ROOT_ENV: &str = "PRISMA_ASSET_ROOT";
 
+/// 环境变量开关：设为 `1`/`true`/`yes`/`on` 时，即使已挂载 `.pak`，环境贴图等
+/// 支持热替换的资产也会优先读取 `assets/` 下的松散文件（便于打包后快速迭代）。
+pub const LOOSE_ASSETS_ENV: &str = "PRISMA_LOOSE_ASSETS";
+
+/// 检查是否启用了松散资产优先覆盖开关（`PRISMA_LOOSE_ASSETS`）。
+pub fn loose_assets_enabled() -> bool {
+    let Ok(val) = std::env::var(LOOSE_ASSETS_ENV) else {
+        return false;
+    };
+    matches!(
+        val.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 /// 资源子目录名，所有 `assets/...` 相对路径都挂在它下面。
 const ASSET_DIR_NAME: &str = "assets";
 

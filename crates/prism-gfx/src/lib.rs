@@ -20,6 +20,9 @@
 use prism_reflect::{FieldType, ReflectError, ReflectType, Value};
 use serde::{Deserialize, Serialize};
 
+pub mod hdr;
+pub mod ibl;
+
 /// How the camera clears the framebuffer.
 ///
 /// The numeric values are fixed: `(int)Skybox == 1` … `(int)Nothing == 4`.

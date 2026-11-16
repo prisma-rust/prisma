@@ -22,6 +22,7 @@ prism-engine = { path = "../prism-engine", optional = true }
 prism-render = { path = "../prism-render", optional = true }
 prism-asset = { path = "../prism-asset", default-features = false, features = ["runtime"] }
 prism-cooker = { path = "../prism-cooker", default-features = false }
+prism-gfx = { path = "../prism-gfx" }
 prism-scene = { path = "../prism-scene" }
 prism-ini = { path = "../prism-ini" }
 ash = { workspace = true, optional = true }

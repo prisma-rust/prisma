@@ -144,12 +144,6 @@ impl EngineHost {
             shadow_cascade_count,
         )
         .context("create offscreen renderer")?;
-        // 运行期缓存根由宿主解析一次并注入；渲染层不认识 target/ 布局。
-        if let Some(dir) =
-            prism_engine::cache_paths::cache_dir(prism_engine::cache_paths::CacheKind::Ibl)
-        {
-            renderer.set_ibl_cache(prism_render::ibl::IblCacheDir::new(dir));
-        }
 
         Ok(Self {
             kind,

@@ -340,7 +340,22 @@ fn stage_environment_assets(
             }
             let bytes = fs::read(&source)
                 .with_context(|| format!("read environment {}", source.display()))?;
-            write_staged(staging, Path::new(&pak_path), &bytes)?;
+            let cooked_bytes = if prism_gfx::ibl::CookedIbl::is_cooked(&bytes) {
+                bytes
+            } else {
+                let t = std::time::Instant::now();
+                let cooked = prism_gfx::ibl::CookedIbl::bake_from_hdr(&bytes)
+                    .with_context(|| format!("bake IBL for {}", source.display()))?;
+                let encoded = cooked.encode();
+                log::info!(
+                    "baked IBL '{}': {} KiB ({}ms)",
+                    pak_path,
+                    encoded.len() / 1024,
+                    t.elapsed().as_millis()
+                );
+                encoded
+            };
+            write_staged(staging, Path::new(&pak_path), &cooked_bytes)?;
             log::info!("packaged environment asset: {pak_path}");
         }
     }
@@ -2332,6 +2347,13 @@ mod tests {
         )
     }
 
+    fn tiny_valid_hdr() -> Vec<u8> {
+        let mut out = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n".to_vec();
+        // Uncompressed 2-pixel scanline (RGBE: 128,128,128,128 = ~0.5,0.5,0.5)
+        out.extend_from_slice(&[128, 128, 128, 128, 128, 128, 128, 128]);
+        out
+    }
+
     /// A `.rscn`-only manifest entry has no authoring `.scene.json` to read, but
     /// its environment map still has to end up inside the package.
     #[test]
@@ -2340,7 +2362,7 @@ mod tests {
         let assets = temp.path().join("assets");
         fs::create_dir_all(assets.join("scenes")).unwrap();
         fs::create_dir_all(assets.join("env")).unwrap();
-        fs::write(assets.join("env/valley.hdr"), b"hdr-bytes").unwrap();
+        fs::write(assets.join("env/valley.hdr"), tiny_valid_hdr()).unwrap();
 
         // Cook, then drop the authoring doc so only the `.rscn` remains.
         let authoring = assets.join("scenes/valley.scene.json");
@@ -2434,7 +2456,7 @@ mod tests {
         let assets = temp.path().join("assets");
         fs::create_dir_all(assets.join("scenes")).unwrap();
         fs::create_dir_all(assets.join("env")).unwrap();
-        fs::write(assets.join("env/sky.hdr"), b"hdr-with-guid").unwrap();
+        fs::write(assets.join("env/sky.hdr"), tiny_valid_hdr()).unwrap();
         let meta = prism_asset::AssetMeta::ensure(&assets, "env/sky.hdr", "HdrImporter").unwrap();
 
         fs::write(
@@ -2523,7 +2545,7 @@ mod tests {
         let assets = temp.path().join("assets");
         fs::create_dir_all(assets.join("scenes")).unwrap();
         fs::create_dir_all(assets.join("env")).unwrap();
-        fs::write(assets.join("env/sky.hdr"), b"hdr-bytes").unwrap();
+        fs::write(assets.join("env/sky.hdr"), tiny_valid_hdr()).unwrap();
         fs::write(
             assets.join("scenes/main.scene.json"),
             skybox_scene_json("../env/sky.hdr"),
@@ -2543,6 +2565,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(staging.join("env/sky.hdr").is_file());
+        let staged_env = fs::read(staging.join("env/sky.hdr")).unwrap();
+        assert!(
+            prism_gfx::ibl::CookedIbl::is_cooked(&staged_env),
+            "staged environment must be pre-baked PIBL"
+        );
     }
 }

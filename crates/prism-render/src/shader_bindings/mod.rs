@@ -6,6 +6,7 @@
 pub mod auto_exposure;
 pub mod gizmo;
 pub mod gtao;
+pub mod ibl_bake;
 pub mod mesh_vert;
 pub mod particles;
 pub mod post;

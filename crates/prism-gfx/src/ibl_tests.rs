@@ -33,9 +33,9 @@ fn cubemap_samples_full_vertical_range() {
         for x in 0..w {
             let i = ((y * w + x) * 4) as usize;
             if y < h / 2 {
-                eq[i] = 1.0; // top half: red
+                eq[i] = 1.0;
             } else {
-                eq[i + 1] = 1.0; // bottom half: green
+                eq[i + 1] = 1.0;
             }
             eq[i + 3] = 1.0;
         }
@@ -48,8 +48,8 @@ fn cubemap_samples_full_vertical_range() {
         [cube[o], cube[o + 1], cube[o + 2]]
     };
 
-    let up = at(2, face / 2, face / 2); // +Y
-    let down = at(3, face / 2, face / 2); // -Y
+    let up = at(2, face / 2, face / 2);
+    let down = at(3, face / 2, face / 2);
     assert!(
         up[0] > 0.8 && up[1] < 0.2,
         "+Y should sample the top (red) rows, got {up:?}"
@@ -94,6 +94,7 @@ fn importance_sample_ggx_is_unit() {
 
 #[test]
 fn build_tangent_frame_is_orthonormal() {
+    let dot3 = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     for n in &[
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
@@ -108,4 +109,69 @@ fn build_tangent_frame_is_orthonormal() {
         assert!(dot3(b, n).abs() < 1e-5, "b not perpendicular to n");
         assert!(dot3(t, b).abs() < 1e-5, "t not perpendicular to b");
     }
+}
+
+#[test]
+fn cooked_ibl_encode_decode_roundtrip() {
+    let cooked = CookedIbl {
+        env_face_size: 2,
+        irradiance_face_size: 2,
+        prefiltered_face_size: 4,
+        prefiltered_mip_levels: 2,
+        brdf_size: 2,
+        env_cube: vec![0x3c00; 6 * 2 * 2 * 4],
+        irradiance_cube: vec![0x3800; 6 * 2 * 2 * 4],
+        prefiltered_mips: vec![vec![0x3400; 6 * 4 * 4 * 4], vec![0x3000; 6 * 2 * 2 * 4]],
+        brdf_lut: vec![0x4000; 2 * 2 * 2],
+    };
+
+    let bytes = cooked.encode();
+    assert!(CookedIbl::is_cooked(&bytes));
+    let decoded = CookedIbl::decode(&bytes).expect("decode roundtrip");
+    assert_eq!(decoded, cooked);
+    let via_from_bytes = CookedIbl::from_bytes(&bytes).expect("from_bytes");
+    assert_eq!(via_from_bytes, cooked);
+
+    let env_only = CookedIbl::from_bytes_env_only(&bytes).expect("from_bytes_env_only");
+    assert_eq!(env_only.env_face_size, 2);
+    assert_eq!(env_only.env_cube, cooked.env_cube);
+    assert_eq!(env_only.irradiance_face_size, 1);
+    assert_eq!(env_only.prefiltered_face_size, 1);
+    assert_eq!(env_only.prefiltered_mip_levels, 1);
+    assert_eq!(env_only.brdf_size, 1);
+}
+
+#[test]
+fn cooked_ibl_decode_rejects_corrupt_inputs() {
+    assert!(CookedIbl::decode(b"PIBL").is_err());
+    let mut bad_ver = CookedIbl {
+        env_face_size: 1,
+        irradiance_face_size: 1,
+        prefiltered_face_size: 1,
+        prefiltered_mip_levels: 1,
+        brdf_size: 1,
+        env_cube: vec![0; 6 * 4],
+        irradiance_cube: vec![0; 6 * 4],
+        prefiltered_mips: vec![vec![0; 6 * 4]],
+        brdf_lut: vec![0; 2],
+    }
+    .encode();
+    // Bump version to 99
+    bad_ver[4..8].copy_from_slice(&99u32.to_le_bytes());
+    assert!(CookedIbl::decode(&bad_ver).is_err());
+
+    // Truncated payload
+    let valid = CookedIbl {
+        env_face_size: 1,
+        irradiance_face_size: 1,
+        prefiltered_face_size: 1,
+        prefiltered_mip_levels: 1,
+        brdf_size: 1,
+        env_cube: vec![0; 6 * 4],
+        irradiance_cube: vec![0; 6 * 4],
+        prefiltered_mips: vec![vec![0; 6 * 4]],
+        brdf_lut: vec![0; 2],
+    }
+    .encode();
+    assert!(CookedIbl::decode(&valid[..valid.len() - 2]).is_err());
 }

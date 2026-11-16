@@ -1518,6 +1518,7 @@ dependencies = [
 name = "prism-gfx"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "glam",
  "prism-reflect",
  "serde",

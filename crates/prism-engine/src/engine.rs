@@ -25,6 +25,19 @@ use prism_ecs::World;
 
 impl crate::scene::EnvironmentProvider for prism_asset::runtime::ResourceManager {
     fn load_environment(&mut self, asset_path: &str) -> Option<Vec<u8>> {
+        if crate::asset_paths::loose_assets_enabled() {
+            if let Some(path) = crate::asset_paths::asset_path(asset_path) {
+                if path.is_file() {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        log::info!(
+                            "environment: loaded loose asset {} (PRISMA_LOOSE_ASSETS)",
+                            path.display()
+                        );
+                        return Some(bytes);
+                    }
+                }
+            }
+        }
         let id = self.id_by_path(asset_path)?;
         self.load_with_deps_raw(id).ok()
     }
@@ -651,12 +664,8 @@ impl Engine {
         rm: &mut prism_asset::runtime::ResourceManager,
         asset_path: &str,
     ) -> anyhow::Result<()> {
-        let id = rm
-            .id_by_path(asset_path)
+        let bytes = crate::scene::EnvironmentProvider::load_environment(rm, asset_path)
             .ok_or_else(|| anyhow::anyhow!("environment asset not found: {asset_path}"))?;
-        let bytes = rm
-            .load_with_deps_raw(id)
-            .map_err(|e| anyhow::anyhow!("load environment asset '{asset_path}': {e}"))?;
         self.set_scene_environment_bytes(Some(bytes));
         Ok(())
     }

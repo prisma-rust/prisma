@@ -115,19 +115,19 @@ pub fn show_crash_dialog(title: &str, message: &str) -> CrashChoice {
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-#[path = "crash_dialog_windows.rs"]
+#[path = "windows.rs"]
 mod platform;
 
 #[cfg(target_os = "macos")]
-#[path = "crash_dialog_macos.rs"]
+#[path = "macos.rs"]
 mod platform;
 
 #[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
-#[path = "crash_dialog_linux.rs"]
+#[path = "linux.rs"]
 mod platform;
 
 #[cfg(target_os = "android")]
-#[path = "crash_dialog_android.rs"]
+#[path = "android.rs"]
 mod platform;
 
 #[cfg(not(any(
@@ -136,7 +136,7 @@ mod platform;
     target_os = "android",
     all(unix, not(target_os = "android"), not(target_os = "macos"))
 )))]
-#[path = "crash_dialog_fallback.rs"]
+#[path = "fallback.rs"]
 mod platform;
 
 fn show_native(title: &str, message: &str) -> CrashChoice {
@@ -149,7 +149,7 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-#[path = "crash_dialog_android.rs"]
+#[path = "android.rs"]
 mod test_android_syntax;
 
 #[cfg(test)]

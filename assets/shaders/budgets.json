@@ -31,6 +31,16 @@
       "descriptors": 7,
       "push_constant_bytes": 96
     },
+    "ibl_bake": {
+      "sampled_images": 3,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 0,
+      "storage_buffers": 0,
+      "acceleration_structures": 0,
+      "descriptors": 3,
+      "push_constant_bytes": 16
+    },
     "mesh_vert": {
       "sampled_images": 0,
       "sampled_image_arrays": 0,
