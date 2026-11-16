@@ -11,6 +11,7 @@ mod app;
 mod build;
 mod control;
 mod diagnostics;
+mod egui_host;
 mod engine_host;
 mod gpu;
 mod logging;
@@ -29,7 +30,7 @@ mod ui_tree;
 mod viewport;
 mod widgets;
 
-use egui_ash::{AppCreator, AshRenderState, CreationContext, RunOption};
+use crate::egui_host::{AppCreator, AshRenderState, CreationContext, RunOption};
 use gpu_allocator::vulkan::Allocator;
 use std::sync::{Arc, Mutex};
 
@@ -75,5 +76,5 @@ fn main() -> std::process::ExitCode {
         ..Default::default()
     };
 
-    egui_ash::run("prism-editor-egui", EditorCreator, options)
+    crate::egui_host::run("prism-editor-egui", EditorCreator, options)
 }

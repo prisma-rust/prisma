@@ -13,9 +13,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
+use crate::egui_host::ImageRegistry;
 use ash::vk;
 use egui::{Align, Layout, Rect, Sense, Vec2};
-use egui_ash::ImageRegistry;
 use prism_editor_core::{
     emit_prt_probe_gizmos, unit_ring_points, viewport_math as vm, GizmoCommand, GizmoContext,
     GizmoFilter, GizmoRegistry, PrtProbeVolume, SelectMode, TransformJson, Workspace,

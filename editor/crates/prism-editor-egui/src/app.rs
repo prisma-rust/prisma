@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::egui_host::{self, App, AshRenderState, CreationContext, ExitSignal, HandleRedraw};
 use anyhow::Context as _;
 use egui::{Align, Color32, CursorIcon, Layout, Rect, RichText, Sense, Stroke, Vec2};
-use egui_ash::{App, CreationContext, ExitSignal, HandleRedraw};
 
 use prism_editor_core::dock::split_side_length;
 use prism_editor_core::{Command, DockDirection, DockNode, Locale, Preferences, Workspace};
@@ -5780,7 +5780,7 @@ impl EditorApp {
     /// egui-ash 需要的渲染状态（同一设备 / 队列 / 分配器）。
     pub fn render_state(
         &self,
-    ) -> egui_ash::AshRenderState<Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>> {
+    ) -> AshRenderState<Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>> {
         self.gpu.render_state()
     }
 }
@@ -5878,9 +5878,9 @@ impl App for EditorApp {
     /// egui-ash 在 winit `CloseRequested` 里已经先 `event_loop.exit()` 了，app 的
     /// `ui` 可能来不及看到 `close_requested`。`LoopExiting` 是事件循环结束前
     /// 唯一还能访问 app 的钩子：在这里把 dirty 文档落成恢复快照（#619）。
-    fn handle_event(&mut self, event: egui_ash::event::Event<'_>) {
-        let egui_ash::event::Event::AppEvent {
-            event: egui_ash::event::AppEvent::LoopExiting,
+    fn handle_event(&mut self, event: egui_host::event::Event<'_>) {
+        let egui_host::event::Event::AppEvent {
+            event: egui_host::event::AppEvent::LoopExiting,
         } = event
         else {
             return;
@@ -6917,7 +6917,7 @@ struct PendingCapture {
 }
 
 /// 根窗口的 `HWND`（只有 Windows 有意义，其它平台返回 `None`）。
-fn main_window_hwnd(window: &egui_ash::winit::window::Window) -> Option<isize> {
+fn main_window_hwnd(window: &egui_host::winit::window::Window) -> Option<isize> {
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};

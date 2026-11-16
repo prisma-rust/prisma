@@ -10,9 +10,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::egui_host::{raw_window_handle, AshRenderState, CreationContext};
 use anyhow::Context as _;
 use ash::vk;
-use egui_ash::{raw_window_handle, CreationContext};
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use prism_render::context::{
     create_host_instance, pick_host_physical_device, pick_present_queue_family,
@@ -141,8 +141,8 @@ impl SharedVulkan {
 
     /// 交给 egui-ash 的渲染状态。句柄都是 `Copy` 的 Vulkan 对象，egui-ash
     /// 只使用、不销毁。
-    pub fn render_state(&self) -> egui_ash::AshRenderState<Arc<Mutex<Allocator>>> {
-        egui_ash::AshRenderState {
+    pub fn render_state(&self) -> AshRenderState<Arc<Mutex<Allocator>>> {
+        AshRenderState {
             entry: self.entry.clone(),
             instance: self.instance.clone(),
             physical_device: self.physical_device,
