@@ -323,4 +323,21 @@ mod tests {
         assert_ne!(vf & VoxelVisualFlags::CHARGED, 0);
         assert_ne!(vf & VoxelVisualFlags::WET, 0);
     }
+
+    #[test]
+    fn spbr_pack_manifest_references_existing_textures() {
+        let json = include_str!("../assets/data/spbr_pack.json");
+        let doc: serde_json::Value = serde_json::from_str(json).expect("valid spbr_pack.json");
+        let textures = doc["textures"].as_object().expect("textures object");
+        assert!(!textures.is_empty());
+        let assets_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for (name, entry) in textures {
+            for slot in ["albedo", "normal", "specular"] {
+                if let Some(rel) = entry[slot].as_str() {
+                    let full = assets_root.join(rel);
+                    assert!(full.exists(), "missing SPBR {slot} texture for {name}: {full:?}");
+                }
+            }
+        }
+    }
 }
