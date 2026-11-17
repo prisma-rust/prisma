@@ -932,6 +932,21 @@
 
                             ]
                         }
+                    },
+                    {
+                        "name": "lid",
+                        "semanticName": "SV_GROUPTHREADID",
+                        "type": {
+                            "kind": "vector",
+                            "elementCount": 3,
+                            "elementType": {
+                                "kind": "scalar",
+                                "scalarType": "uint32"
+                            },
+                            "sizes": [
+
+                            ]
+                        }
                     }
                 ]
             },
@@ -939,6 +954,21 @@
                 {
                     "name": "tid",
                     "semanticName": "SV_DISPATCHTHREADID",
+                    "type": {
+                        "kind": "vector",
+                        "elementCount": 3,
+                        "elementType": {
+                            "kind": "scalar",
+                            "scalarType": "uint32"
+                        },
+                        "sizes": [
+
+                        ]
+                    }
+                },
+                {
+                    "name": "lid",
+                    "semanticName": "SV_GROUPTHREADID",
                     "type": {
                         "kind": "vector",
                         "elementCount": 3,

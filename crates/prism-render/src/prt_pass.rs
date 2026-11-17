@@ -2,7 +2,7 @@
 //!
 //! Executes Pass 1 (`clusterEvalMain`), Pass 2 (`propagateMain`), and Pass 3
 //! (`resolveVolumeMain`) of the PRT64 pipeline (`docs/prt-gi-64tree-design.md` §4-5),
-//! producing a double-buffered `64^3 * 9` RGBA32F `gi_volume` sampled by
+//! producing a double-buffered `64^3 * 9` RGBA16F `gi_volume` sampled by
 //! `ForwardPass` on the next frame (1-frame latency, matching `GtaoPass` / `RestirGiPass`).
 
 use std::ffi::CStr;
@@ -127,7 +127,7 @@ impl GiVolumeTarget {
             device.create_image(
                 &vk::ImageCreateInfo::default()
                     .image_type(vk::ImageType::TYPE_3D)
-                    .format(vk::Format::R32G32B32A32_SFLOAT)
+                    .format(vk::Format::R16G16B16A16_SFLOAT)
                     .extent(vk::Extent3D {
                         width: PRT_VOLUME_DIM,
                         height: PRT_VOLUME_DIM,
@@ -169,7 +169,7 @@ impl GiVolumeTarget {
                 &vk::ImageViewCreateInfo::default()
                     .image(image)
                     .view_type(vk::ImageViewType::TYPE_3D)
-                    .format(vk::Format::R32G32B32A32_SFLOAT)
+                    .format(vk::Format::R16G16B16A16_SFLOAT)
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -911,7 +911,7 @@ impl RenderPassNode for PrtPass {
         graph.create_resource_at(
             PRT_GI_VOLUME_H,
             ResourceType::StorageImage {
-                format: vk::Format::R32G32B32A32_SFLOAT,
+                format: vk::Format::R16G16B16A16_SFLOAT,
                 extent: vk::Extent3D {
                     width: PRT_VOLUME_DIM,
                     height: PRT_VOLUME_DIM,

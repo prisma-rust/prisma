@@ -230,21 +230,42 @@ float3 load_leaf_radiance(uint leaf_idx, out float valid_out)
     return max(rad_v.rgb + dyn, float3(0.0));
 }
 
+groupshared float4 s_prt_tile[4][4][4];
+
 // Pass 3: ResolveVolume into 64^3 order-2 SH texture (dispatch (16, 16, 16))
 [shader("compute")]
 [numthreads(4, 4, 4)]
-void resolveVolumeMain(uint3 tid : SV_DispatchThreadID)
+void resolveVolumeMain(uint3 tid : SV_DispatchThreadID, uint3 lid : SV_GroupThreadID)
 {
     uint3 dims = prtFrame.grid_dims.xyz;
-    if (any(tid >= dims))
-        return;
+    bool in_bounds = all(tid < dims);
 
     float3 world_pos = prtFrame.grid_origin.xyz + float3(tid) * prtFrame.grid_spacing.xyz;
-    uint center_leaf = traverse_64tree(world_pos);
     float center_valid = 0.0;
-    float3 center_rad = load_leaf_radiance(center_leaf, center_valid);
+    float3 center_rad = float3(0.0);
+    if (in_bounds)
+    {
+        uint center_leaf = traverse_64tree(world_pos);
+        center_rad = load_leaf_radiance(center_leaf, center_valid);
+    }
+
+    // Cache center voxel radiance/validity across the 4x4x4 workgroup so interior
+    // neighbor lookups avoid redundant 64-tree traversals.
+    s_prt_tile[lid.x][lid.y][lid.z] = float4(center_rad, center_valid);
+    GroupMemoryBarrierWithGroupSync();
+
+    if (!in_bounds)
+        return;
 
     // 6-neighbor directional SH1 gradient from adjacent leaves (anti-leakage gated).
+    static const int3 idirs[6] = {
+        int3( 1,  0,  0),
+        int3(-1,  0,  0),
+        int3( 0,  1,  0),
+        int3( 0, -1,  0),
+        int3( 0,  0,  1),
+        int3( 0,  0, -1)
+    };
     static const float3 dirs[6] = {
         float3( 1.0,  0.0,  0.0),
         float3(-1.0,  0.0,  0.0),
@@ -266,10 +287,21 @@ void resolveVolumeMain(uint3 tid : SV_DispatchThreadID)
 
         for (uint i = 0u; i < 6u; i++)
         {
-            float3 npos = world_pos + dirs[i] * prtFrame.grid_spacing.xyz;
-            uint nleaf = traverse_64tree(npos);
+            int3 n_lid = int3(lid) + idirs[i];
             float nvalid = 0.0;
-            float3 nrad = load_leaf_radiance(nleaf, nvalid);
+            float3 nrad = float3(0.0);
+            if (all(n_lid >= 0) && all(n_lid < 4))
+            {
+                float4 cached = s_prt_tile[n_lid.x][n_lid.y][n_lid.z];
+                nrad = cached.rgb;
+                nvalid = cached.w;
+            }
+            else
+            {
+                float3 npos = world_pos + dirs[i] * prtFrame.grid_spacing.xyz;
+                uint nleaf = traverse_64tree(npos);
+                nrad = load_leaf_radiance(nleaf, nvalid);
+            }
             if (nvalid > 0.0)
             {
                 accum_dc += nrad * 0.25;

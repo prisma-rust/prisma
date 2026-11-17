@@ -840,31 +840,40 @@ SceneOutput fragmentMain(MeshVaryings in)
         else
         {
             float leak_bias = (pc.gi_mode == 2u) ? pc.prt_leak_bias : 0.0;
+            uint active_coeffs = (pc.gi_mode == 2u) ? 4u : 9u;
             // — Diffuse: probes at surface normal (irradiance SH, A_l factors) —
-        // E(n) = ∑ c_lm * A_l * Y_lm(n) where A_l = [PI, 2*PI/3, PI/4]
-        // are the Ramamoorthi & Hanrahan cosine-convolution factors applied
-        // by EvalSH9Irradiance inside SampleProbeVolumeIrradiance.
-        // Lambertian BRDF = kd * albedo / PI, so we divide E(n) by PI:
-        //   gi_diffuse = kd * (E(n) / PI) * albedo
-        float3 gi_irradiance = SampleProbeVolumeIrradiance(
-            probeVolume, probeInfo, in.worldPos, n, leak_bias);
-        gi_diffuse = kd_ibl * (gi_irradiance / PI) * albedo;
-        diffuse_ibl = ibl_intensity * gi_diffuse;
+            // E(n) = ∑ c_lm * A_l * Y_lm(n) where A_l = [PI, 2*PI/3, PI/4]
+            // are the Ramamoorthi & Hanrahan cosine-convolution factors applied
+            // by EvalSH9Irradiance inside SampleProbeVolumeIrradiance*.
+            // Lambertian BRDF = kd * albedo / PI, so we divide E(n) by PI:
+            //   gi_diffuse = kd * (E(n) / PI) * albedo
+            float3 gi_irradiance = (leak_bias > 0.0)
+                ? SampleProbeVolumeIrradiance(
+                    probeVolume, probeInfo, in.worldPos, n, leak_bias, active_coeffs)
+                : SampleProbeVolumeIrradianceLinear(
+                    probeVolume, globalSamplers[NonUniformResourceIndex(SAMPLER_LINEAR_CLAMP)],
+                    probeInfo, in.worldPos, n, active_coeffs);
+            gi_diffuse = kd_ibl * (gi_irradiance / PI) * albedo;
+            diffuse_ibl = ibl_intensity * gi_diffuse;
 
-        // — Specular: probes at reflection direction (radiance SH, no A_l) —
-        // L(r) = ∑ c_lm * Y_lm(r) — direct SH reconstruction of incident
-        // radiance at the reflection direction, feeding the split-sum
-        // specular approximation. No further PI division needed since the
-        // split-sum formula and BRDF LUT already contain the correct
-        // Fresnel/roughness factors.
-        if (on(PBR_FLAG_SPECULAR_IBL))
-        {
-            float3 r = reflect(-v, n);
-            float3 gi_radiance = SampleProbeVolumeRadiance(
-                probeVolume, probeInfo, in.worldPos, r, leak_bias);
-            float2 brdf = sample_brdf_lut(max(dot(n, v), 0.0), roughness);
-            specular_ibl = ibl_intensity * gi_radiance * (f_ibl * brdf.x + brdf.y);
-        }
+            // — Specular: probes at reflection direction (radiance SH, no A_l) —
+            // L(r) = ∑ c_lm * Y_lm(r) — direct SH reconstruction of incident
+            // radiance at the reflection direction, feeding the split-sum
+            // specular approximation. No further PI division needed since the
+            // split-sum formula and BRDF LUT already contain the correct
+            // Fresnel/roughness factors.
+            if (on(PBR_FLAG_SPECULAR_IBL))
+            {
+                float3 r = reflect(-v, n);
+                float3 gi_radiance = (leak_bias > 0.0)
+                    ? SampleProbeVolumeRadiance(
+                        probeVolume, probeInfo, in.worldPos, r, leak_bias, active_coeffs)
+                    : SampleProbeVolumeRadianceLinear(
+                        probeVolume, globalSamplers[NonUniformResourceIndex(SAMPLER_LINEAR_CLAMP)],
+                        probeInfo, in.worldPos, r, active_coeffs);
+                float2 brdf = sample_brdf_lut(max(dot(n, v), 0.0), roughness);
+                specular_ibl = ibl_intensity * gi_radiance * (f_ibl * brdf.x + brdf.y);
+            }
         }
     }
     // ---- IBL (environment cubemap, only when GI is inactive). ----
