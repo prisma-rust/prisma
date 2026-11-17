@@ -83,6 +83,16 @@ fn make_camera_vp(eye: [f32; 3], target: [f32; 3], aspect: f32) -> [[f32; 4]; 4]
     mul_mat(proj, view)
 }
 
+const VIS_BURNING: u32 = 1 << 1;
+
+const fn pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16) | ((a as u32) << 24)
+}
+
+const fn pack_visual(flags16: u32, roughness_u8: u8, emissive_u8: u8) -> u32 {
+    (flags16 & 0xFFFF) | ((roughness_u8 as u32) << 16) | ((emissive_u8 as u32) << 24)
+}
+
 #[test]
 fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     let mut renderer = match try_create_headless() {
@@ -223,5 +233,166 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     assert_ne!(
         rim, hole,
         "carved L3 pinhole must expose background vs solid rim: rim={rim:?}, hole={hole:?}"
+    );
+}
+
+#[test]
+fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
+    let mut renderer = match try_create_headless() {
+        Some(r) => r,
+        None => return,
+    };
+
+    let dims = [6u32, 4u32, 6u32];
+    let count = (dims[0] * dims[1] * dims[2]) as usize;
+    let l1_idx = |x: u32, y: u32, z: u32| -> usize { (x + dims[0] * (y + dims[1] * z)) as usize };
+    let wall_rgba = pack_rgba(185, 185, 185, 255);
+    let wall_vis = pack_visual(0, 220, 0);
+
+    let build_room_l1 = |emitter_cell: Option<[u32; 4]>| {
+        let mut cells = vec![[0u32; 4]; count];
+        for z in 0..dims[2] {
+            for y in 0..dims[1] {
+                for x in 0..dims[0] {
+                    let is_shell =
+                        x == 0 || x == dims[0] - 1 || y == 0 || y == dims[1] - 1 || z == 0 || z == 4;
+                    if is_shell {
+                        cells[l1_idx(x, y, z)] = [u32::MAX, wall_rgba, wall_vis, 0];
+                    }
+                }
+            }
+        }
+        if let Some(cell) = emitter_cell {
+            // Place off-camera inside the enclosed dark room to the right of view frustum.
+            cells[l1_idx(4, 1, 3)] = cell;
+        }
+        cells
+    };
+
+    let render_room = |renderer: &mut GraphRenderer, sig: u64, l1_cells: Vec<[u32; 4]>| -> Vec<u8> {
+        let scene = Arc::new(VoxelSceneUpload {
+            signature: sig,
+            elapsed_seconds: 1.0,
+            chunks: vec![VoxelChunkUpload {
+                entity_id: 2,
+                version: sig,
+                origin_l1: [0, 0, 0],
+                dims_l1: dims,
+                l1_cells,
+                brick_occ: Vec::new(),
+                brick_cells: Vec::new(),
+            }],
+            cursor: None,
+            atlas: None,
+        });
+        renderer.set_voxel_scene(Some(scene));
+
+        let eye = [2.0, 1.8, 1.5];
+        let target = [2.0, 1.7, 4.0];
+        let vp = make_camera_vp(eye, target, 1.0);
+        let mut frame_data = FrameUBOData::default();
+        frame_data.viewProj = vp;
+        frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
+        frame_data.lightDirection = [0.0, 1.0, 0.0, 0.0];
+        frame_data.lightColor = [0.0, 0.0, 0.0, 0.0];
+        frame_data.viewportW = 256.0;
+        frame_data.viewportH = 256.0;
+        frame_data.exposure = 1.0;
+
+        for _ in 0..2 {
+            let out_of_date = renderer
+                .render(
+                    &[],
+                    &frame_data,
+                    [[0.0; 4]; 4],
+                    [[0.0; 4]; 4],
+                    0,
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    0.0,
+                    &[],
+                    RenderMode::Raster,
+                    0,
+                    0.0,
+                    0,
+                    1.0,
+                    &[],
+                    PostGrade::default(),
+                    true,
+                    false,
+                    &[],
+                )
+                .expect("room render failed");
+            assert!(!out_of_date);
+        }
+        renderer
+            .copy_offscreen_to_readback()
+            .expect("copy_offscreen_to_readback failed");
+        renderer.readback_pixels().expect("readback_pixels failed")
+    };
+
+    let stats_patch = |pixels: &[u8]| -> ([f64; 3], f64, u8) {
+        let mut sum = [0.0f64; 3];
+        let mut n = 0.0f64;
+        let mut diff_sum = 0.0f64;
+        let mut diff_n = 0.0f64;
+        let mut max_diff = 0u8;
+        for y in 108..148usize {
+            for x in 96..160usize {
+                let off = (y * 256 + x) * 4;
+                let r = pixels[off];
+                let g = pixels[off + 1];
+                let b = pixels[off + 2];
+                sum[0] += r as f64;
+                sum[1] += g as f64;
+                sum[2] += b as f64;
+                n += 1.0;
+                if x + 1 < 160 {
+                    let off_r = (y * 256 + x + 1) * 4;
+                    let dr = r.abs_diff(pixels[off_r]);
+                    let dg = g.abs_diff(pixels[off_r + 1]);
+                    let db = b.abs_diff(pixels[off_r + 2]);
+                    let d = dr.max(dg).max(db);
+                    max_diff = max_diff.max(d);
+                    diff_sum += (dr as f64 + dg as f64 + db as f64) / 3.0;
+                    diff_n += 1.0;
+                }
+            }
+        }
+        (
+            [sum[0] / n, sum[1] / n, sum[2] / n],
+            diff_sum / diff_n,
+            max_diff,
+        )
+    };
+
+    let dark_pixels = render_room(&mut renderer, 10, build_room_l1(None));
+    let (dark_rgb, _, _) = stats_patch(&dark_pixels);
+
+    // Test transient BURNING flag (emissive byte == 0) contributing colored indirect GI.
+    let burning_vis = pack_visual(VIS_BURNING, 180, 0);
+    let burning_rgba = pack_rgba(255, 110, 35, 255);
+    let lit_pixels = render_room(
+        &mut renderer,
+        11,
+        build_room_l1(Some([u32::MAX, burning_rgba, burning_vis, 0])),
+    );
+    let (lit_rgb, neighbor_diff, max_neighbor_diff) = stats_patch(&lit_pixels);
+
+    let dark_luma = (dark_rgb[0] + dark_rgb[1] + dark_rgb[2]) / 3.0;
+    let lit_luma = (lit_rgb[0] + lit_rgb[1] + lit_rgb[2]) / 3.0;
+    assert!(
+        lit_luma > dark_luma + 12.0,
+        "emissive BURNING voxel must bounce noticeable GI onto shaded wall: dark={dark_rgb:?}, lit={lit_rgb:?}"
+    );
+    assert!(
+        lit_rgb[0] > lit_rgb[2] + 6.0,
+        "warm emissive voxel GI must tint neutral gray wall warm: lit={lit_rgb:?}"
+    );
+    assert!(
+        neighbor_diff < 2.5 && max_neighbor_diff < 12,
+        "denoised flat GI wall must be grain-free: mean_diff={neighbor_diff:.2}, max_diff={max_neighbor_diff}, lit={lit_rgb:?}"
     );
 }

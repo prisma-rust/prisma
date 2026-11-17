@@ -8,6 +8,11 @@
 
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VOXEL_DDA_MAIN: &str = "voxelDdaMain"; // stage: COMPUTE
+pub const ENTRY_VOXEL_GI_DENOISE_MAIN: &str = "voxelGiDenoiseMain"; // stage: COMPUTE
+pub const ENTRY_VOXEL_COMPOSITE_MAIN: &str = "voxelCompositeMain"; // stage: COMPUTE
+
+/// Push-constant block size in bytes (reflected).
+pub const PUSH_CONSTANT_SIZE: u32 = 16;
 
 // --- descriptor set 0 ---
 pub const UBO_SET: u32 = 0;
@@ -20,21 +25,77 @@ pub const BRICK_OCC_SET: u32 = 0;
 pub const BRICK_OCC_BINDING: u32 = 3; // UNIFORM_BUFFER
 pub const BRICK_CELLS_SET: u32 = 0;
 pub const BRICK_CELLS_BINDING: u32 = 4; // UNIFORM_BUFFER
-pub const FORWARD_COLOR_TEX_SET: u32 = 0;
-pub const FORWARD_COLOR_TEX_BINDING: u32 = 5; // COMBINED_IMAGE_SAMPLER
-pub const FORWARD_DEPTH_TEX_SET: u32 = 0;
-pub const FORWARD_DEPTH_TEX_BINDING: u32 = 6; // COMBINED_IMAGE_SAMPLER
-pub const OUT_COLOR_TEX_SET: u32 = 0;
-pub const OUT_COLOR_TEX_BINDING: u32 = 7; // COMBINED_IMAGE_SAMPLER
-pub const OUT_DEPTH_TEX_SET: u32 = 0;
-pub const OUT_DEPTH_TEX_BINDING: u32 = 8; // COMBINED_IMAGE_SAMPLER
 pub const SPBR_ATLAS_SET: u32 = 0;
-pub const SPBR_ATLAS_BINDING: u32 = 9; // UNIFORM_BUFFER
+pub const SPBR_ATLAS_BINDING: u32 = 5; // UNIFORM_BUFFER
+pub const EMITTERS_SET: u32 = 0;
+pub const EMITTERS_BINDING: u32 = 6; // UNIFORM_BUFFER
+pub const FORWARD_COLOR_TEX_SET: u32 = 0;
+pub const FORWARD_COLOR_TEX_BINDING: u32 = 7; // COMBINED_IMAGE_SAMPLER
+pub const FORWARD_DEPTH_TEX_SET: u32 = 0;
+pub const FORWARD_DEPTH_TEX_BINDING: u32 = 8; // COMBINED_IMAGE_SAMPLER
+pub const PREV_GI_TEX_SET: u32 = 0;
+pub const PREV_GI_TEX_BINDING: u32 = 9; // COMBINED_IMAGE_SAMPLER
+pub const PREV_POS_NORM_TEX_SET: u32 = 0;
+pub const PREV_POS_NORM_TEX_BINDING: u32 = 10; // COMBINED_IMAGE_SAMPLER
+pub const GI_READ_TEX_SET: u32 = 0;
+pub const GI_READ_TEX_BINDING: u32 = 11; // COMBINED_IMAGE_SAMPLER
+pub const POS_NORM_READ_TEX_SET: u32 = 0;
+pub const POS_NORM_READ_TEX_BINDING: u32 = 12; // COMBINED_IMAGE_SAMPLER
+pub const DIRECT_READ_TEX_SET: u32 = 0;
+pub const DIRECT_READ_TEX_BINDING: u32 = 13; // COMBINED_IMAGE_SAMPLER
+pub const ALBEDO_READ_TEX_SET: u32 = 0;
+pub const ALBEDO_READ_TEX_BINDING: u32 = 14; // COMBINED_IMAGE_SAMPLER
+pub const SPEC_ENV_READ_TEX_SET: u32 = 0;
+pub const SPEC_ENV_READ_TEX_BINDING: u32 = 15; // COMBINED_IMAGE_SAMPLER
+pub const GLASS_READ_TEX_SET: u32 = 0;
+pub const GLASS_READ_TEX_BINDING: u32 = 16; // COMBINED_IMAGE_SAMPLER
+pub const OUT_COLOR_TEX_SET: u32 = 0;
+pub const OUT_COLOR_TEX_BINDING: u32 = 17; // COMBINED_IMAGE_SAMPLER
+pub const OUT_DEPTH_TEX_SET: u32 = 0;
+pub const OUT_DEPTH_TEX_BINDING: u32 = 18; // COMBINED_IMAGE_SAMPLER
+pub const DIRECT_OUT_TEX_SET: u32 = 0;
+pub const DIRECT_OUT_TEX_BINDING: u32 = 19; // COMBINED_IMAGE_SAMPLER
+pub const ALBEDO_OUT_TEX_SET: u32 = 0;
+pub const ALBEDO_OUT_TEX_BINDING: u32 = 20; // COMBINED_IMAGE_SAMPLER
+pub const SPEC_ENV_OUT_TEX_SET: u32 = 0;
+pub const SPEC_ENV_OUT_TEX_BINDING: u32 = 21; // COMBINED_IMAGE_SAMPLER
+pub const POS_NORM_OUT_TEX_SET: u32 = 0;
+pub const POS_NORM_OUT_TEX_BINDING: u32 = 22; // COMBINED_IMAGE_SAMPLER
+pub const GI_OUT_TEX_SET: u32 = 0;
+pub const GI_OUT_TEX_BINDING: u32 = 23; // COMBINED_IMAGE_SAMPLER
+pub const GLASS_OUT_TEX_SET: u32 = 0;
+pub const GLASS_OUT_TEX_BINDING: u32 = 24; // COMBINED_IMAGE_SAMPLER
+
+/// GPU layout struct (auto-generated from Slang `VoxelDenoisePush`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 16 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct VoxelDenoisePush {
+    /// offset 0, size 4
+    pub stepSize: i32,
+    /// offset 4, size 4
+    pub width: u32,
+    /// offset 8, size 4
+    pub height: u32,
+    /// offset 12, size 4
+    pub passIndex: u32,
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<VoxelDenoisePush>() == 16);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, stepSize) == 0);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, width) == 4);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, height) == 8);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, passIndex) == 12);
+};
 
 /// GPU layout struct (auto-generated from Slang `VoxelFrameUbo`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
-/// explicit `_pad_*` fillers, so `size_of` is 240 bytes and every field sits
+/// explicit `_pad_*` fillers, so `size_of` is 320 bytes and every field sits
 /// where the shader expects it.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
@@ -43,33 +104,39 @@ pub struct VoxelFrameUbo {
     pub viewProj: [[f32; 4]; 4],
     /// offset 64, size 64
     pub invViewProj: [[f32; 4]; 4],
-    /// offset 128, size 16
-    pub cameraPos: [f32; 4],
-    /// offset 144, size 16
-    pub sunDirRadiance: [f32; 4],
-    /// offset 160, size 16
-    pub sunColorAmbient: [f32; 4],
-    /// offset 176, size 16
-    pub counts: [u32; 4],
+    /// offset 128, size 64
+    pub prevViewProj: [[f32; 4]; 4],
     /// offset 192, size 16
-    pub cursorMin: [f32; 4],
+    pub cameraPos: [f32; 4],
     /// offset 208, size 16
-    pub cursorMax: [f32; 4],
+    pub sunDirRadiance: [f32; 4],
     /// offset 224, size 16
+    pub sunColorAmbient: [f32; 4],
+    /// offset 240, size 16
+    pub counts: [u32; 4],
+    /// offset 256, size 16
+    pub counts2: [u32; 4],
+    /// offset 272, size 16
+    pub cursorMin: [f32; 4],
+    /// offset 288, size 16
+    pub cursorMax: [f32; 4],
+    /// offset 304, size 16
     pub cursorColor: [f32; 4],
 }
 
 const _: () = {
-    assert!(::std::mem::size_of::<VoxelFrameUbo>() == 240);
+    assert!(::std::mem::size_of::<VoxelFrameUbo>() == 320);
     assert!(::std::mem::offset_of!(VoxelFrameUbo, viewProj) == 0);
     assert!(::std::mem::offset_of!(VoxelFrameUbo, invViewProj) == 64);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cameraPos) == 128);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunDirRadiance) == 144);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunColorAmbient) == 160);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, counts) == 176);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMin) == 192);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMax) == 208);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorColor) == 224);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, prevViewProj) == 128);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cameraPos) == 192);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunDirRadiance) == 208);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunColorAmbient) == 224);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, counts) == 240);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, counts2) == 256);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMin) == 272);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMax) == 288);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorColor) == 304);
 };
 
 /// GPU layout struct (auto-generated from Slang `VoxelChunkGpu`).
@@ -90,4 +157,27 @@ const _: () = {
     assert!(::std::mem::size_of::<VoxelChunkGpu>() == 32);
     assert!(::std::mem::offset_of!(VoxelChunkGpu, originAndL1Offset) == 0);
     assert!(::std::mem::offset_of!(VoxelChunkGpu, dimsAndBrickOffset) == 16);
+};
+
+/// GPU layout struct (auto-generated from Slang `VoxelEmitterGpu`).
+///
+/// Field offsets are the reflected std140 ones — alignment holes are emitted as
+/// explicit `_pad_*` fillers, so `size_of` is 48 bytes and every field sits
+/// where the shader expects it.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
+pub struct VoxelEmitterGpu {
+    /// offset 0, size 16
+    pub bminRange: [f32; 4],
+    /// offset 16, size 16
+    pub bmaxRadius: [f32; 4],
+    /// offset 32, size 16
+    pub colorIntensity: [f32; 4],
+}
+
+const _: () = {
+    assert!(::std::mem::size_of::<VoxelEmitterGpu>() == 48);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bminRange) == 0);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bmaxRadius) == 16);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, colorIntensity) == 32);
 };

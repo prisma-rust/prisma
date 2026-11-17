@@ -421,9 +421,11 @@ compile_stage prt propagateMain compute prt_propagate
 compile_stage prt resolveVolumeMain compute prt_resolve_volume
 emit_reflection prt resolveVolumeMain compute
 
-# voxel_dda: three-tier L1/L2/L3 voxel raymarcher (crates/prism-render/src/voxel_dda_pass.rs).
+# voxel_dda: three-tier L1/L2/L3 voxel raymarcher + GI denoiser + composite (crates/prism-render/src/voxel_dda_pass.rs).
 compile_stage voxel_dda voxelDdaMain compute voxel_dda
-emit_reflection voxel_dda voxelDdaMain compute
+compile_stage voxel_dda voxelGiDenoiseMain compute voxel_gi_denoise
+compile_stage voxel_dda voxelCompositeMain compute voxel_composite
+emit_reflection voxel_dda voxelDdaMain compute voxelGiDenoiseMain compute voxelCompositeMain compute
 
 # Hard gate: every emitted module must be valid SPIR-V (#580). Slang can emit
 # illegal layout decorations that only show up as a Vulkan validation error at
