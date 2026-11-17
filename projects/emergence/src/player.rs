@@ -85,6 +85,7 @@ pub struct PlayerController {
     pub pitch: f32,
     pub grounded: bool,
     pub fly_mode: bool,
+    was_fly_mode: bool,
     pub tier: VoxelTier,
     pub tier_mode: TierMode,
     pub tool_index: usize,
@@ -119,6 +120,7 @@ impl PlayerController {
             pitch: -0.14,
             grounded: true,
             fly_mode: false,
+            was_fly_mode: false,
             tier: VoxelTier::L2,
             tier_mode: TierMode::Auto,
             tool_index: 0,
@@ -205,9 +207,6 @@ impl PlayerController {
             self.yaw = ctrl.yaw;
             self.pitch = ctrl.pitch.clamp(-1.52, 1.52);
             self.last_synced_camera_rot = Some(self.camera_rotation());
-            if let Some(lt) = world.get::<LocalTransform>(cam) {
-                self.feet_pos = lt.position - Vec3::new(0.0, PLAYER_EYE_HEIGHT_M, 0.0);
-            }
             return true;
         }
         let Some(lt) = world.get::<LocalTransform>(cam) else {
@@ -611,6 +610,7 @@ impl PlayerController {
         };
 
         if self.fly_mode {
+            self.was_fly_mode = true;
             let mut move_vec = wish_dir;
             if input.key(keys::SPACE) {
                 move_vec.y += 1.0;
@@ -628,12 +628,17 @@ impl PlayerController {
             return;
         }
 
-        // Depenetrate if Walk mode started or switched from Fly inside solid terrain.
-        while sim.aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
-            && self.feet_pos.y < 62.0
-        {
-            self.feet_pos.y += 0.25;
-            self.velocity.y = 0.0;
+        // Depenetrate ONLY on the transition from Fly -> Walk so walking into walls
+        // never triggers vertical climbing or floor jitter.
+        if self.was_fly_mode {
+            self.was_fly_mode = false;
+            while sim
+                .aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
+                && self.feet_pos.y < 62.0
+            {
+                self.feet_pos.y += 0.25;
+                self.velocity.y = 0.0;
+            }
         }
 
         // Walk mode kinematics with gravity, coyote time, jump buffer, and L2 step-up.

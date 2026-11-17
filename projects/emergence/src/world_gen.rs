@@ -295,7 +295,14 @@ pub fn terrain_height_m(wx: f32, wz: f32, seed: u64) -> f32 {
     let blend = dx.max(dz).clamp(0.0, 1.0);
     h = 4.0 + (h - 4.0) * (blend * blend);
 
-    h.clamp(1.6, 52.0)
+    // Quantize gentle plains/plateaus to 1.0m L1 steps so flat ground uses L1 COW instead of L2 bricks;
+    // keep 0.25m L2 precision on steep mountain slopes (`continental > 0.60`).
+    let clamped = h.clamp(1.6, 52.0);
+    if continental <= 0.60 {
+        clamped.round()
+    } else {
+        clamped
+    }
 }
 
 fn is_cave_air(wx: f32, wy: f32, wz: f32, surface_m: f32, seed: u64) -> bool {
@@ -350,7 +357,11 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
             let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_dim);
             for l1y in 2..max_l1y {
                 let block_top_l2y = (l1y + 1) * 4;
-                if block_top_l2y <= min_top_l2y - 6 && min_h < 10.5 && l1y >= 4 {
+                // Flat 1m surface block (`top_l2y == block_top_l2y` across all 16 columns): emit pure L1 COW!
+                if min_top_l2y == max_top_l2y
+                    && min_top_l2y == block_top_l2y
+                    && min_h >= SEA_LEVEL_M
+                {
                     let c_cave = smooth_noise_3d(
                         l1x as f32 + 0.5,
                         l1y as f32 + 0.5,
@@ -358,10 +369,33 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
                         seed ^ 0x5151,
                     );
                     if c_cave < 0.45 {
-                        builder.set_l1_cow(
-                            [local_l1x as u32, l1y as u32, local_l1z as u32],
-                            mat_id::SOIL,
-                        );
+                        let mat = if min_h >= 14.5 {
+                            mat_id::CRYO
+                        } else if min_h < SEA_LEVEL_M + 0.35 {
+                            mat_id::SOIL
+                        } else if min_h < 10.5 {
+                            mat_id::GRASS
+                        } else {
+                            mat_id::LIMESTONE
+                        };
+                        builder.set_l1_cow([local_l1x as u32, l1y as u32, local_l1z as u32], mat);
+                        continue;
+                    }
+                }
+                if block_top_l2y <= min_top_l2y - 6 && l1y >= 2 {
+                    let c_cave = smooth_noise_3d(
+                        l1x as f32 + 0.5,
+                        l1y as f32 + 0.5,
+                        l1z as f32 + 0.5,
+                        seed ^ 0x5151,
+                    );
+                    if c_cave < 0.45 {
+                        let mat = if min_h >= 10.5 || l1y <= 3 {
+                            mat_id::LIMESTONE
+                        } else {
+                            mat_id::SOIL
+                        };
+                        builder.set_l1_cow([local_l1x as u32, l1y as u32, local_l1z as u32], mat);
                         continue;
                     }
                 }
