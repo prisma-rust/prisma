@@ -129,7 +129,7 @@ pub use plugin::{
     PluginGroup,
 };
 pub use prism_engine::ecs::World;
-pub use prism_engine::render_settings::RenderSettings;
+pub use prism_engine::render_settings::{MobileUpscaler, RenderSettings};
 pub use prism_platform::PlatformWindow;
 pub use render_shared::{FrameImage, RenderShared, RenderStats};
 

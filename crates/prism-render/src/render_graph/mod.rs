@@ -106,6 +106,8 @@ pub const PRT_GI_VOLUME_H: ResourceHandle = ResourceHandle(1018);
 pub const VOXEL_COLOR_H: ResourceHandle = ResourceHandle(1019);
 /// Linearized NDC depth composite produced by `VoxelDdaPass` (R32_SFLOAT).
 pub const VOXEL_DEPTH_H: ResourceHandle = ResourceHandle(1020);
+/// Full-resolution HDR color upscaled by `MobileUpscalerPass` (SGSR 2 / Arm ASR).
+pub const UPSCALED_COLOR_H: ResourceHandle = ResourceHandle(1021);
 
 impl ResourceHandle {
     pub const INVALID: ResourceHandle = ResourceHandle(u32::MAX);
@@ -213,6 +215,8 @@ pub enum PassKind {
     Rt,
     /// Qualcomm Adreno Neural Fusion compute pass (`AnfPass`).
     Anf,
+    /// Open-source mobile temporal upscaler compute pass (`MobileUpscalerPass`).
+    MobileUpscaler,
     /// Screen-space ReSTIR indirect diffuse (`RestirGiPass`).
     RestirGi,
     /// Standalone SHaRC trainer (`SharcTrainPass`): deposits radiance into the
@@ -1423,6 +1427,12 @@ impl RenderGraph {
             (
                 ANF_COLOR_H,
                 "anf_color",
+                vk::Format::R16G16B16A16_SFLOAT,
+                crate::pass_dump::DumpKind::Radiance,
+            ),
+            (
+                UPSCALED_COLOR_H,
+                "upscaled_color",
                 vk::Format::R16G16B16A16_SFLOAT,
                 crate::pass_dump::DumpKind::Radiance,
             ),

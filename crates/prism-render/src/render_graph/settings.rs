@@ -71,6 +71,84 @@ pub enum DlssMode {
     Dlaa,
 }
 
+/// Mobile and desktop upscaler mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MobileUpscaler {
+    #[default]
+    Off,
+    /// Real nearest-neighbor spatial upscaling (`vk::Filter::NEAREST`).
+    Nearest,
+    /// Real bilinear spatial upscaling (`vk::Filter::LINEAR`).
+    Linear,
+    /// Qualcomm Snapdragon Game Super Resolution 2 (TAAU + Lanczos).
+    Sgsr2,
+    /// Arm Accuracy Super Resolution (FSR 2 mobile derivative).
+    ArmAsr,
+    /// PC-only placeholder for NVIDIA DLSS (equivalent to `Off`).
+    Dlss,
+    /// PC-only placeholder for AMD FSR (equivalent to `Off`).
+    Fsr,
+}
+
+impl MobileUpscaler {
+    /// Canonical config name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Nearest => "nearest",
+            Self::Linear => "linear",
+            Self::Sgsr2 => "sgsr2",
+            Self::ArmAsr => "asr",
+            Self::Dlss => "dlss",
+            Self::Fsr => "fsr",
+        }
+    }
+
+    /// Human-readable label for debug overlays and settings UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Nearest => "Nearest",
+            Self::Linear => "Linear",
+            Self::Sgsr2 => "SGSR 2",
+            Self::ArmAsr => "Arm ASR",
+            Self::Dlss => "DLSS (Placeholder)",
+            Self::Fsr => "FSR (Placeholder)",
+        }
+    }
+
+    /// Whether this mode runs the temporal compute upscaler pass (`MobileUpscalerPass`)
+    /// and requires camera subpixel jitter.
+    pub fn is_temporal_compute(self) -> bool {
+        matches!(self, Self::Sgsr2 | Self::ArmAsr)
+    }
+
+    /// Whether this mode renders the scene at scaled `internal_resolution`
+    /// and upscales to the output swapchain extent.
+    ///
+    /// Note: `Dlss` and `Fsr` are PC placeholders equivalent to `Off`.
+    pub fn uses_internal_resolution(self) -> bool {
+        matches!(
+            self,
+            Self::Nearest | Self::Linear | Self::Sgsr2 | Self::ArmAsr
+        )
+    }
+
+    /// Parse upscaler mode name (case-insensitive).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "0" => Some(Self::Off),
+            "nearest" | "point" => Some(Self::Nearest),
+            "linear" | "bilinear" => Some(Self::Linear),
+            "sgsr2" | "sgsr" => Some(Self::Sgsr2),
+            "asr" | "arm_asr" | "arm-asr" | "armasr" => Some(Self::ArmAsr),
+            "dlss" => Some(Self::Dlss),
+            "fsr" => Some(Self::Fsr),
+            _ => None,
+        }
+    }
+}
+
 /// Quality / feature settings that passes consult at execution time.
 /// These are the runtime-switchable knobs described in
 /// `docs/mobile-raytracing-gi-design.md`.
@@ -198,6 +276,11 @@ pub struct RenderSettings {
     pub anf_sharpness: f32,
     /// Qualcomm Adreno Neural Fusion Frame Generation (#1161).
     pub anf_fg: bool,
+
+    /// Open-source mobile temporal upscaler (`Off` / `Sgsr2` / `ArmAsr`).
+    pub mobile_upscaler: MobileUpscaler,
+    /// Sharpening strength for `mobile_upscaler`, clamped to `0.0..=1.0`.
+    pub upscaler_sharpness: f32,
 }
 
 impl Default for RenderSettings {
@@ -245,6 +328,8 @@ impl Default for RenderSettings {
             anf_sr: false,
             anf_sharpness: 0.5,
             anf_fg: false,
+            mobile_upscaler: MobileUpscaler::Off,
+            upscaler_sharpness: 0.5,
         }
     }
 }

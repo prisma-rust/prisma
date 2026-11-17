@@ -17,6 +17,7 @@ pub mod nei_ui;
 pub mod pbr_materials;
 pub mod perf_report;
 pub mod player;
+pub mod render_settings_ui;
 pub mod sim;
 pub mod structures;
 pub mod tags;
@@ -289,6 +290,7 @@ pub struct EmergenceRuntime {
     pub commands: CommandWorldState,
     pub debug_hud: DebugHudState,
     pub nei: EmergenceNeiHud,
+    pub render_settings_ui: render_settings_ui::RenderSettingsUi,
     pub perf: EmergencePerfRecorder,
     pub pending_dirty_chunks: usize,
 }
@@ -309,6 +311,7 @@ impl EmergenceRuntime {
             commands: CommandWorldState::new(),
             debug_hud: DebugHudState::new(seed),
             nei: EmergenceNeiHud::new(),
+            render_settings_ui: render_settings_ui::RenderSettingsUi::default(),
             perf: EmergencePerfRecorder::from_active_config(seed),
             pending_dirty_chunks: 0,
         }
@@ -359,8 +362,12 @@ pub fn emergence_frame_tick(
         if input.key_pressed(keys::F3) {
             runtime.debug_hud.open = !runtime.debug_hud.open;
         }
-        let ui_consumed =
+        let settings_consumed =
             runtime
+                .render_settings_ui
+                .handle_input(&input, screen, console_active);
+        let ui_consumed = settings_consumed
+            || runtime
                 .nei
                 .handle_input(&input, screen, console_active, &mut runtime.player);
         runtime
@@ -372,6 +379,7 @@ pub fn emergence_frame_tick(
     runtime
         .nei
         .sync_ui(world, &runtime.sim, &runtime.player, console_active);
+    runtime.render_settings_ui.sync_ui(world, console_active);
     runtime
         .debug_hud
         .sync_ui(world, &runtime.sim, &runtime.player, &runtime.commands);
@@ -518,10 +526,30 @@ impl prism_app::FrameHook for EmergenceHostHook {
         &mut self,
         window: &prism_app::PlatformWindow,
         _world: &mut prism_app::World,
-        _settings: &mut prism_app::RenderSettings,
+        settings: &mut prism_app::RenderSettings,
         stats: &prism_app::RenderStats,
         _shared: &prism_app::RenderShared,
     ) {
+        let (mode_id, scale, sharpness) = commands::current_upscaler_config();
+        let mode = match mode_id {
+            1 => prism_app::MobileUpscaler::Sgsr2,
+            2 => prism_app::MobileUpscaler::ArmAsr,
+            3 => prism_app::MobileUpscaler::Nearest,
+            4 => prism_app::MobileUpscaler::Linear,
+            5 => prism_app::MobileUpscaler::Dlss,
+            6 => prism_app::MobileUpscaler::Fsr,
+            _ => prism_app::MobileUpscaler::Off,
+        };
+        settings.mobile_upscaler = mode;
+        settings.upscaler_sharpness = sharpness;
+        if !mode.uses_internal_resolution() {
+            settings.internal_resolution = [0, 0];
+        } else {
+            let (w, h) = window.inner_size();
+            let rw = ((w.max(1) as f32) * scale).round().max(64.0) as u32;
+            let rh = ((h.max(1) as f32) * scale).round().max(64.0) as u32;
+            settings.internal_resolution = [rw, rh];
+        }
         let all_gpu_passes = stats
             .gpu_timings
             .as_ref()
@@ -565,6 +593,7 @@ impl prism_app::FrameHook for EmergenceHostHook {
 /// Builds the full playable Emergence application (`player` feature).
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
+    commands::init_upscaler_from_env();
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio)

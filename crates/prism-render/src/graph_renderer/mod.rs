@@ -595,7 +595,9 @@ impl GraphRenderer {
             Arc::clone(&context),
         )?));
         if context.rt_caps.has_ray_query() {
-            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(&context)?));
+            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(
+                &context,
+            )?));
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
@@ -628,6 +630,10 @@ impl GraphRenderer {
         // traced image and its guides in path-trace mode (#883 follow-up). In the
         // raster path it still resolves the forward pass output.
         graph.add_pass(Box::new(taa_pass));
+        let mobile_upscaler_pass =
+            crate::mobile_upscaler::MobileUpscalerPass::new(&context, swapchain.extent)
+                .context("MobileUpscalerPass::new")?;
+        graph.add_pass(Box::new(mobile_upscaler_pass));
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
 
@@ -1087,7 +1093,9 @@ impl GraphRenderer {
             Arc::clone(&context),
         )?));
         if context.rt_caps.has_ray_query() {
-            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(&context)?));
+            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(
+                &context,
+            )?));
         }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
@@ -1113,6 +1121,10 @@ impl GraphRenderer {
         #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         graph.add_pass(Box::new(taa_pass));
+        let mobile_upscaler_pass =
+            crate::mobile_upscaler::MobileUpscalerPass::new(&context, offscreen.extent())
+                .context("MobileUpscalerPass::new (headless)")?;
+        graph.add_pass(Box::new(mobile_upscaler_pass));
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
         if let Some(post_pass) = graph.pass_mut::<crate::post::PostPass>() {
@@ -1357,8 +1369,10 @@ impl GraphRenderer {
     /// Apply this frame's TAA subpixel jitter to `frame_data` and remember the
     /// NDC offset for `TaaPass`. Call once per frame before `prepare` (#883).
     pub fn apply_taa_jitter(&mut self, frame_data: &mut FrameUBOData) {
-        self.temporal
-            .apply_jitter(frame_data, self.settings.taa || self.settings.anf_sr);
+        let active = self.settings.taa
+            || self.settings.anf_sr
+            || self.settings.mobile_upscaler.is_temporal_compute();
+        self.temporal.apply_jitter(frame_data, active);
     }
 
     /// Enable/disable TAA and set its history weight (#883).
@@ -1373,6 +1387,22 @@ impl GraphRenderer {
     pub fn set_anf_sr(&mut self, enabled: bool, sharpness: f32) {
         self.settings.anf_sr = enabled;
         self.settings.anf_sharpness = sharpness.clamp(0.0, 1.0);
+    }
+
+    pub fn set_mobile_upscaler(
+        &mut self,
+        mode: crate::render_graph::MobileUpscaler,
+        sharpness: f32,
+    ) {
+        if !mode.is_temporal_compute()
+            && self.settings.mobile_upscaler.is_temporal_compute()
+            && !self.settings.taa
+            && !self.settings.anf_sr
+        {
+            self.temporal.taa_frame = 0;
+        }
+        self.settings.mobile_upscaler = mode;
+        self.settings.upscaler_sharpness = sharpness.clamp(0.0, 1.0);
     }
 
     pub fn set_internal_resolution(
@@ -1580,6 +1610,14 @@ impl GraphRenderer {
                     log::warn!("TaaPass recreate_target failed: {e:#}");
                 }
             }
+            if let Some(upscaler) = self
+                .graph
+                .pass_mut::<crate::mobile_upscaler::MobileUpscalerPass>()
+            {
+                if let Err(e) = upscaler.recreate_target(&self.runtime.context, extent) {
+                    log::warn!("MobileUpscalerPass recreate_target failed: {e:#}");
+                }
+            }
             if let Some(voxel) = self.graph.pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>() {
                 voxel.drop_targets();
             }
@@ -1684,6 +1722,14 @@ impl GraphRenderer {
                 log::warn!("TaaPass recreate_target failed (offscreen resize): {e:#}");
             }
         }
+        if let Some(upscaler) = self
+            .graph
+            .pass_mut::<crate::mobile_upscaler::MobileUpscalerPass>()
+        {
+            if let Err(e) = upscaler.recreate_target(&context, extent) {
+                log::warn!("MobileUpscalerPass recreate_target failed (offscreen resize): {e:#}");
+            }
+        }
         if let Some(voxel) = self.graph.pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>() {
             voxel.drop_targets();
         }
@@ -1711,14 +1757,8 @@ impl GraphRenderer {
     }
 
     /// Supply the three-tier sparse voxel scene payload for subsequent frames.
-    pub fn set_voxel_scene(
-        &mut self,
-        scene: Option<Arc<crate::voxel_dda_pass::VoxelSceneUpload>>,
-    ) {
-        if let Some(voxel) = self
-            .graph
-            .pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>()
-        {
+    pub fn set_voxel_scene(&mut self, scene: Option<Arc<crate::voxel_dda_pass::VoxelSceneUpload>>) {
+        if let Some(voxel) = self.graph.pass_mut::<crate::voxel_dda_pass::VoxelDdaPass>() {
             voxel.set_scene(scene);
         }
     }

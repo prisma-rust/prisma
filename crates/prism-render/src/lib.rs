@@ -71,6 +71,7 @@ pub mod lut;
 pub mod managers;
 mod math;
 pub mod mesh;
+pub mod mobile_upscaler;
 pub mod offscreen;
 pub mod particle_pass;
 /// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
@@ -176,11 +177,12 @@ pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
 pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
-    DrawItem, DrawState, InternalScaleMode, ParticleDrawItem, PassInfo, PassKind, PostGrade,
-    PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings, ResourceHandle,
-    ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight, FORWARD_COLOR_H,
-    FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT,
-    SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
+    DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem, PassInfo, PassKind,
+    PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings,
+    ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight,
+    FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H,
+    SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
+    UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]
@@ -200,6 +202,4 @@ pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
 pub use ui_overlay::UiOverlay;
 pub use ui_overlay::UiOverlayInput;
-pub use voxel_dda_pass::{
-    VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload,
-};
+pub use voxel_dda_pass::{VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload};

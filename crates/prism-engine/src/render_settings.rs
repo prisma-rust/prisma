@@ -4,7 +4,9 @@
 //! into a single struct so [`render_system`] has a clean, extensible parameter
 //! instead of a growing list of scalar arguments.
 
-pub use prism_render::{DlssMode, InternalScaleMode, PtGiMode, RasterGiMode, RenderMode};
+pub use prism_render::{
+    DlssMode, InternalScaleMode, MobileUpscaler, PtGiMode, RasterGiMode, RenderMode,
+};
 
 /// Debug flag names, ordered by shader bit (`PBR_FLAG_*` in
 /// `scene_frag.slang`). Bit `i` corresponds to `PBR_FLAG_NAMES[i]`.
@@ -208,6 +210,10 @@ pub struct RenderSettings {
     pub anf_sharpness: f32,
     /// Qualcomm Adreno Neural Fusion Frame Generation (#1161).
     pub anf_fg: bool,
+    /// Open-source mobile temporal upscaler (`Off` / `Sgsr2` / `ArmAsr`).
+    pub mobile_upscaler: MobileUpscaler,
+    /// Sharpening strength for `mobile_upscaler`, clamped to `0.0..=1.0`.
+    pub upscaler_sharpness: f32,
     /// 内部渲染分辨率 `[宽, 高]`（#613）；`[0, 0]` = 关闭。
     ///
     /// 开启后场景按这个尺寸渲染，`PostPass` 再放大到窗口；相机的宽高比也跟着
@@ -330,6 +336,8 @@ impl Default for RenderSettings {
             anf_sr: false,
             anf_sharpness: 0.5,
             anf_fg: false,
+            mobile_upscaler: MobileUpscaler::Off,
+            upscaler_sharpness: 0.5,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_map_size: prism_render::SHADOW_MAP_SIZE,
             shadow_cascade_count: 1,

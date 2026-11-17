@@ -421,6 +421,42 @@ fn internal_scale_mode_parses_authoring_values() {
 }
 
 #[test]
+fn mobile_upscaler_modes_parse_and_classify_correctly() {
+    use crate::render_graph::MobileUpscaler;
+
+    assert_eq!(MobileUpscaler::parse("off"), Some(MobileUpscaler::Off));
+    assert_eq!(
+        MobileUpscaler::parse("nearest"),
+        Some(MobileUpscaler::Nearest)
+    );
+    assert_eq!(
+        MobileUpscaler::parse("linear"),
+        Some(MobileUpscaler::Linear)
+    );
+    assert_eq!(MobileUpscaler::parse("sgsr2"), Some(MobileUpscaler::Sgsr2));
+    assert_eq!(MobileUpscaler::parse("asr"), Some(MobileUpscaler::ArmAsr));
+    assert_eq!(MobileUpscaler::parse("dlss"), Some(MobileUpscaler::Dlss));
+    assert_eq!(MobileUpscaler::parse("fsr"), Some(MobileUpscaler::Fsr));
+    assert_eq!(MobileUpscaler::parse("unknown"), None);
+
+    assert!(MobileUpscaler::Sgsr2.is_temporal_compute());
+    assert!(MobileUpscaler::ArmAsr.is_temporal_compute());
+    assert!(!MobileUpscaler::Nearest.is_temporal_compute());
+    assert!(!MobileUpscaler::Linear.is_temporal_compute());
+    assert!(!MobileUpscaler::Dlss.is_temporal_compute());
+    assert!(!MobileUpscaler::Fsr.is_temporal_compute());
+
+    assert!(MobileUpscaler::Nearest.uses_internal_resolution());
+    assert!(MobileUpscaler::Linear.uses_internal_resolution());
+    assert!(MobileUpscaler::Sgsr2.uses_internal_resolution());
+    assert!(MobileUpscaler::ArmAsr.uses_internal_resolution());
+    // PC placeholders behave identically to Off.
+    assert!(!MobileUpscaler::Off.uses_internal_resolution());
+    assert!(!MobileUpscaler::Dlss.uses_internal_resolution());
+    assert!(!MobileUpscaler::Fsr.uses_internal_resolution());
+}
+
+#[test]
 fn sprite_lights_are_sorted_by_strength_and_truncated() {
     // #611：2D 光表固定 16 条，超出的按「强度 × 亮度」丢掉最弱的。
     let mut lights: Vec<SpriteLight> = (0..SPRITE_LIGHT_MAX + 4)

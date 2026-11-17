@@ -1,6 +1,76 @@
 //! Horizon-aligned chat & slash-command console (`T` / `Enter` / `/`) for `emergence`.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+
+static UPSCALER_MODE: AtomicU8 = AtomicU8::new(0);
+static UPSCALER_SCALE_BITS: AtomicU32 = AtomicU32::new(0.75_f32.to_bits());
+static UPSCALER_SHARPNESS_BITS: AtomicU32 = AtomicU32::new(0.5_f32.to_bits());
+
+/// Returns `(mode_id, render_scale, sharpness)` where `mode_id` is:
+/// `0 = Off`, `1 = Sgsr2`, `2 = ArmAsr`, `3 = Nearest`, `4 = Linear`,
+/// `5 = Dlss (PC placeholder)`, `6 = Fsr (PC placeholder)`.
+pub fn current_upscaler_config() -> (u8, f32, f32) {
+    (
+        UPSCALER_MODE.load(Ordering::Relaxed),
+        f32::from_bits(UPSCALER_SCALE_BITS.load(Ordering::Relaxed)),
+        f32::from_bits(UPSCALER_SHARPNESS_BITS.load(Ordering::Relaxed)),
+    )
+}
+
+/// Update upscaler state from the in-game Render Settings UI.
+pub fn set_upscaler_config(mode_id: u8, scale: f32, sharpness: f32) {
+    UPSCALER_MODE.store(mode_id.min(6), Ordering::Relaxed);
+    UPSCALER_SCALE_BITS.store(scale.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+    UPSCALER_SHARPNESS_BITS.store(sharpness.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+/// Human-readable upscaler mode name for HUD and command feedback.
+pub fn upscaler_mode_label(mode_id: u8) -> &'static str {
+    match mode_id {
+        1 => "SGSR 2",
+        2 => "Arm ASR",
+        3 => "Nearest",
+        4 => "Linear",
+        5 => "DLSS (Placeholder -> Off)",
+        6 => "FSR (Placeholder -> Off)",
+        _ => "Off",
+    }
+}
+
+/// Optional startup override via `EMERGENCE_UPSCALER=off|nearest|linear|sgsr2|asr|dlss|fsr`,
+/// `EMERGENCE_UPSCALER_SCALE=0.75`, and `EMERGENCE_UPSCALER_SHARPNESS=0.5`.
+pub fn init_upscaler_from_env() {
+    if let Ok(mode) = std::env::var("EMERGENCE_UPSCALER") {
+        let id = parse_upscaler_mode_id(&mode).unwrap_or(0);
+        UPSCALER_MODE.store(id, Ordering::Relaxed);
+    }
+    if let Ok(scale) = std::env::var("EMERGENCE_UPSCALER_SCALE") {
+        if let Ok(v) = scale.trim().parse::<f32>() {
+            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+        }
+    }
+    if let Ok(sharp) = std::env::var("EMERGENCE_UPSCALER_SHARPNESS") {
+        if let Ok(v) = sharp.trim().parse::<f32>() {
+            UPSCALER_SHARPNESS_BITS.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
+fn parse_upscaler_mode_id(raw: &str) -> Option<u8> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "off" | "none" | "0" => Some(0),
+        "sgsr2" | "sgsr" => Some(1),
+        "asr" | "arm_asr" | "arm-asr" | "armasr" => Some(2),
+        "nearest" | "point" => Some(3),
+        "linear" | "bilinear" => Some(4),
+        #[cfg(not(target_os = "android"))]
+        "dlss" => Some(5),
+        #[cfg(not(target_os = "android"))]
+        "fsr" => Some(6),
+        _ => None,
+    }
+}
 
 use glam::Vec3;
 use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
@@ -901,7 +971,7 @@ impl CommandWorldState {
             return String::new();
         }
         match parts[0].to_ascii_lowercase().as_str() {
-            "help" | "?" => "Commands: /time <set|add|query>, /weather <clear|rain|thunder>, /gamemode <survival|creative|walk|fly>, /tp <x> <y> <z>, /setblock <x> <y> <z> <mat>, /gamerule <rule> <bool>, /seed, /clear".to_string(),
+            "help" | "?" => "Commands: /time <set|add|query>, /weather <clear|rain|thunder>, /gamemode <survival|creative|walk|fly>, /tp <x> <y> <z>, /setblock <x> <y> <z> <mat>, /gamerule <rule> <bool>, /upscaler <off|sgsr2|asr|query> [scale] [sharpness], /seed, /clear".to_string(),
             "seed" => format!("Seed: {}", sim.seed),
             "clear" => {
                 self.chat_log.clear();
@@ -913,6 +983,7 @@ impl CommandWorldState {
             "tp" | "teleport" => self.exec_tp(&parts[1..], world, sim, player),
             "setblock" => self.exec_setblock(&parts[1..], sim, player),
             "gamerule" => self.exec_gamerule(&parts[1..]),
+            "upscaler" => self.exec_upscaler(&parts[1..]),
             other => format!("Unknown command '{other}'. Type /help."),
         }
     }
@@ -1105,6 +1176,37 @@ impl CommandWorldState {
         }
         format!("Gamerule {} = {val}", args[0])
     }
+
+    fn exec_upscaler(&self, args: &[&str]) -> String {
+        if args.is_empty() || args[0].eq_ignore_ascii_case("query") {
+            let (id, scale, sharp) = current_upscaler_config();
+            return format!(
+                "Upscaler: {} (scale={scale:.2}, sharpness={sharp:.2})",
+                upscaler_mode_label(id)
+            );
+        }
+        let Some(id) = parse_upscaler_mode_id(args[0]) else {
+            return "Usage: /upscaler <off|nearest|linear|sgsr2|asr|dlss|fsr|query> [scale 0.35..1.0] [sharpness 0..1]".to_string();
+        };
+        UPSCALER_MODE.store(id, Ordering::Relaxed);
+        if let Some(raw_scale) = args.get(1) {
+            let Ok(v) = raw_scale.parse::<f32>() else {
+                return format!("Invalid upscaler scale '{raw_scale}'");
+            };
+            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+        }
+        if let Some(raw_sharp) = args.get(2) {
+            let Ok(v) = raw_sharp.parse::<f32>() else {
+                return format!("Invalid upscaler sharpness '{raw_sharp}'");
+            };
+            UPSCALER_SHARPNESS_BITS.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        }
+        let (_, scale, sharp) = current_upscaler_config();
+        format!(
+            "Upscaler set to {} (scale={scale:.2}, sharpness={sharp:.2})",
+            upscaler_mode_label(id)
+        )
+    }
 }
 
 fn is_known_command(word: &str) -> bool {
@@ -1120,6 +1222,7 @@ fn is_known_command(word: &str) -> bool {
             | "teleport"
             | "setblock"
             | "gamerule"
+            | "upscaler"
             | "seed"
             | "clear"
     )
@@ -1211,7 +1314,8 @@ fn poll_typed_char(input: &InputSnapshot) -> Option<char> {
 
 fn autocomplete_candidates(input_line: &str) -> Vec<&'static str> {
     const COMMANDS: &[&str] = &[
-        "time", "weather", "gamemode", "tp", "setblock", "gamerule", "seed", "help", "clear",
+        "time", "weather", "gamemode", "tp", "setblock", "gamerule", "upscaler", "seed", "help",
+        "clear",
     ];
     let trimmed = input_line.trim_start();
     if trimmed.is_empty() {
@@ -1262,6 +1366,9 @@ fn autocomplete_candidates(input_line: &str) -> Vec<&'static str> {
         ("gamemode" | "gm", 0) => &["survival", "creative", "spectator", "walk", "fly"],
         ("gamerule", 0) => &["doDaylightCycle", "doWeatherCycle", "doFireTick"],
         ("gamerule", 1) => &["true", "false"],
+        ("upscaler", 0) => &[
+            "off", "nearest", "linear", "sgsr2", "asr", "dlss", "fsr", "query",
+        ],
         ("setblock", 3) => &[
             "stone", "alloy", "glass", "timber", "water", "acid", "cryo", "biomass", "wire",
             "isotope", "air",
@@ -1281,6 +1388,52 @@ mod tests {
     use super::*;
     use crate::materials::MaterialTable;
     use crate::world_gen::generate_world;
+
+    #[test]
+    fn upscaler_command_switches_modes_and_placeholders() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
+        let mut player = PlayerController::new();
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+        let mut cmd = CommandWorldState::new();
+
+        let msg = cmd.execute(
+            "/upscaler sgsr2 0.75 0.6",
+            &mut world,
+            &mut sim,
+            &mut player,
+        );
+        assert!(msg.contains("SGSR 2"), "msg={msg}");
+        assert_eq!(current_upscaler_config(), (1, 0.75, 0.6));
+
+        let msg = cmd.execute("/upscaler asr 0.67 0.5", &mut world, &mut sim, &mut player);
+        assert!(msg.contains("Arm ASR"), "msg={msg}");
+        assert_eq!(current_upscaler_config(), (2, 0.67, 0.5));
+
+        let msg = cmd.execute("/upscaler nearest 0.5", &mut world, &mut sim, &mut player);
+        assert!(msg.contains("Nearest"), "msg={msg}");
+        assert_eq!(current_upscaler_config(), (3, 0.5, 0.5));
+
+        let msg = cmd.execute("/upscaler linear 0.85", &mut world, &mut sim, &mut player);
+        assert!(msg.contains("Linear"), "msg={msg}");
+        assert_eq!(current_upscaler_config(), (4, 0.85, 0.5));
+
+        #[cfg(not(target_os = "android"))]
+        {
+            let msg = cmd.execute("/upscaler dlss", &mut world, &mut sim, &mut player);
+            assert!(msg.contains("DLSS"), "msg={msg}");
+            assert_eq!(current_upscaler_config().0, 5);
+
+            let msg = cmd.execute("/upscaler fsr", &mut world, &mut sim, &mut player);
+            assert!(msg.contains("FSR"), "msg={msg}");
+            assert_eq!(current_upscaler_config().0, 6);
+        }
+
+        let _ = cmd.execute("/upscaler off", &mut world, &mut sim, &mut player);
+        assert_eq!(current_upscaler_config().0, 0);
+    }
 
     #[test]
     fn commands_update_time_weather_gamemode_tp_and_gamerules() {
