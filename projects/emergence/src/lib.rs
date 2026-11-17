@@ -305,7 +305,7 @@ pub fn emergence_fixed_tick(
     runtime.player.step_physics(world, &runtime.sim, dt);
     runtime
         .sim
-        .stream_around(runtime.player.feet_pos, Some(world), 4);
+        .stream_around(runtime.player.feet_pos, Some(world), 1);
     runtime.sim.step(dt);
     runtime.sim.sync_dirty_chunks(world);
 }

@@ -20,8 +20,8 @@ use crate::tags::{
 
 /// Minecraft-style streaming chunk dimensions (`16m x 64m x 16m` per chunk).
 pub const CHUNK_DIMS_L1: [u32; 3] = [16, 64, 16];
-/// Active chunk streaming radius around the player (`4` -> `9 x 9 = 81` chunks = `144m x 64m x 144m`).
-pub const STREAM_RADIUS_CHUNKS: i32 = 4;
+/// Active chunk streaming radius around the player (`2` -> `5 x 5 = 25` chunks = `80m x 64m x 80m`).
+pub const STREAM_RADIUS_CHUNKS: i32 = 2;
 
 const ORTHO_DIRS: [[i32; 3]; 6] = [
     [1, 0, 0],
@@ -1042,7 +1042,7 @@ mod tests {
         sim.attach_ecs(&mut world);
 
         // Move far away to `(160m, 4m, 160m)` -> chunk `(10, 10)` and stream in real time.
-        sim.stream_around(glam::Vec3::new(160.0, 4.0, 160.0), Some(&mut world), 16);
+        sim.stream_around(glam::Vec3::new(160.0, 4.0, 160.0), Some(&mut world), 32);
         assert!(
             sim.chunk_lookup.contains_key(&[10, 10]),
             "chunk (10, 10) must stream in around player"

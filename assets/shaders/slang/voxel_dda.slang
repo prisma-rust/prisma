@@ -557,7 +557,7 @@ float3 sample_atmosphere(float3 dir, float3 sunDir, float3 sunCol)
 }
 
 // LabPBR 16x16 sub-texel micro-normal perturbation + animated water ripples.
-float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float time)
+float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float time, float hitDist)
 {
     float3 n = normal;
     if ((visual & VIS_LIQUID) != 0u)
@@ -569,6 +569,9 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
         n = normalize(normal + ripple * (1.0 - abs(normal.x) * 0.5));
         return n;
     }
+
+    if (hitDist > 28.0)
+        return normal;
 
     // 16x16 texel grid micro-relief inspired by SPBR normal maps.
     float3 texel = floor(worldPos * 16.0);
@@ -582,7 +585,7 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
     return normalize(normal + grad * bumpStrength);
 }
 
-float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint tier, float3 viewDir, float shadowVis)
+float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint tier, float3 viewDir, float shadowVis, float hitDist)
 {
     float4 baseCol = unpack_rgba_linear(rgba);
     float3 albedo = baseCol.rgb;
@@ -658,7 +661,7 @@ float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint 
         albedo *= (1.0 - crack * 0.55);
     }
 
-    float3 N = perturb_voxel_normal(worldPos, normal, visual, time);
+    float3 N = perturb_voxel_normal(worldPos, normal, visual, time, hitDist);
     float3 V = normalize(viewDir);
     float3 L = normalize(ubo.sunDirRadiance.xyz);
     float3 H = normalize(L + V);
@@ -744,10 +747,14 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
         if (voxelDepth <= forwardDepth)
         {
             float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-            TraceHit sh = trace_world(res.worldPos + res.normal * 0.025, sunDir, 64.0, true);
-            float shadowVis = sh.hit ? 0.22 : 1.0;
+            float shadowVis = 0.22;
+            if (dot(res.normal, sunDir) > 0.0)
+            {
+                TraceHit sh = trace_world(res.worldPos + res.normal * 0.025, sunDir, 64.0, true);
+                shadowVis = sh.hit ? 0.22 : 1.0;
+            }
             outColor = shade_voxel(
-                res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis
+                res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis, res.t
             );
             // Complementary-style atmospheric aerial haze with sun forward scattering.
             float fog = clamp((res.t - 45.0) / 110.0, 0.0, 0.60);
@@ -768,7 +775,7 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
         {
             float4 gc = unpack_rgba_linear(res.glassRgba);
             float3 litGlass = shade_voxel(
-                glassPos, res.glassNormal, res.glassRgba, res.glassVisual, 2u, -rayDir, 1.0
+                glassPos, res.glassNormal, res.glassRgba, res.glassVisual, 2u, -rayDir, 1.0, res.glassT
             );
             float fresnel = pow(1.0 - max(dot(res.glassNormal, -rayDir), 0.0), 4.0);
             float alpha = clamp(gc.a + fresnel * 0.30, 0.15, 0.90);

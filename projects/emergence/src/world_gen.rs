@@ -19,9 +19,9 @@ use crate::tags::{PhysicalCell, TransientFlags};
 /// Sea level in meters (`l2y = 14`).
 pub const SEA_LEVEL_M: f32 = 3.5;
 
-/// Initial bootstrap chunk radius around `(1, 1)` (`5 x 5 = 25` chunks = `80m x 64m x 80m`).
+/// Initial bootstrap chunk window around `(0, 0)` (`4 x 4 = 16` chunks = `64m x 64m x 64m`).
 pub const BOOTSTRAP_MIN_CHUNK: i32 = -1;
-pub const BOOTSTRAP_MAX_CHUNK: i32 = 3;
+pub const BOOTSTRAP_MAX_CHUNK: i32 = 2;
 
 /// Sparse map from world L2 coordinate to `(material_id, PhysicalCell)`.
 pub type SparseCellMap = HashMap<[i32; 3], (u8, PhysicalCell)>;
@@ -520,7 +520,7 @@ mod tests {
     fn world_gen_creates_streaming_chunks_caves_water_and_template_structures() {
         let mats = MaterialTable::compiled_default();
         let gen = generate_world(&mats, 2026);
-        assert_eq!(gen.chunks.len(), 25);
+        assert_eq!(gen.chunks.len(), 16);
         assert!(!gen.cells.is_empty());
         assert!(!gen.active.is_empty());
 

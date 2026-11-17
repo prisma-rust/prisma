@@ -205,6 +205,9 @@ impl PlayerController {
             self.yaw = ctrl.yaw;
             self.pitch = ctrl.pitch.clamp(-1.52, 1.52);
             self.last_synced_camera_rot = Some(self.camera_rotation());
+            if let Some(lt) = world.get::<LocalTransform>(cam) {
+                self.feet_pos = lt.position - Vec3::new(0.0, PLAYER_EYE_HEIGHT_M, 0.0);
+            }
             return true;
         }
         let Some(lt) = world.get::<LocalTransform>(cam) else {
@@ -625,6 +628,14 @@ impl PlayerController {
             return;
         }
 
+        // Depenetrate if Walk mode started or switched from Fly inside solid terrain.
+        while sim.aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
+            && self.feet_pos.y < 62.0
+        {
+            self.feet_pos.y += 0.25;
+            self.velocity.y = 0.0;
+        }
+
         // Walk mode kinematics with gravity, coyote time, jump buffer, and L2 step-up.
         self.velocity.x = wish_dir.x * speed;
         self.velocity.z = wish_dir.z * speed;
@@ -669,9 +680,7 @@ impl PlayerController {
             self.grounded = false;
         }
 
-        // Clamp within sandbox world safety envelope.
-        self.feet_pos.x = self.feet_pos.x.clamp(0.4, 31.6);
-        self.feet_pos.z = self.feet_pos.z.clamp(0.4, 31.6);
+        // Respawn above ground only if player fell below bedrock floor.
         if self.feet_pos.y < 1.0 {
             self.feet_pos.y = 6.0;
             self.velocity.y = 0.0;
@@ -1311,6 +1320,30 @@ mod tests {
         assert_eq!(
             sign_reversals, 0,
             "camera step-up must be monotonic with no bounce jitter"
+        );
+    }
+
+    #[test]
+    fn fly_beyond_legacy_bounds_and_switch_back_to_walk_keeps_position() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+
+        let mut player = PlayerController::new();
+        player.attach_ecs(&mut world, &sim);
+        player.fly_mode = true;
+        player.feet_pos = Vec3::new(90.0, 24.0, 90.0);
+        sim.stream_around(player.feet_pos, Some(&mut world), 32);
+
+        // Switch back to Walk mode and step physics: position must NOT be clamped to 31.6m.
+        player.fly_mode = false;
+        player.step_physics(&mut world, &sim, 1.0 / 60.0);
+        assert!(
+            player.feet_pos.x > 85.0 && player.feet_pos.z > 85.0,
+            "switching from Fly to Walk must keep distant position, got {:?}",
+            player.feet_pos
         );
     }
 }
