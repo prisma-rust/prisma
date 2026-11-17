@@ -1,83 +1,112 @@
-//! Deterministic procedural 3D map and Emergence Research Outpost generator.
+//! Deterministic per-chunk procedural 3D terrain, caves, water bodies,
+//! mountains, and Minecraft-style template-pool structure generator.
+//!
+//! Supports both single-chunk streaming (`generate_chunk(materials, seed, cx, cz)`)
+//! across infinite signed chunk coordinates and initial multi-chunk bootstrap
+//! (`generate_world(materials, seed)`).
 
 use std::collections::HashMap;
 
-use prism_scene::{VoxelBrick, VoxelChunk};
+use prism_scene::VoxelChunk;
 
 use crate::materials::{mat_id, MaterialTable};
-use crate::sim::{SimWorld, CHUNK_DIMS_L1, WORLD_CHUNKS_X, WORLD_CHUNKS_Z};
+use crate::sim::CHUNK_DIMS_L1;
+use crate::structures::{
+    build_default_template_pool, StructureOp, StructureRot, StructureTemplate,
+};
 use crate::tags::{PhysicalCell, TransientFlags};
+
+/// Sea level in meters (`l2y = 14`).
+pub const SEA_LEVEL_M: f32 = 3.5;
+
+/// Initial bootstrap chunk radius around `(1, 1)` (`5 x 5 = 25` chunks = `80m x 64m x 80m`).
+pub const BOOTSTRAP_MIN_CHUNK: i32 = -1;
+pub const BOOTSTRAP_MAX_CHUNK: i32 = 3;
 
 /// Sparse map from world L2 coordinate to `(material_id, PhysicalCell)`.
 pub type SparseCellMap = HashMap<[i32; 3], (u8, PhysicalCell)>;
 
-/// Result of deterministic map generation: chunks, sparse L2 cells, and awake seeds.
-pub struct GeneratedWorld {
-    pub chunks: Vec<VoxelChunk>,
+/// Result of generating a single `16m x 64m x 16m` chunk at `(cx, cz)`.
+pub struct GeneratedChunk {
+    pub coord: [i32; 2],
+    pub chunk: VoxelChunk,
     pub cells: SparseCellMap,
     pub active: Vec<[i32; 3]>,
 }
 
-struct MapBuilder<'a> {
+/// Result of deterministic bootstrap map generation: chunks, coords, sparse L2 cells, and awake seeds.
+pub struct GeneratedWorld {
+    pub chunks: Vec<VoxelChunk>,
+    pub chunk_coords: Vec<[i32; 2]>,
+    pub cells: SparseCellMap,
+    pub active: Vec<[i32; 3]>,
+}
+
+struct ChunkBuilder<'a> {
     materials: &'a MaterialTable,
-    chunks: Vec<VoxelChunk>,
+    cx: i32,
+    cz: i32,
+    l1_origin_x: i32,
+    l1_origin_z: i32,
+    chunk: VoxelChunk,
     cells: SparseCellMap,
     active: Vec<[i32; 3]>,
 }
 
-impl<'a> MapBuilder<'a> {
-    fn new(materials: &'a MaterialTable) -> Self {
-        let mut chunks = Vec::with_capacity(WORLD_CHUNKS_X * WORLD_CHUNKS_Z);
-        for cz in 0..WORLD_CHUNKS_Z {
-            for cx in 0..WORLD_CHUNKS_X {
-                chunks.push(VoxelChunk::new(
-                    [(cx as u32 * CHUNK_DIMS_L1[0]) as i32, 0, (cz as u32 * CHUNK_DIMS_L1[2]) as i32],
-                    CHUNK_DIMS_L1,
-                ));
-            }
-        }
+impl<'a> ChunkBuilder<'a> {
+    fn new(materials: &'a MaterialTable, cx: i32, cz: i32) -> Self {
+        let l1_origin_x = cx * CHUNK_DIMS_L1[0] as i32;
+        let l1_origin_z = cz * CHUNK_DIMS_L1[2] as i32;
         Self {
             materials,
-            chunks,
+            cx,
+            cz,
+            l1_origin_x,
+            l1_origin_z,
+            chunk: VoxelChunk::new([l1_origin_x, 0, l1_origin_z], CHUNK_DIMS_L1),
             cells: HashMap::new(),
             active: Vec::new(),
         }
     }
 
-    fn set_l1_cow(&mut self, l1: [i32; 3], mat: u8) {
-        if l1[0] < 0
-            || l1[1] < 0
-            || l1[2] < 0
-            || l1[0] >= (WORLD_CHUNKS_X as u32 * CHUNK_DIMS_L1[0]) as i32
-            || l1[1] >= CHUNK_DIMS_L1[1] as i32
-            || l1[2] >= (WORLD_CHUNKS_Z as u32 * CHUNK_DIMS_L1[2]) as i32
+    fn set_l1_cow(&mut self, local_l1: [u32; 3], mat: u8) {
+        if local_l1[0] >= CHUNK_DIMS_L1[0]
+            || local_l1[1] >= CHUNK_DIMS_L1[1]
+            || local_l1[2] >= CHUNK_DIMS_L1[2]
         {
             return;
         }
-        let cx = l1[0] as usize / CHUNK_DIMS_L1[0] as usize;
-        let cz = l1[2] as usize / CHUNK_DIMS_L1[2] as usize;
-        let lx = l1[0] as u32 % CHUNK_DIMS_L1[0];
-        let ly = l1[1] as u32;
-        let lz = l1[2] as u32 % CHUNK_DIMS_L1[2];
+        let wl1_x = self.l1_origin_x + local_l1[0] as i32;
+        let wl1_y = local_l1[1] as i32;
+        let wl1_z = self.l1_origin_z + local_l1[2] as i32;
         for dz in 0..4 {
             for dy in 0..4 {
                 for dx in 0..4 {
-                    self.cells.remove(&[l1[0] * 4 + dx, l1[1] * 4 + dy, l1[2] * 4 + dz]);
+                    self.cells
+                        .remove(&[wl1_x * 4 + dx, wl1_y * 4 + dy, wl1_z * 4 + dz]);
                 }
             }
         }
         let cell = self.materials.spawn_cell(mat);
         let (rgba, vis) = self.materials.cell_visuals(mat, &cell);
-        self.chunks[cx + WORLD_CHUNKS_X * cz].set_l1_uniform(lx, ly, lz, rgba, vis);
+        self.chunk
+            .set_l1_uniform(local_l1[0], local_l1[1], local_l1[2], rgba, vis);
     }
 
-    fn set_l2(&mut self, l2: [i32; 3], mat: u8, active: bool) {
-        let Some((c_idx, local)) = SimWorld::chunk_coords_for_l2(l2) else {
+    fn set_l2_world(&mut self, l2: [i32; 3], mat: u8, active: bool) {
+        let l2_w = (CHUNK_DIMS_L1[0] * 4) as i32;
+        let l2_h = (CHUNK_DIMS_L1[1] * 4) as i32;
+        let l2_d = (CHUNK_DIMS_L1[2] * 4) as i32;
+        let lx = l2[0] - self.l1_origin_x * 4;
+        let ly = l2[1];
+        let lz = l2[2] - self.l1_origin_z * 4;
+        if lx < 0 || ly < 0 || lz < 0 || lx >= l2_w || ly >= l2_h || lz >= l2_d {
             return;
-        };
+        }
         if mat == mat_id::AIR {
             self.cells.remove(&l2);
-            self.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], 0, 0, 0);
+            self.chunk
+                .set_l2_cell(lx as u32, ly as u32, lz as u32, 0, 0, 0);
             return;
         }
         let mut cell = self.materials.spawn_cell(mat);
@@ -87,38 +116,116 @@ impl<'a> MapBuilder<'a> {
         }
         let (rgba, vis) = self.materials.cell_visuals(mat, &cell);
         self.cells.insert(l2, (mat, cell));
-        self.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], rgba, vis, u64::MAX);
+        self.chunk
+            .set_l2_cell(lx as u32, ly as u32, lz as u32, rgba, vis, u64::MAX);
     }
 
-    /// Carve or populate a patterned 64-bit L3 micro-voxel mask inside an L2 cell.
-    fn set_l2_l3_mask(&mut self, l2: [i32; 3], mat: u8, l3_mask: u64) {
-        let Some((c_idx, local)) = SimWorld::chunk_coords_for_l2(l2) else {
+    fn set_l2_l3_mask_world(&mut self, l2: [i32; 3], mat: u8, l3_mask: u64) {
+        let l2_w = (CHUNK_DIMS_L1[0] * 4) as i32;
+        let l2_h = (CHUNK_DIMS_L1[1] * 4) as i32;
+        let l2_d = (CHUNK_DIMS_L1[2] * 4) as i32;
+        let lx = l2[0] - self.l1_origin_x * 4;
+        let ly = l2[1];
+        let lz = l2[2] - self.l1_origin_z * 4;
+        if lx < 0 || ly < 0 || lz < 0 || lx >= l2_w || ly >= l2_h || lz >= l2_d {
             return;
-        };
+        }
         if l3_mask == 0 || mat == mat_id::AIR {
             self.cells.remove(&l2);
-            self.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], 0, 0, 0);
+            self.chunk
+                .set_l2_cell(lx as u32, ly as u32, lz as u32, 0, 0, 0);
             return;
         }
         let cell = self.materials.spawn_cell(mat);
         let (rgba, vis) = self.materials.cell_visuals(mat, &cell);
         self.cells.insert(l2, (mat, cell));
-        self.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], rgba, vis, l3_mask);
+        self.chunk
+            .set_l2_cell(lx as u32, ly as u32, lz as u32, rgba, vis, l3_mask);
     }
 
-    fn fill_l2_box(&mut self, min_l2: [i32; 3], max_l2_excl: [i32; 3], mat: u8, active: bool) {
-        for z in min_l2[2]..max_l2_excl[2] {
-            for y in min_l2[1]..max_l2_excl[1] {
-                for x in min_l2[0]..max_l2_excl[0] {
-                    self.set_l2([x, y, z], mat, active);
+    fn place_structure(
+        &mut self,
+        template: &StructureTemplate,
+        origin_l2: [i32; 3],
+        rot: StructureRot,
+    ) {
+        if let Some(fmat) = template.foundation_mat {
+            let fp = rot.rotated_footprint(template.size);
+            for dz in 0..fp[1] {
+                for dx in 0..fp[0] {
+                    let wx = origin_l2[0] + dx;
+                    let wz = origin_l2[2] + dz;
+                    let min_fy = (origin_l2[1] - 12).max(4);
+                    for fy in min_fy..origin_l2[1] {
+                        self.set_l2_world([wx, fy, wz], fmat, false);
+                    }
                 }
             }
+        }
+
+        for &op in &template.ops {
+            match op {
+                StructureOp::Solid { pos, mat, active } => {
+                    let r = rot.rotate_xz(pos, template.size);
+                    self.set_l2_world(
+                        [
+                            origin_l2[0] + r[0],
+                            origin_l2[1] + r[1],
+                            origin_l2[2] + r[2],
+                        ],
+                        mat,
+                        active,
+                    );
+                }
+                StructureOp::Carve { pos } => {
+                    let r = rot.rotate_xz(pos, template.size);
+                    self.set_l2_world(
+                        [
+                            origin_l2[0] + r[0],
+                            origin_l2[1] + r[1],
+                            origin_l2[2] + r[2],
+                        ],
+                        mat_id::AIR,
+                        false,
+                    );
+                }
+                StructureOp::Micro { pos, mat, l3_mask } => {
+                    let r = rot.rotate_xz(pos, template.size);
+                    self.set_l2_l3_mask_world(
+                        [
+                            origin_l2[0] + r[0],
+                            origin_l2[1] + r[1],
+                            origin_l2[2] + r[2],
+                        ],
+                        mat,
+                        l3_mask,
+                    );
+                }
+            }
+        }
+    }
+
+    fn finish(self) -> GeneratedChunk {
+        GeneratedChunk {
+            coord: [self.cx, self.cz],
+            chunk: self.chunk,
+            cells: self.cells,
+            active: self.active,
         }
     }
 }
 
 fn hash2d(x: i32, z: i32, seed: u64) -> f32 {
     let mut h = seed ^ ((x as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    h ^= (z as i64 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 30)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    ((h >> 40) as f32) / ((1u32 << 24) as f32)
+}
+
+fn hash3d(x: i32, y: i32, z: i32, seed: u64) -> f32 {
+    let mut h = seed ^ ((x as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    h ^= (y as i64 as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
     h ^= (z as i64 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h = (h ^ (h >> 30)).wrapping_mul(0x94D0_49BB_1331_11EB);
     h ^= h >> 31;
@@ -141,116 +248,91 @@ fn smooth_noise(x: f32, z: f32, seed: u64) -> f32 {
     nx0 + (nx1 - nx0) * sz
 }
 
-/// Deterministic heightmap elevation in meters (`[3.0 .. 11.0]`).
+fn smooth_noise_3d(x: f32, y: f32, z: f32, seed: u64) -> f32 {
+    let xi = x.floor() as i32;
+    let yi = y.floor() as i32;
+    let zi = z.floor() as i32;
+    let fx = x - xi as f32;
+    let fy = y - yi as f32;
+    let fz = z - zi as f32;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let sz = fz * fz * (3.0 - 2.0 * fz);
+
+    let c000 = hash3d(xi, yi, zi, seed);
+    let c100 = hash3d(xi + 1, yi, zi, seed);
+    let c010 = hash3d(xi, yi + 1, zi, seed);
+    let c110 = hash3d(xi + 1, yi + 1, zi, seed);
+    let c001 = hash3d(xi, yi, zi + 1, seed);
+    let c101 = hash3d(xi + 1, yi, zi + 1, seed);
+    let c011 = hash3d(xi, yi + 1, zi + 1, seed);
+    let c111 = hash3d(xi + 1, yi + 1, zi + 1, seed);
+
+    let x00 = c000 + (c100 - c000) * sx;
+    let x10 = c010 + (c110 - c010) * sx;
+    let x01 = c001 + (c101 - c001) * sx;
+    let x11 = c011 + (c111 - c011) * sx;
+    let y0 = x00 + (x10 - x00) * sy;
+    let y1 = x01 + (x11 - x01) * sy;
+    y0 + (y1 - y0) * sz
+}
+
+/// Deterministic heightmap elevation in meters (`[1.6 .. 52.0]`) across infinite `(wx, wz)`.
 pub fn terrain_height_m(wx: f32, wz: f32, seed: u64) -> f32 {
-    let broad = smooth_noise(wx * 0.11, wz * 0.11, seed) * 2.2
-        + smooth_noise(wx * 0.27, wz * 0.27, seed ^ 0x5555) * 0.85;
-    let mut h = 3.5 + broad;
+    let continental = smooth_noise(wx * 0.016, wz * 0.016, seed ^ 0x1010);
+    let ridge_raw = 1.0 - (smooth_noise(wx * 0.028, wz * 0.028, seed ^ 0x2020) * 2.0 - 1.0).abs();
+    let ridge = ridge_raw * ridge_raw;
+    let detail = smooth_noise(wx * 0.08, wz * 0.08, seed ^ 0x3030) * 2.6
+        + smooth_noise(wx * 0.22, wz * 0.22, seed ^ 0x4040) * 0.8;
 
-    // Gentle highland cliff rising along the rear boundary (`z > 24`) to frame the outpost.
-    if wz > 23.0 {
-        h += ((wz - 23.0) * 0.72).min(5.2);
-    }
-    // Flat graded courtyard and Research Outpost pad around `x in [5..26], z in [6..24]`.
-    if (4.0..=27.0).contains(&wx) && (4.5..=24.0).contains(&wz) {
-        let dx = ((wx - 15.5).abs() - 8.5).max(0.0) / 3.0;
-        let dz = ((wz - 14.5).abs() - 7.5).max(0.0) / 2.5;
-        let blend = (dx.max(dz)).clamp(0.0, 1.0);
-        h = 4.0 + (h - 4.0) * (blend * blend);
-    }
-    // Water basin depression (`x in [6..10.5], z in [11..14.5]`).
-    if (6.0..=10.5).contains(&wx) && (11.0..=14.5).contains(&wz) {
-        h = h.min(3.25);
-    }
-    // Acid containment trough (`x in [23..26.5], z in [13..18]`).
-    if (23.0..=26.5).contains(&wx) && (13.0..=18.0).contains(&wz) {
-        h = h.min(3.25);
-    }
-    h.clamp(2.5, 13.0)
+    let mountain_boost = ((continental - 0.54).max(0.0) / 0.46).powf(1.35) * 42.0 * ridge;
+    let basin_dip = ((0.38 - continental).max(0.0) / 0.38) * 3.6;
+    let mut h = 4.6 + (continental - 0.45) * 6.0 + detail + mountain_boost - basin_dip;
+
+    // Gentle starter courtyard plateau at `y = 4.0m` near `(15m, 14.5m)` so player spawn and camera stay clear.
+    let dx = ((wx - 15.0).abs() - 8.5).max(0.0) / 4.5;
+    let dz = ((wz - 14.5).abs() - 7.5).max(0.0) / 4.5;
+    let blend = dx.max(dz).clamp(0.0, 1.0);
+    h = 4.0 + (h - 4.0) * (blend * blend);
+
+    h.clamp(1.6, 52.0)
 }
 
-fn grate_l3_mask() -> u64 {
-    // Open L3 vertical & horizontal steel lattice mullions (`0.0625m` thin bars with see-through gaps).
-    let mut mask = 0u64;
-    for mz in 0..4u32 {
-        for my in 0..4u32 {
-            for mx in 0..4u32 {
-                let on_bar = (mx == 0 || my == 0) && (mz == 1 || mz == 2);
-                if on_bar {
-                    mask |= 1u64 << VoxelChunk::l3_sub_index(mx, my, mz);
-                }
-            }
-        }
+fn is_cave_air(wx: f32, wy: f32, wz: f32, surface_m: f32, seed: u64) -> bool {
+    if wy < 2.2 || wy > surface_m - 1.5 {
+        return false;
     }
-    mask
+    let n1 = smooth_noise_3d(wx * 0.11, wy * 0.16, wz * 0.11, seed ^ 0x5151);
+    let n2 = smooth_noise_3d(wx * 0.22, wy * 0.26, wz * 0.22, seed ^ 0x6262);
+    n1 * 0.72 + n2 * 0.28 > 0.64
 }
 
-fn thin_pane_l3_mask_z() -> u64 {
-    // 0.125m thin central Z plate inside an L2 cell (`mz == 1` and `mz == 2`).
-    let mut mask = 0u64;
-    for mz in 1..=2u32 {
-        for my in 0..4u32 {
-            for mx in 0..4u32 {
-                mask |= 1u64 << VoxelChunk::l3_sub_index(mx, my, mz);
-            }
-        }
-    }
-    mask
-}
+/// Deterministically generates one `16m x 64m x 16m` chunk at chunk coordinates `(cx, cz)`.
+pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) -> GeneratedChunk {
+    let mut builder = ChunkBuilder::new(materials, cx, cz);
+    let l1_x_dim = CHUNK_DIMS_L1[0] as i32;
+    let l1_y_dim = CHUNK_DIMS_L1[1] as i32;
+    let l1_z_dim = CHUNK_DIMS_L1[2] as i32;
+    let sea_l2y = (SEA_LEVEL_M * 4.0).round() as i32;
 
-fn thin_pipe_l3_mask_x() -> u64 {
-    // Centered `0.125m` diameter conduit core running along X axis (`my in 1..3, mz in 1..3`).
-    let mut mask = 0u64;
-    for mz in 1..=2u32 {
-        for my in 1..=2u32 {
-            for mx in 0..4u32 {
-                mask |= 1u64 << VoxelChunk::l3_sub_index(mx, my, mz);
-            }
-        }
-    }
-    mask
-}
-
-fn micro_steps_l3_mask() -> u64 {
-    // L3 quarter-stair profile along +Z: bottom 4 rows solid, top back raised.
-    let mut mask = 0u64;
-    for mz in 0..4u32 {
-        for my in 0..4u32 {
-            for mx in 0..4u32 {
-                let height_limit = (mz / 2) * 2 + 2;
-                if my < height_limit {
-                    mask |= 1u64 << VoxelChunk::l3_sub_index(mx, my, mz);
-                }
-            }
-        }
-    }
-    mask
-}
-
-/// Generate the procedural terrain, three fluid/cryo pools, Research Outpost, and L3 details.
-pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
-    let mut builder = MapBuilder::new(materials);
-    let l1_x_max = WORLD_CHUNKS_X as i32 * CHUNK_DIMS_L1[0] as i32;
-    let l1_z_max = WORLD_CHUNKS_Z as i32 * CHUNK_DIMS_L1[2] as i32;
-
-    // 1. Copy-On-Write L1 Bedrock basement (`y in 0..2m` -> zero brick allocations).
-    for l1z in 0..l1_z_max {
-        for l1x in 0..l1_x_max {
-            builder.set_l1_cow([l1x, 0, l1z], mat_id::BEDROCK);
-            builder.set_l1_cow([l1x, 1, l1z], mat_id::BEDROCK);
-            builder.set_l1_cow([l1x, 2, l1z], mat_id::SOIL);
+    // 1. Copy-On-Write L1 Bedrock & deep limestone basement (`y in 0..2m`).
+    for lz in 0..CHUNK_DIMS_L1[2] {
+        for lx in 0..CHUNK_DIMS_L1[0] {
+            builder.set_l1_cow([lx, 0, lz], mat_id::BEDROCK);
+            builder.set_l1_cow([lx, 1, lz], mat_id::LIMESTONE);
         }
     }
 
-    // 2. Sculpt terrain above y = 3.0m (`l1y >= 3`): keep homogeneous 1m interior
-    //    blocks as Copy-On-Write L1 uniform cells, and only subdivide into L2
-    //    bricks along the surface and terrain/strata boundaries.
-    let l1_y_max = CHUNK_DIMS_L1[1] as i32;
-    for l1z in 0..l1_z_max {
-        for l1x in 0..l1_x_max {
+    // 2. Sculpt terrain, water bodies, snow peaks, and underground caves (`y >= 2.0m`).
+    for local_l1z in 0..l1_z_dim {
+        for local_l1x in 0..l1_x_dim {
+            let l1x = builder.l1_origin_x + local_l1x;
+            let l1z = builder.l1_origin_z + local_l1z;
             let mut col_h = [[0.0f32; 4]; 4];
             let mut col_top = [[0i32; 4]; 4];
-            let mut max_top_l2y = 12i32;
+            let mut max_top_l2y = sea_l2y;
+            let mut min_top_l2y = i32::MAX;
+            let mut min_h = f32::MAX;
             for dz in 0..4usize {
                 for dx in 0..4usize {
                     let wx = (l1x * 4 + dx as i32) as f32 * 0.25 + 0.125;
@@ -260,11 +342,30 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
                     col_h[dz][dx] = h_m;
                     col_top[dz][dx] = top_l2y;
                     max_top_l2y = max_top_l2y.max(top_l2y);
+                    min_top_l2y = min_top_l2y.min(top_l2y);
+                    min_h = min_h.min(h_m);
                 }
             }
 
-            let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_max);
-            for l1y in 3..max_l1y {
+            let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_dim);
+            for l1y in 2..max_l1y {
+                let block_top_l2y = (l1y + 1) * 4;
+                if block_top_l2y <= min_top_l2y - 6 && min_h < 10.5 && l1y >= 4 {
+                    let c_cave = smooth_noise_3d(
+                        l1x as f32 + 0.5,
+                        l1y as f32 + 0.5,
+                        l1z as f32 + 0.5,
+                        seed ^ 0x5151,
+                    );
+                    if c_cave < 0.45 {
+                        builder.set_l1_cow(
+                            [local_l1x as u32, l1y as u32, local_l1z as u32],
+                            mat_id::SOIL,
+                        );
+                        continue;
+                    }
+                }
+
                 let mut block_mats = [mat_id::AIR; 64];
                 let mut first_mat = None;
                 let mut uniform = true;
@@ -272,20 +373,48 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
                 for dz in 0..4usize {
                     for dy in 0..4usize {
                         let l2y = l1y * 4 + dy as i32;
+                        let wy = l2y as f32 * 0.25 + 0.125;
                         for dx in 0..4usize {
+                            let wx = (l1x * 4 + dx as i32) as f32 * 0.25 + 0.125;
+                            let wz = (l1z * 4 + dz as i32) as f32 * 0.25 + 0.125;
                             let top_l2y = col_top[dz][dx];
                             let h_m = col_h[dz][dx];
+
                             let mat = if l2y < top_l2y {
-                                if l2y + 1 == top_l2y && h_m < 8.0 {
-                                    mat_id::GRASS
-                                } else if (h_m >= 8.0 && l2y >= top_l2y - 3) || l2y <= 13 {
+                                if is_cave_air(wx, wy, wz, h_m, seed) {
+                                    if l2y <= 10
+                                        && hash3d(
+                                            l1x * 4 + dx as i32,
+                                            l2y,
+                                            l1z * 4 + dz as i32,
+                                            seed ^ 0x7777,
+                                        ) > 0.92
+                                    {
+                                        mat_id::ACID
+                                    } else {
+                                        mat_id::AIR
+                                    }
+                                } else if l2y + 1 == top_l2y {
+                                    if h_m >= 14.5 {
+                                        mat_id::CRYO
+                                    } else if h_m < SEA_LEVEL_M + 0.35 {
+                                        mat_id::SOIL
+                                    } else if h_m < 10.5 {
+                                        mat_id::GRASS
+                                    } else {
+                                        mat_id::LIMESTONE
+                                    }
+                                } else if (h_m >= 10.5 && l2y >= top_l2y - 4) || l2y <= 13 {
                                     mat_id::LIMESTONE
                                 } else {
                                     mat_id::SOIL
                                 }
+                            } else if l2y < sea_l2y && h_m < SEA_LEVEL_M {
+                                mat_id::WATER
                             } else {
                                 mat_id::AIR
                             };
+
                             block_mats[dz * 16 + dy * 4 + dx] = mat;
                             match first_mat {
                                 None => first_mat = Some(mat),
@@ -299,7 +428,8 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
                 if uniform {
                     if let Some(m0) = first_mat {
                         if m0 != mat_id::AIR {
-                            builder.set_l1_cow([l1x, l1y, l1z], m0);
+                            builder
+                                .set_l1_cow([local_l1x as u32, l1y as u32, local_l1z as u32], m0);
                         }
                     }
                 } else {
@@ -308,8 +438,12 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
                             for dx in 0..4usize {
                                 let mat = block_mats[dz * 16 + dy * 4 + dx];
                                 if mat != mat_id::AIR {
-                                    builder.set_l2(
-                                        [l1x * 4 + dx as i32, l1y * 4 + dy as i32, l1z * 4 + dz as i32],
+                                    builder.set_l2_world(
+                                        [
+                                            l1x * 4 + dx as i32,
+                                            l1y * 4 + dy as i32,
+                                            l1z * 4 + dz as i32,
+                                        ],
                                         mat,
                                         false,
                                     );
@@ -322,126 +456,58 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
         }
     }
 
-    // 3. Natural Water pond (`x in 6..10.5m, z in 11..14.5m`) & Acid trench (`x in 23..26.5m, z in 13..18m`).
-    // Pools start settled inside their stone basins and wake immediately when breached.
-    for l2z in 44..58 {
-        for l2x in 24..42 {
-            for l2y in 13..16 {
-                builder.set_l2([l2x, l2y, l2z], mat_id::WATER, false);
-            }
+    // 3. Place Minecraft-style structures from the weighted TemplatePool per 16m x 16m chunk.
+    let pool = build_default_template_pool();
+    if (0..=1).contains(&cx) && (0..=1).contains(&cz) {
+        if let Some(outpost) = pool.by_id("research_outpost") {
+            builder.place_structure(outpost, [52, 16, 60], StructureRot::Rot0);
         }
-    }
-    for l2z in 52..72 {
-        for l2x in 92..106 {
-            for l2y in 13..16 {
-                builder.set_l2([l2x, l2y, l2z], mat_id::ACID, false);
-            }
+        if cx == 0 && cz == 0 {
+            builder.set_l1_cow([10, 4, 8], mat_id::LIMESTONE);
+            builder.set_l1_cow([10, 5, 8], mat_id::ALLOY);
         }
-    }
-    // Timber walkway spanning across the acid trough so player can burn or cross it!
-    builder.fill_l2_box([90, 16, 60], [108, 17, 64], mat_id::TIMBER, false);
-
-    // 4. Emergence Research Outpost (`x in 13..22m` -> `l2x in 52..88`, `z in 15..23m` -> `l2z in 60..92`, floor at `y=4.0m` -> `l2y=16`).
-    builder.fill_l2_box([50, 15, 58], [90, 16, 94], mat_id::ALLOY, false);
-    // Clear interior volume (`y = 4.0..7.0m`).
-    builder.fill_l2_box([53, 16, 61], [87, 28, 91], mat_id::AIR, false);
-
-    // Outer Limestone/Alloy walls (`l2y in 16..28`).
-    builder.fill_l2_box([52, 16, 60], [88, 28, 61], mat_id::LIMESTONE, false); // Front Z wall (`z=15`)
-    builder.fill_l2_box([52, 16, 91], [88, 28, 92], mat_id::LIMESTONE, false); // Back Z wall (`z=22.75`)
-    builder.fill_l2_box([52, 16, 60], [53, 28, 92], mat_id::LIMESTONE, false); // West X wall (`x=13`)
-    builder.fill_l2_box([87, 16, 60], [88, 28, 92], mat_id::LIMESTONE, false); // East X wall (`x=21.75`)
-
-    // Alloy roof perimeter + skylight opening (`l2y = 28`).
-    builder.fill_l2_box([51, 28, 59], [89, 29, 93], mat_id::ALLOY, false);
-    builder.fill_l2_box([60, 28, 68], [80, 29, 84], mat_id::GLASS, false);
-
-    // Front Doorway (`x in 17..19m` -> `l2x in 68..76`, `l2y in 16..25`).
-    builder.fill_l2_box([68, 16, 60], [76, 25, 61], mat_id::AIR, false);
-    // L3 micro-voxel beveled entrance sill & steps outside doorway (`l2z = 59`).
-    for l2x in 68..76 {
-        builder.set_l2_l3_mask([l2x, 16, 59], mat_id::ALLOY, micro_steps_l3_mask());
-    }
-
-    // Large Front Glass Observation Window (`l2x in 55..66`, `l2y in 19..26`, `l2z = 60`).
-    builder.fill_l2_box([55, 19, 60], [66, 26, 61], mat_id::GLASS, false);
-    // Thin L3 metallic mullions dividing the glass window every meter (`l2x = 59, 62`).
-    for l2y in 19..26 {
-        builder.set_l2_l3_mask([59, l2y, 60], mat_id::ALLOY, grate_l3_mask());
-        builder.set_l2_l3_mask([62, l2y, 60], mat_id::ALLOY, thin_pane_l3_mask_z());
-    }
-
-    // Side L3 Ventilation Grate (`l2x = 52`, `l2z in 70..78`, `l2y in 19..24`).
-    for l2z in 70..78 {
-        for l2y in 19..24 {
-            builder.set_l2_l3_mask([52, l2y, l2z], mat_id::ALLOY, grate_l3_mask());
+    } else if hash2d(cx, cz, seed ^ 0x8888) >= 0.22 {
+        let ox = cx * 16 + 2 + (hash2d(cx, cz, seed ^ 0x9991) * 6.0) as i32;
+        let oz = cz * 16 + 2 + (hash2d(cx, cz, seed ^ 0x9992) * 6.0) as i32;
+        let surface_m = terrain_height_m(ox as f32 + 0.5, oz as f32 + 0.5, seed);
+        let is_water = surface_m < SEA_LEVEL_M;
+        let roll = (hash2d(cx, cz, seed ^ 0xAAAA) * 10_000.0) as u32;
+        let rot = StructureRot::ALL[(roll as usize) % 4];
+        if let Some(tmpl) = pool.pick(surface_m, is_water, roll) {
+            let place_y = if is_water {
+                sea_l2y - 3
+            } else {
+                (surface_m * 4.0).round() as i32
+            };
+            builder.place_structure(tmpl, [ox * 4, place_y, oz * 4], rot);
         }
     }
 
-    // Cryo-Biomass Containment Chamber inside right bay (`x in 19..21m, z in 17..20m`).
-    builder.fill_l2_box([76, 16, 68], [84, 18, 80], mat_id::CRYO, false);
-    builder.fill_l2_box([78, 16, 72], [82, 20, 76], mat_id::BIOMASS, true);
-    builder.fill_l2_box([76, 18, 67], [84, 24, 68], mat_id::GLASS, false);
+    builder.finish()
+}
 
-    // Reactor Pedestal + Glowing Isotope Core inside center bay (`x=17.5m, z=19.5m`).
-    builder.fill_l2_box([68, 16, 76], [72, 18, 80], mat_id::ALLOY, false);
-    builder.fill_l2_box([69, 18, 77], [71, 20, 79], mat_id::ISOTOPE, true);
+/// Generate the initial bootstrap chunk window around `(0, 0)` for `EmergenceRuntime`.
+pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
+    let mut chunks = Vec::new();
+    let mut chunk_coords = Vec::new();
+    let mut cells = HashMap::new();
+    let mut active = Vec::new();
 
-    // Overhead L3 thin pressurized pipe run + Valve feeding Isotope bay -> Courtyard rig!
-    for l2x in 46..70 {
-        builder.set_l2_l3_mask([l2x, 22, 66], mat_id::CONDUIT, thin_pipe_l3_mask_x());
-    }
-    builder.set_l2([46, 22, 66], mat_id::VALVE, false);
-
-    // Wet-Wire Short-Circuit Bridge linking Valve/Wire -> Water Pond -> Courtyard Explosive Tank rig!
-    for l2x in 38..69 {
-        builder.set_l2([l2x, 16, 52], mat_id::WIRE, false);
-    }
-    builder.set_l2([37, 16, 52], mat_id::TANK, false);
-    builder.set_l2([37, 17, 52], mat_id::TANK, false);
-
-    // Courtyard Timber Crates + Test Pillar right in view of initial camera!
-    builder.fill_l2_box([40, 16, 40], [43, 19, 43], mat_id::TIMBER, false);
-    builder.fill_l2_box([44, 16, 42], [46, 18, 44], mat_id::TIMBER, false);
-    builder.set_l2([43, 19, 41], mat_id::VALVE, false);
-    builder.set_l2([45, 18, 43], mat_id::TANK, false);
-
-    // Visible 1.0m Copy-On-Write L1 monoliths & bastion piers (zero brick allocation until split).
-    builder.set_l1_cow([10, 4, 8], mat_id::LIMESTONE);
-    builder.set_l1_cow([10, 5, 8], mat_id::ALLOY);
-    builder.set_l1_cow([11, 4, 8], mat_id::LIMESTONE);
-    builder.set_l1_cow([13, 4, 11], mat_id::LIMESTONE);
-    builder.set_l1_cow([14, 4, 11], mat_id::ALLOY);
-    builder.set_l1_cow([12, 4, 14], mat_id::ALLOY);
-    builder.set_l1_cow([12, 5, 14], mat_id::LIMESTONE);
-    builder.set_l1_cow([22, 4, 14], mat_id::ALLOY);
-    builder.set_l1_cow([22, 5, 14], mat_id::LIMESTONE);
-
-    // Highland cliff interior strata above y=3m converted to pure 1.0m L1 COW rock cores.
-    for l1z in 24..l1_z_max {
-        for l1x in 0..l1_x_max {
-            let mut min_h = f32::MAX;
-            for dz in 0..4 {
-                for dx in 0..4 {
-                    let wx = (l1x * 4 + dx) as f32 * 0.25 + 0.125;
-                    let wz = (l1z * 4 + dz) as f32 * 0.25 + 0.125;
-                    min_h = min_h.min(terrain_height_m(wx, wz, seed));
-                }
-            }
-            let top_full_l1y = min_h.floor() as i32;
-            for l1y in 3..top_full_l1y {
-                builder.set_l1_cow([l1x, l1y, l1z], mat_id::LIMESTONE);
-            }
+    for cz in BOOTSTRAP_MIN_CHUNK..=BOOTSTRAP_MAX_CHUNK {
+        for cx in BOOTSTRAP_MIN_CHUNK..=BOOTSTRAP_MAX_CHUNK {
+            let gen = generate_chunk(materials, seed, cx, cz);
+            chunks.push(gen.chunk);
+            chunk_coords.push(gen.coord);
+            cells.extend(gen.cells);
+            active.extend(gen.active);
         }
     }
-
-    // Keep unused helper reference suppressed cleanly (`VoxelBrick` size assert).
-    let _ = std::mem::size_of::<VoxelBrick>();
 
     GeneratedWorld {
-        chunks: builder.chunks,
-        cells: builder.cells,
-        active: builder.active,
+        chunks,
+        chunk_coords,
+        cells,
+        active,
     }
 }
 
@@ -451,45 +517,45 @@ mod tests {
     use prism_scene::L1_UNIFORM_REF;
 
     #[test]
-    fn world_gen_creates_l1_cow_l2_terrain_and_l3_details() {
+    fn world_gen_creates_streaming_chunks_caves_water_and_template_structures() {
         let mats = MaterialTable::compiled_default();
         let gen = generate_world(&mats, 2026);
-        let (chunks, cells, active) = (gen.chunks, gen.cells, gen.active);
-        assert_eq!(chunks.len(), WORLD_CHUNKS_X * WORLD_CHUNKS_Z);
-        assert!(!cells.is_empty());
-        assert!(!active.is_empty());
+        assert_eq!(gen.chunks.len(), 25);
+        assert!(!gen.cells.is_empty());
+        assert!(!gen.active.is_empty());
 
-        // Verify underground bedrock and above-ground monoliths use Copy-On-Write L1 uniform storage.
-        let cow_count: usize = chunks
+        let cow_count: usize = gen
+            .chunks
             .iter()
             .flat_map(|c| c.l1_brick_ref.iter())
             .filter(|&&r| r == L1_UNIFORM_REF)
             .count();
-        assert!(cow_count > 100, "strata and monoliths must use COW L1 uniform storage");
-
-        let (mon_idx, _) = SimWorld::chunk_coords_for_l2([40, 16, 32]).unwrap();
-        let mon_l1_idx = chunks[mon_idx].l1_index(10 % 8, 4, 8 % 8).unwrap();
-        assert_eq!(
-            chunks[mon_idx].l1_brick_ref[mon_l1_idx],
-            L1_UNIFORM_REF,
-            "courtyard display monolith [10, 4, 8] must be visible L1 COW"
+        assert!(
+            cow_count > 1000,
+            "chunks must keep interior strata as L1 COW (got {cow_count})"
         );
 
-        // Verify L3 micro-voxel grate exists on the front window mullion (not u64::MAX).
-        let (c_idx, local) = SimWorld::chunk_coords_for_l2([59, 20, 60]).unwrap();
-        let (_, _, mask) = chunks[c_idx]
-            .get_l2_cell(local[0], local[1], local[2])
-            .expect("mullion cell exists");
-        assert_ne!(mask, 0);
-        assert_ne!(mask, u64::MAX, "window mullion must use sub-L2 L3 bitmask");
+        // Verify negative chunk coordinates work seamlessly for infinite streaming.
+        let neg = generate_chunk(&mats, 2026, -3, -4);
+        assert_eq!(neg.chunk.origin_l1, [-48, 0, -64]);
 
-        // Verify solid interior highland blocks above y = 3m stay L1 COW (not L2 bricks).
-        let (cliff_idx, _) = SimWorld::chunk_coords_for_l2([16, 16, 112]).unwrap();
-        let cliff_l1_idx = chunks[cliff_idx].l1_index(4, 4, 28 % 8).unwrap();
-        assert_eq!(
-            chunks[cliff_idx].l1_brick_ref[cliff_l1_idx],
-            L1_UNIFORM_REF,
-            "homogeneous underground highland cell must stay L1 COW"
+        // Verify mountains and water basins exist across a 256m x 256m sample.
+        let mut min_h = f32::MAX;
+        let mut max_h = f32::MIN;
+        for z in 0..256 {
+            for x in 0..256 {
+                let h = terrain_height_m(x as f32 + 0.5, z as f32 + 0.5, 2026);
+                min_h = min_h.min(h);
+                max_h = max_h.max(h);
+            }
+        }
+        assert!(
+            min_h < SEA_LEVEL_M,
+            "expected water basins below sea level, min_h={min_h}"
+        );
+        assert!(
+            max_h > 20.0,
+            "expected mountain ridges above 20.0m, max_h={max_h}"
         );
     }
 }

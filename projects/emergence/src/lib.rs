@@ -14,6 +14,7 @@ pub mod nei_ui;
 pub mod pbr_materials;
 pub mod player;
 pub mod sim;
+pub mod structures;
 pub mod tags;
 pub mod terrain;
 pub mod world_gen;
@@ -285,14 +286,16 @@ impl EmergenceRuntime {
         let materials = MaterialTable::load(Some(world));
         let gen = generate_world(&materials, seed);
         let mut sim = SimWorld::new(materials, gen.chunks, gen.cells, gen.active);
+        sim.seed = seed;
         sim.attach_ecs(world);
         let mut player = PlayerController::new();
         player.attach_ecs(world, &sim);
+        sim.stream_around(player.feet_pos, Some(world), 8);
         Self { sim, player }
     }
 }
 
-/// Fixed simulation system (`60 Hz`): physics kinematics + multi-rate v3.0 cellular ticks + dirty chunk sync.
+/// Fixed simulation system (`60 Hz`): physics kinematics + multi-rate v3.0 cellular ticks + chunk streaming.
 pub fn emergence_fixed_tick(
     state: &mut Option<EmergenceRuntime>,
     world: &mut GameWorld<'_>,
@@ -300,6 +303,9 @@ pub fn emergence_fixed_tick(
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
     runtime.player.step_physics(world, &runtime.sim, dt);
+    runtime
+        .sim
+        .stream_around(runtime.player.feet_pos, Some(world), 4);
     runtime.sim.step(dt);
     runtime.sim.sync_dirty_chunks(world);
 }
@@ -428,14 +434,8 @@ pub fn build_app() -> prism_app::App {
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio);
-    app.add_fixed_game_system::<EmergenceRuntime, _>(
-        "emergence::fixed_tick",
-        emergence_fixed_tick,
-    );
-    app.add_game_system::<EmergenceRuntime, _>(
-        "emergence::frame_tick",
-        emergence_frame_tick,
-    );
+    app.add_fixed_game_system::<EmergenceRuntime, _>("emergence::fixed_tick", emergence_fixed_tick);
+    app.add_game_system::<EmergenceRuntime, _>("emergence::frame_tick", emergence_frame_tick);
     app
 }
 

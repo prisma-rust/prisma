@@ -2,7 +2,9 @@
 
 use glam::{EulerRot, Quat, Vec3};
 use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
-use prism_scene::ui::{Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign};
+use prism_scene::ui::{
+    Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
+};
 use prism_scene::{
     Active, Camera, FlyCameraController, LocalTransform, Name, VoxelCursorHighlight, VoxelHit,
     VoxelTier, VOXEL_L1_SIZE_M, VOXEL_L2_SIZE_M, VOXEL_L3_SIZE_M,
@@ -226,7 +228,12 @@ impl PlayerController {
     fn live_camera_rotation(&self, world: &GameWorld<'_>) -> Quat {
         if let Some(cam) = self.camera_entity {
             if let Some(ctrl) = world.get::<FlyCameraController>(cam) {
-                return Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch.clamp(-1.52, 1.52), 0.0);
+                return Quat::from_euler(
+                    EulerRot::YXZ,
+                    ctrl.yaw,
+                    ctrl.pitch.clamp(-1.52, 1.52),
+                    0.0,
+                );
             }
             if let Some(lt) = world.get::<LocalTransform>(cam) {
                 let norm = lt.rotation.normalize();
@@ -245,7 +252,11 @@ impl PlayerController {
                 self.camera_entity = Some(cam);
                 if let Some(lt) = world.get::<LocalTransform>(cam) {
                     // Use authored courtyard overlook on initial frame while snapping cleanly above terrain.
-                    self.feet_pos = Vec3::new(lt.position[0], (lt.position[1] - PLAYER_EYE_HEIGHT_M).max(4.02), lt.position[2]);
+                    self.feet_pos = Vec3::new(
+                        lt.position[0],
+                        (lt.position[1] - PLAYER_EYE_HEIGHT_M).max(4.02),
+                        lt.position[2],
+                    );
                     self.apply_camera_rotation(lt.rotation);
                     self.last_synced_camera_rot = Some(self.camera_rotation());
                 }
@@ -268,8 +279,9 @@ impl PlayerController {
                 self.camera_entity = Some(cam);
             }
             // Push feet above ground if spawn overlapped solid terrain.
-            while sim.aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
-                && self.feet_pos.y < 14.0
+            while sim
+                .aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
+                && self.feet_pos.y < 58.0
             {
                 self.feet_pos.y += 0.25;
             }
@@ -365,7 +377,12 @@ impl PlayerController {
     }
 
     /// Process frame-responsive mouse look and hotbar selection (`update`).
-    pub fn update_look_and_tools(&mut self, world: &mut GameWorld<'_>, sim: &mut SimWorld, dt: f32) {
+    pub fn update_look_and_tools(
+        &mut self,
+        world: &mut GameWorld<'_>,
+        sim: &mut SimWorld,
+        dt: f32,
+    ) {
         let has_fly_controller = self.sync_from_camera_if_modified(world);
         let input = world.input();
 
@@ -394,7 +411,9 @@ impl PlayerController {
         if input.key(keys::ARROW_DOWN) {
             self.pitch = (self.pitch - key_turn * 0.7).clamp(-1.52, 1.52);
         }
-        if has_fly_controller && ((self.yaw - prev_yaw).abs() > 1e-6 || (self.pitch - prev_pitch).abs() > 1e-6) {
+        if has_fly_controller
+            && ((self.yaw - prev_yaw).abs() > 1e-6 || (self.pitch - prev_pitch).abs() > 1e-6)
+        {
             if let Some(cam) = self.camera_entity {
                 if let Some(mut ctrl) = world.get::<FlyCameraController>(cam) {
                     ctrl.yaw = self.yaw;
@@ -418,8 +437,7 @@ impl PlayerController {
             self.was_unlocked_right_held = true;
             false
         } else {
-            let released_click =
-                self.was_unlocked_right_held && self.unlocked_right_drag_px < 6.0;
+            let released_click = self.was_unlocked_right_held && self.unlocked_right_drag_px < 6.0;
             self.was_unlocked_right_held = false;
             self.unlocked_right_drag_px = 0.0;
             released_click || input.right_clicked
@@ -497,7 +515,10 @@ impl PlayerController {
         let tool = HOTBAR_TOOLS[self.tool_index];
         let hit_liquids = matches!(
             tool,
-            ToolAction::StimCold | ToolAction::StimHeat | ToolAction::StimShock | ToolAction::StimWet
+            ToolAction::StimCold
+                | ToolAction::StimHeat
+                | ToolAction::StimShock
+                | ToolAction::StimWet
         );
         self.last_hit = sim.raycast(eye.to_array(), fwd.to_array(), MAX_REACH_M, hit_liquids);
         if self.last_hit.is_none() && hit_liquids {
@@ -540,10 +561,18 @@ impl PlayerController {
                             sim.place_adjacent(self.tier, &hit, mat);
                         }
                     }
-                    ToolAction::StimHeat => sim.inject_stimulus(hit.world_l2, StimulusFlags::HEAT, false, 1),
-                    ToolAction::StimShock => sim.inject_stimulus(hit.world_l2, StimulusFlags::SHOCK, false, 1),
-                    ToolAction::StimWet => sim.inject_stimulus(hit.world_l2, StimulusFlags::NONE, true, 1),
-                    ToolAction::StimCold => sim.inject_stimulus(hit.world_l2, StimulusFlags::COLD, false, 1),
+                    ToolAction::StimHeat => {
+                        sim.inject_stimulus(hit.world_l2, StimulusFlags::HEAT, false, 1)
+                    }
+                    ToolAction::StimShock => {
+                        sim.inject_stimulus(hit.world_l2, StimulusFlags::SHOCK, false, 1)
+                    }
+                    ToolAction::StimWet => {
+                        sim.inject_stimulus(hit.world_l2, StimulusFlags::NONE, true, 1)
+                    }
+                    ToolAction::StimCold => {
+                        sim.inject_stimulus(hit.world_l2, StimulusFlags::COLD, false, 1)
+                    }
                 }
             }
             if input.key_pressed(keys::OTHER_BASE + b'F' as usize) {
@@ -680,8 +709,9 @@ impl PlayerController {
             self.feet_pos = candidate;
             return false;
         }
-        let can_step =
-            allow_step && axis != 1 && (self.grounded || self.coyote_timer > 0.0 || self.velocity.y <= 0.5);
+        let can_step = allow_step
+            && axis != 1
+            && (self.grounded || self.coyote_timer > 0.0 || self.velocity.y <= 0.5);
         if can_step {
             let mut max_stepped = candidate;
             max_stepped.y += STEP_HEIGHT_M;
@@ -701,11 +731,12 @@ impl PlayerController {
                 }
                 let mut exact = candidate;
                 exact.y += (hi + 0.0005).min(STEP_HEIGHT_M);
-                self.feet_pos = if !sim.aabb_intersects_solid(self.aabb_min(exact), self.aabb_max(exact)) {
-                    exact
-                } else {
-                    max_stepped
-                };
+                self.feet_pos =
+                    if !sim.aabb_intersects_solid(self.aabb_min(exact), self.aabb_max(exact)) {
+                        exact
+                    } else {
+                        max_stepped
+                    };
                 return false;
             }
         }
@@ -765,9 +796,7 @@ impl PlayerController {
         };
         let eye = self.eye_pos();
         let rot = self.camera_rotation();
-        let mut lt = world
-            .get::<LocalTransform>(cam)
-            .unwrap_or_default();
+        let mut lt = world.get::<LocalTransform>(cam).unwrap_or_default();
         lt.position = eye;
         lt.rotation = rot;
         world.set(cam, lt);
@@ -1029,7 +1058,10 @@ mod tests {
         let before = player.feet_pos;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         let delta = player.feet_pos - before;
-        assert!(delta.z < -0.05 && delta.x.abs() < 1e-4, "expected -Z movement, got {delta:?}");
+        assert!(
+            delta.z < -0.05 && delta.x.abs() < 1e-4,
+            "expected -Z movement, got {delta:?}"
+        );
 
         // Rotate right 90 degrees via unlocked RMB drag (e.g. Editor Game View) to face +X.
         let mut look_input = InputSnapshot {
@@ -1044,16 +1076,30 @@ mod tests {
 
         let cam_rot = world.get::<LocalTransform>(cam).unwrap().rotation;
         let cam_fwd = (cam_rot * -Vec3::Z).normalize();
-        assert!(cam_fwd.x > 0.99, "camera forward should turn toward +X, got {cam_fwd:?}");
-        assert!(player.forward_dir().x > 0.99, "aim forward should turn toward +X");
-        let hit = player.last_hit.expect("aim ray should hit east outpost wall when facing +X");
-        assert!(hit.world_pos[0] > player.feet_pos.x, "hit should be in +X direction: {hit:?}");
+        assert!(
+            cam_fwd.x > 0.99,
+            "camera forward should turn toward +X, got {cam_fwd:?}"
+        );
+        assert!(
+            player.forward_dir().x > 0.99,
+            "aim forward should turn toward +X"
+        );
+        let hit = player
+            .last_hit
+            .expect("aim ray should hit east outpost wall when facing +X");
+        assert!(
+            hit.world_pos[0] > player.feet_pos.x,
+            "hit should be in +X direction: {hit:?}"
+        );
 
         // Stepping W must now move in +X matching rotated camera angle.
         let before2 = player.feet_pos;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         let delta2 = player.feet_pos - before2;
-        assert!(delta2.x > 0.05 && delta2.z.abs() < 1e-3, "expected +X movement after camera turn, got {delta2:?}");
+        assert!(
+            delta2.x > 0.05 && delta2.z.abs() < 1e-3,
+            "expected +X movement after camera turn, got {delta2:?}"
+        );
     }
 
     #[test]
@@ -1080,7 +1126,10 @@ mod tests {
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
         player.feet_pos = Vec3::new(17.5, 4.0, 17.5);
-        assert!(player.forward_dir().x < -0.95, "initial facing should inherit -X camera rotation");
+        assert!(
+            player.forward_dir().x < -0.95,
+            "initial facing should inherit -X camera rotation"
+        );
 
         // Externally rotate camera entity to look +Z (yaw = PI).
         let mut lt = world.get::<LocalTransform>(cam).unwrap();
@@ -1091,11 +1140,17 @@ mod tests {
         press_key(&mut input, keys::KEY_W);
         world.set_input(input);
         player.update_look_and_tools(&mut world, &mut sim, 1.0 / 60.0);
-        assert!(player.forward_dir().z > 0.95, "aim forward should sync to +Z camera rotation");
+        assert!(
+            player.forward_dir().z > 0.95,
+            "aim forward should sync to +Z camera rotation"
+        );
         let before = player.feet_pos;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         let delta = player.feet_pos - before;
-        assert!(delta.z > 0.05 && delta.x.abs() < 1e-3, "expected +Z movement after external camera turn, got {delta:?}");
+        assert!(
+            delta.z > 0.05 && delta.x.abs() < 1e-3,
+            "expected +Z movement after external camera turn, got {delta:?}"
+        );
 
         // Attach FlyCameraController facing +X (yaw = -PI/2) and verify physics & aiming follow it.
         world.set(
@@ -1107,11 +1162,17 @@ mod tests {
             },
         );
         player.update_look_and_tools(&mut world, &mut sim, 1.0 / 60.0);
-        assert!(player.forward_dir().x > 0.99, "aim forward should sync to FlyCameraController +X");
+        assert!(
+            player.forward_dir().x > 0.99,
+            "aim forward should sync to FlyCameraController +X"
+        );
         let before_fly = player.feet_pos;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         let delta_fly = player.feet_pos - before_fly;
-        assert!(delta_fly.x > 0.05 && delta_fly.z.abs() < 1e-3, "expected +X movement under FlyCameraController, got {delta_fly:?}");
+        assert!(
+            delta_fly.x > 0.05 && delta_fly.z.abs() < 1e-3,
+            "expected +X movement under FlyCameraController, got {delta_fly:?}"
+        );
     }
 
     #[test]
@@ -1168,7 +1229,11 @@ mod tests {
         player.pitch = 0.0;
         player.sync_camera_transform(&mut world);
         player.update_look_and_tools(&mut world, &mut sim, 1.0 / 60.0);
-        assert_eq!(player.tier, VoxelTier::L3, "Auto mode aiming at L3 mullion must highlight L3 0.0625m");
+        assert_eq!(
+            player.tier,
+            VoxelTier::L3,
+            "Auto mode aiming at L3 mullion must highlight L3 0.0625m"
+        );
     }
 
     #[test]
@@ -1243,6 +1308,9 @@ mod tests {
             "camera eye jumped {}m in one frame on step-up",
             max_single_frame_eye_jump
         );
-        assert_eq!(sign_reversals, 0, "camera step-up must be monotonic with no bounce jitter");
+        assert_eq!(
+            sign_reversals, 0,
+            "camera step-up must be monotonic with no bounce jitter"
+        );
     }
 }

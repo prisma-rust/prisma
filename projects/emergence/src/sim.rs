@@ -7,7 +7,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use prism_game_api::{EntityHandle, GameWorld};
-use prism_scene::{raycast_chunks, VoxelChunk, VoxelHit, VoxelTier, VOXEL_L1_SIZE_M, VOXEL_L2_SIZE_M, VOXEL_L3_SIZE_M};
+use prism_scene::{
+    raycast_chunks, VoxelChunk, VoxelHit, VoxelTier, VOXEL_L1_SIZE_M, VOXEL_L2_SIZE_M,
+    VOXEL_L3_SIZE_M,
+};
 
 use crate::materials::{mat_id, MaterialTable};
 use crate::tags::{
@@ -15,10 +18,10 @@ use crate::tags::{
     TopologyFlags, TransientFlags,
 };
 
-/// Number of chunks along X and Z in the MVP sandbox (`4 x 4 = 16` chunks = `32m x 24m x 32m`).
-pub const WORLD_CHUNKS_X: usize = 4;
-pub const WORLD_CHUNKS_Z: usize = 4;
-pub const CHUNK_DIMS_L1: [u32; 3] = [8, 24, 8];
+/// Minecraft-style streaming chunk dimensions (`16m x 64m x 16m` per chunk).
+pub const CHUNK_DIMS_L1: [u32; 3] = [16, 64, 16];
+/// Active chunk streaming radius around the player (`4` -> `9 x 9 = 81` chunks = `144m x 64m x 144m`).
+pub const STREAM_RADIUS_CHUNKS: i32 = 4;
 
 const ORTHO_DIRS: [[i32; 3]; 6] = [
     [1, 0, 0],
@@ -33,8 +36,11 @@ const HORIZ_DIRS: [[i32; 3]; 4] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]]
 
 /// Active Emergence sandbox world combining ECS `VoxelChunk` mirrors and v3.0 L2 simulation.
 pub struct SimWorld {
+    pub seed: u64,
     pub materials: MaterialTable,
     pub chunks: Vec<VoxelChunk>,
+    pub chunk_coords: Vec<[i32; 2]>,
+    chunk_lookup: HashMap<[i32; 2], usize>,
     pub chunk_entities: Vec<EntityHandle>,
     synced_versions: Vec<u64>,
     cells: HashMap<[i32; 3], (u8, PhysicalCell)>,
@@ -49,7 +55,7 @@ pub struct SimWorld {
 }
 
 impl SimWorld {
-    /// Construct a `SimWorld` from pre-populated chunks, sparse L2 cells, and active seed list.
+    /// Construct a `SimWorld` from generated chunks, sparse L2 cells, and active seed list.
     pub fn new(
         materials: MaterialTable,
         chunks: Vec<VoxelChunk>,
@@ -57,9 +63,22 @@ impl SimWorld {
         initial_active: Vec<[i32; 3]>,
     ) -> Self {
         let count = chunks.len();
+        let mut chunk_coords = Vec::with_capacity(count);
+        let mut chunk_lookup = HashMap::with_capacity(count);
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let coord = [
+                chunk.origin_l1[0].div_euclid(CHUNK_DIMS_L1[0] as i32),
+                chunk.origin_l1[2].div_euclid(CHUNK_DIMS_L1[2] as i32),
+            ];
+            chunk_coords.push(coord);
+            chunk_lookup.insert(coord, idx);
+        }
         let mut world = Self {
+            seed: 2026,
             materials,
             chunks,
+            chunk_coords,
+            chunk_lookup,
             chunk_entities: Vec::new(),
             synced_versions: vec![0; count],
             cells,
@@ -83,8 +102,7 @@ impl SimWorld {
             return;
         }
         for (idx, chunk) in self.chunks.iter().enumerate() {
-            let cx = idx % WORLD_CHUNKS_X;
-            let cz = idx / WORLD_CHUNKS_X;
+            let [cx, cz] = self.chunk_coords[idx];
             let entity = world.spawn();
             world.set(entity, prism_scene::Name(format!("voxel_chunk_{cx}_{cz}")));
             world.set(entity, prism_scene::LocalTransform::default());
@@ -92,6 +110,93 @@ impl SimWorld {
             world.set(entity, chunk.clone());
             self.chunk_entities.push(entity);
             self.synced_versions[idx] = chunk.version;
+        }
+    }
+
+    /// Stream chunks in/out around `center_world` in real time (Minecraft-style).
+    pub fn stream_around(
+        &mut self,
+        center_world: glam::Vec3,
+        mut ecs_world: Option<&mut GameWorld<'_>>,
+        max_new_per_tick: usize,
+    ) {
+        let chunk_span_x = CHUNK_DIMS_L1[0] as f32;
+        let chunk_span_z = CHUNK_DIMS_L1[2] as f32;
+        let pcx = center_world.x.div_euclid(chunk_span_x) as i32;
+        let pcz = center_world.z.div_euclid(chunk_span_z) as i32;
+
+        // 1. Unload distant chunks beyond `STREAM_RADIUS_CHUNKS + 1`.
+        let unload_radius = STREAM_RADIUS_CHUNKS + 1;
+        let mut idx = 0;
+        while idx < self.chunks.len() {
+            let [cx, cz] = self.chunk_coords[idx];
+            if (cx - pcx).abs() > unload_radius || (cz - pcz).abs() > unload_radius {
+                self.unload_chunk_at(idx, ecs_world.as_deref_mut());
+            } else {
+                idx += 1;
+            }
+        }
+
+        // 2. Collect missing chunks within `STREAM_RADIUS_CHUNKS`, sorted closest-first.
+        let mut missing = Vec::new();
+        for dz in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
+            for dx in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
+                let coord = [pcx + dx, pcz + dz];
+                if !self.chunk_lookup.contains_key(&coord) {
+                    missing.push((dx * dx + dz * dz, coord));
+                }
+            }
+        }
+        if missing.is_empty() {
+            return;
+        }
+        missing.sort_unstable_by_key(|(dist2, _)| *dist2);
+
+        let budget = max_new_per_tick.min(missing.len());
+        for (_, [cx, cz]) in missing.into_iter().take(budget) {
+            let gen = crate::world_gen::generate_chunk(&self.materials, self.seed, cx, cz);
+            let new_idx = self.chunks.len();
+            self.chunk_lookup.insert(gen.coord, new_idx);
+            self.chunk_coords.push(gen.coord);
+            self.synced_versions.push(gen.chunk.version);
+            if let Some(world) = ecs_world.as_deref_mut() {
+                let entity = world.spawn();
+                world.set(entity, prism_scene::Name(format!("voxel_chunk_{cx}_{cz}")));
+                world.set(entity, prism_scene::LocalTransform::default());
+                world.set(entity, prism_scene::Active(true));
+                world.set(entity, gen.chunk.clone());
+                self.chunk_entities.push(entity);
+            }
+            self.chunks.push(gen.chunk);
+            self.cells.extend(gen.cells);
+            for pos in gen.active {
+                self.wake_cell_and_neighbors(pos, false);
+            }
+        }
+    }
+
+    fn unload_chunk_at(&mut self, idx: usize, ecs_world: Option<&mut GameWorld<'_>>) {
+        let [cx, cz] = self.chunk_coords[idx];
+        self.chunk_lookup.remove(&[cx, cz]);
+        let min_l2x = cx * (CHUNK_DIMS_L1[0] as i32) * 4;
+        let max_l2x = min_l2x + (CHUNK_DIMS_L1[0] as i32) * 4;
+        let min_l2z = cz * (CHUNK_DIMS_L1[2] as i32) * 4;
+        let max_l2z = min_l2z + (CHUNK_DIMS_L1[2] as i32) * 4;
+        self.cells.retain(|pos, _| {
+            !(pos[0] >= min_l2x && pos[0] < max_l2x && pos[2] >= min_l2z && pos[2] < max_l2z)
+        });
+
+        self.chunks.swap_remove(idx);
+        self.chunk_coords.swap_remove(idx);
+        self.synced_versions.swap_remove(idx);
+        if idx < self.chunk_entities.len() {
+            let removed_ent = self.chunk_entities.swap_remove(idx);
+            if let Some(world) = ecs_world {
+                world.despawn(removed_ent);
+            }
+        }
+        if idx < self.chunk_coords.len() {
+            self.chunk_lookup.insert(self.chunk_coords[idx], idx);
         }
     }
 
@@ -120,32 +225,31 @@ impl SimWorld {
 
     /// Map a world-space L2 integer coordinate to `(chunk_index, local_l2)`.
     #[inline]
-    pub fn chunk_coords_for_l2(l2: [i32; 3]) -> Option<(usize, [u32; 3])> {
-        let max_x = (WORLD_CHUNKS_X as i32) * (CHUNK_DIMS_L1[0] as i32) * 4;
+    pub fn chunk_coords_for_l2(&self, l2: [i32; 3]) -> Option<(usize, [u32; 3])> {
         let max_y = (CHUNK_DIMS_L1[1] as i32) * 4;
-        let max_z = (WORLD_CHUNKS_Z as i32) * (CHUNK_DIMS_L1[2] as i32) * 4;
-        if l2[0] < 0
-            || l2[1] < 0
-            || l2[2] < 0
-            || l2[0] >= max_x
-            || l2[1] >= max_y
-            || l2[2] >= max_z
-        {
+        if l2[1] < 0 || l2[1] >= max_y {
             return None;
         }
-        let cx = (l2[0] as usize) / ((CHUNK_DIMS_L1[0] as usize) * 4);
-        let cz = (l2[2] as usize) / ((CHUNK_DIMS_L1[2] as usize) * 4);
-        let lx = (l2[0] as u32) % (CHUNK_DIMS_L1[0] * 4);
+        let span_x = (CHUNK_DIMS_L1[0] as i32) * 4;
+        let span_z = (CHUNK_DIMS_L1[2] as i32) * 4;
+        let cx = l2[0].div_euclid(span_x);
+        let cz = l2[2].div_euclid(span_z);
+        let &c_idx = self.chunk_lookup.get(&[cx, cz])?;
+        let lx = l2[0].rem_euclid(span_x) as u32;
         let ly = l2[1] as u32;
-        let lz = (l2[2] as u32) % (CHUNK_DIMS_L1[2] * 4);
-        Some((cx + WORLD_CHUNKS_X * cz, [lx, ly, lz]))
+        let lz = l2[2].rem_euclid(span_z) as u32;
+        Some((c_idx, [lx, ly, lz]))
     }
 
     /// Map world L3 integer coordinate to `(chunk_index, local_l3, world_l2)`.
     #[inline]
-    pub fn chunk_coords_for_l3(l3: [i32; 3]) -> Option<(usize, [u32; 3], [i32; 3])> {
-        let l2 = [l3[0].div_euclid(4), l3[1].div_euclid(4), l3[2].div_euclid(4)];
-        let (c_idx, local_l2) = Self::chunk_coords_for_l2(l2)?;
+    pub fn chunk_coords_for_l3(&self, l3: [i32; 3]) -> Option<(usize, [u32; 3], [i32; 3])> {
+        let l2 = [
+            l3[0].div_euclid(4),
+            l3[1].div_euclid(4),
+            l3[2].div_euclid(4),
+        ];
+        let (c_idx, local_l2) = self.chunk_coords_for_l2(l2)?;
         let local_l3 = [
             local_l2[0] * 4 + l3[0].rem_euclid(4) as u32,
             local_l2[1] * 4 + l3[1].rem_euclid(4) as u32,
@@ -157,12 +261,16 @@ impl SimWorld {
     fn fallback_material_id(&self, l2: [i32; 3], rgba: u32) -> u8 {
         self.materials
             .find_by_packed_rgba(rgba)
-            .unwrap_or(if l2[1] < 8 { mat_id::BEDROCK } else { mat_id::SOIL })
+            .unwrap_or(if l2[1] < 8 {
+                mat_id::BEDROCK
+            } else {
+                mat_id::SOIL
+            })
     }
 
     /// Read `(mat_id, PhysicalCell, l3_mask)` at a world L2 coordinate (`None` if empty air).
     pub fn inspect_l2(&self, l2: [i32; 3]) -> Option<(u8, PhysicalCell, u64)> {
-        let (c_idx, local_l2) = Self::chunk_coords_for_l2(l2)?;
+        let (c_idx, local_l2) = self.chunk_coords_for_l2(l2)?;
         let (rgba, _, mask) =
             self.chunks[c_idx].get_l2_cell(local_l2[0], local_l2[1], local_l2[2])?;
         if let Some(&(id, cell)) = self.cells.get(&l2) {
@@ -196,13 +304,13 @@ impl SimWorld {
 
     /// Schedule `l2` (and optionally its 6 orthogonal neighbors) into the active dirty set.
     pub fn wake_cell_and_neighbors(&mut self, l2: [i32; 3], include_neighbors: bool) {
-        if Self::chunk_coords_for_l2(l2).is_some() && self.active_set.insert(l2) {
+        if self.chunk_coords_for_l2(l2).is_some() && self.active_set.insert(l2) {
             self.active_queue.push_back(l2);
         }
         if include_neighbors {
             for d in ORTHO_DIRS {
                 let n = [l2[0] + d[0], l2[1] + d[1], l2[2] + d[2]];
-                if Self::chunk_coords_for_l2(n).is_some() && self.active_set.insert(n) {
+                if self.chunk_coords_for_l2(n).is_some() && self.active_set.insert(n) {
                     self.active_queue.push_back(n);
                 }
             }
@@ -210,7 +318,7 @@ impl SimWorld {
     }
 
     fn ensure_cell_entry(&mut self, l2: [i32; 3]) -> Option<(u8, PhysicalCell, u64)> {
-        let (c_idx, local_l2) = Self::chunk_coords_for_l2(l2)?;
+        let (c_idx, local_l2) = self.chunk_coords_for_l2(l2)?;
         let (rgba, _, mask) =
             self.chunks[c_idx].get_l2_cell(local_l2[0], local_l2[1], local_l2[2])?;
         if let Some(&entry) = self.cells.get(&l2) {
@@ -224,7 +332,7 @@ impl SimWorld {
 
     /// Commit updated `(id, cell)` state to both sparse map and `VoxelChunk` (Iron Law 2).
     fn write_cell_visual(&mut self, l2: [i32; 3], id: u8, mut cell: PhysicalCell) {
-        let Some((c_idx, local_l2)) = Self::chunk_coords_for_l2(l2) else {
+        let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) else {
             return;
         };
         // Iron Law 1: shattered glass/depleted cells with zero durability turn into empty void.
@@ -254,7 +362,7 @@ impl SimWorld {
 
     /// Remove an L2 cell cleanly, enforcing Iron Law 1 (`AIRTIGHT` & occupancy removed).
     pub fn clear_l2_cell(&mut self, l2: [i32; 3]) -> bool {
-        let Some((c_idx, local_l2)) = Self::chunk_coords_for_l2(l2) else {
+        let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) else {
             return false;
         };
         let had = self.cells.remove(&l2).is_some()
@@ -272,7 +380,11 @@ impl SimWorld {
     pub fn carve_at_hit(&mut self, tier: VoxelTier, hit: &VoxelHit) -> bool {
         match tier {
             VoxelTier::L1 => {
-                let base = [hit.world_l1[0] * 4, hit.world_l1[1] * 4, hit.world_l1[2] * 4];
+                let base = [
+                    hit.world_l1[0] * 4,
+                    hit.world_l1[1] * 4,
+                    hit.world_l1[2] * 4,
+                ];
                 let mut any = false;
                 for dz in 0..4 {
                     for dy in 0..4 {
@@ -295,7 +407,9 @@ impl SimWorld {
                                 hit.world_l2[2] + d[2],
                             ];
                             if let Some((nid, mut ncell, _)) = self.ensure_cell_entry(n) {
-                                if nid == mat_id::GLASS || ncell.transient.contains(TransientFlags::BRITTLE) {
+                                if nid == mat_id::GLASS
+                                    || ncell.transient.contains(TransientFlags::BRITTLE)
+                                {
                                     ncell.apply_stimulus(StimulusFlags::KINETIC);
                                     ncell.durability = 0;
                                     self.write_cell_visual(n, nid, ncell);
@@ -307,13 +421,18 @@ impl SimWorld {
                 self.clear_l2_cell(hit.world_l2)
             }
             VoxelTier::L3 => {
-                let Some((c_idx, local_l3, l2)) = Self::chunk_coords_for_l3(hit.world_l3) else {
+                let Some((c_idx, local_l3, l2)) = self.chunk_coords_for_l3(hit.world_l3) else {
                     return false;
                 };
                 let _ = self.ensure_cell_entry(l2);
-                let Some(parent_empty) =
-                    self.chunks[c_idx].set_l3_voxel(local_l3[0], local_l3[1], local_l3[2], false, 0, 0)
-                else {
+                let Some(parent_empty) = self.chunks[c_idx].set_l3_voxel(
+                    local_l3[0],
+                    local_l3[1],
+                    local_l3[2],
+                    false,
+                    0,
+                    0,
+                ) else {
                     return false;
                 };
                 // Iron Law 1: clearing the final L3 bit inside an L2 cell clears its L2 physics cell.
@@ -344,14 +463,14 @@ impl SimWorld {
                     hit.world_l1[2] + hit.normal[2],
                 ];
                 let base_l2 = [target_l1[0] * 4, target_l1[1] * 4, target_l1[2] * 4];
-                if Self::chunk_coords_for_l2(base_l2).is_none() {
+                if self.chunk_coords_for_l2(base_l2).is_none() {
                     return false;
                 }
                 for dz in 0..4 {
                     for dy in 0..4 {
                         for dx in 0..4 {
                             let l2 = [base_l2[0] + dx, base_l2[1] + dy, base_l2[2] + dz];
-                            if let Some((c_idx, local_l2)) = Self::chunk_coords_for_l2(l2) {
+                            if let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) {
                                 self.cells.insert(l2, (mat, cell));
                                 self.chunks[c_idx].set_l2_cell(
                                     local_l2[0],
@@ -374,7 +493,7 @@ impl SimWorld {
                     hit.world_l2[1] + hit.normal[1],
                     hit.world_l2[2] + hit.normal[2],
                 ];
-                let Some((c_idx, local_l2)) = Self::chunk_coords_for_l2(target_l2) else {
+                let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(target_l2) else {
                     return false;
                 };
                 self.cells.insert(target_l2, (mat, cell));
@@ -395,7 +514,7 @@ impl SimWorld {
                     hit.world_l3[1] + hit.normal[1],
                     hit.world_l3[2] + hit.normal[2],
                 ];
-                let Some((c_idx, local_l3, l2)) = Self::chunk_coords_for_l3(target_l3) else {
+                let Some((c_idx, local_l3, l2)) = self.chunk_coords_for_l3(target_l3) else {
                     return false;
                 };
                 self.cells.entry(l2).or_insert((mat, cell));
@@ -458,7 +577,14 @@ impl SimWorld {
                     hit.world_l1[1] as f32 * VOXEL_L1_SIZE_M,
                     hit.world_l1[2] as f32 * VOXEL_L1_SIZE_M,
                 ];
-                (min, [min[0] + VOXEL_L1_SIZE_M, min[1] + VOXEL_L1_SIZE_M, min[2] + VOXEL_L1_SIZE_M])
+                (
+                    min,
+                    [
+                        min[0] + VOXEL_L1_SIZE_M,
+                        min[1] + VOXEL_L1_SIZE_M,
+                        min[2] + VOXEL_L1_SIZE_M,
+                    ],
+                )
             }
             VoxelTier::L2 => {
                 let min = [
@@ -466,7 +592,14 @@ impl SimWorld {
                     hit.world_l2[1] as f32 * VOXEL_L2_SIZE_M,
                     hit.world_l2[2] as f32 * VOXEL_L2_SIZE_M,
                 ];
-                (min, [min[0] + VOXEL_L2_SIZE_M, min[1] + VOXEL_L2_SIZE_M, min[2] + VOXEL_L2_SIZE_M])
+                (
+                    min,
+                    [
+                        min[0] + VOXEL_L2_SIZE_M,
+                        min[1] + VOXEL_L2_SIZE_M,
+                        min[2] + VOXEL_L2_SIZE_M,
+                    ],
+                )
             }
             VoxelTier::L3 => {
                 let min = [
@@ -474,7 +607,14 @@ impl SimWorld {
                     hit.world_l3[1] as f32 * VOXEL_L3_SIZE_M,
                     hit.world_l3[2] as f32 * VOXEL_L3_SIZE_M,
                 ];
-                (min, [min[0] + VOXEL_L3_SIZE_M, min[1] + VOXEL_L3_SIZE_M, min[2] + VOXEL_L3_SIZE_M])
+                (
+                    min,
+                    [
+                        min[0] + VOXEL_L3_SIZE_M,
+                        min[1] + VOXEL_L3_SIZE_M,
+                        min[2] + VOXEL_L3_SIZE_M,
+                    ],
+                )
             }
         }
     }
@@ -572,7 +712,9 @@ impl SimWorld {
             }
 
             // Conductive electrical pulse propagation through wires, alloy, and WET paths.
-            if cell.transient.contains(TransientFlags::CHARGED) && !cell.transient.contains(TransientFlags::BROKEN) {
+            if cell.transient.contains(TransientFlags::CHARGED)
+                && !cell.transient.contains(TransientFlags::BROKEN)
+            {
                 keep_awake = true;
                 for d in ORTHO_DIRS {
                     let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
@@ -626,7 +768,9 @@ impl SimWorld {
                 for d in HORIZ_DIRS {
                     let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
                     if let Some((nid, mut nc)) = self.cells.get(&n).copied() {
-                        if nc.env.matter() == MatterState::Liquid && nc.env.temperature() > Temperature::Cryo {
+                        if nc.env.matter() == MatterState::Liquid
+                            && nc.env.temperature() > Temperature::Cryo
+                        {
                             nc.apply_stimulus(StimulusFlags::COLD);
                             let _ = nc.step_reaction(false);
                             self.write_cell_visual(n, nid, nc);
@@ -641,7 +785,7 @@ impl SimWorld {
                 && !cell.transient.contains(TransientFlags::FROZEN)
             {
                 let below = [pos[0], pos[1] - 1, pos[2]];
-                if let Some((b_idx, b_local)) = Self::chunk_coords_for_l2(below) {
+                if let Some((b_idx, b_local)) = self.chunk_coords_for_l2(below) {
                     if self.chunks[b_idx]
                         .get_l2_cell(b_local[0], b_local[1], b_local[2])
                         .is_none()
@@ -650,7 +794,12 @@ impl SimWorld {
                         let (rgba, vis) = self.materials.cell_visuals(id, &cell);
                         self.cells.insert(below, (id, cell));
                         self.chunks[b_idx].set_l2_cell(
-                            b_local[0], b_local[1], b_local[2], rgba, vis, u64::MAX,
+                            b_local[0],
+                            b_local[1],
+                            b_local[2],
+                            rgba,
+                            vis,
+                            u64::MAX,
                         );
                         wake_list.push(below);
                         continue;
@@ -662,10 +811,11 @@ impl SimWorld {
                             let d = HORIZ_DIRS[(start + off) % HORIZ_DIRS.len()];
                             let side = [pos[0] + d[0], pos[1], pos[2] + d[2]];
                             let side_below = [side[0], side[1] - 1, side[2]];
-                            let Some((s_idx, s_local)) = Self::chunk_coords_for_l2(side) else {
+                            let Some((s_idx, s_local)) = self.chunk_coords_for_l2(side) else {
                                 continue;
                             };
-                            let Some((sb_idx, sb_local)) = Self::chunk_coords_for_l2(side_below) else {
+                            let Some((sb_idx, sb_local)) = self.chunk_coords_for_l2(side_below)
+                            else {
                                 continue;
                             };
                             let side_free = self.chunks[s_idx]
@@ -679,7 +829,12 @@ impl SimWorld {
                                 let (rgba, vis) = self.materials.cell_visuals(id, &cell);
                                 self.cells.insert(side, (id, cell));
                                 self.chunks[s_idx].set_l2_cell(
-                                    s_local[0], s_local[1], s_local[2], rgba, vis, u64::MAX,
+                                    s_local[0],
+                                    s_local[1],
+                                    s_local[2],
+                                    rgba,
+                                    vis,
+                                    u64::MAX,
                                 );
                                 wake_list.push(side);
                                 break;
@@ -797,7 +952,7 @@ mod tests {
 
         // Place a dedicated alloy L2 cell and carve all 64 L3 micro-voxels.
         let l2 = [20, 22, 20];
-        let (c_idx, local_l2) = SimWorld::chunk_coords_for_l2(l2).unwrap();
+        let (c_idx, local_l2) = sim.chunk_coords_for_l2(l2).unwrap();
         let alloy_cell = sim.materials.spawn_cell(mat_id::ALLOY);
         let (rgba, vis) = sim.materials.cell_visuals(mat_id::ALLOY, &alloy_cell);
         sim.chunks[c_idx].set_l2_cell(local_l2[0], local_l2[1], local_l2[2], rgba, vis, u64::MAX);
@@ -821,7 +976,10 @@ mod tests {
                 }
             }
         }
-        assert!(sim.inspect_l2(l2).is_none(), "empty L3 mask must remove parent L2 cell");
+        assert!(
+            sim.inspect_l2(l2).is_none(),
+            "empty L3 mask must remove parent L2 cell"
+        );
     }
 
     #[test]
@@ -830,10 +988,10 @@ mod tests {
         let gen = generate_world(&mats, 7);
         let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
 
-        let l2a = [16, 20, 16];
-        let l2b = [17, 20, 16];
+        let l2a = [40, 24, 40];
+        let l2b = [41, 24, 40];
         for p in [l2a, l2b] {
-            let (c_idx, local) = SimWorld::chunk_coords_for_l2(p).unwrap();
+            let (c_idx, local) = sim.chunk_coords_for_l2(p).unwrap();
             let mut c = sim.materials.spawn_cell(mat_id::WIRE);
             c.transient.insert(TransientFlags::WET);
             let (rgba, vis) = sim.materials.cell_visuals(mat_id::WIRE, &c);
@@ -857,7 +1015,7 @@ mod tests {
         let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
 
         let target = [22, 22, 22];
-        let (c_idx, local) = SimWorld::chunk_coords_for_l2(target).unwrap();
+        let (c_idx, local) = sim.chunk_coords_for_l2(target).unwrap();
         let mut timber = sim.materials.spawn_cell(mat_id::TIMBER);
         timber.durability = 20;
         let (rgba, vis) = sim.materials.cell_visuals(mat_id::TIMBER, &timber);
@@ -868,6 +1026,31 @@ mod tests {
         for _ in 0..10 {
             sim.step(0.05);
         }
-        assert!(sim.inspect_l2(target).is_none(), "burned-out timber must become empty air");
+        assert!(
+            sim.inspect_l2(target).is_none(),
+            "burned-out timber must become empty air"
+        );
+    }
+
+    #[test]
+    fn runtime_chunk_streaming_loads_new_chunks_and_unloads_distant_ones() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+        sim.attach_ecs(&mut world);
+
+        // Move far away to `(160m, 4m, 160m)` -> chunk `(10, 10)` and stream in real time.
+        sim.stream_around(glam::Vec3::new(160.0, 4.0, 160.0), Some(&mut world), 16);
+        assert!(
+            sim.chunk_lookup.contains_key(&[10, 10]),
+            "chunk (10, 10) must stream in around player"
+        );
+        assert!(
+            !sim.chunk_lookup.contains_key(&[0, 0]),
+            "distant chunk (0, 0) must unload"
+        );
+        assert_eq!(sim.chunks.len(), sim.chunk_entities.len());
     }
 }
