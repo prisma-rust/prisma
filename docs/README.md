@@ -86,6 +86,9 @@ docs/
   ├── mobile-raytracing-gi-design.md      # [L2 渲染进阶] 移动端 RayQuery 与实时 GI 管线蓝图
   ├── rtx-dlss-integration-design.md      # [L2 渲染进阶] DLSS / 光线重构 / 帧生成的 guide buffer 契约与里程碑
   ├── prt-gi-64tree-design.md             # [L2 渲染进阶] PRT64 预计算辐射度传输、64 叉树流式与 M1–M4 验收契约
+  ├── src-gi-design.md                    # [L2 渲染进阶] SRC GI（面元辐射级联）移动端动态 GI 备选设计蓝图
+  ├── voxel-software-gi-design.md         # [L2 渲染进阶] 立方体素专用软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联）
+  ├── voxel-rtx-gi-design.md              # [L2 渲染进阶] 立方体素专用硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI）
   │
   ├── ai-workflow.md                      # [L3 协作流程] AI 协同工作流与五条硬规则
   ├── code-style.md                       # [L3 编码规范] 英文代码注释规范与冗余清理指南
@@ -126,6 +129,9 @@ docs/
 | **渲染专题** | [`mobile-raytracing-gi-design.md`](mobile-raytracing-gi-design.md) | RayQuery inline、SHARC 辐射度缓存 | `prism-render` |
 | | [`rtx-dlss-integration-design.md`](rtx-dlss-integration-design.md) | DLSS-SR/RR/G、guide buffer 句柄与格式、降级阶梯 | `prism-render`, `assets/shaders/` |
 | | [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md) | PRT64 数据契约、Pass 1–4 拓扑、防漏光、M1–M4 验收口径 | `prism-render`, `prism-build-pipeline` |
+| | [`src-gi-design.md`](src-gi-design.md) | SRC GI（Surfel 软件光追 + 3D 辐射级联）移动端 UGC 备选蓝图 | `prism-render`（规划） |
+| | [`voxel-software-gi-design.md`](voxel-software-gi-design.md) | 立方体素软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联） | `prism-render`（规划） |
+| | [`voxel-rtx-gi-design.md`](voxel-rtx-gi-design.md) | 立方体素硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI / DLSS-RR） | `prism-render`（规划） |
 | | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang 编译、绑定代码生成、Bindless 纹理表 | `assets/shaders/`, `xtask` |
 | **协作规范** | [`ai-workflow.md`](ai-workflow.md) | 五条硬规则、原子提交、自检门禁、PR 模板 | 全仓库 |
 | | [`code-style.md`](code-style.md) | 纯英文注释、删除代码复述、删除旧版本兼容垫片 | 全仓库 `.rs` 源码 |
