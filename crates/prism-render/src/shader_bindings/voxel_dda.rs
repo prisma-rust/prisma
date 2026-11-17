@@ -28,6 +28,8 @@ pub const OUT_COLOR_TEX_SET: u32 = 0;
 pub const OUT_COLOR_TEX_BINDING: u32 = 7; // COMBINED_IMAGE_SAMPLER
 pub const OUT_DEPTH_TEX_SET: u32 = 0;
 pub const OUT_DEPTH_TEX_BINDING: u32 = 8; // COMBINED_IMAGE_SAMPLER
+pub const SPBR_ATLAS_SET: u32 = 0;
+pub const SPBR_ATLAS_BINDING: u32 = 9; // UNIFORM_BUFFER
 
 /// GPU layout struct (auto-generated from Slang `VoxelFrameUbo`).
 ///

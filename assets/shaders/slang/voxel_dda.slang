@@ -10,6 +10,7 @@
 //   6 - Texture2D<float> (ForwardPass D32 depth input)
 //   7 - RWTexture2D<float4> (VOXEL_COLOR_H composited HDR output)
 //   8 - RWTexture2D<float> (VOXEL_DEPTH_H composited depth output)
+//   9 - StructuredBuffer<uint> (256x48 SPBR LabPBR atlas: row0=albedo, row1=normal, row2=specular)
 
 static const uint L1_UNIFORM_REF = 0xFFFFFFFFu;
 static const float L1_SIZE_M = 1.0;
@@ -59,6 +60,7 @@ public struct VoxelChunkGpu
 [[vk::binding(6, 0)]] Texture2D<float>                forwardDepthTex;
 [[vk::binding(7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outColorTex;
 [[vk::binding(8, 0)]] [[vk::image_format("r32f")]]    RWTexture2D<float>  outDepthTex;
+[[vk::binding(9, 0)]] StructuredBuffer<uint>          spbrAtlas;
 
 struct TraceHit
 {
@@ -556,8 +558,97 @@ float3 sample_atmosphere(float3 dir, float3 sunDir, float3 sunCol)
     return sky;
 }
 
+float4 unpack_unorm4(uint packed)
+{
+    return float4(
+        float(packed & 0xFFu),
+        float((packed >> 8u) & 0xFFu),
+        float((packed >> 16u) & 0xFFu),
+        float((packed >> 24u) & 0xFFu)
+    ) * (1.0 / 255.0);
+}
+
+// Map packed material rgba + visual flags to one of the 16 SPBR atlas tiles (`0..15`).
+// Returns `0xFFFFFFFFu` when no atlas is loaded or no matching tile exists.
+uint resolve_spbr_tile(uint rgba, uint visual, float3 normal)
+{
+    if (ubo.cursorMin.w < 0.5)
+        return 0xFFFFFFFFu;
+
+    uint r = rgba & 0xFFu;
+    uint g = (rgba >> 8u) & 0xFFu;
+    uint b = (rgba >> 16u) & 0xFFu;
+
+    if ((visual & VIS_LIQUID) != 0u)
+    {
+        if ((visual & VIS_FROZEN) != 0u) return 9u;  // ice
+        if ((visual & VIS_CORRODED) != 0u) return 8u; // acid
+        return 7u;                                    // water
+    }
+    if ((visual & VIS_TRANSLUCENT) != 0u) return 5u;  // glass
+    if ((visual & VIS_INFECTED) != 0u) return 10u;    // amethyst/biomass
+    if ((visual & VIS_EMISSIVE) != 0u && g > 140u) return 14u; // emerald/isotope
+    if ((visual & VIS_METALLIC) != 0u)
+    {
+        if (r > 180u && g > 100u && b < 80u) return 11u; // copper/wire
+        if (r > 180u && g < 110u) return 13u;            // valve/redstone
+        return 4u;                                       // iron/alloy
+    }
+    // Grass block: top = grass_block_top (2), side = grass_block_side (15), bottom = dirt (1)
+    if (g > r + 25u && g > b + 25u)
+    {
+        if (normal.y > 0.5) return 2u;
+        if (normal.y < -0.5) return 1u;
+        return 15u;
+    }
+    if (r < 90u && g < 90u && b < 100u) return 0u;   // bedrock
+    if (r > 145u && g > 140u && b > 130u) return 3u; // stone/limestone
+    if (r > 135u && g > 85u && b < 80u) return 6u;   // oak_planks/timber
+    return 1u;                                       // dirt
+}
+
+int2 voxel_face_texel(float3 worldPos, float3 normal)
+{
+    float2 uv;
+    if (abs(normal.y) > 0.5)
+        uv = frac(worldPos.xz);
+    else if (abs(normal.x) > 0.5)
+        uv = frac(float2(worldPos.z, -worldPos.y));
+    else
+        uv = frac(float2(worldPos.x, -worldPos.y));
+    int2 px = int2(floor(uv * 16.0));
+    return clamp(px, int2(0, 0), int2(15, 15));
+}
+
+float3 sample_spbr_normal(uint tile, int2 px, float3 normal)
+{
+    uint packed = spbrAtlas[(px.y + 16) * 256 + int(tile) * 16 + px.x];
+    float4 nTex = unpack_unorm4(packed);
+    float2 xy = nTex.xy * 2.0 - 1.0;
+    float nz = sqrt(max(1.0 - dot(xy, xy), 0.0));
+    float3 tN = normalize(float3(xy.x, xy.y, nz));
+
+    float3 T, B;
+    if (abs(normal.y) > 0.5)
+    {
+        T = float3(1.0, 0.0, 0.0);
+        B = float3(0.0, 0.0, normal.y > 0.0 ? 1.0 : -1.0);
+    }
+    else if (abs(normal.x) > 0.5)
+    {
+        T = float3(0.0, 0.0, 1.0);
+        B = float3(0.0, 1.0, 0.0);
+    }
+    else
+    {
+        T = float3(1.0, 0.0, 0.0);
+        B = float3(0.0, 1.0, 0.0);
+    }
+    return normalize(T * tN.x + B * tN.y + normal * tN.z);
+}
+
 // LabPBR 16x16 sub-texel micro-normal perturbation + animated water ripples.
-float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float time, float hitDist)
+float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float time, float hitDist, uint tile)
 {
     float3 n = normal;
     if ((visual & VIS_LIQUID) != 0u)
@@ -573,7 +664,13 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
     if (hitDist > 36.0)
         return normal;
 
-    // 16x16 texel grid micro-relief inspired by SPBR normal maps.
+    if (tile != 0xFFFFFFFFu)
+    {
+        int2 px = voxel_face_texel(worldPos, normal);
+        return sample_spbr_normal(tile, px, normal);
+    }
+
+    // 16x16 texel grid micro-relief fallback when no atlas is bound.
     float3 texel = floor(worldPos * 16.0);
     float gx = hash31(texel + float3(1.0, 0.0, 0.0)) - hash31(texel - float3(1.0, 0.0, 0.0));
     float gy = hash31(texel + float3(0.0, 1.0, 0.0)) - hash31(texel - float3(0.0, 1.0, 0.0));
@@ -584,17 +681,39 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
     return normalize(normal + grad * bumpStrength);
 }
 
-// Compute procedural 16x16 LabPBR-inspired albedo & roughness modulation so blocks
-// never look like flat solid-colored cubes.
+// Sample real SPBR 16x16 albedo + LabPBR specular (_s.png) when atlas is bound,
+// falling back to procedural 16x16 surface detail otherwise.
 void apply_voxel_surface_detail(
     float3 worldPos,
     float3 normal,
     uint visual,
     uint tier,
+    uint tile,
     inout float3 albedo,
-    inout float roughness
+    inout float roughness,
+    inout float metallic,
+    inout float3 emissive
 )
 {
+    if (tile != 0xFFFFFFFFu)
+    {
+        int2 px = voxel_face_texel(worldPos, normal);
+        uint albPacked = spbrAtlas[px.y * 256 + int(tile) * 16 + px.x];
+        float4 albTex = unpack_rgba_linear(albPacked);
+        if (albTex.a > 0.05)
+            albedo = albTex.rgb;
+
+        uint specPacked = spbrAtlas[(px.y + 32) * 256 + int(tile) * 16 + px.x];
+        float4 specTex = unpack_unorm4(specPacked);
+        float smoothness = specTex.r;
+        roughness = clamp((1.0 - smoothness) * (1.0 - smoothness), 0.04, 1.0);
+        if (specTex.g >= (229.5 / 255.0))
+            metallic = 1.0;
+        if (specTex.a > 0.0 && specTex.a < 0.999)
+            emissive += albedo * (specTex.a * 2.5);
+        return;
+    }
+
     float cellStep = (tier == 3u) ? L3_SIZE_M : ((tier == 2u) ? L2_SIZE_M : L1_SIZE_M);
     float3 gridP = worldPos / cellStep;
     float3 f = abs(frac(gridP) - 0.5);
@@ -603,21 +722,18 @@ void apply_voxel_surface_detail(
     float bevel = smoothstep(0.43, 0.50, edgeMax);
     albedo *= lerp(1.0, (tier == 3u) ? 0.78 : 0.86, bevel);
 
-    // 16x16 sub-texel coordinates on the block face.
     float3 texel = floor(worldPos * 16.0);
     float h0 = hash31(texel);
     float hStrata = hash31(float3(floor(worldPos.x * 4.0), texel.y, floor(worldPos.z * 4.0)));
 
     if ((visual & VIS_METALLIC) != 0u)
     {
-        // Brushed industrial metal panel border + subtle rivet speckles.
         float panelEdge = step(0.44, edgeMax);
         albedo *= lerp(0.92 + 0.16 * h0, 0.68, panelEdge);
         roughness = clamp(roughness + (h0 - 0.5) * 0.18 - panelEdge * 0.10, 0.06, 0.95);
     }
     else if ((visual & VIS_LIQUID) == 0u)
     {
-        // Natural stone/soil/grass pixel grain + sedimentary strata variation.
         float grain = (h0 - 0.5) * 0.24 + (hStrata - 0.5) * 0.12;
         albedo *= clamp(1.0 + grain, 0.68, 1.32);
         roughness = clamp(roughness + (h0 - 0.5) * 0.22, 0.08, 0.98);
@@ -647,37 +763,36 @@ void trace_voxel_ao_and_gi(
     float3 tRot = tangent * ca + bitangent * sa;
     float3 bRot = -tangent * sa + bitangent * ca;
 
-    // 3 cosine-biased hemisphere sample directions.
-    static const float3 dirs[3] = {
-        float3( 0.58,  0.00, 0.81),
-        float3(-0.29,  0.50, 0.81),
-        float3(-0.29, -0.50, 0.81)
+    // 2 cosine-biased hemisphere sample directions for fast Voxel AO + 1-bounce GI.
+    static const float3 dirs[2] = {
+        float3( 0.62,  0.22, 0.75),
+        float3(-0.62, -0.22, 0.75)
     };
 
     float occ = 0.0;
     float3 gi = float3(0.0, 0.0, 0.0);
     float3 rayOrigin = worldPos + normal * 0.03;
 
-    for (uint i = 0u; i < 3u; i++)
+    for (uint i = 0u; i < 2u; i++)
     {
         float3 d = normalize(tRot * dirs[i].x + bRot * dirs[i].y + normal * dirs[i].z);
-        TraceHit h = trace_world(rayOrigin, d, 4.5, false);
+        TraceHit h = trace_world(rayOrigin, d, 3.5, false);
         if (h.hit)
         {
-            float distWeight = 1.0 - clamp(h.t / 4.5, 0.0, 1.0);
-            occ += distWeight * 0.85;
+            float distWeight = 1.0 - clamp(h.t / 3.5, 0.0, 1.0);
+            occ += distWeight * 1.15;
 
             float4 hitCol = unpack_rgba_linear(h.rgba);
             float hitNdl = max(dot(h.normal, sunDir), 0.0);
             float hitEmissive = ((h.visual & (VIS_EMISSIVE | VIS_HEAT_GLOW)) != 0u)
                 ? (float((h.visual >> 24u) & 0xFFu) * (1.0 / 255.0) * 2.5)
                 : 0.0;
-            gi += hitCol.rgb * (sunCol * (0.28 * hitNdl) + hitEmissive);
+            gi += hitCol.rgb * (sunCol * (0.35 * hitNdl) + hitEmissive);
         }
     }
 
-    aoOut = clamp(1.0 - occ * 0.32, 0.18, 1.0);
-    bounceGiOut = gi * (1.0 / 3.0);
+    aoOut = clamp(1.0 - occ * 0.38, 0.18, 1.0);
+    bounceGiOut = gi * 0.5;
 }
 
 float3 shade_voxel(
@@ -698,10 +813,13 @@ float3 shade_voxel(
     float roughness = clamp(float((visual >> 16u) & 0xFFu) * (1.0 / 255.0), 0.04, 1.0);
     float emissiveAmt = float((visual >> 24u) & 0xFFu) * (1.0 / 255.0);
     float time = ubo.cameraPos.w;
-
-    apply_voxel_surface_detail(worldPos, normal, visual, tier, albedo, roughness);
-
+    bool isMetallic = (visual & VIS_METALLIC) != 0u;
+    float metallic = isMetallic ? 0.90 : 0.0;
     float3 emissive = float3(0.0, 0.0, 0.0);
+
+    uint tile = resolve_spbr_tile(rgba, visual, normal);
+    apply_voxel_surface_detail(worldPos, normal, visual, tier, tile, albedo, roughness, metallic, emissive);
+
     if ((visual & VIS_EMISSIVE) != 0u)
         emissive += albedo * (emissiveAmt * 3.8);
     if ((visual & VIS_HEAT_GLOW) != 0u)
@@ -756,7 +874,7 @@ float3 shade_voxel(
         albedo *= (1.0 - crack * 0.55);
     }
 
-    float3 N = perturb_voxel_normal(worldPos, normal, visual, time, hitDist);
+    float3 N = perturb_voxel_normal(worldPos, normal, visual, time, hitDist, tile);
     float3 V = normalize(viewDir);
     float3 L = normalize(ubo.sunDirRadiance.xyz);
     float3 H = normalize(L + V);
@@ -768,8 +886,6 @@ float3 shade_voxel(
     float ndh = max(dot(N, H), 0.0);
     float vdh = max(dot(V, H), 0.0);
 
-    bool isMetallic = (visual & VIS_METALLIC) != 0u;
-    float metallic = isMetallic ? 0.90 : 0.0;
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
 
     // Cook-Torrance GGX specular + LabPBR energy conservation.
@@ -851,7 +967,7 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             }
             float ao = 1.0;
             float3 bounceGi = float3(0.0, 0.0, 0.0);
-            if (res.t < 42.0)
+            if (res.t < 32.0)
             {
                 trace_voxel_ao_and_gi(res.worldPos, res.normal, sunDir, sunCol, tid.xy, ao, bounceGi);
             }

@@ -28,7 +28,6 @@ static LAST_DROPPED_LIGHTS: AtomicUsize = AtomicUsize::new(0);
 ///
 /// 上限本身是前向着色器的硬约束（SSBO 固定长度），但用户不该在「加了灯没反应」
 /// 之后自己猜。每帧都 warn 会刷屏，所以只在丢弃数量**变化**时打一条。
-
 mod shadow;
 pub use shadow::{dir_to_euler_xyz_deg, euler_xyz_deg_to_dir};
 use shadow::{directional_light_ubo_direction, shadow_cascade_matrices};
@@ -432,11 +431,7 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
             for (entity, chunk) in world.query::<prism_scene::VoxelChunk>() {
                 let key = ((entity.generation() as u64) << 32) | (entity.id() as u64);
                 if stale_or_missing.contains(&key) {
-                    dirty_updates.push((
-                        key,
-                        chunk.version,
-                        encode_voxel_chunk_upload(key, chunk),
-                    ));
+                    dirty_updates.push((key, chunk.version, encode_voxel_chunk_upload(key, chunk)));
                 }
             }
         }
@@ -459,11 +454,19 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
         }
     }
     let elapsed_seconds = cache.started_at.elapsed().as_secs_f32();
+    static SPBR_ATLAS: std::sync::OnceLock<Option<Arc<Vec<u32>>>> = std::sync::OnceLock::new();
+    let atlas = SPBR_ATLAS
+        .get_or_init(|| {
+            crate::asset_paths::asset_dir()
+                .and_then(|dir| prism_render::voxel_dda_pass::load_spbr_atlas_from_assets(&dir))
+        })
+        .clone();
     Some(Arc::new(prism_render::VoxelSceneUpload {
         signature,
         elapsed_seconds,
         chunks: uploads,
         cursor,
+        atlas,
     }))
 }
 

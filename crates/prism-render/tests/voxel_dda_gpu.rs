@@ -126,12 +126,7 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     let cyan_alloy = 60 | (185 << 8) | (220 << 16) | (255 << 24);
     // Transient WET flag (`1 << 0`) + METALLIC (`1 << 12`).
     let metal_vis = (1u32 | (1u32 << 12)) | (70u32 << 16);
-    brick_cells[sub] = [
-        cyan_alloy,
-        metal_vis,
-        mask as u32,
-        (mask >> 32) as u32,
-    ];
+    brick_cells[sub] = [cyan_alloy, metal_vis, mask as u32, (mask >> 32) as u32];
 
     let scene = Arc::new(VoxelSceneUpload {
         signature: 1,
@@ -151,6 +146,7 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
             max: [2.25, 1.75, 2.25],
             color: [1.0, 0.9, 0.2, 1.0],
         }),
+        atlas: None,
     });
     renderer.set_voxel_scene(Some(scene));
 
@@ -202,7 +198,12 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
 
     let px = |x: usize, y: usize| -> [u8; 4] {
         let off = (y * 256 + x) * 4;
-        [pixels[off], pixels[off + 1], pixels[off + 2], pixels[off + 3]]
+        [
+            pixels[off],
+            pixels[off + 1],
+            pixels[off + 2],
+            pixels[off + 3],
+        ]
     };
 
     // Center pixel looks through the carved 2x2 L3 hole (dark clear color ~ [85, 85, 85, 255]).

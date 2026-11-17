@@ -57,6 +57,71 @@ pub struct VoxelSceneUpload {
     pub elapsed_seconds: f32,
     pub chunks: Vec<VoxelChunkUpload>,
     pub cursor: Option<VoxelCursorUpload>,
+    /// Optional 256x48 SPBR LabPBR atlas (16 tiles x 3 rows of 16x16 RGBA8 packed `u32`).
+    pub atlas: Option<Arc<Vec<u32>>>,
+}
+
+/// Loads the 16-tile (256x48) SPBR LabPBR atlas from `<assets_root>/textures/blocks/` if present.
+///
+/// Row 0 (`y = 0..16`): albedo `.png`
+/// Row 1 (`y = 16..32`): normal `_n.png`
+/// Row 2 (`y = 32..48`): LabPBR specular `_s.png`
+pub fn load_spbr_atlas_from_assets(assets_root: &std::path::Path) -> Option<Arc<Vec<u32>>> {
+    let blocks_dir = assets_root.join("textures").join("blocks");
+    if !blocks_dir.is_dir() {
+        return None;
+    }
+    const TILES: [&str; 16] = [
+        "bedrock",
+        "dirt",
+        "grass_block_top",
+        "stone",
+        "iron_block",
+        "glass_pane_top",
+        "oak_planks",
+        "water_still",
+        "emerald_block",
+        "ice",
+        "amethyst_block",
+        "copper_block",
+        "iron_block",
+        "redstone_ore",
+        "emerald_block",
+        "grass_block_side",
+    ];
+    let mut pixels = vec![0u32; 256 * 48];
+    let mut loaded_any = false;
+
+    for (tile_idx, name) in TILES.iter().enumerate() {
+        let suffixes = [("", 0usize), ("_n", 16usize), ("_s", 32usize)];
+        for (suffix, row_y) in suffixes {
+            let path = blocks_dir.join(format!("{name}{suffix}.png"));
+            let Ok(img) = image::open(&path) else {
+                continue;
+            };
+            loaded_any = true;
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            for py in 0..16u32 {
+                let sy = (py * h) / 16;
+                for px in 0..16u32 {
+                    let sx = (px * w) / 16;
+                    let p = rgba.get_pixel(sx, sy).0;
+                    let packed = (p[0] as u32)
+                        | ((p[1] as u32) << 8)
+                        | ((p[2] as u32) << 16)
+                        | ((p[3] as u32) << 24);
+                    pixels[(row_y + py as usize) * 256 + tile_idx * 16 + px as usize] = packed;
+                }
+            }
+        }
+    }
+
+    if loaded_any {
+        Some(Arc::new(pixels))
+    } else {
+        None
+    }
 }
 
 struct HostBuffer {
@@ -203,7 +268,8 @@ fn create_storage_image(
         .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .initial_layout(vk::ImageLayout::UNDEFINED);
-    let image = unsafe { device.create_image(&info, None) }.context("VoxelDdaPass: create image")?;
+    let image =
+        unsafe { device.create_image(&info, None) }.context("VoxelDdaPass: create image")?;
     let reqs = unsafe { device.get_image_memory_requirements(image) };
     let mem_type = find_memory_type(
         context,
@@ -242,7 +308,9 @@ struct FrameSlot {
     l1_buf: HostBuffer,
     occ_buf: HostBuffer,
     cells_buf: HostBuffer,
+    atlas_buf: HostBuffer,
     uploaded_signature: Option<u64>,
+    atlas_uploaded: bool,
     target: Option<TargetImages>,
 }
 
@@ -257,6 +325,7 @@ impl FrameSlot {
         let l1_buf = HostBuffer::new(context, 256, vk::BufferUsageFlags::STORAGE_BUFFER)?;
         let occ_buf = HostBuffer::new(context, 256, vk::BufferUsageFlags::STORAGE_BUFFER)?;
         let cells_buf = HostBuffer::new(context, 256, vk::BufferUsageFlags::STORAGE_BUFFER)?;
+        let atlas_buf = HostBuffer::new(context, 64, vk::BufferUsageFlags::STORAGE_BUFFER)?;
         Ok(Self {
             descriptor_set,
             ubo_buf,
@@ -264,16 +333,14 @@ impl FrameSlot {
             l1_buf,
             occ_buf,
             cells_buf,
+            atlas_buf,
             uploaded_signature: None,
+            atlas_uploaded: false,
             target: None,
         })
     }
 
-    fn ensure_ssbo(
-        buf: &mut HostBuffer,
-        context: &VulkanContext,
-        bytes: &[u8],
-    ) -> Result<()> {
+    fn ensure_ssbo(buf: &mut HostBuffer, context: &VulkanContext, bytes: &[u8]) -> Result<()> {
         let needed = (bytes.len() as vk::DeviceSize).max(64);
         if buf.capacity_bytes < needed {
             buf.destroy(&context.device);
@@ -327,10 +394,24 @@ impl FrameSlot {
             flat_cells.push([0; 4]);
         }
 
-        Self::ensure_ssbo(&mut self.chunks_buf, context, bytemuck::cast_slice(&gpu_chunks))?;
+        Self::ensure_ssbo(
+            &mut self.chunks_buf,
+            context,
+            bytemuck::cast_slice(&gpu_chunks),
+        )?;
         Self::ensure_ssbo(&mut self.l1_buf, context, bytemuck::cast_slice(&flat_l1))?;
         Self::ensure_ssbo(&mut self.occ_buf, context, bytemuck::cast_slice(&flat_occ))?;
-        Self::ensure_ssbo(&mut self.cells_buf, context, bytemuck::cast_slice(&flat_cells))?;
+        Self::ensure_ssbo(
+            &mut self.cells_buf,
+            context,
+            bytemuck::cast_slice(&flat_cells),
+        )?;
+        if !self.atlas_uploaded {
+            if let Some(atlas) = &scene.atlas {
+                Self::ensure_ssbo(&mut self.atlas_buf, context, bytemuck::cast_slice(atlas))?;
+                self.atlas_uploaded = true;
+            }
+        }
         self.uploaded_signature = Some(scene.signature);
         Ok(())
     }
@@ -341,6 +422,7 @@ impl FrameSlot {
         self.l1_buf.destroy(device);
         self.occ_buf.destroy(device);
         self.cells_buf.destroy(device);
+        self.atlas_buf.destroy(device);
         if let Some(mut t) = self.target.take() {
             t.destroy(device);
         }
@@ -407,6 +489,11 @@ impl VoxelDdaPass {
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(bindings::SPBR_ATLAS_BINDING)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
         ];
 
         let descriptor_layout = unsafe {
@@ -424,7 +511,7 @@ impl VoxelDdaPass {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 8,
+                descriptor_count: 10,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLED_IMAGE,
@@ -544,7 +631,12 @@ impl RenderPassNode for VoxelDdaPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
-        let Some(scene) = self.scene.as_ref().filter(|s| !s.chunks.is_empty()).cloned() else {
+        let Some(scene) = self
+            .scene
+            .as_ref()
+            .filter(|s| !s.chunks.is_empty())
+            .cloned()
+        else {
             return Ok(());
         };
         if !ctx.frame.has_camera
@@ -567,10 +659,7 @@ impl RenderPassNode for VoxelDdaPass {
         let slot_idx = (ctx.frame_index as usize) % 2;
         let slot = &mut self.slots[slot_idx];
 
-        let recreate = slot
-            .target
-            .as_ref()
-            .is_none_or(|t| t.extent != extent);
+        let recreate = slot.target.as_ref().is_none_or(|t| t.extent != extent);
         if recreate {
             if let Some(mut old) = slot.target.take() {
                 old.destroy(&self.context.device);
@@ -585,9 +674,14 @@ impl RenderPassNode for VoxelDdaPass {
             ctx.frame.light_dir[1],
             ctx.frame.light_dir[2],
         ];
-        let sun_len = (sun_dir[0] * sun_dir[0] + sun_dir[1] * sun_dir[1] + sun_dir[2] * sun_dir[2]).sqrt();
+        let sun_len =
+            (sun_dir[0] * sun_dir[0] + sun_dir[1] * sun_dir[1] + sun_dir[2] * sun_dir[2]).sqrt();
         if sun_len > 1e-5 {
-            sun_dir = [sun_dir[0] / sun_len, sun_dir[1] / sun_len, sun_dir[2] / sun_len];
+            sun_dir = [
+                sun_dir[0] / sun_len,
+                sun_dir[1] / sun_len,
+                sun_dir[2] / sun_len,
+            ];
         } else {
             sun_dir = [0.408, 0.816, 0.408];
         }
@@ -596,7 +690,11 @@ impl RenderPassNode for VoxelDdaPass {
         } else {
             1.8
         };
-        let sun_col = if ctx.frame.light_color[0] + ctx.frame.light_color[1] + ctx.frame.light_color[2] > 0.01 {
+        let sun_col = if ctx.frame.light_color[0]
+            + ctx.frame.light_color[1]
+            + ctx.frame.light_color[2]
+            > 0.01
+        {
             ctx.frame.light_color
         } else {
             [1.0, 0.96, 0.90, 0.35]
@@ -626,7 +724,12 @@ impl RenderPassNode for VoxelDdaPass {
                 extent.height,
                 u32::from(cursor.active),
             ],
-            cursorMin: [cursor.min[0], cursor.min[1], cursor.min[2], 0.0],
+            cursorMin: [
+                cursor.min[0],
+                cursor.min[1],
+                cursor.min[2],
+                if scene.atlas.is_some() { 16.0 } else { 0.0 },
+            ],
             cursorMax: [
                 cursor.max[0],
                 cursor.max[1],
@@ -655,6 +758,9 @@ impl RenderPassNode for VoxelDdaPass {
             .range(vk::WHOLE_SIZE);
         let cells_info = vk::DescriptorBufferInfo::default()
             .buffer(slot.cells_buf.buffer)
+            .range(vk::WHOLE_SIZE);
+        let atlas_info = vk::DescriptorBufferInfo::default()
+            .buffer(slot.atlas_buf.buffer)
             .range(vk::WHOLE_SIZE);
         let fwd_col_info = vk::DescriptorImageInfo::default()
             .image_view(forward_color_view)
@@ -715,6 +821,11 @@ impl RenderPassNode for VoxelDdaPass {
                 .dst_binding(bindings::OUT_DEPTH_TEX_BINDING)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .image_info(std::slice::from_ref(&out_depth_info)),
+            vk::WriteDescriptorSet::default()
+                .dst_set(ds)
+                .dst_binding(bindings::SPBR_ATLAS_BINDING)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(std::slice::from_ref(&atlas_info)),
         ];
         unsafe { ctx.device.update_descriptor_sets(&writes, &[]) };
 
