@@ -35,7 +35,7 @@
       },
       "components": {
         "prism_engine::scene::DirectionalLight": {
-          "euler_xyz": [-62.0, 24.0, 0.0],
+          "euler_xyz": [62.0, 24.0, 0.0],
           "color": [1.0, 0.97, 0.90],
           "intensity": 80000.0,
           "ambient": 0.55

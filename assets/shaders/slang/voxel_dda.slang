@@ -546,15 +546,144 @@ float3 f_schlick(float cosTheta, float3 f0)
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// Complementary-style atmospheric sky & sun-halo color for horizon fog and reflections.
+// Value noise & 4-octave FBM for procedural skybox clouds and Milky Way haze.
+float sky_noise2(float2 p)
+{
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    float a = hash31(float3(i, 0.0));
+    float b = hash31(float3(i + float2(1.0, 0.0), 0.0));
+    float c = hash31(float3(i + float2(0.0, 1.0), 0.0));
+    float d = hash31(float3(i + float2(1.0, 1.0), 0.0));
+    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+float sky_fbm(float2 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; i++)
+    {
+        v += a * sky_noise2(p);
+        p = p * 2.04 + float2(17.3, 9.2);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// Compute time-of-day weights from UBO lighting state (no UBO layout change needed).
+void compute_tod_weights(out float isNight, out float dayFactor, out float twilightFactor, out float overcast)
+{
+    float3 lightCol = ubo.sunColorAmbient.rgb;
+    float ambient = ubo.sunColorAmbient.w;
+    float sunRad = ubo.sunDirRadiance.w;
+    float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
+
+    isNight = smoothstep(0.27, 0.16, ambient) * smoothstep(-0.02, 0.10, lightCol.b - lightCol.r + 0.04);
+    dayFactor = smoothstep(0.16, 0.50, ambient) * (1.0 - isNight);
+    twilightFactor = clamp(1.0 - sunDir.y * 3.0, 0.0, 1.0) * (1.0 - isNight);
+    float expectedClearRad = lerp(0.25, 2.2, dayFactor);
+    overcast = clamp(1.0 - sunRad / max(expectedClearRad, 0.2), 0.0, 0.85);
+}
+
+// Complementary-style atmospheric sky & sun/moon halo for horizon fog, GI, and reflections.
 float3 sample_atmosphere(float3 dir, float3 sunDir, float3 sunCol)
 {
+    float isNight, dayFactor, twilightFactor, overcast;
+    compute_tod_weights(isNight, dayFactor, twilightFactor, overcast);
+
     float up = clamp(dir.y, -0.2, 1.0);
-    float3 zenith = float3(0.18, 0.42, 0.85);
-    float3 horizon = float3(0.56, 0.72, 0.90);
-    float3 sky = lerp(horizon, zenith, pow(max(up, 0.0), 0.55));
+    float horizonPow = pow(1.0 - max(up, 0.0), 4.0);
+
+    float3 dayZenith = float3(0.13, 0.36, 0.82);
+    float3 dayHorizon = float3(0.56, 0.76, 0.95);
+    float3 duskZenith = float3(0.10, 0.14, 0.36);
+    float3 duskHorizon = float3(0.94, 0.44, 0.20);
+    float3 nightZenith = float3(0.008, 0.014, 0.036);
+    float3 nightHorizon = float3(0.024, 0.042, 0.088);
+
+    float3 zenith = lerp(dayZenith, duskZenith, twilightFactor);
+    float3 horizon = lerp(dayHorizon, duskHorizon, twilightFactor);
+    zenith = lerp(zenith, nightZenith, isNight);
+    horizon = lerp(horizon, nightHorizon, isNight);
+
+    float3 stormCol = lerp(float3(0.22, 0.26, 0.32), float3(0.025, 0.032, 0.045), isNight);
+    zenith = lerp(zenith, stormCol * 0.75, overcast * 0.80);
+    horizon = lerp(horizon, stormCol, overcast * 0.85);
+
+    float3 sky = lerp(horizon, zenith, pow(max(up, 0.0), 0.52));
+
     float sunCos = max(dot(dir, sunDir), 0.0);
-    sky += sunCol * (0.28 * pow(sunCos, 8.0) + 0.85 * pow(sunCos, 96.0));
+    float glowScale = (1.0 - overcast * 0.75) * lerp(1.0, 0.22, isNight);
+    sky += sunCol * (0.28 * pow(sunCos, 8.0) + 0.80 * pow(sunCos, 96.0)) * glowScale;
+    sky += float3(0.98, 0.42, 0.16) * (twilightFactor * 0.35 * horizonPow * pow(sunCos, 3.0));
+    return sky;
+}
+
+// Full procedural time-of-day skybox with sun/moon disc, stars, and animated FBM clouds.
+float3 render_procedural_sky(float3 dir, float3 sunDir, float3 sunCol)
+{
+    float isNight, dayFactor, twilightFactor, overcast;
+    compute_tod_weights(isNight, dayFactor, twilightFactor, overcast);
+
+    float3 sky = sample_atmosphere(dir, sunDir, sunCol);
+    float time = ubo.cameraPos.w;
+    float sunCos = max(dot(dir, sunDir), 0.0);
+
+    // Crisp sun disc (day/dawn/dusk) or silver moon disc (night).
+    if (isNight < 0.5)
+    {
+        float disc = smoothstep(0.99935, 0.99972, sunCos) * (1.0 - overcast * 0.85);
+        sky += sunCol * (disc * 6.5);
+    }
+    else
+    {
+        float moonDisc = smoothstep(0.99945, 0.99975, sunCos) * (1.0 - overcast * 0.85);
+        float crater = 0.82 + 0.18 * sky_noise2(dir.xz * 95.0);
+        sky += float3(0.88, 0.92, 1.0) * (moonDisc * 2.4 * crater);
+    }
+
+    // Procedural twinkling starfield + faint Milky Way band at night.
+    if (isNight > 0.02 && dir.y > 0.01)
+    {
+        float starMask = isNight * smoothstep(0.01, 0.26, dir.y) * (1.0 - overcast * 0.92);
+        float3 starCell = floor(dir * 260.0);
+        float h = hash31(starCell);
+        if (h > 0.991)
+        {
+            float3 cellCenter = normalize(starCell + 0.5);
+            float dist = length(dir - cellCenter) * 260.0;
+            float sparkle = smoothstep(0.45, 0.05, dist);
+            float twinkle = 0.65 + 0.35 * sin(time * 2.4 + h * 180.0);
+            float3 starTint = lerp(float3(0.72, 0.84, 1.0), float3(1.0, 0.90, 0.72), frac(h * 73.1));
+            sky += starTint * (sparkle * twinkle * starMask * 1.45);
+        }
+        float mw = sky_fbm(dir.xz * 3.5 + float2(1.2, 4.7));
+        sky += float3(0.035, 0.048, 0.085) * (smoothstep(0.48, 0.78, mw) * starMask);
+    }
+
+    // Animated volumetric-style layered clouds projected on the upper sky dome.
+    if (dir.y > 0.015)
+    {
+        float cloudPlaneDist = 120.0 / max(dir.y, 0.035);
+        float2 cloudUv = dir.xz * (cloudPlaneDist * 0.0085) + float2(time * 0.014, time * 0.006);
+        float n = sky_fbm(cloudUv);
+        float detail = sky_fbm(cloudUv * 2.7 - float2(time * 0.008, 0.0));
+        float density = smoothstep(0.48 - overcast * 0.22, 0.76 - overcast * 0.14, n * 0.72 + detail * 0.28);
+        float horizonFade = smoothstep(0.015, 0.18, dir.y);
+        float cloudAlpha = density * horizonFade * lerp(0.72, 0.92, overcast);
+
+        float3 cloudLit = lerp(float3(0.95, 0.97, 1.0), float3(1.0, 0.62, 0.38), twilightFactor);
+        cloudLit = lerp(cloudLit, float3(0.09, 0.12, 0.18), isNight);
+        cloudLit = lerp(cloudLit, float3(0.28, 0.31, 0.36) * (1.0 - isNight * 0.75), overcast * 0.7);
+        float3 cloudDark = cloudLit * lerp(0.58, 0.42, isNight);
+
+        float silverLining = pow(sunCos, 6.0) * (1.0 - overcast * 0.65) * lerp(0.7, 0.2, isNight);
+        float3 cloudCol = lerp(cloudDark, cloudLit, smoothstep(0.2, 0.85, n)) + sunCol * silverLining * 0.45;
+        sky = lerp(sky, cloudCol, cloudAlpha);
+    }
+
     return sky;
 }
 
@@ -895,9 +1024,11 @@ float3 shade_voxel(
     float3 specBrdf = (D * G * F) / max(4.0 * ndl * ndv, 1e-4);
     float3 kd = (1.0 - F) * (1.0 - metallic);
 
-    // Complementary-style hemisphere sky + warm ground bounce GI.
-    float3 hemiSky = lerp(float3(0.22, 0.28, 0.38), float3(0.72, 0.86, 1.08), N.y * 0.5 + 0.5);
-    float3 groundBounce = sunCol * (0.10 * max(-N.y * 0.5 + 0.5, 0.0));
+    // Time-of-day atmospheric hemisphere sky GI + sun/moon ground bounce GI.
+    float3 skyZenithGi = sample_atmosphere(float3(0.0, 1.0, 0.0), L, sunCol);
+    float3 skyHorizonGi = sample_atmosphere(normalize(float3(N.x, 0.08, N.z)), L, sunCol);
+    float3 hemiSky = lerp(skyHorizonGi * 0.52, skyZenithGi * 1.15, N.y * 0.5 + 0.5);
+    float3 groundBounce = sunCol * (0.10 * max(L.y, 0.05) * max(-N.y * 0.5 + 0.5, 0.0));
     float directionalFacet = 0.90 + 0.10 * dot(normal, normalize(float3(0.3, 1.0, 0.2)));
 
     // Sky reflection fresnel (strongest on wet, frozen, metallic, and liquid surfaces).
@@ -948,7 +1079,11 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
 
     TraceHit res = trace_world(rayOrigin, rayDir, min(farDist, 256.0), false);
 
-    float3 outColor = forwardColor.rgb;
+    float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
+    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.25, ubo.sunDirRadiance.w * 2.3);
+    float3 outColor = (forwardDepth >= 0.9995)
+        ? render_procedural_sky(rayDir, sunDir, sunCol)
+        : forwardColor.rgb;
     float  outDepth = forwardDepth;
 
     if (res.hit)
@@ -957,8 +1092,6 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
         float voxelDepth = clipPos.z / clipPos.w;
         if (voxelDepth <= forwardDepth)
         {
-            float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-            float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
             float shadowVis = 0.08;
             if (dot(res.normal, sunDir) > 0.0)
             {
@@ -974,11 +1107,9 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             outColor = shade_voxel(
                 res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis, res.t, ao, bounceGi
             );
-            // Complementary-style atmospheric aerial haze with sun forward scattering.
+            // Complementary-style atmospheric aerial haze with sun/moon forward scattering.
             float fog = clamp((res.t - 45.0) / 110.0, 0.0, 0.60);
-            float3 fogCol = sample_atmosphere(
-                rayDir, sunDir, ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.0)
-            );
+            float3 fogCol = sample_atmosphere(rayDir, sunDir, sunCol);
             outColor = lerp(outColor, fogCol, fog);
             outDepth = voxelDepth;
         }

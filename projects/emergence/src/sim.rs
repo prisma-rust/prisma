@@ -534,6 +534,32 @@ impl SimWorld {
         }
     }
 
+    /// Set a single L2 voxel at `l2` to `mat` (or clear it when `mat == mat_id::AIR`).
+    pub fn set_l2_material(&mut self, l2: [i32; 3], mat: u8) -> bool {
+        let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) else {
+            return false;
+        };
+        if mat == mat_id::AIR {
+            self.cells.remove(&l2);
+            self.chunks[c_idx].set_l2_cell(local_l2[0], local_l2[1], local_l2[2], 0, 0, u64::MAX);
+            self.wake_cell_and_neighbors(l2, true);
+            return true;
+        }
+        let cell = self.materials.spawn_cell(mat);
+        let (rgba, visual) = self.materials.cell_visuals(mat, &cell);
+        self.cells.insert(l2, (mat, cell));
+        self.chunks[c_idx].set_l2_cell(
+            local_l2[0],
+            local_l2[1],
+            local_l2[2],
+            rgba,
+            visual,
+            u64::MAX,
+        );
+        self.wake_cell_and_neighbors(l2, true);
+        true
+    }
+
     /// Inject a physical stimulus (or wetting splash) around `center_l2`.
     pub fn inject_stimulus(
         &mut self,

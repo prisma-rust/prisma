@@ -817,6 +817,15 @@ impl PlayerController {
         self.last_synced_camera_rot = Some(rot.normalize());
     }
 
+    pub fn set_hud_status_override(&self, world: &mut GameWorld<'_>, message: &str) {
+        if let Some(ent) = self.hud_status {
+            if let Some(mut text) = world.get::<Text>(ent) {
+                text.content = message.to_string();
+                world.set(ent, text);
+            }
+        }
+    }
+
     fn update_hud_text(&self, world: &mut GameWorld<'_>, sim: &SimWorld) {
         let size_label = match self.tier {
             VoxelTier::L1 => "L1 (1.0m)",

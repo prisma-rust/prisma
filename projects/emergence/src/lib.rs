@@ -8,6 +8,7 @@
 #![deny(warnings)]
 
 pub mod catalog;
+pub mod commands;
 pub mod grid;
 pub mod materials;
 pub mod nei_ui;
@@ -21,6 +22,7 @@ pub mod world_gen;
 
 use prism_game_api::{keys, GameWorld, UiQuad};
 
+use crate::commands::CommandWorldState;
 use crate::grid::CellGrid;
 use crate::materials::MaterialTable;
 use crate::nei_ui::NeiHudState;
@@ -279,6 +281,7 @@ impl SandboxState {
 pub struct EmergenceRuntime {
     pub sim: SimWorld,
     pub player: PlayerController,
+    pub commands: CommandWorldState,
 }
 
 impl EmergenceRuntime {
@@ -291,18 +294,27 @@ impl EmergenceRuntime {
         let mut player = PlayerController::new();
         player.attach_ecs(world, &sim);
         sim.stream_around(player.feet_pos, Some(world), 8);
-        Self { sim, player }
+        Self {
+            sim,
+            player,
+            commands: CommandWorldState::new(),
+        }
     }
 }
 
-/// Fixed simulation system (`60 Hz`): physics kinematics + multi-rate v3.0 cellular ticks + chunk streaming.
+/// Fixed simulation system (`60 Hz`): physics kinematics + daylight/weather + chunk streaming.
 pub fn emergence_fixed_tick(
     state: &mut Option<EmergenceRuntime>,
     world: &mut GameWorld<'_>,
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
-    runtime.player.step_physics(world, &runtime.sim, dt);
+    if !runtime.commands.console_open {
+        runtime.player.step_physics(world, &runtime.sim, dt);
+    }
+    runtime
+        .commands
+        .step(dt, world, &mut runtime.sim, runtime.player.feet_pos);
     runtime
         .sim
         .stream_around(runtime.player.feet_pos, Some(world), 1);
@@ -310,16 +322,30 @@ pub fn emergence_fixed_tick(
     runtime.sim.sync_dirty_chunks(world);
 }
 
-/// Per-frame interaction & camera look system: responsive mouse aim, L1/L2/L3 carve/place, HUD.
+/// Per-frame interaction & camera look system: command console, mouse aim, L1/L2/L3 carve/place, HUD.
 pub fn emergence_frame_tick(
     state: &mut Option<EmergenceRuntime>,
     world: &mut GameWorld<'_>,
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
-    runtime
-        .player
-        .update_look_and_tools(world, &mut runtime.sim, dt);
+    let input = world.input();
+    let console_active =
+        runtime
+            .commands
+            .handle_console_input(&input, world, &mut runtime.sim, &mut runtime.player);
+    if !console_active {
+        runtime
+            .player
+            .update_look_and_tools(world, &mut runtime.sim, dt);
+    }
+    if runtime.commands.console_open {
+        let prompt = format!("> {}_", runtime.commands.input_line);
+        runtime.player.set_hud_status_override(world, &prompt);
+    } else if runtime.commands.feedback_timer_sec > 0.0 && !runtime.commands.feedback.is_empty() {
+        let msg = runtime.commands.feedback.clone();
+        runtime.player.set_hud_status_override(world, &msg);
+    }
     runtime.sim.sync_dirty_chunks(world);
 }
 
