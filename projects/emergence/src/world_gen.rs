@@ -1,9 +1,13 @@
-//! Deterministic per-chunk procedural 3D terrain, caves, water bodies,
-//! mountains, and Minecraft-style template-pool structure generator.
+//! Deterministic per-chunk procedural natural terrain, caves, water bodies, mountains, and
+//! vegetation decoration.
 //!
-//! Supports both single-chunk streaming (`generate_chunk(materials, seed, cx, cz)`)
-//! across infinite signed chunk coordinates and initial multi-chunk bootstrap
-//! (`generate_world(materials, seed)`).
+//! Terrain is authored at L1 (1 m) granularity so flat ground collapses into a single
+//! Copy-On-Write cell. L2/L3 detail belongs to man-made blueprints, which procedural generation
+//! never places: the only blueprints in the world are the ones hand-placed around the spawn
+//! courtyard (see `SPAWN_BLUEPRINTS`), one of each type.
+//!
+//! Supports both single-chunk streaming (`generate_chunk(materials, seed, cx, cz)`) across
+//! infinite signed chunk coordinates and initial multi-chunk bootstrap (`generate_world`).
 
 use std::collections::HashMap;
 
@@ -12,7 +16,8 @@ use prism_scene::VoxelChunk;
 use crate::materials::{mat_id, MaterialTable};
 use crate::sim::CHUNK_DIMS_L1;
 use crate::structures::{
-    build_default_template_pool, StructureOp, StructureRot, StructureTemplate,
+    build_default_template_pool, build_natural_template_pool, stamp_structure, StructureRot,
+    WorldVoxelWriter,
 };
 use crate::tags::{PhysicalCell, TransientFlags};
 
@@ -22,6 +27,30 @@ pub const SEA_LEVEL_M: f32 = 3.5;
 /// Initial bootstrap chunk window around `(0, 0)` (`4 x 4 = 16` chunks = `64m x 64m x 64m`).
 pub const BOOTSTRAP_MIN_CHUNK: i32 = -1;
 pub const BOOTSTRAP_MAX_CHUNK: i32 = 2;
+
+/// Player spawn point in meters, on the flat spawn courtyard.
+pub const SPAWN_POINT_M: [f32; 2] = [6.5, 6.5];
+
+/// Flat spawn courtyard bounds in meters; kept clear of vegetation and natural relief.
+pub const COURTYARD_MIN_M: [f32; 2] = [4.0, 6.0];
+pub const COURTYARD_MAX_M: [f32; 2] = [26.0, 23.0];
+
+/// Hand-placed blueprints around the spawn point: exactly one of every default template.
+/// Entries are `(template id, world L2 origin, yaw)`, authored by hand rather than generated.
+pub const SPAWN_BLUEPRINTS: [(&str, [i32; 3], StructureRot); 6] = [
+    ("research_outpost", [48, 16, 52], StructureRot::Rot0),
+    ("water_pier", [68, 11, 32], StructureRot::Rot0),
+    ("watchtower", [88, 16, 76], StructureRot::Rot0),
+    ("monolith_shrine", [88, 16, 28], StructureRot::Rot0),
+    ("timber_cabin", [28, 16, 68], StructureRot::Rot0),
+    ("oak_tree", [24, 16, 36], StructureRot::Rot0),
+];
+
+/// Spawn pond in meters: the courtyard basin that carries the hand-placed water pier.
+const POND_MIN_M: [i32; 2] = [17, 8];
+const POND_MAX_M: [i32; 2] = [22, 11];
+/// Pond floor (`2.0 m`), carved out of the `4.0 m` courtyard plateau.
+const POND_FLOOR_L1: i32 = 2;
 
 /// Sparse map from world L2 coordinate to `(material_id, PhysicalCell)`.
 pub type SparseCellMap = HashMap<[i32; 3], (u8, PhysicalCell)>;
@@ -94,115 +123,7 @@ impl<'a> ChunkBuilder<'a> {
     }
 
     fn set_l2_world(&mut self, l2: [i32; 3], mat: u8, active: bool) {
-        let l2_w = (CHUNK_DIMS_L1[0] * 4) as i32;
-        let l2_h = (CHUNK_DIMS_L1[1] * 4) as i32;
-        let l2_d = (CHUNK_DIMS_L1[2] * 4) as i32;
-        let lx = l2[0] - self.l1_origin_x * 4;
-        let ly = l2[1];
-        let lz = l2[2] - self.l1_origin_z * 4;
-        if lx < 0 || ly < 0 || lz < 0 || lx >= l2_w || ly >= l2_h || lz >= l2_d {
-            return;
-        }
-        if mat == mat_id::AIR {
-            self.cells.remove(&l2);
-            self.chunk
-                .set_l2_cell(lx as u32, ly as u32, lz as u32, 0, 0, 0);
-            return;
-        }
-        let mut cell = self.materials.spawn_cell(mat);
-        if active {
-            cell.transient.remove(TransientFlags::DORMANT);
-            self.active.push(l2);
-        }
-        let (rgba, vis) = self.materials.cell_visuals(mat, &cell);
-        self.cells.insert(l2, (mat, cell));
-        self.chunk
-            .set_l2_cell(lx as u32, ly as u32, lz as u32, rgba, vis, u64::MAX);
-    }
-
-    fn set_l2_l3_mask_world(&mut self, l2: [i32; 3], mat: u8, l3_mask: u64) {
-        let l2_w = (CHUNK_DIMS_L1[0] * 4) as i32;
-        let l2_h = (CHUNK_DIMS_L1[1] * 4) as i32;
-        let l2_d = (CHUNK_DIMS_L1[2] * 4) as i32;
-        let lx = l2[0] - self.l1_origin_x * 4;
-        let ly = l2[1];
-        let lz = l2[2] - self.l1_origin_z * 4;
-        if lx < 0 || ly < 0 || lz < 0 || lx >= l2_w || ly >= l2_h || lz >= l2_d {
-            return;
-        }
-        if l3_mask == 0 || mat == mat_id::AIR {
-            self.cells.remove(&l2);
-            self.chunk
-                .set_l2_cell(lx as u32, ly as u32, lz as u32, 0, 0, 0);
-            return;
-        }
-        let cell = self.materials.spawn_cell(mat);
-        let (rgba, vis) = self.materials.cell_visuals(mat, &cell);
-        self.cells.insert(l2, (mat, cell));
-        self.chunk
-            .set_l2_cell(lx as u32, ly as u32, lz as u32, rgba, vis, l3_mask);
-    }
-
-    fn place_structure(
-        &mut self,
-        template: &StructureTemplate,
-        origin_l2: [i32; 3],
-        rot: StructureRot,
-    ) {
-        if let Some(fmat) = template.foundation_mat {
-            let fp = rot.rotated_footprint(template.size);
-            for dz in 0..fp[1] {
-                for dx in 0..fp[0] {
-                    let wx = origin_l2[0] + dx;
-                    let wz = origin_l2[2] + dz;
-                    let min_fy = (origin_l2[1] - 12).max(4);
-                    for fy in min_fy..origin_l2[1] {
-                        self.set_l2_world([wx, fy, wz], fmat, false);
-                    }
-                }
-            }
-        }
-
-        for &op in &template.ops {
-            match op {
-                StructureOp::Solid { pos, mat, active } => {
-                    let r = rot.rotate_xz(pos, template.size);
-                    self.set_l2_world(
-                        [
-                            origin_l2[0] + r[0],
-                            origin_l2[1] + r[1],
-                            origin_l2[2] + r[2],
-                        ],
-                        mat,
-                        active,
-                    );
-                }
-                StructureOp::Carve { pos } => {
-                    let r = rot.rotate_xz(pos, template.size);
-                    self.set_l2_world(
-                        [
-                            origin_l2[0] + r[0],
-                            origin_l2[1] + r[1],
-                            origin_l2[2] + r[2],
-                        ],
-                        mat_id::AIR,
-                        false,
-                    );
-                }
-                StructureOp::Micro { pos, mat, l3_mask } => {
-                    let r = rot.rotate_xz(pos, template.size);
-                    self.set_l2_l3_mask_world(
-                        [
-                            origin_l2[0] + r[0],
-                            origin_l2[1] + r[1],
-                            origin_l2[2] + r[2],
-                        ],
-                        mat,
-                        l3_mask,
-                    );
-                }
-            }
-        }
+        chunk_writer(self).write_l2(l2, mat, u64::MAX, active);
     }
 
     fn finish(self) -> GeneratedChunk {
@@ -278,6 +199,9 @@ fn smooth_noise_3d(x: f32, y: f32, z: f32, seed: u64) -> f32 {
 }
 
 /// Deterministic heightmap elevation in meters (`[1.6 .. 52.0]`) across infinite `(wx, wz)`.
+///
+/// Every column is quantized to whole meters so natural ground always fills complete L1 cells and
+/// stays Copy-On-Write; L2 relief is never needed for terrain.
 pub fn terrain_height_m(wx: f32, wz: f32, seed: u64) -> f32 {
     let continental = smooth_noise(wx * 0.016, wz * 0.016, seed ^ 0x1010);
     let ridge_raw = 1.0 - (smooth_noise(wx * 0.028, wz * 0.028, seed ^ 0x2020) * 2.0 - 1.0).abs();
@@ -289,20 +213,18 @@ pub fn terrain_height_m(wx: f32, wz: f32, seed: u64) -> f32 {
     let basin_dip = ((0.38 - continental).max(0.0) / 0.38) * 3.6;
     let mut h = 4.6 + (continental - 0.45) * 6.0 + detail + mountain_boost - basin_dip;
 
-    // Gentle starter courtyard plateau at `y = 4.0m` near `(15m, 14.5m)` so player spawn and camera stay clear.
-    let dx = ((wx - 15.0).abs() - 8.5).max(0.0) / 4.5;
-    let dz = ((wz - 14.5).abs() - 7.5).max(0.0) / 4.5;
+    // Gentle starter courtyard plateau at 4.0 m covering the whole spawn plot, so the player, the
+    // camera and every hand-placed blueprint sit on one flat L1 surface.
+    let center_x = (COURTYARD_MIN_M[0] + COURTYARD_MAX_M[0]) * 0.5;
+    let center_z = (COURTYARD_MIN_M[1] + COURTYARD_MAX_M[1]) * 0.5;
+    let half_x = (COURTYARD_MAX_M[0] - COURTYARD_MIN_M[0]) * 0.5;
+    let half_z = (COURTYARD_MAX_M[1] - COURTYARD_MIN_M[1]) * 0.5;
+    let dx = ((wx - center_x).abs() - half_x).max(0.0) / 4.5;
+    let dz = ((wz - center_z).abs() - half_z).max(0.0) / 4.5;
     let blend = dx.max(dz).clamp(0.0, 1.0);
     h = 4.0 + (h - 4.0) * (blend * blend);
 
-    // Quantize gentle plains/plateaus to 1.0m L1 steps so flat ground uses L1 COW instead of L2 bricks;
-    // keep 0.25m L2 precision on steep mountain slopes (`continental > 0.60`).
-    let clamped = h.clamp(1.6, 52.0);
-    if continental <= 0.60 {
-        clamped.round()
-    } else {
-        clamped
-    }
+    h.clamp(1.6, 52.0).round()
 }
 
 fn is_cave_air(wx: f32, wy: f32, wz: f32, surface_m: f32, seed: u64) -> bool {
@@ -314,6 +236,19 @@ fn is_cave_air(wx: f32, wy: f32, wz: f32, surface_m: f32, seed: u64) -> bool {
     n1 * 0.72 + n2 * 0.28 > 0.64
 }
 
+/// Surface material of a natural column whose top sits at `h_m` meters.
+pub fn surface_material(h_m: f32) -> u8 {
+    if h_m >= 14.5 {
+        mat_id::CRYO
+    } else if h_m < SEA_LEVEL_M + 0.35 {
+        mat_id::SOIL
+    } else if h_m < 10.5 {
+        mat_id::GRASS
+    } else {
+        mat_id::LIMESTONE
+    }
+}
+
 /// Deterministically generates one `16m x 64m x 16m` chunk at chunk coordinates `(cx, cz)`.
 pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) -> GeneratedChunk {
     let mut builder = ChunkBuilder::new(materials, cx, cz);
@@ -322,7 +257,7 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
     let l1_z_dim = CHUNK_DIMS_L1[2] as i32;
     let sea_l2y = (SEA_LEVEL_M * 4.0).round() as i32;
 
-    // 1. Copy-On-Write L1 Bedrock & deep limestone basement (`y in 0..2m`).
+    // 1. Copy-On-Write L1 bedrock & deep limestone basement (`y in 0..2m`).
     for lz in 0..CHUNK_DIMS_L1[2] {
         for lx in 0..CHUNK_DIMS_L1[0] {
             builder.set_l1_cow([lx, 0, lz], mat_id::BEDROCK);
@@ -357,7 +292,7 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
             let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_dim);
             for l1y in 2..max_l1y {
                 let block_top_l2y = (l1y + 1) * 4;
-                // Flat 1m surface block (`top_l2y == block_top_l2y` across all 16 columns): emit pure L1 COW!
+                // Flat 1 m surface block (`top_l2y == block_top_l2y` across all 16 columns): emit pure L1 COW.
                 if min_top_l2y == max_top_l2y
                     && min_top_l2y == block_top_l2y
                     && min_h >= SEA_LEVEL_M
@@ -369,16 +304,10 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
                         seed ^ 0x5151,
                     );
                     if c_cave < 0.45 {
-                        let mat = if min_h >= 14.5 {
-                            mat_id::CRYO
-                        } else if min_h < SEA_LEVEL_M + 0.35 {
-                            mat_id::SOIL
-                        } else if min_h < 10.5 {
-                            mat_id::GRASS
-                        } else {
-                            mat_id::LIMESTONE
-                        };
-                        builder.set_l1_cow([local_l1x as u32, l1y as u32, local_l1z as u32], mat);
+                        builder.set_l1_cow(
+                            [local_l1x as u32, l1y as u32, local_l1z as u32],
+                            surface_material(min_h),
+                        );
                         continue;
                     }
                 }
@@ -429,15 +358,7 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
                                         mat_id::AIR
                                     }
                                 } else if l2y + 1 == top_l2y {
-                                    if h_m >= 14.5 {
-                                        mat_id::CRYO
-                                    } else if h_m < SEA_LEVEL_M + 0.35 {
-                                        mat_id::SOIL
-                                    } else if h_m < 10.5 {
-                                        mat_id::GRASS
-                                    } else {
-                                        mat_id::LIMESTONE
-                                    }
+                                    surface_material(h_m)
                                 } else if (h_m >= 10.5 && l2y >= top_l2y - 4) || l2y <= 13 {
                                     mat_id::LIMESTONE
                                 } else {
@@ -490,34 +411,129 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
         }
     }
 
-    // 3. Place Minecraft-style structures from the weighted TemplatePool per 16m x 16m chunk.
-    let pool = build_default_template_pool();
-    if (0..=1).contains(&cx) && (0..=1).contains(&cz) {
-        if let Some(outpost) = pool.by_id("research_outpost") {
-            builder.place_structure(outpost, [52, 16, 60], StructureRot::Rot0);
+    // 3. Spawn courtyard: flatten, carve the pond, then hand-place one of every blueprint.
+    stamp_spawn_courtyard(&mut builder);
+    // 4. Scatter natural vegetation (trees, pines, shrubs) over untouched ground.
+    stamp_natural_vegetation(&mut builder, seed, cx, cz);
+
+    builder.finish()
+}
+
+fn chunk_writer<'a>(builder: &'a mut ChunkBuilder<'_>) -> WorldVoxelWriter<'a> {
+    WorldVoxelWriter {
+        chunk: &mut builder.chunk,
+        cells: &mut builder.cells,
+        active: &mut builder.active,
+        materials: builder.materials,
+    }
+}
+
+fn rect_intersects_chunk(min_m: [f32; 2], max_m: [f32; 2], cx: i32, cz: i32) -> bool {
+    let chunk_min = [cx as f32 * 16.0, cz as f32 * 16.0];
+    let chunk_max = [chunk_min[0] + 16.0, chunk_min[1] + 16.0];
+    min_m[0] < chunk_max[0]
+        && max_m[0] > chunk_min[0]
+        && min_m[1] < chunk_max[1]
+        && max_m[1] > chunk_min[1]
+}
+
+fn in_courtyard(wx: f32, wz: f32) -> bool {
+    (COURTYARD_MIN_M[0]..COURTYARD_MAX_M[0]).contains(&wx)
+        && (COURTYARD_MIN_M[1]..COURTYARD_MAX_M[1]).contains(&wz)
+}
+
+/// Flatten the spawn courtyard, carve its pond, and hand-place every default blueprint once.
+fn stamp_spawn_courtyard(builder: &mut ChunkBuilder<'_>) {
+    if !rect_intersects_chunk(COURTYARD_MIN_M, COURTYARD_MAX_M, builder.cx, builder.cz) {
+        return;
+    }
+    {
+        let mut writer = chunk_writer(builder);
+        // Clear the courtyard volume above the 4.0 m plateau so buildings and the pond read cleanly.
+        let x0 = COURTYARD_MIN_M[0] as i32;
+        let z0 = COURTYARD_MIN_M[1] as i32;
+        let x1 = COURTYARD_MAX_M[0] as i32;
+        let z1 = COURTYARD_MAX_M[1] as i32;
+        for l1z in z0..z1 {
+            for l1x in x0..x1 {
+                for l1y in 4..20 {
+                    writer.write_l1([l1x, l1y, l1z], mat_id::AIR);
+                }
+            }
         }
-        if cx == 0 && cz == 0 {
-            builder.set_l1_cow([10, 4, 8], mat_id::LIMESTONE);
-            builder.set_l1_cow([10, 5, 8], mat_id::ALLOY);
-        }
-    } else if hash2d(cx, cz, seed ^ 0x8888) >= 0.22 {
-        let ox = cx * 16 + 2 + (hash2d(cx, cz, seed ^ 0x9991) * 6.0) as i32;
-        let oz = cz * 16 + 2 + (hash2d(cx, cz, seed ^ 0x9992) * 6.0) as i32;
-        let surface_m = terrain_height_m(ox as f32 + 0.5, oz as f32 + 0.5, seed);
-        let is_water = surface_m < SEA_LEVEL_M;
-        let roll = (hash2d(cx, cz, seed ^ 0xAAAA) * 10_000.0) as u32;
-        let rot = StructureRot::ALL[(roll as usize) % 4];
-        if let Some(tmpl) = pool.pick(surface_m, is_water, roll) {
-            let place_y = if is_water {
-                sea_l2y - 3
-            } else {
-                (surface_m * 4.0).round() as i32
-            };
-            builder.place_structure(tmpl, [ox * 4, place_y, oz * 4], rot);
+        // Carve the pond basin and fill it with water up to sea level.
+        for l1z in POND_MIN_M[1]..POND_MAX_M[1] {
+            for l1x in POND_MIN_M[0]..POND_MAX_M[0] {
+                for l1y in POND_FLOOR_L1..4 {
+                    writer.write_l1([l1x, l1y, l1z], mat_id::AIR);
+                }
+                for l2y in POND_FLOOR_L1 * 4..(SEA_LEVEL_M * 4.0).round() as i32 {
+                    for dz in 0..4 {
+                        for dx in 0..4 {
+                            writer.write_l2(
+                                [l1x * 4 + dx, l2y, l1z * 4 + dz],
+                                mat_id::WATER,
+                                u64::MAX,
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
-    builder.finish()
+    let pool = build_default_template_pool();
+    for (id, origin, rot) in SPAWN_BLUEPRINTS {
+        let Some(template) = pool.by_id(id) else {
+            continue;
+        };
+        let mut writer = chunk_writer(builder);
+        stamp_structure(&mut writer, template, origin, rot);
+    }
+}
+
+/// Deterministic vegetation pass: trees, pines and shrubs scattered over natural grass.
+///
+/// Candidate positions are derived per chunk and re-evaluated by the three neighbouring chunks so
+/// a canopy that crosses a chunk border is stamped completely on both sides.
+fn stamp_natural_vegetation(builder: &mut ChunkBuilder<'_>, seed: u64, cx: i32, cz: i32) {
+    let pool = build_natural_template_pool();
+    let mut writer = chunk_writer(builder);
+    for dcz in -1..=1 {
+        for dcx in -1..=1 {
+            let ncx = cx + dcx;
+            let ncz = cz + dcz;
+            for slot in 0..3i32 {
+                let jitter_x = hash2d(ncx * 4 + slot, ncz * 8 - slot, seed ^ 0x9191);
+                let jitter_z = hash2d(ncx * 8 + slot, ncz * 4 + slot, seed ^ 0x9292);
+                let density = hash2d(ncx * 16 + slot, ncz * 16 - slot, seed ^ 0x9393);
+                if density >= 0.42 {
+                    continue;
+                }
+                let wx = ncx * 16 + 2 + (jitter_x * 12.0) as i32;
+                let wz = ncz * 16 + 2 + (jitter_z * 12.0) as i32;
+                let surface_m = terrain_height_m(wx as f32 + 0.5, wz as f32 + 0.5, seed);
+                if surface_m < SEA_LEVEL_M + 0.5 || surface_m >= 10.5 {
+                    continue;
+                }
+                if in_courtyard(wx as f32, wz as f32) {
+                    continue;
+                }
+                let roll =
+                    (hash2d(ncx * 32 - slot, ncz * 32 + slot, seed ^ 0x9494) * 10_000.0) as u32;
+                let Some(template) = pool.pick(surface_m, false, roll) else {
+                    continue;
+                };
+                let origin = [
+                    wx * 4 - template.size[0] / 2,
+                    (surface_m * 4.0).round() as i32,
+                    wz * 4 - template.size[2] / 2,
+                ];
+                stamp_structure(&mut writer, template, origin, StructureRot::Rot0);
+            }
+        }
+    }
 }
 
 /// Generate the initial bootstrap chunk window around `(0, 0)` for `EmergenceRuntime`.
@@ -551,12 +567,11 @@ mod tests {
     use prism_scene::L1_UNIFORM_REF;
 
     #[test]
-    fn world_gen_creates_streaming_chunks_caves_water_and_template_structures() {
+    fn world_gen_keeps_terrain_l1_and_places_each_blueprint_once() {
         let mats = MaterialTable::compiled_default();
         let gen = generate_world(&mats, 2026);
         assert_eq!(gen.chunks.len(), 16);
         assert!(!gen.cells.is_empty());
-        assert!(!gen.active.is_empty());
 
         let cow_count: usize = gen
             .chunks
@@ -565,15 +580,15 @@ mod tests {
             .filter(|&&r| r == L1_UNIFORM_REF)
             .count();
         assert!(
-            cow_count > 1000,
-            "chunks must keep interior strata as L1 COW (got {cow_count})"
+            cow_count > 2000,
+            "natural terrain must stay L1 Copy-On-Write (got {cow_count})"
         );
 
-        // Verify negative chunk coordinates work seamlessly for infinite streaming.
+        // Negative chunk coordinates stream seamlessly for infinite worlds.
         let neg = generate_chunk(&mats, 2026, -3, -4);
         assert_eq!(neg.chunk.origin_l1, [-48, 0, -64]);
 
-        // Verify mountains and water basins exist across a 256m x 256m sample.
+        // Mountains and water basins exist across a 256 m x 256 m sample.
         let mut min_h = f32::MAX;
         let mut max_h = f32::MIN;
         for z in 0..256 {
@@ -589,7 +604,61 @@ mod tests {
         );
         assert!(
             max_h > 20.0,
-            "expected mountain ridges above 20.0m, max_h={max_h}"
+            "expected mountain ridges above 20.0 m, max_h={max_h}"
         );
+    }
+
+    #[test]
+    fn procedural_terrain_outside_the_courtyard_has_no_man_made_materials() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut man_made = 0;
+        for (l2, (mat, _)) in &gen.cells {
+            let wx = l2[0] as f32 * 0.25;
+            let wz = l2[2] as f32 * 0.25;
+            if in_courtyard(wx, wz) {
+                continue;
+            }
+            if matches!(
+                *mat,
+                mat_id::ALLOY
+                    | mat_id::GLASS
+                    | mat_id::ISOTOPE
+                    | mat_id::BIOMASS
+                    | mat_id::TANK
+                    | mat_id::WIRE
+                    | mat_id::VALVE
+                    | mat_id::CONDUIT
+            ) {
+                man_made += 1;
+            }
+        }
+        assert_eq!(
+            man_made, 0,
+            "procedural terrain must stay natural; found {man_made} artificial voxels"
+        );
+    }
+
+    #[test]
+    fn spawn_courtyard_stamps_every_blueprint() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let pool = build_default_template_pool();
+        for (id, origin, rot) in SPAWN_BLUEPRINTS {
+            let template = pool.by_id(id).expect("blueprint exists");
+            let footprint = rot.rotated_footprint(template.size);
+            let mut found = false;
+            for dz in 0..footprint[1] {
+                for dx in 0..footprint[0] {
+                    for dy in 0..template.size[1] {
+                        let l2 = [origin[0] + dx, origin[1] + dy, origin[2] + dz];
+                        if gen.cells.contains_key(&l2) {
+                            found = true;
+                        }
+                    }
+                }
+            }
+            assert!(found, "spawn blueprint {id} left no L2 voxels behind");
+        }
     }
 }

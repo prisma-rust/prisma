@@ -982,11 +982,11 @@ mod tests {
         let gen = generate_world(&mats, 2026);
         let sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
         let mut player = PlayerController::new();
-        player.feet_pos = Vec3::new(17.5, 4.4, 14.0);
+        player.feet_pos = Vec3::new(10.0, 4.4, 12.0);
         player.fly_mode = false;
         player.grounded = false;
 
-        // Simulate falling onto courtyard alloy apron (top at y = 4.0m) using standalone world.
+        // Simulate falling onto the flat spawn courtyard (top at y = 4.0m) using a standalone world.
         let mut ecs = prism_ecs::World::new();
         let mut world = GameWorld::host(&mut ecs);
         for _ in 0..30 {
@@ -995,8 +995,8 @@ mod tests {
         assert!(player.grounded, "player should land on y=4.0m floor");
         assert!((player.feet_pos.y - 4.0).abs() < 0.05);
 
-        // Moving forward into solid outpost wall at x=13.0..13.25 must stop before intersecting wall.
-        player.feet_pos = Vec3::new(12.2, 4.0, 17.5);
+        // Walking into the hand-placed research outpost must stop at its west wall (x = 12.0m).
+        player.feet_pos = Vec3::new(10.2, 4.0, 15.0);
         player.yaw = -std::f32::consts::FRAC_PI_2; // facing +X
         let mut input = InputSnapshot::default();
         input.keys[keys::KEY_W / 64] |= 1u64 << (keys::KEY_W % 64);
@@ -1005,8 +1005,8 @@ mod tests {
             player.step_physics(&mut world, &sim, 1.0 / 60.0);
         }
         assert!(
-            player.feet_pos.x <= 13.0 - PLAYER_RADIUS_M + 0.02,
-            "player x={} penetrated solid outpost wall at x=13.0",
+            player.feet_pos.x <= 12.0 - PLAYER_RADIUS_M + 0.02,
+            "player x={} penetrated solid outpost wall at x=12.0",
             player.feet_pos.x
         );
     }
@@ -1030,7 +1030,7 @@ mod tests {
         world.set(
             cam,
             LocalTransform {
-                position: Vec3::new(17.5, 5.5, 17.5),
+                position: Vec3::new(9.5, 5.5, 15.0),
                 rotation: Quat::IDENTITY, // facing -Z
                 scale: Vec3::ONE,
             },
@@ -1038,7 +1038,7 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        player.feet_pos = Vec3::new(17.5, 4.0, 17.5);
+        player.feet_pos = Vec3::new(9.5, 4.0, 15.0);
         player.grounded = true;
         player.sync_camera_transform(&mut world);
         assert!((player.forward_dir().z - (-1.0)).abs() < 1e-4);
@@ -1078,7 +1078,7 @@ mod tests {
         );
         let hit = player
             .last_hit
-            .expect("aim ray should hit east outpost wall when facing +X");
+            .expect("aim ray should hit the east outpost wall when facing +X");
         assert!(
             hit.world_pos[0] > player.feet_pos.x,
             "hit should be in +X direction: {hit:?}"
@@ -1109,7 +1109,7 @@ mod tests {
         world.set(
             cam,
             LocalTransform {
-                position: Vec3::new(17.5, 5.5, 17.5),
+                position: Vec3::new(9.5, 5.5, 11.5),
                 rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, -0.1, 0.0), // -X
                 scale: Vec3::ONE,
             },
@@ -1117,7 +1117,7 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        player.feet_pos = Vec3::new(17.5, 4.0, 17.5);
+        player.feet_pos = Vec3::new(9.5, 4.0, 11.5);
         assert!(
             player.forward_dir().x < -0.95,
             "initial facing should inherit -X camera rotation"
@@ -1177,10 +1177,10 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        // Stand at (8.5, 4.0, 8.5) aiming +X straight at visible L1 COW monolith [10, 4, 8] (`x in [10,11)`).
-        player.feet_pos = Vec3::new(8.5, 4.0, 8.5);
+        // Stand on the spawn courtyard aiming straight down at natural L1 COW terrain.
+        player.feet_pos = Vec3::new(9.5, 4.0, 15.5);
         player.yaw = -std::f32::consts::FRAC_PI_2;
-        player.pitch = -0.35;
+        player.pitch = -1.5;
         player.sync_camera_transform(&mut world);
 
         player.update_look_and_tools(&mut world, &mut sim, 1.0 / 60.0);
@@ -1210,21 +1210,21 @@ mod tests {
             "Fixed L2 mode must highlight 0.25m L2 sub-cell"
         );
 
-        // Press `2` again to return to Auto and verify L3 window grate (`[59, 20, 60]`) draws 0.0625m L3 outline.
+        // Press `2` again to return to Auto and verify the outpost window mullion draws a 0.0625m L3 outline.
         let mut back_auto = InputSnapshot::default();
         back_auto.keys[idx / 64] |= 1u64 << (idx % 64);
         back_auto.key_edges[idx / 64] |= 1u64 << (idx % 64);
         world.set_input(back_auto);
-        // Stand at (14.875, 4.0, 14.0) aiming +Z directly at L3 window mullion bar at `x=14.78, y=5.03, z=15.09`.
-        player.feet_pos = Vec3::new(14.78, 3.6, 14.2);
+        // Stand in front of the hand-placed outpost window grate (L2 `x = 55`, `y = 19..24`, `z = 52`).
+        player.feet_pos = Vec3::new(13.79, 4.0, 12.0);
         player.yaw = std::f32::consts::PI;
-        player.pitch = 0.0;
+        player.pitch = -0.5826;
         player.sync_camera_transform(&mut world);
         player.update_look_and_tools(&mut world, &mut sim, 1.0 / 60.0);
         assert_eq!(
             player.tier,
             VoxelTier::L3,
-            "Auto mode aiming at L3 mullion must highlight L3 0.0625m"
+            "Auto mode aiming at the outpost L3 mullion must highlight L3 0.0625m"
         );
     }
 
@@ -1238,10 +1238,10 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        // Build a wide 0.25m L2 step platform ahead (`x in 17.5..20.5, y in 4.0..4.25, z in 13.5..14.5`)
-        // on the clean open apron (`y = 4.0`).
-        for lz in 54..58 {
-            for lx in 70..82 {
+        // Build a wide 0.25m L2 step platform ahead (`x in 9.5..12.5, y in 4.0..4.25, z in 10.5..11.5`)
+        // on the clean open courtyard (`y = 4.0`).
+        for lz in 42..46 {
+            for lx in 38..50 {
                 sim.place_adjacent(
                     VoxelTier::L2,
                     &VoxelHit {
@@ -1259,7 +1259,7 @@ mod tests {
                 );
             }
         }
-        player.feet_pos = Vec3::new(17.10, 4.0, 14.0);
+        player.feet_pos = Vec3::new(9.10, 4.0, 11.0);
         player.yaw = -std::f32::consts::FRAC_PI_2; // +X
         player.pitch = 0.0;
         player.grounded = true;
