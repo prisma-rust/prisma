@@ -565,12 +565,12 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
         float2 p = worldPos.xz * 4.5;
         float w1 = sin(p.x * 1.7 + time * 2.4 + cos(p.y * 1.3 - time * 1.8));
         float w2 = cos(p.y * 2.3 - time * 2.1 + sin(p.x * 1.9 + time * 1.5));
-        float3 ripple = float3(w1 * 0.09, 0.0, w2 * 0.09);
+        float3 ripple = float3(w1 * 0.14, 0.0, w2 * 0.14);
         n = normalize(normal + ripple * (1.0 - abs(normal.x) * 0.5));
         return n;
     }
 
-    if (hitDist > 28.0)
+    if (hitDist > 36.0)
         return normal;
 
     // 16x16 texel grid micro-relief inspired by SPBR normal maps.
@@ -579,13 +579,119 @@ float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float t
     float gy = hash31(texel + float3(0.0, 1.0, 0.0)) - hash31(texel - float3(0.0, 1.0, 0.0));
     float gz = hash31(texel + float3(0.0, 0.0, 1.0)) - hash31(texel - float3(0.0, 0.0, 1.0));
     float3 grad = float3(gx, gy, gz);
-    // Project gradient onto the surface tangent plane.
     grad -= normal * dot(grad, normal);
-    float bumpStrength = ((visual & VIS_METALLIC) != 0u) ? 0.06 : 0.12;
+    float bumpStrength = ((visual & VIS_METALLIC) != 0u) ? 0.12 : 0.24;
     return normalize(normal + grad * bumpStrength);
 }
 
-float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint tier, float3 viewDir, float shadowVis, float hitDist)
+// Compute procedural 16x16 LabPBR-inspired albedo & roughness modulation so blocks
+// never look like flat solid-colored cubes.
+void apply_voxel_surface_detail(
+    float3 worldPos,
+    float3 normal,
+    uint visual,
+    uint tier,
+    inout float3 albedo,
+    inout float roughness
+)
+{
+    float cellStep = (tier == 3u) ? L3_SIZE_M : ((tier == 2u) ? L2_SIZE_M : L1_SIZE_M);
+    float3 gridP = worldPos / cellStep;
+    float3 f = abs(frac(gridP) - 0.5);
+    float3 maskN = 1.0 - abs(normal);
+    float edgeMax = max(f.x * maskN.x, max(f.y * maskN.y, f.z * maskN.z));
+    float bevel = smoothstep(0.43, 0.50, edgeMax);
+    albedo *= lerp(1.0, (tier == 3u) ? 0.78 : 0.86, bevel);
+
+    // 16x16 sub-texel coordinates on the block face.
+    float3 texel = floor(worldPos * 16.0);
+    float h0 = hash31(texel);
+    float hStrata = hash31(float3(floor(worldPos.x * 4.0), texel.y, floor(worldPos.z * 4.0)));
+
+    if ((visual & VIS_METALLIC) != 0u)
+    {
+        // Brushed industrial metal panel border + subtle rivet speckles.
+        float panelEdge = step(0.44, edgeMax);
+        albedo *= lerp(0.92 + 0.16 * h0, 0.68, panelEdge);
+        roughness = clamp(roughness + (h0 - 0.5) * 0.18 - panelEdge * 0.10, 0.06, 0.95);
+    }
+    else if ((visual & VIS_LIQUID) == 0u)
+    {
+        // Natural stone/soil/grass pixel grain + sedimentary strata variation.
+        float grain = (h0 - 0.5) * 0.24 + (hStrata - 0.5) * 0.12;
+        albedo *= clamp(1.0 + grain, 0.68, 1.32);
+        roughness = clamp(roughness + (h0 - 0.5) * 0.22, 0.08, 0.98);
+    }
+}
+
+// Short-range raytraced Voxel AO + 1-bounce colored GI (3 hemisphere rays).
+void trace_voxel_ao_and_gi(
+    float3 worldPos,
+    float3 normal,
+    float3 sunDir,
+    float3 sunCol,
+    uint2 px,
+    out float aoOut,
+    out float3 bounceGiOut
+)
+{
+    // Build orthonormal tangent frame around face normal.
+    float3 up = (abs(normal.y) < 0.99) ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float3 tangent = normalize(cross(up, normal));
+    float3 bitangent = cross(normal, tangent);
+
+    // Per-pixel interleaved spatial rotation to trade banding for clean micro-dither.
+    float angle = hash31(float3(float(px.x & 63u), float(px.y & 63u), 0.37)) * 6.2831853;
+    float ca = cos(angle);
+    float sa = sin(angle);
+    float3 tRot = tangent * ca + bitangent * sa;
+    float3 bRot = -tangent * sa + bitangent * ca;
+
+    // 3 cosine-biased hemisphere sample directions.
+    static const float3 dirs[3] = {
+        float3( 0.58,  0.00, 0.81),
+        float3(-0.29,  0.50, 0.81),
+        float3(-0.29, -0.50, 0.81)
+    };
+
+    float occ = 0.0;
+    float3 gi = float3(0.0, 0.0, 0.0);
+    float3 rayOrigin = worldPos + normal * 0.03;
+
+    for (uint i = 0u; i < 3u; i++)
+    {
+        float3 d = normalize(tRot * dirs[i].x + bRot * dirs[i].y + normal * dirs[i].z);
+        TraceHit h = trace_world(rayOrigin, d, 4.5, false);
+        if (h.hit)
+        {
+            float distWeight = 1.0 - clamp(h.t / 4.5, 0.0, 1.0);
+            occ += distWeight * 0.85;
+
+            float4 hitCol = unpack_rgba_linear(h.rgba);
+            float hitNdl = max(dot(h.normal, sunDir), 0.0);
+            float hitEmissive = ((h.visual & (VIS_EMISSIVE | VIS_HEAT_GLOW)) != 0u)
+                ? (float((h.visual >> 24u) & 0xFFu) * (1.0 / 255.0) * 2.5)
+                : 0.0;
+            gi += hitCol.rgb * (sunCol * (0.28 * hitNdl) + hitEmissive);
+        }
+    }
+
+    aoOut = clamp(1.0 - occ * 0.32, 0.18, 1.0);
+    bounceGiOut = gi * (1.0 / 3.0);
+}
+
+float3 shade_voxel(
+    float3 worldPos,
+    float3 normal,
+    uint rgba,
+    uint visual,
+    uint tier,
+    float3 viewDir,
+    float shadowVis,
+    float hitDist,
+    float ao,
+    float3 bounceGi
+)
 {
     float4 baseCol = unpack_rgba_linear(rgba);
     float3 albedo = baseCol.rgb;
@@ -593,18 +699,7 @@ float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint 
     float emissiveAmt = float((visual >> 24u) & 0xFFu) * (1.0 / 255.0);
     float time = ubo.cameraPos.w;
 
-    // Fine spatial variation + crisp tier border bevel + 16x16 SPBR-style pixel grain.
-    float cellStep = (tier == 3u) ? L3_SIZE_M : ((tier == 2u) ? L2_SIZE_M : L2_SIZE_M);
-    float3 gridP = worldPos / cellStep;
-    float3 f = abs(frac(gridP) - 0.5);
-    float3 maskN = 1.0 - abs(normal);
-    float edgeMax = max(f.x * maskN.x, max(f.y * maskN.y, f.z * maskN.z));
-    float bevel = smoothstep(0.42, 0.50, edgeMax);
-    albedo *= lerp(1.0, (tier == 3u) ? 0.82 : 0.90, bevel);
-
-    float texelNoise = hash31(floor(worldPos * 16.0)) - 0.5;
-    float microNoise = hash31(floor(worldPos / L2_SIZE_M)) - 0.5;
-    albedo *= (1.0 + microNoise * 0.05 + texelNoise * 0.08);
+    apply_voxel_surface_detail(worldPos, normal, visual, tier, albedo, roughness);
 
     float3 emissive = float3(0.0, 0.0, 0.0);
     if ((visual & VIS_EMISSIVE) != 0u)
@@ -703,8 +798,8 @@ float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint 
     }
 
     float3 direct = (kd * albedo / VOXEL_PI + specBrdf) * sunCol * (ndl * shadowVis);
-    float3 indirect = kd * albedo * (hemiSky * ambientStrength * directionalFacet + groundBounce)
-                    + envRefl * fresnelEnv * (0.45 + 0.55 * shadowVis);
+    float3 indirect = kd * albedo * ((hemiSky * ambientStrength * directionalFacet + groundBounce) * ao + bounceGi)
+                    + envRefl * fresnelEnv * (0.35 + 0.65 * shadowVis) * ao;
 
     return direct + indirect + sss + emissive;
 }
@@ -747,14 +842,21 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
         if (voxelDepth <= forwardDepth)
         {
             float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-            float shadowVis = 0.22;
+            float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
+            float shadowVis = 0.08;
             if (dot(res.normal, sunDir) > 0.0)
             {
-                TraceHit sh = trace_world(res.worldPos + res.normal * 0.025, sunDir, 64.0, true);
-                shadowVis = sh.hit ? 0.22 : 1.0;
+                TraceHit sh = trace_world(res.worldPos + res.normal * 0.025, sunDir, 36.0, true);
+                shadowVis = sh.hit ? 0.08 : 1.0;
+            }
+            float ao = 1.0;
+            float3 bounceGi = float3(0.0, 0.0, 0.0);
+            if (res.t < 42.0)
+            {
+                trace_voxel_ao_and_gi(res.worldPos, res.normal, sunDir, sunCol, tid.xy, ao, bounceGi);
             }
             outColor = shade_voxel(
-                res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis, res.t
+                res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis, res.t, ao, bounceGi
             );
             // Complementary-style atmospheric aerial haze with sun forward scattering.
             float fog = clamp((res.t - 45.0) / 110.0, 0.0, 0.60);
@@ -775,7 +877,7 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
         {
             float4 gc = unpack_rgba_linear(res.glassRgba);
             float3 litGlass = shade_voxel(
-                glassPos, res.glassNormal, res.glassRgba, res.glassVisual, 2u, -rayDir, 1.0, res.glassT
+                glassPos, res.glassNormal, res.glassRgba, res.glassVisual, 2u, -rayDir, 1.0, res.glassT, 1.0, float3(0.0, 0.0, 0.0)
             );
             float fresnel = pow(1.0 - max(dot(res.glassNormal, -rayDir), 0.0), 4.0);
             float alpha = clamp(gc.a + fresnel * 0.30, 0.15, 0.90);
