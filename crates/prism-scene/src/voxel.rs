@@ -1192,6 +1192,73 @@ pub fn raycast_chunks(
     best
 }
 
+/// Broad-phase AABB test against the chunks registered in `index`.
+///
+/// `resolve` maps an index key back to the caller's chunk. Chunks the resolver
+/// does not know (already streamed out) are skipped, so the index may briefly
+/// outlive the storage it describes.
+///
+/// `scratch` is reused across calls; keeping one per caller removes the
+/// per-query allocation that a fresh candidate list would cost.
+pub fn aabb_intersects_solid_indexed<'a, F>(
+    index: &VoxelChunkIndex,
+    min: [f32; 3],
+    max: [f32; 3],
+    include_liquid: bool,
+    scratch: &mut Vec<u64>,
+    mut resolve: F,
+) -> bool
+where
+    F: FnMut(u64) -> Option<&'a VoxelChunk>,
+{
+    index.aabb_candidates(min, max, scratch);
+    for &key in scratch.iter() {
+        if let Some(chunk) = resolve(key) {
+            if chunk.aabb_intersects_solid(min, max, include_liquid) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Broad-phase raycast against the chunks registered in `index`.
+///
+/// Candidates are tested nearest-first, so the first chunk that reports a hit
+/// already bounds the search: the loop stops as soon as the next candidate
+/// starts beyond the best distance found so far.
+pub fn raycast_chunks_indexed<'a, F>(
+    index: &VoxelChunkIndex,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    max_dist: f32,
+    hit_liquids: bool,
+    scratch: &mut Vec<(f32, u64)>,
+    mut resolve: F,
+) -> Option<VoxelHit>
+where
+    F: FnMut(u64) -> Option<&'a VoxelChunk>,
+{
+    index.ray_candidates(origin, dir, max_dist, scratch);
+    let mut best_t = max_dist;
+    let mut best: Option<VoxelHit> = None;
+    for &(enter, key) in scratch.iter() {
+        if enter > best_t {
+            break;
+        }
+        let Some(chunk) = resolve(key) else {
+            continue;
+        };
+        if let Some(hit) = chunk.raycast(origin, dir, best_t, hit_liquids) {
+            if best.is_none() || hit.distance < best_t {
+                best_t = hit.distance;
+                best = Some(hit);
+            }
+        }
+    }
+    best
+}
+
 #[inline]
 fn next_boundary_t(rel: f32, d: f32, cell: i32) -> f32 {
     if d > 1e-8 {
@@ -1262,6 +1329,123 @@ impl Default for VoxelCursorHighlight {
             max: [0.0; 3],
             color: [1.0, 0.92, 0.35, 1.0],
         }
+    }
+}
+
+/// Broad-phase index over the world-space bounds of a set of [`VoxelChunk`]s.
+///
+/// A streaming world holds one chunk per `16 m x 64 m x 16 m` block. Answering a
+/// collision or aim query by walking every chunk makes the cost scale with the
+/// streaming radius, and each rejected chunk still pays for its own `L1 -> L2 ->
+/// L3` walk inside [`VoxelChunk::aabb_intersects_solid`] or [`VoxelChunk::raycast`].
+/// The index stores only the world-space boxes, sorted along `X`, so an AABB
+/// sweep stops at the first box starting past the query and a ray query hands
+/// back candidates ordered by entry distance.
+///
+/// The index owns no voxel data: callers keep their own chunk storage and pass
+/// the same `key` back to resolve a candidate. Keys are opaque to the index.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct VoxelChunkIndex {
+    /// `(key, world_min, world_max)` sorted by `world_min[0]`.
+    entries: Vec<(u64, [f32; 3], [f32; 3])>,
+}
+
+impl VoxelChunkIndex {
+    /// Creates an empty index.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drops every entry while keeping the allocation.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Number of indexed chunks.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the index currently holds no chunks.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Indexes `chunk` under `key`, replacing any box already stored for it.
+    ///
+    /// Streaming touches this once per chunk that enters or leaves the radius,
+    /// so the linear key scan is not on the per-frame path.
+    pub fn insert(&mut self, key: u64, chunk: &VoxelChunk) {
+        let entry = (key, chunk.world_min(), chunk.world_max());
+        if let Some(slot) = self.entries.iter_mut().find(|probe| probe.0 == key) {
+            *slot = entry;
+        } else {
+            let pos = self
+                .entries
+                .partition_point(|probe| probe.1[0] <= entry.1[0]);
+            self.entries.insert(pos, entry);
+        }
+    }
+
+    /// Removes `key` and reports whether it was present.
+    pub fn remove(&mut self, key: u64) -> bool {
+        match self.entries.iter().position(|probe| probe.0 == key) {
+            Some(idx) => {
+                self.entries.remove(idx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Appends the keys of every chunk whose world box overlaps `[min, max]`.
+    ///
+    /// `out` is cleared first, so callers can reuse one scratch vector across
+    /// frames instead of allocating per query.
+    pub fn aabb_candidates(&self, min: [f32; 3], max: [f32; 3], out: &mut Vec<u64>) {
+        out.clear();
+        for (key, bmin, bmax) in &self.entries {
+            if bmin[0] > max[0] {
+                break;
+            }
+            if bmax[0] < min[0]
+                || bmin[1] > max[1]
+                || bmax[1] < min[1]
+                || bmin[2] > max[2]
+                || bmax[2] < min[2]
+            {
+                continue;
+            }
+            out.push(*key);
+        }
+    }
+
+    /// Appends `(entry_distance, key)` for every chunk box the ray enters,
+    /// sorted by entry distance.
+    ///
+    /// `dir` is normalized internally; a zero-length direction yields no
+    /// candidates. `out` is cleared first, so callers can reuse one scratch
+    /// vector across frames.
+    pub fn ray_candidates(
+        &self,
+        origin: [f32; 3],
+        dir: [f32; 3],
+        max_dist: f32,
+        out: &mut Vec<(f32, u64)>,
+    ) {
+        out.clear();
+        let len_sq = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+        if len_sq < 1e-12 || max_dist <= 0.0 {
+            return;
+        }
+        let inv_len = len_sq.sqrt().recip();
+        let d = [dir[0] * inv_len, dir[1] * inv_len, dir[2] * inv_len];
+        for (key, bmin, bmax) in &self.entries {
+            if let Some((t_enter, _, _)) = intersect_aabb(origin, d, *bmin, *bmax, 0.0, max_dist) {
+                out.push((t_enter.max(0.0), *key));
+            }
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
 }
 
@@ -1349,5 +1533,145 @@ mod tests {
         }
         assert!(chunk.aabb_intersects_solid([0.26, 0.01, 0.01], [0.49, 0.05, 0.05], false));
         assert!(!chunk.aabb_intersects_solid([0.26, 0.08, 0.08], [0.49, 0.24, 0.24], false));
+    }
+
+    #[test]
+    fn chunk_index_returns_only_overlapping_boxes() {
+        let mut index = VoxelChunkIndex::new();
+        assert!(index.is_empty());
+        for i in 0..4u32 {
+            let chunk = VoxelChunk::new([i as i32 * 8, 0, 0], [8, 24, 8]);
+            index.insert(i as u64, &chunk);
+        }
+        assert_eq!(index.len(), 4);
+
+        let mut out = Vec::new();
+        // Inside the box of key 2 only ([16..24) on X).
+        index.aabb_candidates([17.0, 1.0, 1.0], [18.0, 2.0, 2.0], &mut out);
+        assert_eq!(out, vec![2]);
+
+        // Straddling the 0/1 boundary returns both neighbours, never the far ones.
+        index.aabb_candidates([7.5, 1.0, 1.0], [8.5, 2.0, 2.0], &mut out);
+        out.sort_unstable();
+        assert_eq!(out, vec![0, 1]);
+
+        // Above the chunks: nothing overlaps on Y.
+        index.aabb_candidates([1.0, 40.0, 1.0], [2.0, 41.0, 2.0], &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn chunk_index_ray_candidates_are_ordered_by_entry_distance() {
+        let mut index = VoxelChunkIndex::new();
+        for i in 0..3u32 {
+            let chunk = VoxelChunk::new([i as i32 * 8, 0, 0], [8, 24, 8]);
+            index.insert(100 + i as u64, &chunk);
+        }
+
+        let mut out = Vec::new();
+        // Travelling +X from x = -1 enters key 100 first, then 101, then 102.
+        index.ray_candidates([-1.0, 4.0, 4.0], [1.0, 0.0, 0.0], 40.0, &mut out);
+        assert_eq!(
+            out.iter().map(|&(_, key)| key).collect::<Vec<_>>(),
+            vec![100, 101, 102]
+        );
+        assert!(out.windows(2).all(|w| w[0].0 <= w[1].0));
+
+        // A short ray stops before the second chunk: it would only reach x = 7.5.
+        index.ray_candidates([-1.0, 4.0, 4.0], [1.0, 0.0, 0.0], 8.5, &mut out);
+        assert_eq!(
+            out.iter().map(|&(_, key)| key).collect::<Vec<_>>(),
+            vec![100]
+        );
+
+        // A degenerate direction yields no candidates.
+        index.ray_candidates([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 40.0, &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn indexed_queries_match_the_brute_force_walk() {
+        let mut chunks = Vec::new();
+        for i in 0..3i32 {
+            let mut chunk = VoxelChunk::new([i * 4, 0, 0], [4, 4, 4]);
+            let stone = pack_rgba(128, 128, 128, 255);
+            let vis = pack_visual(VoxelVisualFlags::NONE, 200, 0);
+            // Only the middle chunk holds solid voxels.
+            if i == 1 {
+                chunk.set_l2_cell(0, 0, 0, stone, vis, u64::MAX);
+            }
+            chunks.push(chunk);
+        }
+        let mut index = VoxelChunkIndex::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            index.insert(i as u64, chunk);
+        }
+        let resolve = |key: u64| chunks.get(key as usize);
+
+        let mut aabb_scratch = Vec::new();
+        // Inside chunk 1's solid L2 cell at [4..5) on every axis.
+        let min = [4.1, 0.1, 0.1];
+        let max = [4.2, 0.2, 0.2];
+        assert!(aabb_intersects_solid_indexed(
+            &index,
+            min,
+            max,
+            false,
+            &mut aabb_scratch,
+            resolve
+        ));
+        let brute = chunks
+            .iter()
+            .any(|chunk| chunk.aabb_intersects_solid(min, max, false));
+        assert!(brute);
+
+        // Empty space above the chunks agrees with the brute-force walk too.
+        let min = [4.1, 40.0, 0.1];
+        let max = [4.2, 41.0, 0.2];
+        assert_eq!(
+            aabb_intersects_solid_indexed(&index, min, max, false, &mut aabb_scratch, resolve),
+            chunks
+                .iter()
+                .any(|chunk| chunk.aabb_intersects_solid(min, max, false))
+        );
+
+        // A ray down -X from beyond the far chunk hits the middle one first.
+        let mut ray_scratch = Vec::new();
+        let indexed = raycast_chunks_indexed(
+            &index,
+            [20.0, 0.125, 0.125],
+            [-1.0, 0.0, 0.0],
+            40.0,
+            false,
+            &mut ray_scratch,
+            resolve,
+        );
+        let refs: Vec<&VoxelChunk> = chunks.iter().collect();
+        let brute = raycast_chunks(&refs, [20.0, 0.125, 0.125], [-1.0, 0.0, 0.0], 40.0, false)
+            .map(|(_, hit)| hit);
+        assert_eq!(
+            indexed.map(|hit| hit.world_l2),
+            brute.map(|hit| hit.world_l2)
+        );
+        assert!(indexed.is_some());
+    }
+
+    #[test]
+    fn chunk_index_insert_replaces_and_remove_drops() {
+        let mut index = VoxelChunkIndex::new();
+        index.insert(7, &VoxelChunk::new([0, 0, 0], [8, 24, 8]));
+        // Same key, moved box: the entry is replaced, not duplicated.
+        index.insert(7, &VoxelChunk::new([64, 0, 0], [8, 24, 8]));
+        assert_eq!(index.len(), 1);
+
+        let mut out = Vec::new();
+        index.aabb_candidates([1.0, 1.0, 1.0], [2.0, 2.0, 2.0], &mut out);
+        assert!(out.is_empty());
+        index.aabb_candidates([65.0, 1.0, 1.0], [66.0, 2.0, 2.0], &mut out);
+        assert_eq!(out, vec![7]);
+
+        assert!(index.remove(7));
+        assert!(!index.remove(7));
+        assert!(index.is_empty());
     }
 }
