@@ -31,6 +31,8 @@ use prism_ecs::{Component, Entity};
 use prism_physics2d::{Aabb2, MoveResult2};
 pub use prism_project_api::keys;
 pub use prism_project_api::{EntityHandle, InputSnapshot};
+/// Background job pool shared by both static Player and preview-module builds.
+pub mod jobs;
 /// Shared 2D geometry used by both static Player and preview-module builds.
 pub mod physics2d {
     pub use prism_physics2d::*;
