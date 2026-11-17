@@ -451,10 +451,25 @@ impl SimWorld {
             return false;
         }
         let cell = self.materials.spawn_cell(mat);
+        self.place_adjacent_cell(tier, hit, mat, cell)
+    }
+
+    /// Place an initialized `PhysicalCell` (e.g. a Catalog entity/variant) onto the outward face of `hit`.
+    pub fn place_adjacent_cell(
+        &mut self,
+        tier: VoxelTier,
+        hit: &VoxelHit,
+        mat: u8,
+        cell: PhysicalCell,
+    ) -> bool {
+        if mat == mat_id::AIR {
+            return false;
+        }
         let (rgba, visual) = self.materials.cell_visuals(mat, &cell);
         if (rgba >> 24) == 0 {
             return false;
         }
+        let wake_all = !cell.transient.contains(TransientFlags::DORMANT);
         match tier {
             VoxelTier::L1 => {
                 let target_l1 = [
@@ -480,6 +495,9 @@ impl SimWorld {
                                     visual,
                                     u64::MAX,
                                 );
+                                if wake_all {
+                                    self.wake_cell_and_neighbors(l2, false);
+                                }
                             }
                         }
                     }

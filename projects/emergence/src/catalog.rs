@@ -889,6 +889,76 @@ pub fn format_cell_inspector(
     out
 }
 
+const MATERIAL_FLAG_TABLE: &[(u32, &str)] = &[
+    (MaterialFlags::METALLIC.0 as u32, "METALLIC"),
+    (MaterialFlags::ORGANIC.0 as u32, "ORGANIC"),
+    (MaterialFlags::GLASS.0 as u32, "GLASS"),
+    (MaterialFlags::CONDUCTIVE.0 as u32, "CONDUCTIVE"),
+    (MaterialFlags::INSULATED.0 as u32, "INSULATED"),
+    (MaterialFlags::FLAMMABLE.0 as u32, "FLAMMABLE"),
+    (MaterialFlags::AIRTIGHT.0 as u32, "AIRTIGHT"),
+    (MaterialFlags::PRESSURE_RATED.0 as u32, "PRESSURE_RATED"),
+    (MaterialFlags::HOT_RESISTANT.0 as u32, "HOT_RESISTANT"),
+    (MaterialFlags::RAD_SHIELDED.0 as u32, "RAD_SHIELDED"),
+    (MaterialFlags::PIEZOELECTRIC.0 as u32, "PIEZOELECTRIC"),
+    (MaterialFlags::SUPERCONDUCTIVE.0 as u32, "SUPERCONDUCTIVE"),
+    (MaterialFlags::ELASTIC.0 as u32, "ELASTIC"),
+    (MaterialFlags::ABSORBENT.0 as u32, "ABSORBENT"),
+    (MaterialFlags::OXIDIZER.0 as u32, "OXIDIZER"),
+    (MaterialFlags::GRANULAR.0 as u32, "GRANULAR"),
+];
+
+const TRANSIENT_FLAG_TABLE: &[(u32, &str)] = &[
+    (TransientFlags::WET.0, "WET"),
+    (TransientFlags::BURNING.0, "BURNING"),
+    (TransientFlags::FROZEN.0, "FROZEN"),
+    (TransientFlags::CHARGED.0, "CHARGED"),
+    (TransientFlags::MAGNETIZED.0, "MAGNETIZED"),
+    (TransientFlags::BRITTLE.0, "BRITTLE"),
+    (TransientFlags::CORRODED.0, "CORRODED"),
+    (TransientFlags::BROKEN.0, "BROKEN"),
+    (TransientFlags::VOLATILE.0, "VOLATILE"),
+    (TransientFlags::TOXIC.0, "TOXIC"),
+    (TransientFlags::CORROSIVE.0, "CORROSIVE"),
+    (TransientFlags::RADIOACTIVE.0, "RADIOACTIVE"),
+    (TransientFlags::INFECTED.0, "INFECTED"),
+    (TransientFlags::STASIS.0, "STASIS"),
+    (TransientFlags::WARNING.0, "WARNING"),
+    (TransientFlags::DORMANT.0, "DORMANT"),
+    (TransientFlags::SHARP.0, "SHARP"),
+    (TransientFlags::VISCOUS.0, "VISCOUS"),
+];
+
+const TOPOLOGY_FLAG_TABLE: &[(u32, &str)] = &[
+    (TopologyFlags::RIGID_WELD.0 as u32, "RIGID_WELD"),
+    (TopologyFlags::BIO_NEST.0 as u32, "BIO_NEST"),
+    (TopologyFlags::FROZEN_LOCKED.0 as u32, "FROZEN_LOCKED"),
+    (TopologyFlags::PUNCTURED.0 as u32, "PUNCTURED"),
+    (TopologyFlags::EDIBLE.0 as u32, "EDIBLE"),
+    (TopologyFlags::EQUIPPABLE.0 as u32, "EQUIPPABLE"),
+    (TopologyFlags::SEALED.0 as u32, "SEALED"),
+    (TopologyFlags::CONVEYOR.0 as u32, "CONVEYOR"),
+    (TopologyFlags::CONDUIT.0 as u32, "CONDUIT"),
+    (TopologyFlags::VALVE.0 as u32, "VALVE"),
+];
+
+/// Collects active `#emergence:<flag>` tags for Horizon-style F3 inspection.
+pub(crate) fn collect_cell_debug_tags(cell: &PhysicalCell) -> Vec<String> {
+    let mut tags = Vec::new();
+    for (bits, table) in [
+        (cell.material.0 as u32, MATERIAL_FLAG_TABLE),
+        (cell.transient.0, TRANSIENT_FLAG_TABLE),
+        (cell.topology.0 as u32, TOPOLOGY_FLAG_TABLE),
+    ] {
+        for &(flag, label) in table {
+            if (bits & flag) != 0 {
+                tags.push(format!("#emergence:{}", label.to_ascii_lowercase()));
+            }
+        }
+    }
+    tags
+}
+
 fn append_flag_list(out: &mut String, bits: u32, table: &[(u32, &str)]) {
     let mut first = true;
     for &(flag, label) in table {
@@ -906,65 +976,15 @@ fn append_flag_list(out: &mut String, bits: u32, table: &[(u32, &str)]) {
 }
 
 fn append_material_flags(out: &mut String, flags: MaterialFlags) {
-    const TABLE: &[(u32, &str)] = &[
-        (MaterialFlags::METALLIC.0 as u32, "METALLIC"),
-        (MaterialFlags::ORGANIC.0 as u32, "ORGANIC"),
-        (MaterialFlags::GLASS.0 as u32, "GLASS"),
-        (MaterialFlags::CONDUCTIVE.0 as u32, "CONDUCTIVE"),
-        (MaterialFlags::INSULATED.0 as u32, "INSULATED"),
-        (MaterialFlags::FLAMMABLE.0 as u32, "FLAMMABLE"),
-        (MaterialFlags::AIRTIGHT.0 as u32, "AIRTIGHT"),
-        (MaterialFlags::PRESSURE_RATED.0 as u32, "PRESSURE_RATED"),
-        (MaterialFlags::HOT_RESISTANT.0 as u32, "HOT_RESISTANT"),
-        (MaterialFlags::RAD_SHIELDED.0 as u32, "RAD_SHIELDED"),
-        (MaterialFlags::PIEZOELECTRIC.0 as u32, "PIEZOELECTRIC"),
-        (MaterialFlags::SUPERCONDUCTIVE.0 as u32, "SUPERCONDUCTIVE"),
-        (MaterialFlags::ELASTIC.0 as u32, "ELASTIC"),
-        (MaterialFlags::ABSORBENT.0 as u32, "ABSORBENT"),
-        (MaterialFlags::OXIDIZER.0 as u32, "OXIDIZER"),
-        (MaterialFlags::GRANULAR.0 as u32, "GRANULAR"),
-    ];
-    append_flag_list(out, flags.0 as u32, TABLE);
+    append_flag_list(out, flags.0 as u32, MATERIAL_FLAG_TABLE);
 }
 
 fn append_transient_flags(out: &mut String, flags: TransientFlags) {
-    const TABLE: &[(u32, &str)] = &[
-        (TransientFlags::WET.0, "WET"),
-        (TransientFlags::BURNING.0, "BURNING"),
-        (TransientFlags::FROZEN.0, "FROZEN"),
-        (TransientFlags::CHARGED.0, "CHARGED"),
-        (TransientFlags::MAGNETIZED.0, "MAGNETIZED"),
-        (TransientFlags::BRITTLE.0, "BRITTLE"),
-        (TransientFlags::CORRODED.0, "CORRODED"),
-        (TransientFlags::BROKEN.0, "BROKEN"),
-        (TransientFlags::VOLATILE.0, "VOLATILE"),
-        (TransientFlags::TOXIC.0, "TOXIC"),
-        (TransientFlags::CORROSIVE.0, "CORROSIVE"),
-        (TransientFlags::RADIOACTIVE.0, "RADIOACTIVE"),
-        (TransientFlags::INFECTED.0, "INFECTED"),
-        (TransientFlags::STASIS.0, "STASIS"),
-        (TransientFlags::WARNING.0, "WARNING"),
-        (TransientFlags::DORMANT.0, "DORMANT"),
-        (TransientFlags::SHARP.0, "SHARP"),
-        (TransientFlags::VISCOUS.0, "VISCOUS"),
-    ];
-    append_flag_list(out, flags.0, TABLE);
+    append_flag_list(out, flags.0, TRANSIENT_FLAG_TABLE);
 }
 
 fn append_topology_flags(out: &mut String, flags: TopologyFlags) {
-    const TABLE: &[(u32, &str)] = &[
-        (TopologyFlags::RIGID_WELD.0 as u32, "RIGID_WELD"),
-        (TopologyFlags::BIO_NEST.0 as u32, "BIO_NEST"),
-        (TopologyFlags::FROZEN_LOCKED.0 as u32, "FROZEN_LOCKED"),
-        (TopologyFlags::PUNCTURED.0 as u32, "PUNCTURED"),
-        (TopologyFlags::EDIBLE.0 as u32, "EDIBLE"),
-        (TopologyFlags::EQUIPPABLE.0 as u32, "EQUIPPABLE"),
-        (TopologyFlags::SEALED.0 as u32, "SEALED"),
-        (TopologyFlags::CONVEYOR.0 as u32, "CONVEYOR"),
-        (TopologyFlags::CONDUIT.0 as u32, "CONDUIT"),
-        (TopologyFlags::VALVE.0 as u32, "VALVE"),
-    ];
-    append_flag_list(out, flags.0 as u32, TABLE);
+    append_flag_list(out, flags.0 as u32, TOPOLOGY_FLAG_TABLE);
 }
 
 fn append_stimulus_flags(out: &mut String, flags: StimulusFlags) {

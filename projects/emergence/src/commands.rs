@@ -1,10 +1,15 @@
-//! Minecraft-style slash-command system (`time`, `weather`, `gamemode`, `tp`,
-//! `setblock`, `gamerule`, `seed`, `help`) for `emergence`.
+//! Horizon-aligned chat & slash-command console (`T` / `Enter` / `/`) for `emergence`.
+
+use std::collections::VecDeque;
 
 use glam::Vec3;
-use prism_game_api::{keys, GameWorld, InputSnapshot};
-use prism_scene::{Camera, DirectionalLight};
+use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
+use prism_scene::ui::{
+    Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
+};
+use prism_scene::{Active, Camera, DirectionalLight, Name};
 
+use crate::debug_hud::estimate_text_width;
 use crate::materials::mat_id;
 use crate::player::PlayerController;
 use crate::sim::SimWorld;
@@ -50,6 +55,76 @@ impl Default for GameRules {
 }
 
 /// Persistent world time, weather, game rules, and in-game command console state.
+/// Maximum messages retained in the Horizon-style chat scrollback.
+const MAX_CHAT_HISTORY: usize = 100;
+const CHAT_FADE_LIFETIME_SEC: f32 = 10.0;
+const CHAT_FADE_TAIL_SEC: f32 = 1.0;
+const MAX_VISIBLE_UNFOCUSED: usize = 10;
+const MAX_VISIBLE_OPEN: usize = 14;
+const CHAT_FONT_SIZE: f32 = 14.0;
+const CHAT_ROW_HEIGHT: f32 = 19.0;
+const INPUT_BAR_HEIGHT: f32 = 26.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatTag {
+    Player,
+    System,
+    Command,
+    Warning,
+    Error,
+}
+
+impl ChatTag {
+    const fn accent_color(self) -> Option<[f32; 4]> {
+        match self {
+            Self::Player => None,
+            Self::System => Some([0.33, 1.0, 1.0, 1.0]),
+            Self::Command => Some([0.33, 1.0, 0.33, 1.0]),
+            Self::Warning => Some([1.0, 0.67, 0.0, 1.0]),
+            Self::Error => Some([1.0, 0.33, 0.33, 1.0]),
+        }
+    }
+
+    const fn text_color(self) -> [f32; 4] {
+        match self {
+            Self::Player => [0.878, 0.878, 0.878, 1.0],
+            Self::System | Self::Command => [0.90, 0.96, 0.98, 1.0],
+            Self::Warning => [1.0, 0.84, 0.38, 1.0],
+            Self::Error => [1.0, 0.42, 0.42, 1.0],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatMessage {
+    pub text: String,
+    pub tag: ChatTag,
+    pub age_sec: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChatRowEntities {
+    bg: EntityHandle,
+    accent: EntityHandle,
+    text: EntityHandle,
+}
+
+#[derive(Debug, Default)]
+struct ChatUiEntities {
+    initialized: bool,
+    rows: Vec<ChatRowEntities>,
+    suggest_bg: Option<EntityHandle>,
+    suggest_text: Option<EntityHandle>,
+    input_bg: Option<EntityHandle>,
+    input_text: Option<EntityHandle>,
+}
+
+const CHAT_CANVAS: Canvas = Canvas {
+    reference_resolution: [1280.0, 720.0],
+    scale_mode: CanvasScaleMode::ConstantPixelSize,
+    match_width_or_height: 0.5,
+};
+
 pub struct CommandWorldState {
     pub time_ticks: u64,
     pub weather: WeatherKind,
@@ -57,10 +132,16 @@ pub struct CommandWorldState {
     pub rules: GameRules,
     pub console_open: bool,
     pub input_line: String,
+    pub cursor_char: usize,
     pub history: Vec<String>,
     pub history_cursor: Option<usize>,
     pub feedback: String,
     pub feedback_timer_sec: f32,
+    pub chat_log: VecDeque<ChatMessage>,
+    draft_line: String,
+    scroll_offset: usize,
+    caret_blink_sec: f32,
+    chat_ui: ChatUiEntities,
     time_accum_sec: f32,
     weather_stim_accum_sec: f32,
 }
@@ -80,13 +161,77 @@ impl CommandWorldState {
             rules: GameRules::default(),
             console_open: false,
             input_line: String::new(),
+            cursor_char: 0,
             history: Vec::new(),
             history_cursor: None,
             feedback: String::new(),
             feedback_timer_sec: 0.0,
+            chat_log: VecDeque::new(),
+            draft_line: String::new(),
+            scroll_offset: 0,
+            caret_blink_sec: 0.0,
+            chat_ui: ChatUiEntities::default(),
             time_accum_sec: 0.0,
             weather_stim_accum_sec: 0.0,
         }
+    }
+
+    /// Returns a human-readable time-of-day phase label for the F3 overlay.
+    pub fn time_phase_label(&self) -> &'static str {
+        match self.time_ticks % TICKS_PER_DAY {
+            0..=5_999 => "Morning",
+            6_000..=11_999 => "Day",
+            12_000..=13_499 => "Sunset",
+            13_500..=22_499 => "Night",
+            _ => "Dawn",
+        }
+    }
+
+    /// Returns the active gamemode label aligned with PlayerController fly state.
+    pub fn gamemode_label(&self, player: &PlayerController) -> &'static str {
+        if player.fly_mode {
+            "creative"
+        } else {
+            "survival"
+        }
+    }
+
+    /// Appends one or more feedback/chat lines to the Horizon-style scrollback.
+    pub fn push_chat(&mut self, text: &str, tag: ChatTag) {
+        for raw_line in text.lines() {
+            let line = raw_line.trim_end();
+            if line.is_empty() {
+                continue;
+            }
+            if self.chat_log.len() >= MAX_CHAT_HISTORY {
+                self.chat_log.pop_back();
+            }
+            self.chat_log.push_front(ChatMessage {
+                text: line.to_string(),
+                tag,
+                age_sec: 0.0,
+            });
+        }
+    }
+
+    fn open_console(&mut self, initial: &str) {
+        self.console_open = true;
+        self.input_line.clear();
+        self.input_line.push_str(initial);
+        self.cursor_char = self.input_line.chars().count();
+        self.history_cursor = None;
+        self.draft_line.clear();
+        self.scroll_offset = 0;
+        self.caret_blink_sec = 0.0;
+    }
+
+    fn close_console(&mut self) {
+        self.console_open = false;
+        self.input_line.clear();
+        self.cursor_char = 0;
+        self.history_cursor = None;
+        self.draft_line.clear();
+        self.scroll_offset = 0;
     }
 
     /// Advance daylight cycle, weather timers, and apply sky/sun changes to ECS.
@@ -256,44 +401,50 @@ impl CommandWorldState {
         player: &mut PlayerController,
     ) -> bool {
         if !self.console_open {
-            if input.key_pressed(keys::OTHER_BASE + b'/' as usize) || input.key_pressed(keys::F1) {
-                self.console_open = true;
-                self.input_line.clear();
-                self.input_line.push('/');
-                self.history_cursor = None;
+            if input.key_pressed(keys::KEY_T) || input.key_pressed(keys::ENTER) {
+                self.open_console("");
+                return true;
+            }
+            if input.key_pressed(keys::OTHER_BASE + 0xBF)
+                || input.key_pressed(keys::OTHER_BASE + 0x6F)
+            {
+                self.open_console("/");
                 return true;
             }
             return false;
         }
 
         if input.key_pressed(keys::ESCAPE) {
-            self.console_open = false;
-            self.input_line.clear();
+            self.close_console();
             return true;
         }
 
         if input.key_pressed(keys::ENTER) {
-            let cmd = self.input_line.trim().to_string();
-            self.console_open = false;
-            self.input_line.clear();
-            if !cmd.is_empty() {
-                if self.history.last() != Some(&cmd) {
-                    self.history.push(cmd.clone());
+            let raw = self.input_line.trim().to_string();
+            self.close_console();
+            if !raw.is_empty() {
+                if self.history.last() != Some(&raw) {
+                    if self.history.len() >= MAX_CHAT_HISTORY {
+                        self.history.remove(0);
+                    }
+                    self.history.push(raw.clone());
                 }
-                let msg = self.execute(&cmd, world, sim, player);
-                self.feedback = msg;
-                self.feedback_timer_sec = 5.0;
+                self.submit_line(&raw, world, sim, player);
             }
             return true;
         }
 
         if input.key_pressed(keys::ARROW_UP) && !self.history.is_empty() {
+            if self.history_cursor.is_none() {
+                self.draft_line = self.input_line.clone();
+            }
             let next = match self.history_cursor {
                 None => self.history.len() - 1,
                 Some(i) => i.saturating_sub(1),
             };
             self.history_cursor = Some(next);
             self.input_line = self.history[next].clone();
+            self.cursor_char = self.input_line.chars().count();
             return true;
         }
         if input.key_pressed(keys::ARROW_DOWN) {
@@ -303,65 +454,437 @@ impl CommandWorldState {
                     self.input_line = self.history[i + 1].clone();
                 } else {
                     self.history_cursor = None;
-                    self.input_line.clear();
+                    self.input_line = std::mem::take(&mut self.draft_line);
                 }
+                self.cursor_char = self.input_line.chars().count();
             }
             return true;
         }
 
-        // Backspace (ASCII 8 or 127).
-        if input.key_pressed(keys::OTHER_BASE + 8) || input.key_pressed(keys::OTHER_BASE + 127) {
-            self.input_line.pop();
+        let char_len = self.input_line.chars().count();
+        self.cursor_char = self.cursor_char.min(char_len);
+
+        if input.key_pressed(keys::ARROW_LEFT) {
+            self.cursor_char = self.cursor_char.saturating_sub(1);
+            self.caret_blink_sec = 0.0;
+            return true;
+        }
+        if input.key_pressed(keys::ARROW_RIGHT) {
+            self.cursor_char = (self.cursor_char + 1).min(char_len);
+            self.caret_blink_sec = 0.0;
+            return true;
+        }
+        if input.key_pressed(keys::OTHER_BASE + 0x24) {
+            // Home
+            self.cursor_char = 0;
+            self.caret_blink_sec = 0.0;
+            return true;
+        }
+        if input.key_pressed(keys::OTHER_BASE + 0x23) {
+            // End
+            self.cursor_char = char_len;
+            self.caret_blink_sec = 0.0;
+            return true;
+        }
+        if input.key_pressed(keys::OTHER_BASE + 0x21) {
+            // PageUp
+            let max_scroll = self.chat_log.len().saturating_sub(1);
+            self.scroll_offset = (self.scroll_offset + 5).min(max_scroll);
+            return true;
+        }
+        if input.key_pressed(keys::OTHER_BASE + 0x22) {
+            // PageDown
+            self.scroll_offset = self.scroll_offset.saturating_sub(5);
+            return true;
+        }
+        if input.key_pressed(keys::TAB) {
+            self.autocomplete();
+            self.caret_blink_sec = 0.0;
             return true;
         }
 
-        // Text entry mapping from `keys` bitset.
-        let shift = input.key(keys::SHIFT_LEFT) || input.key(keys::SHIFT_RIGHT);
-        if input.key_pressed(keys::SPACE) {
-            self.input_line.push(' ');
+        // Backspace (VK_BACK = 0x08) and Delete (VK_DELETE = 0x2E).
+        if input.key_pressed(keys::OTHER_BASE + 0x08) {
+            self.delete_before_cursor();
+            self.caret_blink_sec = 0.0;
+            return true;
         }
-        for (k, ch) in [
-            (keys::KEY_W, 'w'),
-            (keys::KEY_A, 'a'),
-            (keys::KEY_S, 's'),
-            (keys::KEY_D, 'd'),
-            (keys::KEY_Q, 'q'),
-            (keys::KEY_E, 'e'),
-            (keys::KEY_T, 't'),
-            (keys::DIGIT_0, '0'),
-            (keys::DIGIT_1, '1'),
-            (keys::DIGIT_2, '2'),
-            (keys::DIGIT_3, '3'),
-            (keys::DIGIT_4, '4'),
-            (keys::DIGIT_5, '5'),
-            (keys::DIGIT_6, '6'),
-            (keys::DIGIT_7, '7'),
-            (keys::DIGIT_8, '8'),
-            (keys::DIGIT_9, '9'),
-        ] {
-            if input.key_pressed(k) {
-                self.input_line.push(ch);
-            }
+        if input.key_pressed(keys::OTHER_BASE + 0x2E) {
+            self.delete_at_cursor();
+            self.caret_blink_sec = 0.0;
+            return true;
         }
-        for b in b'A'..=b'Z' {
-            if matches!(b, b'W' | b'A' | b'S' | b'D' | b'Q' | b'E' | b'T') {
-                continue;
-            }
-            if input.key_pressed(keys::OTHER_BASE + b as usize) {
-                self.input_line.push((b as char).to_ascii_lowercase());
-            }
-        }
-        for (raw, normal, shifted) in [
-            (b'/' as usize, '/', '?'),
-            (b'-' as usize, '-', '_'),
-            (b'.' as usize, '.', '>'),
-            (b'`' as usize, '~', '~'),
-        ] {
-            if input.key_pressed(keys::OTHER_BASE + raw) {
-                self.input_line.push(if shift { shifted } else { normal });
-            }
+
+        if let Some(ch) = poll_typed_char(input) {
+            self.insert_char_at_cursor(ch);
+            self.history_cursor = None;
+            self.caret_blink_sec = 0.0;
         }
         true
+    }
+
+    fn submit_line(
+        &mut self,
+        raw: &str,
+        world: &mut GameWorld<'_>,
+        sim: &mut SimWorld,
+        player: &mut PlayerController,
+    ) {
+        let is_slash = raw.starts_with('/');
+        let first_word = raw
+            .strip_prefix('/')
+            .unwrap_or(raw)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if is_slash || is_known_command(&first_word) {
+            let msg = self.execute(raw, world, sim, player);
+            let tag = classify_feedback_tag(&msg);
+            self.push_chat(&msg, tag);
+            self.feedback = msg;
+            self.feedback_timer_sec = 5.0;
+        } else {
+            let line = format!("<Player> {raw}");
+            self.push_chat(&line, ChatTag::Player);
+            self.feedback = line;
+            self.feedback_timer_sec = 5.0;
+        }
+    }
+
+    /// Advances chat message fade timers and syncs the bottom-left Horizon chat UI.
+    pub fn sync_chat_ui(&mut self, world: &mut GameWorld<'_>, dt: f32) {
+        for msg in &mut self.chat_log {
+            msg.age_sec += dt.clamp(0.0, 0.25);
+        }
+        if self.console_open {
+            self.caret_blink_sec = (self.caret_blink_sec + dt.max(0.0)) % 1.0;
+        }
+
+        self.ensure_chat_ui(world);
+        if !self.chat_ui.initialized {
+            return;
+        }
+
+        let screen = world.screen_size();
+        let screen_w = if screen[0] > 1.0 { screen[0] } else { 1280.0 };
+        let screen_h = if screen[1] > 1.0 { screen[1] } else { 720.0 };
+        let box_w = (screen_w * 0.45).clamp(360.0, 620.0);
+
+        // Gather visible messages newest-at-bottom, oldest-above.
+        let mut visible: Vec<(&ChatMessage, f32)> = Vec::new();
+        if self.console_open {
+            for msg in self
+                .chat_log
+                .iter()
+                .skip(self.scroll_offset)
+                .take(MAX_VISIBLE_OPEN)
+            {
+                visible.push((msg, 1.0));
+            }
+        } else {
+            for msg in self.chat_log.iter().take(MAX_VISIBLE_UNFOCUSED) {
+                if msg.age_sec >= CHAT_FADE_LIFETIME_SEC {
+                    continue;
+                }
+                let remaining = CHAT_FADE_LIFETIME_SEC - msg.age_sec;
+                let fade = (remaining / CHAT_FADE_TAIL_SEC).clamp(0.0, 1.0);
+                visible.push((msg, fade * fade));
+            }
+        }
+
+        let base_bottom_y = screen_h - 42.0;
+        for (slot_idx, row) in self.chat_ui.rows.iter().enumerate() {
+            let Some(&(msg, alpha)) = visible.get(slot_idx) else {
+                world.set(row.bg, Active(false));
+                world.set(row.accent, Active(false));
+                world.set(row.text, Active(false));
+                continue;
+            };
+            let y = (base_bottom_y - ((slot_idx + 1) as f32) * CHAT_ROW_HEIGHT).max(4.0);
+            world.set(
+                row.bg,
+                Style {
+                    width: Some(box_w),
+                    height: Some(CHAT_ROW_HEIGHT),
+                    anchors: Anchors::TOP_LEFT,
+                    pivot: Pivot::TOP_LEFT,
+                    margin: Margin {
+                        left: 4.0,
+                        top: y,
+                        ..Margin::default()
+                    },
+                    background: [0.0, 0.0, 0.0, 0.50 * alpha],
+                    ..Style::default()
+                },
+            );
+            world.set(row.bg, Active(true));
+
+            if let Some(mut accent_col) = msg.tag.accent_color() {
+                accent_col[3] *= alpha;
+                world.set(
+                    row.accent,
+                    Style {
+                        width: Some(2.0),
+                        height: Some(CHAT_ROW_HEIGHT),
+                        anchors: Anchors::TOP_LEFT,
+                        pivot: Pivot::TOP_LEFT,
+                        margin: Margin {
+                            left: 4.0,
+                            top: y,
+                            ..Margin::default()
+                        },
+                        background: accent_col,
+                        ..Style::default()
+                    },
+                );
+                world.set(row.accent, Active(true));
+            } else {
+                world.set(row.accent, Active(false));
+            }
+
+            let mut text_col = msg.tag.text_color();
+            text_col[3] *= alpha;
+            world.set(
+                row.text,
+                Style {
+                    width: Some(box_w - 8.0),
+                    height: Some(CHAT_ROW_HEIGHT),
+                    anchors: Anchors::TOP_LEFT,
+                    pivot: Pivot::TOP_LEFT,
+                    margin: Margin {
+                        left: 10.0,
+                        top: y,
+                        ..Margin::default()
+                    },
+                    ..Style::default()
+                },
+            );
+            world.set(
+                row.text,
+                Text {
+                    content: msg.text.clone(),
+                    font_size: CHAT_FONT_SIZE,
+                    color: text_col,
+                    alignment: TextAlign::Left,
+                    wrap: false,
+                    ..Text::default()
+                },
+            );
+            world.set(row.text, Active(true));
+        }
+
+        // Sync input bar and command suggestions when console is open.
+        if let (Some(in_bg), Some(in_txt), Some(sug_bg), Some(sug_txt)) = (
+            self.chat_ui.input_bg,
+            self.chat_ui.input_text,
+            self.chat_ui.suggest_bg,
+            self.chat_ui.suggest_text,
+        ) {
+            if !self.console_open {
+                world.set(in_bg, Active(false));
+                world.set(in_txt, Active(false));
+                world.set(sug_bg, Active(false));
+                world.set(sug_txt, Active(false));
+                return;
+            }
+
+            let bar_w = (screen_w - 8.0).max(200.0);
+            let bar_y = (screen_h - INPUT_BAR_HEIGHT - 4.0).max(4.0);
+            world.set(
+                in_bg,
+                Style {
+                    width: Some(bar_w),
+                    height: Some(INPUT_BAR_HEIGHT),
+                    anchors: Anchors::TOP_LEFT,
+                    pivot: Pivot::TOP_LEFT,
+                    margin: Margin {
+                        left: 4.0,
+                        top: bar_y,
+                        ..Margin::default()
+                    },
+                    background: [0.0, 0.0, 0.0, 0.70],
+                    ..Style::default()
+                },
+            );
+            world.set(in_bg, Active(true));
+
+            let display_input = self.render_input_with_caret();
+            world.set(
+                in_txt,
+                Style {
+                    width: Some(bar_w - 12.0),
+                    height: Some(INPUT_BAR_HEIGHT),
+                    anchors: Anchors::TOP_LEFT,
+                    pivot: Pivot::TOP_LEFT,
+                    margin: Margin {
+                        left: 10.0,
+                        top: bar_y + 2.0,
+                        ..Margin::default()
+                    },
+                    ..Style::default()
+                },
+            );
+            world.set(
+                in_txt,
+                Text {
+                    content: display_input,
+                    font_size: 14.5,
+                    color: [0.878, 0.878, 0.878, 1.0],
+                    alignment: TextAlign::Left,
+                    wrap: false,
+                    ..Text::default()
+                },
+            );
+            world.set(in_txt, Active(true));
+
+            let suggestions = autocomplete_candidates(&self.input_line);
+            if suggestions.is_empty() {
+                world.set(sug_bg, Active(false));
+                world.set(sug_txt, Active(false));
+            } else {
+                let joined = suggestions.join("  ");
+                let sug_w = (estimate_text_width(&joined, CHAT_FONT_SIZE) + 12.0)
+                    .min(bar_w)
+                    .max(120.0);
+                let sug_y = (bar_y - CHAT_ROW_HEIGHT - 2.0).max(4.0);
+                world.set(
+                    sug_bg,
+                    Style {
+                        width: Some(sug_w),
+                        height: Some(CHAT_ROW_HEIGHT),
+                        anchors: Anchors::TOP_LEFT,
+                        pivot: Pivot::TOP_LEFT,
+                        margin: Margin {
+                            left: 4.0,
+                            top: sug_y,
+                            ..Margin::default()
+                        },
+                        background: [0.0, 0.0, 0.0, 0.82],
+                        ..Style::default()
+                    },
+                );
+                world.set(sug_bg, Active(true));
+                world.set(
+                    sug_txt,
+                    Style {
+                        width: Some(sug_w - 8.0),
+                        height: Some(CHAT_ROW_HEIGHT),
+                        anchors: Anchors::TOP_LEFT,
+                        pivot: Pivot::TOP_LEFT,
+                        margin: Margin {
+                            left: 9.0,
+                            top: sug_y,
+                            ..Margin::default()
+                        },
+                        ..Style::default()
+                    },
+                );
+                world.set(
+                    sug_txt,
+                    Text {
+                        content: joined,
+                        font_size: CHAT_FONT_SIZE,
+                        color: [1.0, 1.0, 0.45, 1.0],
+                        alignment: TextAlign::Left,
+                        wrap: false,
+                        ..Text::default()
+                    },
+                );
+                world.set(sug_txt, Active(true));
+            }
+        }
+    }
+
+    fn ensure_chat_ui(&mut self, world: &mut GameWorld<'_>) {
+        if self.chat_ui.initialized {
+            return;
+        }
+        let spawn_node = |world: &mut GameWorld<'_>, name: String| -> EntityHandle {
+            let ent = world.spawn();
+            world.set(ent, Name(name));
+            world.set(ent, Node::default());
+            world.set(ent, CHAT_CANVAS);
+            world.set(ent, Active(false));
+            ent
+        };
+
+        for idx in 0..MAX_VISIBLE_OPEN {
+            let bg = spawn_node(world, format!("chat_row_bg_{idx}"));
+            let accent = spawn_node(world, format!("chat_row_accent_{idx}"));
+            let text = spawn_node(world, format!("chat_row_text_{idx}"));
+            self.chat_ui.rows.push(ChatRowEntities { bg, accent, text });
+        }
+
+        self.chat_ui.suggest_bg = Some(spawn_node(world, "chat_suggest_bg".to_string()));
+        self.chat_ui.suggest_text = Some(spawn_node(world, "chat_suggest_text".to_string()));
+        self.chat_ui.input_bg = Some(spawn_node(world, "chat_input_bg".to_string()));
+        self.chat_ui.input_text = Some(spawn_node(world, "chat_input_text".to_string()));
+        self.chat_ui.initialized = true;
+    }
+
+    fn render_input_with_caret(&self) -> String {
+        let caret = if self.caret_blink_sec < 0.5 { "|" } else { " " };
+        let byte_idx = self.char_to_byte(self.cursor_char);
+        let mut out = String::with_capacity(self.input_line.len() + 2);
+        out.push_str(&self.input_line[..byte_idx]);
+        out.push_str(caret);
+        out.push_str(&self.input_line[byte_idx..]);
+        out
+    }
+
+    fn char_to_byte(&self, char_idx: usize) -> usize {
+        self.input_line
+            .char_indices()
+            .nth(char_idx)
+            .map(|(byte, _)| byte)
+            .unwrap_or(self.input_line.len())
+    }
+
+    fn insert_char_at_cursor(&mut self, ch: char) {
+        let byte_idx = self.char_to_byte(self.cursor_char);
+        self.input_line.insert(byte_idx, ch);
+        self.cursor_char += 1;
+    }
+
+    fn delete_before_cursor(&mut self) {
+        if self.cursor_char == 0 {
+            return;
+        }
+        let target_char = self.cursor_char - 1;
+        let byte_idx = self.char_to_byte(target_char);
+        if byte_idx < self.input_line.len() {
+            self.input_line.remove(byte_idx);
+            self.cursor_char = target_char;
+        }
+    }
+
+    fn delete_at_cursor(&mut self) {
+        let byte_idx = self.char_to_byte(self.cursor_char);
+        if byte_idx < self.input_line.len() {
+            self.input_line.remove(byte_idx);
+        }
+    }
+
+    fn autocomplete(&mut self) {
+        let candidates = autocomplete_candidates(&self.input_line);
+        let Some(first) = candidates.first() else {
+            return;
+        };
+        if self.input_line.ends_with(' ') {
+            self.input_line.push_str(first);
+        } else if let Some(last_space) = self.input_line.rfind(' ') {
+            self.input_line.truncate(last_space + 1);
+            self.input_line.push_str(first);
+        } else {
+            let has_slash = self.input_line.starts_with('/');
+            self.input_line.clear();
+            if has_slash && !first.starts_with('/') {
+                self.input_line.push('/');
+            }
+            self.input_line.push_str(first);
+        }
+        self.cursor_char = self.input_line.chars().count();
     }
 
     /// Parse and execute one Minecraft-style slash command.
@@ -378,8 +901,12 @@ impl CommandWorldState {
             return String::new();
         }
         match parts[0].to_ascii_lowercase().as_str() {
-            "help" => "Commands: /time <set|add|query>, /weather <clear|rain|thunder>, /gamemode <survival|creative|walk|fly>, /tp <x> <y> <z>, /setblock <x> <y> <z> <mat>, /gamerule <rule> <bool>, /seed".to_string(),
+            "help" | "?" => "Commands: /time <set|add|query>, /weather <clear|rain|thunder>, /gamemode <survival|creative|walk|fly>, /tp <x> <y> <z>, /setblock <x> <y> <z> <mat>, /gamerule <rule> <bool>, /seed, /clear".to_string(),
             "seed" => format!("Seed: {}", sim.seed),
+            "clear" => {
+                self.chat_log.clear();
+                "Cleared chat history.".to_string()
+            }
             "time" => self.exec_time(&parts[1..], world),
             "weather" => self.exec_weather(&parts[1..], world),
             "gamemode" | "gm" => self.exec_gamemode(&parts[1..], player),
@@ -580,6 +1107,175 @@ impl CommandWorldState {
     }
 }
 
+fn is_known_command(word: &str) -> bool {
+    matches!(
+        word,
+        "help"
+            | "?"
+            | "time"
+            | "weather"
+            | "gamemode"
+            | "gm"
+            | "tp"
+            | "teleport"
+            | "setblock"
+            | "gamerule"
+            | "seed"
+            | "clear"
+    )
+}
+
+fn classify_feedback_tag(msg: &str) -> ChatTag {
+    if msg.starts_with("Unknown") || msg.starts_with("Invalid") || msg.starts_with("Usage") {
+        ChatTag::Error
+    } else if msg.starts_with("Target chunk") {
+        ChatTag::Warning
+    } else {
+        ChatTag::Command
+    }
+}
+
+fn poll_typed_char(input: &InputSnapshot) -> Option<char> {
+    let shift = input.key(keys::SHIFT_LEFT) || input.key(keys::SHIFT_RIGHT);
+    if input.key_pressed(keys::SPACE) {
+        return Some(' ');
+    }
+    for (k, lower, upper) in [
+        (keys::KEY_W, 'w', 'W'),
+        (keys::KEY_A, 'a', 'A'),
+        (keys::KEY_S, 's', 'S'),
+        (keys::KEY_D, 'd', 'D'),
+        (keys::KEY_Q, 'q', 'Q'),
+        (keys::KEY_E, 'e', 'E'),
+        (keys::KEY_T, 't', 'T'),
+        (keys::DIGIT_0, '0', ')'),
+        (keys::DIGIT_1, '1', '!'),
+        (keys::DIGIT_2, '2', '@'),
+        (keys::DIGIT_3, '3', '#'),
+        (keys::DIGIT_4, '4', '$'),
+        (keys::DIGIT_5, '5', '%'),
+        (keys::DIGIT_6, '6', '^'),
+        (keys::DIGIT_7, '7', '&'),
+        (keys::DIGIT_8, '8', '*'),
+        (keys::DIGIT_9, '9', '('),
+    ] {
+        if input.key_pressed(k) {
+            return Some(if shift { upper } else { lower });
+        }
+    }
+    for b in b'A'..=b'Z' {
+        if matches!(b, b'W' | b'A' | b'S' | b'D' | b'Q' | b'E' | b'T') {
+            continue;
+        }
+        if input.key_pressed(keys::OTHER_BASE + b as usize) {
+            let ch = b as char;
+            return Some(if shift { ch } else { ch.to_ascii_lowercase() });
+        }
+    }
+    for (vk, normal, shifted) in [
+        (0xBAusize, ';', ':'),
+        (0xBBusize, '=', '+'),
+        (0xBCusize, ',', '<'),
+        (0xBDusize, '-', '_'),
+        (0xBEusize, '.', '>'),
+        (0xBFusize, '/', '?'),
+        (0xC0usize, '`', '~'),
+    ] {
+        if input.key_pressed(keys::OTHER_BASE + vk) {
+            return Some(if shift { shifted } else { normal });
+        }
+    }
+    for (vk, ch) in [
+        (0x60usize, '0'),
+        (0x61usize, '1'),
+        (0x62usize, '2'),
+        (0x63usize, '3'),
+        (0x64usize, '4'),
+        (0x65usize, '5'),
+        (0x66usize, '6'),
+        (0x67usize, '7'),
+        (0x68usize, '8'),
+        (0x69usize, '9'),
+        (0x6Ausize, '*'),
+        (0x6Busize, '+'),
+        (0x6Dusize, '-'),
+        (0x6Eusize, '.'),
+        (0x6Fusize, '/'),
+    ] {
+        if input.key_pressed(keys::OTHER_BASE + vk) {
+            return Some(ch);
+        }
+    }
+    None
+}
+
+fn autocomplete_candidates(input_line: &str) -> Vec<&'static str> {
+    const COMMANDS: &[&str] = &[
+        "time", "weather", "gamemode", "tp", "setblock", "gamerule", "seed", "help", "clear",
+    ];
+    let trimmed = input_line.trim_start();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let body = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let has_slash = trimmed.starts_with('/');
+    let ends_space = input_line.ends_with(' ');
+    let tokens: Vec<&str> = body.split_whitespace().collect();
+
+    if tokens.is_empty() {
+        return if has_slash {
+            COMMANDS.to_vec()
+        } else {
+            Vec::new()
+        };
+    }
+
+    if tokens.len() == 1 && !ends_space {
+        let prefix = tokens[0].to_ascii_lowercase();
+        if !has_slash && !COMMANDS.iter().any(|c| c.starts_with(&prefix)) {
+            return Vec::new();
+        }
+        return COMMANDS
+            .iter()
+            .copied()
+            .filter(|cmd| cmd.starts_with(&prefix) && *cmd != prefix)
+            .collect();
+    }
+
+    let cmd = tokens[0].to_ascii_lowercase();
+    let arg_idx = if ends_space {
+        tokens.len() - 1
+    } else {
+        tokens.len() - 2
+    };
+    let arg_prefix = if ends_space {
+        ""
+    } else {
+        tokens.last().copied().unwrap_or("")
+    };
+    let options: &[&str] = match (cmd.as_str(), arg_idx) {
+        ("time", 0) => &["set", "add", "query"],
+        ("time", 1) if tokens.get(1).copied() == Some("set") => {
+            &["day", "noon", "sunset", "night", "midnight"]
+        }
+        ("weather", 0) => &["clear", "rain", "thunder"],
+        ("gamemode" | "gm", 0) => &["survival", "creative", "spectator", "walk", "fly"],
+        ("gamerule", 0) => &["doDaylightCycle", "doWeatherCycle", "doFireTick"],
+        ("gamerule", 1) => &["true", "false"],
+        ("setblock", 3) => &[
+            "stone", "alloy", "glass", "timber", "water", "acid", "cryo", "biomass", "wire",
+            "isotope", "air",
+        ],
+        _ => &[],
+    };
+    let prefix_lower = arg_prefix.to_ascii_lowercase();
+    options
+        .iter()
+        .copied()
+        .filter(|opt| opt.to_ascii_lowercase().starts_with(&prefix_lower) && *opt != arg_prefix)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +1345,177 @@ mod tests {
             "moonlight should be cool blue"
         );
         assert!(night_light.intensity < 20_000.0);
+    }
+
+    fn press(key_idx: usize) -> InputSnapshot {
+        let mut input = InputSnapshot::default();
+        input.keys[key_idx / 64] |= 1u64 << (key_idx % 64);
+        input.key_edges[key_idx / 64] |= 1u64 << (key_idx % 64);
+        input
+    }
+
+    fn press_shifted(key_idx: usize) -> InputSnapshot {
+        let mut input = press(key_idx);
+        input.keys[keys::SHIFT_LEFT / 64] |= 1u64 << (keys::SHIFT_LEFT % 64);
+        input
+    }
+
+    #[test]
+    fn t_enter_and_slash_triggers_align_with_horizon_and_replace_f1() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+        let mut player = PlayerController::new();
+        player.attach_ecs(&mut world, &sim);
+        let mut cmd = CommandWorldState::new();
+
+        // F1 no longer opens the command console.
+        assert!(!cmd.handle_console_input(&press(keys::F1), &mut world, &mut sim, &mut player));
+        assert!(!cmd.console_open);
+
+        // `T` opens console with an empty buffer and does not inject 't'.
+        assert!(cmd.handle_console_input(&press(keys::KEY_T), &mut world, &mut sim, &mut player));
+        assert!(cmd.console_open);
+        assert_eq!(cmd.input_line, "");
+
+        // `Escape` cancels and closes console.
+        assert!(cmd.handle_console_input(&press(keys::ESCAPE), &mut world, &mut sim, &mut player));
+        assert!(!cmd.console_open);
+
+        // `Enter` when closed opens console empty and does not execute immediately.
+        assert!(cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player));
+        assert!(cmd.console_open);
+        assert_eq!(cmd.input_line, "");
+        assert!(cmd.chat_log.is_empty());
+        assert!(cmd.handle_console_input(&press(keys::ESCAPE), &mut world, &mut sim, &mut player));
+
+        // `/` opens console prefilled with `/`.
+        assert!(cmd.handle_console_input(
+            &press(keys::OTHER_BASE + 0xBF),
+            &mut world,
+            &mut sim,
+            &mut player,
+        ));
+        assert!(cmd.console_open);
+        assert_eq!(cmd.input_line, "/");
+        assert_eq!(cmd.cursor_char, 1);
+    }
+
+    #[test]
+    fn console_supports_vk_punctuation_editing_tab_history_and_chat_feed() {
+        let mats = MaterialTable::compiled_default();
+        let gen = generate_world(&mats, 2026);
+        let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+        let mut player = PlayerController::new();
+        player.attach_ecs(&mut world, &sim);
+        let mut cmd = CommandWorldState::new();
+
+        // Open with `T` and type `/ti` + Tab -> `/time`, then ` set day` -> Enter.
+        cmd.handle_console_input(&press(keys::KEY_T), &mut world, &mut sim, &mut player);
+        for k in [
+            press(keys::OTHER_BASE + 0xBF),
+            press(keys::KEY_T),
+            press(keys::OTHER_BASE + b'I' as usize),
+        ] {
+            cmd.handle_console_input(&k, &mut world, &mut sim, &mut player);
+        }
+        assert_eq!(cmd.input_line, "/ti");
+        cmd.handle_console_input(&press(keys::TAB), &mut world, &mut sim, &mut player);
+        assert_eq!(cmd.input_line, "/time");
+
+        // Cursor navigation + editing: add `x` at start via Home, then Delete it.
+        cmd.handle_console_input(
+            &press(keys::OTHER_BASE + 0x24),
+            &mut world,
+            &mut sim,
+            &mut player,
+        );
+        assert_eq!(cmd.cursor_char, 0);
+        cmd.handle_console_input(
+            &press(keys::OTHER_BASE + b'X' as usize),
+            &mut world,
+            &mut sim,
+            &mut player,
+        );
+        assert_eq!(cmd.input_line, "x/time");
+        cmd.handle_console_input(
+            &press(keys::OTHER_BASE + 0x08),
+            &mut world,
+            &mut sim,
+            &mut player,
+        );
+        assert_eq!(cmd.input_line, "/time");
+        cmd.handle_console_input(
+            &press(keys::OTHER_BASE + 0x23),
+            &mut world,
+            &mut sim,
+            &mut player,
+        );
+
+        for k in [
+            press(keys::SPACE),
+            press(keys::KEY_S),
+            press(keys::KEY_E),
+            press(keys::KEY_T),
+            press(keys::SPACE),
+            press(keys::KEY_D),
+            press(keys::KEY_A),
+            press(keys::OTHER_BASE + b'Y' as usize),
+        ] {
+            cmd.handle_console_input(&k, &mut world, &mut sim, &mut player);
+        }
+        assert_eq!(cmd.input_line, "/time set day");
+        cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player);
+        assert!(!cmd.console_open);
+        assert_eq!(cmd.time_ticks, 1_000);
+        assert_eq!(cmd.history, vec!["/time set day".to_string()]);
+        assert_eq!(cmd.chat_log[0].tag, ChatTag::Command);
+
+        // Open with `Enter`, test relative tilde (`Shift + backquote`) + minus + dot, then chat msg.
+        cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player);
+        for k in [
+            press_shifted(keys::OTHER_BASE + 0xC0),
+            press(keys::OTHER_BASE + 0xBD),
+            press(keys::DIGIT_5),
+            press(keys::OTHER_BASE + 0xBE),
+            press(keys::DIGIT_2),
+        ] {
+            cmd.handle_console_input(&k, &mut world, &mut sim, &mut player);
+        }
+        assert_eq!(cmd.input_line, "~-5.2");
+        cmd.handle_console_input(&press(keys::ARROW_UP), &mut world, &mut sim, &mut player);
+        assert_eq!(cmd.input_line, "/time set day");
+        cmd.handle_console_input(&press(keys::ARROW_DOWN), &mut world, &mut sim, &mut player);
+        assert_eq!(cmd.input_line, "~-5.2");
+        cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player);
+        assert_eq!(cmd.chat_log[0].tag, ChatTag::Player);
+        assert_eq!(cmd.chat_log[0].text, "<Player> ~-5.2");
+
+        // Sync chat UI spawns pooled bottom-left entities and ages out unfocused lines after 10s.
+        cmd.sync_chat_ui(&mut world, 0.2);
+        assert!(cmd.chat_ui.initialized);
+        assert_eq!(
+            world.get::<Active>(cmd.chat_ui.rows[0].bg),
+            Some(Active(true))
+        );
+        for _ in 0..45 {
+            cmd.sync_chat_ui(&mut world, 0.25);
+        }
+        assert_eq!(
+            world.get::<Active>(cmd.chat_ui.rows[0].bg),
+            Some(Active(false))
+        );
+        assert_eq!(
+            world.get::<Active>(cmd.chat_ui.rows[0].text),
+            Some(Active(false))
+        );
+
+        // `/clear` clears the chat log.
+        cmd.execute("/clear", &mut world, &mut sim, &mut player);
+        assert!(cmd.chat_log.is_empty());
     }
 }

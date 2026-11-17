@@ -2,17 +2,16 @@
 
 use glam::{EulerRot, Quat, Vec3};
 use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
-use prism_scene::ui::{
-    Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
-};
+use prism_scene::ui::{Anchors, Canvas, CanvasScaleMode, Node, Pivot, Style, Text, TextAlign};
 use prism_scene::{
     Active, Camera, FlyCameraController, LocalTransform, Name, VoxelCursorHighlight, VoxelHit,
     VoxelTier, VOXEL_L1_SIZE_M, VOXEL_L2_SIZE_M, VOXEL_L3_SIZE_M,
 };
 
+use crate::catalog::CATALOG;
 use crate::materials::mat_id;
 use crate::sim::SimWorld;
-use crate::tags::{StimulusFlags, TransientFlags};
+use crate::tags::StimulusFlags;
 
 const PLAYER_RADIUS_M: f32 = 0.26;
 const PLAYER_HEIGHT_M: f32 = 1.68;
@@ -25,9 +24,35 @@ const GRAVITY_MPS2: f32 = 18.0;
 const JUMP_VEL_MPS: f32 = 6.8;
 const MAX_REACH_M: f32 = 14.0;
 
+pub const HOTBAR_LEN: usize = 10;
+
+/// Map a 32-entry catalog slug onto the closest ROM visual material ID while preserving its `PhysicalCell` template.
+pub fn catalog_mat_id(entry_id: &str) -> u8 {
+    match entry_id {
+        "conductive_wire" | "superconductor" | "copper_ore" | "gold_ore" => mat_id::WIRE,
+        "piezo_crystal" => mat_id::CONDUIT,
+        "water_cell" => mat_id::WATER,
+        "glass_wall" | "diamond_ore" => mat_id::GLASS,
+        "insulated_wall" | "iron_ore" => mat_id::ALLOY,
+        "volatile_fuel" | "absorbent_sponge" => mat_id::TIMBER,
+        "acid_pool" => mat_id::ACID,
+        "cryo_spore" | "hyper_neo_core" => mat_id::BIOMASS,
+        "valve_conduit" | "redstone_ore" => mat_id::VALVE,
+        "conveyor_east" => mat_id::CONDUIT,
+        "rad_isotope" | "plasma_arc" | "magma_lava" => mat_id::ISOTOPE,
+        "stasis_emitter" | "ice_block" | "snow_block" => mat_id::CRYO,
+        "bedrock" | "deepslate" => mat_id::BEDROCK,
+        "stone" | "sandstone" | "coal_ore" => mat_id::LIMESTONE,
+        "dirt" | "sand" => mat_id::SOIL,
+        "grass_block" => mat_id::GRASS,
+        _ => mat_id::LIMESTONE,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolAction {
     PlaceMaterial(u8),
+    PlaceCatalog(usize),
     StimHeat,
     StimShock,
     StimWet,
@@ -38,6 +63,9 @@ impl ToolAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::PlaceMaterial(id) => match id {
+                mat_id::BEDROCK => "Place Bedrock",
+                mat_id::SOIL => "Place Soil",
+                mat_id::GRASS => "Place Grass",
                 mat_id::ALLOY => "Place Alloy",
                 mat_id::GLASS => "Place Glass",
                 mat_id::TIMBER => "Place Timber",
@@ -46,18 +74,81 @@ impl ToolAction {
                 mat_id::CRYO => "Pour Cryo",
                 mat_id::BIOMASS => "Seed Biomass",
                 mat_id::WIRE => "Lay Wire",
+                mat_id::CONDUIT => "Place Conduit",
+                mat_id::VALVE => "Place Valve",
                 mat_id::ISOTOPE => "Place Isotope",
+                mat_id::TANK => "Place Tank",
                 _ => "Place Stone",
             },
+            Self::PlaceCatalog(idx) => CATALOG.get(idx).map(|e| e.name).unwrap_or("Place Catalog"),
             Self::StimHeat => "Stim: Heat/Ignite",
             Self::StimShock => "Stim: Shock [E]",
             Self::StimWet => "Stim: Splash Wet",
             Self::StimCold => "Stim: Cryo Cold",
         }
     }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::PlaceMaterial(id) => match id {
+                mat_id::BEDROCK => "Bedrock",
+                mat_id::SOIL => "Soil",
+                mat_id::GRASS => "Grass",
+                mat_id::ALLOY => "Alloy",
+                mat_id::GLASS => "Glass",
+                mat_id::TIMBER => "Timber",
+                mat_id::WATER => "Water",
+                mat_id::ACID => "Acid",
+                mat_id::CRYO => "Cryo",
+                mat_id::BIOMASS => "Bio",
+                mat_id::WIRE => "Wire",
+                mat_id::CONDUIT => "Conduit",
+                mat_id::VALVE => "Valve",
+                mat_id::ISOTOPE => "Isotope",
+                mat_id::TANK => "Tank",
+                _ => "Stone",
+            },
+            Self::PlaceCatalog(idx) => CATALOG.get(idx).map(|e| e.name).unwrap_or("Catalog"),
+            Self::StimHeat => "Heat",
+            Self::StimShock => "Shock",
+            Self::StimWet => "Wet",
+            Self::StimCold => "Cold",
+        }
+    }
+
+    pub fn swatch_color(self) -> [f32; 4] {
+        match self {
+            Self::PlaceMaterial(id) => match id {
+                mat_id::BEDROCK => [0.22, 0.23, 0.27, 1.0],
+                mat_id::SOIL => [0.46, 0.31, 0.20, 1.0],
+                mat_id::GRASS => [0.28, 0.62, 0.25, 1.0],
+                mat_id::ALLOY => [0.58, 0.63, 0.70, 1.0],
+                mat_id::GLASS => [0.62, 0.86, 0.96, 1.0],
+                mat_id::TIMBER => [0.62, 0.41, 0.24, 1.0],
+                mat_id::WATER => [0.22, 0.56, 0.94, 1.0],
+                mat_id::ACID => [0.45, 0.95, 0.22, 1.0],
+                mat_id::CRYO => [0.46, 0.88, 0.98, 1.0],
+                mat_id::BIOMASS => [0.62, 0.28, 0.84, 1.0],
+                mat_id::WIRE => [0.85, 0.54, 0.24, 1.0],
+                mat_id::CONDUIT => [0.48, 0.56, 0.64, 1.0],
+                mat_id::VALVE => [0.85, 0.26, 0.24, 1.0],
+                mat_id::ISOTOPE => [0.35, 0.98, 0.42, 1.0],
+                mat_id::TANK => [0.34, 0.68, 0.72, 1.0],
+                _ => [0.56, 0.57, 0.60, 1.0],
+            },
+            Self::PlaceCatalog(idx) => CATALOG
+                .get(idx)
+                .map(|e| e.color)
+                .unwrap_or([0.75, 0.75, 0.75, 1.0]),
+            Self::StimHeat => [0.98, 0.44, 0.14, 1.0],
+            Self::StimShock => [0.35, 0.84, 1.0, 1.0],
+            Self::StimWet => [0.24, 0.58, 0.96, 1.0],
+            Self::StimCold => [0.58, 0.92, 1.0, 1.0],
+        }
+    }
 }
 
-const HOTBAR_TOOLS: [ToolAction; 10] = [
+pub const DEFAULT_HOTBAR_TOOLS: [ToolAction; HOTBAR_LEN] = [
     ToolAction::PlaceMaterial(mat_id::ALLOY),
     ToolAction::PlaceMaterial(mat_id::GLASS),
     ToolAction::PlaceMaterial(mat_id::TIMBER),
@@ -89,6 +180,7 @@ pub struct PlayerController {
     pub tier: VoxelTier,
     pub tier_mode: TierMode,
     pub tool_index: usize,
+    pub hotbar: [ToolAction; HOTBAR_LEN],
     coyote_timer: f32,
     jump_buffer: f32,
     camera_step_offset_y: f32,
@@ -98,9 +190,6 @@ pub struct PlayerController {
     last_synced_camera_rot: Option<Quat>,
     camera_entity: Option<EntityHandle>,
     cursor_entity: Option<EntityHandle>,
-    hud_panel: Option<EntityHandle>,
-    hud_status: Option<EntityHandle>,
-    hud_probe: Option<EntityHandle>,
     crosshair: Option<EntityHandle>,
     last_hit: Option<VoxelHit>,
 }
@@ -124,6 +213,7 @@ impl PlayerController {
             tier: VoxelTier::L2,
             tier_mode: TierMode::Auto,
             tool_index: 0,
+            hotbar: DEFAULT_HOTBAR_TOOLS,
             coyote_timer: 0.0,
             jump_buffer: 0.0,
             camera_step_offset_y: 0.0,
@@ -133,9 +223,6 @@ impl PlayerController {
             last_synced_camera_rot: None,
             camera_entity: None,
             cursor_entity: None,
-            hud_panel: None,
-            hud_status: None,
-            hud_probe: None,
             crosshair: None,
             last_hit: None,
         }
@@ -304,52 +391,7 @@ impl PlayerController {
     }
 
     fn spawn_hud(&mut self, world: &mut GameWorld<'_>) {
-        // Translucent dark backdrop panel in top-left corner for legible readout.
-        let panel = world.spawn();
-        world.set(panel, Name("hud_panel".to_string()));
-        world.set(panel, Node::default());
-        world.set(panel, hud_canvas());
-        world.set(
-            panel,
-            Style {
-                width: Some(820.0),
-                height: Some(82.0),
-                anchors: Anchors::TOP_LEFT,
-                pivot: Pivot::TOP_LEFT,
-                margin: Margin {
-                    left: 12.0,
-                    top: 12.0,
-                    ..Margin::default()
-                },
-                background: [0.04, 0.07, 0.12, 0.72],
-                border_radius: 6.0,
-                ..Style::default()
-            },
-        );
-        world.set(panel, Active(true));
-        self.hud_panel = Some(panel);
-
-        self.hud_status = Some(spawn_hud_text(
-            world,
-            "hud_status",
-            "Emergence v3.0 MVP",
-            17.0,
-            22.0,
-            20.0,
-            790.0,
-            [0.92, 0.96, 1.0, 1.0],
-        ));
-        self.hud_probe = Some(spawn_hud_text(
-            world,
-            "hud_probe",
-            "Aim at voxel to inspect...",
-            15.0,
-            22.0,
-            46.0,
-            790.0,
-            [0.72, 0.92, 0.85, 1.0],
-        ));
-
+        // Only the centered crosshair stays permanently visible; status/probe readouts live in F3.
         let ch = world.spawn();
         world.set(ch, Name("hud_crosshair".to_string()));
         world.set(ch, Node::default());
@@ -385,11 +427,23 @@ impl PlayerController {
         sim: &mut SimWorld,
         dt: f32,
     ) {
+        self.update_look_and_tools_with_ui(world, sim, dt, false);
+    }
+
+    /// Process frame-responsive mouse look and hotbar selection, gating click/drag actions when HUD UI consumes input.
+    pub fn update_look_and_tools_with_ui(
+        &mut self,
+        world: &mut GameWorld<'_>,
+        sim: &mut SimWorld,
+        dt: f32,
+        ui_consumed: bool,
+    ) {
         let has_fly_controller = self.sync_from_camera_if_modified(world);
         let input = world.input();
 
         // Look via mouse delta while locked, plus drag-look and arrow-key fallback when unlocked.
-        let unlocked_drag = !input.pointer_locked
+        let unlocked_drag = !ui_consumed
+            && !input.pointer_locked
             && (input.right_held
                 || input.middle_held
                 || (!self.was_pointer_locked && input.left_held));
@@ -427,7 +481,7 @@ impl PlayerController {
 
         // Track unlocked RMB click vs drag-look so dragging does not spuriously trigger placement.
         let mouse_move_px = (input.mouse_delta[0].powi(2) + input.mouse_delta[1].powi(2)).sqrt();
-        let unlocked_right_click = if input.pointer_locked {
+        let unlocked_right_click = if input.pointer_locked || ui_consumed {
             self.was_unlocked_right_held = false;
             self.unlocked_right_drag_px = 0.0;
             false
@@ -444,7 +498,7 @@ impl PlayerController {
             self.unlocked_right_drag_px = 0.0;
             released_click || input.right_clicked
         };
-        let use_tool = (input.pointer_locked && input.right_clicked) || unlocked_right_click;
+        let use_tool = !ui_consumed && ((input.pointer_locked && input.right_clicked) || unlocked_right_click);
 
         // Toggle Walk / Fly with Tab or V.
         if input.key_pressed(keys::TAB) || input.key_pressed(keys::OTHER_BASE + b'V' as usize) {
@@ -466,12 +520,6 @@ impl PlayerController {
                 };
             }
         }
-        if input.key_pressed(keys::KEY_T) {
-            self.tier_mode = match self.tier_mode {
-                TierMode::Auto => TierMode::Fixed(self.tier),
-                TierMode::Fixed(_) => TierMode::Auto,
-            };
-        }
 
         // Smoothly glide camera eye height over stepped ledges without abrupt pops.
         if self.camera_step_offset_y.abs() > 1e-4 {
@@ -492,15 +540,15 @@ impl PlayerController {
             (6, keys::DIGIT_0),
         ] {
             if input.key_pressed(key) {
-                self.tool_index = slot_idx;
+                self.select_slot(slot_idx);
             }
         }
         if input.key_pressed(keys::KEY_Q) {
-            self.tool_index = (self.tool_index + 1) % HOTBAR_TOOLS.len();
+            self.tool_index = (self.tool_index + 1) % self.hotbar.len();
         }
-        if input.scroll.abs() > 0.1 {
+        if !ui_consumed && input.scroll.abs() > 0.1 {
             let delta = if input.scroll > 0.0 { 1isize } else { -1isize };
-            let len = HOTBAR_TOOLS.len() as isize;
+            let len = self.hotbar.len() as isize;
             self.tool_index = ((self.tool_index as isize + delta).rem_euclid(len)) as usize;
         }
 
@@ -514,7 +562,7 @@ impl PlayerController {
         let eye = self.eye_pos();
         let cam_rot = self.live_camera_rotation(world);
         let fwd = (cam_rot * -Vec3::Z).normalize_or(self.forward_dir());
-        let tool = HOTBAR_TOOLS[self.tool_index];
+        let tool = self.active_tool();
         let hit_liquids = matches!(
             tool,
             ToolAction::StimCold
@@ -552,7 +600,7 @@ impl PlayerController {
 
         // Interaction: Carve (Left Click), Place / Tool (Right Click), Quick Stimuli (F/E/R/G).
         if let Some(hit) = self.last_hit {
-            if self.was_pointer_locked && input.left_clicked {
+            if !ui_consumed && self.was_pointer_locked && input.left_clicked {
                 sim.carve_at_hit(self.tier, &hit);
             }
             if use_tool {
@@ -561,6 +609,19 @@ impl PlayerController {
                         let place_pos = self.placement_world_center(&hit);
                         if !self.overlaps_player_voxel(place_pos, self.tier) {
                             sim.place_adjacent(self.tier, &hit, mat);
+                        }
+                    }
+                    ToolAction::PlaceCatalog(idx) => {
+                        if let Some(entry) = CATALOG.get(idx) {
+                            let place_pos = self.placement_world_center(&hit);
+                            if !self.overlaps_player_voxel(place_pos, self.tier) {
+                                sim.place_adjacent_cell(
+                                    self.tier,
+                                    &hit,
+                                    catalog_mat_id(entry.id),
+                                    entry.template,
+                                );
+                            }
                         }
                     }
                     ToolAction::StimHeat => {
@@ -592,7 +653,6 @@ impl PlayerController {
         }
 
         self.was_pointer_locked = input.pointer_locked;
-        self.update_hud_text(world, sim);
     }
 
     /// Fixed-timestep kinematics & swept three-tier voxel AABB collision (`fixed_update`).
@@ -804,7 +864,7 @@ impl PlayerController {
             && (center[2] + half > pmin[2] && center[2] - half < pmax[2])
     }
 
-    fn sync_camera_transform(&mut self, world: &mut GameWorld<'_>) {
+    pub(crate) fn sync_camera_transform(&mut self, world: &mut GameWorld<'_>) {
         let Some(cam) = self.camera_entity else {
             return;
         };
@@ -817,65 +877,51 @@ impl PlayerController {
         self.last_synced_camera_rot = Some(rot.normalize());
     }
 
-    pub fn set_hud_status_override(&self, world: &mut GameWorld<'_>, message: &str) {
-        if let Some(ent) = self.hud_status {
-            if let Some(mut text) = world.get::<Text>(ent) {
-                text.content = message.to_string();
-                world.set(ent, text);
-            }
-        }
+    /// Returns the most recent aimed voxel hit for F3 targeted-block inspection.
+    pub fn last_hit(&self) -> Option<&VoxelHit> {
+        self.last_hit.as_ref()
     }
 
-    fn update_hud_text(&self, world: &mut GameWorld<'_>, sim: &SimWorld) {
+    /// Returns the active tool action for the currently selected hotbar slot.
+    pub fn active_tool(&self) -> ToolAction {
+        self.hotbar[self.tool_index.min(HOTBAR_LEN - 1)]
+    }
+
+    /// Selects a hotbar slot (`0..HOTBAR_LEN`).
+    pub fn select_slot(&mut self, slot: usize) {
+        self.tool_index = slot.min(HOTBAR_LEN - 1);
+    }
+
+    /// Replaces the currently selected hotbar slot with `tool`.
+    pub fn equip_active_slot(&mut self, tool: ToolAction) {
+        let idx = self.tool_index.min(HOTBAR_LEN - 1);
+        self.hotbar[idx] = tool;
+    }
+
+    /// Returns the active tool label for F3 status readout.
+    pub fn active_tool_label(&self) -> &'static str {
+        self.active_tool().label()
+    }
+
+    /// Returns a human-readable summary of the current voxel editing tier mode.
+    pub fn tier_summary(&self) -> String {
         let size_label = match self.tier {
             VoxelTier::L1 => "L1 (1.0m)",
             VoxelTier::L2 => "L2 (0.25m)",
             VoxelTier::L3 => "L3 (0.0625m)",
         };
-        let tier_label = match self.tier_mode {
-            TierMode::Auto => format!("AUTO->{size_label}"),
-            TierMode::Fixed(_) => format!("LOCK {size_label}"),
-        };
-        let mode_label = if self.fly_mode { "FLY" } else { "WALK" };
-        let tool_label = HOTBAR_TOOLS[self.tool_index].label();
-
-        if let Some(ent) = self.hud_status {
-            if let Some(mut text) = world.get::<Text>(ent) {
-                text.content = format!(
-                    "[{mode_label}] Tier(1/2/3/T): {tier_label} | Tool(Q/4-0): {tool_label} | Active: {}",
-                    sim.active_count()
-                );
-                world.set(ent, text);
-            }
+        match self.tier_mode {
+            TierMode::Auto => format!("Auto -> {size_label}"),
+            TierMode::Fixed(_) => format!("Fixed ({size_label})"),
         }
+    }
 
-        if let Some(ent) = self.hud_probe {
-            if let Some(mut text) = world.get::<Text>(ent) {
-                if let Some(hit) = self.last_hit {
-                    if let Some((mat, cell, l3_mask)) = sim.inspect_l2(hit.world_l2) {
-                        let mat_name = &sim.materials.get(mat).name;
-                        let tags = format_transient_tags(cell.transient);
-                        let hit_tag = match hit.hit_tier {
-                            VoxelTier::L1 => "L1 1m",
-                            VoxelTier::L2 => "L2 0.25m",
-                            VoxelTier::L3 => "L3 0.06m",
-                        };
-                        text.content = format!(
-                            "Aim[{hit_tag}]: {mat_name} ({:?}/{:?}/{:?}) L3:{}/64 HP:{} [{tags}] | F:Heat E:Shock R:Wet G:Cryo Tab:Fly",
-                            cell.env.matter(),
-                            cell.env.temperature(),
-                            cell.env.bio_activity(),
-                            l3_mask.count_ones(),
-                            cell.durability,
-                        );
-                    }
-                } else {
-                    text.content =
-                        "LMB:Carve  RMB:Place/Stim  1/2/3:Tier(re-press=Auto)  F:Heat  E:Shock  R:Wet  G:Cryo  Tab:Fly"
-                            .to_string();
-                }
-                world.set(ent, text);
-            }
+    /// Returns the current locomotion mode label.
+    pub fn motion_mode_label(&self) -> &'static str {
+        if self.fly_mode {
+            "Fly"
+        } else {
+            "Walk"
         }
     }
 }
@@ -916,89 +962,12 @@ fn horizontal_wish_dir_for_rot(input: &InputSnapshot, cam_rot: Quat, fallback_ya
     }
 }
 
-fn format_transient_tags(t: TransientFlags) -> String {
-    let mut parts = Vec::new();
-    if t.contains(TransientFlags::WET) {
-        parts.push("WET");
-    }
-    if t.contains(TransientFlags::BURNING) {
-        parts.push("BURNING");
-    }
-    if t.contains(TransientFlags::FROZEN) {
-        parts.push("FROZEN");
-    }
-    if t.contains(TransientFlags::CHARGED) {
-        parts.push("CHARGED");
-    }
-    if t.contains(TransientFlags::CORRODED) || t.contains(TransientFlags::CORROSIVE) {
-        parts.push("CORRODED");
-    }
-    if t.contains(TransientFlags::INFECTED) {
-        parts.push("INFECTED");
-    }
-    if t.contains(TransientFlags::BRITTLE) {
-        parts.push("BRITTLE");
-    }
-    if t.contains(TransientFlags::WARNING) {
-        parts.push("WARNING");
-    }
-    if parts.is_empty() {
-        "NORMAL".to_string()
-    } else {
-        parts.join("+")
-    }
-}
-
 fn hud_canvas() -> Canvas {
     Canvas {
         reference_resolution: [1280.0, 720.0],
         scale_mode: CanvasScaleMode::ScaleWithScreenSize,
         match_width_or_height: 0.5,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn spawn_hud_text(
-    world: &mut GameWorld<'_>,
-    name: &str,
-    content: &str,
-    font_size: f32,
-    left: f32,
-    top: f32,
-    width: f32,
-    color: [f32; 4],
-) -> EntityHandle {
-    let entity = world.spawn();
-    world.set(entity, Name(name.to_string()));
-    world.set(entity, Node::default());
-    world.set(entity, hud_canvas());
-    world.set(
-        entity,
-        Style {
-            width: Some(width),
-            height: Some(font_size + 10.0),
-            anchors: Anchors::TOP_LEFT,
-            pivot: Pivot::TOP_LEFT,
-            margin: Margin {
-                left,
-                top,
-                ..Margin::default()
-            },
-            ..Style::default()
-        },
-    );
-    world.set(
-        entity,
-        Text {
-            content: content.to_string(),
-            font_size,
-            color,
-            alignment: TextAlign::Left,
-            ..Text::default()
-        },
-    );
-    world.set(entity, Active(true));
-    entity
 }
 
 #[cfg(test)]

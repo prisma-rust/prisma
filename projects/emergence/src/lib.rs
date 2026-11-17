@@ -9,6 +9,7 @@
 
 pub mod catalog;
 pub mod commands;
+pub mod debug_hud;
 pub mod grid;
 pub mod materials;
 pub mod nei_ui;
@@ -23,9 +24,10 @@ pub mod world_gen;
 use prism_game_api::{keys, GameWorld, UiQuad};
 
 use crate::commands::CommandWorldState;
+use crate::debug_hud::DebugHudState;
 use crate::grid::CellGrid;
 use crate::materials::MaterialTable;
-use crate::nei_ui::NeiHudState;
+use crate::nei_ui::{EmergenceNeiHud, NeiHudState};
 use crate::player::PlayerController;
 use crate::sim::SimWorld;
 use crate::tags::{
@@ -282,6 +284,8 @@ pub struct EmergenceRuntime {
     pub sim: SimWorld,
     pub player: PlayerController,
     pub commands: CommandWorldState,
+    pub debug_hud: DebugHudState,
+    pub nei: EmergenceNeiHud,
 }
 
 impl EmergenceRuntime {
@@ -298,6 +302,8 @@ impl EmergenceRuntime {
             sim,
             player,
             commands: CommandWorldState::new(),
+            debug_hud: DebugHudState::new(seed),
+            nei: EmergenceNeiHud::new(),
         }
     }
 }
@@ -318,34 +324,48 @@ pub fn emergence_fixed_tick(
     runtime
         .sim
         .stream_around(runtime.player.feet_pos, Some(world), 1);
+    let sim_t0 = std::time::Instant::now();
     runtime.sim.step(dt);
+    let sim_ms = sim_t0.elapsed().as_secs_f32() * 1000.0;
+    runtime.debug_hud.record_sim_step_ms(sim_ms);
     runtime.sim.sync_dirty_chunks(world);
 }
 
-/// Per-frame interaction & camera look system: command console, mouse aim, L1/L2/L3 carve/place, HUD.
+/// Per-frame interaction & camera look system: command console, F3 overlay, mouse aim, voxel tools.
 pub fn emergence_frame_tick(
     state: &mut Option<EmergenceRuntime>,
     world: &mut GameWorld<'_>,
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
+    runtime.debug_hud.update_telemetry(dt);
+
     let input = world.input();
+    let screen = world.screen_size();
     let console_active =
         runtime
             .commands
             .handle_console_input(&input, world, &mut runtime.sim, &mut runtime.player);
     if !console_active {
+        if input.key_pressed(keys::F3) {
+            runtime.debug_hud.open = !runtime.debug_hud.open;
+        }
+        let ui_consumed =
+            runtime
+                .nei
+                .handle_input(&input, screen, console_active, &mut runtime.player);
         runtime
             .player
-            .update_look_and_tools(world, &mut runtime.sim, dt);
+            .update_look_and_tools_with_ui(world, &mut runtime.sim, dt, ui_consumed);
     }
-    if runtime.commands.console_open {
-        let prompt = format!("> {}_", runtime.commands.input_line);
-        runtime.player.set_hud_status_override(world, &prompt);
-    } else if runtime.commands.feedback_timer_sec > 0.0 && !runtime.commands.feedback.is_empty() {
-        let msg = runtime.commands.feedback.clone();
-        runtime.player.set_hud_status_override(world, &msg);
-    }
+
+    runtime.commands.sync_chat_ui(world, dt);
+    runtime
+        .nei
+        .sync_ui(world, &runtime.sim, &runtime.player, console_active);
+    runtime
+        .debug_hud
+        .sync_ui(world, &runtime.sim, &runtime.player, &runtime.commands);
     runtime.sim.sync_dirty_chunks(world);
 }
 
@@ -456,10 +476,64 @@ pub fn sandbox_tick(state: &mut Option<SandboxState>, world: &mut GameWorld<'_>,
 }
 
 #[cfg(feature = "player")]
+#[derive(Default)]
+struct EmergenceHostHook;
+
+#[cfg(feature = "player")]
+impl prism_app::FrameHook for EmergenceHostHook {
+    fn on_tick(
+        &mut self,
+        window: &prism_app::PlatformWindow,
+        _world: &mut prism_app::World,
+        _settings: &mut prism_app::RenderSettings,
+        stats: &prism_app::RenderStats,
+        _shared: &prism_app::RenderShared,
+    ) {
+        let top_gpu_passes = stats
+            .gpu_timings
+            .as_ref()
+            .filter(|g| g.supported && !g.passes.is_empty())
+            .map(|g| {
+                let mut passes: Vec<(String, f32)> = g
+                    .passes
+                    .iter()
+                    .map(|p| (p.name.to_string(), p.ms))
+                    .collect();
+                passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+                passes.truncate(2);
+                passes
+            })
+            .unwrap_or_default();
+
+        debug_hud::publish_host_render_stats(debug_hud::HostRenderStats {
+            fps: stats.fps,
+            frame_time_ms: stats.frame_time_ms,
+            gpu_frame_ms: stats
+                .gpu_timings
+                .as_ref()
+                .filter(|g| g.supported)
+                .map(|g| g.frame_ms),
+            gpu_total_ms: stats
+                .gpu_timings
+                .as_ref()
+                .filter(|g| g.supported)
+                .map(|g| g.total_ms),
+            top_gpu_passes,
+            cpu_p95_ms: stats.frame_stats.cpu.as_ref().map(|c| c.p95_ms),
+            low_1pct_fps: stats.frame_stats.cpu.as_ref().map(|c| c.low_1pct_fps),
+            physical_size: window.inner_size(),
+            scale_factor: window.scale_factor(),
+        });
+    }
+}
+
+/// Builds the full playable Emergence application (`player` feature).
+#[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
-        .with_subsystem(prism_app::Subsystem::Audio);
+        .with_subsystem(prism_app::Subsystem::Audio)
+        .with_frame_hook(EmergenceHostHook);
     app.add_fixed_game_system::<EmergenceRuntime, _>("emergence::fixed_tick", emergence_fixed_tick);
     app.add_game_system::<EmergenceRuntime, _>("emergence::frame_tick", emergence_frame_tick);
     app
@@ -505,4 +579,89 @@ mod preview {
 #[no_mangle]
 pub extern "C" fn android_main(android_app: prism_app::AndroidApp) {
     prism_app::run_on_android(build_app, android_app).expect("fatal application error");
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+    use crate::player::TierMode;
+    use prism_game_api::{GameWorld, InputSnapshot};
+
+    fn press_key_snapshot(key_idx: usize) -> InputSnapshot {
+        let mut input = InputSnapshot::default();
+        input.keys[key_idx / 64] |= 1u64 << (key_idx % 64);
+        input.key_edges[key_idx / 64] |= 1u64 << (key_idx % 64);
+        input
+    }
+
+    #[test]
+    fn frame_tick_gates_f3_while_chat_is_open_and_frees_t_from_tier_toggle() {
+        let mut ecs = prism_ecs::World::new();
+        let mut world = GameWorld::host(&mut ecs);
+        let mut state: Option<EmergenceRuntime> = None;
+
+        // Bootstrap starts with F3 overlay and chat console hidden.
+        world.set_input(InputSnapshot::default());
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        {
+            let rt = state.as_ref().expect("bootstrapped");
+            assert!(!rt.debug_hud.open);
+            assert!(!rt.commands.console_open);
+            assert_eq!(rt.player.tier_mode, TierMode::Auto);
+        }
+
+        // Pressing `T` opens chat console and does not flip player TierMode.
+        world.set_input(press_key_snapshot(keys::KEY_T));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        {
+            let rt = state.as_ref().unwrap();
+            assert!(rt.commands.console_open);
+            assert_eq!(rt.player.tier_mode, TierMode::Auto);
+        }
+
+        // Pressing `F3` while typing in chat must not toggle the debug overlay.
+        world.set_input(press_key_snapshot(keys::F3));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().debug_hud.open);
+
+        // Close chat with `Escape`, then press `F3` to toggle overlay on and back off.
+        world.set_input(press_key_snapshot(keys::ESCAPE));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().commands.console_open);
+
+        world.set_input(press_key_snapshot(keys::F3));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(state.as_ref().unwrap().debug_hud.open);
+
+        world.set_input(press_key_snapshot(keys::F3));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().debug_hud.open);
+
+        // Top-center tooltip activates when aiming at blocks and [B] toggles NEI only when chat is closed.
+        {
+            let rt = state.as_ref().unwrap();
+            assert!(rt.nei.open);
+            assert!(rt.nei.build_top_tooltip(&rt.sim, &rt.player).is_some());
+        }
+
+        world.set_input(press_key_snapshot(keys::OTHER_BASE + b'B' as usize));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().nei.open);
+
+        world.set_input(press_key_snapshot(keys::KEY_T));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(state.as_ref().unwrap().commands.console_open);
+
+        world.set_input(press_key_snapshot(keys::OTHER_BASE + b'B' as usize));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().nei.open);
+
+        world.set_input(press_key_snapshot(keys::ESCAPE));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(!state.as_ref().unwrap().commands.console_open);
+
+        world.set_input(press_key_snapshot(keys::OTHER_BASE + b'B' as usize));
+        emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        assert!(state.as_ref().unwrap().nei.open);
+    }
 }

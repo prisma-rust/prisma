@@ -906,11 +906,27 @@ impl ViewportState {
 
         let hovered = response.hovered();
         for (button, raw_down, tracked) in [
-            (MouseButton::Left, primary_down, &mut self.forwarded_left_down),
-            (MouseButton::Right, secondary_down, &mut self.forwarded_right_down),
-            (MouseButton::Middle, middle_down, &mut self.forwarded_middle_down),
+            (
+                MouseButton::Left,
+                primary_down,
+                &mut self.forwarded_left_down,
+            ),
+            (
+                MouseButton::Right,
+                secondary_down,
+                &mut self.forwarded_right_down,
+            ),
+            (
+                MouseButton::Middle,
+                middle_down,
+                &mut self.forwarded_middle_down,
+            ),
         ] {
-            let held = if *tracked { raw_down } else { raw_down && hovered };
+            let held = if *tracked {
+                raw_down
+            } else {
+                raw_down && hovered
+            };
             if held != *tracked {
                 let state = if held {
                     ElementState::Pressed
@@ -3153,10 +3169,44 @@ fn engine_key(key: egui::Key) -> Option<KeyCode> {
         EguiKey::D => EngineKey::KeyD,
         EguiKey::Q => EngineKey::KeyQ,
         EguiKey::E => EngineKey::KeyE,
+        EguiKey::T => EngineKey::KeyT,
+        EguiKey::B => EngineKey::Other(b'B' as u32),
+        EguiKey::C => EngineKey::Other(b'C' as u32),
+        EguiKey::F => EngineKey::Other(b'F' as u32),
+        EguiKey::G => EngineKey::Other(b'G' as u32),
+        EguiKey::H => EngineKey::Other(b'H' as u32),
+        EguiKey::I => EngineKey::Other(b'I' as u32),
+        EguiKey::J => EngineKey::Other(b'J' as u32),
+        EguiKey::K => EngineKey::Other(b'K' as u32),
+        EguiKey::L => EngineKey::Other(b'L' as u32),
+        EguiKey::M => EngineKey::Other(b'M' as u32),
+        EguiKey::N => EngineKey::Other(b'N' as u32),
+        EguiKey::O => EngineKey::Other(b'O' as u32),
+        EguiKey::P => EngineKey::Other(b'P' as u32),
+        EguiKey::R => EngineKey::Other(b'R' as u32),
+        EguiKey::U => EngineKey::Other(b'U' as u32),
+        EguiKey::V => EngineKey::Other(b'V' as u32),
+        EguiKey::X => EngineKey::Other(b'X' as u32),
+        EguiKey::Y => EngineKey::Other(b'Y' as u32),
+        EguiKey::Z => EngineKey::Other(b'Z' as u32),
         EguiKey::Space => EngineKey::Space,
         EguiKey::Escape => EngineKey::Escape,
         EguiKey::Tab => EngineKey::Tab,
         EguiKey::Enter => EngineKey::Enter,
+        EguiKey::Backspace => EngineKey::Other(0x08),
+        EguiKey::PageUp => EngineKey::Other(0x21),
+        EguiKey::PageDown => EngineKey::Other(0x22),
+        EguiKey::End => EngineKey::Other(0x23),
+        EguiKey::Home => EngineKey::Other(0x24),
+        EguiKey::Delete => EngineKey::Other(0x2E),
+        EguiKey::Semicolon => EngineKey::Other(0xBA),
+        EguiKey::Equals => EngineKey::Other(0xBB),
+        EguiKey::Comma => EngineKey::Other(0xBC),
+        EguiKey::Minus => EngineKey::Other(0xBD),
+        EguiKey::Period => EngineKey::Other(0xBE),
+        EguiKey::Slash => EngineKey::Other(0xBF),
+        EguiKey::Backtick => EngineKey::Other(0xC0),
+        EguiKey::F3 => EngineKey::F3,
         EguiKey::ArrowUp => EngineKey::ArrowUp,
         EguiKey::ArrowDown => EngineKey::ArrowDown,
         EguiKey::ArrowLeft => EngineKey::ArrowLeft,
@@ -3337,8 +3387,13 @@ mod tests {
     #[test]
     fn game_keys_use_the_engine_abi_mapping() {
         assert_eq!(engine_key(egui::Key::W), Some(KeyCode::KeyW));
+        assert_eq!(engine_key(egui::Key::T), Some(KeyCode::KeyT));
+        assert_eq!(engine_key(egui::Key::F3), Some(KeyCode::F3));
         assert_eq!(engine_key(egui::Key::Space), Some(KeyCode::Space));
         assert_eq!(engine_key(egui::Key::Num5), Some(KeyCode::Digit5));
+        assert_eq!(engine_key(egui::Key::Slash), Some(KeyCode::Other(0xBF)));
+        assert_eq!(engine_key(egui::Key::Backspace), Some(KeyCode::Other(0x08)));
+        assert_eq!(engine_key(egui::Key::Z), Some(KeyCode::Other(b'Z' as u32)));
         assert_eq!(engine_key(egui::Key::F1), None);
     }
 
