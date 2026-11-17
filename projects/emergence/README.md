@@ -21,6 +21,9 @@ projects/emergence/
     main.rs               # 桌面端可执行入口
     lib.rs                # 玩家 build_app / Android JNI / 编辑器 preview-module 入口
     tags.rs               # v3.0 全景标签 16 字节 PhysicalCell 内核与单元测试
+    grid.rs               # 8x8 分块休眠位图网格、邻接传播与浮力分层
+    catalog.rs            # NEI 物品与实体目录及全维度标签状态格式化
+    nei_ui.rs             # NEI 面板、9 格快捷道具栏与瞄准状态检视 HUD
 ```
 
 ## 构建与校验
@@ -34,6 +37,6 @@ cargo test --manifest-path projects/emergence/Cargo.toml --no-default-features -
 构建桌面玩家二进制（需 Vulkan / 音频系统库与已编译着色器）：
 
 ```bash
-cargo run -p prism-build-pipeline -- build-scenes --project projects/emergence
+cargo run -p prism-build-pipeline -- build-scenes --manifest projects/emergence/assets/scenes.json --staging projects/emergence/target/scene_pack --output projects/emergence/assets/scenes.pak
 cargo build --manifest-path projects/emergence/Cargo.toml
 ```

@@ -40,7 +40,7 @@ prism-app = { path = "../../crates/prism-app", optional = true }
 prism-engine = { path = "../../crates/prism-engine", optional = true }
 prism-game-api = { path = "../../crates/prism-game-api", default-features = false }
 prism-project-api = { path = "../../crates/prism-project-api", optional = true }
-prism-scene = { path = "../../crates/prism-scene", default-features = false }
+prism-scene = { path = "../../crates/prism-scene", default-features = false, features = ["group-ui"] }
 glam = "0.33.2"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }

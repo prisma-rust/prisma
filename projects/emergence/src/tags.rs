@@ -298,6 +298,7 @@ impl MaterialFlags {
     pub const ELASTIC: Self = Self(1 << 12);
     pub const ABSORBENT: Self = Self(1 << 13);
     pub const OXIDIZER: Self = Self(1 << 14);
+    pub const GRANULAR: Self = Self(1 << 15);
 
     pub const fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
@@ -309,6 +310,10 @@ impl MaterialFlags {
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 }
 
@@ -350,6 +355,10 @@ impl TransientFlags {
         Self(self.0 | other.0)
     }
 
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
     pub fn insert(&mut self, other: Self) {
         self.0 |= other.0;
     }
@@ -387,6 +396,10 @@ impl TopologyFlags {
 
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 
     pub fn insert(&mut self, other: Self) {
@@ -563,6 +576,7 @@ impl PhysicalCell {
     pub fn step_reaction(&mut self, advance_clock_tick: bool) -> bool {
         if self.transient.contains(TransientFlags::STASIS) {
             self.pending_stimuli.clear();
+            self.transient.insert(TransientFlags::DORMANT);
             return false;
         }
 
@@ -578,15 +592,48 @@ impl PhysicalCell {
         {
             let next_temp = self.env.temperature().step_warmer();
             self.env.set_temperature(next_temp);
-            self.transient.remove(TransientFlags::FROZEN);
-            self.topology.remove(TopologyFlags::FROZEN_LOCKED);
+            if next_temp >= Temperature::Ambient {
+                if self.transient.contains(TransientFlags::FROZEN)
+                    && !self.material.intersects(
+                        MaterialFlags::METALLIC
+                            .union(MaterialFlags::GLASS)
+                            .union(MaterialFlags::ORGANIC),
+                    )
+                {
+                    self.env.set_matter(MatterState::Liquid);
+                }
+                self.transient.remove(TransientFlags::FROZEN);
+                self.transient.remove(TransientFlags::BRITTLE);
+                self.topology.remove(TopologyFlags::FROZEN_LOCKED);
+            }
             if self.material.contains(MaterialFlags::FLAMMABLE)
                 && !self.material.contains(MaterialFlags::HOT_RESISTANT)
                 && !self.transient.contains(TransientFlags::WET)
+                && !self.transient.contains(TransientFlags::BROKEN)
                 && (self.env.pressure() >= Pressure::Normal
                     || self.material.contains(MaterialFlags::OXIDIZER))
             {
                 self.transient.insert(TransientFlags::BURNING);
+            }
+            // Geological vitrification: sand (`GRANULAR | GLASS`) fuses into solid glass at PlasmaHeat.
+            if next_temp >= Temperature::PlasmaHeat
+                && self.material.contains(MaterialFlags::GRANULAR)
+                && self.material.contains(MaterialFlags::GLASS)
+            {
+                self.material.0 &= !MaterialFlags::GRANULAR.0;
+                self.topology.insert(TopologyFlags::RIGID_WELD);
+            }
+            // Geological melting: snow (`GRANULAR | ABSORBENT`) or un-welded ice (`GLASS`) melts into water.
+            if next_temp >= Temperature::Hot
+                && self.env.matter() == MatterState::Solid
+                && !self.topology.contains(TopologyFlags::RIGID_WELD)
+                && (self.material.contains(MaterialFlags::GLASS)
+                    || (self.material.contains(MaterialFlags::GRANULAR)
+                        && self.material.contains(MaterialFlags::ABSORBENT)))
+            {
+                self.env.set_matter(MatterState::Liquid);
+                self.material.0 &= !MaterialFlags::GRANULAR.0;
+                self.transient.insert(TransientFlags::WET);
             }
         }
 
@@ -596,6 +643,13 @@ impl PhysicalCell {
             let next_temp = self.env.temperature().step_cooler();
             self.env.set_temperature(next_temp);
             self.transient.remove(TransientFlags::BURNING);
+            // Magma/lava quenching: superheated liquid solidifies into stone/obsidian when cooled.
+            if self.env.matter() == MatterState::Liquid
+                && self.material.contains(MaterialFlags::HOT_RESISTANT)
+                && next_temp <= Temperature::Hot
+            {
+                self.env.set_matter(MatterState::Solid);
+            }
             if next_temp <= Temperature::Cryo {
                 if self.env.matter() == MatterState::Liquid {
                     self.env.set_matter(MatterState::Solid);
@@ -633,17 +687,20 @@ impl PhysicalCell {
                 if !was_charged && !self.material.contains(MaterialFlags::SUPERCONDUCTIVE) {
                     let heat = self.clocks.switch_heat().saturating_add(1);
                     self.clocks.set_switch_heat(heat);
+                    if heat + 2 >= SWITCH_HEAT_MELTDOWN_THRESHOLD {
+                        self.transient.insert(TransientFlags::WARNING);
+                    }
                     if heat >= SWITCH_HEAT_MELTDOWN_THRESHOLD {
-                        self.transient.insert(TransientFlags::BROKEN);
-                        self.transient.remove(TransientFlags::CHARGED);
-                        self.durability = 0;
+                        self.break_cell(false);
                     }
                 }
             }
         }
 
         if stimuli.contains(StimulusFlags::KINETIC) {
-            if self.material.contains(MaterialFlags::PIEZOELECTRIC) {
+            if self.material.contains(MaterialFlags::PIEZOELECTRIC)
+                && !self.transient.contains(TransientFlags::BROKEN)
+            {
                 self.transient.insert(TransientFlags::CHARGED);
                 if self.clocks.intensity() < 4 {
                     self.clocks.set_intensity(4);
@@ -652,8 +709,7 @@ impl PhysicalCell {
             if self.transient.contains(TransientFlags::BRITTLE)
                 || self.material.contains(MaterialFlags::GLASS)
             {
-                self.transient.insert(TransientFlags::BROKEN);
-                self.durability = 0;
+                self.break_cell(true);
             }
         }
 
@@ -664,8 +720,24 @@ impl PhysicalCell {
             self.transient.insert(TransientFlags::CORRODED);
             self.durability = self.durability.saturating_sub(32);
             if self.durability == 0 {
-                self.transient.insert(TransientFlags::BROKEN);
-                self.topology.insert(TopologyFlags::PUNCTURED);
+                self.break_cell(true);
+            }
+        }
+
+        // Ongoing combustion either extinguishes in wet/anoxic conditions or consumes durability.
+        if self.transient.contains(TransientFlags::BURNING) {
+            let has_oxidizer = self.env.pressure() >= Pressure::Normal
+                || self.material.contains(MaterialFlags::OXIDIZER);
+            if self.transient.contains(TransientFlags::WET)
+                || self.material.contains(MaterialFlags::HOT_RESISTANT)
+                || !has_oxidizer
+            {
+                self.transient.remove(TransientFlags::BURNING);
+            } else if advance_clock_tick {
+                self.durability = self.durability.saturating_sub(8);
+                if self.durability == 0 {
+                    self.break_cell(false);
+                }
             }
         }
 
@@ -710,7 +782,11 @@ impl PhysicalCell {
             }
 
             if self.clocks.switch_heat() > 0 {
-                self.clocks.set_switch_heat(self.clocks.switch_heat() - 1);
+                let next_heat = self.clocks.switch_heat() - 1;
+                self.clocks.set_switch_heat(next_heat);
+                if next_heat + 2 < SWITCH_HEAT_MELTDOWN_THRESHOLD {
+                    self.transient.remove(TransientFlags::WARNING);
+                }
             }
         }
 
@@ -719,13 +795,26 @@ impl PhysicalCell {
             TransientFlags::BURNING
                 .union(TransientFlags::WARNING)
                 .union(TransientFlags::INFECTED),
-        );
+        ) || self.env.bio_activity() == BioActivity::HyperNeo;
         if has_active_clock || has_active_hazard {
             self.transient.remove(TransientFlags::DORMANT);
             true
         } else {
             self.transient.insert(TransientFlags::DORMANT);
             false
+        }
+    }
+
+    /// Marks the cell as structurally broken and clears active energy/combustion.
+    fn break_cell(&mut self, puncture: bool) {
+        self.durability = 0;
+        self.transient.insert(TransientFlags::BROKEN);
+        self.transient.remove(TransientFlags::CHARGED);
+        self.transient.remove(TransientFlags::BURNING);
+        self.transient.remove(TransientFlags::WARNING);
+        self.clocks.set_intensity(0);
+        if puncture {
+            self.topology.insert(TopologyFlags::PUNCTURED);
         }
     }
 }
@@ -856,5 +945,120 @@ mod tests {
         assert!(wire.transient.contains(TransientFlags::BROKEN));
         assert!(!wire.transient.contains(TransientFlags::CHARGED));
         assert_eq!(wire.durability, 0);
+    }
+
+    #[test]
+    fn freeze_and_melt_are_reversible_and_clear_brittle() {
+        let mut water = PhysicalCell {
+            env: EnvPacked::new(
+                MatterState::Liquid,
+                Temperature::Ambient,
+                Pressure::Normal,
+                3,
+                BioActivity::Inert,
+                FlowDir::None,
+            ),
+            ..PhysicalCell::default()
+        };
+
+        water.apply_stimulus(StimulusFlags::COLD);
+        water.step_reaction(false);
+        assert_eq!(water.env.matter(), MatterState::Solid);
+        assert_eq!(water.env.temperature(), Temperature::Cryo);
+        assert!(water.transient.contains(TransientFlags::FROZEN));
+        assert!(water.transient.contains(TransientFlags::BRITTLE));
+
+        water.apply_stimulus(StimulusFlags::HEAT);
+        water.step_reaction(false);
+        assert_eq!(water.env.matter(), MatterState::Liquid);
+        assert_eq!(water.env.temperature(), Temperature::Ambient);
+        assert!(!water.transient.contains(TransientFlags::FROZEN));
+        assert!(!water.transient.contains(TransientFlags::BRITTLE));
+    }
+
+    #[test]
+    fn kinetic_shattering_piezo_glass_does_not_stay_charged() {
+        let mut piezo_glass = PhysicalCell {
+            material: MaterialFlags::GLASS.union(MaterialFlags::PIEZOELECTRIC),
+            ..PhysicalCell::default()
+        };
+
+        piezo_glass.apply_stimulus(StimulusFlags::KINETIC);
+        piezo_glass.step_reaction(false);
+
+        assert!(piezo_glass.transient.contains(TransientFlags::BROKEN));
+        assert!(piezo_glass.topology.contains(TopologyFlags::PUNCTURED));
+        assert!(!piezo_glass.transient.contains(TransientFlags::CHARGED));
+        assert_eq!(piezo_glass.clocks.intensity(), 0);
+    }
+
+    #[test]
+    fn burning_consumes_durability_and_extinguishes_when_wet() {
+        let mut fuel = PhysicalCell {
+            material: MaterialFlags::FLAMMABLE,
+            durability: 16,
+            ..PhysicalCell::default()
+        };
+
+        fuel.apply_stimulus(StimulusFlags::HEAT);
+        assert!(fuel.step_reaction(true));
+        assert!(fuel.transient.contains(TransientFlags::BURNING));
+        assert_eq!(fuel.durability, 8);
+
+        fuel.transient.insert(TransientFlags::WET);
+        fuel.apply_stimulus(StimulusFlags::LIGHT);
+        assert!(!fuel.step_reaction(true));
+        assert!(!fuel.transient.contains(TransientFlags::BURNING));
+    }
+
+    #[test]
+    fn hyper_neo_remains_active_and_stasis_sets_dormant() {
+        let mut mutant = PhysicalCell {
+            env: EnvPacked::new(
+                MatterState::Solid,
+                Temperature::Ambient,
+                Pressure::Normal,
+                5,
+                BioActivity::Vital,
+                FlowDir::None,
+            ),
+            material: MaterialFlags::ORGANIC,
+            ..PhysicalCell::default()
+        };
+
+        mutant.apply_stimulus(StimulusFlags::RADIATION);
+        assert!(mutant.step_reaction(false));
+        assert_eq!(mutant.env.bio_activity(), BioActivity::HyperNeo);
+        assert!(!mutant.transient.contains(TransientFlags::DORMANT));
+
+        mutant.transient.insert(TransientFlags::STASIS);
+        mutant.apply_stimulus(StimulusFlags::HEAT);
+        assert!(!mutant.step_reaction(true));
+        assert!(mutant.transient.contains(TransientFlags::DORMANT));
+    }
+
+    #[test]
+    fn vacuum_boiling_and_overpressure_liquefaction() {
+        let mut liquid = PhysicalCell {
+            env: EnvPacked::new(
+                MatterState::Liquid,
+                Temperature::Ambient,
+                Pressure::Vacuum,
+                3,
+                BioActivity::Inert,
+                FlowDir::None,
+            ),
+            ..PhysicalCell::default()
+        };
+        liquid.apply_stimulus(StimulusFlags::LIGHT);
+        liquid.step_reaction(false);
+        assert_eq!(liquid.env.matter(), MatterState::Gas);
+        assert!(liquid.env.density() <= 1);
+
+        liquid.env.set_pressure(Pressure::GigaPressure);
+        liquid.apply_stimulus(StimulusFlags::LIGHT);
+        liquid.step_reaction(false);
+        assert_eq!(liquid.env.matter(), MatterState::Liquid);
+        assert!((2..=4).contains(&liquid.env.density()));
     }
 }
