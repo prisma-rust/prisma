@@ -242,22 +242,82 @@ pub fn generate_world(materials: &MaterialTable, seed: u64) -> GeneratedWorld {
         }
     }
 
-    // 2. Sculpt L2 (`0.25m`) surface terrain heightmap & natural strata above y = 3.0m (`l2y >= 12`).
-    for l2z in 0..(l1_z_max * 4) {
-        for l2x in 0..(l1_x_max * 4) {
-            let wx = l2x as f32 * 0.25 + 0.125;
-            let wz = l2z as f32 * 0.25 + 0.125;
-            let h_m = terrain_height_m(wx, wz, seed);
-            let top_l2y = (h_m * 4.0).round() as i32;
-            for l2y in 12..top_l2y {
-                let mat = if l2y + 1 == top_l2y && h_m < 8.0 {
-                    mat_id::GRASS
-                } else if (h_m >= 8.0 && l2y >= top_l2y - 3) || l2y <= 13 {
-                    mat_id::LIMESTONE
+    // 2. Sculpt terrain above y = 3.0m (`l1y >= 3`): keep homogeneous 1m interior
+    //    blocks as Copy-On-Write L1 uniform cells, and only subdivide into L2
+    //    bricks along the surface and terrain/strata boundaries.
+    let l1_y_max = CHUNK_DIMS_L1[1] as i32;
+    for l1z in 0..l1_z_max {
+        for l1x in 0..l1_x_max {
+            let mut col_h = [[0.0f32; 4]; 4];
+            let mut col_top = [[0i32; 4]; 4];
+            let mut max_top_l2y = 12i32;
+            for dz in 0..4usize {
+                for dx in 0..4usize {
+                    let wx = (l1x * 4 + dx as i32) as f32 * 0.25 + 0.125;
+                    let wz = (l1z * 4 + dz as i32) as f32 * 0.25 + 0.125;
+                    let h_m = terrain_height_m(wx, wz, seed);
+                    let top_l2y = (h_m * 4.0).round() as i32;
+                    col_h[dz][dx] = h_m;
+                    col_top[dz][dx] = top_l2y;
+                    max_top_l2y = max_top_l2y.max(top_l2y);
+                }
+            }
+
+            let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_max);
+            for l1y in 3..max_l1y {
+                let mut block_mats = [mat_id::AIR; 64];
+                let mut first_mat = None;
+                let mut uniform = true;
+
+                for dz in 0..4usize {
+                    for dy in 0..4usize {
+                        let l2y = l1y * 4 + dy as i32;
+                        for dx in 0..4usize {
+                            let top_l2y = col_top[dz][dx];
+                            let h_m = col_h[dz][dx];
+                            let mat = if l2y < top_l2y {
+                                if l2y + 1 == top_l2y && h_m < 8.0 {
+                                    mat_id::GRASS
+                                } else if (h_m >= 8.0 && l2y >= top_l2y - 3) || l2y <= 13 {
+                                    mat_id::LIMESTONE
+                                } else {
+                                    mat_id::SOIL
+                                }
+                            } else {
+                                mat_id::AIR
+                            };
+                            block_mats[dz * 16 + dy * 4 + dx] = mat;
+                            match first_mat {
+                                None => first_mat = Some(mat),
+                                Some(m0) if m0 != mat => uniform = false,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if uniform {
+                    if let Some(m0) = first_mat {
+                        if m0 != mat_id::AIR {
+                            builder.set_l1_cow([l1x, l1y, l1z], m0);
+                        }
+                    }
                 } else {
-                    mat_id::SOIL
-                };
-                builder.set_l2([l2x, l2y, l2z], mat, false);
+                    for dz in 0..4usize {
+                        for dy in 0..4usize {
+                            for dx in 0..4usize {
+                                let mat = block_mats[dz * 16 + dy * 4 + dx];
+                                if mat != mat_id::AIR {
+                                    builder.set_l2(
+                                        [l1x * 4 + dx as i32, l1y * 4 + dy as i32, l1z * 4 + dz as i32],
+                                        mat,
+                                        false,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -422,5 +482,14 @@ mod tests {
             .expect("mullion cell exists");
         assert_ne!(mask, 0);
         assert_ne!(mask, u64::MAX, "window mullion must use sub-L2 L3 bitmask");
+
+        // Verify solid interior highland blocks above y = 3m stay L1 COW (not L2 bricks).
+        let (cliff_idx, _) = SimWorld::chunk_coords_for_l2([16, 16, 112]).unwrap();
+        let cliff_l1_idx = chunks[cliff_idx].l1_index(4, 4, 28 % 8).unwrap();
+        assert_eq!(
+            chunks[cliff_idx].l1_brick_ref[cliff_l1_idx],
+            L1_UNIFORM_REF,
+            "homogeneous underground highland cell must stay L1 COW"
+        );
     }
 }
