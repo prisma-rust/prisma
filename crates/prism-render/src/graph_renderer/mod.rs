@@ -594,6 +594,9 @@ impl GraphRenderer {
         graph.add_pass(Box::new(crate::voxel_dda_pass::VoxelDdaPass::new(
             Arc::clone(&context),
         )?));
+        if context.rt_caps.has_ray_query() {
+            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(&context)?));
+        }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
         #[cfg(feature = "anf")]
@@ -1083,6 +1086,9 @@ impl GraphRenderer {
         graph.add_pass(Box::new(crate::voxel_dda_pass::VoxelDdaPass::new(
             Arc::clone(&context),
         )?));
+        if context.rt_caps.has_ray_query() {
+            graph.add_pass(Box::new(crate::voxel_rt_gi_pass::VoxelRtGiPass::new(&context)?));
+        }
         #[cfg(feature = "gtao")]
         graph.add_pass(Box::new(gtao_pass));
         #[cfg(feature = "anf")]

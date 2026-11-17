@@ -564,11 +564,29 @@ TraceHit trace_world(float3 origin, float3 dir, float maxT, bool shadowRay)
     );
 
     uint count = ubo.counts.x;
+    float curMaxT = maxT;
+    float3 segEnd = origin + dir * curMaxT;
+    float3 segMin = min(origin, segEnd) - float3(0.01, 0.01, 0.01);
+    float3 segMax = max(origin, segEnd) + float3(0.01, 0.01, 0.01);
+
     for (uint i = 0u; i < count; i++)
     {
-        trace_chunk(chunks[i], origin, dir, invDir, maxT, shadowRay, best);
+        VoxelChunkGpu chunk = chunks[i];
+        float3 bmin = float3(chunk.originAndL1Offset.xyz) * L1_SIZE_M;
+        float3 bmax = bmin + float3(chunk.dimsAndBrickOffset.xyz) * L1_SIZE_M;
+        if (any(segMax < bmin) || any(segMin > bmax))
+            continue;
+
+        trace_chunk(chunk, origin, dir, invDir, curMaxT, shadowRay, best);
         if (shadowRay && best.hit)
             return best;
+        if (best.t < curMaxT)
+        {
+            curMaxT = best.t;
+            segEnd = origin + dir * curMaxT;
+            segMin = min(origin, segEnd) - float3(0.01, 0.01, 0.01);
+            segMax = max(origin, segEnd) + float3(0.01, 0.01, 0.01);
+        }
     }
     return best;
 }
@@ -884,7 +902,7 @@ float3 eval_voxel_emissive(
     }
 
     if ((visual & VIS_EMISSIVE) != 0u || emissiveAmt > 0.0)
-        emissive += albedo * (max(emissiveAmt, 0.5) * 5.2);
+        emissive += albedo * (max(emissiveAmt, 0.35) * 3.8);
     if ((visual & VIS_HEAT_GLOW) != 0u)
         emissive += float3(2.2, 0.55, 0.08) * max(0.55, emissiveAmt * 3.8);
     if ((visual & VIS_INFECTED) != 0u)
@@ -1051,8 +1069,18 @@ float3 eval_emitters_at_surface(
     if (emitterCount == 0u)
         return float3(0.0, 0.0, 0.0);
 
-    float3 sum = float3(0.0, 0.0, 0.0);
     float3 rayOrigin = worldPos + normal * 0.03;
+
+    // Stochastic RIS: evaluate cheap analytic weights for all emitters, then trace at most 1 visibility ray.
+    float wSum = 0.0;
+    float bestW = 0.0;
+    float3 bestContrib = float3(0.0, 0.0, 0.0);
+    float3 bestDir = float3(0.0, 1.0, 0.0);
+    float bestMaxVisT = 0.0;
+    float3 bestBmin = float3(0.0, 0.0, 0.0);
+    float3 bestBmax = float3(0.0, 0.0, 0.0);
+    float bestDist = 0.0;
+    float rng = frac(jitterA * 1.73205 + jitterB * 2.23606);
 
     for (uint e = 0u; e < emitterCount; e++)
     {
@@ -1060,7 +1088,7 @@ float3 eval_emitters_at_surface(
         float3 bmin = em.bminRange.xyz;
         float3 bmax = em.bmaxRadius.xyz;
         float maxRange = em.bminRange.w;
-        float softR = max(em.bmaxRadius.w, 0.30);
+        float softR = max(em.bmaxRadius.w, 0.65);
 
         float3 closest = clamp(worldPos, bmin, bmax);
         float3 center = 0.5 * (bmin + bmax);
@@ -1070,7 +1098,6 @@ float3 eval_emitters_at_surface(
         if (anchorDist > maxRange || anchorDist < 0.03)
             continue;
 
-        // Subtle jitter inside emitter box for soft area-light penumbra without self-occlusion.
         float3 jitterVec = float3(jitterA - 0.5, jitterB - 0.5, frac(jitterA + jitterB) - 0.5) * (halfExt * 1.35);
         float3 samplePt = clamp(anchor + jitterVec, bmin + halfExt * 0.04, bmax - halfExt * 0.04);
         float3 toE = samplePt - worldPos;
@@ -1083,33 +1110,53 @@ float3 eval_emitters_at_surface(
         if (ndl <= 0.0)
             continue;
 
-        if (traceVisibility && dist > 0.06)
-        {
-            float3 invD = float3(
-                abs(dir.x) > 1e-6 ? 1.0 / dir.x : 1e30,
-                abs(dir.y) > 1e-6 ? 1.0 / dir.y : 1e30,
-                abs(dir.z) > 1e-6 ? 1.0 / dir.z : 1e30
-            );
-            float bEnter, bExit;
-            float3 bN;
-            float maxVisT = dist - 0.03;
-            if (intersect_aabb(rayOrigin, invD, bmin, bmax, 0.0, dist + 0.1, bEnter, bExit, bN))
-                maxVisT = bEnter - 0.03;
-            if (maxVisT > 0.04)
-            {
-                TraceHit sh = trace_world(rayOrigin, dir, maxVisT, true);
-                if (sh.hit)
-                    continue;
-            }
-        }
-
-        float effDist = max(anchorDist, 0.20);
+        float effDist = max(anchorDist, 0.55);
         float atten = 1.0 / (effDist * effDist + softR * softR);
         float fade = saturate(1.0 - effDist / maxRange);
         fade *= fade;
-        sum += em.colorIntensity.rgb * (em.colorIntensity.w * ndl * atten * fade);
+        float3 contrib = em.colorIntensity.rgb * (em.colorIntensity.w * ndl * atten * fade);
+        float w = max(contrib.r, max(contrib.g, contrib.b));
+        if (w <= 1e-6)
+            continue;
+
+        wSum += w;
+        rng = frac(rng * 1.6180339 + 0.381966);
+        if (rng * wSum < w)
+        {
+            bestW = w;
+            bestContrib = contrib;
+            bestDir = dir;
+            bestDist = dist;
+            bestBmin = bmin;
+            bestBmax = bmax;
+        }
     }
-    return sum;
+
+    if (wSum <= 1e-6 || bestW <= 1e-6)
+        return float3(0.0, 0.0, 0.0);
+
+    if (traceVisibility && bestDist > 0.06)
+    {
+        float3 invD = float3(
+            abs(bestDir.x) > 1e-6 ? 1.0 / bestDir.x : 1e30,
+            abs(bestDir.y) > 1e-6 ? 1.0 / bestDir.y : 1e30,
+            abs(bestDir.z) > 1e-6 ? 1.0 / bestDir.z : 1e30
+        );
+        float bEnter, bExit;
+        float3 bN;
+        bestMaxVisT = bestDist - 0.03;
+        if (intersect_aabb(rayOrigin, invD, bestBmin, bestBmax, 0.0, bestDist + 0.1, bEnter, bExit, bN))
+            bestMaxVisT = bEnter - 0.03;
+        if (bestMaxVisT > 0.04)
+        {
+            TraceHit sh = trace_world(rayOrigin, bestDir, bestMaxVisT, true);
+            if (sh.hit)
+                return float3(0.0, 0.0, 0.0);
+        }
+    }
+
+    float3 result = bestContrib * (wSum / bestW);
+    return result / (1.0 + result * 0.18);
 }
 
 void build_orthonormal_basis(float3 n, out float3 tangent, out float3 bitangent)
@@ -1128,7 +1175,7 @@ float3 sample_cosine_hemisphere(float3 normal, float3 tangent, float3 bitangent,
     return normalize(tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normal * cosTheta);
 }
 
-// 2-bounce voxel GI + sky visibility + short-range AO + emissive voxel contribution.
+// Distance-tiered 2-bounce voxel GI + sky visibility + short-range AO + emissive voxel contribution.
 void trace_voxel_ao_and_gi(
     float3 worldPos,
     float3 normal,
@@ -1137,6 +1184,7 @@ void trace_voxel_ao_and_gi(
     float  ambientStrength,
     uint2  px,
     float  time,
+    float  hitDist,
     out float  aoOut,
     out float  skyVisOut,
     out float3 bounceGiOut
@@ -1149,20 +1197,23 @@ void trace_voxel_ao_and_gi(
     float ignA = interleaved_gradient_noise(px, frameIdx);
     float ignB = interleaved_gradient_noise(px + uint2(17u, 29u), frameIdx + 5u);
 
-    // 4 stratified cosine-hemisphere rays for Bounce 1 + 1 Bounce-2 ray per hit.
-    static const uint GI_RAYS = 4u;
+    // Balanced 2-ray / 1-bounce near-field GI + temporal accumulation + À-Trous denoiser.
+    uint giRays = (hitDist < 12.0) ? 2u : 1u;
+    uint b2Cap  = (hitDist < 12.0) ? 1u : 0u;
+    float b1MaxT = (hitDist < 24.0) ? 12.0 : 8.0;
+
     float occ = 0.0;
     float skyVis = 0.0;
     float3 gi = float3(0.0, 0.0, 0.0);
     float3 rayOrigin = worldPos + normal * 0.03;
 
-    for (uint i = 0u; i < GI_RAYS; i++)
+    for (uint i = 0u; i < giRays; i++)
     {
-        float u1 = (float(i) + ignA) * (1.0 / float(GI_RAYS));
+        float u1 = (float(i) + ignA) * (1.0 / float(giRays));
         float u2 = frac(ignB + float(i) * 0.61803398875) * 0.90;
         float3 d1 = sample_cosine_hemisphere(normal, tangent, bitangent, u1, u2);
 
-        TraceHit h1 = trace_world(rayOrigin, d1, 14.0, false);
+        TraceHit h1 = trace_world(rayOrigin, d1, b1MaxT, false);
 
         // Translucent emissive fluids/glass (AcidPool, CryoSlush, glowing glass) skipped by opaque DDA.
         if (h1.hasGlass && (!h1.hit || h1.glassT < h1.t))
@@ -1205,55 +1256,59 @@ void trace_voxel_ao_and_gi(
         }
         float3 hit1Direct = sunCol * (hit1Ndl * hit1Vis / VOXEL_PI);
 
-        // Emissive NEE at Bounce-1 hit so emissive light bounces off walls & around corners!
-        float3 hit1EmitterBounce = eval_emitters_at_surface(h1.worldPos, h1.normal, ignB, ignA, i < 2u);
+        // Emissive NEE at Bounce-1 hit without extra visibility rays.
+        float3 hit1EmitterBounce = eval_emitters_at_surface(h1.worldPos, h1.normal, ignB, ignA, false) * 0.45;
 
-        // Bounce 2 from h1 -> h2 (brightens sheltered interiors, overhangs, and colored multi-bounce).
-        float3 t2, b2;
-        build_orthonormal_basis(h1.normal, t2, b2);
-        float u2a = frac(ignA * 3.17 + float(i) * 0.381966);
-        float u2b = frac(ignB * 2.71 + float(i) * 0.754877) * 0.88;
-        float3 d2 = sample_cosine_hemisphere(h1.normal, t2, b2, u2a, u2b);
-        TraceHit h2 = trace_world(h1.worldPos + h1.normal * 0.03, d2, 8.0, false);
-
-        float3 bounce2 = float3(0.0, 0.0, 0.0);
-        if (!h2.hit)
+        float3 bounce2 = sample_atmosphere(h1.normal, sunDir, sunCol) * (ambientStrength * 0.25);
+        if (i < b2Cap)
         {
-            bounce2 = sample_atmosphere(d2, sunDir, sunCol) * (ambientStrength * 0.75);
-        }
-        else
-        {
-            float3 hit2Alb = unpack_rgba_linear(h2.rgba).rgb;
-            uint hit2Tile = resolve_spbr_tile(h2.rgba, h2.visual, h2.normal);
-            int2 hit2Px = (hit2Tile != 0xFFFFFFFFu) ? voxel_face_texel(h2.worldPos, h2.normal) : int2(0, 0);
-            if (hit2Tile != 0xFFFFFFFFu)
+            // Bounce 2 from h1 -> h2 (brightens sheltered interiors, overhangs, and colored multi-bounce).
+            float3 t2, b2;
+            build_orthonormal_basis(h1.normal, t2, b2);
+            float u2a = frac(ignA * 3.17 + float(i) * 0.381966);
+            float u2b = frac(ignB * 2.71 + float(i) * 0.754877) * 0.88;
+            float3 d2 = sample_cosine_hemisphere(h1.normal, t2, b2, u2a, u2b);
+            TraceHit h2 = trace_world(h1.worldPos + h1.normal * 0.03, d2, 8.0, false);
+
+            if (!h2.hit)
             {
-                float4 albTex2 = unpack_rgba_linear(spbrAtlas[hit2Px.y * 256 + int(hit2Tile) * 16 + hit2Px.x]);
-                if (albTex2.a > 0.05)
-                    hit2Alb = (hit2Tile == 2u) ? saturate(hit2Alb * albTex2.rgb * 2.8) : albTex2.rgb;
+                bounce2 = sample_atmosphere(d2, sunDir, sunCol) * (ambientStrength * 0.75);
             }
-            float3 hit2Emit = eval_voxel_emissive(h2.worldPos, h2.rgba, h2.visual, hit2Alb, time, hit2Tile, hit2Px);
-            float hit2Ndl = max(dot(h2.normal, sunDir), 0.0);
-            float hit2Vis = 0.0;
-            if (hit2Ndl > 0.0)
+            else
             {
-                TraceHit s2 = trace_world(h2.worldPos + h2.normal * 0.03, sunDir, 20.0, true);
-                hit2Vis = s2.hit ? 0.0 : 1.0;
+                float3 hit2Alb = unpack_rgba_linear(h2.rgba).rgb;
+                uint hit2Tile = resolve_spbr_tile(h2.rgba, h2.visual, h2.normal);
+                int2 hit2Px = (hit2Tile != 0xFFFFFFFFu) ? voxel_face_texel(h2.worldPos, h2.normal) : int2(0, 0);
+                if (hit2Tile != 0xFFFFFFFFu)
+                {
+                    float4 albTex2 = unpack_rgba_linear(spbrAtlas[hit2Px.y * 256 + int(hit2Tile) * 16 + hit2Px.x]);
+                    if (albTex2.a > 0.05)
+                        hit2Alb = (hit2Tile == 2u) ? saturate(hit2Alb * albTex2.rgb * 2.8) : albTex2.rgb;
+                }
+                float3 hit2Emit = eval_voxel_emissive(h2.worldPos, h2.rgba, h2.visual, hit2Alb, time, hit2Tile, hit2Px);
+                float hit2Ndl = max(dot(h2.normal, sunDir), 0.0);
+                float hit2Vis = 0.0;
+                if (hit2Ndl > 0.0)
+                {
+                    TraceHit s2 = trace_world(h2.worldPos + h2.normal * 0.03, sunDir, 20.0, true);
+                    hit2Vis = s2.hit ? 0.0 : 1.0;
+                }
+                bounce2 = hit2Alb * (sunCol * (hit2Ndl * hit2Vis / VOXEL_PI)) + hit2Emit * 0.95;
             }
-            bounce2 = hit2Alb * (sunCol * (hit2Ndl * hit2Vis / VOXEL_PI)) + hit2Emit * 0.95;
         }
 
-        // Physical Lambertian bounce energy + multi-bounce boost for bright readable GI.
-        float3 hit1Irradiance = (hit1Direct + hit1EmitterBounce + bounce2) * 1.75;
-        gi += hit1Alb * hit1Irradiance + hit1Emit * 0.90;
+        // Physical Lambertian bounce energy without over-saturating NEE emitters.
+        float3 hit1Irradiance = (hit1Direct + hit1EmitterBounce + bounce2) * 1.35;
+        gi += hit1Alb * hit1Irradiance + hit1Emit * 0.35;
     }
 
     // Explicit direct emissive NEE at primary hit P (soft shadows cleaned by À-Trous denoiser).
-    float3 directEmitterGi = eval_emitters_at_surface(worldPos, normal, ignA, ignB, true) * 1.45;
+    float3 directEmitterGi = eval_emitters_at_surface(worldPos, normal, ignA, ignB, hitDist < 28.0) * 0.85;
 
-    aoOut = clamp(1.0 - (occ * (1.0 / float(GI_RAYS))) * 0.90, 0.22, 1.0);
-    skyVisOut = skyVis * (1.0 / float(GI_RAYS));
-    bounceGiOut = gi * (1.0 / float(GI_RAYS)) + directEmitterGi;
+    float invRays = 1.0 / float(giRays);
+    aoOut = clamp(1.0 - (occ * invRays) * 0.90, 0.22, 1.0);
+    skyVisOut = skyVis * invRays;
+    bounceGiOut = gi * invRays + directEmitterGi;
 }
 
 float3 shade_translucent_glass(
@@ -1419,35 +1474,10 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             float3 fresnelEnv = f_schlick(ndv, f0) * (1.0 - roughness * 0.75);
             float3 specEnv = envRefl * fresnelEnv * (0.35 + 0.65 * shadowVis);
 
-            float3 skyZenithGi = sample_atmosphere(float3(0.0, 1.0, 0.0), L, sunCol);
-            float3 skyHorizonGi = sample_atmosphere(normalize(float3(N.x, 0.08, N.z)), L, sunCol);
-            float3 hemiSky = lerp(skyHorizonGi * 0.52, skyZenithGi * 1.15, N.y * 0.5 + 0.5);
-            float3 groundBounce = sunCol * (0.14 * max(L.y, 0.05) * max(-N.y * 0.5 + 0.5, 0.0));
-            float directionalFacet = 0.90 + 0.10 * dot(res.normal, normalize(float3(0.3, 1.0, 0.2)));
-            float3 analyticSky = hemiSky * (ambientStrength * directionalFacet) + groundBounce;
-
-            float ao = 1.0;
-            float skyVis = 1.0;
-            float3 tracedGi = analyticSky;
-            if (res.t < 56.0)
-            {
-                trace_voxel_ao_and_gi(
-                    res.worldPos, res.normal, sunDir, sunCol, ambientStrength,
-                    tid.xy, time, ao, skyVis, tracedGi
-                );
-                // Smoothly blend analytic distant sky beyond 36m so there is no pop-in seam.
-                float farBlend = smoothstep(36.0, 56.0, res.t);
-                float3 outdoorFill = analyticSky * lerp(0.18 * ao, 0.45, skyVis);
-                float3 fullTraced = tracedGi + outdoorFill;
-                tracedGi = lerp(fullTraced, analyticSky, farBlend);
-                ao = lerp(ao, 1.0, farBlend);
-            }
-
-            tracedGi = clamp(tracedGi, float3(0.0, 0.0, 0.0), float3(32.0, 32.0, 32.0));
-            float4 rawGiAo = float4(tracedGi, ao);
-
-            // Temporal reprojection & variance reduction against previous frame history.
+            // Reproject previous frame GI history first so valid 2x1 checkerboard half can reuse it directly.
             int curNormalId = encode_normal_id(res.normal);
+            bool hasHistory = false;
+            float4 prevGi = float4(0.0, 0.0, 0.0, 1.0);
             if (ubo.counts2.z != 0u)
             {
                 float4 prevClip = mul(ubo.prevViewProj, float4(res.worldPos, 1.0));
@@ -1458,19 +1488,59 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
                     {
                         int2 prevPx = clamp(int2(prevUv * float2(width, height)), int2(0, 0), int2(int(width) - 1, int(height) - 1));
                         float4 prevPN = prevPosNormTex.Load(int3(prevPx, 0));
-                        if (prevPN.w >= -0.5 && abs(prevPN.w - float(curNormalId)) < 0.25)
+                        if (prevPN.w >= -0.5
+                            && abs(prevPN.w - float(curNormalId)) < 0.25
+                            && length(prevPN.xyz - res.worldPos) < 0.22)
                         {
-                            if (length(prevPN.xyz - res.worldPos) < 0.22)
+                            float4 candidate = prevGiTex.Load(int3(prevPx, 0));
+                            if (all(isfinite(candidate)))
                             {
-                                float4 prevGi = prevGiTex.Load(int3(prevPx, 0));
-                                if (all(isfinite(prevGi)))
-                                {
-                                    float alpha = (ubo.counts2.w != 0u) ? 0.38 : 0.16;
-                                    rawGiAo = lerp(prevGi, rawGiAo, alpha);
-                                }
+                                prevGi = candidate;
+                                hasHistory = true;
                             }
                         }
                     }
+                }
+            }
+
+            bool skipGiTrace = hasHistory
+                && (res.t < 48.0)
+                && (ubo.counts2.w == 0u)
+                && (((tid.x ^ tid.y ^ ubo.counts2.y) & 1u) != 0u);
+
+            float4 rawGiAo = prevGi;
+            if (!skipGiTrace)
+            {
+                float3 skyZenithGi = sample_atmosphere(float3(0.0, 1.0, 0.0), L, sunCol);
+                float3 skyHorizonGi = sample_atmosphere(normalize(float3(N.x, 0.08, N.z)), L, sunCol);
+                float3 hemiSky = lerp(skyHorizonGi * 0.52, skyZenithGi * 1.15, N.y * 0.5 + 0.5);
+                float3 groundBounce = sunCol * (0.14 * max(L.y, 0.05) * max(-N.y * 0.5 + 0.5, 0.0));
+                float directionalFacet = 0.90 + 0.10 * dot(res.normal, normalize(float3(0.3, 1.0, 0.2)));
+                float3 analyticSky = hemiSky * (ambientStrength * directionalFacet) + groundBounce;
+
+                float ao = 1.0;
+                float skyVis = 1.0;
+                float3 tracedGi = analyticSky;
+                if (res.t < 48.0)
+                {
+                    trace_voxel_ao_and_gi(
+                        res.worldPos, res.normal, sunDir, sunCol, ambientStrength,
+                        tid.xy, time, res.t, ao, skyVis, tracedGi
+                    );
+                    // Smoothly blend analytic distant sky beyond 30m so there is no pop-in seam.
+                    float farBlend = smoothstep(30.0, 48.0, res.t);
+                    float3 outdoorFill = analyticSky * lerp(0.18 * ao, 0.45, skyVis);
+                    float3 fullTraced = tracedGi + outdoorFill;
+                    tracedGi = lerp(fullTraced, analyticSky, farBlend);
+                    ao = lerp(ao, 1.0, farBlend);
+                }
+
+                tracedGi = clamp(tracedGi, float3(0.0, 0.0, 0.0), float3(32.0, 32.0, 32.0));
+                rawGiAo = float4(tracedGi, ao);
+                if (hasHistory)
+                {
+                    float alpha = (ubo.counts2.w != 0u) ? 0.38 : 0.22;
+                    rawGiAo = lerp(prevGi, rawGiAo, alpha);
                 }
             }
 
@@ -1558,6 +1628,7 @@ void voxelCompositeMain(uint3 tid : SV_DispatchThreadID)
     float4 albedoData = albedoReadTex.Load(px);
     float4 specEnvData = specEnvReadTex.Load(px);
     float4 giAo = giReadTex.Load(px);
+    float4 posNorm = posNormReadTex.Load(px);
 
     float2 uv = (float2(tid.xy) + 0.5) / float2(width, height);
     float2 ndc = uv * 2.0 - 1.0;
@@ -1571,7 +1642,16 @@ void voxelCompositeMain(uint3 tid : SV_DispatchThreadID)
     float3 rayDir = (farDist > 1e-6) ? (rayDelta / farDist) : float3(0.0, 0.0, -1.0);
 
     float3 outColor = directData.rgb;
-    float  outDepth = directData.a;
+    float  outDepth;
+    if (posNorm.w >= -0.5)
+    {
+        float4 vClip = mul(ubo.viewProj, float4(posNorm.xyz, 1.0));
+        outDepth = vClip.z / vClip.w;
+    }
+    else
+    {
+        outDepth = forwardDepthTex.Load(px);
+    }
 
     if (albedoData.a > 0.5)
     {
@@ -1618,19 +1698,29 @@ void voxelCompositeMain(uint3 tid : SV_DispatchThreadID)
         float3 boxMax = ubo.cursorMax.xyz + float3(boxEps, boxEps, boxEps);
         if (intersect_aabb(rayOrigin, invDir, boxMin, boxMax, 0.0, 64.0, bEnter, bExit, bNormal))
         {
-            float3 pHit = rayOrigin + rayDir * max(bEnter, 0.0);
-            float4 bClip = mul(ubo.viewProj, float4(pHit, 1.0));
+            float hitT = max(bEnter, 0.0);
+            float3 pHit = rayOrigin + rayDir * hitT;
+            float depthBias = max(0.005, hitT * 0.002);
+            float3 pDepth = rayOrigin + rayDir * max(hitT - depthBias, 0.0);
+            float4 bClip = mul(ubo.viewProj, float4(pDepth, 1.0));
             float boxDepth = bClip.z / bClip.w;
-            if (boxDepth <= outDepth + 1e-4)
+            if (boxDepth <= outDepth)
             {
                 float3 extents = max(boxMax - boxMin, float3(0.01, 0.01, 0.01));
-                float3 local = (pHit - boxMin) / extents;
-                float3 dEdge = min(local, 1.0 - local);
-                float edgeTol = clamp(0.015 / min(extents.x, min(extents.y, extents.z)), 0.04, 0.18);
-                int nearEdges = int(dEdge.x < edgeTol) + int(dEdge.y < edgeTol) + int(dEdge.z < edgeTol);
-                if (nearEdges >= 2)
+                float minExt = min(extents.x, min(extents.y, extents.z));
+                float3 dWorld = min(pHit - boxMin, boxMax - pHit);
+                float dMin = min(dWorld.x, min(dWorld.y, dWorld.z));
+                float dMax = max(dWorld.x, max(dWorld.y, dWorld.z));
+                float d2 = (dWorld.x + dWorld.y + dWorld.z) - dMin - dMax;
+
+                // Screen-adaptive hairline width with smoothstep anti-aliasing.
+                float pxWorld = max(hitT, 0.1) * (2.0 / max(float(height), 1.0));
+                float halfW = clamp(pxWorld * 1.35, 0.0025, minExt * 0.10);
+                float aa = max(pxWorld * 0.75, 0.001);
+                float edgeCov = 1.0 - smoothstep(halfW - aa, halfW + aa, d2);
+                if (edgeCov > 0.001)
                 {
-                    outColor = lerp(outColor, ubo.cursorColor.rgb * 1.4, ubo.cursorColor.a);
+                    outColor = lerp(outColor, ubo.cursorColor.rgb * 1.4, ubo.cursorColor.a * edgeCov);
                 }
             }
         }

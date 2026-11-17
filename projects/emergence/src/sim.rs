@@ -43,7 +43,7 @@ pub struct SimWorld {
     chunk_lookup: HashMap<[i32; 2], usize>,
     pub chunk_entities: Vec<EntityHandle>,
     synced_versions: Vec<u64>,
-    cells: HashMap<[i32; 3], (u8, PhysicalCell)>,
+    chunk_cells: Vec<HashMap<[i32; 3], (u8, PhysicalCell)>>,
     active_queue: VecDeque<[i32; 3]>,
     active_set: HashSet<[i32; 3]>,
     fast_accum: f32,
@@ -81,7 +81,7 @@ impl SimWorld {
             chunk_lookup,
             chunk_entities: Vec::new(),
             synced_versions: vec![0; count],
-            cells,
+            chunk_cells: (0..count).map(|_| HashMap::new()).collect(),
             active_queue: VecDeque::new(),
             active_set: HashSet::new(),
             fast_accum: 0.0,
@@ -90,6 +90,11 @@ impl SimWorld {
             rng_state: 0x9E37_79B9_7F4A_7C15,
             pending_blasts: Vec::new(),
         };
+        for (pos, entry) in cells {
+            if let Some((c_idx, _)) = world.chunk_coords_for_l2(pos) {
+                world.chunk_cells[c_idx].insert(pos, entry);
+            }
+        }
         for pos in initial_active {
             world.wake_cell_and_neighbors(pos, false);
         }
@@ -168,7 +173,7 @@ impl SimWorld {
                 self.chunk_entities.push(entity);
             }
             self.chunks.push(gen.chunk);
-            self.cells.extend(gen.cells);
+            self.chunk_cells.push(gen.cells);
             for pos in gen.active {
                 self.wake_cell_and_neighbors(pos, false);
             }
@@ -178,14 +183,18 @@ impl SimWorld {
     fn unload_chunk_at(&mut self, idx: usize, ecs_world: Option<&mut GameWorld<'_>>) {
         let [cx, cz] = self.chunk_coords[idx];
         self.chunk_lookup.remove(&[cx, cz]);
-        let min_l2x = cx * (CHUNK_DIMS_L1[0] as i32) * 4;
-        let max_l2x = min_l2x + (CHUNK_DIMS_L1[0] as i32) * 4;
-        let min_l2z = cz * (CHUNK_DIMS_L1[2] as i32) * 4;
-        let max_l2z = min_l2z + (CHUNK_DIMS_L1[2] as i32) * 4;
-        self.cells.retain(|pos, _| {
-            !(pos[0] >= min_l2x && pos[0] < max_l2x && pos[2] >= min_l2z && pos[2] < max_l2z)
-        });
+        if !self.active_set.is_empty() {
+            let min_l2x = cx * (CHUNK_DIMS_L1[0] as i32) * 4;
+            let max_l2x = min_l2x + (CHUNK_DIMS_L1[0] as i32) * 4;
+            let min_l2z = cz * (CHUNK_DIMS_L1[2] as i32) * 4;
+            let max_l2z = min_l2z + (CHUNK_DIMS_L1[2] as i32) * 4;
+            self.active_set.retain(|pos| {
+                !(pos[0] >= min_l2x && pos[0] < max_l2x && pos[2] >= min_l2z && pos[2] < max_l2z)
+            });
+        }
 
+        // O(1) unload drops the chunk's HashMap and frees its bucket allocation immediately.
+        self.chunk_cells.swap_remove(idx);
         self.chunks.swap_remove(idx);
         self.chunk_coords.swap_remove(idx);
         self.synced_versions.swap_remove(idx);
@@ -201,16 +210,29 @@ impl SimWorld {
     }
 
     /// Upload only dirty chunks whose version advanced since the last sync.
-    pub fn sync_dirty_chunks(&mut self, world: &mut GameWorld<'_>) {
+    /// Push modified `VoxelChunk` components into ECS only when dirty, returning the count synced.
+    pub fn sync_dirty_chunks(&mut self, world: &mut GameWorld<'_>) -> usize {
         if self.chunk_entities.len() != self.chunks.len() {
-            return;
+            return 0;
         }
+        let mut synced = 0usize;
         for (idx, chunk) in self.chunks.iter().enumerate() {
             if self.synced_versions[idx] != chunk.version {
                 world.set(self.chunk_entities[idx], chunk.clone());
                 self.synced_versions[idx] = chunk.version;
+                synced += 1;
             }
         }
+        synced
+    }
+
+    /// Number of loaded chunks whose mesh/voxel data changed since the last ECS sync.
+    pub fn dirty_chunk_count(&self) -> usize {
+        self.chunks
+            .iter()
+            .zip(self.synced_versions.iter())
+            .filter(|(c, &v)| c.version != v)
+            .count()
     }
 
     /// Number of currently awake cells in the active dirty set.
@@ -218,9 +240,15 @@ impl SimWorld {
         self.active_set.len()
     }
 
-    /// Total number of sparse tracked L2 simulation cells.
+    /// Total number of sparse tracked L2 simulation cells across loaded chunks.
     pub fn tracked_cell_count(&self) -> usize {
-        self.cells.len()
+        self.chunk_cells.iter().map(HashMap::len).sum()
+    }
+
+    #[inline]
+    fn cell_get(&self, l2: [i32; 3]) -> Option<(u8, PhysicalCell)> {
+        let (c_idx, _) = self.chunk_coords_for_l2(l2)?;
+        self.chunk_cells[c_idx].get(&l2).copied()
     }
 
     /// Map a world-space L2 integer coordinate to `(chunk_index, local_l2)`.
@@ -273,7 +301,7 @@ impl SimWorld {
         let (c_idx, local_l2) = self.chunk_coords_for_l2(l2)?;
         let (rgba, _, mask) =
             self.chunks[c_idx].get_l2_cell(local_l2[0], local_l2[1], local_l2[2])?;
-        if let Some(&(id, cell)) = self.cells.get(&l2) {
+        if let Some(&(id, cell)) = self.chunk_cells[c_idx].get(&l2) {
             return Some((id, cell, mask));
         }
         let fallback_id = self.fallback_material_id(l2, rgba);
@@ -321,12 +349,12 @@ impl SimWorld {
         let (c_idx, local_l2) = self.chunk_coords_for_l2(l2)?;
         let (rgba, _, mask) =
             self.chunks[c_idx].get_l2_cell(local_l2[0], local_l2[1], local_l2[2])?;
-        if let Some(&entry) = self.cells.get(&l2) {
+        if let Some(&entry) = self.chunk_cells[c_idx].get(&l2) {
             return Some((entry.0, entry.1, mask));
         }
         let fallback_id = self.fallback_material_id(l2, rgba);
         let cell = self.materials.spawn_cell(fallback_id);
-        self.cells.insert(l2, (fallback_id, cell));
+        self.chunk_cells[c_idx].insert(l2, (fallback_id, cell));
         Some((fallback_id, cell, mask))
     }
 
@@ -349,7 +377,7 @@ impl SimWorld {
         if !cell.transient.contains(TransientFlags::DORMANT) {
             self.wake_cell_and_neighbors(l2, false);
         }
-        self.cells.insert(l2, (id, cell));
+        self.chunk_cells[c_idx].insert(l2, (id, cell));
         let _ = self.chunks[c_idx].update_l2_appearance(
             local_l2[0],
             local_l2[1],
@@ -365,7 +393,7 @@ impl SimWorld {
         let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) else {
             return false;
         };
-        let had = self.cells.remove(&l2).is_some()
+        let had = self.chunk_cells[c_idx].remove(&l2).is_some()
             || self.chunks[c_idx]
                 .get_l2_cell(local_l2[0], local_l2[1], local_l2[2])
                 .is_some();
@@ -437,7 +465,7 @@ impl SimWorld {
                 };
                 // Iron Law 1: clearing the final L3 bit inside an L2 cell clears its L2 physics cell.
                 if parent_empty {
-                    self.cells.remove(&l2);
+                    self.chunk_cells[c_idx].remove(&l2);
                 }
                 self.wake_cell_and_neighbors(l2, true);
                 true
@@ -486,7 +514,7 @@ impl SimWorld {
                         for dx in 0..4 {
                             let l2 = [base_l2[0] + dx, base_l2[1] + dy, base_l2[2] + dz];
                             if let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) {
-                                self.cells.insert(l2, (mat, cell));
+                                self.chunk_cells[c_idx].insert(l2, (mat, cell));
                                 self.chunks[c_idx].set_l2_cell(
                                     local_l2[0],
                                     local_l2[1],
@@ -514,7 +542,7 @@ impl SimWorld {
                 let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(target_l2) else {
                     return false;
                 };
-                self.cells.insert(target_l2, (mat, cell));
+                self.chunk_cells[c_idx].insert(target_l2, (mat, cell));
                 self.chunks[c_idx].set_l2_cell(
                     local_l2[0],
                     local_l2[1],
@@ -535,8 +563,8 @@ impl SimWorld {
                 let Some((c_idx, local_l3, l2)) = self.chunk_coords_for_l3(target_l3) else {
                     return false;
                 };
-                self.cells.entry(l2).or_insert((mat, cell));
-                let (use_mat, use_cell) = self.cells[&l2];
+                let (use_mat, use_cell) =
+                    *self.chunk_cells[c_idx].entry(l2).or_insert((mat, cell));
                 let (u_rgba, u_vis) = self.materials.cell_visuals(use_mat, &use_cell);
                 self.chunks[c_idx].set_l3_voxel(
                     local_l3[0],
@@ -558,14 +586,14 @@ impl SimWorld {
             return false;
         };
         if mat == mat_id::AIR {
-            self.cells.remove(&l2);
+            self.chunk_cells[c_idx].remove(&l2);
             self.chunks[c_idx].set_l2_cell(local_l2[0], local_l2[1], local_l2[2], 0, 0, u64::MAX);
             self.wake_cell_and_neighbors(l2, true);
             return true;
         }
         let cell = self.materials.spawn_cell(mat);
         let (rgba, visual) = self.materials.cell_visuals(mat, &cell);
-        self.cells.insert(l2, (mat, cell));
+        self.chunk_cells[c_idx].insert(l2, (mat, cell));
         self.chunks[c_idx].set_l2_cell(
             local_l2[0],
             local_l2[1],
@@ -614,53 +642,22 @@ impl SimWorld {
 
     /// Compute the 3D wireframe box bounds (`min`, `max`) for cursor visualization at `tier`.
     pub fn cursor_bounds_for_hit(tier: VoxelTier, hit: &VoxelHit) -> ([f32; 3], [f32; 3]) {
-        match tier {
-            VoxelTier::L1 => {
-                let min = [
-                    hit.world_l1[0] as f32 * VOXEL_L1_SIZE_M,
-                    hit.world_l1[1] as f32 * VOXEL_L1_SIZE_M,
-                    hit.world_l1[2] as f32 * VOXEL_L1_SIZE_M,
-                ];
-                (
-                    min,
-                    [
-                        min[0] + VOXEL_L1_SIZE_M,
-                        min[1] + VOXEL_L1_SIZE_M,
-                        min[2] + VOXEL_L1_SIZE_M,
-                    ],
-                )
-            }
-            VoxelTier::L2 => {
-                let min = [
-                    hit.world_l2[0] as f32 * VOXEL_L2_SIZE_M,
-                    hit.world_l2[1] as f32 * VOXEL_L2_SIZE_M,
-                    hit.world_l2[2] as f32 * VOXEL_L2_SIZE_M,
-                ];
-                (
-                    min,
-                    [
-                        min[0] + VOXEL_L2_SIZE_M,
-                        min[1] + VOXEL_L2_SIZE_M,
-                        min[2] + VOXEL_L2_SIZE_M,
-                    ],
-                )
-            }
-            VoxelTier::L3 => {
-                let min = [
-                    hit.world_l3[0] as f32 * VOXEL_L3_SIZE_M,
-                    hit.world_l3[1] as f32 * VOXEL_L3_SIZE_M,
-                    hit.world_l3[2] as f32 * VOXEL_L3_SIZE_M,
-                ];
-                (
-                    min,
-                    [
-                        min[0] + VOXEL_L3_SIZE_M,
-                        min[1] + VOXEL_L3_SIZE_M,
-                        min[2] + VOXEL_L3_SIZE_M,
-                    ],
-                )
-            }
-        }
+        let (coords, size) = match tier {
+            VoxelTier::L1 => (hit.world_l1, VOXEL_L1_SIZE_M),
+            VoxelTier::L2 => (hit.world_l2, VOXEL_L2_SIZE_M),
+            VoxelTier::L3 => (hit.world_l3, VOXEL_L3_SIZE_M),
+        };
+        let min = [
+            coords[0] as f32 * size,
+            coords[1] as f32 * size,
+            coords[2] as f32 * size,
+        ];
+        let max = [
+            min[0] + size,
+            min[1] + size,
+            min[2] + size,
+        ];
+        (min, max)
     }
 
     /// Advance multi-rate emergent physics (`10 Hz` fast reactions/flow, `5 Hz` bio, `1 Hz` clocks).
@@ -705,7 +702,7 @@ impl SimWorld {
 
         let mut wake_list: Vec<[i32; 3]> = Vec::new();
         for pos in batch {
-            let Some((id, mut cell)) = self.cells.get(&pos).copied() else {
+            let Some((id, mut cell)) = self.cell_get(pos) else {
                 continue;
             };
             if cell.transient.contains(TransientFlags::STASIS) {
@@ -762,7 +759,7 @@ impl SimWorld {
                 keep_awake = true;
                 for d in ORTHO_DIRS {
                     let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-                    if let Some((nid, mut nc)) = self.cells.get(&n).copied() {
+                    if let Some((nid, mut nc)) = self.cell_get(n) {
                         let conductive = nc.material.contains(MaterialFlags::CONDUCTIVE)
                             || nc.transient.contains(TransientFlags::WET);
                         if conductive
@@ -811,7 +808,7 @@ impl SimWorld {
             if cell.env.temperature() <= Temperature::Cryo {
                 for d in HORIZ_DIRS {
                     let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-                    if let Some((nid, mut nc)) = self.cells.get(&n).copied() {
+                    if let Some((nid, mut nc)) = self.cell_get(n) {
                         if nc.env.matter() == MatterState::Liquid
                             && nc.env.temperature() > Temperature::Cryo
                         {
@@ -836,7 +833,7 @@ impl SimWorld {
                     {
                         self.clear_l2_cell(pos);
                         let (rgba, vis) = self.materials.cell_visuals(id, &cell);
-                        self.cells.insert(below, (id, cell));
+                        self.chunk_cells[b_idx].insert(below, (id, cell));
                         self.chunks[b_idx].set_l2_cell(
                             b_local[0],
                             b_local[1],
@@ -871,7 +868,7 @@ impl SimWorld {
                             if side_free && drop_below {
                                 self.clear_l2_cell(pos);
                                 let (rgba, vis) = self.materials.cell_visuals(id, &cell);
-                                self.cells.insert(side, (id, cell));
+                                self.chunk_cells[s_idx].insert(side, (id, cell));
                                 self.chunks[s_idx].set_l2_cell(
                                     s_local[0],
                                     s_local[1],
@@ -911,7 +908,7 @@ impl SimWorld {
     fn step_bio_5hz(&mut self) {
         let snapshot: Vec<[i32; 3]> = self.active_set.iter().copied().collect();
         for pos in snapshot {
-            let Some((id, mut cell)) = self.cells.get(&pos).copied() else {
+            let Some((id, mut cell)) = self.cell_get(pos) else {
                 continue;
             };
             if !cell.material.contains(MaterialFlags::ORGANIC)
@@ -932,7 +929,7 @@ impl SimWorld {
             {
                 let d = ORTHO_DIRS[(self.next_rand() as usize) % ORTHO_DIRS.len()];
                 let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-                if let Some((nid, mut nc)) = self.cells.get(&n).copied() {
+                if let Some((nid, mut nc)) = self.cell_get(n) {
                     if nc.topology.contains(TopologyFlags::EDIBLE)
                         && !nc.transient.contains(TransientFlags::INFECTED)
                     {
@@ -949,7 +946,7 @@ impl SimWorld {
     fn step_clocks_1hz(&mut self) {
         let snapshot: Vec<[i32; 3]> = self.active_set.iter().copied().collect();
         for pos in snapshot {
-            let Some((id, mut cell)) = self.cells.get(&pos).copied() else {
+            let Some((id, mut cell)) = self.cell_get(pos) else {
                 continue;
             };
             if cell.clocks.half_life() > 0 {
@@ -1000,7 +997,7 @@ mod tests {
         let alloy_cell = sim.materials.spawn_cell(mat_id::ALLOY);
         let (rgba, vis) = sim.materials.cell_visuals(mat_id::ALLOY, &alloy_cell);
         sim.chunks[c_idx].set_l2_cell(local_l2[0], local_l2[1], local_l2[2], rgba, vis, u64::MAX);
-        sim.cells.insert(l2, (mat_id::ALLOY, alloy_cell));
+        sim.chunk_cells[c_idx].insert(l2, (mat_id::ALLOY, alloy_cell));
 
         for mz in 0..4 {
             for my in 0..4 {
@@ -1040,7 +1037,7 @@ mod tests {
             c.transient.insert(TransientFlags::WET);
             let (rgba, vis) = sim.materials.cell_visuals(mat_id::WIRE, &c);
             sim.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], rgba, vis, u64::MAX);
-            sim.cells.insert(p, (mat_id::WIRE, c));
+            sim.chunk_cells[c_idx].insert(p, (mat_id::WIRE, c));
         }
 
         sim.inject_stimulus(l2a, StimulusFlags::SHOCK, false, 0);
@@ -1064,7 +1061,7 @@ mod tests {
         timber.durability = 20;
         let (rgba, vis) = sim.materials.cell_visuals(mat_id::TIMBER, &timber);
         sim.chunks[c_idx].set_l2_cell(local[0], local[1], local[2], rgba, vis, u64::MAX);
-        sim.cells.insert(target, (mat_id::TIMBER, timber));
+        sim.chunk_cells[c_idx].insert(target, (mat_id::TIMBER, timber));
 
         sim.inject_stimulus(target, StimulusFlags::HEAT, false, 0);
         for _ in 0..10 {
@@ -1096,5 +1093,8 @@ mod tests {
             "distant chunk (0, 0) must unload"
         );
         assert_eq!(sim.chunks.len(), sim.chunk_entities.len());
+        assert_eq!(sim.chunks.len(), sim.chunk_cells.len());
+        let expected_tracked: usize = sim.chunk_cells.iter().map(HashMap::len).sum();
+        assert_eq!(sim.tracked_cell_count(), expected_tracked);
     }
 }

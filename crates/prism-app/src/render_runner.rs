@@ -427,6 +427,7 @@ pub fn render_thread_main(
         }
 
         shared.set_render_stats(RenderStats {
+            render_seq: frame_count,
             frame_time_ms,
             fps: smoothed_fps,
             pt_frame_count: pt_count,

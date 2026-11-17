@@ -8,6 +8,7 @@
 //! When no voxel chunks are active, the pass is a zero-cost no-op that leaves
 //! `VOXEL_COLOR_H` unpublished so downstream passes consume `FORWARD_COLOR_H` unchanged.
 
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Arc;
 
@@ -38,7 +39,7 @@ const ENTRY_VOXEL_GI_DENOISE: &CStr = c"voxelGiDenoiseMain";
 const ENTRY_VOXEL_COMPOSITE: &CStr = c"voxelCompositeMain";
 
 const L1_UNIFORM_REF: u32 = u32::MAX;
-const MAX_ACTIVE_EMITTERS: usize = 48;
+const MAX_ACTIVE_EMITTERS: usize = 16;
 
 const VIS_BURNING: u32 = 1 << 1;
 const VIS_CHARGED: u32 = 1 << 3;
@@ -82,7 +83,7 @@ pub struct VoxelCursorUpload {
 pub struct VoxelSceneUpload {
     pub signature: u64,
     pub elapsed_seconds: f32,
-    pub chunks: Vec<VoxelChunkUpload>,
+    pub chunks: Vec<Arc<VoxelChunkUpload>>,
     pub cursor: Option<VoxelCursorUpload>,
     /// Optional 256x48 SPBR LabPBR atlas (16 tiles x 3 rows of 16x16 RGBA8 packed `u32`).
     pub atlas: Option<Arc<Vec<u32>>>,
@@ -263,7 +264,7 @@ fn eval_cpu_emissive(
     let mut albedo = [base[0], base[1], base[2]];
     if let Some(tiles) = tile_albedos {
         if let Some(tile) = resolve_cpu_tile(rgba, visual) {
-            if tile != 2 {
+            if tile != 2 && tile != 13 && tile != 4 {
                 albedo = tiles[tile];
             }
         }
@@ -273,7 +274,7 @@ fn eval_cpu_emissive(
     let mut rad = [0.0f32; 3];
 
     if (visual & VIS_EMISSIVE) != 0 || emissive_byte > 0 {
-        let s = amt.max(0.5) * 5.2;
+        let s = amt.max(0.35) * 3.8;
         rad[0] += albedo[0] * s;
         rad[1] += albedo[1] * s;
         rad[2] += albedo[2] * s;
@@ -318,112 +319,200 @@ fn eval_cpu_emissive(
     }
 }
 
-fn extract_emitters(scene: &VoxelSceneUpload) -> Vec<CachedEmitter> {
-    let tile_albedos = scene
-        .atlas
-        .as_deref()
-        .map(|a| compute_atlas_tile_albedo(a));
+fn extract_chunk_emitters(
+    chunk: &VoxelChunkUpload,
+    tile_albedos: Option<&[[f32; 3]; 16]>,
+) -> Vec<CachedEmitter> {
     let mut out = Vec::new();
+    let dx_l1 = chunk.dims_l1[0].max(1);
+    let dy_l1 = chunk.dims_l1[1].max(1);
+    for (idx, l1) in chunk.l1_cells.iter().enumerate() {
+        let l1_ref = l1[0];
+        if l1_ref == 0 {
+            continue;
+        }
+        let lx = (idx as u32) % dx_l1;
+        let ly = ((idx as u32) / dx_l1) % dy_l1;
+        let lz = (idx as u32) / (dx_l1 * dy_l1);
+        let wx = (chunk.origin_l1[0] + lx as i32) as f32;
+        let wy = (chunk.origin_l1[1] + ly as i32) as f32;
+        let wz = (chunk.origin_l1[2] + lz as i32) as f32;
 
-    for chunk in &scene.chunks {
-        let dx_l1 = chunk.dims_l1[0].max(1);
-        let dy_l1 = chunk.dims_l1[1].max(1);
-        for (idx, l1) in chunk.l1_cells.iter().enumerate() {
-            let l1_ref = l1[0];
-            if l1_ref == 0 {
-                continue;
-            }
-            let lx = (idx as u32) % dx_l1;
-            let ly = ((idx as u32) / dx_l1) % dy_l1;
-            let lz = (idx as u32) / (dx_l1 * dy_l1);
-            let wx = (chunk.origin_l1[0] + lx as i32) as f32;
-            let wy = (chunk.origin_l1[1] + ly as i32) as f32;
-            let wz = (chunk.origin_l1[2] + lz as i32) as f32;
-
-            if l1_ref == L1_UNIFORM_REF {
-                if let Some(rad) = eval_cpu_emissive(l1[1], l1[2], tile_albedos.as_ref()) {
-                    let peak = rad[0].max(rad[1]).max(rad[2]);
-                    out.push(CachedEmitter {
-                        bmin: [wx, wy, wz],
-                        bmax: [wx + 1.0, wy + 1.0, wz + 1.0],
-                        radiance: rad,
-                        range: (7.0 + peak.sqrt() * 5.0).clamp(7.0, 20.0),
-                        radius: 0.55,
-                        power_weight: 2.2,
-                    });
-                }
-                continue;
-            }
-
-            let brick_idx = (l1_ref - 1) as usize;
-            let Some(&[occ_lo, occ_hi]) = chunk.brick_occ.get(brick_idx) else {
-                continue;
-            };
-            if (occ_lo | occ_hi) == 0 {
-                continue;
-            }
-
-            let mut any = false;
-            let mut bmin = [f32::MAX; 3];
-            let mut bmax = [f32::MIN; 3];
-            let mut rad_sum = [0.0f32; 3];
-            let mut total_fill = 0.0f32;
-
-            for sub in 0..64usize {
-                let word = if sub < 32 { occ_lo } else { occ_hi };
-                if ((word >> (sub & 31)) & 1) == 0 {
-                    continue;
-                }
-                let Some(&cell) = chunk.brick_cells.get(brick_idx * 64 + sub) else {
-                    continue;
-                };
-                if (cell[0] >> 24) == 0 || (cell[2] | cell[3]) == 0 {
-                    continue;
-                }
-                let Some(rad) = eval_cpu_emissive(cell[0], cell[1], tile_albedos.as_ref()) else {
-                    continue;
-                };
-                let fill = ((cell[2].count_ones() + cell[3].count_ones()) as f32) / 64.0;
-                let sx = (sub % 4) as f32 * 0.25;
-                let sy = ((sub / 4) % 4) as f32 * 0.25;
-                let sz = (sub / 16) as f32 * 0.25;
-
-                any = true;
-                bmin[0] = bmin[0].min(wx + sx);
-                bmin[1] = bmin[1].min(wy + sy);
-                bmin[2] = bmin[2].min(wz + sz);
-                bmax[0] = bmax[0].max(wx + sx + 0.25);
-                bmax[1] = bmax[1].max(wy + sy + 0.25);
-                bmax[2] = bmax[2].max(wz + sz + 0.25);
-                rad_sum[0] += rad[0] * fill;
-                rad_sum[1] += rad[1] * fill;
-                rad_sum[2] += rad[2] * fill;
-                total_fill += fill;
-            }
-
-            if any && total_fill > 0.01 {
-                let avg_rad = [
-                    rad_sum[0] / total_fill,
-                    rad_sum[1] / total_fill,
-                    rad_sum[2] / total_fill,
-                ];
-                let peak = avg_rad[0].max(avg_rad[1]).max(avg_rad[2]);
-                let extent_max = (bmax[0] - bmin[0])
-                    .max(bmax[1] - bmin[1])
-                    .max(bmax[2] - bmin[2]);
+        if l1_ref == L1_UNIFORM_REF {
+            if let Some(rad) = eval_cpu_emissive(l1[1], l1[2], tile_albedos) {
+                let peak = rad[0].max(rad[1]).max(rad[2]);
                 out.push(CachedEmitter {
-                    bmin,
-                    bmax,
-                    radiance: avg_rad,
-                    range: (6.5 + peak.sqrt() * 5.2).clamp(6.5, 20.0),
-                    radius: (extent_max * 0.5).clamp(0.28, 0.75),
-                    power_weight: (total_fill.sqrt() * 1.1).clamp(0.70, 2.4),
+                    bmin: [wx, wy, wz],
+                    bmax: [wx + 1.0, wy + 1.0, wz + 1.0],
+                    radiance: rad,
+                    range: (7.0 + peak.sqrt() * 5.0).clamp(7.0, 20.0),
+                    radius: 0.55,
+                    power_weight: 2.2,
                 });
             }
+            continue;
+        }
+
+        let brick_idx = (l1_ref - 1) as usize;
+        let Some(&[occ_lo, occ_hi]) = chunk.brick_occ.get(brick_idx) else {
+            continue;
+        };
+        if (occ_lo | occ_hi) == 0 {
+            continue;
+        }
+
+        let mut any = false;
+        let mut bmin = [f32::MAX; 3];
+        let mut bmax = [f32::MIN; 3];
+        let mut rad_sum = [0.0f32; 3];
+        let mut total_fill = 0.0f32;
+
+        for sub in 0..64usize {
+            let word = if sub < 32 { occ_lo } else { occ_hi };
+            if ((word >> (sub & 31)) & 1) == 0 {
+                continue;
+            }
+            let Some(&cell) = chunk.brick_cells.get(brick_idx * 64 + sub) else {
+                continue;
+            };
+            if (cell[0] >> 24) == 0 || (cell[2] | cell[3]) == 0 {
+                continue;
+            }
+            let Some(rad) = eval_cpu_emissive(cell[0], cell[1], tile_albedos) else {
+                continue;
+            };
+            let fill = ((cell[2].count_ones() + cell[3].count_ones()) as f32) / 64.0;
+            let sx = (sub % 4) as f32 * 0.25;
+            let sy = ((sub / 4) % 4) as f32 * 0.25;
+            let sz = (sub / 16) as f32 * 0.25;
+
+            any = true;
+            bmin[0] = bmin[0].min(wx + sx);
+            bmin[1] = bmin[1].min(wy + sy);
+            bmin[2] = bmin[2].min(wz + sz);
+            bmax[0] = bmax[0].max(wx + sx + 0.25);
+            bmax[1] = bmax[1].max(wy + sy + 0.25);
+            bmax[2] = bmax[2].max(wz + sz + 0.25);
+            rad_sum[0] += rad[0] * fill;
+            rad_sum[1] += rad[1] * fill;
+            rad_sum[2] += rad[2] * fill;
+            total_fill += fill;
+        }
+
+        if any && total_fill > 0.01 {
+            let avg_rad = [
+                rad_sum[0] / total_fill,
+                rad_sum[1] / total_fill,
+                rad_sum[2] / total_fill,
+            ];
+            let peak = avg_rad[0].max(avg_rad[1]).max(avg_rad[2]);
+            let extent_max = (bmax[0] - bmin[0])
+                .max(bmax[1] - bmin[1])
+                .max(bmax[2] - bmin[2]);
+            out.push(CachedEmitter {
+                bmin,
+                bmax,
+                radiance: avg_rad,
+                range: (6.5 + peak.sqrt() * 5.2).clamp(6.5, 20.0),
+                radius: (extent_max * 0.5).clamp(0.28, 0.75),
+                power_weight: (total_fill.sqrt() * 1.1).clamp(0.70, 2.4),
+            });
         }
     }
+    merge_nearby_emitters(out)
+}
 
-    out
+fn emitter_chroma_similar(a: [f32; 3], b: [f32; 3]) -> bool {
+    let la = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+    let lb = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt();
+    if la < 1e-4 || lb < 1e-4 {
+        return false;
+    }
+    let dot = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb);
+    dot >= 0.88
+}
+
+/// Merge nearby same-hue emitters (even separated by 0.0625m..0.25m gaps) into area emitters.
+fn merge_nearby_emitters(mut emitters: Vec<CachedEmitter>) -> Vec<CachedEmitter> {
+    const MERGE_GAP: f32 = 0.28;
+    const MAX_EXTENT: f32 = 6.0;
+
+    if emitters.len() <= 1 {
+        return emitters;
+    }
+
+    let mut merged = true;
+    while merged {
+        merged = false;
+        let mut i = 0;
+        while i < emitters.len() {
+            let mut j = i + 1;
+            while j < emitters.len() {
+                let a = &emitters[i];
+                let b = &emitters[j];
+                let gap_ok = a.bmax[0] + MERGE_GAP >= b.bmin[0]
+                    && b.bmax[0] + MERGE_GAP >= a.bmin[0]
+                    && a.bmax[1] + MERGE_GAP >= b.bmin[1]
+                    && b.bmax[1] + MERGE_GAP >= a.bmin[1]
+                    && a.bmax[2] + MERGE_GAP >= b.bmin[2]
+                    && b.bmax[2] + MERGE_GAP >= a.bmin[2];
+
+                if gap_ok && emitter_chroma_similar(a.radiance, b.radiance) {
+                    let nbmin = [
+                        a.bmin[0].min(b.bmin[0]),
+                        a.bmin[1].min(b.bmin[1]),
+                        a.bmin[2].min(b.bmin[2]),
+                    ];
+                    let nbmax = [
+                        a.bmax[0].max(b.bmax[0]),
+                        a.bmax[1].max(b.bmax[1]),
+                        a.bmax[2].max(b.bmax[2]),
+                    ];
+                    let ext_x = nbmax[0] - nbmin[0];
+                    let ext_y = nbmax[1] - nbmin[1];
+                    let ext_z = nbmax[2] - nbmin[2];
+                    let ext_max = ext_x.max(ext_y).max(ext_z);
+                    if ext_max <= MAX_EXTENT {
+                        let wa = a.power_weight.max(0.1);
+                        let wb = b.power_weight.max(0.1);
+                        let wsum = wa + wb;
+                        let rad = [
+                            (a.radiance[0] * wa + b.radiance[0] * wb) / wsum,
+                            (a.radiance[1] * wa + b.radiance[1] * wb) / wsum,
+                            (a.radiance[2] * wa + b.radiance[2] * wb) / wsum,
+                        ];
+                        let peak = rad[0].max(rad[1]).max(rad[2]);
+                        emitters[i] = CachedEmitter {
+                            bmin: nbmin,
+                            bmax: nbmax,
+                            radiance: rad,
+                            range: (a.range.max(b.range).max(6.5 + peak.sqrt() * 5.2))
+                                .clamp(6.5, 22.0),
+                            radius: (ext_max * 0.5).clamp(0.28, 1.5),
+                            power_weight: (wa * wa + wb * wb).sqrt().clamp(0.70, 3.2),
+                        };
+                        emitters.swap_remove(j);
+                        merged = true;
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+    }
+    emitters
+}
+
+#[derive(Default)]
+struct SceneUploadScratch {
+    chunk_order: Vec<(f32, usize)>,
+    gpu_chunks: Vec<VoxelChunkGpu>,
+    flat_l1: Vec<[u32; 4]>,
+    flat_occ: Vec<[u32; 2]>,
+    flat_cells: Vec<[u32; 4]>,
+    emitter_ranked: Vec<(f32, usize)>,
+    gpu_emitters: Vec<VoxelEmitterGpu>,
 }
 
 struct HostBuffer {
@@ -730,22 +819,42 @@ impl FrameSlot {
         buf.write_bytes(&context.device, bytes)
     }
 
-    fn upload_scene(&mut self, context: &VulkanContext, scene: &VoxelSceneUpload) -> Result<bool> {
+    fn upload_scene(
+        &mut self,
+        context: &VulkanContext,
+        scene: &VoxelSceneUpload,
+        camera_pos: [f32; 3],
+        scratch: &mut SceneUploadScratch,
+    ) -> Result<bool> {
         if self.uploaded_signature == Some(scene.signature) {
             return Ok(false);
         }
-        let mut gpu_chunks = Vec::with_capacity(scene.chunks.len());
-        let mut flat_l1: Vec<[u32; 4]> = Vec::new();
-        let mut flat_occ: Vec<[u32; 2]> = Vec::new();
-        let mut flat_cells: Vec<[u32; 4]> = Vec::new();
+        scratch.chunk_order.clear();
+        scratch.gpu_chunks.clear();
+        scratch.flat_l1.clear();
+        scratch.flat_occ.clear();
+        scratch.flat_cells.clear();
 
-        for chunk in &scene.chunks {
-            let l1_offset = flat_l1.len() as u32;
-            let brick_offset = flat_occ.len() as u32;
-            flat_l1.extend_from_slice(&chunk.l1_cells);
-            flat_occ.extend_from_slice(&chunk.brick_occ);
-            flat_cells.extend_from_slice(&chunk.brick_cells);
-            gpu_chunks.push(VoxelChunkGpu {
+        // Sort uploaded chunks nearest-to-camera first so `trace_world` tightens `best.t` early.
+        for (idx, chunk) in scene.chunks.iter().enumerate() {
+            let cx = chunk.origin_l1[0] as f32 + chunk.dims_l1[0] as f32 * 0.5;
+            let cy = chunk.origin_l1[1] as f32 + chunk.dims_l1[1] as f32 * 0.5;
+            let cz = chunk.origin_l1[2] as f32 + chunk.dims_l1[2] as f32 * 0.5;
+            let dx = cx - camera_pos[0];
+            let dy = cy - camera_pos[1];
+            let dz = cz - camera_pos[2];
+            scratch.chunk_order.push((dx * dx + dy * dy + dz * dz, idx));
+        }
+        scratch.chunk_order.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        for &(_, idx) in &scratch.chunk_order {
+            let chunk = &scene.chunks[idx];
+            let l1_offset = scratch.flat_l1.len() as u32;
+            let brick_offset = scratch.flat_occ.len() as u32;
+            scratch.flat_l1.extend_from_slice(&chunk.l1_cells);
+            scratch.flat_occ.extend_from_slice(&chunk.brick_occ);
+            scratch.flat_cells.extend_from_slice(&chunk.brick_cells);
+            scratch.gpu_chunks.push(VoxelChunkGpu {
                 originAndL1Offset: [
                     chunk.origin_l1[0],
                     chunk.origin_l1[1],
@@ -761,30 +870,38 @@ impl FrameSlot {
             });
         }
 
-        if gpu_chunks.is_empty() {
-            gpu_chunks.push(VoxelChunkGpu::default());
+        if scratch.gpu_chunks.is_empty() {
+            scratch.gpu_chunks.push(VoxelChunkGpu::default());
         }
-        if flat_l1.is_empty() {
-            flat_l1.push([0; 4]);
+        if scratch.flat_l1.is_empty() {
+            scratch.flat_l1.push([0; 4]);
         }
-        if flat_occ.is_empty() {
-            flat_occ.push([0; 2]);
+        if scratch.flat_occ.is_empty() {
+            scratch.flat_occ.push([0; 2]);
         }
-        if flat_cells.is_empty() {
-            flat_cells.push([0; 4]);
+        if scratch.flat_cells.is_empty() {
+            scratch.flat_cells.push([0; 4]);
         }
 
         Self::ensure_ssbo(
             &mut self.chunks_buf,
             context,
-            bytemuck::cast_slice(&gpu_chunks),
+            bytemuck::cast_slice(&scratch.gpu_chunks),
         )?;
-        Self::ensure_ssbo(&mut self.l1_buf, context, bytemuck::cast_slice(&flat_l1))?;
-        Self::ensure_ssbo(&mut self.occ_buf, context, bytemuck::cast_slice(&flat_occ))?;
+        Self::ensure_ssbo(
+            &mut self.l1_buf,
+            context,
+            bytemuck::cast_slice(&scratch.flat_l1),
+        )?;
+        Self::ensure_ssbo(
+            &mut self.occ_buf,
+            context,
+            bytemuck::cast_slice(&scratch.flat_occ),
+        )?;
         Self::ensure_ssbo(
             &mut self.cells_buf,
             context,
-            bytemuck::cast_slice(&flat_cells),
+            bytemuck::cast_slice(&scratch.flat_cells),
         )?;
         if !self.atlas_uploaded {
             if let Some(atlas) = &scene.atlas {
@@ -801,45 +918,41 @@ impl FrameSlot {
         context: &VulkanContext,
         cached_emitters: &[CachedEmitter],
         camera_pos: [f32; 3],
+        scratch: &mut SceneUploadScratch,
     ) -> Result<u32> {
-        let mut ranked: Vec<(f32, usize)> = cached_emitters
-            .iter()
-            .enumerate()
-            .map(|(idx, e)| {
-                let cx = 0.5 * (e.bmin[0] + e.bmax[0]);
-                let cy = 0.5 * (e.bmin[1] + e.bmax[1]);
-                let cz = 0.5 * (e.bmin[2] + e.bmax[2]);
-                let dx = cx - camera_pos[0];
-                let dy = cy - camera_pos[1];
-                let dz = cz - camera_pos[2];
-                let d2 = dx * dx + dy * dy + dz * dz;
-                let peak = e.radiance[0].max(e.radiance[1]).max(e.radiance[2]);
-                let score = (peak * e.power_weight) / (1.0 + d2 * 0.05);
-                (score, idx)
-            })
-            .collect();
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-        ranked.truncate(MAX_ACTIVE_EMITTERS);
+        scratch.emitter_ranked.clear();
+        for (idx, e) in cached_emitters.iter().enumerate() {
+            let cx = 0.5 * (e.bmin[0] + e.bmax[0]);
+            let cy = 0.5 * (e.bmin[1] + e.bmax[1]);
+            let cz = 0.5 * (e.bmin[2] + e.bmax[2]);
+            let dx = cx - camera_pos[0];
+            let dy = cy - camera_pos[1];
+            let dz = cz - camera_pos[2];
+            let d2 = dx * dx + dy * dy + dz * dz;
+            let peak = e.radiance[0].max(e.radiance[1]).max(e.radiance[2]);
+            let score = (peak * e.power_weight) / (1.0 + d2 * 0.05);
+            scratch.emitter_ranked.push((score, idx));
+        }
+        scratch.emitter_ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scratch.emitter_ranked.truncate(MAX_ACTIVE_EMITTERS);
 
-        let count = ranked.len() as u32;
-        let mut gpu_emitters: Vec<VoxelEmitterGpu> = ranked
-            .into_iter()
-            .map(|(_, idx)| {
-                let e = &cached_emitters[idx];
-                VoxelEmitterGpu {
-                    bminRange: [e.bmin[0], e.bmin[1], e.bmin[2], e.range],
-                    bmaxRadius: [e.bmax[0], e.bmax[1], e.bmax[2], e.radius],
-                    colorIntensity: [e.radiance[0], e.radiance[1], e.radiance[2], e.power_weight],
-                }
-            })
-            .collect();
-        if gpu_emitters.is_empty() {
-            gpu_emitters.push(VoxelEmitterGpu::default());
+        let count = scratch.emitter_ranked.len() as u32;
+        scratch.gpu_emitters.clear();
+        for &(_, idx) in &scratch.emitter_ranked {
+            let e = &cached_emitters[idx];
+            scratch.gpu_emitters.push(VoxelEmitterGpu {
+                bminRange: [e.bmin[0], e.bmin[1], e.bmin[2], e.range],
+                bmaxRadius: [e.bmax[0], e.bmax[1], e.bmax[2], e.radius],
+                colorIntensity: [e.radiance[0], e.radiance[1], e.radiance[2], e.power_weight],
+            });
+        }
+        if scratch.gpu_emitters.is_empty() {
+            scratch.gpu_emitters.push(VoxelEmitterGpu::default());
         }
         Self::ensure_ssbo(
             &mut self.emitters_buf,
             context,
-            bytemuck::cast_slice(&gpu_emitters),
+            bytemuck::cast_slice(&scratch.gpu_emitters),
         )?;
         Ok(count)
     }
@@ -871,6 +984,9 @@ pub struct VoxelDdaPass {
     scene: Option<Arc<VoxelSceneUpload>>,
     cached_emitter_sig: Option<u64>,
     cached_emitters: Vec<CachedEmitter>,
+    chunk_emitter_cache: HashMap<u64, (u64, Vec<CachedEmitter>)>,
+    atlas_tile_albedos: Option<[[f32; 3]; 16]>,
+    upload_scratch: SceneUploadScratch,
     prev_view_proj: Option<[[f32; 4]; 4]>,
 }
 
@@ -1109,6 +1225,9 @@ impl VoxelDdaPass {
             scene: None,
             cached_emitter_sig: None,
             cached_emitters: Vec::new(),
+            chunk_emitter_cache: HashMap::new(),
+            atlas_tile_albedos: None,
+            upload_scratch: SceneUploadScratch::default(),
             prev_view_proj: None,
         })
     }
@@ -1455,7 +1574,32 @@ impl RenderPassNode for VoxelDdaPass {
         let prev_idx = 1 - slot_idx;
 
         if self.cached_emitter_sig != Some(scene.signature) {
-            self.cached_emitters = extract_emitters(&scene);
+            if self.atlas_tile_albedos.is_none() {
+                self.atlas_tile_albedos = scene
+                    .atlas
+                    .as_deref()
+                    .map(|a| compute_atlas_tile_albedo(a));
+            }
+            let tile_albedos = self.atlas_tile_albedos.as_ref();
+            self.chunk_emitter_cache
+                .retain(|&id, _| scene.chunks.iter().any(|c| c.entity_id == id));
+            self.cached_emitters.clear();
+            for chunk in &scene.chunks {
+                let entry = self
+                    .chunk_emitter_cache
+                    .entry(chunk.entity_id)
+                    .or_insert_with(|| {
+                        (
+                            chunk.version,
+                            extract_chunk_emitters(chunk, tile_albedos),
+                        )
+                    });
+                if entry.0 != chunk.version {
+                    entry.0 = chunk.version;
+                    entry.1 = extract_chunk_emitters(chunk, tile_albedos);
+                }
+                self.cached_emitters.extend(entry.1.iter().cloned());
+            }
             self.cached_emitter_sig = Some(scene.signature);
         }
 
@@ -1468,6 +1612,11 @@ impl RenderPassNode for VoxelDdaPass {
             }
         };
 
+        let camera_pos = [
+            ctx.frame.camera_pos[0],
+            ctx.frame.camera_pos[1],
+            ctx.frame.camera_pos[2],
+        ];
         let slot = &mut self.slots[slot_idx];
         let recreate = slot.target.as_ref().is_none_or(|t| t.extent != extent);
         if recreate {
@@ -1477,15 +1626,13 @@ impl RenderPassNode for VoxelDdaPass {
             slot.target = Some(TargetImages::create(&self.context, extent)?);
         }
 
-        let scene_changed = slot.upload_scene(&self.context, &scene)?;
+        let scene_changed =
+            slot.upload_scene(&self.context, &scene, camera_pos, &mut self.upload_scratch)?;
         let emitter_count = slot.upload_active_emitters(
             &self.context,
             &self.cached_emitters,
-            [
-                ctx.frame.camera_pos[0],
-                ctx.frame.camera_pos[1],
-                ctx.frame.camera_pos[2],
-            ],
+            camera_pos,
+            &mut self.upload_scratch,
         )?;
 
         let mut sun_dir = [

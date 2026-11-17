@@ -33,11 +33,13 @@ const CHUNK_DIM_Y_SECTION: i32 = 16;
 /// Snapshot of real host renderer metrics populated by `FrameHook` in player builds.
 #[derive(Debug, Clone, Default)]
 pub struct HostRenderStats {
+    pub render_seq: u64,
     pub fps: f32,
     pub frame_time_ms: f32,
     pub gpu_frame_ms: Option<f32>,
     pub gpu_total_ms: Option<f32>,
     pub top_gpu_passes: Vec<(String, f32)>,
+    pub all_gpu_passes: Vec<(String, f32)>,
     pub cpu_p95_ms: Option<f32>,
     pub low_1pct_fps: Option<f32>,
     pub physical_size: (u32, u32),
@@ -58,7 +60,7 @@ pub fn publish_host_render_stats(stats: HostRenderStats) {
     }
 }
 
-fn read_host_render_stats() -> Option<HostRenderStats> {
+pub(crate) fn read_host_render_stats() -> Option<HostRenderStats> {
     telemetry_slot()
         .try_lock()
         .ok()
@@ -109,14 +111,14 @@ pub fn facing_cardinal_and_angles(fwd: Vec3) -> (&'static str, &'static str, f32
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct ProcessMemoryStats {
-    used_mib: u64,
-    allocated_mib: u64,
-    total_mib: u64,
+pub(crate) struct ProcessMemoryStats {
+    pub(crate) used_mib: u64,
+    pub(crate) allocated_mib: u64,
+    pub(crate) total_mib: u64,
 }
 
 #[cfg(target_os = "windows")]
-fn read_process_memory() -> Option<ProcessMemoryStats> {
+pub(crate) fn read_process_memory() -> Option<ProcessMemoryStats> {
     #[repr(C)]
     struct MemoryStatusEx {
         dw_length: u32,
@@ -195,7 +197,7 @@ fn read_process_memory() -> Option<ProcessMemoryStats> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_process_memory() -> Option<ProcessMemoryStats> {
+pub(crate) fn read_process_memory() -> Option<ProcessMemoryStats> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
     let parse_kb = |text: &str, key: &str| -> u64 {
@@ -219,11 +221,11 @@ fn read_process_memory() -> Option<ProcessMemoryStats> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-fn read_process_memory() -> Option<ProcessMemoryStats> {
+pub(crate) fn read_process_memory() -> Option<ProcessMemoryStats> {
     None
 }
 
-fn cpu_summary_line() -> &'static str {
+pub(crate) fn cpu_summary_line() -> &'static str {
     static CPU_LINE: OnceLock<String> = OnceLock::new();
     CPU_LINE.get_or_init(|| {
         let cores = std::thread::available_parallelism()
@@ -234,14 +236,14 @@ fn cpu_summary_line() -> &'static str {
     })
 }
 
-fn percent_of(part: u64, total: u64) -> u64 {
+pub(crate) fn percent_of(part: u64, total: u64) -> u64 {
     part.saturating_mul(100)
         .checked_div(total)
         .unwrap_or(0)
         .min(100)
 }
 
-fn read_cpu_brand() -> String {
+pub(crate) fn read_cpu_brand() -> String {
     #[cfg(target_arch = "x86_64")]
     {
         let max_ext = core::arch::x86_64::__cpuid(0x8000_0000).eax;
@@ -334,6 +336,10 @@ impl DebugHudState {
         } else {
             self.sim_step_ms * 0.85 + ms * 0.15
         };
+    }
+
+    pub(crate) fn alloc_rate_mib_s(&self) -> u64 {
+        self.alloc_rate_mib_s
     }
 
     pub fn update_telemetry(&mut self, dt: f32) {

@@ -66,6 +66,8 @@ pub struct FrameImage {
 /// 渲染线程产生的每帧渲染指标，由主线程消费以显示编辑器 HUD。
 #[derive(Clone, Debug, Default)]
 pub struct RenderStats {
+    /// Monotonic counter incremented once per completed render-thread frame.
+    pub render_seq: u64,
     /// 从 begin_frame 到 present 的总时间（毫秒）
     pub frame_time_ms: f32,
     /// 平滑后的每秒帧数

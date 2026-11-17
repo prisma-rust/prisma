@@ -141,7 +141,7 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     let scene = Arc::new(VoxelSceneUpload {
         signature: 1,
         elapsed_seconds: 0.25,
-        chunks: vec![VoxelChunkUpload {
+        chunks: vec![Arc::new(VoxelChunkUpload {
             entity_id: 1,
             version: 1,
             origin_l1: [0, 0, 0],
@@ -149,7 +149,7 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
             l1_cells,
             brick_occ: vec![[occ_lo, occ_hi]],
             brick_cells,
-        }],
+        })],
         cursor: Some(VoxelCursorUpload {
             active: true,
             min: [2.0, 1.5, 2.0],
@@ -273,7 +273,7 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
         let scene = Arc::new(VoxelSceneUpload {
             signature: sig,
             elapsed_seconds: 1.0,
-            chunks: vec![VoxelChunkUpload {
+            chunks: vec![Arc::new(VoxelChunkUpload {
                 entity_id: 2,
                 version: sig,
                 origin_l1: [0, 0, 0],
@@ -281,7 +281,7 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
                 l1_cells,
                 brick_occ: Vec::new(),
                 brick_cells: Vec::new(),
-            }],
+            })],
             cursor: None,
             atlas: None,
         });

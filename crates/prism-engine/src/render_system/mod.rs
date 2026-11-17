@@ -336,7 +336,7 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
 
 struct VoxelExtractCache {
     started_at: Instant,
-    chunks: HashMap<u64, (u64, prism_render::VoxelChunkUpload)>,
+    chunks: HashMap<u64, (u64, Arc<prism_render::VoxelChunkUpload>)>,
 }
 
 impl Default for VoxelExtractCache {
@@ -414,7 +414,7 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
     }
 
     // Encode any dirty or newly spawned chunks into the cache first, without aliasing `world`.
-    let mut dirty_updates: Vec<(u64, u64, prism_render::VoxelChunkUpload)> = Vec::new();
+    let mut dirty_updates: Vec<(u64, u64, Arc<prism_render::VoxelChunkUpload>)> = Vec::new();
     {
         let cache = world.get_resource::<VoxelExtractCache>().unwrap();
         let mut stale_or_missing = Vec::new();
@@ -430,14 +430,21 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
         if !stale_or_missing.is_empty() {
             for (entity, chunk) in world.query::<prism_scene::VoxelChunk>() {
                 let key = ((entity.generation() as u64) << 32) | (entity.id() as u64);
-                if stale_or_missing.contains(&key) {
-                    dirty_updates.push((key, chunk.version, encode_voxel_chunk_upload(key, chunk)));
+                if stale_or_missing.binary_search(&key).is_ok() {
+                    dirty_updates.push((
+                        key,
+                        chunk.version,
+                        Arc::new(encode_voxel_chunk_upload(key, chunk)),
+                    ));
                 }
             }
         }
     }
 
     let cache = world.get_resource_mut::<VoxelExtractCache>().unwrap();
+    cache
+        .chunks
+        .retain(|&key, _| chunk_entries.binary_search_by_key(&key, |&(k, _)| k).is_ok());
     for (key, version, upload) in dirty_updates {
         cache.chunks.insert(key, (version, upload));
     }
@@ -450,7 +457,7 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
         signature ^= version;
         signature = signature.wrapping_mul(0x1000_0000_01b3);
         if let Some((_, cached)) = cache.chunks.get(&entity_key) {
-            uploads.push(cached.clone());
+            uploads.push(Arc::clone(cached));
         }
     }
     let elapsed_seconds = cache.started_at.elapsed().as_secs_f32();
