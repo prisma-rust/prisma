@@ -517,41 +517,107 @@ float hash31(float3 p)
     return frac((p.x + p.y) * p.z);
 }
 
+static const float VOXEL_PI = 3.14159265;
+
+float d_ggx(float ndh, float roughness)
+{
+    float a = max(roughness * roughness, 0.002);
+    float a2 = a * a;
+    float denom = ndh * ndh * (a2 - 1.0) + 1.0;
+    return a2 / max(VOXEL_PI * denom * denom, 1e-5);
+}
+
+float g_schlick_ggx(float ndv, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) * 0.125;
+    return ndv / max(ndv * (1.0 - k) + k, 1e-5);
+}
+
+float g_smith(float ndl, float ndv, float roughness)
+{
+    return g_schlick_ggx(ndl, roughness) * g_schlick_ggx(ndv, roughness);
+}
+
+float3 f_schlick(float cosTheta, float3 f0)
+{
+    return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Complementary-style atmospheric sky & sun-halo color for horizon fog and reflections.
+float3 sample_atmosphere(float3 dir, float3 sunDir, float3 sunCol)
+{
+    float up = clamp(dir.y, -0.2, 1.0);
+    float3 zenith = float3(0.18, 0.42, 0.85);
+    float3 horizon = float3(0.56, 0.72, 0.90);
+    float3 sky = lerp(horizon, zenith, pow(max(up, 0.0), 0.55));
+    float sunCos = max(dot(dir, sunDir), 0.0);
+    sky += sunCol * (0.28 * pow(sunCos, 8.0) + 0.85 * pow(sunCos, 96.0));
+    return sky;
+}
+
+// LabPBR 16x16 sub-texel micro-normal perturbation + animated water ripples.
+float3 perturb_voxel_normal(float3 worldPos, float3 normal, uint visual, float time)
+{
+    float3 n = normal;
+    if ((visual & VIS_LIQUID) != 0u)
+    {
+        float2 p = worldPos.xz * 4.5;
+        float w1 = sin(p.x * 1.7 + time * 2.4 + cos(p.y * 1.3 - time * 1.8));
+        float w2 = cos(p.y * 2.3 - time * 2.1 + sin(p.x * 1.9 + time * 1.5));
+        float3 ripple = float3(w1 * 0.09, 0.0, w2 * 0.09);
+        n = normalize(normal + ripple * (1.0 - abs(normal.x) * 0.5));
+        return n;
+    }
+
+    // 16x16 texel grid micro-relief inspired by SPBR normal maps.
+    float3 texel = floor(worldPos * 16.0);
+    float gx = hash31(texel + float3(1.0, 0.0, 0.0)) - hash31(texel - float3(1.0, 0.0, 0.0));
+    float gy = hash31(texel + float3(0.0, 1.0, 0.0)) - hash31(texel - float3(0.0, 1.0, 0.0));
+    float gz = hash31(texel + float3(0.0, 0.0, 1.0)) - hash31(texel - float3(0.0, 0.0, 1.0));
+    float3 grad = float3(gx, gy, gz);
+    // Project gradient onto the surface tangent plane.
+    grad -= normal * dot(grad, normal);
+    float bumpStrength = ((visual & VIS_METALLIC) != 0u) ? 0.06 : 0.12;
+    return normalize(normal + grad * bumpStrength);
+}
+
 float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint tier, float3 viewDir, float shadowVis)
 {
     float4 baseCol = unpack_rgba_linear(rgba);
     float3 albedo = baseCol.rgb;
-    float roughness = float((visual >> 16u) & 0xFFu) * (1.0 / 255.0);
+    float roughness = clamp(float((visual >> 16u) & 0xFFu) * (1.0 / 255.0), 0.04, 1.0);
     float emissiveAmt = float((visual >> 24u) & 0xFFu) * (1.0 / 255.0);
     float time = ubo.cameraPos.w;
 
-    // Fine spatial variation + crisp tier border bevel so 1m/0.25m/0.0625m detail reads clearly.
+    // Fine spatial variation + crisp tier border bevel + 16x16 SPBR-style pixel grain.
     float cellStep = (tier == 3u) ? L3_SIZE_M : ((tier == 2u) ? L2_SIZE_M : L2_SIZE_M);
     float3 gridP = worldPos / cellStep;
     float3 f = abs(frac(gridP) - 0.5);
     float3 maskN = 1.0 - abs(normal);
     float edgeMax = max(f.x * maskN.x, max(f.y * maskN.y, f.z * maskN.z));
     float bevel = smoothstep(0.42, 0.50, edgeMax);
-    albedo *= lerp(1.0, (tier == 3u) ? 0.80 : 0.88, bevel);
+    albedo *= lerp(1.0, (tier == 3u) ? 0.82 : 0.90, bevel);
 
+    float texelNoise = hash31(floor(worldPos * 16.0)) - 0.5;
     float microNoise = hash31(floor(worldPos / L2_SIZE_M)) - 0.5;
-    albedo *= (1.0 + microNoise * 0.06);
+    albedo *= (1.0 + microNoise * 0.05 + texelNoise * 0.08);
 
     float3 emissive = float3(0.0, 0.0, 0.0);
     if ((visual & VIS_EMISSIVE) != 0u)
-        emissive += albedo * (emissiveAmt * 3.5);
+        emissive += albedo * (emissiveAmt * 3.8);
     if ((visual & VIS_HEAT_GLOW) != 0u)
-        emissive += float3(1.4, 0.38, 0.06) * max(0.3, emissiveAmt * 2.5);
+        emissive += float3(1.5, 0.40, 0.06) * max(0.35, emissiveAmt * 2.8);
 
     if ((visual & VIS_WET) != 0u)
     {
         albedo *= 0.68;
-        roughness = min(roughness, 0.14);
+        roughness = min(roughness, 0.12);
     }
     if ((visual & VIS_FROZEN) != 0u)
     {
-        albedo = lerp(albedo, float3(0.55, 0.85, 1.0), 0.48);
-        roughness = min(roughness, 0.18);
+        albedo = lerp(albedo, float3(0.58, 0.86, 1.0), 0.45);
+        roughness = min(roughness, 0.16);
     }
     if ((visual & VIS_CORRODED) != 0u)
     {
@@ -563,18 +629,18 @@ float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint 
         float pulse = 0.5 + 0.5 * sin(time * 3.0 + dot(worldPos, float3(4.0, 3.0, 5.0)));
         float3 spore = float3(0.45, 0.12, 0.65);
         albedo = lerp(albedo, spore, 0.35);
-        emissive += spore * (0.25 + 0.45 * pulse);
+        emissive += spore * (0.28 + 0.45 * pulse);
     }
     if ((visual & VIS_BURNING) != 0u)
     {
         float flicker = 0.55 + 0.45 * sin(time * 14.0 + hash31(floor(worldPos * 8.0)) * 6.2831);
         albedo *= 0.5;
-        emissive += float3(1.8, 0.48, 0.08) * flicker;
+        emissive += float3(1.9, 0.50, 0.08) * flicker;
     }
     if ((visual & VIS_CHARGED) != 0u)
     {
         float spark = pow(0.5 + 0.5 * sin(time * 22.0 + dot(worldPos, float3(12.0, 9.0, 14.0))), 6.0);
-        emissive += float3(0.25, 0.80, 1.8) * (0.15 + 1.2 * spark);
+        emissive += float3(0.25, 0.80, 1.9) * (0.15 + 1.25 * spark);
     }
     if ((visual & VIS_WARNING) != 0u)
     {
@@ -592,24 +658,52 @@ float3 shade_voxel(float3 worldPos, float3 normal, uint rgba, uint visual, uint 
         albedo *= (1.0 - crack * 0.55);
     }
 
-    float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.6, ubo.sunDirRadiance.w * 2.2);
-    float ambientStrength = max(0.18, ubo.sunColorAmbient.w * 1.35);
+    float3 N = perturb_voxel_normal(worldPos, normal, visual, time);
+    float3 V = normalize(viewDir);
+    float3 L = normalize(ubo.sunDirRadiance.xyz);
+    float3 H = normalize(L + V);
+    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
+    float ambientStrength = max(0.20, ubo.sunColorAmbient.w * 1.35);
 
-    float ndl = max(dot(normal, sunDir), 0.0);
-    float3 hemiSky = lerp(float3(0.26, 0.30, 0.36), float3(0.75, 0.88, 1.05), normal.y * 0.5 + 0.5);
-    float directionalFacet = 0.88 + 0.12 * dot(normal, normalize(float3(0.3, 1.0, 0.2)));
+    float ndl = max(dot(N, L), 0.0);
+    float ndv = max(dot(N, V), 1e-4);
+    float ndh = max(dot(N, H), 0.0);
+    float vdh = max(dot(V, H), 0.0);
 
-    float3 H = normalize(sunDir + viewDir);
-    float ndh = max(dot(normal, H), 0.0);
-    float shininess = lerp(128.0, 8.0, clamp(roughness, 0.05, 1.0));
-    float specScale = ((visual & VIS_METALLIC) != 0u) ? 0.55 : (((visual & VIS_WET) != 0u) ? 0.45 : 0.18);
-    float spec = pow(ndh, shininess) * specScale * ndl;
+    bool isMetallic = (visual & VIS_METALLIC) != 0u;
+    float metallic = isMetallic ? 0.90 : 0.0;
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
 
-    float3 lit = albedo * (sunCol * (ndl * shadowVis) + hemiSky * ambientStrength * directionalFacet);
-    lit += sunCol * (spec * shadowVis);
-    lit += emissive;
-    return lit;
+    // Cook-Torrance GGX specular + LabPBR energy conservation.
+    float D = d_ggx(ndh, roughness);
+    float G = g_smith(ndl, ndv, roughness);
+    float3 F = f_schlick(vdh, f0);
+    float3 specBrdf = (D * G * F) / max(4.0 * ndl * ndv, 1e-4);
+    float3 kd = (1.0 - F) * (1.0 - metallic);
+
+    // Complementary-style hemisphere sky + warm ground bounce GI.
+    float3 hemiSky = lerp(float3(0.22, 0.28, 0.38), float3(0.72, 0.86, 1.08), N.y * 0.5 + 0.5);
+    float3 groundBounce = sunCol * (0.10 * max(-N.y * 0.5 + 0.5, 0.0));
+    float directionalFacet = 0.90 + 0.10 * dot(normal, normalize(float3(0.3, 1.0, 0.2)));
+
+    // Sky reflection fresnel (strongest on wet, frozen, metallic, and liquid surfaces).
+    float3 R = reflect(-V, N);
+    float3 envRefl = sample_atmosphere(R, L, sunCol);
+    float3 fresnelEnv = f_schlick(ndv, f0) * (1.0 - roughness * 0.75);
+
+    // Subsurface / foliage forward scattering for translucent & infected cells.
+    float3 sss = float3(0.0, 0.0, 0.0);
+    if ((visual & (VIS_TRANSLUCENT | VIS_INFECTED)) != 0u)
+    {
+        float backScatter = pow(clamp(dot(V, -L), 0.0, 1.0), 4.0);
+        sss = albedo * sunCol * (0.45 * backScatter);
+    }
+
+    float3 direct = (kd * albedo / VOXEL_PI + specBrdf) * sunCol * (ndl * shadowVis);
+    float3 indirect = kd * albedo * (hemiSky * ambientStrength * directionalFacet + groundBounce)
+                    + envRefl * fresnelEnv * (0.45 + 0.55 * shadowVis);
+
+    return direct + indirect + sss + emissive;
 }
 
 [shader("compute")]
@@ -655,9 +749,12 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             outColor = shade_voxel(
                 res.worldPos, res.normal, res.rgba, res.visual, res.tier, -rayDir, shadowVis
             );
-            // Distance aerial haze so distant terrain bounds feel continuous.
-            float fog = clamp((res.t - 45.0) / 110.0, 0.0, 0.55);
-            outColor = lerp(outColor, float3(0.42, 0.54, 0.72), fog);
+            // Complementary-style atmospheric aerial haze with sun forward scattering.
+            float fog = clamp((res.t - 45.0) / 110.0, 0.0, 0.60);
+            float3 fogCol = sample_atmosphere(
+                rayDir, sunDir, ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.0)
+            );
+            outColor = lerp(outColor, fogCol, fog);
             outDepth = voxelDepth;
         }
     }
@@ -673,9 +770,15 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             float3 litGlass = shade_voxel(
                 glassPos, res.glassNormal, res.glassRgba, res.glassVisual, 2u, -rayDir, 1.0
             );
-            float fresnel = pow(1.0 - max(dot(res.glassNormal, -rayDir), 0.0), 3.0);
-            float alpha = clamp(gc.a + fresnel * 0.25, 0.15, 0.88);
-            outColor = lerp(outColor, litGlass + float3(0.18, 0.26, 0.34) * fresnel, alpha);
+            float fresnel = pow(1.0 - max(dot(res.glassNormal, -rayDir), 0.0), 4.0);
+            float alpha = clamp(gc.a + fresnel * 0.30, 0.15, 0.90);
+            float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
+            float3 reflSky = sample_atmosphere(
+                reflect(rayDir, res.glassNormal),
+                sunDir,
+                ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.0)
+            );
+            outColor = lerp(outColor * lerp(float3(1.0, 1.0, 1.0), gc.rgb, 0.55), litGlass + reflSky * fresnel, alpha);
             outDepth = glassDepth;
         }
     }
