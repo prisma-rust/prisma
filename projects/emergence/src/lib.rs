@@ -11,9 +11,11 @@ pub mod catalog;
 pub mod commands;
 pub mod debug_hud;
 pub mod grid;
+pub mod log_persist;
 pub mod materials;
 pub mod nei_ui;
 pub mod pbr_materials;
+pub mod perf_report;
 pub mod player;
 pub mod sim;
 pub mod structures;
@@ -28,6 +30,7 @@ use crate::debug_hud::DebugHudState;
 use crate::grid::CellGrid;
 use crate::materials::MaterialTable;
 use crate::nei_ui::{EmergenceNeiHud, NeiHudState};
+use crate::perf_report::{EmergencePerfRecorder, FrameTelemetryInput};
 use crate::player::PlayerController;
 use crate::sim::SimWorld;
 use crate::tags::{
@@ -286,6 +289,8 @@ pub struct EmergenceRuntime {
     pub commands: CommandWorldState,
     pub debug_hud: DebugHudState,
     pub nei: EmergenceNeiHud,
+    pub perf: EmergencePerfRecorder,
+    pub pending_dirty_chunks: usize,
 }
 
 impl EmergenceRuntime {
@@ -304,6 +309,8 @@ impl EmergenceRuntime {
             commands: CommandWorldState::new(),
             debug_hud: DebugHudState::new(seed),
             nei: EmergenceNeiHud::new(),
+            perf: EmergencePerfRecorder::from_active_config(seed),
+            pending_dirty_chunks: 0,
         }
     }
 }
@@ -328,7 +335,8 @@ pub fn emergence_fixed_tick(
     runtime.sim.step(dt);
     let sim_ms = sim_t0.elapsed().as_secs_f32() * 1000.0;
     runtime.debug_hud.record_sim_step_ms(sim_ms);
-    runtime.sim.sync_dirty_chunks(world);
+    runtime.perf.record_fixed_step(sim_ms);
+    runtime.pending_dirty_chunks += runtime.sim.sync_dirty_chunks(world);
 }
 
 /// Per-frame interaction & camera look system: command console, F3 overlay, mouse aim, voxel tools.
@@ -337,6 +345,7 @@ pub fn emergence_frame_tick(
     world: &mut GameWorld<'_>,
     dt: f32,
 ) {
+    let logic_t0 = std::time::Instant::now();
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
     runtime.debug_hud.update_telemetry(dt);
 
@@ -366,7 +375,31 @@ pub fn emergence_frame_tick(
     runtime
         .debug_hud
         .sync_ui(world, &runtime.sim, &runtime.player, &runtime.commands);
-    runtime.sim.sync_dirty_chunks(world);
+    let dirty_chunks = runtime.pending_dirty_chunks + runtime.sim.sync_dirty_chunks(world);
+    runtime.pending_dirty_chunks = 0;
+
+    if runtime.perf.is_enabled() {
+        let logic_tick_ms = logic_t0.elapsed().as_secs_f32() * 1000.0;
+        let gamemode = runtime.commands.gamemode_label(&runtime.player);
+        let weather = runtime.commands.weather.label();
+        runtime.perf.record_frame(FrameTelemetryInput {
+            dt,
+            logic_tick_ms,
+            chunks_loaded: runtime.sim.chunks.len(),
+            active_cells: runtime.sim.active_count(),
+            tracked_cells: runtime.sim.tracked_cell_count(),
+            dirty_chunks,
+            screen_logical: screen,
+            alloc_rate_mib_s: runtime.debug_hud.alloc_rate_mib_s(),
+            player_pos: runtime.player.feet_pos.to_array(),
+            gamemode,
+            weather,
+            world_time_ticks: runtime.commands.time_ticks,
+            rule_daylight: runtime.commands.rules.do_daylight_cycle,
+            rule_weather: runtime.commands.rules.do_weather_cycle,
+            rule_fire: runtime.commands.rules.do_fire_tick,
+        });
+    }
 }
 
 fn cell_color(cell: &PhysicalCell) -> [f32; 4] {
@@ -489,7 +522,7 @@ impl prism_app::FrameHook for EmergenceHostHook {
         stats: &prism_app::RenderStats,
         _shared: &prism_app::RenderShared,
     ) {
-        let top_gpu_passes = stats
+        let all_gpu_passes = stats
             .gpu_timings
             .as_ref()
             .filter(|g| g.supported && !g.passes.is_empty())
@@ -500,12 +533,13 @@ impl prism_app::FrameHook for EmergenceHostHook {
                     .map(|p| (p.name.to_string(), p.ms))
                     .collect();
                 passes.sort_by(|a, b| b.1.total_cmp(&a.1));
-                passes.truncate(2);
                 passes
             })
             .unwrap_or_default();
+        let top_gpu_passes = all_gpu_passes.iter().take(2).cloned().collect();
 
         debug_hud::publish_host_render_stats(debug_hud::HostRenderStats {
+            render_seq: stats.render_seq,
             fps: stats.fps,
             frame_time_ms: stats.frame_time_ms,
             gpu_frame_ms: stats
@@ -519,6 +553,7 @@ impl prism_app::FrameHook for EmergenceHostHook {
                 .filter(|g| g.supported)
                 .map(|g| g.total_ms),
             top_gpu_passes,
+            all_gpu_passes,
             cpu_p95_ms: stats.frame_stats.cpu.as_ref().map(|c| c.p95_ms),
             low_1pct_fps: stats.frame_stats.cpu.as_ref().map(|c| c.low_1pct_fps),
             physical_size: window.inner_size(),
