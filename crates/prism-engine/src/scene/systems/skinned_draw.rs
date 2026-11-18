@@ -85,6 +85,14 @@ pub fn append_skinned_draw_items_with_frustums(
         let material_ref = world.get::<MaterialRef>(entity);
         let material_slots = world.get::<MaterialSlots>(entity);
         let submeshes = world.get::<MeshSubmeshes>(entity);
+        let shader = if skinned.shader_path.is_empty() {
+            None
+        } else {
+            world
+                .get::<crate::scene::runtime_components::ShaderRef>(entity)
+                .filter(|s| s.generation > 0)
+                .map(|s| s.shader_handle)
+        };
 
         let has_submeshes = submeshes.is_some_and(|submeshes| !submeshes.submeshes.is_empty());
         if has_submeshes {
@@ -108,6 +116,7 @@ pub fn append_skinned_draw_items_with_frustums(
                     bone_offset,
                     splat_slots: [u32::MAX; 4],
                     splat_tiling: 0.0,
+                    shader,
                 });
                 appended += 1;
             }
@@ -131,6 +140,7 @@ pub fn append_skinned_draw_items_with_frustums(
                 bone_offset,
                 splat_slots: [u32::MAX; 4],
                 splat_tiling: 0.0,
+                shader,
             });
             appended += 1;
         }

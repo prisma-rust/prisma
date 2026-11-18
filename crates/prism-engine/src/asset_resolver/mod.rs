@@ -28,7 +28,7 @@ use crate::scene::components::{
     MaterialRef, MeshRef, MeshRenderer, SpriteRef, SpriteRenderer, Tilemap,
 };
 use crate::scene::runtime_components::{
-    MaterialSlots, MeshSubmesh, MeshSubmeshes, TilemapRef, UiImageRef,
+    MaterialSlots, MeshSubmesh, MeshSubmeshes, ShaderRef, TilemapRef, UiImageRef,
 };
 use crate::scene::systems::render::MeshBounds;
 
@@ -45,6 +45,7 @@ mod tests;
 enum AssetSlot {
     Mesh,
     Material,
+    Shader,
     Sprite,
     /// 瓦片地图的 tileset（#529）。
     Tileset,
@@ -73,6 +74,8 @@ struct PendingRequest {
     renderer: MeshRenderer,
     /// 这一帧是否需要解析材质（`MaterialRef.generation == 0`）。
     wants_material: bool,
+    /// Optional custom fragment shader path (`MeshRenderer.shader_path`).
+    shader_path: Option<String>,
     /// 精灵贴图 / 瓦片地图的 tileset / UI 背景图：三者都只需要一张贴图，
     /// 一个实体同一帧只会投递其中一个。
     sprite_path: Option<String>,
@@ -117,6 +120,10 @@ pub struct GpuAssetResolver {
     tileset_paths: HashMap<Entity, String>,
     /// 最近一次解析的 UI 背景图路径（`Style::image`，#591）。
     ui_image_paths: HashMap<Entity, String>,
+    /// Last resolved custom fragment shader path per entity.
+    shader_paths: HashMap<Entity, String>,
+    /// Staged custom shader paths/ids waiting for upload completion.
+    pending_shader_meta: HashMap<Entity, (String, prism_scene::SceneAssetId)>,
     /// 已经交给渲染器的工程字体路径（#583）。
     ///
     /// 字体是整份文件注册进 UI 图集，不像贴图那样每实体一份；同一个路径只读一次。
@@ -188,6 +195,8 @@ impl GpuAssetResolver {
             sprite_paths: HashMap::new(),
             tileset_paths: HashMap::new(),
             ui_image_paths: HashMap::new(),
+            shader_paths: HashMap::new(),
+            pending_shader_meta: HashMap::new(),
             fonts_loaded: HashSet::new(),
             fonts_failed: HashSet::new(),
             resolved: HashMap::new(),
@@ -284,6 +293,17 @@ impl GpuAssetResolver {
                         .get::<MaterialRef>(entity)
                         .map(|r| r.generation == 0)
                         .unwrap_or(true)
+            }
+            AssetSlot::Shader => {
+                (world
+                    .get::<MeshRenderer>(entity)
+                    .is_none_or(|r| r.shader_path.is_empty())
+                    && world
+                        .get::<prism_scene::components::SkinnedMeshRenderer>(entity)
+                        .is_none_or(|r| r.shader_path.is_empty()))
+                    || world
+                        .get::<ShaderRef>(entity)
+                        .is_none_or(|r| r.generation == 0)
             }
             AssetSlot::Sprite => {
                 world.get::<SpriteRenderer>(entity).is_none()
@@ -660,6 +680,12 @@ impl GpuAssetResolver {
                     .get::<crate::ui::components::Style>(*entity)
                     .is_some_and(|style| !style.image.is_empty())
             });
+            self.shader_paths.retain(|entity, _| {
+                world.get::<MeshRenderer>(*entity).is_some()
+                    || world
+                        .get::<prism_scene::components::SkinnedMeshRenderer>(*entity)
+                        .is_some()
+            });
 
             let mut out = Vec::new();
             for (entity, mr) in world.query::<MeshRenderer>() {
@@ -692,12 +718,25 @@ impl GpuAssetResolver {
                             !path.is_empty()
                                 && !self.failed_before(entity, AssetSlot::Material, path)
                         }));
-                if (wants_mesh || wants_material) && !self.enqueued.contains(&entity) {
+                let shader_unresolved = world
+                    .get::<ShaderRef>(entity)
+                    .is_none_or(|r| r.generation == 0);
+                let shader_changed = self
+                    .shader_paths
+                    .get(&entity)
+                    .is_some_and(|prev| prev != &mr.shader_path);
+                let wants_shader = !mr.shader_path.is_empty()
+                    && (shader_unresolved || shader_changed)
+                    && !self.failed_before(entity, AssetSlot::Shader, &mr.shader_path);
+                if (wants_mesh || wants_material || wants_shader)
+                    && !self.enqueued.contains(&entity)
+                {
                     out.push(PendingRequest {
                         entity,
                         mesh_path: wants_mesh.then(|| mr.mesh_path.clone()),
                         renderer: mr.clone(),
                         wants_material,
+                        shader_path: wants_shader.then(|| mr.shader_path.clone()),
                         sprite_path: None,
                         tileset: false,
                         ui_image: false,
@@ -728,12 +767,25 @@ impl GpuAssetResolver {
                             !path.is_empty()
                                 && !self.failed_before(entity, AssetSlot::Material, path)
                         }));
-                if (wants_mesh || wants_material) && !self.enqueued.contains(&entity) {
+                let shader_unresolved = world
+                    .get::<ShaderRef>(entity)
+                    .is_none_or(|r| r.generation == 0);
+                let shader_changed = self
+                    .shader_paths
+                    .get(&entity)
+                    .is_some_and(|prev| prev != &skinned.shader_path);
+                let wants_shader = !skinned.shader_path.is_empty()
+                    && (shader_unresolved || shader_changed)
+                    && !self.failed_before(entity, AssetSlot::Shader, &skinned.shader_path);
+                if (wants_mesh || wants_material || wants_shader)
+                    && !self.enqueued.contains(&entity)
+                {
                     out.push(PendingRequest {
                         entity,
                         mesh_path: None,
                         renderer: skinned.as_mesh_renderer(),
                         wants_material,
+                        shader_path: wants_shader.then(|| skinned.shader_path.clone()),
                         sprite_path: None,
                         tileset: false,
                         ui_image: false,
@@ -765,6 +817,7 @@ impl GpuAssetResolver {
                         mesh_path: None,
                         renderer: MeshRenderer::default(),
                         wants_material: false,
+                        shader_path: None,
                         sprite_path: Some(sprite.sprite_path.clone()),
                         tileset: false,
                         ui_image: false,
@@ -796,6 +849,7 @@ impl GpuAssetResolver {
                         mesh_path: None,
                         renderer: MeshRenderer::default(),
                         wants_material: false,
+                        shader_path: None,
                         sprite_path: Some(tilemap.tileset_path.clone()),
                         tileset: true,
                         ui_image: false,
@@ -828,6 +882,7 @@ impl GpuAssetResolver {
                         mesh_path: None,
                         renderer: MeshRenderer::default(),
                         wants_material: false,
+                        shader_path: None,
                         sprite_path: Some(style.image.clone()),
                         tileset: false,
                         ui_image: true,
@@ -974,6 +1029,44 @@ impl GpuAssetResolver {
             if let Some(bounds) = mesh.as_ref().and_then(MeshUploadInput::bounds) {
                 self.pending_bounds.insert(item.entity, bounds);
             }
+            let shader = match item.shader_path {
+                Some(path) => {
+                    let loaded =
+                        self.resource_manager.id_by_path(&path).and_then(|id| {
+                            match self
+                                .resource_manager
+                                .load::<prism_asset::runtime::ShaderAsset>(id)
+                            {
+                                Ok(handle) => self
+                                    .resource_manager
+                                    .get(handle)
+                                    .ok()
+                                    .map(|asset| (id, asset.spirv.clone())),
+                                Err(err) => {
+                                    log::warn!(
+                                        "asset_resolver: ShaderAsset '{path}' decode failed: {err}"
+                                    );
+                                    None
+                                }
+                            }
+                        });
+                    match loaded {
+                        Some((id, spirv)) => {
+                            self.pending_shader_meta.insert(
+                                item.entity,
+                                (path, prism_scene::SceneAssetId::from_raw(id.0)),
+                            );
+                            Some(spirv)
+                        }
+                        None => {
+                            report_missing_reference(&path, "shader");
+                            self.record_failure(item.entity, AssetSlot::Shader, &path);
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
             reqs.push((
                 item.entity,
                 AssetResolveRequest {
@@ -981,6 +1074,7 @@ impl GpuAssetResolver {
                     mesh,
                     materials,
                     texture,
+                    shader,
                 },
             ));
         }
@@ -1094,6 +1188,19 @@ impl GpuAssetResolver {
                             },
                         );
                     }
+                }
+            }
+            if let Some((shader_path, asset_id)) = self.pending_shader_meta.remove(entity) {
+                if let Some(shader_handle) = result.shader_handle {
+                    self.shader_paths.insert(*entity, shader_path);
+                    world.insert(
+                        *entity,
+                        ShaderRef {
+                            asset_id,
+                            shader_handle,
+                            generation: 1,
+                        },
+                    );
                 }
             }
             if let (Some(slot), Some(size)) = (result.texture_slot, result.texture_size) {
@@ -1601,7 +1708,6 @@ impl GpuAssetResolver {
         }
         loaded
     }
-
 }
 
 impl Default for GpuAssetResolver {

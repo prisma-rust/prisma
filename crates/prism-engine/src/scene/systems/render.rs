@@ -158,6 +158,14 @@ pub fn scene_render_system_into_with_frustums(
         let state = draw_state(renderer);
         let material_ref = world.get::<MaterialRef>(entity);
         let material_slots = world.get::<MaterialSlots>(entity);
+        let shader = if renderer.is_some_and(|r| r.shader_path.is_empty()) {
+            None
+        } else {
+            world
+                .get::<crate::scene::runtime_components::ShaderRef>(entity)
+                .filter(|s| s.generation > 0)
+                .map(|s| s.shader_handle)
+        };
         let submeshes = world.get::<MeshSubmeshes>(entity);
         let mut splat_slots = [u32::MAX; 4];
         let splat_tiling = if let Some(splat) =
@@ -200,6 +208,7 @@ pub fn scene_render_system_into_with_frustums(
                     bone_offset: None,
                     splat_slots,
                     splat_tiling,
+                    shader,
                 });
             }
         } else {
@@ -223,6 +232,7 @@ pub fn scene_render_system_into_with_frustums(
                 bone_offset: None,
                 splat_slots,
                 splat_tiling,
+                shader,
             });
         }
     }

@@ -31,6 +31,8 @@ pub struct AssetResolveRequest {
     pub materials: Vec<Option<MaterialResolveData>>,
     /// 2D 精灵贴图（`SpriteRenderer.sprite_path` 解析结果）。
     pub texture: Option<TextureUploadInput>,
+    /// Optional custom fragment shader SPIR-V bytecode (`ShaderAsset`).
+    pub shader: Option<Vec<u8>>,
 }
 
 /// 一 decided 释放的 GPU 资源（纯数据，Send）。
@@ -71,4 +73,6 @@ pub struct AssetResolveResult {
     pub texture_slot: Option<u32>,
     /// 精灵贴图的像素尺寸 `[width, height]`（与 `texture_slot` 同时有效）。
     pub texture_size: Option<[u32; 2]>,
+    /// Registered custom fragment shader handle.
+    pub shader_handle: Option<crate::ShaderHandle>,
 }

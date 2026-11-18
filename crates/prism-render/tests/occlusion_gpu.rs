@@ -80,6 +80,7 @@ fn draw_item(
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
     }
 }
 

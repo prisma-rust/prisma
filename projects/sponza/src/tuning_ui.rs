@@ -34,7 +34,8 @@ use prism_scene::ui::{
 };
 use prism_scene::Active;
 
-const NUM_ITEMS: usize = 17;
+const NUM_ITEMS: usize = 18;
+const SPONZA_CUSTOM_SHADER: &str = "shaders/sponza_custom.frag.spv";
 
 #[derive(Debug)]
 pub struct SponzaTuningHook {
@@ -69,6 +70,8 @@ pub struct SponzaTuningHook {
     pub sharc_stale_frame_num: u32,
     pub dlss_mode: DlssMode,
     pub vsync: bool,
+    pub custom_shader: bool,
+    applied_custom_shader: Option<bool>,
     pub request_reset: bool,
 
     // ECS UI entities
@@ -135,6 +138,8 @@ impl Default for SponzaTuningHook {
             sharc_stale_frame_num: 60,
             dlss_mode: DlssMode::Off,
             vsync: false,
+            custom_shader: true,
+            applied_custom_shader: None,
             request_reset: false,
             canvas_entity: None,
             panel_bg_entity: None,
@@ -359,6 +364,7 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             16 => self.auto_exposure = !self.auto_exposure,
+            17 => self.custom_shader = !self.custom_shader,
             _ => {}
         }
     }
@@ -371,6 +377,7 @@ impl SponzaTuningHook {
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
             8 => self.sharc_enable_anti_firefly = !self.sharc_enable_anti_firefly,
             16 => self.auto_exposure = !self.auto_exposure,
+            17 => self.custom_shader = !self.custom_shader,
             _ => {}
         }
     }
@@ -584,6 +591,26 @@ impl FrameHook for SponzaTuningHook {
             info!("Sponza: path tracing accumulation reset requested");
         }
 
+        if self.applied_custom_shader != Some(self.custom_shader) {
+            let target = if self.custom_shader {
+                SPONZA_CUSTOM_SHADER
+            } else {
+                ""
+            };
+            let entities: Vec<Entity> = world
+                .query::<prism_scene::components::MeshRenderer>()
+                .map(|(entity, _)| entity)
+                .collect();
+            for entity in entities {
+                if let Some(mr) = world.get_mut::<prism_scene::components::MeshRenderer>(entity) {
+                    if mr.shader_path != target {
+                        mr.shader_path = target.to_string();
+                    }
+                }
+            }
+            self.applied_custom_shader = Some(self.custom_shader);
+        }
+
         // Initialize UI entities once
         if self.canvas_entity.is_none() {
             let canvas = world.spawn();
@@ -778,6 +805,7 @@ impl FrameHook for SponzaTuningHook {
                      --- Post / Upscaling -------------------\n\
                      {}DLSS Mode:          [ {} ]\n\
                      {}Auto Exposure:      [ {} ]\n\
+                     {}Custom Shader:      [ {} ] (Raster)\n\
                      ----------------------------------------\n\
                      [Up/Down] Select   [Left/Right] Adjust\n\
                      [Space/Enter] Toggle   [V] VSync: {}",
@@ -819,6 +847,8 @@ impl FrameHook for SponzaTuningHook {
                     dlss_str,
                     marker(16),
                     on_off(self.auto_exposure),
+                    marker(17),
+                    on_off(self.custom_shader),
                     on_off(self.vsync),
                 );
 

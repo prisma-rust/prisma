@@ -96,6 +96,8 @@ pub struct DrawItem {
     pub splat_slots: [u32; 4],
     /// 纹理层 splat 的 UV 平铺倍数；`0` = 不是 splat 绘制。
     pub splat_tiling: f32,
+    /// Optional custom fragment shader handle (`None` = built-in `scene_frag.frag.spv`).
+    pub shader: Option<crate::ShaderHandle>,
 }
 
 impl DrawItem {

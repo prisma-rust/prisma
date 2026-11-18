@@ -29,6 +29,17 @@ pub struct MaterialRef {
     pub generation: u32,
 }
 
+/// GPU custom fragment shader reference resolved from [`ShaderAsset`](prism_asset::runtime::ShaderAsset).
+#[derive(Debug, Clone, Copy)]
+pub struct ShaderRef {
+    /// Stable asset id.
+    pub asset_id: SceneAssetId,
+    /// Registered shader handle inside `ForwardPass`.
+    pub shader_handle: prism_render::ShaderHandle,
+    /// Generation at resolve time (`0` = pending resolve).
+    pub generation: u32,
+}
+
 /// 一个网格里的 submesh 索引区间（#520）。
 ///
 /// 由 `.pak` 里的 RMES v2 submesh 表还原。运行时由渲染提取系统按这些区间

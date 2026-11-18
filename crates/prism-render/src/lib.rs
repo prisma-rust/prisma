@@ -187,7 +187,7 @@ pub use render_graph::{
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]
 pub use restir_gi::{RestirGiFrame, RestirGiPass, RestirGiReservoir, RESERVOIR_BYTES};
-pub use shader::load_shader_module;
+pub use shader::{load_shader_module, ShaderHandle};
 #[cfg(feature = "shadows")]
 pub use shadow_map_pass::ShadowMapPass;
 #[cfg(feature = "sharc")]

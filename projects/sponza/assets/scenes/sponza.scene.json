@@ -64,7 +64,8 @@
       },
       "components": {
         "prism_engine::scene::MeshRenderer": {
-          "mesh_path": "models/sponza/Sponza.gltf"
+          "mesh_path": "models/sponza/Sponza.gltf",
+          "shader_path": "shaders/sponza_custom.frag.spv"
         }
       }
     }

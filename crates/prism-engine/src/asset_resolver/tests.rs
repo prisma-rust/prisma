@@ -2,9 +2,9 @@ use super::decoders::{deinterleave_rmes, texture_format_for};
 use super::*;
 use crate::scene::components::{LocalToWorld, SceneAssetId};
 use prism_asset::formats::*;
-use prism_render::managers::TextureFormat;
 use prism_render::asset_bridge::AssetResolveResult;
 use prism_render::managers::MeshHandle;
+use prism_render::managers::TextureFormat;
 
 /// 造一个只含指定 `(path, type, bytes)` 的 `.pak` + 路径清单（#583 测试用）。
 fn tiny_pak(entries: &[(&str, prism_asset::core::AssetType, &[u8])]) -> (Vec<u8>, String) {
@@ -129,6 +129,7 @@ fn resolved_sprite(world: &mut World, resolver: &mut GpuAssetResolver, slot: u32
                 material_slot: None,
                 texture_slot: Some(slot),
                 texture_size: Some([16, 16]),
+                shader_handle: None,
             },
         )],
     );
@@ -159,6 +160,7 @@ fn re_uploading_to_a_new_slot_releases_the_previous_one() {
                 material_slot: None,
                 texture_slot: Some(21),
                 texture_size: Some([16, 16]),
+                shader_handle: None,
             },
         )],
     );
@@ -176,6 +178,7 @@ fn re_uploading_to_a_new_slot_releases_the_previous_one() {
                 material_slot: None,
                 texture_slot: Some(21),
                 texture_size: Some([16, 16]),
+                shader_handle: None,
             },
         )],
     );
@@ -217,6 +220,7 @@ fn hot_reload_invalidation_releases_every_handle() {
                 material_slot: Some(4),
                 texture_slot: None,
                 texture_size: None,
+                shader_handle: None,
             },
         )],
     );
@@ -301,6 +305,7 @@ fn sprite_without_ref_is_resolved_and_ref_is_created() {
                 material_slot: None,
                 texture_slot: Some(7),
                 texture_size: Some([16, 16]),
+                shader_handle: None,
             },
         )],
     );
@@ -346,6 +351,7 @@ fn sprite_atlas_subslice_resolves_uv_and_size() {
                 material_slot: None,
                 texture_slot: Some(5),
                 texture_size: Some([512, 512]),
+                shader_handle: None,
             },
         )],
     );
@@ -394,6 +400,7 @@ fn tilemap_tileset_is_staged_once_and_written_back() {
                 material_slot: None,
                 texture_slot: Some(3),
                 texture_size: Some([64, 64]),
+                shader_handle: None,
             },
         )],
     );
@@ -435,6 +442,7 @@ fn ui_background_images_are_staged_and_written_back() {
                 material_slot: None,
                 texture_slot: Some(5),
                 texture_size: Some([32, 32]),
+                shader_handle: None,
             },
         )],
     );
@@ -470,6 +478,7 @@ fn sprite_path_change_re_resolves_without_touching_generation() {
                 material_slot: None,
                 texture_slot: Some(1),
                 texture_size: Some([8, 8]),
+                shader_handle: None,
             },
         )],
     );
@@ -513,6 +522,7 @@ fn mesh_only_renderer_is_enqueued_once() {
                 material_slot: None,
                 texture_slot: None,
                 texture_size: None,
+                shader_handle: None,
             },
         )],
     );
@@ -565,6 +575,7 @@ fn failed_material_is_latched_and_the_resolved_mesh_is_not_reuploaded() {
                 material_slot: None,
                 texture_slot: None,
                 texture_size: None,
+                shader_handle: None,
             },
         )],
     );
@@ -600,6 +611,7 @@ fn changing_a_failed_path_retries_only_that_half() {
                 material_slot: None,
                 texture_slot: None,
                 texture_size: None,
+                shader_handle: None,
             },
         )],
     );
@@ -957,254 +969,256 @@ fn load_texture_data_corrupt_mip_falls_back_to_mip0() {
 
 #[cfg(test)]
 mod mesh_bounds_tests {
-use super::*;
-use crate::scene::systems::render::MeshBounds;
-use prism_render::managers::MeshHandle;
-use prism_scene::SceneAssetId;
+    use super::*;
+    use crate::scene::systems::render::MeshBounds;
+    use prism_render::managers::MeshHandle;
+    use prism_scene::SceneAssetId;
 
-#[test]
-fn the_mesh_bounds_land_in_the_registry_with_the_handle() {
-    // 内置立方体不需要 `.pak`，但走的是同一条 prepare → upload → 写回路径。
-    let mut world = World::new();
-    let entity = world.spawn();
-    world.insert(
-        entity,
-        MeshRenderer {
-            mesh_path: "__builtin/box".into(),
-            ..Default::default()
-        },
-    );
-    world.insert(
-        entity,
-        MeshRef {
-            asset_id: SceneAssetId::generate(),
-            render_handle: MeshHandle::default(),
-            generation: 0,
-        },
-    );
-
-    let mut resolver = GpuAssetResolver::new();
-    let requests = resolver.prepare_requests(&world);
-    assert_eq!(requests.len(), 1);
-    assert!(requests[0].1.mesh.is_some());
-
-    let handle = MeshHandle::default();
-    resolver.apply_results(
-        &mut world,
-        &[(
+    #[test]
+    fn the_mesh_bounds_land_in_the_registry_with_the_handle() {
+        // 内置立方体不需要 `.pak`，但走的是同一条 prepare → upload → 写回路径。
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.insert(
             entity,
-            prism_render::asset_bridge::AssetResolveResult {
-                material_slots: Vec::new(),
-                mesh_handle: Some(handle),
-                material_slot: None,
-                texture_slot: None,
-                texture_size: None,
+            MeshRenderer {
+                mesh_path: "__builtin/box".into(),
+                ..Default::default()
             },
-        )],
-    );
+        );
+        world.insert(
+            entity,
+            MeshRef {
+                asset_id: SceneAssetId::generate(),
+                render_handle: MeshHandle::default(),
+                generation: 0,
+            },
+        );
 
-    let registry = world
-        .get_resource::<MeshBounds>()
-        .expect("bounds registry must be created on the first upload");
-    let bounds = registry.get(handle).expect("box bounds must be registered");
-    // 单位立方体（边长 1，居中在原点）。
-    assert!((bounds.min[0] + 0.5).abs() < 1e-5);
-    assert!((bounds.max[1] - 0.5).abs() < 1e-5);
+        let mut resolver = GpuAssetResolver::new();
+        let requests = resolver.prepare_requests(&world);
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].1.mesh.is_some());
 
-    // 再投递一次不会重复：句柄已写回（`generation = 1`）。
-    assert!(resolver.prepare_requests(&world).is_empty());
-}
+        let handle = MeshHandle::default();
+        resolver.apply_results(
+            &mut world,
+            &[(
+                entity,
+                prism_render::asset_bridge::AssetResolveResult {
+                    material_slots: Vec::new(),
+                    mesh_handle: Some(handle),
+                    material_slot: None,
+                    texture_slot: None,
+                    texture_size: None,
+                    shader_handle: None,
+                },
+            )],
+        );
+
+        let registry = world
+            .get_resource::<MeshBounds>()
+            .expect("bounds registry must be created on the first upload");
+        let bounds = registry.get(handle).expect("box bounds must be registered");
+        // 单位立方体（边长 1，居中在原点）。
+        assert!((bounds.min[0] + 0.5).abs() < 1e-5);
+        assert!((bounds.max[1] - 0.5).abs() < 1e-5);
+
+        // 再投递一次不会重复：句柄已写回（`generation = 1`）。
+        assert!(resolver.prepare_requests(&world).is_empty());
+    }
 }
 
 #[cfg(test)]
 mod hot_reload_tests {
-use super::*;
-use prism_render::managers::MeshHandle;
-use prism_scene::SceneAssetId;
+    use super::*;
+    use prism_render::managers::MeshHandle;
+    use prism_scene::SceneAssetId;
 
-fn spawn_mesh(world: &mut World, path: &str, generation: u32) -> Entity {
-    let entity = world.spawn();
-    world.insert(
-        entity,
-        MeshRenderer {
-            mesh_path: path.into(),
-            ..Default::default()
-        },
-    );
-    world.insert(
-        entity,
-        MeshRef {
-            asset_id: SceneAssetId::generate(),
-            render_handle: Default::default(),
-            generation,
-        },
-    );
-    entity
-}
-
-#[test]
-fn invalidating_everything_re_uploads_the_meshes() {
-    let mut world = World::new();
-    let entity = spawn_mesh(&mut world, "__builtin/box", 1);
-
-    let mut resolver = GpuAssetResolver::new();
-    assert!(
-        resolver.prepare_requests(&world).is_empty(),
-        "a resolved mesh must not be re-uploaded on its own"
-    );
-
-    assert_eq!(resolver.invalidate_assets(&mut world), 1);
-    assert_eq!(world.get::<MeshRef>(entity).unwrap().generation, 0);
-    assert_eq!(
-        resolver.prepare_requests(&world).len(),
-        1,
-        "a hot reload must put the entity back in the upload queue"
-    );
-}
-
-#[test]
-fn invalidating_a_path_only_touches_its_users() {
-    let mut world = World::new();
-    let boxed = spawn_mesh(&mut world, "__builtin/box", 1);
-    let sphere = spawn_mesh(&mut world, "__builtin/sphere", 1);
-
-    let mut resolver = GpuAssetResolver::new();
-    assert_eq!(resolver.invalidate_path(&mut world, "__builtin/box"), 1);
-    assert_eq!(world.get::<MeshRef>(boxed).unwrap().generation, 0);
-    assert_eq!(
-        world.get::<MeshRef>(sphere).unwrap().generation,
-        1,
-        "an unrelated path must keep its resolved handles"
-    );
-    assert_eq!(
-        resolver.invalidate_path(&mut world, "assets/nothing.rmes"),
-        0
-    );
-}
-
-#[test]
-fn invalidation_clears_the_failure_cache() {
-    // 一个不存在于任何包里的路径：第一次 prepare 会失败并进失败缓存，
-    // 之后不再重试。热重载必须能让它再试一次（新包里可能刚加上它）。
-    let mut world = World::new();
-    let entity = spawn_mesh(&mut world, "assets/new_mesh.rmes", 0);
-
-    let mut resolver = GpuAssetResolver::new();
-    let first = resolver.prepare_requests(&world);
-    assert_eq!(first.len(), 1);
-    assert!(first[0].1.mesh.is_none(), "the path is not in any package");
-    // 上传失败也是「有结果」：清掉排队标记，于是只剩失败缓存挡着重试。
-    resolver.apply_results(
-        &mut world,
-        &[(
+    fn spawn_mesh(world: &mut World, path: &str, generation: u32) -> Entity {
+        let entity = world.spawn();
+        world.insert(
             entity,
-            prism_render::asset_bridge::AssetResolveResult {
-                material_slots: Vec::new(),
-                mesh_handle: None,
-                material_slot: None,
-                texture_slot: None,
-                texture_size: None,
-            },
-        )],
-    );
-    assert!(
-        resolver.prepare_requests(&world).is_empty(),
-        "a failed path must not be retried until something changes"
-    );
-
-    assert_eq!(
-        resolver.invalidate_path(&mut world, "assets/new_mesh.rmes"),
-        1
-    );
-    assert_eq!(
-        resolver.prepare_requests(&world).len(),
-        1,
-        "hot reload must clear the failed-path cache"
-    );
-    assert_eq!(world.get::<MeshRef>(entity).unwrap().generation, 0);
-}
-
-#[test]
-fn multiple_material_paths_map_to_submesh_slots() {
-    let mut world = World::new();
-    let entity = world.spawn();
-    world.insert(
-        entity,
-        MeshRenderer {
-            mesh_path: "models/multi.gltf".into(),
-            material_paths: vec!["materials/a.mat".into(), "materials/b.mat".into()],
-            ..MeshRenderer::default()
-        },
-    );
-    // 网格已解析（这帧只补材质），submesh 表来自运行时缓存。
-    world.insert(
-        entity,
-        MeshRef {
-            asset_id: SceneAssetId::generate(),
-            render_handle: MeshHandle::default(),
-            generation: 1,
-        },
-    );
-    world.insert(
-        entity,
-        MaterialRef {
-            asset_id: SceneAssetId::generate(),
-            material_slot: 0,
-            generation: 0,
-        },
-    );
-    world.insert(
-        entity,
-        MeshSubmeshes {
-            submeshes: vec![
-                MeshSubmesh {
-                    index_start: 0,
-                    index_count: 3,
-                    material_index: Some(0),
-                },
-                MeshSubmesh {
-                    index_start: 3,
-                    index_count: 3,
-                    material_index: Some(1),
-                },
-                MeshSubmesh {
-                    index_start: 6,
-                    index_count: 3,
-                    material_index: Some(2),
-                },
-            ],
-        },
-    );
-
-    // 两个路径都不在包里，但请求仍然按唯一路径展开（上传阶段会失败）。
-    let mut resolver = GpuAssetResolver::new();
-    let requests = resolver.prepare_requests(&world);
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].1.materials.len(),
-        2,
-        "a/b 两个唯一材质只请求两次，第三个 submesh 用默认材质"
-    );
-
-    resolver.apply_results(
-        &mut world,
-        &[(
-            entity,
-            prism_render::asset_bridge::AssetResolveResult {
-                material_slots: vec![Some(11), Some(12)],
-                material_slot: Some(11),
+            MeshRenderer {
+                mesh_path: path.into(),
                 ..Default::default()
             },
-        )],
-    );
+        );
+        world.insert(
+            entity,
+            MeshRef {
+                asset_id: SceneAssetId::generate(),
+                render_handle: Default::default(),
+                generation,
+            },
+        );
+        entity
+    }
 
-    let slots = world.get::<MaterialSlots>(entity).expect("slot table");
-    assert_eq!(slots.slots, vec![Some(11), Some(12), None]);
-    assert_eq!(
-        world.get::<MaterialRef>(entity).unwrap().material_slot,
-        11,
-        "第一个材质仍写回旧字段，兼容只读它的代码"
-    );
-    assert_eq!(world.get::<MaterialRef>(entity).unwrap().generation, 1);
-}
+    #[test]
+    fn invalidating_everything_re_uploads_the_meshes() {
+        let mut world = World::new();
+        let entity = spawn_mesh(&mut world, "__builtin/box", 1);
+
+        let mut resolver = GpuAssetResolver::new();
+        assert!(
+            resolver.prepare_requests(&world).is_empty(),
+            "a resolved mesh must not be re-uploaded on its own"
+        );
+
+        assert_eq!(resolver.invalidate_assets(&mut world), 1);
+        assert_eq!(world.get::<MeshRef>(entity).unwrap().generation, 0);
+        assert_eq!(
+            resolver.prepare_requests(&world).len(),
+            1,
+            "a hot reload must put the entity back in the upload queue"
+        );
+    }
+
+    #[test]
+    fn invalidating_a_path_only_touches_its_users() {
+        let mut world = World::new();
+        let boxed = spawn_mesh(&mut world, "__builtin/box", 1);
+        let sphere = spawn_mesh(&mut world, "__builtin/sphere", 1);
+
+        let mut resolver = GpuAssetResolver::new();
+        assert_eq!(resolver.invalidate_path(&mut world, "__builtin/box"), 1);
+        assert_eq!(world.get::<MeshRef>(boxed).unwrap().generation, 0);
+        assert_eq!(
+            world.get::<MeshRef>(sphere).unwrap().generation,
+            1,
+            "an unrelated path must keep its resolved handles"
+        );
+        assert_eq!(
+            resolver.invalidate_path(&mut world, "assets/nothing.rmes"),
+            0
+        );
+    }
+
+    #[test]
+    fn invalidation_clears_the_failure_cache() {
+        // 一个不存在于任何包里的路径：第一次 prepare 会失败并进失败缓存，
+        // 之后不再重试。热重载必须能让它再试一次（新包里可能刚加上它）。
+        let mut world = World::new();
+        let entity = spawn_mesh(&mut world, "assets/new_mesh.rmes", 0);
+
+        let mut resolver = GpuAssetResolver::new();
+        let first = resolver.prepare_requests(&world);
+        assert_eq!(first.len(), 1);
+        assert!(first[0].1.mesh.is_none(), "the path is not in any package");
+        // 上传失败也是「有结果」：清掉排队标记，于是只剩失败缓存挡着重试。
+        resolver.apply_results(
+            &mut world,
+            &[(
+                entity,
+                prism_render::asset_bridge::AssetResolveResult {
+                    material_slots: Vec::new(),
+                    mesh_handle: None,
+                    material_slot: None,
+                    texture_slot: None,
+                    texture_size: None,
+                    shader_handle: None,
+                },
+            )],
+        );
+        assert!(
+            resolver.prepare_requests(&world).is_empty(),
+            "a failed path must not be retried until something changes"
+        );
+
+        assert_eq!(
+            resolver.invalidate_path(&mut world, "assets/new_mesh.rmes"),
+            1
+        );
+        assert_eq!(
+            resolver.prepare_requests(&world).len(),
+            1,
+            "hot reload must clear the failed-path cache"
+        );
+        assert_eq!(world.get::<MeshRef>(entity).unwrap().generation, 0);
+    }
+
+    #[test]
+    fn multiple_material_paths_map_to_submesh_slots() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.insert(
+            entity,
+            MeshRenderer {
+                mesh_path: "models/multi.gltf".into(),
+                material_paths: vec!["materials/a.mat".into(), "materials/b.mat".into()],
+                ..MeshRenderer::default()
+            },
+        );
+        // 网格已解析（这帧只补材质），submesh 表来自运行时缓存。
+        world.insert(
+            entity,
+            MeshRef {
+                asset_id: SceneAssetId::generate(),
+                render_handle: MeshHandle::default(),
+                generation: 1,
+            },
+        );
+        world.insert(
+            entity,
+            MaterialRef {
+                asset_id: SceneAssetId::generate(),
+                material_slot: 0,
+                generation: 0,
+            },
+        );
+        world.insert(
+            entity,
+            MeshSubmeshes {
+                submeshes: vec![
+                    MeshSubmesh {
+                        index_start: 0,
+                        index_count: 3,
+                        material_index: Some(0),
+                    },
+                    MeshSubmesh {
+                        index_start: 3,
+                        index_count: 3,
+                        material_index: Some(1),
+                    },
+                    MeshSubmesh {
+                        index_start: 6,
+                        index_count: 3,
+                        material_index: Some(2),
+                    },
+                ],
+            },
+        );
+
+        // 两个路径都不在包里，但请求仍然按唯一路径展开（上传阶段会失败）。
+        let mut resolver = GpuAssetResolver::new();
+        let requests = resolver.prepare_requests(&world);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].1.materials.len(),
+            2,
+            "a/b 两个唯一材质只请求两次，第三个 submesh 用默认材质"
+        );
+
+        resolver.apply_results(
+            &mut world,
+            &[(
+                entity,
+                prism_render::asset_bridge::AssetResolveResult {
+                    material_slots: vec![Some(11), Some(12)],
+                    material_slot: Some(11),
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let slots = world.get::<MaterialSlots>(entity).expect("slot table");
+        assert_eq!(slots.slots, vec![Some(11), Some(12), None]);
+        assert_eq!(
+            world.get::<MaterialRef>(entity).unwrap().material_slot,
+            11,
+            "第一个材质仍写回旧字段，兼容只读它的代码"
+        );
+        assert_eq!(world.get::<MaterialRef>(entity).unwrap().generation, 1);
+    }
 }

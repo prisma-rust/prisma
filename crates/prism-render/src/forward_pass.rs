@@ -45,6 +45,7 @@ const _: () = assert!(
 struct StaticBatchKey {
     mesh: crate::managers::MeshHandle,
     material: Option<u32>,
+    shader: Option<crate::ShaderHandle>,
     state: DrawState,
     index_start: u32,
     index_count: Option<u32>,
@@ -82,6 +83,7 @@ fn build_static_batches_with(
         let key = StaticBatchKey {
             mesh: item.mesh,
             material: item.material,
+            shader: item.shader,
             state: item.state,
             index_start: item.index_start,
             index_count: item.index_count,
@@ -232,8 +234,16 @@ pub struct ForwardPass {
     ///
     /// 所有变体的描述符集合布局 / 推送常量范围完全相同，只有光栅化与颜色
     /// 混合状态不同，因此描述符绑定与推送常量在一次绘制列表内可以跨变体复用。
-    /// key 的第二项是线框开关（#431）：`POLYGON_MODE_LINE` 需要单独的管线。
-    pipelines: std::collections::HashMap<(DrawState, bool, bool), GraphicsPipeline>,
+    /// key 的第一项是可选自定义片元着色器（`None` = 内建 PBR），
+    /// 第三项是线框开关（#431）：`POLYGON_MODE_LINE` 需要单独的管线。
+    pipelines: std::collections::HashMap<
+        (Option<crate::ShaderHandle>, DrawState, bool, bool),
+        GraphicsPipeline,
+    >,
+    /// Registered custom fragment shader SPIR-V bytecodes, indexed by `ShaderHandle.0`.
+    custom_shaders: Vec<Vec<u8>>,
+    /// Content-hash deduplication map for `custom_shaders`.
+    custom_shader_hashes: std::collections::HashMap<u64, crate::ShaderHandle>,
     /// 选中描边的反向外壳管线（#487）：只读 set 0 的帧 UBO，片元输出纯色。
     /// 与场景网格共享顶点格式 / 渲染 pass / 深度附件，只是剔除正面、不写深度。
     outline_pipeline: Option<GraphicsPipeline>,
@@ -356,6 +366,8 @@ impl ForwardPass {
             },
             render_pass: None,
             pipelines: std::collections::HashMap::new(),
+            custom_shaders: Vec::new(),
+            custom_shader_hashes: std::collections::HashMap::new(),
             outline_pipeline: None,
             shaded_wireframe_pipeline: None,
             ibl_descriptor_set: vk::DescriptorSet::null(),
@@ -390,6 +402,24 @@ impl ForwardPass {
             ground_grid: None,
             device: None,
         }
+    }
+
+    /// Register a custom fragment shader SPIR-V module, deduplicating identical bytecodes.
+    pub fn register_custom_shader(&mut self, spv: Vec<u8>) -> crate::ShaderHandle {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in &spv {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+        if let Some(&existing) = self.custom_shader_hashes.get(&hash) {
+            if self.custom_shaders.get(existing.0 as usize) == Some(&spv) {
+                return existing;
+            }
+        }
+        let handle = crate::ShaderHandle(self.custom_shaders.len() as u32);
+        self.custom_shaders.push(spv);
+        self.custom_shader_hashes.insert(hash, handle);
+        handle
     }
 
     /// Ensure the framebuffer for `image_index` exists and is built against the
@@ -1794,15 +1824,19 @@ impl ForwardPass {
     fn ensure_pipelines(
         &mut self,
         device: &ash::Device,
-        states: &[DrawState],
+        states: &[(Option<crate::ShaderHandle>, DrawState)],
         wireframe: bool,
     ) -> Result<()> {
-        let missing: Vec<DrawState> = states
+        let missing: Vec<(Option<crate::ShaderHandle>, DrawState)> = states
             .iter()
             .copied()
-            .filter(|state| {
-                !self.pipelines.contains_key(&(*state, wireframe, false))
-                    || !self.pipelines.contains_key(&(*state, wireframe, true))
+            .filter(|(shader, state)| {
+                !self
+                    .pipelines
+                    .contains_key(&(*shader, *state, wireframe, false))
+                    || !self
+                        .pipelines
+                        .contains_key(&(*shader, *state, wireframe, true))
             })
             .collect();
         if missing.is_empty() {
@@ -1816,13 +1850,11 @@ impl ForwardPass {
         // pipeline pushes the same `shader_bindings::scene_frag::PbrBindlessPush`
         // block (120 bytes); the vertex stage only reads the leading `model`, and
         // Vulkan allows the push range to exceed what a stage actually reads.
-        // Fragment: scene_frag.frag.spv (bindless PBR + shadow).
+        // Fragment: scene_frag.frag.spv (bindless PBR + shadow) or custom shader.
         const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/mesh_vert.vert.spv");
         const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/scene_frag.frag.spv");
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("ForwardPass: load vert")?;
-        let frag_module =
-            shader::load_shader_module(device, FRAG_SPV).context("ForwardPass: load frag")?;
 
         let vert_entry = std::ffi::CString::new(mesh_vert::ENTRY_VERTEX_MAIN).unwrap();
         let frag_entry = std::ffi::CString::new(scene_frag::ENTRY_FRAGMENT_MAIN).unwrap();
@@ -1836,17 +1868,27 @@ impl ForwardPass {
         let vert_skinned_module = shader::load_shader_module(device, VERT_SKINNED_SPV)
             .context("ForwardPass: load skinned vert")?;
         let skin_entry = std::ffi::CString::new("vertexSkinnedMain").unwrap();
-        let vert_stage = shader::shader_stage(
-            vk::ShaderStageFlags::VERTEX,
-            vert_module,
-            vert_entry.as_c_str(),
-        );
-        let frag_stage = shader::shader_stage(
-            vk::ShaderStageFlags::FRAGMENT,
-            frag_module,
-            frag_entry.as_c_str(),
-        );
-        let shader_stages = [vert_stage, frag_stage];
+
+        let mut frag_modules: std::collections::HashMap<
+            Option<crate::ShaderHandle>,
+            vk::ShaderModule,
+        > = std::collections::HashMap::new();
+        for &(shader_handle, _) in &missing {
+            if frag_modules.contains_key(&shader_handle) {
+                continue;
+            }
+            let bytes: &[u8] = match shader_handle {
+                None => FRAG_SPV,
+                Some(h) => self
+                    .custom_shaders
+                    .get(h.0 as usize)
+                    .map(Vec::as_slice)
+                    .with_context(|| format!("ForwardPass: unknown custom shader {:?}", h))?,
+            };
+            let module = shader::load_shader_module(device, bytes)
+                .with_context(|| format!("ForwardPass: load frag ({shader_handle:?})"))?;
+            frag_modules.insert(shader_handle, module);
+        }
 
         let binding_desc = Vertex::binding_description();
         let attr_descs = Vertex::attribute_descriptions();
@@ -1894,11 +1936,12 @@ impl ForwardPass {
             .offset(0)
             .size(scene_frag::PUSH_CONSTANT_SIZE)];
 
-        for state in missing {
+        for (shader_handle, state) in missing {
+            let frag_module = frag_modules[&shader_handle];
             // MRT: 附件 0 = 颜色（按 `DrawState` 混合），附件 1 = 视图法线（不混合）。
             let blend_attachments = color_blend_attachments(state);
             for skinned in [false, true] {
-                let (variant_stages, variant_bindings, variant_attrs) = if skinned {
+                let (variant_stages, variant_bindings) = if skinned {
                     let stages = [
                         shader::shader_stage(
                             vk::ShaderStageFlags::VERTEX,
@@ -1911,11 +1954,22 @@ impl ForwardPass {
                             frag_entry.as_c_str(),
                         ),
                     ];
-                    (stages, [binding_desc, skin_binding_desc], [0; 2])
+                    (stages, [binding_desc, skin_binding_desc])
                 } else {
-                    (shader_stages, [binding_desc, skin_binding_desc], [0; 2])
+                    let stages = [
+                        shader::shader_stage(
+                            vk::ShaderStageFlags::VERTEX,
+                            vert_module,
+                            vert_entry.as_c_str(),
+                        ),
+                        shader::shader_stage(
+                            vk::ShaderStageFlags::FRAGMENT,
+                            frag_module,
+                            frag_entry.as_c_str(),
+                        ),
+                    ];
+                    (stages, [binding_desc, skin_binding_desc])
                 };
-                let _ = variant_attrs;
                 let binding_descs: &[vk::VertexInputBindingDescription] = if skinned {
                     &variant_bindings
                 } else {
@@ -1961,16 +2015,19 @@ impl ForwardPass {
             })
             .with_context(|| {
                 format!(
-                    "ForwardPass: create pipeline ({state:?}, wireframe={wireframe}, skinned={skinned})"
+                    "ForwardPass: create pipeline ({shader_handle:?}, {state:?}, wireframe={wireframe}, skinned={skinned})"
                 )
             })?;
-                self.pipelines.insert((state, wireframe, skinned), pipeline);
+                self.pipelines
+                    .insert((shader_handle, state, wireframe, skinned), pipeline);
             }
         }
 
         unsafe { device.destroy_shader_module(vert_module, None) };
         unsafe { device.destroy_shader_module(vert_skinned_module, None) };
-        unsafe { device.destroy_shader_module(frag_module, None) };
+        for (_, frag_module) in frag_modules {
+            unsafe { device.destroy_shader_module(frag_module, None) };
+        }
         // set2_layout (IBL) is borrowed from `IblResources` (set via
         // `set_resources`) — do NOT destroy it here. `IblResources` owns the
         // layout lifetime; it outlives all passes.
@@ -2289,12 +2346,14 @@ impl RenderPassNode for ForwardPass {
         let wireframe = ctx.frame.wireframe && ctx.context.wireframe_supported;
         let shaded_wireframe =
             !wireframe && ctx.frame.shaded_wireframe && ctx.context.wireframe_supported;
-        let mut states: Vec<DrawState> = vec![DrawState::default()];
+        let mut states: Vec<(Option<crate::ShaderHandle>, DrawState)> =
+            vec![(None, DrawState::default())];
         let mut seen = std::collections::HashSet::new();
-        seen.insert(DrawState::default());
+        seen.insert((None, DrawState::default()));
         for item in ctx.frame.draw_list {
-            if item.visible_in_main_pass && seen.insert(item.state) {
-                states.push(item.state);
+            let key = (item.shader, item.state);
+            if item.visible_in_main_pass && seen.insert(key) {
+                states.push(key);
             }
         }
         self.ensure_pipelines(ctx.device, &states, wireframe)?;
@@ -2322,7 +2381,7 @@ impl RenderPassNode for ForwardPass {
         let (scene_pipeline, scene_layout) = {
             let pipeline = self
                 .pipelines
-                .get(&(DrawState::default(), wireframe, false))
+                .get(&(None, DrawState::default(), wireframe, false))
                 .context("ForwardPass: default pipeline missing")?;
             (pipeline.pipeline, pipeline.layout)
         };
@@ -2613,7 +2672,7 @@ impl RenderPassNode for ForwardPass {
                         self.update_bones(ctx.device, ctx.frame_index, &packed)?;
                     }
 
-                    let mut bound_state = (DrawState::default(), wireframe, false);
+                    let mut bound_state = (None, DrawState::default(), wireframe, false);
                     for batch in &batches {
                         let item = &ctx.frame.draw_list[batch.items[0]];
                         let uploaded_mesh = match ctx.frame.mesh_manager.get(item.mesh) {
@@ -2630,10 +2689,13 @@ impl RenderPassNode for ForwardPass {
                         if skinned && skin.is_none() {
                             continue;
                         }
-                        let key = (item.state, wireframe, skinned);
+                        let key = (item.shader, item.state, wireframe, skinned);
                         if key != bound_state {
                             let variant = self.pipelines.get(&key).with_context(|| {
-                                format!("ForwardPass: no pipeline for {:?}", item.state)
+                                format!(
+                                    "ForwardPass: no pipeline for ({:?}, {:?})",
+                                    item.shader, item.state
+                                )
                             })?;
                             ctx.device.cmd_bind_pipeline(
                                 ctx.cmd,
@@ -3097,7 +3159,7 @@ impl RenderPassNode for ForwardPass {
             return Ok(());
         }
         self.ensure_render_pass(context)?;
-        self.ensure_pipelines(device, &[DrawState::default()], false)
+        self.ensure_pipelines(device, &[(None, DrawState::default())], false)
     }
 }
 
@@ -3235,6 +3297,7 @@ mod tests {
             bone_offset: None,
             splat_slots: [u32::MAX; 4],
             splat_tiling: 0.0,
+            shader: None,
             state: DrawState::default(),
             world_bounds: None,
             index_start: 0,

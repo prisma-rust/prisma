@@ -352,6 +352,7 @@ fn test_sponza_pipeline_debug_passes() {
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
     };
 
     renderer
@@ -433,6 +434,7 @@ fn test_sponza_pipeline_debug_passes() {
             bone_offset: None,
             splat_slots: [u32::MAX; 4],
             splat_tiling: 0.0,
+            shader: None,
         });
     }
 

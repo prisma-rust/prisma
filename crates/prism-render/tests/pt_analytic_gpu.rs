@@ -108,6 +108,7 @@ fn draw_item(mesh: MeshHandle, model: [[f32; 4]; 4], material: u32, entity_id: u
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
     }
 }
 

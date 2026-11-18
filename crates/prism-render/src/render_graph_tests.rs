@@ -53,6 +53,7 @@ fn draw_item(queue: i32, eye_distance_x: f32) -> DrawItem {
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
         state: DrawState {
             render_queue: queue,
             ..DrawState::default()

@@ -13,6 +13,10 @@
 use anyhow::Context as _;
 use ash::vk;
 
+/// Opaque handle to a registered custom fragment shader module in [`ForwardPass`](crate::ForwardPass).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShaderHandle(pub u32);
+
 /// Load a shader module from SPIR-V bytecode already in memory.
 ///
 /// The byte slice does **not** need to be 4-byte aligned; a temporary copy is

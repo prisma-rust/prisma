@@ -337,6 +337,23 @@ impl GraphRenderer {
         Ok(())
     }
 
+    /// Register a custom fragment shader SPIR-V module with [`ForwardPass`],
+    /// returning a deduplicated [`ShaderHandle`](crate::ShaderHandle).
+    pub fn register_custom_shader(&mut self, spv: Vec<u8>) -> anyhow::Result<crate::ShaderHandle> {
+        anyhow::ensure!(
+            spv.len() >= 20 && spv.len().is_multiple_of(4),
+            "invalid SPIR-V bytecode length ({})",
+            spv.len()
+        );
+        let magic = u32::from_le_bytes([spv[0], spv[1], spv[2], spv[3]]);
+        anyhow::ensure!(magic == 0x0723_0203, "invalid SPIR-V magic: 0x{magic:08x}");
+        let fp = self
+            .graph
+            .pass_mut::<ForwardPass>()
+            .context("GraphRenderer: ForwardPass not registered")?;
+        Ok(fp.register_custom_shader(spv))
+    }
+
     pub fn apply_asset_requests(
         &mut self,
         requests: Vec<crate::asset_bridge::AssetResolveRequest>,
@@ -427,12 +444,24 @@ impl GraphRenderer {
                 None => (None, None),
             };
 
+            let shader_handle = match &req.shader {
+                Some(spv) => match self.register_custom_shader(spv.clone()) {
+                    Ok(handle) => Some(handle),
+                    Err(e) => {
+                        log::warn!("apply_asset_requests: custom shader registration failed: {e}");
+                        None
+                    }
+                },
+                None => None,
+            };
+
             results.push(crate::asset_bridge::AssetResolveResult {
                 mesh_handle,
                 material_slot,
                 material_slots,
                 texture_slot,
                 texture_size,
+                shader_handle,
             });
         }
 

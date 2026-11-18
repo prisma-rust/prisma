@@ -169,6 +169,7 @@ pub fn build_scene_package_split(
     // 3D 网格与材质（#530）：之前只打场景，导入的模型在打包后直接消失。
     stage_mesh_assets(asset_root, &guid_index, staging, &manifest, &mut missing)?;
     stage_material_assets(asset_root, &guid_index, staging, &manifest, &mut missing)?;
+    stage_shader_assets(asset_root, &guid_index, staging, &manifest, &mut missing)?;
     // UI 组件的贴图 / 字体（#591 / #583）：`Style.image`、`Tilemap.tileset_path`、
     // `Text.font` 同样得进包，否则打包后图标、瓦片和工程字体全部消失。
     stage_ui_assets(asset_root, &guid_index, staging, &manifest, &mut missing)?;
@@ -183,6 +184,7 @@ pub fn build_scene_package_split(
     // 工程数据（#1049）：关卡配置等 JSON 同样按运行时路径读取，没有组件引用
     // 可供枚举，`data/` 整个目录原样进包。
     stage_data_folder(asset_root, staging)?;
+    stage_shader_folder(asset_root, staging)?;
 
     report_missing_references(missing)?;
 
@@ -437,6 +439,103 @@ fn stage_sprite_assets(
 /// 枚举不到，只能按目录打包。音频不需要转码，直接拷字节。
 fn stage_audio_folder(asset_root: &Path, staging: &Path) -> Result<usize> {
     stage_folder_verbatim(asset_root, staging, "audio")
+}
+
+/// Stage custom `.spv` shaders referenced by `MeshRenderer.shader_path` or
+/// `SkinnedMeshRenderer.shader_path` in scene documents.
+fn stage_shader_assets(
+    asset_root: &Path,
+    guid_index: &GuidIndex,
+    staging: &Path,
+    manifest: &prism_scene::SceneManifest,
+    missing: &mut Vec<String>,
+) -> Result<usize> {
+    let mut staged = std::collections::BTreeSet::new();
+
+    for (doc_rel, components) in scene_component_maps(asset_root, guid_index, manifest) {
+        for entity in components {
+            let shader_path =
+                component_string(&entity, "prism_engine::scene::MeshRenderer", "shader_path")
+                    .or_else(|| {
+                        component_string(
+                            &entity,
+                            "prism_engine::scene::SkinnedMeshRenderer",
+                            "shader_path",
+                        )
+                    });
+            let Some(value) = shader_path else {
+                continue;
+            };
+            let Some(pak_path) = resolve_asset_path(asset_root, &doc_rel, value) else {
+                missing.push(format!(
+                    "{doc_rel}: shader_path '{value}' is absolute or escapes assets/"
+                ));
+                continue;
+            };
+            if !staged.insert(pak_path.clone()) {
+                continue;
+            }
+            let source = asset_root.join(&pak_path);
+            if !source.is_file() {
+                missing.push(format!("{doc_rel}: shader '{pak_path}' not found"));
+                continue;
+            }
+            let bytes = fs::read(&source).with_context(|| format!("read shader {pak_path}"))?;
+            if bytes.len() < 20
+                || !bytes.len().is_multiple_of(4)
+                || bytes[..4] != [0x03, 0x02, 0x23, 0x07]
+            {
+                bail!("{doc_rel}: shader '{pak_path}' is not valid SPIR-V bytecode");
+            }
+            write_staged(staging, Path::new(&pak_path), &bytes)?;
+            log::info!("packaged scene shader: {pak_path}");
+        }
+    }
+
+    Ok(staged.len())
+}
+
+/// Stage compiled `.spv` shaders under `assets/shaders/` so runtime shader
+/// switching can resolve them from `scenes.pak` via `ShaderAsset`.
+fn stage_shader_folder(asset_root: &Path, staging: &Path) -> Result<usize> {
+    let dir = asset_root.join("shaders");
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut packed = 0usize;
+    let mut stack = vec![dir];
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(&current)
+            .with_context(|| format!("read shaders dir {}", current.display()))?
+        {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("spv"))
+            {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(asset_root)
+                .with_context(|| format!("strip prefix on {}", path.display()))?;
+            let dst = staging.join(rel);
+            if dst.exists() {
+                continue;
+            }
+            let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+            write_staged(staging, rel, &bytes)?;
+            packed += 1;
+        }
+    }
+    if packed > 0 {
+        log::info!("packaged {packed} shader file(s) from assets/shaders/");
+    }
+    Ok(packed)
 }
 
 /// 把 `assets/<name>/` 整个目录原样拷进 staging（不转码）。

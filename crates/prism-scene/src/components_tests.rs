@@ -616,6 +616,7 @@ fn mesh_renderer_state_defaults_and_round_trips() {
         mesh_path: "m.mesh".into(),
         material_path: "m.mat".into(),
         material_paths: Vec::new(),
+        shader_path: String::new(),
         shadow_casting_mode: ShadowCastingMode::Off,
         cull_mode: CullMode::Off,
         render_queue: RenderQueue::new(RenderQueue::TRANSPARENT),

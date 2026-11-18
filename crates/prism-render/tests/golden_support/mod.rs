@@ -324,6 +324,7 @@ pub fn draw_item(mesh: MeshHandle) -> DrawItem {
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
         state: DrawState::default(),
         world_bounds: None,
         index_start: 0,
