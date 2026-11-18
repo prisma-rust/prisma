@@ -61,9 +61,10 @@ jobs:
           if python scripts/check_commit_msg.py "$RUNNER_TEMP/pr-title" 2>"$RUNNER_TEMP/title.err"; then
             gh pr edit "$PR" --remove-label needs/title >/dev/null 2>&1 || true
           else
+            title_err=$(tr '\n' ' ' < "$RUNNER_TEMP/title.err" | sed 's/[[:space:]]*$//')
             gh pr edit "$PR" --add-label needs/title
             comment_once "<!-- pr-triage:title -->" \
-          "标题不符合规范。请改成 \`<type>(<scope>): <祈使句摘要>\`（≤ 72 字符），详见 \`docs/ai-workflow.md\` §3。"
+          "标题不符合规范（${title_err:-check failed}）。请改成 \`<type>(<scope>): <祈使句摘要>\`（≤ 72 字符），详见 \`docs/ai-workflow.md\` §3。"
           fi
 
           # 自检块：要求包含 **Result: 行且 HEAD: `<sha>` 前缀匹配当前提交。
