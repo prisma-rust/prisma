@@ -664,6 +664,30 @@ def main() -> int:
                     )
                 )
 
+    if args.all or has_prefix(changed, "editor/") or "docs/feature-map.json" in changed or has_prefix(changed, "scripts/"):
+        checks.append(
+            Check(
+                "feature map",
+                [sys.executable, str(ROOT / "scripts" / "validate_feature_map.py")],
+            )
+        )
+    if args.all or has_prefix(changed, "scripts/"):
+        checks.append(
+            Check(
+                "scripts tests",
+                [
+                    sys.executable,
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    str(ROOT / "scripts"),
+                    "-p",
+                    "test_*.py",
+                ],
+            )
+        )
+
     failed = False
     for check in checks:
         if check.done:

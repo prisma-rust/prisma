@@ -2913,6 +2913,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.2",
  "prism-anim",
+ "proptest",
 ]
 
 [[package]]
@@ -3031,6 +3032,7 @@ name = "prism-ecs"
 version = "0.1.0"
 dependencies = [
  "log",
+ "proptest",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@
 //! tools (`prism-editor-api`, used by the MCP server) and the editor data layer
 //! (`prism-editor-core`).
 //!
-//! The dialect (see `docs/DESIGN.md` § "项目配置文件"; changing it means
+//! The dialect (see `docs/DESIGN.md` § "Project Configuration Files"; changing it means
 //! changing that section):
 //!
 //! 1. `[section]` lines, then `key = value` inside the section; section order

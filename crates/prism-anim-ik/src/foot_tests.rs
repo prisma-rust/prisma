@@ -201,8 +201,8 @@ fn a_surface_above_the_step_limit_is_not_ground() {
         1.0 / 60.0,
     );
     assert!(report.applied);
-    for index in 0..2 {
-        assert!(!report.feet[index].planted);
+    for foot in &report.feet {
+        assert!(!foot.planted);
     }
 }
 
