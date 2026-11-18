@@ -19,7 +19,9 @@
 pub mod blend;
 pub mod blend_space2d;
 pub mod blend_stack;
+pub mod camera_rigs;
 pub mod clip;
+pub mod foley;
 pub mod graph_eval;
 pub mod montage;
 pub mod pose;
@@ -36,10 +38,12 @@ pub use blend::{
 };
 pub use blend_space2d::{BlendSample2D, BlendSpace2D};
 pub use blend_stack::{BlendLayer, BlendStack, BoneMask};
+pub use camera_rigs::{CameraRigBlender, CameraRigId, CameraRigParams};
 pub use clip::{
     sample_quat, sample_vec3, Clip, ClipNotify, ClipSection, ClipWarpWindow, QuatKey, Track,
     Vec3Key,
 };
+pub use foley::{FoleyAction, FoleyDispatcher, FoleyEvent, SurfaceMaterialKind};
 pub use graph_eval::{
     AnimGraphEvaluator, AnimGraphSource, GraphEvalError, GraphNodeSnapshot, GraphNotifyEvent,
     MontageSnapshot,
