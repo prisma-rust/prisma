@@ -2597,17 +2597,7 @@ impl GraphRenderer {
                 shaded_wireframe: *shaded_wireframe,
                 outline_entities: &self.outline_entities,
                 grade: grade.sanitized(),
-                inv_view_rot: {
-                    let v = &frame_data.view;
-                    let mut m = [[0.0f32; 4]; 4];
-                    for c in 0..3 {
-                        for r in 0..3 {
-                            m[c][r] = v[r][c];
-                        }
-                    }
-                    m[3][3] = 1.0;
-                    m
-                },
+                inv_view_rot: inv_view_rot_from_view(&frame_data.view),
                 view_proj: frame_data.viewProj,
                 view_proj_jitter: if self.graph.debug_control().freeze_temporal {
                     [0.0, 0.0]
@@ -3358,6 +3348,19 @@ impl GraphRenderer {
 // elements are Send.  These fields are accessed exclusively from the render
 // thread, so there is no concurrent &mut mutation.
 unsafe impl Send for GraphRenderer {}
+
+/// Transpose of `view`'s upper-left 3x3 (for `GraphFrame::inv_view_rot`).
+#[must_use]
+pub fn inv_view_rot_from_view(view: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut m = [[0.0f32; 4]; 4];
+    for c in 0..3 {
+        for r in 0..3 {
+            m[c][r] = view[r][c];
+        }
+    }
+    m[3][3] = 1.0;
+    m
+}
 
 impl Drop for GraphRenderer {
     fn drop(&mut self) {
