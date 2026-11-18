@@ -218,8 +218,16 @@ fn test_sponza_pipeline_debug_passes() {
     let out_dir = PathBuf::from("target/debug_passes");
     fs::create_dir_all(&out_dir).expect("create debug_passes dir");
 
-    let mut renderer =
-        GraphRenderer::offscreen_new(WIDTH, HEIGHT, None).expect("create offscreen GraphRenderer");
+    let mut renderer = match GraphRenderer::offscreen_new(WIDTH, HEIGHT, None) {
+        Ok(r) => r,
+        Err(e) => {
+            if golden_support::is_no_vulkan_error(&e) {
+                eprintln!("[SKIP] no Vulkan driver: {e:#}");
+                return;
+            }
+            panic!("create offscreen GraphRenderer: {e:#}");
+        }
+    };
 
     let adapter = {
         let properties = &renderer.context().physical_device_properties;

@@ -63,6 +63,21 @@ pub struct FrameHarness {
     size: usize,
 }
 
+/// Returns `true` when a Vulkan initialisation error indicates that the host
+/// has no usable Vulkan loader, driver, or GPU device.
+pub fn is_no_vulkan_error(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}");
+    message.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+        || message.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
+        || message.contains("VK_ERROR_INITIALIZATION_FAILED")
+        || message.contains("no devices")
+        || message.contains("no GPU with a graphics queue found")
+        || message.contains("No valid")
+        || message.contains("PhysicalDevice")
+        || message.contains("failed to load Vulkan loader")
+        || message.contains("Unable to find a Vulkan driver")
+}
+
 impl FrameHarness {
     /// Create an offscreen renderer of `size × size` pixels.
     pub fn new(size: usize) -> Option<Self> {
@@ -70,13 +85,7 @@ impl FrameHarness {
         let mut renderer = match GraphRenderer::offscreen_new(size as u32, size as u32, None) {
             Ok(renderer) => renderer,
             Err(error) => {
-                let message = format!("{error:#}");
-                if message.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
-                    || message.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
-                    || message.contains("no devices")
-                    || message.contains("No valid")
-                    || message.contains("PhysicalDevice")
-                {
+                if is_no_vulkan_error(&error) {
                     eprintln!("[SKIP] no Vulkan driver: {error:#}");
                     return None;
                 }
@@ -125,6 +134,15 @@ impl FrameHarness {
 
     pub fn supports_wireframe(&self) -> bool {
         self.renderer.context().wireframe_supported
+    }
+
+    /// Returns `true` when the selected Vulkan adapter is a CPU software rasterizer (e.g. lavapipe).
+    pub fn is_software_device(&self) -> bool {
+        self.renderer
+            .context()
+            .physical_device_properties
+            .device_type
+            == ash::vk::PhysicalDeviceType::CPU
     }
 
     /// Adapter and driver identity of the device rendering this frame.

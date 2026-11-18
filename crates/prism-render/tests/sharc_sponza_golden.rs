@@ -112,7 +112,13 @@ fn test_sponza_sharc_real_render_and_comparison() {
             let msg = format!("{e:#}");
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
                 || msg.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
+                || msg.contains("VK_ERROR_INITIALIZATION_FAILED")
                 || msg.contains("no devices")
+                || msg.contains("no GPU with a graphics queue found")
+                || msg.contains("No valid")
+                || msg.contains("PhysicalDevice")
+                || msg.contains("failed to load Vulkan loader")
+                || msg.contains("Unable to find a Vulkan driver")
             {
                 eprintln!("[SKIP] Vulkan device not available: {e:#}");
                 return;
