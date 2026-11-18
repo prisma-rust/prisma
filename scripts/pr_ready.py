@@ -600,6 +600,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prisma pre-PR self-check")
     parser.add_argument("--base", help="比较基准（默认 origin/master）")
     parser.add_argument("--quick", action="store_true", help="只做 fmt + clippy，不跑测试")
+    parser.add_argument(
+        "--static-only",
+        action="store_true",
+        help="只跑静态/脚本门禁（跳过 cargo clippy 与测试，适用于 Termux 或纯文档/CI PR）",
+    )
     parser.add_argument("--all", action="store_true", help="检查所有 workspace 与独立项目")
     parser.add_argument("--verbose", action="store_true", help="失败时打印完整输出")
     args = parser.parse_args()
@@ -645,7 +650,7 @@ def main() -> int:
     checks.append(comment_check(base))
     checks.append(version_check())
 
-    if default_crates:
+    if default_crates and not args.static_only:
         clippy_cmd = ["cargo", "clippy"]
         for crate in default_crates:
             clippy_cmd += ["-p", crate]

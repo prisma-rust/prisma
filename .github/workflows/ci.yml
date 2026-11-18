@@ -118,10 +118,7 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-features
 
-      # prism-render 的 include_bytes! 需要 .spv（gitignored）。
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
+      # Compiled .spv and reflection JSON are committed (verified by the shaders job).
       - name: Feature matrix
         run: python3 scripts/check_features.py
 
@@ -160,11 +157,6 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-lint
 
-      # clippy compiles prism-render, whose include_bytes! needs the .spv files
-      # (gitignored). Compile them before linting.
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
       - name: rustfmt --check
         run: cargo fmt --all -- --check
 
@@ -198,7 +190,7 @@ jobs:
   # ---------------------------------------------------------------------------
   dist-size:
     name: dist build (nightly build-std)
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -207,9 +199,6 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           rustup component add rust-src --toolchain nightly
-
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
 
       - name: Build release player (build-std)
         run: bash scripts/build-dist.sh projects/template
@@ -252,11 +241,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ env.CACHE_VERSION }}-desktop
-
-      # .spv files are NOT committed (see .gitignore). Compile them here so the
-      # include_bytes!-based build has SPIR-V to embed.
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
 
       - name: Build (desktop crates)
         run: >
@@ -309,8 +293,7 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      # 工程链接 prism-app（默认带 audio feature），需要 ALSA 头文件；
-      # .spv 由下面的 setup-slang 编译，include_bytes! 才有东西可嵌。
+      # 工程链接 prism-app（默认带 audio feature），需要 ALSA 头文件。
       - name: Install system libraries
         run: |
           sudo apt-get update
@@ -320,9 +303,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ env.CACHE_VERSION }}-projects
-
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
 
       # `--locked`：工程的 Cargo.lock 也要跟着引擎走，否则本地能跑、CI 用旧锁。
       - name: Build every project workspace
