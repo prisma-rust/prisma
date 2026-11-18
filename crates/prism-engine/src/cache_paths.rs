@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 pub const CACHE_ROOT_DIR_NAME: &str = "cache";
 
 /// 测试二进制所在的子目录名：从这里上跳一层，与同 profile 的普通二进制共用缓存。
+#[cfg(test)]
 const TEST_BINARY_DIR_NAME: &str = "deps";
 
 /// 运行期缓存的类别。每类一个一级子目录，互不干扰，可各自整目录删除。
@@ -69,12 +70,22 @@ pub fn cache_dir(kind: CacheKind) -> Option<PathBuf> {
     Some(cache_root()?.join(kind.dir_name()))
 }
 
-/// 测试二进制在 `deps/` 下；上跳一层，让测试与同 profile 的普通二进制共用缓存。
+const TARGET_DIR_NAME: &str = "target";
+
+/// Resolves Cargo's profile directory (`target/debug`, `target/release`) even when
+/// test runners nest binaries under `deps/<hash>/` or `build/<crate>/<hash>/out/`.
 fn profile_dir(exe_dir: &Path) -> PathBuf {
-    if exe_dir.file_name().and_then(|name| name.to_str()) == Some(TEST_BINARY_DIR_NAME) {
-        if let Some(parent) = exe_dir.parent() {
-            return parent.to_path_buf();
+    let mut current = Some(exe_dir);
+    while let Some(dir) = current {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(TARGET_DIR_NAME) {
+            return exe_dir
+                .strip_prefix(dir)
+                .ok()
+                .and_then(|relative| relative.components().next())
+                .map(|first| dir.join(first))
+                .unwrap_or_else(|| dir.to_path_buf());
         }
+        current = dir.parent();
     }
     exe_dir.to_path_buf()
 }
@@ -90,18 +101,17 @@ mod tests {
             root.file_name().and_then(|name| name.to_str()),
             Some(CACHE_ROOT_DIR_NAME)
         );
-        // 测试二进制在 deps/ 下，缓存必须落在 profile 目录而不是 deps/ 里。
-        assert_ne!(
-            root.parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str()),
-            Some(TEST_BINARY_DIR_NAME)
+        let profile = root.parent().expect("profile dir");
+        assert!(
+            profile.ancestors().any(|dir| {
+                dir.file_name().and_then(|name| name.to_str()) == Some(TARGET_DIR_NAME)
+            }),
+            "cache root {:?} is not under a target/ directory",
+            root
         );
-        // 并且必须在 target/<profile>/ 下：可丢弃、随 cargo clean 一起消失。
-        let profile = root.parent().and_then(Path::parent).expect("profile dir");
-        assert_eq!(
+        assert_ne!(
             profile.file_name().and_then(|name| name.to_str()),
-            Some("target")
+            Some(TEST_BINARY_DIR_NAME)
         );
     }
 
