@@ -248,15 +248,15 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
 
 def markdown_row(total: int, counts: dict[str, int], warn_only: bool) -> str:
     if not total:
-        return "| 注释规范 | ✅ | 无 |"
+        return "| comment style | ✅ | clean |"
     status = "⚠️" if warn_only else "❌"
     detail = (
-        f"{total} 处：CJK {counts.get('cjk', 0)}，"
-        f"分隔线 {counts.get('separator', 0)}，"
-        f"TODO {counts.get('todo', 0)}，"
-        f"裸 allow {counts.get('allow', 0)}"
+        f"{total} finding(s): cjk {counts.get('cjk', 0)}, "
+        f"separator {counts.get('separator', 0)}, "
+        f"todo {counts.get('todo', 0)}, "
+        f"allow {counts.get('allow', 0)}"
     )
-    return f"| 注释规范 | {status} | {detail} |"
+    return f"| comment style | {status} | {detail} |"
 
 
 def main() -> int:
