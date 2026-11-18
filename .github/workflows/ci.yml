@@ -50,6 +50,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      shaders: ${{ steps.filter.outputs.shaders }}
+      features: ${{ steps.filter.outputs.features }}
+      user_projects: ${{ steps.filter.outputs.user_projects }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,23 +64,66 @@ jobs:
           # First push / manual dispatch: nothing to compare against → full CI.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A failed diff can't prove the change is doc-only → fail closed, full CI.
           if ! diff_out=$(git diff --name-only "$base" "$GITHUB_SHA" 2>/dev/null); then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ -z "$diff_out" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(printf '%s\n' "$diff_out" \
+          non_doc=$(printf '%s\n' "$diff_out" \
             | grep -Ev '^(docs/|.*\.md$|LICENSE.*|\.gitignore$)' || true)
-          if [ -n "$changed" ]; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$non_doc" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pure Rust comment-only changes skip heavy build/test jobs just like doc-only PRs.
+          if ! printf '%s\n' "$non_doc" | grep -qvE '\.rs$' \
+            && python3 scripts/check_comment_only.py --base "$base"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '^(assets/shaders/|crates/xtask/)'; then
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '(^Cargo\.toml$|/Cargo\.toml$|^scripts/check_features\.py$)'; then
+            echo "features=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "features=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '^(crates/prism-(app|engine|scene|asset|render)/|projects/|Cargo\.toml$|Cargo\.lock$)'; then
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -105,7 +151,7 @@ jobs:
   features:
     name: modular feature matrix
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.features == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -285,7 +331,7 @@ jobs:
   user-projects:
     name: user projects build
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.user_projects == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -320,7 +366,7 @@ jobs:
   shaders:
     name: slang compile + binding drift
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.shaders == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
