@@ -28,6 +28,7 @@ pub mod skinning;
 pub mod state_machine;
 pub mod sync;
 pub mod traversal;
+pub mod warping;
 
 pub use blend::{
     additive_joint, apply_additive, blend_into, blend_joint, blend_poses, blend_space_weights,
@@ -57,3 +58,4 @@ pub use state_machine::{
     ANY_STATE,
 };
 pub use sync::{SyncGroup, SyncMarkerSet};
+pub use warping::{apply_orientation_warping, apply_stride_warping, warp_root_motion_step};
