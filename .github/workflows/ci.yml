@@ -246,7 +246,7 @@ jobs:
       - name: Install Vulkan loader + headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev vulkan-tools mesa-vulkan-drivers vulkan-validationlayers libasound2-dev
+          sudo apt-get install -y libvulkan-dev libasound2-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -278,7 +278,9 @@ jobs:
 
       - name: Test (prism-render, serialized GPU tests)
         env:
-          PRISM_REQUIRE_VALIDATION: "1"
+          # Exclude preinstalled llvmpipe software ICD on GPU-less ubuntu-latest runners.
+          VK_ICD_FILENAMES: /nonexistent
+          VK_DRIVER_FILES: /nonexistent
         run: >
           cargo test --locked -p prism-render -- --test-threads=1
 
