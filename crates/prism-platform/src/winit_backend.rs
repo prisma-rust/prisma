@@ -59,9 +59,6 @@ pub(crate) fn create_window(
     PlatformWindow::from_winit(window)
 }
 
-/// winit 的字母键判别值 → 按键字符 → Win32 \`VK_*\`。
-///
-/// 只列字母行：其余键（F1–F12 / 方向键 / 数字行）在两张表里本来就同号。
 const LETTER_KEYS: &[(winit::keyboard::KeyCode, u8)] = &[
     (winit::keyboard::KeyCode::KeyA, b'A'),
     (winit::keyboard::KeyCode::KeyB, b'B'),
@@ -91,18 +88,7 @@ const LETTER_KEYS: &[(winit::keyboard::KeyCode, u8)] = &[
     (winit::keyboard::KeyCode::KeyZ, b'Z'),
 ];
 
-/// 把 winit 的 **字母键判别值** 换成与后端无关的 \`Key::Letter\`，其余键原样返回。
-///
-/// 两条规则缺一条，就会有一个后端和另一个后端不认同一串键：
-///
-/// 1. Key 里有专用变体的字母（W/A/S/D/Q/E/T）必须保留变体。这些键进
-///    InputManager 时是 KeyCode::KeyW 这类枚举值，相机系统按枚举查表；
-///    若在这里压成 \`Letter(b'W')\`，事件链就变成
-///    \`Letter(b'W')\` -> \`KeyCode::Other(0x57)\`，key_held(KeyCode::KeyW) 永远为假
-///    ——这就是「Sponza 里 WASD 完全不动相机」的根因（Win32 后端走
-///    Key::from_vk，字母本来就是专用变体，所以只有 winit 后端坏）。
-/// 2. 其余字母走 \`Key::Letter\`：两个后端给出同一个值，项目按
-///    \`Letter(b'M')\` 写快捷键，不必知道后端用的是哪套原始键码。
+// Preserve dedicated Key variants (W/A/S/D/Q/E/T) for camera input; map remaining letters to Key::Letter.
 fn winit_to_vk(code: winit::keyboard::KeyCode) -> Key {
     use winit::keyboard::KeyCode as Wk;
 
@@ -242,10 +228,7 @@ pub fn to_platform_event(event: &WindowEvent) -> PlatformEvent {
         },
         WindowEvent::KeyboardInput { event, .. } => PlatformEvent::Key {
             key: match event.physical_key {
-                // 统一用 **Win32 VK** 作为 `Key::Other` 的载荷（`Key::to_vk` 的契约）：
-                // `Key::from_winit` 会直传 winit 的 `KeyCode` 判别值（`KeyZ = 75`），
-                // 和 Win32 后端的 `'Z' = 0x5A = 90` 对不上，Sponza 里按 `R`/`V`/`M`
-                // （`Key::Other(0x52/0x56/0x4D)`）在两个后端只会有一个生效。
+                // Normalize Key::Other to Win32 VK codes to match the Win32 backend.
                 winit::keyboard::PhysicalKey::Code(code) => winit_to_vk(code),
                 winit::keyboard::PhysicalKey::Unidentified(_) => Key::Other(u32::MAX),
             },
@@ -417,16 +400,9 @@ mod tests {
         assert_eq!(Key::from_winit(Wk::KeyZ), Key::Other(Wk::KeyZ as u32));
     }
 
-    /// 事件层用的是 `winit_to_vk`，它对字母键有两条规则：
-    ///
-    /// - 有专用 `Key` 变体的字母（W/A/S/D/Q/E/T）必须保留变体，否则
-    ///   `InputManager` 里存的是 `KeyCode::Other(0x57)`，相机系统的
-    ///   `key_held(KeyCode::KeyW)` 永远为假，WASD 不动。
-    /// - 没有专用变体的字母换成 `Key::Letter`，两个后端才给出同一个值。
     #[test]
     fn winit_letters_map_to_win32_codes() {
         use winit::keyboard::KeyCode as Wk;
-        // 专用变体：和 Win32 后端的 `Key::from_vk` 结果一致。
         assert_eq!(winit_to_vk(Wk::KeyW), Key::KeyW);
         assert_eq!(winit_to_vk(Wk::KeyA), Key::KeyA);
         assert_eq!(winit_to_vk(Wk::KeyS), Key::KeyS);
@@ -434,11 +410,9 @@ mod tests {
         assert_eq!(winit_to_vk(Wk::KeyQ), Key::KeyQ);
         assert_eq!(winit_to_vk(Wk::KeyE), Key::KeyE);
         assert_eq!(winit_to_vk(Wk::KeyT), Key::KeyT);
-        // 无专用变体的字母：与后端无关的 ASCII 字母。
         assert_eq!(winit_to_vk(Wk::KeyR), Key::Letter(b'R'));
         assert_eq!(winit_to_vk(Wk::KeyV), Key::Letter(b'V'));
         assert_eq!(winit_to_vk(Wk::KeyM), Key::Letter(b'M'));
-        // 非字母键保持原样（两张表本来同号）。
         assert_eq!(winit_to_vk(Wk::F3), Key::F3);
         assert_eq!(winit_to_vk(Wk::ArrowUp), Key::ArrowUp);
     }

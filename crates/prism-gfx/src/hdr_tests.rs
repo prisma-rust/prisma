@@ -15,9 +15,9 @@ fn rgbe_known_value() {
 
 #[test]
 fn decode_rle_scanline() {
-    // Hand-built RLE RGBE file: 1 scanline, 宽度 4.
-    // Scanline header: 0x02 0x02 then 宽度 (big-endian) = 4.
-    // Each 通道 is a single RLE run of 4 相同 values.
+    // Hand-built RLE RGBE file: 1 scanline, width 4.
+    // Scanline header: 0x02 0x02 then width (big-endian) = 4.
+    // Each channel is a single RLE run of 4 identical values.
     let header = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 4\n";
     let scanline = [
         0x02u8, 0x02, 0x00, 0x04, // RLE marker + width=4 (big-endian)
@@ -42,7 +42,7 @@ fn decode_rle_scanline() {
 #[test]
 fn decode_rle_literal_run() {
     // Locks the literal-run convention: a count byte <= 128 means exactly
-    // `count` literal values (NOT count+1). 宽度 4, all channels literal.
+    // `count` literal values (NOT count+1). Width 4, all channels literal.
     let header = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 4\n";
     let scanline = [
         0x02u8, 0x02, 0x00, 0x04, // RLE marker + width=4 (big-endian)
