@@ -14,6 +14,7 @@ fn try_create_headless() -> Option<GraphRenderer> {
         Err(e) => {
             let msg = format!("{e:#}");
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || msg.contains("Unable to find a Vulkan driver")
                 || msg.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
                 || msg.contains("no devices")
                 || msg.contains("No valid")
@@ -116,7 +117,7 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
 
     // L1 split brick at (2, 1, 2) -> brick index 0 (`ref = 1`).
     l1_cells[l1_idx(2, 1, 2)] = [1, 0, 0, 0];
-    let sub = 0 + 4 * (2 + 4 * 0); // local L2 (0, 2, 0) -> world [2.0..2.25, 1.5..1.75, 2.0..2.25]
+    let sub = 8; // local L2 (0, 2, 0) -> world [2.0..2.25, 1.5..1.75, 2.0..2.25]
     let occ_lo = if sub < 32 { 1u32 << sub } else { 0 };
     let occ_hi = if sub >= 32 { 1u32 << (sub - 32) } else { 0 };
     let mut brick_cells = vec![[0u32; 4]; 64];
@@ -164,14 +165,16 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     let target = [2.125, 1.625, 2.0];
     let vp = make_camera_vp(eye, target, 1.0);
 
-    let mut frame_data = FrameUBOData::default();
-    frame_data.viewProj = vp;
-    frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
-    frame_data.lightDirection = [0.4, 0.8, -0.45, 2.5];
-    frame_data.lightColor = [1.0, 0.98, 0.92, 0.4];
-    frame_data.viewportW = 256.0;
-    frame_data.viewportH = 256.0;
-    frame_data.exposure = 1.0;
+    let frame_data = FrameUBOData {
+        viewProj: vp,
+        cameraPosition: [eye[0], eye[1], eye[2], 0.0],
+        lightDirection: [0.4, 0.8, -0.45, 2.5],
+        lightColor: [1.0, 0.98, 0.92, 0.4],
+        viewportW: 256.0,
+        viewportH: 256.0,
+        exposure: 1.0,
+        ..Default::default()
+    };
 
     let out_of_date = renderer
         .render(
@@ -295,14 +298,16 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
             let eye = [2.0, 1.8, 1.5];
             let target = [2.0, 1.7, 4.0];
             let vp = make_camera_vp(eye, target, 1.0);
-            let mut frame_data = FrameUBOData::default();
-            frame_data.viewProj = vp;
-            frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
-            frame_data.lightDirection = [0.0, 1.0, 0.0, 0.0];
-            frame_data.lightColor = [0.0, 0.0, 0.0, 0.0];
-            frame_data.viewportW = 256.0;
-            frame_data.viewportH = 256.0;
-            frame_data.exposure = 1.0;
+            let frame_data = FrameUBOData {
+                viewProj: vp,
+                cameraPosition: [eye[0], eye[1], eye[2], 0.0],
+                lightDirection: [0.0, 1.0, 0.0, 0.0],
+                lightColor: [0.0, 0.0, 0.0, 0.0],
+                viewportW: 256.0,
+                viewportH: 256.0,
+                exposure: 1.0,
+                ..Default::default()
+            };
 
             for _ in 0..2 {
                 let out_of_date = renderer

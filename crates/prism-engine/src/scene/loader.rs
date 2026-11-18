@@ -1128,8 +1128,11 @@ pub fn collect_bake_instances(
 
         let indices: Vec<u32> = mesh_info
             .index_data
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .copied()
+            .map(u32::from_le_bytes)
             .collect();
 
         instances.push(PtGeometryInstance {

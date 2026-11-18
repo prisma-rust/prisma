@@ -296,8 +296,8 @@ fn write_u16_slice(out: &mut Vec<u8>, data: &[u16]) {
 
 fn read_u16_vec(bytes: &[u8], cursor: &mut usize, len: usize) -> Vec<u16> {
     let mut out = Vec::with_capacity(len);
-    for chunk in bytes[*cursor..*cursor + len * 2].chunks_exact(2) {
-        out.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    for &chunk in bytes[*cursor..*cursor + len * 2].as_chunks::<2>().0 {
+        out.push(u16::from_le_bytes(chunk));
     }
     *cursor += len * 2;
     out

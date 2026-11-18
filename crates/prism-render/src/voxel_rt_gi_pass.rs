@@ -93,8 +93,11 @@ impl VoxelRtGiPass {
             .context("VoxelRtGiPass: create pipeline layout")?;
 
         let words: Vec<u32> = VOXEL_RT_GI_SPV
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .copied()
+            .map(u32::from_le_bytes)
             .collect();
         let shader_info = vk::ShaderModuleCreateInfo::default().code(&words);
         let shader_module = unsafe { device.create_shader_module(&shader_info, None) }
