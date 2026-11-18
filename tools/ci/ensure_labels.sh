@@ -40,6 +40,7 @@ create "needs/title"    "b60205" "PR 标题不符合 Conventional Commits"
 create "needs/self-check" "b60205" "PR 缺少 pr_ready 自检块"
 create "needs/triage"   "d4c5f9" "等待人工 / agent 分诊"
 create "source/discord" "5865f2" "由 Discord bot 转入的 issue"
+create "automation"     "ededed" "由周期自动化任务产生或处理的条目"
 
 # Agent 认领
 create "agent/ready"    "0e8a16" "可被 agent 认领"

@@ -44,6 +44,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           TITLE: ${{ github.event.pull_request.title }}
           BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -65,9 +66,14 @@ jobs:
           "标题不符合规范。请改成 \`<type>(<scope>): <祈使句摘要>\`（≤ 72 字符），详见 \`docs/ai-workflow.md\` §3。"
           fi
 
-          # 自检块
-          if printf '%s' "$BODY" | grep -qE '^\*\*Result:'; then
+          # 自检块：要求包含 **Result: 行且 HEAD: `<sha>` 前缀匹配当前提交。
+          block_sha=$(printf '%s\n' "$BODY" | sed -nE 's/.*HEAD:[[:space:]]*`([0-9a-f]{7,40})`.*/\1/p' | head -n1 || true)
+          if printf '%s' "$BODY" | grep -qE '^\*\*Result:' && [ -n "$block_sha" ] && [[ "$HEAD_SHA" == "$block_sha"* ]]; then
             gh pr edit "$PR" --remove-label needs/self-check >/dev/null 2>&1 || true
+          elif printf '%s' "$BODY" | grep -qE '^\*\*Result:'; then
+            gh pr edit "$PR" --add-label needs/self-check
+            comment_once "<!-- pr-triage:self-check-head -->" \
+          "自检块不是当前 HEAD 的结果。请在最新提交上重跑 \`python scripts/pr_ready.py\`，并把完整 Markdown 块（含 \`HEAD:\` 行）重新贴进 PR 正文。"
           else
             gh pr edit "$PR" --add-label needs/self-check
             comment_once "<!-- pr-triage:self-check -->" \
