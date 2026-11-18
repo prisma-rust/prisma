@@ -484,8 +484,7 @@ def format_check(files: list[str], verbose: bool) -> Check:
 def comment_check(base: str) -> Check:
     """注释规范检查（`scripts/check_comments.py`）。
 
-    迁移期只对改动文件告警，不阻塞合并；存量清零后把 `--warn-only` 去掉即可
-    变成硬门禁。规则见 `docs/code-style.md`。
+    只检查相对 base 新增或修改的行，直接阻断违规新增，规则见 `docs/code-style.md`。
     """
     check = Check(
         "注释规范",
@@ -495,30 +494,25 @@ def comment_check(base: str) -> Check:
             "--changed",
             "--base",
             base,
-            "--warn-only",
+            "--added-lines",
         ],
     )
     check.done = True
-    eprint("→ 注释规范: changed .rs files (report-only)")
+    eprint("→ 注释规范: added/modified .rs lines")
     code, out = run(check.cmd)
     check.output = out
     if code != 0:
         check.status = "fail"
-        check.detail = "check_comments.py failed"
+        match = re.search(r"comments: (\d+) finding\(s\)", out)
+        count = int(match.group(1)) if match else 0
+        check.detail = f"{count} 处违规新增" if count else "check_comments.py failed"
         eprint("  FAILED")
         eprint("\n".join(out.rstrip().splitlines()[-10:]))
         return check
 
-    match = re.search(r"comments: (\d+) finding\(s\)", out)
-    count = int(match.group(1)) if match else 0
-    if count:
-        check.status = "warn"
-        check.detail = f"{count} 处（迁移期，未阻塞）"
-        eprint(f"  warn: {count} finding(s)")
-    else:
-        check.status = "ok"
-        check.detail = "clean"
-        eprint("  ok")
+    check.status = "ok"
+    check.detail = "clean"
+    eprint("  ok")
     return check
 
 
