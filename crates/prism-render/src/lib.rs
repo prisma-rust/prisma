@@ -72,6 +72,7 @@ pub mod managers;
 mod math;
 pub mod mesh;
 pub mod mobile_upscaler;
+pub mod nrd;
 pub mod offscreen;
 pub mod particle_pass;
 /// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
@@ -132,6 +133,7 @@ pub mod shadow_map_pass;
 pub mod sharc;
 pub mod skybox_pass;
 pub mod sprite_pass;
+pub mod streamline;
 pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
@@ -168,6 +170,10 @@ pub use ground_grid::GroundGrid;
 pub use gtao::{GtaoFrameInputs, GtaoPass};
 pub use hdr_readback::HdrReadback;
 pub use mesh::{Mesh, Vertex};
+pub use nrd::{
+    select_pt_denoiser, NrdAccumulationMode, NrdCaps, NrdCommonSettings, NrdDenoiserMode,
+    PtDenoiserKind, PT_DIFFUSE_H, PT_HIT_DISTANCE_H, PT_SPECULAR_H,
+};
 pub use particle_pass::ParticlePass;
 pub use pipeline::GraphicsPipeline;
 pub use post::PostPass;
@@ -197,6 +203,10 @@ pub use sharc::{
 };
 pub use skybox_pass::SkyboxSettings;
 pub use sprite_pass::SpritePass;
+pub use streamline::{
+    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, SlResult,
+    StreamlineBinding, StreamlineCaps,
+};
 pub use suballocator::{MemorySuballocator, StagingArena, Suballocation, SuballocatorStats};
 pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
