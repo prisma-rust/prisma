@@ -50,6 +50,10 @@ pub fn init_android_assets(android_app: &AndroidApp) -> Result<PathBuf> {
         );
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Android startup sets cwd to extracted assets root"
+    )]
     std::env::set_current_dir(&data_dir)
         .with_context(|| format!("set cwd to {}", data_dir.display()))?;
     Ok(data_dir)

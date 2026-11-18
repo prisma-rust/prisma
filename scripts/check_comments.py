@@ -10,15 +10,15 @@ What it flags:
   * CJK characters in comments (comments must be English);
   * decorative separators such as `// ----------`;
   * `TODO` / `FIXME` / `XXX` / `HACK` without an issue reference;
-  * `lib.rs` / `main.rs` / `mod.rs` without an inner `//!` module doc.
+  * bare `#[allow(...)]` / `#![allow(...)]` without `reason = "..."`.
 
 Strings and user-facing text are not comments, so Chinese UI strings and
 error messages are not flagged. Generated files such as shader bindings and
 Tauri codegen output are skipped.
 
-The default mode checks files changed against the base branch. Use `--all`
-for the whole repository; during the migration this will report the existing
-backlog, so CI wiring should start with `--changed --warn-only`.
+Use `--added-lines` with `--changed` or `--staged` to check only lines added
+or modified in the current diff, turning the check into a hard gate without
+failing on legacy comments in untouched lines.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib.console import force_utf8_streams  # noqa: E402
-from lib.rust_comments import comment_body, has_module_doc, lex  # noqa: E402
+from lib.rust_comments import comment_body, lex  # noqa: E402
 
 force_utf8_streams()
 
@@ -43,14 +43,15 @@ CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff0
 SEPARATOR_RE = re.compile(r"^[\s\-=_*#~`^+─━┄┅┈┉…·.]+$")
 TODO_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
 ISSUE_RE = re.compile(r"(#\d+|https?://\S+|issues?/\d+)")
+ALLOW_ATTR_RE = re.compile(r"#!?\[\s*allow\s*\([^]]*\)\s*\]")
+REASON_RE = re.compile(r"\breason\s*=")
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 EXCLUDED_PREFIXES = (
     "crates/prism-render/src/shader_bindings/",
     "launcher/src-tauri/gen/",
     ".local/tools/slang/",
 )
-
-MODULE_FILES = {"lib.rs", "main.rs", "mod.rs"}
 
 
 def git(*args: str) -> tuple[int, str]:
@@ -171,7 +172,41 @@ def first_line(body: str, limit: int = 100) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-def check_file(rel_path: str) -> list[tuple[str, int, str]]:
+def diff_added_lines(probe: tuple[str, ...]) -> set[int]:
+    code, output = git(*probe)
+    if code != 0:
+        return set()
+    lines: set[int] = set()
+    for raw in output.splitlines():
+        match = HUNK_RE.match(raw)
+        if not match:
+            continue
+        start = int(match.group(1))
+        count = int(match.group(2)) if match.group(2) is not None else 1
+        if count > 0:
+            lines.update(range(start, start + count))
+    return lines
+
+
+def added_line_numbers(rel_path: str, base: str | None, staged_only: bool) -> set[int] | None:
+    """Return 1-based line numbers added/modified in git, or None for untracked files."""
+    code, untracked = git("ls-files", "--others", "--exclude-standard", "--", rel_path)
+    if code == 0 and untracked.strip():
+        return None
+
+    probes: list[tuple[str, ...]] = [("diff", "-U0", "--cached", "--", rel_path)]
+    if not staged_only:
+        probes.append(("diff", "-U0", "--", rel_path))
+        if base:
+            probes.append(("diff", "-U0", f"{base}...HEAD", "--", rel_path))
+
+    lines: set[int] = set()
+    for probe in probes:
+        lines.update(diff_added_lines(probe))
+    return lines
+
+
+def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[str, int, str]]:
     path = ROOT / rel_path
     try:
         source = path.read_text(encoding="utf-8")
@@ -181,6 +216,8 @@ def check_file(rel_path: str) -> list[tuple[str, int, str]]:
     issues: list[tuple[str, int, str]] = []
     for token in lex(source):
         if not token.is_comment:
+            continue
+        if only_lines is not None and token.line not in only_lines:
             continue
         body = comment_body(token)
         if CJK_RE.search(body):
@@ -192,8 +229,19 @@ def check_file(rel_path: str) -> list[tuple[str, int, str]]:
                 ("todo", token.line, "TODO/FIXME without an issue reference (`TODO(#123)`)")
             )
 
-    if path.name in MODULE_FILES and not has_module_doc(source):
-        issues.append(("module-doc", 1, "missing `//!` module documentation"))
+    for line_no, raw_line in enumerate(source.splitlines(), start=1):
+        if only_lines is not None and line_no not in only_lines:
+            continue
+        for match in ALLOW_ATTR_RE.finditer(raw_line):
+            attr = match.group(0)
+            if not REASON_RE.search(attr):
+                issues.append(
+                    (
+                        "allow",
+                        line_no,
+                        "bare `#[allow(...)]` without `reason = \"...\"` (prefer `#[expect(..., reason = \"...\")]`)",
+                    )
+                )
 
     return issues
 
@@ -206,7 +254,7 @@ def markdown_row(total: int, counts: dict[str, int], warn_only: bool) -> str:
         f"{total} 处：CJK {counts.get('cjk', 0)}，"
         f"分隔线 {counts.get('separator', 0)}，"
         f"TODO {counts.get('todo', 0)}，"
-        f"缺模块文档 {counts.get('module-doc', 0)}"
+        f"裸 allow {counts.get('allow', 0)}"
     )
     return f"| 注释规范 | {status} | {detail} |"
 
@@ -219,24 +267,32 @@ def main() -> int:
     selection.add_argument("--changed", action="store_true", help="check files changed against --base")
     selection.add_argument("--staged", action="store_true", help="check staged .rs files")
     parser.add_argument("--base", help="git ref for --changed (default: origin/master when present)")
+    parser.add_argument(
+        "--added-lines",
+        action="store_true",
+        help="only check lines added/modified in git diff (for --changed / --staged)",
+    )
     parser.add_argument("--warn-only", action="store_true", help="print findings but exit 0")
     parser.add_argument("--markdown", action="store_true", help="print one Markdown row on stdout")
     parser.add_argument("--quiet", action="store_true", help="summary only")
     parser.add_argument("--max-examples", type=int, default=30, help="limit printed findings")
     args = parser.parse_args()
 
+    base_ref: str | None = None
     if args.paths:
         paths = explicit_files(args.paths)
     elif args.staged:
         paths = staged_files()
     elif args.changed:
-        paths = changed_files(resolve_base(args.base))
+        base_ref = resolve_base(args.base)
+        paths = changed_files(base_ref)
     elif args.all:
         paths = tracked_files()
     else:
         # Default to the useful PR behavior when git is available.
         if git("rev-parse", "--verify", "--quiet", "HEAD")[0] == 0:
-            paths = changed_files(resolve_base(args.base))
+            base_ref = resolve_base(args.base)
+            paths = changed_files(base_ref)
         else:
             paths = tracked_files()
 
@@ -251,7 +307,12 @@ def main() -> int:
     counts: dict[str, int] = {}
     total = 0
     for rel_path in paths:
-        issues = check_file(rel_path)
+        only_lines = (
+            added_line_numbers(rel_path, base_ref, args.staged)
+            if args.added_lines and not args.all and not args.paths
+            else None
+        )
+        issues = check_file(rel_path, only_lines=only_lines)
         if not issues:
             continue
         issues_by_file.append((rel_path, issues))
@@ -287,7 +348,7 @@ def main() -> int:
         summary = (
             f"comments: {total} finding(s) in {len(issues_by_file)} file(s) "
             f"(cjk={counts.get('cjk', 0)}, separator={counts.get('separator', 0)}, "
-            f"todo={counts.get('todo', 0)}, module-doc={counts.get('module-doc', 0)})"
+            f"todo={counts.get('todo', 0)}, allow={counts.get('allow', 0)})"
         )
         if not args.quiet:
             print(summary, file=sys.stderr if args.markdown else sys.stdout)

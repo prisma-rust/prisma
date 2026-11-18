@@ -54,6 +54,10 @@ static WARNED_MISSING_ROOT: AtomicBool = AtomicBool::new(false);
 ///
 /// 需要自行尝试多个相对路径的调用方（例如场景清单还要兼容旧格式
 /// `crates/prism-engine/assets/`）可以直接遍历它。
+#[expect(
+    clippy::disallowed_methods,
+    reason = "single source of truth for runtime asset root resolution"
+)]
 pub fn search_roots() -> Vec<PathBuf> {
     let cwd = std::env::current_dir().ok();
     let exe_dir = std::env::current_exe()

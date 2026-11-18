@@ -194,7 +194,7 @@ python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 - 注释中的 CJK 字符；
 - 装饰性分隔线；
 - 没有 issue 的 `TODO` / `FIXME` / `XXX` / `HACK`；
-- `lib.rs` / `main.rs` / `mod.rs` 缺少 `//!` 模块文档。
+- 未附带 `reason = "..."` 的裸 `#[allow(...)]` / `#![allow(...)]`（建议改用 `#[expect(..., reason = "...")]`）。
 
 字符串里的中文（UI 文案、错误信息）不会被标记；生成文件
 （`crates/prism-render/src/shader_bindings/`、`launcher/src-tauri/gen/`、
@@ -202,8 +202,8 @@ python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 
 ## 9. 迁移与门禁
 
-- 存量中文注释按 crate / 模块分批清理，先核心 crate，后渲染、引擎、编辑器。
-- 迁移期 CI 可以只对**改动文件**告警；存量清零后，`check_comments.py --all` 变成硬门禁。
+- 存量中文注释与冗余解释性注释按 crate / 模块分批清理，或在触碰文件时顺手清理。
+- `pr_ready.py` 通过 `check_comments.py --changed --added-lines` 只检查**新增或修改的行**，对违规新增直接阻断合并。
 - 每个注释 PR 额外跑 `RUSTDOCFLAGS="-D warnings" cargo doc -p <crate> --no-deps`，
   确保 rustdoc 链接和代码块没有坏掉。
 - 生成的文档注释不要手改：`shader_bindings/`、Tauri `gen/` 等以生成器为准。
@@ -213,7 +213,6 @@ python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 - [ ] 注释是英文，标识符 / 路径保持原样。
 - [ ] 没有复述代码、装饰线、被注释掉的旧代码、过期里程碑。
 - [ ] 非显然的不变量、单位、panic / error / safety 条件仍然保留。
-- [ ] `TODO` 带 issue；没有 issue 的已删除。
-- [ ] 模块文件有 `//!`；公开 item 有必要的 `///`。
+- [ ] `TODO` 带 issue；没有 issue 的已删除；`#[allow(...)]` 带 `reason`。
 - [ ] 注释-only PR 通过 `check_comment_only.py`。
 - [ ] `cargo doc -D warnings` 对改动的 crate 通过。

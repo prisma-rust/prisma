@@ -6,6 +6,10 @@
 //! component slices.
 
 #![deny(warnings)]
+#![expect(
+    clippy::disallowed_types,
+    reason = "in-memory ECS component and resource storage only; never persisted"
+)]
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;

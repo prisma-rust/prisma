@@ -135,7 +135,10 @@ impl FootPlacement {
     ///
     /// Returns `applied = false` (and leaves `pose` untouched) for invalid
     /// chains, a missing pelvis joint, or a pose shorter than the skeleton.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "stateless foot placement update takes explicit rig and query parameters"
+    )]
     pub fn update(
         &mut self,
         skeleton: &Skeleton,

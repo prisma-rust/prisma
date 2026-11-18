@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "description": "User-perspective UI & workflow Feature Map aligned with editor_ui node tree and Command enum",
+  "panels": {
+    "sceneView": "Scene",
+    "gameView": "Game",
+    "hierarchy": "Hierarchy",
+    "inspector": "Inspector",
+    "assets": "Assets",
+    "docs": "Documents",
+    "log": "Console",
+    "history": "History",
+    "renderGraph": "Render Graph",
+    "projectSettings": "Project Settings",
+    "preferences": "Preferences",
+    "theme": "Theme",
+    "build": "Build",
+    "problems": "Problems",
+    "prefabOverrides": "Prefab Overrides",
+    "material": "Material",
+    "animGraph": "Animation Graph",
+    "tools": "Tools",
+    "shortcuts": "Shortcuts",
+    "about": "About"
+  },
+  "nodePrefixes": [
+    "command:<Name>",
+    "panel:<tab>",
+    "doc:<index>",
+    "entity:<id>",
+    "asset:<path>",
+    "open:<path>",
+    "field:<entity>:<component>:<path>",
+    "view:<tab>:entity:<id>",
+    "view:<tab>:ecs:<index>",
+    "resolution:<WxH>",
+    "dialog:<kind>",
+    "dialog:<kind>:<button>"
+  ],
+  "coreCommands": [
+    "NewScene",
+    "NewPrefab",
+    "OpenDocument",
+    "Save",
+    "SaveAs",
+    "Undo",
+    "Redo",
+    "DuplicateEntity",
+    "DeleteSelection",
+    "Play",
+    "Pause",
+    "Stop",
+    "Step",
+    "ToggleSceneView",
+    "ToggleGameView",
+    "ToggleHierarchy",
+    "ToggleAssets",
+    "ToggleInspector",
+    "ToggleLog",
+    "ResetLayout"
+  ],
+  "flows": [
+    {
+      "id": "scene-edit-and-undo",
+      "goal": "Select an entity, edit a reflected field via inspector node, verify dirty flag and undo/redo consistency",
+      "steps": [
+        { "tool": "editor_ui", "action": "snapshot" },
+        { "tool": "editor_ui", "action": "click", "node": "panel:hierarchy" },
+        { "tool": "editor_ui", "action": "click", "node": "entity:<id>" },
+        { "tool": "editor_ui", "action": "set", "node": "field:<entity>:<component>:<path>", "value": "<new>" },
+        { "tool": "editor_status", "expect": { "dirty": true } },
+        { "tool": "editor_ui", "action": "click", "node": "command:Undo" },
+        { "tool": "editor_ui", "action": "click", "node": "command:Redo" }
+      ]
+    },
+    {
+      "id": "play-and-capture",
+      "goal": "Enter Play mode, inject input, capture Game view, check Console logs for panics/errors, and stop",
+      "steps": [
+        { "tool": "editor_play", "action": "play" },
+        { "tool": "editor_status", "expect": { "playing": true } },
+        { "tool": "editor_input", "click": true },
+        { "tool": "editor_capture", "target": "game" },
+        { "tool": "editor_logs", "expect": { "no_panic": true } },
+        { "tool": "editor_play", "action": "stop" }
+      ]
+    },
+    {
+      "id": "viewport-pick-and-inspect",
+      "goal": "Pick an entity directly in Scene view and verify selection synchronization",
+      "steps": [
+        { "tool": "editor_ui", "action": "click", "node": "panel:sceneView" },
+        { "tool": "editor_ui", "action": "click", "node": "view:sceneView:entity:<id>" },
+        { "tool": "editor_status", "expect": { "selected_entity": "<id>" } },
+        { "tool": "editor_capture", "target": "scene" }
+      ]
+    }
+  ]
+}

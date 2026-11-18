@@ -111,6 +111,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
         Err(e) => {
             let msg = format!("{e:#}");
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || msg.contains("Unable to find a Vulkan driver")
                 || msg.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
                 || msg.contains("VK_ERROR_INITIALIZATION_FAILED")
                 || msg.contains("no devices")

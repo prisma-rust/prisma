@@ -66,6 +66,7 @@ fn try_create(env: Option<Vec<u8>>) -> Option<GraphRenderer> {
         Err(err) => {
             let message = format!("{err:#}");
             if message.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || message.contains("Unable to find a Vulkan driver")
                 || message.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
                 || message.contains("no devices")
                 || message.contains("No valid")
