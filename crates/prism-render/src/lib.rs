@@ -49,6 +49,7 @@ pub mod capabilities;
 pub mod compute;
 pub mod context;
 pub mod culling;
+pub mod ddgi;
 pub mod descriptor;
 pub mod dirty_dispatch;
 pub mod external_overlay;
@@ -151,6 +152,10 @@ pub use anf::{is_qualcomm_adreno, AnfCaps, AnfPass};
 pub use buffer::create_buffer;
 pub use capabilities::RayTracingCaps;
 pub use context::VulkanContext;
+pub use ddgi::{
+    select_rtxgi_backend, DdgiAtlasLayout, DdgiScrollDelta, DdgiScrollingState,
+    DdgiVariabilityState, DdgiVolumeParams,
+};
 pub use descriptor::{
     DescriptorLayout, DescriptorPool, FrameUBO, FrameUBOData, GpuLight, PtAnalyticLight,
     PtEmissiveTri, ReSTIRReservoir, GPU_LIGHT_KIND_POINT, GPU_LIGHT_KIND_SPOT, GPU_LIGHT_SIZE,
