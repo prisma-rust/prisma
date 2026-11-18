@@ -405,6 +405,34 @@ def feature_matrix_check() -> Check:
     return Check("积木特性矩阵", [sys.executable, str(ROOT / "scripts" / "check_features.py")])
 
 
+def standalone_lockfiles_check() -> Check:
+    """校验独立 workspace（`editor/`、`projects/*/`）的 `Cargo.lock` 未漂移。"""
+    manifests = [ROOT / "editor" / "Cargo.toml", *sorted((ROOT / "projects").glob("*/Cargo.toml"))]
+    existing = [m for m in manifests if m.is_file() and m.with_name("Cargo.lock").is_file()]
+    check = Check("独立 lockfile", ["cargo", "metadata", "--locked"])
+    check.done = True
+    eprint("→ 独立 lockfile (--locked)")
+    stale: list[str] = []
+    for manifest in existing:
+        res = subprocess.run(
+            ["cargo", "metadata", "--manifest-path", str(manifest), "--locked", "--format-version", "1"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode != 0:
+            stale.append(str(manifest.relative_to(ROOT).parent))
+    if stale:
+        check.status = "fail"
+        check.detail = f"stale Cargo.lock: {', '.join(stale)}"
+        eprint(f"  FAILED: {check.detail}")
+        return check
+    check.status = "ok"
+    check.detail = f"{len(existing)} workspaces"
+    return check
+
+
 def artifact_guard(changed: list[str]) -> Check:
     check = Check("artifact / secret guard", ["git", "diff --name-only"])
     check.done = True
@@ -664,6 +692,8 @@ def main() -> int:
                     )
                 )
 
+    if args.all or has_prefix(changed, "crates/") or has_prefix(changed, "projects/") or has_prefix(changed, "editor/") or any(Path(p).name in ("Cargo.toml", "Cargo.lock") for p in changed):
+        checks.append(standalone_lockfiles_check())
     if args.all or has_prefix(changed, "editor/") or "docs/feature-map.json" in changed or has_prefix(changed, "scripts/"):
         checks.append(
             Check(
