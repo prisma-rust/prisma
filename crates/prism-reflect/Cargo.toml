@@ -17,3 +17,4 @@ glam = ["dep:glam"]
 [dev-dependencies]
 prism-reflect-derive = { path = "../prism-reflect-derive" }
 glam = { workspace = true }
+proptest = { workspace = true }

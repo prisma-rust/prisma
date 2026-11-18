@@ -1,5 +1,10 @@
 //! `TypeRegistry`: type id to description plus a dynamic constructor.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "in-process fast reverse-lookup cache; never persisted"
+)]
+
 use std::any::Any;
 use std::collections::HashMap;
 

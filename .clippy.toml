@@ -1,0 +1,8 @@
+disallowed-types = [
+    { path = "std::any::TypeId", reason = "use `prism_reflect::TypeId` (fnv1a64) for any persistent or cross-boundary type ID; in-process lookup caches may opt in with `#[expect(clippy::disallowed_types, reason = \"...\")]`" },
+]
+
+disallowed-methods = [
+    { path = "std::env::current_dir", reason = "do not resolve asset paths from cwd; use `prism_engine::asset_paths` (CLI/editor/diagnostic callers may opt in with `#[expect(clippy::disallowed_methods, reason = \"...\")]`)" },
+    { path = "std::env::set_current_dir", reason = "mutating process cwd breaks asset resolution; only platform startup may opt in with `#[expect(clippy::disallowed_methods, reason = \"...\")]`" },
+]

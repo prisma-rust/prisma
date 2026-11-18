@@ -4,6 +4,11 @@
 //! extend, or replace core engine subsystems (physics, audio, rendering passes,
 //! gameplay systems) via modular, decoupled plugins.
 
+#![expect(
+    clippy::disallowed_types,
+    reason = "in-process plugin deduplication only; never persisted"
+)]
+
 use std::any::TypeId;
 use std::collections::HashSet;
 

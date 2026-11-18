@@ -1,0 +1,55 @@
+name: nightly-verify
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Random seed for MCP fuzzer"
+        required: false
+        default: "42"
+      steps:
+        description: "Number of fuzz steps"
+        required: false
+        default: "30"
+
+jobs:
+  deterministic-and-mcp-fuzz:
+    name: Nightly guardrails & MCP schema fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-nightly
+
+      - name: Dependency & layer matrix
+        run: python3 scripts/check_deps.py
+
+      - name: Feature map alignment
+        run: python3 scripts/validate_feature_map.py
+
+      - name: Python verification script tests
+        run: |
+          python3 -m unittest scripts/test_bench_compare.py
+          python3 -m unittest scripts/test_feature_map.py
+          python3 -m unittest scripts/test_mcp_fuzz.py
+
+      - name: Core property tests (proptest)
+        run: cargo test -p prism-ini -p prism-physics2d -p prism-reflect -p prism-scene --test proptest_invariants
+
+      - name: Headless MCP schema fuzz
+        run: |
+          cargo build -p prism-editor-mcp
+          python3 scripts/mcp_fuzz.py \
+            --project projects/template \
+            --mode schema \
+            --seed "${{ github.event.inputs.seed || '42' }}" \
+            --steps "${{ github.event.inputs.steps || '30' }}" \
+            --mcp-bin target/debug/prism-editor-mcp

@@ -26,6 +26,7 @@ fn try_create() -> Option<GraphRenderer> {
         Err(error) => {
             let message = format!("{error:#}");
             if message.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || message.contains("Unable to find a Vulkan driver")
                 || message.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
                 || message.contains("no devices")
                 || message.contains("No valid")

@@ -21,6 +21,7 @@ fn try_create_headless() -> Option<GraphRenderer> {
         Err(e) => {
             let msg = format!("{e:#}");
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || msg.contains("Unable to find a Vulkan driver")
                 || msg.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
                 || msg.contains("no devices")
                 || msg.contains("No valid")

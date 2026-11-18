@@ -487,6 +487,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test discovers repository root from cargo test cwd"
+    )]
     fn finds_editor_from_nested_user_project() {
         let mut repo = std::env::current_dir().unwrap();
         while !repo.join("editor/Cargo.toml").is_file() {

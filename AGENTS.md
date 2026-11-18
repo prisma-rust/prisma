@@ -87,7 +87,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 - **依赖树单向隔离**：用户项目依赖链必须保持 **UI-free 与 editor-free**：
   `template → prism-app → prism-engine → {prism-scene, prism-ecs, prism-render, prism-asset, prism-physics2d}`。
-  严禁将 UI 框架（egui/egui-ash 等）或构建期库引入引擎底层与用户工程，用 `cargo tree | grep -i egui` 验证必须为空。
+  严禁将 UI 框架（egui/egui-ash 等）或构建期库引入引擎底层与用户工程（由 `scripts/check_deps.py` 门禁守卫）。
 - **可选能力默认关闭**：`prism-app/physics`（Rapier 刚体与运动学角色移动）、`prism-app/audio`（Firewheel 空间声像）、`prism-asset/async-io`。由 `scripts/check_deps.py` 守门禁预算。
 - **视口离屏流水线零拷贝**：`prism-render` 渲染至离屏 `VkImage`，egui 通过共享 `VkDevice` 注册 `VkImageView` 直接采样，不经过 CPU 回读。
 - **项目代码在 Game View 中作为动态模块运行**：
@@ -151,7 +151,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 完整规范与二进制协议见 [`docs/REFLECT.md`](docs/REFLECT.md)。
 
-- **中立与命名**：`prism-reflect` 为纯数据层；`TypeId` 为 `fnv1a64(canonical_type_name)`，持久化严禁使用 `std::any::TypeId`。
+- **中立与命名**：`prism-reflect` 为纯数据层；`TypeId` 为 `fnv1a64(canonical_type_name)`。
 - **格式分工**：
   - **RSCN v4**：唯一分发场景格式（`magic + version + (type_id, schema_hash) + 紧凑实体载荷`）。
   - **RTTIBin**：自描述工具/交换格式，供编辑器、MCP 与工程动态模块穿越使用。
@@ -168,7 +168,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 ## Asset root resolution (runtime, do not regress)
 
-- **路径解析单点实现**：统一走 `prism_engine::asset_paths`，严禁新增 cwd 相对路径。
+- **路径解析单点实现**：统一走 `prism_engine::asset_paths`。
 - **命中顺序**：`PRISMA_ASSET_ROOT` → cwd 及其各级父目录 → 可执行文件目录及其各级父目录；必须包含实际存在的 `assets/` 目录。
 
 ## 项目配置文件（settings.ini / scenes.json，do not regress）

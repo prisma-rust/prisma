@@ -79,6 +79,7 @@ tokio = { version = "1", features = ["full"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13", features = ["experimental"] }
 thiserror = "2.0.19"
+proptest = "1"
 clap = { version = "4", features = ["derive"] }
 # 运行时的 image 依赖必须**零默认 codec**：每个 crate 只声明自己真正用到的格式。
 #   - 玩家运行时（prism-render 截图）：png
