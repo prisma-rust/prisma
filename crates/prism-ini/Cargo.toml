@@ -7,3 +7,6 @@ description = "The project settings INI dialect: one parser shared by the engine
 
 [dependencies]
 log = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
