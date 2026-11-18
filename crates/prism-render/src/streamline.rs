@@ -481,11 +481,16 @@ mod tests {
 
     #[test]
     fn probe_distinguishes_nvidia_vendor_id() {
-        let mut props = vk::PhysicalDeviceProperties::default();
-        props.vendor_id = NVIDIA_VENDOR_ID;
+        let props = vk::PhysicalDeviceProperties {
+            vendor_id: NVIDIA_VENDOR_ID,
+            ..Default::default()
+        };
         assert!(StreamlineCaps::probe(&props).is_nvidia);
 
-        props.vendor_id = 0x5143;
-        assert!(!StreamlineCaps::probe(&props).is_nvidia);
+        let non_nvidia = vk::PhysicalDeviceProperties {
+            vendor_id: 0x5143,
+            ..Default::default()
+        };
+        assert!(!StreamlineCaps::probe(&non_nvidia).is_nvidia);
     }
 }
