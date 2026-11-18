@@ -1,7 +1,7 @@
 name: Issue triage
 
-# 新 issue 自动进入分诊；来自 Discord bot 的报告额外打 source/discord。
-# 不做关键词猜类型（bug/feature 由模板或人判断），只保证不漏分诊。
+# Label new issues with needs/triage; add source/discord when Discord is mentioned.
+# Does not guess bug/feature from keywords; relies on templates and triage.
 
 on:
   issues:
