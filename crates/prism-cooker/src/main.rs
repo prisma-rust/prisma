@@ -181,6 +181,10 @@ enum Commands {
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "offline cooker CLI defaults to cwd when --project is omitted"
+)]
 fn project_root(cli: &Cli) -> PathBuf {
     cli.project
         .clone()
