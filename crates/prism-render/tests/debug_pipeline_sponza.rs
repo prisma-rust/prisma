@@ -218,8 +218,22 @@ fn test_sponza_pipeline_debug_passes() {
     let out_dir = PathBuf::from("target/debug_passes");
     fs::create_dir_all(&out_dir).expect("create debug_passes dir");
 
-    let mut renderer =
-        GraphRenderer::offscreen_new(WIDTH, HEIGHT, None).expect("create offscreen GraphRenderer");
+    let mut renderer = match GraphRenderer::offscreen_new(WIDTH, HEIGHT, None) {
+        Ok(renderer) => renderer,
+        Err(error) => {
+            let message = format!("{error:#}");
+            if message.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
+                || message.contains("Unable to find a Vulkan driver")
+                || message.contains("no devices")
+                || message.contains("No valid")
+                || message.contains("PhysicalDevice")
+            {
+                eprintln!("[SKIP] no Vulkan driver: {error:#}");
+                return;
+            }
+            panic!("create offscreen GraphRenderer: {error:#}");
+        }
+    };
 
     let adapter = {
         let properties = &renderer.context().physical_device_properties;
