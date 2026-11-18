@@ -1,8 +1,9 @@
-//! Golden-frame scenarios for the composed render graph.
+//! Per-machine golden-frame regression scenarios for the composed render graph.
 //!
-//! The scene, camera, extent and settings are fixed in `golden_support`; the
-//! committed PNGs live in `tests/goldens`. Use `PRISM_UPDATE_GOLDENS=1` to
-//! regenerate them after an intentional rendering change.
+//! The scene, camera, extent and settings are fixed in `golden_support`; each
+//! machine records its own baseline under `target/golden-baselines/` on first
+//! run and compares subsequent runs against it. Use `PRISM_UPDATE_GOLDENS=1`
+//! to refresh baselines after an intentional rendering change.
 
 mod golden_support;
 

@@ -364,9 +364,11 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
 // Golden comparison
 // ---------------------------------------------------------------------------
 
-/// The committed golden directory (inside the crate).
+/// Per-machine baseline directory under `target/` (discardable, not committed).
 pub fn golden_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/goldens")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/golden-baselines")
+        .to_path_buf()
 }
 
 /// Where mismatch artifacts are written.
@@ -392,19 +394,27 @@ pub fn format_version(version: u32) -> String {
     )
 }
 
-/// Compare `actual` with the committed golden and panic with a readable report
-/// on failure. In update mode the golden is rewritten instead.
+/// Compare `actual` against the per-machine baseline in `target/golden-baselines/`.
 ///
-/// `adapter` should come from [`FrameHarness::adapter_info`]; it is written to
-/// the artifact directory and included in the panic message.
+/// On first run (or when `PRISM_UPDATE_GOLDENS=1`, or when the Vulkan adapter
+/// string changes), records the baseline for this machine and passes.
 pub fn assert_golden(name: &str, actual: &[u8], size: usize, adapter: &str) {
     assert_eq!(actual.len(), size * size * 4, "unexpected frame size");
-    let path = golden_dir().join(format!("{name}.png"));
+    let dir = golden_dir();
+    let path = dir.join(format!("{name}.png"));
+    let adapter_path = dir.join(format!("{name}.adapter.txt"));
+    let recorded_adapter = std::fs::read_to_string(&adapter_path).ok();
 
-    if update_mode() {
-        std::fs::create_dir_all(golden_dir()).expect("create golden dir");
+    if update_mode() || !path.is_file() || recorded_adapter.as_deref() != Some(adapter) {
+        std::fs::create_dir_all(&dir).expect("create golden baseline dir");
         save_png(&path, actual, size).expect("write golden");
-        eprintln!("[golden] updated {} ({}×{})", path.display(), size, size);
+        std::fs::write(&adapter_path, adapter).expect("write golden adapter metadata");
+        eprintln!(
+            "[golden] recorded per-machine baseline {} ({}×{}, {adapter})",
+            path.display(),
+            size,
+            size
+        );
         return;
     }
 
