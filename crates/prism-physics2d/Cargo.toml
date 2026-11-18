@@ -6,3 +6,6 @@ license.workspace = true
 description = "Deterministic 2D AABB geometry shared by Prisma runtime layers"
 
 [dependencies]
+
+[dev-dependencies]
+proptest = { workspace = true }
