@@ -380,38 +380,30 @@ def shader_bindings_check(changed: list[str]) -> Check:
 
 
 def version_check() -> Check:
-    """版本号一致性（`scripts/version.py check`）。
-
-    根 `Cargo.toml` 是唯一源；`editor/`、`launcher/`、`xtask` 不能继承，只能同步。
-    这里把它变成 PR 的常规检查，避免发布时才发现漂移。
-    """
+    """Version consistency (`scripts/version.py check`)."""
     return Check(
-        "版本一致性",
+        "version sync",
         [sys.executable, str(ROOT / "scripts" / "version.py"), "check"],
     )
 
 
 def dependency_budget_check() -> Check:
-    """玩家依赖树预算（`scripts/check_deps.py`）。
-
-    `prism-app` 是玩家二进制唯一的顶层依赖：它多带一个 crate，每个用户项目、
-    每次 Android 打包都会多带一个。这条检查把它变成 CI 红灯，而不是靠人记。
-    """
-    return Check("依赖预算 (player)", [sys.executable, str(ROOT / "scripts" / "check_deps.py")])
+    """Player dependency budget (`scripts/check_deps.py`)."""
+    return Check("dependency budget (player)", [sys.executable, str(ROOT / "scripts" / "check_deps.py")])
 
 
 def feature_matrix_check() -> Check:
-    """积木特性矩阵：关掉某个子系统后仍要能编译（`scripts/check_features.py`）。"""
-    return Check("积木特性矩阵", [sys.executable, str(ROOT / "scripts" / "check_features.py")])
+    """Modular feature matrix (`scripts/check_features.py`)."""
+    return Check("feature matrix", [sys.executable, str(ROOT / "scripts" / "check_features.py")])
 
 
 def standalone_lockfiles_check() -> Check:
-    """校验独立 workspace（`editor/`、`projects/*/`）的 `Cargo.lock` 未漂移。"""
+    """Verify standalone workspace (`editor/`, `projects/*/`) `Cargo.lock` files are in sync."""
     manifests = [ROOT / "editor" / "Cargo.toml", *sorted((ROOT / "projects").glob("*/Cargo.toml"))]
     existing = [m for m in manifests if m.is_file() and m.with_name("Cargo.lock").is_file()]
-    check = Check("独立 lockfile", ["cargo", "metadata", "--locked"])
+    check = Check("standalone lockfiles", ["cargo", "metadata", "--locked"])
     check.done = True
-    eprint("→ 独立 lockfile (--locked)")
+    eprint("→ standalone lockfiles (--locked)")
     stale: list[str] = []
     for manifest in existing:
         res = subprocess.run(
@@ -510,12 +502,9 @@ def format_check(files: list[str], verbose: bool) -> Check:
 
 
 def comment_check(base: str) -> Check:
-    """注释规范检查（`scripts/check_comments.py`）。
-
-    只检查相对 base 新增或修改的行，直接阻断违规新增，规则见 `docs/code-style.md`。
-    """
+    """Comment style check (`scripts/check_comments.py --added-lines`)."""
     check = Check(
-        "注释规范",
+        "comment style",
         [
             sys.executable,
             str(ROOT / "scripts" / "check_comments.py"),
@@ -526,7 +515,7 @@ def comment_check(base: str) -> Check:
         ],
     )
     check.done = True
-    eprint("→ 注释规范: added/modified .rs lines")
+    eprint("→ comment style: added/modified .rs lines")
     code, out = run(check.cmd)
     check.output = out
     if code != 0:
@@ -741,40 +730,43 @@ def main() -> int:
         elif check.name == "editor tests" and check.status == "ok":
             check.detail = test_summary(check.output)
 
-        elif check.name.startswith("积木特性矩阵") and check.status == "ok":
+        elif check.name.startswith("feature matrix") and check.status == "ok":
             check.detail = check.output.strip().split("|")[-2].strip()
 
-        elif check.name.startswith("依赖预算") and check.status == "ok":
+        elif check.name.startswith("dependency budget") and check.status == "ok":
             match = re.search(r"player (\d+)/(\d+) crates", check.output)
             check.detail = f"{match.group(1)}/{match.group(2)} crates" if match else ""
 
-        elif check.name == "版本一致性" and check.status == "ok":
+        elif check.name == "version sync" and check.status == "ok":
             match = re.search(r"version: (\S+)", check.output)
             check.detail = match.group(1) if match else ""
 
         elif check.name.startswith("clippy (") and check.status == "ok":
             check.detail = "-D warnings"
 
-    # 推送前同步主干：落后多少 commit 要说出来，别把冲突留到 PR 上。
     behind = 0
     behind_code, behind_out = git("rev-list", "--count", f"HEAD..{base}")
     if behind_code == 0 and behind_out.strip().isdigit():
         behind = int(behind_out.strip())
     if behind:
         eprint(
-            f"  ⚠ 落后 {base} {behind} 个 commit —— 先在本地 `git rebase {base}` 解冲突再 push"
+            f"  ⚠ {behind} commit(s) behind {base} — run `git rebase {base}` locally before pushing"
         )
 
     sha_code, sha_out = git("rev-parse", "--short", "HEAD")
     sha = sha_out.strip() if sha_code == 0 else "unknown"
     dirty = bool(git("status", "--porcelain")[1].strip())
-    mode = "quick" if args.quick else ("all" if args.all else "full")
+    mode = (
+        "static-only"
+        if args.static_only
+        else ("quick" if args.quick else ("all" if args.all else "full"))
+    )
 
     lines = [
         "## Self-check (`scripts/pr_ready.py`)",
         "",
         f"- mode: **{mode}** · base: `{base}`"
-        + (f"（**落后 {behind} 个 commit，未 rebase**）" if behind else "")
+        + (f" (**{behind} commit(s) behind, not rebased**)" if behind else "")
         + f" · HEAD: `{sha}`"
         + (" · working tree dirty" if dirty else "")
         + f" · changed: {len(changed)} file(s)",
@@ -791,18 +783,17 @@ def main() -> int:
     if failed:
         lines.append("**Result: ❌ checks failed**")
     elif any(check.status == "warn" for check in checks):
-        lines.append("**Result: ✅ all checks passed**（注释规范仅有迁移期告警）")
+        lines.append("**Result: ✅ all checks passed** (comment style warnings only)")
     else:
         lines.append("**Result: ✅ all checks passed**")
 
-    # 未运行的 skip 项没有经过 run()，这里也把它们标出来。
     print("\n".join(lines))
     sys.stdout.flush()
 
     if failed and not shutil.which("slangc"):
         eprint("")
-        eprint("提示：本机没有 slangc。assets/shaders/*.spv 已入库，")
-        eprint("     若报缺文件，先把工作区恢复干净，或 bash assets/shaders/compile.sh 重新生成。")
+        eprint("Note: slangc is not installed locally. assets/shaders/*.spv are committed;")
+        eprint("      restore clean workspace or run `bash assets/shaders/compile.sh` if missing.")
 
     eprint("")
     eprint("PASS" if not failed else "FAIL")
