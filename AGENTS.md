@@ -87,7 +87,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 
 - **依赖树单向隔离**：用户项目依赖链必须保持 **UI-free 与 editor-free**：
   `template → prism-app → prism-engine → {prism-scene, prism-ecs, prism-render, prism-asset, prism-physics2d}`。
-  严禁将 UI 框架（egui/egui-ash 等）或构建期库引入引擎底层与用户工程，用 `cargo tree | grep -i egui` 验证必须为空。
+  严禁将 UI 框架（egui/egui-ash 等）或构建期库引入引擎底层与用户工程（由 `scripts/check_deps.py` 门禁守卫）。
 - **可选能力默认关闭**：`prism-app/physics`（Rapier 刚体与运动学角色移动）、`prism-app/audio`（Firewheel 空间声像）、`prism-asset/async-io`。由 `scripts/check_deps.py` 守门禁预算。
 - **视口离屏流水线零拷贝**：`prism-render` 渲染至离屏 `VkImage`，egui 通过共享 `VkDevice` 注册 `VkImageView` 直接采样，不经过 CPU 回读。
 - **项目代码在 Game View 中作为动态模块运行**：
