@@ -707,6 +707,13 @@ def main() -> int:
             spv_skip.detail = "slangc not on PATH"
             spv_skip.done = True
             checks.append(spv_skip)
+    if args.all or has_prefix(changed, "crates/") or has_prefix(changed, "scripts/"):
+        checks.append(
+            Check(
+                "arch guards",
+                [sys.executable, str(ROOT / "scripts" / "check_arch_guards.py")],
+            )
+        )
     if args.all or has_prefix(changed, "crates/") or has_prefix(changed, "projects/") or has_prefix(changed, "editor/") or any(Path(p).name in ("Cargo.toml", "Cargo.lock") for p in changed):
         checks.append(standalone_lockfiles_check())
     if args.all or has_prefix(changed, "editor/") or "docs/feature-map.json" in changed or has_prefix(changed, "scripts/"):
