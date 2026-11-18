@@ -203,6 +203,13 @@ jobs:
       - name: rustfmt --check
         run: cargo fmt --all -- --check
 
+      - name: comment style (changed lines)
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+            python3 scripts/check_comments.py --changed --base "$base" --added-lines
+          fi
+
       # The root Cargo.toml is the only version source; standalone workspaces
       # cannot inherit it, so drift is checked here instead of at release time.
       - name: version consistency
