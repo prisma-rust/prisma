@@ -185,6 +185,7 @@ pub fn draw_items_signature(items: &[DrawItem]) -> u64 {
             }
         }
         item.material.hash(&mut hasher);
+        item.shader.hash(&mut hasher);
         item.cast_shadow.hash(&mut hasher);
         item.visible_in_main_pass.hash(&mut hasher);
         item.cast_shadow_two_sided.hash(&mut hasher);
@@ -215,6 +216,7 @@ mod tests {
             bone_offset: None,
             splat_slots: [u32::MAX; 4],
             splat_tiling: 0.0,
+            shader: None,
             state: Default::default(),
             world_bounds: None,
             index_start: 0,

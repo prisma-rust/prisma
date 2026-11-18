@@ -598,6 +598,12 @@ pub struct Workspace {
     pub show_camera_icons: bool,
     /// Scene View 是否画光源图标 / 范围（#416）。
     pub show_light_icons: bool,
+    /// Show collider wireframe gizmos even when unselected.
+    pub show_collider_gizmos: bool,
+    /// Show audio source distance gizmos in Scene View.
+    pub show_audio_gizmos: bool,
+    /// Baked PRT probe volume Scene View visualization settings.
+    pub prt_gizmos: crate::gizmo::PrtGizmoSettings,
     /// Scene View 是否用场景的天空盒当背景（关闭时退回纯色）。
     ///
     /// 对应引擎的 `SceneViewState.showSkybox`（默认开）。
@@ -725,6 +731,9 @@ impl Workspace {
             isolate: false,
             show_camera_icons: true,
             show_light_icons: true,
+            show_collider_gizmos: false,
+            show_audio_gizmos: true,
+            prt_gizmos: crate::gizmo::PrtGizmoSettings::default(),
             show_skybox: true,
             playing: false,
             paused: false,

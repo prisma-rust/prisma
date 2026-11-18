@@ -121,10 +121,13 @@ public float3 ProbeVolumeWorldToCoord(float3 world_pos, ProbeVolumeInfo info)
 //   0 = EvalSH9Radiance  (specular / debug)
 //   1 = EvalSH9Irradiance (diffuse)
 float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
-                           float3 world_pos, float3 dir, uint mode)
+                           float3 world_pos, float3 dir, uint mode,
+                           float leak_bias = 0.0,
+                           uint active_coeffs = SH_COEFF_COUNT)
 {
     float3 coord = ProbeVolumeWorldToCoord(world_pos, info);
     int3 dims = int3(info.dims.xyz);
+    uint coeff_count = min(active_coeffs, SH_COEFF_COUNT);
     // Clamp fractional coord to [0, dims-1] so out-of-volume points snap to the
     // boundary probes.
     float3 c = clamp(coord, float3(0.0), float3(dims) - float3(1.0));
@@ -136,6 +139,7 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
     for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
         sh[coeff] = float3(0.0);
 
+    float w_sum = 0.0;
     int dz = dims.z;
     for (uint idx = 0u; idx < 8u; idx++)
     {
@@ -145,17 +149,64 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
         float w = (di == 0 ? 1.0 - t.x : t.x)
                 * (dj == 0 ? 1.0 - t.y : t.y)
                 * (dk == 0 ? 1.0 - t.z : t.z);
-        if (w == 0.0)
+        if (leak_bias > 0.0)
+            w = max(w - leak_bias, 0.0);
+        if (w <= 0.0)
             continue;
+        w_sum += w;
         int3 p = base + int3(di, dj, dk);
-        for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
+        for (uint coeff = 0u; coeff < coeff_count; coeff++)
         {
             int z = int(coeff) * dz + p.z;
             sh[coeff] += volume.Load(int4(p.x, p.y, z, 0)).rgb * w;
         }
     }
 
+    if (leak_bias > 0.0 && w_sum > 1e-5)
+    {
+        float inv_w = 1.0 / w_sum;
+        for (uint coeff = 0u; coeff < coeff_count; coeff++)
+            sh[coeff] *= inv_w;
+    }
+
     // Select the SH evaluation function based on mode.
+    if (mode == 0u)
+        return EvalSH9Radiance(dir, sh);
+    else
+        return EvalSH9Irradiance(dir, sh);
+}
+
+// Hardware trilinear fast-path for `leak_bias <= 0.0`: clamps Z within each
+// coefficient slice's texel centers [0.5, dz - 0.5] so adjacent SH slices
+// never bleed across boundaries.
+float3 SampleProbeVolumeSHLinear(Texture3D volume, SamplerState linear_sampler,
+                                 ProbeVolumeInfo info, float3 world_pos,
+                                 float3 dir, uint mode,
+                                 uint active_coeffs = SH_COEFF_COUNT)
+{
+    float3 coord = ProbeVolumeWorldToCoord(world_pos, info);
+    int3 dims = int3(info.dims.xyz);
+    uint coeff_count = min(active_coeffs, SH_COEFF_COUNT);
+    float3 c = clamp(coord, float3(0.0), float3(dims) - float3(1.0));
+
+    float u = (c.x + 0.5) / float(max(dims.x, 1));
+    float v = (c.y + 0.5) / float(max(dims.y, 1));
+    float inv_total_depth = 1.0 / float(max(dims.z, 1) * int(SH_COEFF_COUNT));
+
+    float3 sh[SH_COEFF_COUNT];
+    for (uint coeff = 0u; coeff < SH_COEFF_COUNT; coeff++)
+    {
+        if (coeff < coeff_count)
+        {
+            float w = (float(int(coeff) * dims.z) + c.z + 0.5) * inv_total_depth;
+            sh[coeff] = volume.SampleLevel(linear_sampler, float3(u, v, w), 0.0).rgb;
+        }
+        else
+        {
+            sh[coeff] = float3(0.0);
+        }
+    }
+
     if (mode == 0u)
         return EvalSH9Radiance(dir, sh);
     else
@@ -167,9 +218,20 @@ float3 SampleProbeVolumeSH(Texture3D volume, ProbeVolumeInfo info,
 /// Sample IRRADIANCE from the probe volume. Returns E(n) = ∫ L(ω) max(0, n·ω) dω.
 /// The caller multiplies by kd * albedo / PI for the Lambertian diffuse BRDF.
 public float3 SampleProbeVolumeIrradiance(Texture3D volume, ProbeVolumeInfo info,
-                                          float3 world_pos, float3 normal)
+                                          float3 world_pos, float3 normal,
+                                          float leak_bias = 0.0,
+                                          uint active_coeffs = SH_COEFF_COUNT)
 {
-    return SampleProbeVolumeSH(volume, info, world_pos, normal, 1u);
+    return SampleProbeVolumeSH(volume, info, world_pos, normal, 1u, leak_bias, active_coeffs);
+}
+
+public float3 SampleProbeVolumeIrradianceLinear(Texture3D volume,
+                                                SamplerState linear_sampler,
+                                                ProbeVolumeInfo info,
+                                                float3 world_pos, float3 normal,
+                                                uint active_coeffs = SH_COEFF_COUNT)
+{
+    return SampleProbeVolumeSHLinear(volume, linear_sampler, info, world_pos, normal, 1u, active_coeffs);
 }
 
 /// Sample RADIANCE from the probe volume. Returns L(ω) ≈ Σ c_lm * Y_lm(ω),
@@ -177,7 +239,18 @@ public float3 SampleProbeVolumeIrradiance(Texture3D volume, ProbeVolumeInfo info
 /// input for the split-sum specular approximation (replaces the prefiltered
 /// environment map).
 public float3 SampleProbeVolumeRadiance(Texture3D volume, ProbeVolumeInfo info,
-                                        float3 world_pos, float3 dir)
+                                        float3 world_pos, float3 dir,
+                                        float leak_bias = 0.0,
+                                        uint active_coeffs = SH_COEFF_COUNT)
 {
-    return SampleProbeVolumeSH(volume, info, world_pos, dir, 0u);
+    return SampleProbeVolumeSH(volume, info, world_pos, dir, 0u, leak_bias, active_coeffs);
+}
+
+public float3 SampleProbeVolumeRadianceLinear(Texture3D volume,
+                                              SamplerState linear_sampler,
+                                              ProbeVolumeInfo info,
+                                              float3 world_pos, float3 dir,
+                                              uint active_coeffs = SH_COEFF_COUNT)
+{
+    return SampleProbeVolumeSHLinear(volume, linear_sampler, info, world_pos, dir, 0u, active_coeffs);
 }

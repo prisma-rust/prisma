@@ -115,6 +115,7 @@ fn draw_item(mesh: prism_render::managers::MeshHandle, bone_offset: Option<u32>)
         bone_offset,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
         state: DrawState::default(),
         world_bounds: None,
         index_start: 0,

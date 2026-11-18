@@ -16,6 +16,7 @@ use prism_ecs::World;
 use prism_engine::scene::loader::{collect_bake_instances, SceneLoader};
 use prism_engine::scene::systems::hierarchy::hierarchy_system;
 use prism_render::bake_common::PtGeometryInstance;
+use prism_render::prt_runtime::eval_sh64;
 use prism_render::prt_volume::{
     PrtCluster, PrtNode, PrtVolume, BRANCHING, LEAF_COUNT_MAX, NO_CHILD, NO_LEAF, SH_COEFF_COUNT,
 };
@@ -166,6 +167,23 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
 
     let built_from_sha = file_sha256_prefix(&cfg.pak_path).unwrap_or(0).to_le_bytes();
 
+    let cluster_valid: Vec<bool> = (0..final_clusters.len())
+        .map(|idx| {
+            candidates
+                .iter()
+                .zip(assignments.iter())
+                .filter(|(_, &a)| a == idx)
+                .all(|(&(cx, cy, cz), _)| {
+                    let center = [
+                        world_origin[0] + (cx as f32 + 0.5) * cell_size,
+                        world_origin[1] + (cy as f32 + 0.5) * cell_size,
+                        world_origin[2] + (cz as f32 + 0.5) * cell_size,
+                    ];
+                    !is_leaf_wall_straddling(center, cell_size * 0.5, &tris)
+                })
+        })
+        .collect();
+
     let volume = PrtVolume {
         cluster_cells: 1,
         world_origin,
@@ -174,7 +192,7 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
         built_from_sha,
         nodes,
         clusters: final_clusters.clone(),
-        cluster_valid: Some(vec![true; final_clusters.len()]),
+        cluster_valid: Some(cluster_valid),
     };
 
     let bytes = volume.to_bytes().context("encode PrtVolume to .prtbin")?;
@@ -339,6 +357,23 @@ fn sample_leaf_sh64(center: [f32; 3], tris: &[Tri], samples: u32) -> PrtCluster 
 }
 
 fn ray_any_hit(orig: [f32; 3], dir: [f32; 3], tris: &[Tri]) -> bool {
+    ray_hit_within(orig, dir, f32::INFINITY, tris)
+}
+
+fn is_leaf_wall_straddling(center: [f32; 3], half_extent: f32, tris: &[Tri]) -> bool {
+    const AXES: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for axis in AXES {
+        let neg = [-axis[0], -axis[1], -axis[2]];
+        if ray_hit_within(center, axis, half_extent, tris)
+            && ray_hit_within(center, neg, half_extent, tris)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn ray_hit_within(orig: [f32; 3], dir: [f32; 3], max_dist: f32, tris: &[Tri]) -> bool {
     const EPS: f32 = 1e-5;
     for t in tris {
         let e1 = [t.v1[0] - t.v0[0], t.v1[1] - t.v0[1], t.v1[2] - t.v0[2]];
@@ -360,7 +395,7 @@ fn ray_any_hit(orig: [f32; 3], dir: [f32; 3], tris: &[Tri]) -> bool {
             continue;
         }
         let dist = f * dot(e2, q);
-        if dist > EPS {
+        if dist > EPS && dist <= max_dist {
             return true;
         }
     }
@@ -379,71 +414,6 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
-}
-
-/// Evaluate 7th-order real Spherical Harmonics (`64` basis functions) for unit vector `d`.
-pub fn eval_sh64(d: [f32; 3]) -> [f32; SH_COEFF_COUNT] {
-    let mut out = [0.0f32; SH_COEFF_COUNT];
-    let (x, y, z) = (d[0], d[1], d[2]);
-    let phi = y.atan2(x);
-    let cos_theta = z.clamp(-1.0, 1.0);
-    let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
-
-    let mut idx = 0usize;
-    for l in 0..=7i32 {
-        for m in -l..=l {
-            let abs_m = m.unsigned_abs() as i32;
-            let p = assoc_legendre(l, abs_m, cos_theta, sin_theta);
-            let norm = sh_norm(l, abs_m);
-            let val = if m == 0 {
-                norm * p
-            } else if m > 0 {
-                std::f32::consts::SQRT_2 * norm * p * (abs_m as f32 * phi).cos()
-            } else {
-                std::f32::consts::SQRT_2 * norm * p * (abs_m as f32 * phi).sin()
-            };
-            out[idx] = val;
-            idx += 1;
-        }
-    }
-    out
-}
-
-fn sh_norm(l: i32, m: i32) -> f32 {
-    let mut num = 1.0f64;
-    let mut den = 1.0f64;
-    for k in 1..=(l - m) {
-        num *= k as f64;
-    }
-    for k in 1..=(l + m) {
-        den *= k as f64;
-    }
-    (((2 * l + 1) as f64 / (4.0 * std::f64::consts::PI)) * (num / den)).sqrt() as f32
-}
-
-fn assoc_legendre(l: i32, m: i32, x: f32, sin_theta: f32) -> f32 {
-    let mut pmm = 1.0f32;
-    if m > 0 {
-        let mut fact = 1.0f32;
-        for _ in 1..=m {
-            pmm *= -fact * sin_theta;
-            fact += 2.0;
-        }
-    }
-    if l == m {
-        return pmm;
-    }
-    let mut pmmp1 = x * (2 * m + 1) as f32 * pmm;
-    if l == m + 1 {
-        return pmmp1;
-    }
-    let mut pll = 0.0f32;
-    for ll in (m + 2)..=l {
-        pll = ((2 * ll - 1) as f32 * x * pmmp1 - (ll + m - 1) as f32 * pmm) / (ll - m) as f32;
-        pmm = pmmp1;
-        pmmp1 = pll;
-    }
-    pll
 }
 
 /// PCA (up to 99% variance, capped at 16 dims) + k-means clustering.

@@ -127,6 +127,14 @@ pub struct FrameStatsSummary {
 /// different device, resolution or warm-up length changes the numbers. The
 /// caller fills this from the renderer; the fields stay optional so a report
 /// can still be written when a value is unknown.
+/// Per-pass GI timing breakdown for `PRISMA_BENCH_REPORT` (`gi.*` fields).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GiBenchStats {
+    pub mode: String,
+    pub prt_pass_ms: f64,
+    pub full_res_1to1: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BenchMetadata {
     /// Vulkan `deviceName` of the adapter that rendered the run.
@@ -137,6 +145,8 @@ pub struct BenchMetadata {
     pub warmup_frames: u32,
     /// Scene or project label, when the host knows one.
     pub scene: Option<String>,
+    /// GI pass timing breakdown (`gi.*`).
+    pub gi: Option<GiBenchStats>,
 }
 
 impl FrameStatsSummary {
@@ -183,6 +193,14 @@ impl FrameStatsSummary {
         match &self.gpu {
             Some(gpu) => json.push_str(&gpu.to_json()),
             None => json.push_str("null"),
+        }
+        if let Some(gi) = &metadata.gi {
+            json.push_str(",\"gi\":{\"mode\":\"");
+            push_escaped(&mut json, &gi.mode);
+            json.push_str(&format!(
+                "\",\"prtPassMs\":{:.3},\"fullRes1to1\":{}}}",
+                gi.prt_pass_ms, gi.full_res_1to1
+            ));
         }
         json.push('}');
         json
@@ -392,12 +410,21 @@ mod tests {
             extent: Some((1280, 720)),
             warmup_frames: 30,
             scene: Some("lake".to_owned()),
+            gi: Some(GiBenchStats {
+                mode: "prt".to_owned(),
+                prt_pass_ms: 0.215,
+                full_res_1to1: true,
+            }),
         };
         let json = stats.summary().to_json_with_metadata(&metadata);
         assert!(json.contains("\"adapter\":\"Test \\\"GPU\\\"\""), "{json}");
         assert!(json.contains("\"extent\":\"1280x720\""), "{json}");
         assert!(json.contains("\"warmupFrames\":30"), "{json}");
         assert!(json.contains("\"scene\":\"lake\""), "{json}");
+        assert!(
+            json.contains("\"gi\":{\"mode\":\"prt\",\"prtPassMs\":0.215,\"fullRes1to1\":true}"),
+            "{json}"
+        );
         assert!(json.contains("\"format\":\"prism-bench-report\""), "{json}");
     }
 

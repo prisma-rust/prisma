@@ -17,7 +17,7 @@ mod golden_support;
 
 use golden_support::{artifact_dir, compare, format_version, save_png, write_mismatch_artifacts};
 use prism_render::managers::{MaterialUploadInput, MeshUploadInput};
-use prism_render::render_graph::{GiMode, PostGrade, RenderMode};
+use prism_render::render_graph::{PostGrade, PtGiMode, RenderMode};
 use prism_render::{DrawItem, DrawState, FrameUBOData, GraphRenderer};
 use std::fs;
 
@@ -113,7 +113,13 @@ fn test_sponza_sharc_real_render_and_comparison() {
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
                 || msg.contains("Unable to find a Vulkan driver")
                 || msg.contains("VK_ERROR_EXTENSION_NOT_PRESENT")
+                || msg.contains("VK_ERROR_INITIALIZATION_FAILED")
                 || msg.contains("no devices")
+                || msg.contains("no GPU with a graphics queue found")
+                || msg.contains("No valid")
+                || msg.contains("PhysicalDevice")
+                || msg.contains("failed to load Vulkan loader")
+                || msg.contains("Unable to find a Vulkan driver")
             {
                 eprintln!("[SKIP] Vulkan device not available: {e:#}");
                 return;
@@ -307,7 +313,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
     // Pass 1: Standard Rasterization
     // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::Raster;
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer
         .render(
             &draw_items,
@@ -342,7 +348,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
     // Pass 2: Path Tracing without SHARC (gi_mode = Off)
     // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer.settings_mut().pt_max_bounces = 3;
 
     // Run 4 accumulation iterations
@@ -384,7 +390,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
     // Pass 3: Path Tracing with RTXGI SHARC (gi_mode = Sharc)
     // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
-    renderer.settings_mut().gi_mode = GiMode::Sharc;
+    renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_scene_scale = 50.0;
     renderer.settings_mut().sharc_enable_clear = true; // reset accumulation
     renderer.settings_mut().sharc_enable_resolve = true;
@@ -464,7 +470,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
         renderer.pt_variant(),
         Some(prism_render::PtVariant::Reference)
     );
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     for _ in 0..4 {
         renderer
             .render(
@@ -517,7 +523,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
     // Pass 5: standalone SHaRC trainer. It deposits radiance and writes no
     // screen output, so the only assertion is that the dispatch runs clean.
     // -----------------------------------------------------------------------
-    renderer.settings_mut().gi_mode = GiMode::Sharc;
+    renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.set_pt_variant(prism_render::PtVariant::Train);
     assert_eq!(renderer.pt_variant(), Some(prism_render::PtVariant::Train));
     for _ in 0..2 {
@@ -675,5 +681,6 @@ fn make_draw(
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
     }
 }

@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::egui_host::{self, App, AshRenderState, CreationContext, ExitSignal, HandleRedraw};
 use anyhow::Context as _;
 use egui::{Align, Color32, CursorIcon, Layout, Rect, RichText, Sense, Stroke, Vec2};
-use egui_ash::{App, CreationContext, ExitSignal, HandleRedraw};
 
 use prism_editor_core::dock::split_side_length;
 use prism_editor_core::{Command, DockDirection, DockNode, Locale, Preferences, Workspace};
@@ -647,6 +647,7 @@ impl EditorApp {
                         view.target = GameResolution::Fixed { width, height };
                     }
                 }
+                view.host.set_project_root(self.project_root.clone());
                 view.host.set_show_skybox(self.workspace.show_skybox);
                 // 分析（渲染图）面板读这个文件；Scene view 出帧时自己写（#451）。
                 if kind == ViewKind::Scene {
@@ -3952,6 +3953,64 @@ impl EditorApp {
                 ui.separator();
                 ui.checkbox(&mut self.workspace.show_camera_icons, "Camera icons");
                 ui.checkbox(&mut self.workspace.show_light_icons, "Light icons");
+                ui.checkbox(&mut self.workspace.show_collider_gizmos, "Collider gizmos");
+                ui.checkbox(&mut self.workspace.show_audio_gizmos, "Audio gizmos");
+                ui.separator();
+                ui.label(egui::RichText::new("PRT Probe Volume").strong().size(11.0));
+                ui.checkbox(&mut self.workspace.prt_gizmos.enabled, "Show PRT probes");
+                if self.workspace.prt_gizmos.enabled {
+                    ui.horizontal(|ui| {
+                        ui.label("Mode");
+                        egui::ComboBox::from_id_salt("view-prt-mode")
+                            .selected_text(self.workspace.prt_gizmos.mode.label())
+                            .width(128.0)
+                            .show_ui(ui, |ui| {
+                                for mode in prism_editor_core::PrtDisplayMode::ALL {
+                                    ui.selectable_value(
+                                        &mut self.workspace.prt_gizmos.mode,
+                                        mode,
+                                        mode.label(),
+                                    );
+                                }
+                            });
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.workspace.prt_gizmos.probe_radius)
+                                .speed(0.01)
+                                .range(0.04..=2.0)
+                                .prefix("r "),
+                        );
+                        ui.add(
+                            egui::DragValue::new(&mut self.workspace.prt_gizmos.exposure)
+                                .speed(0.05)
+                                .range(0.05..=16.0)
+                                .prefix("exp "),
+                        );
+                    });
+                    ui.checkbox(&mut self.workspace.prt_gizmos.show_grid_bounds, "Grid bounds");
+                    ui.checkbox(
+                        &mut self.workspace.prt_gizmos.show_trilinear_tethers,
+                        "Trilinear tethers",
+                    );
+                    if let Some(layers) = self
+                        .scene_view
+                        .as_ref()
+                        .and_then(|v| v.cached_probe_volume())
+                        .map(|v| v.dims[1])
+                    {
+                        ui.horizontal(|ui| {
+                            let mut sliced = self.workspace.prt_gizmos.slice_y.is_some();
+                            if ui.checkbox(&mut sliced, "Y slice").changed() {
+                                self.workspace.prt_gizmos.slice_y = if sliced { Some(0) } else { None };
+                            }
+                            if let Some(ref mut layer) = self.workspace.prt_gizmos.slice_y {
+                                let top = layers.saturating_sub(1);
+                                ui.add(egui::DragValue::new(layer).range(0..=top).speed(0.1));
+                            }
+                        });
+                    }
+                }
             });
             if camera_changed {
                 self.workspace.camera.set_fov_degrees(fov);
@@ -4544,16 +4603,12 @@ impl EditorApp {
         match tab {
             "sceneView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak(),
-                    )
+                    ui.label(RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak())
                 });
             }
             "gameView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak(),
-                    )
+                    ui.label(RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak())
                 });
             }
             "sceneView" => self.show_viewport(ui, ViewKind::Scene, rect),
@@ -4726,6 +4781,15 @@ impl EditorApp {
                             .clicked()
                         {
                             self.workspace.snap.enabled = !self.workspace.snap.enabled;
+                        }
+                        if ui
+                            .selectable_label(self.workspace.prt_gizmos.enabled, "Probes")
+                            .on_hover_text(
+                                "Visualize baked PRT SH9 probes & trilinear weights in Scene View",
+                            )
+                            .clicked()
+                        {
+                            self.workspace.prt_gizmos.enabled = !self.workspace.prt_gizmos.enabled;
                         }
                         ui.add(
                             egui::DragValue::new(&mut self.workspace.snap.translate)
@@ -5648,6 +5712,16 @@ impl EditorApp {
                     prism_editor_core::LogLevel::Info,
                     format!("build finished: {label}"),
                 );
+                if let Some(view) = self.scene_view.as_mut() {
+                    view.invalidate_probe_cache();
+                    view.host.invalidate_gi_cache();
+                    view.mark_dirty();
+                }
+                if let Some(view) = self.game_view.as_mut() {
+                    view.invalidate_probe_cache();
+                    view.host.invalidate_gi_cache();
+                    view.mark_dirty();
+                }
             }
             self.build = None;
             // 构建自己会写 `scenes.pak` / `.rscn`（扫描已排除），这里再对齐一次快照，
@@ -5706,7 +5780,7 @@ impl EditorApp {
     /// egui-ash 需要的渲染状态（同一设备 / 队列 / 分配器）。
     pub fn render_state(
         &self,
-    ) -> egui_ash::AshRenderState<Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>> {
+    ) -> AshRenderState<Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>> {
         self.gpu.render_state()
     }
 }
@@ -5804,9 +5878,9 @@ impl App for EditorApp {
     /// egui-ash 在 winit `CloseRequested` 里已经先 `event_loop.exit()` 了，app 的
     /// `ui` 可能来不及看到 `close_requested`。`LoopExiting` 是事件循环结束前
     /// 唯一还能访问 app 的钩子：在这里把 dirty 文档落成恢复快照（#619）。
-    fn handle_event(&mut self, event: egui_ash::event::Event<'_>) {
-        let egui_ash::event::Event::AppEvent {
-            event: egui_ash::event::AppEvent::LoopExiting,
+    fn handle_event(&mut self, event: egui_host::event::Event<'_>) {
+        let egui_host::event::Event::AppEvent {
+            event: egui_host::event::AppEvent::LoopExiting,
         } = event
         else {
             return;
@@ -6812,7 +6886,7 @@ bloom_intensity = 0.5
 ///
 /// 窄视口下宽度也不会超过视口，避免浮层盖住整块画面。
 fn scene_overlay_rect(viewport: Rect, collapsed: bool) -> Rect {
-    let width: f32 = if collapsed { 30.0 } else { 360.0 };
+    let width: f32 = if collapsed { 30.0 } else { 425.0 };
     let available = (viewport.width() - 16.0).max(30.0);
     Rect::from_min_size(
         viewport.min + egui::vec2(8.0, 8.0),
@@ -6843,7 +6917,7 @@ struct PendingCapture {
 }
 
 /// 根窗口的 `HWND`（只有 Windows 有意义，其它平台返回 `None`）。
-fn main_window_hwnd(window: &egui_ash::winit::window::Window) -> Option<isize> {
+fn main_window_hwnd(window: &egui_host::winit::window::Window) -> Option<isize> {
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};

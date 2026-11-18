@@ -1284,6 +1284,17 @@
                                 ]
                             },
                             "binding": {"kind": "uniform", "offset": 120, "size": 4, "elementStride": 0}
+                        },
+                        {
+                            "name": "prt_leak_bias",
+                            "type": {
+                                "kind": "scalar",
+                                "scalarType": "float32",
+                                "sizes": [
+                                    {"kind": "uniform", "value": 4, "alignment": 4}
+                                ]
+                            },
+                            "binding": {"kind": "uniform", "offset": 124, "size": 4, "elementStride": 0}
                         }
                     ],
                     "sizes": [
@@ -1478,6 +1489,17 @@
                                     ]
                                 },
                                 "binding": {"kind": "uniform", "offset": 120, "size": 4, "elementStride": 0}
+                            },
+                            {
+                                "name": "prt_leak_bias",
+                                "type": {
+                                    "kind": "scalar",
+                                    "scalarType": "float32",
+                                    "sizes": [
+                                        {"kind": "uniform", "value": 4, "alignment": 4}
+                                    ]
+                                },
+                                "binding": {"kind": "uniform", "offset": 124, "size": 4, "elementStride": 0}
                             }
                         ],
                         "sizes": [
@@ -2778,6 +2800,17 @@
                                     ]
                                 },
                                 "binding": {"kind": "uniform", "offset": 120, "size": 4, "elementStride": 0}
+                            },
+                            {
+                                "name": "prt_leak_bias",
+                                "type": {
+                                    "kind": "scalar",
+                                    "scalarType": "float32",
+                                    "sizes": [
+                                        {"kind": "uniform", "value": 4, "alignment": 4}
+                                    ]
+                                },
+                                "binding": {"kind": "uniform", "offset": 124, "size": 4, "elementStride": 0}
                             }
                         ],
                         "sizes": [
@@ -2972,6 +3005,17 @@
                                         ]
                                     },
                                     "binding": {"kind": "uniform", "offset": 120, "size": 4, "elementStride": 0}
+                                },
+                                {
+                                    "name": "prt_leak_bias",
+                                    "type": {
+                                        "kind": "scalar",
+                                        "scalarType": "float32",
+                                        "sizes": [
+                                            {"kind": "uniform", "value": 4, "alignment": 4}
+                                        ]
+                                    },
+                                    "binding": {"kind": "uniform", "offset": 124, "size": 4, "elementStride": 0}
                                 }
                             ],
                             "sizes": [

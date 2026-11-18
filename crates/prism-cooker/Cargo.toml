@@ -29,7 +29,7 @@ texture-compressor = { version = "0.2", default-features = false, features = ["s
 ctt-astcenc = "0.6"
 ctt-etcpak = "0.6"
 miniz_oxide = "0.8"
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
+xxhash-rust = { workspace = true }
 tokio = { workspace = true }
 tracing = "0.1"
 

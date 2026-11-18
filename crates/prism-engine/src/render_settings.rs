@@ -4,7 +4,9 @@
 //! into a single struct so [`render_system`] has a clean, extensible parameter
 //! instead of a growing list of scalar arguments.
 
-pub use prism_render::{DlssMode, GiMode, InternalScaleMode, RenderMode};
+pub use prism_render::{
+    DlssMode, InternalScaleMode, MobileUpscaler, PtGiMode, RasterGiMode, RenderMode,
+};
 
 /// Debug flag names, ordered by shader bit (`PBR_FLAG_*` in
 /// `scene_frag.slang`). Bit `i` corresponds to `PBR_FLAG_NAMES[i]`.
@@ -96,8 +98,12 @@ pub struct RenderSettings {
     pub pt_ray_max_distance: f32,
     /// Maximum iterations (samples per pixel). 0 = accumulate forever.
     pub pt_max_iterations: u32,
-    /// Global Illumination technique mode (Off, Sharc, Nrc).
-    pub gi_mode: GiMode,
+    /// GI technique for `RenderMode::Raster` (BakedProbe, Restir, Prt).
+    pub raster_gi: RasterGiMode,
+    /// Radiance cache / GI technique for `RenderMode::PathTrace` (Off, Sharc, Nrc).
+    pub pt_gi: PtGiMode,
+    /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
+    pub prt_leak_bias: f32,
     /// SHaRC: Hash-map capacity (number of voxel slots). Changing it
     /// rebuilds the cache buffers, which clears all cached radiance.
     pub sharc_capacity: u32,
@@ -204,6 +210,10 @@ pub struct RenderSettings {
     pub anf_sharpness: f32,
     /// Qualcomm Adreno Neural Fusion Frame Generation (#1161).
     pub anf_fg: bool,
+    /// Open-source mobile temporal upscaler (`Off` / `Sgsr2` / `ArmAsr`).
+    pub mobile_upscaler: MobileUpscaler,
+    /// Sharpening strength for `mobile_upscaler`, clamped to `0.0..=1.0`.
+    pub upscaler_sharpness: f32,
     /// 内部渲染分辨率 `[宽, 高]`（#613）；`[0, 0]` = 关闭。
     ///
     /// 开启后场景按这个尺寸渲染，`PostPass` 再放大到窗口；相机的宽高比也跟着
@@ -282,7 +292,9 @@ impl Default for RenderSettings {
             pt_max_bounces: 3,
             pt_ray_max_distance: 1000.0,
             pt_max_iterations: 0,
-            gi_mode: GiMode::Off,
+            raster_gi: RasterGiMode::BakedProbe,
+            pt_gi: PtGiMode::Off,
+            prt_leak_bias: prism_render::prt_runtime::DEFAULT_LEAK_BIAS,
             sharc_capacity: 1 << 20,
             sharc_scene_scale: 50.0,
             sharc_enable_clear: false,
@@ -324,6 +336,8 @@ impl Default for RenderSettings {
             anf_sr: false,
             anf_sharpness: 0.5,
             anf_fg: false,
+            mobile_upscaler: MobileUpscaler::Off,
+            upscaler_sharpness: 0.5,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_map_size: prism_render::SHADOW_MAP_SIZE,
             shadow_cascade_count: 1,

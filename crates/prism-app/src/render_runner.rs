@@ -176,15 +176,10 @@ pub fn render_thread_main(
             return;
         }
     };
-    // 运行期缓存根由宿主解析一次后注入：渲染层不认识 target/ 布局，
-    // 也不允许自己按 cwd 拼路径。解析失败（拿不到可执行文件目录）时
-    // 保持默认 disabled，只是每次重算 IBL 卷积。
-    match prism_engine::cache_paths::cache_dir(prism_engine::cache_paths::CacheKind::Ibl) {
-        Some(dir) => {
-            log::info!("IBL cache root: {}", dir.display());
-            renderer.set_ibl_cache(prism_render::ibl::IblCacheDir::new(dir));
+    if let Some(prt_path) = prism_engine::asset_paths::asset_path("gi/prt_volume.prtbin") {
+        if prt_path.is_file() {
+            renderer.load_prt_volume_file(&prt_path);
         }
-        None => log::warn!("IBL cache: executable directory unavailable; disk cache disabled"),
     }
 
     shared.mark("renderer_built");
@@ -432,6 +427,7 @@ pub fn render_thread_main(
         }
 
         shared.set_render_stats(RenderStats {
+            render_seq: frame_count,
             frame_time_ms,
             fps: smoothed_fps,
             pt_frame_count: pt_count,
@@ -501,6 +497,7 @@ fn render_one_frame(
     let extent = renderer.extent();
     renderer.set_taa(settings.taa, settings.taa_strength);
     renderer.set_anf_sr(settings.anf_sr, settings.anf_sharpness);
+    renderer.set_mobile_upscaler(settings.mobile_upscaler, settings.upscaler_sharpness);
     let mut frame_data = FrameUBOData {
         viewProj: scene.view_proj.to_cols_array_2d(),
         cameraPosition: [
@@ -555,7 +552,9 @@ fn render_one_frame(
     {
         let renderer_settings = renderer.settings_mut();
         renderer_settings.auto_exposure = settings.auto_exposure;
-        renderer_settings.gi_mode = settings.gi_mode;
+        renderer_settings.raster_gi = settings.raster_gi;
+        renderer_settings.pt_gi = settings.pt_gi;
+        renderer_settings.prt_leak_bias = settings.prt_leak_bias;
         renderer_settings.sharc_capacity = settings.sharc_capacity;
         renderer_settings.sharc_scene_scale = settings.sharc_scene_scale;
         renderer_settings.sharc_enable_update = settings.sharc_enable_update;
@@ -631,6 +630,7 @@ fn render_one_frame(
     if let Some(plan) = screenshot {
         renderer.request_screenshot(plan.path.clone(), plan.size, plan.scale);
     }
+    renderer.set_voxel_scene(packet.voxel_scene.clone());
     renderer
         .prepare(&ctx, &input)
         .and_then(|_| renderer.execute(&ctx, &input))

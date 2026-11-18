@@ -6,9 +6,11 @@
 pub mod auto_exposure;
 pub mod gizmo;
 pub mod gtao;
+pub mod ibl_bake;
 pub mod mesh_vert;
 pub mod particles;
 pub mod post;
+pub mod prt;
 pub mod pt_reference;
 pub mod pt_render;
 pub mod pt_sharc_train;
@@ -21,3 +23,4 @@ pub mod skybox;
 pub mod sprites;
 pub mod taa;
 pub mod ui_overlay;
+pub mod voxel_dda;

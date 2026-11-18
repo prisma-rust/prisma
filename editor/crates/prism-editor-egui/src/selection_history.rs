@@ -74,10 +74,6 @@ impl SelectionHistory {
         Some(entry)
     }
 
-    pub fn can_forward(&self) -> bool {
-        self.position + 1 < self.entries.len()
-    }
-
     pub fn position(&self) -> usize {
         self.position
     }
@@ -129,10 +125,17 @@ mod tests {
         history.observe(snap(0, &[1], Some(1)));
         history.observe(snap(0, &[2], Some(2)));
         assert!(history.navigate(-1).is_some());
-        assert!(history.can_forward());
+        assert!(
+            history.position() + 1 < history.len(),
+            "回退后应存在前进分支"
+        );
 
         history.observe(snap(0, &[9], Some(9)));
-        assert!(!history.can_forward(), "新选择应截断前进分支");
+        assert_eq!(
+            history.position() + 1,
+            history.len(),
+            "新选择应截断前进分支"
+        );
         assert_eq!(history.navigate(-1), Some(snap(0, &[1], Some(1))));
     }
 

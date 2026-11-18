@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use prism_app::App;
 use prism_engine::config::AppConfig;
-use prism_engine::render_settings::{GiMode, RenderMode, RenderSettings};
+use prism_engine::render_settings::{PtGiMode, RasterGiMode, RenderMode, RenderSettings};
 
 /// Render mode / GI mode from `PRISM_RENDER_MODE` (the same knob `projects/*`
 /// use, spelled with a neutral prefix because this example is shared):
@@ -36,13 +36,13 @@ fn configure(settings: &mut RenderSettings) {
         .unwrap_or_default();
     if mode.eq_ignore_ascii_case("raster") {
         settings.render_mode = RenderMode::Raster;
-        settings.gi_mode = GiMode::Off;
+        settings.raster_gi = RasterGiMode::BakedProbe;
     } else if mode.eq_ignore_ascii_case("pt_off") {
         settings.render_mode = RenderMode::PathTrace;
-        settings.gi_mode = GiMode::Off;
+        settings.pt_gi = PtGiMode::Off;
     } else if mode.eq_ignore_ascii_case("sharc") {
         settings.render_mode = RenderMode::PathTrace;
-        settings.gi_mode = GiMode::Sharc;
+        settings.pt_gi = PtGiMode::Sharc;
     }
     settings.pt_max_bounces = 4;
     settings.pt_max_iterations = 0;

@@ -184,11 +184,6 @@ impl ControlServer {
         })
     }
 
-    /// 端口文件（`<state 目录>/control.port`），用于 `status` 回执。
-    pub fn port_file(&self) -> &Path {
-        &self.port_file
-    }
-
     /// UI 线程每帧调用一次：取走这一帧要处理的请求（非阻塞）。
     pub fn drain(&self) -> Vec<ControlRequest> {
         self.requests.try_iter().collect()

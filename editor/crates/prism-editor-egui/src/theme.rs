@@ -18,10 +18,10 @@ pub fn color32(colors: &ThemeColors, token: ThemeToken) -> Color32 {
     Color32::from_rgba_unmultiplied(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
-const RADIUS: CornerRadius = CornerRadius::ZERO;
+const RADIUS: CornerRadius = CornerRadius::same(2);
 const POPUP_RADIUS: CornerRadius = CornerRadius::same(3);
 
-/// 应用一套紧凑的编辑器视觉（深色、密排、零圆角）。
+/// Apply the compact, studio dark editor visual style and spacing metrics.
 pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     let panel = color32(colors, ThemeToken::Panel);
     let panel_alt = color32(colors, ThemeToken::PanelAlt);
@@ -124,8 +124,8 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
         (egui::TextStyle::Monospace, FontId::monospace(11.0)),
     ]
     .into();
-    style.spacing.item_spacing = egui::vec2(5.0, 3.0);
-    style.spacing.button_padding = egui::vec2(7.0, 2.0);
+    style.spacing.item_spacing = egui::vec2(6.0, 3.0);
+    style.spacing.button_padding = egui::vec2(8.0, 2.0);
     style.spacing.menu_margin = egui::Margin::same(3);
     style.spacing.indent = 12.0;
     style.spacing.interact_size.y = 20.0;
@@ -168,7 +168,10 @@ mod tests {
         apply(&ctx, &colors);
         let visuals = ctx.style().visuals.clone();
         assert_eq!(visuals.window_corner_radius, CornerRadius::same(3));
-        assert_eq!(visuals.widgets.inactive.corner_radius, CornerRadius::ZERO);
+        assert_eq!(
+            visuals.widgets.inactive.corner_radius,
+            CornerRadius::same(2)
+        );
         assert_eq!(ctx.style().spacing.interact_size.y, 20.0);
         assert_eq!(panel_fill(&colors), color32(&colors, ThemeToken::Panel));
         assert_eq!(chrome_fill(&colors), color32(&colors, ThemeToken::Chrome));

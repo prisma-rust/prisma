@@ -20,6 +20,7 @@ deviating from those conventions is a bug. (`README.md` is the human-facing over
 - **1.0 前零兼容负担（当前版本 0.1）**：在 1.0 版本发布前，**严禁编写任何兼容性逻辑**（向前/向后兼容、兼容层、兼容门面、废弃垫片或旧版本回退分支）；**旧版本兼容被明确视为冗余的垃圾代码**。涉及 API、数据结构、存档/交换格式、配置或管线重构时，直接按最新最优设计替换/删除旧实现，彻底清理废弃代码，绝不保留过渡兼容包袱。
 - **文档分级与命名规范**：遵循 [`docs/README.md`](docs/README.md) L0–L6 划分；技术与流程文档全小写连字符 `kebab-case.md` 并带领域前缀，严禁驼峰或下划线命名；新文档必须在 `docs/README.md` 登记。
 - **不猜**：改公开 API、存档格式（RSCN/RTTIBin/.pak）、坐标约定、workspace 分层或加依赖，先改文档或先问人。
+- **严禁近似/廉价替代**：当用户明确提出具体技术需求或目标时（如指定算法、标准、管线或功能），必须按完整规格实现，**严禁**私自降级为近似实现、简化版或廉价替代方案；若因环境/工具链受限无法完整实现或验证，必须直接向用户说明阻塞点并停下等待指示，不得暗中替换。
 - **版本号只改根 `Cargo.toml`**，通过 `python scripts/version.py` 同步，详见 [`docs/versioning.md`](docs/versioning.md)。
 - **推送前同步主干本地解冲突**：`git fetch origin && git rebase origin/master`，冲突在本分支解完重跑 `pr_ready.py` 后再 `--force-with-lease` 推送。
 - **subagent 限制**：subagent 仅用于只读侦察（同时最多 3 个，分批互不重叠），严禁多 agent 写文件；所有写入与提交留在主会话。

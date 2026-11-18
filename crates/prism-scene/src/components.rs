@@ -256,6 +256,9 @@ pub struct MeshRenderer {
     /// 长度不足时按 submesh 的源材质索引（glTF `material.index()`）取，
     /// 再退到 `material_path`。空字符串表示该 submesh 使用默认材质。
     pub material_paths: Vec<String>,
+    /// Optional custom fragment shader asset path (`.frag.spv` / `.slang`).
+    /// Empty uses the built-in PBR fragment shader (`scene_frag.frag.spv`).
+    pub shader_path: String,
     /// 阴影投射模式 = `Renderer.shadowCastingMode`。
     ///
     /// 决定该物体是否写阴影贴图、是否出现在相机主通道（`ShadowsOnly` 只投影）。
@@ -286,6 +289,7 @@ impl Default for MeshRenderer {
             mesh_path: String::new(),
             material_path: String::new(),
             material_paths: Vec::new(),
+            shader_path: String::new(),
             shadow_casting_mode: ShadowCastingMode::default(),
             cull_mode: CullMode::default(),
             render_queue: RenderQueue::default(),
@@ -3045,6 +3049,8 @@ pub struct SkinnedMeshRenderer {
     pub material_paths: Vec<String>,
     /// 单材质回退路径。
     pub material_path: String,
+    /// Optional custom fragment shader asset path (`.frag.spv` / `.slang`).
+    pub shader_path: String,
     /// 阴影投射模式（与 [`MeshRenderer`] 同义）。
     pub shadow_casting_mode: ShadowCastingMode,
 }
@@ -3062,6 +3068,7 @@ impl SkinnedMeshRenderer {
             mesh_path: String::new(),
             material_path: self.material_path.clone(),
             material_paths: self.material_paths.clone(),
+            shader_path: self.shader_path.clone(),
             shadow_casting_mode: self.shadow_casting_mode,
             ..MeshRenderer::default()
         }

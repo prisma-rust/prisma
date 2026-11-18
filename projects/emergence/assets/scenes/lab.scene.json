@@ -1,0 +1,46 @@
+{
+  "version": 3,
+  "entities": [
+    {
+      "id": 0,
+      "name": "camera",
+      "parent": null,
+      "transform": {
+        "position": [6.5, 6.9, 6.5],
+        "rotation": [0.064, -0.909, -0.145, 0.386],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": {
+        "prism_engine::scene::Camera": {
+          "fov_y_degrees": 65.0,
+          "near": 0.08,
+          "far": 256.0,
+          "exposure": 1.0,
+          "enabled": true,
+          "clear_flags": "SolidColor",
+          "background_color": [0.22, 0.36, 0.58, 1.0],
+          "orthographic": false,
+          "depth": 0.0
+        }
+      }
+    },
+    {
+      "id": 1,
+      "name": "sun",
+      "parent": null,
+      "transform": {
+        "position": [16.0, 20.0, 16.0],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": {
+        "prism_engine::scene::DirectionalLight": {
+          "euler_xyz": [62.0, 24.0, 0.0],
+          "color": [1.0, 0.97, 0.90],
+          "intensity": 80000.0,
+          "ambient": 0.55
+        }
+      }
+    }
+  ]
+}

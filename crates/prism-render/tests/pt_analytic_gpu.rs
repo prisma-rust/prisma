@@ -15,7 +15,7 @@
 #![cfg(all(feature = "pathtrace", feature = "ibl"))]
 
 use prism_render::managers::{MaterialAlphaMode, MaterialUploadInput, MeshHandle};
-use prism_render::render_graph::{DrawItem, DrawState, GiMode, PostGrade, RenderMode};
+use prism_render::render_graph::{DrawItem, DrawState, PostGrade, PtGiMode, RenderMode};
 use prism_render::{FrameInput, FrameUBOData, GraphRenderer, HdrReadback, PtVariant};
 
 const SIZE: usize = 64;
@@ -109,6 +109,7 @@ fn draw_item(mesh: MeshHandle, model: [[f32; 4]; 4], material: u32, entity_id: u
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
     }
 }
 
@@ -585,7 +586,7 @@ fn a_degenerate_sharc_hash_does_not_poison_the_image() {
     let Some(mut renderer) = try_create(Some(constant_environment(0.25))) else {
         return;
     };
-    renderer.settings_mut().gi_mode = GiMode::Sharc;
+    renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_capacity = 0;
     let items = two_box_scene(&mut renderer, 0.5);
 
@@ -622,7 +623,7 @@ fn cache_on_preserves_the_analytic_energy() {
     let samples = 16;
     let bounces = 4;
 
-    renderer.settings_mut().gi_mode = GiMode::Off;
+    renderer.settings_mut().pt_gi = PtGiMode::Off;
     let uncached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);
 
     // 反向对照：关掉 gi_mode 时这两个计数器必须一动不动。没有这一条，下面
@@ -641,7 +642,7 @@ fn cache_on_preserves_the_analytic_energy() {
     // 决定（这套场景里 2–6 米 → level 1–2）。sceneScale = 5 时体素是 0.4–0.8 米，
     // 与两个盒子之间的线段长度同一量级，`valid_hit` 的两条几何门槛才过得去；
     // 出厂值 50 会得到 4 厘米级的体素，命中稀到只剩个位数像素。
-    renderer.settings_mut().gi_mode = GiMode::Sharc;
+    renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_capacity = 1 << 14;
     renderer.settings_mut().sharc_scene_scale = 5.0;
     let cached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);

@@ -936,6 +936,18 @@ impl RenderPassNode for PostPass {
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
+        graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::UPSCALED_COLOR_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
+        graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::VOXEL_COLOR_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
         graph.create_resource_at(
             FINAL_COLOR_H,
             ResourceType::ColorAttachment {
@@ -974,18 +986,46 @@ impl RenderPassNode for PostPass {
         } else {
             None
         };
-        // TAA output (#883) takes precedence when enabled and ANF is off. In
+        let upscaled_view = if ctx.settings.mobile_upscaler.is_temporal_compute()
+            && !is_pt
+            && ctx.frame.debug_rt == 0
+            && anf_view.is_none()
+        {
+            resources.published_view(crate::render_graph::UPSCALED_COLOR_H)
+        } else {
+            None
+        };
+        // TAA output (#883) takes precedence when enabled and ANF / mobile upscaler is off. In
         // path-trace mode the temporal resolve consumes the traced image and its
         // guides, so the resolved image replaces PT_COLOR_H here.
-        let taa_view = if ctx.settings.taa && ctx.frame.debug_rt == 0 && anf_view.is_none() {
+        let taa_view = if ctx.settings.taa
+            && ctx.frame.debug_rt == 0
+            && anf_view.is_none()
+            && upscaled_view.is_none()
+        {
             resources.published_view(TAA_COLOR_H)
         } else {
             None
         };
         let (handle, image_layout) = if anf_view.is_some() {
             (ANF_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        } else if upscaled_view.is_some() {
+            (
+                crate::render_graph::UPSCALED_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else if taa_view.is_some() {
             (TAA_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        } else if !is_pt
+            && ctx.frame.debug_rt == 0
+            && resources
+                .published_view(crate::render_graph::VOXEL_COLOR_H)
+                .is_some()
+        {
+            (
+                crate::render_graph::VOXEL_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else {
             select_input_target(ctx.frame.debug_rt, is_pt, has_camera, has_pt_view)
         };
@@ -1016,14 +1056,31 @@ impl RenderPassNode for PostPass {
         // cache (`bound_hdrs`) keys on the view handle, so switching modes
         // (which changes the view) triggers a rewrite automatically.
         // #613：内部渲染分辨率 → 目标矩形与采样方式。
-        let nearest = ctx.settings.internal_scale_mode
-            == crate::render_graph::InternalScaleMode::Integer
-            && ctx.render_extent != ctx.extent;
-        let dest = crate::render_graph::post_destination(
-            ctx.extent,
-            ctx.render_extent,
-            ctx.settings.internal_scale_mode,
+        // 若已经由 ANF 或 MobileUpscalerPass 升采样到窗口全分辨率，则 PostPass 直接全屏线性采样。
+        // Nearest / Linear 空间升采样模式则直接在 PostPass 内用对应的硬件采样器拉伸到全屏。
+        let already_upscaled = anf_view.is_some() || upscaled_view.is_some();
+        let spatial_upscale = matches!(
+            ctx.settings.mobile_upscaler,
+            crate::render_graph::MobileUpscaler::Nearest
+                | crate::render_graph::MobileUpscaler::Linear
         );
+        let nearest = !already_upscaled
+            && ctx.render_extent != ctx.extent
+            && (ctx.settings.mobile_upscaler == crate::render_graph::MobileUpscaler::Nearest
+                || ctx.settings.internal_scale_mode
+                    == crate::render_graph::InternalScaleMode::Integer);
+        let dest = if already_upscaled || spatial_upscale {
+            vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: ctx.extent,
+            }
+        } else {
+            crate::render_graph::post_destination(
+                ctx.extent,
+                ctx.render_extent,
+                ctx.settings.internal_scale_mode,
+            )
+        };
         self.set_input(
             ctx.device,
             ctx.frame_index,

@@ -2235,11 +2235,13 @@ dependencies = [
 name = "prism-app"
 version = "0.1.0"
 dependencies = [
+ "android-activity",
  "android_logger",
  "anyhow",
  "env_logger",
  "flume",
  "glam 0.33.12",
+ "jni",
  "log",
  "ndk",
  "prism-asset",
@@ -2251,6 +2253,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -2289,12 +2292,10 @@ dependencies = [
 name = "prism-engine"
 version = "0.1.0"
 dependencies = [
- "android-activity",
  "anyhow",
  "bytemuck",
  "dirs",
  "glam 0.33.12",
- "jni",
  "log",
  "prism-anim",
  "prism-anim-ik",
@@ -2310,7 +2311,6 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2330,6 +2330,7 @@ dependencies = [
 name = "prism-gfx"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "glam 0.33.12",
  "prism-reflect",
  "serde",

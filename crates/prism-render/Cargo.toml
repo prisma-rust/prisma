@@ -12,6 +12,8 @@ default = [
     "pathtrace",
     "sharc",
     "restir_gi",
+    "prt",
+    "anf",
     "ui",
     "ui-fontdue",
     "ibl",
@@ -45,10 +47,18 @@ restir_gi = []
 # 不再往下追）。关掉 = ReSTIR GI 只剩单次弹射 + 天空，PT 也退回纯路径追踪。
 # 见 docs/DESIGN.md §12.2。
 sharc = []
+# PRT64 + 64-tree streaming GI pass (`prt_pass.rs` + `prt_*.comp.spv`).
+prt = []
 # NVIDIA Neural Radiance Cache (NRC)
 nrc = ["pathtrace"]
 # NVIDIA Streamline / DLSS (Super Resolution & Ray Reconstruction)
 dlss = []
+# NVIDIA DLSS Frame Generation (desktop only).
+dlfg = ["dlss"]
+# NVIDIA Real-Time Denoisers (NRD, desktop only).
+nrd = []
+# Qualcomm Adreno Neural Fusion (SR / Frame Gen, mobile Adreno only).
+anf = []
 # 图像光照（IBL）：环境 cubemap 卷积 / irradiance / prefilter / BRDF LUT + HDR 解码。
 # 2D 或纯色场景可关，`IblResources` 退化为 1x1 中性灰（descriptor 布局不变）。
 ibl = []

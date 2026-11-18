@@ -17,9 +17,24 @@ fn harness() -> Option<FrameHarness> {
     FrameHarness::new(SIZE)
 }
 
+fn golden_harness() -> Option<FrameHarness> {
+    let harness = harness()?;
+    if harness.is_software_device()
+        && std::env::var_os("PRISM_FORCE_GOLDEN").is_none()
+        && std::env::var_os("PRISM_UPDATE_GOLDENS").is_none()
+    {
+        eprintln!(
+            "[SKIP] software Vulkan adapter ({}) — no hardware GPU",
+            harness.adapter_info()
+        );
+        return None;
+    }
+    Some(harness)
+}
+
 #[test]
 fn baseline_frame_matches_golden() {
-    let Some(mut harness) = harness() else {
+    let Some(mut harness) = golden_harness() else {
         return;
     };
     let pixels = harness.render(FrameOptions::default());
@@ -28,7 +43,7 @@ fn baseline_frame_matches_golden() {
 
 #[test]
 fn shaded_wireframe_frame_matches_golden() {
-    let Some(mut harness) = harness() else {
+    let Some(mut harness) = golden_harness() else {
         return;
     };
     if !harness.supports_wireframe() {
@@ -44,7 +59,7 @@ fn shaded_wireframe_frame_matches_golden() {
 
 #[test]
 fn bloom_frame_matches_golden() {
-    let Some(mut harness) = harness() else {
+    let Some(mut harness) = golden_harness() else {
         return;
     };
     let pixels = harness.render(FrameOptions {

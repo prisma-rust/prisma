@@ -90,7 +90,6 @@ dependencies = [
  "ndk-context",
  "ndk-sys",
  "num_enum",
- "simd_cesu8",
  "thiserror 2.0.21",
 ]
 
@@ -987,22 +986,6 @@ dependencies = [
  "profiling",
  "smallvec",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "egui-ash"
-version = "0.4.0"
-source = "git+https://github.com/prisma-rust/egui-ash?rev=6b390d3e8f48d3e7025a20b1b07b46373a960b8c#6b390d3e8f48d3e7025a20b1b07b46373a960b8c"
-dependencies = [
- "anyhow",
- "ash",
- "ash-window",
- "bytemuck",
- "egui",
- "egui-winit",
- "gpu-allocator",
- "log",
- "raw-window-handle",
 ]
 
 [[package]]
@@ -2644,9 +2627,10 @@ dependencies = [
  "anyhow",
  "ash",
  "ash-window",
+ "bytemuck",
  "egui",
- "egui-ash",
  "egui-phosphor",
+ "egui-winit",
  "env_logger",
  "glam 0.33.12",
  "gpu-allocator",
@@ -2661,18 +2645,17 @@ dependencies = [
  "prism-scene",
  "raw-window-handle",
  "serde_json",
+ "winit",
 ]
 
 [[package]]
 name = "prism-engine"
 version = "0.1.0"
 dependencies = [
- "android-activity",
  "anyhow",
  "bytemuck",
  "dirs",
  "glam 0.33.12",
- "jni",
  "log",
  "prism-anim",
  "prism-anim-ik",
@@ -2687,13 +2670,13 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "prism-gfx"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "glam 0.33.12",
  "prism-reflect",
  "serde",

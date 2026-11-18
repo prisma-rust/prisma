@@ -104,14 +104,52 @@ const LETTER_KEYS: &[(winit::keyboard::KeyCode, u8)] = &[
 /// 2. 其余字母走 \`Key::Letter\`：两个后端给出同一个值，项目按
 ///    \`Letter(b'M')\` 写快捷键，不必知道后端用的是哪套原始键码。
 fn winit_to_vk(code: winit::keyboard::KeyCode) -> Key {
+    use winit::keyboard::KeyCode as Wk;
+
     let key = Key::from_winit(code);
     if !matches!(key, Key::Other(_)) {
         return key;
     }
-    LETTER_KEYS
+    if let Some(letter) = LETTER_KEYS
         .iter()
         .find_map(|(winit_code, byte)| (*winit_code == code).then_some(Key::Letter(*byte)))
-        .unwrap_or(key)
+    {
+        return letter;
+    }
+    // Map editing, navigation, and punctuation keys to Win32 VK_* codes so
+    // the winit backend emits the exact same Key::Other payload as win32.
+    match code {
+        Wk::Backspace => Key::Other(0x08),
+        Wk::PageUp => Key::Other(0x21),
+        Wk::PageDown => Key::Other(0x22),
+        Wk::End => Key::Other(0x23),
+        Wk::Home => Key::Other(0x24),
+        Wk::Delete => Key::Other(0x2E),
+        Wk::Numpad0 => Key::Other(0x60),
+        Wk::Numpad1 => Key::Other(0x61),
+        Wk::Numpad2 => Key::Other(0x62),
+        Wk::Numpad3 => Key::Other(0x63),
+        Wk::Numpad4 => Key::Other(0x64),
+        Wk::Numpad5 => Key::Other(0x65),
+        Wk::Numpad6 => Key::Other(0x66),
+        Wk::Numpad7 => Key::Other(0x67),
+        Wk::Numpad8 => Key::Other(0x68),
+        Wk::Numpad9 => Key::Other(0x69),
+        Wk::NumpadMultiply => Key::Other(0x6A),
+        Wk::NumpadAdd => Key::Other(0x6B),
+        Wk::NumpadSubtract => Key::Other(0x6D),
+        Wk::NumpadDecimal => Key::Other(0x6E),
+        Wk::NumpadDivide => Key::Other(0x6F),
+        Wk::NumpadEnter => Key::Enter,
+        Wk::Semicolon => Key::Other(0xBA),
+        Wk::Equal => Key::Other(0xBB),
+        Wk::Comma => Key::Other(0xBC),
+        Wk::Minus => Key::Other(0xBD),
+        Wk::Period => Key::Other(0xBE),
+        Wk::Slash => Key::Other(0xBF),
+        Wk::Backquote => Key::Other(0xC0),
+        _ => key,
+    }
 }
 
 impl Key {
@@ -403,5 +441,29 @@ mod tests {
         // 非字母键保持原样（两张表本来同号）。
         assert_eq!(winit_to_vk(Wk::F3), Key::F3);
         assert_eq!(winit_to_vk(Wk::ArrowUp), Key::ArrowUp);
+    }
+
+    #[test]
+    fn winit_editing_and_punctuation_map_to_win32_vk() {
+        use winit::keyboard::KeyCode as Wk;
+        for (winit_code, expected) in [
+            (Wk::Backspace, Key::Other(0x08)),
+            (Wk::PageUp, Key::Other(0x21)),
+            (Wk::PageDown, Key::Other(0x22)),
+            (Wk::End, Key::Other(0x23)),
+            (Wk::Home, Key::Other(0x24)),
+            (Wk::Delete, Key::Other(0x2E)),
+            (Wk::NumpadEnter, Key::Enter),
+            (Wk::Semicolon, Key::Other(0xBA)),
+            (Wk::Equal, Key::Other(0xBB)),
+            (Wk::Comma, Key::Other(0xBC)),
+            (Wk::Minus, Key::Other(0xBD)),
+            (Wk::Period, Key::Other(0xBE)),
+            (Wk::Slash, Key::Other(0xBF)),
+            (Wk::Backquote, Key::Other(0xC0)),
+        ] {
+            assert_eq!(winit_to_vk(winit_code), expected, "{winit_code:?}");
+            assert_eq!(expected.to_vk(), Key::from_vk(expected.to_vk()).to_vk());
+        }
     }
 }

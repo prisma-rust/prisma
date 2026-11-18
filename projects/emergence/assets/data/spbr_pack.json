@@ -1,0 +1,95 @@
+{
+  "pack": "ShulkerSakura/SPBR (LabPBR 1.3)",
+  "shader_reference": "ComplementaryDevelopment/ComplementaryReimagined",
+  "textures": {
+    "Bedrock": {
+      "albedo": "textures/blocks/bedrock.png",
+      "normal": "textures/blocks/bedrock_n.png",
+      "specular": "textures/blocks/bedrock_s.png"
+    },
+    "SoilLoam": {
+      "albedo": "textures/blocks/dirt.png",
+      "normal": "textures/blocks/dirt_n.png",
+      "specular": "textures/blocks/dirt_s.png"
+    },
+    "GrassTurf": {
+      "albedo": "textures/blocks/grass_block_top.png",
+      "normal": "textures/blocks/grass_block_top_n.png",
+      "specular": "textures/blocks/grass_block_top_s.png"
+    },
+    "Limestone": {
+      "albedo": "textures/blocks/stone.png",
+      "normal": "textures/blocks/stone_n.png",
+      "specular": "textures/blocks/stone_s.png"
+    },
+    "AlloyPlate": {
+      "albedo": "textures/blocks/iron_block.png",
+      "normal": "textures/blocks/iron_block_n.png",
+      "specular": "textures/blocks/iron_block_s.png"
+    },
+    "GlassPane": {
+      "normal": "textures/blocks/glass_n.png",
+      "specular": "textures/blocks/glass_s.png"
+    },
+    "TimberCrate": {
+      "albedo": "textures/blocks/oak_planks.png",
+      "normal": "textures/blocks/oak_planks_n.png",
+      "specular": "textures/blocks/oak_planks_s.png"
+    },
+    "CryoSlush": {
+      "albedo": "textures/blocks/ice.png",
+      "normal": "textures/blocks/ice_n.png",
+      "specular": "textures/blocks/ice_s.png"
+    },
+    "BioBiomass": {
+      "albedo": "textures/blocks/amethyst_block.png",
+      "normal": "textures/blocks/amethyst_block_n.png",
+      "specular": "textures/blocks/amethyst_block_s.png"
+    },
+    "WireCable": {
+      "albedo": "textures/blocks/copper_block.png",
+      "normal": "textures/blocks/copper_block_n.png",
+      "specular": "textures/blocks/copper_block_s.png"
+    },
+    "ConduitPipe": {
+      "albedo": "textures/blocks/iron_block.png",
+      "normal": "textures/blocks/iron_block_n.png",
+      "specular": "textures/blocks/iron_block_s.png"
+    },
+    "IsotopeCore": {
+      "albedo": "textures/blocks/emerald_block.png",
+      "normal": "textures/blocks/emerald_block_n.png",
+      "specular": "textures/blocks/emerald_block_s.png"
+    },
+    "Sand": {
+      "albedo": "textures/blocks/sand.png",
+      "normal": "textures/blocks/sand_n.png",
+      "specular": "textures/blocks/sand_s.png"
+    },
+    "Snow": {
+      "albedo": "textures/blocks/snow.png",
+      "normal": "textures/blocks/snow_n.png",
+      "specular": "textures/blocks/snow_s.png"
+    },
+    "CoalOre": {
+      "normal": "textures/blocks/coal_ore_n.png",
+      "specular": "textures/blocks/coal_ore_s.png"
+    },
+    "IronOre": {
+      "normal": "textures/blocks/iron_ore_n.png",
+      "specular": "textures/blocks/iron_ore_s.png"
+    },
+    "GoldOre": {
+      "normal": "textures/blocks/gold_ore_n.png",
+      "specular": "textures/blocks/gold_ore_s.png"
+    },
+    "RedstoneOre": {
+      "normal": "textures/blocks/redstone_ore_n.png",
+      "specular": "textures/blocks/redstone_ore_s.png"
+    },
+    "DiamondOre": {
+      "normal": "textures/blocks/diamond_ore_n.png",
+      "specular": "textures/blocks/diamond_ore_s.png"
+    }
+  }
+}

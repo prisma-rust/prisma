@@ -14,7 +14,7 @@ crate-type = ["lib"]
 # 物理是**可选**能力。`physics_runner` 目前仍是骨架（独立线程 + step/result 通道），
 # 尚未接进 `Engine::update`；不让它默认把 rapier3d / parry3d 拉进玩家二进制。
 # 需要物理时在用户项目里开：`prism-app = { path = "...", features = ["physics"] }`。
-default = ["pathtrace", "sharc", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "winit-backend", "x11", "wayland", "group-3d", "group-2d", "group-ui"]
+default = ["pathtrace", "sharc", "prt", "anf", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "winit-backend", "x11", "wayland", "group-3d", "group-2d", "group-ui"]
 # 窗口后端二选一：
 # - `winit-backend`（默认）：winit 窗口 + 事件循环（桌面 / Android）。
 # - `win32-native`（默认关，仅 Windows）：Win32 原生窗口，**不编译任何 winit 代码**，
@@ -30,8 +30,13 @@ wayland = ["winit-backend", "prism-platform/wayland"]
 # Modular building-block toggles: forwarded to prism-render / prism-engine (see docs/DESIGN.md §12).
 pathtrace = ["prism-render/pathtrace", "prism-engine/pathtrace"]
 sharc = ["prism-render/sharc", "prism-engine/sharc"]
+restir_gi = ["prism-render/restir_gi", "prism-engine/restir_gi"]
+prt = ["prism-render/prt", "prism-engine/prt"]
 nrc = ["prism-render/nrc", "prism-engine/nrc", "pathtrace"]
 dlss = ["prism-render/dlss", "prism-engine/dlss"]
+dlfg = ["prism-render/dlfg", "prism-engine/dlfg", "dlss"]
+nrd = ["prism-render/nrd", "prism-engine/nrd"]
+anf = ["prism-render/anf", "prism-engine/anf"]
 ui = ["prism-render/ui", "prism-engine/ui"]
 # 文本光栅后端（透传到 prism-render，见 docs/DESIGN.md §12.2）。默认走 fontdue；
 # Windows 发布包可以只要系统 DirectWrite（`ui-directwrite`），省掉 fontdue/ttf-parser。
@@ -81,11 +86,24 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+] }
+
 [target.'cfg(target_os = "android")'.dependencies]
 # 默认特性 `regex` 只为 RUST_LOG 的正则过滤；Android 上它同样会拉进整套 regex 引擎。
 android_logger = { version = "0.15", default-features = false }
 ndk = "0.9"
+jni = "0.22"
+android-activity = { version = "0.6", features = ["game-activity"] }
 
 [dev-dependencies]
 # `examples/hosted_png.rs` 只写 PNG。
 image = { workspace = true, features = ["png"] }
+jni = "0.22"

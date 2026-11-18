@@ -358,6 +358,13 @@ compile_stage auto_exposure luminanceHistogram compute auto_exposure_hist
 compile_stage auto_exposure exposureAdaptation compute auto_exposure_adapt
 emit_reflection auto_exposure luminanceHistogram compute exposureAdaptation compute
 
+# ibl_bake: GPU compute shaders for runtime IBL baking from equirectangular HDR.
+compile_stage ibl_bake equirectToCubeMain compute ibl_equirect_to_cube
+compile_stage ibl_bake irradianceMain compute ibl_irradiance
+compile_stage ibl_bake prefilterMain compute ibl_prefilter
+compile_stage ibl_bake brdfLutMain compute ibl_brdf_lut
+emit_reflection ibl_bake equirectToCubeMain compute irradianceMain compute prefilterMain compute brdfLutMain compute
+
 # harness_copy: tiny compute kernel for the reusable GPU shader harness test
 # (`crates/prism-render/tests/shader_harness_gpu.rs`). No bindless state.
 compile_stage harness_copy main compute
@@ -407,6 +414,18 @@ emit_reflection rt_preview vertexMain vertex fragmentMain fragment
 # the forward pass applies kd * albedo itself).
 compile_stage restir_gi giMain compute
 emit_reflection restir_gi giMain compute
+
+# prt: PRT64 + 64-tree runtime GI compute passes (crates/prism-render/src/prt_pass.rs).
+compile_stage prt clusterEvalMain compute prt_cluster_eval
+compile_stage prt propagateMain compute prt_propagate
+compile_stage prt resolveVolumeMain compute prt_resolve_volume
+emit_reflection prt resolveVolumeMain compute
+
+# voxel_dda: three-tier L1/L2/L3 voxel raymarcher + GI denoiser + composite (crates/prism-render/src/voxel_dda_pass.rs).
+compile_stage voxel_dda voxelDdaMain compute voxel_dda
+compile_stage voxel_dda voxelGiDenoiseMain compute voxel_gi_denoise
+compile_stage voxel_dda voxelCompositeMain compute voxel_composite
+emit_reflection voxel_dda voxelDdaMain compute voxelGiDenoiseMain compute voxelCompositeMain compute
 
 # Hard gate: every emitted module must be valid SPIR-V (#580). Slang can emit
 # illegal layout decorations that only show up as a Vulkan validation error at

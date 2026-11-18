@@ -82,6 +82,7 @@ mod app;
 #[cfg(feature = "audio")]
 mod audio_decode_runner;
 mod bench_report;
+pub mod crash_dialog;
 mod debug_hud;
 mod hook;
 mod io_runner;
@@ -127,6 +128,9 @@ pub use plugin::{
     AppPlugin, DefaultAudioPlugin, DefaultPhysicsPlugin, DefaultPlugins, DefaultRenderPlugin,
     PluginGroup,
 };
+pub use prism_engine::ecs::World;
+pub use prism_engine::render_settings::{MobileUpscaler, RenderSettings};
+pub use prism_platform::PlatformWindow;
 pub use render_shared::{FrameImage, RenderShared, RenderStats};
 
 /// 用户项目 Android 入口所需的平台句柄；具体窗口库类型由 app 层封装。
@@ -240,11 +244,11 @@ where
 
     log::info!("Prisma Android starting");
 
-    prism_engine::crash_dialog::register_android_app(&android_app);
+    crate::crash_dialog::register_android_app(&android_app);
     struct AndroidAppGuard;
     impl Drop for AndroidAppGuard {
         fn drop(&mut self) {
-            prism_engine::crash_dialog::unregister_android_app();
+            crate::crash_dialog::unregister_android_app();
         }
     }
     let _app_guard = AndroidAppGuard;

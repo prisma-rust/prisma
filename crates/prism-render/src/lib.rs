@@ -32,8 +32,9 @@
 )]
 
 pub mod acceleration_structure;
+#[cfg(feature = "anf")]
 pub mod anf;
-#[cfg(test)]
+#[cfg(all(test, feature = "anf"))]
 mod anf_tests;
 /// 主线程(CPU) ↔ 渲染线程(GPU) 资产解析请求/结果桥接类型。
 pub mod asset_bridge;
@@ -61,7 +62,6 @@ pub mod ground_grid;
 /// Half-resolution ambient occlusion pass (building-block feature `gtao`).
 #[cfg(feature = "gtao")]
 pub mod gtao;
-pub mod hdr;
 /// Linear (pre-tonemap) HDR readback of a graph-published float image.
 pub mod hdr_readback;
 /// Image-based lighting (building-block feature `ibl`); the module is always compiled,
@@ -71,6 +71,7 @@ pub mod lut;
 pub mod managers;
 mod math;
 pub mod mesh;
+pub mod mobile_upscaler;
 pub mod offscreen;
 pub mod particle_pass;
 /// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
@@ -84,6 +85,8 @@ pub mod post;
 pub mod primitives;
 pub mod probe_loader;
 /// PRT64 cluster volume (`.prtbin`): order-7 SH transport vectors, 64-way tree.
+#[cfg(feature = "prt")]
+pub mod prt_pass;
 pub mod prt_runtime;
 pub mod prt_volume;
 #[cfg(test)]
@@ -133,11 +136,15 @@ pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
 pub mod ui_overlay;
+pub mod voxel_dda_pass;
+pub mod voxel_rt_accel;
+pub mod voxel_rt_gi_pass;
 pub(crate) mod vulkan_compat;
 
 // SceneDrawItem is the engine<->renderer exchange type for resolved draws.
 pub use graph_renderer::SceneDrawItem;
 
+#[cfg(feature = "anf")]
 pub use anf::{is_qualcomm_adreno, AnfCaps, AnfPass};
 pub use buffer::create_buffer;
 pub use capabilities::RayTracingCaps;
@@ -170,16 +177,17 @@ pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
 pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
-    DrawItem, DrawState, GiMode, InternalScaleMode, ParticleDrawItem, PassInfo, PassKind,
-    PostGrade, RenderGraphSnapshot, RenderMode, RenderSettings, ResourceHandle, ResourceInfo,
-    ResourceType, ShadowMode, SpriteDrawItem, SpriteLight, FORWARD_COLOR_H, FORWARD_DEPTH_H,
-    FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT,
-    SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
+    DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem, PassInfo, PassKind,
+    PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings,
+    ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight,
+    FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H,
+    SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
+    UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]
 pub use restir_gi::{RestirGiFrame, RestirGiPass, RestirGiReservoir, RESERVOIR_BYTES};
-pub use shader::load_shader_module;
+pub use shader::{load_shader_module, ShaderHandle};
 #[cfg(feature = "shadows")]
 pub use shadow_map_pass::ShadowMapPass;
 #[cfg(feature = "sharc")]
@@ -194,3 +202,4 @@ pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
 pub use ui_overlay::UiOverlay;
 pub use ui_overlay::UiOverlayInput;
+pub use voxel_dda_pass::{VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload};

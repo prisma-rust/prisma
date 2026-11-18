@@ -8,8 +8,76 @@ use crate::prt_volume::{PrtCluster, PrtVolume, BRANCHING, NO_CHILD, NO_LEAF, SH_
 /// Fixed-point scale for Q8.12 `InterlockedAdd` accumulation (2^12 = 4096).
 pub const Q8_12_SCALE: f32 = 4096.0;
 
+/// Default trilinear weight bias for PRT64 anti-leakage (20 cm thin walls).
+pub const DEFAULT_LEAK_BIAS: f32 = 0.05;
+
 /// Maximum allowed `leak_bias` clamp to prevent 20 cm thin-wall light bleeding.
 pub const MAX_LEAK_BIAS: f32 = 0.25;
+
+/// Evaluate 7th-order real Spherical Harmonics (`64` basis functions) for unit vector `d`.
+pub fn eval_sh64(d: [f32; 3]) -> [f32; SH_COEFF_COUNT] {
+    let mut out = [0.0f32; SH_COEFF_COUNT];
+    let (x, y, z) = (d[0], d[1], d[2]);
+    let phi = y.atan2(x);
+    let cos_theta = z.clamp(-1.0, 1.0);
+    let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
+
+    let mut idx = 0usize;
+    for l in 0..=7i32 {
+        for m in -l..=l {
+            let abs_m = m.unsigned_abs() as i32;
+            let p = assoc_legendre(l, abs_m, cos_theta, sin_theta);
+            let norm = sh_norm(l, abs_m);
+            let val = if m == 0 {
+                norm * p
+            } else if m > 0 {
+                std::f32::consts::SQRT_2 * norm * p * (abs_m as f32 * phi).cos()
+            } else {
+                std::f32::consts::SQRT_2 * norm * p * (abs_m as f32 * phi).sin()
+            };
+            out[idx] = val;
+            idx += 1;
+        }
+    }
+    out
+}
+
+fn sh_norm(l: i32, m: i32) -> f32 {
+    let mut num = 1.0f64;
+    let mut den = 1.0f64;
+    for k in 1..=(l - m) {
+        num *= k as f64;
+    }
+    for k in 1..=(l + m) {
+        den *= k as f64;
+    }
+    (((2 * l + 1) as f64 / (4.0 * std::f64::consts::PI)) * (num / den)).sqrt() as f32
+}
+
+fn assoc_legendre(l: i32, m: i32, x: f32, sin_theta: f32) -> f32 {
+    let mut pmm = 1.0f32;
+    if m > 0 {
+        let mut fact = 1.0f32;
+        for _ in 1..=m {
+            pmm *= -fact * sin_theta;
+            fact += 2.0;
+        }
+    }
+    if l == m {
+        return pmm;
+    }
+    let mut pmmp1 = x * (2 * m + 1) as f32 * pmm;
+    if l == m + 1 {
+        return pmmp1;
+    }
+    let mut pll = 0.0f32;
+    for ll in (m + 2)..=l {
+        pll = ((2 * ll - 1) as f32 * x * pmmp1 - (ll + m - 1) as f32 * pmm) / (ll - m) as f32;
+        pmm = pmmp1;
+        pmmp1 = pll;
+    }
+    pll
+}
 
 /// Dynamic point/spot light for cluster-major PRT propagation.
 #[derive(Clone, Copy, Debug)]
@@ -174,7 +242,14 @@ impl PrtStreamingManager {
     }
 
     pub fn step_frame(&mut self) -> PrtStreamingStats {
+        self.step_frame_deltas().0
+    }
+
+    /// Advance one frame of streaming, returning `(stats, uploaded_leaves, evicted_leaves)`.
+    pub fn step_frame_deltas(&mut self) -> (PrtStreamingStats, Vec<usize>, Vec<usize>) {
         let cluster_bytes = crate::prt_volume::CLUSTER_SIZE;
+        let mut uploaded_leaves = Vec::new();
+        let mut evicted_leaves = Vec::new();
         let mut uploaded = 0usize;
         while uploaded < self.max_uploads_per_frame {
             let Some(leaf_idx) = self.pending_uploads.pop_front() else {
@@ -192,6 +267,7 @@ impl PrtStreamingManager {
                     self.stats.resident_leaves -= 1;
                     self.stats.resident_bytes -= cluster_bytes;
                     self.stats.evictions += 1;
+                    evicted_leaves.push(evict_idx);
                 }
             }
             if self.stats.resident_bytes + cluster_bytes <= self.memory_budget_bytes {
@@ -200,10 +276,11 @@ impl PrtStreamingManager {
                 self.stats.resident_leaves += 1;
                 self.stats.resident_bytes += cluster_bytes;
                 self.stats.uploads += 1;
+                uploaded_leaves.push(leaf_idx);
             }
             uploaded += 1;
         }
-        self.stats
+        (self.stats, uploaded_leaves, evicted_leaves)
     }
 
     pub fn is_resident(&self, leaf_idx: usize) -> bool {
@@ -274,6 +351,12 @@ mod tests {
         let res = resolve_prt_irradiance([1.0, 1.0, 1.0], q[0], true, 1.0);
         // leak_bias clamped to 0.25, so result > 0.75
         assert!(res[0] > 0.75);
+    }
+
+    #[test]
+    fn sh64_dc_term_matches_orthonormal_constant() {
+        let sh = eval_sh64([0.0, 1.0, 0.0]);
+        assert!((sh[0] - 0.282_094_8).abs() < 1e-5);
     }
 
     #[test]

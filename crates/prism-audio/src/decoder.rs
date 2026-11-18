@@ -91,8 +91,8 @@ fn decode_probed(probed: symphonium::ProbedAudioSource) -> Result<AudioData, Aud
 
     // Convert planar → interleaved (L,R,L,R,...)
     let mut samples = Vec::with_capacity(channels * num_frames);
+    #[allow(clippy::needless_range_loop)]
     for frame in 0..num_frames {
-        #[allow(clippy::needless_range_loop)]
         for ch in 0..channels {
             samples.push(decoded.data[ch][frame]);
         }

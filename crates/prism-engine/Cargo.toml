@@ -6,13 +6,18 @@ license.workspace = true
 description = "Application layer and main loop for Prisma"
 
 [features]
-default = ["pathtrace", "sharc", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "group-3d", "group-2d", "group-ui"]
+default = ["pathtrace", "sharc", "prt", "anf", "ui", "ui-fontdue", "ibl", "skybox", "shadows", "gtao", "group-3d", "group-2d", "group-ui"]
 legacy-disk-scenes = []
 # Modular building-block toggles: forwarded to prism-render (see docs/DESIGN.md §12).
 pathtrace = ["prism-render/pathtrace"]
 sharc = ["prism-render/sharc"]
+restir_gi = ["prism-render/restir_gi"]
+prt = ["prism-render/prt"]
 nrc = ["prism-render/nrc", "pathtrace"]
 dlss = ["prism-render/dlss"]
+dlfg = ["prism-render/dlfg", "dlss"]
+nrd = ["prism-render/nrd"]
+anf = ["prism-render/anf"]
 # 调试层标记（透传）：引擎自己只用来给 `RenderSettings` 的调试字段做编译期说明，
 # 真正消费它的是 `prism-app`（F3 HUD / 调试图 / 调试快捷键）。默认关，见 prism-app。
 engine-debug = []
@@ -58,24 +63,5 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 dirs = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Foundation",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Ole",
-    "Win32_System_DataExchange",
-    "Win32_System_Memory",
-] }
-
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.22"
-# Match the same backend winit uses (see prism-android/Cargo.toml). The
-# `game-activity` feature selects the GameActivity backend; without it
-# android-activity won't compile.
-android-activity = { version = "0.6", features = ["game-activity"] }
-log = { workspace = true }
-
 [dev-dependencies]
-jni = "0.22"
 tempfile = "3"

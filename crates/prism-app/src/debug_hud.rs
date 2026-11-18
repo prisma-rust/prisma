@@ -182,6 +182,7 @@ mod tests {
     #[test]
     fn hud_shows_gpu_total_and_the_three_slowest_passes() {
         let stats = RenderStats {
+            render_seq: 1,
             frame_time_ms: 16.0,
             fps: 60.0,
             pt_frame_count: None,
@@ -223,6 +224,7 @@ mod tests {
     #[test]
     fn hud_reports_the_frame_span_and_the_unmeasured_gap() {
         let stats = RenderStats {
+            render_seq: 1,
             frame_time_ms: 16.0,
             fps: 60.0,
             pt_frame_count: None,
@@ -262,6 +264,7 @@ mod tests {
             frames.push_frame(16.0, None);
         }
         let stats = RenderStats {
+            render_seq: 1,
             frame_time_ms: 16.0,
             fps: 60.0,
             pt_frame_count: None,
@@ -284,6 +287,7 @@ mod tests {
         let mut frames = prism_render::frame_stats::FrameStats::new(120);
         frames.push_frame(16.0, None);
         let stats = RenderStats {
+            render_seq: 1,
             frame_time_ms: 16.0,
             fps: 60.0,
             pt_frame_count: None,

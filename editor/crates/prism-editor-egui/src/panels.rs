@@ -9,7 +9,8 @@ use prism_editor_core::settings::{
 };
 use prism_editor_core::{
     format_bytes, AssetKind, AssetPreview, EntityJson, Locale, LogLevel, LogSource, Preferences,
-    ProjectSettings, SceneDoc, Workspace, THEME_PRESETS,
+    ProjectSettings, PrtDisplayMode, PrtHeaderInfo, PrtProbeVolume, SceneDoc, Workspace,
+    THEME_PRESETS,
 };
 use prism_engine::scene::systems::terrain::SculptMode;
 use serde_json::{json, Value};
@@ -1993,6 +1994,10 @@ fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) 
         }
     }
 
+    if path.ends_with(".bin") {
+        prpv_asset_section(ui, workspace, &path);
+    }
+
     if details.asset.kind == AssetKind::Texture {
         texture_import_settings(ui, workspace, state, &path);
     }
@@ -2122,14 +2127,20 @@ fn transform_rows(
     let mut position_row: Option<[f32; 3]> = None;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::scrubbable_label(ui, "Position", &mut row_delta, 0.01) {
+        if widgets::aligned_scrubbable_label(ui, "Position", 56.0, &mut row_delta, 0.01) {
             for axis in 0..3 {
                 position[axis] += row_delta;
             }
             position_row = Some(position);
         }
         for axis in 0..3 {
-            if widgets::scrubbable_label(ui, axis_labels[axis], &mut position[axis], 0.01) {
+            if widgets::scrubbable_axis_badge(
+                ui,
+                axis_labels[axis],
+                axis,
+                &mut position[axis],
+                0.01,
+            ) {
                 write(TransformEdit::Axis {
                     field: "position",
                     axis,
@@ -2167,7 +2178,7 @@ fn transform_rows(
     let mut rotation_row = false;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::scrubbable_label(ui, "Rotation", &mut row_delta, 0.5) {
+        if widgets::aligned_scrubbable_label(ui, "Rotation", 56.0, &mut row_delta, 0.5) {
             for value in euler.iter_mut() {
                 *value += row_delta;
             }
@@ -2175,7 +2186,7 @@ fn transform_rows(
         }
         for axis in 0..3 {
             let mut changed =
-                widgets::scrubbable_label(ui, axis_labels[axis], &mut euler[axis], 0.5);
+                widgets::scrubbable_axis_badge(ui, axis_labels[axis], axis, &mut euler[axis], 0.5);
             let response = ui
                 .add(
                     egui::DragValue::new(&mut euler[axis])
@@ -2209,14 +2220,14 @@ fn transform_rows(
     let mut scale_row: Option<[f32; 3]> = None;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::scrubbable_label(ui, "Scale", &mut row_delta, 0.01) {
+        if widgets::aligned_scrubbable_label(ui, "Scale", 56.0, &mut row_delta, 0.01) {
             for axis in 0..3 {
                 scale[axis] += row_delta;
             }
             scale_row = Some(scale);
         }
         for axis in 0..3 {
-            if widgets::scrubbable_label(ui, axis_labels[axis], &mut scale[axis], 0.01) {
+            if widgets::scrubbable_axis_badge(ui, axis_labels[axis], axis, &mut scale[axis], 0.01) {
                 write(TransformEdit::Axis {
                     field: "scale",
                     axis,
@@ -2783,6 +2794,8 @@ fn inspector_single(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState,
             keyframe_animation_editor(ui, workspace, entity_id, &schema.name, &value);
         } else if name == "prism_engine::scene::Terrain" {
             terrain_editor(ui, workspace, &value);
+        } else if name == "prism_engine::scene::GiConfig" {
+            gi_config_editor(ui, workspace, state, &value);
         }
     }
     for action in actions {
@@ -2822,6 +2835,218 @@ fn inspector_single(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState,
             }
         }
     }
+}
+
+fn cached_prpv_header(ui: &Ui, path: &std::path::Path) -> Option<Result<PrtHeaderInfo, String>> {
+    use std::io::Read;
+    let mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    let key = ui.make_persistent_id(("prpv-header-cache", path));
+    if let Some((cached_mtime, cached_res)) = ui
+        .ctx()
+        .data(|d| d.get_temp::<(Option<std::time::SystemTime>, Result<PrtHeaderInfo, String>)>(key))
+    {
+        if cached_mtime == mtime {
+            return Some(cached_res);
+        }
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 116];
+    let res = match file.read_exact(&mut buf) {
+        Ok(()) => PrtProbeVolume::parse_header(&buf),
+        Err(e) => Err(format!("read failed: {e}")),
+    };
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(key, (mtime, res.clone())));
+    Some(res)
+}
+
+fn resolve_gi_volume_on_disk(
+    workspace: &Workspace,
+    declared: Option<&str>,
+) -> (String, Option<std::path::PathBuf>) {
+    let rel = declared
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("assets/gi/probe_volume.bin")
+        .to_string();
+    let p = std::path::PathBuf::from(&rel);
+    if p.is_absolute() {
+        return (rel, p.is_file().then_some(p));
+    }
+    let mut candidates = Vec::new();
+    if let Some(root) = workspace.project_root.as_ref() {
+        candidates.push(root.join(&p));
+        candidates.push(root.join("assets").join(&p));
+    }
+    candidates.push(p);
+    let found = candidates.into_iter().find(|c| c.is_file());
+    (rel, found)
+}
+
+fn prt_probe_summary_rows(ui: &mut Ui, info: &PrtHeaderInfo) {
+    let probes = info.dims[0] as usize * info.dims[1] as usize * info.dims[2] as usize;
+    ui.label(
+        RichText::new(format!(
+            "Grid: {}x{}x{} ({probes} probes) · scene: {}",
+            info.dims[0],
+            info.dims[1],
+            info.dims[2],
+            if info.scene_name.is_empty() {
+                "<unspecified>"
+            } else {
+                info.scene_name.as_str()
+            }
+        ))
+        .size(11.0),
+    );
+    ui.label(
+        RichText::new(format!(
+            "Origin: [{:.1}, {:.1}, {:.1}] · Spacing: [{:.2}, {:.2}, {:.2}]",
+            info.origin[0],
+            info.origin[1],
+            info.origin[2],
+            info.spacing[0],
+            info.spacing[1],
+            info.spacing[2],
+        ))
+        .weak()
+        .size(10.5),
+    );
+    if info.global_hit_ratio >= 0.0 {
+        ui.label(
+            RichText::new(format!(
+                "Global hit ratio: {:.1}%",
+                info.global_hit_ratio * 100.0
+            ))
+            .weak()
+            .size(10.5),
+        );
+    }
+}
+
+fn prt_preview_controls(ui: &mut Ui, workspace: &mut Workspace, max_y_layers: Option<u32>) {
+    ui.checkbox(
+        &mut workspace.prt_gizmos.enabled,
+        "Show PRT probes in Scene View",
+    );
+    if !workspace.prt_gizmos.enabled {
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.label("Mode");
+        egui::ComboBox::from_id_salt(("prt-display-mode", ui.id()))
+            .selected_text(workspace.prt_gizmos.mode.label())
+            .width(136.0)
+            .show_ui(ui, |ui| {
+                for mode in PrtDisplayMode::ALL {
+                    ui.selectable_value(&mut workspace.prt_gizmos.mode, mode, mode.label());
+                }
+            });
+    });
+    ui.horizontal(|ui| {
+        ui.label("Radius");
+        ui.add(
+            egui::DragValue::new(&mut workspace.prt_gizmos.probe_radius)
+                .speed(0.01)
+                .range(0.04..=2.0),
+        );
+        ui.label("Exposure");
+        ui.add(
+            egui::DragValue::new(&mut workspace.prt_gizmos.exposure)
+                .speed(0.05)
+                .range(0.05..=16.0),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut workspace.prt_gizmos.show_grid_bounds, "Bounds");
+        ui.checkbox(
+            &mut workspace.prt_gizmos.show_trilinear_tethers,
+            "Trilinear tethers",
+        );
+    });
+    if let Some(layers) = max_y_layers {
+        ui.horizontal(|ui| {
+            let mut sliced = workspace.prt_gizmos.slice_y.is_some();
+            if ui.checkbox(&mut sliced, "Y slice").changed() {
+                workspace.prt_gizmos.slice_y = if sliced { Some(0) } else { None };
+            }
+            if let Some(ref mut layer) = workspace.prt_gizmos.slice_y {
+                let top = layers.saturating_sub(1);
+                ui.add(egui::DragValue::new(layer).range(0..=top).speed(0.1));
+                ui.label(RichText::new(format!("/ {top}")).weak().size(10.5));
+            }
+        });
+    }
+}
+
+fn prpv_asset_section(ui: &mut Ui, workspace: &mut Workspace, rel_path: &str) {
+    let Some(root) = workspace.project_root.as_ref() else {
+        return;
+    };
+    let abs = root.join(rel_path);
+    let Some(Ok(info)) = cached_prpv_header(ui, &abs) else {
+        return;
+    };
+    ui.separator();
+    ui.label(
+        RichText::new("Baked GI Probe Volume (PRPV)")
+            .strong()
+            .size(11.0),
+    );
+    prt_probe_summary_rows(ui, &info);
+    prt_preview_controls(ui, workspace, Some(info.dims[1]));
+}
+
+fn gi_config_editor(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState, value: &Value) {
+    let declared = value.get("volume").and_then(Value::as_str);
+    let (rel_path, disk_path) = resolve_gi_volume_on_disk(workspace, declared);
+    let mut y_layers = None;
+
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .corner_radius(egui::CornerRadius::same(2))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new("PRT Probe Volume Preview")
+                    .strong()
+                    .size(11.5),
+            );
+            match disk_path {
+                Some(ref abs) => match cached_prpv_header(ui, abs) {
+                    Some(Ok(info)) => {
+                        y_layers = Some(info.dims[1]);
+                        prt_probe_summary_rows(ui, &info);
+                    }
+                    Some(Err(err)) => {
+                        ui.label(
+                            RichText::new(format!("Invalid PRPV file ({rel_path}): {err}"))
+                                .color(Color32::from_rgb(232, 96, 96))
+                                .size(10.5),
+                        );
+                    }
+                    None => {}
+                },
+                None => {
+                    ui.label(
+                        RichText::new(format!("No baked probe file at `{rel_path}` yet."))
+                            .weak()
+                            .size(10.5),
+                    );
+                }
+            }
+            ui.add_space(2.0);
+            prt_preview_controls(ui, workspace, y_layers);
+            ui.add_space(2.0);
+            ui.add_enabled_ui(!state.build_running, |ui| {
+                if ui.button("Bake GI Now").clicked() {
+                    state.pending_build = Some(crate::build::BuildKind::BakeGi {
+                        output: rel_path,
+                        rays: state.offline.gi_rays,
+                        bounces: state.offline.gi_bounces,
+                    });
+                }
+            });
+        });
 }
 
 fn line_renderer_editor(
@@ -3023,7 +3248,7 @@ fn sprite_preview(ui: &mut Ui, workspace: &Workspace, state: &mut UiState, rende
         image_rect.width() / columns as f32,
         image_rect.height() / rows as f32,
     );
-    let grid = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(70));
+    let grid = egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(70));
     for column in 1..columns {
         let x = image_rect.left() + cell.x * column as f32;
         painter.line_segment(
@@ -3055,7 +3280,7 @@ fn sprite_preview(ui: &mut Ui, workspace: &Workspace, state: &mut UiState, rende
     painter.rect_stroke(
         highlight,
         0.0,
-        egui::Stroke::new(2.0, ui.visuals().selection.bg_fill),
+        egui::Stroke::new(2.0_f32, ui.visuals().selection.bg_fill),
         egui::StrokeKind::Inside,
     );
     let total = columns * rows;
@@ -3307,21 +3532,17 @@ fn draw_key_ticks(
         ui.allocate_exact_size(egui::vec2(slider_rect.width(), 6.0), egui::Sense::click());
     let painter = ui.painter();
     let hovered = response.hover_pos().map(|pos| pos.x - rect.left());
-    let mut hovered_tick = None;
     for offset in &offsets {
         let x = rect.left() + offset;
         let near =
             hovered.is_some_and(|x_hover| (x_hover - offset).abs() <= KEY_TICK_HIT_TOLERANCE);
-        if near {
-            hovered_tick = Some(*offset);
-        }
         painter.line_segment(
             [
                 egui::pos2(x, rect.top() + 1.0),
                 egui::pos2(x, rect.bottom() - 1.0),
             ],
             egui::Stroke::new(
-                if near { 2.0 } else { 1.0 },
+                if near { 2.0_f32 } else { 1.0_f32 },
                 egui::Color32::from_rgb(255, 206, 84),
             ),
         );
@@ -3482,7 +3703,7 @@ fn draw_blend_axis(ui: &mut egui::Ui, positions: &[f32], parameter: f32) -> Opti
                 egui::pos2(x, rect.top() + 3.0),
                 egui::pos2(x, rect.bottom() - 3.0),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 124, 132)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 124, 132)),
         );
     }
 
@@ -5949,11 +6170,6 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     asset_delete_confirm(ui, workspace, state);
 }
 
-/// 删除资产：按首选项决定是否先弹确认框。
-pub fn request_delete_asset(workspace: &mut Workspace, state: &mut UiState, path: &str) {
-    request_delete_assets(workspace, state, vec![path.to_string()]);
-}
-
 /// 批量删除资产（一个确认框、逐项删除）。
 pub fn request_delete_assets(workspace: &mut Workspace, state: &mut UiState, paths: Vec<String>) {
     if state.pending_asset_delete.is_some() || paths.is_empty() {
@@ -7778,7 +7994,7 @@ fn draw_anim_graph_layout(
             };
             painter.line_segment(
                 [to_screen(source), to_screen(target)],
-                egui::Stroke::new(1.0, Color32::from_rgb(88, 96, 108)),
+                egui::Stroke::new(1.0_f32, Color32::from_rgb(88, 96, 108)),
             );
         }
     }
@@ -7813,7 +8029,7 @@ fn draw_anim_graph_layout(
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, Color32::from_rgb(120, 132, 150)),
+            egui::Stroke::new(1.0_f32, Color32::from_rgb(120, 132, 150)),
             egui::StrokeKind::Inside,
         );
         painter.text(
@@ -10796,13 +11012,8 @@ const FRAME_BUDGET_MS: f32 = 16.6;
 /// 每个有 GPU 时间的 pass 分到的预算份额（#518）。
 ///
 /// 没有逐 pass 的用户配置时，最直观的「分层预算」是把整帧预算均分给当前
-/// 实际计时的 pass；某个 pass 独占超过自己的份额就标红。pass 数为 0 时返回
-/// 0，调用方不会拿它做除法。
-fn per_pass_budget_ms(pass_count: usize) -> f32 {
-    per_pass_budget_ms_with_total(pass_count, FRAME_BUDGET_MS)
-}
-
-/// 用户配置的整帧预算按实际计时 pass 均分（#518）。
+/// 实际计时的 pass；某个 pass 独占超过自己的份额就标红。pass 数为 0 或预算
+/// 非法时返回 0，调用方不会拿它做除法。
 fn per_pass_budget_ms_with_total(pass_count: usize, frame_budget_ms: f32) -> f32 {
     if pass_count == 0 || !frame_budget_ms.is_finite() || frame_budget_ms <= 0.0 {
         0.0
@@ -10925,7 +11136,7 @@ fn render_graph_history(
             egui::pos2(rect.left(), budget_y),
             egui::pos2(rect.right(), budget_y),
         ],
-        egui::Stroke::new(1.0, Color32::from_rgb(226, 178, 84)),
+        egui::Stroke::new(1.0_f32, Color32::from_rgb(226, 178, 84)),
     );
 
     let last = (samples.len() - 1) as f32;
@@ -10936,7 +11147,7 @@ fn render_graph_history(
         .collect();
     painter.add(egui::Shape::line(
         points,
-        egui::Stroke::new(1.5, Color32::from_rgb(120, 200, 140)),
+        egui::Stroke::new(1.5_f32, Color32::from_rgb(120, 200, 140)),
     ));
 }
 
@@ -11607,6 +11818,8 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     });
                 }
             });
+            ui.add_space(3.0);
+            prt_preview_controls(ui, workspace, None);
         });
 
     egui::CollapsingHeader::new("Heightmap")
@@ -12167,7 +12380,7 @@ mod window_smoke_tests {
             (AssetView::Grid, AssetColumns::Two),
             (AssetView::List, AssetColumns::Two),
         ] {
-            let mut workspace = Workspace::sample();
+            let workspace = Workspace::sample();
             let mut state = UiState::new();
             state.asset_view = view;
             state.asset_columns = columns;
@@ -12456,10 +12669,16 @@ mod window_smoke_tests {
 
     #[test]
     fn per_pass_budget_splits_the_frame_budget_and_handles_zero() {
-        assert_eq!(per_pass_budget_ms(0), 0.0);
-        assert!((per_pass_budget_ms(1) - FRAME_BUDGET_MS).abs() < 1e-6);
-        assert!((per_pass_budget_ms(4) - FRAME_BUDGET_MS / 4.0).abs() < 1e-6);
-        assert!(per_pass_budget_ms(8) < per_pass_budget_ms(4));
+        assert_eq!(per_pass_budget_ms_with_total(0, FRAME_BUDGET_MS), 0.0);
+        assert!((per_pass_budget_ms_with_total(1, FRAME_BUDGET_MS) - FRAME_BUDGET_MS).abs() < 1e-6);
+        assert!(
+            (per_pass_budget_ms_with_total(4, FRAME_BUDGET_MS) - FRAME_BUDGET_MS / 4.0).abs()
+                < 1e-6
+        );
+        assert!(
+            per_pass_budget_ms_with_total(8, FRAME_BUDGET_MS)
+                < per_pass_budget_ms_with_total(4, FRAME_BUDGET_MS)
+        );
 
         // 用户自定义整帧预算（#518）：按当前计时 pass 数均分。
         assert_eq!(per_pass_budget_ms_with_total(0, 8.0), 0.0);

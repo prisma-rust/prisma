@@ -10,7 +10,7 @@
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
 
 /// Push-constant block size in bytes (reflected).
-pub const PUSH_CONSTANT_SIZE: u32 = 124;
+pub const PUSH_CONSTANT_SIZE: u32 = 128;
 
 // --- descriptor set 0 ---
 pub const FRAME_SET: u32 = 0;
@@ -234,9 +234,9 @@ const _: () = {
 /// GPU layout struct (auto-generated from Slang `PbrBindlessPush`).
 ///
 /// Field offsets are the reflected std140 ones — alignment holes are emitted as
-/// explicit `_pad_*` fillers, so `size_of` is 124 bytes and every field sits
+/// explicit `_pad_*` fillers, so `size_of` is 128 bytes and every field sits
 /// where the shader expects it.
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct PbrBindlessPush {
     /// offset 0, size 64
@@ -271,10 +271,12 @@ pub struct PbrBindlessPush {
     pub splat_tiling: f32,
     /// offset 120, size 4
     pub gi_mode: u32,
+    /// offset 124, size 4
+    pub prt_leak_bias: f32,
 }
 
 const _: () = {
-    assert!(::std::mem::size_of::<PbrBindlessPush>() == 124);
+    assert!(::std::mem::size_of::<PbrBindlessPush>() == 128);
     assert!(::std::mem::offset_of!(PbrBindlessPush, model) == 0);
     assert!(::std::mem::offset_of!(PbrBindlessPush, material_slot) == 64);
     assert!(::std::mem::offset_of!(PbrBindlessPush, env_handle) == 68);
@@ -291,4 +293,5 @@ const _: () = {
     assert!(::std::mem::offset_of!(PbrBindlessPush, splat_slot3) == 112);
     assert!(::std::mem::offset_of!(PbrBindlessPush, splat_tiling) == 116);
     assert!(::std::mem::offset_of!(PbrBindlessPush, gi_mode) == 120);
+    assert!(::std::mem::offset_of!(PbrBindlessPush, prt_leak_bias) == 124);
 };

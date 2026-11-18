@@ -23,6 +23,7 @@ pub mod components;
 pub mod doc;
 pub mod dock;
 pub mod expr;
+pub mod gizmo;
 pub mod graph_validation;
 pub mod i18n;
 pub mod ini;
@@ -72,6 +73,11 @@ pub use components::ComponentMap;
 pub use doc::{EntityJson, SceneDoc, TransformJson};
 pub use dock::{
     DockDirection, DockEdge, DockLayout, DockNode, DockZone, FloatPanel, LAYOUT_PRESETS,
+};
+pub use gizmo::{
+    emit_prt_probe_gizmos, unit_ring_points, ComponentGizmoDrawer, GizmoBadgeIcon, GizmoCategory,
+    GizmoCommand, GizmoContext, GizmoEntityContext, GizmoFilter, GizmoRegistry, PrtDisplayMode,
+    PrtGizmoSettings, PrtHeaderInfo, PrtProbeVolume,
 };
 pub use graph_validation::validate_anim_graph;
 pub use i18n::{I18n, Locale};

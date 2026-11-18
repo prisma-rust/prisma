@@ -1,6 +1,6 @@
 //! 运行期生成物缓存目录解析——与构建输入（`assets/`）严格区分。
 //!
-//! IBL 预卷积、BRDF LUT、着色器 / 管线缓存这类**可以随时删除、删了重算**的产物
+//! 着色器 / 管线缓存这类**依赖本机驱动/硬件、可以随时删除重算**的运行期产物
 //! 不能写进 `assets/`：那是只读的构建输入目录（装到 `Program Files` 后不可写，
 //! Android 上更在 APK 内）。它们也不该占用用户配置目录（`%APPDATA%`，通常在系统盘）。
 //!
@@ -8,7 +8,6 @@
 //!
 //! ```text
 //! <可执行文件目录>/cache/
-//!     ibl/        IBL 预卷积 + BRDF LUT
 //!     shader/     管线缓存（未来）
 //!     gi/         GI / 辐射缓存（未来）
 //! ```
@@ -29,15 +28,16 @@ use std::path::{Path, PathBuf};
 /// 缓存根目录名（可执行文件同目录下）。
 pub const CACHE_ROOT_DIR_NAME: &str = "cache";
 
-/// 测试二进制所在的子目录名：从这里上跳一层，与同 profile 的普通二进制共用缓存。
+/// Cargo 构建目录名：缓存根按它定位，确保落在可丢弃的产物目录里。
+const TARGET_DIR_NAME: &str = "target";
+
+/// Cargo 放测试二进制的子目录名（仅测试断言用）。
 #[cfg(test)]
 const TEST_BINARY_DIR_NAME: &str = "deps";
 
 /// 运行期缓存的类别。每类一个一级子目录，互不干扰，可各自整目录删除。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
-    /// IBL 预卷积产物与 BRDF LUT。
-    Ibl,
     /// 管线缓存（`VkPipelineCache` 落盘）。
     Shader,
     /// GI / 辐射缓存。
@@ -48,7 +48,6 @@ impl CacheKind {
     /// 子目录名。
     pub fn dir_name(self) -> &'static str {
         match self {
-            Self::Ibl => "ibl",
             Self::Shader => "shader",
             Self::Gi => "gi",
         }
@@ -70,10 +69,14 @@ pub fn cache_dir(kind: CacheKind) -> Option<PathBuf> {
     Some(cache_root()?.join(kind.dir_name()))
 }
 
-const TARGET_DIR_NAME: &str = "target";
-
-/// Resolves Cargo's profile directory (`target/debug`, `target/release`) even when
-/// test runners nest binaries under `deps/<hash>/` or `build/<crate>/<hash>/out/`.
+/// Cargo 的 profile 目录（`target/debug`、`target/release`）。
+///
+/// 可执行文件不一定直接躺在 profile 目录里：普通二进制在 `target/debug`，
+/// 测试二进制在 `target/debug/deps`，有些运行器还会再套一层哈希目录
+/// （`target/debug/deps/<hash>/`）。这些位置都应该共用同一份缓存，所以向上找
+/// 名为 `target` 的祖先，取它下面的第一段子目录名作为 profile。
+///
+/// 找不到 `target` 时退回可执行文件目录本身（安装后的发布包即属此列）。
 fn profile_dir(exe_dir: &Path) -> PathBuf {
     let mut current = Some(exe_dir);
     while let Some(dir) = current {
@@ -101,6 +104,9 @@ mod tests {
             root.file_name().and_then(|name| name.to_str()),
             Some(CACHE_ROOT_DIR_NAME)
         );
+        // 缓存必须落在 target/<profile>/ 下：可丢弃、随 cargo clean 一起消失。
+        // 测试二进制的实际层级随 cargo 版本和运行器而变，所以只断言「某个祖先是
+        // target」，不写死有几层。
         let profile = root.parent().expect("profile dir");
         assert!(
             profile.ancestors().any(|dir| {
@@ -109,6 +115,7 @@ mod tests {
             "cache root {:?} is not under a target/ directory",
             root
         );
+        // 并且绝不能落在 deps/ 里——那是测试二进制目录，不是共享 profile。
         assert_ne!(
             profile.file_name().and_then(|name| name.to_str()),
             Some(TEST_BINARY_DIR_NAME)
@@ -116,9 +123,32 @@ mod tests {
     }
 
     #[test]
+    fn profile_dir_unwraps_nested_test_directories() {
+        // cargo 会把测试二进制放在 deps/ 下，有的运行器再套一层哈希目录。
+        let cases = [
+            ("/w/target/debug", "/w/target/debug"),
+            ("/w/target/debug/deps", "/w/target/debug"),
+            ("/w/target/debug/deps/ef4c05d3ab9ba736", "/w/target/debug"),
+            ("/w/target/release", "/w/target/release"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                profile_dir(Path::new(input)),
+                PathBuf::from(expected),
+                "profile_dir({input})"
+            );
+        }
+        // 不在 target/ 下时原样返回（安装后的发布包走这条路）。
+        assert_eq!(
+            profile_dir(Path::new("/opt/game")),
+            PathBuf::from("/opt/game")
+        );
+    }
+
+    #[test]
     fn every_kind_gets_its_own_subdirectory() {
         let root = cache_root().expect("cache root");
-        for kind in [CacheKind::Ibl, CacheKind::Shader, CacheKind::Gi] {
+        for kind in [CacheKind::Shader, CacheKind::Gi] {
             let dir = cache_dir(kind).expect("cache dir");
             assert_eq!(dir.parent(), Some(root.as_path()));
             assert_eq!(

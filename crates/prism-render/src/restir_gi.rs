@@ -22,9 +22,9 @@ use crate::compute::ComputePipeline;
 use crate::context::VulkanContext;
 use crate::math::mat_inverse;
 use crate::render_graph::{
-    GiMode, GraphResources, PassInfo, PassKind, RenderContext, RenderGraphBuilder, RenderMode,
-    RenderPassNode, RenderSettings, ResourceHandle, ResourceType, ResourceUsage, FORWARD_ALBEDO_H,
-    FORWARD_DEPTH_H, FORWARD_NORMAL_H, FORWARD_VELOCITY_H, RESTIR_GI_COLOR_H,
+    GraphResources, PassInfo, PassKind, RasterGiMode, RenderContext, RenderGraphBuilder,
+    RenderMode, RenderPassNode, RenderSettings, ResourceHandle, ResourceType, ResourceUsage,
+    FORWARD_ALBEDO_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, FORWARD_VELOCITY_H, RESTIR_GI_COLOR_H,
 };
 use crate::shader;
 use crate::shader_bindings::restir_gi as bindings;
@@ -1173,7 +1173,9 @@ impl RenderPassNode for RestirGiPass {
         // `gi_mode` selects the producer; the forward pass falls back to the
         // baked probe volume when this pass is idle, so nothing runs unless the
         // caller asked for it.
-        if ctx.settings.gi_mode != GiMode::Restir {
+        if ctx.frame.render_mode != RenderMode::Raster
+            || ctx.settings.raster_gi != RasterGiMode::Restir
+        {
             return Ok(());
         }
         let scale = ctx.settings.restir_gi_scale;
