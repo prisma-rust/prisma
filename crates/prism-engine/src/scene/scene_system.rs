@@ -566,6 +566,10 @@ impl SceneManager {
         let manifest_path = match manifest_path {
             Some(p) => p,
             None => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "diagnostic log only when scene manifest is missing"
+                )]
                 let cwd = std::env::current_dir()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|_| "<unknown>".into());
