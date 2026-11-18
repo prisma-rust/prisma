@@ -686,6 +686,27 @@ def main() -> int:
                     )
                 )
 
+    if args.all or has_prefix(changed, "docs/") or has_prefix(changed, "scripts/"):
+        checks.append(
+            Check(
+                "docs naming & index",
+                [sys.executable, str(ROOT / "scripts" / "check_docs.py")],
+            )
+        )
+    if args.all or has_prefix(changed, "assets/shaders/"):
+        if shutil.which("slangc"):
+            checks.append(
+                Check(
+                    "SPIR-V freshness",
+                    ["bash", str(ROOT / "assets" / "shaders" / "compile.sh")],
+                )
+            )
+        else:
+            spv_skip = Check("SPIR-V freshness", ["slangc"])
+            spv_skip.status = "skip"
+            spv_skip.detail = "slangc not on PATH"
+            spv_skip.done = True
+            checks.append(spv_skip)
     if args.all or has_prefix(changed, "crates/") or has_prefix(changed, "projects/") or has_prefix(changed, "editor/") or any(Path(p).name in ("Cargo.toml", "Cargo.lock") for p in changed):
         checks.append(standalone_lockfiles_check())
     if args.all or has_prefix(changed, "editor/") or "docs/feature-map.json" in changed or has_prefix(changed, "scripts/"):

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Pre-push hook: run fast pre-PR check before pushing.
+set -eu
+exec python3 scripts/pr_ready.py --quick
