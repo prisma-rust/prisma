@@ -127,8 +127,8 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # 0b. 玩家依赖预算：`prism-app` 是玩家二进制唯一顶层依赖，多一个 crate 就是
-  #     多一份安装包体积。只做依赖解析，不编译、不需要 .spv。
+  # 0b. Player dependency budget: `prism-app` is the single top-level player
+  #     dependency; resolution only (no compile or .spv needed).
   # ---------------------------------------------------------------------------
   deps:
     name: player dependency budget
@@ -145,8 +145,7 @@ jobs:
         run: python3 scripts/check_deps.py
 
   # ---------------------------------------------------------------------------
-  # 0c. 积木特性矩阵：关掉某块能力之后仍然要能编译。feature 一旦没人编译就会
-  #     烂掉，模板宣称的「2D 项目不编 3D/PT」必须由 CI 真的验证。
+  # 0c. Modular feature matrix: verify disabled subsystems still compile.
   # ---------------------------------------------------------------------------
   features:
     name: modular feature matrix
@@ -168,9 +167,7 @@ jobs:
       - name: Feature matrix
         run: python3 scripts/check_features.py
 
-      # 文本光栅后端 B（`ui-directwrite`）只在 Windows 目标编译，Linux 上的
-      # `check_features.py` 覆盖不到它 —— 交叉 `cargo check` 是唯一在 CI 里能编译它的
-      # 方式（check 不链接，只需要目标标准库，不需要 mingw linker）。
+      # Cross-check Windows-only DirectWrite/fontdue text backends (no linker needed).
       - name: Windows text backends (cross check)
         run: |
           rustup target add x86_64-pc-windows-gnu
@@ -225,14 +222,12 @@ jobs:
           cargo fmt -- --check
           cargo clippy --all-targets -- -D warnings
 
-      # `derive` / `glam` 必须真的是可选特性：关掉默认特性后仍要能编译。
-      # 没有这条检查时，`#[cfg(...)]` 一漏就只在有人手动跑时才会暴露。
+      # Verify `derive` / `glam` remain genuinely optional features.
       - name: check prism-reflect without default features
         run: cargo check -p prism-reflect --no-default-features
 
   # ---------------------------------------------------------------------------
-  # 3c. 发布档体积：nightly `-Z build-std` + immediate-abort（见 scripts/build-dist.sh）。
-  #     只在 master / tag 上跑：nightly 是不稳定功能，不该阻塞每个 PR。
+  # 3c. Release binary size: nightly `-Z build-std` + immediate-abort (tags / manual dispatch).
   # ---------------------------------------------------------------------------
   dist-size:
     name: dist build (nightly build-std)
@@ -323,10 +318,7 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # 3. 用户工程：`projects/*` 各自是独立 workspace，根 workspace 的 `cargo build`
-  #    覆盖不到它们。引擎改了组件字段而工程没跟上（`LineRenderer` 加字段那次），
-  #    或者工程自己的 `Cargo.lock` 过期，都只有下游动手时才会发现 —— 这个 job
-  #    把它们每次都构建一遍（#981）。
+  # 3. User projects (`projects/*` are standalone workspaces outside root Cargo build).
   # ---------------------------------------------------------------------------
   user-projects:
     name: user projects build
@@ -339,7 +331,7 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      # 工程链接 prism-app（默认带 audio feature），需要 ALSA 头文件。
+      # Projects link `prism-app` (default `audio` feature), requiring ALSA headers.
       - name: Install system libraries
         run: |
           sudo apt-get update
@@ -350,7 +342,7 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-projects
 
-      # `--locked`：工程的 Cargo.lock 也要跟着引擎走，否则本地能跑、CI 用旧锁。
+      # `--locked`: keep standalone project Cargo.lock files in sync with engine changes.
       - name: Build every project workspace
         run: |
           for manifest in projects/*/Cargo.toml; do

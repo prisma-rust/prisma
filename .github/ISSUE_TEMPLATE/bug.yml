@@ -6,21 +6,21 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢报告。请尽量给出可复现步骤和日志。
-        **不要粘贴 token、密钥或本机敏感路径**；安全问题请用 Security → Report a vulnerability。
+        Thanks for reporting. Please provide minimal reproduction steps and logs.
+        **Do not paste tokens, secrets, or local sensitive paths.** Report security issues via Security -> Report a vulnerability.
 
   - type: textarea
     id: summary
     attributes:
-      label: 现象
-      description: 发生了什么？你期望发生什么？
+      label: Observed / Expected
+      description: What happened vs. what you expected?
     validations:
       required: true
 
   - type: dropdown
     id: platform
     attributes:
-      label: 平台
+      label: Platform
       options:
         - Windows
         - Linux
@@ -33,15 +33,15 @@ body:
   - type: input
     id: version
     attributes:
-      label: 版本 / commit
-      placeholder: "例如 master@141aa6a 或 v0.1.0"
+      label: Version / Commit
+      placeholder: "e.g. master@141aa6a or v0.1.0"
     validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: 复现步骤
+      label: Reproduction Steps
       placeholder: |
         1. ...
         2. ...
@@ -52,12 +52,12 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: 日志 / 截图
-      description: "RUST_LOG=info 的输出、Vulkan 验证层报错、帧捕获"
+      label: Logs / Screenshots
+      description: "RUST_LOG=info output, Vulkan validation errors, or frame captures"
       render: shell
 
   - type: input
     id: gpu
     attributes:
-      label: GPU / 驱动（渲染问题）
-      placeholder: "例如 RTX 4070 / NVIDIA 580.xx，或 Adreno 740"
+      label: GPU / Driver (for rendering issues)
+      placeholder: "e.g. RTX 4070 / NVIDIA 580.xx, or Adreno 740"

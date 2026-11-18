@@ -1,7 +1,7 @@
 name: cancel-on-close
 
-# PR 关闭/合并后，立刻取消它还在排队或运行的检查，释放 runner。
-# pull_request_target 才能取消 fork PR 的 run；不 checkout、不执行 PR 代码。
+# Cancel queued/running checks immediately when a PR is closed or merged.
+# Requires pull_request_target so fork PR runs can be cancelled without checking out PR code.
 
 on:
   pull_request_target:

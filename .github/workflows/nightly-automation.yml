@@ -89,7 +89,7 @@ jobs:
               existing=$(gh api "repos/$REPO/issues/$num/comments" --paginate --jq '.[].body' || true)
               if ! printf '%s' "$existing" | grep -qF "<!-- janitor:stale-claim -->"; then
                 gh issue comment "$num" -R "$REPO" --body "<!-- janitor:stale-claim -->
-🤖 Agent: \`agent/working\` 已超过 24 小时无更新，自动切换为 \`agent/blocked\`，请认领者或维护者确认进度。"
+🤖 Agent: \`agent/working\` has been idle for >24h; switched to \`agent/blocked\` for maintainer/owner follow-up."
               fi
               gh issue edit "$num" -R "$REPO" --remove-label "agent/working" --add-label "agent/blocked,automation" || true
             fi

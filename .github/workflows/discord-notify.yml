@@ -1,9 +1,8 @@
 name: Discord notify
 
-# 把 issue / PR / release / CI 失败发到 Discord（可选）。
-# 没配 DISCORD_WEBHOOK_URL 时直接跳过，不影响 CI。
-# 只做 outbound；Discord -> GitHub 的报告由外部 bot（Kira 等价物）负责，
-# 契约见 docs/integrations.md。
+# Send optional issue / PR / release / CI-failure notifications to Discord.
+# Skips silently when DISCORD_WEBHOOK_URL is unset. Outbound only;
+# Discord -> GitHub reports are handled by the external bot (see docs/integrations.md).
 
 on:
   issues:
@@ -77,7 +76,7 @@ jobs:
           else:
               raise SystemExit(0)
 
-          # @silent 抑制通知（release 除外）；allowed_mentions 为空，避免标题里的 @everyone 生效。
+          # Suppress pings with @silent (except releases) and empty allowed_mentions.
           content = text if event == "release" else "@silent " + text
           body = json.dumps({
               "content": content[:1900],
@@ -90,6 +89,6 @@ jobs:
           )
           try:
               urllib.request.urlopen(request, timeout=10).read()
-          except Exception as error:  # webhook 失败不应让 CI 变红
+          except Exception as error:  # Webhook failures must not fail CI.
               print(f"Discord webhook failed: {error}")
           PY
