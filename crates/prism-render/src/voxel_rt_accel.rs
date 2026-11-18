@@ -109,9 +109,9 @@ impl VoxelChunkBlas {
         }
 
         let aabb_addr = unsafe {
-            context
-                .device
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(aabb_buffer))
+            context.device.get_buffer_device_address(
+                &vk::BufferDeviceAddressInfo::default().buffer(aabb_buffer),
+            )
         };
 
         let geom_data = vk::AccelerationStructureGeometryDataKHR {
@@ -175,9 +175,9 @@ impl VoxelChunkBlas {
         .context("VoxelChunkBlas: create scratch buffer")?;
 
         let scratch_addr = unsafe {
-            context
-                .device
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(scratch_buffer))
+            context.device.get_buffer_device_address(
+                &vk::BufferDeviceAddressInfo::default().buffer(scratch_buffer),
+            )
         };
 
         let mut exec_build_info = build_info;
@@ -218,8 +218,7 @@ impl VoxelChunkBlas {
                 .end_command_buffer(cmd)
                 .context("VoxelChunkBlas: end command buffer")?;
 
-            let submit_info =
-                vk::SubmitInfo::default().command_buffers(std::slice::from_ref(&cmd));
+            let submit_info = vk::SubmitInfo::default().command_buffers(std::slice::from_ref(&cmd));
             context
                 .device
                 .queue_submit(context.graphics_queue, &[submit_info], vk::Fence::null())

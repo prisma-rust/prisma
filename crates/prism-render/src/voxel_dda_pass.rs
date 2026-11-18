@@ -1575,10 +1575,8 @@ impl RenderPassNode for VoxelDdaPass {
 
         if self.cached_emitter_sig != Some(scene.signature) {
             if self.atlas_tile_albedos.is_none() {
-                self.atlas_tile_albedos = scene
-                    .atlas
-                    .as_deref()
-                    .map(|a| compute_atlas_tile_albedo(a));
+                self.atlas_tile_albedos =
+                    scene.atlas.as_deref().map(|a| compute_atlas_tile_albedo(a));
             }
             let tile_albedos = self.atlas_tile_albedos.as_ref();
             self.chunk_emitter_cache
@@ -1589,10 +1587,7 @@ impl RenderPassNode for VoxelDdaPass {
                     .chunk_emitter_cache
                     .entry(chunk.entity_id)
                     .or_insert_with(|| {
-                        (
-                            chunk.version,
-                            extract_chunk_emitters(chunk, tile_albedos),
-                        )
+                        (chunk.version, extract_chunk_emitters(chunk, tile_albedos))
                     });
                 if entry.0 != chunk.version {
                     entry.0 = chunk.version;
@@ -1608,7 +1603,11 @@ impl RenderPassNode for VoxelDdaPass {
             if let Some(pt) = prev_t.filter(|t| t.extent == extent && t.history_ready) {
                 (true, pt.accum_gi.view, pt.pos_norm.view)
             } else {
-                (false, self.dummies.read_f16.view, self.dummies.read_f16.view)
+                (
+                    false,
+                    self.dummies.read_f16.view,
+                    self.dummies.read_f16.view,
+                )
             }
         };
 

@@ -53,7 +53,9 @@ pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureF
 }
 
 /// `.rskin` 的子网格表 → 渲染侧的材质区间。
-pub(super) fn skinned_submeshes(info: &prism_asset::formats_skinned::SkinnedMeshInfo) -> Vec<MeshSubmesh> {
+pub(super) fn skinned_submeshes(
+    info: &prism_asset::formats_skinned::SkinnedMeshInfo,
+) -> Vec<MeshSubmesh> {
     info.submeshes
         .iter()
         .map(|submesh| MeshSubmesh {
@@ -232,7 +234,11 @@ impl GpuAssetResolver {
     }
 
     /// Load texture input by path (standalone texture or .ratlas#sub_sprite) -> `TextureUploadInput`.
-    pub(super) fn load_texture_by_path(&mut self, entity: Entity, path: &str) -> Option<TextureUploadInput> {
+    pub(super) fn load_texture_by_path(
+        &mut self,
+        entity: Entity,
+        path: &str,
+    ) -> Option<TextureUploadInput> {
         if let Some((atlas_path, sprite_name)) = path.split_once('#') {
             let atlas_id = self.resource_manager.id_by_path(atlas_path).or_else(|| {
                 report_missing_reference(atlas_path, "atlas");

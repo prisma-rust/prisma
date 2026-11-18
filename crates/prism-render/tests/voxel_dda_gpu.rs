@@ -254,8 +254,12 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
         for z in 0..dims[2] {
             for y in 0..dims[1] {
                 for x in 0..dims[0] {
-                    let is_shell =
-                        x == 0 || x == dims[0] - 1 || y == 0 || y == dims[1] - 1 || z == 0 || z == 4;
+                    let is_shell = x == 0
+                        || x == dims[0] - 1
+                        || y == 0
+                        || y == dims[1] - 1
+                        || z == 0
+                        || z == 4;
                     if is_shell {
                         cells[l1_idx(x, y, z)] = [u32::MAX, wall_rgba, wall_vis, 0];
                     }
@@ -269,69 +273,70 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
         cells
     };
 
-    let render_room = |renderer: &mut GraphRenderer, sig: u64, l1_cells: Vec<[u32; 4]>| -> Vec<u8> {
-        let scene = Arc::new(VoxelSceneUpload {
-            signature: sig,
-            elapsed_seconds: 1.0,
-            chunks: vec![Arc::new(VoxelChunkUpload {
-                entity_id: 2,
-                version: sig,
-                origin_l1: [0, 0, 0],
-                dims_l1: dims,
-                l1_cells,
-                brick_occ: Vec::new(),
-                brick_cells: Vec::new(),
-            })],
-            cursor: None,
-            atlas: None,
-        });
-        renderer.set_voxel_scene(Some(scene));
+    let render_room =
+        |renderer: &mut GraphRenderer, sig: u64, l1_cells: Vec<[u32; 4]>| -> Vec<u8> {
+            let scene = Arc::new(VoxelSceneUpload {
+                signature: sig,
+                elapsed_seconds: 1.0,
+                chunks: vec![Arc::new(VoxelChunkUpload {
+                    entity_id: 2,
+                    version: sig,
+                    origin_l1: [0, 0, 0],
+                    dims_l1: dims,
+                    l1_cells,
+                    brick_occ: Vec::new(),
+                    brick_cells: Vec::new(),
+                })],
+                cursor: None,
+                atlas: None,
+            });
+            renderer.set_voxel_scene(Some(scene));
 
-        let eye = [2.0, 1.8, 1.5];
-        let target = [2.0, 1.7, 4.0];
-        let vp = make_camera_vp(eye, target, 1.0);
-        let mut frame_data = FrameUBOData::default();
-        frame_data.viewProj = vp;
-        frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
-        frame_data.lightDirection = [0.0, 1.0, 0.0, 0.0];
-        frame_data.lightColor = [0.0, 0.0, 0.0, 0.0];
-        frame_data.viewportW = 256.0;
-        frame_data.viewportH = 256.0;
-        frame_data.exposure = 1.0;
+            let eye = [2.0, 1.8, 1.5];
+            let target = [2.0, 1.7, 4.0];
+            let vp = make_camera_vp(eye, target, 1.0);
+            let mut frame_data = FrameUBOData::default();
+            frame_data.viewProj = vp;
+            frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
+            frame_data.lightDirection = [0.0, 1.0, 0.0, 0.0];
+            frame_data.lightColor = [0.0, 0.0, 0.0, 0.0];
+            frame_data.viewportW = 256.0;
+            frame_data.viewportH = 256.0;
+            frame_data.exposure = 1.0;
 
-        for _ in 0..2 {
-            let out_of_date = renderer
-                .render(
-                    &[],
-                    &frame_data,
-                    [[0.0; 4]; 4],
-                    [[0.0; 4]; 4],
-                    0,
-                    0,
-                    0,
-                    0,
-                    0.0,
-                    0.0,
-                    &[],
-                    RenderMode::Raster,
-                    0,
-                    0.0,
-                    0,
-                    1.0,
-                    &[],
-                    PostGrade::default(),
-                    true,
-                    false,
-                    &[],
-                )
-                .expect("room render failed");
-            assert!(!out_of_date);
-        }
-        renderer
-            .copy_offscreen_to_readback()
-            .expect("copy_offscreen_to_readback failed");
-        renderer.readback_pixels().expect("readback_pixels failed")
-    };
+            for _ in 0..2 {
+                let out_of_date = renderer
+                    .render(
+                        &[],
+                        &frame_data,
+                        [[0.0; 4]; 4],
+                        [[0.0; 4]; 4],
+                        0,
+                        0,
+                        0,
+                        0,
+                        0.0,
+                        0.0,
+                        &[],
+                        RenderMode::Raster,
+                        0,
+                        0.0,
+                        0,
+                        1.0,
+                        &[],
+                        PostGrade::default(),
+                        true,
+                        false,
+                        &[],
+                    )
+                    .expect("room render failed");
+                assert!(!out_of_date);
+            }
+            renderer
+                .copy_offscreen_to_readback()
+                .expect("copy_offscreen_to_readback failed");
+            renderer.readback_pixels().expect("readback_pixels failed")
+        };
 
     let stats_patch = |pixels: &[u8]| -> ([f64; 3], f64, u8) {
         let mut sum = [0.0f64; 3];

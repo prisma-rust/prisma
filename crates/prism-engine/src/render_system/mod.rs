@@ -442,9 +442,11 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
     }
 
     let cache = world.get_resource_mut::<VoxelExtractCache>().unwrap();
-    cache
-        .chunks
-        .retain(|&key, _| chunk_entries.binary_search_by_key(&key, |&(k, _)| k).is_ok());
+    cache.chunks.retain(|&key, _| {
+        chunk_entries
+            .binary_search_by_key(&key, |&(k, _)| k)
+            .is_ok()
+    });
     for (key, version, upload) in dirty_updates {
         cache.chunks.insert(key, (version, upload));
     }

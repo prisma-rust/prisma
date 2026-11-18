@@ -109,11 +109,10 @@ impl VoxelRtGiPass {
             .stage(stage)
             .layout(pipeline_layout);
 
-        let pipeline = unsafe {
-            device.create_compute_pipelines(vk::PipelineCache::null(), &[cp_info], None)
-        }
-        .map_err(|(_, e)| e)
-        .context("VoxelRtGiPass: create compute pipeline")?[0];
+        let pipeline =
+            unsafe { device.create_compute_pipelines(vk::PipelineCache::null(), &[cp_info], None) }
+                .map_err(|(_, e)| e)
+                .context("VoxelRtGiPass: create compute pipeline")?[0];
 
         unsafe {
             device.destroy_shader_module(shader_module, None);
@@ -176,10 +175,13 @@ impl VoxelRtGiPass {
 impl Drop for VoxelRtGiPass {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
             self.device.destroy_pipeline(self.pipeline, None);
-            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device.destroy_descriptor_set_layout(self.descriptor_layout, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_layout, None);
         }
     }
 }
@@ -191,7 +193,11 @@ impl RenderPassNode for VoxelRtGiPass {
 
     fn setup(&mut self, _graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {}
 
-    fn execute(&mut self, _ctx: &RenderContext, _resources: &mut GraphResources) -> anyhow::Result<()> {
+    fn execute(
+        &mut self,
+        _ctx: &RenderContext,
+        _resources: &mut GraphResources,
+    ) -> anyhow::Result<()> {
         // Ready to bind VoxelDdaPass G-Buffer & TLAS when GraphRenderer schedules RT GI.
         Ok(())
     }
