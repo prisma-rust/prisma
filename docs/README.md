@@ -91,7 +91,8 @@ docs/
   ├── voxel-software-gi-design.md         # [L2 渲染进阶] 立方体素专用软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联）
   ├── voxel-rtx-gi-design.md              # [L2 渲染进阶] 立方体素专用硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI）
   │
-  ├── ai-workflow.md                      # [L3 协作流程] AI 协同工作流与五条硬规则
+  ├── ai-workflow.md                      # [L3 协作流程] AI 协同工作流与五条硬规则（精简速查）
+  ├── ai-workflow-details.md              # [L3 协作流程] 多 Agent 协作与测试 Harness 详解
   ├── code-style.md                       # [L3 编码规范] 英文代码注释规范与冗余清理指南
   ├── naming-and-abstraction-guide.md     # [L3 编码规范] 代码与着色器命名及内容抽象规范
   ├── versioning.md                       # [L3 版本治理] SemVer 规则、1.0 前零兼容逻辑与发版
@@ -134,7 +135,8 @@ docs/
 | | [`voxel-software-gi-design.md`](voxel-software-gi-design.md) | 立方体素软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联） | `prism-render`（规划） |
 | | [`voxel-rtx-gi-design.md`](voxel-rtx-gi-design.md) | 立方体素硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI / DLSS-RR） | `prism-render`（规划） |
 | | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang 编译、绑定代码生成、Bindless 纹理表 | `assets/shaders/`, `xtask` |
-| **协作规范** | [`ai-workflow.md`](ai-workflow.md) | 五条硬规则、原子提交、自检门禁、PR 模板 | 全仓库 |
+| **协作规范** | [`ai-workflow.md`](ai-workflow.md) | 五条硬规则、原子提交、自检门禁、速查命令 | 全仓库 |
+| | [`ai-workflow-details.md`](ai-workflow-details.md) | 多 Agent 协作、文档分层、测试 Harness 详解 | 全仓库 |
 | | [`code-style.md`](code-style.md) | 纯英文注释、删除代码复述、删除旧版本兼容垫片 | 全仓库 `.rs` 源码 |
 | | [`naming-and-abstraction-guide.md`](naming-and-abstraction-guide.md) | 代码与着色器命名及内容抽象规范（去歧义、去口语化、零兼容） | 全仓库源码与着色器 |
 | | [`versioning.md`](versioning.md) | 0.1 演进策略、单一版本源、格式版本升级 | `Cargo.toml`, `scripts/version.py` |
