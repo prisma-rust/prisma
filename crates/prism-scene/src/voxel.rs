@@ -308,9 +308,7 @@ impl VoxelChunk {
     #[inline]
     pub fn l1_index(&self, lx: u32, ly: u32, lz: u32) -> Option<usize> {
         if lx < self.dims_l1[0] && ly < self.dims_l1[1] && lz < self.dims_l1[2] {
-            Some(
-                (lx + self.dims_l1[0] * (ly + self.dims_l1[1] * lz)) as usize,
-            )
+            Some((lx + self.dims_l1[0] * (ly + self.dims_l1[1] * lz)) as usize)
         } else {
             None
         }
@@ -482,7 +480,14 @@ impl VoxelChunk {
     }
 
     /// Update only `(rgba, visual)` of an already-occupied L2 cell (fast transient visual update).
-    pub fn update_l2_appearance(&mut self, l2x: u32, l2y: u32, l2z: u32, rgba: u32, visual: u32) -> bool {
+    pub fn update_l2_appearance(
+        &mut self,
+        l2x: u32,
+        l2y: u32,
+        l2z: u32,
+        rgba: u32,
+        visual: u32,
+    ) -> bool {
         let (l1x, l1y, l1z) = (l2x >> 2, l2y >> 2, l2z >> 2);
         let Some(l1_idx) = self.l1_index(l1x, l1y, l1z) else {
             return false;
@@ -701,9 +706,7 @@ impl VoxelChunk {
                                         for l3x in l3x0..=l3x1 {
                                             let bit = 1u64
                                                 << Self::l3_sub_index(
-                                                    l3x as u32,
-                                                    l3y as u32,
-                                                    l3z as u32,
+                                                    l3x as u32, l3y as u32, l3z as u32,
                                                 );
                                             if (mask & bit) != 0 {
                                                 return true;
@@ -748,7 +751,11 @@ impl VoxelChunk {
         }
 
         // Convert to chunk-local L1 space (`1 unit = 1 m`).
-        let rel_origin = [origin[0] - bmin[0], origin[1] - bmin[1], origin[2] - bmin[2]];
+        let rel_origin = [
+            origin[0] - bmin[0],
+            origin[1] - bmin[1],
+            origin[2] - bmin[2],
+        ];
         let eps = 1e-4;
         let start_p = [
             rel_origin[0] + d[0] * (t_min + eps),
@@ -767,9 +774,21 @@ impl VoxelChunk {
             if d[2] >= 0.0 { 1 } else { -1 },
         ];
         let t_delta = [
-            if d[0].abs() > 1e-8 { 1.0 / d[0].abs() } else { 1e30 },
-            if d[1].abs() > 1e-8 { 1.0 / d[1].abs() } else { 1e30 },
-            if d[2].abs() > 1e-8 { 1.0 / d[2].abs() } else { 1e30 },
+            if d[0].abs() > 1e-8 {
+                1.0 / d[0].abs()
+            } else {
+                1e30
+            },
+            if d[1].abs() > 1e-8 {
+                1.0 / d[1].abs()
+            } else {
+                1e30
+            },
+            if d[2].abs() > 1e-8 {
+                1.0 / d[2].abs()
+            } else {
+                1e30
+            },
         ];
         let mut t_next = [
             next_boundary_t(rel_origin[0], d[0], cell[0]),
@@ -798,17 +817,9 @@ impl VoxelChunk {
                 let rgba = self.l1_uniform_rgba[l1_idx];
                 let vis = self.l1_uniform_visual[l1_idx];
                 if (rgba >> 24) != 0 && (hit_liquids || (vis & VoxelVisualFlags::LIQUID) == 0) {
-                    return Some(self.build_hit(
-                        origin,
-                        d,
-                        t_cur,
-                        normal,
-                        cell,
-                        None,
-                        None,
-                        rgba,
-                        vis,
-                    ));
+                    return Some(
+                        self.build_hit(origin, d, t_cur, normal, cell, None, None, rgba, vis),
+                    );
                 }
             } else if l1_ref != 0 {
                 if let Some(brick) = self.bricks.get((l1_ref - 1) as usize) {
@@ -894,9 +905,21 @@ impl VoxelChunk {
             if d[2] >= 0.0 { 1 } else { -1 },
         ];
         let t_delta = [
-            if d[0].abs() > 1e-8 { 0.25 / d[0].abs() } else { 1e30 },
-            if d[1].abs() > 1e-8 { 0.25 / d[1].abs() } else { 1e30 },
-            if d[2].abs() > 1e-8 { 0.25 / d[2].abs() } else { 1e30 },
+            if d[0].abs() > 1e-8 {
+                0.25 / d[0].abs()
+            } else {
+                1e30
+            },
+            if d[1].abs() > 1e-8 {
+                0.25 / d[1].abs()
+            } else {
+                1e30
+            },
+            if d[2].abs() > 1e-8 {
+                0.25 / d[2].abs()
+            } else {
+                1e30
+            },
         ];
         let mut t_next = [
             next_boundary_t(base[0], d[0] * scale, c[0]),
@@ -917,7 +940,11 @@ impl VoxelChunk {
                 let vis = brick.l2_visual[sub];
                 if (rgba >> 24) != 0 && (hit_liquids || (vis & VoxelVisualFlags::LIQUID) == 0) {
                     let mask = brick.l3_mask(sub);
-                    let l2_local = [l1_cell[0] * 4 + c[0], l1_cell[1] * 4 + c[1], l1_cell[2] * 4 + c[2]];
+                    let l2_local = [
+                        l1_cell[0] * 4 + c[0],
+                        l1_cell[1] * 4 + c[1],
+                        l1_cell[2] * 4 + c[2],
+                    ];
                     if mask == u64::MAX {
                         return Some(self.build_hit(
                             origin,
@@ -1013,9 +1040,21 @@ impl VoxelChunk {
             if d[2] >= 0.0 { 1 } else { -1 },
         ];
         let t_delta = [
-            if d[0].abs() > 1e-8 { 0.0625 / d[0].abs() } else { 1e30 },
-            if d[1].abs() > 1e-8 { 0.0625 / d[1].abs() } else { 1e30 },
-            if d[2].abs() > 1e-8 { 0.0625 / d[2].abs() } else { 1e30 },
+            if d[0].abs() > 1e-8 {
+                0.0625 / d[0].abs()
+            } else {
+                1e30
+            },
+            if d[1].abs() > 1e-8 {
+                0.0625 / d[1].abs()
+            } else {
+                1e30
+            },
+            if d[2].abs() > 1e-8 {
+                0.0625 / d[2].abs()
+            } else {
+                1e30
+            },
         ];
         let mut t_next = [
             next_boundary_t(base[0], d[0] * scale, c[0]),
@@ -1030,7 +1069,11 @@ impl VoxelChunk {
             }
             let bit = 1u64 << Self::l3_sub_index(c[0] as u32, c[1] as u32, c[2] as u32);
             if (mask & bit) != 0 {
-                let l3_local = [l2_local[0] * 4 + c[0], l2_local[1] * 4 + c[1], l2_local[2] * 4 + c[2]];
+                let l3_local = [
+                    l2_local[0] * 4 + c[0],
+                    l2_local[1] * 4 + c[1],
+                    l2_local[2] * 4 + c[2],
+                ];
                 return Some(self.build_hit(
                     origin,
                     d,
@@ -1134,20 +1177,20 @@ impl VoxelChunk {
         } else {
             [
                 self.origin_l1[0] * 16
-                    + ((nudge[0] - bmin[0]) / VOXEL_L3_SIZE_M)
-                        .floor()
-                        .clamp((world_l2[0] - self.origin_l1[0] * 4) as f32 * 4.0, (world_l2[0] - self.origin_l1[0] * 4) as f32 * 4.0 + 3.0)
-                        as i32,
+                    + ((nudge[0] - bmin[0]) / VOXEL_L3_SIZE_M).floor().clamp(
+                        (world_l2[0] - self.origin_l1[0] * 4) as f32 * 4.0,
+                        (world_l2[0] - self.origin_l1[0] * 4) as f32 * 4.0 + 3.0,
+                    ) as i32,
                 self.origin_l1[1] * 16
-                    + ((nudge[1] - bmin[1]) / VOXEL_L3_SIZE_M)
-                        .floor()
-                        .clamp((world_l2[1] - self.origin_l1[1] * 4) as f32 * 4.0, (world_l2[1] - self.origin_l1[1] * 4) as f32 * 4.0 + 3.0)
-                        as i32,
+                    + ((nudge[1] - bmin[1]) / VOXEL_L3_SIZE_M).floor().clamp(
+                        (world_l2[1] - self.origin_l1[1] * 4) as f32 * 4.0,
+                        (world_l2[1] - self.origin_l1[1] * 4) as f32 * 4.0 + 3.0,
+                    ) as i32,
                 self.origin_l1[2] * 16
-                    + ((nudge[2] - bmin[2]) / VOXEL_L3_SIZE_M)
-                        .floor()
-                        .clamp((world_l2[2] - self.origin_l1[2] * 4) as f32 * 4.0, (world_l2[2] - self.origin_l1[2] * 4) as f32 * 4.0 + 3.0)
-                        as i32,
+                    + ((nudge[2] - bmin[2]) / VOXEL_L3_SIZE_M).floor().clamp(
+                        (world_l2[2] - self.origin_l1[2] * 4) as f32 * 4.0,
+                        (world_l2[2] - self.origin_l1[2] * 4) as f32 * 4.0 + 3.0,
+                    ) as i32,
             ]
         };
         let hit_tier = if l3_local.is_some() {
@@ -1519,7 +1562,11 @@ mod tests {
     fn aabb_collision_respects_l3_micro_geometry_and_liquids() {
         let mut chunk = VoxelChunk::new([0, 0, 0], [4, 4, 4]);
         let water = pack_rgba(40, 110, 190, 140);
-        let water_vis = pack_visual(VoxelVisualFlags::LIQUID | VoxelVisualFlags::TRANSLUCENT, 20, 0);
+        let water_vis = pack_visual(
+            VoxelVisualFlags::LIQUID | VoxelVisualFlags::TRANSLUCENT,
+            20,
+            0,
+        );
         chunk.set_l2_cell(0, 0, 0, water, water_vis, u64::MAX);
         // Water should not block solid-only player collision.
         assert!(!chunk.aabb_intersects_solid([0.05, 0.05, 0.05], [0.20, 0.20, 0.20], false));

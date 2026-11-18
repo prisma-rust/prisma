@@ -319,6 +319,7 @@ fn shadow_caster(bounds: Option<prism_render::culling::Aabb>) -> DrawItem {
         bone_offset: None,
         splat_slots: [u32::MAX; 4],
         splat_tiling: 0.0,
+        shader: None,
         state: Default::default(),
         world_bounds: bounds,
         index_start: 0,

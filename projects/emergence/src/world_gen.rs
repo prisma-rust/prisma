@@ -19,7 +19,7 @@ use crate::structures::{
     build_default_template_pool, build_natural_template_pool, stamp_structure, StructureRot,
     WorldVoxelWriter,
 };
-use crate::tags::{PhysicalCell, TransientFlags};
+use crate::tags::PhysicalCell;
 
 /// Sea level in meters (`l2y = 14`).
 pub const SEA_LEVEL_M: f32 = 3.5;
