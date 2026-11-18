@@ -7,3 +7,6 @@ description = "Minimal data-oriented ECS (Entity-Component-System) core for Pris
 
 [dependencies]
 log = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

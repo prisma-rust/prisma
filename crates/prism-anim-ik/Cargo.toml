@@ -8,3 +8,6 @@ description = "Analytic two-bone IK and foot placement for Prisma (#560 P4)"
 [dependencies]
 prism-anim = { path = "../prism-anim" }
 glam.workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
