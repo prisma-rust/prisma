@@ -9,6 +9,7 @@ members = [
     "crates/prism-cooker",
     "crates/prism-scene",
     "crates/prism-render",
+    "crates/prism-render-shaders",
     "crates/prism-engine",
     "crates/prism-app",
     "crates/prism-game-api",

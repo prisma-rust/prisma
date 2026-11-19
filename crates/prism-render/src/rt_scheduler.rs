@@ -28,8 +28,8 @@ use crate::shader_bindings::rt_render::{
     RtRenderPush, ENTRY_FRAGMENT_MAIN as RT_FRAG, ENTRY_VERTEX_MAIN as RT_VERT,
 };
 
-const RT_RENDER_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt_render.vert.spv");
-const RT_RENDER_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt_render.frag.spv");
+const RT_RENDER_VERT_SPV: &[u8] = prism_render_shaders::RT_RENDER_VERT_SPV;
+const RT_RENDER_FRAG_SPV: &[u8] = prism_render_shaders::RT_RENDER_FRAG_SPV;
 
 /// 调度器输出句柄基址：第 i 个注册的 RT 发布到 `RT_OUTPUT_H + i`。
 /// 固定基址（与 SCENE_*_H 同一约定）使下游 pass 无需知道注册顺序。

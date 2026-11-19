@@ -1,0 +1,6 @@
+[package]
+name = "prism-render-shaders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Embedded compiled SPIR-V shader byte slices for Prisma"

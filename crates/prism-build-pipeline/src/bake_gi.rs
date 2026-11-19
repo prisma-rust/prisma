@@ -422,7 +422,7 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
 
     // ---- 11. Create compute pipeline ----
-    const GI_BAKE_SPV: &[u8] = include_bytes!("../../../assets/shaders/gi_bake.comp.spv");
+    const GI_BAKE_SPV: &[u8] = prism_render_shaders::GI_BAKE_COMP_SPV;
     let shader_module = prism_render::shader::load_shader_module(&context.device, GI_BAKE_SPV)
         .context("create gi_bake shader module")?;
 

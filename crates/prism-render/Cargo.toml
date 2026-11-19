@@ -73,6 +73,7 @@ gtao = []
 
 [dependencies]
 prism-gfx = { path = "../prism-gfx" }
+prism-render-shaders = { path = "../prism-render-shaders" }
 ash = { workspace = true }
 ash-window = { workspace = true }
 raw-window-handle = { workspace = true }

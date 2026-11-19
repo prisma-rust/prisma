@@ -251,7 +251,7 @@ impl SharcResolvePass {
         }
 
         // Pipeline
-        const SPV: &[u8] = include_bytes!("../../../assets/shaders/sharc_resolve.comp.spv");
+        const SPV: &[u8] = prism_render_shaders::SHARC_RESOLVE_COMP_SPV;
         let shader_module = crate::shader::load_shader_module(device, SPV)
             .context("SharcResolvePass: create shader module")?;
 

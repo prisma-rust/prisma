@@ -28,11 +28,9 @@ use crate::shader_bindings::voxel_dda::{
     self as bindings, VoxelChunkGpu, VoxelDenoisePush, VoxelEmitterGpu, VoxelFrameUbo,
 };
 
-const VOXEL_DDA_SPV: &[u8] = include_bytes!("../../../assets/shaders/voxel_dda.comp.spv");
-const VOXEL_GI_DENOISE_SPV: &[u8] =
-    include_bytes!("../../../assets/shaders/voxel_gi_denoise.comp.spv");
-const VOXEL_COMPOSITE_SPV: &[u8] =
-    include_bytes!("../../../assets/shaders/voxel_composite.comp.spv");
+const VOXEL_DDA_SPV: &[u8] = prism_render_shaders::VOXEL_DDA_COMP_SPV;
+const VOXEL_GI_DENOISE_SPV: &[u8] = prism_render_shaders::VOXEL_GI_DENOISE_COMP_SPV;
+const VOXEL_COMPOSITE_SPV: &[u8] = prism_render_shaders::VOXEL_COMPOSITE_COMP_SPV;
 
 const ENTRY_VOXEL_DDA: &CStr = c"voxelDdaMain";
 const ENTRY_VOXEL_GI_DENOISE: &CStr = c"voxelGiDenoiseMain";

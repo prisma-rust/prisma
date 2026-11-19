@@ -1638,10 +1638,6 @@ XY 位置，精灵提取与 `VirtualCamera2D` 目标读取按 `interpolation_alp
 
 ---
 
-## Embedded SPIR-V Crate Split Decision (#1225)
+## Embedded SPIR-V Crate Split (`prism-render-shaders`, #1225)
 
-Measured on Linux aarch64 (`rustc` dev profile, warmed target) by touching `assets/shaders/scene_frag.frag.spv` and running `cargo build --manifest-path projects/template/Cargo.toml --timings` across 3 runs:
-
-- Runs: `9.01s`, `8.90s`, `8.92s` (median **`8.92s`**)
-- Breakdown (`--timings`): `prism-render` `1.05s` (11.8% of total), `prism-engine` `0.66s`, `prism-game-api` `0.15s`, `prism-app` `0.35s`, `template` lib `3.26s`, `template` bin link `3.77s` (42.3% of total).
-- Decision (**not planned / wontfix**): `prism-render` compilation is only 11.8% of the incremental shader-touch rebuild (below the `>= 20%` threshold), and downstream linking (`template` lib + bin) dominates. Keep `include_bytes!` inside `prism-render` rather than adding a `prism-render-shaders` crate.
+Compiled SPIR-V byte slices (`assets/shaders/*.spv`) are embedded in the zero-dependency leaf crate `crates/prism-render-shaders` (`pub const <NAME>_SPV: &[u8]`) rather than directly inside `prism-render` or `prism-build-pipeline`. Its `build.rs` keeps the missing/stale `.spv` gate, while `shader_bindings/` stays inside `prism-render` so shader layout changes still type-check together with the passes.

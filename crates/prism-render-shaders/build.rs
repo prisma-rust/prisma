@@ -58,7 +58,10 @@ fn main() {
             } else {
                 "SPIR-V modules are missing"
             };
-            eprintln!("prism-render: {what}, compiling with {}", slangc.display());
+            eprintln!(
+                "prism-render-shaders: {what}, compiling with {}",
+                slangc.display()
+            );
             match find_bash() {
                 Some(bash) => match Command::new(bash)
                     .arg(&script)
@@ -84,7 +87,7 @@ fn main() {
             }
         } else if stale {
             println!(
-                "cargo:warning=prism-render: Slang sources are newer than the committed SPIR-V \
+                "cargo:warning=prism-render-shaders: Slang sources are newer than the committed SPIR-V \
                  and no `slangc` was found; regenerate them once with \
                  `bash {}/assets/shaders/compile.sh`, then commit the `.spv` with the `.slang`",
                 repo.display()
@@ -102,7 +105,7 @@ fn main() {
     let missing_tests = missing_of(&test_only);
     if !missing_tests.is_empty() {
         println!(
-            "cargo:warning=prism-render: {} test-only SPIR-V module(s) are missing ({}); \
+            "cargo:warning=prism-render-shaders: {} test-only SPIR-V module(s) are missing ({}); \
              `cargo test` will fail until they are generated with `bash {}`",
             missing_tests.len(),
             names(&missing_tests),
@@ -148,7 +151,7 @@ fn fail(repo: &Path, shaders: &Path, missing: &[PathBuf], note: Option<&str>) ->
         .replace("{shaders}", &shaders.display().to_string())
         .replace("{missing}", &missing_list);
     eprintln!(
-        "prism-render: {} SPIR-V module(s) referenced by include_bytes! are missing.",
+        "prism-render-shaders: {} SPIR-V module(s) referenced by include_bytes! are missing.",
         missing.len()
     );
     eprintln!();
@@ -172,7 +175,7 @@ fn hint_text() -> String {
         match fs::read_to_string(&path) {
             Ok(text) => return text.trim_end().to_string(),
             Err(err) => eprintln!(
-                "cargo:warning=prism-render: cannot read PRISMA_SHADER_HINT_FILE {}: {err}",
+                "cargo:warning=prism-render-shaders: cannot read PRISMA_SHADER_HINT_FILE {}: {err}",
                 Path::new(&path).display()
             ),
         }

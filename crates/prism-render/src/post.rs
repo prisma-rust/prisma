@@ -764,8 +764,8 @@ impl PostPass {
             .render_pass
             .context("PostPass: render_pass not created before pipeline")?;
 
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/post.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/post.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::POST_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::POST_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("PostPass: load vert")?;
         let frag_module =
