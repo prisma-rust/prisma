@@ -539,6 +539,8 @@ fn create_device(
         independent_blend: available_features.independent_blend,
         // Wireframe（POLYGON_MODE_LINE）需要这个特性；设备不支持时不要请求。
         fill_mode_non_solid: available_features.fill_mode_non_solid,
+        shader_storage_image_write_without_format: available_features
+            .shader_storage_image_write_without_format,
         ..vk::PhysicalDeviceFeatures::default()
     };
 
@@ -566,6 +568,23 @@ fn create_device(
     // and call it through `ash::khr::copy_commands2::Device` in `buffer.rs`.
     if rt_caps.copy_commands2 {
         enabled_extensions.push(ash::khr::copy_commands2::NAME.into());
+    }
+    if let Ok(ext_props) =
+        unsafe { instance.enumerate_device_extension_properties(physical_device) }
+    {
+        for optional_ext in [
+            ash::khr::push_descriptor::NAME,
+            c"VK_NVX_binary_import",
+            c"VK_NVX_image_view_handle",
+        ] {
+            let has_ext = ext_props.iter().any(|p| {
+                let name = unsafe { std::ffi::CStr::from_ptr(p.extension_name.as_ptr()) };
+                name == optional_ext
+            });
+            if has_ext {
+                enabled_extensions.push(optional_ext.into());
+            }
+        }
     }
     for rt_ext in capabilities::rt_extension_names(rt_caps) {
         enabled_extensions.push(rt_ext.into());

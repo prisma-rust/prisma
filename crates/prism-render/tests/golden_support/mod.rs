@@ -123,6 +123,16 @@ impl FrameHarness {
         self.renderer.graph()
     }
 
+    #[allow(dead_code)]
+    pub fn renderer(&self) -> &GraphRenderer {
+        &self.renderer
+    }
+
+    #[allow(dead_code)]
+    pub fn renderer_mut(&mut self) -> &mut GraphRenderer {
+        &mut self.renderer
+    }
+
     pub fn mesh_handle(&self) -> MeshHandle {
         self.mesh
     }

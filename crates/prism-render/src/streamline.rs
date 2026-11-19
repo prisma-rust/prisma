@@ -46,22 +46,28 @@ pub const BUFFER_TYPE_DIFFUSE_HIT_NOISY: BufferType = 15;
 pub const BUFFER_TYPE_SPECULAR_HIT_NOISY: BufferType = 17;
 pub const BUFFER_TYPE_SPECULAR_HIT_DISTANCE: BufferType = 42;
 
-#[repr(i32)]
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlResult {
-    Ok = 0,
-    ErrorIO = 1,
-    ErrorDriverOutOfDate = 2,
-    ErrorOsOutOfDate = 3,
-    ErrorOsDisabledHws = 4,
-    ErrorDeviceNotCreated = 5,
-    ErrorNoSupportedAdapterFound = 6,
-    ErrorAdapterNotSupported = 7,
-    ErrorNoPlugins = 8,
-    ErrorVulkanApi = 9,
-    ErrorNotInitialized = 21,
-    ErrorFeatureMissing = 29,
-    ErrorFeatureNotSupported = 30,
+pub struct SlResult(pub i32);
+
+#[allow(non_upper_case_globals)]
+impl SlResult {
+    pub const Ok: Self = Self(0);
+    pub const ErrorIO: Self = Self(1);
+    pub const ErrorDriverOutOfDate: Self = Self(2);
+    pub const ErrorOsOutOfDate: Self = Self(3);
+    pub const ErrorOsDisabledHws: Self = Self(4);
+    pub const ErrorDeviceNotCreated: Self = Self(5);
+    pub const ErrorNoSupportedAdapterFound: Self = Self(6);
+    pub const ErrorAdapterNotSupported: Self = Self(7);
+    pub const ErrorNoPlugins: Self = Self(8);
+    pub const ErrorVulkanApi: Self = Self(9);
+    pub const ErrorNotInitialized: Self = Self(21);
+    pub const ErrorFeatureMissing: Self = Self(29);
+    pub const ErrorFeatureNotSupported: Self = Self(30);
+    pub const ErrorFeatureMissingHooks: Self = Self(31);
+    pub const ErrorFeatureFailedToLoad: Self = Self(32);
+    pub const ErrorFeatureWrongPriority: Self = Self(33);
 }
 
 #[repr(u32)]
@@ -705,6 +711,7 @@ extern "system" {
 /// Dynamically loaded Streamline 2.x interposer function table.
 pub struct StreamlineBinding {
     _library: SharedLib,
+    loaded_dir: Option<std::path::PathBuf>,
     pub sl_init: PFunSlInit,
     pub sl_shutdown: PFunSlShutdown,
     pub sl_is_feature_supported: PFunSlIsFeatureSupported,
@@ -724,6 +731,10 @@ unsafe impl Sync for StreamlineBinding {}
 impl StreamlineBinding {
     /// Attempt to load `sl.interposer` from env overrides, `vendor/streamline`, or system paths.
     /// Returns `None` when the Streamline SDK runtime is absent.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Streamline SDK DLLs live in workspace vendor/streamline outside asset packs"
+    )]
     pub fn try_load() -> Option<Self> {
         let mut candidates: Vec<String> = Vec::new();
         for env_key in ["PRISMA_STREAMLINE_DIR", "STREAMLINE_SDK_DIR"] {
@@ -744,11 +755,23 @@ impl StreamlineBinding {
         candidates.extend([
             "sl.interposer.dll".to_owned(),
             "libsl.interposer.so".to_owned(),
-            "vendor/streamline/bin/x64/sl.interposer.dll".to_owned(),
-            "../vendor/streamline/bin/x64/sl.interposer.dll".to_owned(),
-            "../../vendor/streamline/bin/x64/sl.interposer.dll".to_owned(),
-            "../../../vendor/streamline/bin/x64/sl.interposer.dll".to_owned(),
         ]);
+        for start in [
+            std::env::current_dir().ok(),
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for ancestor in start.ancestors().take(7) {
+                let dll = ancestor.join("vendor/streamline/bin/x64/sl.interposer.dll");
+                if dll.is_file() {
+                    candidates.push(dll.to_string_lossy().into_owned());
+                }
+            }
+        }
         for candidate in &candidates {
             if let Some(binding) = Self::try_load_from(candidate) {
                 return Some(binding);
@@ -759,6 +782,16 @@ impl StreamlineBinding {
 
     pub fn try_load_from(path: &str) -> Option<Self> {
         let library = SharedLib::open(path)?;
+        let loaded_dir = std::path::Path::new(path)
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| {
+                std::path::Path::new(path)
+                    .parent()
+                    .filter(|d| !d.as_os_str().is_empty())
+                    .map(|d| d.to_path_buf())
+            });
         unsafe {
             let sl_init =
                 std::mem::transmute::<*mut c_void, PFunSlInit>(library.get_symbol(b"slInit\0")?);
@@ -790,6 +823,7 @@ impl StreamlineBinding {
                 .map(|p| std::mem::transmute::<*mut c_void, PFunSlSetConstants>(p));
             Some(Self {
                 _library: library,
+                loaded_dir,
                 sl_init,
                 sl_shutdown,
                 sl_is_feature_supported,
@@ -801,6 +835,19 @@ impl StreamlineBinding {
                 sl_set_constants,
             })
         }
+    }
+}
+
+unsafe extern "C" fn sl_log_callback(log_type: u32, msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    let trimmed = text.trim_end();
+    match log_type {
+        0 => log::info!("[streamline] {trimmed}"),
+        1 => log::warn!("[streamline] {trimmed}"),
+        _ => log::error!("[streamline] {trimmed}"),
     }
 }
 
@@ -828,20 +875,38 @@ impl StreamlineRuntime {
             FEATURE_DLSS_G,
             FEATURE_REFLEX,
         ];
+        let plugin_dir_utf16: Option<Vec<u16>> = binding.loaded_dir.as_ref().map(|dir| {
+            let mut s = dir.to_string_lossy().into_owned();
+            if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                s = stripped.to_owned();
+            }
+            s.encode_utf16().chain(std::iter::once(0)).collect()
+        });
+        let plugin_dir_ptrs: [*const u16; 1] = [plugin_dir_utf16
+            .as_ref()
+            .map_or(std::ptr::null(), |v| v.as_ptr())];
         let prefs = SlPreferences {
             base: BaseStructure::new(PREFERENCES_GUID, 1),
             show_console: false,
-            log_level: 0,
-            paths_to_plugins: std::ptr::null(),
-            num_paths_to_plugins: 0,
+            log_level: if log::log_enabled!(log::Level::Info) {
+                2
+            } else {
+                0
+            },
+            paths_to_plugins: if plugin_dir_utf16.is_some() {
+                plugin_dir_ptrs.as_ptr()
+            } else {
+                std::ptr::null()
+            },
+            num_paths_to_plugins: u32::from(plugin_dir_utf16.is_some()),
             path_to_logs_and_data: std::ptr::null(),
             allocate_callback: std::ptr::null(),
             release_callback: std::ptr::null(),
-            log_message_callback: std::ptr::null(),
-            flags: 1 << 0, // eDisableCLStateTracking
+            log_message_callback: sl_log_callback as *const c_void,
+            flags: (1 << 0) | (1 << 7), // eDisableCLStateTracking | eUseFrameBasedResourceTagging
             features_to_load: features.as_ptr(),
             num_features_to_load: features.len() as u32,
-            application_id: 0,
+            application_id: 231_313_132,
             engine: 0,
             engine_version: c"0.1.0".as_ptr(),
             project_id: std::ptr::null(),
@@ -887,6 +952,9 @@ impl StreamlineRuntime {
         let supported = |feat: Feature| -> bool {
             let res =
                 unsafe { (binding.sl_is_feature_supported)(feat, (&raw const adapter).cast()) };
+            if res != SlResult::Ok {
+                log::info!("Streamline feature {feat} not supported: {res:?}");
+            }
             res == SlResult::Ok
         };
         let caps = StreamlineCaps {
@@ -896,6 +964,12 @@ impl StreamlineRuntime {
             dlss_rr_supported: supported(FEATURE_DLSS_RR),
             dlss_fg_supported: supported(FEATURE_DLSS_G),
         };
+        log::info!(
+            "Streamline initialized (sr={}, rr={}, fg={})",
+            caps.dlss_sr_supported,
+            caps.dlss_rr_supported,
+            caps.dlss_fg_supported
+        );
 
         let load_fn = |feat: Feature, name: &CStr| -> Option<*mut c_void> {
             let mut ptr: *mut c_void = std::ptr::null_mut();
