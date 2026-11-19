@@ -325,7 +325,10 @@ pub fn emergence_fixed_tick(
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
-    if !runtime.commands.console_open {
+    let panel_open = runtime.commands.console_open
+        || runtime.render_settings_ui.open
+        || runtime.nei.open;
+    if !panel_open {
         runtime.player.step_physics(world, &runtime.sim, dt);
     }
     runtime
@@ -369,7 +372,9 @@ pub fn emergence_frame_tick(
         let ui_consumed = settings_consumed
             || runtime
                 .nei
-                .handle_input(&input, screen, console_active, &mut runtime.player);
+                .handle_input(&input, screen, console_active, &mut runtime.player)
+            || runtime.render_settings_ui.open
+            || runtime.nei.open;
         runtime
             .player
             .update_look_and_tools_with_ui(world, &mut runtime.sim, dt, ui_consumed);
