@@ -39,6 +39,9 @@ pub const IBL_PREFILTER_COMP_SPV: &[u8] =
 pub const MESH_VERT_SKINNED_VERT_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/mesh_vert_skinned.vert.spv");
 pub const MESH_VERT_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/mesh_vert.vert.spv");
+pub const NRC_CLEAR_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/nrc_clear.comp.spv");
+pub const NRC_INFER_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/nrc_infer.comp.spv");
+pub const NRC_TRAIN_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/nrc_train.comp.spv");
 pub const OUTLINE_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.frag.spv");
 pub const OUTLINE_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.vert.spv");
 pub const PARTICLES_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/particles.frag.spv");

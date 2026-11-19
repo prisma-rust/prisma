@@ -334,6 +334,12 @@ compile_stage ddgi ddgiBlendMain compute ddgi_blend
 compile_stage ddgi ddgiResolveMain compute ddgi_resolve
 emit_reflection ddgi ddgiClearMain compute ddgiUpdateIrradianceMain compute ddgiUpdateDistanceMain compute ddgiBlendMain compute ddgiResolveMain compute
 
+# nrc: RTXGI v2.0 Neural Radiance Cache (clear, train, infer).
+compile_stage nrc nrcClearMain compute nrc_clear
+compile_stage nrc nrcTrainMain compute nrc_train
+compile_stage nrc nrcInferMain compute nrc_infer
+emit_reflection nrc nrcClearMain compute nrcTrainMain compute nrcInferMain compute
+
 # pt_render: real-time path tracing compute shader (temporal accumulation).
 # Dispatched per pixel — traces 1 sample/frame, accumulates for convergence.
 # Requires VK_KHR_ray_query hardware. Output: RWTexture2D RGBA32F (accumulated).
