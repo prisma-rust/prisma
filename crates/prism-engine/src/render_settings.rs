@@ -5,7 +5,7 @@
 //! instead of a growing list of scalar arguments.
 
 pub use prism_render::{
-    DlssMode, InternalScaleMode, MobileUpscaler, PtGiMode, RasterGiMode, RenderMode,
+    DlssMode, DlssgMode, InternalScaleMode, MobileUpscaler, PtGiMode, RasterGiMode, RenderMode,
 };
 
 /// Debug flag names, ordered by shader bit (`PBR_FLAG_*` in
@@ -142,6 +142,10 @@ pub struct RenderSettings {
     pub restir_gi_max_secondary_dist: f32,
     /// DLSS Mode (Off, Quality, Balanced, Performance, UltraPerformance, Dlaa).
     pub dlss_mode: DlssMode,
+    /// DLSS Frame Generation (DLFG) mode via Streamline.
+    pub dlfg_mode: DlssgMode,
+    /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
+    pub dlss_rr_enabled: bool,
     /// 是否在场景视图中渲染地面基准网格 (Y = 0)。
     pub show_grid: bool,
     /// 显示空间对比度（围绕中灰 `0.5` 缩放，`1.0` = 不变）。色调映射之后应用。
@@ -313,6 +317,8 @@ impl Default for RenderSettings {
             restir_gi_spatial_reuse: true,
             restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
+            dlfg_mode: DlssgMode::Off,
+            dlss_rr_enabled: false,
             show_grid: false,
             contrast: 1.0,
             saturation: 1.0,
