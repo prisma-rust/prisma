@@ -53,6 +53,7 @@ pub mod ddgi;
 pub mod ddgi_pass;
 pub mod descriptor;
 pub mod dirty_dispatch;
+pub mod dlss_pass;
 pub mod external_overlay;
 pub mod forward_pass;
 pub mod frame_stats;
@@ -164,6 +165,7 @@ pub use descriptor::{
     LIGHT_MAX, PT_EMISSIVE_MAX, PT_LIGHT_MAX,
 };
 pub use dirty_dispatch::DirtyDispatchPlan;
+pub use dlss_pass::DlssPass;
 pub use external_overlay::{OverlayMessage, OverlayRecordCtx, SwapchainOverlay};
 pub use forward_pass::ForwardPass;
 pub use gi::{
@@ -193,9 +195,9 @@ pub use render_graph::{
     DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem, PassInfo, PassKind,
     PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings,
     ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight,
-    FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H,
-    SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
-    UPSCALED_COLOR_H,
+    DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H,
+    SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX,
+    SPRITE_LIGHT_POINT, UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]

@@ -457,6 +457,7 @@ impl RenderPassNode for AutoExposurePass {
             FORWARD_COLOR_H,
             crate::render_graph::VOXEL_COLOR_H,
             crate::render_graph::UPSCALED_COLOR_H,
+            crate::render_graph::DLSS_COLOR_H,
             PT_COLOR_H,
             TAA_COLOR_H,
         ] {
@@ -502,20 +503,37 @@ impl RenderPassNode for AutoExposurePass {
         // are always the same one, including the temporal resolve that now also
         // runs on the path-traced image.
         let is_pt = ctx.frame.render_mode == crate::render_graph::RenderMode::PathTrace;
+        let dlss_view = if ctx.settings.dlss_mode != crate::render_graph::DlssMode::Off
+            && ctx.frame.debug_rt == 0
+        {
+            resources.published_view(crate::render_graph::DLSS_COLOR_H)
+        } else {
+            None
+        };
         let upscaled_view = if ctx.settings.mobile_upscaler.is_temporal_compute()
             && !is_pt
             && ctx.frame.debug_rt == 0
+            && dlss_view.is_none()
         {
             resources.published_view(crate::render_graph::UPSCALED_COLOR_H)
         } else {
             None
         };
-        let taa_view = if ctx.settings.taa && ctx.frame.debug_rt == 0 && upscaled_view.is_none() {
+        let taa_view = if ctx.settings.taa
+            && ctx.frame.debug_rt == 0
+            && dlss_view.is_none()
+            && upscaled_view.is_none()
+        {
             resources.published_view(TAA_COLOR_H)
         } else {
             None
         };
-        let (handle, layout) = if upscaled_view.is_some() {
+        let (handle, layout) = if dlss_view.is_some() {
+            (
+                crate::render_graph::DLSS_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
+        } else if upscaled_view.is_some() {
             (
                 crate::render_graph::UPSCALED_COLOR_H,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,

@@ -108,6 +108,8 @@ pub const VOXEL_COLOR_H: ResourceHandle = ResourceHandle(1019);
 pub const VOXEL_DEPTH_H: ResourceHandle = ResourceHandle(1020);
 /// Full-resolution HDR color upscaled by `MobileUpscalerPass` (SGSR 2 / Arm ASR).
 pub const UPSCALED_COLOR_H: ResourceHandle = ResourceHandle(1021);
+/// Full-resolution HDR color upscaled/denoised by `DlssPass` (Streamline DLSS-SR / DLSS-RR).
+pub const DLSS_COLOR_H: ResourceHandle = ResourceHandle(1022);
 
 impl ResourceHandle {
     pub const INVALID: ResourceHandle = ResourceHandle(u32::MAX);
@@ -217,6 +219,8 @@ pub enum PassKind {
     Anf,
     /// Open-source mobile temporal upscaler compute pass (`MobileUpscalerPass`).
     MobileUpscaler,
+    /// NVIDIA Streamline DLSS-SR / DLSS-RR upscaler pass (`DlssPass`).
+    Dlss,
     /// Screen-space ReSTIR indirect diffuse (`RestirGiPass`).
     RestirGi,
     /// Standalone SHaRC trainer (`SharcTrainPass`): deposits radiance into the
@@ -332,6 +336,8 @@ pub struct GraphFrame<'a> {
     /// transpose of the upper-left 3x3 of `view` (the rotation basis), with w=0
     /// on the 4th row.
     pub inv_view_rot: [[f32; 4]; 4],
+    /// Camera world-to-view matrix (`FrameUBOData::view`).
+    pub view: [[f32; 4]; 4],
     /// Full world-space view-projection (clip = proj * view), including the
     /// surface rotation. Used by the world-space gizmo (drawn on top of the
     /// scene) so the axes track the camera.
