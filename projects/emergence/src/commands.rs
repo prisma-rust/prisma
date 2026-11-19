@@ -8,6 +8,26 @@ static UPSCALER_SCALE_BITS: AtomicU32 = AtomicU32::new(0.75_f32.to_bits());
 static UPSCALER_SHARPNESS_BITS: AtomicU32 = AtomicU32::new(0.5_f32.to_bits());
 static DLFG_MODE: AtomicU8 = AtomicU8::new(0);
 static DDGI_ENABLED: AtomicBool = AtomicBool::new(false);
+static DLSS_PRE_UPSCALE_MODE: AtomicU8 = AtomicU8::new(0);
+
+/// Returns DLSS pre-upscale mode (`0=Linear, 1=Nearest, 2=Off`).
+pub fn current_dlss_pre_upscale() -> u8 {
+    DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed)
+}
+
+/// Set DLSS pre-upscale mode (`0=Linear, 1=Nearest, 2=Off`).
+pub fn set_dlss_pre_upscale(mode: u8) {
+    DLSS_PRE_UPSCALE_MODE.store(mode.min(2), Ordering::Relaxed);
+}
+
+/// Human-readable label for DLSS pre-upscale mode.
+pub fn dlss_pre_upscale_label(mode: u8) -> &'static str {
+    match mode {
+        1 => "Nearest",
+        2 => "Off",
+        _ => "Linear",
+    }
+}
 
 /// Returns `(dlfg_mode_id, ddgi_enabled)` for runtime RTXGI / Streamline controls.
 pub fn current_rtx_toggles() -> (u8, bool) {
@@ -1014,6 +1034,17 @@ impl CommandWorldState {
                     _ => "Off",
                 };
                 format!("DLFG (Frame Gen) set to {label}")
+            }
+            "dlss_pre" => {
+                let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("linear" | "bilinear") => 0,
+                    Some("nearest" | "point") => 1,
+                    Some("off" | "none") => 2,
+                    Some("query") => DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed),
+                    _ => (DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed) + 1) % 3,
+                };
+                DLSS_PRE_UPSCALE_MODE.store(next, Ordering::Relaxed);
+                format!("DLSS Pre-Upscale set to {}", dlss_pre_upscale_label(next))
             }
             "ddgi" => {
                 let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {

@@ -28,7 +28,7 @@ use prism_app::FrameHook;
 use prism_app::{RenderShared, RenderStats};
 use prism_engine::ecs::{Entity, World};
 use prism_engine::render_settings::{
-    DlssMode, DlssgMode, PtGiMode, RasterGiMode, RenderMode, RenderSettings,
+    DlssMode, DlssPreUpscaleMode, DlssgMode, PtGiMode, RasterGiMode, RenderMode, RenderSettings,
 };
 use prism_platform::{Key, PlatformEvent, PlatformWindow};
 use prism_scene::ui::{
@@ -36,7 +36,7 @@ use prism_scene::ui::{
 };
 use prism_scene::Active;
 
-const NUM_ITEMS: usize = 20;
+const NUM_ITEMS: usize = 21;
 const SPONZA_CUSTOM_SHADER: &str = "shaders/sponza_custom.frag.spv";
 
 #[derive(Debug)]
@@ -71,6 +71,7 @@ pub struct SponzaTuningHook {
     pub sharc_accumulation_frame_num: u32,
     pub sharc_stale_frame_num: u32,
     pub dlss_mode: DlssMode,
+    pub dlss_pre_upscale: DlssPreUpscaleMode,
     pub dlfg_mode: DlssgMode,
     pub dlss_rr_enabled: bool,
     pub vsync: bool,
@@ -141,6 +142,7 @@ impl Default for SponzaTuningHook {
             sharc_accumulation_frame_num: 20,
             sharc_stale_frame_num: 60,
             dlss_mode: DlssMode::Off,
+            dlss_pre_upscale: DlssPreUpscaleMode::Linear,
             dlfg_mode: DlssgMode::Off,
             dlss_rr_enabled: false,
             vsync: false,
@@ -406,13 +408,38 @@ impl SponzaTuningHook {
             19 => {
                 self.dlss_rr_enabled = !self.dlss_rr_enabled;
             }
+            20 => {
+                self.dlss_pre_upscale = match self.dlss_pre_upscale {
+                    DlssPreUpscaleMode::Linear => {
+                        if increase {
+                            DlssPreUpscaleMode::Nearest
+                        } else {
+                            DlssPreUpscaleMode::Off
+                        }
+                    }
+                    DlssPreUpscaleMode::Nearest => {
+                        if increase {
+                            DlssPreUpscaleMode::Off
+                        } else {
+                            DlssPreUpscaleMode::Linear
+                        }
+                    }
+                    DlssPreUpscaleMode::Off => {
+                        if increase {
+                            DlssPreUpscaleMode::Linear
+                        } else {
+                            DlssPreUpscaleMode::Nearest
+                        }
+                    }
+                };
+            }
             _ => {}
         }
     }
 
     fn toggle_parameter(&mut self) {
         match self.selected_index {
-            0 | 1 | 15 | 18 => self.adjust_parameter(true),
+            0 | 1 | 15 | 18 | 20 => self.adjust_parameter(true),
             5 => self.sharc_enable_clear = !self.sharc_enable_clear,
             6 => self.sharc_enable_update = !self.sharc_enable_update,
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
@@ -626,6 +653,7 @@ impl FrameHook for SponzaTuningHook {
         settings.sharc_accumulation_frame_num = self.sharc_accumulation_frame_num;
         settings.sharc_stale_frame_num = self.sharc_stale_frame_num;
         settings.dlss_mode = self.dlss_mode;
+        settings.dlss_pre_upscale = self.dlss_pre_upscale;
         settings.dlfg_mode = self.dlfg_mode;
         settings.dlss_rr_enabled = self.dlss_rr_enabled;
 
@@ -859,6 +887,7 @@ impl FrameHook for SponzaTuningHook {
                      {}Custom Shader:      [ {} ] (Raster)\n\
                      {}DLFG (Frame Gen):   [ {} ]\n\
                      {}DLSS Ray Recon:     [ {} ]\n\
+                     {}DLSS Pre-Upscale:   [ {} ]\n\
                      ----------------------------------------\n\
                      [Up/Down] Select   [Left/Right] Adjust\n\
                      [Space/Enter] Toggle   [V] VSync: {}",
@@ -906,6 +935,8 @@ impl FrameHook for SponzaTuningHook {
                     dlfg_str,
                     marker(19),
                     on_off(self.dlss_rr_enabled),
+                    marker(20),
+                    self.dlss_pre_upscale.label(),
                     on_off(self.vsync),
                 );
 

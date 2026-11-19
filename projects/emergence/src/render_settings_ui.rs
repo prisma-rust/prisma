@@ -7,7 +7,10 @@ use prism_scene::ui::{
 };
 use prism_scene::{Active, Name};
 
-use crate::commands::{current_upscaler_config, set_upscaler_config, upscaler_mode_label};
+use crate::commands::{
+    current_dlss_pre_upscale, current_upscaler_config, dlss_pre_upscale_label,
+    set_dlss_pre_upscale, set_upscaler_config, upscaler_mode_label,
+};
 
 #[derive(Clone, Copy)]
 struct ModeOption {
@@ -73,9 +76,10 @@ const MODE_OPTIONS: &[ModeOption] = &[
 
 const SCALE_PRESETS: &[f32] = &[0.50, 0.67, 0.75, 0.85, 1.00];
 const SHARP_PRESETS: &[f32] = &[0.00, 0.25, 0.50, 0.75, 1.00];
+const PRE_UPSCALE_LABELS: &[&str] = &["Linear", "Nearest", "Off"];
 
 const PANEL_W: f32 = 520.0;
-const PANEL_H: f32 = 270.0;
+const PANEL_H: f32 = 330.0;
 const PAD: f32 = 16.0;
 const BTN_H: f32 = 26.0;
 const BTN_GAP: f32 = 6.0;
@@ -95,6 +99,8 @@ struct PanelEntities {
     scale_btns: Vec<ButtonEntities>,
     sharp_label: EntityHandle,
     sharp_btns: Vec<ButtonEntities>,
+    pre_label: EntityHandle,
+    pre_btns: Vec<ButtonEntities>,
     status: EntityHandle,
     hint: EntityHandle,
 }
@@ -195,10 +201,10 @@ impl RenderSettingsUi {
         let mut changed = false;
 
         if (pressed & (1 << 1)) != 0 {
-            self.selected_row = (self.selected_row + 2) % 3;
+            self.selected_row = (self.selected_row + 3) % 4;
         }
         if (pressed & (1 << 2)) != 0 {
-            self.selected_row = (self.selected_row + 1) % 3;
+            self.selected_row = (self.selected_row + 1) % 4;
         }
         let step_dir = if (pressed & (1 << 4)) != 0 {
             1i32
@@ -227,9 +233,18 @@ impl RenderSettingsUi {
                     scale = (scale + step_dir as f32 * 0.05).clamp(0.05, 1.0);
                     changed = true;
                 }
-                _ => {
+                2 => {
                     sharp = (sharp + step_dir as f32 * 0.10).clamp(0.0, 1.0);
                     changed = true;
+                }
+                _ => {
+                    let cur = current_dlss_pre_upscale();
+                    let next = if step_dir > 0 {
+                        (cur + 1) % 3
+                    } else {
+                        (cur + 2) % 3
+                    };
+                    set_dlss_pre_upscale(next);
                 }
             }
         }
@@ -265,6 +280,15 @@ impl RenderSettingsUi {
                         sharp = val;
                         self.selected_row = 2;
                         changed = true;
+                    }
+                }
+                let pre_y = panel.y + 242.0;
+                for i in 0..PRE_UPSCALE_LABELS.len() {
+                    if Self::row_button_rect(panel, pre_y, i, PRE_UPSCALE_LABELS.len())
+                        .contains(input.cursor)
+                    {
+                        set_dlss_pre_upscale(i as u8);
+                        self.selected_row = 3;
                     }
                 }
                 if changed {
@@ -321,6 +345,13 @@ impl RenderSettingsUi {
                 text: spawn_child(world, &format!("rs_sharp_txt_{i}")),
             })
             .collect();
+        let pre_label = spawn_child(world, "rs_pre_label");
+        let pre_btns = (0..PRE_UPSCALE_LABELS.len())
+            .map(|i| ButtonEntities {
+                bg: spawn_child(world, &format!("rs_pre_bg_{i}")),
+                text: spawn_child(world, &format!("rs_pre_txt_{i}")),
+            })
+            .collect();
         let status = spawn_child(world, "rs_status");
         let hint = spawn_child(world, "rs_hint");
 
@@ -333,6 +364,8 @@ impl RenderSettingsUi {
             scale_btns,
             sharp_label,
             sharp_btns,
+            pre_label,
+            pre_btns,
             status,
             hint,
         });
@@ -351,6 +384,7 @@ impl RenderSettingsUi {
             p.mode_label,
             p.scale_label,
             p.sharp_label,
+            p.pre_label,
             p.status,
             p.hint,
         ]
@@ -363,6 +397,7 @@ impl RenderSettingsUi {
             .iter()
             .chain(p.scale_btns.iter())
             .chain(p.sharp_btns.iter())
+            .chain(p.pre_btns.iter())
         {
             world.set(b.bg, Active(visible));
             world.set(b.text, Active(visible));
@@ -513,6 +548,48 @@ impl RenderSettingsUi {
             );
         }
 
+        set_text(
+            world,
+            p.pre_label,
+            UiRect {
+                x: panel.x + PAD,
+                y: panel.y + 218.0,
+                w: panel.w - PAD * 2.0,
+                h: 20.0,
+            },
+            &row_marker(
+                3,
+                self.selected_row,
+                &format!(
+                    "DLSS Pre-Upscale ({})",
+                    dlss_pre_upscale_label(current_dlss_pre_upscale())
+                ),
+            ),
+            13.0,
+            [0.78, 0.86, 0.96, 1.0],
+            TextAlign::Left,
+        );
+        let pre_y = panel.y + 242.0;
+        let pre_mode = current_dlss_pre_upscale() as usize;
+        for (i, label) in PRE_UPSCALE_LABELS.iter().enumerate() {
+            let r = Self::row_button_rect(panel, pre_y, i, PRE_UPSCALE_LABELS.len());
+            let bg = if pre_mode == i {
+                [0.20, 0.52, 0.85, 0.95]
+            } else {
+                [0.14, 0.17, 0.23, 0.90]
+            };
+            set_box(world, p.pre_btns[i].bg, r, bg);
+            set_text(
+                world,
+                p.pre_btns[i].text,
+                r,
+                label,
+                12.0,
+                [0.95, 0.97, 1.0, 1.0],
+                TextAlign::Center,
+            );
+        }
+
         let uses_scale = matches!(mode_id, 1..=5);
         let rw = if uses_scale {
             ((screen[0].max(1.0)) * scale).round().max(16.0) as u32
@@ -537,7 +614,7 @@ impl RenderSettingsUi {
             p.status,
             UiRect {
                 x: panel.x + PAD,
-                y: panel.y + 220.0,
+                y: panel.y + 278.0,
                 w: panel.w - PAD * 2.0,
                 h: 20.0,
             },
@@ -557,7 +634,7 @@ impl RenderSettingsUi {
             p.hint,
             UiRect {
                 x: panel.x + PAD,
-                y: panel.y + 242.0,
+                y: panel.y + 300.0,
                 w: panel.w - PAD * 2.0,
                 h: 18.0,
             },

@@ -192,11 +192,11 @@ pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
 pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
-    DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem, PassInfo, PassKind,
-    PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings,
-    ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight,
-    DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H,
-    SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX,
+    DlssPreUpscaleMode, DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem,
+    PassInfo, PassKind, PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode,
+    RenderSettings, ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem,
+    SpriteLight, DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP,
+    PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX,
     SPRITE_LIGHT_POINT, UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
