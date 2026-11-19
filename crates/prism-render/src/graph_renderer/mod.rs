@@ -730,6 +730,11 @@ impl GraphRenderer {
             .unwrap_or_default()
     }
 
+    /// Access the live Streamline runtime (if initialized).
+    pub fn streamline_runtime(&self) -> Option<&crate::streamline::StreamlineRuntime> {
+        self.streamline.as_deref()
+    }
+
     /// 场景 pass 要采样的「上一帧环境光遮蔽」视图。
     ///
     /// `gtao` 开启时取 GTAO pass 的双缓冲 `(frame+1)%2`；关闭时返回 1×1 白色
