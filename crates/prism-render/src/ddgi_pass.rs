@@ -290,6 +290,9 @@ pub struct DdgiPass {
     ray_buffer: BufferGpu,
     variability_buffer: BufferGpu,
     ubo_buffer: BufferGpu,
+    dummy_lights: BufferGpu,
+    dummy_emissive: BufferGpu,
+    scene: Option<crate::bake_common::PtScene>,
     scrolling: DdgiScrollingState,
     variability: DdgiVariabilityState,
     needs_clear: bool,
@@ -514,6 +517,18 @@ impl DdgiPass {
             vk::BufferUsageFlags::UNIFORM_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )?;
+        let dummy_lights = BufferGpu::create(
+            &context,
+            64,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        let dummy_emissive = BufferGpu::create(
+            &context,
+            64,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
 
         let scrolling = DdgiScrollingState::new(params.origin, params.probe_spacing);
         Ok(Self {
@@ -533,6 +548,9 @@ impl DdgiPass {
             ray_buffer,
             variability_buffer,
             ubo_buffer,
+            dummy_lights,
+            dummy_emissive,
+            scene: None,
             scrolling,
             variability: DdgiVariabilityState::default(),
             needs_clear: true,
@@ -543,6 +561,101 @@ impl DdgiPass {
     pub fn invalidate(&mut self) {
         self.needs_clear = true;
         self.variability.wake();
+    }
+
+    /// Whether a TLAS + geometry buffers are currently built for DDGI tracing.
+    #[must_use]
+    pub fn has_geometry(&self) -> bool {
+        self.scene.as_ref().is_some_and(|s| s.tlas.is_some())
+    }
+
+    /// Drop cached acceleration structures so the next frame rebuilds them.
+    pub fn invalidate_geometry(&mut self) {
+        if let Some(mut scene) = self.scene.take() {
+            if let Some(device) = scene.device.take() {
+                scene.destroy(&device);
+            }
+        }
+        self.invalidate();
+    }
+
+    /// Build or rebuild the DDGI ray-tracing scene from world-space instances.
+    pub fn set_geometry(
+        &mut self,
+        command_pool: vk::CommandPool,
+        instances: &[crate::bake_common::PtGeometryInstance],
+    ) -> Result<()> {
+        self.invalidate_geometry();
+        if instances.is_empty() {
+            return Ok(());
+        }
+        let materials = vec![0u8; std::mem::size_of::<crate::managers::GpuMaterial>()];
+        let scene =
+            crate::bake_common::build_pt_scene(&self.context, command_pool, instances, &materials)
+                .context("DdgiPass: build ray-tracing scene")?;
+        self.scene = Some(scene);
+        Ok(())
+    }
+
+    /// Volume parameters and active origin (accounts for infinite scrolling).
+    #[must_use]
+    pub const fn params(&self) -> &DdgiVolumeParams {
+        &self.params
+    }
+
+    /// Current origin (snapped if scrolling is enabled).
+    #[must_use]
+    pub const fn active_origin(&self) -> [f32; 3] {
+        if self.params.scrolling_enabled {
+            self.scrolling.snapped_origin
+        } else {
+            self.params.origin
+        }
+    }
+
+    /// Dispatch DDGI using the internally cached [`PtScene`] and shared material/bindless sets.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "dispatches DDGI with scene, material, bindless, IBL, and lighting uniforms"
+    )]
+    pub fn dispatch_scene(
+        &mut self,
+        cmd: vk::CommandBuffer,
+        probe_volume_out_view: vk::ImageView,
+        materials_buffer: vk::Buffer,
+        bindless_set: vk::DescriptorSet,
+        ibl_set: vk::DescriptorSet,
+        target_world_pos: [f32; 3],
+        light_dir: [f32; 3],
+        light_color: [f32; 3],
+        frame_index: u32,
+    ) -> Result<bool> {
+        let Some(scene) = self.scene.as_ref() else {
+            return Ok(false);
+        };
+        let Some(tlas) = scene.tlas.as_ref() else {
+            return Ok(false);
+        };
+        let inputs = DdgiDispatchInputs {
+            tlas: tlas.handle,
+            vertex_buffer: scene.vertex_buffer,
+            index_buffer: scene.index_buffer,
+            instance_meta_buffer: scene.instance_meta_buffer,
+            materials_buffer,
+            lights_buffer: self.dummy_lights.buffer,
+            emissive_buffer: self.dummy_emissive.buffer,
+            probe_volume_out_view,
+            bindless_set,
+            ibl_set,
+            target_world_pos,
+            light_dir,
+            light_color,
+            num_lights: 0,
+            num_emissive: 0,
+            frame_index,
+        };
+        self.record_dispatch(cmd, &inputs)?;
+        Ok(true)
     }
 
     /// Current DDGI variability sleep state.
@@ -890,6 +1003,7 @@ impl DdgiPass {
 
 impl Drop for DdgiPass {
     fn drop(&mut self) {
+        self.invalidate_geometry();
         let device = &self.context.device;
         self.irradiance_atlas.destroy(device);
         self.distance_atlas.destroy(device);
@@ -897,6 +1011,8 @@ impl Drop for DdgiPass {
         self.ray_buffer.destroy(device);
         self.variability_buffer.destroy(device);
         self.ubo_buffer.destroy(device);
+        self.dummy_lights.destroy(device);
+        self.dummy_emissive.destroy(device);
         unsafe {
             if self.descriptor_pool != vk::DescriptorPool::null() {
                 device.destroy_descriptor_pool(self.descriptor_pool, None);

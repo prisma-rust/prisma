@@ -71,7 +71,7 @@ RWTexture2DArray<float4> probeMetadata; // xyz = relocation offset, w = classifi
 RWStructuredBuffer<float4> rayBuffer; // rgb = radiance, w = signed distance (<0 = backface)
 
 [[vk::binding(12, 0)]]
-[format("rgba16f")]
+[format("rgba32f")]
 RWTexture3D<float4> probeVolumeOut; // (dims.x, dims.y, dims.z * 9)
 
 [[vk::binding(13, 0)]]
