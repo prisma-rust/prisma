@@ -9,6 +9,16 @@ pub const AUTO_EXPOSURE_ADAPT_COMP_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/auto_exposure_adapt.comp.spv");
 pub const AUTO_EXPOSURE_HIST_COMP_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/auto_exposure_hist.comp.spv");
+pub const DDGI_BLEND_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ddgi_blend.comp.spv");
+pub const DDGI_CLEAR_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ddgi_clear.comp.spv");
+pub const DDGI_RESOLVE_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ddgi_resolve.comp.spv");
+pub const DDGI_UPDATE_DISTANCE_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ddgi_update_distance.comp.spv");
+pub const DDGI_UPDATE_IRRADIANCE_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ddgi_update_irradiance.comp.spv");
 pub const GI_BAKE_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/gi_bake.comp.spv");
 pub const GIZMO_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/gizmo.frag.spv");
 pub const GIZMO_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/gizmo.vert.spv");

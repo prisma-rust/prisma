@@ -50,6 +50,7 @@ pub mod compute;
 pub mod context;
 pub mod culling;
 pub mod ddgi;
+pub mod ddgi_pass;
 pub mod descriptor;
 pub mod dirty_dispatch;
 pub mod external_overlay;
