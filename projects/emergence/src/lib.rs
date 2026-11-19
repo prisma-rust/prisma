@@ -327,6 +327,7 @@ pub fn emergence_fixed_tick(
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
     let panel_open =
         runtime.commands.console_open || runtime.render_settings_ui.open || runtime.nei.open;
+    world.set_camera_input_suppressed(panel_open);
     runtime
         .player
         .step_physics_with_input(world, &runtime.sim, dt, !panel_open);
@@ -360,7 +361,7 @@ pub fn emergence_frame_tick(
         runtime
             .commands
             .handle_console_input(&input, world, &mut runtime.sim, &mut runtime.player);
-    if !console_active {
+    let ui_consumed = if !console_active {
         if input.key_pressed(keys::F3) {
             runtime.debug_hud.open = !runtime.debug_hud.open;
         }
@@ -368,16 +369,23 @@ pub fn emergence_frame_tick(
             runtime
                 .render_settings_ui
                 .handle_input(&input, screen, console_active);
-        let ui_consumed = settings_consumed
+        settings_consumed
             || runtime
                 .nei
                 .handle_input(&input, screen, console_active, &mut runtime.player)
             || runtime.render_settings_ui.open
-            || runtime.nei.open;
-        runtime
-            .player
-            .update_look_and_tools_with_ui(world, &mut runtime.sim, dt, ui_consumed);
-    }
+            || runtime.nei.open
+    } else {
+        true
+    };
+    let panel_open = console_active
+        || runtime.commands.console_open
+        || runtime.render_settings_ui.open
+        || runtime.nei.open;
+    world.set_camera_input_suppressed(panel_open);
+    runtime
+        .player
+        .update_look_and_tools_with_ui(world, &mut runtime.sim, dt, ui_consumed);
 
     runtime.commands.sync_chat_ui(world, dt);
     runtime
@@ -775,5 +783,64 @@ mod runtime_tests {
         world.set_input(press_key_snapshot(keys::OTHER_BASE + b'B' as usize));
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         assert!(state.as_ref().unwrap().nei.open);
+    }
+
+    #[test]
+    fn console_open_suppresses_player_movement_and_engine_camera_input() {
+        let mut ecs = prism_ecs::World::new();
+        let mut state: Option<EmergenceRuntime> = None;
+
+        {
+            let mut world = GameWorld::host(&mut ecs);
+            world.set_input(InputSnapshot::default());
+            emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        }
+        // Close NEI if open by default so only the command console controls gating.
+        state.as_mut().unwrap().nei.open = false;
+
+        // Open command console with `T`.
+        {
+            let mut world = GameWorld::host(&mut ecs);
+            world.set_input(press_key_snapshot(keys::KEY_T));
+            emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        }
+        assert!(state.as_ref().unwrap().commands.console_open);
+        assert!(ecs
+            .get_resource::<prism_engine::scene::systems::camera::CameraInputGate>()
+            .is_some_and(|g| g.suppressed));
+
+        let pos_before = state.as_ref().unwrap().player.feet_pos;
+        // Hold `W` and `SPACE` while console is open — player must not move horizontally or jump.
+        let mut move_input = press_key_snapshot(keys::KEY_W);
+        move_input.keys[keys::SPACE / 64] |= 1u64 << (keys::SPACE % 64);
+        move_input.key_edges[keys::SPACE / 64] |= 1u64 << (keys::SPACE % 64);
+        for _ in 0..10 {
+            let mut world = GameWorld::host(&mut ecs);
+            world.set_input(move_input);
+            emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+            emergence_fixed_tick(&mut state, &mut world, 1.0 / 60.0);
+        }
+        let pos_after = state.as_ref().unwrap().player.feet_pos;
+        assert!(
+            (pos_after.x - pos_before.x).abs() < 1e-5
+                && (pos_after.z - pos_before.z).abs() < 1e-5,
+            "horizontal movement must be blocked while command console is open: before={pos_before:?} after={pos_after:?}"
+        );
+
+        // Close console with `Escape` -> next frame camera input gate should lift.
+        {
+            let mut world = GameWorld::host(&mut ecs);
+            world.set_input(press_key_snapshot(keys::ESCAPE));
+            emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        }
+        assert!(!state.as_ref().unwrap().commands.console_open);
+        {
+            let mut world = GameWorld::host(&mut ecs);
+            world.set_input(InputSnapshot::default());
+            emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
+        }
+        assert!(!ecs
+            .get_resource::<prism_engine::scene::systems::camera::CameraInputGate>()
+            .is_some_and(|g| g.suppressed));
     }
 }
