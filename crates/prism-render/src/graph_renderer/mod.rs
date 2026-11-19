@@ -219,6 +219,8 @@ pub struct GraphRenderer {
     color_format: vk::Format,
     /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
     ui_host: UiOverlayHost,
+    /// Optional NVIDIA NRD runtime instance (`NRD.dll` / `libNRD.so`).
+    nrd_runtime: Option<crate::nrd::NrdRuntime>,
     /// NVIDIA Streamline runtime (DLSS-SR, DLSS-RR, DLFG), `None` when absent.
     streamline: Option<std::sync::Arc<crate::streamline::StreamlineRuntime>>,
     /// Real-time RTXGI v1.3 DDGI pass (created lazily when `RasterGiMode::Ddgi` is active).
@@ -673,6 +675,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            nrd_runtime: crate::nrd::NrdRuntime::try_init(),
             streamline,
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
@@ -1192,6 +1195,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            nrd_runtime: crate::nrd::NrdRuntime::try_init(),
             streamline,
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
@@ -3456,6 +3460,14 @@ impl GraphRenderer {
     ) -> anyhow::Result<Option<std::path::PathBuf>> {
         self.telemetry
             .finish_screenshot(&self.runtime.context, ctx.fence, self.color_format)
+    }
+
+    /// Active NVIDIA NRD library version `(major, minor, build)` if loaded.
+    #[must_use]
+    pub fn nrd_version(&self) -> Option<(u8, u8, u8)> {
+        self.nrd_runtime
+            .as_ref()
+            .map(crate::nrd::NrdRuntime::version)
     }
 
     pub fn destroy(&mut self) {

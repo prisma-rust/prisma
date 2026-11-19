@@ -671,7 +671,7 @@ pub type PFunSlGetFeatureFunction = unsafe extern "C" fn(
     function: *mut *mut c_void,
 ) -> SlResult;
 
-struct SharedLib {
+pub(crate) struct SharedLib {
     handle: *mut c_void,
 }
 
@@ -696,7 +696,7 @@ impl Drop for SharedLib {
 }
 
 impl SharedLib {
-    fn open(path: &str) -> Option<Self> {
+    pub(crate) fn open(path: &str) -> Option<Self> {
         let c_path = std::ffi::CString::new(path).ok()?;
         #[cfg(unix)]
         let handle = unsafe { dlopen(c_path.as_ptr(), 1) }; // RTLD_LAZY
@@ -712,7 +712,7 @@ impl SharedLib {
         }
     }
 
-    unsafe fn get_symbol(&self, symbol: &[u8]) -> Option<*mut c_void> {
+    pub(crate) unsafe fn get_symbol(&self, symbol: &[u8]) -> Option<*mut c_void> {
         #[cfg(unix)]
         let ptr = dlsym(self.handle, symbol.as_ptr().cast());
         #[cfg(windows)]
