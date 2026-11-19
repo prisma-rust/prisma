@@ -574,6 +574,7 @@ fn render_one_frame(
         renderer_settings.dlss_mode = settings.dlss_mode;
         renderer_settings.dlss_pre_upscale = settings.dlss_pre_upscale;
         renderer_settings.dlfg_mode = settings.dlfg_mode;
+        renderer_settings.dlfg_frames = settings.dlfg_frames.clamp(1, 3);
         renderer_settings.dlss_rr_enabled = settings.dlss_rr_enabled;
     }
 

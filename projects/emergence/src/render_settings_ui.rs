@@ -8,8 +8,9 @@ use prism_scene::ui::{
 use prism_scene::{Active, Name};
 
 use crate::commands::{
-    current_dlss_pre_upscale, current_upscaler_config, dlss_pre_upscale_label,
-    set_dlss_pre_upscale, set_upscaler_config, upscaler_mode_label,
+    current_dlfg_config, current_dlss_pre_upscale, current_upscaler_config, dlfg_frames_label,
+    dlfg_mode_label, dlss_pre_upscale_label, set_dlfg_config, set_dlss_pre_upscale,
+    set_upscaler_config, upscaler_mode_label,
 };
 
 #[derive(Clone, Copy)]
@@ -77,9 +78,11 @@ const MODE_OPTIONS: &[ModeOption] = &[
 const SCALE_PRESETS: &[f32] = &[0.50, 0.67, 0.75, 0.85, 1.00];
 const SHARP_PRESETS: &[f32] = &[0.00, 0.25, 0.50, 0.75, 1.00];
 const PRE_UPSCALE_LABELS: &[&str] = &["Linear", "Nearest", "Off"];
+const DLFG_MODE_LABELS: &[&str] = &["Off", "On", "Auto"];
+const DLFG_FRAMES_LABELS: &[&str] = &["2x (1)", "3x (2)", "4x (3)"];
 
 const PANEL_W: f32 = 520.0;
-const PANEL_H: f32 = 330.0;
+const PANEL_H: f32 = 446.0;
 const PAD: f32 = 16.0;
 const BTN_H: f32 = 26.0;
 const BTN_GAP: f32 = 6.0;
@@ -101,6 +104,10 @@ struct PanelEntities {
     sharp_btns: Vec<ButtonEntities>,
     pre_label: EntityHandle,
     pre_btns: Vec<ButtonEntities>,
+    dlfg_label: EntityHandle,
+    dlfg_btns: Vec<ButtonEntities>,
+    fg_mult_label: EntityHandle,
+    fg_mult_btns: Vec<ButtonEntities>,
     status: EntityHandle,
     hint: EntityHandle,
 }
@@ -198,13 +205,14 @@ impl RenderSettingsUi {
         }
 
         let (mut mode_id, mut scale, mut sharp) = current_upscaler_config();
+        let (mut dlfg_mode, mut dlfg_frames) = current_dlfg_config();
         let mut changed = false;
 
         if (pressed & (1 << 1)) != 0 {
-            self.selected_row = (self.selected_row + 3) % 4;
+            self.selected_row = (self.selected_row + 5) % 6;
         }
         if (pressed & (1 << 2)) != 0 {
-            self.selected_row = (self.selected_row + 1) % 4;
+            self.selected_row = (self.selected_row + 1) % 6;
         }
         let step_dir = if (pressed & (1 << 4)) != 0 {
             1i32
@@ -237,7 +245,7 @@ impl RenderSettingsUi {
                     sharp = (sharp + step_dir as f32 * 0.10).clamp(0.0, 1.0);
                     changed = true;
                 }
-                _ => {
+                3 => {
                     let cur = current_dlss_pre_upscale();
                     let next = if step_dir > 0 {
                         (cur + 1) % 3
@@ -245,6 +253,24 @@ impl RenderSettingsUi {
                         (cur + 2) % 3
                     };
                     set_dlss_pre_upscale(next);
+                }
+                4 => {
+                    dlfg_mode = if step_dir > 0 {
+                        (dlfg_mode + 1) % 3
+                    } else {
+                        (dlfg_mode + 2) % 3
+                    };
+                    set_dlfg_config(dlfg_mode, dlfg_frames);
+                }
+                _ => {
+                    let idx = dlfg_frames.saturating_sub(1).min(2);
+                    let next_idx = if step_dir > 0 {
+                        (idx + 1) % 3
+                    } else {
+                        (idx + 2) % 3
+                    };
+                    dlfg_frames = next_idx + 1;
+                    set_dlfg_config(dlfg_mode, dlfg_frames);
                 }
             }
         }
@@ -289,6 +315,26 @@ impl RenderSettingsUi {
                     {
                         set_dlss_pre_upscale(i as u8);
                         self.selected_row = 3;
+                    }
+                }
+                let dlfg_y = panel.y + 300.0;
+                for i in 0..DLFG_MODE_LABELS.len() {
+                    if Self::row_button_rect(panel, dlfg_y, i, DLFG_MODE_LABELS.len())
+                        .contains(input.cursor)
+                    {
+                        dlfg_mode = i as u8;
+                        set_dlfg_config(dlfg_mode, dlfg_frames);
+                        self.selected_row = 4;
+                    }
+                }
+                let fg_mult_y = panel.y + 358.0;
+                for i in 0..DLFG_FRAMES_LABELS.len() {
+                    if Self::row_button_rect(panel, fg_mult_y, i, DLFG_FRAMES_LABELS.len())
+                        .contains(input.cursor)
+                    {
+                        dlfg_frames = (i as u8) + 1;
+                        set_dlfg_config(dlfg_mode, dlfg_frames);
+                        self.selected_row = 5;
                     }
                 }
                 if changed {
@@ -352,6 +398,20 @@ impl RenderSettingsUi {
                 text: spawn_child(world, &format!("rs_pre_txt_{i}")),
             })
             .collect();
+        let dlfg_label = spawn_child(world, "rs_dlfg_label");
+        let dlfg_btns = (0..DLFG_MODE_LABELS.len())
+            .map(|i| ButtonEntities {
+                bg: spawn_child(world, &format!("rs_dlfg_bg_{i}")),
+                text: spawn_child(world, &format!("rs_dlfg_txt_{i}")),
+            })
+            .collect();
+        let fg_mult_label = spawn_child(world, "rs_fg_mult_label");
+        let fg_mult_btns = (0..DLFG_FRAMES_LABELS.len())
+            .map(|i| ButtonEntities {
+                bg: spawn_child(world, &format!("rs_fg_mult_bg_{i}")),
+                text: spawn_child(world, &format!("rs_fg_mult_txt_{i}")),
+            })
+            .collect();
         let status = spawn_child(world, "rs_status");
         let hint = spawn_child(world, "rs_hint");
 
@@ -366,6 +426,10 @@ impl RenderSettingsUi {
             sharp_btns,
             pre_label,
             pre_btns,
+            dlfg_label,
+            dlfg_btns,
+            fg_mult_label,
+            fg_mult_btns,
             status,
             hint,
         });
@@ -385,6 +449,8 @@ impl RenderSettingsUi {
             p.scale_label,
             p.sharp_label,
             p.pre_label,
+            p.dlfg_label,
+            p.fg_mult_label,
             p.status,
             p.hint,
         ]
@@ -398,6 +464,8 @@ impl RenderSettingsUi {
             .chain(p.scale_btns.iter())
             .chain(p.sharp_btns.iter())
             .chain(p.pre_btns.iter())
+            .chain(p.dlfg_btns.iter())
+            .chain(p.fg_mult_btns.iter())
         {
             world.set(b.bg, Active(visible));
             world.set(b.text, Active(visible));
@@ -590,6 +658,84 @@ impl RenderSettingsUi {
             );
         }
 
+        let (dlfg_mode, dlfg_frames) = current_dlfg_config();
+        set_text(
+            world,
+            p.dlfg_label,
+            UiRect {
+                x: panel.x + PAD,
+                y: panel.y + 276.0,
+                w: panel.w - PAD * 2.0,
+                h: 20.0,
+            },
+            &row_marker(
+                4,
+                self.selected_row,
+                &format!("Frame Gen (DLFG: {})", dlfg_mode_label(dlfg_mode)),
+            ),
+            13.0,
+            [0.78, 0.86, 0.96, 1.0],
+            TextAlign::Left,
+        );
+        let dlfg_y = panel.y + 300.0;
+        for (i, label) in DLFG_MODE_LABELS.iter().enumerate() {
+            let r = Self::row_button_rect(panel, dlfg_y, i, DLFG_MODE_LABELS.len());
+            let bg = if usize::from(dlfg_mode) == i {
+                [0.20, 0.52, 0.85, 0.95]
+            } else {
+                [0.14, 0.17, 0.23, 0.90]
+            };
+            set_box(world, p.dlfg_btns[i].bg, r, bg);
+            set_text(
+                world,
+                p.dlfg_btns[i].text,
+                r,
+                label,
+                12.0,
+                [0.95, 0.97, 1.0, 1.0],
+                TextAlign::Center,
+            );
+        }
+
+        set_text(
+            world,
+            p.fg_mult_label,
+            UiRect {
+                x: panel.x + PAD,
+                y: panel.y + 334.0,
+                w: panel.w - PAD * 2.0,
+                h: 20.0,
+            },
+            &row_marker(
+                5,
+                self.selected_row,
+                &format!("FG Multiplier ({})", dlfg_frames_label(dlfg_frames)),
+            ),
+            13.0,
+            [0.78, 0.86, 0.96, 1.0],
+            TextAlign::Left,
+        );
+        let fg_mult_y = panel.y + 358.0;
+        let fg_idx = usize::from(dlfg_frames.saturating_sub(1).min(2));
+        for (i, label) in DLFG_FRAMES_LABELS.iter().enumerate() {
+            let r = Self::row_button_rect(panel, fg_mult_y, i, DLFG_FRAMES_LABELS.len());
+            let bg = if fg_idx == i {
+                [0.20, 0.52, 0.85, 0.95]
+            } else {
+                [0.14, 0.17, 0.23, 0.90]
+            };
+            set_box(world, p.fg_mult_btns[i].bg, r, bg);
+            set_text(
+                world,
+                p.fg_mult_btns[i].text,
+                r,
+                label,
+                12.0,
+                [0.95, 0.97, 1.0, 1.0],
+                TextAlign::Center,
+            );
+        }
+
         let uses_scale = matches!(mode_id, 1..=5);
         let rw = if uses_scale {
             ((screen[0].max(1.0)) * scale).round().max(16.0) as u32
@@ -602,8 +748,10 @@ impl RenderSettingsUi {
             screen[1].max(1.0) as u32
         };
         let status_line = format!(
-            "Active: {}  |  {}x{} -> {}x{}",
+            "Active: {} | DLFG: {} ({}) | {}x{} -> {}x{}",
             upscaler_mode_label(mode_id),
+            dlfg_mode_label(dlfg_mode),
+            dlfg_frames_label(dlfg_frames),
             rw,
             rh,
             screen[0].max(1.0) as u32,
@@ -614,7 +762,7 @@ impl RenderSettingsUi {
             p.status,
             UiRect {
                 x: panel.x + PAD,
-                y: panel.y + 278.0,
+                y: panel.y + 394.0,
                 w: panel.w - PAD * 2.0,
                 h: 20.0,
             },
@@ -625,7 +773,7 @@ impl RenderSettingsUi {
         );
 
         #[cfg(not(target_os = "android"))]
-        let hint_text = "Up/Down/Left/Right or Click | *DLSS/FSR are PC placeholders (= Off)";
+        let hint_text = "Up/Down/Left/Right or Click | /upscaler /dlfg /dlss_pre";
         #[cfg(target_os = "android")]
         let hint_text = "Up/Down/Left/Right or Click | /upscaler <mode> [scale] [sharp]";
 
@@ -634,7 +782,7 @@ impl RenderSettingsUi {
             p.hint,
             UiRect {
                 x: panel.x + PAD,
-                y: panel.y + 300.0,
+                y: panel.y + 416.0,
                 w: panel.w - PAD * 2.0,
                 h: 18.0,
             },

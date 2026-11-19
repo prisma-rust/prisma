@@ -120,6 +120,8 @@ pub struct RenderConfig {
     pub dlss_pre_upscale: Option<String>,
     /// DLSS Frame Generation (DLFG) mode (`"off"`, `"on"`, `"auto"`).
     pub dlfg_mode: Option<String>,
+    /// Number of generated frames per rendered frame (`1` = 2x, `2` = 3x, `3` = 4x).
+    pub dlfg_frames: Option<u32>,
     /// Enable DLSS Ray Reconstruction (`true` / `false`).
     pub dlss_rr_enabled: Option<bool>,
 }
@@ -199,6 +201,9 @@ impl RenderConfig {
                     crate::render_settings::DlssgMode::Off
                 }
             };
+        }
+        if let Some(frames) = self.dlfg_frames {
+            settings.dlfg_frames = frames.clamp(1, 3);
         }
         if let Some(rr) = self.dlss_rr_enabled {
             settings.dlss_rr_enabled = rr;
@@ -393,6 +398,7 @@ impl RenderConfig {
             dlss_mode: ini.get("render", "dlss_mode").map(str::to_string),
             dlss_pre_upscale: ini.get("render", "dlss_pre_upscale").map(str::to_string),
             dlfg_mode: ini.get("render", "dlfg_mode").map(str::to_string),
+            dlfg_frames: ini.get_u32("render", "dlfg_frames"),
             dlss_rr_enabled: ini.get_bool("render", "dlss_rr_enabled"),
         }
     }
