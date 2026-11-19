@@ -3549,6 +3549,12 @@ impl GraphRenderer {
         // Destroy shadow sampler.
         unsafe { device.destroy_sampler(self.shadow_sampler, None) };
 
+        // Shut down Streamline before `runtime` drops and calls `vkDestroyDevice`.
+        if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
+            dlss.release_streamline();
+        }
+        self.streamline = None;
+
         // Destroy graph resources (shadow map images, etc.).
         self.graph.destroy(device);
 

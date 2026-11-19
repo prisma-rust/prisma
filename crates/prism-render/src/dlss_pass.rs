@@ -105,6 +105,12 @@ impl DlssPass {
         Ok(())
     }
 
+    /// Release Streamline runtime and owned images before `VkDevice` destruction.
+    pub fn release_streamline(&mut self) {
+        self.streamline = None;
+        self.destroy_images();
+    }
+
     fn destroy_images(&mut self) {
         unsafe {
             for i in 0..2 {
