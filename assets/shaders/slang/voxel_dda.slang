@@ -1185,6 +1185,7 @@ void trace_voxel_ao_and_gi(
     uint2  px,
     float  time,
     float  hitDist,
+    bool   highRes,
     out float  aoOut,
     out float  skyVisOut,
     out float3 bounceGiOut
@@ -1198,8 +1199,9 @@ void trace_voxel_ao_and_gi(
     float ignB = interleaved_gradient_noise(px + uint2(17u, 29u), frameIdx + 5u);
 
     // Balanced 2-ray / 1-bounce near-field GI + temporal accumulation + À-Trous denoiser.
-    uint giRays = (hitDist < 12.0) ? 2u : 1u;
-    uint b2Cap  = (hitDist < 12.0) ? 1u : 0u;
+    // At high resolution (>1.5M px), cap to 1 ray and tighter 2nd-bounce radius to prevent WDDM TDR.
+    uint giRays = (!highRes && hitDist < 12.0) ? 2u : 1u;
+    uint b2Cap  = (hitDist < (highRes ? 8.0 : 12.0)) ? 1u : 0u;
     float b1MaxT = (hitDist < 24.0) ? 12.0 : 8.0;
 
     float occ = 0.0;
@@ -1246,6 +1248,7 @@ void trace_voxel_ao_and_gi(
             hit1Alb, hit1Emit, hit1Rough, hit1Met, hit1Tile
         );
 
+        // Direct sunlight on Bounce-1 surface (with shadow check so sunlit roofs never leak indoors).
         // Direct sunlight on Bounce-1 surface (with shadow check so sunlit roofs never leak indoors).
         float hit1Ndl = max(dot(h1.normal, sunDir), 0.0);
         float hit1Vis = 0.0;
@@ -1474,81 +1477,11 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
             float3 fresnelEnv = f_schlick(ndv, f0) * (1.0 - roughness * 0.75);
             float3 specEnv = envRefl * fresnelEnv * (0.35 + 0.65 * shadowVis);
 
-            // Reproject previous frame GI history first so valid 2x1 checkerboard half can reuse it directly.
             int curNormalId = encode_normal_id(res.normal);
-            bool hasHistory = false;
-            float4 prevGi = float4(0.0, 0.0, 0.0, 1.0);
-            if (ubo.counts2.z != 0u)
-            {
-                float4 prevClip = mul(ubo.prevViewProj, float4(res.worldPos, 1.0));
-                if (prevClip.w > 1e-4)
-                {
-                    float2 prevUv = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
-                    if (all(prevUv >= float2(0.0, 0.0)) && all(prevUv < float2(1.0, 1.0)))
-                    {
-                        int2 prevPx = clamp(int2(prevUv * float2(width, height)), int2(0, 0), int2(int(width) - 1, int(height) - 1));
-                        float4 prevPN = prevPosNormTex.Load(int3(prevPx, 0));
-                        if (prevPN.w >= -0.5
-                            && abs(prevPN.w - float(curNormalId)) < 0.25
-                            && length(prevPN.xyz - res.worldPos) < 0.22)
-                        {
-                            float4 candidate = prevGiTex.Load(int3(prevPx, 0));
-                            if (all(isfinite(candidate)))
-                            {
-                                prevGi = candidate;
-                                hasHistory = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            bool skipGiTrace = hasHistory
-                && (res.t < 48.0)
-                && (ubo.counts2.w == 0u)
-                && (((tid.x ^ tid.y ^ ubo.counts2.y) & 1u) != 0u);
-
-            float4 rawGiAo = prevGi;
-            if (!skipGiTrace)
-            {
-                float3 skyZenithGi = sample_atmosphere(float3(0.0, 1.0, 0.0), L, sunCol);
-                float3 skyHorizonGi = sample_atmosphere(normalize(float3(N.x, 0.08, N.z)), L, sunCol);
-                float3 hemiSky = lerp(skyHorizonGi * 0.52, skyZenithGi * 1.15, N.y * 0.5 + 0.5);
-                float3 groundBounce = sunCol * (0.14 * max(L.y, 0.05) * max(-N.y * 0.5 + 0.5, 0.0));
-                float directionalFacet = 0.90 + 0.10 * dot(res.normal, normalize(float3(0.3, 1.0, 0.2)));
-                float3 analyticSky = hemiSky * (ambientStrength * directionalFacet) + groundBounce;
-
-                float ao = 1.0;
-                float skyVis = 1.0;
-                float3 tracedGi = analyticSky;
-                if (res.t < 48.0)
-                {
-                    trace_voxel_ao_and_gi(
-                        res.worldPos, res.normal, sunDir, sunCol, ambientStrength,
-                        tid.xy, time, res.t, ao, skyVis, tracedGi
-                    );
-                    // Smoothly blend analytic distant sky beyond 30m so there is no pop-in seam.
-                    float farBlend = smoothstep(30.0, 48.0, res.t);
-                    float3 outdoorFill = analyticSky * lerp(0.18 * ao, 0.45, skyVis);
-                    float3 fullTraced = tracedGi + outdoorFill;
-                    tracedGi = lerp(fullTraced, analyticSky, farBlend);
-                    ao = lerp(ao, 1.0, farBlend);
-                }
-
-                tracedGi = clamp(tracedGi, float3(0.0, 0.0, 0.0), float3(32.0, 32.0, 32.0));
-                rawGiAo = float4(tracedGi, ao);
-                if (hasHistory)
-                {
-                    float alpha = (ubo.counts2.w != 0u) ? 0.38 : 0.22;
-                    rawGiAo = lerp(prevGi, rawGiAo, alpha);
-                }
-            }
-
             directOutTex[tid.xy]  = float4(direct + sss + emissive, voxelDepth);
             albedoOutTex[tid.xy]  = float4(kd * albedo, 1.0);
             specEnvOutTex[tid.xy] = float4(specEnv, res.t);
             posNormOutTex[tid.xy] = float4(res.worldPos, float(curNormalId));
-            giOutTex[tid.xy]      = rawGiAo;
             return;
         }
     }
@@ -1557,7 +1490,115 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
     albedoOutTex[tid.xy]  = float4(0.0, 0.0, 0.0, 0.0);
     specEnvOutTex[tid.xy] = float4(0.0, 0.0, 0.0, 0.0);
     posNormOutTex[tid.xy] = float4(0.0, 0.0, 0.0, -1.0);
-    giOutTex[tid.xy]      = float4(0.0, 0.0, 0.0, 1.0);
+}
+
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void voxelGiMain(uint3 tid : SV_DispatchThreadID)
+{
+    uint width = ubo.counts.y;
+    uint height = ubo.counts.z;
+    if (tid.x >= width || tid.y >= height)
+        return;
+
+    int3 px = int3(int(tid.x), int(tid.y), 0);
+    float4 posNorm = posNormReadTex.Load(px);
+    if (posNorm.w < -0.5)
+    {
+        giOutTex[tid.xy] = float4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    float3 worldPos = posNorm.xyz;
+    int curNormalId = int(round(posNorm.w));
+    float3 normal = decode_normal_id(curNormalId);
+    float hitDist = specEnvReadTex.Load(px).w;
+
+    float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
+    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
+    float ambientStrength = max(0.20, ubo.sunColorAmbient.w * 1.35);
+    float time = ubo.cameraPos.w;
+    float3 L = sunDir;
+    float3 N = normal;
+
+    bool hasHistory = false;
+    float4 prevGi = float4(0.0, 0.0, 0.0, 1.0);
+    if (ubo.counts2.z != 0u)
+    {
+        float4 prevClip = mul(ubo.prevViewProj, float4(worldPos, 1.0));
+        if (prevClip.w > 1e-4)
+        {
+            float2 prevUv = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+            if (all(prevUv >= float2(0.0, 0.0)) && all(prevUv < float2(1.0, 1.0)))
+            {
+                int2 prevPx = clamp(int2(prevUv * float2(width, height)), int2(0, 0), int2(int(width) - 1, int(height) - 1));
+                float4 prevPN = prevPosNormTex.Load(int3(prevPx, 0));
+                if (prevPN.w >= -0.5
+                    && abs(prevPN.w - float(curNormalId)) < 0.25
+                    && length(prevPN.xyz - worldPos) < 0.22)
+                {
+                    float4 candidate = prevGiTex.Load(int3(prevPx, 0));
+                    if (all(isfinite(candidate)))
+                    {
+                        prevGi = candidate;
+                        hasHistory = true;
+                    }
+                }
+            }
+        }
+    }
+
+    bool highRes = (width * height) > 1500000u;
+    bool checkerboardSkip = highRes
+        ? (((tid.x & 1u) | ((tid.y & 1u) << 1u)) != (ubo.counts2.y & 3u))
+        : (((tid.x ^ tid.y ^ ubo.counts2.y) & 1u) != 0u);
+    bool skipGiTrace = (hitDist < 48.0)
+        && checkerboardSkip
+        && (ubo.counts2.w == 0u || highRes || !hasHistory);
+
+    float4 rawGiAo = prevGi;
+    if (!skipGiTrace || !hasHistory)
+    {
+        float3 skyZenithGi = sample_atmosphere(float3(0.0, 1.0, 0.0), L, sunCol);
+        float3 skyHorizonGi = sample_atmosphere(normalize(float3(N.x, 0.08, N.z)), L, sunCol);
+        float3 hemiSky = lerp(skyHorizonGi * 0.52, skyZenithGi * 1.15, N.y * 0.5 + 0.5);
+        float3 groundBounce = sunCol * (0.14 * max(L.y, 0.05) * max(-N.y * 0.5 + 0.5, 0.0));
+        float directionalFacet = 0.90 + 0.10 * dot(normal, normalize(float3(0.3, 1.0, 0.2)));
+        float3 analyticSky = hemiSky * (ambientStrength * directionalFacet) + groundBounce;
+
+        if (skipGiTrace)
+        {
+            rawGiAo = float4(clamp(analyticSky, float3(0.0, 0.0, 0.0), float3(32.0, 32.0, 32.0)), 1.0);
+        }
+        else
+        {
+            float ao = 1.0;
+            float skyVis = 1.0;
+            float3 tracedGi = analyticSky;
+            if (hitDist < 48.0)
+            {
+                trace_voxel_ao_and_gi(
+                    worldPos, normal, sunDir, sunCol, ambientStrength,
+                    tid.xy, time, hitDist, highRes, ao, skyVis, tracedGi
+                );
+                float farBlend = smoothstep(30.0, 48.0, hitDist);
+                float3 outdoorFill = analyticSky * lerp(0.18 * ao, 0.45, skyVis);
+                float3 fullTraced = tracedGi + outdoorFill;
+                tracedGi = lerp(fullTraced, analyticSky, farBlend);
+                ao = lerp(ao, 1.0, farBlend);
+            }
+
+            tracedGi = clamp(tracedGi, float3(0.0, 0.0, 0.0), float3(32.0, 32.0, 32.0));
+            rawGiAo = float4(tracedGi, ao);
+            if (hasHistory)
+            {
+                float alpha = (ubo.counts2.w != 0u) ? 0.38 : 0.22;
+                rawGiAo = lerp(prevGi, rawGiAo, alpha);
+            }
+        }
+    }
+
+    giOutTex[tid.xy] = rawGiAo;
 }
 
 [shader("compute")]

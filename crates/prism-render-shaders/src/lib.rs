@@ -78,6 +78,7 @@ pub const UI_OVERLAY_VERT_SPV: &[u8] =
 pub const VOXEL_COMPOSITE_COMP_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/voxel_composite.comp.spv");
 pub const VOXEL_DDA_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/voxel_dda.comp.spv");
+pub const VOXEL_GI_COMP_SPV: &[u8] = include_bytes!("../../../assets/shaders/voxel_gi.comp.spv");
 pub const VOXEL_GI_DENOISE_COMP_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/voxel_gi_denoise.comp.spv");
 pub const VOXEL_RT_GI_COMP_SPV: &[u8] =
