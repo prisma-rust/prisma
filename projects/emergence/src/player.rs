@@ -447,25 +447,28 @@ impl PlayerController {
             && (input.right_held
                 || input.middle_held
                 || (!self.was_pointer_locked && input.left_held));
-        let allow_mouse_look = (!has_fly_controller && input.pointer_locked) || unlocked_drag;
+        let allow_mouse_look =
+            (!ui_consumed && !has_fly_controller && input.pointer_locked) || unlocked_drag;
         let prev_yaw = self.yaw;
         let prev_pitch = self.pitch;
         if allow_mouse_look {
             self.yaw -= input.mouse_delta[0] * 0.0024;
             self.pitch = (self.pitch - input.mouse_delta[1] * 0.0024).clamp(-1.52, 1.52);
         }
-        let key_turn = 1.8 * dt;
-        if input.key(keys::ARROW_LEFT) {
-            self.yaw += key_turn;
-        }
-        if input.key(keys::ARROW_RIGHT) {
-            self.yaw -= key_turn;
-        }
-        if input.key(keys::ARROW_UP) {
-            self.pitch = (self.pitch + key_turn * 0.7).clamp(-1.52, 1.52);
-        }
-        if input.key(keys::ARROW_DOWN) {
-            self.pitch = (self.pitch - key_turn * 0.7).clamp(-1.52, 1.52);
+        if !ui_consumed {
+            let key_turn = 1.8 * dt;
+            if input.key(keys::ARROW_LEFT) {
+                self.yaw += key_turn;
+            }
+            if input.key(keys::ARROW_RIGHT) {
+                self.yaw -= key_turn;
+            }
+            if input.key(keys::ARROW_UP) {
+                self.pitch = (self.pitch + key_turn * 0.7).clamp(-1.52, 1.52);
+            }
+            if input.key(keys::ARROW_DOWN) {
+                self.pitch = (self.pitch - key_turn * 0.7).clamp(-1.52, 1.52);
+            }
         }
         if has_fly_controller
             && ((self.yaw - prev_yaw).abs() > 1e-6 || (self.pitch - prev_pitch).abs() > 1e-6)
