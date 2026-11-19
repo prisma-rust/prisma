@@ -325,12 +325,11 @@ pub fn emergence_fixed_tick(
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
-    let panel_open = runtime.commands.console_open
-        || runtime.render_settings_ui.open
-        || runtime.nei.open;
-    if !panel_open {
-        runtime.player.step_physics(world, &runtime.sim, dt);
-    }
+    let panel_open =
+        runtime.commands.console_open || runtime.render_settings_ui.open || runtime.nei.open;
+    runtime
+        .player
+        .step_physics_with_input(world, &runtime.sim, dt, !panel_open);
     runtime
         .commands
         .step(dt, world, &mut runtime.sim, runtime.player.feet_pos);
