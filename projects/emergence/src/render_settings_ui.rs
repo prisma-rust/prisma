@@ -224,7 +224,7 @@ impl RenderSettingsUi {
                     changed = true;
                 }
                 1 => {
-                    scale = (scale + step_dir as f32 * 0.05).clamp(0.35, 1.0);
+                    scale = (scale + step_dir as f32 * 0.05).clamp(0.05, 1.0);
                     changed = true;
                 }
                 _ => {
@@ -515,12 +515,12 @@ impl RenderSettingsUi {
 
         let uses_scale = matches!(mode_id, 1..=5);
         let rw = if uses_scale {
-            ((screen[0].max(1.0)) * scale).round().max(64.0) as u32
+            ((screen[0].max(1.0)) * scale).round().max(16.0) as u32
         } else {
             screen[0].max(1.0) as u32
         };
         let rh = if uses_scale {
-            ((screen[1].max(1.0)) * scale).round().max(64.0) as u32
+            ((screen[1].max(1.0)) * scale).round().max(16.0) as u32
         } else {
             screen[1].max(1.0) as u32
         };

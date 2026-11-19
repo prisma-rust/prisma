@@ -37,7 +37,7 @@ pub fn current_upscaler_config() -> (u8, f32, f32) {
 /// Update upscaler state from the in-game Render Settings UI.
 pub fn set_upscaler_config(mode_id: u8, scale: f32, sharpness: f32) {
     UPSCALER_MODE.store(mode_id.min(6), Ordering::Relaxed);
-    UPSCALER_SCALE_BITS.store(scale.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+    UPSCALER_SCALE_BITS.store(scale.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
     UPSCALER_SHARPNESS_BITS.store(sharpness.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
 }
 
@@ -63,7 +63,7 @@ pub fn init_upscaler_from_env() {
     }
     if let Ok(scale) = std::env::var("EMERGENCE_UPSCALER_SCALE") {
         if let Ok(v) = scale.trim().parse::<f32>() {
-            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+            UPSCALER_SCALE_BITS.store(v.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
         }
     }
     if let Ok(sharp) = std::env::var("EMERGENCE_UPSCALER_SHARPNESS") {
@@ -1226,14 +1226,14 @@ impl CommandWorldState {
             );
         }
         let Some(id) = parse_upscaler_mode_id(args[0]) else {
-            return "Usage: /upscaler <off|nearest|linear|sgsr2|asr|dlss|fsr|query> [scale 0.35..1.0] [sharpness 0..1]".to_string();
+            return "Usage: /upscaler <off|nearest|linear|sgsr2|asr|dlss|fsr|query> [scale 0.05..1.0] [sharpness 0..1]".to_string();
         };
         UPSCALER_MODE.store(id, Ordering::Relaxed);
         if let Some(raw_scale) = args.get(1) {
             let Ok(v) = raw_scale.parse::<f32>() else {
                 return format!("Invalid upscaler scale '{raw_scale}'");
             };
-            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+            UPSCALER_SCALE_BITS.store(v.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
         }
         if let Some(raw_sharp) = args.get(2) {
             let Ok(v) = raw_sharp.parse::<f32>() else {

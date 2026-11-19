@@ -583,10 +583,10 @@ impl prism_app::FrameHook for EmergenceHostHook {
             let (w, h) = window.inner_size();
             let rw = ((w.max(1) as f32) * effective_scale)
                 .round()
-                .max(64.0) as u32;
+                .max(16.0) as u32;
             let rh = ((h.max(1) as f32) * effective_scale)
                 .round()
-                .max(64.0) as u32;
+                .max(16.0) as u32;
             settings.internal_resolution = [rw, rh];
         }
         let all_gpu_passes = stats
