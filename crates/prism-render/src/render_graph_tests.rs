@@ -451,9 +451,9 @@ fn mobile_upscaler_modes_parse_and_classify_correctly() {
     assert!(MobileUpscaler::Linear.uses_internal_resolution());
     assert!(MobileUpscaler::Sgsr2.uses_internal_resolution());
     assert!(MobileUpscaler::ArmAsr.uses_internal_resolution());
-    // PC placeholders behave identically to Off.
+    assert!(MobileUpscaler::Dlss.uses_internal_resolution());
+    // Fsr placeholder behaves identically to Off.
     assert!(!MobileUpscaler::Off.uses_internal_resolution());
-    assert!(!MobileUpscaler::Dlss.uses_internal_resolution());
     assert!(!MobileUpscaler::Fsr.uses_internal_resolution());
 }
 
