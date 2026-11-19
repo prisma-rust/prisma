@@ -10,7 +10,7 @@ description = "Offline build pipeline: GI bake, asset cooking, etc."
 # renderer, so it is opt-in: `build-scenes` / `cook` / `pack` / `heightmap`
 # stay CPU-only and do not require compiled `.spv` shaders.
 default = []
-gi-bake = ["dep:prism-ecs", "dep:prism-engine", "dep:prism-render", "dep:ash", "dep:bytemuck"]
+gi-bake = ["dep:prism-ecs", "dep:prism-engine", "dep:prism-render", "dep:prism-render-shaders", "dep:ash", "dep:bytemuck"]
 
 [[bin]]
 name = "prism-build-pipeline"
@@ -20,6 +20,7 @@ path = "src/main.rs"
 prism-ecs = { path = "../prism-ecs", optional = true }
 prism-engine = { path = "../prism-engine", optional = true }
 prism-render = { path = "../prism-render", optional = true }
+prism-render-shaders = { path = "../prism-render-shaders", optional = true }
 prism-asset = { path = "../prism-asset", default-features = false, features = ["runtime"] }
 prism-cooker = { path = "../prism-cooker", default-features = false }
 prism-gfx = { path = "../prism-gfx" }

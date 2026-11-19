@@ -22,8 +22,8 @@ pub struct GizmoInstance {
     pub mode: u32,
 }
 
-const GIZMO_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/gizmo.vert.spv");
-const GIZMO_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/gizmo.frag.spv");
+const GIZMO_VERT_SPV: &[u8] = prism_render_shaders::GIZMO_VERT_SPV;
+const GIZMO_FRAG_SPV: &[u8] = prism_render_shaders::GIZMO_FRAG_SPV;
 
 /// Per-vertex data for the gizmo: object-space position + color.
 #[repr(C)]

@@ -667,11 +667,8 @@ impl RestirGiPass {
             return Ok(());
         }
         let device = &context.device;
-        let module = shader::load_shader_module(
-            device,
-            include_bytes!("../../../assets/shaders/restir_gi.comp.spv"),
-        )
-        .context("RestirGiPass: load shader module")?;
+        let module = shader::load_shader_module(device, prism_render_shaders::RESTIR_GI_COMP_SPV)
+            .context("RestirGiPass: load shader module")?;
         let entry: &CStr = c"giMain";
         let layouts = [
             self.ds0_layout.unwrap_or(vk::DescriptorSetLayout::null()),

@@ -21,8 +21,8 @@ use crate::shader_bindings::rt_preview::{
     RtPreviewPush, ENTRY_FRAGMENT_MAIN as PREVIEW_FRAG, ENTRY_VERTEX_MAIN as PREVIEW_VERT,
 };
 
-const RT_PREVIEW_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt_preview.vert.spv");
-const RT_PREVIEW_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt_preview.frag.spv");
+const RT_PREVIEW_VERT_SPV: &[u8] = prism_render_shaders::RT_PREVIEW_VERT_SPV;
+const RT_PREVIEW_FRAG_SPV: &[u8] = prism_render_shaders::RT_PREVIEW_FRAG_SPV;
 
 /// 全屏采样 RenderTexture（bindless）→ swapchain 的消费 pass。
 pub struct RtPreviewPass {

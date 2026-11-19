@@ -125,8 +125,8 @@ impl SkyboxPass {
             // that double-frees.
             self.pipeline = None;
 
-            const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/skybox.vert.spv");
-            const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/skybox.frag.spv");
+            const VERT_SPV: &[u8] = prism_render_shaders::SKYBOX_VERT_SPV;
+            const FRAG_SPV: &[u8] = prism_render_shaders::SKYBOX_FRAG_SPV;
             let vert_module =
                 shader::load_shader_module(device, VERT_SPV).context("SkyboxPass: load vert")?;
             let frag_module =

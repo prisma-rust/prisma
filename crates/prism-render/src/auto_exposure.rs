@@ -229,8 +229,7 @@ impl AutoExposurePass {
         }];
         let set_layouts = [ds_layout];
 
-        let histogram_spv: &[u8] =
-            include_bytes!("../../../assets/shaders/auto_exposure_hist.comp.spv");
+        let histogram_spv: &[u8] = prism_render_shaders::AUTO_EXPOSURE_HIST_COMP_SPV;
         let histogram_module = crate::shader::load_shader_module(device, histogram_spv)
             .context("AutoExposurePass: load histogram module")?;
         let entry = CString::new(bindings::ENTRY_LUMINANCE_HISTOGRAM).unwrap();
@@ -244,8 +243,7 @@ impl AutoExposurePass {
         .context("AutoExposurePass: create histogram pipeline")?;
         unsafe { device.destroy_shader_module(histogram_module, None) };
 
-        let adapt_spv: &[u8] =
-            include_bytes!("../../../assets/shaders/auto_exposure_adapt.comp.spv");
+        let adapt_spv: &[u8] = prism_render_shaders::AUTO_EXPOSURE_ADAPT_COMP_SPV;
         let adapt_module = crate::shader::load_shader_module(device, adapt_spv)
             .context("AutoExposurePass: load adaptation module")?;
         let entry = CString::new(bindings::ENTRY_EXPOSURE_ADAPTATION).unwrap();

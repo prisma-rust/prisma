@@ -107,9 +107,9 @@ pub enum PtVariant {
 /// Embedded SPIR-V for a transport variant.
 fn variant_spirv(variant: PtVariant) -> &'static [u8] {
     match variant {
-        PtVariant::Consume => include_bytes!("../../../assets/shaders/pt_render.comp.spv"),
-        PtVariant::Reference => include_bytes!("../../../assets/shaders/pt_reference.comp.spv"),
-        PtVariant::Train => include_bytes!("../../../assets/shaders/pt_sharc_train.comp.spv"),
+        PtVariant::Consume => prism_render_shaders::PT_RENDER_COMP_SPV,
+        PtVariant::Reference => prism_render_shaders::PT_REFERENCE_COMP_SPV,
+        PtVariant::Train => prism_render_shaders::PT_SHARC_TRAIN_COMP_SPV,
     }
 }
 

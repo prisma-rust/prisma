@@ -27,8 +27,8 @@ use crate::shader_bindings::particles as bindings;
 
 const _: () = assert!(size_of::<bindings::ParticlePush>() as u32 == bindings::PUSH_CONSTANT_SIZE);
 
-const PARTICLE_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/particles.vert.spv");
-const PARTICLE_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/particles.frag.spv");
+const PARTICLE_VERT_SPV: &[u8] = prism_render_shaders::PARTICLES_VERT_SPV;
+const PARTICLE_FRAG_SPV: &[u8] = prism_render_shaders::PARTICLES_FRAG_SPV;
 
 /// 初始实例容量（按需增长）。
 const INITIAL_CAPACITY: u32 = 256;

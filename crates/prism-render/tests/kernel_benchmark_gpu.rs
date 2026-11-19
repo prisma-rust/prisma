@@ -64,7 +64,7 @@ fn best_of_n_picks_the_fastest_correct_group_count() {
 
         let timed = harness
             .dispatch_repeated(
-                include_bytes!("../../../assets/shaders/harness_bench.comp.spv"),
+                prism_render_shaders::HARNESS_BENCH_COMP_SPV,
                 c"main",
                 &[
                     BufferSpec::input(&input_bytes),

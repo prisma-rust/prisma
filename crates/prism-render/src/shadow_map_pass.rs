@@ -341,8 +341,8 @@ impl ShadowMapPass {
         cull_mode: vk::CullModeFlags,
         bone_layout: Option<vk::DescriptorSetLayout>,
     ) -> anyhow::Result<GraphicsPipeline> {
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/shadow_depth.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/shadow_depth.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::SHADOW_DEPTH_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::SHADOW_DEPTH_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("load shadow vert module")?;
         let frag_module =
@@ -419,9 +419,8 @@ impl ShadowMapPass {
         cull_mode: vk::CullModeFlags,
         bone_layout: vk::DescriptorSetLayout,
     ) -> anyhow::Result<GraphicsPipeline> {
-        const VERT_SPV: &[u8] =
-            include_bytes!("../../../assets/shaders/shadow_depth_skinned.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/shadow_depth.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::SHADOW_DEPTH_SKINNED_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::SHADOW_DEPTH_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("load skinned shadow vert")?;
         let frag_module =

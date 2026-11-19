@@ -37,7 +37,7 @@ fn harness_runs_a_compute_kernel_with_push_constants() {
 
     let results = harness
         .dispatch(
-            include_bytes!("../../../assets/shaders/harness_copy.comp.spv"),
+            prism_render_shaders::HARNESS_COPY_COMP_SPV,
             c"main",
             &[
                 BufferSpec::input(bytes_of(&input)),

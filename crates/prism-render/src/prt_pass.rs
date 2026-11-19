@@ -24,10 +24,9 @@ use crate::shader::load_shader_module;
 use crate::shader_bindings::prt as bindings;
 use crate::shader_bindings::scene_frag::ProbeVolumeInfo;
 
-const CLUSTER_EVAL_SPV: &[u8] = include_bytes!("../../../assets/shaders/prt_cluster_eval.comp.spv");
-const PROPAGATE_SPV: &[u8] = include_bytes!("../../../assets/shaders/prt_propagate.comp.spv");
-const RESOLVE_VOLUME_SPV: &[u8] =
-    include_bytes!("../../../assets/shaders/prt_resolve_volume.comp.spv");
+const CLUSTER_EVAL_SPV: &[u8] = prism_render_shaders::PRT_CLUSTER_EVAL_COMP_SPV;
+const PROPAGATE_SPV: &[u8] = prism_render_shaders::PRT_PROPAGATE_COMP_SPV;
+const RESOLVE_VOLUME_SPV: &[u8] = prism_render_shaders::PRT_RESOLVE_VOLUME_COMP_SPV;
 
 const ENTRY_CLUSTER_EVAL: &CStr = c"clusterEvalMain";
 const ENTRY_PROPAGATE: &CStr = c"propagateMain";

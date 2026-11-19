@@ -33,8 +33,8 @@ use prism_gfx::{BlendMode, BlendOp};
 
 const _: () = assert!(size_of::<bindings::SpritePush>() as u32 == bindings::PUSH_CONSTANT_SIZE);
 
-const SPRITE_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/sprites.vert.spv");
-const SPRITE_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/sprites.frag.spv");
+const SPRITE_VERT_SPV: &[u8] = prism_render_shaders::SPRITES_VERT_SPV;
+const SPRITE_FRAG_SPV: &[u8] = prism_render_shaders::SPRITES_FRAG_SPV;
 
 /// 初始实例容量（按需增长）。
 const INITIAL_CAPACITY: u32 = 256;
