@@ -219,6 +219,8 @@ pub struct GraphRenderer {
     color_format: vk::Format,
     /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
     ui_host: UiOverlayHost,
+    /// Real-time RTXGI v1.3 DDGI pass (created lazily when `RasterGiMode::Ddgi` is active).
+    ddgi_pass: Option<crate::ddgi_pass::DdgiPass>,
     #[cfg(feature = "sharc")]
     sharc_targets: Option<crate::sharc::SharcTargets>,
     /// Reasons the world-space SHaRC cache no longer describes the scene.
@@ -663,6 +665,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
             #[cfg(feature = "sharc")]
@@ -1161,6 +1164,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
             #[cfg(feature = "sharc")]
@@ -2130,6 +2134,57 @@ impl GraphRenderer {
                 self.sync_restir_gi_geometry(input.draw_items)?;
             }
         }
+        if input.render_mode == crate::render_graph::RenderMode::Raster
+            && self.settings.raster_gi == crate::render_graph::RasterGiMode::Ddgi
+        {
+            if !self.runtime.context.rt_caps.has_ray_query() {
+                static DDGI_NO_RQ_WARNED: std::sync::Once = std::sync::Once::new();
+                DDGI_NO_RQ_WARNED.call_once(|| {
+                    log::warn!(
+                        "raster_gi = Ddgi requested, but VK_KHR_ray_query is unavailable; falling back to BakedProbe"
+                    );
+                });
+            } else {
+                if self.ddgi_pass.is_none() {
+                    let params = crate::ddgi::DdgiVolumeParams::default();
+                    match crate::ddgi_pass::DdgiPass::new(
+                        self.runtime.context.clone(),
+                        self.texture_manager.bindless().layout,
+                        self.ibl.descriptor_set_layout,
+                        params,
+                    ) {
+                        Ok(pass) => {
+                            let info = crate::gi::ProbeVolumeInfo::new(
+                                pass.active_origin(),
+                                params.probe_spacing,
+                                params.probe_counts,
+                            );
+                            if let Err(e) = self
+                                .scene_scope
+                                .ensure_probe_volume_for_ddgi(params.probe_counts, &info)
+                            {
+                                log::warn!("DDGI probe volume setup failed: {e:#}");
+                            } else {
+                                self.ddgi_pass = Some(pass);
+                            }
+                        }
+                        Err(e) => log::warn!("Failed to initialize DdgiPass: {e:#}"),
+                    }
+                }
+                let needs_geom = self
+                    .ddgi_pass
+                    .as_ref()
+                    .is_some_and(|pass| !pass.has_geometry());
+                if needs_geom && !input.draw_items.is_empty() {
+                    let instances = self.collect_rt_instances(input.draw_items);
+                    if !instances.is_empty() {
+                        if let Some(ddgi) = &mut self.ddgi_pass {
+                            ddgi.set_geometry(self.runtime.command_pool, &instances)?;
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2157,9 +2212,8 @@ impl GraphRenderer {
     /// Build world-space ray-tracing instances from the draw list.
     ///
     /// Mirrors the instance construction inside [`Self::sync_pt_geometry`] so the
-    /// ReSTIR GI pass sees exactly the same geometry (same vertex transform, same
-    /// index slice, same material slot and alpha semantics) as the path tracer.
-    #[cfg(feature = "restir_gi")]
+    /// ReSTIR GI / DDGI passes see exactly the same geometry (same vertex transform,
+    /// same index slice, same material slot and alpha semantics) as the path tracer.
     fn collect_rt_instances(
         &self,
         draw_items: &[crate::render_graph::DrawItem],
@@ -2807,6 +2861,93 @@ impl GraphRenderer {
                 });
             }
 
+            if *render_mode == crate::render_graph::RenderMode::Raster
+                && self.settings.raster_gi == crate::render_graph::RasterGiMode::Ddgi
+            {
+                if let Some(ddgi) = &mut self.ddgi_pass {
+                    if ddgi.has_geometry() {
+                        let pv_image = self.scene_scope.probe_volume_image();
+                        let to_general = vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .new_layout(vk::ImageLayout::GENERAL)
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(pv_image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            })
+                            .src_access_mask(vk::AccessFlags::SHADER_READ)
+                            .dst_access_mask(vk::AccessFlags::SHADER_WRITE);
+                        unsafe {
+                            device.cmd_pipeline_barrier(
+                                cmd,
+                                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                                vk::PipelineStageFlags::COMPUTE_SHADER,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[],
+                                std::slice::from_ref(&to_general),
+                            );
+                        }
+
+                        ddgi.dispatch_scene(
+                            cmd,
+                            self.scene_scope.probe_volume_view(),
+                            self.material_manager.buffer(),
+                            self.texture_manager.bindless().set,
+                            self.ibl.descriptor_set,
+                            [
+                                frame_data.cameraPosition[0],
+                                frame_data.cameraPosition[1],
+                                frame_data.cameraPosition[2],
+                            ],
+                            [
+                                frame_data.lightDirection[0],
+                                frame_data.lightDirection[1],
+                                frame_data.lightDirection[2],
+                            ],
+                            [
+                                frame_data.lightColor[0],
+                                frame_data.lightColor[1],
+                                frame_data.lightColor[2],
+                            ],
+                            ctx.frame_index,
+                        )?;
+
+                        let to_read = vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::GENERAL)
+                            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(pv_image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            })
+                            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                        unsafe {
+                            device.cmd_pipeline_barrier(
+                                cmd,
+                                vk::PipelineStageFlags::COMPUTE_SHADER,
+                                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[],
+                                std::slice::from_ref(&to_read),
+                            );
+                        }
+                    }
+                }
+            }
+
             let render_ctx = crate::render_graph::RenderContext {
                 device,
                 context: &self.runtime.context,
@@ -3255,6 +3396,7 @@ impl GraphRenderer {
 
         // Destroy scene-level GI probe volume (SceneScope). Must happen AFTER
         // ForwardPass::destroy (ForwardPass borrows the 描述符 集合
+        self.ddgi_pass = None;
         self.scene_scope.destroy();
 
         // Destroy GTAO pass (AO images, render pass, pipeline, descriptor

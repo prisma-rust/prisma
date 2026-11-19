@@ -45,6 +45,8 @@ pub enum RasterGiMode {
     Restir,
     /// Order-7 PRT64 + 64-way spatial tree (`PrtPass`).
     Prt,
+    /// Real-time RTXGI v1.3 DDGI probe volume (`DdgiPass`, requires `VK_KHR_ray_query`).
+    Ddgi,
 }
 
 /// Radiance cache / GI technique for the path-tracing pipeline (`RenderMode::PathTrace`).

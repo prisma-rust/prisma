@@ -137,6 +137,7 @@ impl RenderConfig {
                 }
                 "restir" | "restir_gi" => crate::render_settings::RasterGiMode::Restir,
                 "prt" | "prt64" => crate::render_settings::RasterGiMode::Prt,
+                "ddgi" | "rtxgi" => crate::render_settings::RasterGiMode::Ddgi,
                 other => {
                     log::warn!("settings: unknown raster_gi '{other}'; using baked_probe");
                     crate::render_settings::RasterGiMode::BakedProbe

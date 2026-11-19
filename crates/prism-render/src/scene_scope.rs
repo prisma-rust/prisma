@@ -32,6 +32,7 @@ pub struct SceneScope {
     volume_image: vk::Image,
     volume_view: vk::ImageView,
     volume_memory: vk::DeviceMemory,
+    volume_dims: [u32; 3],
     // ---- ProbeVolumeInfo UBO (48 bytes) ----
     info_buffer: vk::Buffer,
     info_memory: vk::DeviceMemory,
@@ -104,6 +105,7 @@ impl SceneScope {
             volume_image: vk::Image::null(),
             volume_view: vk::ImageView::null(),
             volume_memory: vk::DeviceMemory::null(),
+            volume_dims: [0, 0, 0],
             info_buffer: vk::Buffer::null(),
             info_memory: vk::DeviceMemory::null(),
         };
@@ -112,6 +114,60 @@ impl SceneScope {
         scope.upload_synthetic_probe_volume()?;
 
         Ok(scope)
+    }
+
+    /// Probe volume 3D image handle (used by `DdgiPass` to resolve SH9 coefficients).
+    #[must_use]
+    pub const fn probe_volume_image(&self) -> vk::Image {
+        self.volume_image
+    }
+
+    /// Probe volume 3D image view handle (`RGBA32F` storage + sampled).
+    #[must_use]
+    pub const fn probe_volume_view(&self) -> vk::ImageView {
+        self.volume_view
+    }
+
+    /// Current probe volume grid dimensions `[nx, ny, nz]`.
+    #[must_use]
+    pub const fn probe_volume_dims(&self) -> [u32; 3] {
+        self.volume_dims
+    }
+
+    /// Ensure the 3D probe volume matches `dims` and update `ProbeVolumeInfo` UBO.
+    pub fn ensure_probe_volume_for_ddgi(
+        &mut self,
+        dims: [u32; 3],
+        info: &crate::gi::ProbeVolumeInfo,
+    ) -> Result<()> {
+        if self.volume_dims != dims {
+            let total = (dims[0] as usize) * (dims[1] as usize) * (dims[2] as usize) * 9 * 4;
+            let zeros = vec![0.0f32; total];
+            return self.recreate_probe_volume(info, dims, &zeros);
+        }
+        self.update_probe_volume_info(info)
+    }
+
+    /// Update the 48-byte `ProbeVolumeInfo` UBO in-place (e.g. for DDGI infinite scrolling).
+    pub fn update_probe_volume_info(&self, info: &crate::gi::ProbeVolumeInfo) -> Result<()> {
+        if self.info_memory == vk::DeviceMemory::null() {
+            return Ok(());
+        }
+        let info_bytes = bytemuck::bytes_of(info);
+        unsafe {
+            let ptr = self
+                .device
+                .map_memory(
+                    self.info_memory,
+                    0,
+                    info_bytes.len() as vk::DeviceSize,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .context("SceneScope: map ProbeVolumeInfo UBO")?;
+            std::ptr::copy_nonoverlapping(info_bytes.as_ptr(), ptr as *mut u8, info_bytes.len());
+            self.device.unmap_memory(self.info_memory);
+        }
+        Ok(())
     }
 
     /// Rebuild the probe volume from external data (Phase C/E: loaded from
@@ -217,7 +273,11 @@ impl SceneScope {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+            .usage(
+                vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST
+                    | vk::ImageUsageFlags::STORAGE,
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         let volume_image = unsafe { device.create_image(&image_info, None) }
@@ -441,6 +501,7 @@ impl SceneScope {
         self.volume_image = volume_image;
         self.volume_view = volume_view;
         self.volume_memory = volume_memory;
+        self.volume_dims = dims;
         self.info_buffer = info_buffer;
         self.info_memory = info_memory;
 

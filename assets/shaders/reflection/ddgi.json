@@ -970,7 +970,7 @@
         {
             "name": "probeVolumeOut",
             "binding": {"kind": "descriptorTableSlot", "index": 12},
-            "format": "rgba16f",
+            "format": "rgba32f",
             "type": {
                 "kind": "resource",
                 "baseShape": "texture3D",
@@ -1980,7 +1980,7 @@
             {
                 "name": "probeVolumeOut",
                 "binding": {"kind": "descriptorTableSlot", "index": 12},
-                "format": "rgba16f",
+                "format": "rgba32f",
                 "type": {
                     "kind": "resource",
                     "baseShape": "texture3D",
@@ -2128,7 +2128,7 @@
                 {
                     "name": "probeVolumeOut",
                     "binding": {"kind": "descriptorTableSlot", "index": 12},
-                    "format": "rgba16f"
+                    "format": "rgba32f"
                 },
                 {
                     "name": "variabilityAccum",
@@ -2266,7 +2266,7 @@
                 {
                     "name": "probeVolumeOut",
                     "binding": {"kind": "descriptorTableSlot", "index": 12},
-                    "format": "rgba16f"
+                    "format": "rgba32f"
                 },
                 {
                     "name": "variabilityAccum",
@@ -2382,7 +2382,7 @@
                 {
                     "name": "probeVolumeOut",
                     "binding": {"kind": "descriptorTableSlot", "index": 12},
-                    "format": "rgba16f"
+                    "format": "rgba32f"
                 },
                 {
                     "name": "variabilityAccum",
@@ -2498,7 +2498,7 @@
                 {
                     "name": "probeVolumeOut",
                     "binding": {"kind": "descriptorTableSlot", "index": 12},
-                    "format": "rgba16f"
+                    "format": "rgba32f"
                 },
                 {
                     "name": "variabilityAccum",
@@ -2614,7 +2614,7 @@
                 {
                     "name": "probeVolumeOut",
                     "binding": {"kind": "descriptorTableSlot", "index": 12},
-                    "format": "rgba16f"
+                    "format": "rgba32f"
                 },
                 {
                     "name": "variabilityAccum",
