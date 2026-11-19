@@ -9,6 +9,7 @@ pub mod gizmo;
 pub mod gtao;
 pub mod ibl_bake;
 pub mod mesh_vert;
+pub mod nrc;
 pub mod particles;
 pub mod post;
 pub mod prt;

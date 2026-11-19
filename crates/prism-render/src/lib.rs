@@ -74,6 +74,7 @@ pub mod managers;
 mod math;
 pub mod mesh;
 pub mod mobile_upscaler;
+pub mod nrc;
 pub mod nrd;
 pub mod offscreen;
 pub mod particle_pass;
