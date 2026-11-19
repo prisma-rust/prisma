@@ -7,10 +7,12 @@
 //!
 //! Reference: `docs/rtx-dlss-integration-design.md` §§ 2–4.
 
+use std::ffi::c_void;
+
 use crate::render_graph::{
     ResourceHandle, PT_COLOR_H, PT_DEPTH_H, PT_NORMAL_ROUGHNESS_H, PT_VELOCITY_H,
 };
-use crate::streamline::{probe_shared_library, StreamlineCaps};
+use crate::streamline::{probe_shared_library, SharedLib, StreamlineCaps};
 
 /// Split-lobe diffuse radiance guide handle reserved for NRD / DLSS-RR (`PT_DIFFUSE_H`).
 pub const PT_DIFFUSE_H: ResourceHandle = ResourceHandle(1011);
@@ -175,7 +177,194 @@ impl NrdCaps {
     #[must_use]
     pub fn probe() -> Self {
         Self {
-            available: probe_shared_library(NRD_LIB_NAME),
+            available: NrdBinding::find_library_path().is_some()
+                || probe_shared_library(NRD_LIB_NAME),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NrdLibraryDesc {
+    pub spirv_binding_offsets: [u32; 4],
+    pub supported_denoisers: *const u32,
+    pub supported_denoisers_num: u32,
+    pub version_major: u8,
+    pub version_minor: u8,
+    pub version_build: u8,
+    pub normal_encoding: u8,
+    pub roughness_encoding: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NrdDenoiserDesc {
+    pub identifier: u32,
+    pub denoiser: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NrdAllocationCallbacks {
+    pub allocate: *const c_void,
+    pub reallocate: *const c_void,
+    pub free: *const c_void,
+    pub user_arg: *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NrdInstanceCreationDesc {
+    pub allocation_callbacks: NrdAllocationCallbacks,
+    pub denoisers: *const NrdDenoiserDesc,
+    pub denoisers_num: u32,
+}
+
+pub type PFunNrdGetLibraryDesc = unsafe extern "C" fn() -> *const NrdLibraryDesc;
+pub type PFunNrdCreateInstance =
+    unsafe extern "C" fn(desc: *const NrdInstanceCreationDesc, instance: *mut *mut c_void) -> i32;
+pub type PFunNrdDestroyInstance = unsafe extern "C" fn(instance: *mut c_void);
+
+/// Dynamically loaded NVIDIA NRD C-ABI binding (`NRD.dll` / `libNRD.so`).
+pub struct NrdBinding {
+    _library: SharedLib,
+    pub get_library_desc: PFunNrdGetLibraryDesc,
+    pub create_instance: PFunNrdCreateInstance,
+    pub destroy_instance: PFunNrdDestroyInstance,
+}
+
+// SAFETY: Resolved NRD entry points point to immutable code pages.
+unsafe impl Send for NrdBinding {}
+// SAFETY: Resolved NRD entry points point to immutable code pages.
+unsafe impl Sync for NrdBinding {}
+
+impl NrdBinding {
+    fn candidate_paths() -> Vec<String> {
+        let mut candidates = Vec::new();
+        for env_key in ["PRISMA_NRD_DIR", "NRD_SDK_DIR"] {
+            if let Ok(dir) = std::env::var(env_key) {
+                let base = std::path::Path::new(&dir);
+                candidates.push(base.join(NRD_LIB_NAME).to_string_lossy().into_owned());
+            }
+        }
+        candidates.extend([
+            NRD_LIB_NAME.to_owned(),
+            format!(".local/reference/RTXGI/Bin/{NRD_LIB_NAME}"),
+            format!("../.local/reference/RTXGI/Bin/{NRD_LIB_NAME}"),
+            format!("../../.local/reference/RTXGI/Bin/{NRD_LIB_NAME}"),
+            format!("../../../.local/reference/RTXGI/Bin/{NRD_LIB_NAME}"),
+        ]);
+        candidates
+    }
+
+    fn find_library_path() -> Option<String> {
+        Self::candidate_paths()
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())
+    }
+
+    /// Attempt to load `NRD.dll` / `libNRD.so` from env overrides, reference Bin, or PATH.
+    pub fn try_load() -> Option<Self> {
+        for path in Self::candidate_paths() {
+            if let Some(binding) = Self::try_load_from(&path) {
+                return Some(binding);
+            }
+        }
+        None
+    }
+
+    /// Load NRD from an explicit shared library path.
+    pub fn try_load_from(path: &str) -> Option<Self> {
+        let library = SharedLib::open(path)?;
+        unsafe {
+            let get_library_desc = std::mem::transmute::<*mut c_void, PFunNrdGetLibraryDesc>(
+                library.get_symbol(b"GetLibraryDesc\0")?,
+            );
+            let create_instance = std::mem::transmute::<*mut c_void, PFunNrdCreateInstance>(
+                library.get_symbol(b"CreateInstance\0")?,
+            );
+            let destroy_instance = std::mem::transmute::<*mut c_void, PFunNrdDestroyInstance>(
+                library.get_symbol(b"DestroyInstance\0")?,
+            );
+            Some(Self {
+                _library: library,
+                get_library_desc,
+                create_instance,
+                destroy_instance,
+            })
+        }
+    }
+}
+
+/// Live NVIDIA NRD runtime instance (ReBLUR / ReLAX / SIGMA) for 1 spp path tracing.
+pub struct NrdRuntime {
+    binding: NrdBinding,
+    instance: *mut c_void,
+    version: (u8, u8, u8),
+}
+
+// SAFETY: `NrdRuntime` owns its NRD instance exclusively and is only mutated on the render thread.
+unsafe impl Send for NrdRuntime {}
+// SAFETY: `NrdRuntime` is synchronized by `GraphRenderer` on the render thread.
+unsafe impl Sync for NrdRuntime {}
+
+impl NrdRuntime {
+    /// Load `NRD.dll` / `libNRD.so` and create a ReBLUR diffuse+specular instance.
+    pub fn try_init() -> Option<Self> {
+        let binding = NrdBinding::try_load()?;
+        let desc_ptr = unsafe { (binding.get_library_desc)() };
+        let version = if desc_ptr.is_null() {
+            (0, 0, 0)
+        } else {
+            let d = unsafe { &*desc_ptr };
+            (d.version_major, d.version_minor, d.version_build)
+        };
+        let denoiser = NrdDenoiserDesc {
+            identifier: 0,
+            denoiser: 0, // REBLUR_DIFFUSE_SPECULAR
+        };
+        let create_desc = NrdInstanceCreationDesc {
+            allocation_callbacks: NrdAllocationCallbacks {
+                allocate: std::ptr::null(),
+                reallocate: std::ptr::null(),
+                free: std::ptr::null(),
+                user_arg: std::ptr::null_mut(),
+            },
+            denoisers: &raw const denoiser,
+            denoisers_num: 1,
+        };
+        let mut instance: *mut c_void = std::ptr::null_mut();
+        let res = unsafe { (binding.create_instance)(&raw const create_desc, &raw mut instance) };
+        if res != 0 || instance.is_null() {
+            log::warn!("NRD CreateInstance failed (code={res})");
+            return None;
+        }
+        log::info!(
+            "NRD initialized (v{}.{}.{})",
+            version.0,
+            version.1,
+            version.2
+        );
+        Some(Self {
+            binding,
+            instance,
+            version,
+        })
+    }
+
+    #[must_use]
+    pub const fn version(&self) -> (u8, u8, u8) {
+        self.version
+    }
+}
+
+impl Drop for NrdRuntime {
+    fn drop(&mut self) {
+        if !self.instance.is_null() {
+            unsafe {
+                (self.binding.destroy_instance)(self.instance);
+            }
+            self.instance = std::ptr::null_mut();
         }
     }
 }
