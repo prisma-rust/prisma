@@ -565,6 +565,8 @@ pub struct UiState {
     pub pending_audio_preview: Option<AudioPreviewAction>,
     /// 当前正在试听的音频资产路径（`None` = 没在播）。
     pub audio_preview_path: Option<String>,
+    /// GASP-Godot parity debug & sandbox panel state (`#560`).
+    pub gasp_debug: crate::gasp_debug::GaspDebugState,
 }
 
 /// Project 面板 → `EditorApp` 的音频试听请求。

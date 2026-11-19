@@ -13,6 +13,7 @@ mod control;
 mod diagnostics;
 mod egui_host;
 mod engine_host;
+mod gasp_debug;
 mod gpu;
 mod logging;
 mod loose_assets;
