@@ -542,6 +542,30 @@ impl prism_app::FrameHook for EmergenceHostHook {
         };
         settings.mobile_upscaler = mode;
         settings.upscaler_sharpness = sharpness;
+        settings.dlss_mode = if mode == prism_app::MobileUpscaler::Dlss {
+            if scale >= 0.99 {
+                prism_engine::render_settings::DlssMode::Dlaa
+            } else if scale >= 0.66 {
+                prism_engine::render_settings::DlssMode::Quality
+            } else if scale >= 0.58 {
+                prism_engine::render_settings::DlssMode::Balanced
+            } else if scale >= 0.50 {
+                prism_engine::render_settings::DlssMode::Performance
+            } else {
+                prism_engine::render_settings::DlssMode::UltraPerformance
+            }
+        } else {
+            prism_engine::render_settings::DlssMode::Off
+        };
+        let (dlfg_id, ddgi_on) = commands::current_rtx_toggles();
+        settings.dlfg_mode = match dlfg_id {
+            1 => prism_engine::render_settings::DlssgMode::On,
+            2 => prism_engine::render_settings::DlssgMode::Auto,
+            _ => prism_engine::render_settings::DlssgMode::Off,
+        };
+        if ddgi_on {
+            settings.raster_gi = prism_engine::render_settings::RasterGiMode::Ddgi;
+        }
         if !mode.uses_internal_resolution() {
             settings.internal_resolution = [0, 0];
         } else {

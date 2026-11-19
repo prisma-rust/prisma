@@ -1,11 +1,27 @@
 //! Horizon-aligned chat & slash-command console (`T` / `Enter` / `/`) for `emergence`.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 static UPSCALER_MODE: AtomicU8 = AtomicU8::new(0);
 static UPSCALER_SCALE_BITS: AtomicU32 = AtomicU32::new(0.75_f32.to_bits());
 static UPSCALER_SHARPNESS_BITS: AtomicU32 = AtomicU32::new(0.5_f32.to_bits());
+static DLFG_MODE: AtomicU8 = AtomicU8::new(0);
+static DDGI_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Returns `(dlfg_mode_id, ddgi_enabled)` for runtime RTXGI / Streamline controls.
+pub fn current_rtx_toggles() -> (u8, bool) {
+    (
+        DLFG_MODE.load(Ordering::Relaxed),
+        DDGI_ENABLED.load(Ordering::Relaxed),
+    )
+}
+
+/// Toggle or set DLFG (`0=Off, 1=On, 2=Auto`) and DDGI from runtime UI or commands.
+pub fn set_rtx_toggles(dlfg_mode: u8, ddgi_enabled: bool) {
+    DLFG_MODE.store(dlfg_mode.min(2), Ordering::Relaxed);
+    DDGI_ENABLED.store(ddgi_enabled, Ordering::Relaxed);
+}
 
 /// Returns `(mode_id, render_scale, sharpness)` where `mode_id` is:
 /// `0 = Off`, `1 = Sgsr2`, `2 = ArmAsr`, `3 = Nearest`, `4 = Linear`,
@@ -32,7 +48,7 @@ pub fn upscaler_mode_label(mode_id: u8) -> &'static str {
         2 => "Arm ASR",
         3 => "Nearest",
         4 => "Linear",
-        5 => "DLSS (Placeholder -> Off)",
+        5 => "DLSS (Streamline)",
         6 => "FSR (Placeholder -> Off)",
         _ => "Off",
     }
@@ -984,6 +1000,30 @@ impl CommandWorldState {
             "setblock" => self.exec_setblock(&parts[1..], sim, player),
             "gamerule" => self.exec_gamerule(&parts[1..]),
             "upscaler" => self.exec_upscaler(&parts[1..]),
+            "dlfg" => {
+                let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("on") => 1,
+                    Some("auto") => 2,
+                    Some("off") => 0,
+                    _ => (DLFG_MODE.load(Ordering::Relaxed) + 1) % 3,
+                };
+                DLFG_MODE.store(next, Ordering::Relaxed);
+                let label = match next {
+                    1 => "On",
+                    2 => "Auto",
+                    _ => "Off",
+                };
+                format!("DLFG (Frame Gen) set to {label}")
+            }
+            "ddgi" => {
+                let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("on" | "true") => true,
+                    Some("off" | "false") => false,
+                    _ => !DDGI_ENABLED.load(Ordering::Relaxed),
+                };
+                DDGI_ENABLED.store(next, Ordering::Relaxed);
+                format!("DDGI set to {}", if next { "ON" } else { "OFF" })
+            }
             other => format!("Unknown command '{other}'. Type /help."),
         }
     }

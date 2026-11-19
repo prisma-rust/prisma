@@ -211,8 +211,8 @@ pub use sharc::{
 pub use skybox_pass::SkyboxSettings;
 pub use sprite_pass::SpritePass;
 pub use streamline::{
-    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, SlResult,
-    StreamlineBinding, StreamlineCaps,
+    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, DlssgMode,
+    SlResult, StreamlineBinding, StreamlineCaps,
 };
 pub use suballocator::{MemorySuballocator, StagingArena, Suballocation, SuballocatorStats};
 pub use swapchain::Swapchain;

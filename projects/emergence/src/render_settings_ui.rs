@@ -39,7 +39,7 @@ const MODE_OPTIONS: &[ModeOption] = &[
     },
     ModeOption {
         id: 5,
-        label: "DLSS*",
+        label: "DLSS",
     },
     ModeOption {
         id: 6,
