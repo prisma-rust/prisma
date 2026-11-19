@@ -154,6 +154,13 @@ pub const DLSS_OPTIONS_GUID: StructType = StructType {
     data4: [0xa9, 0x2d, 0x63, 0x8d, 0x42, 0x10, 0x57, 0xb8],
 };
 
+pub const DLSS_OPTIMAL_SETTINGS_GUID: StructType = StructType {
+    data1: 0xef1d_0957,
+    data2: 0xfd58,
+    data3: 0x4df7,
+    data4: [0xb5, 0x04, 0x8b, 0x69, 0xd8, 0xaa, 0x6b, 0x76],
+};
+
 pub const DLSSD_OPTIONS_GUID: StructType = StructType {
     data1: 0x0ad8_7504,
     data2: 0x774e,
@@ -482,6 +489,39 @@ pub struct DlssOptions {
     pub use_auto_exposure: SlBoolean,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DlssOptimalSettings {
+    pub base: BaseStructure,
+    pub optimal_render_width: u32,
+    pub optimal_render_height: u32,
+    pub optimal_sharpness: f32,
+    pub render_width_min: u32,
+    pub render_height_min: u32,
+    pub render_width_max: u32,
+    pub render_height_max: u32,
+}
+
+impl Default for DlssOptimalSettings {
+    fn default() -> Self {
+        Self {
+            base: BaseStructure::new(DLSS_OPTIMAL_SETTINGS_GUID, 1),
+            optimal_render_width: 0,
+            optimal_render_height: 0,
+            optimal_sharpness: 0.0,
+            render_width_min: 0,
+            render_height_min: 0,
+            render_width_max: 0,
+            render_height_max: 0,
+        }
+    }
+}
+
+pub type PFunSlDlssGetOptimalSettings = unsafe extern "C" fn(
+    options: *const DlssOptions,
+    settings: *mut DlssOptimalSettings,
+) -> SlResult;
+
 impl Default for DlssOptions {
     fn default() -> Self {
         Self {
@@ -711,6 +751,7 @@ extern "system" {
 /// Dynamically loaded Streamline 2.x interposer function table.
 pub struct StreamlineBinding {
     _library: SharedLib,
+    loaded_path: String,
     loaded_dir: Option<std::path::PathBuf>,
     pub sl_init: PFunSlInit,
     pub sl_shutdown: PFunSlShutdown,
@@ -823,6 +864,7 @@ impl StreamlineBinding {
                 .map(|p| std::mem::transmute::<*mut c_void, PFunSlSetConstants>(p));
             Some(Self {
                 _library: library,
+                loaded_path: path.to_owned(),
                 loaded_dir,
                 sl_init,
                 sl_shutdown,
@@ -851,95 +893,120 @@ unsafe extern "C" fn sl_log_callback(log_type: u32, msg: *const c_char) {
     }
 }
 
+fn call_sl_init(binding: &StreamlineBinding) -> bool {
+    let features = [
+        FEATURE_DLSS,
+        FEATURE_DLSS_RR,
+        FEATURE_DLSS_G,
+        FEATURE_REFLEX,
+    ];
+    let plugin_dir_utf16: Option<Vec<u16>> = binding.loaded_dir.as_ref().map(|dir| {
+        let mut s = dir.to_string_lossy().into_owned();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            s = stripped.to_owned();
+        }
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    });
+    let plugin_dir_ptrs: [*const u16; 1] = [plugin_dir_utf16
+        .as_ref()
+        .map_or(std::ptr::null(), |v| v.as_ptr())];
+    let prefs = SlPreferences {
+        base: BaseStructure::new(PREFERENCES_GUID, 1),
+        show_console: false,
+        log_level: if log::log_enabled!(log::Level::Info) {
+            2
+        } else {
+            0
+        },
+        paths_to_plugins: if plugin_dir_utf16.is_some() {
+            plugin_dir_ptrs.as_ptr()
+        } else {
+            std::ptr::null()
+        },
+        num_paths_to_plugins: u32::from(plugin_dir_utf16.is_some()),
+        path_to_logs_and_data: std::ptr::null(),
+        allocate_callback: std::ptr::null(),
+        release_callback: std::ptr::null(),
+        log_message_callback: sl_log_callback as *const c_void,
+        flags: (1 << 0) | (1 << 7), // eDisableCLStateTracking | eUseFrameBasedResourceTagging
+        features_to_load: features.as_ptr(),
+        num_features_to_load: features.len() as u32,
+        application_id: 231_313_132,
+        engine: 0,
+        engine_version: c"0.1.0".as_ptr(),
+        project_id: std::ptr::null(),
+        render_api: 2, // Vulkan
+    };
+    let init_res = unsafe { (binding.sl_init)((&raw const prefs).cast(), SL_SDK_VERSION) };
+    if init_res != SlResult::Ok {
+        log::warn!("Streamline slInit failed: {init_res:?}");
+        return false;
+    }
+    true
+}
+
 /// Live NVIDIA Streamline runtime bound to a Vulkan device (DLSS-SR, DLSS-RR, DLFG).
 pub struct StreamlineRuntime {
     binding: StreamlineBinding,
     caps: StreamlineCaps,
     dlss_set_options: Option<PFunSlDlssSetOptions>,
+    dlss_get_optimal_settings: Option<PFunSlDlssGetOptimalSettings>,
     dlssd_set_options: Option<PFunSlDlssdSetOptions>,
     dlssg_set_options: Option<PFunSlDlssgSetOptions>,
     viewport: SlViewportHandle,
 }
 
 impl StreamlineRuntime {
+    /// Load `sl.interposer` and call `slInit()` before `ash::Entry` / `vkCreateInstance`
+    /// so `ash::Entry::load_from(path)` can route all Vulkan calls through Streamline.
+    pub fn pre_init_interposer() -> Option<String> {
+        let binding = StreamlineBinding::try_load()?;
+        let path = binding.loaded_path.clone();
+        if !call_sl_init(&binding) {
+            return None;
+        }
+        // Keep the binding alive inside `sl.interposer` (Entry::load_from also holds a ref).
+        std::mem::forget(binding);
+        Some(path)
+    }
+
     /// Probe and initialize Streamline for `context`. Returns `None` on non-NVIDIA
     /// hosts or when `sl.interposer` / required plugins fail to initialize.
     pub fn try_init(context: &crate::context::VulkanContext) -> Option<Self> {
-        if context.physical_device_properties.vendor_id != NVIDIA_VENDOR_ID {
-            return None;
-        }
         let binding = StreamlineBinding::try_load()?;
-        let features = [
-            FEATURE_DLSS,
-            FEATURE_DLSS_RR,
-            FEATURE_DLSS_G,
-            FEATURE_REFLEX,
-        ];
-        let plugin_dir_utf16: Option<Vec<u16>> = binding.loaded_dir.as_ref().map(|dir| {
-            let mut s = dir.to_string_lossy().into_owned();
-            if let Some(stripped) = s.strip_prefix(r"\\?\") {
-                s = stripped.to_owned();
+        if context.physical_device_properties.vendor_id != NVIDIA_VENDOR_ID {
+            if context.streamline_interposed {
+                unsafe { (binding.sl_shutdown)() };
             }
-            s.encode_utf16().chain(std::iter::once(0)).collect()
-        });
-        let plugin_dir_ptrs: [*const u16; 1] = [plugin_dir_utf16
-            .as_ref()
-            .map_or(std::ptr::null(), |v| v.as_ptr())];
-        let prefs = SlPreferences {
-            base: BaseStructure::new(PREFERENCES_GUID, 1),
-            show_console: false,
-            log_level: if log::log_enabled!(log::Level::Info) {
-                2
-            } else {
-                0
-            },
-            paths_to_plugins: if plugin_dir_utf16.is_some() {
-                plugin_dir_ptrs.as_ptr()
-            } else {
-                std::ptr::null()
-            },
-            num_paths_to_plugins: u32::from(plugin_dir_utf16.is_some()),
-            path_to_logs_and_data: std::ptr::null(),
-            allocate_callback: std::ptr::null(),
-            release_callback: std::ptr::null(),
-            log_message_callback: sl_log_callback as *const c_void,
-            flags: (1 << 0) | (1 << 7), // eDisableCLStateTracking | eUseFrameBasedResourceTagging
-            features_to_load: features.as_ptr(),
-            num_features_to_load: features.len() as u32,
-            application_id: 231_313_132,
-            engine: 0,
-            engine_version: c"0.1.0".as_ptr(),
-            project_id: std::ptr::null(),
-            render_api: 2, // Vulkan
-        };
-        let init_res = unsafe { (binding.sl_init)((&raw const prefs).cast(), SL_SDK_VERSION) };
-        if init_res != SlResult::Ok {
-            log::warn!("Streamline slInit failed: {init_res:?}");
             return None;
         }
-
-        if let Some(set_vk) = binding.sl_set_vulkan_info {
-            let vk_info = SlVulkanInfo {
-                base: BaseStructure::new(VULKAN_INFO_GUID, 3),
-                device: context.device.handle(),
-                instance: context.instance.handle(),
-                physical_device: context.physical_device,
-                compute_queue_index: 0,
-                compute_queue_family: context.graphics_queue_family,
-                graphics_queue_index: 0,
-                graphics_queue_family: context.graphics_queue_family,
-                optical_flow_queue_index: 0,
-                optical_flow_queue_family: context.graphics_queue_family,
-                use_native_optical_flow_mode: false,
-                compute_queue_create_flags: 0,
-                graphics_queue_create_flags: 0,
-                optical_flow_queue_create_flags: 0,
-            };
-            let vk_res = unsafe { set_vk(&raw const vk_info) };
-            if vk_res != SlResult::Ok {
-                log::warn!("Streamline slSetVulkanInfo failed: {vk_res:?}");
-                unsafe { (binding.sl_shutdown)() };
+        if !context.streamline_interposed {
+            if !call_sl_init(&binding) {
                 return None;
+            }
+            if let Some(set_vk) = binding.sl_set_vulkan_info {
+                let vk_info = SlVulkanInfo {
+                    base: BaseStructure::new(VULKAN_INFO_GUID, 3),
+                    device: context.device.handle(),
+                    instance: context.instance.handle(),
+                    physical_device: context.physical_device,
+                    compute_queue_index: 0,
+                    compute_queue_family: context.graphics_queue_family,
+                    graphics_queue_index: 0,
+                    graphics_queue_family: context.graphics_queue_family,
+                    optical_flow_queue_index: 0,
+                    optical_flow_queue_family: context.graphics_queue_family,
+                    use_native_optical_flow_mode: false,
+                    compute_queue_create_flags: 0,
+                    graphics_queue_create_flags: 0,
+                    optical_flow_queue_create_flags: 0,
+                };
+                let vk_res = unsafe { set_vk(&raw const vk_info) };
+                if vk_res != SlResult::Ok {
+                    log::warn!("Streamline slSetVulkanInfo failed: {vk_res:?}");
+                    unsafe { (binding.sl_shutdown)() };
+                    return None;
+                }
             }
         }
 
@@ -983,6 +1050,10 @@ impl StreamlineRuntime {
         };
         let dlss_set_options = load_fn(FEATURE_DLSS, c"slDLSSSetOptions")
             .map(|p| unsafe { std::mem::transmute::<*mut c_void, PFunSlDlssSetOptions>(p) });
+        let dlss_get_optimal_settings =
+            load_fn(FEATURE_DLSS, c"slDLSSGetOptimalSettings").map(|p| unsafe {
+                std::mem::transmute::<*mut c_void, PFunSlDlssGetOptimalSettings>(p)
+            });
         let dlssd_set_options = load_fn(FEATURE_DLSS_RR, c"slDLSSDSetOptions")
             .map(|p| unsafe { std::mem::transmute::<*mut c_void, PFunSlDlssdSetOptions>(p) });
         let dlssg_set_options = load_fn(FEATURE_DLSS_G, c"slDLSSGSetOptions")
@@ -999,6 +1070,7 @@ impl StreamlineRuntime {
             binding,
             caps,
             dlss_set_options,
+            dlss_get_optimal_settings,
             dlssd_set_options,
             dlssg_set_options,
             viewport: SlViewportHandle::new(0),
@@ -1008,6 +1080,18 @@ impl StreamlineRuntime {
     #[must_use]
     pub const fn caps(&self) -> StreamlineCaps {
         self.caps
+    }
+
+    /// Query Streamline/NGX optimal and min/max render resolution for a DLSS mode.
+    pub fn dlss_optimal_settings(&self, options: &DlssOptions) -> Option<DlssOptimalSettings> {
+        let get_opt = self.dlss_get_optimal_settings?;
+        let mut out = DlssOptimalSettings::default();
+        let res = unsafe { get_opt(&raw const *options, &raw mut out) };
+        if res == SlResult::Ok {
+            Some(out)
+        } else {
+            None
+        }
     }
 
     /// Push per-frame camera matrices and jitter constants to Streamline.

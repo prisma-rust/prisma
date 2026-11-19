@@ -32,6 +32,39 @@ fn streamline_dlss_headless_smoke() {
     let caps = harness.renderer().streamline_caps();
     eprintln!("Streamline caps: {caps:?}");
 
+    if let Some(sl) = harness.renderer().streamline_runtime() {
+        for (name, mode) in [
+            ("Quality", prism_render::streamline::DlssMode::MaxQuality),
+            ("Balanced", prism_render::streamline::DlssMode::Balanced),
+            (
+                "Performance",
+                prism_render::streamline::DlssMode::MaxPerformance,
+            ),
+            (
+                "UltraPerformance",
+                prism_render::streamline::DlssMode::UltraPerformance,
+            ),
+        ] {
+            let opts = prism_render::streamline::DlssOptions {
+                mode,
+                output_width: 1920,
+                output_height: 1080,
+                ..Default::default()
+            };
+            if let Some(opt) = sl.dlss_optimal_settings(&opts) {
+                eprintln!(
+                    "DLSS 1920x1080 {name}: optimal={}x{} min={}x{} max={}x{}",
+                    opt.optimal_render_width,
+                    opt.optimal_render_height,
+                    opt.render_width_min,
+                    opt.render_height_min,
+                    opt.render_width_max,
+                    opt.render_height_max
+                );
+            }
+        }
+    }
+
     harness.renderer_mut().settings_mut().dlss_mode = DlssMode::Quality;
     let item = draw_item(harness.mesh_handle());
     let pixels = harness.render_draws(std::slice::from_ref(&item), FrameOptions::default());
