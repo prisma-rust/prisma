@@ -4,6 +4,7 @@
 #![allow(dead_code, non_snake_case)]
 
 pub mod auto_exposure;
+pub mod ddgi;
 pub mod gizmo;
 pub mod gtao;
 pub mod ibl_bake;

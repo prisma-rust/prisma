@@ -326,6 +326,14 @@ emit_reflection gtao vertexMain vertex fragmentMain fragment
 # VK_KHR_ray_query hardware. Output: RWTexture3D coefficient-major depth slices.
 compile_stage gi_bake bakeMain compute
 
+# ddgi: RTXGI v1.3 real-time DDGI compute passes (clear, update irradiance/distance, blend, resolve).
+compile_stage ddgi ddgiClearMain compute ddgi_clear
+compile_stage ddgi ddgiUpdateIrradianceMain compute ddgi_update_irradiance
+compile_stage ddgi ddgiUpdateDistanceMain compute ddgi_update_distance
+compile_stage ddgi ddgiBlendMain compute ddgi_blend
+compile_stage ddgi ddgiResolveMain compute ddgi_resolve
+emit_reflection ddgi ddgiClearMain compute ddgiUpdateIrradianceMain compute ddgiUpdateDistanceMain compute ddgiBlendMain compute ddgiResolveMain compute
+
 # pt_render: real-time path tracing compute shader (temporal accumulation).
 # Dispatched per pixel — traces 1 sample/frame, accumulates for convergence.
 # Requires VK_KHR_ray_query hardware. Output: RWTexture2D RGBA32F (accumulated).
