@@ -36,7 +36,7 @@ use prism_scene::ui::{
 };
 use prism_scene::Active;
 
-const NUM_ITEMS: usize = 21;
+const NUM_ITEMS: usize = 22;
 const SPONZA_CUSTOM_SHADER: &str = "shaders/sponza_custom.frag.spv";
 
 #[derive(Debug)]
@@ -73,6 +73,7 @@ pub struct SponzaTuningHook {
     pub dlss_mode: DlssMode,
     pub dlss_pre_upscale: DlssPreUpscaleMode,
     pub dlfg_mode: DlssgMode,
+    pub dlfg_frames: u32,
     pub dlss_rr_enabled: bool,
     pub vsync: bool,
     pub custom_shader: bool,
@@ -144,6 +145,7 @@ impl Default for SponzaTuningHook {
             dlss_mode: DlssMode::Off,
             dlss_pre_upscale: DlssPreUpscaleMode::Linear,
             dlfg_mode: DlssgMode::Off,
+            dlfg_frames: 1,
             dlss_rr_enabled: false,
             vsync: false,
             custom_shader: true,
@@ -433,13 +435,22 @@ impl SponzaTuningHook {
                     }
                 };
             }
+            21 => {
+                self.dlfg_frames = if increase {
+                    (self.dlfg_frames % 3) + 1
+                } else if self.dlfg_frames <= 1 {
+                    3
+                } else {
+                    self.dlfg_frames - 1
+                };
+            }
             _ => {}
         }
     }
 
     fn toggle_parameter(&mut self) {
         match self.selected_index {
-            0 | 1 | 15 | 18 | 20 => self.adjust_parameter(true),
+            0 | 1 | 15 | 18 | 20 | 21 => self.adjust_parameter(true),
             5 => self.sharc_enable_clear = !self.sharc_enable_clear,
             6 => self.sharc_enable_update = !self.sharc_enable_update,
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
@@ -655,6 +666,7 @@ impl FrameHook for SponzaTuningHook {
         settings.dlss_mode = self.dlss_mode;
         settings.dlss_pre_upscale = self.dlss_pre_upscale;
         settings.dlfg_mode = self.dlfg_mode;
+        settings.dlfg_frames = self.dlfg_frames.clamp(1, 3);
         settings.dlss_rr_enabled = self.dlss_rr_enabled;
 
         if self.request_reset {
@@ -888,6 +900,7 @@ impl FrameHook for SponzaTuningHook {
                      {}DLFG (Frame Gen):   [ {} ]\n\
                      {}DLSS Ray Recon:     [ {} ]\n\
                      {}DLSS Pre-Upscale:   [ {} ]\n\
+                     {}DLFG Multiplier:    [ {}x ({}) ]\n\
                      ----------------------------------------\n\
                      [Up/Down] Select   [Left/Right] Adjust\n\
                      [Space/Enter] Toggle   [V] VSync: {}",
@@ -937,6 +950,9 @@ impl FrameHook for SponzaTuningHook {
                     on_off(self.dlss_rr_enabled),
                     marker(20),
                     self.dlss_pre_upscale.label(),
+                    marker(21),
+                    self.dlfg_frames.clamp(1, 3) + 1,
+                    self.dlfg_frames.clamp(1, 3),
                     on_off(self.vsync),
                 );
 

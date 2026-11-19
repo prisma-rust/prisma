@@ -3035,6 +3035,7 @@ impl GraphRenderer {
                     {
                         let dlfg_opts = crate::streamline::DlssgOptions {
                             mode: self.settings.dlfg_mode,
+                            num_frames_to_generate: self.settings.dlfg_frames.clamp(1, 3),
                             color_width: extent.width,
                             color_height: extent.height,
                             mvec_depth_width: render_extent.width,

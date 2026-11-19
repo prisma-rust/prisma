@@ -562,11 +562,13 @@ impl prism_app::FrameHook for EmergenceHostHook {
             prism_engine::render_settings::DlssMode::Off
         };
         let (dlfg_id, ddgi_on) = commands::current_rtx_toggles();
+        let (_, dlfg_frames) = commands::current_dlfg_config();
         settings.dlfg_mode = match dlfg_id {
             1 => prism_engine::render_settings::DlssgMode::On,
             2 => prism_engine::render_settings::DlssgMode::Auto,
             _ => prism_engine::render_settings::DlssgMode::Off,
         };
+        settings.dlfg_frames = u32::from(dlfg_frames);
         settings.dlss_pre_upscale = match commands::current_dlss_pre_upscale() {
             1 => prism_engine::render_settings::DlssPreUpscaleMode::Nearest,
             2 => prism_engine::render_settings::DlssPreUpscaleMode::Off,

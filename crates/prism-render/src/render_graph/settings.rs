@@ -255,6 +255,8 @@ pub struct RenderSettings {
     pub dlss_pre_upscale: DlssPreUpscaleMode,
     /// DLSS Frame Generation (DLFG) mode via Streamline.
     pub dlfg_mode: crate::streamline::DlssgMode,
+    /// Number of generated frames per rendered frame for DLFG (`1` = 2x, `2` = 3x, `3` = 4x).
+    pub dlfg_frames: u32,
     /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
     pub dlss_rr_enabled: bool,
 
@@ -351,6 +353,7 @@ impl Default for RenderSettings {
             dlss_mode: DlssMode::Off,
             dlss_pre_upscale: DlssPreUpscaleMode::Linear,
             dlfg_mode: crate::streamline::DlssgMode::Off,
+            dlfg_frames: 1,
             dlss_rr_enabled: false,
             shadow_mode: ShadowMode::Auto,
             shadow_map_size: crate::SHADOW_MAP_SIZE,
