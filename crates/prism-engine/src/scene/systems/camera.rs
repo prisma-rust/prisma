@@ -97,6 +97,13 @@ pub fn clear_flags(world: &World, camera: prism_ecs::Entity) -> CameraClearFlags
         .unwrap_or_default()
 }
 
+/// World resource that suppresses [`camera_controller_system`] input while a
+/// game UI or command console owns keyboard/mouse focus.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CameraInputGate {
+    pub suppressed: bool,
+}
+
 /// Runtime camera output produced each frame by [`compute_camera_output`].
 pub struct CameraOutput {
     pub view_proj: Mat4,

@@ -224,6 +224,19 @@ impl<'a> GameWorld<'a> {
         }
     }
 
+    /// Suppresses or re-enables the engine's built-in `FlyCameraController`
+    /// while a project UI or command console owns keyboard/mouse input.
+    pub fn set_camera_input_suppressed(&mut self, suppressed: bool) {
+        #[cfg(feature = "host")]
+        if let Backend::Host(world) = &mut self.backend {
+            world.insert_resource(prism_engine::scene::systems::camera::CameraInputGate {
+                suppressed,
+            });
+        }
+        #[cfg(not(feature = "host"))]
+        let _ = suppressed;
+    }
+
     pub fn screen_size(&self) -> [f32; 2] {
         self.input().screen
     }
