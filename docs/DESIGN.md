@@ -1635,3 +1635,13 @@ XY 位置，精灵提取与 `VirtualCamera2D` 目标读取按 `interpolation_alp
 仍未实现。GitHub issue #1160 提出的 2D 虚拟相机（阻尼、死区、边界限制、像素吸附）
 已由 `VirtualCamera2D` 场景组件和引擎系统提供；纯 2D 模式的渲染 pass 裁剪仍未实现，
 也不由当前 AABB 几何内核覆盖。
+
+---
+
+## Embedded SPIR-V Crate Split Decision (#1225)
+
+Measured on Linux aarch64 (`rustc` dev profile, warmed target) by touching `assets/shaders/scene_frag.frag.spv` and running `cargo build --manifest-path projects/template/Cargo.toml --timings` across 3 runs:
+
+- Runs: `9.01s`, `8.90s`, `8.92s` (median **`8.92s`**)
+- Breakdown (`--timings`): `prism-render` `1.05s` (11.8% of total), `prism-engine` `0.66s`, `prism-game-api` `0.15s`, `prism-app` `0.35s`, `template` lib `3.26s`, `template` bin link `3.77s` (42.3% of total).
+- Decision (**not planned / wontfix**): `prism-render` compilation is only 11.8% of the incremental shader-touch rebuild (below the `>= 20%` threshold), and downstream linking (`template` lib + bin) dominates. Keep `include_bytes!` inside `prism-render` rather than adding a `prism-render-shaders` crate.
