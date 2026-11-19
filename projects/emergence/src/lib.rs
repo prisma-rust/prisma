@@ -549,11 +549,11 @@ impl prism_app::FrameHook for EmergenceHostHook {
         settings.dlss_mode = if mode == prism_app::MobileUpscaler::Dlss {
             if scale >= 0.99 {
                 prism_engine::render_settings::DlssMode::Dlaa
-            } else if scale >= 0.66 {
+            } else if scale >= 0.665 {
                 prism_engine::render_settings::DlssMode::Quality
-            } else if scale >= 0.58 {
+            } else if scale >= 0.575 {
                 prism_engine::render_settings::DlssMode::Balanced
-            } else if scale >= 0.50 {
+            } else if scale >= 0.495 {
                 prism_engine::render_settings::DlssMode::Performance
             } else {
                 prism_engine::render_settings::DlssMode::UltraPerformance
@@ -573,9 +573,20 @@ impl prism_app::FrameHook for EmergenceHostHook {
         if !mode.uses_internal_resolution() {
             settings.internal_resolution = [0, 0];
         } else {
+            let effective_scale = if settings.dlss_mode
+                == prism_engine::render_settings::DlssMode::UltraPerformance
+            {
+                1.0 / 3.0
+            } else {
+                scale
+            };
             let (w, h) = window.inner_size();
-            let rw = ((w.max(1) as f32) * scale).round().max(64.0) as u32;
-            let rh = ((h.max(1) as f32) * scale).round().max(64.0) as u32;
+            let rw = ((w.max(1) as f32) * effective_scale)
+                .round()
+                .max(64.0) as u32;
+            let rh = ((h.max(1) as f32) * effective_scale)
+                .round()
+                .max(64.0) as u32;
             settings.internal_resolution = [rw, rh];
         }
         let all_gpu_passes = stats
