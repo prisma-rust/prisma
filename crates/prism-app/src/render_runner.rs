@@ -572,6 +572,7 @@ fn render_one_frame(
         renderer_settings.restir_gi_spatial_reuse = settings.restir_gi_spatial_reuse;
         renderer_settings.restir_gi_max_secondary_dist = settings.restir_gi_max_secondary_dist;
         renderer_settings.dlss_mode = settings.dlss_mode;
+        renderer_settings.dlss_pre_upscale = settings.dlss_pre_upscale;
         renderer_settings.dlfg_mode = settings.dlfg_mode;
         renderer_settings.dlss_rr_enabled = settings.dlss_rr_enabled;
     }

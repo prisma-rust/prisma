@@ -567,6 +567,11 @@ impl prism_app::FrameHook for EmergenceHostHook {
             2 => prism_engine::render_settings::DlssgMode::Auto,
             _ => prism_engine::render_settings::DlssgMode::Off,
         };
+        settings.dlss_pre_upscale = match commands::current_dlss_pre_upscale() {
+            1 => prism_engine::render_settings::DlssPreUpscaleMode::Nearest,
+            2 => prism_engine::render_settings::DlssPreUpscaleMode::Off,
+            _ => prism_engine::render_settings::DlssPreUpscaleMode::Linear,
+        };
         if ddgi_on {
             settings.raster_gi = prism_engine::render_settings::RasterGiMode::Ddgi;
         }
@@ -575,6 +580,8 @@ impl prism_app::FrameHook for EmergenceHostHook {
         } else {
             let effective_scale = if settings.dlss_mode
                 == prism_engine::render_settings::DlssMode::UltraPerformance
+                && settings.dlss_pre_upscale
+                    == prism_engine::render_settings::DlssPreUpscaleMode::Off
             {
                 1.0 / 3.0
             } else {

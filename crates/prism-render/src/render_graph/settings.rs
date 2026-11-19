@@ -73,6 +73,34 @@ pub enum DlssMode {
     Dlaa,
 }
 
+/// Pre-upscale filter applied before DLSS when `render_extent` is below DLSS's minimum input size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DlssPreUpscaleMode {
+    #[default]
+    Linear,
+    Nearest,
+    Off,
+}
+
+impl DlssPreUpscaleMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "linear" | "bilinear" | "1" => Some(Self::Linear),
+            "nearest" | "point" | "2" => Some(Self::Nearest),
+            "off" | "none" | "0" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Linear => "Linear",
+            Self::Nearest => "Nearest",
+            Self::Off => "Off",
+        }
+    }
+}
+
 /// Mobile and desktop upscaler mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum MobileUpscaler {
@@ -223,6 +251,8 @@ pub struct RenderSettings {
 
     /// DLSS upscaling mode.
     pub dlss_mode: DlssMode,
+    /// Pre-upscale filter when `render_extent < dlss_min`.
+    pub dlss_pre_upscale: DlssPreUpscaleMode,
     /// DLSS Frame Generation (DLFG) mode via Streamline.
     pub dlfg_mode: crate::streamline::DlssgMode,
     /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
@@ -319,6 +349,7 @@ impl Default for RenderSettings {
             restir_gi_spatial_reuse: true,
             restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
+            dlss_pre_upscale: DlssPreUpscaleMode::Linear,
             dlfg_mode: crate::streamline::DlssgMode::Off,
             dlss_rr_enabled: false,
             shadow_mode: ShadowMode::Auto,

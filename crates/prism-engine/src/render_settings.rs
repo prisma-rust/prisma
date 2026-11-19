@@ -5,7 +5,8 @@
 //! instead of a growing list of scalar arguments.
 
 pub use prism_render::{
-    DlssMode, DlssgMode, InternalScaleMode, MobileUpscaler, PtGiMode, RasterGiMode, RenderMode,
+    DlssMode, DlssPreUpscaleMode, DlssgMode, InternalScaleMode, MobileUpscaler, PtGiMode,
+    RasterGiMode, RenderMode,
 };
 
 /// Debug flag names, ordered by shader bit (`PBR_FLAG_*` in
@@ -142,6 +143,8 @@ pub struct RenderSettings {
     pub restir_gi_max_secondary_dist: f32,
     /// DLSS Mode (Off, Quality, Balanced, Performance, UltraPerformance, Dlaa).
     pub dlss_mode: DlssMode,
+    /// Pre-upscale filter applied before DLSS when `render_extent < dlss_min`.
+    pub dlss_pre_upscale: DlssPreUpscaleMode,
     /// DLSS Frame Generation (DLFG) mode via Streamline.
     pub dlfg_mode: DlssgMode,
     /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
@@ -317,6 +320,7 @@ impl Default for RenderSettings {
             restir_gi_spatial_reuse: true,
             restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
+            dlss_pre_upscale: DlssPreUpscaleMode::Linear,
             dlfg_mode: DlssgMode::Off,
             dlss_rr_enabled: false,
             show_grid: false,

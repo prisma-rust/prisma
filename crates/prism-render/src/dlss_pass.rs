@@ -13,9 +13,9 @@ use ash::vk;
 
 use crate::context::VulkanContext;
 use crate::render_graph::{
-    DlssMode as GraphDlssMode, GraphResources, PassInfo, PassKind, RenderContext,
-    RenderGraphBuilder, RenderMode, RenderPassNode, RenderSettings, ResourceHandle, ResourceType,
-    ResourceUsage, DLSS_COLOR_H, FORWARD_ALBEDO_H, FORWARD_COLOR_H, FORWARD_DEPTH_H,
+    DlssMode as GraphDlssMode, DlssPreUpscaleMode, GraphResources, PassInfo, PassKind,
+    RenderContext, RenderGraphBuilder, RenderMode, RenderPassNode, RenderSettings, ResourceHandle,
+    ResourceType, ResourceUsage, DLSS_COLOR_H, FORWARD_ALBEDO_H, FORWARD_COLOR_H, FORWARD_DEPTH_H,
     FORWARD_NORMAL_H, FORWARD_VELOCITY_H, PT_COLOR_H, PT_DEPTH_H, PT_NORMAL_ROUGHNESS_H,
     PT_VELOCITY_H, VOXEL_COLOR_H, VOXEL_DEPTH_H,
 };
@@ -38,6 +38,111 @@ struct TaggedImage {
     usage: vk::ImageUsageFlags,
 }
 
+struct ImageTriple {
+    image: vk::Image,
+    memory: vk::DeviceMemory,
+    view: vk::ImageView,
+}
+
+struct PreUpscaleTargets {
+    extent: vk::Extent2D,
+    depth_format: vk::Format,
+    color: [ImageTriple; 2],
+    velocity: [ImageTriple; 2],
+    depth: [ImageTriple; 2],
+}
+
+impl PreUpscaleTargets {
+    fn new(
+        context: &VulkanContext,
+        extent: vk::Extent2D,
+        depth_format: vk::Format,
+    ) -> Result<Self> {
+        let color_usage = vk::ImageUsageFlags::TRANSFER_DST
+            | vk::ImageUsageFlags::SAMPLED
+            | vk::ImageUsageFlags::STORAGE;
+        let depth_aspect = if depth_format == vk::Format::D32_SFLOAT {
+            vk::ImageAspectFlags::DEPTH
+        } else {
+            vk::ImageAspectFlags::COLOR
+        };
+        let depth_usage = vk::ImageUsageFlags::TRANSFER_DST
+            | vk::ImageUsageFlags::SAMPLED
+            | if depth_format == vk::Format::D32_SFLOAT {
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            } else {
+                vk::ImageUsageFlags::STORAGE
+            };
+        let color = [
+            create_2d_image(
+                context,
+                extent,
+                vk::Format::R16G16B16A16_SFLOAT,
+                color_usage,
+                vk::ImageAspectFlags::COLOR,
+            )?,
+            create_2d_image(
+                context,
+                extent,
+                vk::Format::R16G16B16A16_SFLOAT,
+                color_usage,
+                vk::ImageAspectFlags::COLOR,
+            )?,
+        ];
+        let velocity = [
+            create_2d_image(
+                context,
+                extent,
+                vk::Format::R16G16_SFLOAT,
+                color_usage,
+                vk::ImageAspectFlags::COLOR,
+            )?,
+            create_2d_image(
+                context,
+                extent,
+                vk::Format::R16G16_SFLOAT,
+                color_usage,
+                vk::ImageAspectFlags::COLOR,
+            )?,
+        ];
+        let depth = [
+            create_2d_image(context, extent, depth_format, depth_usage, depth_aspect)?,
+            create_2d_image(context, extent, depth_format, depth_usage, depth_aspect)?,
+        ];
+        Ok(Self {
+            extent,
+            depth_format,
+            color,
+            velocity,
+            depth,
+        })
+    }
+
+    fn destroy(&mut self, device: &ash::Device) {
+        unsafe {
+            for t in self
+                .color
+                .iter_mut()
+                .chain(self.velocity.iter_mut())
+                .chain(self.depth.iter_mut())
+            {
+                if t.view != vk::ImageView::null() {
+                    device.destroy_image_view(t.view, None);
+                    t.view = vk::ImageView::null();
+                }
+                if t.image != vk::Image::null() {
+                    device.destroy_image(t.image, None);
+                    t.image = vk::Image::null();
+                }
+                if t.memory != vk::DeviceMemory::null() {
+                    device.free_memory(t.memory, None);
+                    t.memory = vk::DeviceMemory::null();
+                }
+            }
+        }
+    }
+}
+
 /// Render-graph pass that tags Streamline inputs and evaluates DLSS-SR / DLSS-RR.
 pub struct DlssPass {
     output_extent: vk::Extent2D,
@@ -45,6 +150,7 @@ pub struct DlssPass {
     memories: [vk::DeviceMemory; 2],
     views: [vk::ImageView; 2],
     initialized: [bool; 2],
+    pre_targets: Option<PreUpscaleTargets>,
     device: ash::Device,
     streamline: Option<Arc<StreamlineRuntime>>,
     logged_eval_error: bool,
@@ -75,6 +181,7 @@ impl DlssPass {
             memories,
             views,
             initialized: [false; 2],
+            pre_targets: None,
             device: context.device.clone(),
             streamline,
             logged_eval_error: false,
@@ -112,6 +219,9 @@ impl DlssPass {
     }
 
     fn destroy_images(&mut self) {
+        if let Some(mut pre) = self.pre_targets.take() {
+            pre.destroy(&self.device);
+        }
         unsafe {
             for i in 0..2 {
                 if self.views[i] != vk::ImageView::null() {
@@ -252,6 +362,235 @@ impl RenderPassNode for DlssPass {
         };
 
         let frame = (ctx.frame_index as usize) & 1;
+
+        let (
+            input_color_img,
+            input_color_view,
+            input_depth_img,
+            input_depth_view,
+            input_vel_img,
+            input_vel_view,
+            input_extent,
+        ) = if sl_dlss_mode != DlssMode::Off
+            && ctx.settings.dlss_pre_upscale != DlssPreUpscaleMode::Off
+        {
+            let min_extent = dlss_min_extent(&sl, sl_dlss_mode, self.output_extent);
+            if ctx.render_extent.width < min_extent.width
+                || ctx.render_extent.height < min_extent.height
+            {
+                let pre_extent = vk::Extent2D {
+                    width: ctx.render_extent.width.max(min_extent.width),
+                    height: ctx.render_extent.height.max(min_extent.height),
+                };
+                let recreate_pre = self
+                    .pre_targets
+                    .as_ref()
+                    .is_none_or(|p| p.extent != pre_extent || p.depth_format != depth_format);
+                if recreate_pre {
+                    if let Some(mut old) = self.pre_targets.take() {
+                        old.destroy(&self.device);
+                    }
+                    self.pre_targets = Some(PreUpscaleTargets::new(
+                        ctx.context,
+                        pre_extent,
+                        depth_format,
+                    )?);
+                }
+                let pre = self.pre_targets.as_ref().unwrap();
+                let pre_c = &pre.color[frame];
+                let pre_d = &pre.depth[frame];
+                let pre_v = &pre.velocity[frame];
+                let depth_aspect = if depth_format == vk::Format::D32_SFLOAT {
+                    vk::ImageAspectFlags::DEPTH
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                };
+                let color_filter = match ctx.settings.dlss_pre_upscale {
+                    DlssPreUpscaleMode::Nearest => vk::Filter::NEAREST,
+                    DlssPreUpscaleMode::Linear | DlssPreUpscaleMode::Off => vk::Filter::LINEAR,
+                };
+
+                let to_transfer = [
+                    image_barrier_aspect(
+                        color_img,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        vk::AccessFlags::SHADER_READ,
+                        vk::AccessFlags::TRANSFER_READ,
+                        vk::ImageAspectFlags::COLOR,
+                    ),
+                    image_barrier_aspect(
+                        vel_img,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        vk::AccessFlags::SHADER_READ,
+                        vk::AccessFlags::TRANSFER_READ,
+                        vk::ImageAspectFlags::COLOR,
+                    ),
+                    image_barrier_aspect(
+                        depth_img,
+                        depth_layout,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        vk::AccessFlags::SHADER_READ,
+                        vk::AccessFlags::TRANSFER_READ,
+                        depth_aspect,
+                    ),
+                    image_barrier_aspect(
+                        pre_c.image,
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::AccessFlags::empty(),
+                        vk::AccessFlags::TRANSFER_WRITE,
+                        vk::ImageAspectFlags::COLOR,
+                    ),
+                    image_barrier_aspect(
+                        pre_v.image,
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::AccessFlags::empty(),
+                        vk::AccessFlags::TRANSFER_WRITE,
+                        vk::ImageAspectFlags::COLOR,
+                    ),
+                    image_barrier_aspect(
+                        pre_d.image,
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::AccessFlags::empty(),
+                        vk::AccessFlags::TRANSFER_WRITE,
+                        depth_aspect,
+                    ),
+                ];
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::ALL_COMMANDS,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &to_transfer,
+                    );
+                    blit_2d(
+                        ctx.device,
+                        ctx.cmd,
+                        color_img,
+                        pre_c.image,
+                        ctx.render_extent,
+                        pre_extent,
+                        vk::ImageAspectFlags::COLOR,
+                        color_filter,
+                    );
+                    blit_2d(
+                        ctx.device,
+                        ctx.cmd,
+                        vel_img,
+                        pre_v.image,
+                        ctx.render_extent,
+                        pre_extent,
+                        vk::ImageAspectFlags::COLOR,
+                        vk::Filter::NEAREST,
+                    );
+                    blit_2d(
+                        ctx.device,
+                        ctx.cmd,
+                        depth_img,
+                        pre_d.image,
+                        ctx.render_extent,
+                        pre_extent,
+                        depth_aspect,
+                        vk::Filter::NEAREST,
+                    );
+                    let to_shader = [
+                        image_barrier_aspect(
+                            color_img,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            vk::AccessFlags::TRANSFER_READ,
+                            vk::AccessFlags::SHADER_READ,
+                            vk::ImageAspectFlags::COLOR,
+                        ),
+                        image_barrier_aspect(
+                            vel_img,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            vk::AccessFlags::TRANSFER_READ,
+                            vk::AccessFlags::SHADER_READ,
+                            vk::ImageAspectFlags::COLOR,
+                        ),
+                        image_barrier_aspect(
+                            depth_img,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            depth_layout,
+                            vk::AccessFlags::TRANSFER_READ,
+                            vk::AccessFlags::SHADER_READ,
+                            depth_aspect,
+                        ),
+                        image_barrier_aspect(
+                            pre_c.image,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            vk::AccessFlags::TRANSFER_WRITE,
+                            vk::AccessFlags::SHADER_READ,
+                            vk::ImageAspectFlags::COLOR,
+                        ),
+                        image_barrier_aspect(
+                            pre_v.image,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            vk::AccessFlags::TRANSFER_WRITE,
+                            vk::AccessFlags::SHADER_READ,
+                            vk::ImageAspectFlags::COLOR,
+                        ),
+                        image_barrier_aspect(
+                            pre_d.image,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            depth_layout,
+                            vk::AccessFlags::TRANSFER_WRITE,
+                            vk::AccessFlags::SHADER_READ,
+                            depth_aspect,
+                        ),
+                    ];
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &to_shader,
+                    );
+                }
+                (
+                    pre_c.image,
+                    pre_c.view,
+                    pre_d.image,
+                    pre_d.view,
+                    pre_v.image,
+                    pre_v.view,
+                    pre_extent,
+                )
+            } else {
+                (
+                    color_img,
+                    color_view,
+                    depth_img,
+                    depth_view,
+                    vel_img,
+                    vel_view,
+                    ctx.render_extent,
+                )
+            }
+        } else {
+            (
+                color_img,
+                color_view,
+                depth_img,
+                depth_view,
+                vel_img,
+                vel_view,
+                ctx.render_extent,
+            )
+        };
         if sl_dlss_mode != DlssMode::Off {
             let old_layout = if self.initialized[frame] {
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
@@ -281,11 +620,11 @@ impl RenderPassNode for DlssPass {
         let mut tagged = Vec::with_capacity(6);
         tagged.push(TaggedImage {
             buffer_type: BUFFER_TYPE_DEPTH,
-            image: depth_img,
-            view: depth_view,
+            image: input_depth_img,
+            view: input_depth_view,
             layout: depth_layout,
             format: depth_format,
-            extent: ctx.render_extent,
+            extent: input_extent,
             usage: if depth_layout == vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL {
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED
             } else {
@@ -294,11 +633,11 @@ impl RenderPassNode for DlssPass {
         });
         tagged.push(TaggedImage {
             buffer_type: BUFFER_TYPE_MOTION_VECTORS,
-            image: vel_img,
-            view: vel_view,
+            image: input_vel_img,
+            view: input_vel_view,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             format: vk::Format::R16G16_SFLOAT,
-            extent: ctx.render_extent,
+            extent: input_extent,
             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
                 | vk::ImageUsageFlags::STORAGE
                 | vk::ImageUsageFlags::SAMPLED,
@@ -346,11 +685,11 @@ impl RenderPassNode for DlssPass {
         if sl_dlss_mode != DlssMode::Off {
             tagged.push(TaggedImage {
                 buffer_type: BUFFER_TYPE_SCALING_INPUT_COLOR,
-                image: color_img,
-                view: color_view,
+                image: input_color_img,
+                view: input_color_view,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 format: vk::Format::R16G16B16A16_SFLOAT,
-                extent: ctx.render_extent,
+                extent: input_extent,
                 usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
                     | vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::SAMPLED,
@@ -498,12 +837,96 @@ fn published_pair(
     Some((img, view))
 }
 
-fn image_barrier(
+fn dlss_min_extent(
+    sl: &StreamlineRuntime,
+    mode: DlssMode,
+    output_extent: vk::Extent2D,
+) -> vk::Extent2D {
+    let opts = DlssOptions {
+        mode,
+        output_width: output_extent.width,
+        output_height: output_extent.height,
+        ..Default::default()
+    };
+    if let Some(opt) = sl.dlss_optimal_settings(&opts) {
+        if opt.render_width_min > 0 && opt.render_height_min > 0 {
+            return vk::Extent2D {
+                width: opt.render_width_min,
+                height: opt.render_height_min,
+            };
+        }
+    }
+    match mode {
+        DlssMode::UltraPerformance => vk::Extent2D {
+            width: output_extent.width.div_ceil(3).max(1),
+            height: output_extent.height.div_ceil(3).max(1),
+        },
+        DlssMode::Dlaa => output_extent,
+        _ => vk::Extent2D {
+            width: output_extent.width.div_ceil(2).max(1),
+            height: output_extent.height.div_ceil(2).max(1),
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn blit_2d(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    src_image: vk::Image,
+    dst_image: vk::Image,
+    src_extent: vk::Extent2D,
+    dst_extent: vk::Extent2D,
+    aspect_mask: vk::ImageAspectFlags,
+    filter: vk::Filter,
+) {
+    let region = vk::ImageBlit::default()
+        .src_subresource(vk::ImageSubresourceLayers {
+            aspect_mask,
+            mip_level: 0,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .src_offsets([
+            vk::Offset3D { x: 0, y: 0, z: 0 },
+            vk::Offset3D {
+                x: src_extent.width as i32,
+                y: src_extent.height as i32,
+                z: 1,
+            },
+        ])
+        .dst_subresource(vk::ImageSubresourceLayers {
+            aspect_mask,
+            mip_level: 0,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .dst_offsets([
+            vk::Offset3D { x: 0, y: 0, z: 0 },
+            vk::Offset3D {
+                x: dst_extent.width as i32,
+                y: dst_extent.height as i32,
+                z: 1,
+            },
+        ]);
+    device.cmd_blit_image(
+        cmd,
+        src_image,
+        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        dst_image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        &[region],
+        filter,
+    );
+}
+
+fn image_barrier_aspect(
     image: vk::Image,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
     src_access: vk::AccessFlags,
     dst_access: vk::AccessFlags,
+    aspect_mask: vk::ImageAspectFlags,
 ) -> vk::ImageMemoryBarrier<'static> {
     vk::ImageMemoryBarrier::default()
         .old_layout(old_layout)
@@ -512,7 +935,7 @@ fn image_barrier(
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .image(image)
         .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
+            aspect_mask,
             base_mip_level: 0,
             level_count: 1,
             base_array_layer: 0,
@@ -522,12 +945,47 @@ fn image_barrier(
         .dst_access_mask(dst_access)
 }
 
+fn image_barrier(
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+    src_access: vk::AccessFlags,
+    dst_access: vk::AccessFlags,
+) -> vk::ImageMemoryBarrier<'static> {
+    image_barrier_aspect(
+        image,
+        old_layout,
+        new_layout,
+        src_access,
+        dst_access,
+        vk::ImageAspectFlags::COLOR,
+    )
+}
+
 fn create_dlss_image(
     context: &VulkanContext,
     extent: vk::Extent2D,
 ) -> Result<(vk::Image, vk::DeviceMemory, vk::ImageView)> {
+    let t = create_2d_image(
+        context,
+        extent,
+        vk::Format::R16G16B16A16_SFLOAT,
+        vk::ImageUsageFlags::SAMPLED
+            | vk::ImageUsageFlags::STORAGE
+            | vk::ImageUsageFlags::TRANSFER_DST,
+        vk::ImageAspectFlags::COLOR,
+    )?;
+    Ok((t.image, t.memory, t.view))
+}
+
+fn create_2d_image(
+    context: &VulkanContext,
+    extent: vk::Extent2D,
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    aspect_mask: vk::ImageAspectFlags,
+) -> Result<ImageTriple> {
     let device = &context.device;
-    let format = vk::Format::R16G16B16A16_SFLOAT;
     let image = unsafe {
         device.create_image(
             &vk::ImageCreateInfo::default()
@@ -542,11 +1000,7 @@ fn create_dlss_image(
                 .array_layers(1)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(
-                    vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::TRANSFER_DST,
-                )
+                .usage(usage)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .initial_layout(vk::ImageLayout::UNDEFINED),
             None,
@@ -590,7 +1044,7 @@ fn create_dlss_image(
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(format)
                 .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    aspect_mask,
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
@@ -601,5 +1055,9 @@ fn create_dlss_image(
     }
     .context("DlssPass: create image view")?;
 
-    Ok((image, memory, view))
+    Ok(ImageTriple {
+        image,
+        memory,
+        view,
+    })
 }

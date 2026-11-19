@@ -116,6 +116,8 @@ pub struct RenderConfig {
     pub prt_leak_bias: Option<f32>,
     /// DLSS Super Resolution mode (`"off"`, `"quality"`, `"balanced"`, `"performance"`, `"ultra_performance"`, `"dlaa"`).
     pub dlss_mode: Option<String>,
+    /// DLSS pre-upscale filter (`"linear"`, `"nearest"`, `"off"`) when `render_extent < dlss_min`.
+    pub dlss_pre_upscale: Option<String>,
     /// DLSS Frame Generation (DLFG) mode (`"off"`, `"on"`, `"auto"`).
     pub dlfg_mode: Option<String>,
     /// Enable DLSS Ray Reconstruction (`true` / `false`).
@@ -179,6 +181,13 @@ impl RenderConfig {
                     crate::render_settings::DlssMode::Off
                 }
             };
+        }
+        if let Some(mode) = &self.dlss_pre_upscale {
+            if let Some(parsed) = crate::render_settings::DlssPreUpscaleMode::parse(mode) {
+                settings.dlss_pre_upscale = parsed;
+            } else {
+                log::warn!("settings: unknown dlss_pre_upscale '{mode}'; using linear");
+            }
         }
         if let Some(mode) = &self.dlfg_mode {
             settings.dlfg_mode = match mode.trim().to_ascii_lowercase().as_str() {
@@ -382,6 +391,7 @@ impl RenderConfig {
             pt_gi: ini.get("render", "pt_gi").map(str::to_string),
             prt_leak_bias: ini.get_f32("render", "prt_leak_bias"),
             dlss_mode: ini.get("render", "dlss_mode").map(str::to_string),
+            dlss_pre_upscale: ini.get("render", "dlss_pre_upscale").map(str::to_string),
             dlfg_mode: ini.get("render", "dlfg_mode").map(str::to_string),
             dlss_rr_enabled: ini.get_bool("render", "dlss_rr_enabled"),
         }
