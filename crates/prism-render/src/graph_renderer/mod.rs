@@ -1444,6 +1444,9 @@ impl GraphRenderer {
         {
             return;
         }
+        if self.settings.internal_resolution != resolution {
+            unsafe { self.runtime.context.device.device_wait_idle() }.ok();
+        }
         self.settings.internal_resolution = resolution;
         self.settings.internal_scale_mode = mode;
     }

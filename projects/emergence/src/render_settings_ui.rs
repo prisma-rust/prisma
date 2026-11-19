@@ -215,7 +215,11 @@ impl RenderSettingsUi {
                         .position(|m| m.id == mode_id)
                         .unwrap_or(0);
                     let len = MODE_OPTIONS.len();
-                    let next_idx = (cur_idx + len + step_dir as usize) % len;
+                    let next_idx = if step_dir > 0 {
+                        (cur_idx + 1) % len
+                    } else {
+                        (cur_idx + len - 1) % len
+                    };
                     mode_id = MODE_OPTIONS[next_idx].id;
                     changed = true;
                 }
