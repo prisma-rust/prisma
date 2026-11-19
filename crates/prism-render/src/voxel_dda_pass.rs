@@ -29,10 +29,12 @@ use crate::shader_bindings::voxel_dda::{
 };
 
 const VOXEL_DDA_SPV: &[u8] = prism_render_shaders::VOXEL_DDA_COMP_SPV;
+const VOXEL_GI_SPV: &[u8] = prism_render_shaders::VOXEL_GI_COMP_SPV;
 const VOXEL_GI_DENOISE_SPV: &[u8] = prism_render_shaders::VOXEL_GI_DENOISE_COMP_SPV;
 const VOXEL_COMPOSITE_SPV: &[u8] = prism_render_shaders::VOXEL_COMPOSITE_COMP_SPV;
 
 const ENTRY_VOXEL_DDA: &CStr = c"voxelDdaMain";
+const ENTRY_VOXEL_GI: &CStr = c"voxelGiMain";
 const ENTRY_VOXEL_GI_DENOISE: &CStr = c"voxelGiDenoiseMain";
 const ENTRY_VOXEL_COMPOSITE: &CStr = c"voxelCompositeMain";
 
@@ -759,6 +761,7 @@ impl TargetImages {
 
 struct FrameSlot {
     ds_primary: vk::DescriptorSet,
+    ds_gi: vk::DescriptorSet,
     ds_denoise_0: vk::DescriptorSet,
     ds_denoise_1: vk::DescriptorSet,
     ds_denoise_2: vk::DescriptorSet,
@@ -794,6 +797,7 @@ impl FrameSlot {
             ds_denoise_1: sets[2],
             ds_denoise_2: sets[3],
             ds_composite: sets[4],
+            ds_gi: sets[5],
             ubo_buf,
             chunks_buf,
             l1_buf,
@@ -975,6 +979,7 @@ pub struct VoxelDdaPass {
     descriptor_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_primary: ComputePipeline,
+    pipeline_gi: ComputePipeline,
     pipeline_denoise: ComputePipeline,
     pipeline_composite: ComputePipeline,
     slots: [FrameSlot; 2],
@@ -1128,8 +1133,8 @@ impl VoxelDdaPass {
         }
         .context("VoxelDdaPass: create descriptor layout")?;
 
-        // 2 slots * 5 descriptor sets per slot = 10 sets.
-        const TOTAL_SETS: u32 = 10;
+        // 2 slots * 6 descriptor sets per slot = 12 sets.
+        const TOTAL_SETS: u32 = 12;
         let pool_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -1185,6 +1190,17 @@ impl VoxelDdaPass {
         unsafe { device.destroy_shader_module(primary_mod, None) };
         let pipeline_primary = pipeline_primary?;
 
+        let gi_mod = load_shader_module(device, VOXEL_GI_SPV)?;
+        let pipeline_gi = ComputePipeline::new(
+            device,
+            gi_mod,
+            ENTRY_VOXEL_GI,
+            std::slice::from_ref(&descriptor_layout),
+            &push_range,
+        );
+        unsafe { device.destroy_shader_module(gi_mod, None) };
+        let pipeline_gi = pipeline_gi?;
+
         let denoise_mod = load_shader_module(device, VOXEL_GI_DENOISE_SPV)?;
         let pipeline_denoise = ComputePipeline::new(
             device,
@@ -1207,8 +1223,8 @@ impl VoxelDdaPass {
         unsafe { device.destroy_shader_module(composite_mod, None) };
         let pipeline_composite = pipeline_composite?;
 
-        let slot0 = FrameSlot::new(&context, &allocated[0..5])?;
-        let slot1 = FrameSlot::new(&context, &allocated[5..10])?;
+        let slot0 = FrameSlot::new(&context, &allocated[0..6])?;
+        let slot1 = FrameSlot::new(&context, &allocated[6..12])?;
         let dummies = DummyImages::create(&context)?;
 
         Ok(Self {
@@ -1216,6 +1232,7 @@ impl VoxelDdaPass {
             descriptor_layout,
             descriptor_pool,
             pipeline_primary,
+            pipeline_gi,
             pipeline_denoise,
             pipeline_composite,
             slots: [slot0, slot1],
@@ -1724,6 +1741,7 @@ impl RenderPassNode for VoxelDdaPass {
             emitters: slot.emitters_buf.buffer,
         };
         let ds_primary = slot.ds_primary;
+        let ds_gi = slot.ds_gi;
         let ds_denoise_0 = slot.ds_denoise_0;
         let ds_denoise_1 = slot.ds_denoise_1;
         let ds_denoise_2 = slot.ds_denoise_2;
@@ -1812,8 +1830,32 @@ impl RenderPassNode for VoxelDdaPass {
             target.albedo.view,
             target.spec_env.view,
             target.pos_norm.view,
-            target.accum_gi.view,
+            self.dummies.rw_f16.view,
             target.glass.view,
+        );
+
+        write_full_descriptor_set(
+            ctx.device,
+            ds_gi,
+            slot_bufs,
+            forward_color_view,
+            forward_depth_view,
+            prev_gi_view,
+            prev_pn_view,
+            self.dummies.read_f16.view,
+            target.pos_norm.view,
+            self.dummies.read_f16.view,
+            self.dummies.read_f16.view,
+            target.spec_env.view,
+            self.dummies.read_u32.view,
+            self.dummies.rw_f16.view,
+            self.dummies.rw_r32f.view,
+            self.dummies.rw_f16.view,
+            self.dummies.rw_f16.view,
+            self.dummies.rw_f16.view,
+            self.dummies.rw_f32.view,
+            target.accum_gi.view,
+            self.dummies.rw_u32.view,
         );
 
         let write_denoise = |ds: vk::DescriptorSet, gi_in: vk::ImageView, gi_out: vk::ImageView| {
@@ -1928,7 +1970,7 @@ impl RenderPassNode for VoxelDdaPass {
             ctx.device.cmd_dispatch(ctx.cmd, gx, gy, 1);
         }
 
-        // Transition G-buffer & accum_gi to SHADER_READ_ONLY_OPTIMAL before denoise + composite.
+        // Transition primary G-buffer outputs to SHADER_READ_ONLY_OPTIMAL before GI + denoise + composite.
         let after_primary = [
             image_barrier(
                 target.direct.image,
@@ -1959,13 +2001,6 @@ impl RenderPassNode for VoxelDdaPass {
                 vk::AccessFlags::SHADER_READ,
             ),
             image_barrier(
-                target.accum_gi.image,
-                vk::ImageLayout::GENERAL,
-                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                vk::AccessFlags::SHADER_WRITE,
-                vk::AccessFlags::SHADER_READ,
-            ),
-            image_barrier(
                 target.glass.image,
                 vk::ImageLayout::GENERAL,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
@@ -1982,6 +2017,43 @@ impl RenderPassNode for VoxelDdaPass {
                 &[],
                 &[],
                 &after_primary,
+            );
+        }
+
+        // 2b. Pass 1b: Demodulated 2-bounce voxel GI + emissive NEE + temporal accumulation.
+        unsafe {
+            ctx.device.cmd_bind_pipeline(
+                ctx.cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_gi.pipeline,
+            );
+            ctx.device.cmd_bind_descriptor_sets(
+                ctx.cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_gi.layout,
+                0,
+                &[ds_gi],
+                &[],
+            );
+            ctx.device.cmd_dispatch(ctx.cmd, gx, gy, 1);
+        }
+
+        let after_gi = [image_barrier(
+            target.accum_gi.image,
+            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::SHADER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+        )];
+        unsafe {
+            ctx.device.cmd_pipeline_barrier(
+                ctx.cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &after_gi,
             );
         }
 
