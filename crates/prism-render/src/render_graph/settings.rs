@@ -223,6 +223,10 @@ pub struct RenderSettings {
 
     /// DLSS upscaling mode.
     pub dlss_mode: DlssMode,
+    /// DLSS Frame Generation (DLFG) mode via Streamline.
+    pub dlfg_mode: crate::streamline::DlssgMode,
+    /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
+    pub dlss_rr_enabled: bool,
 
     /// Shadow strategy. `Auto` (default) picks RayQuery when RT is enabled and
     /// `VK_KHR_ray_query` is supported, otherwise falls back to the rasterized
@@ -315,6 +319,8 @@ impl Default for RenderSettings {
             restir_gi_spatial_reuse: true,
             restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
+            dlfg_mode: crate::streamline::DlssgMode::Off,
+            dlss_rr_enabled: false,
             shadow_mode: ShadowMode::Auto,
             shadow_map_size: crate::SHADOW_MAP_SIZE,
             shadow_cascade_count: 1,

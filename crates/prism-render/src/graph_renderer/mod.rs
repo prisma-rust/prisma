@@ -219,6 +219,8 @@ pub struct GraphRenderer {
     color_format: vk::Format,
     /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
     ui_host: UiOverlayHost,
+    /// NVIDIA Streamline runtime (DLSS-SR, DLSS-RR, DLFG), `None` when absent.
+    streamline: Option<crate::streamline::StreamlineRuntime>,
     /// Real-time RTXGI v1.3 DDGI pass (created lazily when `RasterGiMode::Ddgi` is active).
     ddgi_pass: Option<crate::ddgi_pass::DdgiPass>,
     #[cfg(feature = "sharc")]
@@ -665,6 +667,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            streamline: crate::streamline::StreamlineRuntime::try_init(&context),
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
@@ -1164,6 +1167,7 @@ impl GraphRenderer {
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
+            streamline: crate::streamline::StreamlineRuntime::try_init(&context),
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
@@ -2943,6 +2947,75 @@ impl GraphRenderer {
                                 &[],
                                 std::slice::from_ref(&to_read),
                             );
+                        }
+                    }
+                }
+            }
+
+            if let Some(sl) = &self.streamline {
+                let sl_dlss_mode = match self.settings.dlss_mode {
+                    crate::render_graph::DlssMode::Off => crate::streamline::DlssMode::Off,
+                    crate::render_graph::DlssMode::UltraPerformance => {
+                        crate::streamline::DlssMode::UltraPerformance
+                    }
+                    crate::render_graph::DlssMode::Performance => {
+                        crate::streamline::DlssMode::MaxPerformance
+                    }
+                    crate::render_graph::DlssMode::Balanced => {
+                        crate::streamline::DlssMode::Balanced
+                    }
+                    crate::render_graph::DlssMode::Quality => {
+                        crate::streamline::DlssMode::MaxQuality
+                    }
+                    crate::render_graph::DlssMode::Dlaa => crate::streamline::DlssMode::Dlaa,
+                };
+                if sl_dlss_mode != crate::streamline::DlssMode::Off
+                    || self.settings.dlfg_mode != crate::streamline::DlssgMode::Off
+                {
+                    let constants = crate::streamline::SlConstants {
+                        camera_view_to_clip: frame_data.viewProj,
+                        clip_to_camera_view: inv_projection,
+                        jitter_offset: self.temporal.taa_jitter_ndc,
+                        camera_pos: [
+                            frame_data.cameraPosition[0],
+                            frame_data.cameraPosition[1],
+                            frame_data.cameraPosition[2],
+                        ],
+                        camera_aspect_ratio: extent.width as f32 / extent.height.max(1) as f32,
+                        ..Default::default()
+                    };
+                    let _ = sl.set_frame_constants(ctx.frame_index, &constants);
+                    if self.settings.dlfg_mode != crate::streamline::DlssgMode::Off
+                        && sl.caps().dlss_fg_supported
+                    {
+                        let dlfg_opts = crate::streamline::DlssgOptions {
+                            mode: self.settings.dlfg_mode,
+                            color_width: extent.width,
+                            color_height: extent.height,
+                            mvec_depth_width: render_extent.width,
+                            mvec_depth_height: render_extent.height,
+                            ..Default::default()
+                        };
+                        let _ = sl.configure_dlfg(&dlfg_opts);
+                    }
+                    if sl_dlss_mode != crate::streamline::DlssMode::Off {
+                        if self.settings.dlss_rr_enabled && sl.caps().dlss_rr_supported {
+                            let rr_opts = crate::streamline::DlssdOptions {
+                                mode: sl_dlss_mode,
+                                output_width: extent.width,
+                                output_height: extent.height,
+                                world_to_camera_view: frame_data.view,
+                                ..Default::default()
+                            };
+                            let _ = sl.evaluate_dlss_rr(cmd, ctx.frame_index, &rr_opts);
+                        } else if sl.caps().dlss_sr_supported {
+                            let sr_opts = crate::streamline::DlssOptions {
+                                mode: sl_dlss_mode,
+                                output_width: extent.width,
+                                output_height: extent.height,
+                                ..Default::default()
+                            };
+                            let _ = sl.evaluate_dlss_sr(cmd, ctx.frame_index, &sr_opts);
                         }
                     }
                 }
