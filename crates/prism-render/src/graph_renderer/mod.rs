@@ -3458,6 +3458,12 @@ impl GraphRenderer {
         let device = &self.runtime.context.device;
         unsafe { device.device_wait_idle() }.ok();
 
+        // Shut down Streamline while all tagged images, swapchain, and VkDevice are still valid.
+        if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
+            dlss.release_streamline();
+        }
+        self.streamline = None;
+
         self.telemetry.destroy(device);
         self.graph.discard_pass_dump(device);
 
@@ -3548,12 +3554,6 @@ impl GraphRenderer {
 
         // Destroy shadow sampler.
         unsafe { device.destroy_sampler(self.shadow_sampler, None) };
-
-        // Shut down Streamline before `runtime` drops and calls `vkDestroyDevice`.
-        if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
-            dlss.release_streamline();
-        }
-        self.streamline = None;
 
         // Destroy graph resources (shadow map images, etc.).
         self.graph.destroy(device);
