@@ -513,7 +513,7 @@ impl RenderSettingsUi {
             );
         }
 
-        let uses_scale = matches!(mode_id, 1..=4);
+        let uses_scale = matches!(mode_id, 1..=5);
         let rw = if uses_scale {
             ((screen[0].max(1.0)) * scale).round().max(64.0) as u32
         } else {

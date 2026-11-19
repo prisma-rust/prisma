@@ -132,7 +132,7 @@ impl MobileUpscaler {
     pub fn uses_internal_resolution(self) -> bool {
         matches!(
             self,
-            Self::Nearest | Self::Linear | Self::Sgsr2 | Self::ArmAsr
+            Self::Nearest | Self::Linear | Self::Sgsr2 | Self::ArmAsr | Self::Dlss
         )
     }
 
