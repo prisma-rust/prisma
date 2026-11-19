@@ -221,6 +221,8 @@ pub struct GraphRenderer {
     ui_host: UiOverlayHost,
     /// Optional NVIDIA NRD runtime instance (`NRD.dll` / `libNRD.so`).
     nrd_runtime: Option<crate::nrd::NrdRuntime>,
+    /// NVIDIA Streamline runtime (DLSS-SR, DLSS-RR, DLFG), `None` when absent.
+    streamline: Option<std::sync::Arc<crate::streamline::StreamlineRuntime>>,
     /// Real-time RTXGI v1.3 DDGI pass (created lazily when `RasterGiMode::Ddgi` is active).
     ddgi_pass: Option<crate::ddgi_pass::DdgiPass>,
     #[cfg(feature = "sharc")]
@@ -633,6 +635,12 @@ impl GraphRenderer {
         // The temporal resolve runs after the path tracer so it can consume the
         // traced image and its guides in path-trace mode (#883 follow-up). In the
         // raster path it still resolves the forward pass output.
+        let streamline =
+            crate::streamline::StreamlineRuntime::try_init(&context).map(std::sync::Arc::new);
+        let dlss_pass =
+            crate::dlss_pass::DlssPass::new(&context, swapchain.extent, streamline.clone())
+                .context("DlssPass::new")?;
+        graph.add_pass(Box::new(dlss_pass));
         graph.add_pass(Box::new(taa_pass));
         let mobile_upscaler_pass =
             crate::mobile_upscaler::MobileUpscalerPass::new(&context, swapchain.extent)
@@ -668,6 +676,7 @@ impl GraphRenderer {
             color_format,
             ui_host: UiOverlayHost::default(),
             nrd_runtime: crate::nrd::NrdRuntime::try_init(),
+            streamline,
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
@@ -714,6 +723,19 @@ impl GraphRenderer {
     /// Whether this renderer was created in headless mode (no window surface).
     pub fn is_headless(&self) -> bool {
         self.is_headless
+    }
+
+    /// Runtime Streamline capabilities (`DLSS-SR`, `DLSS-RR`, `DLFG`).
+    pub fn streamline_caps(&self) -> crate::streamline::StreamlineCaps {
+        self.streamline
+            .as_ref()
+            .map(|sl| sl.caps())
+            .unwrap_or_default()
+    }
+
+    /// Access the live Streamline runtime (if initialized).
+    pub fn streamline_runtime(&self) -> Option<&crate::streamline::StreamlineRuntime> {
+        self.streamline.as_deref()
     }
 
     /// 场景 pass 要采样的「上一帧环境光遮蔽」视图。
@@ -1126,6 +1148,12 @@ impl GraphRenderer {
         // Same ordering as the windowed path: resolve after the tracer.
         #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
+        let streamline =
+            crate::streamline::StreamlineRuntime::try_init(&context).map(std::sync::Arc::new);
+        let dlss_pass =
+            crate::dlss_pass::DlssPass::new(&context, offscreen.extent(), streamline.clone())
+                .context("DlssPass::new (headless)")?;
+        graph.add_pass(Box::new(dlss_pass));
         graph.add_pass(Box::new(taa_pass));
         let mobile_upscaler_pass =
             crate::mobile_upscaler::MobileUpscalerPass::new(&context, offscreen.extent())
@@ -1168,6 +1196,7 @@ impl GraphRenderer {
             color_format,
             ui_host: UiOverlayHost::default(),
             nrd_runtime: crate::nrd::NrdRuntime::try_init(),
+            streamline,
             ddgi_pass: None,
             #[cfg(feature = "sharc")]
             sharc_targets: None,
@@ -1379,7 +1408,8 @@ impl GraphRenderer {
     pub fn apply_taa_jitter(&mut self, frame_data: &mut FrameUBOData) {
         let active = self.settings.taa
             || self.settings.anf_sr
-            || self.settings.mobile_upscaler.is_temporal_compute();
+            || self.settings.mobile_upscaler.is_temporal_compute()
+            || self.settings.dlss_mode != crate::render_graph::DlssMode::Off;
         self.temporal.apply_jitter(frame_data, active);
     }
 
@@ -1422,6 +1452,9 @@ impl GraphRenderer {
             && self.settings.internal_scale_mode == mode
         {
             return;
+        }
+        if self.settings.internal_resolution != resolution {
+            unsafe { self.runtime.context.device.device_wait_idle() }.ok();
         }
         self.settings.internal_resolution = resolution;
         self.settings.internal_scale_mode = mode;
@@ -1613,6 +1646,11 @@ impl GraphRenderer {
                     log::warn!("GtaoPass recreate_target failed: {e:#}");
                 }
             }
+            if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
+                if let Err(e) = dlss.recreate_target(&self.runtime.context, extent) {
+                    log::warn!("DlssPass recreate_target failed: {e:#}");
+                }
+            }
             if let Some(taa) = self.graph.pass_mut::<crate::taa::TaaPass>() {
                 if let Err(e) = taa.recreate_target(&self.runtime.context, extent) {
                     log::warn!("TaaPass recreate_target failed: {e:#}");
@@ -1723,6 +1761,11 @@ impl GraphRenderer {
         if let Some(gtao) = self.graph.pass_mut::<crate::gtao::GtaoPass>() {
             if let Err(e) = gtao.recreate_target(&context, self.runtime.command_pool, extent) {
                 log::warn!("GtaoPass recreate_target failed (offscreen resize): {e:#}");
+            }
+        }
+        if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
+            if let Err(e) = dlss.recreate_target(&context, extent) {
+                log::warn!("DlssPass recreate_target failed (offscreen resize): {e:#}");
             }
         }
         if let Some(taa) = self.graph.pass_mut::<crate::taa::TaaPass>() {
@@ -2656,6 +2699,7 @@ impl GraphRenderer {
                 outline_entities: &self.outline_entities,
                 grade: grade.sanitized(),
                 inv_view_rot: inv_view_rot_from_view(&frame_data.view),
+                view: frame_data.view,
                 view_proj: frame_data.viewProj,
                 view_proj_jitter: if self.graph.debug_control().freeze_temporal {
                     [0.0, 0.0]
@@ -2948,6 +2992,56 @@ impl GraphRenderer {
                                 std::slice::from_ref(&to_read),
                             );
                         }
+                    }
+                }
+            }
+
+            if let Some(sl) = &self.streamline {
+                let sl_dlss_mode = match self.settings.dlss_mode {
+                    crate::render_graph::DlssMode::Off => crate::streamline::DlssMode::Off,
+                    crate::render_graph::DlssMode::UltraPerformance => {
+                        crate::streamline::DlssMode::UltraPerformance
+                    }
+                    crate::render_graph::DlssMode::Performance => {
+                        crate::streamline::DlssMode::MaxPerformance
+                    }
+                    crate::render_graph::DlssMode::Balanced => {
+                        crate::streamline::DlssMode::Balanced
+                    }
+                    crate::render_graph::DlssMode::Quality => {
+                        crate::streamline::DlssMode::MaxQuality
+                    }
+                    crate::render_graph::DlssMode::Dlaa => crate::streamline::DlssMode::Dlaa,
+                };
+                if sl_dlss_mode != crate::streamline::DlssMode::Off
+                    || self.settings.dlfg_mode != crate::streamline::DlssgMode::Off
+                {
+                    let constants = crate::streamline::SlConstants {
+                        camera_view_to_clip: frame_data.viewProj,
+                        clip_to_camera_view: inv_projection,
+                        jitter_offset: self.temporal.taa_jitter_ndc,
+                        mvec_scale: [-1.0, -1.0],
+                        camera_pos: [
+                            frame_data.cameraPosition[0],
+                            frame_data.cameraPosition[1],
+                            frame_data.cameraPosition[2],
+                        ],
+                        camera_aspect_ratio: extent.width as f32 / extent.height.max(1) as f32,
+                        ..Default::default()
+                    };
+                    let _ = sl.set_frame_constants(ctx.frame_index, &constants);
+                    if self.settings.dlfg_mode != crate::streamline::DlssgMode::Off
+                        && sl.caps().dlss_fg_supported
+                    {
+                        let dlfg_opts = crate::streamline::DlssgOptions {
+                            mode: self.settings.dlfg_mode,
+                            color_width: extent.width,
+                            color_height: extent.height,
+                            mvec_depth_width: render_extent.width,
+                            mvec_depth_height: render_extent.height,
+                            ..Default::default()
+                        };
+                        let _ = sl.configure_dlfg(&dlfg_opts);
                     }
                 }
             }
@@ -3380,6 +3474,12 @@ impl GraphRenderer {
         self.destroy_occlusion_targets();
         let device = &self.runtime.context.device;
         unsafe { device.device_wait_idle() }.ok();
+
+        // Shut down Streamline while all tagged images, swapchain, and VkDevice are still valid.
+        if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
+            dlss.release_streamline();
+        }
+        self.streamline = None;
 
         self.telemetry.destroy(device);
         self.graph.discard_pass_dump(device);

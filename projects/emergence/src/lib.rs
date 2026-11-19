@@ -325,9 +325,11 @@ pub fn emergence_fixed_tick(
     dt: f32,
 ) {
     let runtime = state.get_or_insert_with(|| EmergenceRuntime::bootstrap(world, 2026));
-    if !runtime.commands.console_open {
-        runtime.player.step_physics(world, &runtime.sim, dt);
-    }
+    let panel_open =
+        runtime.commands.console_open || runtime.render_settings_ui.open || runtime.nei.open;
+    runtime
+        .player
+        .step_physics_with_input(world, &runtime.sim, dt, !panel_open);
     runtime
         .commands
         .step(dt, world, &mut runtime.sim, runtime.player.feet_pos);
@@ -369,7 +371,9 @@ pub fn emergence_frame_tick(
         let ui_consumed = settings_consumed
             || runtime
                 .nei
-                .handle_input(&input, screen, console_active, &mut runtime.player);
+                .handle_input(&input, screen, console_active, &mut runtime.player)
+            || runtime.render_settings_ui.open
+            || runtime.nei.open;
         runtime
             .player
             .update_look_and_tools_with_ui(world, &mut runtime.sim, dt, ui_consumed);
@@ -542,12 +546,54 @@ impl prism_app::FrameHook for EmergenceHostHook {
         };
         settings.mobile_upscaler = mode;
         settings.upscaler_sharpness = sharpness;
+        settings.dlss_mode = if mode == prism_app::MobileUpscaler::Dlss {
+            if scale >= 0.99 {
+                prism_engine::render_settings::DlssMode::Dlaa
+            } else if scale >= 0.665 {
+                prism_engine::render_settings::DlssMode::Quality
+            } else if scale >= 0.575 {
+                prism_engine::render_settings::DlssMode::Balanced
+            } else if scale >= 0.495 {
+                prism_engine::render_settings::DlssMode::Performance
+            } else {
+                prism_engine::render_settings::DlssMode::UltraPerformance
+            }
+        } else {
+            prism_engine::render_settings::DlssMode::Off
+        };
+        let (dlfg_id, ddgi_on) = commands::current_rtx_toggles();
+        settings.dlfg_mode = match dlfg_id {
+            1 => prism_engine::render_settings::DlssgMode::On,
+            2 => prism_engine::render_settings::DlssgMode::Auto,
+            _ => prism_engine::render_settings::DlssgMode::Off,
+        };
+        settings.dlss_pre_upscale = match commands::current_dlss_pre_upscale() {
+            1 => prism_engine::render_settings::DlssPreUpscaleMode::Nearest,
+            2 => prism_engine::render_settings::DlssPreUpscaleMode::Off,
+            _ => prism_engine::render_settings::DlssPreUpscaleMode::Linear,
+        };
+        if ddgi_on {
+            settings.raster_gi = prism_engine::render_settings::RasterGiMode::Ddgi;
+        }
         if !mode.uses_internal_resolution() {
             settings.internal_resolution = [0, 0];
         } else {
+            let effective_scale = if settings.dlss_mode
+                == prism_engine::render_settings::DlssMode::UltraPerformance
+                && settings.dlss_pre_upscale
+                    == prism_engine::render_settings::DlssPreUpscaleMode::Off
+            {
+                1.0 / 3.0
+            } else {
+                scale
+            };
             let (w, h) = window.inner_size();
-            let rw = ((w.max(1) as f32) * scale).round().max(64.0) as u32;
-            let rh = ((h.max(1) as f32) * scale).round().max(64.0) as u32;
+            let rw = ((w.max(1) as f32) * effective_scale)
+                .round()
+                .max(16.0) as u32;
+            let rh = ((h.max(1) as f32) * effective_scale)
+                .round()
+                .max(16.0) as u32;
             settings.internal_resolution = [rw, rh];
         }
         let all_gpu_passes = stats

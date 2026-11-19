@@ -27,14 +27,16 @@ use log::info;
 use prism_app::FrameHook;
 use prism_app::{RenderShared, RenderStats};
 use prism_engine::ecs::{Entity, World};
-use prism_engine::render_settings::{DlssMode, PtGiMode, RasterGiMode, RenderMode, RenderSettings};
+use prism_engine::render_settings::{
+    DlssMode, DlssPreUpscaleMode, DlssgMode, PtGiMode, RasterGiMode, RenderMode, RenderSettings,
+};
 use prism_platform::{Key, PlatformEvent, PlatformWindow};
 use prism_scene::ui::{
     Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
 };
 use prism_scene::Active;
 
-const NUM_ITEMS: usize = 18;
+const NUM_ITEMS: usize = 21;
 const SPONZA_CUSTOM_SHADER: &str = "shaders/sponza_custom.frag.spv";
 
 #[derive(Debug)]
@@ -69,6 +71,9 @@ pub struct SponzaTuningHook {
     pub sharc_accumulation_frame_num: u32,
     pub sharc_stale_frame_num: u32,
     pub dlss_mode: DlssMode,
+    pub dlss_pre_upscale: DlssPreUpscaleMode,
+    pub dlfg_mode: DlssgMode,
+    pub dlss_rr_enabled: bool,
     pub vsync: bool,
     pub custom_shader: bool,
     applied_custom_shader: Option<bool>,
@@ -137,6 +142,9 @@ impl Default for SponzaTuningHook {
             sharc_accumulation_frame_num: 20,
             sharc_stale_frame_num: 60,
             dlss_mode: DlssMode::Off,
+            dlss_pre_upscale: DlssPreUpscaleMode::Linear,
+            dlfg_mode: DlssgMode::Off,
+            dlss_rr_enabled: false,
             vsync: false,
             custom_shader: true,
             applied_custom_shader: None,
@@ -178,7 +186,7 @@ impl SponzaTuningHook {
                             if increase {
                                 RasterGiMode::Restir
                             } else {
-                                RasterGiMode::Prt
+                                RasterGiMode::Ddgi
                             }
                         }
                         RasterGiMode::Restir => {
@@ -190,9 +198,16 @@ impl SponzaTuningHook {
                         }
                         RasterGiMode::Prt => {
                             if increase {
-                                RasterGiMode::BakedProbe
+                                RasterGiMode::Ddgi
                             } else {
                                 RasterGiMode::Restir
+                            }
+                        }
+                        RasterGiMode::Ddgi => {
+                            if increase {
+                                RasterGiMode::BakedProbe
+                            } else {
+                                RasterGiMode::Prt
                             }
                         }
                     };
@@ -365,19 +380,73 @@ impl SponzaTuningHook {
             }
             16 => self.auto_exposure = !self.auto_exposure,
             17 => self.custom_shader = !self.custom_shader,
+            18 => {
+                self.dlfg_mode = match self.dlfg_mode {
+                    DlssgMode::Off => {
+                        if increase {
+                            DlssgMode::On
+                        } else {
+                            DlssgMode::Auto
+                        }
+                    }
+                    DlssgMode::On => {
+                        if increase {
+                            DlssgMode::Auto
+                        } else {
+                            DlssgMode::Off
+                        }
+                    }
+                    DlssgMode::Auto => {
+                        if increase {
+                            DlssgMode::Off
+                        } else {
+                            DlssgMode::On
+                        }
+                    }
+                };
+            }
+            19 => {
+                self.dlss_rr_enabled = !self.dlss_rr_enabled;
+            }
+            20 => {
+                self.dlss_pre_upscale = match self.dlss_pre_upscale {
+                    DlssPreUpscaleMode::Linear => {
+                        if increase {
+                            DlssPreUpscaleMode::Nearest
+                        } else {
+                            DlssPreUpscaleMode::Off
+                        }
+                    }
+                    DlssPreUpscaleMode::Nearest => {
+                        if increase {
+                            DlssPreUpscaleMode::Off
+                        } else {
+                            DlssPreUpscaleMode::Linear
+                        }
+                    }
+                    DlssPreUpscaleMode::Off => {
+                        if increase {
+                            DlssPreUpscaleMode::Linear
+                        } else {
+                            DlssPreUpscaleMode::Nearest
+                        }
+                    }
+                };
+            }
             _ => {}
         }
     }
 
     fn toggle_parameter(&mut self) {
         match self.selected_index {
-            0 | 1 | 15 => self.adjust_parameter(true),
+            0 | 1 | 15 | 18 | 20 => self.adjust_parameter(true),
             5 => self.sharc_enable_clear = !self.sharc_enable_clear,
             6 => self.sharc_enable_update = !self.sharc_enable_update,
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
             8 => self.sharc_enable_anti_firefly = !self.sharc_enable_anti_firefly,
             16 => self.auto_exposure = !self.auto_exposure,
             17 => self.custom_shader = !self.custom_shader,
+            19 => self.dlss_rr_enabled = !self.dlss_rr_enabled,
             _ => {}
         }
     }
@@ -584,6 +653,9 @@ impl FrameHook for SponzaTuningHook {
         settings.sharc_accumulation_frame_num = self.sharc_accumulation_frame_num;
         settings.sharc_stale_frame_num = self.sharc_stale_frame_num;
         settings.dlss_mode = self.dlss_mode;
+        settings.dlss_pre_upscale = self.dlss_pre_upscale;
+        settings.dlfg_mode = self.dlfg_mode;
+        settings.dlss_rr_enabled = self.dlss_rr_enabled;
 
         if self.request_reset {
             self.request_reset = false;
@@ -749,6 +821,7 @@ impl FrameHook for SponzaTuningHook {
                         RasterGiMode::BakedProbe => "Baked Probe (raster)",
                         RasterGiMode::Restir => "ReSTIR GI (raster)",
                         RasterGiMode::Prt => "PRT64 (raster)",
+                        RasterGiMode::Ddgi => "DDGI (raster RTXGI)",
                     },
                     RenderMode::PathTrace => match self.pt_gi {
                         PtGiMode::Off => "Reference (PT)",
@@ -771,6 +844,12 @@ impl FrameHook for SponzaTuningHook {
                     DlssMode::Performance => "Performance",
                     DlssMode::UltraPerformance => "Ultra Performance",
                     DlssMode::Dlaa => "DLAA",
+                };
+
+                let dlfg_str = match self.dlfg_mode {
+                    DlssgMode::Off => "Off",
+                    DlssgMode::On => "On",
+                    DlssgMode::Auto => "Auto",
                 };
 
                 let mode_str = match self.render_mode {
@@ -806,6 +885,9 @@ impl FrameHook for SponzaTuningHook {
                      {}DLSS Mode:          [ {} ]\n\
                      {}Auto Exposure:      [ {} ]\n\
                      {}Custom Shader:      [ {} ] (Raster)\n\
+                     {}DLFG (Frame Gen):   [ {} ]\n\
+                     {}DLSS Ray Recon:     [ {} ]\n\
+                     {}DLSS Pre-Upscale:   [ {} ]\n\
                      ----------------------------------------\n\
                      [Up/Down] Select   [Left/Right] Adjust\n\
                      [Space/Enter] Toggle   [V] VSync: {}",
@@ -849,6 +931,12 @@ impl FrameHook for SponzaTuningHook {
                     on_off(self.auto_exposure),
                     marker(17),
                     on_off(self.custom_shader),
+                    marker(18),
+                    dlfg_str,
+                    marker(19),
+                    on_off(self.dlss_rr_enabled),
+                    marker(20),
+                    self.dlss_pre_upscale.label(),
                     on_off(self.vsync),
                 );
 
@@ -871,6 +959,7 @@ impl FrameHook for SponzaTuningHook {
                         RasterGiMode::BakedProbe => "BakedProbe",
                         RasterGiMode::Restir => "ReSTIR",
                         RasterGiMode::Prt => "PRT64",
+                        RasterGiMode::Ddgi => "DDGI",
                     },
                     RenderMode::PathTrace => match self.pt_gi {
                         PtGiMode::Off => "Reference",

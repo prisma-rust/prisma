@@ -943,6 +943,12 @@ impl RenderPassNode for PostPass {
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
         graph.read_usage(ResourceUsage {
+            handle: crate::render_graph::DLSS_COLOR_H,
+            access: vk::AccessFlags::SHADER_READ,
+            stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        });
+        graph.read_usage(ResourceUsage {
             handle: crate::render_graph::VOXEL_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
@@ -986,21 +992,31 @@ impl RenderPassNode for PostPass {
         } else {
             None
         };
+        let dlss_view = if ctx.settings.dlss_mode != crate::render_graph::DlssMode::Off
+            && ctx.frame.debug_rt == 0
+            && anf_view.is_none()
+        {
+            resources.published_view(crate::render_graph::DLSS_COLOR_H)
+        } else {
+            None
+        };
         let upscaled_view = if ctx.settings.mobile_upscaler.is_temporal_compute()
             && !is_pt
             && ctx.frame.debug_rt == 0
             && anf_view.is_none()
+            && dlss_view.is_none()
         {
             resources.published_view(crate::render_graph::UPSCALED_COLOR_H)
         } else {
             None
         };
-        // TAA output (#883) takes precedence when enabled and ANF / mobile upscaler is off. In
+        // TAA output (#883) takes precedence when enabled and ANF / DLSS / mobile upscaler is off. In
         // path-trace mode the temporal resolve consumes the traced image and its
         // guides, so the resolved image replaces PT_COLOR_H here.
         let taa_view = if ctx.settings.taa
             && ctx.frame.debug_rt == 0
             && anf_view.is_none()
+            && dlss_view.is_none()
             && upscaled_view.is_none()
         {
             resources.published_view(TAA_COLOR_H)
@@ -1009,6 +1025,11 @@ impl RenderPassNode for PostPass {
         };
         let (handle, image_layout) = if anf_view.is_some() {
             (ANF_COLOR_H, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        } else if dlss_view.is_some() {
+            (
+                crate::render_graph::DLSS_COLOR_H,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
         } else if upscaled_view.is_some() {
             (
                 crate::render_graph::UPSCALED_COLOR_H,
