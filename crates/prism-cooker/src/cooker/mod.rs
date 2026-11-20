@@ -924,6 +924,112 @@ impl MeshCooker {
 
         Some(buf)
     }
+
+    fn write_rcld(intermediate: &[u8]) -> Result<Vec<u8>, CookError> {
+        let layout = rmxi_layout(intermediate)
+            .ok_or_else(|| CookError::CookFailed("Invalid RMXI layout for RCLD build".into()))?;
+        let vc = layout.vert_count as usize;
+        let ic = layout.idx_count as usize;
+        if vc == 0 || ic < 3 || !ic.is_multiple_of(3) {
+            return Err(CookError::CookFailed(
+                "Virtual geometry requires non-empty triangle mesh".into(),
+            ));
+        }
+
+        let pos_start = layout.vert_data_start;
+        let pos_bytes = vc * 12;
+        let pos_end = pos_start + pos_bytes;
+        let positions: Vec<[f32; 3]> = intermediate[pos_start..pos_end]
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|c| {
+                [
+                    f32::from_le_bytes(c[0..4].try_into().unwrap()),
+                    f32::from_le_bytes(c[4..8].try_into().unwrap()),
+                    f32::from_le_bytes(c[8..12].try_into().unwrap()),
+                ]
+            })
+            .collect();
+
+        let mut cursor = pos_end;
+        let normals: Vec<[f32; 3]> = if layout.has_normals {
+            let nrm_end = cursor + vc * 12;
+            let parsed = intermediate[cursor..nrm_end]
+                .as_chunks::<12>()
+                .0
+                .iter()
+                .map(|c| {
+                    [
+                        f32::from_le_bytes(c[0..4].try_into().unwrap()),
+                        f32::from_le_bytes(c[4..8].try_into().unwrap()),
+                        f32::from_le_bytes(c[8..12].try_into().unwrap()),
+                    ]
+                })
+                .collect();
+            cursor = nrm_end;
+            parsed
+        } else {
+            Vec::new()
+        };
+
+        let uvs: Vec<[f32; 2]> = if layout.uv_channels > 0 {
+            let uv_end = cursor + vc * 8;
+            intermediate[cursor..uv_end]
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|c| {
+                    [
+                        f32::from_le_bytes(c[0..4].try_into().unwrap()),
+                        f32::from_le_bytes(c[4..8].try_into().unwrap()),
+                    ]
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let idx_start = layout.vert_data_start + layout.vert_data_size;
+        let idx_end = idx_start + layout.idx_data_size;
+        let indices: Vec<u32> = intermediate[idx_start..idx_end]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
+            .collect();
+
+        let tri_mats = if layout.submeshes.is_empty() {
+            None
+        } else {
+            let mut mats = vec![0u16; ic / 3];
+            for sm in &layout.submeshes {
+                let t_start = (sm.index_start / 3) as usize;
+                let t_end = ((sm.index_start + sm.index_count) / 3) as usize;
+                let mat_id = sm.material_index.unwrap_or(0) as u16;
+                let clamped_end = t_end.min(mats.len());
+                for slot in &mut mats[t_start..clamped_end] {
+                    *slot = mat_id;
+                }
+            }
+            Some(mats)
+        };
+
+        let asset =
+            virtual_geo::build_virtual_geometry_asset(&virtual_geo::VirtualGeoBuildInput {
+                positions: &positions,
+                normals: &normals,
+                uvs: &uvs,
+                indices: &indices,
+                triangle_materials: tri_mats.as_deref(),
+                joints: None,
+                weights: None,
+                displacements: None,
+                alpha_masked_foliage: false,
+            })?;
+        prism_asset::formats_virtual_geo::encode_rcld_bytes(&asset)
+            .ok_or_else(|| CookError::CookFailed("Failed to encode RCLD virtual geometry".into()))
+    }
 }
 
 impl Cooker for MeshCooker {
@@ -945,6 +1051,15 @@ impl Cooker for MeshCooker {
             return Err(CookError::CookFailed(
                 "Empty mesh (no vertices or indices)".into(),
             ));
+        }
+
+        if ctx.settings.mesh.virtual_geometry {
+            let cooked_data = Self::write_rcld(ctx.imported_data)?;
+            return Ok(CookResult {
+                cooked_data,
+                // Keep streamed RCLD pages uncompressed so runtime can pread single pages directly.
+                compress: !ctx.settings.streaming,
+            });
         }
 
         let cooked_data = Self::write_rmes(ctx.imported_data).ok_or_else(|| {

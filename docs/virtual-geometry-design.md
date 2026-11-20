@@ -1,7 +1,7 @@
 # 多平台虚拟几何体架构设计（Beyond-Nanite Cluster-DAG / 软硬混合光栅 / 光追同源）
 
 > **层级**：L2 专项子系统设计契约 · 渲染进阶
-> **状态**：设计契约（M1 离线格式与 Cooker、M2–M4 运行时核心逐步落地中）
+> **状态**：M1–M3（含 `MeshCooker` 接入）与 M5/M6 核心数学及运行时已落地（`prism-asset` / `prism-cooker` / `prism-render`）；M4 离线 Slang 着色器待 `slangc` 宿主环境编译签入
 > **关联**：[DESIGN.md](DESIGN.md)、[rtx-dlss-integration-design.md](rtx-dlss-integration-design.md)、[prt-gi-64tree-design.md](prt-gi-64tree-design.md)、[mobile-raytracing-gi-design.md](mobile-raytracing-gi-design.md)
 
 本文定义 Prisma 引擎面向**最新桌面旗舰 GPU（NVIDIA RTX 40/50、AMD RDNA 3.5/4）与移动旗舰 SoC（骁龙 8 Gen 3 / 8 Elite Adreno 750/850+、天玑 9400 Immortalis-G925）** 的统一虚拟几何体（Virtual Geometry）渲染架构。在继承传统 Nanite「Cluster-DAG 无级自动 LOD + VisBuffer 零 Quad Overdraw」优势的同时，重点攻克传统方案在**硬件光追几何不同源、动态骨骼蒙皮、高频植被退化、离线包体膨胀及移动端 TBDR 带宽墙**五大领域的结构性短板。
@@ -156,11 +156,11 @@
 
 ## 5. 分阶段实施里程碑与验收契约（M1–M6）
 
-| 里程碑 | 范围与核心交付 | 关键文件 | 量化验收门禁（DoD） |
-|---|---|---|---|
-| **M1** | **离线分页格式 `RCLD` 与锁边界 Cluster-DAG Cooker** | `crates/prism-asset/src/formats_virtual_geo.rs`<br>`crates/prism-cooker/src/cooker/virtual_geo.rs`<br>`crates/prism-cooker/src/cooker/profile.rs` | 单顶点量化 $\le 20\text{ B}$；任意混合 LOD Cut 相邻 Group 边界 **100% 零裂缝**；`parent_error > self_error` 严格单调；玩家树 `check_deps.py` 零新增依赖。 |
-| **M2** | **能力分级探测、64 KB Page Pool LRU 流式器与 DAG Cut 裁剪** | `crates/prism-render/src/capabilities.rs`<br>`crates/prism-render/src/virtual_geo.rs` | 覆盖 Tier 0/1A/1B/2 全探测；缺页请求下无缝回退常驻父 Page（0 破洞）；高遮挡 HZB 剔除闭环与 Ray-Guided 流式打通。 |
-| **M3** | **VisBuffer 编码、解析重心导数与 Geomorphing 消抖速度场** | `crates/prism-render/src/virtual_geo.rs` | 32-bit/64-bit VisBuffer Reverse-Z 单调排序正确；解析 `ddx/ddy` 与有限差分屏幕梯度误差 $< 10^{-4}$；Geomorphing 速度补偿与超分 LOD 偏置单测全绿。 |
-| **M4** | **GPU Slang 着色器与 `VirtualGeoPass` RenderGraph 接入**（需 `slangc` 宿主） | `assets/shaders/slang/vg_*.slang`<br>`crates/prism-render/src/vg_pass.rs`<br>`assets/shaders/budgets.json` | 通过 `xtask shader-bindgen` 与 `shader-budget`；Task/Mesh Shader + Compute 64-bit 软光栅 + Tile-Local Subpass 在 RenderGraph 端到端出图。 |
-| **M5** | **光栅/光追几何同源与神经超分真机联合验证** | `crates/prism-render/src/acceleration_structure.rs`<br>`crates/prism-render/src/pt_pass.rs`<br>`crates/prism-render/src/restir_gi.rs` | CLAS / Active-Cut BLAS 驱动 RayQuery 阴影与 ReSTIR GI 零自阴影瑕疵；DLSS-RR 与 Adreno ANF 连续相机漫游 SSIM $\ge 0.995$。 |
-| **M6** | **全模态扩展：8-Bone 簇级延迟蒙皮、DMM 微细分、植被 SGGX Splatting** | `crates/prism-cooker/src/cooker/skinned.rs`<br>`assets/shaders/slang/vg_splat_sggx.slang` | 远景蒙皮算力随距离自动衰减 $\ge 85\%$；DMM 资产包体压缩 $\ge 5\times$；植被森林远景无闪烁与 Overdraw 归零。 |
+| 里程碑 | 状态 | 范围与核心交付 | 关键文件 | 量化验收门禁（DoD） |
+|---|---|---|---|---|
+| **M1** | ✅ 已落地 | **离线分页格式 `RCLD` 与锁边界 Cluster-DAG Cooker** | `crates/prism-asset/src/formats_virtual_geo.rs`<br>`crates/prism-cooker/src/cooker/virtual_geo.rs`<br>`crates/prism-cooker/src/cooker/profile.rs`<br>`crates/prism-cooker/src/cooker/mod.rs` | 单顶点量化 $\le 20\text{ B}$；任意混合 LOD Cut 相邻 Group 边界 **100% 零裂缝**；`parent_error > self_error` 严格单调；`MeshCooker` 接线并保持玩家树 `check_deps.py` 零新增依赖。 |
+| **M2** | ✅ 已落地 | **能力分级探测、64 KB Page Pool LRU 流式器与 DAG Cut 裁剪** | `crates/prism-render/src/capabilities.rs`<br>`crates/prism-render/src/virtual_geo.rs` | 覆盖 Tier 0/1A/1B/2 全探测；缺页请求下无缝回退常驻父 Page（0 破洞）；双阶段 HZB 剔除闭环与 Ray-Guided 流式打通。 |
+| **M3** | ✅ 已落地 | **VisBuffer 编码、解析重心导数与 Geomorphing 消抖速度场** | `crates/prism-render/src/virtual_geo.rs` | 32-bit/64-bit VisBuffer Reverse-Z 单调排序正确；解析 `ddx/ddy` 与有限差分屏幕梯度误差 $< 10^{-4}$；Geomorphing 速度补偿与超分 LOD 偏置单测全绿。 |
+| **M4** | ⏳ 待 `slangc` 宿主 | **GPU Slang 着色器与 `VirtualGeoPass` RenderGraph 接入** | `assets/shaders/slang/vg_*.slang`<br>`crates/prism-render/src/vg_pass.rs`<br>`assets/shaders/budgets.json` | 通过 `xtask shader-bindgen` 与 `shader-budget`；Task/Mesh Shader + Compute 64-bit 软光栅 + Tile-Local Subpass 在 RenderGraph 端到端出图。 |
+| **M5** | 🟡 核心已落地 / 待真机渲染接线 | **光栅/光追几何同源（Active-Cut RT 增量池与光线驱动流式）** | `crates/prism-render/src/virtual_geo.rs`<br>`crates/prism-render/src/acceleration_structure.rs`<br>`crates/prism-render/src/pt_pass.rs`<br>`crates/prism-render/src/restir_gi.rs` | `ActiveCutRtClusterPool` 增量 diff 与 `evaluate_ray_guided_page_fault` 已落地并单测通过；待 M4 着色器就绪后接入 TLAS / CLAS 与 DLSS-RR / ANF 联合真机 SSIM 验收（$\ge 0.995$）。 |
+| **M6** | 🟡 核心数学与结构已落地 / 待着色器接线 | **全模态扩展：8-Bone 簇级延迟蒙皮、DMM 微细分、植被 SGGX Splatting** | `crates/prism-render/src/virtual_geo.rs`<br>`crates/prism-cooker/src/cooker/virtual_geo.rs`<br>`assets/shaders/slang/vg_splat_sggx.slang` | `evaluate_cluster_bone_envelope`/`skin_cluster_vertex`、`subdivide_dmm_triangle`（$4^k$ 细分）、`evaluate_sggx_ndf`/`transmittance` 已落地并单测通过；待 M4 GPU 管线接线后全场景性能压测。 |
