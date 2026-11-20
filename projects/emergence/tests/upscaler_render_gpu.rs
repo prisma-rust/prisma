@@ -81,7 +81,12 @@ fn emergence_seed_2026_renders_with_sgsr2_and_asr() {
         ("sgsr2", MobileUpscaler::Sgsr2, [out_w / 2, out_h / 2], 12),
         ("asr", MobileUpscaler::ArmAsr, [out_w / 2, out_h / 2], 12),
         ("linear", MobileUpscaler::Linear, [out_w / 2, out_h / 2], 4),
-        ("nearest", MobileUpscaler::Nearest, [out_w / 2, out_h / 2], 4),
+        (
+            "nearest",
+            MobileUpscaler::Nearest,
+            [out_w / 2, out_h / 2],
+            4,
+        ),
     ];
 
     for (name, mode, internal_res, frames) in modes {
@@ -89,25 +94,27 @@ fn emergence_seed_2026_renders_with_sgsr2_and_asr() {
         renderer.set_internal_resolution(internal_res, InternalScaleMode::Stretch);
 
         for _ in 0..frames {
-            let mut frame_data = FrameUBOData::default();
-            frame_data.viewProj = packet.scene.view_proj.to_cols_array_2d();
-            frame_data.view = packet.scene.view.to_cols_array_2d();
-            frame_data.cameraPosition = [
-                packet.scene.eye[0],
-                packet.scene.eye[1],
-                packet.scene.eye[2],
-                packet.scene.lights.len() as f32,
-            ];
-            frame_data.lightDirection = packet.scene.light_direction.to_array();
-            frame_data.lightColor = packet.scene.light_color.to_array();
-            frame_data.lightViewProj = packet.scene.light_view_proj.to_cols_array_2d();
-            frame_data.lightViewProj1 = packet.scene.light_view_proj1.to_cols_array_2d();
-            frame_data.shadowSplit = packet.scene.shadow_split;
-            frame_data.shadowCascadeCount = packet.scene.shadow_cascade_count;
-            frame_data.viewportW = out_w as f32;
-            frame_data.viewportH = out_h as f32;
-            frame_data.exposure = packet.scene.exposure;
-            frame_data.shadowStrength = packet.scene.shadow_strength;
+            let mut frame_data = FrameUBOData {
+                viewProj: packet.scene.view_proj.to_cols_array_2d(),
+                view: packet.scene.view.to_cols_array_2d(),
+                cameraPosition: [
+                    packet.scene.eye[0],
+                    packet.scene.eye[1],
+                    packet.scene.eye[2],
+                    packet.scene.lights.len() as f32,
+                ],
+                lightDirection: packet.scene.light_direction.to_array(),
+                lightColor: packet.scene.light_color.to_array(),
+                lightViewProj: packet.scene.light_view_proj.to_cols_array_2d(),
+                lightViewProj1: packet.scene.light_view_proj1.to_cols_array_2d(),
+                shadowSplit: packet.scene.shadow_split,
+                shadowCascadeCount: packet.scene.shadow_cascade_count,
+                viewportW: out_w as f32,
+                viewportH: out_h as f32,
+                exposure: packet.scene.exposure,
+                shadowStrength: packet.scene.shadow_strength,
+                ..Default::default()
+            };
             renderer.apply_taa_jitter(&mut frame_data);
 
             let out_of_date = renderer
@@ -145,7 +152,9 @@ fn emergence_seed_2026_renders_with_sgsr2_and_asr() {
         assert_eq!(rgba.len(), (out_w * out_h * 4) as usize);
 
         let non_black = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 5 || px[1] > 5 || px[2] > 5)
             .count();
         assert!(

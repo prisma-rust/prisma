@@ -346,14 +346,16 @@ fn mobile_upscalers_render_valid_images_on_gpu() {
         renderer.set_internal_resolution(internal_res, InternalScaleMode::Stretch);
 
         for _ in 0..frames {
-            let mut frame_data = FrameUBOData::default();
-            frame_data.viewProj = vp;
-            frame_data.cameraPosition = [eye[0], eye[1], eye[2], 0.0];
-            frame_data.lightDirection = [0.42, 0.80, -0.42, 0.0];
-            frame_data.lightColor = [1.0, 0.88, 0.72, 4.2];
-            frame_data.viewportW = out_w as f32;
-            frame_data.viewportH = out_h as f32;
-            frame_data.exposure = 1.1;
+            let mut frame_data = FrameUBOData {
+                viewProj: vp,
+                cameraPosition: [eye[0], eye[1], eye[2], 0.0],
+                lightDirection: [0.42, 0.80, -0.42, 0.0],
+                lightColor: [1.0, 0.88, 0.72, 4.2],
+                viewportW: out_w as f32,
+                viewportH: out_h as f32,
+                exposure: 1.1,
+                ..Default::default()
+            };
             renderer.apply_taa_jitter(&mut frame_data);
 
             let out_of_date = renderer
@@ -391,7 +393,9 @@ fn mobile_upscalers_render_valid_images_on_gpu() {
         assert_eq!(rgba.len(), (out_w * out_h * 4) as usize);
 
         let non_black = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 5 || px[1] > 5 || px[2] > 5)
             .count();
         assert!(
