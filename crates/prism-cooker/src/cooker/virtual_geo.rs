@@ -209,7 +209,7 @@ fn compute_cluster_bounds(
         let cutoff = if half_angle >= std::f32::consts::FRAC_PI_2 {
             1.0
         } else {
-            (half_angle + std::f32::consts::FRAC_PI_2).sin().min(1.0)
+            half_angle.sin().min(1.0)
         };
         [axis[0], axis[1], axis[2], cutoff]
     };
