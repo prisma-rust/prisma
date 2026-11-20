@@ -118,7 +118,8 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-features
 
-      # prism-render 的 include_bytes! 需要 .spv（gitignored）。
+      # `.spv` 已入库，clone 不装 slangc 也能编；这里用固定版本 slangc 重编，
+      # 保证各 job 拿到的字节码一致（漂移由 shaders job 的 git status 断言）。
       - name: Setup slang + compile shaders
         uses: ./.github/actions/setup-slang
 
@@ -160,8 +161,9 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-lint
 
-      # clippy compiles prism-render, whose include_bytes! needs the .spv files
-      # (gitignored). Compile them before linting.
+      # clippy compiles prism-render, whose include_bytes! reads the committed
+      # `.spv`. Recompile with the pinned slangc so every job embeds identical
+      # bytes; the shaders job asserts those bytes match the sources.
       - name: Setup slang + compile shaders
         uses: ./.github/actions/setup-slang
 
@@ -253,8 +255,9 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-desktop
 
-      # .spv files are NOT committed (see .gitignore). Compile them here so the
-      # include_bytes!-based build has SPIR-V to embed.
+      # `.spv` files are committed (see .gitignore). Recompile them here so the
+      # build embeds bytecode produced by the pinned slangc, not whatever the
+      # checkout happens to contain; the shaders job asserts they match sources.
       - name: Setup slang + compile shaders
         uses: ./.github/actions/setup-slang
 
