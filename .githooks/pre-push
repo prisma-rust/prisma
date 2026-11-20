@@ -42,9 +42,11 @@ if [ -z "$python_bin" ]; then
 fi
 
 args=(scripts/pr_ready.py --base "$base")
-if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ]; then
+arch="$(uname -m 2>/dev/null || true)"
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ] \
+  || [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; then
   args+=(--quick)
-  echo "prisma: Termux detected — running static checks only." >&2
+  echo "prisma: Termux / aarch64 host — running static checks only." >&2
 fi
 
 if [ "${PRISMA_HOOK_DRY_RUN:-0}" = "1" ]; then
