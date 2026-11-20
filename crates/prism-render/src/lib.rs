@@ -215,5 +215,6 @@ pub use virtual_geo::{
     HzbPyramid, MicroSubdividedMesh, PageFaultRequest, PageKey, PageRequestKind, VgClusterDesc,
     VgClusterGroupDesc, VgMeshDesc, VgPageDesc, VgPrimitiveKind, VirtualGeoCutConfig,
     VirtualGeoCutOutput, VirtualGeoInstance, VirtualGeoPagePool, VirtualGeoPoolStats,
+    VirtualGeoRuntime,
 };
 pub use voxel_dda_pass::{VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload};

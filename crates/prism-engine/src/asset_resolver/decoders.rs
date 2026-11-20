@@ -6,10 +6,16 @@ use prism_asset::formats::{
     RTEX_FORMAT_BC1, RTEX_FORMAT_BC3, RTEX_FORMAT_BC5, RTEX_FORMAT_BC6H, RTEX_FORMAT_BC7,
     RTEX_FORMAT_ETC2_RGBA8, RTEX_FORMAT_RGBA8,
 };
-use prism_asset::runtime::{MaterialAsset, MeshAsset, SkinnedMeshAsset, TextureAsset};
+use prism_asset::formats_virtual_geo::{
+    decode_octahedral_normal, decode_rcld_page_slice, RcldAsset, RcldCluster, RCLD_MAGIC,
+};
+use prism_asset::runtime::{
+    MaterialAsset, MeshAsset, SkinnedMeshAsset, TextureAsset, VirtualGeoAsset,
+};
 use prism_ecs::Entity;
 use prism_render::asset_bridge::MaterialResolveData;
 use prism_render::managers::{MeshUploadInput, SkinAttributes, TextureFormat, TextureUploadInput};
+use prism_render::virtual_geo::{decode_rcld_runtime, VgMeshDesc, VgPageDesc};
 
 use crate::scene::runtime_components::MeshSubmesh;
 
@@ -151,20 +157,65 @@ impl GpuAssetResolver {
             None
         })?;
 
-        let handle = self
-            .resource_manager
-            .load_with_deps::<MeshAsset>(id)
-            .map_err(|e| log::warn!("load_mesh_inputs: load '{path}' failed: {e}"))
-            .ok()?;
-        let mesh = self
-            .resource_manager
-            .get(handle)
-            .map_err(|e| log::warn!("load_mesh_inputs: get '{path}' failed: {e}"))
-            .ok()?;
+        match self.resource_manager.load_with_deps::<MeshAsset>(id) {
+            Ok(handle) => {
+                let mesh = self
+                    .resource_manager
+                    .get(handle)
+                    .map_err(|e| log::warn!("load_mesh_inputs: get '{path}' failed: {e}"))
+                    .ok()?;
+                deinterleave_rmes(path, &mesh.info)
+                    .map(|(input, submeshes)| LoadedMesh { input, submeshes })
+            }
+            Err(rmes_err) => {
+                let is_rcld = self
+                    .resource_manager
+                    .read_asset_range(id, 0, RCLD_MAGIC.len())
+                    .ok()
+                    .as_deref()
+                    == Some(RCLD_MAGIC);
+                if !is_rcld {
+                    log::warn!("load_mesh_inputs: load '{path}' failed: {rmes_err}");
+                    return None;
+                }
+                let handle = self
+                    .resource_manager
+                    .load_with_deps::<VirtualGeoAsset>(id)
+                    .map_err(|e| log::warn!("load_mesh_inputs: load RCLD '{path}' failed: {e}"))
+                    .ok()?;
+                let vg = self
+                    .resource_manager
+                    .get(handle)
+                    .map_err(|e| log::warn!("load_mesh_inputs: get RCLD '{path}' failed: {e}"))
+                    .ok()?;
+                dequantize_rcld_root_mesh(&vg.info)
+                    .map(|(input, submeshes)| LoadedMesh { input, submeshes })
+            }
+        }
+    }
 
-        // RMES 的顶点区是分段布局（见 `deinterleave_rmes`），不是每顶点交错。
-        deinterleave_rmes(path, &mesh.info)
-            .map(|(input, submeshes)| LoadedMesh { input, submeshes })
+    /// Loads the runtime Cluster-DAG descriptor (`VgMeshDesc`) for an `RCLD` mesh asset.
+    pub fn load_virtual_geo_descriptor(&mut self, path: &str) -> Option<VgMeshDesc> {
+        let id = self.resource_manager.id_by_path(path)?;
+        let raw = self.resource_manager.load_with_deps_raw(id).ok()?;
+        decode_rcld_runtime(id.into_raw(), &raw)
+    }
+
+    /// Streams and decodes a single 64 KiB `RCLD` page from disk/package without loading full LOD data.
+    pub fn stream_virtual_geo_page(
+        &self,
+        asset_id: AssetId,
+        page: &VgPageDesc,
+    ) -> Option<Vec<RcldCluster>> {
+        let bytes = self
+            .resource_manager
+            .read_asset_range(
+                asset_id,
+                u64::from(page.byte_offset),
+                page.byte_size as usize,
+            )
+            .ok()?;
+        decode_rcld_page_slice(&bytes, page.cluster_count)
     }
 
     /// CPU 段：加载材质资源 → 18 个 PBR 标量 + 5 张纹理像素
@@ -483,6 +534,128 @@ pub(super) fn deinterleave_rmes(
             material_index: submesh.material_index,
         })
         .collect();
+
+    Some((
+        MeshUploadInput {
+            positions,
+            normals,
+            colors: vec![],
+            uvs,
+            tangents,
+            indices,
+        },
+        submeshes,
+    ))
+}
+
+fn reconstruct_rcld_tangent(normal: [f32; 3], tangent_angle: i8) -> [f32; 4] {
+    let up = if normal[2].abs() < 0.999 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let bx = up[1] * normal[2] - up[2] * normal[1];
+    let by = up[2] * normal[0] - up[0] * normal[2];
+    let bz = up[0] * normal[1] - up[1] * normal[0];
+    let blen = (bx * bx + by * by + bz * bz).sqrt();
+    let b1 = if blen > 1e-8 {
+        [bx / blen, by / blen, bz / blen]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let b2 = [
+        normal[1] * b1[2] - normal[2] * b1[1],
+        normal[2] * b1[0] - normal[0] * b1[2],
+        normal[0] * b1[1] - normal[1] * b1[0],
+    ];
+    let angle = (f32::from(tangent_angle) / 127.0) * std::f32::consts::PI;
+    let (s, c) = angle.sin_cos();
+    [
+        b1[0] * c + b2[0] * s,
+        b1[1] * c + b2[1] * s,
+        b1[2] * c + b2[2] * s,
+        1.0,
+    ]
+}
+
+/// Dequantizes the coarsest root-cut clusters of an `RCLD` virtual geometry asset
+/// into a standard [`MeshUploadInput`] fallback so non-VG passes render seamlessly.
+pub(super) fn dequantize_rcld_root_mesh(
+    info: &RcldAsset,
+) -> Option<(MeshUploadInput, Vec<MeshSubmesh>)> {
+    let root_group = info
+        .groups
+        .get(info.header.root_group_index as usize)
+        .or_else(|| info.groups.first())?;
+    let root_lod = root_group.lod_level;
+
+    let mut root_clusters: Vec<&RcldCluster> = Vec::new();
+    for group in info.groups.iter().filter(|g| g.lod_level == root_lod) {
+        let start = group.first_cluster as usize;
+        let end = (start + usize::from(group.cluster_count)).min(info.clusters.len());
+        for cluster in &info.clusters[start..end] {
+            if !cluster.vertices.is_empty() && !cluster.triangles.is_empty() {
+                root_clusters.push(cluster);
+            }
+        }
+    }
+    if root_clusters.is_empty() {
+        return None;
+    }
+
+    root_clusters.sort_by_key(|c| (c.material_index, c.cluster_id));
+
+    let total_verts: usize = root_clusters.iter().map(|c| c.vertices.len()).sum();
+    let total_indices: usize = root_clusters.iter().map(|c| c.triangles.len() * 3).sum();
+    if total_verts == 0 || total_indices == 0 {
+        return None;
+    }
+
+    let mut positions = Vec::with_capacity(total_verts);
+    let mut normals = Vec::with_capacity(total_verts);
+    let mut uvs = Vec::with_capacity(total_verts);
+    let mut tangents = Vec::with_capacity(total_verts);
+    let mut indices = Vec::with_capacity(total_indices);
+    let mut submeshes = Vec::new();
+
+    for cluster in root_clusters {
+        let base_vertex = positions.len() as u32;
+        for v in &cluster.vertices {
+            let pos = v.dequantize_position(
+                cluster.aabb_min,
+                cluster.aabb_max,
+                cluster.geomorph_scale,
+                0.0,
+            );
+            let normal = decode_octahedral_normal(v.normal_oct);
+            let uv = v.dequantize_uv();
+            let tangent = reconstruct_rcld_tangent(normal, v.tangent_angle);
+            positions.push(pos);
+            normals.push(normal);
+            uvs.push(uv);
+            tangents.push(tangent);
+        }
+        let tri_start = indices.len() as u32;
+        for tri in &cluster.triangles {
+            indices.push(base_vertex + u32::from(tri[0]));
+            indices.push(base_vertex + u32::from(tri[1]));
+            indices.push(base_vertex + u32::from(tri[2]));
+        }
+        let tri_indices = (cluster.triangles.len() * 3) as u32;
+        let mat_idx = Some(u32::from(cluster.material_index));
+        if let Some(last) = submeshes
+            .last_mut()
+            .filter(|s: &&mut MeshSubmesh| s.material_index == mat_idx)
+        {
+            last.index_count += tri_indices;
+        } else {
+            submeshes.push(MeshSubmesh {
+                index_start: tri_start,
+                index_count: tri_indices,
+                material_index: mat_idx,
+            });
+        }
+    }
 
     Some((
         MeshUploadInput {

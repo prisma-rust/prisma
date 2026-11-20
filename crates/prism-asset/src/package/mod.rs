@@ -954,6 +954,55 @@ impl PackageReader {
         }
     }
 
+    /// Read a byte sub-range `[sub_offset .. sub_offset + length]` of an asset.
+    ///
+    /// Uncompressed and streamed entries issue a bounded read directly for that
+    /// byte span rather than loading the entire payload.
+    pub fn read_asset_range(
+        &self,
+        id: AssetId,
+        sub_offset: u64,
+        length: usize,
+    ) -> Result<Option<Vec<u8>>, PackageError> {
+        let Some(record) = self.find_record(id) else {
+            return Ok(None);
+        };
+        let sub_end = sub_offset
+            .checked_add(length as u64)
+            .ok_or_else(|| PackageError::Truncated("asset sub-range overflows u64".into()))?;
+        if sub_end > record.size {
+            return Err(PackageError::Truncated(format!(
+                "asset sub-range {sub_end} exceeds asset size {}",
+                record.size
+            )));
+        }
+        if length == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        if !record.is_compressed() {
+            let (start, _) = self.stored_range(record)?;
+            let range_start = start
+                .checked_add(sub_offset)
+                .ok_or_else(|| PackageError::Truncated("asset range start overflows u64".into()))?;
+            return self
+                .backing
+                .read_range(range_start, length as u64)
+                .map(Some);
+        }
+        let decompressed = self.read_asset_record_data(record)?;
+        let start_idx = usize::try_from(sub_offset)
+            .map_err(|_| PackageError::Truncated("asset sub-range start overflows usize".into()))?;
+        let end_idx = usize::try_from(sub_end)
+            .map_err(|_| PackageError::Truncated("asset sub-range end overflows usize".into()))?;
+        if end_idx > decompressed.len() {
+            return Err(PackageError::Truncated(format!(
+                "decompressed asset sub-range {end_idx} exceeds payload size {}",
+                decompressed.len()
+            )));
+        }
+        Ok(Some(decompressed[start_idx..end_idx].to_vec()))
+    }
+
     /// Check integrity of the package (re-checksums the entire file body).
     pub fn verify_integrity(&self) -> Result<(), PackageError> {
         match &self.backing {

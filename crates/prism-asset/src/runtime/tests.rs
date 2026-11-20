@@ -882,3 +882,184 @@ fn handle_pin_generation_mismatch_and_unload_resets_pin() {
         RuntimeError::NotLoaded(_)
     ));
 }
+
+#[test]
+fn read_asset_range_streams_individual_rcld_pages_without_full_load() {
+    use crate::formats_virtual_geo::*;
+
+    let aabb_min = [0.0, 0.0, 0.0];
+    let aabb_max = [1.0, 1.0, 0.0];
+    let verts = vec![
+        QuantizedClusterVertex {
+            pos_q: QuantizedClusterVertex::quantize_position([0.0, 0.0, 0.0], aabb_min, aabb_max),
+            normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+            tangent_angle: 0,
+            bone_local_pair: 0,
+            uv_f16: [f32_to_f16(0.0), f32_to_f16(0.0)],
+            geomorph_delta_q: [0, 0, 0],
+        },
+        QuantizedClusterVertex {
+            pos_q: QuantizedClusterVertex::quantize_position([1.0, 0.0, 0.0], aabb_min, aabb_max),
+            normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+            tangent_angle: 0,
+            bone_local_pair: 0,
+            uv_f16: [f32_to_f16(1.0), f32_to_f16(0.0)],
+            geomorph_delta_q: [0, 0, 0],
+        },
+        QuantizedClusterVertex {
+            pos_q: QuantizedClusterVertex::quantize_position([0.5, 1.0, 0.0], aabb_min, aabb_max),
+            normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+            tangent_angle: 0,
+            bone_local_pair: 0,
+            uv_f16: [f32_to_f16(0.5), f32_to_f16(1.0)],
+            geomorph_delta_q: [0, 0, 0],
+        },
+    ];
+    let asset = RcldAsset {
+        header: RcldHeader {
+            version: RCLD_VERSION,
+            flags: 0,
+            max_lod_level: 1,
+            page_count: 2,
+            group_count: 2,
+            cluster_count: 2,
+            root_group_index: 0,
+            bounds_min: aabb_min,
+            bounds_max: aabb_max,
+            page_table_offset: 64,
+            group_table_offset: 64 + 40,
+            payload_offset: 64 + 40 + 96,
+        },
+        pages: vec![
+            RcldPageDescriptor {
+                page_index: 0,
+                byte_offset: 0,
+                byte_size: 0,
+                first_cluster: 0,
+                cluster_count: 1,
+                lod_level: 1,
+                flags: RCLD_PAGE_FLAG_RESIDENT_ROOT,
+            },
+            RcldPageDescriptor {
+                page_index: 1,
+                byte_offset: 0,
+                byte_size: 0,
+                first_cluster: 1,
+                cluster_count: 1,
+                lod_level: 0,
+                flags: 0,
+            },
+        ],
+        groups: vec![
+            RcldClusterGroup {
+                group_id: 0,
+                lod_level: 1,
+                primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                child_group_count: 1,
+                page_index: 0,
+                child_group_first: 1,
+                first_cluster: 0,
+                cluster_count: 1,
+                parent_error: 100.0,
+                self_error: 0.25,
+                bounding_sphere: [0.5, 0.5, 0.0, 1.0],
+            },
+            RcldClusterGroup {
+                group_id: 1,
+                lod_level: 0,
+                primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                child_group_count: 0,
+                page_index: 1,
+                child_group_first: 0,
+                first_cluster: 1,
+                cluster_count: 1,
+                parent_error: 0.25,
+                self_error: 0.0,
+                bounding_sphere: [0.5, 0.5, 0.0, 1.0],
+            },
+        ],
+        clusters: vec![
+            RcldCluster {
+                cluster_id: 0,
+                group_id: 0,
+                lod_level: 1,
+                primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                material_index: 0,
+                aabb_min,
+                aabb_max,
+                normal_cone: [0.0, 0.0, 1.0, 0.2],
+                parent_error: 100.0,
+                self_error: 0.25,
+                geomorph_scale: 0.0,
+                bone_palette: [0; 8],
+                bone_count: 0,
+                max_skin_inflation: 0.0,
+                vertices: verts.clone(),
+                triangles: vec![[0, 1, 2]],
+                dmm_displacements: Vec::new(),
+                splat_surrogate: None,
+            },
+            RcldCluster {
+                cluster_id: 1,
+                group_id: 1,
+                lod_level: 0,
+                primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                material_index: 0,
+                aabb_min,
+                aabb_max,
+                normal_cone: [0.0, 0.0, 1.0, 0.2],
+                parent_error: 0.25,
+                self_error: 0.0,
+                geomorph_scale: 0.0,
+                bone_palette: [0; 8],
+                bone_count: 0,
+                max_skin_inflation: 0.0,
+                vertices: verts,
+                triangles: vec![[0, 1, 2]],
+                dmm_displacements: vec![42, -17, 99],
+                splat_surrogate: None,
+            },
+        ],
+    };
+
+    let rcld_bytes = encode_rcld_bytes(&asset).expect("encode RCLD");
+    let id = AssetId::from_raw((1u64 << 32) | 9001);
+    let mut builder = PackageBuilder::new();
+    builder.add_streamed_asset(id, AssetType::Mesh, rcld_bytes, &[]);
+    let pak = builder.build().expect("build pak");
+    let path = write_pak(&pak, "test_rcld_stream_range.pak");
+
+    let mut rm = ResourceManager::new();
+    rm.load_package(&path).expect("load pak");
+    std::fs::remove_file(&path).ok();
+
+    let hdr_bytes = rm.read_asset_range(id, 0, 64).expect("read header range");
+    let hdr = decode_rcld_header(&hdr_bytes).expect("decode header");
+    let dir_bytes = rm
+        .read_asset_range(id, 0, hdr.payload_offset as usize)
+        .expect("read directory range");
+    let (_, pages, groups) = decode_rcld_directory(&dir_bytes).expect("decode directory");
+    assert_eq!(pages.len(), 2);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        rm.memory_usage(),
+        0,
+        "streaming sub-ranges must not pin cache"
+    );
+
+    let page1_slice = rm
+        .read_asset_range(
+            id,
+            u64::from(pages[1].byte_offset),
+            pages[1].byte_size as usize,
+        )
+        .expect("stream page 1");
+    let clusters =
+        decode_rcld_page_slice(&page1_slice, pages[1].cluster_count).expect("decode page 1");
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(clusters[0].dmm_displacements, vec![42, -17, 99]);
+
+    let typed_h: Handle<VirtualGeoAsset> = rm.load(id).expect("load typed VirtualGeoAsset");
+    let typed = rm.get(typed_h).expect("get VirtualGeoAsset");
+    assert_eq!(typed.info.clusters.len(), 2);
+}

@@ -1497,6 +1497,134 @@ pub fn evaluate_sggx_foliage_transmittance(
     (-sigma * optical_density.max(0.0)).exp()
 }
 
+/// Multi-frame orchestrator combining Cluster-DAG cut evaluation, 64 KiB page streaming,
+/// Two-Phase HZB history rotation, and incremental Active-Cut ray-tracing BLAS sync.
+pub struct VirtualGeoRuntime {
+    tier: VirtualGeometryTier,
+    meshes: HashMap<u64, VgMeshDesc>,
+    page_pool: VirtualGeoPagePool,
+    rt_pool: ActiveCutRtClusterPool,
+    prev_hzb: Option<HzbPyramid>,
+    curr_hzb: Option<HzbPyramid>,
+    frame_index: u64,
+}
+
+impl VirtualGeoRuntime {
+    /// Creates a new virtual geometry orchestrator sized for `tier` or `custom_pool_mb` when non-zero.
+    pub fn new(tier: VirtualGeometryTier, custom_pool_mb: u32) -> Self {
+        let page_pool = if custom_pool_mb == 0 {
+            VirtualGeoPagePool::for_tier(tier)
+        } else {
+            let pages =
+                ((custom_pool_mb as usize).saturating_mul(1024 * 1024) / VG_PAGE_SIZE).max(4);
+            VirtualGeoPagePool::new(pages)
+        };
+        Self {
+            tier,
+            meshes: HashMap::new(),
+            page_pool,
+            rt_pool: ActiveCutRtClusterPool::new(),
+            prev_hzb: None,
+            curr_hzb: None,
+            frame_index: 0,
+        }
+    }
+
+    /// Returns the hardware virtual geometry tier driving culling and raster routing.
+    pub fn tier(&self) -> VirtualGeometryTier {
+        self.tier
+    }
+
+    /// Returns the monotonically incremented orchestrator frame counter.
+    pub fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+
+    /// Returns current GPU page pool residency and eviction counters.
+    pub fn pool_stats(&self) -> VirtualGeoPoolStats {
+        self.page_pool.stats()
+    }
+
+    /// Returns the number of currently resident active-cut RT clusters.
+    pub fn rt_resident_count(&self) -> usize {
+        self.rt_pool.resident_count()
+    }
+
+    /// Registers a cooked virtual geometry mesh and pins its resident root pages.
+    pub fn register_mesh(&mut self, mesh: VgMeshDesc) {
+        for page in &mesh.pages {
+            if page.is_resident_root {
+                self.page_pool.pin_root_page(PageKey {
+                    asset_id: mesh.asset_id,
+                    page_index: page.page_index,
+                });
+            }
+        }
+        self.meshes.insert(mesh.asset_id, mesh);
+    }
+
+    /// Removes a mesh descriptor from the orchestrator.
+    pub fn unregister_mesh(&mut self, asset_id: u64) -> bool {
+        self.meshes.remove(&asset_id).is_some()
+    }
+
+    /// Looks up a registered mesh descriptor by asset ID.
+    pub fn mesh(&self, asset_id: u64) -> Option<&VgMeshDesc> {
+        self.meshes.get(&asset_id)
+    }
+
+    /// Marks a streamed 64 KiB geometry page as resident in the GPU page pool.
+    pub fn install_streamed_page(&mut self, key: PageKey) -> Option<usize> {
+        let is_root = self
+            .meshes
+            .get(&key.asset_id)
+            .and_then(|m| m.pages.get(key.page_index as usize))
+            .is_some_and(|p| p.is_resident_root);
+        self.page_pool.install_page(key, is_root, self.frame_index)
+    }
+
+    /// Rotates the previous frame's HZB pyramid into history and installs `next_hzb`.
+    pub fn push_hzb(&mut self, next_hzb: HzbPyramid) {
+        self.prev_hzb = self.curr_hzb.take();
+        self.curr_hzb = Some(next_hzb);
+    }
+
+    /// Evaluates one frame of Cluster-DAG cuts, active-cut RT BLAS diffing, and queued page faults.
+    pub fn evaluate_frame(
+        &mut self,
+        instances: &[(u64, [[f32; 4]; 4])],
+        cfg: &mut VirtualGeoCutConfig,
+    ) -> (
+        VirtualGeoCutOutput,
+        ActiveCutRtSyncDiff,
+        Vec<PageFaultRequest>,
+    ) {
+        self.frame_index += 1;
+        cfg.frame_index = self.frame_index;
+
+        let resolved: Vec<VirtualGeoInstance<'_>> = instances
+            .iter()
+            .filter_map(|&(asset_id, model)| {
+                self.meshes
+                    .get(&asset_id)
+                    .map(|mesh| VirtualGeoInstance { mesh, model })
+            })
+            .collect();
+
+        let cut = evaluate_dag_cut(
+            &resolved,
+            &mut self.page_pool,
+            self.prev_hzb.as_ref(),
+            self.curr_hzb.as_ref(),
+            cfg,
+            self.tier,
+        );
+        let rt_diff = self.rt_pool.sync_with_cut(&cut.active_cut_blas_clusters);
+        let faults = self.page_pool.drain_fault_requests();
+        (cut, rt_diff, faults)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2096,5 +2224,59 @@ mod tests {
         );
         let tr = evaluate_sggx_foliage_transmittance(&iso, [0.0, 1.0, 0.0], 1.0);
         assert!((tr - (-1.0f32).exp()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn virtual_geo_runtime_streams_pages_and_syncs_rt_across_frames() {
+        let mesh = sample_two_level_mesh();
+        let asset_id = mesh.asset_id;
+        let mut runtime = VirtualGeoRuntime::new(VirtualGeometryTier::NextGenClasMeshSw, 16);
+        runtime.register_mesh(mesh);
+        assert_eq!(runtime.pool_stats().pinned_root_pages, 1);
+
+        let proj = vulkan_perspective(60.0_f32.to_radians(), 16.0 / 9.0, 0.1, 200.0);
+        let mut cfg = VirtualGeoCutConfig {
+            view_proj: proj,
+            camera_pos: [0.0, 0.0, 0.0],
+            cot_half_fovy: proj[1][1].abs(),
+            near_plane: 0.1,
+            output_extent: [3840, 2160],
+            internal_extent: [1920, 1080],
+            dlss_mode: DlssMode::Quality,
+            mobile_upscaler: MobileUpscaler::Off,
+            anf_active: false,
+            base_error_threshold_px: 1.0,
+            geomorph_window_ratio: 0.35,
+            frame_index: 0,
+            hzb_reverse_z_projection: false,
+        };
+        let instances = [(asset_id, identity_mat4())];
+
+        let (cut1, diff1, faults1) = runtime.evaluate_frame(&instances, &mut cfg);
+        assert_eq!(runtime.frame_index(), 1);
+        assert_eq!(cut1.parent_fallbacks_on_miss, 1);
+        assert_eq!(diff1.to_build.len(), 1);
+        assert!(diff1.requires_tlas_rebuild);
+        assert_eq!(faults1.len(), 1);
+        assert_eq!(faults1[0].key.page_index, 1);
+
+        assert!(runtime.install_streamed_page(faults1[0].key).is_some());
+
+        let (cut2, diff2, faults2) = runtime.evaluate_frame(&instances, &mut cfg);
+        assert_eq!(runtime.frame_index(), 2);
+        assert!(faults2.is_empty());
+        assert_eq!(cut2.parent_fallbacks_on_miss, 0);
+        assert_eq!(cut2.active_cut_blas_clusters.len(), 2);
+        assert_eq!(diff2.to_evict.len(), 1);
+        assert_eq!(diff2.to_build.len(), 2);
+        assert_eq!(runtime.rt_resident_count(), 2);
+
+        let cleared_hzb = HzbPyramid::from_reverse_z_samples(64, 64, &vec![0.0; 64 * 64]).unwrap();
+        runtime.push_hzb(cleared_hzb);
+        let (_cut3, diff3, _faults3) = runtime.evaluate_frame(&instances, &mut cfg);
+        assert!(!diff3.requires_tlas_rebuild);
+        assert_eq!(diff3.to_reuse.len(), 2);
+        assert!(runtime.unregister_mesh(asset_id));
+        assert!(runtime.mesh(asset_id).is_none());
     }
 }
