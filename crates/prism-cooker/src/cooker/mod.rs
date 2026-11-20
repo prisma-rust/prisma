@@ -31,6 +31,7 @@ pub mod profile;
 pub mod scene;
 pub mod skinned;
 pub mod state_machine;
+pub mod virtual_geo;
 
 // ---------------------------------------------------------------------------
 // Errors

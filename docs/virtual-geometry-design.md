@@ -43,7 +43,7 @@
 ```text
 [ RcldHeader: 64 bytes ]
 [ PageDescriptorTable: page_count × 20 bytes ]
-[ ClusterGroupTable: group_count × 44 bytes ]
+[ ClusterGroupTable: group_count × 48 bytes ]
 [ Page Payloads (Page 0 Resident Root | Page 1..N Streamed Child Pages) ]
 ```
 
@@ -71,7 +71,7 @@
 1. **`RcldPageDescriptor`（20 字节）**：
    - `page_index (u32)`、`byte_offset (u32)`、`byte_size (u32)`、`first_cluster (u32)`、`cluster_count (u16)`、`lod_level (u8)`、`flags (u8)`（bit0 = `RCLD_PAGE_FLAG_RESIDENT_ROOT`）。
    - Page 0 随资产挂载立即上传至 GPU `PagePool` 并永久钉扎（Pinned），保证任何帧在高精度页尚在流式传输时始终存在可用几何保底，**彻底杜绝破洞**。
-2. **`RcldClusterGroup`（44 字节）**：
+2. **`RcldClusterGroup`（48 字节）**：
    - `group_id (u32)`、`lod_level (u8)`、`primitive_kind (u8)`、`child_group_count (u16)`、`page_index (u32)`、`child_group_first (u32)`、`first_cluster (u32)`、`cluster_count (u16)`、`reserved (u16)`、`parent_error (f32)`、`self_error (f32)`、`bounding_sphere ([f32; 4])`（xyz = center, w = radius）。
    - **硬不变量**：对任意非根 Group，恒有 `parent_error > self_error` 且所有同组 Cluster 共享完全相同的外边界顶点集合，保证任意 DAG Cut 切口下 **100% 零拓扑裂缝（Crack-Free）**。
 

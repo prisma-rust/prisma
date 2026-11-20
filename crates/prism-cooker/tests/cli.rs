@@ -20,6 +20,12 @@ use prism_asset::package::PackageBuilder;
 /// CLI 二进制 lives in `target/debug/` (or `target/debug/prism-cook.exe` on
 /// Windows).  We walk up from the test exe to find it.
 fn cli_binary() -> PathBuf {
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_prism-cook") {
+        let path = PathBuf::from(bin);
+        if path.exists() {
+            return path;
+        }
+    }
     let mut path = std::env::current_exe().expect("current exe");
     // Pop the binary name, then the "deps" directory if present.
     path.pop(); // binary name

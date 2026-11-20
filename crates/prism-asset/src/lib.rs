@@ -5,6 +5,7 @@ pub mod formats;
 pub mod formats_anim_graph;
 pub mod formats_skinned;
 pub mod formats_state_machine;
+pub mod formats_virtual_geo;
 #[cfg(feature = "package")]
 pub mod package;
 #[cfg(feature = "runtime")]
