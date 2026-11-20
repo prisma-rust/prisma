@@ -135,3 +135,36 @@ fn rt_extension_names_ray_query_only() {
     assert!(names.contains(&vk::KHR_RAY_QUERY_NAME));
     assert!(!names.contains(&vk::KHR_RAY_TRACING_PIPELINE_NAME));
 }
+
+#[test]
+fn virtual_geometry_caps_selects_all_four_hardware_tiers() {
+    let rt_with_int64 = RayTracingCaps {
+        shader_buffer_int64_atomics: true,
+        ..Default::default()
+    };
+
+    let mut exts = HashSet::new();
+    exts.insert("VK_EXT_mesh_shader".to_owned());
+    exts.insert("VK_NV_cluster_acceleration_structure".to_owned());
+    exts.insert("VK_NV_displacement_micromap".to_owned());
+    exts.insert("VK_EXT_opacity_micromap".to_owned());
+    let tier0 = probe_virtual_geometry_caps(&exts, &rt_with_int64, true);
+    assert_eq!(tier0.tier, VirtualGeometryTier::NextGenClasMeshSw);
+    assert!(tier0.mesh_shader && tier0.cluster_acceleration_structure);
+    assert!(tier0.displacement_micromap && tier0.opacity_micromap);
+    assert!(tier0.subgroup_arithmetic);
+
+    exts.remove("VK_NV_cluster_acceleration_structure");
+    let tier1a = probe_virtual_geometry_caps(&exts, &rt_with_int64, true);
+    assert_eq!(tier1a.tier, VirtualGeometryTier::FlagshipMeshSw);
+
+    let mut tile_exts = HashSet::new();
+    tile_exts.insert("VK_EXT_shader_tile_image".to_owned());
+    let tier1b = probe_virtual_geometry_caps(&tile_exts, &RayTracingCaps::default(), true);
+    assert_eq!(tier1b.tier, VirtualGeometryTier::TileLocalSubpass);
+    assert!(tier1b.shader_tile_image);
+
+    let tier2 = probe_virtual_geometry_caps(&HashSet::new(), &RayTracingCaps::default(), false);
+    assert_eq!(tier2.tier, VirtualGeometryTier::IndirectIndexedFallback);
+    assert!(!tier2.mesh_shader && !tier2.int64_atomics);
+}

@@ -136,6 +136,7 @@ pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
 pub mod ui_overlay;
+pub mod virtual_geo;
 pub mod voxel_dda_pass;
 pub mod voxel_rt_accel;
 pub mod voxel_rt_gi_pass;
@@ -147,7 +148,9 @@ pub use graph_renderer::SceneDrawItem;
 #[cfg(feature = "anf")]
 pub use anf::{is_qualcomm_adreno, AnfCaps, AnfPass};
 pub use buffer::create_buffer;
-pub use capabilities::RayTracingCaps;
+pub use capabilities::{
+    probe_virtual_geometry_caps, RayTracingCaps, VirtualGeometryCaps, VirtualGeometryTier,
+};
 pub use context::VulkanContext;
 pub use descriptor::{
     DescriptorLayout, DescriptorPool, FrameUBO, FrameUBOData, GpuLight, PtAnalyticLight,
@@ -202,4 +205,15 @@ pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
 pub use ui_overlay::UiOverlay;
 pub use ui_overlay::UiOverlayInput;
+pub use virtual_geo::{
+    compute_analytic_barycentrics, compute_geomorph_compensated_velocity, decode_rcld_runtime,
+    evaluate_cluster_bone_envelope, evaluate_dag_cut, evaluate_ray_guided_page_fault,
+    evaluate_sggx_foliage_transmittance, evaluate_sggx_ndf, evaluate_sggx_projected_area,
+    pack_vis32, pack_vis64, select_dmm_subdivision_level, skin_cluster_vertex,
+    subdivide_dmm_triangle, unpack_vis32, unpack_vis64, ActiveClusterKey, ActiveCutRtClusterPool,
+    ActiveCutRtSyncDiff, AnalyticBarycentrics, DispatchedCluster, GeomorphVelocityInput,
+    HzbPyramid, MicroSubdividedMesh, PageFaultRequest, PageKey, PageRequestKind, VgClusterDesc,
+    VgClusterGroupDesc, VgMeshDesc, VgPageDesc, VgPrimitiveKind, VirtualGeoCutConfig,
+    VirtualGeoCutOutput, VirtualGeoInstance, VirtualGeoPagePool, VirtualGeoPoolStats,
+};
 pub use voxel_dda_pass::{VoxelChunkUpload, VoxelCursorUpload, VoxelDdaPass, VoxelSceneUpload};
