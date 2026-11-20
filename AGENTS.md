@@ -60,8 +60,9 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
 ## 5. Assets, shaders, scenes
 
 - Slang sources live in `assets/shaders/slang/`; compiled `.spv` and `reflection/*.json` are
-  committed and `slangc` is pinned. Push-constant structs come from `xtask shader_bindgen` and are
-  never hand-written.
+  committed and `slangc` is pinned. `assets/shaders/compile-stamp.json` records the version of the
+  sources the bytecode was built from, so builds only recompile when a `.slang` file actually
+  changes. Push-constant structs come from `xtask shader_bindgen` and are never hand-written.
 - `.scene.json` is the only authored scene form: `transform` is baked into `LocalTransform` +
   `LocalToWorld`, matrix propagation runs at the end of the simulation step, and entity `id` is
   stable across edits.

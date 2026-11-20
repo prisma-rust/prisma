@@ -26,6 +26,11 @@
 #
 #   bash assets/shaders/compile.sh                     # build + verify reflection
 #   bash assets/shaders/compile.sh --write-reflection  # adopt the new reflection
+#   bash assets/shaders/compile.sh --check             # exit 0 if the stamp is current
+#
+# `compile-stamp.json` records a hash of every `.slang` source. `cargo build`
+# runs `--check` and only recompiles when that version changes, so touching a
+# file without editing it no longer rewrites the committed `.spv`.
 #
 # Env:
 #   SLANGC              slangc binary (default: .local/tools/slang, then PATH)
@@ -56,15 +61,42 @@ PROFILE="${SLANG_PROFILE:-spirv_1_4}"
 # so the generated bindings can differ from what the shader actually declares.
 MIN_SLANGC="${SLANGC_MIN_VERSION:-2026.21}"
 SLANG_DOWNLOAD="https://github.com/shader-slang/slang/releases"
+STAMP="$HERE/compile-stamp.json"
 WRITE_REFLECTION=0
+CHECK_ONLY=0
 
 usage() {
   sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
+# SHA-256 of stdin, or a value that never matches a stamp when no hashing tool
+# exists (forces one recompile instead of trusting a stale stamp).
+hash_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    printf 'no-hash-tool-%s\n' "$RANDOM"
+  fi
+}
+
+# Version of the shader sources: every `.slang` file in sorted order, path and
+# content. The committed `.spv` are bound to this value, not to whichever
+# compiler happens to be installed.
+shaders_fingerprint() {
+  {
+    while IFS= read -r f; do
+      printf '%s\n' "${f#"$HERE"/}"
+      cat "$f"
+    done < <(find "$SRC" -type f -name '*.slang' | LC_ALL=C sort)
+  } | hash_stdin
+}
+
 for arg in "$@"; do
   case "$arg" in
     --write-reflection) WRITE_REFLECTION=1 ;;
+    --check) CHECK_ONLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *)
       echo "ERROR: unknown argument '$arg' (try --help)" >&2
@@ -72,6 +104,22 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# `--check` answers "would a compile change anything?" without needing slangc:
+# the stamp is written by the last successful compile and names the inputs it
+# was built from.
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  want="$(shaders_fingerprint)"
+  have=""
+  if [ -f "$STAMP" ]; then
+    have="$(sed -n 's/.*"shaders": *"\([0-9a-f]*\)".*/\1/p' "$STAMP" | head -n 1)"
+  fi
+  if [ "$have" = "$want" ]; then
+    exit 0
+  fi
+  echo "shader sources changed since ${STAMP##*/}" >&2
+  exit 1
+fi
 
 if ! command -v "$SLANGC" >/dev/null 2>&1 && [ ! -x "$SLANGC" ]; then
   echo "ERROR: slangc not found. Install a Slang release or set SLANGC=/path/to/slangc" >&2
@@ -460,6 +508,15 @@ if command -v spirv-val >/dev/null 2>&1; then
 fi
 
 settle_reflection
+
+# Record the version of the sources these bytes were built from, so `--check`
+# (and therefore `cargo build`) can skip recompiling while the `.slang` files
+# are untouched.
+cat > "$STAMP" <<EOF
+{
+  "shaders": "$(shaders_fingerprint)"
+}
+EOF
 
 echo "All Slang shaders compiled. SPIR-V in $OUT, reflection JSON in $REFL"
 

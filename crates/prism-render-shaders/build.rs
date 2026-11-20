@@ -4,15 +4,20 @@
 //! script keeps that honest: it runs before the crate is compiled and
 //!   1. collects every `.spv` path referenced from `src/` (and `tests/`),
 //!   2. recompiles them with `assets/shaders/compile.sh` when a `slangc` is
-//!      available and the sources are newer (or a module is missing),
+//!      available and the sources changed since the last compile,
 //!   3. otherwise fails once, with a message that can be replaced per project —
 //!      without it, `rustc` reports one `couldn't read ... .spv` error per
 //!      reference (over thirty of them) and never says what to do.
 //!
+//! "Changed" is decided by `compile.sh --check`, which compares a hash of the
+//! `.slang` sources against `compile-stamp.json`. The stamp records the source
+//! version the committed bytes were built from, so a checkout, a `touch`, or a
+//! different local compiler never rewrites them.
+//!
 //! Env knobs (all optional):
 //!   `PRISMA_SHADER_AUTOCOMPILE`  `0` disables running `compile.sh` (default: enabled)
-//!   `PRISMA_SHADER_REBUILD`      `1` always runs `compile.sh` (default: only when a
-//!                                  `.spv` is missing or older than the `.slang` source)
+//!   `PRISMA_SHADER_REBUILD`      `1` always runs `compile.sh` (default: only when the
+//!                                  stamp no longer matches the shader inputs)
 //!   `PRISMA_SHADER_SCRIPT`       `compile.sh` to run (default `<repo>/assets/shaders/compile.sh`)
 //!   `PRISMA_SHADER_HINT`         replaces the failure text
 //!   `PRISMA_SHADER_HINT_FILE`    file holding that text (wins over `PRISMA_SHADER_HINT`)
@@ -25,7 +30,6 @@ use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
 
 fn main() {
     let manifest = PathBuf::from(
@@ -45,7 +49,7 @@ fn main() {
     let auto = env_flag("PRISMA_SHADER_AUTOCOMPILE", true);
     let force = env_flag("PRISMA_SHADER_REBUILD", false);
     let missing_now = missing_of(&runtime);
-    let stale = missing_now.is_empty() && !force && slang_is_newer(&shaders, &runtime);
+    let stale = missing_now.is_empty() && !force && inputs_changed(&script, &repo);
 
     let want_compile = !missing_now.is_empty() || force || stale;
     let mut note = None;
@@ -54,7 +58,7 @@ fn main() {
     } else if want_compile {
         if let Some(slangc) = find_slangc(&repo) {
             let what = if missing_now.is_empty() {
-                "SPIR-V modules are older than the Slang sources"
+                "the Slang sources changed since the committed SPIR-V"
             } else {
                 "SPIR-V modules are missing"
             };
@@ -87,8 +91,8 @@ fn main() {
             }
         } else if stale {
             println!(
-                "cargo:warning=prism-render-shaders: Slang sources are newer than the committed SPIR-V \
-                 and no `slangc` was found; regenerate them once with \
+                "cargo:warning=prism-render-shaders: the Slang sources changed since the \
+                 committed SPIR-V and no `slangc` was found; regenerate them once with \
                  `bash {}/assets/shaders/compile.sh`, then commit the `.spv` with the `.slang`",
                 repo.display()
             );
@@ -200,7 +204,8 @@ restore them, or regenerate them after editing a `.slang`:
        gh run download <run-id> -n spirv -D /tmp/spirv
        cp /tmp/spirv/*.spv {shaders}/
 
-`cargo build` runs `compile.sh` on its own when it can find a `slangc`
+`cargo build` runs `compile.sh` on its own when it can find a `slangc` and
+`compile-stamp.json` no longer matches the shader inputs
 (set PRISMA_SHADER_AUTOCOMPILE=0 to turn that off)."#;
 
 /// Collect every `.spv` path referenced from `include_bytes!` under `dir`.
@@ -321,19 +326,22 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// True when any `.slang` source is newer than the oldest embedded `.spv`.
-fn slang_is_newer(shaders: &Path, spv: &[PathBuf]) -> bool {
-    let Some(newest_slang) = slang_sources(shaders).iter().filter_map(|p| mtime(p)).max() else {
+/// True when `compile.sh --check` reports that the committed stamp no longer
+/// matches the shader inputs. A missing `bash` means "cannot tell", which must
+/// not fail the build.
+fn inputs_changed(script: &Path, repo: &Path) -> bool {
+    let Some(bash) = find_bash() else {
         return false;
     };
-    let Some(oldest_spv) = spv.iter().filter_map(|p| mtime(p)).min() else {
-        return false;
-    };
-    newest_slang > oldest_spv
-}
-
-fn mtime(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).ok()?.modified().ok()
+    match Command::new(bash)
+        .arg(script)
+        .arg("--check")
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) => !out.status.success(),
+        Err(_) => false,
+    }
 }
 
 fn slang_sources(shaders: &Path) -> Vec<PathBuf> {
