@@ -1,0 +1,110 @@
+name: Nightly automation
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # 02:00 CST
+  workflow_dispatch:
+    inputs:
+      force:
+        type: boolean
+        default: false
+      scope:
+        type: choice
+        options: [commits, version]
+        default: commits
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-automation
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      base: ${{ steps.gate.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+          SCOPE: ${{ inputs.scope || 'commits' }}
+        run: |
+          set -euo pipefail
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tip=$(git rev-parse origin/master)
+          last=$(gh run list -w nightly-automation.yml -s success -L1 \
+                   --json headSha -q '.[0].headSha' || true)
+          if [ -z "$last" ] || [ "$last" = "null" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$last" = "$tip" ]; then
+            echo "skipped: no new commits since $last" >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if bash tools/ci/changed_since.sh "$last" "$tip" "$SCOPE"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "base=$last" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped: only docs/markdown changed since $last" >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  patrol:
+    needs: guard
+    if: needs.guard.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only stale claim & triage patrol
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sh tools/ci/ensure_labels.sh
+          now=$(date -u +%s)
+          stale_cutoff=$((now - 86400))
+          triage_cutoff=$((now - 259200))
+
+          # 1. Stale agent/working claims (> 24h without updates -> agent/blocked)
+          while IFS=$'\t' read -r num updated_at; do
+            [ -n "$num" ] || continue
+            ts=$(date -u -d "$updated_at" +%s)
+            if [ "$ts" -lt "$stale_cutoff" ]; then
+              existing=$(gh api "repos/$REPO/issues/$num/comments" --paginate --jq '.[].body' || true)
+              if ! printf '%s' "$existing" | grep -qF "<!-- janitor:stale-claim -->"; then
+                gh issue comment "$num" -R "$REPO" --body "<!-- janitor:stale-claim -->
+🤖 Agent: \`agent/working\` has been idle for >24h; switched to \`agent/blocked\` for maintainer/owner follow-up."
+              fi
+              gh issue edit "$num" -R "$REPO" --remove-label "agent/working" --add-label "agent/blocked,automation" || true
+            fi
+          done < <(gh api "repos/$REPO/issues?state=open&labels=agent/working&per_page=100" --jq '.[] | "\(.number)\t\(.updated_at)"')
+
+          # 2. Triage backlog summary (> 72h in needs/triage)
+          {
+            echo "## Nightly Patrol Summary"
+            echo ""
+            echo "### Stale needs/triage (>72h)"
+            while IFS=$'\t' read -r num title updated_at; do
+              [ -n "$num" ] || continue
+              ts=$(date -u -d "$updated_at" +%s)
+              if [ "$ts" -lt "$triage_cutoff" ]; then
+                echo "- #$num: $title (updated $updated_at)"
+              fi
+            done < <(gh api "repos/$REPO/issues?state=open&labels=needs/triage&per_page=100" --jq '.[] | "\(.number)\t\(.title)\t\(.updated_at)"')
+          } >> "$GITHUB_STEP_SUMMARY"

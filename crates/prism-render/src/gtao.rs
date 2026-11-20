@@ -623,8 +623,8 @@ impl GtaoPass {
             .render_pass
             .context("GtaoPass: render_pass not created before pipeline")?;
 
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/gtao.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/gtao.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::GTAO_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::GTAO_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("GtaoPass: load vert")?;
         let frag_module =

@@ -1140,8 +1140,7 @@ impl IblResources {
             Ok(pipe)
         };
 
-        const EQUIRECT_SPV: &[u8] =
-            include_bytes!("../../../assets/shaders/ibl_equirect_to_cube.comp.spv");
+        const EQUIRECT_SPV: &[u8] = prism_render_shaders::IBL_EQUIRECT_TO_CUBE_COMP_SPV;
         let pipe_equirect = create_comp_pipe(EQUIRECT_SPV, bindings::ENTRY_EQUIRECT_TO_CUBE_MAIN)?;
         let mut temp_pipes = vec![pipe_equirect];
 
@@ -1271,10 +1270,9 @@ impl IblResources {
 
         // Prepare PBR pipelines & descriptor sets when Full.
         let pbr_pipes = if scope == IblScope::Full {
-            const IRR_SPV: &[u8] =
-                include_bytes!("../../../assets/shaders/ibl_irradiance.comp.spv");
-            const PRE_SPV: &[u8] = include_bytes!("../../../assets/shaders/ibl_prefilter.comp.spv");
-            const BRDF_SPV: &[u8] = include_bytes!("../../../assets/shaders/ibl_brdf_lut.comp.spv");
+            const IRR_SPV: &[u8] = prism_render_shaders::IBL_IRRADIANCE_COMP_SPV;
+            const PRE_SPV: &[u8] = prism_render_shaders::IBL_PREFILTER_COMP_SPV;
+            const BRDF_SPV: &[u8] = prism_render_shaders::IBL_BRDF_LUT_COMP_SPV;
             let p_irr = create_comp_pipe(IRR_SPV, bindings::ENTRY_IRRADIANCE_MAIN)?;
             let p_pre = create_comp_pipe(PRE_SPV, bindings::ENTRY_PREFILTER_MAIN)?;
             let p_brdf = create_comp_pipe(BRDF_SPV, bindings::ENTRY_BRDF_LUT_MAIN)?;

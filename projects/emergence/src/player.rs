@@ -438,44 +438,53 @@ impl PlayerController {
         dt: f32,
         ui_consumed: bool,
     ) {
-        let has_fly_controller = self.sync_from_camera_if_modified(world);
         let input = world.input();
 
-        // Look via mouse delta while locked, plus drag-look and arrow-key fallback when unlocked.
-        let unlocked_drag = !ui_consumed
-            && !input.pointer_locked
-            && (input.right_held
-                || input.middle_held
-                || (!self.was_pointer_locked && input.left_held));
-        let allow_mouse_look = (!has_fly_controller && input.pointer_locked) || unlocked_drag;
-        let prev_yaw = self.yaw;
-        let prev_pitch = self.pitch;
-        if allow_mouse_look {
-            self.yaw -= input.mouse_delta[0] * 0.0024;
-            self.pitch = (self.pitch - input.mouse_delta[1] * 0.0024).clamp(-1.52, 1.52);
-        }
-        let key_turn = 1.8 * dt;
-        if input.key(keys::ARROW_LEFT) {
-            self.yaw += key_turn;
-        }
-        if input.key(keys::ARROW_RIGHT) {
-            self.yaw -= key_turn;
-        }
-        if input.key(keys::ARROW_UP) {
-            self.pitch = (self.pitch + key_turn * 0.7).clamp(-1.52, 1.52);
-        }
-        if input.key(keys::ARROW_DOWN) {
-            self.pitch = (self.pitch - key_turn * 0.7).clamp(-1.52, 1.52);
-        }
-        if has_fly_controller
-            && ((self.yaw - prev_yaw).abs() > 1e-6 || (self.pitch - prev_pitch).abs() > 1e-6)
-        {
-            if let Some(cam) = self.camera_entity {
-                if let Some(mut ctrl) = world.get::<FlyCameraController>(cam) {
-                    ctrl.yaw = self.yaw;
-                    ctrl.pitch = self.pitch;
-                    world.set(cam, ctrl);
+        if !ui_consumed {
+            let has_fly_controller = self.sync_from_camera_if_modified(world);
+
+            // Look via mouse delta while locked, plus drag-look and arrow-key fallback when unlocked.
+            let unlocked_drag = !input.pointer_locked
+                && (input.right_held
+                    || input.middle_held
+                    || (!self.was_pointer_locked && input.left_held));
+            let allow_mouse_look = (!has_fly_controller && input.pointer_locked) || unlocked_drag;
+            let prev_yaw = self.yaw;
+            let prev_pitch = self.pitch;
+            if allow_mouse_look {
+                self.yaw -= input.mouse_delta[0] * 0.0024;
+                self.pitch = (self.pitch - input.mouse_delta[1] * 0.0024).clamp(-1.52, 1.52);
+            }
+            let key_turn = 1.8 * dt;
+            if input.key(keys::ARROW_LEFT) {
+                self.yaw += key_turn;
+            }
+            if input.key(keys::ARROW_RIGHT) {
+                self.yaw -= key_turn;
+            }
+            if input.key(keys::ARROW_UP) {
+                self.pitch = (self.pitch + key_turn * 0.7).clamp(-1.52, 1.52);
+            }
+            if input.key(keys::ARROW_DOWN) {
+                self.pitch = (self.pitch - key_turn * 0.7).clamp(-1.52, 1.52);
+            }
+            if has_fly_controller
+                && ((self.yaw - prev_yaw).abs() > 1e-6 || (self.pitch - prev_pitch).abs() > 1e-6)
+            {
+                if let Some(cam) = self.camera_entity {
+                    if let Some(mut ctrl) = world.get::<FlyCameraController>(cam) {
+                        ctrl.yaw = self.yaw;
+                        ctrl.pitch = self.pitch;
+                        world.set(cam, ctrl);
+                    }
                 }
+            }
+        } else if let Some(cam) = self.camera_entity {
+            // Keep any attached FlyCameraController locked to the player's heading while UI owns input.
+            if let Some(mut ctrl) = world.get::<FlyCameraController>(cam) {
+                ctrl.yaw = self.yaw;
+                ctrl.pitch = self.pitch;
+                world.set(cam, ctrl);
             }
         }
 
@@ -553,7 +562,7 @@ impl PlayerController {
             self.tool_index = ((self.tool_index as isize + delta).rem_euclid(len)) as usize;
         }
 
-        if input.key_pressed(keys::SPACE) {
+        if !ui_consumed && input.key_pressed(keys::SPACE) {
             self.jump_buffer = 0.12;
         }
 
@@ -658,11 +667,29 @@ impl PlayerController {
 
     /// Fixed-timestep kinematics & swept three-tier voxel AABB collision (`fixed_update`).
     pub fn step_physics(&mut self, world: &mut GameWorld<'_>, sim: &SimWorld, dt: f32) {
-        self.sync_from_camera_if_modified(world);
+        self.step_physics_with_input(world, sim, dt, true);
+    }
+
+    /// Fixed-timestep kinematics with optional movement-input gating (physics/gravity still runs).
+    pub fn step_physics_with_input(
+        &mut self,
+        world: &mut GameWorld<'_>,
+        sim: &SimWorld,
+        dt: f32,
+        accept_input: bool,
+    ) {
+        if accept_input {
+            self.sync_from_camera_if_modified(world);
+        }
         let input = world.input();
         let cam_rot = self.live_camera_rotation(world);
-        let wish_dir = horizontal_wish_dir_for_rot(&input, cam_rot, self.yaw);
-        let speed = if input.key(keys::SHIFT_LEFT) || input.key(keys::SHIFT_RIGHT) {
+        let wish_dir = if accept_input {
+            horizontal_wish_dir_for_rot(&input, cam_rot, self.yaw)
+        } else {
+            Vec3::ZERO
+        };
+        let speed = if accept_input && (input.key(keys::SHIFT_LEFT) || input.key(keys::SHIFT_RIGHT))
+        {
             SPRINT_SPEED_MPS
         } else if self.fly_mode {
             FLY_SPEED_MPS
@@ -673,11 +700,13 @@ impl PlayerController {
         if self.fly_mode {
             self.was_fly_mode = true;
             let mut move_vec = wish_dir;
-            if input.key(keys::SPACE) {
-                move_vec.y += 1.0;
-            }
-            if input.key(keys::CONTROL_LEFT) || input.key(keys::OTHER_BASE + b'C' as usize) {
-                move_vec.y -= 1.0;
+            if accept_input {
+                if input.key(keys::SPACE) {
+                    move_vec.y += 1.0;
+                }
+                if input.key(keys::CONTROL_LEFT) || input.key(keys::OTHER_BASE + b'C' as usize) {
+                    move_vec.y -= 1.0;
+                }
             }
             if move_vec.length_squared() > 1e-4 {
                 move_vec = move_vec.normalize() * speed * dt;

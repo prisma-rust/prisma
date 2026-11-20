@@ -114,6 +114,16 @@ pub struct RenderConfig {
     pub pt_gi: Option<String>,
     /// PRT64 trilinear weight bias for thin-wall anti-leakage (default 0.05).
     pub prt_leak_bias: Option<f32>,
+    /// DLSS Super Resolution mode (`"off"`, `"quality"`, `"balanced"`, `"performance"`, `"ultra_performance"`, `"dlaa"`).
+    pub dlss_mode: Option<String>,
+    /// DLSS pre-upscale filter (`"linear"`, `"nearest"`, `"off"`) when `render_extent < dlss_min`.
+    pub dlss_pre_upscale: Option<String>,
+    /// DLSS Frame Generation (DLFG) mode (`"off"`, `"on"`, `"auto"`).
+    pub dlfg_mode: Option<String>,
+    /// Number of generated frames per rendered frame (`1` = 2x, `2` = 3x, `3` = 4x).
+    pub dlfg_frames: Option<u32>,
+    /// Enable DLSS Ray Reconstruction (`true` / `false`).
+    pub dlss_rr_enabled: Option<bool>,
 }
 
 impl RenderConfig {
@@ -137,6 +147,7 @@ impl RenderConfig {
                 }
                 "restir" | "restir_gi" => crate::render_settings::RasterGiMode::Restir,
                 "prt" | "prt64" => crate::render_settings::RasterGiMode::Prt,
+                "ddgi" | "rtxgi" => crate::render_settings::RasterGiMode::Ddgi,
                 other => {
                     log::warn!("settings: unknown raster_gi '{other}'; using baked_probe");
                     crate::render_settings::RasterGiMode::BakedProbe
@@ -156,6 +167,46 @@ impl RenderConfig {
         }
         if let Some(bias) = self.prt_leak_bias {
             settings.prt_leak_bias = bias;
+        }
+        if let Some(mode) = &self.dlss_mode {
+            settings.dlss_mode = match mode.trim().to_ascii_lowercase().as_str() {
+                "off" | "none" => crate::render_settings::DlssMode::Off,
+                "ultra_performance" | "ultraperformance" => {
+                    crate::render_settings::DlssMode::UltraPerformance
+                }
+                "performance" => crate::render_settings::DlssMode::Performance,
+                "balanced" => crate::render_settings::DlssMode::Balanced,
+                "quality" => crate::render_settings::DlssMode::Quality,
+                "dlaa" => crate::render_settings::DlssMode::Dlaa,
+                other => {
+                    log::warn!("settings: unknown dlss_mode '{other}'; using off");
+                    crate::render_settings::DlssMode::Off
+                }
+            };
+        }
+        if let Some(mode) = &self.dlss_pre_upscale {
+            if let Some(parsed) = crate::render_settings::DlssPreUpscaleMode::parse(mode) {
+                settings.dlss_pre_upscale = parsed;
+            } else {
+                log::warn!("settings: unknown dlss_pre_upscale '{mode}'; using linear");
+            }
+        }
+        if let Some(mode) = &self.dlfg_mode {
+            settings.dlfg_mode = match mode.trim().to_ascii_lowercase().as_str() {
+                "off" | "none" => crate::render_settings::DlssgMode::Off,
+                "on" | "enabled" => crate::render_settings::DlssgMode::On,
+                "auto" => crate::render_settings::DlssgMode::Auto,
+                other => {
+                    log::warn!("settings: unknown dlfg_mode '{other}'; using off");
+                    crate::render_settings::DlssgMode::Off
+                }
+            };
+        }
+        if let Some(frames) = self.dlfg_frames {
+            settings.dlfg_frames = frames.clamp(1, 3);
+        }
+        if let Some(rr) = self.dlss_rr_enabled {
+            settings.dlss_rr_enabled = rr;
         }
         if let Some(flags) = self.debug_flags {
             settings.debug_flags = flags;
@@ -344,6 +395,11 @@ impl RenderConfig {
             raster_gi: ini.get("render", "raster_gi").map(str::to_string),
             pt_gi: ini.get("render", "pt_gi").map(str::to_string),
             prt_leak_bias: ini.get_f32("render", "prt_leak_bias"),
+            dlss_mode: ini.get("render", "dlss_mode").map(str::to_string),
+            dlss_pre_upscale: ini.get("render", "dlss_pre_upscale").map(str::to_string),
+            dlfg_mode: ini.get("render", "dlfg_mode").map(str::to_string),
+            dlfg_frames: ini.get_u32("render", "dlfg_frames"),
+            dlss_rr_enabled: ini.get_bool("render", "dlss_rr_enabled"),
         }
     }
 }

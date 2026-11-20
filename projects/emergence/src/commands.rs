@@ -1,11 +1,81 @@
 //! Horizon-aligned chat & slash-command console (`T` / `Enter` / `/`) for `emergence`.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 static UPSCALER_MODE: AtomicU8 = AtomicU8::new(0);
 static UPSCALER_SCALE_BITS: AtomicU32 = AtomicU32::new(0.75_f32.to_bits());
 static UPSCALER_SHARPNESS_BITS: AtomicU32 = AtomicU32::new(0.5_f32.to_bits());
+static DLFG_MODE: AtomicU8 = AtomicU8::new(0);
+static DLFG_FRAMES: AtomicU8 = AtomicU8::new(1);
+static DDGI_ENABLED: AtomicBool = AtomicBool::new(false);
+static DLSS_PRE_UPSCALE_MODE: AtomicU8 = AtomicU8::new(0);
+
+/// Returns `(dlfg_mode_id, dlfg_frames)` where `dlfg_mode_id` is `0=Off, 1=On, 2=Auto`
+/// and `dlfg_frames` is `1=2x, 2=3x, 3=4x`.
+pub fn current_dlfg_config() -> (u8, u8) {
+    (
+        DLFG_MODE.load(Ordering::Relaxed),
+        DLFG_FRAMES.load(Ordering::Relaxed).clamp(1, 3),
+    )
+}
+
+/// Set DLFG mode (`0=Off, 1=On, 2=Auto`) and generated frame count (`1..=3`).
+pub fn set_dlfg_config(mode: u8, frames: u8) {
+    DLFG_MODE.store(mode.min(2), Ordering::Relaxed);
+    DLFG_FRAMES.store(frames.clamp(1, 3), Ordering::Relaxed);
+}
+
+/// Human-readable label for DLFG mode.
+pub fn dlfg_mode_label(mode: u8) -> &'static str {
+    match mode {
+        1 => "On",
+        2 => "Auto",
+        _ => "Off",
+    }
+}
+
+/// Human-readable label for DLFG frame generation multiplier.
+pub fn dlfg_frames_label(frames: u8) -> &'static str {
+    match frames {
+        2 => "3x (2)",
+        3 => "4x (3)",
+        _ => "2x (1)",
+    }
+}
+
+/// Returns DLSS pre-upscale mode (`0=Linear, 1=Nearest, 2=Off`).
+pub fn current_dlss_pre_upscale() -> u8 {
+    DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed)
+}
+
+/// Set DLSS pre-upscale mode (`0=Linear, 1=Nearest, 2=Off`).
+pub fn set_dlss_pre_upscale(mode: u8) {
+    DLSS_PRE_UPSCALE_MODE.store(mode.min(2), Ordering::Relaxed);
+}
+
+/// Human-readable label for DLSS pre-upscale mode.
+pub fn dlss_pre_upscale_label(mode: u8) -> &'static str {
+    match mode {
+        1 => "Nearest",
+        2 => "Off",
+        _ => "Linear",
+    }
+}
+
+/// Returns `(dlfg_mode_id, ddgi_enabled)` for runtime RTXGI / Streamline controls.
+pub fn current_rtx_toggles() -> (u8, bool) {
+    (
+        DLFG_MODE.load(Ordering::Relaxed),
+        DDGI_ENABLED.load(Ordering::Relaxed),
+    )
+}
+
+/// Toggle or set DLFG (`0=Off, 1=On, 2=Auto`) and DDGI from runtime UI or commands.
+pub fn set_rtx_toggles(dlfg_mode: u8, ddgi_enabled: bool) {
+    DLFG_MODE.store(dlfg_mode.min(2), Ordering::Relaxed);
+    DDGI_ENABLED.store(ddgi_enabled, Ordering::Relaxed);
+}
 
 /// Returns `(mode_id, render_scale, sharpness)` where `mode_id` is:
 /// `0 = Off`, `1 = Sgsr2`, `2 = ArmAsr`, `3 = Nearest`, `4 = Linear`,
@@ -21,7 +91,7 @@ pub fn current_upscaler_config() -> (u8, f32, f32) {
 /// Update upscaler state from the in-game Render Settings UI.
 pub fn set_upscaler_config(mode_id: u8, scale: f32, sharpness: f32) {
     UPSCALER_MODE.store(mode_id.min(6), Ordering::Relaxed);
-    UPSCALER_SCALE_BITS.store(scale.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+    UPSCALER_SCALE_BITS.store(scale.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
     UPSCALER_SHARPNESS_BITS.store(sharpness.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
 }
 
@@ -32,7 +102,7 @@ pub fn upscaler_mode_label(mode_id: u8) -> &'static str {
         2 => "Arm ASR",
         3 => "Nearest",
         4 => "Linear",
-        5 => "DLSS (Placeholder -> Off)",
+        5 => "DLSS (Streamline)",
         6 => "FSR (Placeholder -> Off)",
         _ => "Off",
     }
@@ -47,7 +117,7 @@ pub fn init_upscaler_from_env() {
     }
     if let Ok(scale) = std::env::var("EMERGENCE_UPSCALER_SCALE") {
         if let Ok(v) = scale.trim().parse::<f32>() {
-            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+            UPSCALER_SCALE_BITS.store(v.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
         }
     }
     if let Ok(sharp) = std::env::var("EMERGENCE_UPSCALER_SHARPNESS") {
@@ -982,6 +1052,46 @@ impl CommandWorldState {
             "setblock" => self.exec_setblock(&parts[1..], sim, player),
             "gamerule" => self.exec_gamerule(&parts[1..]),
             "upscaler" => self.exec_upscaler(&parts[1..]),
+            "dlfg" => {
+                match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("on") => DLFG_MODE.store(1, Ordering::Relaxed),
+                    Some("auto") => DLFG_MODE.store(2, Ordering::Relaxed),
+                    Some("off") => DLFG_MODE.store(0, Ordering::Relaxed),
+                    Some("2x" | "1") => DLFG_FRAMES.store(1, Ordering::Relaxed),
+                    Some("3x" | "2") => DLFG_FRAMES.store(2, Ordering::Relaxed),
+                    Some("4x" | "3") => DLFG_FRAMES.store(3, Ordering::Relaxed),
+                    _ => {
+                        let next = (DLFG_MODE.load(Ordering::Relaxed) + 1) % 3;
+                        DLFG_MODE.store(next, Ordering::Relaxed);
+                    }
+                }
+                let (mode, frames) = current_dlfg_config();
+                format!(
+                    "DLFG (Frame Gen) set to {} ({})",
+                    dlfg_mode_label(mode),
+                    dlfg_frames_label(frames)
+                )
+            }
+            "dlss_pre" => {
+                let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("linear" | "bilinear") => 0,
+                    Some("nearest" | "point") => 1,
+                    Some("off" | "none") => 2,
+                    Some("query") => DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed),
+                    _ => (DLSS_PRE_UPSCALE_MODE.load(Ordering::Relaxed) + 1) % 3,
+                };
+                DLSS_PRE_UPSCALE_MODE.store(next, Ordering::Relaxed);
+                format!("DLSS Pre-Upscale set to {}", dlss_pre_upscale_label(next))
+            }
+            "ddgi" => {
+                let next = match parts.get(1).copied().map(str::to_ascii_lowercase).as_deref() {
+                    Some("on" | "true") => true,
+                    Some("off" | "false") => false,
+                    _ => !DDGI_ENABLED.load(Ordering::Relaxed),
+                };
+                DDGI_ENABLED.store(next, Ordering::Relaxed);
+                format!("DDGI set to {}", if next { "ON" } else { "OFF" })
+            }
             other => format!("Unknown command '{other}'. Type /help."),
         }
     }
@@ -1184,14 +1294,14 @@ impl CommandWorldState {
             );
         }
         let Some(id) = parse_upscaler_mode_id(args[0]) else {
-            return "Usage: /upscaler <off|nearest|linear|sgsr2|asr|dlss|fsr|query> [scale 0.35..1.0] [sharpness 0..1]".to_string();
+            return "Usage: /upscaler <off|nearest|linear|sgsr2|asr|dlss|fsr|query> [scale 0.05..1.0] [sharpness 0..1]".to_string();
         };
         UPSCALER_MODE.store(id, Ordering::Relaxed);
         if let Some(raw_scale) = args.get(1) {
             let Ok(v) = raw_scale.parse::<f32>() else {
                 return format!("Invalid upscaler scale '{raw_scale}'");
             };
-            UPSCALER_SCALE_BITS.store(v.clamp(0.35, 1.0).to_bits(), Ordering::Relaxed);
+            UPSCALER_SCALE_BITS.store(v.clamp(0.05, 1.0).to_bits(), Ordering::Relaxed);
         }
         if let Some(raw_sharp) = args.get(2) {
             let Ok(v) = raw_sharp.parse::<f32>() else {

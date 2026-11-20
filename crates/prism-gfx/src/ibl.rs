@@ -348,9 +348,7 @@ pub fn f32_to_f16(x: f32) -> u16 {
     sign | ((e as u16) << 10) | (rounded as u16)
 }
 
-// ---------------------------------------------------------------------------
 // CPU convolution helpers
-// ---------------------------------------------------------------------------
 
 /// Cosine-weighted hemisphere convolution of the equirect into a diffuse
 /// irradiance cubemap.

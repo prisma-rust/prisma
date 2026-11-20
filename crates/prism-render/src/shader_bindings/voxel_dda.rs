@@ -8,6 +8,7 @@
 
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VOXEL_DDA_MAIN: &str = "voxelDdaMain"; // stage: COMPUTE
+pub const ENTRY_VOXEL_GI_MAIN: &str = "voxelGiMain"; // stage: COMPUTE
 pub const ENTRY_VOXEL_GI_DENOISE_MAIN: &str = "voxelGiDenoiseMain"; // stage: COMPUTE
 pub const ENTRY_VOXEL_COMPOSITE_MAIN: &str = "voxelCompositeMain"; // stage: COMPUTE
 

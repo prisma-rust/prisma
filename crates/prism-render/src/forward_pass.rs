@@ -1851,8 +1851,8 @@ impl ForwardPass {
         // block (120 bytes); the vertex stage only reads the leading `model`, and
         // Vulkan allows the push range to exceed what a stage actually reads.
         // Fragment: scene_frag.frag.spv (bindless PBR + shadow) or custom shader.
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/mesh_vert.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/scene_frag.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::MESH_VERT_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::SCENE_FRAG_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("ForwardPass: load vert")?;
 
@@ -1863,8 +1863,7 @@ impl ForwardPass {
         // extra joints/weights inputs from vertex buffer 1 (#560 P0-3). The
         // reflection JSON only carries the first entry point, so the skinned
         // entry name stays a literal here.
-        const VERT_SKINNED_SPV: &[u8] =
-            include_bytes!("../../../assets/shaders/mesh_vert_skinned.vert.spv");
+        const VERT_SKINNED_SPV: &[u8] = prism_render_shaders::MESH_VERT_SKINNED_VERT_SPV;
         let vert_skinned_module = shader::load_shader_module(device, VERT_SKINNED_SPV)
             .context("ForwardPass: load skinned vert")?;
         let skin_entry = std::ffi::CString::new("vertexSkinnedMain").unwrap();
@@ -2053,8 +2052,8 @@ impl ForwardPass {
             .frame_set_layout
             .context("ForwardPass: set0 layout not set (call set_resources)")?;
 
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::OUTLINE_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::OUTLINE_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("outline: load vert")?;
         let frag_module =
@@ -2134,8 +2133,8 @@ impl ForwardPass {
         let rp = self
             .render_pass
             .context("ForwardPass: render_pass not created before shaded wireframe")?;
-        const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.vert.spv");
-        const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/outline.frag.spv");
+        const VERT_SPV: &[u8] = prism_render_shaders::OUTLINE_VERT_SPV;
+        const FRAG_SPV: &[u8] = prism_render_shaders::OUTLINE_FRAG_SPV;
         let vert_module =
             shader::load_shader_module(device, VERT_SPV).context("wireframe overlay: load vert")?;
         let frag_module =

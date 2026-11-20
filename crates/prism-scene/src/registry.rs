@@ -463,6 +463,7 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
             "prism_engine::scene::EnvironmentLighting",
         );
         registry.register_reflect_serde::<GiConfig>("prism_engine::scene::GiConfig");
+        registry.register_reflect_serde::<ProbeVolume>("prism_engine::scene::ProbeVolume");
     }
 
     // ── 相机 ──

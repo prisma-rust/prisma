@@ -400,10 +400,10 @@ unsafe fn type_name<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     std::str::from_utf8(bytes).ok()
 }
 
-/// ABI 字符串参数 → `&str`（与 [`type_name`] 同一套校验）。
+/// ABI string parameter -> `&str` (same validation as [`type_name`]).
 ///
 /// # Safety
-/// `ptr`/`len` 必须描述一块调用期间有效的 UTF-8 字节。
+/// `ptr`/`len` must describe valid UTF-8 bytes for the duration of the call.
 unsafe fn path_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     unsafe { type_name(ptr, len) }
 }
@@ -830,7 +830,6 @@ unsafe extern "C" fn host_stop_sound(user_data: *mut std::ffi::c_void, id: u32) 
     SUCCESS
 }
 
-/// 射线查询（#522）：几何实现由宿主注入，本 crate 只做 ABI 适配。
 /// Raycast query (#522): the geometry implementation is injected by the host; this
 /// crate only adapts the ABI.
 unsafe extern "C" fn host_raycast(

@@ -13,7 +13,7 @@ use crate::render_graph::{
 use crate::voxel_dda_pass::VoxelChunkUpload;
 use crate::voxel_rt_accel::VoxelRtAccel;
 
-const VOXEL_RT_GI_SPV: &[u8] = include_bytes!("../../../assets/shaders/voxel_rt_gi.comp.spv");
+const VOXEL_RT_GI_SPV: &[u8] = prism_render_shaders::VOXEL_RT_GI_COMP_SPV;
 
 pub struct VoxelRtGiPass {
     device: ash::Device,

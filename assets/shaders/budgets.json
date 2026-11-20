@@ -11,6 +11,16 @@
       "descriptors": 3,
       "push_constant_bytes": 48
     },
+    "ddgi": {
+      "sampled_images": 5,
+      "sampled_image_arrays": 1,
+      "samplers": 1,
+      "uniform_buffers": 1,
+      "storage_buffers": 8,
+      "acceleration_structures": 1,
+      "descriptors": 17,
+      "push_constant_bytes": 0
+    },
     "gizmo": {
       "sampled_images": 0,
       "sampled_image_arrays": 0,
@@ -50,6 +60,16 @@
       "acceleration_structures": 0,
       "descriptors": 3,
       "push_constant_bytes": 128
+    },
+    "nrc": {
+      "sampled_images": 0,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 1,
+      "storage_buffers": 7,
+      "acceleration_structures": 0,
+      "descriptors": 8,
+      "push_constant_bytes": 0
     },
     "particles": {
       "sampled_images": 0,

@@ -782,8 +782,8 @@ fn create_pipeline(
     render_pass: vk::RenderPass,
     ds_layout: vk::DescriptorSetLayout,
 ) -> Result<GraphicsPipeline> {
-    const VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/taa.vert.spv");
-    const FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/taa.frag.spv");
+    const VERT_SPV: &[u8] = prism_render_shaders::TAA_VERT_SPV;
+    const FRAG_SPV: &[u8] = prism_render_shaders::TAA_FRAG_SPV;
     let vert_module =
         shader::load_shader_module(device, VERT_SPV).context("TaaPass: load vertex shader")?;
     let frag_module =

@@ -50,6 +50,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      shaders: ${{ steps.filter.outputs.shaders }}
+      features: ${{ steps.filter.outputs.features }}
+      user_projects: ${{ steps.filter.outputs.user_projects }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,28 +64,71 @@ jobs:
           # First push / manual dispatch: nothing to compare against → full CI.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A failed diff can't prove the change is doc-only → fail closed, full CI.
           if ! diff_out=$(git diff --name-only "$base" "$GITHUB_SHA" 2>/dev/null); then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ -z "$diff_out" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(printf '%s\n' "$diff_out" \
+          non_doc=$(printf '%s\n' "$diff_out" \
             | grep -Ev '^(docs/|.*\.md$|LICENSE.*|\.gitignore$)' || true)
-          if [ -n "$changed" ]; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$non_doc" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pure Rust comment-only changes skip heavy build/test jobs just like doc-only PRs.
+          if ! printf '%s\n' "$non_doc" | grep -qvE '\.rs$' \
+            && python3 scripts/check_comment_only.py --base "$base"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+            echo "features=false" >> "$GITHUB_OUTPUT"
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "code=true" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+            echo "features=true" >> "$GITHUB_OUTPUT"
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '^(assets/shaders/|crates/xtask/)'; then
+            echo "shaders=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "shaders=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '(^Cargo\.toml$|/Cargo\.toml$|^scripts/check_features\.py$)'; then
+            echo "features=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "features=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$non_doc" | grep -qE '^(crates/prism-(app|engine|scene|asset|render)/|projects/|Cargo\.toml$|Cargo\.lock$)'; then
+            echo "user_projects=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "user_projects=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
-  # 0b. 玩家依赖预算：`prism-app` 是玩家二进制唯一顶层依赖，多一个 crate 就是
-  #     多一份安装包体积。只做依赖解析，不编译、不需要 .spv。
+  # 0b. Player dependency budget: `prism-app` is the single top-level player
+  #     dependency; resolution only (no compile or .spv needed).
   # ---------------------------------------------------------------------------
   deps:
     name: player dependency budget
@@ -99,13 +145,12 @@ jobs:
         run: python3 scripts/check_deps.py
 
   # ---------------------------------------------------------------------------
-  # 0c. 积木特性矩阵：关掉某块能力之后仍然要能编译。feature 一旦没人编译就会
-  #     烂掉，模板宣称的「2D 项目不编 3D/PT」必须由 CI 真的验证。
+  # 0c. Modular feature matrix: verify disabled subsystems still compile.
   # ---------------------------------------------------------------------------
   features:
     name: modular feature matrix
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.features == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,17 +163,11 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-features
 
-      # `.spv` 已入库，clone 不装 slangc 也能编；这里用固定版本 slangc 重编，
-      # 保证各 job 拿到的字节码一致（漂移由 shaders job 的 git status 断言）。
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
+      # Compiled .spv and reflection JSON are committed (verified by the shaders job).
       - name: Feature matrix
         run: python3 scripts/check_features.py
 
-      # 文本光栅后端 B（`ui-directwrite`）只在 Windows 目标编译，Linux 上的
-      # `check_features.py` 覆盖不到它 —— 交叉 `cargo check` 是唯一在 CI 里能编译它的
-      # 方式（check 不链接，只需要目标标准库，不需要 mingw linker）。
+      # Cross-check Windows-only DirectWrite/fontdue text backends (no linker needed).
       - name: Windows text backends (cross check)
         run: |
           rustup target add x86_64-pc-windows-gnu
@@ -161,14 +200,15 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-lint
 
-      # clippy compiles prism-render, whose include_bytes! reads the committed
-      # `.spv`. Recompile with the pinned slangc so every job embeds identical
-      # bytes; the shaders job asserts those bytes match the sources.
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
       - name: rustfmt --check
         run: cargo fmt --all -- --check
+
+      - name: comment style (changed lines)
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+            python3 scripts/check_comments.py --changed --base "$base" --added-lines
+          fi
 
       # The root Cargo.toml is the only version source; standalone workspaces
       # cannot inherit it, so drift is checked here instead of at release time.
@@ -189,18 +229,16 @@ jobs:
           cargo fmt -- --check
           cargo clippy --all-targets -- -D warnings
 
-      # `derive` / `glam` 必须真的是可选特性：关掉默认特性后仍要能编译。
-      # 没有这条检查时，`#[cfg(...)]` 一漏就只在有人手动跑时才会暴露。
+      # Verify `derive` / `glam` remain genuinely optional features.
       - name: check prism-reflect without default features
         run: cargo check -p prism-reflect --no-default-features
 
   # ---------------------------------------------------------------------------
-  # 3c. 发布档体积：nightly `-Z build-std` + immediate-abort（见 scripts/build-dist.sh）。
-  #     只在 master / tag 上跑：nightly 是不稳定功能，不该阻塞每个 PR。
+  # 3c. Release binary size: nightly `-Z build-std` + immediate-abort (tags / manual dispatch).
   # ---------------------------------------------------------------------------
   dist-size:
     name: dist build (nightly build-std)
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -209,9 +247,6 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           rustup component add rust-src --toolchain nightly
-
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
 
       - name: Build release player (build-std)
         run: bash scripts/build-dist.sh projects/template
@@ -255,12 +290,6 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-desktop
 
-      # `.spv` files are committed (see .gitignore). Recompile them here so the
-      # build embeds bytecode produced by the pinned slangc, not whatever the
-      # checkout happens to contain; the shaders job asserts they match sources.
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
       - name: Build (desktop crates)
         run: >
           cargo build --locked
@@ -296,15 +325,12 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # 3. 用户工程：`projects/*` 各自是独立 workspace，根 workspace 的 `cargo build`
-  #    覆盖不到它们。引擎改了组件字段而工程没跟上（`LineRenderer` 加字段那次），
-  #    或者工程自己的 `Cargo.lock` 过期，都只有下游动手时才会发现 —— 这个 job
-  #    把它们每次都构建一遍（#981）。
+  # 3. User projects (`projects/*` are standalone workspaces outside root Cargo build).
   # ---------------------------------------------------------------------------
   user-projects:
     name: user projects build
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.user_projects == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -312,8 +338,7 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      # 工程链接 prism-app（默认带 audio feature），需要 ALSA 头文件；
-      # .spv 由下面的 setup-slang 编译，include_bytes! 才有东西可嵌。
+      # Projects link `prism-app` (default `audio` feature), requiring ALSA headers.
       - name: Install system libraries
         run: |
           sudo apt-get update
@@ -324,10 +349,7 @@ jobs:
         with:
           key: ${{ env.CACHE_VERSION }}-projects
 
-      - name: Setup slang + compile shaders
-        uses: ./.github/actions/setup-slang
-
-      # `--locked`：工程的 Cargo.lock 也要跟着引擎走，否则本地能跑、CI 用旧锁。
+      # `--locked`: keep standalone project Cargo.lock files in sync with engine changes.
       - name: Build every project workspace
         run: |
           for manifest in projects/*/Cargo.toml; do
@@ -343,7 +365,7 @@ jobs:
   shaders:
     name: slang compile + binding drift
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.shaders == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

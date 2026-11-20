@@ -258,6 +258,19 @@ impl<'a> GameWorld<'a> {
         }
     }
 
+    /// Suppresses or re-enables the engine's built-in `FlyCameraController`
+    /// while a project UI or command console owns keyboard/mouse input.
+    pub fn set_camera_input_suppressed(&mut self, suppressed: bool) {
+        #[cfg(feature = "host")]
+        if let Backend::Host(world) = &mut self.backend {
+            world.insert_resource(prism_engine::scene::systems::camera::CameraInputGate {
+                suppressed,
+            });
+        }
+        #[cfg(not(feature = "host"))]
+        let _ = suppressed;
+    }
+
     pub fn screen_size(&self) -> [f32; 2] {
         self.input().screen
     }
@@ -311,12 +324,11 @@ impl<'a> GameWorld<'a> {
         }
     }
 
-    /// 写入一条玩家存档并立即落盘（#984）。
+    /// Write a player save entry and flush immediately (#984).
     ///
-    /// 键值都是字符串：结构由工程自己序列化（`serde_json` 也好、只看
-    /// `"caught"` 这种计数也好），引擎不理解业务 schema。
-    /// 插件后端走 `HostApi::save_value`（能力位 `HOST_CAP_SAVE`）；宿主没有
-    /// 存档实现时返回 `false`。
+    /// Both key and value are strings; schema is owned by the project (e.g.
+    /// `serde_json` or simple counters). The plugin backend forwards via
+    /// `HostApi::save_value` (`HOST_CAP_SAVE`), returning `false` if unsupported.
     pub fn save_data(&mut self, key: &str, value: &str) -> bool {
         match &mut self.backend {
             #[cfg(feature = "host")]
@@ -342,7 +354,7 @@ impl<'a> GameWorld<'a> {
         }
     }
 
-    /// 读一条玩家存档；没有这个键 = `None`（不是错误）。
+    /// Read a player save entry; returns `None` when absent.
     pub fn load_data(&self, key: &str) -> Option<String> {
         match &self.backend {
             #[cfg(feature = "host")]
@@ -897,7 +909,7 @@ pub fn install_host_logger(host: &HostApi) {
 
 #[cfg(feature = "plugin")]
 impl PluginBackend<'_> {
-    /// 一次性音效（#987）：没有 `HOST_CAP_AUDIO` 时返回 `None`。
+    /// One-shot sound playback (#987); returns `None` without `HOST_CAP_AUDIO`.
     fn play_sound(&self, path: &str, volume: f32, repeat: bool) -> Option<u32> {
         if self.api.capabilities & prism_project_api::HOST_CAP_AUDIO == 0 {
             static WARNED: std::sync::Once = std::sync::Once::new();
@@ -963,7 +975,7 @@ impl PluginBackend<'_> {
         }
     }
 
-    /// 写入玩家存档（#984）；宿主没有能力位时只警告一次。
+    /// Write player save data (#984); warns once if host lacks `HOST_CAP_SAVE`.
     fn save_value(&self, key: &str, value: &[u8]) -> bool {
         if self.api.capabilities & prism_project_api::HOST_CAP_SAVE == 0 {
             static WARNED: std::sync::Once = std::sync::Once::new();
@@ -988,7 +1000,7 @@ impl PluginBackend<'_> {
         status == SUCCESS
     }
 
-    /// 读玩家存档（#984）：先问长度再取内容，和宿主的两段读取一致。
+    /// Read player save data (#984) using the host's two-step length/payload protocol.
     fn load_value(&self, key: &str) -> Option<Vec<u8>> {
         if self.api.capabilities & prism_project_api::HOST_CAP_SAVE == 0 {
             static WARNED: std::sync::Once = std::sync::Once::new();

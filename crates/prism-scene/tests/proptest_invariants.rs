@@ -90,4 +90,53 @@ proptest! {
     fn rscn_decode_never_panics_on_arbitrary_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
         let _ = rscn::decode_scene(&bytes, builtin_registry());
     }
+
+    #[test]
+    fn probe_volume_roundtrips_through_rscn_v4(
+        mode_idx in 0u8..3u8,
+        relocation in any::<bool>(),
+        classification in any::<bool>(),
+        scrolling in any::<bool>(),
+        variability in any::<bool>(),
+        spacing in 0.5f32..8.0f32,
+        rays in 32u32..256u32,
+    ) {
+        let mode = match mode_idx {
+            0 => "Off",
+            1 => "Baked",
+            _ => "Dynamic",
+        };
+        let mut components = HashMap::new();
+        components.insert(
+            "prism_engine::scene::ProbeVolume".to_string(),
+            serde_json::json!({
+                "mode": mode,
+                "origin": [1.0, 2.0, -3.0],
+                "spacing": [spacing, spacing, spacing],
+                "probe_counts": [8, 4, 8],
+                "rays_per_probe": rays,
+                "hysteresis": 0.95,
+                "relocation": relocation,
+                "classification": classification,
+                "scrolling": scrolling,
+                "variability": variability,
+                "baked_volume": null
+            }),
+        );
+        let scene = SceneJson {
+            version: 3,
+            entities: vec![EntityJson {
+                id: 1,
+                name: Some("ProbeVolume".to_string()),
+                parent: None,
+                transform: TransformJson::default(),
+                components,
+            }],
+        };
+        let registry = builtin_registry();
+        let bytes = rscn::encode_scene(&scene, registry).expect("encode ProbeVolume RSCN v4");
+        let decoded = rscn::decode_scene(&bytes, registry).expect("decode ProbeVolume RSCN v4");
+        prop_assert_eq!(decoded.entities.len(), 1);
+        prop_assert_eq!(decoded.entities[0].components.len(), 1);
+    }
 }

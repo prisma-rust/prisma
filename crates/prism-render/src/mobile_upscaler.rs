@@ -22,10 +22,10 @@ use crate::render_graph::{
 use crate::render_pass::find_memory_type;
 use crate::shader::load_shader_module;
 
-const SGSR2_CONVERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_convert.comp.spv");
-const SGSR2_ACTIVATE_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_activate.comp.spv");
-const SGSR2_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_upscale.comp.spv");
-const ARM_ASR_SPV: &[u8] = include_bytes!("../../../assets/shaders/arm_asr_upscale.comp.spv");
+const SGSR2_CONVERT_SPV: &[u8] = prism_render_shaders::SGSR2_CONVERT_COMP_SPV;
+const SGSR2_ACTIVATE_SPV: &[u8] = prism_render_shaders::SGSR2_ACTIVATE_COMP_SPV;
+const SGSR2_SPV: &[u8] = prism_render_shaders::SGSR2_UPSCALE_COMP_SPV;
+const ARM_ASR_SPV: &[u8] = prism_render_shaders::ARM_ASR_UPSCALE_COMP_SPV;
 const ENTRY_MAIN: &CStr = c"main";
 
 #[repr(C)]

@@ -1635,3 +1635,9 @@ XY 位置，精灵提取与 `VirtualCamera2D` 目标读取按 `interpolation_alp
 仍未实现。GitHub issue #1160 提出的 2D 虚拟相机（阻尼、死区、边界限制、像素吸附）
 已由 `VirtualCamera2D` 场景组件和引擎系统提供；纯 2D 模式的渲染 pass 裁剪仍未实现，
 也不由当前 AABB 几何内核覆盖。
+
+---
+
+## Embedded SPIR-V Crate Split (`prism-render-shaders`, #1225)
+
+Compiled SPIR-V byte slices (`assets/shaders/*.spv`) are embedded in the zero-dependency leaf crate `crates/prism-render-shaders` (`pub const <NAME>_SPV: &[u8]`) rather than directly inside `prism-render` or `prism-build-pipeline`. Its `build.rs` keeps the missing/stale `.spv` gate, while `shader_bindings/` stays inside `prism-render` so shader layout changes still type-check together with the passes.

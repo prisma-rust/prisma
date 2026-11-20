@@ -503,7 +503,11 @@ impl Engine {
                 .unwrap_or([0.0, 0.0]);
             self.begin_frame(input_manager, screen);
         }
-        let look_active = input_manager.pointer_locked;
+        let suppressed = self
+            .world
+            .get_resource::<crate::scene::systems::camera::CameraInputGate>()
+            .is_some_and(|gate| gate.suppressed);
+        let look_active = input_manager.pointer_locked && !suppressed;
         crate::scene::systems::camera::camera_controller_system(
             &mut self.world,
             input_manager,

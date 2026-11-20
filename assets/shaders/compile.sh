@@ -326,6 +326,20 @@ emit_reflection gtao vertexMain vertex fragmentMain fragment
 # VK_KHR_ray_query hardware. Output: RWTexture3D coefficient-major depth slices.
 compile_stage gi_bake bakeMain compute
 
+# ddgi: RTXGI v1.3 real-time DDGI compute passes (clear, update irradiance/distance, blend, resolve).
+compile_stage ddgi ddgiClearMain compute ddgi_clear
+compile_stage ddgi ddgiUpdateIrradianceMain compute ddgi_update_irradiance
+compile_stage ddgi ddgiUpdateDistanceMain compute ddgi_update_distance
+compile_stage ddgi ddgiBlendMain compute ddgi_blend
+compile_stage ddgi ddgiResolveMain compute ddgi_resolve
+emit_reflection ddgi ddgiClearMain compute ddgiUpdateIrradianceMain compute ddgiUpdateDistanceMain compute ddgiBlendMain compute ddgiResolveMain compute
+
+# nrc: RTXGI v2.0 Neural Radiance Cache (clear, train, infer).
+compile_stage nrc nrcClearMain compute nrc_clear
+compile_stage nrc nrcTrainMain compute nrc_train
+compile_stage nrc nrcInferMain compute nrc_infer
+emit_reflection nrc nrcClearMain compute nrcTrainMain compute nrcInferMain compute
+
 # pt_render: real-time path tracing compute shader (temporal accumulation).
 # Dispatched per pixel — traces 1 sample/frame, accumulates for convergence.
 # Requires VK_KHR_ray_query hardware. Output: RWTexture2D RGBA32F (accumulated).
@@ -423,9 +437,10 @@ emit_reflection prt resolveVolumeMain compute
 
 # voxel_dda: three-tier L1/L2/L3 voxel raymarcher + GI denoiser + composite (crates/prism-render/src/voxel_dda_pass.rs).
 compile_stage voxel_dda voxelDdaMain compute voxel_dda
+compile_stage voxel_dda voxelGiMain compute voxel_gi
 compile_stage voxel_dda voxelGiDenoiseMain compute voxel_gi_denoise
 compile_stage voxel_dda voxelCompositeMain compute voxel_composite
-emit_reflection voxel_dda voxelDdaMain compute voxelGiDenoiseMain compute voxelCompositeMain compute
+emit_reflection voxel_dda voxelDdaMain compute voxelGiMain compute voxelGiDenoiseMain compute voxelCompositeMain compute
 
 # virtual_geo: cluster-DAG cull + 32-bit atomic SW raster + analytic VisBuffer resolve + HZB build.
 compile_stage virtual_geo vgCullMain compute vg_cull

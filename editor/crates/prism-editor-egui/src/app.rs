@@ -288,6 +288,7 @@ fn tab_title(tab: &str) -> &str {
         "prefabOverrides" => "Prefab Overrides",
         "material" => "Material",
         "animGraph" => "Animation Graph",
+        "gaspDebug" => "GASP Debug",
         "tools" => "Tools",
         "shortcuts" => "Shortcuts",
         "about" => "About",
@@ -3590,6 +3591,10 @@ impl EditorApp {
                         self.workspace.show_panel("animGraph");
                         ui.close();
                     }
+                    if ui.button("GASP Debug").clicked() {
+                        self.workspace.show_panel("gaspDebug");
+                        ui.close();
+                    }
                 });
                 ui.separator();
                 self.menu_do(ui, "Capture Window", |app| app.capture_window_now());
@@ -4698,6 +4703,14 @@ impl EditorApp {
                     })
                 });
                 panels::anim_graph(ui, &mut self.workspace, &mut self.state, runtime)
+            }
+            "gaspDebug" => {
+                let runtime_graph = self.game_view.as_ref().and_then(|view| {
+                    view.host
+                        .world()
+                        .get_resource::<prism_engine::scene::systems::animator::AnimGraphDebug>()
+                });
+                crate::gasp_debug::gasp_debug_panel(ui, &mut self.state.gasp_debug, runtime_graph);
             }
             "tools" => {
                 panels::tools(ui, &mut self.workspace, &mut self.state);

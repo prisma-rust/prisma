@@ -2113,6 +2113,80 @@ pub struct GiConfig {
     pub volume: Option<String>,
 }
 
+/// Operating mode of a scene [`ProbeVolume`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ProbeVolumeMode {
+    #[default]
+    Off,
+    Baked,
+    Dynamic,
+}
+
+impl ReflectType for ProbeVolumeMode {
+    fn field_type() -> FieldType {
+        FieldType::U8
+    }
+
+    fn enum_variants() -> Option<&'static [&'static str]> {
+        Some(&["Off", "Baked", "Dynamic"])
+    }
+
+    fn to_value(&self) -> Value {
+        Value::U64(match self {
+            Self::Off => 0,
+            Self::Baked => 1,
+            Self::Dynamic => 2,
+        })
+    }
+
+    fn from_value(value: Value) -> Result<Self, ReflectError> {
+        match value.as_u64()? {
+            0 => Ok(Self::Off),
+            1 => Ok(Self::Baked),
+            2 => Ok(Self::Dynamic),
+            other => Err(ReflectError::BadData(format!(
+                "invalid ProbeVolumeMode discriminant {other}"
+            ))),
+        }
+    }
+}
+
+/// Scene GI probe-volume component editable in `.scene.json` and serialized via RSCN v4 (#1164).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Reflect)]
+#[reflect(name = "prism_engine::scene::ProbeVolume")]
+#[serde(default)]
+pub struct ProbeVolume {
+    pub mode: ProbeVolumeMode,
+    pub origin: [f32; 3],
+    pub spacing: [f32; 3],
+    pub probe_counts: [u32; 3],
+    pub rays_per_probe: u32,
+    pub hysteresis: f32,
+    pub relocation: bool,
+    pub classification: bool,
+    pub scrolling: bool,
+    pub variability: bool,
+    pub baked_volume: Option<String>,
+}
+
+impl Default for ProbeVolume {
+    fn default() -> Self {
+        Self {
+            mode: ProbeVolumeMode::Off,
+            origin: [0.0, 0.0, 0.0],
+            spacing: [2.0, 2.0, 2.0],
+            probe_counts: [16, 8, 16],
+            rays_per_probe: 128,
+            hysteresis: 0.97,
+            relocation: true,
+            classification: true,
+            scrolling: false,
+            variability: false,
+            baked_volume: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Camera
 // ---------------------------------------------------------------------------

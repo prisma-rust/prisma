@@ -63,8 +63,8 @@ pub mod keys {
     pub const F12: usize = 42;
     /// Platform raw key codes start here (`43 + code`), for `code < 213`.
     ///
-    /// 30..=42 以前是 `OTHER_BASE`：`KeyT` 与 `F1..=F12` 占走这 13 个位后基址右移。
-    /// 已经按旧编号编译的动态模块需要重新构建（`ABI_VERSION` 同步 +1）。
+    /// Slots 30..=42 were previously `OTHER_BASE` before `KeyT` and `F1..=F12`
+    /// claimed those 13 indices (bumping `ABI_VERSION` by +1).
     pub const OTHER_BASE: usize = 43;
 }
 
@@ -117,12 +117,13 @@ pub const HOST_CAP_SCENE: u64 = 1 << 6;
 /// Physics queries (`raycast`, #522). The host advertises this bit only after it
 /// injects a query implementation.
 pub const HOST_CAP_PHYSICS: u64 = 1 << 7;
-/// 玩家存档（`save_value` / `load_value`，#984）。与引擎自带的场景存档
-/// （[`HOST_CAP_STATE`]）分开：这是工程自己决定 schema 的键值存储。
+/// Player save store (`save_value` / `load_value`, #984), separate from
+/// engine-owned scene state ([`HOST_CAP_STATE`]): key-value storage whose schema
+/// is owned by the project.
 pub const HOST_CAP_SAVE: u64 = 1 << 8;
 
-/// 一次性音效（`play_sound` / `stop_sound`，#987）。宿主注入音频实现后才会
-/// 声明该能力位；没有它时编辑器 Play 是一次性音效的哑巴。
+/// One-shot sound playback (`play_sound` / `stop_sound`, #987). Declared only
+/// when the host provides an audio backend; otherwise editor Play is silent.
 pub const HOST_CAP_AUDIO: u64 = 1 << 9;
 /// 2D AABB collider queries (`Collider2D` world bounds).
 pub const HOST_CAP_PHYSICS_2D: u64 = 1 << 10;
@@ -430,10 +431,10 @@ pub type QueryColliders2D = unsafe extern "C" fn(
     out_count: *mut usize,
 ) -> i32;
 
-/// 写入一条玩家存档（#984）：`0` = 已落盘，负数为错误码（没有能力 / 写失败）。
+/// Write a player save entry (#984): `0` = flushed, negative = error (unsupported or write failed).
 ///
-/// `key`/`value` 都是字节串，schema 由工程自己解释；`value_len == 0` 时
-/// `value` 可以是 `null`。
+/// Both `key` and `value` are byte slices with a project-owned schema; `value`
+/// may be `null` when `value_len == 0`.
 pub type SaveValue = unsafe extern "C" fn(
     user_data: *mut core::ffi::c_void,
     key: *const u8,
@@ -442,9 +443,10 @@ pub type SaveValue = unsafe extern "C" fn(
     value_len: usize,
 ) -> i32;
 
-/// 读取一条玩家存档（#984）：返回**完整字节长度**。
+/// Read a player save entry (#984): returns the full byte length.
 ///
-/// `out == null` 或 `out_cap` 不足时只返回长度（两段读取）；键不存在返回负数。
+/// When `out == null` or `out_cap` is too small, returns the required length for
+/// two-step reading; returns a negative code if the key does not exist.
 pub type LoadValue = unsafe extern "C" fn(
     user_data: *mut core::ffi::c_void,
     key: *const u8,
@@ -453,11 +455,11 @@ pub type LoadValue = unsafe extern "C" fn(
     out_cap: usize,
 ) -> i32;
 
-/// 播放一个一次性音效（#987）：`path` 是相对 `assets/` 的 UTF-8 路径，
-/// `volume` 是 0..1 的线性增益，`repeat = 1` 表示循环。
+/// Play a one-shot sound (#987): `path` is a UTF-8 path relative to `assets/`,
+/// `volume` is linear gain in `0..1`, and `repeat = 1` enables looping.
 ///
-/// 成功时返回 [`SUCCESS`] 并写 `out_id`（非 0，可用于 `stop_sound`）；
-/// 片段不存在 / 解码失败 / 宿主没有音频时返回负数，`out_id` 保持 0。
+/// Returns [`SUCCESS`] and writes a non-zero `out_id` (for `stop_sound`) on
+/// success; returns negative with `out_id = 0` on missing/invalid clip or no audio host.
 pub type PlaySound = unsafe extern "C" fn(
     user_data: *mut core::ffi::c_void,
     path: *const u8,
@@ -467,7 +469,7 @@ pub type PlaySound = unsafe extern "C" fn(
     out_id: *mut u32,
 ) -> i32;
 
-/// 停止 `play_sound` 返回的音效 id；未知或已结束的 id 返回 [`SUCCESS`]。
+/// Stop a sound id returned by `play_sound`; unknown or finished ids return [`SUCCESS`].
 pub type StopSound = unsafe extern "C" fn(user_data: *mut core::ffi::c_void, id: u32) -> i32;
 
 pub type LogMessage = unsafe extern "C" fn(
@@ -598,11 +600,11 @@ pub struct HostApi {
     pub raycast: Option<Raycast>,
     /// 2D collider query; capability bit [`HOST_CAP_PHYSICS_2D`].
     pub query_colliders2d: Option<QueryColliders2D>,
-    /// 玩家存档（#984）；能力位 [`HOST_CAP_SAVE`]。
+    /// Player save store (#984); capability bit [`HOST_CAP_SAVE`].
     pub save_value: Option<SaveValue>,
     pub load_value: Option<LoadValue>,
 
-    /// 一次性音效（#987）；能力位 [`HOST_CAP_AUDIO`]。
+    /// One-shot sound playback (#987); capability bit [`HOST_CAP_AUDIO`].
     pub play_sound: Option<PlaySound>,
     pub stop_sound: Option<StopSound>,
 }

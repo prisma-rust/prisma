@@ -1598,6 +1598,7 @@ dependencies = [
  "image",
  "log",
  "prism-gfx",
+ "prism-render-shaders",
  "raw-window-handle",
  "serde",
  "serde_json",
@@ -1605,6 +1606,10 @@ dependencies = [
  "unicode-linebreak",
  "windows",
 ]
+
+[[package]]
+name = "prism-render-shaders"
+version = "0.1.0"
 
 [[package]]
 name = "prism-scene"

@@ -49,8 +49,11 @@ pub mod capabilities;
 pub mod compute;
 pub mod context;
 pub mod culling;
+pub mod ddgi;
+pub mod ddgi_pass;
 pub mod descriptor;
 pub mod dirty_dispatch;
+pub mod dlss_pass;
 pub mod external_overlay;
 pub mod forward_pass;
 pub mod frame_stats;
@@ -72,6 +75,8 @@ pub mod managers;
 mod math;
 pub mod mesh;
 pub mod mobile_upscaler;
+pub mod nrc;
+pub mod nrd;
 pub mod offscreen;
 pub mod particle_pass;
 /// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
@@ -132,6 +137,7 @@ pub mod shadow_map_pass;
 pub mod sharc;
 pub mod skybox_pass;
 pub mod sprite_pass;
+pub mod streamline;
 pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
@@ -153,12 +159,17 @@ pub use capabilities::{
     probe_virtual_geometry_caps, RayTracingCaps, VirtualGeometryCaps, VirtualGeometryTier,
 };
 pub use context::VulkanContext;
+pub use ddgi::{
+    select_rtxgi_backend, DdgiAtlasLayout, DdgiScrollDelta, DdgiScrollingState,
+    DdgiVariabilityState, DdgiVolumeParams,
+};
 pub use descriptor::{
     DescriptorLayout, DescriptorPool, FrameUBO, FrameUBOData, GpuLight, PtAnalyticLight,
     PtEmissiveTri, ReSTIRReservoir, GPU_LIGHT_KIND_POINT, GPU_LIGHT_KIND_SPOT, GPU_LIGHT_SIZE,
     LIGHT_MAX, PT_EMISSIVE_MAX, PT_LIGHT_MAX,
 };
 pub use dirty_dispatch::DirtyDispatchPlan;
+pub use dlss_pass::DlssPass;
 pub use external_overlay::{OverlayMessage, OverlayRecordCtx, SwapchainOverlay};
 pub use forward_pass::ForwardPass;
 pub use gi::{
@@ -172,6 +183,10 @@ pub use ground_grid::GroundGrid;
 pub use gtao::{GtaoFrameInputs, GtaoPass};
 pub use hdr_readback::HdrReadback;
 pub use mesh::{Mesh, Vertex};
+pub use nrd::{
+    select_pt_denoiser, NrdAccumulationMode, NrdCaps, NrdCommonSettings, NrdDenoiserMode,
+    PtDenoiserKind, PT_DIFFUSE_H, PT_HIT_DISTANCE_H, PT_SPECULAR_H,
+};
 pub use particle_pass::ParticlePass;
 pub use pipeline::GraphicsPipeline;
 pub use post::PostPass;
@@ -181,12 +196,12 @@ pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
 pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
-    DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem, PassInfo, PassKind,
-    PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode, RenderSettings,
-    ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem, SpriteLight,
-    FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP, PT_COLOR_H, SHADOW_MAP_H,
-    SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT,
-    UPSCALED_COLOR_H,
+    DlssPreUpscaleMode, DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem,
+    PassInfo, PassKind, PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode,
+    RenderSettings, ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem,
+    SpriteLight, DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP,
+    PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX,
+    SPRITE_LIGHT_POINT, UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]
@@ -201,6 +216,10 @@ pub use sharc::{
 };
 pub use skybox_pass::SkyboxSettings;
 pub use sprite_pass::SpritePass;
+pub use streamline::{
+    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, DlssgMode,
+    SlResult, StreamlineBinding, StreamlineCaps,
+};
 pub use suballocator::{MemorySuballocator, StagingArena, Suballocation, SuballocatorStats};
 pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
