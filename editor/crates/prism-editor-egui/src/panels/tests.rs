@@ -620,6 +620,7 @@ mod window_smoke_tests {
             let mut viewport_scale = 1.0;
             let _ = render_graph(
                 ui,
+                _workspace,
                 None,
                 &mut settings,
                 &mut viewport_scale,
@@ -643,6 +644,7 @@ mod window_smoke_tests {
             let mut viewport_scale = 1.0;
             let _ = render_graph(
                 ui,
+                _workspace,
                 Some(report),
                 &mut settings,
                 &mut viewport_scale,
@@ -651,18 +653,18 @@ mod window_smoke_tests {
                 &mut None,
             );
         });
-        run_frame(|ui, _workspace, state| project_settings(ui, None, state));
+        run_frame(|ui, workspace, state| project_settings(ui, workspace, None, state));
         run_frame(|ui, workspace, state| {
             let mut prefs = Preferences::default();
             preferences(ui, &mut prefs, workspace, state, false);
         });
         run_frame(|ui, workspace, _state| theme(ui, workspace));
         run_frame(|ui, workspace, state| build(ui, workspace, state));
-        run_frame(|ui, _workspace, state| {
+        run_frame(|ui, workspace, state| {
             let mut prefs = Preferences::default();
-            shortcuts(ui, &mut prefs, state);
+            shortcuts(ui, workspace, &mut prefs, state);
         });
-        run_frame(|ui, _workspace, _state| about(ui));
+        run_frame(|ui, workspace, _state| about(ui, workspace));
         run_frame(|ui, workspace, state| tools(ui, workspace, state));
     }
 

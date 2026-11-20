@@ -80,66 +80,95 @@ impl GaspDebugState {
 /// Draw the GASP Debug panel.
 pub fn gasp_debug_panel(
     ui: &mut Ui,
+    workspace: &prism_editor_core::Workspace,
     state: &mut GaspDebugState,
     runtime_graph: Option<&AnimGraphDebug>,
 ) {
-    ui.heading("GASP-Godot Parity Debug");
+    ui.heading(workspace.t("desktop.gasp.title"));
     ui.separator();
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        draw_runtime_section(ui, runtime_graph);
+        draw_runtime_section(ui, workspace, runtime_graph);
         ui.add_space(6.0);
-        draw_traversal_section(ui, state);
+        draw_traversal_section(ui, workspace, state);
         ui.add_space(6.0);
-        draw_camera_rigs_section(ui, state);
+        draw_camera_rigs_section(ui, workspace, state);
         ui.add_space(6.0);
-        draw_foley_section(ui, state);
+        draw_foley_section(ui, workspace, state);
     });
 }
 
-fn draw_runtime_section(ui: &mut Ui, runtime_graph: Option<&AnimGraphDebug>) {
-    ui.collapsing("Live AnimGraph Runtime", |ui| match runtime_graph {
-        Some(dbg) => {
-            ui.label(format!("Entities: {}", dbg.entities.len()));
-            for (entity, nodes) in &dbg.entities {
-                ui.group(|ui| {
-                    ui.label(
-                        RichText::new(format!("Entity {entity:?} — {} node(s)", nodes.len()))
+fn draw_runtime_section(
+    ui: &mut Ui,
+    workspace: &prism_editor_core::Workspace,
+    runtime_graph: Option<&AnimGraphDebug>,
+) {
+    ui.collapsing(
+        workspace.t("desktop.gasp.runtime"),
+        |ui| match runtime_graph {
+            Some(dbg) => {
+                ui.label(workspace.tf(
+                    "desktop.gasp.entities",
+                    &[("count", &dbg.entities.len().to_string())],
+                ));
+                for (entity, nodes) in &dbg.entities {
+                    ui.group(|ui| {
+                        ui.label(
+                            RichText::new(workspace.tf(
+                                "desktop.gasp.entityNodes",
+                                &[
+                                    ("entity", &format!("{entity:?}")),
+                                    ("count", &nodes.len().to_string()),
+                                ],
+                            ))
                             .strong(),
-                    );
-                    for node in nodes {
-                        ui.label(format!(
-                            "  '{}' ({:?}): state={}, t={:.2}s, blend={:.2}",
-                            node.name, node.kind, node.state, node.time, node.blend_weight
-                        ));
-                    }
-                });
+                        );
+                        for node in nodes {
+                            ui.label(format!(
+                                "  '{}' ({:?}): state={}, t={:.2}s, blend={:.2}",
+                                node.name, node.kind, node.state, node.time, node.blend_weight
+                            ));
+                        }
+                    });
+                }
             }
-        }
-        None => {
-            ui.label(
-                RichText::new("Enter Play Mode to inspect live AnimGraphDebug entities.").weak(),
-            );
-        }
-    });
+            None => {
+                ui.label(RichText::new(workspace.t("desktop.gasp.enterPlay")).weak());
+            }
+        },
+    );
 }
 
-fn draw_traversal_section(ui: &mut Ui, state: &mut GaspDebugState) {
-    ui.collapsing("P4 Traversal & MotionWarping Sandbox", |ui| {
+fn draw_traversal_section(
+    ui: &mut Ui,
+    workspace: &prism_editor_core::Workspace,
+    state: &mut GaspDebugState,
+) {
+    ui.collapsing(workspace.t("desktop.gasp.traversal"), |ui| {
         ui.add(
-            egui::Slider::new(&mut state.obstacle_height, 0.1..=3.0).text("Obstacle Height (m)"),
+            egui::Slider::new(&mut state.obstacle_height, 0.1..=3.0)
+                .text(workspace.t("desktop.gasp.obstacleHeight")),
         );
-        ui.add(egui::Slider::new(&mut state.obstacle_depth, 0.2..=2.5).text("Obstacle Depth (m)"));
         ui.add(
-            egui::Slider::new(&mut state.approach_speed, 0.0..=8.0).text("Approach Speed (m/s)"),
+            egui::Slider::new(&mut state.obstacle_depth, 0.2..=2.5)
+                .text(workspace.t("desktop.gasp.obstacleDepth")),
+        );
+        ui.add(
+            egui::Slider::new(&mut state.approach_speed, 0.0..=8.0)
+                .text(workspace.t("desktop.gasp.approachSpeed")),
         );
         ui.checkbox(
             &mut state.has_clear_landing,
-            "Clear Landing Beyond Obstacle",
+            workspace.t("desktop.gasp.clearLanding"),
         );
 
         let (action, targets) = state.evaluate_traversal();
-        ui.label(RichText::new(format!("Selected Action: {action:?}")).strong());
+        ui.label(
+            RichText::new(
+                workspace.tf("desktop.gasp.action", &[("action", &format!("{action:?}"))]),
+            )
+            .strong(),
+        );
         for (idx, t) in targets.iter().enumerate() {
             ui.label(format!(
                 "  Warp[{idx}]: pos=[{:.2}, {:.2}, {:.2}] t=[{:.2}, {:.2}]",
@@ -149,8 +178,12 @@ fn draw_traversal_section(ui: &mut Ui, state: &mut GaspDebugState) {
     });
 }
 
-fn draw_camera_rigs_section(ui: &mut Ui, state: &mut GaspDebugState) {
-    ui.collapsing("P2 GameplayCamera 9 Rigs", |ui| {
+fn draw_camera_rigs_section(
+    ui: &mut Ui,
+    workspace: &prism_editor_core::Workspace,
+    state: &mut GaspDebugState,
+) {
+    ui.collapsing(workspace.t("desktop.gasp.cameraRigs"), |ui| {
         ui.horizontal_wrapped(|ui| {
             for rig in CameraRigId::ALL {
                 let selected = state.selected_rig == rig;
@@ -162,31 +195,52 @@ fn draw_camera_rigs_section(ui: &mut Ui, state: &mut GaspDebugState) {
         let dt = ui.input(|i| i.stable_dt.clamp(0.0, 0.1));
         state.rig_blender.step(state.selected_rig, dt);
         let preset = CameraRigParams::preset(state.selected_rig);
-        ui.label(format!(
-            "Target Preset: FOV {:.1} deg | Arm {:.2} m | Lag {:.1}",
-            preset.fov_deg, preset.arm_length, preset.position_lag_speed
+        ui.label(workspace.tf(
+            "desktop.gasp.targetPreset",
+            &[
+                ("fov", &format!("{:.1}", preset.fov_deg)),
+                ("arm", &format!("{:.2}", preset.arm_length)),
+                ("lag", &format!("{:.1}", preset.position_lag_speed)),
+            ],
         ));
-        ui.label(format!(
-            "Blended Live: FOV {:.1} deg | Arm {:.2} m",
-            state.rig_blender.current.fov_deg, state.rig_blender.current.arm_length
+        ui.label(workspace.tf(
+            "desktop.gasp.blendedLive",
+            &[
+                ("fov", &format!("{:.1}", state.rig_blender.current.fov_deg)),
+                (
+                    "arm",
+                    &format!("{:.2}", state.rig_blender.current.arm_length),
+                ),
+            ],
         ));
-        ui.checkbox(&mut state.camera_hit_enabled, "Simulate Obstruction Hit");
+        ui.checkbox(
+            &mut state.camera_hit_enabled,
+            workspace.t("desktop.gasp.simulateHit"),
+        );
         if state.camera_hit_enabled {
             ui.add(
                 egui::Slider::new(&mut state.camera_hit_distance, 0.2..=5.0)
-                    .text("Hit Distance (m)"),
+                    .text(workspace.t("desktop.gasp.hitDistance")),
             );
         }
         ui.label(
-            RichText::new(format!("Clamped Arm Length: {:.2} m", state.clamped_arm())).strong(),
+            RichText::new(workspace.tf(
+                "desktop.gasp.clampedArm",
+                &[("arm", &format!("{:.2}", state.clamped_arm()))],
+            ))
+            .strong(),
         );
     });
 }
 
-fn draw_foley_section(ui: &mut Ui, state: &mut GaspDebugState) {
-    ui.collapsing("P6 Foley Notify Dispatcher", |ui| {
+fn draw_foley_section(
+    ui: &mut Ui,
+    workspace: &prism_editor_core::Workspace,
+    state: &mut GaspDebugState,
+) {
+    ui.collapsing(workspace.t("desktop.gasp.foley"), |ui| {
         ui.horizontal(|ui| {
-            ui.label("Surface:");
+            ui.label(workspace.t("desktop.gasp.surface"));
             for surf in [
                 SurfaceMaterialKind::Default,
                 SurfaceMaterialKind::Concrete,
@@ -204,11 +258,14 @@ fn draw_foley_section(ui: &mut Ui, state: &mut GaspDebugState) {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Notify:");
+            ui.label(workspace.t("desktop.gasp.notify"));
             ui.text_edit_singleline(&mut state.foley_notify);
         });
-        ui.add(egui::Slider::new(&mut state.foley_speed, 0.0..=8.0).text("Speed (m/s)"));
-        if ui.button("Dispatch Notify").clicked() {
+        ui.add(
+            egui::Slider::new(&mut state.foley_speed, 0.0..=8.0)
+                .text(workspace.t("desktop.gasp.speed")),
+        );
+        if ui.button(workspace.t("desktop.gasp.dispatch")).clicked() {
             let now = ui.input(|i| i.time as f32);
             state.last_foley_event = state.foley_dispatcher.try_dispatch(
                 &state.foley_notify,
@@ -219,13 +276,18 @@ fn draw_foley_section(ui: &mut Ui, state: &mut GaspDebugState) {
         }
         match state.last_foley_event {
             Some(ev) => {
-                ui.label(format!(
-                    "Resolved: {:?} on {:?} (gain={:.2}, pitch={:.2})",
-                    ev.action, ev.surface, ev.gain, ev.pitch
+                ui.label(workspace.tf(
+                    "desktop.gasp.resolved",
+                    &[
+                        ("action", &format!("{:?}", ev.action)),
+                        ("surface", &format!("{:?}", ev.surface)),
+                        ("gain", &format!("{:.2}", ev.gain)),
+                        ("pitch", &format!("{:.2}", ev.pitch)),
+                    ],
                 ));
             }
             None => {
-                ui.label(RichText::new("No event (unrecognized notify or in cooldown)").weak());
+                ui.label(RichText::new(workspace.t("desktop.gasp.noEvent")).weak());
             }
         }
     });

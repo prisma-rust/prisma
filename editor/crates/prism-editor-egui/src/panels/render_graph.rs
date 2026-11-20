@@ -34,20 +34,20 @@ impl SceneRenderMode {
         SceneRenderMode::SkinWeights,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label_key(self) -> &'static str {
         match self {
-            SceneRenderMode::Shaded => "Shaded",
-            SceneRenderMode::Wireframe => "Wireframe",
-            SceneRenderMode::ShadedWireframe => "Shaded Wireframe",
-            SceneRenderMode::Direct => "Direct",
-            SceneRenderMode::Specular => "Specular",
-            SceneRenderMode::Metallic => "Metallic",
-            SceneRenderMode::Roughness => "Roughness",
-            SceneRenderMode::AmbientOcclusion => "AO",
-            SceneRenderMode::Emissive => "Emissive",
-            SceneRenderMode::Depth => "Depth",
-            SceneRenderMode::ViewNormals => "View Normals",
-            SceneRenderMode::SkinWeights => "Skin Weights",
+            SceneRenderMode::Shaded => "desktop.renderMode.shaded",
+            SceneRenderMode::Wireframe => "desktop.renderMode.wireframe",
+            SceneRenderMode::ShadedWireframe => "desktop.renderMode.shadedWireframe",
+            SceneRenderMode::Direct => "desktop.renderMode.direct",
+            SceneRenderMode::Specular => "desktop.renderMode.specular",
+            SceneRenderMode::Metallic => "desktop.renderMode.metallic",
+            SceneRenderMode::Roughness => "desktop.renderMode.roughness",
+            SceneRenderMode::AmbientOcclusion => "desktop.renderMode.ao",
+            SceneRenderMode::Emissive => "desktop.renderMode.emissive",
+            SceneRenderMode::Depth => "desktop.renderMode.depth",
+            SceneRenderMode::ViewNormals => "desktop.renderMode.viewNormals",
+            SceneRenderMode::SkinWeights => "desktop.renderMode.skinWeights",
         }
     }
 
@@ -100,17 +100,20 @@ impl SceneRenderMode {
 
 pub fn scene_render_mode_combo(
     ui: &mut Ui,
+    workspace: &Workspace,
     settings: &mut prism_engine::render_settings::RenderSettings,
 ) -> bool {
     let current = SceneRenderMode::from_settings(settings);
-    let selected = current.map(|mode| mode.label()).unwrap_or("Custom");
+    let selected = current
+        .map(|mode| workspace.t(mode.label_key()))
+        .unwrap_or_else(|| workspace.t("desktop.renderMode.custom"));
     let mut chosen = current;
     egui::ComboBox::from_id_salt("scene-render-mode")
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for mode in SceneRenderMode::ALL {
                 if ui
-                    .selectable_label(current == Some(mode), mode.label())
+                    .selectable_label(current == Some(mode), workspace.t(mode.label_key()))
                     .clicked()
                 {
                     chosen = Some(mode);
@@ -128,6 +131,7 @@ pub fn scene_render_mode_combo(
 
 pub fn render_graph(
     ui: &mut Ui,
+    workspace: &Workspace,
     report: Option<&str>,
     settings: &mut prism_engine::render_settings::RenderSettings,
     viewport_scale: &mut f32,
@@ -136,24 +140,29 @@ pub fn render_graph(
     frame_budget_ms: &mut Option<f32>,
 ) -> bool {
     let mut changed = false;
-    ui.heading("Render Settings");
+    ui.heading(workspace.t("desktop.render.settings"));
     egui::Grid::new("render-settings")
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Mode");
-            changed |= scene_render_mode_combo(ui, settings);
+            ui.label(workspace.t("desktop.render.mode"));
+            changed |= scene_render_mode_combo(ui, workspace, settings);
             ui.end_row();
 
-            ui.label("Tonemap");
+            ui.label(workspace.t("desktop.render.tonemap"));
             egui::ComboBox::from_id_salt("tonemap")
-                .selected_text(match settings.tonemap_mode {
-                    0 => "Reinhard",
-                    1 => "ACES",
-                    _ => "Passthrough",
-                })
+                .selected_text(workspace.t(match settings.tonemap_mode {
+                    0 => "desktop.render.tonemapReinhard",
+                    1 => "desktop.render.tonemapAces",
+                    _ => "desktop.render.tonemapPassthrough",
+                }))
                 .show_ui(ui, |ui| {
-                    for (mode, label) in [(0u32, "Reinhard"), (1, "ACES"), (2, "Passthrough")] {
+                    for (mode, key) in [
+                        (0u32, "desktop.render.tonemapReinhard"),
+                        (1, "desktop.render.tonemapAces"),
+                        (2, "desktop.render.tonemapPassthrough"),
+                    ] {
+                        let label = workspace.t(key);
                         if ui
                             .selectable_label(settings.tonemap_mode == mode, label)
                             .clicked()
@@ -165,146 +174,137 @@ pub fn render_graph(
                 });
             ui.end_row();
 
-            ui.label("Contrast");
+            ui.label(workspace.t("desktop.render.contrast"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.contrast, 0.0..=3.0))
                 .changed();
             ui.end_row();
 
-            ui.label("Saturation");
+            ui.label(workspace.t("desktop.render.saturation"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.saturation, 0.0..=3.0))
                 .changed();
             ui.end_row();
 
-            ui.label("Vignette");
+            ui.label(workspace.t("desktop.render.vignette"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.vignette, 0.0..=1.0))
                 .changed();
             ui.end_row();
 
-            ui.label("Chromatic Aberration");
+            ui.label(workspace.t("desktop.render.chromatic"));
             changed |= ui
                 .add(egui::Slider::new(
                     &mut settings.chromatic_aberration,
                     0.0..=1.0,
                 ))
-                .on_hover_text("Radial red/blue split toward the frame edges.")
                 .changed();
             ui.end_row();
 
-            ui.label("Film Grain");
+            ui.label(workspace.t("desktop.render.filmGrain"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.film_grain, 0.0..=1.0))
-                .on_hover_text("Monochrome noise over the final image.")
                 .changed();
             ui.end_row();
 
-            ui.label("Temperature");
+            ui.label(workspace.t("desktop.render.temperature"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.temperature, -1.0..=1.0))
-                .on_hover_text("White balance: negative is cooler (blue), positive is warmer (orange).")
                 .changed();
             ui.end_row();
 
-            ui.label("Tint");
+            ui.label(workspace.t("desktop.render.tint"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.tint, -1.0..=1.0))
-                .on_hover_text("White balance: negative is green, positive is magenta.")
                 .changed();
             ui.end_row();
 
-            ui.label("Depth of Field");
+            ui.label(workspace.t("desktop.render.dof"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.dof_aperture, 0.0..=1.0))
-                .on_hover_text("Depth-of-field strength; 0 disables it.")
                 .changed();
             ui.end_row();
 
-            ui.label("Focus Distance");
+            ui.label(workspace.t("desktop.render.focusDistance"));
             changed |= ui
                 .add(egui::Slider::new(
                     &mut settings.dof_focus_distance,
                     0.1..=100.0,
                 ))
-                .on_hover_text("Distance from the camera that stays sharp, in metres.")
                 .changed();
             ui.end_row();
 
-            ui.label("Max Blur");
+            ui.label(workspace.t("desktop.render.maxBlur"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.dof_max_blur, 0.0..=32.0))
-                .on_hover_text("Largest depth-of-field blur radius in pixels.")
                 .changed();
             ui.end_row();
 
-            ui.label("LUT");
+            ui.label(workspace.t("desktop.render.lut"));
             changed |= ui
                 .add(
                     egui::TextEdit::singleline(&mut settings.lut)
                         .hint_text("luts/grade.cube")
                         .desired_width(180.0),
                 )
-                .on_hover_text("3D LUT path relative to assets/. Empty disables it.")
                 .changed();
             ui.end_row();
 
-            ui.label("LUT Strength");
+            ui.label(workspace.t("desktop.render.lutStrength"));
             changed |= ui
                 .add_enabled(
                     !settings.lut.trim().is_empty(),
                     egui::Slider::new(&mut settings.lut_strength, 0.0..=1.0),
                 )
-                .on_hover_text("Blend toward the LUT; 0 disables it, 1 uses it fully.")
                 .changed();
             ui.end_row();
 
-            ui.label("Motion Blur");
+            ui.label(workspace.t("desktop.render.motionBlur"));
             changed |= ui
                 .add(egui::Slider::new(&mut settings.motion_blur, 0.0..=1.0))
-                .on_hover_text("Camera motion-blur strength; 0 disables it.")
                 .changed();
             ui.end_row();
 
-            ui.label("Motion Trail");
+            ui.label(workspace.t("desktop.render.motionTrail"));
             changed |= ui
                 .add(egui::Slider::new(
                     &mut settings.motion_blur_max_pixels,
                     0.0..=64.0,
                 ))
-                .on_hover_text("Largest motion-blur trail in pixels.")
                 .changed();
             ui.end_row();
 
-            ui.label("TAA");
-            changed |= ui.checkbox(&mut settings.taa, "Enable").changed();
+            ui.label(workspace.t("desktop.render.taa"));
+            changed |= ui
+                .checkbox(&mut settings.taa, workspace.t("desktop.render.enable"))
+                .changed();
             ui.end_row();
 
-            ui.label("Occlusion Culling");
+            ui.label(workspace.t("desktop.render.occlusion"));
             changed |= ui
-                .checkbox(&mut settings.occlusion_culling, "Enable")
-                .on_hover_text(
-                    "Skip draws that the previous frame's depth fully covers; \
-                     shadows are unaffected. Off by default.",
+                .checkbox(
+                    &mut settings.occlusion_culling,
+                    workspace.t("desktop.render.enable"),
                 )
                 .changed();
             ui.end_row();
 
-            ui.label("TAA Strength");
+            ui.label(workspace.t("desktop.render.taaStrength"));
             changed |= ui
                 .add_enabled(
                     settings.taa,
                     egui::Slider::new(&mut settings.taa_strength, 0.0..=0.95),
                 )
-                .on_hover_text("History blend weight; 0 is current frame only.")
                 .changed();
             ui.end_row();
 
-            ui.label("Bloom");
-            changed |= ui.checkbox(&mut settings.bloom, "Enable").changed();
+            ui.label(workspace.t("desktop.render.bloom"));
+            changed |= ui
+                .checkbox(&mut settings.bloom, workspace.t("desktop.render.enable"))
+                .changed();
             ui.end_row();
 
-            ui.label("Bloom Intensity");
+            ui.label(workspace.t("desktop.render.bloomIntensity"));
             changed |= ui
                 .add_enabled(
                     settings.bloom,
@@ -313,30 +313,26 @@ pub fn render_graph(
                 .changed();
             ui.end_row();
 
-            ui.label("Bloom Threshold");
+            ui.label(workspace.t("desktop.render.bloomThreshold"));
             changed |= ui
                 .add_enabled(
                     settings.bloom,
                     egui::Slider::new(&mut settings.bloom_threshold, 0.0..=8.0),
                 )
-                .on_hover_text("HDR luminance above which pixels start to bloom.")
                 .changed();
             ui.end_row();
 
-            ui.label("Shadow Distance");
+            ui.label(workspace.t("desktop.render.shadowDistance"));
             changed |= ui
                 .add(
                     egui::Slider::new(&mut settings.shadow_distance, 10.0..=300.0)
                         .suffix(" m")
                         .fixed_decimals(1),
                 )
-                .on_hover_text(
-                    "Directional shadow coverage. Larger sees further, each texel covers more                      world, so contact shadows get blurrier.",
-                )
                 .changed();
             ui.end_row();
 
-            ui.label("Shadow Cascades");
+            ui.label(workspace.t("desktop.render.shadowCascades"));
             egui::ComboBox::from_id_salt("shadow-cascades")
                 .selected_text(match settings.shadow_cascade_count {
                     2 => "2 (atlas)",
@@ -354,20 +350,20 @@ pub fn render_graph(
                         }
                     }
                 })
-                .response
-                .on_hover_text(
-                    "1 = single shadow map; 2 = near/far cascades in a 2×1 atlas. Requires recreating the renderer.",
-                );
+                .response;
             ui.end_row();
 
-            ui.label("Anti-aliasing");
+            ui.label(workspace.t("desktop.render.aa"));
             egui::ComboBox::from_id_salt("aa-mode")
-                .selected_text(match settings.aa_mode {
-                    1 => "FXAA",
-                    _ => "Off",
-                })
+                .selected_text(workspace.t(match settings.aa_mode {
+                    1 => "desktop.render.aaFxaa",
+                    _ => "desktop.render.aaOff",
+                }))
                 .show_ui(ui, |ui| {
-                    for (mode, label) in [(0u32, "Off"), (1, "FXAA")] {
+                    for (mode, key) in
+                        [(0u32, "desktop.render.aaOff"), (1, "desktop.render.aaFxaa")]
+                    {
+                        let label = workspace.t(key);
                         if ui
                             .selectable_label(settings.aa_mode == mode, label)
                             .clicked()
@@ -379,12 +375,15 @@ pub fn render_graph(
                 });
             ui.end_row();
 
-            ui.label("Path trace");
+            ui.label(workspace.t("desktop.render.pathTrace"));
             let mut path_trace = matches!(
                 settings.render_mode,
                 prism_engine::render_settings::RenderMode::PathTrace
             );
-            if ui.checkbox(&mut path_trace, "Path traced").changed() {
+            if ui
+                .checkbox(&mut path_trace, workspace.t("desktop.render.pathTraced"))
+                .changed()
+            {
                 settings.render_mode = if path_trace {
                     prism_engine::render_settings::RenderMode::PathTrace
                 } else {
@@ -395,25 +394,28 @@ pub fn render_graph(
             ui.end_row();
 
             if path_trace {
-                ui.label("Max bounces");
+                ui.label(workspace.t("desktop.render.maxBounces"));
                 changed |= ui
                     .add(egui::Slider::new(&mut settings.pt_max_bounces, 1..=16))
                     .changed();
                 ui.end_row();
-                ui.label("Samples");
+                ui.label(workspace.t("desktop.render.samples"));
                 changed |= ui
                     .add(egui::Slider::new(&mut settings.pt_max_iterations, 0..=4096))
                     .changed();
                 ui.end_row();
             }
 
-            ui.label("Grid");
+            ui.label(workspace.t("desktop.viewport.grid"));
             changed |= ui
-                .checkbox(&mut settings.show_grid, "Show ground grid")
+                .checkbox(
+                    &mut settings.show_grid,
+                    workspace.t("desktop.render.showGrid"),
+                )
                 .changed();
             ui.end_row();
 
-            ui.label("Viewport res");
+            ui.label(workspace.t("desktop.render.viewportRes"));
             changed |= ui
                 .add(egui::Slider::new(viewport_scale, 0.5..=1.5).suffix("×"))
                 .changed();
@@ -421,10 +423,10 @@ pub fn render_graph(
         });
 
     ui.separator();
-    ui.heading("Render Graph");
+    ui.heading(workspace.t("menu.renderGraph"));
     let mut budget = frame_budget_ms.unwrap_or(FRAME_BUDGET_MS);
     ui.horizontal(|ui| {
-        ui.label("Frame budget");
+        ui.label(workspace.t("desktop.render.frameBudget"));
         if ui
             .add(
                 egui::DragValue::new(&mut budget)
@@ -436,14 +438,18 @@ pub fn render_graph(
         {
             *frame_budget_ms = Some(budget);
         }
-        if frame_budget_ms.is_some() && ui.small_button("Auto").clicked() {
+        if frame_budget_ms.is_some()
+            && ui
+                .small_button(workspace.t("desktop.render.auto"))
+                .clicked()
+        {
             *frame_budget_ms = None;
         }
         ui.label(
             RichText::new(if frame_budget_ms.is_some() {
-                "custom"
+                workspace.t("desktop.render.custom")
             } else {
-                "auto 16.6 ms"
+                workspace.t("desktop.render.autoBudget")
             })
             .weak()
             .size(10.0),
@@ -451,29 +457,21 @@ pub fn render_graph(
     });
     ui.horizontal(|ui| {
         let label = if *paused {
-            "Resume live capture"
+            workspace.t("desktop.render.resumeCapture")
         } else {
-            "Pause capture"
+            workspace.t("desktop.render.pauseCapture")
         };
         if ui.button(label).clicked() {
             *paused = !*paused;
         }
         if *paused {
             ui.label(
-                RichText::new("showing the frame captured when paused")
+                RichText::new(workspace.t("desktop.render.pausedFrame"))
                     .weak()
                     .size(10.0),
             );
         }
     });
-    ui.label(
-        RichText::new(
-            "Shadow → Scene → GTAO → PathTrace → Sprite → Sky → Post run on one queue; \
-             the Scene/Game viewports sample the final offscreen image directly.",
-        )
-        .weak()
-        .size(11.0),
-    );
     match report {
         Some(json) => {
             ui.label(
@@ -483,12 +481,12 @@ pub fn render_graph(
             );
             let parsed = prism_editor_core::render_graph::RenderGraphReport::parse(json);
             if let Some(parsed) = &parsed {
-                render_graph_timings(ui, parsed, budget);
-                render_graph_history(ui, parsed, budget);
-                render_graph_stats(ui, parsed);
-                render_graph_draw_calls(ui, parsed, paused, selected_call);
+                render_graph_timings(ui, workspace, parsed, budget);
+                render_graph_history(ui, workspace, parsed, budget);
+                render_graph_stats(ui, workspace, parsed);
+                render_graph_draw_calls(ui, workspace, parsed, paused, selected_call);
             }
-            ui.collapsing("Raw JSON", |ui| {
+            ui.collapsing(workspace.t("desktop.render.rawJson"), |ui| {
                 egui::ScrollArea::both()
                     .id_salt("graph-scroll")
                     .auto_shrink([false, false])
@@ -499,12 +497,7 @@ pub fn render_graph(
             });
         }
         None => {
-            ui.label(
-                RichText::new(
-                    "No report yet — the Scene view writes one to                      target/prism-render-graph.json after its first frame.",
-                )
-                .weak(),
-            );
+            ui.label(RichText::new(workspace.t("desktop.render.noReport")).weak());
         }
     }
     changed
@@ -512,6 +505,7 @@ pub fn render_graph(
 
 pub(super) fn render_graph_draw_calls(
     ui: &mut Ui,
+    workspace: &Workspace,
     report: &prism_editor_core::render_graph::RenderGraphReport,
     paused: &mut bool,
     selected: &mut Option<usize>,
@@ -527,21 +521,37 @@ pub(super) fn render_graph_draw_calls(
     ui.add_space(4.0);
     let mut step = None;
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Draw calls").strong());
-        ui.label(RichText::new(format!("{count} recorded")).weak().size(10.0));
-        if ui.button("◀ Prev").clicked() {
+        ui.label(RichText::new(workspace.t("desktop.render.drawCalls")).strong());
+        ui.label(
+            RichText::new(
+                workspace.tf("desktop.render.recorded", &[("count", &count.to_string())]),
+            )
+            .weak()
+            .size(10.0),
+        );
+        if ui.button(workspace.t("desktop.render.prev")).clicked() {
             step = Some(-1);
         }
-        if ui.button("Next ▶").clicked() {
+        if ui.button(workspace.t("desktop.render.next")).clicked() {
             step = Some(1);
         }
         match *selected {
             Some(index) => ui.label(
-                RichText::new(format!("call {}/{}", index + 1, count))
+                RichText::new(workspace.tf(
+                    "desktop.render.callOf",
+                    &[
+                        ("index", &(index + 1).to_string()),
+                        ("count", &count.to_string()),
+                    ],
+                ))
+                .weak()
+                .size(10.0),
+            ),
+            None => ui.label(
+                RichText::new(workspace.t("desktop.render.noneSelected"))
                     .weak()
                     .size(10.0),
             ),
-            None => ui.label(RichText::new("no call selected").weak().size(10.0)),
         };
     });
     if let Some(delta) = step {
@@ -559,10 +569,26 @@ pub(super) fn render_graph_draw_calls(
                 .num_columns(4)
                 .spacing([12.0, 3.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Call").weak().size(10.0));
-                    ui.label(RichText::new("Inst.").weak().size(10.0));
-                    ui.label(RichText::new("Tris").weak().size(10.0));
-                    ui.label(RichText::new("State").weak().size(10.0));
+                    ui.label(
+                        RichText::new(workspace.t("desktop.render.call"))
+                            .weak()
+                            .size(10.0),
+                    );
+                    ui.label(
+                        RichText::new(workspace.t("desktop.render.instances"))
+                            .weak()
+                            .size(10.0),
+                    );
+                    ui.label(
+                        RichText::new(workspace.t("desktop.render.triangles"))
+                            .weak()
+                            .size(10.0),
+                    );
+                    ui.label(
+                        RichText::new(workspace.t("desktop.render.state"))
+                            .weak()
+                            .size(10.0),
+                    );
                     ui.end_row();
                     for (index, call) in report.draw_calls.iter().enumerate() {
                         let mut text = RichText::new(call.summary()).size(11.0);
@@ -598,45 +624,73 @@ pub(super) fn render_graph_draw_calls(
     };
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.label(
-            RichText::new(format!("Call {}/{} · {}", index + 1, count, call.summary()))
-                .strong()
-                .size(11.0),
+            RichText::new(workspace.tf(
+                "desktop.render.callSummary",
+                &[
+                    ("index", &(index + 1).to_string()),
+                    ("count", &count.to_string()),
+                    ("summary", &call.summary()),
+                ],
+            ))
+            .strong()
+            .size(11.0),
         );
         ui.label(
-            RichText::new(format!(
-                "instances {} · triangles {} · visible {}",
-                call.instances,
-                call.triangles,
-                if call.visible { "yes" } else { "no (culled)" }
+            RichText::new(workspace.tf(
+                "desktop.render.callStats",
+                &[
+                    ("instances", &call.instances.to_string()),
+                    ("triangles", &call.triangles.to_string()),
+                    (
+                        "visible",
+                        &workspace.t(if call.visible {
+                            "common.yes"
+                        } else {
+                            "desktop.render.culled"
+                        }),
+                    ),
+                ],
             ))
             .size(10.0),
         );
         ui.label(
-            RichText::new(format!(
-                "pipeline: {}",
-                call.pipeline.as_deref().unwrap_or("not recorded")
+            RichText::new(workspace.tf(
+                "desktop.render.pipeline",
+                &[("value", call.pipeline.as_deref().unwrap_or("not recorded"))],
             ))
             .size(10.0),
         );
         let descriptor_sets = if call.descriptor_sets.is_empty() {
-            "none".to_string()
+            workspace.t("desktop.render.none")
         } else {
             call.descriptor_sets.join(", ")
         };
-        ui.label(RichText::new(format!("descriptor sets: {descriptor_sets}")).size(10.0));
         ui.label(
-            RichText::new(format!(
-                "vertices: {}",
-                call.vertices
-                    .map(|vertices| vertices.to_string())
-                    .unwrap_or_else(|| "not recorded".to_string())
+            RichText::new(workspace.tf(
+                "desktop.render.descriptorSets",
+                &[("value", &descriptor_sets)],
             ))
             .size(10.0),
         );
         ui.label(
-            RichText::new(format!(
-                "state: {}",
-                call.state.as_deref().unwrap_or("not recorded")
+            RichText::new(
+                workspace.tf(
+                    "desktop.render.vertices",
+                    &[(
+                        "value",
+                        &call
+                            .vertices
+                            .map(|vertices| vertices.to_string())
+                            .unwrap_or_else(|| "not recorded".to_string()),
+                    )],
+                ),
+            )
+            .size(10.0),
+        );
+        ui.label(
+            RichText::new(workspace.tf(
+                "desktop.render.stateLine",
+                &[("value", call.state.as_deref().unwrap_or("not recorded"))],
             ))
             .size(10.0),
         );
@@ -659,6 +713,7 @@ pub(super) fn stepped_call(current: Option<usize>, count: usize, delta: isize) -
 
 pub(super) fn render_graph_stats(
     ui: &mut Ui,
+    workspace: &Workspace,
     report: &prism_editor_core::render_graph::RenderGraphReport,
 ) {
     let Some(stats) = report.stats else {
@@ -666,11 +721,14 @@ pub(super) fn render_graph_stats(
     };
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Resources").strong());
+        ui.label(RichText::new(workspace.t("desktop.render.resources")).strong());
         ui.label(
-            RichText::new(format!("~{} resident", format_bytes(stats.total_bytes())))
-                .weak()
-                .size(10.0),
+            RichText::new(workspace.tf(
+                "desktop.render.resident",
+                &[("size", &format_bytes(stats.total_bytes()))],
+            ))
+            .weak()
+            .size(10.0),
         );
     });
     egui::Grid::new("graph-resource-stats")
@@ -697,12 +755,13 @@ pub(super) fn per_pass_budget_ms_with_total(pass_count: usize, frame_budget_ms: 
 
 pub(super) fn render_graph_timings(
     ui: &mut Ui,
+    workspace: &Workspace,
     report: &prism_editor_core::render_graph::RenderGraphReport,
     frame_budget_ms: f32,
 ) {
     let Some(total) = report.gpu_total_ms() else {
         ui.label(
-            RichText::new("No GPU timings (device does not report timestamps).")
+            RichText::new(workspace.t("desktop.render.noTimings"))
                 .weak()
                 .size(11.0),
         );
@@ -722,8 +781,12 @@ pub(super) fn render_graph_timings(
         };
         ui.label(RichText::new(format!("{total:.2} ms")).color(color));
         ui.label(
-            RichText::new(format!(
-                "budget {frame_budget_ms:.1} ms · {budget:.2} ms/pass"
+            RichText::new(workspace.tf(
+                "desktop.render.budgetLine",
+                &[
+                    ("budget", &format!("{frame_budget_ms:.1}")),
+                    ("per_pass", &format!("{budget:.2}")),
+                ],
             ))
             .weak()
             .size(10.0),
@@ -734,10 +797,26 @@ pub(super) fn render_graph_timings(
         .num_columns(4)
         .spacing([12.0, 3.0])
         .show(ui, |ui| {
-            ui.label(RichText::new("Pass").weak().size(10.0));
-            ui.label(RichText::new("Kind").weak().size(10.0));
-            ui.label(RichText::new("GPU ms").weak().size(10.0));
-            ui.label(RichText::new("Budget").weak().size(10.0));
+            ui.label(
+                RichText::new(workspace.t("desktop.render.pass"))
+                    .weak()
+                    .size(10.0),
+            );
+            ui.label(
+                RichText::new(workspace.t("desktop.render.kind"))
+                    .weak()
+                    .size(10.0),
+            );
+            ui.label(
+                RichText::new(workspace.t("desktop.render.gpuMs"))
+                    .weak()
+                    .size(10.0),
+            );
+            ui.label(
+                RichText::new(workspace.t("desktop.render.budget"))
+                    .weak()
+                    .size(10.0),
+            );
             ui.end_row();
             for pass in &passes {
                 ui.label(RichText::new(&pass.name).size(11.0));
@@ -766,6 +845,7 @@ pub(super) fn render_graph_timings(
 
 pub(super) fn render_graph_history(
     ui: &mut Ui,
+    workspace: &Workspace,
     report: &prism_editor_core::render_graph::RenderGraphReport,
     frame_budget_ms: f32,
 ) {
@@ -776,11 +856,17 @@ pub(super) fn render_graph_history(
     ui.add_space(4.0);
     let average = samples.iter().sum::<f32>() / samples.len() as f32;
     ui.horizontal(|ui| {
-        ui.label(RichText::new("GPU history").strong());
+        ui.label(RichText::new(workspace.t("desktop.render.gpuHistory")).strong());
         ui.label(
-            RichText::new(format!("{average:.2} ms avg · {} frames", samples.len()))
-                .weak()
-                .size(10.0),
+            RichText::new(workspace.tf(
+                "desktop.render.historyLine",
+                &[
+                    ("average", &format!("{average:.2}")),
+                    ("count", &samples.len().to_string()),
+                ],
+            ))
+            .weak()
+            .size(10.0),
         );
     });
 
@@ -830,8 +916,8 @@ mod render_mode_tests {
             assert_eq!(
                 SceneRenderMode::from_settings(&settings),
                 Some(mode),
-                "{} did not round-trip",
-                mode.label()
+                "{:?} did not round-trip",
+                mode
             );
         }
     }

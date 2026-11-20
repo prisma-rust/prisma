@@ -478,7 +478,7 @@ impl EditorApp {
         let closable = tabs.len() > 1;
         let widths: Vec<f32> = tabs
             .iter()
-            .map(|tab| dock_tab_width(&child, &tab_title(tab), closable))
+            .map(|tab| dock_tab_width(&child, &self.workspace.panel_title(tab), closable))
             .collect();
         let needed: f32 = widths.iter().sum();
         let overflow = tab_bar_needs_overflow(needed, bar.width());
@@ -515,7 +515,8 @@ impl EditorApp {
         let bar_ui = &mut bar_ui;
         for tab in &tabs[visible_from..visible_to] {
             let selected = tab == active;
-            let tab_outcome = dock_tab(bar_ui, tab, &tab_title(tab), selected, closable, &colors);
+            let title = self.workspace.panel_title(tab);
+            let tab_outcome = dock_tab(bar_ui, tab, &title, selected, closable, &colors);
             if tab_outcome.closed {
                 close = Some(tab.clone());
                 continue;
@@ -535,27 +536,31 @@ impl EditorApp {
             response.context_menu(|ui| {
                 let is_maximized = maximized.as_deref() == Some(tab.as_str());
                 if ui
-                    .button(if is_maximized { "Restore" } else { "Maximize" })
+                    .button(if is_maximized {
+                        self.t("desktop.dock.restore")
+                    } else {
+                        self.t("desktop.dock.maximize")
+                    })
                     .clicked()
                 {
                     maximize = Some(tab.clone());
                     ui.close();
                 }
-                if tabs.len() > 1 && ui.button("Float panel").clicked() {
+                if tabs.len() > 1 && ui.button(self.t("desktop.dock.float")).clicked() {
                     float = Some(tab.clone());
                     ui.close();
                 }
                 ui.separator();
-                if tabs.len() > 1 && ui.button("Close tab").clicked() {
+                if tabs.len() > 1 && ui.button(self.t("desktop.dock.closeTab")).clicked() {
                     close = Some(tab.clone());
                     ui.close();
                 }
-                if tabs.len() > 1 && ui.button("Close others").clicked() {
+                if tabs.len() > 1 && ui.button(self.t("desktop.dock.closeOthers")).clicked() {
                     close_others = Some(tab.clone());
                     ui.close();
                 }
                 if !addable.is_empty() {
-                    ui.menu_button("Add tab", |ui| {
+                    ui.menu_button(self.t("desktop.dock.addTab"), |ui| {
                         for (id, title) in &addable {
                             if ui.button(title).clicked() {
                                 add_tab = Some(id.clone());
@@ -579,7 +584,8 @@ impl EditorApp {
             button_ui.set_clip_rect(button_rect);
             button_ui.menu_button(icons::CARET_DOWN, |ui| {
                 for tab in tabs {
-                    if ui.selectable_label(tab == active, tab_title(tab)).clicked() {
+                    let title = self.workspace.panel_title(tab);
+                    if ui.selectable_label(tab == active, title).clicked() {
                         overflow_activate = Some(tab.clone());
                         ui.close();
                     }
@@ -768,12 +774,12 @@ impl EditorApp {
         match tab {
             "sceneView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak())
+                    ui.label(RichText::new(self.t("desktop.viewport.disabled")).weak())
                 });
             }
             "gameView" if no_viewport => {
                 ui.centered_and_justified(|ui| {
-                    ui.label(RichText::new("viewport disabled (PRISMA_EDITOR_NO_VIEWPORT)").weak())
+                    ui.label(RichText::new(self.t("desktop.viewport.disabled")).weak())
                 });
             }
             "sceneView" => self.show_viewport(ui, ViewKind::Scene, rect),
@@ -804,6 +810,7 @@ impl EditorApp {
                 let mut settings = self.render_settings.clone();
                 if panels::render_graph(
                     ui,
+                    &self.workspace,
                     report,
                     &mut settings,
                     &mut self.state.viewport_scale,
@@ -822,9 +829,12 @@ impl EditorApp {
                     };
                 }
             }
-            "projectSettings" => {
-                panels::project_settings(ui, self.project_root.as_deref(), &mut self.state)
-            }
+            "projectSettings" => panels::project_settings(
+                ui,
+                &self.workspace,
+                self.project_root.as_deref(),
+                &mut self.state,
+            ),
             "preferences" => panels::preferences(
                 ui,
                 &mut self.preferences,
@@ -845,7 +855,13 @@ impl EditorApp {
                     .as_ref()
                     .map(|view| view.host.project_diagnostics().to_vec())
                     .unwrap_or_default();
-                panels::problems(ui, &module, &self.build_diagnostics, &mut self.state);
+                panels::problems(
+                    ui,
+                    &self.workspace,
+                    &module,
+                    &self.build_diagnostics,
+                    &mut self.state,
+                );
             }
             "prefabOverrides" => panels::prefab_overrides(ui, &mut self.workspace, &mut self.state),
             "material" => panels::material(ui, &mut self.workspace, &mut self.state),
@@ -868,7 +884,12 @@ impl EditorApp {
                         .world()
                         .get_resource::<prism_engine::scene::systems::animator::AnimGraphDebug>()
                 });
-                crate::gasp_debug::gasp_debug_panel(ui, &mut self.state.gasp_debug, runtime_graph);
+                crate::gasp_debug::gasp_debug_panel(
+                    ui,
+                    &self.workspace,
+                    &mut self.state.gasp_debug,
+                    runtime_graph,
+                );
             }
             "tools" => {
                 panels::tools(ui, &mut self.workspace, &mut self.state);
@@ -876,12 +897,23 @@ impl EditorApp {
                     self.start_build(kind);
                 }
             }
-            "shortcuts" => panels::shortcuts(ui, &mut self.preferences, &mut self.state),
-            "about" => panels::about(ui),
+            "shortcuts" => {
+                panels::shortcuts(ui, &self.workspace, &mut self.preferences, &mut self.state)
+            }
+            "about" => panels::about(ui, &self.workspace),
             other => {
                 ui.label(RichText::new(format!("panel '{other}' not implemented")).weak());
             }
         }
+    }
+
+    fn prt_mode_label(&self, mode: prism_editor_core::PrtDisplayMode) -> String {
+        self.t(match mode {
+            prism_editor_core::PrtDisplayMode::ShSpheres => "desktop.viewport.prtSpheres",
+            prism_editor_core::PrtDisplayMode::MeanIrradiance => "desktop.viewport.prtMean",
+            prism_editor_core::PrtDisplayMode::DominantDirection => "desktop.viewport.prtDirection",
+            prism_editor_core::PrtDisplayMode::GridBoundsOnly => "desktop.viewport.prtBounds",
+        })
     }
 
     pub(super) fn scene_overlay(&mut self, ui: &mut egui::Ui, rect: Rect) {
@@ -917,7 +949,6 @@ impl EditorApp {
                             } else {
                                 icons::CARET_DOWN
                             })
-                            .on_hover_text("Collapse / expand viewport header bar")
                             .clicked()
                         {
                             collapsed_now = !collapsed_now;
@@ -925,36 +956,41 @@ impl EditorApp {
                         if collapsed_now {
                             return;
                         }
-                        if panels::scene_render_mode_combo(ui, &mut settings) {
+                        if panels::scene_render_mode_combo(ui, &self.workspace, &mut settings) {
                             changed = true;
                         }
                         if ui
-                            .selectable_label(self.workspace.camera.orthographic, "2D")
-                            .on_hover_text("Orthographic XY view (locks orbit to pan + zoom)")
+                            .selectable_label(
+                                self.workspace.camera.orthographic,
+                                self.t("desktop.viewport.ortho"),
+                            )
                             .clicked()
                         {
                             self.workspace.camera.toggle_2d();
                             camera_changed = true;
                         }
                         if ui
-                            .selectable_label(settings.show_grid, "Grid")
-                            .on_hover_text("Ground grid (G)")
+                            .selectable_label(settings.show_grid, self.t("desktop.viewport.grid"))
                             .clicked()
                         {
                             settings.show_grid = !settings.show_grid;
                             changed = true;
                         }
                         if ui
-                            .selectable_label(self.workspace.show_skybox, "Sky")
-                            .on_hover_text("Scene skybox background (S)")
+                            .selectable_label(
+                                self.workspace.show_skybox,
+                                self.t("desktop.viewport.sky"),
+                            )
                             .clicked()
                         {
                             self.workspace.show_skybox = !self.workspace.show_skybox;
                             skybox_changed = true;
                         }
                         if ui
-                            .selectable_label(self.workspace.show_selection_outline, "Outline")
-                            .on_hover_text("Draw wireframe outline around selected objects")
+                            .selectable_label(
+                                self.workspace.show_selection_outline,
+                                self.t("desktop.viewport.outline"),
+                            )
                             .clicked()
                         {
                             self.workspace.show_selection_outline =
@@ -962,8 +998,10 @@ impl EditorApp {
                             mark_dirty = true;
                         }
                         if ui
-                            .selectable_label(self.workspace.show_skeleton, "Bones")
-                            .on_hover_text("Draw skeleton of selected skinned mesh")
+                            .selectable_label(
+                                self.workspace.show_skeleton,
+                                self.t("desktop.viewport.bones"),
+                            )
                             .clicked()
                         {
                             self.workspace.show_skeleton = !self.workspace.show_skeleton;
@@ -973,8 +1011,7 @@ impl EditorApp {
                             .as_ref()
                             .is_some_and(|view| view.raw_ui_edit);
                         if ui
-                            .selectable_label(raw_ui, "UI Raw")
-                            .on_hover_text("Move UI anchors without compensating margins or size")
+                            .selectable_label(raw_ui, self.t("desktop.viewport.uiRaw"))
                             .clicked()
                         {
                             if let Some(view) = self.scene_view.as_mut() {
@@ -982,19 +1019,26 @@ impl EditorApp {
                             }
                         }
                         if ui
-                            .selectable_label(self.workspace.prt_gizmos.enabled, "Probes")
-                            .on_hover_text(
-                                "Visualize baked PRT SH9 probes & trilinear weights in Scene View",
+                            .selectable_label(
+                                self.workspace.prt_gizmos.enabled,
+                                self.t("desktop.viewport.probes"),
                             )
                             .clicked()
                         {
                             self.workspace.prt_gizmos.enabled = !self.workspace.prt_gizmos.enabled;
                         }
 
-                        ui.menu_button("View…", |ui| {
-                            ui.label(egui::RichText::new("Editor camera").strong().size(11.0));
+                        ui.menu_button(self.t("desktop.viewport.viewMenu"), |ui| {
+                            ui.label(
+                                egui::RichText::new(self.t("desktop.viewport.editorCamera"))
+                                    .strong()
+                                    .size(11.0),
+                            );
                             if ui
-                                .add(egui::Slider::new(&mut fov, 20.0..=110.0).text("FOV"))
+                                .add(
+                                    egui::Slider::new(&mut fov, 20.0..=110.0)
+                                        .text(self.t("desktop.viewport.fov")),
+                                )
                                 .changed()
                             {
                                 camera_changed = true;
@@ -1004,7 +1048,7 @@ impl EditorApp {
                                     egui::DragValue::new(&mut near)
                                         .speed(0.01)
                                         .range(0.001..=100.0)
-                                        .prefix("near "),
+                                        .prefix(self.t("desktop.viewport.near")),
                                 )
                                 .changed()
                             {
@@ -1015,35 +1059,44 @@ impl EditorApp {
                                     egui::DragValue::new(&mut far)
                                         .speed(1.0)
                                         .range(1.0..=100_000.0)
-                                        .prefix("far "),
+                                        .prefix(self.t("desktop.viewport.far")),
                                 )
                                 .changed()
                             {
                                 camera_changed = true;
                             }
                             ui.separator();
-                            ui.checkbox(&mut self.workspace.show_camera_icons, "Camera icons");
-                            ui.checkbox(&mut self.workspace.show_light_icons, "Light icons");
-                            ui.checkbox(
-                                &mut self.workspace.show_collider_gizmos,
-                                "Collider gizmos",
-                            );
-                            ui.checkbox(&mut self.workspace.show_audio_gizmos, "Audio gizmos");
+                            let label = self.t("desktop.viewport.cameraIcons");
+                            ui.checkbox(&mut self.workspace.show_camera_icons, label);
+                            let label = self.t("desktop.viewport.lightIcons");
+                            ui.checkbox(&mut self.workspace.show_light_icons, label);
+                            let label = self.t("desktop.viewport.colliderGizmos");
+                            ui.checkbox(&mut self.workspace.show_collider_gizmos, label);
+                            let label = self.t("desktop.viewport.audioGizmos");
+                            ui.checkbox(&mut self.workspace.show_audio_gizmos, label);
                             ui.separator();
-                            ui.label(egui::RichText::new("PRT Probe Volume").strong().size(11.0));
-                            ui.checkbox(&mut self.workspace.prt_gizmos.enabled, "Show PRT probes");
+                            ui.label(
+                                egui::RichText::new(self.t("desktop.viewport.prtVolume"))
+                                    .strong()
+                                    .size(11.0),
+                            );
+                            let show_probes = self.t("desktop.viewport.showProbes");
+                            ui.checkbox(&mut self.workspace.prt_gizmos.enabled, show_probes);
                             if self.workspace.prt_gizmos.enabled {
                                 ui.horizontal(|ui| {
-                                    ui.label("Mode");
+                                    ui.label(self.t("desktop.viewport.mode"));
                                     egui::ComboBox::from_id_salt("view-prt-mode")
-                                        .selected_text(self.workspace.prt_gizmos.mode.label())
+                                        .selected_text(
+                                            self.prt_mode_label(self.workspace.prt_gizmos.mode),
+                                        )
                                         .width(128.0)
                                         .show_ui(ui, |ui| {
                                             for mode in prism_editor_core::PrtDisplayMode::ALL {
+                                                let label = self.prt_mode_label(mode);
                                                 ui.selectable_value(
                                                     &mut self.workspace.prt_gizmos.mode,
                                                     mode,
-                                                    mode.label(),
+                                                    label,
                                                 );
                                             }
                                         });
@@ -1066,13 +1119,12 @@ impl EditorApp {
                                         .prefix("exp "),
                                     );
                                 });
-                                ui.checkbox(
-                                    &mut self.workspace.prt_gizmos.show_grid_bounds,
-                                    "Grid bounds",
-                                );
+                                let label = self.t("desktop.viewport.gridBounds");
+                                ui.checkbox(&mut self.workspace.prt_gizmos.show_grid_bounds, label);
+                                let label = self.t("desktop.viewport.tethers");
                                 ui.checkbox(
                                     &mut self.workspace.prt_gizmos.show_trilinear_tethers,
-                                    "Trilinear tethers",
+                                    label,
                                 );
                                 if let Some(layers) = self
                                     .scene_view
@@ -1083,7 +1135,13 @@ impl EditorApp {
                                     ui.horizontal(|ui| {
                                         let mut sliced =
                                             self.workspace.prt_gizmos.slice_y.is_some();
-                                        if ui.checkbox(&mut sliced, "Y slice").changed() {
+                                        if ui
+                                            .checkbox(
+                                                &mut sliced,
+                                                self.t("desktop.viewport.ySlice"),
+                                            )
+                                            .changed()
+                                        {
                                             self.workspace.prt_gizmos.slice_y =
                                                 if sliced { Some(0) } else { None };
                                         }
@@ -1101,27 +1159,19 @@ impl EditorApp {
                                 }
                             }
                             ui.separator();
+                            let snap_prefix = self.t("desktop.viewport.snapStep");
                             ui.add(
                                 egui::DragValue::new(&mut self.workspace.snap.translate)
                                     .speed(0.01)
                                     .range(0.01..=100.0)
-                                    .prefix("Snap Δ "),
-                            )
-                            .on_hover_text("Translate snap step (world units)");
+                                    .prefix(snap_prefix),
+                            );
                         });
 
-                        if ui
-                            .small_button(icons::CROSSHAIR)
-                            .on_hover_text("Frame Selection (F)")
-                            .clicked()
-                        {
+                        if ui.small_button(icons::CROSSHAIR).clicked() {
                             frame_sel = true;
                         }
-                        if ui
-                            .small_button(icons::ARROWS_CLOCKWISE)
-                            .on_hover_text("Reset Scene Camera (Ctrl+0)")
-                            .clicked()
-                        {
+                        if ui.small_button(icons::ARROWS_CLOCKWISE).clicked() {
                             reset_cam = true;
                         }
                     });
@@ -1171,7 +1221,7 @@ impl EditorApp {
         let _ = rect;
         if !self.ensure_view(kind) {
             ui.label(
-                RichText::new("Engine viewport unavailable (see Console)")
+                RichText::new(self.t("desktop.viewport.unavailable"))
                     .color(Color32::from_rgb(232, 96, 96)),
             );
             return;
@@ -1251,7 +1301,8 @@ impl EditorApp {
             };
             let mut open = true;
             let mut titled = false;
-            let shown = egui::Window::new(tab_title(&panel.tab))
+            let title = self.workspace.panel_title(&panel.tab);
+            let shown = egui::Window::new(title)
                 .id(egui::Id::new(("float", &panel.tab)))
                 .open(&mut open)
                 .default_pos(egui::pos2(panel.x, panel.y))

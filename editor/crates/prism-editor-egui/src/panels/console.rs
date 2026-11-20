@@ -14,10 +14,10 @@ pub fn log(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.log_search)
-                .hint_text("Filter")
+                .hint_text(workspace.t("console.filterPlaceholder"))
                 .desired_width(140.0),
         );
-        ui.menu_button("Levels", |ui| {
+        ui.menu_button(workspace.t("console.levels"), |ui| {
             for level in [
                 LogLevel::Error,
                 LogLevel::Warn,
@@ -27,7 +27,15 @@ pub fn log(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 LogLevel::Panic,
             ] {
                 let mut on = state.log_levels.contains(&level);
-                if ui.checkbox(&mut on, level.label()).changed() {
+                let key = match level {
+                    LogLevel::Error => "console.levelError",
+                    LogLevel::Warn => "console.levelWarn",
+                    LogLevel::Info => "console.levelInfo",
+                    LogLevel::Debug => "console.levelDebug",
+                    LogLevel::Trace => "console.levelTrace",
+                    LogLevel::Panic => "console.levelPanic",
+                };
+                if ui.checkbox(&mut on, workspace.t(key)).changed() {
                     if on {
                         state.log_levels.push(level);
                     } else {
@@ -36,7 +44,7 @@ pub fn log(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 }
             }
         });
-        ui.menu_button("Sources", |ui| {
+        ui.menu_button(workspace.t("console.sources"), |ui| {
             for source in [
                 LogSource::Editor,
                 LogSource::Engine,
@@ -44,7 +52,13 @@ pub fn log(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 LogSource::System,
             ] {
                 let mut on = state.log_sources.contains(&source);
-                if ui.checkbox(&mut on, source.label()).changed() {
+                let key = match source {
+                    LogSource::Editor => "console.editor",
+                    LogSource::Engine => "desktop.console.engine",
+                    LogSource::Game => "console.game",
+                    LogSource::System => "desktop.console.system",
+                };
+                if ui.checkbox(&mut on, workspace.t(key)).changed() {
                     if on {
                         state.log_sources.push(source);
                     } else {
@@ -53,18 +67,27 @@ pub fn log(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 }
             }
         });
-        ui.checkbox(&mut state.log_autoscroll, "Follow");
-        ui.checkbox(&mut state.log_collapse, "Collapse")
-            .on_hover_text("Merge identical messages into one row with a count");
-        ui.checkbox(&mut state.log_clear_on_play, "Clear on Play")
-            .on_hover_text("Clear the Console when Play starts");
-        ui.checkbox(&mut state.log_error_pause, "Error Pause")
-            .on_hover_text("Pause Play when an error is logged");
-        if ui.button("Clear").clicked() {
+        ui.checkbox(&mut state.log_autoscroll, workspace.t("console.follow"));
+        ui.checkbox(&mut state.log_collapse, workspace.t("console.collapse"));
+        ui.checkbox(
+            &mut state.log_clear_on_play,
+            workspace.t("console.clearOnPlay"),
+        );
+        ui.checkbox(
+            &mut state.log_error_pause,
+            workspace.t("console.errorPause"),
+        );
+        if ui.button(workspace.t("console.clear")).clicked() {
             workspace.log.clear();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(format!("{} lines", workspace.log.len())).weak());
+            ui.label(
+                RichText::new(workspace.tf(
+                    "console.lines",
+                    &[("count", &workspace.log.len().to_string())],
+                ))
+                .weak(),
+            );
         });
     });
     ui.separator();
@@ -164,7 +187,13 @@ pub(super) fn log_location(text: &str) -> Option<(String, Option<usize>, Option<
     None
 }
 
-pub fn problems(ui: &mut Ui, module: &[Diagnostic], build: &[Diagnostic], state: &mut UiState) {
+pub fn problems(
+    ui: &mut Ui,
+    workspace: &Workspace,
+    module: &[Diagnostic],
+    build: &[Diagnostic],
+    state: &mut UiState,
+) {
     let errors = module
         .iter()
         .chain(build)
@@ -172,17 +201,21 @@ pub fn problems(ui: &mut Ui, module: &[Diagnostic], build: &[Diagnostic], state:
         .count();
     let warnings = module.len() + build.len() - errors;
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{errors} errors · {warnings} warnings")).size(11.0));
         ui.label(
-            RichText::new("module build · player build")
-                .weak()
-                .size(10.5),
+            RichText::new(workspace.tf(
+                "desktop.problems.counts",
+                &[
+                    ("errors", &errors.to_string()),
+                    ("warnings", &warnings.to_string()),
+                ],
+            ))
+            .size(11.0),
         );
     });
     ui.separator();
     if module.is_empty() && build.is_empty() {
         ui.label(
-            RichText::new("No problems. Compiler errors and warnings appear here.")
+            RichText::new(workspace.t("console.noProblems"))
                 .weak()
                 .size(11.0),
         );
@@ -193,8 +226,8 @@ pub fn problems(ui: &mut Ui, module: &[Diagnostic], build: &[Diagnostic], state:
         .id_salt("problems-scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            problem_section(ui, "Project module (Ctrl+R recompiles)", module, state);
-            problem_section(ui, "Player build", build, state);
+            problem_section(ui, &workspace.t("desktop.problems.module"), module, state);
+            problem_section(ui, &workspace.t("desktop.problems.build"), build, state);
         });
 }
 
@@ -226,8 +259,7 @@ pub(super) fn problem_section(
         if location.is_some() {
             response = response
                 .interact(Sense::click())
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("Open this location in the default editor");
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
             if response.clicked() {
                 if let Some(file) = diagnostic.file.as_deref() {
                     state.status =
@@ -305,7 +337,10 @@ pub fn history(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     let entries = workspace.history_entries();
     let cursor = workspace.history_cursor();
     ui.horizontal(|ui| {
-        ui.checkbox(&mut state.history_latest_first, "Latest first");
+        ui.checkbox(
+            &mut state.history_latest_first,
+            workspace.t("console.latestFirst"),
+        );
         ui.label(RichText::new(format!("{cursor}/{}", entries.len())).weak());
     });
     ui.separator();
@@ -321,17 +356,33 @@ pub fn history(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if !state.history_latest_first {
-                history_row(ui, "Initial state", cursor == 0, cursor != 0, 0, &mut jump);
+                history_row(
+                    ui,
+                    workspace,
+                    &workspace.t("console.initialState"),
+                    cursor == 0,
+                    cursor != 0,
+                    0,
+                    &mut jump,
+                );
             }
             for index in &order {
                 let (label, undone) = &entries[*index];
 
                 let target = index + 1;
                 let current = target == cursor;
-                history_row(ui, label, current, *undone, target, &mut jump);
+                history_row(ui, workspace, label, current, *undone, target, &mut jump);
             }
             if state.history_latest_first {
-                history_row(ui, "Initial state", cursor == 0, cursor != 0, 0, &mut jump);
+                history_row(
+                    ui,
+                    workspace,
+                    &workspace.t("console.initialState"),
+                    cursor == 0,
+                    cursor != 0,
+                    0,
+                    &mut jump,
+                );
             }
         });
     if let Some(target) = jump {
@@ -341,6 +392,7 @@ pub fn history(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
 
 pub(super) fn history_row(
     ui: &mut Ui,
+    workspace: &Workspace,
     label: &str,
     current: bool,
     weak: bool,
@@ -348,7 +400,7 @@ pub(super) fn history_row(
     jump: &mut Option<usize>,
 ) {
     let mut text = if weak {
-        RichText::new(format!("(undone) {label}")).weak()
+        RichText::new(workspace.tf("console.undone", &[("label", label)])).weak()
     } else {
         RichText::new(label)
     };

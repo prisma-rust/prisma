@@ -66,17 +66,6 @@ impl ModuleState {
             ModuleState::Failed => "failed",
         }
     }
-
-    /// 状态栏文案（UE 的 Compile 按钮那种一眼能看懂的状态）。
-    pub fn label(self) -> &'static str {
-        match self {
-            ModuleState::Unavailable => "Module: off",
-            ModuleState::Ready => "Module: ready",
-            ModuleState::Pending => "Module: changes not compiled",
-            ModuleState::Compiling => "Module: compiling…",
-            ModuleState::Failed => "Module: compile failed",
-        }
-    }
 }
 
 /// 可轮询的状态（状态栏 / Problems / MCP `editor_status` 用）。

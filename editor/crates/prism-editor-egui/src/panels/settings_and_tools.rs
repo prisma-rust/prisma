@@ -3,9 +3,14 @@
 use super::inspector::prt_preview_controls;
 use super::*;
 
-pub fn project_settings(ui: &mut Ui, root: Option<&std::path::Path>, state: &mut UiState) {
+pub fn project_settings(
+    ui: &mut Ui,
+    workspace: &Workspace,
+    root: Option<&std::path::Path>,
+    state: &mut UiState,
+) {
     let Some(root) = root else {
-        ui.label(RichText::new("Open a project directory first.").weak());
+        ui.label(RichText::new(workspace.t("desktop.settings.openProject")).weak());
         return;
     };
     let same_root = state
@@ -26,37 +31,39 @@ pub fn project_settings(ui: &mut Ui, root: Option<&std::path::Path>, state: &mut
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut query)
-                .hint_text("Search settings…")
+                .hint_text(workspace.t("desktop.settings.search"))
                 .desired_width(170.0),
         );
         if cache.is_dirty() {
             ui.label(
-                RichText::new("● unsaved")
+                RichText::new(workspace.t("material.unsaved"))
                     .size(11.0)
                     .color(Color32::from_rgb(226, 178, 84)),
             );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             apply = ui
-                .add_enabled(cache.is_dirty(), egui::Button::new("Apply"))
-                .on_hover_text("Write assets/settings.ini")
+                .add_enabled(
+                    cache.is_dirty(),
+                    egui::Button::new(workspace.t("common.apply")),
+                )
                 .clicked();
             revert = ui
-                .add_enabled(cache.is_dirty(), egui::Button::new("Revert"))
+                .add_enabled(
+                    cache.is_dirty(),
+                    egui::Button::new(workspace.t("inspector.revert")),
+                )
                 .clicked();
             reset_all = ui
-                .button("Reset all")
-                .on_hover_text("Fill every field with the built-in default")
+                .button(workspace.t("desktop.settings.resetAll"))
                 .clicked();
         });
     });
     if cache.external_change() {
         ui.label(
-            RichText::new(
-                "settings.ini changed on disk while you were editing — Revert reloads it.",
-            )
-            .size(11.0)
-            .color(Color32::from_rgb(226, 178, 84)),
+            RichText::new(workspace.t("desktop.settings.externalChange"))
+                .size(11.0)
+                .color(Color32::from_rgb(226, 178, 84)),
         );
     }
     if let Some(error) = cache.error.clone() {
@@ -66,10 +73,13 @@ pub fn project_settings(ui: &mut Ui, root: Option<&std::path::Path>, state: &mut
                     .size(11.0)
                     .color(Color32::from_rgb(232, 96, 96)),
             );
-            if ui.small_button("Reset to defaults").clicked() {
+            if ui
+                .small_button(workspace.t("desktop.settings.resetDefaults"))
+                .clicked()
+            {
                 reset_all = true;
             }
-            if ui.small_button("Reload").clicked() {
+            if ui.small_button(workspace.t("material.reload")).clicked() {
                 cache.reload_from_disk();
             }
         });
@@ -91,7 +101,7 @@ pub fn project_settings(ui: &mut Ui, root: Option<&std::path::Path>, state: &mut
 
     let fields = matching_fields(&query);
     if fields.is_empty() {
-        ui.label(RichText::new("no matching setting").weak());
+        ui.label(RichText::new(workspace.t("desktop.settings.none")).weak());
     }
     egui::ScrollArea::vertical()
         .auto_shrink([false, true])
@@ -106,11 +116,7 @@ pub fn project_settings(ui: &mut Ui, root: Option<&std::path::Path>, state: &mut
                 }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(*section).strong().size(12.0));
-                    if ui
-                        .small_button("Reset")
-                        .on_hover_text(format!("Restore [{section}] to its defaults"))
-                        .clicked()
-                    {
+                    if ui.small_button(workspace.t("common.reset")).clicked() {
                         cache.reset_section(section);
                     }
                 });
@@ -214,38 +220,38 @@ pub fn preferences(
     state: &mut UiState,
     control_cli_disabled: bool,
 ) {
-    ui.checkbox(&mut preferences.autosave, "Auto save layout");
-    ui.checkbox(&mut preferences.confirm_delete, "Confirm before delete");
-    ui.checkbox(&mut preferences.compact, "Compact layout");
+    ui.checkbox(
+        &mut preferences.autosave,
+        workspace.t("desktop.preferences.autosave"),
+    );
+    ui.checkbox(
+        &mut preferences.confirm_delete,
+        workspace.t("desktop.preferences.confirmDelete"),
+    );
+    ui.checkbox(
+        &mut preferences.compact,
+        workspace.t("desktop.preferences.compact"),
+    );
     ui.add_enabled(
         !control_cli_disabled,
         egui::Checkbox::new(
             &mut preferences.control_channel,
-            "Enable local control channel (MCP / automation)",
+            workspace.t("desktop.preferences.controlChannel"),
         ),
-    )
-    .on_hover_text(
-        "Listen on 127.0.0.1 and write target/editor-egui/control.port so the MCP \
-         server can drive the editor; turning it off stops the listener immediately \
-         (#1008). --no-control disables it for the whole process.",
     );
     if control_cli_disabled {
         ui.label(
-            RichText::new("Control channel disabled by --no-control")
+            RichText::new(workspace.t("desktop.preferences.controlDisabled"))
                 .weak()
                 .small(),
         );
     }
     ui.checkbox(
         &mut preferences.hot_reload_assets,
-        "Rebuild scene pack when loose assets change",
-    )
-    .on_hover_text(
-        "Watch assets/ (textures, meshes, HDR, fonts…) and rerun Build Scene Pack \
-         after a change, so Play picks it up without a restart (#495)",
+        workspace.t("desktop.preferences.hotReload"),
     );
     ui.horizontal(|ui| {
-        ui.label("Max log lines");
+        ui.label(workspace.t("desktop.preferences.maxLogLines"));
         let response =
             ui.add(egui::DragValue::new(&mut preferences.max_log_lines).range(500.0..=20_000.0));
         if response.changed() {
@@ -255,7 +261,7 @@ pub fn preferences(
         }
     });
     ui.horizontal(|ui| {
-        ui.label("Language");
+        ui.label(workspace.t("desktop.preferences.language"));
         let locale = workspace.i18n.locale();
         if ui
             .selectable_label(locale == Locale::EnUs, "English")
@@ -279,24 +285,25 @@ pub fn entity_delete_confirm(ctx: &egui::Context, workspace: &mut Workspace, sta
         return;
     };
     let mut decision: Option<bool> = None;
-    egui::Window::new("Delete")
+    egui::Window::new(workspace.t("common.delete"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             let count = indices.len();
             if count == 1 {
-                ui.label("Delete the selected entity and its children?");
+                ui.label(workspace.t("desktop.dialog.deleteEntity"));
             } else {
-                ui.label(format!(
-                    "Delete {count} selected entities and their children?"
+                ui.label(workspace.tf(
+                    "desktop.dialog.deleteEntities",
+                    &[("count", &count.to_string())],
                 ));
             }
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                if ui.button(workspace.t("common.delete")).clicked() {
                     decision = Some(true);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(workspace.t("common.cancel")).clicked() {
                     decision = Some(false);
                 }
             });
@@ -327,7 +334,7 @@ pub fn theme(ui: &mut Ui, workspace: &mut Workspace) {
 }
 
 pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
-    ui.heading("Scenes in build");
+    ui.heading(workspace.t("desktop.buildPanel.scenesInBuild"));
     let entries: Vec<(String, bool)> = workspace
         .scene_manifest
         .scenes
@@ -368,13 +375,13 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     // ---- Add scenes that exist on disk but are missing from the manifest ----
     let available = workspace.available_scene_documents();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Add").size(11.0));
+        ui.label(RichText::new(workspace.t("desktop.buildPanel.add")).size(11.0));
         ui.add_enabled_ui(!available.is_empty() && !state.build_running, |ui| {
             egui::ComboBox::from_id_salt("build-add-scene")
                 .selected_text(if available.is_empty() {
-                    "all scenes in build"
+                    workspace.t("desktop.buildPanel.allInBuild")
                 } else {
-                    "scene…"
+                    workspace.t("desktop.buildPanel.scene")
                 })
                 .show_ui(ui, |ui| {
                     for path in &available {
@@ -396,13 +403,12 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("This scene is not in the build")
+                    RichText::new(workspace.t("desktop.buildPanel.notInBuild"))
                         .weak()
                         .size(11.0),
                 );
                 if ui
-                    .small_button("+ Add to build")
-                    .on_hover_text("Append this document to assets/scenes.toml")
+                    .small_button(workspace.t("desktop.buildPanel.addToBuild"))
                     .clicked()
                     && workspace.add_scene_document(&relative).is_some()
                 {
@@ -415,15 +421,22 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     ui.separator();
     ui.horizontal(|ui| {
         ui.add_enabled_ui(!state.build_running, |ui| {
-            if ui.button("Build").clicked() {
+            if ui.button(workspace.t("desktop.buildPanel.build")).clicked() {
                 state.pending_build = Some(crate::build::BuildKind::ScenePack);
             }
-            if ui.button("Build And Run").clicked() {
+            if ui
+                .button(workspace.t("desktop.buildPanel.buildAndRun"))
+                .clicked()
+            {
                 state.pending_build = Some(crate::build::BuildKind::PlayerRun);
             }
         });
         if state.build_running {
-            ui.label(RichText::new("building…").weak().size(11.0));
+            ui.label(
+                RichText::new(workspace.t("desktop.buildPanel.building"))
+                    .weak()
+                    .size(11.0),
+            );
         }
     });
     ui.label(
@@ -436,14 +449,17 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     );
 }
 
-pub fn shortcuts(ui: &mut Ui, preferences: &mut Preferences, state: &mut UiState) {
+pub fn shortcuts(
+    ui: &mut Ui,
+    workspace: &Workspace,
+    preferences: &mut Preferences,
+    state: &mut UiState,
+) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new("Click a key to rebind it. Esc cancels; Reset restores the default.")
-                .weak()
-                .size(11.0),
-        );
-        if ui.button("Reset all").clicked() {
+        if ui
+            .button(workspace.t("desktop.shortcuts.resetAll"))
+            .clicked()
+        {
             preferences.shortcut_overrides.clear();
             state.shortcut_capture = None;
             state.status = "shortcuts reset to defaults".to_string();
@@ -453,11 +469,14 @@ pub fn shortcuts(ui: &mut Ui, preferences: &mut Preferences, state: &mut UiState
     if let Some(command) = state.shortcut_capture {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("Press a new key for {command:?}"))
-                    .strong()
-                    .color(Color32::from_rgb(255, 180, 80)),
+                RichText::new(workspace.tf(
+                    "desktop.shortcuts.pressFor",
+                    &[("command", &format!("{command:?}"))],
+                ))
+                .strong()
+                .color(Color32::from_rgb(255, 180, 80)),
             );
-            if ui.small_button("Cancel").clicked() {
+            if ui.small_button(workspace.t("common.cancel")).clicked() {
                 state.shortcut_capture = None;
             }
         });
@@ -508,7 +527,7 @@ pub fn shortcuts(ui: &mut Ui, preferences: &mut Preferences, state: &mut UiState
                         )
                         .unwrap_or_else(|| entry.keys.to_string());
                         let text = if capturing {
-                            "Press…".to_string()
+                            workspace.t("desktop.shortcuts.press")
                         } else {
                             keys
                         };
@@ -516,16 +535,12 @@ pub fn shortcuts(ui: &mut Ui, preferences: &mut Preferences, state: &mut UiState
                         if overridden || capturing {
                             rich = rich.strong();
                         }
-                        if ui
-                            .add(egui::Button::new(rich))
-                            .on_hover_text("Click, then press the new key")
-                            .clicked()
-                        {
+                        if ui.add(egui::Button::new(rich)).clicked() {
                             state.shortcut_capture = Some(entry.command);
                         }
                         ui.label(format!("{:?}", entry.command));
                         if overridden {
-                            if ui.small_button("Reset").clicked() {
+                            if ui.small_button(workspace.t("common.reset")).clicked() {
                                 preferences.shortcut_overrides.remove(entry.command.id());
                                 if state.shortcut_capture == Some(entry.command) {
                                     state.shortcut_capture = None;
@@ -572,65 +587,43 @@ pub(super) fn captured_shortcut(ui: &Ui) -> Option<CapturedShortcut> {
     })
 }
 
-pub fn about(ui: &mut Ui) {
+pub fn about(ui: &mut Ui, workspace: &Workspace) {
     ui.heading("Prisma Editor");
-    ui.label("egui + ash Vulkan editor with zero-copy Scene / Game viewports.");
+    ui.label(RichText::new(format!("v{}", env!("CARGO_PKG_VERSION"))).weak());
     ui.separator();
-    ui.label(
-        RichText::new(
-            "Scene View renders the edited document with an editor camera; \
-             Game View uses the document camera and runs the simulation on Play.",
-        )
-        .weak()
-        .size(11.0),
-    );
+    ui.label(workspace.t("desktop.about.engine"));
 }
 
 pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
-    ui.heading("Offline tools");
-    ui.label(
-        RichText::new(
-            "Runs `cargo run -p prism-build-pipeline -- …` on the host. \
-             Output streams into the Console; the editor never links the cooker.",
-        )
-        .weak()
-        .size(11.0),
-    );
+    ui.heading(workspace.t("menu.tools"));
     if state.build_running {
         ui.label(
-            RichText::new("a task is already running…")
+            RichText::new(workspace.t("desktop.tools.running"))
                 .weak()
                 .size(11.0),
         );
     }
     ui.separator();
 
-    egui::CollapsingHeader::new("GI Bake")
+    egui::CollapsingHeader::new(workspace.t("desktop.tools.giBake"))
         .default_open(true)
         .show(ui, |ui| {
-            ui.label(
-                RichText::new("Offline probe-volume bake (GPU ray query, multi-bounce).")
-                    .weak()
-                    .size(10.5),
-            );
             ui.horizontal(|ui| {
-                ui.label("rays");
+                ui.label(workspace.t("desktop.tools.rays"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.gi_rays)
                         .speed(4.0)
                         .range(1..=4096),
-                )
-                .on_hover_text("Rays per probe");
-                ui.label("bounces");
+                );
+                ui.label(workspace.t("desktop.tools.bounces"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.gi_bounces)
                         .speed(0.2)
                         .range(1..=16),
-                )
-                .on_hover_text("Max bounces");
+                );
             });
             ui.horizontal(|ui| {
-                ui.label("output");
+                ui.label(workspace.t("desktop.tools.output"));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.offline.gi_output)
                         .desired_width(ui.available_width().max(120.0)),
@@ -642,7 +635,7 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 state.offline.gi_bounces,
             );
             ui.add_enabled_ui(!state.build_running, |ui| {
-                if ui.button("Bake GI").clicked() {
+                if ui.button(workspace.t("desktop.tools.bakeGi")).clicked() {
                     state.pending_build = Some(crate::build::BuildKind::BakeGi {
                         output,
                         rays,
@@ -654,16 +647,11 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             prt_preview_controls(ui, workspace, None);
         });
 
-    egui::CollapsingHeader::new("Heightmap")
+    egui::CollapsingHeader::new(workspace.t("desktop.tools.heightmap"))
         .default_open(true)
         .show(ui, |ui| {
-            ui.label(
-                RichText::new("Procedural fbm terrain + hydraulic / thermal erosion (raw f32).")
-                    .weak()
-                    .size(10.5),
-            );
             ui.horizontal(|ui| {
-                ui.label("size");
+                ui.label(workspace.t("desktop.tools.size"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.heightmap_width)
                         .speed(8.0)
@@ -677,32 +665,30 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("seed");
+                ui.label(workspace.t("desktop.tools.seed"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.heightmap_seed)
                         .speed(1.0)
                         .range(0..=u64::MAX),
                 );
-                ui.label("erosion");
+                ui.label(workspace.t("desktop.tools.erosion"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.heightmap_iterations)
                         .speed(4.0)
                         .range(0..=10_000),
                 )
-                .on_hover_text("Erosion iterations");
             });
             ui.horizontal(|ui| {
-                ui.label("sea level");
+                ui.label(workspace.t("desktop.tools.seaLevel"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.heightmap_sea_level)
                         .speed(0.01)
                         .range(0.0..=1.0)
                         .max_decimals(2),
                 )
-                .on_hover_text("0 = all land, 1 = all ocean (0.7 ≈ Earth)");
             });
             ui.horizontal(|ui| {
-                ui.label("output");
+                ui.label(workspace.t("common.output"));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.offline.heightmap_output)
                         .desired_width(ui.available_width().max(120.0)),
@@ -717,7 +703,10 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 state.offline.heightmap_sea_level,
             );
             ui.add_enabled_ui(!state.build_running, |ui| {
-                if ui.button("Generate Heightmap").clicked() {
+                if ui
+                    .button(workspace.t("desktop.tools.generateHeightmap"))
+                    .clicked()
+                {
                     state.pending_build = Some(crate::build::BuildKind::Heightmap {
                         output,
                         width,
@@ -730,29 +719,23 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             });
         });
 
-    egui::CollapsingHeader::new("Cook / Build Scenes")
+    egui::CollapsingHeader::new(workspace.t("desktop.tools.cookScenes"))
         .default_open(true)
         .show(ui, |ui| {
-            ui.label(
-                RichText::new("Cook every scene in `assets/scenes.json` into the runtime `.pak`.")
-                    .weak()
-                    .size(10.5),
-            );
             ui.horizontal(|ui| {
-                ui.label("output");
+                ui.label(workspace.t("common.output"));
                 ui.add(
                     egui::TextEdit::singleline(&mut state.offline.pack_output)
                         .desired_width(ui.available_width().max(120.0)),
                 );
             });
             ui.horizontal(|ui| {
-                ui.label("compression");
+                ui.label(workspace.t("desktop.tools.compression"));
                 ui.add(
                     egui::DragValue::new(&mut state.offline.pack_compression)
                         .speed(0.2)
                         .range(0..=22),
                 )
-                .on_hover_text("zstd level (0 = store)");
             });
             let (output, compression) = (
                 state.offline.pack_output.trim().to_string(),
@@ -760,7 +743,10 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             );
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!state.build_running, |ui| {
-                    if ui.button("Build Scenes").clicked() {
+                    if ui
+                        .button(workspace.t("desktop.tools.buildScenes"))
+                        .clicked()
+                    {
                         state.pending_build = Some(crate::build::BuildKind::ScenePackCustom {
                             output,
                             compression,
@@ -773,8 +759,10 @@ pub fn tools(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         .zip(workspace.document().path.as_ref())
                         .map(|(root, path)| root.join(path));
                     if ui
-                        .add_enabled(cook_path.is_some(), egui::Button::new("Cook active scene"))
-                        .on_hover_text("Single scene → RSCN (assets/cooked)")
+                        .add_enabled(
+                            cook_path.is_some(),
+                            egui::Button::new(workspace.t("desktop.tools.cookActive")),
+                        )
                         .clicked()
                     {
                         if let Some(path) = cook_path {

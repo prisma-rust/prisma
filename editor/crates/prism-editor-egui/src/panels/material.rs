@@ -14,7 +14,10 @@ pub fn open_material_asset(workspace: &Workspace, state: &mut UiState, path: &st
             state.material_asset = Some(path.to_string());
             state.material_value = None;
             state.material_saved = None;
-            state.material_error = Some(format!("读取 {path} 失败：{error}"));
+            state.material_error = Some(workspace.tf(
+                "material.readFailed",
+                &[("path", path), ("error", &error.to_string())],
+            ));
         }
     }
 }
@@ -31,11 +34,18 @@ pub fn material(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         }
     }
     let Some(value) = state.material_value.clone() else {
-        ui.label(
-            RichText::new("double-click a .mat.json / .asset.json in the assets panel")
-                .weak()
-                .size(11.0),
-        );
+        ui.vertical_centered(|ui| {
+            ui.add_space(24.0);
+            ui.label(RichText::new(icons::FILE).size(22.0).color(theme::color32(
+                &workspace.colors(),
+                prism_editor_core::ThemeToken::MutedDim,
+            )));
+            ui.label(
+                RichText::new(workspace.t("material.empty"))
+                    .weak()
+                    .size(11.0),
+            );
+        });
         if let Some(error) = state.material_error.clone() {
             ui.label(RichText::new(error).color(Color32::from_rgb(232, 96, 96)));
         }
@@ -48,15 +58,14 @@ pub fn material(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         ui.label(RichText::new(&path).size(11.0));
         if dirty {
             ui.label(
-                RichText::new("● unsaved")
+                RichText::new(workspace.t("material.unsaved"))
                     .size(11.0)
                     .color(Color32::from_rgb(226, 178, 84)),
             );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .add_enabled(dirty, egui::Button::new("Save"))
-                .on_hover_text("Write the asset back to disk")
+                .add_enabled(dirty, egui::Button::new(workspace.t("common.save")))
                 .clicked()
             {
                 match workspace.write_asset_json(&path, &value) {
@@ -65,13 +74,20 @@ pub fn material(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         state.material_error = None;
                         state.status = format!("saved {path}");
                     }
-                    Err(error) => state.material_error = Some(format!("保存失败：{error}")),
+                    Err(error) => {
+                        state.material_error = Some(
+                            workspace.tf("material.saveFailed", &[("error", &error.to_string())]),
+                        )
+                    }
                 }
             }
-            if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
+            if ui
+                .add_enabled(dirty, egui::Button::new(workspace.t("inspector.revert")))
+                .clicked()
+            {
                 state.material_value = state.material_saved.clone();
             }
-            if ui.button("Reload").clicked() {
+            if ui.button(workspace.t("material.reload")).clicked() {
                 open_material_asset(workspace, state, &path);
             }
         });
@@ -98,19 +114,24 @@ pub fn material(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         for key in keys {
                             ui.label(RichText::new(&key).size(11.0));
                             let slot = map.get_mut(&key).expect("key came from the map");
-                            material_field(ui, &key, slot);
+                            material_field(ui, workspace, &key, slot);
                             ui.end_row();
                         }
                     });
             } else {
-                ui.label(RichText::new("top-level value is not an object").weak());
+                ui.label(RichText::new(workspace.t("material.notObject")).weak());
                 ui.label(RichText::new(value.to_string()).monospace().size(10.0));
             }
         });
     state.material_value = Some(value);
 }
 
-pub(super) fn material_field(ui: &mut Ui, key: &str, value: &mut serde_json::Value) {
+pub(super) fn material_field(
+    ui: &mut Ui,
+    workspace: &Workspace,
+    key: &str,
+    value: &mut serde_json::Value,
+) {
     match value {
         serde_json::Value::Bool(flag) => {
             ui.checkbox(flag, "");
@@ -192,7 +213,11 @@ pub(super) fn material_field(ui: &mut Ui, key: &str, value: &mut serde_json::Val
             );
         }
         serde_json::Value::Null => {
-            ui.label(RichText::new("null").weak().size(11.0));
+            ui.label(
+                RichText::new(workspace.t("material.null"))
+                    .weak()
+                    .size(11.0),
+            );
         }
     }
 }

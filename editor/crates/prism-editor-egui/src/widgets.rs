@@ -77,6 +77,7 @@ pub fn component_card_with_assets(
     assets: &[String],
     doc_dir: &str,
     presets: &[String],
+    i18n: &prism_editor_core::I18n,
 ) {
     let collapse_id = ui.make_persistent_id(("comp-card-open", component.name.as_str()));
     let mut is_open = ui.data(|d| d.get_temp::<bool>(collapse_id)).unwrap_or(true);
@@ -96,11 +97,7 @@ pub fn component_card_with_assets(
                         } else {
                             icons::CARET_RIGHT
                         };
-                        if ui
-                            .small_button(toggle_arrow)
-                            .on_hover_text("Collapse / expand component")
-                            .clicked()
-                        {
+                        if ui.small_button(toggle_arrow).clicked() {
                             is_open = !is_open;
                             ui.data_mut(|d| d.insert_temp(collapse_id, is_open));
                         }
@@ -117,7 +114,7 @@ pub fn component_card_with_assets(
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button(icons::X)
-                                .on_hover_text("Remove Component")
+                                .on_hover_text(i18n.t1("inspector.removeComponent"))
                                 .clicked()
                             {
                                 actions.push(CardAction::Remove(component.name.clone()));
@@ -125,21 +122,21 @@ pub fn component_card_with_assets(
                             // 组件顺序是文档的一部分（#512）：这两个箭头走一次撤销步。
                             if ui
                                 .small_button(icons::CARET_DOWN)
-                                .on_hover_text("Move Down")
+                                .on_hover_text(i18n.t1("inspector.moveDown"))
                                 .clicked()
                             {
                                 actions.push(CardAction::MoveDown(component.name.clone()));
                             }
                             if ui
                                 .small_button(icons::CARET_UP)
-                                .on_hover_text("Move Up")
+                                .on_hover_text(i18n.t1("inspector.moveUp"))
                                 .clicked()
                             {
                                 actions.push(CardAction::MoveUp(component.name.clone()));
                             }
                             if ui
                                 .small_button(icons::COPY)
-                                .on_hover_text("Copy Component")
+                                .on_hover_text(i18n.t1("inspector.copyComponent"))
                                 .clicked()
                             {
                                 actions.push(CardAction::Copy(component.name.clone()));
@@ -147,20 +144,20 @@ pub fn component_card_with_assets(
                             // `…` 菜单（#418）：Copy / Paste Values / 顺序 / Reset / Remove。
                             // Paste 的启用状态由调用方在应用时判断（剪贴板可能不是这个类型）。
                             ui.menu_button(icons::DOTS_THREE, |ui| {
-                                if ui.button("Copy Component").clicked() {
+                                if ui.button(i18n.t1("inspector.copyComponent")).clicked() {
                                     actions.push(CardAction::Copy(component.name.clone()));
                                     ui.close();
                                 }
-                                if ui.button("Paste Values").clicked() {
+                                if ui.button(i18n.t1("inspector.pasteValues")).clicked() {
                                     actions.push(CardAction::Paste(component.name.clone()));
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui.button("Move Up").clicked() {
+                                if ui.button(i18n.t1("inspector.moveUp")).clicked() {
                                     actions.push(CardAction::MoveUp(component.name.clone()));
                                     ui.close();
                                 }
-                                if ui.button("Move Down").clicked() {
+                                if ui.button(i18n.t1("inspector.moveDown")).clicked() {
                                     actions.push(CardAction::MoveDown(component.name.clone()));
                                     ui.close();
                                 }
@@ -168,8 +165,10 @@ pub fn component_card_with_assets(
                                 // Reset 写回 schema 的 defaultJson（整份组件 = 一个撤销步）。
                                 let default = component.default_json.clone();
                                 if ui
-                                    .add_enabled(default.is_some(), egui::Button::new("Reset"))
-                                    .on_hover_text("Restore every field to the schema default")
+                                    .add_enabled(
+                                        default.is_some(),
+                                        egui::Button::new(i18n.t1("common.reset")),
+                                    )
                                     .clicked()
                                 {
                                     if let Some(default) = default {
@@ -179,8 +178,8 @@ pub fn component_card_with_assets(
                                 }
                                 ui.separator();
                                 // 组件预设（#418）：保存当前值 / 套用已有预设。
-                                ui.menu_button("Presets", |ui| {
-                                    ui.menu_button("Save Preset…", |ui| {
+                                ui.menu_button(i18n.t1("inspector.presets"), |ui| {
+                                    ui.menu_button(i18n.t1("inspector.savePreset"), |ui| {
                                         let id =
                                             egui::Id::new(("preset-name", component.name.as_str()));
                                         let mut name = ui
@@ -193,7 +192,7 @@ pub fn component_card_with_assets(
                                         if ui
                                             .add_enabled(
                                                 !trimmed.is_empty(),
-                                                egui::Button::new("Save"),
+                                                egui::Button::new(i18n.t1("common.save")),
                                             )
                                             .clicked()
                                         {
@@ -208,7 +207,9 @@ pub fn component_card_with_assets(
                                     });
                                     if presets.is_empty() {
                                         ui.label(
-                                            egui::RichText::new("no presets").weak().size(10.0),
+                                            egui::RichText::new(i18n.t1("inspector.noPresets"))
+                                                .weak()
+                                                .size(10.0),
                                         );
                                     } else {
                                         for preset in presets {
@@ -222,7 +223,7 @@ pub fn component_card_with_assets(
                                         }
                                     }
                                 });
-                                if ui.button("Remove Component").clicked() {
+                                if ui.button(i18n.t1("inspector.removeComponent")).clicked() {
                                     actions.push(CardAction::Remove(component.name.clone()));
                                     ui.close();
                                 }
@@ -240,7 +241,17 @@ pub fn component_card_with_assets(
                     if field.name == "type_id" {
                         continue;
                     }
-                    field_row_at(ui, registry, field, field_value, "", set, assets, doc_dir);
+                    field_row_at(
+                        ui,
+                        registry,
+                        field,
+                        field_value,
+                        "",
+                        set,
+                        assets,
+                        doc_dir,
+                        i18n,
+                    );
                 }
             }
             let _ = &component;
@@ -537,7 +548,17 @@ mod tests {
                 let mut set = |path: &str, value: Value| writes.push((path.to_owned(), value));
                 for field in &component.fields {
                     let field_value = value.get(&field.name).unwrap();
-                    field_row_at(ui, &schema, field, field_value, "", &mut set, &[], "assets");
+                    field_row_at(
+                        ui,
+                        &schema,
+                        field,
+                        field_value,
+                        "",
+                        &mut set,
+                        &[],
+                        "assets",
+                        &prism_editor_core::I18n::default(),
+                    );
                 }
             });
         });
@@ -582,6 +603,7 @@ mod tests {
                     &[],
                     "assets",
                     &["hero".to_string()],
+                    &prism_editor_core::I18n::default(),
                 );
             });
         });
@@ -769,7 +791,7 @@ fn delayed_text_edit(
                 committed = Some(buffer.clone());
             }
         }
-        // 没在编辑（或被别的控件抢走焦点且已经处理过提交）：跟随文档里的值。
+        // Not editing (or focus moved after a handled commit): mirror the document value.
         TextCommit::Keep => {
             if !focused {
                 buffer = value.to_string();
@@ -807,6 +829,7 @@ fn field_row_at(
     set: &mut dyn FnMut(&str, Value),
     assets: &[String],
     doc_dir: &str,
+    i18n: &prism_editor_core::I18n,
 ) {
     let widget = field.widget();
     let label = field.label();
@@ -822,7 +845,7 @@ fn field_row_at(
                             .sense(egui::Sense::click()),
                     );
                 });
-                field_context_menu(&response, &name, value, set);
+                field_context_menu(&response, &name, value, set, i18n);
                 ui.label(
                     egui::RichText::new(format_json(value))
                         .monospace()
@@ -838,8 +861,8 @@ fn field_row_at(
                     ui.label(egui::RichText::new(label).size(11.0));
                 });
                 let response = ui.checkbox(&mut checked, "");
-                field_context_menu(&label_res, &name, value, set);
-                field_context_menu(&response, &name, value, set);
+                field_context_menu(&label_res, &name, value, set, i18n);
+                field_context_menu(&response, &name, value, set, i18n);
                 if response.changed() {
                     set(&name, Value::Bool(checked));
                 }
@@ -861,7 +884,7 @@ fn field_row_at(
                             .custom_parser(number_parser),
                     )
                     .on_hover_text("Type an expression: 90/2, 2*(3+4)");
-                field_context_menu(&drag, &name, value, set);
+                field_context_menu(&drag, &name, value, set, i18n);
                 if dragged || drag.changed() {
                     set(&name, Value::from(current));
                 }
@@ -889,7 +912,7 @@ fn field_row_at(
                         drag.custom_parser(number_parser),
                     )
                     .on_hover_text("Type an expression: 90/2, 2*(3+4), sin(30)");
-                field_context_menu(&response, &name, value, set);
+                field_context_menu(&response, &name, value, set, i18n);
                 if dragged || response.changed() {
                     set(&name, Value::from(current as f64));
                 }
@@ -902,9 +925,8 @@ fn field_row_at(
                 property_label_slot(ui, label_w, |ui| {
                     ui.label(egui::RichText::new(label).size(11.0));
                 });
-                let (response, buffer, committed) =
-                    delayed_text_edit(ui, edit_id, &current, false);
-                field_context_menu(&response, &name, value, set);
+                let (response, buffer, committed) = delayed_text_edit(ui, edit_id, &current, false);
+                field_context_menu(&response, &name, value, set, i18n);
                 current = buffer;
                 if let Some(text) = committed {
                     set(&name, Value::String(text));
@@ -917,13 +939,10 @@ fn field_row_at(
                         .is_none()
                 {
                     ui.label(
-                        egui::RichText::new("⚠ Missing")
+                        egui::RichText::new("⚠")
                             .size(10.5)
                             .color(egui::Color32::from_rgb(232, 96, 96)),
-                    )
-                    .on_hover_text(format!(
-                        "{current} is not in the asset database — the file was deleted, renamed, or the path is misspelt"
-                    ));
+                    );
                 }
                 if looks_like_asset {
                     if let Some(payload) = response.dnd_release_payload::<AssetDrag>() {
@@ -936,7 +955,11 @@ fn field_row_at(
                             .max_height(260.0)
                             .show(ui, |ui| {
                                 if assets.is_empty() {
-                                    ui.label(egui::RichText::new("no assets").weak().size(10.0));
+                                    ui.label(
+                                        egui::RichText::new(i18n.t1("inspector.noAssets"))
+                                            .weak()
+                                            .size(10.0),
+                                    );
                                 }
                                 for path in assets {
                                     if !asset_matches(&name, path) {
@@ -960,7 +983,7 @@ fn field_row_at(
             let edit_id = ui.make_persistent_id(("field-multiline", name.as_str()));
             ui.label(egui::RichText::new(label).size(11.0));
             let (response, _buffer, committed) = delayed_text_edit(ui, edit_id, &current, true);
-            field_context_menu(&response, &name, value, set);
+            field_context_menu(&response, &name, value, set, i18n);
             if let Some(text) = committed {
                 set(&name, Value::String(text));
             }
@@ -1002,7 +1025,7 @@ fn field_row_at(
                             .speed(0.01)
                             .custom_parser(number_parser),
                     );
-                    field_context_menu(&response, &name, value, set);
+                    field_context_menu(&response, &name, value, set, i18n);
                     if badge_changed || response.changed() {
                         let mut next = value.clone();
                         if let Some(array) = next.as_array_mut() {
@@ -1044,7 +1067,7 @@ fn field_row_at(
                                 .custom_parser(number_parser),
                         )
                         .on_hover_text("Type an expression: 90/2, 45+15");
-                    field_context_menu(&response, &name, value, set);
+                    field_context_menu(&response, &name, value, set, i18n);
                     if badge_changed || response.changed() {
                         let quat = vm::euler_degrees_to_quat(degrees);
                         set(
@@ -1067,7 +1090,7 @@ fn field_row_at(
                     ui.label(egui::RichText::new(label).size(11.0));
                 });
                 let response = ui.color_edit_button_rgba_unmultiplied(&mut rgba);
-                field_context_menu(&response, &name, value, set);
+                field_context_menu(&response, &name, value, set, i18n);
                 if response.changed() {
                     set(&name, color_value(rgba, alpha));
                 }
@@ -1088,11 +1111,13 @@ fn field_row_at(
                             }
                         }
                     });
-                field_context_menu(&combo.response, &name, value, set);
+                field_context_menu(&combo.response, &name, value, set, i18n);
             });
         }
         FieldWidget::List => {
-            list_row(ui, registry, field, value, prefix, set, assets, doc_dir);
+            list_row(
+                ui, registry, field, value, prefix, set, assets, doc_dir, i18n,
+            );
         }
         // `Option<T>`: a checkbox says whether the value exists, then the inner
         // scalar is edited in place. Authors used to have to hand-edit JSON to
@@ -1101,7 +1126,7 @@ fn field_row_at(
             let inner = field.inner.as_deref();
             let mut enabled = !value.is_null();
             let response = ui.checkbox(&mut enabled, label);
-            field_context_menu(&response, &name, value, set);
+            field_context_menu(&response, &name, value, set, i18n);
             if response.changed() {
                 set(
                     &name,
@@ -1156,10 +1181,11 @@ fn field_row_at(
                                 set,
                                 assets,
                                 doc_dir,
+                                i18n,
                             );
                         }
                     });
-                field_context_menu(&section.header_response, &name, value, set);
+                field_context_menu(&section.header_response, &name, value, set, i18n);
             }
         }
     }
@@ -1339,11 +1365,12 @@ fn field_context_menu(
     name: &str,
     value: &Value,
     set: &mut dyn FnMut(&str, Value),
+    i18n: &prism_editor_core::I18n,
 ) {
     const CLIPBOARD: &str = "prism-inspector-field-clipboard";
     let id = egui::Id::new(CLIPBOARD);
     response.context_menu(|ui| {
-        if ui.button("Copy Value").clicked() {
+        if ui.button(i18n.t1("inspector.copyValue")).clicked() {
             ui.ctx().copy_text(format_json(value));
             ui.data_mut(|data| data.insert_temp(id, value.clone()));
             ui.close();
@@ -1354,8 +1381,11 @@ fn field_context_menu(
             .map(|clipboard| values_compatible(value, clipboard))
             .unwrap_or(false);
         if ui
-            .add_enabled(compatible, egui::Button::new("Paste Value"))
-            .on_hover_text("Paste the last copied value of the same shape")
+            .add_enabled(
+                compatible,
+                egui::Button::new(i18n.t1("inspector.pasteValue")),
+            )
+            .on_hover_text(i18n.t1("inspector.pasteValueHint"))
             .clicked()
         {
             if let Some(clipboard) = clipboard {
@@ -1364,7 +1394,7 @@ fn field_context_menu(
             ui.close();
         }
         ui.separator();
-        if ui.button("Copy Property Path").clicked() {
+        if ui.button(i18n.t1("inspector.copyPath")).clicked() {
             ui.ctx().copy_text(name.to_string());
             ui.close();
         }
@@ -1475,6 +1505,7 @@ fn list_row(
     set: &mut dyn FnMut(&str, Value),
     assets: &[String],
     doc_dir: &str,
+    i18n: &prism_editor_core::I18n,
 ) {
     let name = format!("{prefix}{}", field.name);
     let items = value.as_array().cloned().unwrap_or_default();
@@ -1514,7 +1545,7 @@ fn list_row(
                         }
                         if ui
                             .small_button(icons::X)
-                            .on_hover_text("Remove element")
+                            .on_hover_text(i18n.t1("inspector.removeElement"))
                             .clicked()
                             && list_remove(&mut working, index)
                         {
@@ -1522,9 +1553,9 @@ fn list_row(
                         }
                     }
                     match &element {
-                        Some(element) => {
-                            field_row_at(ui, registry, element, item, &name, set, assets, doc_dir)
-                        }
+                        Some(element) => field_row_at(
+                            ui, registry, element, item, &name, set, assets, doc_dir, i18n,
+                        ),
                         None => json_row(ui, &format!("[{index}]"), item),
                     }
                 });
@@ -1532,7 +1563,7 @@ fn list_row(
             if !fixed
                 && ui
                     .small_button(format!("{} Add", icons::PLUS))
-                    .on_hover_text("Append an element using the schema default")
+                    .on_hover_text(i18n.t1("inspector.appendElement"))
                     .clicked()
             {
                 let element = inner
@@ -1543,10 +1574,14 @@ fn list_row(
                 pending = Some(Value::Array(working.clone()));
             }
             if items.is_empty() {
-                ui.label(egui::RichText::new("empty list").weak().size(10.0));
+                ui.label(
+                    egui::RichText::new(i18n.t1("inspector.emptyList"))
+                        .weak()
+                        .size(10.0),
+                );
             }
         });
-    field_context_menu(&section.header_response, &name, value, set);
+    field_context_menu(&section.header_response, &name, value, set, i18n);
 
     if let Some(value) = pending {
         set(&name, value);

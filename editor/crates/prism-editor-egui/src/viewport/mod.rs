@@ -253,22 +253,13 @@ pub struct ViewportResponse {
     pub document_changed: bool,
 }
 
-impl ViewKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            ViewKind::Scene => "Scene",
-            ViewKind::Game => "Game",
-        }
-    }
-}
-
-pub(super) fn drop_hint(path: &str) -> String {
+pub(super) fn drop_hint(workspace: &Workspace, path: &str) -> String {
     if path.ends_with(".prefab.json") {
-        "instantiate at the marker".to_string()
+        workspace.t("desktop.viewport.dropPrefab")
     } else if path.ends_with(".scene.json") {
-        "open scene".to_string()
+        workspace.t("desktop.viewport.dropScene")
     } else {
-        "droppable".to_string()
+        workspace.t("desktop.viewport.dropOther")
     }
 }
 
@@ -553,13 +544,13 @@ impl ViewportState {
                 (
                     egui::Color32::from_rgb(90, 170, 120),
                     egui::Color32::from_rgba_unmultiplied(90, 170, 120, 36),
-                    drop_hint(&payload.path),
+                    drop_hint(workspace, &payload.path),
                 )
             } else {
                 (
                     egui::Color32::from_rgb(214, 96, 96),
                     egui::Color32::from_rgba_unmultiplied(214, 96, 96, 28),
-                    "cannot be dropped here".to_string(),
+                    workspace.t("desktop.viewport.dropRejected"),
                 )
             };
             painter.rect_stroke(
@@ -1123,15 +1114,30 @@ impl ViewportState {
         }
 
         let (lights_kept, lights_total) = self.host.local_light_stats();
-        let mut stats = format!(
-            "{} · {} · {:.1} ms · {:.1} FPS · {} frames",
-            self.kind().label(),
-            self.tool.label(),
-            self.last_frame_ms,
-            self.fps,
-            self.frames
+        let mut stats = workspace.tf(
+            "desktop.viewport.stats",
+            &[
+                (
+                    "view",
+                    &workspace.t(match self.kind() {
+                        ViewKind::Scene => "menu.sceneView",
+                        ViewKind::Game => "menu.gameView",
+                    }),
+                ),
+                (
+                    "tool",
+                    &workspace.t(match self.tool {
+                        GizmoTool::Translate => "toolbar.move",
+                        GizmoTool::Rotate => "toolbar.rotate",
+                        GizmoTool::Scale => "toolbar.scale",
+                    }),
+                ),
+                ("ms", &format!("{:.1}", self.last_frame_ms)),
+                ("fps", &format!("{:.1}", self.fps)),
+                ("frames", &self.frames.to_string()),
+            ],
         );
-        if let Some(label) = light_budget_label(lights_kept, lights_total) {
+        if let Some(label) = light_budget_label(workspace, lights_kept, lights_total) {
             stats.push_str(" · ");
             stats.push_str(&label);
         }
@@ -1150,20 +1156,21 @@ impl ViewportState {
 
 #[cfg(test)]
 mod drop_hint_tests {
+    use prism_editor_core::Workspace;
 
     #[test]
     fn the_drop_label_names_the_action() {
         assert_eq!(
-            super::drop_hint("assets/prefabs/crate.prefab.json"),
-            "instantiate at the marker"
+            super::drop_hint(&Workspace::sample(), "assets/prefabs/crate.prefab.json"),
+            "在标记处实例化"
         );
         assert_eq!(
-            super::drop_hint("assets/scenes/level.scene.json"),
-            "open scene"
+            super::drop_hint(&Workspace::sample(), "assets/scenes/level.scene.json"),
+            "打开场景"
         );
         assert_eq!(
-            super::drop_hint("assets/materials/red.mat.json"),
-            "droppable"
+            super::drop_hint(&Workspace::sample(), "assets/materials/red.mat.json"),
+            "可放置"
         );
     }
 }
@@ -1258,11 +1265,19 @@ mod tests {
 
     #[test]
     fn the_stats_label_reports_dropped_lights() {
-        assert_eq!(light_budget_label(0, 0), None, "没有局部光时不占位置");
-        assert_eq!(light_budget_label(3, 3), Some("Lights 3".to_string()));
+        let workspace = Workspace::sample();
         assert_eq!(
-            light_budget_label(8, 12),
-            Some("Lights 8/12 (4 dropped)".to_string())
+            light_budget_label(&workspace, 0, 0),
+            None,
+            "没有局部光时不占位置"
+        );
+        assert_eq!(
+            light_budget_label(&workspace, 3, 3),
+            Some("光源 3".to_string())
+        );
+        assert_eq!(
+            light_budget_label(&workspace, 8, 12),
+            Some("光源 8/12（丢弃 4）".to_string())
         );
     }
 

@@ -2,14 +2,25 @@
 
 use super::*;
 
-pub(super) fn light_budget_label(kept: usize, total: usize) -> Option<String> {
+pub(super) fn light_budget_label(
+    workspace: &Workspace,
+    kept: usize,
+    total: usize,
+) -> Option<String> {
     if total == 0 {
         return None;
     }
     if kept < total {
-        Some(format!("Lights {kept}/{total} ({} dropped)", total - kept))
+        Some(workspace.tf(
+            "desktop.viewport.lightsDropped",
+            &[
+                ("kept", &kept.to_string()),
+                ("total", &total.to_string()),
+                ("dropped", &(total - kept).to_string()),
+            ],
+        ))
     } else {
-        Some(format!("Lights {total}"))
+        Some(workspace.tf("desktop.viewport.lights", &[("total", &total.to_string())]))
     }
 }
 

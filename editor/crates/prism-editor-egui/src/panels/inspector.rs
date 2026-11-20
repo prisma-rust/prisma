@@ -91,9 +91,9 @@ pub fn inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 icons::LOCK_SIMPLE_OPEN
             };
             let hint = if locked {
-                "Unlock the inspector"
+                workspace.t("desktop.inspector.unlock")
             } else {
-                "Lock the inspector to the current selection"
+                workspace.t("desktop.inspector.lock")
             };
             let can_lock = locked || !workspace.selection.is_empty();
             if ui
@@ -104,7 +104,11 @@ pub fn inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 toggle_inspector_lock(workspace, state);
             }
             if locked {
-                ui.label(RichText::new("Locked").size(10.5).weak());
+                ui.label(
+                    RichText::new(workspace.t("inspector.locked"))
+                        .size(10.5)
+                        .weak(),
+                );
             }
         });
     }
@@ -114,8 +118,21 @@ pub fn inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         if !state.asset_selection.is_empty() {
             asset_inspector(ui, workspace, state);
         } else {
-            ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Select an entity").weak());
+            ui.vertical_centered(|ui| {
+                ui.add_space(24.0);
+                ui.label(
+                    RichText::new(icons::CURSOR_CLICK)
+                        .size(22.0)
+                        .color(theme::color32(
+                            &workspace.colors(),
+                            prism_editor_core::ThemeToken::MutedDim,
+                        )),
+                );
+                ui.label(
+                    RichText::new(workspace.t("common.selectEntity"))
+                        .weak()
+                        .size(11.0),
+                );
             });
         }
     } else if indices.len() > 1 {
@@ -251,9 +268,12 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
         );
         if state.asset_selection.len() > 1 {
             ui.label(
-                RichText::new(format!("+{} selected", state.asset_selection.len() - 1))
-                    .weak()
-                    .size(11.0),
+                RichText::new(workspace.tf(
+                    "inspector.moreSelected",
+                    &[("count", &(state.asset_selection.len() - 1).to_string())],
+                ))
+                .weak()
+                .size(11.0),
             );
         }
     });
@@ -261,7 +281,7 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
     ui.separator();
 
     let Some(details) = details else {
-        ui.label(RichText::new("asset not in the project index").weak());
+        ui.label(RichText::new(workspace.t("inspector.notIndexed")).weak());
         return;
     };
 
@@ -271,25 +291,37 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
             ui.label(RichText::new(value).size(11.0));
         });
     };
-    row("Type", details.asset.kind.label().to_string());
-    row("Size", format_bytes(details.asset.size_bytes));
+    row(
+        &workspace.t("inspector.assetType"),
+        details.asset.kind.label().to_string(),
+    );
+    row(
+        &workspace.t("inspector.assetSize"),
+        format_bytes(details.asset.size_bytes),
+    );
     if !details.asset.importer.is_empty() {
-        row("Importer", details.asset.importer.clone());
+        row(
+            &workspace.t("inspector.importer"),
+            details.asset.importer.clone(),
+        );
     }
     row("GUID", details.guid.clone());
-    row("References", details.references.len().to_string());
+    row(
+        &workspace.t("inspector.references"),
+        details.references.len().to_string(),
+    );
     ui.horizontal(|ui| {
-        if ui
-            .button("Ping In Scene")
-            .on_hover_text("Select the first object that references this asset")
-            .clicked()
-        {
+        if ui.button(workspace.t("assets.pingScene")).clicked() {
             ping_asset(workspace, state, &path);
         }
     });
 
     ui.separator();
-    ui.label(RichText::new("Preview").strong().size(11.0));
+    ui.label(
+        RichText::new(workspace.t("inspector.preview"))
+            .strong()
+            .size(11.0),
+    );
     match &details.preview {
         AssetPreview::Text { text, truncated } => {
             let lines: Vec<&str> = text.lines().take(10).collect();
@@ -305,7 +337,11 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
                 .wrap(),
             );
             if *truncated {
-                ui.label(RichText::new("… truncated").weak().size(10.0));
+                ui.label(
+                    RichText::new(workspace.t("inspector.truncated"))
+                        .weak()
+                        .size(10.0),
+                );
             }
         }
         AssetPreview::Image {
@@ -315,7 +351,7 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
         } => {
             let size = match (width, height) {
                 (Some(width), Some(height)) => format!("{width} × {height}"),
-                _ => "unknown size".to_string(),
+                _ => workspace.t("inspector.unknownSize"),
             };
             ui.label(RichText::new(format!("{size} · {}", format_bytes(*bytes))).size(11.0));
 
@@ -335,10 +371,18 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
             }
         }
         AssetPreview::Document => {
-            ui.label(RichText::new("scene / prefab document").weak().size(11.0));
+            ui.label(
+                RichText::new(workspace.t("inspector.sceneDoc"))
+                    .weak()
+                    .size(11.0),
+            );
         }
         AssetPreview::None => {
-            ui.label(RichText::new("no preview for this kind").weak().size(11.0));
+            ui.label(
+                RichText::new(workspace.t("inspector.noPreview"))
+                    .weak()
+                    .size(11.0),
+            );
         }
     }
 
@@ -346,12 +390,12 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
         ui.add_space(4.0);
         let playing = state.audio_preview_path.as_deref() == Some(path.as_str());
         ui.horizontal(|ui| {
-            let label = if playing { "Stop" } else { "Play" };
-            if ui
-                .button(label)
-                .on_hover_text("Preview this clip with the editor audio engine (#508)")
-                .clicked()
-            {
+            let label = if playing {
+                workspace.t("common.stop")
+            } else {
+                workspace.t("common.play")
+            };
+            if ui.button(label).clicked() {
                 state.pending_audio_preview = Some(if playing {
                     AudioPreviewAction::Stop
                 } else {
@@ -359,14 +403,22 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
                 });
             }
             if playing {
-                ui.label(RichText::new("playing…").weak().size(10.0));
+                ui.label(
+                    RichText::new(workspace.t("inspector.playing"))
+                        .weak()
+                        .size(10.0),
+                );
             }
         });
     }
 
     if !details.references.is_empty() {
         ui.separator();
-        ui.label(RichText::new("Used by").strong().size(11.0));
+        ui.label(
+            RichText::new(workspace.t("inspector.usedBy"))
+                .strong()
+                .size(11.0),
+        );
         for reference in details.references.iter().take(12) {
             ui.label(
                 RichText::new(format!(
@@ -379,9 +431,12 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
         }
         if details.references.len() > 12 {
             ui.label(
-                RichText::new(format!("+{} more", details.references.len() - 12))
-                    .weak()
-                    .size(10.0),
+                RichText::new(workspace.tf(
+                    "inspector.more",
+                    &[("count", &(details.references.len() - 12).to_string())],
+                ))
+                .weak()
+                .size(10.0),
             );
         }
     }
@@ -396,14 +451,14 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Copy Path").clicked() {
+        if ui.button(workspace.t("menu.copyPath")).clicked() {
             ui.ctx().copy_text(path.clone());
             state.status = format!("copied {path}");
         }
         let openable = path.ends_with(".scene.json")
             || path.ends_with(".prefab.json")
             || prism_editor_core::project::is_json_editable_asset(&path);
-        if openable && ui.button("Open").clicked() {
+        if openable && ui.button(workspace.t("menu.open")).clicked() {
             if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
                 match workspace.open_project_file(&path) {
                     Ok(()) => state.status = format!("opened {path}"),
@@ -415,7 +470,7 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
                 state.status = format!("opened {path}");
             }
         }
-        if ui.button("Show in Explorer").clicked() {
+        if ui.button(workspace.t("menu.showInExplorer")).clicked() {
             state.status = match reveal_asset(workspace, &path) {
                 Ok(()) => format!("revealed {path}"),
                 Err(error) => error,
@@ -430,8 +485,11 @@ pub(super) fn add_component_menu_for(
     state: &mut UiState,
     indices: &[usize],
 ) {
-    ui.menu_button("Add Component", |ui| {
-        ui.add(egui::TextEdit::singleline(&mut state.add_component_query).hint_text("search"));
+    ui.menu_button(workspace.t("inspector.addComponent"), |ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut state.add_component_query)
+                .hint_text(workspace.t("common.search")),
+        );
         let query = state.add_component_query.to_lowercase();
 
         let attachable: std::collections::HashSet<String> = workspace
@@ -460,7 +518,7 @@ pub(super) fn add_component_menu_for(
             .collect();
         let mut picked = None;
         if categories.is_empty() {
-            ui.label(RichText::new("no more components").weak());
+            ui.label(RichText::new(workspace.t("inspector.noMoreComponents")).weak());
         }
         for (category, items) in categories {
             ui.menu_button(category, |ui| {
@@ -493,8 +551,31 @@ pub(super) enum TransformEdit {
     Rotation([f32; 4]),
 }
 
+pub(super) struct TransformLabels {
+    pub position: String,
+    pub rotation: String,
+    pub scale: String,
+    pub copy: String,
+    pub paste: String,
+    pub reset: String,
+}
+
+impl TransformLabels {
+    pub fn new(workspace: &Workspace) -> Self {
+        Self {
+            position: workspace.t("inspector.position"),
+            rotation: workspace.t("inspector.rotation"),
+            scale: workspace.t("inspector.scale"),
+            copy: workspace.t("common.copy"),
+            paste: workspace.t("common.paste"),
+            reset: workspace.t("common.reset"),
+        }
+    }
+}
+
 pub(super) fn transform_rows(
     ui: &mut Ui,
+    labels: &TransformLabels,
     state: &mut UiState,
     transform: &prism_editor_core::TransformJson,
 
@@ -504,8 +585,7 @@ pub(super) fn transform_rows(
     let mixed_at = |row: usize, axis: usize| mixed.map(|mixed| mixed[row][axis]).unwrap_or(false);
     let marker = |ui: &mut Ui, axis: usize, row: usize| {
         if mixed_at(row, axis) {
-            ui.label(RichText::new("—").weak())
-                .on_hover_text("Selected entities have different values here");
+            ui.label(RichText::new("—").weak());
         }
     };
 
@@ -516,7 +596,7 @@ pub(super) fn transform_rows(
     let mut position_row: Option<[f32; 3]> = None;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::aligned_scrubbable_label(ui, "Position", label_w, &mut row_delta, 0.01) {
+        if widgets::aligned_scrubbable_label(ui, &labels.position, label_w, &mut row_delta, 0.01) {
             for axis in 0..3 {
                 position[axis] += row_delta;
             }
@@ -536,15 +616,19 @@ pub(super) fn transform_rows(
                     value: position[axis],
                 });
             }
-            let response = ui
-                .add(
-                    egui::DragValue::new(&mut position[axis])
-                        .speed(0.01)
-                        .max_decimals(3)
-                        .custom_parser(widgets::number_parser),
-                )
-                .on_hover_text("Type an expression: 90/2, 2*(3+4)");
-            transform_row_menu(&response, TransformRow::Position, transform, &mut write);
+            let response = ui.add(
+                egui::DragValue::new(&mut position[axis])
+                    .speed(0.01)
+                    .max_decimals(3)
+                    .custom_parser(widgets::number_parser),
+            );
+            transform_row_menu(
+                labels,
+                &response,
+                TransformRow::Position,
+                transform,
+                &mut write,
+            );
             if response.changed() {
                 write(TransformEdit::Axis {
                     field: "position",
@@ -556,7 +640,6 @@ pub(super) fn transform_rows(
         }
         if ui
             .small_button(RichText::new(icons::ARROW_COUNTER_CLOCKWISE).size(10.0))
-            .on_hover_text("Reset Position")
             .clicked()
         {
             apply_transform_row(
@@ -577,7 +660,7 @@ pub(super) fn transform_rows(
     let mut rotation_row = false;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::aligned_scrubbable_label(ui, "Rotation", label_w, &mut row_delta, 0.5) {
+        if widgets::aligned_scrubbable_label(ui, &labels.rotation, label_w, &mut row_delta, 0.5) {
             for value in euler.iter_mut() {
                 *value += row_delta;
             }
@@ -586,16 +669,20 @@ pub(super) fn transform_rows(
         for axis in 0..3 {
             let mut changed =
                 widgets::scrubbable_axis_badge(ui, axis_labels[axis], axis, &mut euler[axis], 0.5);
-            let response = ui
-                .add(
-                    egui::DragValue::new(&mut euler[axis])
-                        .speed(0.5)
-                        .max_decimals(2)
-                        .suffix("°")
-                        .custom_parser(widgets::number_parser),
-                )
-                .on_hover_text("Type an expression: 90/2, 45+15");
-            transform_row_menu(&response, TransformRow::Rotation, transform, &mut write);
+            let response = ui.add(
+                egui::DragValue::new(&mut euler[axis])
+                    .speed(0.5)
+                    .max_decimals(2)
+                    .suffix("°")
+                    .custom_parser(widgets::number_parser),
+            );
+            transform_row_menu(
+                labels,
+                &response,
+                TransformRow::Rotation,
+                transform,
+                &mut write,
+            );
             if response.changed() {
                 changed = true;
             }
@@ -609,7 +696,6 @@ pub(super) fn transform_rows(
         }
         if ui
             .small_button(RichText::new(icons::ARROW_COUNTER_CLOCKWISE).size(10.0))
-            .on_hover_text("Reset Rotation")
             .clicked()
         {
             apply_transform_row(
@@ -629,7 +715,7 @@ pub(super) fn transform_rows(
     let mut scale_row: Option<[f32; 3]> = None;
     ui.horizontal(|ui| {
         let mut row_delta = 0.0f32;
-        if widgets::aligned_scrubbable_label(ui, "Scale", label_w, &mut row_delta, 0.01) {
+        if widgets::aligned_scrubbable_label(ui, &labels.scale, label_w, &mut row_delta, 0.01) {
             for axis in 0..3 {
                 scale[axis] += row_delta;
             }
@@ -651,7 +737,13 @@ pub(super) fn transform_rows(
                         .custom_parser(widgets::number_parser),
                 )
                 .on_hover_text("Type an expression: 90/2, 2*(3+4)");
-            transform_row_menu(&response, TransformRow::Scale, transform, &mut write);
+            transform_row_menu(
+                labels,
+                &response,
+                TransformRow::Scale,
+                transform,
+                &mut write,
+            );
             if response.changed() {
                 write(TransformEdit::Axis {
                     field: "scale",
@@ -663,7 +755,6 @@ pub(super) fn transform_rows(
         }
         if ui
             .small_button(RichText::new(icons::ARROW_COUNTER_CLOCKWISE).size(10.0))
-            .on_hover_text("Reset Scale")
             .clicked()
         {
             apply_transform_row(
@@ -690,14 +781,6 @@ pub(super) enum TransformRow {
 }
 
 impl TransformRow {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Position => "Position",
-            Self::Rotation => "Rotation",
-            Self::Scale => "Scale",
-        }
-    }
-
     pub(super) fn reset(self) -> Vec<f32> {
         match self {
             Self::Position => vec![0.0, 0.0, 0.0],
@@ -716,6 +799,7 @@ impl TransformRow {
 }
 
 pub(super) fn transform_row_menu(
+    labels: &TransformLabels,
     response: &egui::Response,
     row: TransformRow,
     transform: &prism_editor_core::TransformJson,
@@ -724,7 +808,7 @@ pub(super) fn transform_row_menu(
     const CLIPBOARD: &str = "prism-transform-row-clipboard";
     let id = egui::Id::new(CLIPBOARD);
     response.context_menu(|ui| {
-        if ui.button(format!("Copy {}", row.label())).clicked() {
+        if ui.button(labels.copy.as_str()).clicked() {
             let values = row.from_transform(transform);
             ui.ctx().copy_text(format!("{values:?}"));
             ui.data_mut(|data| data.insert_temp(id, (row, values)));
@@ -736,11 +820,7 @@ pub(super) fn transform_row_menu(
             .map(|(kind, _)| *kind == row)
             .unwrap_or(false);
         if ui
-            .add_enabled(
-                compatible,
-                egui::Button::new(format!("Paste {}", row.label())),
-            )
-            .on_hover_text("Rows only accept a value copied from the same row")
+            .add_enabled(compatible, egui::Button::new(labels.paste.as_str()))
             .clicked()
         {
             if let Some((_, values)) = clipboard {
@@ -748,7 +828,7 @@ pub(super) fn transform_row_menu(
             }
             ui.close();
         }
-        if ui.button(format!("Reset {}", row.label())).clicked() {
+        if ui.button(labels.reset.as_str()).clicked() {
             apply_transform_row(row, &row.reset(), &mut *write);
             ui.close();
         }
@@ -834,7 +914,11 @@ pub(super) fn tilemap_editor(
     let rows = tiles.len().div_ceil(columns.max(1));
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Tilemap").strong().size(12.0));
+        ui.label(
+            RichText::new(workspace.t("desktop.inspector.tilemap"))
+                .strong()
+                .size(12.0),
+        );
         ui.label(
             RichText::new(format!("{columns} x {rows}"))
                 .size(10.0)
@@ -846,20 +930,18 @@ pub(super) fn tilemap_editor(
             .is_some_and(|path| path.is_empty())
         {
             ui.label(
-                RichText::new("no tileset")
+                RichText::new(workspace.t("inspector.noTileset"))
                     .size(10.0)
                     .color(Color32::from_rgb(226, 168, 64)),
-            )
-            .on_hover_text("Set tileset_path before tiles can be rendered");
+            );
         }
     });
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Columns").size(10.5));
+        ui.label(RichText::new(workspace.t("inspector.columns")).size(10.5));
         let mut edited_columns = columns as u32;
         if ui
             .add(egui::DragValue::new(&mut edited_columns).range(1..=256))
-            .on_hover_text("Re-flows the same tiles into this many columns")
             .changed()
         {
             workspace.set_field(
@@ -870,11 +952,10 @@ pub(super) fn tilemap_editor(
             );
         }
 
-        ui.label(RichText::new("Rows").size(10.5));
+        ui.label(RichText::new(workspace.t("inspector.rows")).size(10.5));
         let mut edited_rows = rows as u32;
         if ui
             .add(egui::DragValue::new(&mut edited_rows).range(1..=256))
-            .on_hover_text("Pads with empty cells or drops the tail")
             .changed()
         {
             tiles.resize(edited_rows as usize * columns.max(1), 0);
@@ -882,10 +963,9 @@ pub(super) fn tilemap_editor(
         }
 
         ui.separator();
-        ui.label(RichText::new("Palette").size(10.5))
-            .on_hover_text("Left click cycles 0..=Palette, right click clears one cell");
+        ui.label(RichText::new(workspace.t("inspector.palette")).size(10.5));
         ui.add(egui::DragValue::new(&mut state.tilemap_palette).range(1..=64));
-        if ui.small_button("Clear").clicked() {
+        if ui.small_button(workspace.t("common.clear")).clicked() {
             for tile in &mut tiles {
                 *tile = 0;
             }
@@ -970,12 +1050,7 @@ pub(super) fn inspector_single(
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui
-                    .checkbox(&mut entity_active, "")
-                    .on_hover_text("Entity active state")
-                    .changed()
-                    && entity_active != active_was
-                {
+                if ui.checkbox(&mut entity_active, "").changed() && entity_active != active_was {
                     workspace.set_active_entity(index, entity_active);
                 }
                 ui.label(RichText::new(entity_icon).size(13.0).color(theme::color32(
@@ -1010,8 +1085,7 @@ pub(super) fn inspector_single(
                             .monospace()
                             .weak()
                             .size(10.0),
-                    )
-                    .on_hover_text("Stable entity ID");
+                    );
                 });
             });
         });
@@ -1023,13 +1097,12 @@ pub(super) fn inspector_single(
         for (field, value) in broken {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new("Missing")
+                    RichText::new(workspace.t("inspector.missing"))
                         .size(10.5)
                         .strong()
                         .color(Color32::from_rgb(232, 96, 96)),
                 );
-                ui.label(RichText::new(field).monospace().size(10.0))
-                    .on_hover_text("Asset path field");
+                ui.label(RichText::new(field).monospace().size(10.0));
                 ui.label(RichText::new(value).monospace().size(10.0).weak());
             });
         }
@@ -1047,18 +1120,10 @@ pub(super) fn inspector_single(
         if state.dropped_light_ids.contains(&entity_id) {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    RichText::new("Not rendered")
+                    RichText::new(workspace.t("inspector.notRendered"))
                         .size(10.5)
                         .strong()
                         .color(Color32::from_rgb(226, 168, 64)),
-                );
-                ui.label(
-                    RichText::new(format!(
-                        "only the {} most important of {} local lights are drawn",
-                        state.lights_kept, state.lights_total
-                    ))
-                    .size(10.5)
-                    .weak(),
                 );
             });
             ui.separator();
@@ -1078,13 +1143,16 @@ pub(super) fn inspector_single(
     match &prefab {
         Some(link) => {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Prefab").weak().size(10.0));
+                ui.label(
+                    RichText::new(workspace.t("inspector.prefab"))
+                        .weak()
+                        .size(10.0),
+                );
                 ui.label(RichText::new(link).monospace().size(10.0));
             });
             ui.horizontal(|ui| {
                 if ui
-                    .small_button("Open Prefab")
-                    .on_hover_text("Edit the source prefab; the breadcrumb will lead back here")
+                    .small_button(workspace.t("inspector.openPrefab"))
                     .clicked()
                 {
                     let scene_index = workspace.active_index();
@@ -1093,25 +1161,23 @@ pub(super) fn inspector_single(
                         Err(error) => state.status = format!("open prefab failed: {error}"),
                     }
                 }
-                if ui.small_button("Revert").clicked() {
+                if ui
+                    .small_button(workspace.t("inspector.revertPrefab"))
+                    .clicked()
+                {
                     match workspace.revert_prefab_instance(entity_id) {
                         Ok(_) => state.status = "reverted prefab instance".to_string(),
                         Err(error) => state.status = format!("revert failed: {error}"),
                     }
                 }
-                if ui
-                    .small_button("Sync All")
-                    .on_hover_text("Sync every instance of this prefab in the document")
-                    .clicked()
-                {
+                if ui.small_button(workspace.t("inspector.syncAll")).clicked() {
                     match workspace.sync_prefab_instances(link) {
                         Ok(count) => state.status = format!("synced {count} instances"),
                         Err(error) => state.status = format!("sync failed: {error}"),
                     }
                 }
                 if ui
-                    .small_button("Apply to Prefab")
-                    .on_hover_text("Overwrite the prefab asset with this instance's subtree")
+                    .small_button(workspace.t("inspector.applyToPrefab"))
                     .clicked()
                 {
                     match apply_to_prefab(workspace, index, link) {
@@ -1126,14 +1192,13 @@ pub(super) fn inspector_single(
         }
         None => {
             if ui
-                .small_button("Save as Prefab…")
-                .on_hover_text("Extract this subtree into assets/prefabs")
+                .small_button(workspace.t("inspector.saveAsPrefab"))
                 .clicked()
             {
                 state.prompt = Some(Prompt::new(
                     PromptKind::SavePrefab,
-                    "Save as Prefab",
-                    "预制体文件名（不含目录）",
+                    &workspace.t("desktop.inspector.savePrefabTitle"),
+                    &workspace.t("desktop.inspector.savePrefabHint"),
                     name.clone(),
                 ));
             }
@@ -1166,13 +1231,13 @@ pub(super) fn inspector_single(
                             ui.data_mut(|d| d.insert_temp(tf_open_id, tf_open));
                         }
                         ui.label(RichText::new(icons::ARROWS_OUT_CARDINAL).size(11.5));
-                        ui.label(RichText::new("Transform").strong().size(12.0));
+                        ui.label(
+                            RichText::new(workspace.t("inspector.transform"))
+                                .strong()
+                                .size(12.0),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .small_button(icons::ARROW_COUNTER_CLOCKWISE)
-                                .on_hover_text("Reset all Transform fields")
-                                .clicked()
-                            {
+                            if ui.small_button(icons::ARROW_COUNTER_CLOCKWISE).clicked() {
                                 workspace.set_transform_vector(
                                     entity_id,
                                     "position",
@@ -1186,7 +1251,8 @@ pub(super) fn inspector_single(
                 });
             if tf_open {
                 ui.add_space(4.0);
-                transform_rows(ui, state, &transform, None, |edit| match edit {
+                let labels = TransformLabels::new(workspace);
+                transform_rows(ui, &labels, state, &transform, None, |edit| match edit {
                     TransformEdit::Axis { field, axis, value } => {
                         workspace.set_transform_axis(entity_id, field, axis, value);
                     }
@@ -1220,10 +1286,14 @@ pub(super) fn inspector_single(
     }
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Components").strong().size(12.0));
+        ui.label(
+            RichText::new(workspace.t("inspector.components"))
+                .strong()
+                .size(12.0),
+        );
         ui.add(
             egui::TextEdit::singleline(&mut state.inspector_search)
-                .hint_text("filter")
+                .hint_text(workspace.t("common.filter"))
                 .desired_width(80.0),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1253,6 +1323,7 @@ pub(super) fn inspector_single(
             continue;
         };
         let presets = workspace.component_preset_names(&schema.name);
+        let i18n = workspace.i18n.clone();
         let mut set = |field: &str, value: Value| {
             workspace.set_field(entity_id, &schema.name, field, value);
         };
@@ -1266,6 +1337,7 @@ pub(super) fn inspector_single(
             &asset_paths,
             &doc_dir,
             &presets,
+            &i18n,
         );
         if name == "prism_engine::scene::LineRenderer" {
             line_renderer_editor(ui, workspace, entity_id, &schema.name, &value);
@@ -1276,7 +1348,7 @@ pub(super) fn inspector_single(
         } else if name == "prism_engine::scene::Animator" {
             animator_editor(ui, workspace, state, entity_id, &schema.name, &value);
         } else if name == "prism_engine::scene::SkeletonRoot" {
-            skeleton_root_editor(ui, state, &schema.name, &value);
+            skeleton_root_editor(ui, workspace, state, &schema.name, &value);
         } else if name == "prism_engine::scene::KeyframeAnimation" {
             keyframe_animation_editor(ui, workspace, entity_id, &schema.name, &value);
         } else if name == "prism_engine::scene::Terrain" {
@@ -1419,32 +1491,51 @@ pub(super) fn prt_preview_controls(
     workspace: &mut Workspace,
     max_y_layers: Option<u32>,
 ) {
-    ui.checkbox(
-        &mut workspace.prt_gizmos.enabled,
-        "Show PRT probes in Scene View",
-    );
+    let label = workspace.t("desktop.viewport.showProbes");
+    ui.checkbox(&mut workspace.prt_gizmos.enabled, label);
     if !workspace.prt_gizmos.enabled {
         return;
     }
     ui.horizontal(|ui| {
-        ui.label("Mode");
+        ui.label(workspace.t("desktop.viewport.mode"));
         egui::ComboBox::from_id_salt(("prt-display-mode", ui.id()))
-            .selected_text(workspace.prt_gizmos.mode.label())
+            .selected_text(workspace.t(match workspace.prt_gizmos.mode {
+                prism_editor_core::PrtDisplayMode::ShSpheres => "desktop.viewport.prtSpheres",
+                prism_editor_core::PrtDisplayMode::MeanIrradiance => "desktop.viewport.prtMean",
+                prism_editor_core::PrtDisplayMode::DominantDirection => {
+                    "desktop.viewport.prtDirection"
+                }
+                prism_editor_core::PrtDisplayMode::GridBoundsOnly => "desktop.viewport.prtBounds",
+            }))
             .width(136.0)
             .show_ui(ui, |ui| {
                 for mode in PrtDisplayMode::ALL {
-                    ui.selectable_value(&mut workspace.prt_gizmos.mode, mode, mode.label());
+                    let label = workspace.t(match mode {
+                        prism_editor_core::PrtDisplayMode::ShSpheres => {
+                            "desktop.viewport.prtSpheres"
+                        }
+                        prism_editor_core::PrtDisplayMode::MeanIrradiance => {
+                            "desktop.viewport.prtMean"
+                        }
+                        prism_editor_core::PrtDisplayMode::DominantDirection => {
+                            "desktop.viewport.prtDirection"
+                        }
+                        prism_editor_core::PrtDisplayMode::GridBoundsOnly => {
+                            "desktop.viewport.prtBounds"
+                        }
+                    });
+                    ui.selectable_value(&mut workspace.prt_gizmos.mode, mode, label);
                 }
             });
     });
     ui.horizontal(|ui| {
-        ui.label("Radius");
+        ui.label(workspace.t("desktop.render.radius"));
         ui.add(
             egui::DragValue::new(&mut workspace.prt_gizmos.probe_radius)
                 .speed(0.01)
                 .range(0.04..=2.0),
         );
-        ui.label("Exposure");
+        ui.label(workspace.t("desktop.render.exposure"));
         ui.add(
             egui::DragValue::new(&mut workspace.prt_gizmos.exposure)
                 .speed(0.05)
@@ -1452,16 +1543,18 @@ pub(super) fn prt_preview_controls(
         );
     });
     ui.horizontal(|ui| {
-        ui.checkbox(&mut workspace.prt_gizmos.show_grid_bounds, "Bounds");
-        ui.checkbox(
-            &mut workspace.prt_gizmos.show_trilinear_tethers,
-            "Trilinear tethers",
-        );
+        let bounds = workspace.t("desktop.viewport.prtBounds");
+        ui.checkbox(&mut workspace.prt_gizmos.show_grid_bounds, bounds);
+        let tethers = workspace.t("desktop.viewport.tethers");
+        ui.checkbox(&mut workspace.prt_gizmos.show_trilinear_tethers, tethers);
     });
     if let Some(layers) = max_y_layers {
         ui.horizontal(|ui| {
             let mut sliced = workspace.prt_gizmos.slice_y.is_some();
-            if ui.checkbox(&mut sliced, "Y slice").changed() {
+            if ui
+                .checkbox(&mut sliced, workspace.t("desktop.viewport.ySlice"))
+                .changed()
+            {
                 workspace.prt_gizmos.slice_y = if sliced { Some(0) } else { None };
             }
             if let Some(ref mut layer) = workspace.prt_gizmos.slice_y {
@@ -1483,7 +1576,7 @@ pub(super) fn prpv_asset_section(ui: &mut Ui, workspace: &mut Workspace, rel_pat
     };
     ui.separator();
     ui.label(
-        RichText::new("Baked GI Probe Volume (PRPV)")
+        RichText::new(workspace.t("inspector.prpv"))
             .strong()
             .size(11.0),
     );
@@ -1506,7 +1599,7 @@ pub(super) fn gi_config_editor(
         .corner_radius(egui::CornerRadius::same(2))
         .show(ui, |ui| {
             ui.label(
-                RichText::new("PRT Probe Volume Preview")
+                RichText::new(workspace.t("inspector.prtPreview"))
                     .strong()
                     .size(11.5),
             );
@@ -1518,18 +1611,23 @@ pub(super) fn gi_config_editor(
                     }
                     Some(Err(err)) => {
                         ui.label(
-                            RichText::new(format!("Invalid PRPV file ({rel_path}): {err}"))
-                                .color(Color32::from_rgb(232, 96, 96))
-                                .size(10.5),
+                            RichText::new(workspace.tf(
+                                "inspector.invalidPrpv",
+                                &[("path", &rel_path), ("error", &err.to_string())],
+                            ))
+                            .color(Color32::from_rgb(232, 96, 96))
+                            .size(10.5),
                         );
                     }
                     None => {}
                 },
                 None => {
                     ui.label(
-                        RichText::new(format!("No baked probe file at `{rel_path}` yet."))
-                            .weak()
-                            .size(10.5),
+                        RichText::new(
+                            workspace.tf("inspector.noProbeFile", &[("path", &rel_path)]),
+                        )
+                        .weak()
+                        .size(10.5),
                     );
                 }
             }
@@ -1537,7 +1635,7 @@ pub(super) fn gi_config_editor(
             prt_preview_controls(ui, workspace, y_layers);
             ui.add_space(2.0);
             ui.add_enabled_ui(!state.build_running, |ui| {
-                if ui.button("Bake GI Now").clicked() {
+                if ui.button(workspace.t("inspector.bakeGi")).clicked() {
                     state.pending_build = Some(crate::build::BuildKind::BakeGi {
                         output: rel_path,
                         rays: state.offline.gi_rays,
@@ -1558,7 +1656,11 @@ pub(super) fn line_renderer_editor(
     let Some(points) = value.get("points").and_then(Value::as_array) else {
         return;
     };
-    ui.label(RichText::new("Positions").strong().size(11.0));
+    ui.label(
+        RichText::new(workspace.t("inspector.positions"))
+            .strong()
+            .size(11.0),
+    );
     let mut updated = points.clone();
     let mut action = None;
     for (index, point) in points.iter().enumerate() {
@@ -1575,20 +1677,18 @@ pub(super) fn line_renderer_editor(
             if changed {
                 updated[index] = json!([coords[0], coords[1], coords[2]]);
             }
-            if index + 1 < points.len()
-                && ui
-                    .small_button("+")
-                    .on_hover_text("Subdivide after this point")
-                    .clicked()
-            {
+            if index + 1 < points.len() && ui.small_button("+").clicked() {
                 action = Some(LinePointAction::Subdivide(index));
             }
-            if ui.small_button("x").on_hover_text("Remove point").clicked() {
+            if ui.small_button("x").clicked() {
                 action = Some(LinePointAction::Remove(index));
             }
         });
     }
-    if ui.small_button("Add Position").clicked() {
+    if ui
+        .small_button(workspace.t("inspector.addPosition"))
+        .clicked()
+    {
         action = Some(LinePointAction::Add);
     }
     if let Some(action) = action {
@@ -1701,10 +1801,14 @@ pub(super) fn sprite_preview(
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32;
 
-    ui.label(RichText::new("Sprite Preview").strong().size(11.0));
+    ui.label(
+        RichText::new(workspace.t("inspector.spritePreview"))
+            .strong()
+            .size(11.0),
+    );
     let Some(image) = thumbnail_image(ui, workspace, state, path, AssetKind::Texture) else {
         ui.label(
-            RichText::new(format!("no preview for {path}"))
+            RichText::new(workspace.tf("inspector.noPreviewFor", &[("path", path)]))
                 .weak()
                 .size(10.0),
         );
@@ -1725,11 +1829,22 @@ pub(super) fn sprite_preview(
         let (source_width, source_height) = (image.source[0], image.source[1]);
         ui.label(
             RichText::new(if frame_size == [0, 0] {
-                format!("whole texture is one frame ({source_width}×{source_height})")
+                workspace.tf(
+                    "inspector.wholeTexture",
+                    &[
+                        ("width", &source_width.to_string()),
+                        ("height", &source_height.to_string()),
+                    ],
+                )
             } else {
-                format!(
-                    "frame size {}×{} does not tile a {source_width}×{source_height} sheet",
-                    frame_size[0], frame_size[1]
+                workspace.tf(
+                    "inspector.badFrameSize",
+                    &[
+                        ("frame_w", &frame_size[0].to_string()),
+                        ("frame_h", &frame_size[1].to_string()),
+                        ("width", &source_width.to_string()),
+                        ("height", &source_height.to_string()),
+                    ],
                 )
             })
             .size(10.0)
@@ -1778,11 +1893,16 @@ pub(super) fn sprite_preview(
     );
     let total = columns * rows;
     ui.label(
-        RichText::new(format!(
-            "frame {} of {total} ({columns}×{rows} cells, {}×{} px each)",
-            row * columns + column + 1,
-            frame_size[0],
-            frame_size[1]
+        RichText::new(workspace.tf(
+            "inspector.frameInfo",
+            &[
+                ("frame", &(row * columns + column + 1).to_string()),
+                ("total", &total.to_string()),
+                ("columns", &columns.to_string()),
+                ("rows", &rows.to_string()),
+                ("width", &frame_size[0].to_string()),
+                ("height", &frame_size[1].to_string()),
+            ],
         ))
         .size(10.0)
         .weak(),
@@ -1816,24 +1936,30 @@ pub(super) fn sprite_animation_editor(
     let max_frame = frames.saturating_sub(1);
     let current = current.min(max_frame);
 
-    ui.label(RichText::new("Sprite Sheet Preview").strong().size(11.0));
+    ui.label(
+        RichText::new(workspace.t("inspector.spriteSheet"))
+            .strong()
+            .size(11.0),
+    );
     let mut target_frame = None;
     ui.horizontal(|ui| {
         if ui
             .add_enabled(frames > 0 && !playing, egui::Button::new(icons::SKIP_BACK))
-            .on_hover_text("First frame")
             .clicked()
         {
             target_frame = Some(0);
         }
         if ui
             .add_enabled(frames > 0 && !playing, egui::Button::new(icons::CARET_LEFT))
-            .on_hover_text("Previous frame")
             .clicked()
         {
             target_frame = Some(current.saturating_sub(1));
         }
-        ui.label(if frames == 0 { "No frames" } else { "Frame" });
+        ui.label(if frames == 0 {
+            workspace.t("inspector.noFrames")
+        } else {
+            workspace.t("inspector.frame")
+        });
         let mut selected = current;
         if ui
             .add_enabled(
@@ -1850,7 +1976,6 @@ pub(super) fn sprite_animation_editor(
                 frames > 0 && !playing,
                 egui::Button::new(icons::CARET_RIGHT),
             )
-            .on_hover_text("Next frame")
             .clicked()
         {
             target_frame = Some(current.saturating_add(1).min(max_frame));
@@ -1860,7 +1985,6 @@ pub(super) fn sprite_animation_editor(
                 frames > 0 && !playing,
                 egui::Button::new(icons::SKIP_FORWARD),
             )
-            .on_hover_text("Last frame")
             .clicked()
         {
             target_frame = Some(max_frame);
@@ -1868,7 +1992,7 @@ pub(super) fn sprite_animation_editor(
     });
     if playing {
         ui.label(
-            RichText::new("Pause playback to preview a frame.")
+            RichText::new(workspace.t("inspector.pauseToPreview"))
                 .weak()
                 .size(10.0),
         );
@@ -1963,31 +2087,32 @@ pub fn terrain_heightmap_stats(
     })
 }
 
-pub(super) fn terrain_sculpt_controls(ui: &mut Ui) {
+pub(super) fn terrain_sculpt_controls(ui: &mut Ui, workspace: &Workspace) {
     ui.separator();
-    ui.label(RichText::new("Sculpt brush").strong().size(11.0));
     ui.label(
-        RichText::new("Enable Sculpt in the toolbar, then drag in the Scene view.")
-            .weak()
-            .size(10.0),
+        RichText::new(workspace.t("inspector.sculptBrush"))
+            .strong()
+            .size(11.0),
     );
     let mut brush = terrain_brush_settings(ui);
     ui.horizontal(|ui| {
-        ui.label("Mode");
+        ui.label(workspace.t("desktop.render.mode"));
         for (mode, label) in [
-            (SculptMode::Raise, "Raise"),
-            (SculptMode::Lower, "Lower"),
-            (SculptMode::Smooth, "Smooth"),
-            (SculptMode::Flatten, "Flatten"),
+            (SculptMode::Raise, workspace.t("inspector.sculptRaise")),
+            (SculptMode::Lower, workspace.t("inspector.sculptLower")),
+            (SculptMode::Smooth, workspace.t("inspector.sculptSmooth")),
+            (SculptMode::Flatten, workspace.t("inspector.sculptFlatten")),
         ] {
             ui.selectable_value(&mut brush.mode, mode, label);
         }
     });
-    ui.add(egui::Slider::new(&mut brush.radius, 0.01..=1.0).text("Radius"));
+    ui.add(
+        egui::Slider::new(&mut brush.radius, 0.01..=1.0).text(workspace.t("desktop.render.radius")),
+    );
     ui.add(
         egui::Slider::new(&mut brush.strength, 0.01..=100.0)
             .logarithmic(true)
-            .text("Strength"),
+            .text(workspace.t("inspector.strength")),
     );
     set_terrain_brush_settings(ui, brush);
 }
@@ -2010,10 +2135,14 @@ pub(super) fn terrain_editor(ui: &mut Ui, workspace: &Workspace, value: &Value) 
     };
 
     ui.separator();
-    ui.label(RichText::new("Heightmap").strong().size(11.0));
+    ui.label(
+        RichText::new(workspace.t("desktop.tools.heightmap"))
+            .strong()
+            .size(11.0),
+    );
     if heightmap.is_empty() {
         ui.label(
-            RichText::new("no heightmap — flat terrain at y = 0")
+            RichText::new(workspace.t("inspector.noHeightmap"))
                 .weak()
                 .size(10.0),
         );
@@ -2023,7 +2152,7 @@ pub(super) fn terrain_editor(ui: &mut Ui, workspace: &Workspace, value: &Value) 
 
     let Some(root) = workspace.project_root.as_ref() else {
         ui.label(
-            RichText::new("no project root; cannot read the heightmap")
+            RichText::new(workspace.t("inspector.noHeightmapRoot"))
                 .weak()
                 .size(10.0),
         );
@@ -2063,7 +2192,7 @@ pub(super) fn terrain_editor(ui: &mut Ui, workspace: &Workspace, value: &Value) 
                     ui.label(format!("world {x:.1} × {z:.1} m"));
                 }
             }
-            terrain_sculpt_controls(ui);
+            terrain_sculpt_controls(ui, workspace);
         }
         Err(error) => {
             ui.colored_label(
@@ -2113,7 +2242,7 @@ pub(super) fn keyframe_animation_editor(
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        if let Some(updated) = keyframe_track_editor(ui, label, field, keys, identity) {
+        if let Some(updated) = keyframe_track_editor(ui, workspace, label, field, keys, identity) {
             workspace.set_field(entity_id, component, field, Value::Array(updated));
         }
     }
@@ -2121,6 +2250,7 @@ pub(super) fn keyframe_animation_editor(
 
 pub(super) fn keyframe_track_editor(
     ui: &mut Ui,
+    workspace: &Workspace,
     label: &str,
     field: &str,
     keys: &[Value],
@@ -2162,8 +2292,10 @@ pub(super) fn keyframe_track_editor(
                                 )
                                 .changed();
                         }
-                        let remove_clicked =
-                            ui.small_button("x").on_hover_text("Remove key").clicked();
+                        let remove_clicked = ui
+                            .small_button("x")
+                            .on_hover_text(workspace.t("inspector.removeKey"))
+                            .clicked();
                         (changed, remove_clicked)
                     })
                     .inner;
@@ -2495,7 +2627,14 @@ mod keyframe_editor_tests {
         let mut written = None;
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                written = keyframe_track_editor(ui, "Position", "position", &keys, [0.0; 3]);
+                written = keyframe_track_editor(
+                    ui,
+                    &Workspace::sample(),
+                    "Position",
+                    "position",
+                    &keys,
+                    [0.0; 3],
+                );
             });
         });
         assert!(
@@ -2600,18 +2739,15 @@ pub(super) fn inspector_multi(
         .and_then(|entity| entity.name.clone())
         .unwrap_or_else(|| format!("entity {active}"));
     ui.label(
-        RichText::new(format!(
-            "{} GameObjects selected · Active: {}",
-            indices.len(),
-            active_name
+        RichText::new(workspace.tf(
+            "inspector.multiSelected",
+            &[
+                ("count", &indices.len().to_string()),
+                ("name", &active_name),
+            ],
         ))
         .strong()
         .size(12.0),
-    );
-    ui.label(
-        RichText::new("Fields apply to every selected entity in one undo step.")
-            .weak()
-            .size(10.0),
     );
     ui.separator();
 
@@ -2624,25 +2760,41 @@ pub(super) fn inspector_multi(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icons::ARROWS_OUT_CARDINAL).size(11.5));
-                ui.label(RichText::new("Transform").strong().size(12.0));
+                ui.label(
+                    RichText::new(workspace.t("inspector.transform"))
+                        .strong()
+                        .size(12.0),
+                );
             });
             ui.add_space(4.0);
-            transform_rows(ui, state, &transform, Some(&mixed), |edit| match edit {
-                TransformEdit::Axis { field, axis, value } => {
-                    workspace.set_transform_axis_many(&ids, field, axis, value);
-                }
-                TransformEdit::Vector { field, values } => {
-                    workspace.set_transform_vector_many(&ids, field, values);
-                }
-                TransformEdit::Rotation(rotation) => {
-                    workspace.set_transform_rotation_many(&ids, rotation);
-                }
-            });
+            let labels = TransformLabels::new(workspace);
+            transform_rows(
+                ui,
+                &labels,
+                state,
+                &transform,
+                Some(&mixed),
+                |edit| match edit {
+                    TransformEdit::Axis { field, axis, value } => {
+                        workspace.set_transform_axis_many(&ids, field, axis, value);
+                    }
+                    TransformEdit::Vector { field, values } => {
+                        workspace.set_transform_vector_many(&ids, field, values);
+                    }
+                    TransformEdit::Rotation(rotation) => {
+                        workspace.set_transform_rotation_many(&ids, rotation);
+                    }
+                },
+            );
         });
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Common Components").strong().size(12.0));
+        ui.label(
+            RichText::new(workspace.t("inspector.commonComponents"))
+                .strong()
+                .size(12.0),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             add_component_menu_for(ui, workspace, state, indices);
         });
@@ -2672,6 +2824,7 @@ pub(super) fn inspector_multi(
             continue;
         };
         let presets = workspace.component_preset_names(&schema.name);
+        let i18n = workspace.i18n.clone();
         let mut set = |field: &str, value: Value| {
             workspace.set_field_multi(&ids, &schema.name, field, value);
         };
@@ -2685,6 +2838,7 @@ pub(super) fn inspector_multi(
             &asset_paths,
             &doc_dir,
             &presets,
+            &i18n,
         );
     }
     for action in actions {
@@ -2751,16 +2905,12 @@ pub(super) fn component_debug_editor(
 
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("{name}  (no schema — raw JSON)"))
+            RichText::new(workspace.tf("inspector.rawComponent", &[("name", name)]))
                 .weak()
                 .size(11.0),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Reload")
-                .on_hover_text("Discard the buffer and read the document again")
-                .clicked()
-            {
+            if ui.small_button(workspace.t("material.reload")).clicked() {
                 buffer = serde_json::to_string_pretty(value).unwrap_or_default();
             }
         });
@@ -2775,7 +2925,10 @@ pub(super) fn component_debug_editor(
     let parsed = serde_json::from_str::<Value>(&buffer);
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(parsed.is_ok(), egui::Button::new("Apply JSON"))
+            .add_enabled(
+                parsed.is_ok(),
+                egui::Button::new(workspace.t("inspector.applyJson")),
+            )
             .clicked()
         {
             if let Ok(parsed) = &parsed {
@@ -2785,7 +2938,11 @@ pub(super) fn component_debug_editor(
         }
         match &parsed {
             Ok(_) => {
-                ui.label(RichText::new("valid JSON").size(10.0).weak());
+                ui.label(
+                    RichText::new(workspace.t("inspector.validJson"))
+                        .size(10.0)
+                        .weak(),
+                );
             }
             Err(error) => {
                 ui.label(
@@ -2820,7 +2977,7 @@ pub(super) fn apply_to_prefab(
 pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     let Some(root) = workspace.primary_selection() else {
         ui.label(
-            RichText::new("select a prefab instance root in the hierarchy")
+            RichText::new(workspace.t("inspector.selectPrefabRoot"))
                 .weak()
                 .size(11.0),
         );
@@ -2835,7 +2992,7 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
         .map(|path| path.to_string());
     let Some(prefab_path) = linked else {
         ui.label(
-            RichText::new("the selected entity is not a prefab instance")
+            RichText::new(workspace.t("inspector.notPrefabInstance"))
                 .weak()
                 .size(11.0),
         );
@@ -2845,7 +3002,13 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
     let overrides = match workspace.prefab_overrides(root) {
         Ok(list) => list,
         Err(error) => {
-            ui.label(RichText::new(format!("cannot read {prefab_path}: {error}")).weak());
+            ui.label(
+                RichText::new(workspace.tf(
+                    "inspector.cannotRead",
+                    &[("path", &prefab_path), ("error", &error.to_string())],
+                ))
+                .weak(),
+            );
             return;
         }
     };
@@ -2853,11 +3016,7 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{prefab_path}")).size(11.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Unpack")
-                .on_hover_text("Remove the prefab link, keep the objects")
-                .clicked()
-            {
+            if ui.small_button(workspace.t("inspector.unpack")).clicked() {
                 let removed = workspace.unpack_prefab(root);
                 state.status = format!("unpacked ({removed} link(s) removed)");
             }
@@ -2866,13 +3025,20 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
     ui.separator();
 
     if overrides.is_empty() {
-        ui.label(RichText::new("no overrides").weak().size(11.0));
+        ui.label(
+            RichText::new(workspace.t("inspector.noOverrides"))
+                .weak()
+                .size(11.0),
+        );
         return;
     }
     ui.label(
-        RichText::new(format!("{} override(s)", overrides.len()))
-            .size(11.0)
-            .weak(),
+        RichText::new(workspace.tf(
+            "inspector.overrideCount",
+            &[("count", &overrides.len().to_string())],
+        ))
+        .size(11.0)
+        .weak(),
     );
 
     let mut revert: Option<prism_editor_core::workspace::PrefabOverride> = None;
@@ -2889,25 +3055,12 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
                         format!("{}.{}", entry.component, entry.field)
                     };
                     let label = format!("{} · {field}", entry.entity_name);
-                    ui.label(RichText::new(label).size(11.0))
-                        .on_hover_text(format!(
-                            "instance: {}\nprefab: {}",
-                            preview_value(&entry.instance_value),
-                            preview_value(&entry.prefab_value)
-                        ));
+                    ui.label(RichText::new(label).size(11.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button("Apply")
-                            .on_hover_text("Write to the prefab")
-                            .clicked()
-                        {
+                        if ui.small_button(workspace.t("common.apply")).clicked() {
                             apply = Some(entry.clone());
                         }
-                        if ui
-                            .small_button("Revert")
-                            .on_hover_text("Copy the prefab value back")
-                            .clicked()
-                        {
+                        if ui.small_button(workspace.t("inspector.revert")).clicked() {
                             revert = Some(entry.clone());
                         }
                     });
@@ -2946,15 +3099,6 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
     }
 }
 
-pub(super) fn preview_value(value: &serde_json::Value) -> String {
-    let text = value.to_string();
-    if text.chars().count() <= 80 {
-        text
-    } else {
-        format!("{}…", text.chars().take(79).collect::<String>())
-    }
-}
-
 pub(super) const STYLE_COMPONENT: &str = "prism_engine::ui::Style";
 
 pub(super) fn layout_editor(
@@ -2968,12 +3112,16 @@ pub(super) fn layout_editor(
         .and_then(Value::as_str)
         .unwrap_or("None")
         .to_string();
-    ui.label(RichText::new("Layout Group").strong().size(12.0));
+    ui.label(
+        RichText::new(workspace.t("inspector.layoutGroup"))
+            .strong()
+            .size(12.0),
+    );
     egui::Grid::new(format!("layout-group-{entity_id}"))
         .num_columns(2)
         .spacing([8.0, 4.0])
         .show(ui, |ui| {
-            ui.label(RichText::new("Direction").size(11.0));
+            ui.label(RichText::new(workspace.t("inspector.direction")).size(11.0));
             egui::ComboBox::from_id_salt(format!("layout-direction-{entity_id}"))
                 .selected_text(direction.as_str())
                 .show_ui(ui, |ui| {
@@ -2991,7 +3139,7 @@ pub(super) fn layout_editor(
             ui.end_row();
 
             if direction != "None" {
-                ui.label(RichText::new("Spacing").size(11.0));
+                ui.label(RichText::new(workspace.t("inspector.spacing")).size(11.0));
                 let mut spacing =
                     layout.get("spacing").and_then(Value::as_f64).unwrap_or(0.0) as f32;
                 if ui
@@ -3011,7 +3159,7 @@ pub(super) fn layout_editor(
                 }
                 ui.end_row();
 
-                ui.label(RichText::new("Padding").size(11.0));
+                ui.label(RichText::new(workspace.t("inspector.padding")).size(11.0));
                 ui.horizontal(|ui| {
                     for (key, label) in
                         [("left", "L"), ("right", "R"), ("top", "T"), ("bottom", "B")]
@@ -3041,7 +3189,7 @@ pub(super) fn layout_editor(
                 });
                 ui.end_row();
 
-                ui.label(RichText::new("Child align").size(11.0));
+                ui.label(RichText::new(workspace.t("inspector.childAlign")).size(11.0));
                 let align = layout
                     .get("child_align")
                     .and_then(Value::as_str)
@@ -3063,7 +3211,7 @@ pub(super) fn layout_editor(
                     });
                 ui.end_row();
 
-                ui.label(RichText::new("Fit content").size(11.0));
+                ui.label(RichText::new(workspace.t("inspector.fitContent")).size(11.0));
                 let mut fit = layout
                     .get("fit_content")
                     .and_then(Value::as_bool)
@@ -3125,25 +3273,23 @@ pub(super) fn texture_import_settings(
 
     ui.separator();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Import Settings").strong().size(11.0));
         ui.label(
-            RichText::new("max size / mips take effect after Reimport")
-                .weak()
-                .size(10.0),
+            RichText::new(workspace.t("inspector.importSettings"))
+                .strong()
+                .size(11.0),
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Max Size");
+        ui.label(workspace.t("inspector.maxSize"));
         ui.add(
             egui::DragValue::new(&mut buffer.0)
                 .range(0..=16384)
                 .speed(16.0),
-        )
-        .on_hover_text("Longest edge in pixels; 0 = unlimited");
-        ui.checkbox(&mut buffer.1, "Mips");
+        );
+        ui.checkbox(&mut buffer.1, workspace.t("inspector.mips"));
     });
     ui.horizontal(|ui| {
-        if ui.button("Apply").clicked() {
+        if ui.button(workspace.t("common.apply")).clicked() {
             state.status = match std::fs::write(&sidecar, import_settings_json(buffer.0, buffer.1))
             {
                 Ok(()) => format!("saved {}", sidecar.display()),
@@ -3151,23 +3297,17 @@ pub(super) fn texture_import_settings(
             };
             ui.data_mut(|data| data.insert_temp(id, buffer));
         }
-        if ui.button("Revert").clicked() {
+        if ui.button(workspace.t("inspector.revert")).clicked() {
             buffer = read_import_settings(&sidecar);
             ui.data_mut(|data| data.insert_temp(id, buffer));
             state.status = format!("reloaded import settings for {asset}");
         }
-        if ui.button("Reimport").clicked() {
+        if ui.button(workspace.t("inspector.reimport")).clicked() {
             state.pending_build = Some(crate::build::BuildKind::ScenePack);
             state.status = "rebuilding the scene pack (Reimport)".to_string();
         }
     });
-    if !sidecar.is_file() {
-        ui.label(
-            RichText::new("no sidecar yet — Apply creates it")
-                .weak()
-                .size(10.0),
-        );
-    }
+    if !sidecar.is_file() {}
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@ impl Palette {
     }
 
     /// 画一帧；用户确认某条结果时返回它的动作（弹窗随即关闭）。
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<PaletteAction> {
+    pub fn show(&mut self, ctx: &egui::Context, workspace: &Workspace) -> Option<PaletteAction> {
         if !self.open {
             return None;
         }
@@ -89,7 +89,7 @@ impl Palette {
             .show(ctx, |ui| {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
-                        .hint_text("Search entities, assets, commands…")
+                        .hint_text(workspace.t("desktop.palette.placeholder"))
                         .desired_width(f32::INFINITY),
                 );
                 if focus_pending {
@@ -104,7 +104,7 @@ impl Palette {
 
                 let total = order.len();
                 if total == 0 {
-                    ui.label(egui::RichText::new("no matches").weak());
+                    ui.label(egui::RichText::new(workspace.t("desktop.palette.noMatches")).weak());
                 } else {
                     if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
                         selected = (selected + 1) % total;
@@ -120,11 +120,15 @@ impl Palette {
                             for (row, &index) in order.iter().enumerate() {
                                 let entry = &entries[index];
                                 let text = if entry.detail.is_empty() {
-                                    format!("[{}] {}", entry.kind.label(), entry.title)
+                                    format!(
+                                        "[{}] {}",
+                                        workspace.t(kind_key(entry.kind)),
+                                        entry.title
+                                    )
                                 } else {
                                     format!(
                                         "[{}] {}  —  {}",
-                                        entry.kind.label(),
+                                        workspace.t(kind_key(entry.kind)),
                                         entry.title,
                                         entry.detail
                                     )
@@ -160,5 +164,14 @@ impl Palette {
             self.close();
         }
         action
+    }
+}
+
+fn kind_key(kind: palette::PaletteKind) -> &'static str {
+    match kind {
+        palette::PaletteKind::Command => "desktop.palette.kindCommand",
+        palette::PaletteKind::Document => "desktop.palette.kindDocument",
+        palette::PaletteKind::Entity => "desktop.palette.kindEntity",
+        palette::PaletteKind::Asset => "desktop.palette.kindAsset",
     }
 }

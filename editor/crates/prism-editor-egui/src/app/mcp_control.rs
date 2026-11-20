@@ -310,17 +310,21 @@ impl EditorApp {
 
         if let Some(indices) = &self.state.pending_entity_delete {
             let message = if indices.len() == 1 {
-                "Delete the selected entity and its children?".to_string()
+                self.t("desktop.dialog.deleteEntity")
             } else {
-                format!(
-                    "Delete {} selected entities and their children?",
-                    indices.len()
+                self.tf(
+                    "desktop.dialog.deleteEntities",
+                    &[("count", &indices.len().to_string())],
                 )
             };
             out.push(
-                Dialog::new("delete-entities", "Delete", message)
-                    .button("delete", "Delete")
-                    .button("cancel", "Cancel"),
+                Dialog::new(
+                    "delete-entities",
+                    self.t("desktop.dialog.deleteTitle"),
+                    message,
+                )
+                .button("delete", &self.t("common.delete"))
+                .button("cancel", &self.t("common.cancel")),
             );
         }
 
@@ -328,25 +332,30 @@ impl EditorApp {
             out.push(
                 Dialog::new(
                     "delete-document",
-                    "Delete Document",
-                    format!(
-                        "Delete {path}? The file, its open tab and its Build Settings entry are removed."
-                    ),
+                    self.t("desktop.dialog.deleteDocumentTitle"),
+                    self.tf("desktop.dialog.deleteDocument", &[("path", path)]),
                 )
-                .button("delete", "Delete")
-                .button("cancel", "Cancel"),
+                .button("delete", &self.t("common.delete"))
+                .button("cancel", &self.t("common.cancel")),
             );
         }
 
         if let Some(paths) = &self.state.pending_asset_delete {
             let message = match paths.as_slice() {
-                [one] => format!("删除 {one}？此操作不可撤销。"),
-                many => format!("删除 {} 项资产？此操作不可撤销。", many.len()),
+                [one] => self.tf("desktop.dialog.deleteAsset", &[("path", one)]),
+                many => self.tf(
+                    "desktop.dialog.deleteAssets",
+                    &[("count", &many.len().to_string())],
+                ),
             };
             out.push(
-                Dialog::new("delete-assets", "Delete Asset", message)
-                    .button("delete", "Delete")
-                    .button("cancel", "Cancel"),
+                Dialog::new(
+                    "delete-assets",
+                    self.t("desktop.dialog.deleteAssetTitle"),
+                    message,
+                )
+                .button("delete", &self.t("common.delete"))
+                .button("cancel", &self.t("common.cancel")),
             );
         }
 
@@ -356,16 +365,19 @@ impl EditorApp {
                 .docs
                 .get(index)
                 .map(|document| (document.title(), document.path.clone().unwrap_or_default()))
-                .unwrap_or_else(|| ("Document".to_string(), String::new()));
+                .unwrap_or_else(|| (self.t("desktop.dialog.document"), String::new()));
             out.push(
                 Dialog::new(
                     "save-conflict",
-                    "File Changed on Disk",
-                    format!("{title} was modified outside the editor. ({path})"),
+                    self.t("desktop.dialog.saveConflictTitle"),
+                    self.tf(
+                        "desktop.dialog.saveConflict",
+                        &[("title", &title), ("path", &path)],
+                    ),
                 )
-                .button("overwrite", "Overwrite")
-                .button("reload", "Reload from Disk")
-                .button("cancel", "Cancel"),
+                .button("overwrite", &self.t("desktop.dialog.overwrite"))
+                .button("reload", &self.t("material.reload"))
+                .button("cancel", &self.t("common.cancel")),
             );
         }
 
@@ -377,10 +389,10 @@ impl EditorApp {
                         .docs
                         .get(index)
                         .map(|document| document.title())
-                        .unwrap_or_else(|| "document".to_string());
+                        .unwrap_or_else(|| self.t("desktop.dialog.document"));
                     (
-                        format!("{title} has unsaved changes."),
-                        "Close it anyway?".to_string(),
+                        self.tf("desktop.dialog.unsavedDoc", &[("title", &title)]),
+                        self.t("desktop.dialog.closeAnyway"),
                     )
                 }
                 panels::CloseTarget::App => {
@@ -391,16 +403,23 @@ impl EditorApp {
                         .filter(|document| document.is_dirty())
                         .count();
                     (
-                        format!("{count} document(s) have unsaved changes."),
-                        "Quit anyway?".to_string(),
+                        self.tf(
+                            "desktop.dialog.unsavedDocs",
+                            &[("count", &count.to_string())],
+                        ),
+                        self.t("desktop.dialog.quitAnyway"),
                     )
                 }
             };
             out.push(
-                Dialog::new("close", "Unsaved Changes", format!("{message} {detail}"))
-                    .button("save", "Save")
-                    .button("discard", "Don't Save")
-                    .button("cancel", "Cancel"),
+                Dialog::new(
+                    "close",
+                    self.t("desktop.dialog.unsavedTitle"),
+                    format!("{message} {detail}"),
+                )
+                .button("save", &self.t("common.save"))
+                .button("discard", &self.t("desktop.dialog.dontSave"))
+                .button("cancel", &self.t("common.cancel")),
             );
         }
 
@@ -408,7 +427,7 @@ impl EditorApp {
             out.push(
                 Dialog::new("confirm", confirm.title.clone(), confirm.message.clone())
                     .button("ok", &confirm.ok)
-                    .button("cancel", "Cancel"),
+                    .button("cancel", &self.t("common.cancel")),
             );
         }
 
@@ -417,10 +436,13 @@ impl EditorApp {
                 Dialog::new(
                     "prompt",
                     prompt.title.clone(),
-                    format!("{}（当前值：{}）", prompt.hint, prompt.value),
+                    self.tf(
+                        "desktop.dialog.promptValue",
+                        &[("hint", &prompt.hint), ("value", &prompt.value)],
+                    ),
                 )
-                .button("ok", "OK")
-                .button("cancel", "Cancel")
+                .button("ok", &self.t("common.ok"))
+                .button("cancel", &self.t("common.cancel"))
                 .value(prompt.value.clone()),
             );
         }

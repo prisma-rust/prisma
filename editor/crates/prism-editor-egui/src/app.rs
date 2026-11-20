@@ -33,11 +33,14 @@ mod mcp_control;
 mod shortcuts;
 
 use chrome::*;
-use dock_ui::*;
 use mcp_control::*;
 use shortcuts::*;
 
-fn tab_title(tab: &str) -> &str {
+/// Stable English tab titles for the feature map and agent-facing tests.
+///
+/// The user-visible tab label comes from [`Workspace::panel_title`] and follows the locale, so this
+/// table must never be used for rendering.
+pub(super) fn tab_title(tab: &str) -> &str {
     match tab {
         "sceneView" => "Scene",
         "gameView" => "Game",
@@ -393,6 +396,7 @@ pub(super) fn selection_hash(workspace: &Workspace) -> u64 {
     hash
 }
 
+#[cfg(test)]
 pub(super) fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in bytes {
@@ -532,7 +536,6 @@ impl EditorApp {
             .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1440.0, 900.0)));
 
         let mut workspace = load_workspace();
-        workspace.set_locale(Locale::EnUs);
         theme::apply(&cc.context, &workspace.colors());
 
         let project_root = workspace.project_root.clone();
@@ -1425,7 +1428,7 @@ impl App for EditorApp {
         if ctx.input(|input| input.pointer.any_released()) {
             self.workspace.end_interaction();
         }
-        if let Some(action) = self.palette.show(ctx) {
+        if let Some(action) = self.palette.show(ctx, &self.workspace) {
             self.run_palette_action(action);
         }
         self.poll_control(ctx);
@@ -1566,12 +1569,16 @@ impl App for EditorApp {
         panels::doc_delete_confirm(ctx, &mut self.workspace, &mut self.state);
 
         let mut about = self.state.about_open;
-        panels::boolean_window(ctx, &mut about, "About", panels::about);
+        let about_title = self.t("menu.about");
+        panels::boolean_window(ctx, &mut about, &about_title, |ui| {
+            panels::about(ui, &self.workspace)
+        });
         self.state.about_open = about;
 
         let mut shortcuts = self.state.shortcuts_open;
-        panels::boolean_window(ctx, &mut shortcuts, "Shortcuts", |ui| {
-            panels::shortcuts(ui, &mut self.preferences, &mut self.state);
+        let shortcuts_title = self.t("menu.shortcuts");
+        panels::boolean_window(ctx, &mut shortcuts, &shortcuts_title, |ui| {
+            panels::shortcuts(ui, &self.workspace, &mut self.preferences, &mut self.state);
         });
         self.state.shortcuts_open = shortcuts;
         if !self.state.shortcuts_open {
@@ -1617,6 +1624,15 @@ fn document_hash(workspace: &Workspace) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::dock_ui::*;
+
+    #[test]
+    fn stable_tab_titles_keep_the_feature_map_in_sync() {
+        assert_eq!(tab_title("sceneView"), "Scene");
+        assert_eq!(tab_title("renderGraph"), "Render Graph");
+        assert_eq!(tab_title("prefabOverrides"), "Prefab Overrides");
+        assert_eq!(tab_title("unknown"), "unknown");
+    }
     use prism_editor_core::{KeyChord, SHORTCUTS, SHORTCUT_ALIASES};
 
     /// The inspector must see every component the scene registry knows about.

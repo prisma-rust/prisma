@@ -4,14 +4,16 @@ use super::material::open_material_asset;
 use super::*;
 
 pub(super) fn asset_folder_column(ui: &mut Ui, workspace: &Workspace, state: &mut UiState) {
-    ui.label(RichText::new("Folders").strong().size(11.0));
     egui::ScrollArea::vertical()
         .id_salt("asset-folder-tree")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let selected = state.asset_folder == "assets";
             if ui
-                .selectable_label(selected, format!("{} assets", icons::FOLDER))
+                .selectable_label(
+                    selected,
+                    format!("{} {}", icons::FOLDER, workspace.t("assets.title")),
+                )
                 .clicked()
             {
                 navigate_assets(state, "assets");
@@ -78,20 +80,20 @@ pub(super) fn asset_grid(
                             state.select_asset_only(path.clone());
                         }
                         response.context_menu(|ui| {
-                            if ui.button("Open").clicked() {
+                            if ui.button(workspace.t("menu.open")).clicked() {
                                 navigate_assets(state, path);
                                 ui.close();
                             }
-                            if ui.button("Rename…").clicked() {
+                            if ui.button(workspace.t("common.rename")).clicked() {
                                 actions.rename = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Copy Path").clicked() {
+                            if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(path.clone());
                                 state.status = format!("copied {path}");
                                 ui.close();
                             }
-                            if ui.button("Show in Explorer").clicked() {
+                            if ui.button(workspace.t("menu.showInExplorer")).clicked() {
                                 state.status = match reveal_asset(workspace, path) {
                                     Ok(()) => format!("revealed {path}"),
                                     Err(error) => error,
@@ -135,41 +137,44 @@ pub(super) fn asset_grid(
                             vec![path.clone()]
                         };
                         response.context_menu(|ui| {
-                            if ui.button("Open").clicked() {
+                            if ui.button(workspace.t("menu.open")).clicked() {
                                 actions.open = Some(path.clone());
                                 ui.close();
                             }
                             if path.ends_with(".prefab.json")
-                                && ui.button("Instantiate In Scene").clicked()
+                                && ui.button(workspace.t("menu.instantiate")).clicked()
                             {
                                 actions.instantiate = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Rename…").clicked() {
+                            if ui.button(workspace.t("common.rename")).clicked() {
                                 actions.rename = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Ping In Scene").clicked() {
+                            if ui.button(workspace.t("assets.pingScene")).clicked() {
                                 actions.ping = Some(path.clone());
                                 ui.close();
                             }
                             if ui
                                 .button(if targets.len() > 1 {
-                                    format!("Duplicate {} items", targets.len())
+                                    workspace.tf(
+                                        "assets.duplicateItems",
+                                        &[("count", &targets.len().to_string())],
+                                    )
                                 } else {
-                                    "Duplicate".to_string()
+                                    workspace.t("common.duplicate")
                                 })
                                 .clicked()
                             {
                                 actions.duplicate = Some(targets.clone());
                                 ui.close();
                             }
-                            if ui.button("Copy Path").clicked() {
+                            if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(targets.join("\n"));
                                 state.status = format!("copied {path}");
                                 ui.close();
                             }
-                            if ui.button("Show in Explorer").clicked() {
+                            if ui.button(workspace.t("menu.showInExplorer")).clicked() {
                                 state.status = match reveal_asset(workspace, path) {
                                     Ok(()) => format!("revealed {path}"),
                                     Err(error) => error,
@@ -178,9 +183,12 @@ pub(super) fn asset_grid(
                             }
                             if ui
                                 .button(if targets.len() > 1 {
-                                    format!("Delete {} items", targets.len())
+                                    workspace.tf(
+                                        "assets.deleteItems",
+                                        &[("count", &targets.len().to_string())],
+                                    )
                                 } else {
-                                    "Delete".to_string()
+                                    workspace.t("common.delete")
                                 })
                                 .clicked()
                             {
@@ -192,7 +200,11 @@ pub(super) fn asset_grid(
                 });
             }
             if files.is_empty() && folders.is_empty() {
-                ui.label(RichText::new("empty folder").weak().size(11.0));
+                ui.label(
+                    RichText::new(workspace.t("assets.emptyFolder"))
+                        .weak()
+                        .size(11.0),
+                );
             }
         });
 }
@@ -436,11 +448,7 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             navigate_assets(state, &target);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button(icons::ARROWS_CLOCKWISE)
-                .on_hover_text("Refresh")
-                .clicked()
-            {
+            if ui.small_button(icons::ARROWS_CLOCKWISE).clicked() {
                 workspace.refresh_project_files();
             }
         });
@@ -448,16 +456,12 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut state.asset_search)
-                .hint_text("Search (t:texture, dir:sprites)")
+                .hint_text(workspace.t("assets.searchPlaceholder"))
                 .desired_width(170.0),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let two_columns = state.asset_columns == AssetColumns::Two;
-            if ui
-                .selectable_label(two_columns, icons::COLUMNS)
-                .on_hover_text("Two columns (folder tree + contents)")
-                .clicked()
-            {
+            if ui.selectable_label(two_columns, icons::COLUMNS).clicked() {
                 state.asset_columns = if two_columns {
                     AssetColumns::One
                 } else {
@@ -465,22 +469,14 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 };
             }
             let grid = state.asset_view == AssetView::Grid;
-            if ui
-                .selectable_label(grid, icons::SQUARES_FOUR)
-                .on_hover_text("Grid view")
-                .clicked()
-            {
+            if ui.selectable_label(grid, icons::SQUARES_FOUR).clicked() {
                 state.asset_view = if grid {
                     AssetView::List
                 } else {
                     AssetView::Grid
                 };
             }
-            if ui
-                .selectable_label(!grid, icons::LIST_BULLETS)
-                .on_hover_text("List view")
-                .clicked()
-            {
+            if ui.selectable_label(!grid, icons::LIST_BULLETS).clicked() {
                 state.asset_view = AssetView::List;
             }
         });
@@ -491,7 +487,6 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             let enabled = workspace.asset_query.kinds.contains(&kind);
             if ui
                 .selectable_label(enabled, asset_kind_icon(kind))
-                .on_hover_text(kind.label())
                 .clicked()
             {
                 workspace.toggle_asset_kind(kind);
@@ -501,9 +496,9 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
 
     ui.horizontal(|ui| {
         for (sort, label) in [
-            (AssetSort::Name, "Name"),
-            (AssetSort::Kind, "Kind"),
-            (AssetSort::Size, "Size"),
+            (AssetSort::Name, workspace.t("assets.sortName")),
+            (AssetSort::Kind, workspace.t("assets.sortKind")),
+            (AssetSort::Size, workspace.t("assets.sortSize")),
         ] {
             let active = state.asset_sort == sort;
             let arrow = if !active {
@@ -674,24 +669,24 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                             }
                         }
                         row.context_menu(|ui| {
-                            if ui.button("Open").clicked() {
+                            if ui.button(workspace.t("menu.open")).clicked() {
                                 navigate_assets(state, path);
                                 ui.close();
                             }
-                            if ui.button("Rename…").clicked() {
+                            if ui.button(workspace.t("common.rename")).clicked() {
                                 actions.rename = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("New Subfolder…").clicked() {
+                            if ui.button(workspace.t("assets.newSubfolder")).clicked() {
                                 actions.create_subfolder = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Copy Path").clicked() {
+                            if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(path.clone());
                                 state.status = format!("copied {path}");
                                 ui.close();
                             }
-                            if ui.button("Show in Explorer").clicked() {
+                            if ui.button(workspace.t("menu.showInExplorer")).clicked() {
                                 state.status = match reveal_asset(workspace, path) {
                                     Ok(()) => format!("revealed {path}"),
                                     Err(error) => error,
@@ -699,7 +694,7 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("Delete").clicked() {
+                            if ui.button(workspace.t("common.delete")).clicked() {
                                 actions.delete = Some(vec![path.clone()]);
                                 ui.close();
                             }
@@ -783,32 +778,35 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                             actions.open = Some(path.clone());
                         }
                         response.context_menu(|ui| {
-                            if ui.button("Open").clicked() {
+                            if ui.button(workspace.t("menu.open")).clicked() {
                                 actions.open = Some(path.clone());
                                 ui.close();
                             }
                             if path.ends_with(".prefab.json")
-                                && ui.button("Instantiate In Scene").clicked()
+                                && ui.button(workspace.t("menu.instantiate")).clicked()
                             {
                                 actions.instantiate = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Rename…").clicked() {
+                            if ui.button(workspace.t("common.rename")).clicked() {
                                 actions.rename = Some(path.clone());
                                 ui.close();
                             }
                             if ui
                                 .button(if targets.len() > 1 {
-                                    format!("Duplicate {} items", targets.len())
+                                    workspace.tf(
+                                        "assets.duplicateItems",
+                                        &[("count", &targets.len().to_string())],
+                                    )
                                 } else {
-                                    "Duplicate".to_string()
+                                    workspace.t("common.duplicate")
                                 })
                                 .clicked()
                             {
                                 actions.duplicate = Some(targets.clone());
                                 ui.close();
                             }
-                            if ui.button("Copy Path").clicked() {
+                            if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 let text = targets.join("\n");
                                 ui.ctx().copy_text(text);
                                 state.status = if targets.len() > 1 {
@@ -819,20 +817,20 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("Ping In Scene").clicked() {
+                            if ui.button(workspace.t("assets.pingScene")).clicked() {
                                 actions.ping = Some(path.clone());
                                 ui.close();
                             }
-                            if ui.button("Find References In Scene").clicked() {
+                            if ui.button(workspace.t("menu.findRefsScene")).clicked() {
                                 state.pending_find_references = Some((path.clone(), false));
                                 ui.close();
                             }
-                            if ui.button("Find References In Project").clicked() {
+                            if ui.button(workspace.t("menu.findRefsProject")).clicked() {
                                 state.pending_find_references = Some((path.clone(), true));
                                 ui.close();
                             }
                             ui.separator();
-                            if ui.button("Show in Explorer").clicked() {
+                            if ui.button(workspace.t("menu.showInExplorer")).clicked() {
                                 state.status = match reveal_asset(workspace, path) {
                                     Ok(()) => format!("revealed {path}"),
                                     Err(error) => error,
@@ -841,9 +839,12 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                             }
                             if ui
                                 .button(if targets.len() > 1 {
-                                    format!("Delete {} items", targets.len())
+                                    workspace.tf(
+                                        "assets.deleteItems",
+                                        &[("count", &targets.len().to_string())],
+                                    )
                                 } else {
-                                    "Delete".to_string()
+                                    workspace.t("common.delete")
                                 })
                                 .clicked()
                             {
@@ -857,7 +858,11 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         }
                     }
                     if files.is_empty() && folders.is_empty() {
-                        ui.label(RichText::new("empty folder").weak().size(11.0));
+                        ui.label(
+                            RichText::new(workspace.t("assets.emptyFolder"))
+                                .weak()
+                                .size(11.0),
+                        );
                     }
 
                     let rest = ui.available_rect_before_wrap();
@@ -957,10 +962,12 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         }
     }
     if let Some(folder) = actions.create_subfolder {
+        let title = workspace.t("desktop.prompt.newFolder");
+        let hint = workspace.t("desktop.prompt.folderBody");
         state.prompt = Some(Prompt::new(
             PromptKind::NewFolder,
-            "New Folder",
-            "assets/ 下的相对目录",
+            &title,
+            &hint,
             format!("{folder}/"),
         ));
     }
@@ -1037,16 +1044,18 @@ pub fn asset_delete_confirm(ui: &Ui, workspace: &mut Workspace, state: &mut UiSt
     };
     let mut confirmed = false;
     let mut cancelled = false;
-    egui::Window::new("Delete Asset")
+    egui::Window::new(workspace.t("assets.deleteAsset"))
         .collapsible(false)
         .resizable(false)
         .show(ui.ctx(), |ui| {
             match paths.as_slice() {
                 [one] => {
-                    ui.label(format!("删除 {one}？此操作不可撤销。"));
+                    ui.label(workspace.tf("assets.deletePermanent", &[("path", &one)]));
                 }
                 many => {
-                    ui.label(format!("删除 {} 项资产？此操作不可撤销。", many.len()));
+                    ui.label(
+                        workspace.tf("assets.deleteMany", &[("count", &many.len().to_string())]),
+                    );
                     for path in many.iter().take(10) {
                         ui.label(RichText::new(path).monospace().size(11.0));
                     }
@@ -1057,10 +1066,10 @@ pub fn asset_delete_confirm(ui: &Ui, workspace: &mut Workspace, state: &mut UiSt
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                if ui.button(workspace.t("common.delete")).clicked() {
                     confirmed = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(workspace.t("common.cancel")).clicked() {
                     cancelled = true;
                 }
             });
@@ -1103,12 +1112,12 @@ pub fn doc_delete_confirm(ctx: &egui::Context, workspace: &mut Workspace, state:
         return;
     };
     let mut decision = None;
-    egui::Window::new("Delete Document")
+    egui::Window::new(workspace.t("assets.deleteDoc"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
-            ui.label(format!("Delete {path}?"));
+            ui.label(workspace.tf("assets.confirmDelete", &[("path", &path)]));
             ui.label(
                 RichText::new(
                     "The file, its open tab and its Build Settings entry are removed. This cannot be undone.",
@@ -1116,10 +1125,10 @@ pub fn doc_delete_confirm(ctx: &egui::Context, workspace: &mut Workspace, state:
                 .weak(),
             );
             ui.horizontal(|ui| {
-                if ui.button("Delete").clicked() {
+                if ui.button(workspace.t("common.delete")).clicked() {
                     decision = Some(true);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(workspace.t("common.cancel")).clicked() {
                     decision = Some(false);
                 }
             });
@@ -1210,7 +1219,7 @@ pub fn docs(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         .size(11.0)
                         .color(egui::Color32::from_rgb(220, 170, 60)),
                 )
-                .on_hover_text("磁盘上的版本已被外部修改，保存前会先问你");
+                .on_hover_text(workspace.t("assets.externallyModified"));
         }
         row_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if flat_icon(ui, icons::X).clicked() {
@@ -1226,7 +1235,7 @@ pub fn docs(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
 
         if let Some(path) = workspace.docs[index].path.clone() {
             row.context_menu(|ui| {
-                if ui.button("Delete…").clicked() {
+                if ui.button(workspace.t("common.delete")).clicked() {
                     delete_doc = Some(path);
                     ui.close();
                 }

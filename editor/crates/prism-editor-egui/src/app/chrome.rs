@@ -16,6 +16,14 @@ pub(super) enum SaveConflictChoice {
 }
 
 impl EditorApp {
+    pub(super) fn t(&self, key: &str) -> String {
+        self.workspace.t(key)
+    }
+
+    pub(super) fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
+        self.workspace.i18n.t(key, params)
+    }
+
     pub(super) fn menu_item(
         &mut self,
         ui: &mut egui::Ui,
@@ -94,8 +102,8 @@ impl EditorApp {
 
         egui::MenuBar::new().ui(ui, |ui| {
             // ---- File ----
-            ui.menu_button("File", |ui| {
-                self.menu_item(ui, "New Scene", "Ctrl+N", Command::NewScene);
+            ui.menu_button(self.t("menu.file"), |ui| {
+                self.menu_item(ui, &self.t("menu.newScene"), "Ctrl+N", Command::NewScene);
                 let scene_templates: Vec<(String, String)> = self
                     .workspace
                     .templates
@@ -104,7 +112,7 @@ impl EditorApp {
                     .map(|template| (template.id.clone(), template.label.clone()))
                     .collect();
                 if !scene_templates.is_empty() {
-                    ui.menu_button("New Scene From Template", |ui| {
+                    ui.menu_button(self.t("menu.newSceneFromTemplate"), |ui| {
                         for (id, label) in &scene_templates {
                             if ui.button(label).clicked() {
                                 self.workspace
@@ -115,9 +123,14 @@ impl EditorApp {
                         }
                     });
                 }
-                self.menu_item(ui, "New Prefab", "", Command::NewPrefab);
+                self.menu_item(ui, &self.t("menu.newPrefab"), "", Command::NewPrefab);
                 ui.separator();
-                self.menu_item(ui, "Open Scene…", "Ctrl+O", Command::OpenDocument);
+                self.menu_item(
+                    ui,
+                    &self.t("menu.openDocument"),
+                    "Ctrl+O",
+                    Command::OpenDocument,
+                );
                 let docs: Vec<(usize, String, bool)> = self
                     .workspace
                     .docs
@@ -127,7 +140,7 @@ impl EditorApp {
                         (index, doc.title(), index == self.workspace.active_index())
                     })
                     .collect();
-                ui.menu_button("Recent Scenes", |ui| {
+                ui.menu_button(self.t("menu.recentScenes"), |ui| {
                     for (index, title, active) in &docs {
                         if ui.selectable_label(*active, title).clicked() {
                             self.workspace.set_active(*index);
@@ -136,18 +149,18 @@ impl EditorApp {
                         }
                     }
                 });
-                self.menu_item(ui, "Save", "Ctrl+S", Command::Save);
-                self.menu_item(ui, "Save As…", "Ctrl+Shift+S", Command::SaveAs);
-                self.menu_do(ui, "Save Project", |app| {
+                self.menu_item(ui, &self.t("menu.save"), "Ctrl+S", Command::Save);
+                self.menu_item(ui, &self.t("menu.saveAs"), "Ctrl+Shift+S", Command::SaveAs);
+                self.menu_do(ui, &self.t("menu.saveProject"), |app| {
                     let _ = app.save_all_documents();
                 });
-                self.menu_item(ui, "Reload Scene", "", Command::ReloadDocument);
+                self.menu_item(ui, &self.t("menu.reloadScene"), "", Command::ReloadDocument);
                 ui.separator();
-                self.menu_item(ui, "Build Settings…", "", Command::ToggleBuild);
+                self.menu_item(ui, &self.t("menu.buildSettings"), "", Command::ToggleBuild);
                 if ui
                     .add_enabled(
                         !self.build_job_running(),
-                        egui::Button::new("Build Scene Pack"),
+                        egui::Button::new(self.t("menu.buildScenePack")),
                     )
                     .clicked()
                 {
@@ -157,7 +170,7 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         !self.build_job_running(),
-                        egui::Button::new("Cook Active Scene"),
+                        egui::Button::new(self.t("menu.cookActiveScene")),
                     )
                     .clicked()
                 {
@@ -165,7 +178,10 @@ impl EditorApp {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(!self.build_job_running(), egui::Button::new("Build Player"))
+                    .add_enabled(
+                        !self.build_job_running(),
+                        egui::Button::new(self.t("menu.buildPlayer")),
+                    )
                     .clicked()
                 {
                     self.start_build(crate::build::BuildKind::Player);
@@ -174,7 +190,7 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         !self.build_job_running(),
-                        egui::Button::new("Build And Run  (Ctrl+B)"),
+                        egui::Button::new(format!("{}  (Ctrl+B)", self.t("menu.buildAndRun"))),
                     )
                     .clicked()
                 {
@@ -187,7 +203,7 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         module_available,
-                        egui::Button::new("Compile Project Module  (Ctrl+R)"),
+                        egui::Button::new(format!("{}  (Ctrl+R)", self.t("menu.compileModule"))),
                     )
                     .clicked()
                 {
@@ -198,82 +214,106 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         module_available,
-                        egui::Checkbox::new(&mut auto_refresh, "Auto Refresh Project Module"),
+                        egui::Checkbox::new(&mut auto_refresh, self.t("menu.autoRefreshModule")),
                     )
                     .changed()
                 {
                     self.set_project_auto_refresh(auto_refresh);
                 }
                 if ui
-                    .add_enabled(!self.build_job_running(), egui::Button::new("Clean Build"))
+                    .add_enabled(
+                        !self.build_job_running(),
+                        egui::Button::new(self.t("menu.cleanBuild")),
+                    )
                     .clicked()
                 {
                     self.state.confirm = Some(panels::Confirm::new(
                         panels::ConfirmKind::CleanPlayer,
-                        "Clean Build",
-                        "清理玩家工程（projects/template）的编译产物，下次 Build 会全量重编。\n\
-                         不会动仓库根的引擎 target。",
-                        "Clean Player",
+                        &self.t("menu.cleanBuild"),
+                        self.t("desktop.confirm.cleanBuildBody"),
+                        &self.t("desktop.confirm.cleanPlayer"),
                     ));
                     ui.close();
                 }
                 if ui
                     .add_enabled(
                         !self.build_job_running(),
-                        egui::Button::new("Clean Engine Cache…"),
+                        egui::Button::new(self.t("menu.cleanEngineCache")),
                     )
                     .clicked()
                 {
                     self.state.confirm = Some(panels::Confirm::new(
                         panels::ConfirmKind::CleanEngine,
-                        "Clean Engine Cache",
-                        "清理仓库根 workspace 的 target/（引擎 + 全部 crate 的编译产物，\n\
-                         通常几个 GB，重编需要十几分钟）。",
-                        "Clean Engine",
+                        &self.t("menu.cleanEngineCache"),
+                        self.t("desktop.confirm.cleanEngineBody"),
+                        &self.t("desktop.confirm.cleanEngine"),
                     ));
                     ui.close();
                 }
-                if self.build_job_running() && ui.button("Cancel Build").clicked() {
+                if self.build_job_running() && ui.button(self.t("menu.cancelBuild")).clicked() {
                     self.cancel_build();
                     ui.close();
                 }
                 ui.separator();
                 let quit_ctx = ui.ctx().clone();
-                self.menu_do(ui, "Exit", |app| app.request_quit(&quit_ctx));
+                self.menu_do(ui, &self.t("menu.exit"), |app| app.request_quit(&quit_ctx));
             });
 
             // ---- Edit ----
-            ui.menu_button("Edit", |ui| {
-                self.menu_do(ui, "Search… (Ctrl+K)", |app| {
+            ui.menu_button(self.t("menu.edit"), |ui| {
+                self.menu_do(ui, &format!("{} (Ctrl+K)", self.t("menu.search")), |app| {
                     app.palette.open(&app.workspace)
                 });
                 ui.separator();
-                self.menu_item(ui, "Undo", "Ctrl+Z", Command::Undo);
-                self.menu_item(ui, "Redo", "Ctrl+Y", Command::Redo);
+                self.menu_item(ui, &self.t("menu.undo"), "Ctrl+Z", Command::Undo);
+                self.menu_item(ui, &self.t("menu.redo"), "Ctrl+Y", Command::Redo);
                 ui.separator();
-                self.menu_item(ui, "Cut", "Ctrl+X", Command::CutEntity);
-                self.menu_item(ui, "Copy", "Ctrl+C", Command::CopyEntity);
-                self.menu_item(ui, "Paste", "Ctrl+V", Command::PasteEntity);
-                self.menu_item(ui, "Duplicate", "Ctrl+D", Command::DuplicateEntity);
-                self.menu_item(ui, "Delete", "Del", Command::DeleteSelection);
+                self.menu_item(ui, &self.t("hierarchy.cut"), "Ctrl+X", Command::CutEntity);
+                self.menu_item(ui, &self.t("hierarchy.copy"), "Ctrl+C", Command::CopyEntity);
+                self.menu_item(
+                    ui,
+                    &self.t("hierarchy.paste"),
+                    "Ctrl+V",
+                    Command::PasteEntity,
+                );
+                self.menu_item(
+                    ui,
+                    &self.t("common.duplicate"),
+                    "Ctrl+D",
+                    Command::DuplicateEntity,
+                );
+                self.menu_item(
+                    ui,
+                    &self.t("common.delete"),
+                    "Del",
+                    Command::DeleteSelection,
+                );
                 ui.separator();
-                self.menu_item(ui, "Select All", "Ctrl+A", Command::SelectAll);
-                self.menu_do(ui, "Deselect All", |app| app.workspace.clear_selection());
-                self.menu_do(ui, "Invert Selection", |app| app.invert_selection());
-                self.menu_do(ui, "Select Children", |app| {
+                self.menu_item(ui, &self.t("common.all"), "Ctrl+A", Command::SelectAll);
+                self.menu_do(ui, &self.t("menu.deselectAll"), |app| {
+                    app.workspace.clear_selection()
+                });
+                self.menu_do(ui, &self.t("menu.invertSelection"), |app| {
+                    app.invert_selection()
+                });
+                self.menu_do(ui, &self.t("menu.selectChildren"), |app| {
                     app.select_children_of_selection()
                 });
-                self.menu_do(ui, "Select Prefab Root", |app| app.select_prefab_root());
+                self.menu_do(ui, &self.t("menu.selectPrefabRoot"), |app| {
+                    app.select_prefab_root()
+                });
                 ui.separator();
-                self.menu_do(ui, "Selection Back", |app| {
+                self.menu_do(ui, &self.t("menu.selectionBack"), |app| {
                     app.navigate_selection_history(-1)
                 });
-                self.menu_do(ui, "Selection Forward", |app| {
+                self.menu_do(ui, &self.t("menu.selectionForward"), |app| {
                     app.navigate_selection_history(1)
                 });
-                self.menu_do(ui, "Find in Hierarchy", |app| app.find_in_hierarchy());
+                self.menu_do(ui, &self.t("menu.findInHierarchy"), |app| {
+                    app.find_in_hierarchy()
+                });
                 ui.separator();
-                ui.menu_button("Copy Transform", |ui| {
+                ui.menu_button(self.t("menu.copyTransform"), |ui| {
                     for field in ["position", "rotation", "scale"] {
                         if ui.button(field).clicked() {
                             self.copy_transform(field);
@@ -281,7 +321,7 @@ impl EditorApp {
                         }
                     }
                 });
-                ui.menu_button("Paste Transform", |ui| {
+                ui.menu_button(self.t("menu.pasteTransform"), |ui| {
                     for field in ["position", "rotation", "scale"] {
                         if ui.button(field).clicked() {
                             self.paste_transform(field);
@@ -292,62 +332,67 @@ impl EditorApp {
                 ui.separator();
                 self.menu_item(
                     ui,
-                    "Paste Component",
+                    &self.t("menu.pasteComponent"),
                     "Ctrl+Shift+V",
                     Command::PasteComponent,
                 );
                 self.menu_item(
                     ui,
-                    "Clear Component Clipboard",
+                    &self.t("menu.clearComponentClipboard"),
                     "",
                     Command::ClearComponentClipboard,
                 );
                 ui.separator();
-                self.menu_item(ui, "Play", "Ctrl+P", Command::Play);
-                self.menu_item(ui, "Pause", "Ctrl+Shift+P", Command::Pause);
-                self.menu_item(ui, "Step", "Ctrl+Alt+P", Command::Step);
+                self.menu_item(ui, &self.t("common.run"), "Ctrl+P", Command::Play);
+                self.menu_item(ui, &self.t("common.pause"), "Ctrl+Shift+P", Command::Pause);
+                self.menu_item(ui, &self.t("common.step"), "Ctrl+Alt+P", Command::Step);
                 ui.separator();
-                self.menu_item(ui, "Project Settings…", "", Command::ProjectSettings);
-                self.menu_item(ui, "Preferences…", "", Command::Preferences);
-                self.menu_item(ui, "Theme…", "", Command::ThemePanel);
+                self.menu_item(
+                    ui,
+                    &self.t("menu.projectSettings"),
+                    "",
+                    Command::ProjectSettings,
+                );
+                self.menu_item(ui, &self.t("menu.preferences"), "", Command::Preferences);
+                self.menu_item(ui, &self.t("menu.theme"), "", Command::ThemePanel);
             });
 
             // ---- Assets ----
-            ui.menu_button("Assets", |ui| {
-                ui.menu_button("Create", |ui| {
-                    self.menu_item(ui, "Scene", "", Command::NewScene);
-                    self.menu_item(ui, "Prefab", "", Command::NewPrefab);
+            ui.menu_button(self.t("menu.assets"), |ui| {
+                ui.menu_button(self.t("menu.create"), |ui| {
+                    self.menu_item(ui, &self.t("menu.scene"), "", Command::NewScene);
+                    self.menu_item(ui, &self.t("menu.prefab"), "", Command::NewPrefab);
                     let can_variant = self.has_prefab_instance();
                     if ui
-                        .add_enabled(can_variant, egui::Button::new("Prefab Variant…"))
+                        .add_enabled(can_variant, egui::Button::new(self.t("menu.prefabVariant")))
                         .clicked()
                     {
-                        self.open_prompt(
-                            panels::PromptKind::PrefabVariant,
-                            "Create Prefab Variant",
-                            "变体文件名（不含目录，写到 assets/prefabs/）",
-                            "Variant",
-                        );
+                        let title = self.t("desktop.prompt.prefabVariant");
+                        let hint = self.t("desktop.prompt.prefabVariantBody");
+                        let value = self.t("desktop.prompt.variantDefault");
+                        self.open_prompt(panels::PromptKind::PrefabVariant, &title, &hint, value);
                         ui.close();
                     }
-                    self.menu_do(ui, "Folder…", |app| {
+                    let folder_title = self.t("desktop.prompt.newFolder");
+                    let folder_body = self.t("desktop.prompt.folderBody");
+                    self.menu_do(ui, &self.t("menu.folder"), move |app| {
                         app.open_prompt(
                             panels::PromptKind::NewFolder,
-                            "New Folder",
-                            "assets/ 下的相对目录，例如 prefabs/enemies",
+                            &folder_title,
+                            &folder_body,
                             "assets/",
                         )
                     });
                 });
                 let selected = self.state.asset_primary().cloned();
                 if let Some(path) = selected.as_deref() {
-                    self.menu_do(ui, "Open", |app| {
+                    self.menu_do(ui, &self.t("menu.open"), |app| {
                         if let Err(error) = app.workspace.open_project_file(path) {
                             app.state.status = format!("open {path} failed: {error}");
                         }
                     });
                     let selected_path = path.to_string();
-                    self.menu_do(ui, "Show in Explorer", |app| {
+                    self.menu_do(ui, &self.t("menu.showInExplorer"), |app| {
                         app.state.status =
                             match panels::reveal_asset(&app.workspace, &selected_path) {
                                 Ok(()) => format!("revealed {selected_path}"),
@@ -356,25 +401,27 @@ impl EditorApp {
                     });
                     let ctx_copy = ui.ctx().clone();
                     let copy_path = selected_path.clone();
-                    self.menu_do(ui, "Copy Path", move |app| {
+                    self.menu_do(ui, &self.t("menu.copyPath"), move |app| {
                         ctx_copy.copy_text(copy_path.clone());
                         app.state.status = format!("copied {copy_path}");
                     });
-                    self.menu_do(ui, "Duplicate", |app| {
+                    self.menu_do(ui, &self.t("menu.duplicate"), |app| {
                         match app.workspace.duplicate_asset(path) {
                             Ok(copy) => app.state.status = format!("duplicated → {copy}"),
                             Err(error) => app.state.status = format!("duplicate failed: {error}"),
                         }
                     });
-                    self.menu_do(ui, "Delete", |app| match app.workspace.delete_asset(path) {
-                        Ok(()) => {
-                            app.state.forget_asset(path);
-                            app.state.status = format!("deleted {path}");
+                    self.menu_do(ui, &self.t("common.delete"), |app| {
+                        match app.workspace.delete_asset(path) {
+                            Ok(()) => {
+                                app.state.forget_asset(path);
+                                app.state.status = format!("deleted {path}");
+                            }
+                            Err(error) => app.state.status = format!("delete failed: {error}"),
                         }
-                        Err(error) => app.state.status = format!("delete failed: {error}"),
                     });
                     if path.ends_with(".prefab.json") {
-                        self.menu_do(ui, "Instantiate In Scene", |app| {
+                        self.menu_do(ui, &self.t("menu.instantiate"), |app| {
                             match app.workspace.instantiate_prefab_asset(path, None) {
                                 Ok(count) => {
                                     app.state.status = format!("instantiated {count} entities");
@@ -387,85 +434,105 @@ impl EditorApp {
                         });
                     }
                 } else {
-                    ui.add_enabled(false, egui::Button::new("Open"));
-                    ui.add_enabled(false, egui::Button::new("Show in Explorer"));
-                    ui.add_enabled(false, egui::Button::new("Duplicate"));
-                    ui.add_enabled(false, egui::Button::new("Delete"));
+                    ui.add_enabled(false, egui::Button::new(self.t("menu.open")));
+                    ui.add_enabled(false, egui::Button::new(self.t("menu.showInExplorer")));
+                    ui.add_enabled(false, egui::Button::new(self.t("menu.duplicate")));
+                    ui.add_enabled(false, egui::Button::new(self.t("common.delete")));
                 }
                 ui.separator();
-                self.menu_do(ui, "Find References In Scene", |app| {
+                self.menu_do(ui, &self.t("menu.findRefsScene"), |app| {
                     if let Some(path) = app.state.asset_primary().cloned() {
                         app.find_references(&path, false);
                     }
                 });
-                self.menu_do(ui, "Find References In Project", |app| {
+                self.menu_do(ui, &self.t("menu.findRefsProject"), |app| {
                     if let Some(path) = app.state.asset_primary().cloned() {
                         app.find_references(&path, true);
                     }
                 });
                 ui.separator();
-                self.menu_do(ui, "Refresh", |app| {
+                self.menu_do(ui, &self.t("menu.refresh"), |app| {
                     app.workspace.refresh_project_files();
                     app.state.status = "assets refreshed".to_string();
                 });
             });
 
             // ---- GameObject ----
-            ui.menu_button("GameObject", |ui| {
-                self.menu_do(ui, "Create Empty", |app| app.workspace.add_entity(""));
-                self.menu_do(ui, "Create Empty Child", |app| app.create_empty_child());
-                self.menu_do(ui, "Create Empty Parent", |app| app.create_empty_parent());
+            ui.menu_button(self.t("menu.gameObject"), |ui| {
+                self.menu_do(ui, &self.t("hierarchy.createEmpty"), |app| {
+                    app.workspace.add_entity("")
+                });
+                self.menu_do(ui, &self.t("hierarchy.createEmptyChild"), |app| {
+                    app.create_empty_child()
+                });
+                let empty_parent = self.t("hierarchy.createEmptyParent");
+                self.menu_do(ui, &empty_parent, |app| app.create_empty_parent());
                 ui.separator();
-                ui.menu_button("Create Other", |ui| {
-                    ui.menu_button("3D Object", |ui| {
-                        for (id, label) in [
-                            ("cube", "Cube"),
-                            ("sphere", "Sphere"),
-                            ("cylinder", "Cylinder"),
-                            ("capsule", "Capsule"),
-                            ("quad", "Quad"),
-                            ("plane", "Plane"),
+                ui.menu_button(self.t("menu.createOther"), |ui| {
+                    ui.menu_button(self.t("hierarchy.object3D"), |ui| {
+                        for (id, key) in [
+                            ("cube", "desktop.preset.cube"),
+                            ("sphere", "desktop.preset.sphere"),
+                            ("cylinder", "desktop.preset.cylinder"),
+                            ("capsule", "desktop.preset.capsule"),
+                            ("quad", "desktop.preset.quad"),
+                            ("plane", "desktop.preset.plane"),
                         ] {
                             let known = self.workspace.presets.iter().any(|p| p.id == id);
-                            if ui.add_enabled(known, egui::Button::new(label)).clicked() {
+                            if ui
+                                .add_enabled(known, egui::Button::new(self.t(key)))
+                                .clicked()
+                            {
                                 self.workspace.add_entity(id);
                                 ui.close();
                             }
                         }
                     });
-                    ui.menu_button("Rendering", |ui| {
-                        for (id, label) in [("mesh", "Mesh Renderer"), ("skybox", "Skybox")] {
-                            let known = self.workspace.presets.iter().any(|p| p.id == id);
-                            if ui.add_enabled(known, egui::Button::new(label)).clicked() {
-                                self.workspace.add_entity(id);
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.menu_button("Light", |ui| {
-                        for (id, label) in [
-                            ("sun", "Directional Light"),
-                            ("point_light", "Point Light"),
-                            ("spot_light", "Spot Light"),
+                    ui.menu_button(self.t("menu.rendering"), |ui| {
+                        for (id, key) in [
+                            ("mesh", "desktop.preset.mesh"),
+                            ("skybox", "desktop.preset.skybox"),
                         ] {
                             let known = self.workspace.presets.iter().any(|p| p.id == id);
-                            if ui.add_enabled(known, egui::Button::new(label)).clicked() {
+                            if ui
+                                .add_enabled(known, egui::Button::new(self.t(key)))
+                                .clicked()
+                            {
                                 self.workspace.add_entity(id);
                                 ui.close();
                             }
                         }
                     });
-                    ui.menu_button("Camera", |ui| {
+                    ui.menu_button(self.t("hierarchy.light"), |ui| {
+                        for (id, key) in [
+                            ("sun", "desktop.preset.sun"),
+                            ("point_light", "desktop.preset.pointLight"),
+                            ("spot_light", "desktop.preset.spotLight"),
+                        ] {
+                            let known = self.workspace.presets.iter().any(|p| p.id == id);
+                            if ui
+                                .add_enabled(known, egui::Button::new(self.t(key)))
+                                .clicked()
+                            {
+                                self.workspace.add_entity(id);
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button(self.t("hierarchy.camera"), |ui| {
                         let known = self.workspace.presets.iter().any(|p| p.id == "camera");
-                        if ui.add_enabled(known, egui::Button::new("Camera")).clicked() {
+                        if ui
+                            .add_enabled(known, egui::Button::new(self.t("hierarchy.camera")))
+                            .clicked()
+                        {
                             self.workspace.add_entity("camera");
                             ui.close();
                         }
                     });
-                    ui.menu_button("UI", |ui| {
+                    ui.menu_button(self.t("hierarchy.ui"), |ui| {
                         let known = self.workspace.presets.iter().any(|p| p.id == "ui");
                         if ui
-                            .add_enabled(known, egui::Button::new("UI Element"))
+                            .add_enabled(known, egui::Button::new(self.t("hierarchy.uiElement")))
                             .clicked()
                         {
                             self.workspace.add_entity("ui");
@@ -474,7 +541,7 @@ impl EditorApp {
                     });
                 });
                 ui.separator();
-                self.menu_do(ui, "Move To View", |app| {
+                self.menu_do(ui, &self.t("menu.moveToView"), |app| {
                     if app.workspace.align_selection_to_view() {
                         app.state.status = "moved selection to view".to_string();
                         app.mark_scene_dirty();
@@ -482,12 +549,12 @@ impl EditorApp {
                         app.state.status = "Move To View needs a selection".to_string();
                     }
                 });
-                self.menu_do(ui, "Align View to Selected", |app| {
+                self.menu_do(ui, &self.t("menu.alignViewToSelected"), |app| {
                     if app.workspace.align_view_to_selection() {
                         app.mark_scene_dirty();
                     }
                 });
-                self.menu_do(ui, "Snap to Ground", |app| {
+                self.menu_do(ui, &self.t("menu.snapToGround"), |app| {
                     let count = app.workspace.snap_selection_to_ground();
                     app.state.status = format!("snapped {count} entities");
                     app.mark_scene_dirty();
@@ -495,7 +562,7 @@ impl EditorApp {
             });
 
             // ---- Component ----
-            ui.menu_button("Component", |ui| {
+            ui.menu_button(self.t("inspector.components"), |ui| {
                 let attachable: std::collections::HashSet<String> = self
                     .workspace
                     .component_types()
@@ -520,7 +587,7 @@ impl EditorApp {
                     .filter(|(_, items): &(String, Vec<(String, String)>)| !items.is_empty())
                     .collect();
                 if categories.is_empty() {
-                    ui.label("no more components");
+                    ui.label(self.t("menu.noComponents"));
                 }
                 for (category, items) in categories {
                     ui.menu_button(category, |ui| {
@@ -535,60 +602,59 @@ impl EditorApp {
             });
 
             // ---- Window ----
-            ui.menu_button("Window", |ui| {
-                ui.menu_button("General", |ui| {
+            ui.menu_button(self.t("menu.window"), |ui| {
+                ui.menu_button(self.t("menu.general"), |ui| {
                     for (label, command) in [
-                        ("Scene", Command::ToggleSceneView),
-                        ("Game", Command::ToggleGameView),
-                        ("Hierarchy", Command::ToggleHierarchy),
-                        ("Project", Command::ToggleAssets),
-                        ("Inspector", Command::ToggleInspector),
-                        ("Console", Command::ToggleLog),
-                        ("Documents", Command::ToggleDocs),
-                        ("History", Command::ToggleHistory),
-                        ("Render Graph", Command::ToggleRenderGraph),
-                        ("Build Settings", Command::ToggleBuild),
-                        ("Offline Tools", Command::ToggleTools),
-                        ("Project Settings", Command::ProjectSettings),
-                        ("Preferences", Command::Preferences),
-                        ("Theme", Command::ThemePanel),
+                        (self.t("menu.sceneView"), Command::ToggleSceneView),
+                        (self.t("menu.gameView"), Command::ToggleGameView),
+                        (self.t("menu.hierarchy"), Command::ToggleHierarchy),
+                        (self.t("menu.assets"), Command::ToggleAssets),
+                        (self.t("menu.inspector"), Command::ToggleInspector),
+                        (self.t("menu.log"), Command::ToggleLog),
+                        (self.t("menu.docs"), Command::ToggleDocs),
+                        (self.t("menu.history"), Command::ToggleHistory),
+                        (self.t("menu.renderGraph"), Command::ToggleRenderGraph),
+                        (self.t("menu.buildPanel"), Command::ToggleBuild),
+                        (self.t("menu.tools"), Command::ToggleTools),
+                        (self.t("menu.projectSettings"), Command::ProjectSettings),
+                        (self.t("menu.preferences"), Command::Preferences),
+                        (self.t("menu.theme"), Command::ThemePanel),
                     ] {
-                        self.menu_item(ui, label, "", command);
+                        self.menu_item(ui, &label, "", command);
                     }
-                    if ui.button("Problems").clicked() {
+                    if ui.button(self.t("menu.problems")).clicked() {
                         self.workspace.show_panel("problems");
                         ui.close();
                     }
-                    if ui.button("Prefab Overrides").clicked() {
+                    if ui.button(self.t("menu.prefabOverrides")).clicked() {
                         self.workspace.show_panel("prefabOverrides");
                         ui.close();
                     }
                     let mut maximize_on_play = self.workspace.maximize_on_play;
                     if ui
-                        .checkbox(&mut maximize_on_play, "Maximize Game View on Play")
-                        .on_hover_text(
-                            "Enter Play with the Game view maximized (Unity maximizeOnPlay)",
-                        )
+                        .checkbox(&mut maximize_on_play, self.t("menu.maximizeOnPlay"))
                         .changed()
                     {
                         self.workspace.maximize_on_play = maximize_on_play;
                     }
-                    if ui.button("Material").clicked() {
+                    if ui.button(self.t("menu.material")).clicked() {
                         self.workspace.show_panel("material");
                         ui.close();
                     }
-                    if ui.button("Animation Graph").clicked() {
+                    if ui.button(self.t("menu.animationGraph")).clicked() {
                         self.workspace.show_panel("animGraph");
                         ui.close();
                     }
-                    if ui.button("GASP Debug").clicked() {
+                    if ui.button(self.t("menu.gaspDebug")).clicked() {
                         self.workspace.show_panel("gaspDebug");
                         ui.close();
                     }
                 });
                 ui.separator();
-                self.menu_do(ui, "Capture Window", |app| app.capture_window_now());
-                ui.menu_button("Layouts", |ui| {
+                self.menu_do(ui, &self.t("menu.captureWindow"), |app| {
+                    app.capture_window_now()
+                });
+                ui.menu_button(self.t("menu.layouts"), |ui| {
                     for (id, label) in prism_editor_core::workspace::layout_preset_ids() {
                         let active = self.workspace.layout_preset == id;
                         if ui.selectable_label(active, label).clicked() {
@@ -600,7 +666,7 @@ impl EditorApp {
                     let names: Vec<String> = self.named_layouts.keys().cloned().collect();
                     for name in names {
                         ui.menu_button(&name, |ui| {
-                            if ui.button("Load").clicked() {
+                            if ui.button(self.t("menu.load")).clicked() {
                                 let value = self.named_layouts.get(&name).cloned();
                                 if let Some(value) = value {
                                     self.apply_layout_json(&value);
@@ -608,7 +674,7 @@ impl EditorApp {
                                 }
                                 ui.close();
                             }
-                            if ui.button("Delete").clicked() {
+                            if ui.button(self.t("common.delete")).clicked() {
                                 self.named_layouts.remove(&name);
                                 self.write_named_layouts();
                                 ui.close();
@@ -618,31 +684,38 @@ impl EditorApp {
                     if !self.named_layouts.is_empty() {
                         ui.separator();
                     }
-                    self.menu_do(ui, "Save Layout…", |app| {
+                    let save_title = self.t("menu.saveLayout");
+                    let save_hint = self.t("desktop.prompt.layoutName");
+                    let save_default = self.t("desktop.prompt.layoutDefault");
+                    self.menu_do(ui, &self.t("menu.saveLayout"), move |app| {
                         app.open_prompt(
                             panels::PromptKind::LayoutName,
-                            "Save Layout",
-                            "布局名（写进 target/editor-egui/layouts.json）",
-                            "My Layout",
+                            &save_title,
+                            &save_hint,
+                            save_default,
                         )
                     });
-                    self.menu_do(ui, "Save Layout to File…", |app| {
+                    let save_file_title = self.t("menu.saveLayoutFile");
+                    let save_file_hint = self.t("desktop.prompt.outputJson");
+                    self.menu_do(ui, &self.t("menu.saveLayoutFile"), move |app| {
                         app.open_prompt(
                             panels::PromptKind::LayoutFileSave,
-                            "Save Layout to File",
-                            "输出 JSON 路径",
+                            &save_file_title,
+                            &save_file_hint,
                             "target/editor-egui/layout.json",
                         )
                     });
-                    self.menu_do(ui, "Load Layout from File…", |app| {
+                    let load_title = self.t("desktop.prompt.loadLayoutFile");
+                    let load_body = self.t("desktop.prompt.loadLayoutBody");
+                    self.menu_do(ui, &self.t("menu.loadLayoutFile"), move |app| {
                         app.open_prompt(
                             panels::PromptKind::LayoutFileLoad,
-                            "Load Layout from File",
-                            "读取 JSON 路径（v4 {version,dock,floating}）",
+                            &load_title,
+                            &load_body,
                             "target/editor-egui/layout.json",
                         )
                     });
-                    self.menu_do(ui, "Reset All Layouts", |app| {
+                    self.menu_do(ui, &self.t("menu.resetAllLayouts"), |app| {
                         app.named_layouts.clear();
                         app.write_named_layouts();
                         app.workspace.set_layout_preset("default");
@@ -650,26 +723,16 @@ impl EditorApp {
                     });
                 });
                 ui.separator();
-                self.menu_item(ui, "Reset Layout", "", Command::ResetLayout);
+                self.menu_item(ui, &self.t("menu.resetLayout"), "", Command::ResetLayout);
             });
 
             // ---- Help ----
-            ui.menu_button("Help", |ui| {
-                self.menu_item(ui, "Shortcuts", "", Command::Shortcuts);
-                self.menu_do(ui, "Editor Guide", |app| {
-                    app.state.status = "docs/editor-egui.md".to_string();
-                });
-                self.menu_item(ui, "About Prisma", "", Command::About);
+            ui.menu_button(self.t("menu.help"), |ui| {
+                self.menu_item(ui, &self.t("menu.shortcuts"), "", Command::Shortcuts);
+                self.menu_item(ui, &self.t("menu.about"), "", Command::About);
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let colors = self.workspace.colors();
-                let accent = theme::color32(&colors, prism_editor_core::ThemeToken::Accent);
-                ui.label(
-                    RichText::new("zero-copy viewports")
-                        .size(10.0)
-                        .color(accent),
-                );
                 if let Some(view) = &self.scene_view {
                     ui.label(
                         RichText::new(format!("{:.1} ms", view.last_frame_ms))
@@ -684,8 +747,7 @@ impl EditorApp {
                     .map(|job| job.label().to_string());
                 if let Some(label) = build_label {
                     if ui
-                        .small_button(RichText::new("Cancel").size(10.0))
-                        .on_hover_text("Stop the running cargo build")
+                        .small_button(RichText::new(self.t("common.cancel")).size(10.0))
                         .clicked()
                     {
                         self.cancel_build();
@@ -756,11 +818,7 @@ impl EditorApp {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let transport_btn =
-                        |ui: &mut egui::Ui,
-                         glyph: &str,
-                         tip: &str,
-                         enabled: bool,
-                         tint: Option<Color32>| {
+                        |ui: &mut egui::Ui, glyph: &str, enabled: bool, tint: Option<Color32>| {
                             let mut text = RichText::new(glyph).size(13.0);
                             if enabled {
                                 if let Some(c) = tint {
@@ -768,7 +826,6 @@ impl EditorApp {
                                 }
                             }
                             ui.add_enabled(enabled, egui::Button::new(text).frame(true))
-                                .on_hover_text(tip)
                                 .clicked()
                         };
                     let play_tint = if playing && !paused {
@@ -776,7 +833,7 @@ impl EditorApp {
                     } else {
                         None
                     };
-                    if transport_btn(ui, icons::PLAY, "Play (Ctrl+P)", !playing, play_tint) {
+                    if transport_btn(ui, icons::PLAY, !playing, play_tint) {
                         app.apply_command(Command::Play);
                     }
                     let pause_tint = if paused {
@@ -787,13 +844,12 @@ impl EditorApp {
                     if transport_btn(
                         ui,
                         if paused { icons::PLAY } else { icons::PAUSE },
-                        if paused { "Resume" } else { "Pause" },
                         playing,
                         pause_tint,
                     ) {
                         app.apply_command(Command::Pause);
                     }
-                    if transport_btn(ui, icons::SKIP_FORWARD, "Step Frame", playing, None) {
+                    if transport_btn(ui, icons::SKIP_FORWARD, playing, None) {
                         app.apply_command(Command::Step);
                     }
                     let stop_tint = if playing {
@@ -801,7 +857,7 @@ impl EditorApp {
                     } else {
                         None
                     };
-                    if transport_btn(ui, icons::STOP, "Stop", playing, stop_tint) {
+                    if transport_btn(ui, icons::STOP, playing, stop_tint) {
                         app.apply_command(Command::Stop);
                     }
                 });
@@ -814,7 +870,6 @@ impl EditorApp {
                         let prefab_title = self.workspace.document().title();
                         if ui
                             .small_button(format!("{} {}", icons::ARROW_LEFT, origin.scene_title))
-                            .on_hover_text("Back to the scene this prefab instance came from")
                             .clicked()
                         {
                             let prefab_index = self.workspace.active_index();
@@ -834,11 +889,7 @@ impl EditorApp {
                     } else {
                         RichText::new(icons::FLOPPY_DISK).color(muted)
                     };
-                    if ui
-                        .small_button(save_icon)
-                        .on_hover_text("Save Active Document (Ctrl+S)")
-                        .clicked()
-                    {
+                    if ui.small_button(save_icon).clicked() {
                         self.apply_command(Command::Save);
                     }
                     if ui
@@ -846,7 +897,6 @@ impl EditorApp {
                             self.workspace.can_undo(),
                             egui::Button::new(icons::ARROW_COUNTER_CLOCKWISE).small(),
                         )
-                        .on_hover_text("Undo (Ctrl+Z)")
                         .clicked()
                     {
                         self.apply_command(Command::Undo);
@@ -856,7 +906,6 @@ impl EditorApp {
                             self.workspace.can_redo(),
                             egui::Button::new(icons::ARROW_CLOCKWISE).small(),
                         )
-                        .on_hover_text("Redo (Ctrl+Y)")
                         .clicked()
                     {
                         self.apply_command(Command::Redo);
@@ -872,25 +921,18 @@ impl EditorApp {
                         .inner_margin(egui::Margin::symmetric(2, 1))
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.x = 1.0;
-                            for (tool, icon, key, tip) in [
+                            for (tool, icon, key) in [
                                 (
                                     crate::viewport::GizmoTool::Translate,
                                     icons::ARROWS_OUT_CARDINAL,
                                     "W",
-                                    "Move Tool (W)",
                                 ),
                                 (
                                     crate::viewport::GizmoTool::Rotate,
                                     icons::ARROWS_CLOCKWISE,
                                     "E",
-                                    "Rotate Tool (E)",
                                 ),
-                                (
-                                    crate::viewport::GizmoTool::Scale,
-                                    icons::ARROWS_OUT,
-                                    "R",
-                                    "Scale Tool (R)",
-                                ),
+                                (crate::viewport::GizmoTool::Scale, icons::ARROWS_OUT, "R"),
                             ] {
                                 let active = self
                                     .scene_view
@@ -912,7 +954,6 @@ impl EditorApp {
                                         .fill(fill)
                                         .frame(true),
                                     )
-                                    .on_hover_text(tip)
                                     .clicked()
                                 {
                                     self.set_gizmo_tool(tool);
@@ -931,15 +972,15 @@ impl EditorApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new(format!("{} Sculpt", icons::SPARKLE))
-                                            .size(11.0)
-                                            .color(sculpt_fg),
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            icons::SPARKLE,
+                                            self.t("toolbar.sculpt")
+                                        ))
+                                        .size(11.0)
+                                        .color(sculpt_fg),
                                     )
                                     .fill(sculpt_fill),
-                                )
-                                .on_hover_text(
-                                    "Paint Terrain heightmap: drag in Scene view. \
-                                     Brush settings live in the Terrain inspector.",
                                 )
                                 .clicked()
                             {
@@ -961,8 +1002,15 @@ impl EditorApp {
                         prism_editor_core::viewport_math::GizmoSpace::Local => icons::CUBE,
                     };
                     if ui
-                        .small_button(format!("{space_icon} {space:?}"))
-                        .on_hover_text("Toggle World / Local gizmo space (X)")
+                        .small_button(format!(
+                            "{space_icon} {}",
+                            match space {
+                                prism_editor_core::viewport_math::GizmoSpace::World =>
+                                    self.t("toolbar.global"),
+                                prism_editor_core::viewport_math::GizmoSpace::Local =>
+                                    self.t("toolbar.local"),
+                            }
+                        ))
                         .clicked()
                     {
                         self.workspace.toggle_gizmo_space();
@@ -972,18 +1020,11 @@ impl EditorApp {
                     let pivot =
                         self.workspace.pivot_mode == prism_editor_core::workspace::PivotMode::Pivot;
                     let pivot_label = if pivot {
-                        format!("{} Pivot", icons::CROSSHAIR)
+                        format!("{} {}", icons::CROSSHAIR, self.t("toolbar.pivot"))
                     } else {
-                        format!("{} Center", icons::TARGET)
+                        format!("{} {}", icons::TARGET, self.t("toolbar.center"))
                     };
-                    if ui
-                        .selectable_label(pivot, pivot_label)
-                        .on_hover_text(
-                            "Rotate / scale each object around its own pivot \
-                             (off = selection center, group transform)",
-                        )
-                        .clicked()
-                    {
+                    if ui.selectable_label(pivot, pivot_label).clicked() {
                         self.workspace.pivot_mode = if pivot {
                             prism_editor_core::workspace::PivotMode::Center
                         } else {
@@ -994,11 +1035,10 @@ impl EditorApp {
 
                     let snap = self.workspace.snap;
                     if ui
-                        .selectable_label(snap.enabled, format!("{} Snap", icons::MAGNET))
-                        .on_hover_text(format!(
-                            "Snap gizmo drags: {} units / {}° / x{} — hold Ctrl to invert",
-                            snap.translate, snap.rotate_degrees, snap.scale
-                        ))
+                        .selectable_label(
+                            snap.enabled,
+                            format!("{} {}", icons::MAGNET, self.t("toolbar.snap")),
+                        )
                         .clicked()
                     {
                         self.workspace.snap.enabled = !snap.enabled;
@@ -1037,8 +1077,11 @@ impl EditorApp {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(right_rect), |ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
-                            .small_button(format!("{} Search", icons::MAGNIFYING_GLASS))
-                            .on_hover_text("Command Palette & Search (Ctrl+K)")
+                            .small_button(format!(
+                                "{} {}",
+                                icons::MAGNIFYING_GLASS,
+                                self.t("desktop.search")
+                            ))
                             .clicked()
                         {
                             self.palette.open(&self.workspace);
@@ -1047,7 +1090,11 @@ impl EditorApp {
                         let active_preset = self.workspace.layout_preset.clone();
                         egui::ComboBox::from_id_salt("toolbar-layout")
                             .width(86.0)
-                            .selected_text(format!("{} {}", icons::LAYOUT, active_preset))
+                            .selected_text(format!(
+                                "{} {}",
+                                icons::LAYOUT,
+                                self.t(&format!("desktop.layout.{active_preset}"))
+                            ))
                             .show_ui(ui, |ui| {
                                 for (id, label) in prism_editor_core::workspace::layout_preset_ids()
                                 {
@@ -1080,9 +1127,13 @@ impl EditorApp {
                         if ui
                             .add_enabled(
                                 !self.build_job_running(),
-                                egui::Button::new(format!("{} Build", icons::HAMMER)).small(),
+                                egui::Button::new(format!(
+                                    "{} {}",
+                                    icons::HAMMER,
+                                    self.t("desktop.build")
+                                ))
+                                .small(),
                             )
-                            .on_hover_text("Build and Run Player (Ctrl+B)")
                             .clicked()
                         {
                             self.start_build(crate::build::BuildKind::PlayerRun);
@@ -1107,12 +1158,15 @@ impl EditorApp {
                                     .add_enabled(
                                         !status.building,
                                         egui::Button::new(
-                                            RichText::new(format!("{} Compile", icons::CIRCLE))
-                                                .small()
-                                                .color(dot_color),
+                                            RichText::new(format!(
+                                                "{} {}",
+                                                icons::CIRCLE,
+                                                self.t("desktop.compile")
+                                            ))
+                                            .small()
+                                            .color(dot_color),
                                         ),
                                     )
-                                    .on_hover_text("Compile & Reload Project Module (Ctrl+R)")
                                     .clicked()
                                 {
                                     self.refresh_project_module();
@@ -1134,67 +1188,26 @@ impl EditorApp {
 
             let failures = self.workspace.project_load_failures();
             if !failures.is_empty() {
-                let label = if failures.len() == 1 {
-                    "1 document failed to load".to_string()
-                } else {
-                    format!("{} documents failed to load", failures.len())
-                };
-                let hint = format!(
-                    "{}\n\nFix the file and restart the editor. The editor shows an empty scene \
-                     instead of the sample fixture.",
-                    failures.join("\n")
+                let label = self.tf(
+                    "desktop.status.documentsFailed",
+                    &[("count", &failures.len().to_string())],
                 );
                 ui.label(
                     RichText::new(label)
                         .size(11.0)
                         .strong()
                         .color(Color32::from_rgb(232, 96, 96)),
-                )
-                .on_hover_text(hint);
+                );
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if let Some(status) = self.project_module_status() {
-                    if status.available {
-                        if ui
-                            .add_enabled(
-                                !status.building,
-                                egui::Button::new("Compile (Ctrl+R)").small(),
-                            )
-                            .on_hover_text(
-                                "Recompile and reload the project module \
-                                 (whole-module reload: project state resets)",
-                            )
-                            .clicked()
-                        {
-                            self.refresh_project_module();
-                        }
-                        let color = match status.state {
-                            ModuleState::Ready => Color32::from_rgb(120, 200, 120),
-                            ModuleState::Pending => Color32::from_rgb(220, 190, 100),
-                            ModuleState::Compiling => Color32::from_rgb(120, 170, 230),
-                            ModuleState::Failed => Color32::from_rgb(232, 96, 96),
-                            ModuleState::Unavailable => Color32::from_gray(140),
-                        };
-                        let label = if status.problems > 0 {
-                            format!("{} · {} problems", status.state.label(), status.problems)
-                        } else {
-                            status.state.label().to_string()
-                        };
-                        let hint = status.error.as_deref().unwrap_or(
-                            "Project module build state (diagnostics live in the Problems panel)",
-                        );
-                        ui.label(RichText::new(label).size(10.0).color(color))
-                            .on_hover_text(hint);
-                    }
-                }
                 let text = if self.playing {
                     if self.paused {
-                        "PAUSED"
+                        self.t("desktop.status.paused")
                     } else {
-                        "PLAYING"
+                        self.t("desktop.status.playing")
                     }
                 } else {
-                    "EDIT"
+                    self.t("desktop.status.edit")
                 };
                 let color = if self.playing {
                     panels::play_mode_tint(self.paused)
@@ -1209,15 +1222,16 @@ impl EditorApp {
                 let selected = self.workspace.selection.len();
                 let entities = self.workspace.document().doc.entities.len();
                 ui.label(
-                    RichText::new(format!("{entities} entities · {selected} selected"))
-                        .size(10.5)
-                        .weak(),
+                    RichText::new(self.tf(
+                        "desktop.status.counts",
+                        &[
+                            ("entities", &entities.to_string()),
+                            ("selected", &selected.to_string()),
+                        ],
+                    ))
+                    .size(10.5)
+                    .weak(),
                 );
-                if let Some(root) = &self.project_root {
-                    ui.label(RichText::new(root.display().to_string()).size(10.0).weak());
-                } else {
-                    ui.label(RichText::new("no project (fixture only)").size(10.0).weak());
-                }
             });
         });
     }
@@ -1240,7 +1254,7 @@ impl EditorApp {
                     if ui.button(confirm.ok.as_str()).clicked() {
                         accepted = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(self.t("common.cancel")).clicked() {
                         cancelled = true;
                     }
                 });
@@ -1281,7 +1295,7 @@ impl EditorApp {
                 if !response.has_focus() && !response.lost_focus() {
                     response.request_focus();
                 }
-                commit = ui.button("OK").clicked()
+                commit = ui.button(self.t("common.ok")).clicked()
                     || ui.input(|input| input.key_pressed(egui::Key::Enter));
             });
 
@@ -1372,23 +1386,21 @@ impl EditorApp {
         let path = document.path.clone().unwrap_or_default();
 
         let mut choice: Option<SaveConflictChoice> = None;
-        egui::Window::new("File Changed on Disk")
+        egui::Window::new(self.t("desktop.dialog.fileChanged"))
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!("{title} was modified outside the editor."));
+                ui.label(self.tf("desktop.dialog.fileChangedMsg", &[("title", &title)]));
                 ui.label(egui::RichText::new(path).weak().small());
                 ui.add_space(4.0);
-                ui.label(egui::RichText::new("Overwriting discards the other copy.").weak());
-                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Overwrite").clicked() {
+                    if ui.button(self.t("common.overwrite")).clicked() {
                         choice = Some(SaveConflictChoice::Overwrite);
                     }
-                    if ui.button("Reload from Disk").clicked() {
+                    if ui.button(self.t("desktop.dialog.reloadFromDisk")).clicked() {
                         choice = Some(SaveConflictChoice::Reload);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(self.t("common.cancel")).clicked() {
                         choice = Some(SaveConflictChoice::Cancel);
                     }
                 });
@@ -1427,8 +1439,8 @@ impl EditorApp {
                     .map(|document| document.title())
                     .unwrap_or_else(|| "document".to_string());
                 (
-                    format!("{title} has unsaved changes."),
-                    "Close it anyway?".to_string(),
+                    self.tf("desktop.dialog.unsavedDoc", &[("title", &title)]),
+                    String::new(),
                 )
             }
             panels::CloseTarget::App => {
@@ -1439,30 +1451,35 @@ impl EditorApp {
                     .filter(|document| document.is_dirty())
                     .count();
                 (
-                    format!("{count} document(s) have unsaved changes."),
-                    "Quit anyway?".to_string(),
+                    self.tf(
+                        "desktop.dialog.unsavedApp",
+                        &[("count", &count.to_string())],
+                    ),
+                    String::new(),
                 )
             }
         };
 
         let mut open = true;
         let mut decision: Option<CloseDecision> = None;
-        egui::Window::new("Unsaved Changes")
+        egui::Window::new(self.t("desktop.dialog.unsavedTitle"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.label(message);
-                ui.label(egui::RichText::new(detail).weak());
+                if !detail.is_empty() {
+                    ui.label(egui::RichText::new(detail).weak());
+                }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.button(self.t("common.save")).clicked() {
                         decision = Some(CloseDecision::Save);
                     }
-                    if ui.button("Don't Save").clicked() {
+                    if ui.button(self.t("common.dontSave")).clicked() {
                         decision = Some(CloseDecision::Discard);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(self.t("common.cancel")).clicked() {
                         decision = Some(CloseDecision::Cancel);
                     }
                 });
@@ -1484,26 +1501,21 @@ impl EditorApp {
             return;
         }
         let mut recover = None;
-        egui::Window::new("Unsaved Changes Recovered")
+        egui::Window::new(self.t("desktop.dialog.recoveredTitle"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "{count} document(s) from the previous session were not saved."
+                ui.label(self.tf(
+                    "desktop.dialog.recoveredMsg",
+                    &[("count", &count.to_string())],
                 ));
-                ui.label(
-                    egui::RichText::new(
-                        "Recover them as unsaved documents, or discard the snapshot?",
-                    )
-                    .weak(),
-                );
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Recover").clicked() {
+                    if ui.button(self.t("desktop.dialog.recover")).clicked() {
                         recover = Some(true);
                     }
-                    if ui.button("Discard").clicked() {
+                    if ui.button(self.t("common.discard")).clicked() {
                         recover = Some(false);
                     }
                 });

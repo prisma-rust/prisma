@@ -351,13 +351,6 @@ pub enum HierarchySearchMode {
 }
 
 impl HierarchySearchMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Name => "Name",
-            Self::Component => "Type",
-        }
-    }
-
     fn matches(self, entity: &EntityJson, filter: &str) -> bool {
         match self {
             Self::Name => entity.display_name().to_lowercase().contains(filter),

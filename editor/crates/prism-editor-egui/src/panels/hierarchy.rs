@@ -123,19 +123,26 @@ pub(super) fn hierarchy_toolbar(
             egui::TextEdit::singleline(&mut state.hierarchy_search)
                 .hint_text(
                     if state.hierarchy_search_mode == HierarchySearchMode::Component {
-                        "Search type"
+                        workspace.t("hierarchy.filterType")
                     } else {
-                        "Search"
+                        workspace.t("hierarchy.filterPlaceholder")
                     },
                 )
                 .desired_width(110.0),
         );
         let mode = egui::ComboBox::from_id_salt("hierarchy-search-mode")
             .width(56.0)
-            .selected_text(state.hierarchy_search_mode.label())
+            .selected_text(match state.hierarchy_search_mode {
+                HierarchySearchMode::Name => workspace.t("desktop.hierarchy.byName"),
+                HierarchySearchMode::Component => workspace.t("desktop.hierarchy.byType"),
+            })
             .show_ui(ui, |ui| {
                 for mode in [HierarchySearchMode::Name, HierarchySearchMode::Component] {
-                    ui.selectable_value(&mut state.hierarchy_search_mode, mode, mode.label());
+                    let label = match mode {
+                        HierarchySearchMode::Name => workspace.t("desktop.hierarchy.byName"),
+                        HierarchySearchMode::Component => workspace.t("desktop.hierarchy.byType"),
+                    };
+                    ui.selectable_value(&mut state.hierarchy_search_mode, mode, label);
                 }
             })
             .response;
@@ -145,14 +152,14 @@ pub(super) fn hierarchy_toolbar(
             .map(|preset| (preset.id.clone(), preset.label.clone()))
             .collect();
         let create = if presets.is_empty() {
-            let create = ui.button("Create");
+            let create = ui.button(workspace.t("hierarchy.createMenu"));
             if create.clicked() {
                 workspace.add_entity("");
             }
             create
         } else {
             let current = state.preset_choice.min(presets.len().saturating_sub(1));
-            ui.menu_button("Create", |ui| {
+            ui.menu_button(workspace.t("hierarchy.createMenu"), |ui| {
                 for (index, (id, label)) in presets.iter().enumerate() {
                     if ui.selectable_label(index == current, label).clicked() {
                         state.preset_choice = index;
@@ -166,7 +173,11 @@ pub(super) fn hierarchy_toolbar(
         let visibility_changed =
             !workspace.document().hidden_entities.is_empty() || workspace.isolate;
         let show_all = visibility_changed.then(|| {
-            let response = ui.button(format!("{} Show All", icons::EYE));
+            let response = ui.button(format!(
+                "{} {}",
+                icons::EYE,
+                workspace.t("hierarchy.showAll")
+            ));
             if response.clicked() {
                 workspace.show_all_entities();
             }
@@ -174,9 +185,13 @@ pub(super) fn hierarchy_toolbar(
         });
         let isolate = ui.add_enabled(
             workspace.isolate || !workspace.selection.is_empty(),
-            egui::Button::new(format!("{} Isolate", icons::TARGET)).selected(workspace.isolate),
+            egui::Button::new(format!(
+                "{} {}",
+                icons::TARGET,
+                workspace.t("hierarchy.isolate")
+            ))
+            .selected(workspace.isolate),
         );
-        let isolate = isolate.on_hover_text("Only show the selected entities and their children");
         if isolate.clicked() {
             workspace.set_isolate(!workspace.isolate);
         }
@@ -192,9 +207,9 @@ pub(super) fn hierarchy_toolbar(
             .selected(hierarchy_locked),
         );
         let lock = if hierarchy_locked {
-            lock.on_hover_text("Unlock the hierarchy selection")
+            lock.on_hover_text(workspace.t("hierarchy.unlock"))
         } else {
-            lock.on_hover_text("Lock the hierarchy selection")
+            lock.on_hover_text(workspace.t("hierarchy.lock"))
         };
         if lock.clicked() {
             toggle_hierarchy_lock(workspace, state);
@@ -203,7 +218,7 @@ pub(super) fn hierarchy_toolbar(
             workspace.primary_selection().is_some(),
             egui::Button::new(icons::CROSSHAIR),
         );
-        let find = find.on_hover_text("Find the selected object in the hierarchy");
+        let find = find.on_hover_text(workspace.t("hierarchy.findSelected"));
         if find.clicked() {
             if let Some(index) = workspace.primary_selection() {
                 reveal_in_hierarchy(workspace, state, index);
@@ -455,9 +470,9 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     !active || (active && !ancestor_active),
                 );
                 let response = if active && !ancestor_active {
-                    response.on_hover_text("Hidden by an inactive parent")
+                    response
                 } else {
-                    response.on_hover_text("Toggle Active")
+                    response.on_hover_text(workspace.t("hierarchy.toggleActive"))
                 };
                 if response.clicked() {
                     action = Some(TreeAction::ToggleActive(index));
@@ -470,11 +485,11 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 };
                 let visibility = flat_icon_dimmed(&mut row_ui, visibility_icon, hidden);
                 let visibility = if workspace.isolate && hidden {
-                    visibility.on_hover_text("Isolated — exit Isolate to show other objects")
+                    visibility
                 } else if hidden {
-                    visibility.on_hover_text("Show in Scene view")
+                    visibility.on_hover_text(workspace.t("hierarchy.showInScene"))
                 } else {
-                    visibility.on_hover_text("Hide in Scene view")
+                    visibility.on_hover_text(workspace.t("hierarchy.hideInScene"))
                 };
                 if visibility.clicked() && !(workspace.isolate && hidden) {
                     action = Some(TreeAction::ToggleHidden(index));
@@ -658,9 +673,9 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 row.context_menu(|ui| {
                     let hidden_now = hidden;
                     let visibility_label = if hidden_now {
-                        "Show in Scene View"
+                        workspace.t("hierarchy.showInScene")
                     } else {
-                        "Hide in Scene View"
+                        workspace.t("hierarchy.hideInScene")
                     };
                     if ui.button(visibility_label).clicked() {
                         if workspace.isolate && hidden_now {
@@ -673,51 +688,58 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     if ui
                         .add_enabled(
                             !workspace.selection.is_empty(),
-                            egui::Button::new("Isolate Selection"),
+                            egui::Button::new(workspace.t("hierarchy.isolateSelection")),
                         )
                         .clicked()
                     {
                         workspace.set_isolate(true);
                         ui.close();
                     }
-                    if ui.button("Show All").clicked() {
+                    if ui.button(workspace.t("hierarchy.showAll")).clicked() {
                         workspace.show_all_entities();
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Rename").clicked() {
+                    if ui.button(workspace.t("common.rename")).clicked() {
                         action = Some(TreeAction::BeginRename(index, name.clone()));
                         ui.close();
                     }
-                    if ui.button("Duplicate").clicked() {
+                    if ui.button(workspace.t("common.duplicate")).clicked() {
                         action = Some(TreeAction::Duplicate(index));
                         ui.close();
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(workspace.t("common.delete")).clicked() {
                         action = Some(TreeAction::Delete(index));
                         ui.close();
                     }
-                    if ui.button("Select Children").clicked() {
+                    if ui.button(workspace.t("menu.selectChildren")).clicked() {
                         let children = workspace.document().doc.descendants(index);
                         workspace.select_many(&children, false);
                         sync_hierarchy_lock(workspace, state);
                         ui.close();
                     }
-                    if ui.button("Set as First Sibling").clicked() {
+                    if ui
+                        .button(workspace.t("hierarchy.setFirstSibling"))
+                        .clicked()
+                    {
                         let _ = workspace.document_mut().doc.move_entity(index, 0);
                         ui.close();
                     }
-                    if ui.button("Set as Last Sibling").clicked() {
+                    if ui.button(workspace.t("hierarchy.setLastSibling")).clicked() {
                         let last = workspace.document().doc.entities.len().saturating_sub(1);
                         let _ = workspace.document_mut().doc.move_entity(index, last);
                         ui.close();
                     }
-                    if ui.button("Move to Root").clicked() {
+                    if ui.button(workspace.t("hierarchy.moveToRoot")).clicked() {
                         workspace.reparent(index, None, None);
                         ui.close();
                     }
                     if let Some(parent) = workspace.primary_selection() {
-                        if parent != index && ui.button("Parent to Selection").clicked() {
+                        if parent != index
+                            && ui
+                                .button(workspace.t("hierarchy.parentToSelection"))
+                                .clicked()
+                        {
                             workspace.reparent(index, Some(parent), None);
                             ui.close();
                         }
@@ -754,7 +776,7 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             .entities
             .get(from)
             .map(|entity| entity.display_name())
-            .unwrap_or_else(|| "Entity".to_string());
+            .unwrap_or_else(|| workspace.t("common.entity"));
         let ghost = egui::Rect::from_min_size(
             pointer + egui::vec2(12.0, 12.0),
             egui::vec2((label.len() as f32 * 7.0 + 30.0).clamp(96.0, 260.0), 22.0),

@@ -1221,6 +1221,11 @@ impl Workspace {
             "history" => self.i18n.t1("menu.history"),
             "shortcuts" => self.i18n.t1("menu.shortcuts"),
             "about" => self.i18n.t1("menu.about"),
+            "problems" => self.i18n.t1("menu.problems"),
+            "prefabOverrides" => self.i18n.t1("menu.prefabOverrides"),
+            "material" => self.i18n.t1("menu.material"),
+            "animGraph" => self.i18n.t1("menu.animationGraph"),
+            "gaspDebug" => self.i18n.t1("menu.gaspDebug"),
             other => self
                 .panel(other)
                 .map(|panel| panel.title.clone())
@@ -1371,6 +1376,11 @@ impl Workspace {
 
     pub fn t(&self, key: &str) -> String {
         self.i18n.t1(key)
+    }
+
+    /// Interpolates `{param}` placeholders, e.g. `tf("assets.deleteItems", &[("count", "3")])`.
+    pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
+        self.i18n.t(key, params)
     }
 
     pub fn log(&mut self, source: LogSource, level: LogLevel, text: impl Into<String>) {
