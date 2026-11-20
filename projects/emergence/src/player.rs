@@ -498,7 +498,8 @@ impl PlayerController {
             self.unlocked_right_drag_px = 0.0;
             released_click || input.right_clicked
         };
-        let use_tool = !ui_consumed && ((input.pointer_locked && input.right_clicked) || unlocked_right_click);
+        let use_tool =
+            !ui_consumed && ((input.pointer_locked && input.right_clicked) || unlocked_right_click);
 
         // Toggle Walk / Fly with Tab or V.
         if input.key_pressed(keys::TAB) || input.key_pressed(keys::OTHER_BASE + b'V' as usize) {

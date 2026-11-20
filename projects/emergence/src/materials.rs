@@ -105,7 +105,12 @@ impl MaterialTable {
     /// Parse a JSON materials table document.
     pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
         let doc: MaterialFileJson = serde_json::from_str(text)?;
-        let max_id = doc.materials.iter().map(|m| m.id as usize).max().unwrap_or(0);
+        let max_id = doc
+            .materials
+            .iter()
+            .map(|m| m.id as usize)
+            .max()
+            .unwrap_or(0);
         let mut entries = vec![
             MaterialEntry {
                 id: 0,
@@ -127,7 +132,14 @@ impl MaterialTable {
                 SignalClockState::default()
             };
             let cell = PhysicalCell {
-                env: EnvPacked::new(m.state, m.temperature, m.pressure, 5, m.bio_activity, FlowDir::None),
+                env: EnvPacked::new(
+                    m.state,
+                    m.temperature,
+                    m.pressure,
+                    5,
+                    m.bio_activity,
+                    FlowDir::None,
+                ),
                 material: mat_flags,
                 transient: trans_flags,
                 topology: topo_flags,
@@ -170,7 +182,11 @@ impl MaterialTable {
 
     /// Convert a material ID and live `PhysicalCell` into packed GPU `(rgba, visual)` words.
     pub fn cell_visuals(&self, id: u8, cell: &PhysicalCell) -> (u32, u32) {
-        if id == mat_id::AIR || cell.durability == 0 && cell.transient.contains(TransientFlags::BROKEN) && cell.material.contains(MaterialFlags::GLASS) {
+        if id == mat_id::AIR
+            || cell.durability == 0
+                && cell.transient.contains(TransientFlags::BROKEN)
+                && cell.material.contains(MaterialFlags::GLASS)
+        {
             return (0, 0);
         }
         let entry = self.get(id);
@@ -199,16 +215,22 @@ impl MaterialTable {
             g = (g as u16 / 2 + 45).min(255) as u8;
             b /= 3;
         }
-        if cell.transient.contains(TransientFlags::FROZEN) || cell.env.temperature() <= Temperature::Cryo {
+        if cell.transient.contains(TransientFlags::FROZEN)
+            || cell.env.temperature() <= Temperature::Cryo
+        {
             flags |= VoxelVisualFlags::FROZEN;
         }
         if cell.transient.contains(TransientFlags::CHARGED) {
             flags |= VoxelVisualFlags::CHARGED;
         }
-        if cell.transient.contains(TransientFlags::CORRODED) || cell.transient.contains(TransientFlags::CORROSIVE) {
+        if cell.transient.contains(TransientFlags::CORRODED)
+            || cell.transient.contains(TransientFlags::CORROSIVE)
+        {
             flags |= VoxelVisualFlags::CORRODED;
         }
-        if cell.transient.contains(TransientFlags::INFECTED) || cell.env.bio_activity() >= BioActivity::Vital {
+        if cell.transient.contains(TransientFlags::INFECTED)
+            || cell.env.bio_activity() >= BioActivity::Vital
+        {
             flags |= VoxelVisualFlags::INFECTED;
         }
         if cell.transient.contains(TransientFlags::WARNING) {
@@ -335,7 +357,10 @@ mod tests {
             for slot in ["albedo", "normal", "specular"] {
                 if let Some(rel) = entry[slot].as_str() {
                     let full = assets_root.join(rel);
-                    assert!(full.exists(), "missing SPBR {slot} texture for {name}: {full:?}");
+                    assert!(
+                        full.exists(),
+                        "missing SPBR {slot} texture for {name}: {full:?}"
+                    );
                 }
             }
         }

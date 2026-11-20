@@ -10,7 +10,7 @@ use prism_scene::ui::{
     Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Style, Text, TextAlign,
 };
 
-use prism_scene::voxel::{VoxelTier, VoxelHit};
+use prism_scene::voxel::{VoxelHit, VoxelTier};
 
 use crate::catalog::{
     collect_cell_debug_tags, format_cell_inspector, identify_cell, CatalogEntry, CatalogKind,
@@ -848,10 +848,8 @@ impl EmergenceNeiHud {
         let col = local_idx % HUD_NEI_COLS;
         let row = local_idx / HUD_NEI_COLS;
         let x = panel[0] + HUD_NEI_PAD + col as f32 * (HUD_NEI_SLOT_W + HUD_NEI_GAP);
-        let y = panel[1]
-            + HUD_NEI_PAD
-            + HUD_NEI_HEADER_H
-            + row as f32 * (HUD_NEI_SLOT_H + HUD_NEI_GAP);
+        let y =
+            panel[1] + HUD_NEI_PAD + HUD_NEI_HEADER_H + row as f32 * (HUD_NEI_SLOT_H + HUD_NEI_GAP);
         [x, y, HUD_NEI_SLOT_W, HUD_NEI_SLOT_H]
     }
 
@@ -873,10 +871,7 @@ impl EmergenceNeiHud {
     }
 
     fn point_in(rect: [f32; 4], p: [f32; 2]) -> bool {
-        p[0] >= rect[0]
-            && p[0] <= rect[0] + rect[2]
-            && p[1] >= rect[1]
-            && p[1] <= rect[1] + rect[3]
+        p[0] >= rect[0] && p[0] <= rect[0] + rect[2] && p[1] >= rect[1] && p[1] <= rect[1] + rect[3]
     }
 
     /// Handles `[B]` NEI toggle and pointer interactions with hotbar & NEI panel.
@@ -939,8 +934,11 @@ impl EmergenceNeiHud {
             return false;
         }
 
-        const FILTERS: [CatalogFilter; 3] =
-            [CatalogFilter::All, CatalogFilter::Items, CatalogFilter::Entities];
+        const FILTERS: [CatalogFilter; 3] = [
+            CatalogFilter::All,
+            CatalogFilter::Items,
+            CatalogFilter::Entities,
+        ];
         for (tab_idx, filter) in FILTERS.into_iter().enumerate() {
             if Self::point_in(Self::filter_tab_rect(panel, tab_idx), cur) {
                 if input.left_clicked {
@@ -1010,7 +1008,11 @@ impl EmergenceNeiHud {
                     format!("Click to equip slot [{}]", player.tool_index + 1)
                 } else {
                     tags.truncate(4);
-                    format!("{}  | Click: Slot {}", tags.join(" "), player.tool_index + 1)
+                    format!(
+                        "{}  | Click: Slot {}",
+                        tags.join(" "),
+                        player.tool_index + 1
+                    )
                 };
                 TopTooltipInfo {
                     title: format!("{}  [{}]", entry.name, entry.kind.label()),
@@ -1429,7 +1431,11 @@ impl EmergenceNeiHud {
                         true,
                     );
                     if i <= 6 {
-                        let key_badge = if i < 6 { format!("{}", i + 4) } else { "0".to_string() };
+                        let key_badge = if i < 6 {
+                            format!("{}", i + 4)
+                        } else {
+                            "0".to_string()
+                        };
                         set_text_style(
                             world,
                             slot_ui.badge,
@@ -1497,7 +1503,12 @@ impl EmergenceNeiHud {
             set_rect_style(
                 world,
                 panel_ui.border,
-                [panel[0] - 1.5, panel[1] - 1.5, panel[2] + 3.0, panel[3] + 3.0],
+                [
+                    panel[0] - 1.5,
+                    panel[1] - 1.5,
+                    panel[2] + 3.0,
+                    panel[3] + 3.0,
+                ],
                 [0.28, 0.38, 0.50, 0.92],
                 7.0,
                 true,
@@ -1529,8 +1540,11 @@ impl EmergenceNeiHud {
                 TextAlign::Right,
             );
 
-            const FILTERS: [CatalogFilter; 3] =
-                [CatalogFilter::All, CatalogFilter::Items, CatalogFilter::Entities];
+            const FILTERS: [CatalogFilter; 3] = [
+                CatalogFilter::All,
+                CatalogFilter::Items,
+                CatalogFilter::Entities,
+            ];
             for (idx, filter) in FILTERS.into_iter().enumerate() {
                 let tr = Self::filter_tab_rect(panel, idx);
                 let active = self.filter == filter;

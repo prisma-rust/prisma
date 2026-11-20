@@ -263,7 +263,12 @@ pub fn resolve_project_root() -> PathBuf {
 }
 
 fn is_emergence_project_dir(dir: &Path) -> bool {
-    dir.join("Cargo.toml").is_file() && dir.join("assets").join("data").join("materials.json").is_file()
+    dir.join("Cargo.toml").is_file()
+        && dir
+            .join("assets")
+            .join("data")
+            .join("materials.json")
+            .is_file()
 }
 
 pub(crate) fn resolve_project_root_from(
@@ -319,12 +324,16 @@ pub fn format_report_filename(stamp_compact: &str, pid: u32) -> String {
 }
 
 /// Resolves final output file path for `config` at session end.
-pub fn resolve_output_path(config: &PerfReportConfig, stamp_compact: &str, pid: u32) -> Option<PathBuf> {
+pub fn resolve_output_path(
+    config: &PerfReportConfig,
+    stamp_compact: &str,
+    pid: u32,
+) -> Option<PathBuf> {
     match &config.target {
         PerfOutputTarget::Disabled => None,
-        PerfOutputTarget::ProjectCacheAuto => Some(
-            default_perf_cache_dir().join(format_report_filename(stamp_compact, pid)),
-        ),
+        PerfOutputTarget::ProjectCacheAuto => {
+            Some(default_perf_cache_dir().join(format_report_filename(stamp_compact, pid)))
+        }
         PerfOutputTarget::CustomDir(dir) => {
             Some(dir.join(format_report_filename(stamp_compact, pid)))
         }
@@ -716,8 +725,8 @@ impl TimelineBucketAcc {
         } else {
             0.0
         };
-        let render_mean = (self.render_frames > 0)
-            .then(|| self.render_sum_ms / self.render_frames as f64);
+        let render_mean =
+            (self.render_frames > 0).then(|| self.render_sum_ms / self.render_frames as f64);
         TimelineBucket {
             second: self.second,
             frames: self.frames,
@@ -1057,7 +1066,8 @@ impl EmergencePerfRecorder {
                 bucket.tracked_cells_end = input.tracked_cells;
                 bucket.dirty_chunks_sum += input.dirty_chunks as u64;
                 bucket.mem_used_mib_end = used_mib;
-                bucket.alloc_rate_mib_s_max = bucket.alloc_rate_mib_s_max.max(input.alloc_rate_mib_s);
+                bucket.alloc_rate_mib_s_max =
+                    bucket.alloc_rate_mib_s_max.max(input.alloc_rate_mib_s);
             }
         }
     }
@@ -1209,7 +1219,11 @@ impl EmergencePerfRecorder {
                 peak_working_set_pct: peak_mem_pct,
             },
             worst_frames: self.worst_frames.clone(),
-            timeline: self.timeline.iter().map(TimelineBucketAcc::freeze).collect(),
+            timeline: self
+                .timeline
+                .iter()
+                .map(TimelineBucketAcc::freeze)
+                .collect(),
         }
     }
 
@@ -1246,7 +1260,10 @@ impl Drop for EmergencePerfRecorder {
         }
         match self.flush() {
             Ok(Some(path)) => {
-                let msg = format!("[emergence][perf] wrote performance report -> {}", path.display());
+                let msg = format!(
+                    "[emergence][perf] wrote performance report -> {}",
+                    path.display()
+                );
                 log::info!("{msg}");
                 eprintln!("{msg}");
             }
@@ -1510,7 +1527,8 @@ mod tests {
             CliAction::PrintHelpAndExit
         );
 
-        let CliAction::Run(default_cfg) = parse_cli_args(["emergence.exe", "--perf-report"]).unwrap()
+        let CliAction::Run(default_cfg) =
+            parse_cli_args(["emergence.exe", "--perf-report"]).unwrap()
         else {
             panic!("expected Run");
         };
@@ -1545,7 +1563,11 @@ mod tests {
         fs::create_dir_all(proj.join("assets").join("data")).unwrap();
         fs::create_dir_all(&exe_dir).unwrap();
         fs::write(proj.join("Cargo.toml"), "[package]\nname=\"emergence\"\n").unwrap();
-        fs::write(proj.join("assets").join("data").join("materials.json"), "{}").unwrap();
+        fs::write(
+            proj.join("assets").join("data").join("materials.json"),
+            "{}",
+        )
+        .unwrap();
 
         // Launched from repo root (`cargo run --manifest-path projects/emergence/Cargo.toml`).
         let from_repo = resolve_project_root_from(None, Some(&tmp), Some(&exe_dir));
@@ -1650,7 +1672,11 @@ mod tests {
             .expect("perf dir created on exit")
             .filter_map(|e| e.ok().map(|entry| entry.path()))
             .collect();
-        assert_eq!(files.len(), 1, "expected exactly 1 report file, got {files:?}");
+        assert_eq!(
+            files.len(),
+            1,
+            "expected exactly 1 report file, got {files:?}"
+        );
         let fname = files[0].file_name().unwrap().to_string_lossy();
         assert!(fname.starts_with("emergence_perf_"), "got {fname}");
         assert!(fname.ends_with(".json"), "got {fname}");
