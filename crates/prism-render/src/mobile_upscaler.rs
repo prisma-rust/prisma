@@ -22,6 +22,8 @@ use crate::render_graph::{
 use crate::render_pass::find_memory_type;
 use crate::shader::load_shader_module;
 
+const SGSR2_CONVERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_convert.comp.spv");
+const SGSR2_ACTIVATE_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_activate.comp.spv");
 const SGSR2_SPV: &[u8] = include_bytes!("../../../assets/shaders/sgsr2_upscale.comp.spv");
 const ARM_ASR_SPV: &[u8] = include_bytes!("../../../assets/shaders/arm_asr_upscale.comp.spv");
 const ENTRY_MAIN: &CStr = c"main";
@@ -31,6 +33,7 @@ const ENTRY_MAIN: &CStr = c"main";
 struct UpscalerParamsUbo {
     inv_view_proj: [[f32; 4]; 4],
     prev_view_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 4],
     input_size: [f32; 2],
     output_size: [f32; 2],
     inv_input_size: [f32; 2],
@@ -40,12 +43,27 @@ struct UpscalerParamsUbo {
     reset: u32,
 }
 
-/// Compute pass implementing both SGSR 2 and Arm ASR temporal upscaling.
+/// Compute pass implementing 3-pass SGSR 2 and Arm ASR temporal upscaling.
 pub struct MobileUpscalerPass {
     output_extent: vk::Extent2D,
+    input_extent: vk::Extent2D,
     images: [vk::Image; 2],
     memories: [vk::DeviceMemory; 2],
     views: [vk::ImageView; 2],
+    motion_depth_clip_img: vk::Image,
+    motion_depth_clip_mem: vk::DeviceMemory,
+    motion_depth_clip_view: vk::ImageView,
+    ycocg_color_img: vk::Image,
+    ycocg_color_mem: vk::DeviceMemory,
+    ycocg_color_view: vk::ImageView,
+    motion_depth_alpha_img: vk::Image,
+    motion_depth_alpha_mem: vk::DeviceMemory,
+    motion_depth_alpha_view: vk::ImageView,
+    luma_history_imgs: [vk::Image; 2],
+    luma_history_mems: [vk::DeviceMemory; 2],
+    luma_history_views: [vk::ImageView; 2],
+    luma_history_initialized: [bool; 2],
+    sgsr2_intermediates_initialized: bool,
     history_initialized: [bool; 2],
     history_valid: [bool; 2],
     prev_view_proj: Option<[[f32; 4]; 4]>,
@@ -53,10 +71,15 @@ pub struct MobileUpscalerPass {
     linear_sampler: vk::Sampler,
     nearest_sampler: vk::Sampler,
     ds_layout: vk::DescriptorSetLayout,
+    convert_ds_layout: vk::DescriptorSetLayout,
     ds_pool: vk::DescriptorPool,
     sets: [vk::DescriptorSet; 2],
+    convert_sets: [vk::DescriptorSet; 2],
+    activate_sets: [vk::DescriptorSet; 2],
     ubos: [vk::Buffer; 2],
     ubo_memories: [vk::DeviceMemory; 2],
+    sgsr2_convert_pipeline: ComputePipeline,
+    sgsr2_activate_pipeline: ComputePipeline,
     sgsr2_pipeline: ComputePipeline,
     arm_asr_pipeline: ComputePipeline,
     device: ash::Device,
@@ -78,6 +101,23 @@ impl MobileUpscalerPass {
             images[i] = img;
             memories[i] = mem;
             views[i] = view;
+        }
+
+        let input_extent = output_extent;
+        let (motion_depth_clip_img, motion_depth_clip_mem, motion_depth_clip_view) =
+            create_upscaler_image(context, input_extent)?;
+        let (ycocg_color_img, ycocg_color_mem, ycocg_color_view) =
+            create_upscaler_image(context, input_extent)?;
+        let (motion_depth_alpha_img, motion_depth_alpha_mem, motion_depth_alpha_view) =
+            create_upscaler_image(context, input_extent)?;
+        let mut luma_history_imgs = [vk::Image::null(); 2];
+        let mut luma_history_mems = [vk::DeviceMemory::null(); 2];
+        let mut luma_history_views = [vk::ImageView::null(); 2];
+        for i in 0..2 {
+            let (img, mem, view) = create_upscaler_image(context, input_extent)?;
+            luma_history_imgs[i] = img;
+            luma_history_mems[i] = mem;
+            luma_history_views[i] = view;
         }
 
         let linear_sampler = create_sampler(device, vk::Filter::LINEAR)?;
@@ -123,24 +163,64 @@ impl MobileUpscalerPass {
         }
         .context("MobileUpscalerPass: create descriptor set layout")?;
 
+        let convert_bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(4)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(5)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        ];
+        let convert_ds_layout = unsafe {
+            device.create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&convert_bindings),
+                None,
+            )
+        }
+        .context("MobileUpscalerPass: create convert descriptor set layout")?;
+
         let pool_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 8,
+                descriptor_count: 20,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 2,
+                descriptor_count: 10,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 2,
+                descriptor_count: 6,
             },
         ];
         let ds_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(2)
+                    .max_sets(6)
                     .pool_sizes(&pool_sizes),
                 None,
             )
@@ -158,6 +238,27 @@ impl MobileUpscalerPass {
         .context("MobileUpscalerPass: allocate descriptor sets")?;
         let sets = [allocated[0], allocated[1]];
 
+        let convert_layouts = [convert_ds_layout, convert_ds_layout];
+        let convert_allocated = unsafe {
+            device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(ds_pool)
+                    .set_layouts(&convert_layouts),
+            )
+        }
+        .context("MobileUpscalerPass: allocate convert descriptor sets")?;
+        let convert_sets = [convert_allocated[0], convert_allocated[1]];
+
+        let activate_allocated = unsafe {
+            device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(ds_pool)
+                    .set_layouts(&convert_layouts),
+            )
+        }
+        .context("MobileUpscalerPass: allocate activate descriptor sets")?;
+        let activate_sets = [activate_allocated[0], activate_allocated[1]];
+
         let mut ubos = [vk::Buffer::null(); 2];
         let mut ubo_memories = [vk::DeviceMemory::null(); 2];
         for i in 0..2 {
@@ -171,6 +272,30 @@ impl MobileUpscalerPass {
             ubos[i] = buf;
             ubo_memories[i] = mem;
         }
+
+        let sgsr2_convert_mod = load_shader_module(device, SGSR2_CONVERT_SPV)
+            .context("MobileUpscalerPass: load sgsr2_convert.comp.spv")?;
+        let sgsr2_convert_pipeline = ComputePipeline::new(
+            device,
+            sgsr2_convert_mod,
+            ENTRY_MAIN,
+            &[convert_ds_layout],
+            &[],
+        );
+        unsafe { device.destroy_shader_module(sgsr2_convert_mod, None) };
+        let sgsr2_convert_pipeline = sgsr2_convert_pipeline?;
+
+        let sgsr2_activate_mod = load_shader_module(device, SGSR2_ACTIVATE_SPV)
+            .context("MobileUpscalerPass: load sgsr2_activate.comp.spv")?;
+        let sgsr2_activate_pipeline = ComputePipeline::new(
+            device,
+            sgsr2_activate_mod,
+            ENTRY_MAIN,
+            &[convert_ds_layout],
+            &[],
+        );
+        unsafe { device.destroy_shader_module(sgsr2_activate_mod, None) };
+        let sgsr2_activate_pipeline = sgsr2_activate_pipeline?;
 
         let sgsr2_mod = load_shader_module(device, SGSR2_SPV)
             .context("MobileUpscalerPass: load sgsr2_upscale.comp.spv")?;
@@ -187,9 +312,24 @@ impl MobileUpscalerPass {
 
         Ok(Self {
             output_extent,
+            input_extent,
             images,
             memories,
             views,
+            motion_depth_clip_img,
+            motion_depth_clip_mem,
+            motion_depth_clip_view,
+            ycocg_color_img,
+            ycocg_color_mem,
+            ycocg_color_view,
+            motion_depth_alpha_img,
+            motion_depth_alpha_mem,
+            motion_depth_alpha_view,
+            luma_history_imgs,
+            luma_history_mems,
+            luma_history_views,
+            luma_history_initialized: [false; 2],
+            sgsr2_intermediates_initialized: false,
             history_initialized: [false; 2],
             history_valid: [false; 2],
             prev_view_proj: None,
@@ -197,10 +337,15 @@ impl MobileUpscalerPass {
             linear_sampler,
             nearest_sampler,
             ds_layout,
+            convert_ds_layout,
             ds_pool,
             sets,
+            convert_sets,
+            activate_sets,
             ubos,
             ubo_memories,
+            sgsr2_convert_pipeline,
+            sgsr2_activate_pipeline,
             sgsr2_pipeline,
             arm_asr_pipeline,
             device: device.clone(),
@@ -246,6 +391,81 @@ impl MobileUpscalerPass {
         Ok(())
     }
 
+    fn recreate_input_targets(
+        &mut self,
+        context: &VulkanContext,
+        input_extent: vk::Extent2D,
+    ) -> Result<()> {
+        let input_extent = vk::Extent2D {
+            width: input_extent.width.max(1),
+            height: input_extent.height.max(1),
+        };
+        if self.input_extent == input_extent {
+            return Ok(());
+        }
+        unsafe {
+            let _ = self.device.device_wait_idle();
+            for (view, img, mem) in [
+                (
+                    self.motion_depth_clip_view,
+                    self.motion_depth_clip_img,
+                    self.motion_depth_clip_mem,
+                ),
+                (
+                    self.ycocg_color_view,
+                    self.ycocg_color_img,
+                    self.ycocg_color_mem,
+                ),
+                (
+                    self.motion_depth_alpha_view,
+                    self.motion_depth_alpha_img,
+                    self.motion_depth_alpha_mem,
+                ),
+                (
+                    self.luma_history_views[0],
+                    self.luma_history_imgs[0],
+                    self.luma_history_mems[0],
+                ),
+                (
+                    self.luma_history_views[1],
+                    self.luma_history_imgs[1],
+                    self.luma_history_mems[1],
+                ),
+            ] {
+                if view != vk::ImageView::null() {
+                    self.device.destroy_image_view(view, None);
+                }
+                if img != vk::Image::null() {
+                    self.device.destroy_image(img, None);
+                }
+                if mem != vk::DeviceMemory::null() {
+                    self.device.free_memory(mem, None);
+                }
+            }
+        }
+        let (mdc_img, mdc_mem, mdc_view) = create_upscaler_image(context, input_extent)?;
+        let (ycc_img, ycc_mem, ycc_view) = create_upscaler_image(context, input_extent)?;
+        let (mda_img, mda_mem, mda_view) = create_upscaler_image(context, input_extent)?;
+        let (lh0_img, lh0_mem, lh0_view) = create_upscaler_image(context, input_extent)?;
+        let (lh1_img, lh1_mem, lh1_view) = create_upscaler_image(context, input_extent)?;
+        self.motion_depth_clip_img = mdc_img;
+        self.motion_depth_clip_mem = mdc_mem;
+        self.motion_depth_clip_view = mdc_view;
+        self.ycocg_color_img = ycc_img;
+        self.ycocg_color_mem = ycc_mem;
+        self.ycocg_color_view = ycc_view;
+        self.motion_depth_alpha_img = mda_img;
+        self.motion_depth_alpha_mem = mda_mem;
+        self.motion_depth_alpha_view = mda_view;
+        self.luma_history_imgs = [lh0_img, lh1_img];
+        self.luma_history_mems = [lh0_mem, lh1_mem];
+        self.luma_history_views = [lh0_view, lh1_view];
+        self.luma_history_initialized = [false; 2];
+        self.input_extent = input_extent;
+        self.sgsr2_intermediates_initialized = false;
+        Ok(())
+    }
+
     fn reset_history(&mut self) {
         self.history_valid = [false; 2];
         self.prev_view_proj = None;
@@ -273,7 +493,46 @@ impl Drop for MobileUpscalerPass {
                     self.device.free_memory(self.ubo_memories[i], None);
                 }
             }
+            for (view, img, mem) in [
+                (
+                    self.motion_depth_clip_view,
+                    self.motion_depth_clip_img,
+                    self.motion_depth_clip_mem,
+                ),
+                (
+                    self.ycocg_color_view,
+                    self.ycocg_color_img,
+                    self.ycocg_color_mem,
+                ),
+                (
+                    self.motion_depth_alpha_view,
+                    self.motion_depth_alpha_img,
+                    self.motion_depth_alpha_mem,
+                ),
+                (
+                    self.luma_history_views[0],
+                    self.luma_history_imgs[0],
+                    self.luma_history_mems[0],
+                ),
+                (
+                    self.luma_history_views[1],
+                    self.luma_history_imgs[1],
+                    self.luma_history_mems[1],
+                ),
+            ] {
+                if view != vk::ImageView::null() {
+                    self.device.destroy_image_view(view, None);
+                }
+                if img != vk::Image::null() {
+                    self.device.destroy_image(img, None);
+                }
+                if mem != vk::DeviceMemory::null() {
+                    self.device.free_memory(mem, None);
+                }
+            }
             self.device.destroy_descriptor_pool(self.ds_pool, None);
+            self.device
+                .destroy_descriptor_set_layout(self.convert_ds_layout, None);
             self.device
                 .destroy_descriptor_set_layout(self.ds_layout, None);
             self.device.destroy_sampler(self.linear_sampler, None);
@@ -392,6 +651,7 @@ impl RenderPassNode for MobileUpscalerPass {
         let params = UpscalerParamsUbo {
             inv_view_proj,
             prev_view_proj,
+            camera_pos: ctx.frame.camera_pos,
             input_size: [in_w, in_h],
             output_size: [out_w, out_h],
             inv_input_size: [1.0 / in_w, 1.0 / in_h],
@@ -428,9 +688,318 @@ impl RenderPassNode for MobileUpscalerPass {
             vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL
         };
 
+        let ubo_info = [vk::DescriptorBufferInfo::default()
+            .buffer(self.ubos[frame])
+            .offset(0)
+            .range(std::mem::size_of::<UpscalerParamsUbo>() as vk::DeviceSize)];
+
+        if mode == MobileUpscaler::Sgsr2 {
+            self.recreate_input_targets(ctx.context, ctx.render_extent)?;
+
+            let in_color_info = [vk::DescriptorImageInfo::default()
+                .sampler(self.nearest_sampler)
+                .image_view(color_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let in_depth_info = [vk::DescriptorImageInfo::default()
+                .sampler(self.nearest_sampler)
+                .image_view(depth_view)
+                .image_layout(depth_layout)];
+            let in_vel_info = [vk::DescriptorImageInfo::default()
+                .sampler(self.nearest_sampler)
+                .image_view(velocity_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let mdc_out_info = [vk::DescriptorImageInfo::default()
+                .image_view(self.motion_depth_clip_view)
+                .image_layout(vk::ImageLayout::GENERAL)];
+            let ycc_out_info = [vk::DescriptorImageInfo::default()
+                .image_view(self.ycocg_color_view)
+                .image_layout(vk::ImageLayout::GENERAL)];
+
+            let convert_writes = [
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&in_color_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(1)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&in_depth_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(2)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&in_vel_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .image_info(&mdc_out_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(4)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .image_info(&ycc_out_info),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(self.convert_sets[frame])
+                    .dst_binding(5)
+                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                    .buffer_info(&ubo_info),
+            ];
+            unsafe {
+                self.device.update_descriptor_sets(&convert_writes, &[]);
+            }
+
+            let old_layout = if self.sgsr2_intermediates_initialized {
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            } else {
+                vk::ImageLayout::UNDEFINED
+            };
+            let convert_pre = [
+                image_barrier(
+                    self.motion_depth_clip_img,
+                    old_layout,
+                    vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),
+                    vk::AccessFlags::SHADER_WRITE,
+                ),
+                image_barrier(
+                    self.ycocg_color_img,
+                    old_layout,
+                    vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),
+                    vk::AccessFlags::SHADER_WRITE,
+                ),
+            ];
+            let convert_post = [
+                image_barrier(
+                    self.motion_depth_clip_img,
+                    vk::ImageLayout::GENERAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    vk::AccessFlags::SHADER_WRITE,
+                    vk::AccessFlags::SHADER_READ,
+                ),
+                image_barrier(
+                    self.ycocg_color_img,
+                    vk::ImageLayout::GENERAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    vk::AccessFlags::SHADER_WRITE,
+                    vk::AccessFlags::SHADER_READ,
+                ),
+            ];
+            unsafe {
+                ctx.device.cmd_pipeline_barrier(
+                    ctx.cmd,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &convert_pre,
+                );
+                ctx.device.cmd_bind_pipeline(
+                    ctx.cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.sgsr2_convert_pipeline.pipeline,
+                );
+                ctx.device.cmd_bind_descriptor_sets(
+                    ctx.cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.sgsr2_convert_pipeline.layout,
+                    0,
+                    &[self.convert_sets[frame]],
+                    &[],
+                );
+                ctx.device.cmd_dispatch(
+                    ctx.cmd,
+                    self.input_extent.width.div_ceil(8),
+                    self.input_extent.height.div_ceil(8),
+                    1,
+                );
+                ctx.device.cmd_pipeline_barrier(
+                    ctx.cmd,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &convert_post,
+                );
+            }
+            self.sgsr2_intermediates_initialized = true;
+
+            let use_activate = ctx.settings.sgsr2_three_pass;
+            if use_activate {
+                let ycc_in_info = [vk::DescriptorImageInfo::default()
+                    .sampler(self.nearest_sampler)
+                    .image_view(self.ycocg_color_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                let mdc_in_info = [vk::DescriptorImageInfo::default()
+                    .sampler(self.nearest_sampler)
+                    .image_view(self.motion_depth_clip_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                let prev_lh_info = [vk::DescriptorImageInfo::default()
+                    .sampler(self.linear_sampler)
+                    .image_view(self.luma_history_views[prev])
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                let curr_lh_out_info = [vk::DescriptorImageInfo::default()
+                    .image_view(self.luma_history_views[frame])
+                    .image_layout(vk::ImageLayout::GENERAL)];
+                let mda_out_info = [vk::DescriptorImageInfo::default()
+                    .image_view(self.motion_depth_alpha_view)
+                    .image_layout(vk::ImageLayout::GENERAL)];
+
+                let activate_writes = [
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(&ycc_in_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(&mdc_in_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(2)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(&prev_lh_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(3)
+                        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                        .image_info(&curr_lh_out_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(4)
+                        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                        .image_info(&mda_out_info),
+                    vk::WriteDescriptorSet::default()
+                        .dst_set(self.activate_sets[frame])
+                        .dst_binding(5)
+                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                        .buffer_info(&ubo_info),
+                ];
+                unsafe {
+                    self.device.update_descriptor_sets(&activate_writes, &[]);
+                }
+
+                let mut act_pre = Vec::with_capacity(3);
+                if !self.luma_history_initialized[prev] {
+                    act_pre.push(image_barrier(
+                        self.luma_history_imgs[prev],
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        vk::AccessFlags::empty(),
+                        vk::AccessFlags::SHADER_READ,
+                    ));
+                    self.luma_history_initialized[prev] = true;
+                }
+                let lh_old = if self.luma_history_initialized[frame] {
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                } else {
+                    vk::ImageLayout::UNDEFINED
+                };
+                act_pre.push(image_barrier(
+                    self.luma_history_imgs[frame],
+                    lh_old,
+                    vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),
+                    vk::AccessFlags::SHADER_WRITE,
+                ));
+                let mda_old =
+                    if self.luma_history_initialized[0] || self.luma_history_initialized[1] {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    } else {
+                        vk::ImageLayout::UNDEFINED
+                    };
+                act_pre.push(image_barrier(
+                    self.motion_depth_alpha_img,
+                    mda_old,
+                    vk::ImageLayout::GENERAL,
+                    vk::AccessFlags::empty(),
+                    vk::AccessFlags::SHADER_WRITE,
+                ));
+
+                let act_post = [
+                    image_barrier(
+                        self.luma_history_imgs[frame],
+                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        vk::AccessFlags::SHADER_WRITE,
+                        vk::AccessFlags::SHADER_READ,
+                    ),
+                    image_barrier(
+                        self.motion_depth_alpha_img,
+                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        vk::AccessFlags::SHADER_WRITE,
+                        vk::AccessFlags::SHADER_READ,
+                    ),
+                ];
+
+                unsafe {
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &act_pre,
+                    );
+                    ctx.device.cmd_bind_pipeline(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.sgsr2_activate_pipeline.pipeline,
+                    );
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::COMPUTE,
+                        self.sgsr2_activate_pipeline.layout,
+                        0,
+                        &[self.activate_sets[frame]],
+                        &[],
+                    );
+                    ctx.device.cmd_dispatch(
+                        ctx.cmd,
+                        self.input_extent.width.div_ceil(8),
+                        self.input_extent.height.div_ceil(8),
+                        1,
+                    );
+                    ctx.device.cmd_pipeline_barrier(
+                        ctx.cmd,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &act_post,
+                    );
+                }
+                self.luma_history_initialized[frame] = true;
+            }
+        }
+
+        let (pass2_color_view, pass2_color_sampler, pass2_vel_view) = match mode {
+            MobileUpscaler::Sgsr2 => (
+                self.ycocg_color_view,
+                self.nearest_sampler,
+                if ctx.settings.sgsr2_three_pass {
+                    self.motion_depth_alpha_view
+                } else {
+                    self.motion_depth_clip_view
+                },
+            ),
+            MobileUpscaler::ArmAsr => (color_view, self.linear_sampler, velocity_view),
+            _ => unreachable!(),
+        };
+
         let color_info = [vk::DescriptorImageInfo::default()
-            .sampler(self.linear_sampler)
-            .image_view(color_view)
+            .sampler(pass2_color_sampler)
+            .image_view(pass2_color_view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
         let depth_info = [vk::DescriptorImageInfo::default()
             .sampler(self.nearest_sampler)
@@ -438,7 +1007,7 @@ impl RenderPassNode for MobileUpscalerPass {
             .image_layout(depth_layout)];
         let velocity_info = [vk::DescriptorImageInfo::default()
             .sampler(self.nearest_sampler)
-            .image_view(velocity_view)
+            .image_view(pass2_vel_view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
         let history_info = [vk::DescriptorImageInfo::default()
             .sampler(self.linear_sampler)
@@ -447,10 +1016,6 @@ impl RenderPassNode for MobileUpscalerPass {
         let output_info = [vk::DescriptorImageInfo::default()
             .image_view(self.views[frame])
             .image_layout(vk::ImageLayout::GENERAL)];
-        let ubo_info = [vk::DescriptorBufferInfo::default()
-            .buffer(self.ubos[frame])
-            .offset(0)
-            .range(std::mem::size_of::<UpscalerParamsUbo>() as vk::DeviceSize)];
 
         let writes = [
             vk::WriteDescriptorSet::default()

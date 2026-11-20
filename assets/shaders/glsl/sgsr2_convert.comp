@@ -1,0 +1,126 @@
+#version 450
+
+// Qualcomm Snapdragon Game Super Resolution 2 (SGSR 2) — Pass 1: Convert.
+//
+// Runs at internal (low) render resolution to prepare:
+// - MotionDepthClipAlphaBuffer: dilated closest-depth motion vector (.xy),
+//   linear-depth disocclusion clip factor (.z), and motion validity (.w)
+// - YCoCgColor: input HDR color converted to YCoCg (.rgb) + luma (.a)
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D u_color;
+layout(set = 0, binding = 1) uniform sampler2D u_depth;
+layout(set = 0, binding = 2) uniform sampler2D u_velocity;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D u_motion_depth_clip;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D u_ycocg_color;
+
+layout(std140, set = 0, binding = 5) uniform UpscalerParams {
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+    vec4 camera_pos;
+    vec2 input_size;
+    vec2 output_size;
+    vec2 inv_input_size;
+    vec2 inv_output_size;
+    vec2 jitter_uv;
+    float sharpness;
+    uint reset;
+} params;
+
+vec3 rgb_to_ycocg(vec3 c) {
+    float co = c.r - c.b;
+    float t  = c.b + co * 0.5;
+    float cg = c.g - t;
+    float y  = t + cg * 0.5;
+    return vec3(y, co, cg);
+}
+
+float luma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+float compute_linear_depth(vec2 uv, float raw_d) {
+    if (raw_d >= 0.99999) {
+        return 1e5;
+    }
+    vec4 clip = vec4(uv * 2.0 - 1.0, raw_d, 1.0);
+    vec4 world = params.inv_view_proj * clip;
+    if (abs(world.w) < 1e-6) {
+        return 1e5;
+    }
+    world /= world.w;
+    return length(world.xyz - params.camera_pos.xyz);
+}
+
+vec2 reproject_camera(vec2 uv, float depth, out float valid) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = params.inv_view_proj * clip;
+    if (abs(world.w) < 1e-6) {
+        valid = 0.0;
+        return vec2(0.0);
+    }
+    world /= world.w;
+    vec4 prev = params.prev_view_proj * world;
+    if (prev.w <= 1e-5) {
+        valid = 0.0;
+        return vec2(0.0);
+    }
+    valid = 1.0;
+    return prev.xy / prev.w * 0.5 + 0.5;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 in_size = ivec2(params.input_size);
+    if (gid.x >= in_size.x || gid.y >= in_size.y) {
+        return;
+    }
+
+    vec2 uv = (vec2(gid) + 0.5) * params.inv_input_size;
+    vec3 color = max(texelFetch(u_color, gid, 0).rgb, vec3(0.0));
+    vec3 ycc = rgb_to_ycocg(color);
+    imageStore(u_ycocg_color, gid, vec4(ycc, luma(color)));
+
+    // 3x3 closest-depth dilation + linear-depth discontinuity evaluation.
+    float closest_depth = 1.0;
+    ivec2 closest_pos = gid;
+    float center_lin = 1e5;
+    float min_lin = 1e9;
+    float max_lin = 0.0;
+
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 p = clamp(gid + ivec2(x, y), ivec2(0), in_size - 1);
+            float d = texelFetch(u_depth, p, 0).r;
+            if (d < closest_depth) {
+                closest_depth = d;
+                closest_pos = p;
+            }
+            vec2 p_uv = (vec2(p) + 0.5) * params.inv_input_size;
+            float lin = compute_linear_depth(p_uv, d);
+            if (x == 0 && y == 0) {
+                center_lin = lin;
+            }
+            min_lin = min(min_lin, lin);
+            max_lin = max(max_lin, lin);
+        }
+    }
+
+    float rel_depth_diff = (max_lin - min_lin) / max(center_lin, 0.1);
+    float depth_clip = smoothstep(0.08, 0.50, rel_depth_diff);
+
+    vec2 obj_vel = texelFetch(u_velocity, closest_pos, 0).rg;
+    vec2 motion_uv;
+    float valid = 0.0;
+    if (dot(obj_vel, obj_vel) > 1e-12) {
+        motion_uv = obj_vel;
+    } else {
+        float cam_valid = 1.0;
+        vec2 prev_uv = reproject_camera(uv, closest_depth, cam_valid);
+        motion_uv = (cam_valid > 0.5) ? (uv - prev_uv) : vec2(0.0);
+        valid = (cam_valid > 0.5) ? 0.0 : -1.0;
+    }
+
+    imageStore(u_motion_depth_clip, gid, vec4(motion_uv, depth_clip, valid));
+}

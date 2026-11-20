@@ -1,0 +1,86 @@
+#version 450
+
+// Qualcomm Snapdragon Game Super Resolution 2 (SGSR 2) — Pass 2: Activate.
+//
+// Runs at internal (low) render resolution between Convert and Upscale to:
+// - Track temporal luma history & luma instability across frames
+// - Build temporal lock on static, low-instability pixels
+// - Produce refined MotionDepthAlphaBuffer (.xy = motion, .z = depth_clip, .w = lock_alpha)
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D u_ycocg;
+layout(set = 0, binding = 1) uniform sampler2D u_motion_depth_clip;
+layout(set = 0, binding = 2) uniform sampler2D u_prev_luma_history;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D u_curr_luma_history;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D u_motion_depth_alpha;
+
+layout(std140, set = 0, binding = 5) uniform UpscalerParams {
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+    vec4 camera_pos;
+    vec2 input_size;
+    vec2 output_size;
+    vec2 inv_input_size;
+    vec2 inv_output_size;
+    vec2 jitter_uv;
+    float sharpness;
+    uint reset;
+} params;
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 in_size = ivec2(params.input_size);
+    if (gid.x >= in_size.x || gid.y >= in_size.y) {
+        return;
+    }
+
+    vec2 uv = (vec2(gid) + 0.5) * params.inv_input_size;
+    float curr_luma = texelFetch(u_ycocg, gid, 0).a;
+    vec4 mdc = texelFetch(u_motion_depth_clip, gid, 0);
+    vec2 motion_uv = mdc.xy;
+    float depth_clip = mdc.z;
+    float valid_motion = mdc.w;
+
+    // 3x3 luma range to gauge local contrast/flicker sensitivity.
+    float min_l = curr_luma;
+    float max_l = curr_luma;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 p = clamp(gid + ivec2(x, y), ivec2(0), in_size - 1);
+            float l = texelFetch(u_ycocg, p, 0).a;
+            min_l = min(min_l, l);
+            max_l = max(max_l, l);
+        }
+    }
+    float luma_range = max(max_l - min_l, 0.02);
+
+    vec2 prev_uv = uv - motion_uv;
+    bool offscreen = any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)));
+
+    if (params.reset != 0u || valid_motion < -0.5 || offscreen) {
+        imageStore(u_curr_luma_history, gid, vec4(curr_luma, curr_luma, 0.0, 0.0));
+        imageStore(u_motion_depth_alpha, gid, vec4(motion_uv, depth_clip, -1.0));
+        return;
+    }
+
+    vec4 prev_hist = textureLod(u_prev_luma_history, prev_uv, 0.0);
+    float prev_luma = prev_hist.r;
+    float prev_ema = prev_hist.g;
+    float prev_instab = prev_hist.b;
+    float prev_lock = prev_hist.a;
+
+    float luma_delta = abs(curr_luma - prev_luma) / max(luma_range, max(curr_luma, prev_luma) * 0.25 + 0.02);
+    float curr_instab = clamp(luma_delta, 0.0, 1.0);
+    float instab = mix(prev_instab, curr_instab, 0.35);
+    float ema_luma = mix(prev_ema, curr_luma, 0.25);
+
+    float speed_px = length(motion_uv * params.output_size);
+    float motion_decay = clamp(1.0 - speed_px * 0.05, 0.0, 1.0);
+    float lock_gain = (1.0 - depth_clip) * (1.0 - instab) * motion_decay;
+    float lock = clamp(prev_lock * 0.85 * motion_decay * (1.0 - depth_clip) + lock_gain * 0.25, 0.0, 1.0);
+
+    // Encode lock into .w (> 0.0 valid with lock strength in [0, 1]).
+    imageStore(u_curr_luma_history, gid, vec4(curr_luma, ema_luma, instab, lock));
+    imageStore(u_motion_depth_alpha, gid, vec4(motion_uv, depth_clip, lock));
+}

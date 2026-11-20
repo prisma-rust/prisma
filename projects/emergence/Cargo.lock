@@ -883,12 +883,14 @@ name = "emergence"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
+ "image",
  "log",
  "prism-app",
  "prism-ecs",
  "prism-engine",
  "prism-game-api",
  "prism-project-api",
+ "prism-render",
  "prism-scene",
  "serde",
  "serde_json",
