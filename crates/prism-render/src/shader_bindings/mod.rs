@@ -23,4 +23,5 @@ pub mod skybox;
 pub mod sprites;
 pub mod taa;
 pub mod ui_overlay;
+pub mod virtual_geo;
 pub mod voxel_dda;

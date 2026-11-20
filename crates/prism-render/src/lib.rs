@@ -136,6 +136,7 @@ pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
 pub mod ui_overlay;
+pub mod vg_pass;
 pub mod virtual_geo;
 pub mod voxel_dda_pass;
 pub mod voxel_rt_accel;
@@ -205,6 +206,10 @@ pub use swapchain::Swapchain;
 #[cfg(feature = "ui")]
 pub use ui_overlay::UiOverlay;
 pub use ui_overlay::UiOverlayInput;
+pub use vg_pass::{
+    build_vg_frame_ubo, pack_vg_mesh_gpu_buffers, PackedVgMeshBuffers, VgSceneUpload,
+    VirtualGeoPass,
+};
 pub use virtual_geo::{
     compute_analytic_barycentrics, compute_geomorph_compensated_velocity, decode_rcld_runtime,
     evaluate_cluster_bone_envelope, evaluate_dag_cut, evaluate_ray_guided_page_fault,

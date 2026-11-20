@@ -201,6 +201,16 @@
       "descriptors": 3,
       "push_constant_bytes": 0
     },
+    "virtual_geo": {
+      "sampled_images": 6,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 1,
+      "storage_buffers": 11,
+      "acceleration_structures": 0,
+      "descriptors": 18,
+      "push_constant_bytes": 16
+    },
     "voxel_dda": {
       "sampled_images": 18,
       "sampled_image_arrays": 0,
