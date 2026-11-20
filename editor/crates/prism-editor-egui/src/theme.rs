@@ -18,8 +18,8 @@ pub fn color32(colors: &ThemeColors, token: ThemeToken) -> Color32 {
     Color32::from_rgba_unmultiplied(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
-const RADIUS: CornerRadius = CornerRadius::same(2);
-const POPUP_RADIUS: CornerRadius = CornerRadius::same(3);
+const RADIUS: CornerRadius = CornerRadius::same(3);
+const POPUP_RADIUS: CornerRadius = CornerRadius::same(4);
 
 /// Apply the compact, studio dark editor visual style and spacing metrics.
 pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
@@ -124,11 +124,11 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
         (egui::TextStyle::Monospace, FontId::monospace(11.0)),
     ]
     .into();
-    style.spacing.item_spacing = egui::vec2(6.0, 3.0);
-    style.spacing.button_padding = egui::vec2(8.0, 2.0);
-    style.spacing.menu_margin = egui::Margin::same(3);
+    style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+    style.spacing.button_padding = egui::vec2(8.0, 3.0);
+    style.spacing.menu_margin = egui::Margin::same(4);
     style.spacing.indent = 12.0;
-    style.spacing.interact_size.y = 20.0;
+    style.spacing.interact_size.y = 22.0;
     style.spacing.combo_width = 160.0;
     style.spacing.scroll.floating = false;
     // 默认 handle 取 `fg_stroke`（正文灰）→ 滚动条会亮成白色；改用 `bg_fill`。
@@ -167,12 +167,12 @@ mod tests {
         let colors = ThemeColors::preset("studio");
         apply(&ctx, &colors);
         let visuals = ctx.style().visuals.clone();
-        assert_eq!(visuals.window_corner_radius, CornerRadius::same(3));
+        assert_eq!(visuals.window_corner_radius, CornerRadius::same(4));
         assert_eq!(
             visuals.widgets.inactive.corner_radius,
-            CornerRadius::same(2)
+            CornerRadius::same(3)
         );
-        assert_eq!(ctx.style().spacing.interact_size.y, 20.0);
+        assert_eq!(ctx.style().spacing.interact_size.y, 22.0);
         assert_eq!(panel_fill(&colors), color32(&colors, ThemeToken::Panel));
         assert_eq!(chrome_fill(&colors), color32(&colors, ThemeToken::Chrome));
     }

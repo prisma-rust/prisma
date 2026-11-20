@@ -25,6 +25,7 @@ void main() {
         0.0,
         1.0
     );
-    v_rgba = vec4(srgb_to_linear(a_srgba.rgb), a_srgba.a);
+    vec3 straight_srgb = a_srgba.a > 0.0 ? a_srgba.rgb / a_srgba.a : vec3(0.0);
+    v_rgba = vec4(srgb_to_linear(straight_srgb) * a_srgba.a, a_srgba.a);
     v_uv = a_uv;
 }

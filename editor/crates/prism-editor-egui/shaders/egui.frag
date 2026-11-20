@@ -8,5 +8,7 @@ layout(location = 1) in vec2 v_uv;
 layout(location = 0) out vec4 f_color;
 
 void main() {
-    f_color = v_rgba * texture(u_sampler, v_uv);
+    vec4 texel = texture(u_sampler, v_uv);
+    texel.rgb *= texel.a;
+    f_color = v_rgba * texel;
 }

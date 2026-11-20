@@ -27,7 +27,7 @@ use prism_engine::render_system::{
     extract_frame_packet_into_with_shadow_cascades_and_render_height, FramePacket,
 };
 use prism_engine::scene::components::{
-    Camera, Hidden, LocalToWorld, LocalTransform, Parent, SceneEntityId,
+    Active, Animator, Camera, Hidden, LocalToWorld, LocalTransform, Parent, SceneEntityId,
 };
 use prism_engine::ui::ComputedLayout;
 use prism_engine::Engine;
@@ -103,6 +103,8 @@ pub struct EngineHost {
     project_root: Option<PathBuf>,
     /// Last GI probe volume state applied to the renderer `(path, mtime, enabled)`.
     loaded_gi: Option<(Option<PathBuf>, Option<std::time::SystemTime>, bool)>,
+    /// Previous frame view-projection matrix for motion vectors and TAA.
+    prev_view_proj: Option<[[f32; 4]; 4]>,
 }
 
 /// 编辑器地面网格只在 Scene 视图出现。
@@ -135,7 +137,7 @@ impl EngineHost {
 
         let width = width.max(1);
         let height = height.max(1);
-        let mut renderer = GraphRenderer::offscreen_new_with_context_and_shadow_size(
+        let renderer = GraphRenderer::offscreen_new_with_context_and_shadow_size(
             context,
             width,
             height,
@@ -174,6 +176,7 @@ impl EngineHost {
             asset_check_at: Instant::now(),
             project_root: None,
             loaded_gi: None,
+            prev_view_proj: None,
         })
     }
 
@@ -334,7 +337,16 @@ impl EngineHost {
             .iter()
             .map(|joint| joint.inverse_bind.to_cols_array_2d())
             .collect();
-        crate::skeleton_overlay::bone_overlay(&palette.matrices, &parents, &inverse_binds)
+        let local_to_world = world
+            .get::<LocalToWorld>(entity)
+            .map(|ltw| ltw.0.to_cols_array_2d())
+            .unwrap_or_else(|| Mat4::IDENTITY.to_cols_array_2d());
+        crate::skeleton_overlay::bone_overlay(
+            &palette.matrices,
+            &parents,
+            &inverse_binds,
+            &local_to_world,
+        )
     }
 
     /// 精灵实际纹理尺寸（好让 Scene 拾取在 `frame_size = [0,0]` 时也能知道
@@ -465,17 +477,74 @@ impl EngineHost {
         let count = entities.len();
         self.entities = entities;
         self.scene_loaded = true;
+        self.prev_view_proj = None;
 
-        // 加载器只保证根实体的 `LocalToWorld`；立刻传播一次，让相机 / 高亮
-        // 在第一帧就落在正确位置。
+        // Loader only guarantees root `LocalToWorld`; propagate full hierarchy before first frame.
         prism_engine::scene::systems::hierarchy::hierarchy_system(self.engine.world_mut());
         prism_engine::scene::systems::hierarchy::active_hierarchy_system(self.engine.world_mut());
 
         self.ensure_helper_entities();
+        self.isolate_scene_cameras();
         self.apply_scene_hidden();
         self.accumulator = Duration::ZERO;
         self.last_tick = Instant::now();
         Ok(count)
+    }
+
+    /// Synchronize transforms and active flags from the editor document in place.
+    ///
+    /// Returns `false` when entity count or identity no longer matches the loaded ECS world,
+    /// signaling that a full `load_scene` rebuild is required.
+    pub fn sync_transforms_from_doc(&mut self, doc: &prism_editor_core::doc::SceneDoc) -> bool {
+        if !self.scene_loaded || self.entities.len() != doc.entities.len() {
+            return false;
+        }
+        {
+            let world = self.engine.world_mut();
+            for (index, &entity) in self.entities.iter().enumerate() {
+                let doc_ent = &doc.entities[index];
+                if let Some(doc_id) = doc_ent.id {
+                    if world.get::<SceneEntityId>(entity).map(|id| id.0) != Some(doc_id) {
+                        return false;
+                    }
+                }
+                if world.get::<LocalTransform>(entity).is_none() {
+                    return false;
+                }
+                let r = doc_ent.transform.rotation;
+                let quat = Quat::from_xyzw(r[0], r[1], r[2], r[3]);
+                let rotation = if quat.is_finite() && quat.length_squared() > 1e-8 {
+                    quat.normalize()
+                } else {
+                    Quat::IDENTITY
+                };
+                let local = LocalTransform {
+                    position: Vec3::from(doc_ent.transform.position),
+                    rotation,
+                    scale: Vec3::from(doc_ent.transform.scale),
+                };
+                let world_mat = local.to_model_matrix();
+                world.insert(entity, local);
+                world.insert(entity, LocalToWorld(world_mat));
+                world.insert(entity, Active(doc_ent.active()));
+            }
+        }
+        prism_engine::scene::systems::hierarchy::hierarchy_system(self.engine.world_mut());
+        prism_engine::scene::systems::hierarchy::active_hierarchy_system(self.engine.world_mut());
+        true
+    }
+
+    fn isolate_scene_cameras(&mut self) {
+        if self.kind != ViewKind::Scene {
+            return;
+        }
+        let entities = self.entities.clone();
+        let world = self.engine.world_mut();
+        for entity in entities {
+            if let Some(cam) = world.get_mut::<Camera>(entity) {
+                cam.enabled = false;
+            }
+        }
     }
 
     /// Scene view 的编辑器相机 + 背景策略。
@@ -542,12 +611,7 @@ impl EngineHost {
         // yaw is world-Y, while positive pitch raises the eye toward +Y.
         let rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-pitch);
         let eye = target + rotation * Vec3::new(0.0, 0.0, distance.max(0.05));
-        let forward = (target - eye).normalize_or_zero();
-        let look = if forward.length_squared() > 0.0 {
-            Quat::from_rotation_arc(Vec3::NEG_Z, forward)
-        } else {
-            Quat::IDENTITY
-        };
+        let look = rotation;
 
         let world = self.engine.world_mut();
         world.insert(
@@ -946,8 +1010,34 @@ impl EngineHost {
             prism_engine::scene::systems::hierarchy::active_hierarchy_system(
                 self.engine.world_mut(),
             );
-            // 编辑态不跑 `update()`，但 Scene 视图的锚点手柄需要最新的
-            // `ComputedLayout`（#429）。布局是派生数据，重算不会改文档。
+            let animated: Vec<(Entity, f32)> = {
+                let world = self.engine.world();
+                self.entities
+                    .iter()
+                    .filter_map(|&entity| {
+                        world
+                            .get::<Animator>(entity)
+                            .map(|anim| (entity, anim.time))
+                    })
+                    .collect()
+            };
+            if !animated.is_empty() {
+                {
+                    let world = self.engine.world_mut();
+                    for (entity, time) in animated {
+                        if let Some(playhead) = world.get_mut::<
+                            prism_engine::scene::systems::animator::AnimatorPlayhead,
+                        >(entity) {
+                            playhead.time = if time.is_finite() { time } else { 0.0 };
+                        }
+                    }
+                }
+                prism_engine::scene::systems::animator::animator_system(
+                    self.engine.world_mut(),
+                    0.0,
+                );
+            }
+            // Edit mode does not run update(); recompute UI layout for Scene anchor handles.
             prism_engine::ui::ui_layout_system(self.engine.world_mut());
         }
         self.pump_assets();
@@ -980,8 +1070,10 @@ impl EngineHost {
         self.renderer
             .set_taa(self.settings.taa, self.settings.taa_strength);
         let scene = &self.packet.scene;
+        let current_view_proj = scene.view_proj.to_cols_array_2d();
+        let prev_view_proj = self.prev_view_proj.unwrap_or(current_view_proj);
         let mut frame_data = FrameUBOData {
-            viewProj: scene.view_proj.to_cols_array_2d(),
+            viewProj: current_view_proj,
             cameraPosition: [
                 scene.eye.x,
                 scene.eye.y,
@@ -1000,12 +1092,7 @@ impl EngineHost {
             viewportH: extent.height as f32,
             exposure: scene.exposure,
             shadowStrength: scene.shadow_strength,
-            prevViewProj: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
+            prevViewProj: prev_view_proj,
             ..Default::default()
         };
         self.renderer.apply_taa_jitter(&mut frame_data);
@@ -1059,7 +1146,11 @@ impl EngineHost {
             camera_orthographic: scene.camera_orthographic,
             clear_color: scene.clear_color,
             shadows_enabled: scene.shadows_enabled,
-            ui_overlay: Some(&self.packet.ui_overlay),
+            ui_overlay: if self.kind == ViewKind::Game || self.view_2d {
+                Some(&self.packet.ui_overlay)
+            } else {
+                None
+            },
             show_grid: editor_grid_visible(self.kind, &self.settings, self.view_2d),
             dispatch_plan: None,
         };
@@ -1068,6 +1159,8 @@ impl EngineHost {
             self.settings.internal_resolution,
             self.settings.internal_scale_mode,
         );
+        self.renderer
+            .set_voxel_scene(self.packet.voxel_scene.clone());
         let Some(ctx) = self.renderer.begin_frame()? else {
             return Ok(None);
         };
@@ -1075,11 +1168,17 @@ impl EngineHost {
             .renderer
             .prepare(&ctx, &input)
             .and_then(|_| self.renderer.execute(&ctx, &input))
+            .inspect_err(|_| {
+                // Keep headless/window fence signaled cleanly when a render pass aborts.
+                let _ = self.renderer.present(&ctx);
+                let _ = self.renderer.end_frame(&ctx, false);
+            })
             .and_then(|_| self.renderer.present(&ctx))
             .and_then(|_| self.renderer.end_frame(&ctx, false));
         if let Err(error) = result {
             return Err(error);
         }
+        self.prev_view_proj = Some(current_view_proj);
 
         // 截图要读离屏图像当前布局（帧结束是 `COLOR_ATTACHMENT_OPTIMAL`），
         // 所以必须在转采样布局**之前**做。

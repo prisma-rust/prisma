@@ -42,6 +42,31 @@ pub enum CardAction {
 ///
 /// `set(field, value)` 由调用方决定写到哪个实体（单选 / 多选批量）。
 /// 同 [`component_card`]，但路径字段带资产选择器。
+/// Map a component type name to a semantic Phosphor icon glyph.
+pub fn component_icon(name: &str) -> &'static str {
+    if name.contains("Camera") {
+        icons::CAMERA
+    } else if name.contains("Light") {
+        icons::LIGHTBULB
+    } else if name.contains("MeshRenderer") || name.contains("SkinnedMesh") {
+        icons::CUBE
+    } else if name.contains("Sprite") || name.contains("Tilemap") {
+        icons::IMAGE
+    } else if name.contains("Audio") {
+        icons::MUSIC_NOTES
+    } else if name.contains("Animator") || name.contains("Animation") {
+        icons::FILM_STRIP
+    } else if name.contains("Collider") || name.contains("RigidBody") {
+        icons::BOUNDING_BOX
+    } else if name.contains("::ui::") {
+        icons::SQUARES_FOUR
+    } else if name.contains("Terrain") || name.contains("GiConfig") {
+        icons::GLOBE
+    } else {
+        icons::GEAR
+    }
+}
+
 pub fn component_card_with_assets(
     ui: &mut Ui,
     registry: &Schema,
@@ -53,16 +78,37 @@ pub fn component_card_with_assets(
     doc_dir: &str,
     presets: &[String],
 ) {
+    let collapse_id = ui.make_persistent_id(("comp-card-open", component.name.as_str()));
+    let mut is_open = ui.data(|d| d.get_temp::<bool>(collapse_id)).unwrap_or(true);
+
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(8, 5))
-        .corner_radius(egui::CornerRadius::same(2))
+        .corner_radius(egui::CornerRadius::same(3))
         .show(ui, |ui| {
             egui::Frame::new()
                 .fill(ui.visuals().faint_bg_color)
                 .inner_margin(egui::Margin::symmetric(6, 3))
-                .corner_radius(egui::CornerRadius::same(2))
+                .corner_radius(egui::CornerRadius::same(3))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
+                        let toggle_arrow = if is_open {
+                            icons::CARET_DOWN
+                        } else {
+                            icons::CARET_RIGHT
+                        };
+                        if ui
+                            .small_button(toggle_arrow)
+                            .on_hover_text("Collapse / expand component")
+                            .clicked()
+                        {
+                            is_open = !is_open;
+                            ui.data_mut(|d| d.insert_temp(collapse_id, is_open));
+                        }
+                        ui.label(
+                            egui::RichText::new(component_icon(&component.name))
+                                .size(11.5)
+                                .color(ui.visuals().text_color()),
+                        );
                         ui.label(
                             egui::RichText::new(component.display_name())
                                 .strong()
@@ -184,17 +230,18 @@ pub fn component_card_with_assets(
                         });
                     });
                 });
-            ui.add_space(3.0);
-
-            let fields = component.fields.clone();
-            for field in &fields {
-                let Some(field_value) = value.get(&field.name) else {
-                    continue;
-                };
-                if field.name == "type_id" {
-                    continue;
+            if is_open {
+                ui.add_space(4.0);
+                let fields = component.fields.clone();
+                for field in &fields {
+                    let Some(field_value) = value.get(&field.name) else {
+                        continue;
+                    };
+                    if field.name == "type_id" {
+                        continue;
+                    }
+                    field_row_at(ui, registry, field, field_value, "", set, assets, doc_dir);
                 }
-                field_row_at(ui, registry, field, field_value, "", set, assets, doc_dir);
             }
             let _ = &component;
         });
@@ -568,12 +615,12 @@ fn drag_delta_from_response(ui: &Ui, response: &egui::Response, speed: f32) -> f
     delta * speed
 }
 
-/// Unity-inspired axis pill color (`X` red, `Y` green, `Z` blue, `W` amber).
+/// Unity-inspired axis pill color (`X` #E05252, `Y` #62B850, `Z` #4A8EE8, `W` #D6AC52).
 pub fn axis_badge_color(axis: usize) -> egui::Color32 {
     match axis {
-        0 => egui::Color32::from_rgb(218, 86, 82),
-        1 => egui::Color32::from_rgb(96, 192, 86),
-        2 => egui::Color32::from_rgb(78, 144, 232),
+        0 => egui::Color32::from_rgb(224, 82, 82),
+        1 => egui::Color32::from_rgb(98, 184, 80),
+        2 => egui::Color32::from_rgb(74, 142, 232),
         _ => egui::Color32::from_rgb(214, 172, 82),
     }
 }
@@ -733,7 +780,24 @@ fn delayed_text_edit(
     (response, buffer, committed)
 }
 
-/// 带资产选择器的字段行（路径字段右侧多一个 `…` 按钮，列出 `assets` 里的候选）。
+fn property_label_width(ui: &Ui) -> f32 {
+    (ui.available_width() * 0.36).clamp(72.0, 140.0)
+}
+
+fn property_label_slot(
+    ui: &mut Ui,
+    width: f32,
+    add_contents: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 18.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        add_contents,
+    )
+    .response
+}
+
+/// Property row for one schema field with two-column label/editor alignment.
 fn field_row_at(
     ui: &mut Ui,
     registry: &Schema,
@@ -747,40 +811,51 @@ fn field_row_at(
     let widget = field.widget();
     let label = field.label();
     let name = format!("{prefix}{}", field.name);
+    let label_w = property_label_width(ui);
 
     match widget {
         FieldWidget::ReadOnly => {
             ui.horizontal(|ui| {
-                let response = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-                field_context_menu(&response, &name, value, set);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format_json(value))
-                            .monospace()
-                            .weak()
-                            .size(11.0),
+                let response = property_label_slot(ui, label_w, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(label).size(11.0))
+                            .sense(egui::Sense::click()),
                     );
                 });
+                field_context_menu(&response, &name, value, set);
+                ui.label(
+                    egui::RichText::new(format_json(value))
+                        .monospace()
+                        .weak()
+                        .size(11.0),
+                );
             });
         }
         FieldWidget::Bool => {
             let mut checked = value.as_bool().unwrap_or(false);
-            let response = ui.checkbox(&mut checked, label);
-            field_context_menu(&response, &name, value, set);
-            if response.changed() {
-                set(&name, Value::Bool(checked));
-            }
+            ui.horizontal(|ui| {
+                let label_res = property_label_slot(ui, label_w, |ui| {
+                    ui.label(egui::RichText::new(label).size(11.0));
+                });
+                let response = ui.checkbox(&mut checked, "");
+                field_context_menu(&label_res, &name, value, set);
+                field_context_menu(&response, &name, value, set);
+                if response.changed() {
+                    set(&name, Value::Bool(checked));
+                }
+            });
         }
         FieldWidget::Integer => {
             let mut current = value.as_i64().unwrap_or(0);
             ui.horizontal(|ui| {
                 let mut scrubbed = current as f32;
-                let dragged = scrubbable_label(ui, label, &mut scrubbed, 1.0);
+                let dragged = aligned_scrubbable_label(ui, label, label_w, &mut scrubbed, 1.0);
                 if dragged {
                     current = scrubbed.round() as i64;
                 }
                 let drag = ui
-                    .add(
+                    .add_sized(
+                        [ui.available_width().max(52.0), 18.0],
                         egui::DragValue::new(&mut current)
                             .speed(1.0)
                             .custom_parser(number_parser),
@@ -795,7 +870,7 @@ fn field_row_at(
         FieldWidget::Float => {
             let mut current = value.as_f64().unwrap_or(0.0) as f32;
             ui.horizontal(|ui| {
-                let dragged = scrubbable_label(ui, label, &mut current, 0.01);
+                let dragged = aligned_scrubbable_label(ui, label, label_w, &mut current, 0.01);
                 let drawer = field.drawer();
                 let mut drag = egui::DragValue::new(&mut current).speed(0.01);
                 if let Some((min, max)) = drawer.and_then(|drawer| drawer.range()) {
@@ -809,7 +884,10 @@ fn field_row_at(
                     }
                 }
                 let response = ui
-                    .add(drag.custom_parser(number_parser))
+                    .add_sized(
+                        [ui.available_width().max(52.0), 18.0],
+                        drag.custom_parser(number_parser),
+                    )
                     .on_hover_text("Type an expression: 90/2, 2*(3+4), sin(30)");
                 field_context_menu(&response, &name, value, set);
                 if dragged || response.changed() {
@@ -821,7 +899,9 @@ fn field_row_at(
             let mut current = value.as_str().unwrap_or_default().to_string();
             let edit_id = ui.make_persistent_id(("field-text", name.as_str()));
             ui.horizontal(|ui| {
-                ui.label(label);
+                property_label_slot(ui, label_w, |ui| {
+                    ui.label(egui::RichText::new(label).size(11.0));
+                });
                 let (response, buffer, committed) =
                     delayed_text_edit(ui, edit_id, &current, false);
                 field_context_menu(&response, &name, value, set);
@@ -829,11 +909,8 @@ fn field_row_at(
                 if let Some(text) = committed {
                     set(&name, Value::String(text));
                 }
-                // 引擎的「把资产拖到对象字段」：路径类字段接受资产拖放。
                 let looks_like_asset = name.ends_with("_path")
                     || matches!(name.as_str(), "prefab" | "env_map" | "volume" | "mesh");
-                // 引用断掉（被删 / 改名 / 拼错）时红字标出来：引擎那边只会往
-                // 日志写一句 warn，画面里是「物体不见了」或「贴图变白」（#467）。
                 if looks_like_asset
                     && !current.is_empty()
                     && prism_editor_core::assets::resolve_reference(assets, doc_dir, &current)
@@ -845,7 +922,7 @@ fn field_row_at(
                             .color(egui::Color32::from_rgb(232, 96, 96)),
                     )
                     .on_hover_text(format!(
-                        "{current} is not in the asset database — the file was deleted,                          renamed, or the path is misspelt"
+                        "{current} is not in the asset database — the file was deleted, renamed, or the path is misspelt"
                     ));
                 }
                 if looks_like_asset {
@@ -881,7 +958,7 @@ fn field_row_at(
         FieldWidget::Multiline => {
             let current = value.as_str().unwrap_or_default().to_string();
             let edit_id = ui.make_persistent_id(("field-multiline", name.as_str()));
-            ui.label(label);
+            ui.label(egui::RichText::new(label).size(11.0));
             let (response, _buffer, committed) = delayed_text_edit(ui, edit_id, &current, true);
             field_context_menu(&response, &name, value, set);
             if let Some(text) = committed {
@@ -898,14 +975,11 @@ fn field_row_at(
                 })
                 .collect();
             ui.horizontal(|ui| {
-                // 拖标签 = 所有分量一起动（Unity 的 Vector3 label 行为）。
-                let mut scratch = 0.0f32;
-                let delta = drag_label(ui, label, 0.01);
-                if delta != 0.0 {
+                let mut row_delta = 0.0f32;
+                if aligned_scrubbable_label(ui, label, label_w, &mut row_delta, 0.01) {
                     for item in values.iter_mut() {
-                        *item += delta;
+                        *item += row_delta;
                     }
-                    scratch = delta;
                     let mut next = value.clone();
                     if let Some(array) = next.as_array_mut() {
                         for (axis, item) in values.iter().enumerate() {
@@ -916,7 +990,6 @@ fn field_row_at(
                         set(&name, next);
                     }
                 }
-                let _ = scratch;
                 for (axis, item) in values.iter_mut().enumerate() {
                     let axis_name = ["X", "Y", "Z", "W"].get(axis).copied().unwrap_or("");
                     let badge_changed = if !axis_name.is_empty() && len >= 2 && len <= 4 {
@@ -943,8 +1016,6 @@ fn field_row_at(
             });
         }
         FieldWidget::Quat => {
-            // 四元数按 XYZ 欧拉角编辑（`R = Rz Ry Rx`，与 glam 的
-            // `EulerRot::XYZ` 一致）：直接编辑 x/y/z/w 四个分量没人算得出来。
             let current = [0usize, 1, 2, 3].map(|axis| {
                 value
                     .get(axis)
@@ -953,7 +1024,9 @@ fn field_row_at(
             });
             let mut degrees = vm::quat_to_euler_degrees(current);
             ui.horizontal(|ui| {
-                ui.label(label);
+                property_label_slot(ui, label_w, |ui| {
+                    ui.label(egui::RichText::new(label).size(11.0));
+                });
                 for axis in 0..3 {
                     let badge_changed = scrubbable_axis_badge(
                         ui,
@@ -990,7 +1063,9 @@ fn field_row_at(
         FieldWidget::Color { alpha } => {
             let mut rgba = read_color(value, alpha);
             ui.horizontal(|ui| {
-                ui.label(label);
+                property_label_slot(ui, label_w, |ui| {
+                    ui.label(egui::RichText::new(label).size(11.0));
+                });
                 let response = ui.color_edit_button_rgba_unmultiplied(&mut rgba);
                 field_context_menu(&response, &name, value, set);
                 if response.changed() {
@@ -1001,7 +1076,9 @@ fn field_row_at(
         FieldWidget::Enum { variants } => {
             let current = value.as_str().unwrap_or_default().to_string();
             ui.horizontal(|ui| {
-                ui.label(label);
+                property_label_slot(ui, label_w, |ui| {
+                    ui.label(egui::RichText::new(label).size(11.0));
+                });
                 let combo = egui::ComboBox::from_id_salt((name.clone(), field.name.clone()))
                     .selected_text(current.clone())
                     .show_ui(ui, |ui| {

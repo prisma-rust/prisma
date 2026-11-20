@@ -4,7 +4,7 @@
 //! 拾取优先用实体真实局部包围盒（网格 AABB / 精灵尺寸），没有数据时退回
 //! 单位立方体（`[-0.5,0.5]³` × scale）。
 
-use glam::{Mat3, Quat, Vec2, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec2, Vec3};
 
 use crate::doc::{EntityJson, SceneDoc, TransformJson};
 use crate::workspace::OrbitCamera;
@@ -142,6 +142,18 @@ pub fn pick_rotation_axis(
     )
 }
 
+/// Rotation ring segment count for 3D projected ellipses and screen ring.
+pub const GIZMO_RING_SEGMENTS: usize = 64;
+
+/// Interactive transform gizmo handle under the pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GizmoHandle {
+    Axis(usize),
+    Plane(usize, usize),
+    Center,
+    ScreenRing,
+}
+
 /// 局部坐标下的圆环命中。
 pub fn pick_rotation_axis_oriented(
     point: (f32, f32),
@@ -152,23 +164,157 @@ pub fn pick_rotation_axis_oriented(
     width: f32,
     height: f32,
 ) -> Option<usize> {
-    let mut best: Option<(usize, f32)> = None;
-    for axis in 0..3 {
-        let Some((cx, cy, radius)) =
-            ring_screen_radius_oriented(frame, origin, basis, axis, world_radius, width, height)
-        else {
-            continue;
-        };
-        if radius < 12.0 {
-            continue;
-        }
-        let distance = ((point.0 - cx).powi(2) + (point.1 - cy).powi(2)).sqrt();
-        let error = (distance - radius).abs();
-        if error <= GIZMO_RING_TOLERANCE && best.map(|(_, best)| error < best).unwrap_or(true) {
-            best = Some((axis, error));
+    match pick_rotation_handle_oriented(
+        point,
+        frame,
+        origin,
+        basis,
+        world_radius,
+        frame.ortho_half_height.is_some(),
+        width,
+        height,
+    ) {
+        Some(GizmoHandle::Axis(axis)) => Some(axis),
+        _ => None,
+    }
+}
+
+/// Project a 3D rotation ring around `basis[axis]` as 2D screen-space polyline segments.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Explicit camera frame, basis, and viewport extent avoid bundled state"
+)]
+pub fn rotation_ring_segments_oriented(
+    frame: &CameraFrame,
+    origin: [f32; 3],
+    basis: [[f32; 3]; 3],
+    axis: usize,
+    world_radius: f32,
+    width: f32,
+    height: f32,
+    segments: usize,
+) -> Vec<((f32, f32), (f32, f32))> {
+    let (u, v) = match axis {
+        0 => (basis[1], basis[2]),
+        1 => (basis[0], basis[2]),
+        _ => (basis[0], basis[1]),
+    };
+    ring_segments_from_basis(frame, origin, u, v, world_radius, width, height, segments)
+}
+
+/// Project an outer view-aligned screen-space rotation ring (`1.18 * world_radius`).
+pub fn screen_ring_segments(
+    frame: &CameraFrame,
+    origin: [f32; 3],
+    world_radius: f32,
+    width: f32,
+    height: f32,
+    segments: usize,
+) -> Vec<((f32, f32), (f32, f32))> {
+    ring_segments_from_basis(
+        frame,
+        origin,
+        frame.right,
+        frame.up,
+        world_radius * 1.18,
+        width,
+        height,
+        segments,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Shared ring tessellation helper across axis and screen-space rings"
+)]
+fn ring_segments_from_basis(
+    frame: &CameraFrame,
+    origin: [f32; 3],
+    u: [f32; 3],
+    v: [f32; 3],
+    radius: f32,
+    width: f32,
+    height: f32,
+    segments: usize,
+) -> Vec<((f32, f32), (f32, f32))> {
+    let segs = segments.max(8);
+    let mut out = Vec::with_capacity(segs);
+    for i in 0..segs {
+        let a0 = (i as f32) * std::f32::consts::TAU / (segs as f32);
+        let a1 = ((i + 1) as f32) * std::f32::consts::TAU / (segs as f32);
+        let (s0, c0) = a0.sin_cos();
+        let (s1, c1) = a1.sin_cos();
+        let p0 = [
+            origin[0] + (u[0] * c0 + v[0] * s0) * radius,
+            origin[1] + (u[1] * c0 + v[1] * s0) * radius,
+            origin[2] + (u[2] * c0 + v[2] * s0) * radius,
+        ];
+        let p1 = [
+            origin[0] + (u[0] * c1 + v[0] * s1) * radius,
+            origin[1] + (u[1] * c1 + v[1] * s1) * radius,
+            origin[2] + (u[2] * c1 + v[2] * s1) * radius,
+        ];
+        if let Some(seg) = project_clipped_segment(p0, p1, frame, width, height) {
+            out.push(seg);
         }
     }
-    best.map(|(axis, _)| axis)
+    out
+}
+
+/// Pick the closest projected 3D rotation ring or outer screen-space ring under `point`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Explicit camera frame, basis, and viewport extent avoid bundled state"
+)]
+pub fn pick_rotation_handle_oriented(
+    point: (f32, f32),
+    frame: &CameraFrame,
+    origin: [f32; 3],
+    basis: [[f32; 3]; 3],
+    world_radius: f32,
+    ortho_2d: bool,
+    width: f32,
+    height: f32,
+) -> Option<GizmoHandle> {
+    let mut best: Option<(GizmoHandle, f32)> = None;
+    let axes: &[usize] = if ortho_2d { &[2] } else { &[0, 1, 2] };
+    for &axis in axes {
+        let segs = rotation_ring_segments_oriented(
+            frame,
+            origin,
+            basis,
+            axis,
+            world_radius,
+            width,
+            height,
+            GIZMO_RING_SEGMENTS,
+        );
+        let min_dist = segs
+            .iter()
+            .map(|&(a, b)| distance_point_segment(point, a, b))
+            .fold(f32::INFINITY, f32::min);
+        if min_dist <= GIZMO_RING_TOLERANCE && best.map(|(_, d)| min_dist < d).unwrap_or(true) {
+            best = Some((GizmoHandle::Axis(axis), min_dist));
+        }
+    }
+    if best.is_none() {
+        let outer = screen_ring_segments(
+            frame,
+            origin,
+            world_radius,
+            width,
+            height,
+            GIZMO_RING_SEGMENTS,
+        );
+        let min_dist = outer
+            .iter()
+            .map(|&(a, b)| distance_point_segment(point, a, b))
+            .fold(f32::INFINITY, f32::min);
+        if min_dist <= GIZMO_RING_TOLERANCE {
+            best = Some((GizmoHandle::ScreenRing, min_dist));
+        }
+    }
+    best.map(|(handle, _)| handle)
 }
 
 /// 屏幕点相对圆心的角度（用于旋转拖动）。
@@ -293,33 +439,46 @@ pub fn parent_world_rotation(doc: &SceneDoc, index: usize) -> [f32; 4] {
         .unwrap_or(IDENTITY_ROTATION)
 }
 
-/// 实体世界位置（父链累积：父旋转 + 父缩放作用在子局部位置上）。
-pub fn world_position(doc: &SceneDoc, index: usize) -> [f32; 3] {
-    fn walk(doc: &SceneDoc, index: usize, depth: usize) -> [f32; 3] {
-        let Some(entity) = doc.entities.get(index) else {
-            return [0.0; 3];
-        };
-        let local = entity.transform.position;
-        if depth > 64 {
-            return local;
+fn walk_world_matrix(doc: &SceneDoc, index: usize, depth: usize, clamp_zero_scale: bool) -> Mat4 {
+    let Some(entity) = doc.entities.get(index) else {
+        return Mat4::IDENTITY;
+    };
+    let mut s = entity.transform.scale;
+    if clamp_zero_scale {
+        for axis in &mut s {
+            if axis.abs() < 1e-6 {
+                *axis = if *axis < 0.0 { -1e-6 } else { 1e-6 };
+            }
         }
-        let Some(parent_index) = entity.parent.and_then(|parent| doc.index_of_id(parent)) else {
-            return local;
-        };
-        let parent_world = walk(doc, parent_index, depth + 1);
-        let parent_rotation = world_rotation(doc, parent_index);
-        let rotated = quat_rotate(parent_rotation, local);
-        let parent_scale = doc.entities[parent_index].transform.scale;
-        add(
-            parent_world,
-            [
-                rotated[0] * parent_scale[0],
-                rotated[1] * parent_scale[1],
-                rotated[2] * parent_scale[2],
-            ],
-        )
     }
-    walk(doc, index, 0)
+    let q = quat_normalize(entity.transform.rotation);
+    let local = Mat4::from_scale_rotation_translation(
+        Vec3::from(s),
+        glam::Quat::from_xyzw(q[0], q[1], q[2], q[3]),
+        Vec3::from(entity.transform.position),
+    );
+    if depth > 64 {
+        return local;
+    }
+    let Some(parent_index) = entity.parent.and_then(|parent| doc.index_of_id(parent)) else {
+        return local;
+    };
+    walk_world_matrix(doc, parent_index, depth + 1, clamp_zero_scale) * local
+}
+
+/// Compute the entity world transform matrix along the full parent chain (`Parent * T * R * S`).
+pub fn world_matrix(doc: &SceneDoc, index: usize) -> Mat4 {
+    walk_world_matrix(doc, index, 0, false)
+}
+
+/// Compute an invertible parent world matrix, preserving negative scale signs while clamping zero scales.
+pub fn world_matrix_invertible(doc: &SceneDoc, index: usize) -> Mat4 {
+    walk_world_matrix(doc, index, 0, true)
+}
+
+/// Entity world position accumulated along the full ancestor matrix chain.
+pub fn world_position(doc: &SceneDoc, index: usize) -> [f32; 3] {
+    world_matrix(doc, index).w_axis.truncate().to_array()
 }
 
 /// 实体世界缩放（父链分量相乘）。
@@ -608,9 +767,11 @@ pub struct CameraFrame {
 
 pub fn camera_frame(camera: &OrbitCamera) -> CameraFrame {
     let eye = Vec3::from(camera.eye());
-    let forward = (Vec3::from(camera.target) - eye).normalize_or_zero();
-    let right = forward.cross(Vec3::Y).normalize_or_zero();
-    let up = right.cross(forward);
+    // Derive orthonormal basis directly from yaw/pitch to avoid gimbal collapse at +-90 deg.
+    let rotation = Quat::from_rotation_y(camera.yaw) * Quat::from_rotation_x(-camera.pitch);
+    let right = (rotation * Vec3::X).normalize();
+    let up = (rotation * Vec3::Y).normalize();
+    let forward = (rotation * Vec3::NEG_Z).normalize();
     CameraFrame {
         eye: eye.to_array(),
         right: right.to_array(),
@@ -775,15 +936,147 @@ pub fn distance_point_segment(point: (f32, f32), a: (f32, f32), b: (f32, f32)) -
     ((point.0 - projection.0).powi(2) + (point.1 - projection.1).powi(2)).sqrt()
 }
 
+/// Clip a world-space segment against the camera near plane in perspective mode.
+pub fn clip_segment_to_near_plane(
+    a: [f32; 3],
+    b: [f32; 3],
+    frame: &CameraFrame,
+    near: f32,
+) -> Option<([f32; 3], [f32; 3])> {
+    if frame.ortho_half_height.is_some() {
+        return Some((a, b));
+    }
+    let eye = Vec3::from(frame.eye);
+    let forward = Vec3::from(frame.forward);
+    let da = (Vec3::from(a) - eye).dot(forward) - near;
+    let db = (Vec3::from(b) - eye).dot(forward) - near;
+    if da < 0.0 && db < 0.0 {
+        return None;
+    }
+    if da >= 0.0 && db >= 0.0 {
+        return Some((a, b));
+    }
+    let denom = da - db;
+    let t = if denom.abs() > 1e-6 {
+        (da / denom).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let clipped = [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ];
+    if da < 0.0 {
+        Some((clipped, b))
+    } else {
+        Some((a, clipped))
+    }
+}
+
+/// Clip a world-space segment against the camera near plane and project to viewport pixels.
+pub fn project_clipped_segment(
+    a: [f32; 3],
+    b: [f32; 3],
+    frame: &CameraFrame,
+    width: f32,
+    height: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    let (ca, cb) = clip_segment_to_near_plane(a, b, frame, 0.06)?;
+    let pa = project(ca, frame, width, height)?;
+    let pb = project(cb, frame, width, height)?;
+    Some(((pa.0, pa.1), (pb.0, pb.1)))
+}
+
+/// Intersect a ray with a plane; returns `None` if parallel or behind the origin (when `!allow_behind`).
+pub fn ray_intersect_plane(
+    ray_origin: [f32; 3],
+    ray_dir: [f32; 3],
+    plane_origin: [f32; 3],
+    plane_normal: [f32; 3],
+    allow_behind: bool,
+) -> Option<[f32; 3]> {
+    let n = Vec3::from(plane_normal);
+    let d = Vec3::from(ray_dir);
+    let denom = d.dot(n);
+    if denom.abs() < 1e-4 {
+        return None;
+    }
+    let o = Vec3::from(ray_origin);
+    let p0 = Vec3::from(plane_origin);
+    let t = (p0 - o).dot(n) / denom;
+    if !t.is_finite() || (!allow_behind && t < 0.0) {
+        return None;
+    }
+    Some((o + d * t).to_array())
+}
+
+/// Compute the closest parameter `t` along an infinite world axis `(axis_origin + axis_dir * t)` to a screen ray.
+pub fn ray_closest_point_on_axis(
+    ray_origin: [f32; 3],
+    ray_dir: [f32; 3],
+    axis_origin: [f32; 3],
+    axis_dir: [f32; 3],
+) -> Option<f32> {
+    let u = Vec3::from(axis_dir).normalize_or_zero();
+    let v = Vec3::from(ray_dir).normalize_or_zero();
+    if u.length_squared() < 1e-6 || v.length_squared() < 1e-6 {
+        return None;
+    }
+    let w0 = Vec3::from(axis_origin) - Vec3::from(ray_origin);
+    let b = u.dot(v);
+    let denom = 1.0 - b * b;
+    if denom.abs() < 1e-4 {
+        return None;
+    }
+    let d = u.dot(w0);
+    let e = v.dot(w0);
+    let t = (b * e - d) / denom;
+    t.is_finite().then_some(t)
+}
+
+/// Signed right-handed angle (radians) from `prev_vec` to `next_vec` around `axis_dir`.
+pub fn signed_angle_around_axis(prev_vec: [f32; 3], next_vec: [f32; 3], axis_dir: [f32; 3]) -> f32 {
+    let a = Vec3::from(prev_vec).normalize_or_zero();
+    let b = Vec3::from(next_vec).normalize_or_zero();
+    let n = Vec3::from(axis_dir).normalize_or_zero();
+    if a.length_squared() < 1e-6 || b.length_squared() < 1e-6 || n.length_squared() < 1e-6 {
+        return 0.0;
+    }
+    let sin_term = n.dot(a.cross(b));
+    let cos_term = a.dot(b);
+    sin_term.atan2(cos_term)
+}
+
 /// gizmo 轴的世界长度：保持屏幕上的长度近似恒定。
 pub fn gizmo_world_length(camera: &OrbitCamera, viewport_height: f32) -> f32 {
     let pixels = GIZMO_SCREEN_PIXELS / viewport_height.max(1.0);
     if camera.orthographic {
-        // 正交：GIZMO_SCREEN_PIXELS 像素对应 distance（半高）×2 世界单位。
         return camera.distance.max(0.05) * pixels * 2.0;
     }
-    let tan_half = 30.0f32.to_radians().tan();
-    camera.distance * pixels * 2.0 * tan_half
+    let tan_half = (camera.fov_y_degrees.clamp(10.0, 170.0) * 0.5)
+        .to_radians()
+        .tan();
+    camera.distance.max(0.05) * pixels * 2.0 * tan_half
+}
+
+/// World-space gizmo size keeping constant screen pixel height at `gizmo_center`.
+pub fn gizmo_world_length_at(
+    camera: &OrbitCamera,
+    gizmo_center: [f32; 3],
+    viewport_height: f32,
+) -> f32 {
+    let pixels = GIZMO_SCREEN_PIXELS / viewport_height.max(1.0);
+    if camera.orthographic {
+        return camera.distance.max(0.05) * pixels * 2.0;
+    }
+    let frame = camera_frame(camera);
+    let depth = (Vec3::from(gizmo_center) - Vec3::from(frame.eye))
+        .dot(Vec3::from(frame.forward))
+        .abs()
+        .max(0.1);
+    let tan_half = half_fov_tan(&frame);
+    depth * pixels * 2.0 * tan_half
 }
 
 /// 一条 gizmo 轴的屏幕端点 `(start, end, 每世界单位像素)`。
@@ -873,6 +1166,125 @@ pub fn pick_gizmo_axis_oriented(
         }
     }
     best.map(|(axis, dir, px, _)| (axis, dir, px))
+}
+
+/// Compute world-space corners of a planar gizmo quad spanning `basis[u]` and `basis[v]`.
+pub fn plane_quad_corners(
+    origin: [f32; 3],
+    basis: [[f32; 3]; 3],
+    u: usize,
+    v: usize,
+    world_length: f32,
+) -> [[f32; 3]; 4] {
+    let min_off = world_length * 0.22;
+    let max_off = world_length * 0.44;
+    let bu = basis[u];
+    let bv = basis[v];
+    [
+        add(origin, add(scale(bu, min_off), scale(bv, min_off))),
+        add(origin, add(scale(bu, max_off), scale(bv, min_off))),
+        add(origin, add(scale(bu, max_off), scale(bv, max_off))),
+        add(origin, add(scale(bu, min_off), scale(bv, max_off))),
+    ]
+}
+
+fn point_in_quad(point: (f32, f32), quad: [(f32, f32); 4]) -> bool {
+    let mut pos = false;
+    let mut neg = false;
+    for i in 0..4 {
+        let a = quad[i];
+        let b = quad[(i + 1) % 4];
+        let cross = (b.0 - a.0) * (point.1 - a.1) - (b.1 - a.1) * (point.0 - a.0);
+        if cross > 1e-3 {
+            pos = true;
+        } else if cross < -1e-3 {
+            neg = true;
+        }
+        if pos && neg {
+            return false;
+        }
+    }
+    pos || neg
+}
+
+/// Pick center, axis arrows, or planar quads of a translate/scale gizmo under `point`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Explicit camera frame, basis, and viewport dimensions avoid bundled UI state"
+)]
+pub fn pick_gizmo_handle_oriented(
+    point: (f32, f32),
+    frame: &CameraFrame,
+    origin: [f32; 3],
+    basis: [[f32; 3]; 3],
+    world_length: f32,
+    ortho_2d: bool,
+    width: f32,
+    height: f32,
+) -> Option<(GizmoHandle, [f32; 2], f32)> {
+    if let Some((cx, cy, _)) = project(origin, frame, width, height) {
+        let dist_sq = (point.0 - cx).powi(2) + (point.1 - cy).powi(2);
+        if dist_sq <= 10.0_f32.powi(2) {
+            let world_per_px = if let Some(half_h) = frame.ortho_half_height {
+                (half_h * 2.0) / height.max(1.0)
+            } else {
+                let depth = (Vec3::from(origin) - Vec3::from(frame.eye))
+                    .dot(Vec3::from(frame.forward))
+                    .abs()
+                    .max(0.1);
+                (2.0 * depth * half_fov_tan(frame)) / height.max(1.0)
+            };
+            return Some((
+                GizmoHandle::Center,
+                [1.0, 0.0],
+                1.0 / world_per_px.max(1e-4),
+            ));
+        }
+    }
+
+    let axes: &[usize] = if ortho_2d { &[0, 1] } else { &[0, 1, 2] };
+    let mut best_axis: Option<(usize, [f32; 2], f32, f32)> = None;
+    for &axis in axes {
+        let Some((start, end, px_per_unit)) =
+            axis_screen_segment_oriented(frame, origin, basis[axis], world_length, width, height)
+        else {
+            continue;
+        };
+        let distance = distance_point_segment(point, start, end);
+        if distance > GIZMO_PICK_RADIUS {
+            continue;
+        }
+        let dir = normalize2((end.0 - start.0, end.1 - start.1));
+        if best_axis.map(|(_, _, _, d)| distance < d).unwrap_or(true) {
+            best_axis = Some((axis, dir, px_per_unit, distance));
+        }
+    }
+    if let Some((axis, dir, px_per_unit, _)) = best_axis {
+        return Some((GizmoHandle::Axis(axis), dir, px_per_unit));
+    }
+
+    let planes: &[(usize, usize)] = if ortho_2d {
+        &[(0, 1)]
+    } else {
+        &[(1, 2), (0, 2), (0, 1)]
+    };
+    for &(u, v) in planes {
+        let corners = plane_quad_corners(origin, basis, u, v, world_length);
+        let mut screen = [(0.0f32, 0.0f32); 4];
+        let mut visible = true;
+        for (slot, corner) in corners.iter().enumerate() {
+            if let Some((x, y, _)) = project(*corner, frame, width, height) {
+                screen[slot] = (x, y);
+            } else {
+                visible = false;
+                break;
+            }
+        }
+        if visible && point_in_quad(point, screen) {
+            return Some((GizmoHandle::Plane(u, v), [1.0, 0.0], 1.0));
+        }
+    }
+    None
 }
 
 pub fn normalize2(v: (f32, f32)) -> [f32; 2] {
@@ -1040,6 +1452,37 @@ pub fn local_box(start: (f32, f32), end: (f32, f32), origin: (f32, f32)) -> (f32
 ///
 /// 矩形是 `(min_x, min_y, max_x, max_y)`（视口像素坐标）；索引按文档顺序返回。
 /// 用相交而不是「角点落在矩形内」，所以填满视口的大物体也能被小框选中。
+/// Project all 12 world proxy box edges clipped against the camera near plane.
+pub fn projected_box_clipped_edges(
+    transform: &TransformJson,
+    frame: &CameraFrame,
+    width: f32,
+    height: f32,
+) -> Vec<((f32, f32), (f32, f32))> {
+    let corners = transformed_corners(transform);
+    const EDGES: [(usize, usize); 12] = [
+        (0, 1),
+        (2, 3),
+        (4, 5),
+        (6, 7),
+        (0, 2),
+        (1, 3),
+        (4, 6),
+        (5, 7),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ];
+    let mut out = Vec::with_capacity(12);
+    for (a, b) in EDGES {
+        if let Some(seg) = project_clipped_segment(corners[a], corners[b], frame, width, height) {
+            out.push(seg);
+        }
+    }
+    out
+}
+
 pub fn box_select(
     rect: (f32, f32, f32, f32),
     frame: &CameraFrame,
@@ -1051,18 +1494,16 @@ pub fn box_select(
     let mut selected = Vec::new();
     for (index, transform) in entities {
         let mut bounds: Option<(f32, f32, f32, f32)> = None;
-        for corner in transformed_corners(transform) {
-            let Some((x, y, _)) = project(corner, frame, width, height) else {
-                continue;
-            };
-            bounds = Some(match bounds {
-                None => (x, y, x, y),
-                Some((min_px, min_py, max_px, max_py)) => {
-                    (min_px.min(x), min_py.min(y), max_px.max(x), max_py.max(y))
-                }
-            });
+        for (a, b) in projected_box_clipped_edges(transform, frame, width, height) {
+            for (x, y) in [a, b] {
+                bounds = Some(match bounds {
+                    None => (x, y, x, y),
+                    Some((min_px, min_py, max_px, max_py)) => {
+                        (min_px.min(x), min_py.min(y), max_px.max(x), max_py.max(y))
+                    }
+                });
+            }
         }
-        // 全部角点都在相机背后 → 无法投影，跳过。
         let Some((min_px, min_py, max_px, max_py)) = bounds else {
             continue;
         };
@@ -1653,20 +2094,30 @@ mod tests {
     fn ring_pick_and_angle_helpers() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        let radius = gizmo_world_length(&camera, 600.0);
-        let (cx, cy, screen_radius) =
-            ring_screen_radius(&frame, [0.0, 0.0, 0.0], 1, radius, 800.0, 600.0).unwrap();
-        assert!(screen_radius > 10.0);
-        // 圆环右侧一点（Y 轴圆环在 XZ 平面，屏幕上是一个椭圆）。
-        let hit = pick_rotation_axis(
-            (cx + screen_radius, cy),
+        let radius = gizmo_world_length_at(&camera, [0.0, 0.0, 0.0], 600.0);
+        let y_segs = rotation_ring_segments_oriented(
             &frame,
             [0.0, 0.0, 0.0],
+            IDENTITY_BASIS,
+            1,
             radius,
             800.0,
             600.0,
+            GIZMO_RING_SEGMENTS,
         );
-        assert_eq!(hit, Some(1), "最外圈是 Y 轴圆环");
+        assert!(!y_segs.is_empty());
+        let sample = y_segs[0].0;
+        let hit = pick_rotation_handle_oriented(
+            sample,
+            &frame,
+            [0.0, 0.0, 0.0],
+            IDENTITY_BASIS,
+            radius,
+            false,
+            800.0,
+            600.0,
+        );
+        assert_eq!(hit, Some(GizmoHandle::Axis(1)));
 
         assert!((wrap_angle(3.0 * std::f32::consts::PI) - std::f32::consts::PI).abs() < 1e-4);
         assert!((wrap_angle(-3.0 * std::f32::consts::PI) + std::f32::consts::PI).abs() < 1e-4);
@@ -1998,5 +2449,109 @@ mod tests {
         assert!((distance_point_segment((0.0, 5.0), (0.0, 0.0), (10.0, 0.0)) - 5.0).abs() < 1e-4);
         assert!((distance_point_segment((-5.0, 0.0), (0.0, 0.0), (10.0, 0.0)) - 5.0).abs() < 1e-4);
         assert!(distance_point_segment((5.0, 0.0), (0.0, 0.0), (10.0, 0.0)) < 1e-4);
+    }
+
+    #[test]
+    fn camera_frame_stays_orthonormal_at_poles() {
+        for sign in [1.0f32, -1.0f32] {
+            let mut camera = OrbitCamera::default();
+            camera.align_to_axis(1, sign);
+            let frame = camera_frame(&camera);
+            let right = Vec3::from(frame.right);
+            let up = Vec3::from(frame.up);
+            let forward = Vec3::from(frame.forward);
+            assert!(right.is_finite() && (right.length() - 1.0).abs() < 1e-4);
+            assert!(up.is_finite() && (up.length() - 1.0).abs() < 1e-4);
+            assert!(forward.is_finite() && (forward.length() - 1.0).abs() < 1e-4);
+            assert!(right.dot(up).abs() < 1e-4);
+            assert!(right.dot(forward).abs() < 1e-4);
+            assert!(up.dot(forward).abs() < 1e-4);
+            assert!((forward.y + sign).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn gizmo_world_length_at_tracks_distance_and_fov() {
+        let mut cam = camera();
+        cam.fov_y_degrees = 90.0;
+        let len_90 = gizmo_world_length_at(&cam, [0.0, 0.0, 0.0], 600.0);
+        cam.fov_y_degrees = 60.0;
+        let len_60 = gizmo_world_length_at(&cam, [0.0, 0.0, 0.0], 600.0);
+        assert!(len_90 > len_60 * 1.5);
+        let closer = gizmo_world_length_at(&cam, [0.0, 0.0, 5.0], 600.0);
+        assert!((closer - len_60 * 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn near_plane_clipping_keeps_partial_segments() {
+        let cam = camera();
+        let frame = camera_frame(&cam);
+        // Camera is at z = +10 looking down -Z; point z = +12 is behind camera, z = 0 is in front.
+        let seg = project_clipped_segment([0.0, 0.0, 12.0], [2.0, 0.0, 0.0], &frame, 800.0, 600.0);
+        assert!(seg.is_some());
+        let behind =
+            project_clipped_segment([0.0, 0.0, 12.0], [1.0, 0.0, 13.0], &frame, 800.0, 600.0);
+        assert!(behind.is_none());
+    }
+
+    #[test]
+    fn planar_and_center_gizmo_pick_handles_3d_and_2d() {
+        let cam = camera();
+        let frame = camera_frame(&cam);
+        let origin = [0.0, 0.0, 0.0];
+        let world_length = gizmo_world_length_at(&cam, origin, 600.0);
+        let center_px = project(origin, &frame, 800.0, 600.0).unwrap();
+        assert_eq!(
+            pick_gizmo_handle_oriented(
+                (center_px.0, center_px.1),
+                &frame,
+                origin,
+                IDENTITY_BASIS,
+                world_length,
+                false,
+                800.0,
+                600.0,
+            )
+            .map(|(h, _, _)| h),
+            Some(GizmoHandle::Center)
+        );
+        let corners = plane_quad_corners(origin, IDENTITY_BASIS, 0, 1, world_length);
+        let mid = [
+            (corners[0][0] + corners[2][0]) * 0.5,
+            (corners[0][1] + corners[2][1]) * 0.5,
+            (corners[0][2] + corners[2][2]) * 0.5,
+        ];
+        let p = project(mid, &frame, 800.0, 600.0).unwrap();
+        assert_eq!(
+            pick_gizmo_handle_oriented(
+                (p.0, p.1),
+                &frame,
+                origin,
+                IDENTITY_BASIS,
+                world_length,
+                true,
+                800.0,
+                600.0,
+            )
+            .map(|(h, _, _)| h),
+            Some(GizmoHandle::Plane(0, 1))
+        );
+    }
+
+    #[test]
+    fn ray_axis_and_plane_intersections_and_signed_angle() {
+        let cam = camera();
+        let frame = camera_frame(&cam);
+        let ray = ray_from_screen(400.0, 300.0, &frame, 800.0, 600.0);
+        let hit =
+            ray_intersect_plane(ray.0, ray.1, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], false).unwrap();
+        assert!(hit[0].abs() < 1e-3 && hit[1].abs() < 1e-3 && hit[2].abs() < 1e-3);
+        let right_ray = ray_from_screen(500.0, 300.0, &frame, 800.0, 600.0);
+        let t_x =
+            ray_closest_point_on_axis(right_ray.0, right_ray.1, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                .unwrap();
+        assert!(t_x > 0.0);
+        let angle = signed_angle_around_axis([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]);
+        assert!((angle - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
     }
 }

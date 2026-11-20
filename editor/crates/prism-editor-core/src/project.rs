@@ -206,12 +206,12 @@ fn importer_for(path: &str) -> String {
     use crate::assets::AssetKind;
     match asset_kind(path) {
         AssetKind::Model => "ModelImporter",
-        AssetKind::Texture => "TextureImporter",
-        AssetKind::Env => "TextureImporter",
+        AssetKind::Texture => "ImageImporter",
+        AssetKind::Env => "ImageImporter",
         AssetKind::Scene | AssetKind::Prefab => "DefaultImporter",
         AssetKind::Audio => "AudioImporter",
-        AssetKind::Material => "TextScriptImporter",
-        AssetKind::Data => "TextScriptImporter",
+        AssetKind::Material => "TextImporter",
+        AssetKind::Data => "TextImporter",
         _ => "DefaultImporter",
     }
     .to_string()

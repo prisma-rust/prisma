@@ -166,6 +166,7 @@ struct FrameSync {
     index_buf: Option<GpuBuffer>,
     retired_textures: Vec<ManagedTexture>,
     retired_buffers: Vec<GpuBuffer>,
+    retired_descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
 struct SwapchainState {
@@ -320,6 +321,7 @@ impl EguiRenderer {
                 index_buf: None,
                 retired_textures: Vec::new(),
                 retired_buffers: Vec::new(),
+                retired_descriptor_sets: Vec::new(),
             });
         }
 
@@ -393,6 +395,17 @@ impl EguiRenderer {
         for mut buf in self.frames[slot].retired_buffers.drain(..) {
             buf.destroy(&self.device, &self.allocator);
         }
+        let retired_sets: Vec<vk::DescriptorSet> = self.frames[slot]
+            .retired_descriptor_sets
+            .drain(..)
+            .collect();
+        if !retired_sets.is_empty() {
+            unsafe {
+                let _ = self
+                    .device
+                    .free_descriptor_sets(self.descriptor_pool, &retired_sets);
+            }
+        }
 
         let image_available = self.frames[slot].image_available;
         let acquire = unsafe {
@@ -414,7 +427,7 @@ impl EguiRenderer {
 
         unsafe { self.device.reset_fences(&[fence]) }.context("reset egui fence")?;
 
-        self.sync_user_textures()?;
+        self.sync_user_textures(slot)?;
 
         let cmd = self.frames[slot].cmd;
         unsafe {
@@ -628,15 +641,12 @@ impl EguiRenderer {
         Ok(())
     }
 
-    fn sync_user_textures(&mut self) -> anyhow::Result<()> {
+    fn sync_user_textures(&mut self, slot: usize) -> anyhow::Result<()> {
         let mut inner = self.registry.inner.lock().expect("image registry poisoned");
         let unregister: Vec<vk::DescriptorSet> = inner.pending_unregister.drain(..).collect();
         if !unregister.is_empty() {
-            unsafe {
-                let _ = self
-                    .device
-                    .free_descriptor_sets(self.descriptor_pool, &unregister);
-            }
+            // Defer freeing until this frame slot's fence completes so in-flight draws stay valid.
+            self.frames[slot].retired_descriptor_sets.extend(unregister);
         }
         let register: Vec<(u64, vk::ImageView, vk::Sampler)> =
             inner.pending_register.drain(..).collect();
@@ -703,7 +713,7 @@ impl EguiRenderer {
                 image_delta.image.height() as u32,
             );
             let rgba: Vec<u8> = match &image_delta.image {
-                egui::ImageData::Color(c) => c.pixels.iter().flat_map(|p| p.to_array()).collect(),
+                egui::ImageData::Color(c) => unpremultiply_srgba_pixels(&c.pixels),
             };
 
             let mut staging = GpuBuffer::new(
@@ -912,6 +922,15 @@ impl EguiRenderer {
             }
             for mut buf in frame.retired_buffers.drain(..) {
                 buf.destroy(&self.device, &self.allocator);
+            }
+            let retired_sets: Vec<vk::DescriptorSet> =
+                frame.retired_descriptor_sets.drain(..).collect();
+            if !retired_sets.is_empty() {
+                unsafe {
+                    let _ = self
+                        .device
+                        .free_descriptor_sets(self.descriptor_pool, &retired_sets);
+                }
             }
             if let Some(mut vb) = frame.vertex_buf.take() {
                 vb.destroy(&self.device, &self.allocator);
@@ -1335,4 +1354,45 @@ fn bytes_to_words(bytes: &[u8]) -> Vec<u32> {
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
+}
+
+pub(crate) fn unpremultiply_srgba_pixels(pixels: &[egui::Color32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pixels.len() * 4);
+    for p in pixels {
+        let [r, g, b, a] = p.to_array();
+        if a == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+        } else if a == 255 {
+            out.extend_from_slice(&[r, g, b, 255]);
+        } else {
+            let alpha = a as u32;
+            let half = alpha / 2;
+            out.push(((r as u32 * 255 + half) / alpha).min(255) as u8);
+            out.push(((g as u32 * 255 + half) / alpha).min(255) as u8);
+            out.push(((b as u32 * 255 + half) / alpha).min(255) as u8);
+            out.push(a);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod srgb_unpremultiply_tests {
+    use super::unpremultiply_srgba_pixels;
+    use egui::Color32;
+
+    #[test]
+    fn unpremultiply_recovers_straight_srgb_for_alpha_textures() {
+        let pixels = [
+            Color32::from_rgba_premultiplied(0, 0, 0, 0),
+            Color32::from_rgba_premultiplied(128, 128, 128, 128),
+            Color32::from_rgba_premultiplied(128, 64, 0, 128),
+            Color32::from_rgba_premultiplied(200, 100, 50, 255),
+        ];
+        let out = unpremultiply_srgba_pixels(&pixels);
+        assert_eq!(&out[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&out[4..8], &[255, 255, 255, 128]);
+        assert_eq!(&out[8..12], &[255, 128, 0, 128]);
+        assert_eq!(&out[12..16], &[200, 100, 50, 255]);
+    }
 }

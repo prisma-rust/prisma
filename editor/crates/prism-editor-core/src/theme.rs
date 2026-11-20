@@ -364,48 +364,48 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     ThemePreset {
         id: "studio",
         label: "工业暗色",
-        description: "默认 · 工业级经典暗色中性灰",
+        description: "Default UE5 / Unity 6 dark studio palette",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
-                Rgba::new(28, 28, 28, 255),    // bg
-                Rgba::new(24, 24, 24, 255),    // bgSunken
-                Rgba::new(40, 40, 40, 255),    // panel
-                Rgba::new(48, 48, 48, 255),    // panelAlt
-                Rgba::new(56, 56, 56, 255),    // panelRaised
-                Rgba::new(34, 34, 34, 255),    // chrome
-                Rgba::new(26, 26, 26, 255),    // border
-                Rgba::new(53, 53, 53, 255),    // borderStrong
-                Rgba::new(36, 36, 36, 255),    // borderSubtle
-                Rgba::new(196, 196, 196, 255), // text
-                Rgba::new(255, 255, 255, 255), // textStrong
-                Rgba::new(171, 171, 171, 255), // textSoft
-                Rgba::new(118, 118, 118, 255), // muted
-                Rgba::new(88, 88, 88, 255),    // mutedDim
-                Rgba::new(48, 48, 48, 255),    // rowHover
-                Rgba::new(58, 58, 58, 255),    // menuHover
-                Rgba::new(44, 93, 136, 255),   // menuActive
-                Rgba::new(44, 93, 136, 255),   // selection
-                Rgba::new(58, 117, 196, 255),  // accent
-                Rgba::new(44, 93, 136, 255),   // accentSolid
+                Rgba::new(20, 22, 27, 255),    // bg
+                Rgba::new(17, 19, 23, 255),    // bgSunken
+                Rgba::new(26, 29, 35, 255),    // panel
+                Rgba::new(34, 38, 46, 255),    // panelAlt
+                Rgba::new(40, 45, 55, 255),    // panelRaised
+                Rgba::new(22, 25, 31, 255),    // chrome
+                Rgba::new(43, 48, 59, 255),    // border
+                Rgba::new(58, 65, 80, 255),    // borderStrong
+                Rgba::new(33, 37, 45, 255),    // borderSubtle
+                Rgba::new(208, 213, 223, 255), // text
+                Rgba::new(243, 245, 248, 255), // textStrong
+                Rgba::new(176, 183, 197, 255), // textSoft
+                Rgba::new(125, 133, 148, 255), // muted
+                Rgba::new(89, 97, 112, 255),   // mutedDim
+                Rgba::new(37, 42, 52, 255),    // rowHover
+                Rgba::new(44, 50, 62, 255),    // menuHover
+                Rgba::new(38, 77, 126, 255),   // menuActive
+                Rgba::new(38, 75, 122, 255),   // selection
+                Rgba::new(59, 130, 246, 255),  // accent
+                Rgba::new(37, 99, 235, 255),   // accentSolid
                 Rgba::new(255, 255, 255, 255), // onAccent
-                Rgba::new(10, 20, 32, 255),    // accentInk
-                Rgba::new(86, 156, 214, 255),  // accentAlt
-                Rgba::new(78, 201, 176, 255),  // success
-                Rgba::new(143, 224, 176, 255), // successSoft
-                Rgba::new(37, 95, 59, 255),    // successBg
-                Rgba::new(47, 122, 75, 255),   // successBorder
-                Rgba::new(244, 71, 71, 255),   // danger
-                Rgba::new(255, 139, 139, 255), // dangerSoft
-                Rgba::new(96, 36, 40, 255),    // dangerBg
-                Rgba::new(48, 24, 26, 255),    // dangerBgSubtle
-                Rgba::new(141, 40, 40, 255),   // dangerSolid
-                Rgba::new(152, 48, 48, 255),   // dangerBorder
+                Rgba::new(11, 19, 32, 255),    // accentInk
+                Rgba::new(96, 165, 250, 255),  // accentAlt
+                Rgba::new(52, 211, 153, 255),  // success
+                Rgba::new(110, 231, 183, 255), // successSoft
+                Rgba::new(30, 77, 59, 255),    // successBg
+                Rgba::new(42, 107, 82, 255),   // successBorder
+                Rgba::new(248, 113, 113, 255), // danger
+                Rgba::new(252, 165, 165, 255), // dangerSoft
+                Rgba::new(91, 35, 39, 255),    // dangerBg
+                Rgba::new(48, 26, 29, 255),    // dangerBgSubtle
+                Rgba::new(185, 28, 28, 255),   // dangerSolid
+                Rgba::new(153, 27, 27, 255),   // dangerBorder
                 Rgba::new(255, 255, 255, 255), // onDanger
-                Rgba::new(220, 220, 170, 255), // warning
-                Rgba::new(215, 186, 125, 255), // warningStrong
-                Rgba::new(104, 88, 48, 255),   // warningBorder
-                Rgba::new(244, 71, 71, 255),   // panic
+                Rgba::new(251, 191, 36, 255),  // warning
+                Rgba::new(245, 158, 11, 255),  // warningStrong
+                Rgba::new(120, 83, 26, 255),   // warningBorder
+                Rgba::new(244, 114, 182, 255), // panic
             ],
         },
     },

@@ -32,13 +32,15 @@ pub fn bone_overlay(
     palette: &[[[f32; 4]; 4]],
     parents: &[Option<usize>],
     inverse_binds: &[[[f32; 4]; 4]],
+    local_to_world: &[[f32; 4]; 4],
 ) -> SkeletonOverlay {
     let count = palette.len().min(parents.len()).min(inverse_binds.len());
+    let entity_world = glam::Mat4::from_cols_array_2d(local_to_world);
     let mut joints = Vec::with_capacity(count);
     for index in 0..count {
-        // world = palette * bind，bind = inverse_bind⁻¹。
+        // world = entity_local_to_world * palette * bind, bind = inverse_bind^-1.
         let bind = glam::Mat4::from_cols_array_2d(&inverse_binds[index]).inverse();
-        let world = glam::Mat4::from_cols_array_2d(&palette[index]) * bind;
+        let world = entity_world * glam::Mat4::from_cols_array_2d(&palette[index]) * bind;
         let position = world.w_axis.truncate();
         if !position.is_finite() {
             joints.push([f32::NAN; 3]);
@@ -82,11 +84,13 @@ mod tests {
 
     #[test]
     fn a_rest_pose_palette_puts_every_joint_on_its_bind_position() {
-        // bind 在 +1m 的骨骼，调色板是单位矩阵 → 关节世界位置 = (1, 0, 0)。
+        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
+        // bind at +1m with identity palette places the joint at (1, 0, 0).
         let overlay = bone_overlay(
             &identity_palette(2),
             &[None, Some(0)],
             &[translated_bind(0.0), translated_bind(1.0)],
+            &identity,
         );
         assert_eq!(overlay.joints.len(), 2);
         assert!((overlay.joints[0][0]).abs() < 1e-5);
@@ -100,12 +104,14 @@ mod tests {
 
     #[test]
     fn a_translated_palette_moves_the_joint_with_the_animation() {
+        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         let mut palette = identity_palette(2);
         palette[1] = glam::Mat4::from_translation(glam::vec3(0.0, 2.0, 0.0)).to_cols_array_2d();
         let overlay = bone_overlay(
             &palette,
             &[None, Some(0)],
             &[translated_bind(0.0), translated_bind(1.0)],
+            &identity,
         );
         assert!(
             (overlay.joints[1][1] - 2.0).abs() < 1e-5,
@@ -116,28 +122,32 @@ mod tests {
 
     #[test]
     fn mismatched_inputs_and_broken_matrices_are_dropped_instead_of_panicking() {
-        // 调色板比父表短：按最短的来。
+        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
+        // Shorter palette clamps to the shortest input length.
         let overlay = bone_overlay(
             &identity_palette(1),
             &[None, Some(0)],
             &[translated_bind(0.0), translated_bind(1.0)],
+            &identity,
         );
         assert_eq!(overlay.joints.len(), 1);
         assert!(overlay.segments.is_empty());
 
-        // NaN 关节不参与连线。
+        // NaN joints are excluded from bone segments.
         let mut palette = identity_palette(2);
         palette[1][3][1] = f32::NAN;
         let overlay = bone_overlay(
             &palette,
             &[None, Some(0)],
             &[translated_bind(0.0), translated_bind(1.0)],
+            &identity,
         );
         assert!(overlay.segments.is_empty());
     }
 
     #[test]
     fn a_parent_that_points_at_itself_or_forward_is_ignored() {
+        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
         let overlay = bone_overlay(
             &identity_palette(3),
             &[None, Some(1), Some(3)],
@@ -146,7 +156,29 @@ mod tests {
                 translated_bind(1.0),
                 translated_bind(2.0),
             ],
+            &identity,
         );
-        assert!(overlay.segments.is_empty(), "自环 / 越界父级不该连线");
+        assert!(
+            overlay.segments.is_empty(),
+            "self or forward parent must not emit segments"
+        );
+    }
+
+    #[test]
+    fn bone_overlay_transforms_joints_by_entity_local_to_world() {
+        let entity_world =
+            glam::Mat4::from_translation(glam::vec3(10.0, 5.0, -2.0)).to_cols_array_2d();
+        let overlay = bone_overlay(
+            &identity_palette(2),
+            &[None, Some(0)],
+            &[translated_bind(0.0), translated_bind(1.0)],
+            &entity_world,
+        );
+        assert!((overlay.joints[0][0] - 10.0).abs() < 1e-5);
+        assert!((overlay.joints[0][1] - 5.0).abs() < 1e-5);
+        assert!((overlay.joints[0][2] + 2.0).abs() < 1e-5);
+        assert!((overlay.joints[1][0] - 11.0).abs() < 1e-5);
+        assert!((overlay.joints[1][1] - 5.0).abs() < 1e-5);
+        assert!((overlay.joints[1][2] + 2.0).abs() < 1e-5);
     }
 }

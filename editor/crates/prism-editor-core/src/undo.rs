@@ -79,8 +79,10 @@ pub struct SelectionSnapshot {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UndoOutcome {
     pub label: String,
-    /// 该步记录的选中实体；`None` = 这一步没有记录选择（字段类命令），调用方保持现状。
+    /// Selected entity ids saved for this step (`None` for field/transform edits).
     pub selection: Option<Vec<u32>>,
+    /// True when only entity transforms changed, allowing in-place ECS sync.
+    pub transform_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,8 +494,16 @@ impl UndoStack {
         entry.coalesce = None;
         self.current_state = entry.before_state;
         let label = entry.label.clone();
+        let transform_only = matches!(
+            entry.command,
+            Command::Transform { .. } | Command::TransformBatch { .. }
+        );
         self.redo.push(entry);
-        Some(UndoOutcome { label, selection })
+        Some(UndoOutcome {
+            label,
+            selection,
+            transform_only,
+        })
     }
 
     pub fn redo(&mut self, doc: &mut SceneDoc) -> Option<UndoOutcome> {
@@ -529,8 +539,16 @@ impl UndoStack {
         entry.coalesce = None;
         self.current_state = entry.after_state;
         let label = entry.label.clone();
+        let transform_only = matches!(
+            entry.command,
+            Command::Transform { .. } | Command::TransformBatch { .. }
+        );
         self.undo.push(entry);
-        Some(UndoOutcome { label, selection })
+        Some(UndoOutcome {
+            label,
+            selection,
+            transform_only,
+        })
     }
 
     fn trim(&mut self) {
