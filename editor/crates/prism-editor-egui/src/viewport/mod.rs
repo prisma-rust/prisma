@@ -669,11 +669,19 @@ impl ViewportState {
                         }
                         self.dirty = true;
                     }
-                    Err(error) => self.error = Some(format!("instantiate failed: {error}")),
+                    Err(error) => {
+                        self.error = Some(workspace.tf(
+                            "desktop.status.instantiateFailed",
+                            &[("error", &error.to_string())],
+                        ))
+                    }
                 }
             } else if path.ends_with(".scene.json") {
                 if let Err(error) = workspace.open_project_file(&path) {
-                    self.error = Some(format!("open {path} failed: {error}"));
+                    self.error = Some(workspace.tf(
+                        "desktop.status.openFailed",
+                        &[("path", &path), ("error", &error.to_string())],
+                    ));
                 }
             }
         }

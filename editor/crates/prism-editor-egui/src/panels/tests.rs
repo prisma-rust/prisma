@@ -316,12 +316,12 @@ mod window_smoke_tests {
 
         assert_eq!(workspace.selection, vec![0], "ping 要选中引用它的实体");
         assert!(state.asset_selection.is_empty(), "选中实体后退出资产检查器");
-        assert!(state.status.contains("pinged"), "status: {}", state.status);
+        assert!(state.status.contains("已定位"), "status: {}", state.status);
 
         workspace.clear_selection();
         ping_asset(&mut workspace, &mut state, "assets/models/missing.gltf");
         assert!(workspace.selection.is_empty());
-        assert!(state.status.contains("no object references"));
+        assert!(state.status.contains("没有对象引用"));
     }
 
     #[test]

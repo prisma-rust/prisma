@@ -673,9 +673,7 @@ pub fn scrubbable_axis_badge(
             egui::Color32::from_rgb(18, 20, 24),
         );
     }
-    let response = response
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-        .on_hover_text("Drag to adjust (Shift=fine, Alt=fast)");
+    let response = response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     let delta = drag_delta_from_response(ui, &response, speed);
     if delta == 0.0 {
         return false;
@@ -692,8 +690,7 @@ pub fn scrubbable_axis_badge(
 pub fn drag_label(ui: &mut Ui, text: &str, speed: f32) -> f32 {
     let response = ui
         .add(egui::Label::new(egui::RichText::new(text).size(11.0)).sense(egui::Sense::drag()))
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-        .on_hover_text("Drag to change");
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     drag_delta_from_response(ui, &response, speed)
 }
 
@@ -883,7 +880,7 @@ fn field_row_at(
                             .speed(1.0)
                             .custom_parser(number_parser),
                     )
-                    .on_hover_text("Type an expression: 90/2, 2*(3+4)");
+                    .on_hover_text(i18n.t1("inspector.expressionHint"));
                 field_context_menu(&drag, &name, value, set, i18n);
                 if dragged || drag.changed() {
                     set(&name, Value::from(current));
@@ -911,7 +908,7 @@ fn field_row_at(
                         [ui.available_width().max(52.0), 18.0],
                         drag.custom_parser(number_parser),
                     )
-                    .on_hover_text("Type an expression: 90/2, 2*(3+4), sin(30)");
+                    .on_hover_text(i18n.t1("inspector.expressionHintTrig"));
                 field_context_menu(&response, &name, value, set, i18n);
                 if dragged || response.changed() {
                     set(&name, Value::from(current as f64));
@@ -1066,7 +1063,7 @@ fn field_row_at(
                                 .suffix("°")
                                 .custom_parser(number_parser),
                         )
-                        .on_hover_text("Type an expression: 90/2, 45+15");
+                        .on_hover_text(i18n.t1("inspector.expressionHintAngle"));
                     field_context_menu(&response, &name, value, set, i18n);
                     if badge_changed || response.changed() {
                         let quat = vm::euler_degrees_to_quat(degrees);
@@ -1529,7 +1526,7 @@ fn list_row(
                     if !fixed {
                         if ui
                             .small_button(icons::CARET_UP)
-                            .on_hover_text("Move up")
+                            .on_hover_text(i18n.t1("inspector.moveUp"))
                             .clicked()
                             && list_move(&mut working, index, index.saturating_sub(1))
                         {
@@ -1537,7 +1534,7 @@ fn list_row(
                         }
                         if ui
                             .small_button(icons::CARET_DOWN)
-                            .on_hover_text("Move down")
+                            .on_hover_text(i18n.t1("inspector.moveDown"))
                             .clicked()
                             && list_move(&mut working, index, index + 1)
                         {

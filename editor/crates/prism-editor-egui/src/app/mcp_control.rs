@@ -215,7 +215,7 @@ impl EditorApp {
                 Ok(server) => {
                     self.control = Some(server);
                     self.control_error = None;
-                    self.state.status = "control channel enabled".to_string();
+                    self.state.status = self.t("desktop.status.controlEnabled");
                 }
                 Err(error) => {
                     log::warn!("control channel failed to start: {error:#}");
@@ -226,7 +226,7 @@ impl EditorApp {
             self.control = None;
             self.control_error = None;
             log::info!("control channel disabled");
-            self.state.status = "control channel disabled".to_string();
+            self.state.status = self.t("desktop.status.controlDisabled");
         }
     }
 
@@ -281,7 +281,10 @@ impl EditorApp {
                             let _ = reply.send(response);
                         })
                         .ok();
-                    self.state.status = format!("screenshot: {}", pending.path.display());
+                    self.state.status = self.tf(
+                        "desktop.status.screenshot",
+                        &[("path", &pending.path.display().to_string())],
+                    );
                 }
                 target => {
                     let response = match self.capture(target, &pending.path, pending.size) {
@@ -1016,7 +1019,7 @@ impl EditorApp {
 
         if let Some(path) = node.strip_prefix("open:") {
             self.workspace.open_path(path);
-            self.state.status = format!("open {path}");
+            self.state.status = self.tf("desktop.status.opening", &[("path", &path)]);
             return Ok(format!("open {path}"));
         }
         if let Some(tab) = node.strip_prefix("panel:") {
@@ -1183,7 +1186,10 @@ impl EditorApp {
             PaletteAction::RunCommand(command) => self.apply_command(command),
             PaletteAction::OpenDocument(index) => {
                 self.workspace.set_active(index);
-                self.state.status = format!("opened {}", self.workspace.document().title());
+                self.state.status = self.tf(
+                    "desktop.status.opened",
+                    &[("path", &self.workspace.document().title())],
+                );
             }
             PaletteAction::SelectEntity(index) => {
                 let name = self.workspace.document().doc.entities[index]
@@ -1193,14 +1199,17 @@ impl EditorApp {
                 self.workspace.select(index, false);
                 self.workspace.frame_selection();
                 self.mark_scene_dirty();
-                self.state.status = format!("selected {name}");
+                self.state.status = self.tf("desktop.status.selectedEntity", &[("name", &name)]);
             }
             PaletteAction::OpenAsset(path) => {
                 if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
                     if let Err(error) = self.workspace.open_project_file(&path) {
-                        self.state.status = format!("open {path} failed: {error}");
+                        self.state.status = self.tf(
+                            "desktop.status.openFailed",
+                            &[("path", &path), ("error", &error.to_string())],
+                        );
                     } else {
-                        self.state.status = format!("opened {path}");
+                        self.state.status = self.tf("desktop.status.opened", &[("path", &path)]);
                     }
                     return;
                 }
@@ -1216,7 +1225,7 @@ impl EditorApp {
                     }
                 }
                 self.state.select_asset_only(path.clone());
-                self.state.status = format!("selected asset {path}");
+                self.state.status = self.tf("desktop.status.selectedAsset", &[("path", &path)]);
             }
         }
     }
@@ -1328,7 +1337,10 @@ impl EditorApp {
                     anyhow::anyhow!("window capture unavailable on this platform")
                 })?;
                 let path = crate::screenshot::save_window_png(hwnd, path, size)?;
-                self.state.status = format!("screenshot: {}", path.display());
+                self.state.status = self.tf(
+                    "desktop.status.screenshot",
+                    &[("path", &path.display().to_string())],
+                );
                 self.workspace.log(
                     prism_editor_core::LogSource::Editor,
                     prism_editor_core::LogLevel::Info,
@@ -1357,7 +1369,10 @@ impl EditorApp {
                 if !path.exists() {
                     anyhow::bail!("viewport capture wrote nothing (no frame?)");
                 }
-                self.state.status = format!("screenshot: {}", path.display());
+                self.state.status = self.tf(
+                    "desktop.status.screenshot",
+                    &[("path", &path.display().to_string())],
+                );
                 self.workspace.log(
                     prism_editor_core::LogSource::Editor,
                     prism_editor_core::LogLevel::Info,
@@ -1398,6 +1413,9 @@ impl EditorApp {
             ready_at: self.frame_count + 1,
             reply,
         });
-        self.state.status = format!("screenshot: {}", path.display());
+        self.state.status = self.tf(
+            "desktop.status.screenshot",
+            &[("path", &path.display().to_string())],
+        );
     }
 }

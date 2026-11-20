@@ -72,7 +72,7 @@ pub fn material(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     Ok(()) => {
                         state.material_saved = Some(value.clone());
                         state.material_error = None;
-                        state.status = format!("saved {path}");
+                        state.status = workspace.tf("desktop.status.saved", &[("path", &path)]);
                     }
                     Err(error) => {
                         state.material_error = Some(

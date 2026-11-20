@@ -902,7 +902,10 @@ impl EditorApp {
             }
             "about" => panels::about(ui, &self.workspace),
             other => {
-                ui.label(RichText::new(format!("panel '{other}' not implemented")).weak());
+                ui.label(
+                    RichText::new(self.tf("desktop.status.panelMissing", &[("panel", other)]))
+                        .weak(),
+                );
             }
         }
     }
@@ -1101,6 +1104,8 @@ impl EditorApp {
                                             }
                                         });
                                 });
+                                let radius_prefix = self.t("desktop.viewport.probeRadiusPrefix");
+                                let exposure_prefix = self.t("desktop.viewport.exposurePrefix");
                                 ui.horizontal(|ui| {
                                     ui.add(
                                         egui::DragValue::new(
@@ -1108,7 +1113,7 @@ impl EditorApp {
                                         )
                                         .speed(0.01)
                                         .range(0.04..=2.0)
-                                        .prefix("r "),
+                                        .prefix(radius_prefix),
                                     );
                                     ui.add(
                                         egui::DragValue::new(
@@ -1116,7 +1121,7 @@ impl EditorApp {
                                         )
                                         .speed(0.05)
                                         .range(0.05..=16.0)
-                                        .prefix("exp "),
+                                        .prefix(exposure_prefix),
                                     );
                                 });
                                 let label = self.t("desktop.viewport.gridBounds");
@@ -1286,7 +1291,7 @@ impl EditorApp {
             }
         }
         if document_changed {
-            self.state.status = "moved selection".to_string();
+            self.state.status = self.t("desktop.status.movedSelection");
         }
         if kind == ViewKind::Scene {
             self.scene_overlay(ui, rect);

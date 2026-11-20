@@ -90,7 +90,8 @@ pub(super) fn asset_grid(
                             }
                             if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(path.clone());
-                                state.status = format!("copied {path}");
+                                state.status =
+                                    workspace.tf("desktop.status.copied", &[("path", &path)]);
                                 ui.close();
                             }
                             if ui.button(workspace.t("menu.showInExplorer")).clicked() {
@@ -171,7 +172,8 @@ pub(super) fn asset_grid(
                             }
                             if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(targets.join("\n"));
-                                state.status = format!("copied {path}");
+                                state.status =
+                                    workspace.tf("desktop.status.copied", &[("path", &path)]);
                                 ui.close();
                             }
                             if ui.button(workspace.t("menu.showInExplorer")).clicked() {
@@ -317,7 +319,7 @@ pub(super) fn ping_asset(workspace: &mut Workspace, state: &mut UiState, path: &
         }
     }
     let Some((doc, entity)) = found else {
-        state.status = format!("no object references {path}");
+        state.status = workspace.tf("desktop.status.noObjectReferences", &[("path", path)]);
         return;
     };
     if doc != active {
@@ -336,7 +338,7 @@ pub(super) fn ping_asset(workspace: &mut Workspace, state: &mut UiState, path: &
         .get(entity)
         .map(|entity| entity.display_name())
         .unwrap_or_else(|| format!("#{entity}"));
-    state.status = format!("pinged {path} → {name}");
+    state.status = workspace.tf("desktop.status.pinged", &[("path", path), ("name", &name)]);
 }
 
 pub(super) fn asset_grid_cell(
@@ -683,7 +685,8 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                             }
                             if ui.button(workspace.t("menu.copyPath")).clicked() {
                                 ui.ctx().copy_text(path.clone());
-                                state.status = format!("copied {path}");
+                                state.status =
+                                    workspace.tf("desktop.status.copied", &[("path", &path)]);
                                 ui.close();
                             }
                             if ui.button(workspace.t("menu.showInExplorer")).clicked() {
@@ -907,26 +910,44 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
             Ok(to) if to == from => {}
             Ok(to) => {
                 state.select_asset_only(to.clone());
-                state.status = format!("moved → {to}");
+                state.status = workspace.tf("desktop.status.moved", &[("path", &to)]);
             }
-            Err(error) => state.status = format!("move failed: {error}"),
+            Err(error) => {
+                state.status = workspace.tf(
+                    "desktop.status.moveFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
     if let Some(path) = actions.open {
         if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
             if let Err(error) = workspace.open_project_file(&path) {
-                state.status = format!("open {path} failed: {error}");
+                state.status = workspace.tf(
+                    "desktop.status.openFailed",
+                    &[("path", &path), ("error", &error.to_string())],
+                );
             }
         } else if prism_editor_core::project::is_json_editable_asset(&path) {
             open_material_asset(workspace, state, &path);
             workspace.show_panel("material");
-            state.status = format!("opened {path}");
+            state.status = workspace.tf("desktop.status.opened", &[("path", &path)]);
         }
     }
     if let Some(path) = actions.instantiate {
         match workspace.instantiate_prefab_asset(&path, None) {
-            Ok(count) => state.status = format!("instantiated {count} entities"),
-            Err(error) => state.status = format!("instantiate failed: {error}"),
+            Ok(count) => {
+                state.status = workspace.tf(
+                    "desktop.status.instantiated",
+                    &[("count", &count.to_string())],
+                )
+            }
+            Err(error) => {
+                state.status = workspace.tf(
+                    "desktop.status.instantiateFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
     if let Some(path) = actions.rename {
@@ -952,13 +973,21 @@ pub fn assets(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                 match result {
                     Ok(count) => {
                         state.select_asset_only(to.clone());
-                        state.status = format!("renamed → {to} ({count} references updated)");
+                        state.status = workspace.tf(
+                            "desktop.status.renamed",
+                            &[("path", &to), ("count", &count.to_string())],
+                        );
                     }
-                    Err(error) => state.status = format!("rename failed: {error}"),
+                    Err(error) => {
+                        state.status = workspace.tf(
+                            "desktop.status.renameFailed",
+                            &[("error", &error.to_string())],
+                        )
+                    }
                 }
             }
             Some(_) => {}
-            None => state.status = "invalid file name".to_string(),
+            None => state.status = workspace.t("desktop.status.invalidFileName"),
         }
     }
     if let Some(folder) = actions.create_subfolder {
@@ -1032,9 +1061,14 @@ pub fn delete_asset_now(workspace: &mut Workspace, state: &mut UiState, path: &s
     match result {
         Ok(()) => {
             state.forget_asset(path);
-            state.status = format!("deleted {path}");
+            state.status = workspace.tf("desktop.status.deleted", &[("path", &path)]);
         }
-        Err(error) => state.status = format!("delete failed: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.deleteFailed",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 
@@ -1147,9 +1181,14 @@ pub fn apply_pending_doc_delete(workspace: &mut Workspace, state: &mut UiState) 
     match workspace.delete_document(&path) {
         Ok(()) => {
             state.forget_asset(&path);
-            state.status = format!("deleted {path}");
+            state.status = workspace.tf("desktop.status.deleted", &[("path", &path)]);
         }
-        Err(error) => state.status = format!("delete failed: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.deleteFailed",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 
@@ -1258,12 +1297,17 @@ pub fn docs(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
 
 pub fn request_save_document(workspace: &mut Workspace, state: &mut UiState, index: usize) {
     match workspace.save_document(index) {
-        Ok(path) => state.status = format!("saved {path}"),
+        Ok(path) => state.status = workspace.tf("desktop.status.saved", &[("path", &path)]),
         Err(_) if workspace.save_conflict(index).is_some() => {
             state.pending_save_conflict = Some(index);
             state.status = "文件在磁盘上已被修改".to_string();
         }
-        Err(error) => state.status = format!("save failed: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.saveFailed",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 

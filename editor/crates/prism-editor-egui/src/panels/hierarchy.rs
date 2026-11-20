@@ -820,7 +820,10 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                         DropZone::After => workspace.reparent_selection_at(to, false),
                     };
                     if moved > 0 {
-                        state.status = format!("moved {moved} entities");
+                        state.status = workspace.tf(
+                            "desktop.status.movedEntities",
+                            &[("count", &moved.to_string())],
+                        );
                     }
                     state.drop_target = None;
                     return;
@@ -849,8 +852,18 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
 
     if let Some((parent, prefab)) = asset_drop {
         match workspace.instantiate_prefab_asset(&prefab, Some(parent)) {
-            Ok(count) => state.status = format!("instantiated {count} entities from {prefab}"),
-            Err(error) => state.status = format!("instantiate failed: {error}"),
+            Ok(count) => {
+                state.status = workspace.tf(
+                    "desktop.status.instantiatedFromPrefab",
+                    &[("count", &count.to_string()), ("path", &prefab)],
+                )
+            }
+            Err(error) => {
+                state.status = workspace.tf(
+                    "desktop.status.instantiateFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
 

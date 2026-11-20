@@ -86,13 +86,18 @@ pub fn project_settings(
     }
     if apply {
         match cache.apply() {
-            Ok(()) => state.status = "assets/settings.ini saved".to_string(),
-            Err(error) => state.status = format!("settings save failed: {error}"),
+            Ok(()) => state.status = workspace.t("desktop.status.settingsSaved"),
+            Err(error) => {
+                state.status = workspace.tf(
+                    "desktop.status.settingsSaveFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
     if revert {
         cache.revert();
-        state.status = "settings reverted".to_string();
+        state.status = workspace.t("desktop.status.settingsReverted");
     }
     if reset_all {
         cache.reset_all();
@@ -268,14 +273,14 @@ pub fn preferences(
             .clicked()
         {
             workspace.set_locale(Locale::EnUs);
-            state.status = "locale: en-US".to_string();
+            state.status = workspace.tf("desktop.status.locale", &[("locale", "en-US")]);
         }
         if ui
             .selectable_label(locale == Locale::ZhCn, "简体中文")
             .clicked()
         {
             workspace.set_locale(Locale::ZhCn);
-            state.status = "locale: zh-CN".to_string();
+            state.status = workspace.tf("desktop.status.locale", &[("locale", "zh-CN")]);
         }
     });
 }
@@ -367,7 +372,10 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
     if changed {
         if let Some(root) = workspace.project_root.clone() {
             if let Err(error) = workspace.scene_manifest.write(&root) {
-                state.status = format!("scenes.json save failed: {error}");
+                state.status = workspace.tf(
+                    "desktop.status.scenesSaveFailed",
+                    &[("error", &error.to_string())],
+                );
             }
         }
     }
@@ -387,7 +395,8 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     for path in &available {
                         if ui.selectable_label(false, path).clicked() {
                             if workspace.add_scene_document(path).is_some() {
-                                state.status = format!("added {path} to build");
+                                state.status =
+                                    workspace.tf("desktop.status.addedToBuild", &[("path", &path)]);
                             }
                         }
                     }
@@ -412,7 +421,8 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
                     .clicked()
                     && workspace.add_scene_document(&relative).is_some()
                 {
-                    state.status = format!("added {relative} to build");
+                    state.status =
+                        workspace.tf("desktop.status.addedToBuild", &[("path", &relative)]);
                 }
             });
         }
@@ -462,7 +472,7 @@ pub fn shortcuts(
         {
             preferences.shortcut_overrides.clear();
             state.shortcut_capture = None;
-            state.status = "shortcuts reset to defaults".to_string();
+            state.status = workspace.t("desktop.status.shortcutsReset");
         }
     });
 
@@ -497,12 +507,17 @@ pub fn shortcuts(
                                 preferences
                                     .shortcut_overrides
                                     .insert(command.id().to_string(), keys.clone());
-                                state.status = format!("bound {command:?} to {keys}");
+                                state.status = workspace.tf(
+                                    "desktop.status.bound",
+                                    &[("command", &format!("{command:?}")), ("keys", &keys)],
+                                );
                                 state.shortcut_capture = None;
                             }
                         }
                     }
-                    None => state.status = format!("cannot bind {keys}"),
+                    None => {
+                        state.status = workspace.tf("desktop.status.cannotBind", &[("keys", &keys)])
+                    }
                 },
             }
         }

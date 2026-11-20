@@ -195,8 +195,7 @@ impl EditorApp {
                 .is_some_and(|start| start != pre_command_doc);
             self.write_preview_scene();
             if discarded {
-                self.state.status =
-                    "Stopped Play — edits made while playing were discarded".to_string();
+                self.state.status = self.t("desktop.status.stoppedPlayDiscarded");
             }
             // Stop must clear the live runtime immediately; do not wait for sync_document.
             if let Some(view) = self.game_view.as_mut() {
@@ -577,21 +576,21 @@ impl EditorApp {
         }
         if failures.is_empty() {
             self.state.status = if saved == 0 {
-                "nothing to save".to_string()
+                self.t("desktop.status.nothingToSave")
             } else {
-                format!("saved {saved} document(s)")
+                self.tf("desktop.status.savedDocs", &[("count", &saved.to_string())])
             };
             Ok(saved)
         } else {
             let message = failures.join("; ");
-            self.state.status = format!("save failed: {message}");
+            self.state.status = self.tf("desktop.status.saveFailed", &[("error", &message)]);
             Err(message)
         }
     }
 
     pub(super) fn request_asset_delete(&mut self) {
         if self.state.asset_selection.is_empty() {
-            self.state.status = "no asset selected".to_string();
+            self.state.status = self.t("desktop.status.noAssetSelected");
             return;
         }
         let paths = self.state.asset_selection.clone();
@@ -603,13 +602,16 @@ impl EditorApp {
                 panels::delete_asset_now(&mut self.workspace, &mut self.state, path);
                 deleted += 1;
             }
-            self.state.status = format!("deleted {deleted} asset(s)");
+            self.state.status = self.tf(
+                "desktop.status.deletedAssets",
+                &[("count", &deleted.to_string())],
+            );
         }
     }
 
     pub(super) fn duplicate_selected_asset(&mut self) {
         if self.state.asset_selection.is_empty() {
-            self.state.status = "no asset selected".to_string();
+            self.state.status = self.t("desktop.status.noAssetSelected");
             return;
         }
         let mut created = Vec::new();
@@ -632,15 +634,14 @@ impl EditorApp {
 
     pub(super) fn rename_selected_asset_prompt(&mut self) {
         let Some(path) = self.state.asset_primary().cloned() else {
-            self.state.status = "no asset selected".to_string();
+            self.state.status = self.t("desktop.status.noAssetSelected");
             return;
         };
         if self.state.asset_selection.len() > 1 {
-            self.state.status = "renaming one asset at a time".to_string();
+            self.state.status = self.t("desktop.status.renameOneAtATime");
         }
         if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
-            self.state.status =
-                "scenes and prefabs rename through Save As / the document panel".to_string();
+            self.state.status = self.t("desktop.status.sceneRenameViaSaveAs");
             return;
         }
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
@@ -699,7 +700,7 @@ impl EditorApp {
             .prefab_link()
             .map(|link| link.to_string())
         else {
-            self.state.status = "selection is not a prefab instance".to_string();
+            self.state.status = self.t("inspector.notPrefabInstance");
             return;
         };
         while let Some(parent) = doc.entities[index].parent {
@@ -760,10 +761,15 @@ impl EditorApp {
             .filter_map(|index| self.workspace.document().doc.id_of_index(index))
             .collect();
         self.workspace.expanded.extend(expanded);
-        self.state.status = format!(
-            "selection history {}/{}",
-            self.selection_history.position() + 1,
-            self.selection_history.len()
+        self.state.status = self.tf(
+            "desktop.status.selectionHistory",
+            &[
+                (
+                    "index",
+                    &(self.selection_history.position() + 1).to_string(),
+                ),
+                ("total", &self.selection_history.len().to_string()),
+            ],
         );
     }
 
@@ -779,17 +785,19 @@ impl EditorApp {
             _ => return,
         };
         self.state.transform_clip = Some((field.to_string(), values));
-        self.state.status = format!("copied {field}");
+        self.state.status = self.tf("desktop.status.copiedField", &[("field", field)]);
     }
 
     pub(super) fn paste_transform(&mut self, field: &str) {
         let Some((clipboard_field, values)) = self.state.transform_clip.clone() else {
-            self.state.status = "transform clipboard is empty".to_string();
+            self.state.status = self.t("desktop.status.clipboardEmpty");
             return;
         };
         if clipboard_field != field {
-            self.state.status =
-                format!("clipboard holds {clipboard_field}, not {field} — copy it first");
+            self.state.status = self.tf(
+                "desktop.status.clipboardMismatch",
+                &[("held", &clipboard_field), ("field", field)],
+            );
             return;
         }
         let ids: Vec<u32> = self
@@ -807,7 +815,10 @@ impl EditorApp {
                     .set_transform_axis(*entity, field, axis, *value);
             }
         }
-        self.state.status = format!("pasted {field} to {} entities", ids.len());
+        self.state.status = self.tf(
+            "desktop.status.pastedField",
+            &[("field", field), ("count", &ids.len().to_string())],
+        );
     }
 
     pub(super) fn find_references(&mut self, path: &str, project_wide: bool) {
@@ -840,7 +851,7 @@ impl EditorApp {
             }
         }
         if hits.is_empty() {
-            self.state.status = format!("no references to {path}");
+            self.state.status = self.tf("desktop.status.noReferences", &[("path", path)]);
         } else {
             self.state.status = format!("{} reference(s) to {path}", hits.len());
         }

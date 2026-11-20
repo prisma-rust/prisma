@@ -388,14 +388,19 @@ impl EditorApp {
                 if let Some(path) = selected.as_deref() {
                     self.menu_do(ui, &self.t("menu.open"), |app| {
                         if let Err(error) = app.workspace.open_project_file(path) {
-                            app.state.status = format!("open {path} failed: {error}");
+                            app.state.status = app.tf(
+                                "desktop.status.openFailed",
+                                &[("path", &path), ("error", &error.to_string())],
+                            );
                         }
                     });
                     let selected_path = path.to_string();
                     self.menu_do(ui, &self.t("menu.showInExplorer"), |app| {
                         app.state.status =
                             match panels::reveal_asset(&app.workspace, &selected_path) {
-                                Ok(()) => format!("revealed {selected_path}"),
+                                Ok(()) => {
+                                    app.tf("desktop.status.revealed", &[("path", &selected_path)])
+                                }
                                 Err(error) => error,
                             };
                     });
@@ -403,32 +408,52 @@ impl EditorApp {
                     let copy_path = selected_path.clone();
                     self.menu_do(ui, &self.t("menu.copyPath"), move |app| {
                         ctx_copy.copy_text(copy_path.clone());
-                        app.state.status = format!("copied {copy_path}");
+                        app.state.status = app.tf("desktop.status.copied", &[("path", &copy_path)]);
                     });
                     self.menu_do(ui, &self.t("menu.duplicate"), |app| {
                         match app.workspace.duplicate_asset(path) {
-                            Ok(copy) => app.state.status = format!("duplicated → {copy}"),
-                            Err(error) => app.state.status = format!("duplicate failed: {error}"),
+                            Ok(copy) => {
+                                app.state.status =
+                                    app.tf("desktop.status.duplicated", &[("path", &copy)])
+                            }
+                            Err(error) => {
+                                app.state.status = app.tf(
+                                    "desktop.status.duplicateFailed",
+                                    &[("error", &error.to_string())],
+                                )
+                            }
                         }
                     });
                     self.menu_do(ui, &self.t("common.delete"), |app| {
                         match app.workspace.delete_asset(path) {
                             Ok(()) => {
                                 app.state.forget_asset(path);
-                                app.state.status = format!("deleted {path}");
+                                app.state.status =
+                                    app.tf("desktop.status.deleted", &[("path", &path)]);
                             }
-                            Err(error) => app.state.status = format!("delete failed: {error}"),
+                            Err(error) => {
+                                app.state.status = app.tf(
+                                    "desktop.status.deleteFailed",
+                                    &[("error", &error.to_string())],
+                                )
+                            }
                         }
                     });
                     if path.ends_with(".prefab.json") {
                         self.menu_do(ui, &self.t("menu.instantiate"), |app| {
                             match app.workspace.instantiate_prefab_asset(path, None) {
                                 Ok(count) => {
-                                    app.state.status = format!("instantiated {count} entities");
+                                    app.state.status = app.tf(
+                                        "desktop.status.instantiated",
+                                        &[("count", &count.to_string())],
+                                    );
                                     app.synced_doc_state = None;
                                 }
                                 Err(error) => {
-                                    app.state.status = format!("instantiate failed: {error}")
+                                    app.state.status = app.tf(
+                                        "desktop.status.instantiateFailed",
+                                        &[("error", &error.to_string())],
+                                    )
                                 }
                             }
                         });
@@ -453,7 +478,7 @@ impl EditorApp {
                 ui.separator();
                 self.menu_do(ui, &self.t("menu.refresh"), |app| {
                     app.workspace.refresh_project_files();
-                    app.state.status = "assets refreshed".to_string();
+                    app.state.status = app.t("desktop.status.assetsRefreshed");
                 });
             });
 
@@ -543,10 +568,10 @@ impl EditorApp {
                 ui.separator();
                 self.menu_do(ui, &self.t("menu.moveToView"), |app| {
                     if app.workspace.align_selection_to_view() {
-                        app.state.status = "moved selection to view".to_string();
+                        app.state.status = app.t("desktop.status.movedToView");
                         app.mark_scene_dirty();
                     } else {
-                        app.state.status = "Move To View needs a selection".to_string();
+                        app.state.status = app.t("desktop.status.moveToViewNeedsSelection");
                     }
                 });
                 self.menu_do(ui, &self.t("menu.alignViewToSelected"), |app| {
@@ -556,7 +581,8 @@ impl EditorApp {
                 });
                 self.menu_do(ui, &self.t("menu.snapToGround"), |app| {
                     let count = app.workspace.snap_selection_to_ground();
-                    app.state.status = format!("snapped {count} entities");
+                    app.state.status =
+                        app.tf("desktop.status.snapped", &[("count", &count.to_string())]);
                     app.mark_scene_dirty();
                 });
             });
@@ -670,7 +696,8 @@ impl EditorApp {
                                 let value = self.named_layouts.get(&name).cloned();
                                 if let Some(value) = value {
                                     self.apply_layout_json(&value);
-                                    self.state.status = format!("layout loaded: {name}");
+                                    self.state.status =
+                                        self.tf("desktop.status.layoutLoaded", &[("name", &name)]);
                                 }
                                 ui.close();
                             }
@@ -719,7 +746,7 @@ impl EditorApp {
                         app.named_layouts.clear();
                         app.write_named_layouts();
                         app.workspace.set_layout_preset("default");
-                        app.state.status = "layouts reset".to_string();
+                        app.state.status = app.t("desktop.status.layoutsReset");
                     });
                 });
                 ui.separator();
@@ -753,7 +780,7 @@ impl EditorApp {
                         self.cancel_build();
                     }
                     ui.label(
-                        RichText::new(format!("building: {label}"))
+                        RichText::new(self.tf("desktop.status.building", &[("label", &label)]))
                             .size(10.0)
                             .color(egui::Color32::from_rgb(224, 176, 80)),
                     );
@@ -874,9 +901,9 @@ impl EditorApp {
                         {
                             let prefab_index = self.workspace.active_index();
                             if self.workspace.return_from_prefab(prefab_index) {
-                                self.state.status = format!(
-                                    "returned to {} · selected {}",
-                                    origin.scene_title, prefab_title
+                                self.state.status = self.tf(
+                                    "desktop.status.returnedTo",
+                                    &[("scene", &origin.scene_title), ("entity", &prefab_title)],
                                 );
                             }
                         }
@@ -1415,12 +1442,24 @@ impl EditorApp {
         self.state.pending_save_conflict = None;
         match choice {
             SaveConflictChoice::Overwrite => match self.workspace.save_document_forced(index) {
-                Ok(path) => self.state.status = format!("saved {path} (overwrote)"),
-                Err(error) => self.state.status = format!("save failed: {error}"),
+                Ok(path) => {
+                    self.state.status = self.tf("desktop.status.savedOverwrote", &[("path", &path)])
+                }
+                Err(error) => {
+                    self.state.status = self.tf(
+                        "desktop.status.saveFailed",
+                        &[("error", &error.to_string())],
+                    )
+                }
             },
             SaveConflictChoice::Reload => match self.workspace.reload_document_from_disk(index) {
-                Ok(()) => self.state.status = "reloaded from disk".to_string(),
-                Err(error) => self.state.status = format!("reload failed: {error}"),
+                Ok(()) => self.state.status = self.t("desktop.status.reloadedFromDisk"),
+                Err(error) => {
+                    self.state.status = self.tf(
+                        "desktop.status.reloadFailed",
+                        &[("error", &error.to_string())],
+                    )
+                }
             },
             SaveConflictChoice::Cancel => {}
         }
@@ -1525,22 +1564,29 @@ impl EditorApp {
             Some(true) => match self.workspace.recover_unsaved() {
                 Ok(count) => {
                     self.state.pending_recovery = 0;
-                    self.state.status = format!("recovered {count} unsaved document(s)");
+                    self.state.status =
+                        self.tf("desktop.status.recovered", &[("count", &count.to_string())]);
                     // Reload engine from the recovered document on the next sync pass.
                     self.synced_doc_state = None;
                     self.mark_scene_dirty();
                 }
                 Err(error) => {
-                    self.state.status = format!("recover failed: {error}");
+                    self.state.status = self.tf(
+                        "desktop.status.recoverFailed",
+                        &[("error", &error.to_string())],
+                    );
                 }
             },
             Some(false) => match self.workspace.discard_recovery() {
                 Ok(()) => {
                     self.state.pending_recovery = 0;
-                    self.state.status = "discarded the recovery snapshot".to_string();
+                    self.state.status = self.t("desktop.status.discardedRecovery");
                 }
                 Err(error) => {
-                    self.state.status = format!("discard failed: {error}");
+                    self.state.status = self.tf(
+                        "desktop.status.discardFailed",
+                        &[("error", &error.to_string())],
+                    );
                 }
             },
             None => {}
@@ -1556,7 +1602,12 @@ impl EditorApp {
         match decision {
             CloseDecision::Save => match self.save_before_close(target) {
                 Ok(()) => self.finish_close(ctx, target),
-                Err(error) => self.state.status = format!("save failed: {error}"),
+                Err(error) => {
+                    self.state.status = self.tf(
+                        "desktop.status.saveFailed",
+                        &[("error", &error.to_string())],
+                    )
+                }
             },
             CloseDecision::Discard => self.finish_close(ctx, target),
             CloseDecision::Cancel => self.state.pending_close = None,
@@ -1569,7 +1620,7 @@ impl EditorApp {
                 .workspace
                 .save_document(index)
                 .map(|path| {
-                    self.state.status = format!("saved {path}");
+                    self.state.status = self.tf("desktop.status.saved", &[("path", &path)]);
                 })
                 .map_err(|error| error.to_string()),
             panels::CloseTarget::App => {

@@ -453,7 +453,7 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
     ui.horizontal(|ui| {
         if ui.button(workspace.t("menu.copyPath")).clicked() {
             ui.ctx().copy_text(path.clone());
-            state.status = format!("copied {path}");
+            state.status = workspace.tf("desktop.status.copied", &[("path", &path)]);
         }
         let openable = path.ends_with(".scene.json")
             || path.ends_with(".prefab.json")
@@ -461,13 +461,20 @@ pub(super) fn asset_inspector(ui: &mut Ui, workspace: &mut Workspace, state: &mu
         if openable && ui.button(workspace.t("menu.open")).clicked() {
             if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
                 match workspace.open_project_file(&path) {
-                    Ok(()) => state.status = format!("opened {path}"),
-                    Err(error) => state.status = format!("open {path} failed: {error}"),
+                    Ok(()) => {
+                        state.status = workspace.tf("desktop.status.opened", &[("path", &path)])
+                    }
+                    Err(error) => {
+                        state.status = workspace.tf(
+                            "desktop.status.openFailed",
+                            &[("path", &path), ("error", &error.to_string())],
+                        )
+                    }
                 }
             } else {
                 open_material_asset(workspace, state, &path);
                 workspace.show_panel("material");
-                state.status = format!("opened {path}");
+                state.status = workspace.tf("desktop.status.opened", &[("path", &path)]);
             }
         }
         if ui.button(workspace.t("menu.showInExplorer")).clicked() {
@@ -729,14 +736,12 @@ pub(super) fn transform_rows(
                     value: scale[axis],
                 });
             }
-            let response = ui
-                .add(
-                    egui::DragValue::new(&mut scale[axis])
-                        .speed(0.01)
-                        .max_decimals(3)
-                        .custom_parser(widgets::number_parser),
-                )
-                .on_hover_text("Type an expression: 90/2, 2*(3+4)");
+            let response = ui.add(
+                egui::DragValue::new(&mut scale[axis])
+                    .speed(0.01)
+                    .max_decimals(3)
+                    .custom_parser(widgets::number_parser),
+            );
             transform_row_menu(
                 labels,
                 &response,
@@ -1157,8 +1162,15 @@ pub(super) fn inspector_single(
                 {
                     let scene_index = workspace.active_index();
                     match workspace.open_prefab_from_instance(scene_index, entity_id) {
-                        Ok(()) => state.status = format!("opened {link}"),
-                        Err(error) => state.status = format!("open prefab failed: {error}"),
+                        Ok(()) => {
+                            state.status = workspace.tf("desktop.status.opened", &[("path", link)])
+                        }
+                        Err(error) => {
+                            state.status = workspace.tf(
+                                "desktop.status.openPrefabFailed",
+                                &[("error", &error.to_string())],
+                            )
+                        }
                     }
                 }
                 if ui
@@ -1166,14 +1178,29 @@ pub(super) fn inspector_single(
                     .clicked()
                 {
                     match workspace.revert_prefab_instance(entity_id) {
-                        Ok(_) => state.status = "reverted prefab instance".to_string(),
-                        Err(error) => state.status = format!("revert failed: {error}"),
+                        Ok(_) => state.status = workspace.t("desktop.status.revertedPrefab"),
+                        Err(error) => {
+                            state.status = workspace.tf(
+                                "desktop.status.revertFailed",
+                                &[("error", &error.to_string())],
+                            )
+                        }
                     }
                 }
                 if ui.small_button(workspace.t("inspector.syncAll")).clicked() {
                     match workspace.sync_prefab_instances(link) {
-                        Ok(count) => state.status = format!("synced {count} instances"),
-                        Err(error) => state.status = format!("sync failed: {error}"),
+                        Ok(count) => {
+                            state.status = workspace.tf(
+                                "desktop.status.syncedInstances",
+                                &[("count", &count.to_string())],
+                            )
+                        }
+                        Err(error) => {
+                            state.status = workspace.tf(
+                                "desktop.status.syncFailed",
+                                &[("error", &error.to_string())],
+                            )
+                        }
                     }
                 }
                 if ui
@@ -1182,10 +1209,18 @@ pub(super) fn inspector_single(
                 {
                     match apply_to_prefab(workspace, index, link) {
                         Ok(count) => {
-                            state.status = format!("applied {count} entities to {link}");
+                            state.status = workspace.tf(
+                                "desktop.status.appliedToPrefab",
+                                &[("count", &count.to_string()), ("path", link)],
+                            );
                             let _ = workspace.sync_prefab_instances(link);
                         }
-                        Err(error) => state.status = format!("apply failed: {error}"),
+                        Err(error) => {
+                            state.status = workspace.tf(
+                                "desktop.status.applyFailed",
+                                &[("error", &error.to_string())],
+                            )
+                        }
                     }
                 }
             });
@@ -1381,15 +1416,22 @@ pub(super) fn inspector_single(
                 value,
             } => {
                 workspace.save_component_preset(&component, &name, value);
-                state.status = format!("saved preset {name} for {component}");
+                state.status = workspace.tf(
+                    "desktop.status.savedPreset",
+                    &[("name", &name), ("component", &component)],
+                );
             }
             widgets::CardAction::ApplyPreset { component, name } => {
                 match workspace.component_preset_value(&component, &name) {
                     Some(value) => {
                         workspace.set_field(entity_id, &component, "", value);
-                        state.status = format!("applied preset {name}");
+                        state.status =
+                            workspace.tf("desktop.status.appliedPreset", &[("name", &name)]);
                     }
-                    None => state.status = format!("preset {name} not found"),
+                    None => {
+                        state.status =
+                            workspace.tf("desktop.status.presetNotFound", &[("name", &name)])
+                    }
                 }
             }
         }
@@ -2189,7 +2231,10 @@ pub(super) fn terrain_editor(ui: &mut Ui, workspace: &Workspace, value: &Value) 
                 if size.len() >= 2 {
                     let x = size[0].as_f64().unwrap_or(0.0);
                     let z = size[1].as_f64().unwrap_or(0.0);
-                    ui.label(format!("world {x:.1} × {z:.1} m"));
+                    ui.label(workspace.tf(
+                        "inspector.worldSize",
+                        &[("x", &format!("{x:.1}")), ("z", &format!("{z:.1}"))],
+                    ));
                 }
             }
             terrain_sculpt_controls(ui, workspace);
@@ -2231,7 +2276,7 @@ pub(super) fn keyframe_animation_editor(
         format!("{longest:.2}s (auto)")
     };
     ui.label(
-        RichText::new(format!("Keyframes · {length_label}"))
+        RichText::new(workspace.tf("inspector.keyframesLength", &[("duration", &length_label)]))
             .strong()
             .size(11.0),
     );
@@ -2311,7 +2356,7 @@ pub(super) fn keyframe_track_editor(
             ui.horizontal(|ui| {
                 if ui
                     .small_button("+ Key")
-                    .on_hover_text("Append a key one second after the last one")
+                    .on_hover_text(workspace.t("inspector.appendKeyHint"))
                     .clicked()
                 {
                     append_key(&mut updated, identity);
@@ -2876,15 +2921,24 @@ pub(super) fn inspector_multi(
                 value,
             } => {
                 workspace.save_component_preset(&component, &name, value);
-                state.status = format!("saved preset {name} for {component}");
+                state.status = workspace.tf(
+                    "desktop.status.savedPreset",
+                    &[("name", &name), ("component", &component)],
+                );
             }
             widgets::CardAction::ApplyPreset { component, name } => {
                 match workspace.component_preset_value(&component, &name) {
                     Some(value) => {
                         let applied = workspace.set_field_multi(&ids, &component, "", value);
-                        state.status = format!("applied preset {name} ({applied} objects)");
+                        state.status = workspace.tf(
+                            "desktop.status.appliedPresetCount",
+                            &[("name", &name), ("count", &applied.to_string())],
+                        );
                     }
-                    None => state.status = format!("preset {name} not found"),
+                    None => {
+                        state.status =
+                            workspace.tf("desktop.status.presetNotFound", &[("name", &name)])
+                    }
                 }
             }
         }
@@ -3018,7 +3072,10 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button(workspace.t("inspector.unpack")).clicked() {
                 let removed = workspace.unpack_prefab(root);
-                state.status = format!("unpacked ({removed} link(s) removed)");
+                state.status = workspace.tf(
+                    "desktop.status.unpacked",
+                    &[("count", &removed.to_string())],
+                );
             }
         });
     });
@@ -3070,31 +3127,46 @@ pub fn prefab_overrides(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiSt
 
     if let Some(entry) = revert {
         if workspace.revert_prefab_override(&entry) {
-            state.status = format!(
-                "reverted {} · {}",
-                entry.entity_name,
-                if entry.field.is_empty() {
-                    entry.component.clone()
-                } else {
-                    format!("{}.{}", entry.component, entry.field)
-                }
+            state.status = workspace.tf(
+                "desktop.status.revertedOverride",
+                &[
+                    ("entity", &entry.entity_name),
+                    (
+                        "field",
+                        &if entry.field.is_empty() {
+                            entry.component.clone()
+                        } else {
+                            format!("{}.{}", entry.component, entry.field)
+                        },
+                    ),
+                ],
             );
         }
     }
     if let Some(entry) = apply {
         match workspace.apply_prefab_override(root, &entry) {
             Ok(()) => {
-                state.status = format!(
-                    "applied {} · {}",
-                    entry.entity_name,
-                    if entry.field.is_empty() {
-                        entry.component.clone()
-                    } else {
-                        format!("{}.{}", entry.component, entry.field)
-                    }
+                state.status = workspace.tf(
+                    "desktop.status.appliedOverride",
+                    &[
+                        ("entity", &entry.entity_name),
+                        (
+                            "field",
+                            &if entry.field.is_empty() {
+                                entry.component.clone()
+                            } else {
+                                format!("{}.{}", entry.component, entry.field)
+                            },
+                        ),
+                    ],
                 );
             }
-            Err(error) => state.status = format!("apply failed: {error}"),
+            Err(error) => {
+                state.status = workspace.tf(
+                    "desktop.status.applyFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
 }
@@ -3300,11 +3372,12 @@ pub(super) fn texture_import_settings(
         if ui.button(workspace.t("inspector.revert")).clicked() {
             buffer = read_import_settings(&sidecar);
             ui.data_mut(|data| data.insert_temp(id, buffer));
-            state.status = format!("reloaded import settings for {asset}");
+            state.status =
+                workspace.tf("desktop.status.reloadedImportSettings", &[("path", &asset)]);
         }
         if ui.button(workspace.t("inspector.reimport")).clicked() {
             state.pending_build = Some(crate::build::BuildKind::ScenePack);
-            state.status = "rebuilding the scene pack (Reimport)".to_string();
+            state.status = workspace.t("desktop.status.rebuildingPack");
         }
     });
     if !sidecar.is_file() {}

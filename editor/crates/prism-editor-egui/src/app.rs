@@ -40,6 +40,7 @@ use shortcuts::*;
 ///
 /// The user-visible tab label comes from [`Workspace::panel_title`] and follows the locale, so this
 /// table must never be used for rendering.
+#[cfg(test)]
 pub(super) fn tab_title(tab: &str) -> &str {
     match tab {
         "sceneView" => "Scene",
@@ -855,13 +856,13 @@ impl EditorApp {
         }
         if finished {
             self.state.audio_preview_path = None;
-            self.state.status = "audio preview finished".to_string();
+            self.state.status = self.t("desktop.status.audioFinished");
         }
     }
 
     pub(super) fn play_audio_preview(&mut self, relative: &str) {
         let Some(root) = self.project_root.clone() else {
-            self.state.status = "audio preview needs a project root".to_string();
+            self.state.status = self.t("desktop.status.audioNeedsRoot");
             return;
         };
         if self.audio_preview.is_none() {
@@ -874,7 +875,10 @@ impl EditorApp {
                     });
                 }
                 Err(error) => {
-                    self.state.status = format!("audio preview unavailable: {error}");
+                    self.state.status = self.tf(
+                        "desktop.status.audioUnavailable",
+                        &[("error", &error.to_string())],
+                    );
                     return;
                 }
             }
@@ -904,7 +908,7 @@ impl EditorApp {
         match result {
             Ok(()) => {
                 self.state.audio_preview_path = Some(relative.to_string());
-                self.state.status = format!("playing {relative}");
+                self.state.status = self.tf("desktop.status.playing", &[("path", &relative)]);
             }
             Err(error) => {
                 self.state.audio_preview_path = None;
@@ -921,7 +925,7 @@ impl EditorApp {
             preview.started = false;
         }
         self.state.audio_preview_path = None;
-        self.state.status = "audio preview stopped".to_string();
+        self.state.status = self.t("desktop.status.audioStopped");
     }
 
     pub(super) fn project_module_status(
@@ -986,9 +990,9 @@ impl EditorApp {
                 prism_editor_core::LogLevel::Info,
                 "project module: compile requested",
             );
-            self.state.status = "compiling project module…".to_string();
+            self.state.status = self.t("desktop.status.compilingModule");
         } else {
-            self.state.status = "project has no preview-module (see Console)".to_string();
+            self.state.status = self.t("desktop.status.noPreviewModule");
         }
     }
 
@@ -1026,7 +1030,7 @@ impl EditorApp {
         };
         job.cancel();
         let label = job.label().to_string();
-        self.state.status = format!("cancelling build: {label}");
+        self.state.status = self.tf("desktop.status.cancellingBuild", &[("label", &label)]);
         self.workspace.log(
             prism_editor_core::LogSource::System,
             prism_editor_core::LogLevel::Warn,
@@ -1036,12 +1040,15 @@ impl EditorApp {
 
     pub(super) fn start_build(&mut self, kind: crate::build::BuildKind) {
         let Some(root) = self.project_root.clone() else {
-            self.state.status = "no project root — cannot build".to_string();
+            self.state.status = self.t("desktop.status.noRootBuild");
             return;
         };
 
         if let Err(error) = self.save_all_documents() {
-            self.state.status = format!("build aborted: {error}");
+            self.state.status = self.tf(
+                "desktop.status.buildAborted",
+                &[("error", &error.to_string())],
+            );
             self.workspace.log(
                 prism_editor_core::LogSource::System,
                 prism_editor_core::LogLevel::Error,
@@ -1082,13 +1089,13 @@ impl EditorApp {
 
     pub(super) fn cook_active_scene(&mut self) {
         let Some(root) = self.project_root.clone() else {
-            self.state.status = "no project root — cannot cook".to_string();
+            self.state.status = self.t("desktop.status.noRootCook");
             return;
         };
 
         let _ = self.workspace.save_active_if_dirty();
         let Some(path) = self.workspace.document().path.clone() else {
-            self.state.status = "current document has no path".to_string();
+            self.state.status = self.t("desktop.status.docNoPath");
             return;
         };
         self.start_build(crate::build::BuildKind::Cook(root.join(&path)));
@@ -1138,8 +1145,18 @@ impl EditorApp {
             &self.layouts_path,
             serde_json::to_string_pretty(&value).unwrap_or_default(),
         ) {
-            Ok(()) => self.state.status = format!("layouts saved: {}", self.layouts_path.display()),
-            Err(error) => self.state.status = format!("save layouts failed: {error}"),
+            Ok(()) => {
+                self.state.status = self.tf(
+                    "desktop.status.layoutsSaved",
+                    &[("path", &self.layouts_path.display().to_string())],
+                )
+            }
+            Err(error) => {
+                self.state.status = self.tf(
+                    "desktop.status.layoutsSaveFailed",
+                    &[("error", &error.to_string())],
+                )
+            }
         }
     }
 
@@ -1193,7 +1210,7 @@ impl EditorApp {
             prism_editor_core::LogLevel::Info,
             "loose assets changed — rebuilding the scene pack",
         );
-        self.state.status = "assets changed — rebuilding scene pack".to_string();
+        self.state.status = self.t("desktop.status.assetsChanged");
         self.start_build(crate::build::BuildKind::ScenePack);
     }
 
@@ -1216,21 +1233,21 @@ impl EditorApp {
             let failed = job.failed() && !cancelled;
             let label = job.label().to_string();
             if cancelled {
-                self.state.status = format!("build cancelled: {label}");
+                self.state.status = self.tf("desktop.status.buildCancelled", &[("label", &label)]);
                 self.workspace.log(
                     prism_editor_core::LogSource::System,
                     prism_editor_core::LogLevel::Warn,
                     format!("build cancelled: {label}"),
                 );
             } else if failed {
-                self.state.status = format!("build failed: {label}");
+                self.state.status = self.tf("desktop.status.buildFailed", &[("label", &label)]);
                 self.workspace.log(
                     prism_editor_core::LogSource::System,
                     prism_editor_core::LogLevel::Error,
                     format!("build failed: {label} (see Console)"),
                 );
             } else {
-                self.state.status = format!("build finished: {label}");
+                self.state.status = self.tf("desktop.status.buildFinished", &[("label", &label)]);
                 self.workspace.log(
                     prism_editor_core::LogSource::System,
                     prism_editor_core::LogLevel::Info,
@@ -1277,7 +1294,7 @@ impl EditorApp {
             && !self.workspace.paused
         {
             self.apply_command(Command::Pause);
-            self.state.status = "paused: an error was logged (Error Pause)".to_string();
+            self.state.status = self.t("desktop.status.errorPause");
             self.workspace.log(
                 prism_editor_core::LogSource::Editor,
                 prism_editor_core::LogLevel::Warn,
@@ -1472,7 +1489,10 @@ impl App for EditorApp {
             }
         }
         if re_resolved > 0 {
-            self.state.status = format!("hot-reloaded assets: {re_resolved} reference(s)");
+            self.state.status = self.tf(
+                "desktop.status.hotReloaded",
+                &[("count", &re_resolved.to_string())],
+            );
         }
 
         self.sync_animation_preview();

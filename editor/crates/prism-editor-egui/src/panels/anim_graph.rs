@@ -62,6 +62,7 @@ pub fn notify_markers(notifies: &[(f32, String)], duration: f32, width: f32) -> 
 
 pub(super) fn draw_notify_markers(
     ui: &mut egui::Ui,
+    workspace: &Workspace,
     slider_rect: egui::Rect,
     notifies: &[(f32, String)],
     duration: f32,
@@ -94,12 +95,13 @@ pub(super) fn draw_notify_markers(
         ));
     }
     if let Some(name) = hovered {
-        response.on_hover_text(format!("Notify: {name}"));
+        response.on_hover_text(workspace.tf("desktop.anim.notifyHover", &[("name", name)]));
     }
 }
 
 pub(super) fn draw_key_ticks(
     ui: &mut egui::Ui,
+    workspace: &Workspace,
     slider_rect: egui::Rect,
     times: &[f32],
     duration: f32,
@@ -130,7 +132,7 @@ pub(super) fn draw_key_ticks(
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    let response = response.on_hover_text("Jump to this keyframe");
+    let response = response.on_hover_text(workspace.t("desktop.anim.jumpToKeyframe"));
 
     let click = response.interact_pointer_pos()?;
     if !response.clicked() {
@@ -241,7 +243,12 @@ pub fn blend_pad_value_at(
     ])
 }
 
-pub(super) fn draw_blend_axis(ui: &mut egui::Ui, positions: &[f32], parameter: f32) -> Option<f32> {
+pub(super) fn draw_blend_axis(
+    ui: &mut egui::Ui,
+    workspace: &Workspace,
+    positions: &[f32],
+    parameter: f32,
+) -> Option<f32> {
     let Some((min, max)) = blend_axis_range(positions) else {
         return None;
     };
@@ -281,7 +288,7 @@ pub(super) fn draw_blend_axis(ui: &mut egui::Ui, positions: &[f32], parameter: f
             return blend_axis_value_at(pointer.x - rect.left(), rect.width(), min, max);
         }
     }
-    response.on_hover_text("Blend parameter — click or drag to scrub the blend");
+    response.on_hover_text(workspace.t("desktop.anim.blendScrub"));
     None
 }
 
@@ -429,13 +436,13 @@ pub(super) fn animator_editor(
             edited = true;
         }
         if let Some(keys) = state.clip_keys.get(&clip_path) {
-            if let Some(key_time) = draw_key_ticks(ui, response.rect, keys, duration) {
+            if let Some(key_time) = draw_key_ticks(ui, workspace, response.rect, keys, duration) {
                 time = key_time;
                 edited = true;
             }
         }
         if let Some(notifies) = state.clip_notifies.get(&clip_path) {
-            draw_notify_markers(ui, response.rect, notifies, duration);
+            draw_notify_markers(ui, workspace, response.rect, notifies, duration);
         }
         ui.label(
             RichText::new(workspace.tf(
@@ -516,7 +523,7 @@ pub(super) fn animator_editor(
             .size(10.0)
             .weak(),
         );
-        if let Some(next) = draw_blend_axis(ui, &blend_positions, blend_parameter) {
+        if let Some(next) = draw_blend_axis(ui, workspace, &blend_positions, blend_parameter) {
             blend_parameter = next;
             edited = true;
         }
@@ -633,7 +640,7 @@ pub(super) fn animator_editor(
                     if ui
                         .add(
                             egui::TextEdit::singleline(&mut layer.clip_path)
-                                .hint_text("clips/aim.ranim")
+                                .hint_text(workspace.t("desktop.anim.clipPathHint"))
                                 .desired_width(180.0),
                         )
                         .changed()
@@ -1081,7 +1088,10 @@ pub fn anim_graph(
                     }
                     Err(error) => {
                         state.anim_graph_edit.graph_parameter_rename = None;
-                        state.status = format!("animation graph: {error}");
+                        state.status = workspace.tf(
+                            "desktop.status.animationGraphError",
+                            &[("error", &error.to_string())],
+                        );
                     }
                 }
             }
@@ -1113,7 +1123,10 @@ pub fn anim_graph(
                     Ok(false) => {}
                     Err(error) => {
                         state.anim_graph_edit.sm_state_rename = None;
-                        state.status = format!("state machine: {error}");
+                        state.status = workspace.tf(
+                            "desktop.status.stateMachineError",
+                            &[("error", &error.to_string())],
+                        );
                     }
                 }
                 if let Some((index, new_name)) = state.anim_graph_edit.sm_state_rename.take() {
@@ -1207,8 +1220,11 @@ pub(super) fn draw_notifies_asset(
         Ok(value) => value,
         Err(error) => {
             ui.label(
-                RichText::new(format!("read {path} failed: {error}"))
-                    .color(Color32::from_rgb(232, 96, 96)),
+                RichText::new(workspace.tf(
+                    "desktop.status.readFailed",
+                    &[("path", &path), ("error", &error.to_string())],
+                ))
+                .color(Color32::from_rgb(232, 96, 96)),
             );
             return;
         }
@@ -1232,7 +1248,12 @@ pub(super) fn draw_notifies_asset(
             };
         }
         Ok(false) => {}
-        Err(error) => state.status = format!("notify file: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.notifyFileError",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 
@@ -1276,8 +1297,11 @@ pub(super) fn draw_clip_asset(ui: &mut Ui, workspace: &mut Workspace, path: &str
         Ok(bytes) => bytes,
         Err(error) => {
             ui.label(
-                RichText::new(format!("read {path} failed: {error}"))
-                    .color(Color32::from_rgb(232, 96, 96)),
+                RichText::new(workspace.tf(
+                    "desktop.status.readFailed",
+                    &[("path", &path), ("error", &error.to_string())],
+                ))
+                .color(Color32::from_rgb(232, 96, 96)),
             );
             return;
         }
@@ -1645,8 +1669,11 @@ pub(super) fn draw_montages_asset(
         Ok(value) => value,
         Err(error) => {
             ui.label(
-                RichText::new(format!("read {path} failed: {error}"))
-                    .color(Color32::from_rgb(232, 96, 96)),
+                RichText::new(workspace.tf(
+                    "desktop.status.readFailed",
+                    &[("path", &path), ("error", &error.to_string())],
+                ))
+                .color(Color32::from_rgb(232, 96, 96)),
             );
             return;
         }
@@ -1670,7 +1697,12 @@ pub(super) fn draw_montages_asset(
             };
         }
         Ok(false) => {}
-        Err(error) => state.status = format!("montage file: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.montageFileError",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 
@@ -2114,7 +2146,7 @@ pub(super) fn draw_montages_view(
                     ui.add(
                         egui::TextEdit::singleline(name)
                             .desired_width(96.0)
-                            .hint_text("section name"),
+                            .hint_text(workspace.t("desktop.anim.sectionNameHint")),
                     );
                     ui.add(
                         egui::DragValue::new(start)
@@ -2159,8 +2191,11 @@ pub(super) fn draw_sync_markers_asset(
         Ok(value) => value,
         Err(error) => {
             ui.label(
-                RichText::new(format!("read {path} failed: {error}"))
-                    .color(Color32::from_rgb(232, 96, 96)),
+                RichText::new(workspace.tf(
+                    "desktop.status.readFailed",
+                    &[("path", &path), ("error", &error.to_string())],
+                ))
+                .color(Color32::from_rgb(232, 96, 96)),
             );
             return;
         }
@@ -2184,7 +2219,12 @@ pub(super) fn draw_sync_markers_asset(
             };
         }
         Ok(false) => {}
-        Err(error) => state.status = format!("sync markers: {error}"),
+        Err(error) => {
+            state.status = workspace.tf(
+                "desktop.status.syncMarkersError",
+                &[("error", &error.to_string())],
+            )
+        }
     }
 }
 
@@ -2561,7 +2601,7 @@ pub(super) fn draw_notifies_view(
                     .unwrap_or_else(|| entry.name.clone());
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut text)
-                        .hint_text("Footstep.L")
+                        .hint_text(workspace.t("desktop.anim.notifyNameHint"))
                         .desired_width(150.0),
                 );
                 if response.changed() {
@@ -2587,7 +2627,7 @@ pub(super) fn draw_notifies_view(
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut draft.0)
-                    .hint_text("clip (glTF name)")
+                    .hint_text(workspace.t("desktop.anim.clipGlTFNameHint"))
                     .desired_width(120.0),
             );
             ui.add(
@@ -2598,7 +2638,7 @@ pub(super) fn draw_notifies_view(
             );
             ui.add(
                 egui::TextEdit::singleline(&mut draft.2)
-                    .hint_text("Footstep.L")
+                    .hint_text(workspace.t("desktop.anim.notifyNameHint"))
                     .desired_width(140.0),
             );
         });
@@ -3063,7 +3103,7 @@ pub(super) fn draw_anim_graph_view(
                         .unwrap_or_else(|| node.clips.first().cloned().unwrap_or_default());
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut text)
-                            .hint_text("clip.ranim")
+                            .hint_text(workspace.t("desktop.anim.clipHint"))
                             .desired_width(180.0),
                     );
                     if response.changed() {
@@ -3176,7 +3216,11 @@ pub(super) fn draw_anim_graph_view(
                             );
                             let mut x = position[0];
                             if ui
-                                .add(egui::DragValue::new(&mut x).speed(0.01).prefix("x "))
+                                .add(
+                                    egui::DragValue::new(&mut x)
+                                        .speed(0.01)
+                                        .prefix(workspace.t("desktop.anim.axisX")),
+                                )
                                 .changed()
                             {
                                 position_edits.push((node.name.clone(), index, [x, position[1]]));
@@ -3184,7 +3228,11 @@ pub(super) fn draw_anim_graph_view(
                             if two_d {
                                 let mut y = position[1];
                                 if ui
-                                    .add(egui::DragValue::new(&mut y).speed(0.01).prefix("y "))
+                                    .add(
+                                        egui::DragValue::new(&mut y)
+                                            .speed(0.01)
+                                            .prefix(workspace.t("desktop.anim.axisY")),
+                                    )
                                     .changed()
                                 {
                                     position_edits.push((
@@ -3344,13 +3392,19 @@ pub(super) fn draw_anim_graph_view(
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut draft.1)
-                                        .hint_text("clip.ranim")
+                                        .hint_text(workspace.t("desktop.anim.clipHint"))
                                         .desired_width(120.0),
                                 );
-                                ui.add(egui::DragValue::new(&mut draft.2).speed(0.01).prefix("x "));
+                                ui.add(
+                                    egui::DragValue::new(&mut draft.2)
+                                        .speed(0.01)
+                                        .prefix(workspace.t("desktop.anim.axisX")),
+                                );
                                 if two_d {
                                     ui.add(
-                                        egui::DragValue::new(&mut draft.3).speed(0.01).prefix("y "),
+                                        egui::DragValue::new(&mut draft.3)
+                                            .speed(0.01)
+                                            .prefix(workspace.t("desktop.anim.axisY")),
                                     );
                                 }
                                 if ui.small_button(workspace.t("common.add")).clicked() {
@@ -3406,9 +3460,12 @@ pub(super) fn draw_anim_graph_view(
                 }
                 if !node.parameter.is_empty() {
                     ui.label(
-                        RichText::new(format!("parameter: {}", node.parameter))
-                            .weak()
-                            .size(10.0),
+                        RichText::new(
+                            workspace
+                                .tf("desktop.anim.parameterLine", &[("name", &node.parameter)]),
+                        )
+                        .weak()
+                        .size(10.0),
                     );
                 }
                 for input in &node.inputs {
@@ -3609,14 +3666,14 @@ pub(super) fn draw_anim_graph_view(
         edit.new_node_kind = "clip_player".to_string();
     }
     let source_hint = match edit.new_node_kind.as_str() {
-        "clip_player" => "clip.ranim",
-        "state_machine" => "anim/hero.rasm",
+        "clip_player" => "desktop.anim.clipHint",
+        "state_machine" => "desktop.anim.stateMachineHint",
         _ => "desktop.anim.inputNode",
     };
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut edit.new_node.0)
-                .hint_text("node name")
+                .hint_text(workspace.t("desktop.anim.nodeName"))
                 .desired_width(96.0),
         );
         egui::ComboBox::from_id_salt("anim-graph-new-node-kind")
@@ -3746,7 +3803,7 @@ pub(super) fn draw_state_machine_view(
                 .unwrap_or_else(|| state.clip.clone());
             let clip_response = ui.add(
                 egui::TextEdit::singleline(&mut clip_text)
-                    .hint_text("clip.ranim")
+                    .hint_text(workspace.t("desktop.anim.clipHint"))
                     .desired_width(130.0),
             );
             if clip_response.changed() {
@@ -3844,12 +3901,12 @@ pub(super) fn draw_state_machine_view(
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut draft.0)
-                    .hint_text("state")
+                    .hint_text(workspace.t("desktop.anim.stateHint"))
                     .desired_width(80.0),
             );
             ui.add(
                 egui::TextEdit::singleline(&mut draft.1)
-                    .hint_text("clip.ranim")
+                    .hint_text(workspace.t("desktop.anim.clipHint"))
                     .desired_width(130.0),
             );
         });
@@ -4057,7 +4114,7 @@ pub(super) fn draw_state_machine_view(
                             .unwrap_or_else(|| condition.name.clone());
                         let name_response = ui.add(
                             egui::TextEdit::singleline(&mut name_text)
-                                .hint_text("parameter")
+                                .hint_text(workspace.t("desktop.anim.parameterHint"))
                                 .desired_width(90.0),
                         );
                         if name_response.changed() {
@@ -4124,7 +4181,7 @@ pub(super) fn draw_state_machine_view(
                             });
                         ui.add(
                             egui::TextEdit::singleline(&mut draft.name)
-                                .hint_text("parameter")
+                                .hint_text(workspace.t("desktop.anim.parameterHint"))
                                 .desired_width(110.0),
                         );
                         if draft.kind.starts_with("float") {
