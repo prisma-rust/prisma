@@ -1,7 +1,7 @@
 //! Unit tests for `App` input translation, asset path normalization, and hot reload.
 
 #[cfg(test)]
-mod tests {
+mod cases {
     use super::super::input::{
         apply_device_mouse_motion, apply_key_event, apply_window_cursor_move,
         engine_key_from_native, engine_touch_phase, should_release_pointer_lock,

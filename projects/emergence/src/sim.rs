@@ -563,8 +563,7 @@ impl SimWorld {
                 let Some((c_idx, local_l3, l2)) = self.chunk_coords_for_l3(target_l3) else {
                     return false;
                 };
-                let (use_mat, use_cell) =
-                    *self.chunk_cells[c_idx].entry(l2).or_insert((mat, cell));
+                let (use_mat, use_cell) = *self.chunk_cells[c_idx].entry(l2).or_insert((mat, cell));
                 let (u_rgba, u_vis) = self.materials.cell_visuals(use_mat, &use_cell);
                 self.chunks[c_idx].set_l3_voxel(
                     local_l3[0],
@@ -652,11 +651,7 @@ impl SimWorld {
             coords[1] as f32 * size,
             coords[2] as f32 * size,
         ];
-        let max = [
-            min[0] + size,
-            min[1] + size,
-            min[2] + size,
-        ];
+        let max = [min[0] + size, min[1] + size, min[2] + size];
         (min, max)
     }
 

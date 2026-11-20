@@ -22,6 +22,69 @@ use std::ffi::CStr;
 
 use ash::vk;
 
+/// Hardware execution tier for the unified virtual geometry pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VirtualGeometryTier {
+    /// Desktop RTX 40/50 & RDNA4 class: Mesh Shader + 64-bit SW raster + CLAS/DMM RT.
+    NextGenClasMeshSw,
+    /// Flagship mobile (Adreno 750/850+, Immortalis-G925) and modern discrete GPUs.
+    FlagshipMeshSw,
+    /// Strong TBDR mobile devices preferring tile-local VisBuffer subpass resolve.
+    TileLocalSubpass,
+    /// Baseline Vulkan 1.2 fallback using indirect indexed draws and 32-bit VisBuffer.
+    #[default]
+    IndirectIndexedFallback,
+}
+
+/// Probed device capabilities controlling virtual geometry raster and RT paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VirtualGeometryCaps {
+    pub mesh_shader: bool,
+    pub cluster_acceleration_structure: bool,
+    pub displacement_micromap: bool,
+    pub opacity_micromap: bool,
+    pub shader_tile_image: bool,
+    pub int64_atomics: bool,
+    pub subgroup_arithmetic: bool,
+    pub tier: VirtualGeometryTier,
+}
+
+/// Resolves virtual geometry capabilities from advertised device extensions and RT/subgroup caps.
+pub fn probe_virtual_geometry_caps(
+    available_extensions: &HashSet<String>,
+    rt_caps: &RayTracingCaps,
+    subgroup_arithmetic: bool,
+) -> VirtualGeometryCaps {
+    let mesh_shader = has_extension(available_extensions, "VK_EXT_mesh_shader");
+    let cluster_acceleration_structure =
+        has_extension(available_extensions, "VK_NV_cluster_acceleration_structure");
+    let displacement_micromap = has_extension(available_extensions, "VK_NV_displacement_micromap");
+    let opacity_micromap = has_extension(available_extensions, "VK_EXT_opacity_micromap");
+    let shader_tile_image = has_extension(available_extensions, "VK_EXT_shader_tile_image");
+    let int64_atomics = rt_caps.shader_buffer_int64_atomics;
+
+    let tier = if mesh_shader && int64_atomics && cluster_acceleration_structure {
+        VirtualGeometryTier::NextGenClasMeshSw
+    } else if mesh_shader && int64_atomics {
+        VirtualGeometryTier::FlagshipMeshSw
+    } else if shader_tile_image {
+        VirtualGeometryTier::TileLocalSubpass
+    } else {
+        VirtualGeometryTier::IndirectIndexedFallback
+    };
+
+    VirtualGeometryCaps {
+        mesh_shader,
+        cluster_acceleration_structure,
+        displacement_micromap,
+        opacity_micromap,
+        shader_tile_image,
+        int64_atomics,
+        subgroup_arithmetic,
+        tier,
+    }
+}
+
 /// Result of probing one physical device for ray-tracing capabilities.
 ///
 /// Every field is `false` / zero when the feature is absent, so callers can
@@ -79,6 +142,8 @@ pub struct RayTracingCaps {
     pub max_ray_dispatch_invocation_count: u32,
     pub shader_group_handle_alignment: u32,
     pub max_ray_hit_attribute_size: u32,
+    /// Probed virtual geometry hardware execution tier and optional extensions.
+    pub virtual_geometry: VirtualGeometryCaps,
 }
 
 impl RayTracingCaps {
@@ -292,14 +357,24 @@ pub unsafe fn probe(
         && has_shader_float_controls_ext
         && ray_query_features.ray_query == vk::TRUE;
 
-    // --- RT pipeline properties (SBT alignment etc.) ---
+    let mut subgroup_props = vk::PhysicalDeviceSubgroupProperties::default();
     let mut rt_props = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
-    let mut props2 = vk::PhysicalDeviceProperties2::default().push_next(&mut rt_props);
+    let mut props2 = vk::PhysicalDeviceProperties2::default();
+    if props.api_version >= vk::API_VERSION_1_1 {
+        props2 = props2.push_next(&mut subgroup_props);
+    }
     if ray_tracing_pipeline {
+        props2 = props2.push_next(&mut rt_props);
+    }
+    if props.api_version >= vk::API_VERSION_1_1 || ray_tracing_pipeline {
         unsafe { instance.get_physical_device_properties2(physical_device, &mut props2) };
     }
+    let subgroup_arithmetic = props.api_version >= vk::API_VERSION_1_1
+        && subgroup_props
+            .supported_operations
+            .contains(vk::SubgroupFeatureFlags::BALLOT | vk::SubgroupFeatureFlags::ARITHMETIC);
 
-    RayTracingCaps {
+    let mut caps = RayTracingCaps {
         vulkan_1_2,
         buffer_device_address,
         descriptor_indexing,
@@ -324,7 +399,10 @@ pub unsafe fn probe(
         max_ray_dispatch_invocation_count: rt_props.max_ray_dispatch_invocation_count,
         shader_group_handle_alignment: rt_props.shader_group_handle_alignment,
         max_ray_hit_attribute_size: rt_props.max_ray_hit_attribute_size,
-    }
+        virtual_geometry: VirtualGeometryCaps::default(),
+    };
+    caps.virtual_geometry = probe_virtual_geometry_caps(&available, &caps, subgroup_arithmetic);
+    caps
 }
 
 #[cfg(test)]

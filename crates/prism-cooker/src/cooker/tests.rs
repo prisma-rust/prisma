@@ -888,6 +888,70 @@ fn mesh_cooker_preserves_the_rmxi_v2_submesh_table() {
 }
 
 #[test]
+fn mesh_cooker_emits_rcld_when_virtual_geometry_enabled() {
+    let verts = 9u32;
+    let idxs = 24u32;
+    let mut intermediate = Vec::new();
+    intermediate.extend_from_slice(b"RMXI");
+    intermediate.push(2);
+    intermediate.extend_from_slice(&verts.to_le_bytes());
+    intermediate.extend_from_slice(&idxs.to_le_bytes());
+    intermediate.extend_from_slice(&1u32.to_le_bytes());
+
+    for z in 0..3 {
+        for x in 0..3 {
+            for v in [x as f32, 0.0f32, z as f32] {
+                intermediate.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+    for _ in 0..verts {
+        for v in [0.0f32, 1.0f32, 0.0f32] {
+            intermediate.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    for z in 0..3 {
+        for x in 0..3 {
+            for v in [x as f32 * 0.5, z as f32 * 0.5] {
+                intermediate.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+    for z in 0..2u32 {
+        for x in 0..2u32 {
+            let v0 = z * 3 + x;
+            let v1 = v0 + 1;
+            let v2 = v0 + 3;
+            let v3 = v2 + 1;
+            for i in [v0, v2, v1, v1, v2, v3] {
+                intermediate.extend_from_slice(&i.to_le_bytes());
+            }
+        }
+    }
+    intermediate.extend_from_slice(&1u32.to_le_bytes());
+    intermediate.extend_from_slice(&0u32.to_le_bytes());
+    intermediate.extend_from_slice(&idxs.to_le_bytes());
+    intermediate.extend_from_slice(&2u32.to_le_bytes());
+
+    let mut settings = profile::CookSettings::default();
+    settings.mesh.virtual_geometry = true;
+    settings.streaming = true;
+    let id = AssetId::from_raw((1u64 << 32) | 202);
+    let record =
+        crate::db::AssetRecord::new(id, "vg.gltf".into(), AssetType::Mesh, "gltf-importer");
+    let ctx = CookContext {
+        record: &record,
+        imported_data: &intermediate,
+        settings: &settings,
+    };
+    let result = MeshCooker.cook(&ctx).unwrap();
+    assert!(!result.compress);
+    let decoded = prism_asset::formats_virtual_geo::decode_rcld(&result.cooked_data)
+        .expect("RCLD output from MeshCooker must decode");
+    assert_eq!(decoded.clusters[0].material_index, 2);
+}
+
+#[test]
 fn mesh_decoder_rejects_bad_data() {
     assert!(decode_rmes(b"garbage").is_none());
     // Wrong version.

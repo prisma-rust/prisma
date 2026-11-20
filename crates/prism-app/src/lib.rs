@@ -130,7 +130,9 @@ pub use plugin::{
 };
 pub use prism_engine::ecs::World;
 pub use prism_engine::render_settings::{MobileUpscaler, RenderSettings};
-pub use prism_platform::PlatformWindow;
+pub use prism_platform::{
+    current_platform, is_android, is_desktop, is_mobile, PlatformWindow, TargetPlatform,
+};
 pub use render_shared::{FrameImage, RenderShared, RenderStats};
 
 /// 用户项目 Android 入口所需的平台句柄；具体窗口库类型由 app 层封装。

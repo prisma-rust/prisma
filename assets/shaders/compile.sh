@@ -442,6 +442,13 @@ compile_stage voxel_dda voxelGiDenoiseMain compute voxel_gi_denoise
 compile_stage voxel_dda voxelCompositeMain compute voxel_composite
 emit_reflection voxel_dda voxelDdaMain compute voxelGiMain compute voxelGiDenoiseMain compute voxelCompositeMain compute
 
+# virtual_geo: cluster-DAG cull + 32-bit atomic SW raster + analytic VisBuffer resolve + HZB build.
+compile_stage virtual_geo vgCullMain compute vg_cull
+compile_stage virtual_geo vgSwRasterMain compute vg_sw_raster
+compile_stage virtual_geo vgResolveMain compute vg_resolve
+compile_stage virtual_geo vgHzbBuildMain compute vg_hzb_build
+emit_reflection virtual_geo vgCullMain compute vgSwRasterMain compute vgResolveMain compute vgHzbBuildMain compute
+
 # Hard gate: every emitted module must be valid SPIR-V (#580). Slang can emit
 # illegal layout decorations that only show up as a Vulkan validation error at
 # startup; fail the compile instead of shipping them.

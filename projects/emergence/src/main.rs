@@ -3,9 +3,7 @@
 #![deny(warnings)]
 
 use emergence_core::log_persist::init_session_file_logger;
-use emergence_core::perf_report::{
-    cli_usage_text, install_cli_config, parse_cli_args, CliAction,
-};
+use emergence_core::perf_report::{cli_usage_text, install_cli_config, parse_cli_args, CliAction};
 
 fn main() {
     match parse_cli_args(std::env::args()) {
@@ -14,7 +12,10 @@ fn main() {
         }
         Ok(CliAction::Run(cfg)) => {
             if let Some(log_path) = init_session_file_logger() {
-                eprintln!("[emergence][log] writing session log -> {}", log_path.display());
+                eprintln!(
+                    "[emergence][log] writing session log -> {}",
+                    log_path.display()
+                );
             }
             if cfg.is_enabled() {
                 eprintln!(

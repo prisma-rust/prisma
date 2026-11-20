@@ -1221,4 +1221,197 @@ mod hot_reload_tests {
         );
         assert_eq!(world.get::<MaterialRef>(entity).unwrap().generation, 1);
     }
+
+    #[test]
+    fn rcld_virtual_geometry_mesh_resolves_and_streams_pages() {
+        use prism_asset::formats_virtual_geo::*;
+
+        let aabb_min = [-1.0, -1.0, 0.0];
+        let aabb_max = [1.0, 1.0, 0.0];
+        let verts = vec![
+            QuantizedClusterVertex {
+                pos_q: QuantizedClusterVertex::quantize_position(
+                    [-1.0, -1.0, 0.0],
+                    aabb_min,
+                    aabb_max,
+                ),
+                normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+                tangent_angle: 0,
+                bone_local_pair: 0,
+                uv_f16: [f32_to_f16(0.0), f32_to_f16(0.0)],
+                geomorph_delta_q: [0, 0, 0],
+            },
+            QuantizedClusterVertex {
+                pos_q: QuantizedClusterVertex::quantize_position(
+                    [1.0, -1.0, 0.0],
+                    aabb_min,
+                    aabb_max,
+                ),
+                normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+                tangent_angle: 0,
+                bone_local_pair: 0,
+                uv_f16: [f32_to_f16(1.0), f32_to_f16(0.0)],
+                geomorph_delta_q: [0, 0, 0],
+            },
+            QuantizedClusterVertex {
+                pos_q: QuantizedClusterVertex::quantize_position(
+                    [0.0, 1.0, 0.0],
+                    aabb_min,
+                    aabb_max,
+                ),
+                normal_oct: encode_octahedral_normal([0.0, 0.0, 1.0]),
+                tangent_angle: 0,
+                bone_local_pair: 0,
+                uv_f16: [f32_to_f16(0.5), f32_to_f16(1.0)],
+                geomorph_delta_q: [0, 0, 0],
+            },
+        ];
+        let asset = RcldAsset {
+            header: RcldHeader {
+                version: RCLD_VERSION,
+                flags: 0,
+                max_lod_level: 1,
+                page_count: 2,
+                group_count: 2,
+                cluster_count: 2,
+                root_group_index: 0,
+                bounds_min: aabb_min,
+                bounds_max: aabb_max,
+                page_table_offset: 64,
+                group_table_offset: 64 + 40,
+                payload_offset: 64 + 40 + 96,
+            },
+            pages: vec![
+                RcldPageDescriptor {
+                    page_index: 0,
+                    byte_offset: 0,
+                    byte_size: 0,
+                    first_cluster: 0,
+                    cluster_count: 1,
+                    lod_level: 1,
+                    flags: RCLD_PAGE_FLAG_RESIDENT_ROOT,
+                },
+                RcldPageDescriptor {
+                    page_index: 1,
+                    byte_offset: 0,
+                    byte_size: 0,
+                    first_cluster: 1,
+                    cluster_count: 1,
+                    lod_level: 0,
+                    flags: 0,
+                },
+            ],
+            groups: vec![
+                RcldClusterGroup {
+                    group_id: 0,
+                    lod_level: 1,
+                    primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                    child_group_count: 1,
+                    page_index: 0,
+                    child_group_first: 1,
+                    first_cluster: 0,
+                    cluster_count: 1,
+                    parent_error: 100.0,
+                    self_error: 0.25,
+                    bounding_sphere: [0.0, 0.0, 0.0, 1.5],
+                },
+                RcldClusterGroup {
+                    group_id: 1,
+                    lod_level: 0,
+                    primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                    child_group_count: 0,
+                    page_index: 1,
+                    child_group_first: 0,
+                    first_cluster: 1,
+                    cluster_count: 1,
+                    parent_error: 0.25,
+                    self_error: 0.0,
+                    bounding_sphere: [0.0, 0.0, 0.0, 1.5],
+                },
+            ],
+            clusters: vec![
+                RcldCluster {
+                    cluster_id: 0,
+                    group_id: 0,
+                    lod_level: 1,
+                    primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                    material_index: 0,
+                    aabb_min,
+                    aabb_max,
+                    normal_cone: [0.0, 0.0, 1.0, 0.2],
+                    parent_error: 100.0,
+                    self_error: 0.25,
+                    geomorph_scale: 0.0,
+                    bone_palette: [0; 8],
+                    bone_count: 0,
+                    max_skin_inflation: 0.0,
+                    vertices: verts.clone(),
+                    triangles: vec![[0, 1, 2]],
+                    dmm_displacements: Vec::new(),
+                    splat_surrogate: None,
+                },
+                RcldCluster {
+                    cluster_id: 1,
+                    group_id: 1,
+                    lod_level: 0,
+                    primitive_kind: VirtualGeoPrimitiveKind::Triangles,
+                    material_index: 1,
+                    aabb_min,
+                    aabb_max,
+                    normal_cone: [0.0, 0.0, 1.0, 0.2],
+                    parent_error: 0.25,
+                    self_error: 0.0,
+                    geomorph_scale: 0.0,
+                    bone_palette: [0; 8],
+                    bone_count: 0,
+                    max_skin_inflation: 0.0,
+                    vertices: verts,
+                    triangles: vec![[0, 1, 2]],
+                    dmm_displacements: vec![15, -30, 45],
+                    splat_surrogate: None,
+                },
+            ],
+        };
+        let rcld_bytes = encode_rcld_bytes(&asset).expect("encode RCLD");
+        let (pak, manifest) = tiny_pak(&[(
+            "models/statue.rcld",
+            prism_asset::core::AssetType::Mesh,
+            &rcld_bytes,
+        )]);
+
+        let mut resolver = GpuAssetResolver::new();
+        resolver
+            .load_resource_package_bytes(&pak, Some(&manifest))
+            .expect("load pak");
+
+        let mut world = World::new();
+        let entity = spawn_renderer(&mut world, "models/statue.rcld", "");
+        let requests = resolver.prepare_requests(&world);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, entity);
+        let mesh = requests[0]
+            .1
+            .mesh
+            .as_ref()
+            .expect("RCLD root fallback must upload MeshUploadInput");
+        assert_eq!(mesh.positions.len(), 3);
+        assert_eq!(mesh.indices, vec![0, 1, 2]);
+
+        let desc = resolver
+            .load_virtual_geo_descriptor("models/statue.rcld")
+            .expect("RCLD runtime descriptor");
+        assert_eq!(desc.pages.len(), 2);
+        assert_eq!(desc.clusters.len(), 2);
+
+        let id = resolver
+            .resource_manager
+            .id_by_path("models/statue.rcld")
+            .expect("asset id");
+        let page1 = resolver
+            .stream_virtual_geo_page(id, &desc.pages[1])
+            .expect("stream page 1 clusters");
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].material_index, 1);
+        assert_eq!(page1[0].dmm_displacements, vec![15, -30, 45]);
+    }
 }

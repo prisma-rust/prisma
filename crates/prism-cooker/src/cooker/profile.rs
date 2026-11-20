@@ -133,6 +133,7 @@ pub struct MeshSettings {
     pub vertex_compression: bool,
     pub optimize: bool,
     pub generate_tangents: bool,
+    pub virtual_geometry: bool,
 }
 
 impl Default for MeshSettings {
@@ -141,6 +142,7 @@ impl Default for MeshSettings {
             vertex_compression: false,
             optimize: true,
             generate_tangents: false,
+            virtual_geometry: false,
         }
     }
 }
@@ -238,6 +240,8 @@ pub struct MeshOverrides {
     pub optimize: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generate_tangents: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub virtual_geometry: Option<bool>,
 }
 
 /// Partial [`ShaderSettings`] override from a profile file.
@@ -285,6 +289,9 @@ impl MeshSettings {
         }
         if let Some(generate_tangents) = overrides.generate_tangents {
             self.generate_tangents = generate_tangents;
+        }
+        if let Some(virtual_geometry) = overrides.virtual_geometry {
+            self.virtual_geometry = virtual_geometry;
         }
     }
 }
@@ -617,6 +624,7 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
                 vertex_compression: Some(false),
                 optimize: Some(true),
                 generate_tangents: Some(false),
+                virtual_geometry: Some(false),
             }),
             shader: Some(ShaderOverrides {
                 target: Some("spirv".into()),
@@ -648,6 +656,7 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
                 vertex_compression: Some(false),
                 optimize: Some(true),
                 generate_tangents: Some(true),
+                virtual_geometry: None,
             }),
             streaming: Some(false),
             ..Default::default()
@@ -671,6 +680,7 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
                 vertex_compression: Some(true),
                 optimize: Some(true),
                 generate_tangents: Some(false),
+                virtual_geometry: None,
             }),
             streaming: Some(true),
             streaming_threshold_bytes: Some(1024 * 1024),
@@ -696,6 +706,7 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
                 vertex_compression: Some(true),
                 optimize: Some(true),
                 generate_tangents: Some(false),
+                virtual_geometry: None,
             }),
             streaming: Some(true),
             streaming_threshold_bytes: Some(1024 * 1024),
@@ -721,6 +732,7 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
                 vertex_compression: Some(true),
                 optimize: Some(true),
                 generate_tangents: Some(false),
+                virtual_geometry: None,
             }),
             compression: Some(CompressionOverrides {
                 algorithm: Some("zstd".into()),

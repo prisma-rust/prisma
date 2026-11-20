@@ -660,7 +660,10 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
-            env_fingerprint: Some(None),
+            // No environment was requested yet. The first explicit
+            // `set_environment` must rebuild and queue the SHARC sky
+            // invalidation, even when it asks for the empty IBL again.
+            env_fingerprint: None,
             env_source: None,
             ibl_has_pbr: false,
             scene_scope,
@@ -1180,7 +1183,7 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
-            env_fingerprint: Some(initial_env_fp),
+            env_fingerprint: initial_env_fp.map(Some),
             env_source: env_bytes,
             ibl_has_pbr: initial_has_pbr,
             scene_scope,

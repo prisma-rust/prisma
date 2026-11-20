@@ -1,25 +1,26 @@
 #version 450
 
-// Qualcomm Snapdragon Game Super Resolution 2 (SGSR 2) — Mobile Temporal Upscaler.
+// Qualcomm Snapdragon Game Super Resolution 2 (SGSR 2) — Pass 3: Upscale.
 //
-// Features:
-// - Jitter-aware Lanczos-like spatial reconstruction over 3x3 low-res neighborhood
-// - Hybrid camera reprojection + per-object velocity (supports both raster & voxel DDA)
-// - YCoCg variance clipping to suppress ghosting
-// - Depth/disocclusion-aware history weighting + Catmull-Rom 5-tap history sampling
-// - Lightweight local contrast-adaptive sharpening
+// Consumes Pass 1/2 buffers (YCoCgColor, MotionDepthAlphaBuffer) and
+// previous-frame full-res history to perform:
+// - Jitter-compensated FastLanczos spatial reconstruction
+// - 5-tap Catmull-Rom history sampling with YCoCg variance clipping
+// - Linear-depth & luma-divergence modulated temporal accumulation
+// - RCAS-style local contrast-adaptive sharpening
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(set = 0, binding = 0) uniform sampler2D u_color;
+layout(set = 0, binding = 0) uniform sampler2D u_ycocg;
 layout(set = 0, binding = 1) uniform sampler2D u_depth;
-layout(set = 0, binding = 2) uniform sampler2D u_velocity;
+layout(set = 0, binding = 2) uniform sampler2D u_motion_depth_clip;
 layout(set = 0, binding = 3) uniform sampler2D u_history;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D u_output;
 
 layout(std140, set = 0, binding = 5) uniform UpscalerParams {
     mat4 inv_view_proj;
     mat4 prev_view_proj;
+    vec4 camera_pos;
     vec2 input_size;
     vec2 output_size;
     vec2 inv_input_size;
@@ -29,14 +30,6 @@ layout(std140, set = 0, binding = 5) uniform UpscalerParams {
     uint reset;
 } params;
 
-vec3 rgb_to_ycocg(vec3 c) {
-    float co = c.r - c.b;
-    float t  = c.b + co * 0.5;
-    float cg = c.g - t;
-    float y  = t + cg * 0.5;
-    return vec3(y, co, cg);
-}
-
 vec3 ycocg_to_rgb(vec3 ycc) {
     float t = ycc.r - ycc.b * 0.5;
     float g = ycc.b + t;
@@ -45,11 +38,17 @@ vec3 ycocg_to_rgb(vec3 ycc) {
     return vec3(r, g, b);
 }
 
-float luma(vec3 c) {
-    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+// SGSR 2 polynomial Lanczos-2 approximation over normalized squared distance [0, 1].
+float fast_lanczos(float d2) {
+    float base = d2 * 0.4444444;
+    if (base >= 1.0) {
+        return 0.0;
+    }
+    float y = base - 1.0;
+    float y2 = y * y;
+    return (0.75 * y + y2) * y2;
 }
 
-// Fast 5-tap Catmull-Rom history sampling to preserve crispness across frames.
 vec3 sample_history_catmull_rom(vec2 uv) {
     vec2 sample_pos = uv * params.output_size;
     vec2 tex_pos1 = floor(sample_pos - 0.5) + 0.5;
@@ -77,18 +76,12 @@ vec3 sample_history_catmull_rom(vec2 uv) {
     return max(result / max(norm, 1e-5), vec3(0.0));
 }
 
-vec2 reproject_camera(vec2 uv, float depth) {
-    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
-    vec4 world = params.inv_view_proj * clip;
-    if (abs(world.w) < 1e-6) {
-        return vec2(-1.0);
-    }
-    world /= world.w;
-    vec4 prev = params.prev_view_proj * world;
-    if (prev.w <= 1e-5) {
-        return vec2(-1.0);
-    }
-    return prev.xy / prev.w * 0.5 + 0.5;
+vec3 rgb_to_ycocg(vec3 c) {
+    float co = c.r - c.b;
+    float t  = c.b + co * 0.5;
+    float cg = c.g - t;
+    float y  = t + cg * 0.5;
+    return vec3(y, co, cg);
 }
 
 void main() {
@@ -98,99 +91,96 @@ void main() {
     }
 
     vec2 out_uv = (vec2(gid) + 0.5) * params.inv_output_size;
-
-    // Nearest low-res texel center for depth/velocity and 3x3 neighborhood.
     vec2 in_coord = out_uv * params.input_size - 0.5;
     vec2 base_coord = floor(in_coord + 0.5);
-    vec2 base_uv = (base_coord + 0.5) * params.inv_input_size;
+    ivec2 in_size = ivec2(params.input_size);
 
-    // Sample 3x3 low-res neighborhood: Lanczos-like current reconstruction + YCoCg stats.
+    vec2 center_offset = (out_uv - params.jitter_uv) * params.input_size - 0.5 - base_coord;
+
     vec3 curr_sum = vec3(0.0);
     float curr_wsum = 0.0;
     vec3 m1 = vec3(0.0);
     vec3 m2 = vec3(0.0);
-    float min_luma = 1e9;
-    float max_luma = -1e9;
-    float min_depth = 1.0;
-    float max_depth = 0.0;
-
-    // Jitter-compensated subpixel distance in low-res pixel space.
-    vec2 center_offset = (out_uv - params.jitter_uv) * params.input_size - 0.5 - base_coord;
+    vec3 min_ycc = vec3(1e9);
+    vec3 max_ycc = vec3(-1e9);
+    vec3 min_rgb = vec3(1e9);
+    vec3 max_rgb = vec3(-1e9);
 
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
-            vec2 sample_uv = clamp(base_uv + vec2(x, y) * params.inv_input_size, vec2(0.0), vec2(1.0));
-            vec3 c = max(textureLod(u_color, sample_uv, 0.0).rgb, vec3(0.0));
-            float d = textureLod(u_depth, sample_uv, 0.0).r;
-            min_depth = min(min_depth, d);
-            max_depth = max(max_depth, d);
+            ivec2 p = clamp(ivec2(base_coord) + ivec2(x, y), ivec2(0), in_size - 1);
+            vec3 ycc = texelFetch(u_ycocg, p, 0).rgb;
+            vec3 rgb = max(ycocg_to_rgb(ycc), vec3(0.0));
 
-            vec3 ycc = rgb_to_ycocg(c);
+            min_ycc = min(min_ycc, ycc);
+            max_ycc = max(max_ycc, ycc);
+            min_rgb = min(min_rgb, rgb);
+            max_rgb = max(max_rgb, rgb);
+
             m1 += ycc;
             m2 += ycc * ycc;
 
-            float l = luma(c);
-            min_luma = min(min_luma, l);
-            max_luma = max(max_luma, l);
-
-            // SGSR2 fast Lanczos-bell weight: (1 - d^2 / 2.25)^2
             vec2 delta = vec2(x, y) - center_offset;
-            float d2 = dot(delta, delta);
-            float w = max(0.0, 1.0 - d2 * 0.4444444);
-            w = w * w;
-            curr_sum += c * w;
+            float w = fast_lanczos(dot(delta, delta));
+            curr_sum += ycc * w;
             curr_wsum += w;
         }
     }
 
-    vec3 current = curr_sum / max(curr_wsum, 1e-5);
+    vec3 current_ycc = (curr_wsum > 1e-4)
+        ? clamp(curr_sum / curr_wsum, min_ycc, max_ycc)
+        : texelFetch(u_ycocg, clamp(ivec2(base_coord), ivec2(0), in_size - 1), 0).rgb;
+    vec3 current_rgb = max(ycocg_to_rgb(current_ycc), vec3(0.0));
 
-    if (params.reset != 0u) {
-        imageStore(u_output, gid, vec4(current, 1.0));
+    ivec2 center_pos = clamp(ivec2(base_coord), ivec2(0), in_size - 1);
+    vec4 mdc = texelFetch(u_motion_depth_clip, center_pos, 0);
+    vec2 motion_uv = mdc.xy;
+    float depth_clip = mdc.z;
+    float lock_factor = mdc.w;
+
+    vec2 prev_uv = out_uv - motion_uv;
+
+    if (params.reset != 0u
+        || lock_factor < -0.5
+        || any(lessThan(prev_uv, vec2(0.0)))
+        || any(greaterThan(prev_uv, vec2(1.0)))) {
+        imageStore(u_output, gid, vec4(current_rgb, 1.0));
         return;
     }
 
-    // Motion vector: prefer per-object velocity when present, else camera reprojection.
-    float center_depth = textureLod(u_depth, base_uv, 0.0).r;
-    vec2 obj_vel = textureLod(u_velocity, base_uv, 0.0).rg;
-    vec2 prev_uv = (dot(obj_vel, obj_vel) > 1e-12)
-        ? (out_uv - obj_vel)
-        : reproject_camera(out_uv, center_depth);
+    vec3 history_rgb = sample_history_catmull_rom(prev_uv);
+    vec3 hist_ycc = rgb_to_ycocg(history_rgb);
 
-    if (any(lessThan(prev_uv, vec2(0.0))) || any(greaterThan(prev_uv, vec2(1.0)))) {
-        imageStore(u_output, gid, vec4(current, 1.0));
-        return;
-    }
-
-    vec3 history = sample_history_catmull_rom(prev_uv);
-
-    // YCoCg variance clipping.
+    // YCoCg variance clipping modulated by linear-depth clip, luma divergence, and Activate lock.
     vec3 mean = m1 / 9.0;
     vec3 stddev = sqrt(max(m2 / 9.0 - mean * mean, vec3(0.0)));
-    float depth_discontinuity = clamp((max_depth - min_depth) * 40.0, 0.0, 1.0);
-    float gamma = mix(1.25, 0.75, depth_discontinuity);
+    float luma_diff = abs(hist_ycc.x - current_ycc.x) / max(max(hist_ycc.x, current_ycc.x), 0.05);
+    float disocclusion = max(depth_clip, clamp(luma_diff * 1.5, 0.0, 1.0));
+    float locked_gamma = mix(1.35, 1.75, clamp(lock_factor, 0.0, 1.0));
+    float gamma = mix(locked_gamma, 0.80, disocclusion);
 
-    vec3 hist_ycc = rgb_to_ycocg(history);
     vec3 clipped_ycc = clamp(hist_ycc, mean - gamma * stddev, mean + gamma * stddev);
-    vec3 clipped_history = max(ycocg_to_rgb(clipped_ycc), vec3(0.0));
 
-    // Velocity & disocclusion-modulated temporal blend weight.
-    vec2 motion_px = (out_uv - prev_uv) * params.output_size;
-    float speed = length(motion_px);
-    float vel_weight = clamp(1.0 - speed * 0.02, 0.65, 1.0);
-    float alpha = 0.88 * vel_weight * mix(1.0, 0.55, depth_discontinuity);
+    float speed = length(motion_uv * params.output_size);
+    float vel_weight = clamp(1.0 - speed * 0.015, 0.70, 1.0);
+    float base_alpha = mix(0.88, 0.93, clamp(lock_factor, 0.0, 1.0));
+    float alpha = base_alpha * vel_weight * mix(1.0, 0.55, disocclusion);
 
-    vec3 resolved = mix(current, clipped_history, alpha);
+    vec3 resolved_ycc = mix(current_ycc, clipped_ycc, alpha);
+    vec3 resolved = max(ycocg_to_rgb(resolved_ycc), vec3(0.0));
 
-    // Optional SGSR2 lightweight local contrast sharpening.
+    // RCAS-style local contrast-adaptive sharpening.
     if (params.sharpness > 0.001) {
-        float rl = luma(resolved);
-        float contrast = max_luma - min_luma;
-        float sharpen_amt = params.sharpness * 0.35 * clamp(1.0 - contrast * 2.0, 0.15, 1.0);
-        float target_l = clamp(rl + (rl - luma(current)) * sharpen_amt, min_luma, max_luma);
-        float scale = (rl > 1e-5) ? (target_l / rl) : 1.0;
-        resolved = max(resolved * scale, vec3(0.0));
+        vec3 mn = min_rgb;
+        vec3 mx = max_rgb;
+        vec3 hit_min = mn / max(4.0 * mx, vec3(1e-5));
+        vec3 hit_max = (1.0 - mx) / max(4.0 * mn - 4.0, vec3(-1e-5));
+        vec3 lobe = max(-hit_min, hit_max);
+        float max_lobe = clamp(max(lobe.r, max(lobe.g, lobe.b)), -0.1875, 0.0);
+        float rcas_w = max_lobe * params.sharpness;
+        vec3 sharpened = (resolved + rcas_w * (mn + mx - 2.0 * current_rgb)) / max(1.0 + 2.0 * rcas_w, 1e-5);
+        resolved = clamp(sharpened, mn, mx);
     }
 
-    imageStore(u_output, gid, vec4(resolved, 1.0));
+    imageStore(u_output, gid, vec4(max(resolved, vec3(0.0)), 1.0));
 }

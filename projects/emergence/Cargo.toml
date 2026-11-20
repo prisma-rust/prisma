@@ -49,6 +49,8 @@ serde_json = "1"
 [dev-dependencies]
 prism-ecs = { path = "../../crates/prism-ecs" }
 prism-game-api = { path = "../../crates/prism-game-api", features = ["host"] }
+prism-render = { path = "../../crates/prism-render" }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.dist]
 inherits = "release"

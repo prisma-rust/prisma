@@ -7,8 +7,10 @@
 //!
 //! Every module here is a built-in engine pass: descriptor bindings and
 //! push-constant layouts come from the generated `shader_bindings`, so bytecode
-//! and Rust pipeline code have to ship together. `prism-asset` can decode a
-//! `ShaderAsset`, but no runtime path consumes one yet.
+//! and Rust pipeline code have to ship together. Project shaders are data:
+//! `prism-asset` decodes a `ShaderAsset`, `GpuAssetResolver` resolves the
+//! component's `shader_path`, and `GraphRenderer::register_custom_shader`
+//! registers the bytecode at runtime.
 
 use anyhow::Context as _;
 use ash::vk;

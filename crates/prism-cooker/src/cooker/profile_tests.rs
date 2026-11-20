@@ -407,7 +407,32 @@ fn explicit_false_flag_is_applied() {
     assert!(!settings.mesh.optimize);
     assert!(!settings.mesh.generate_tangents);
     assert!(!settings.mesh.vertex_compression);
+    assert!(!settings.mesh.virtual_geometry);
     assert_eq!(settings.texture.quality, 90, "untouched sections inherit");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn virtual_geometry_mesh_override_inherits_and_overrides() {
+    let unique = format!("vg_override_test_{}", std::process::id());
+    let dir = std::env::temp_dir().join(&unique);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    std::fs::write(
+        dir.join("nanite.json"),
+        serde_json::json!({
+            "base": "desktop",
+            "mesh": { "virtual_geometry": true }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let mut mgr = ProfileManager::new(&dir);
+    let settings = mgr.resolve("nanite").unwrap();
+    assert!(settings.mesh.virtual_geometry);
+    assert!(settings.mesh.generate_tangents);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

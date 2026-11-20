@@ -319,6 +319,17 @@ pub struct RenderSettings {
     pub mobile_upscaler: MobileUpscaler,
     /// Sharpening strength for `mobile_upscaler`, clamped to `0.0..=1.0`.
     pub upscaler_sharpness: f32,
+
+    /// Enables multi-platform virtual geometry Cluster-DAG rendering when assets provide `RCLD`.
+    pub virtual_geometry_enabled: bool,
+    /// Screen-space geometric error budget in output pixels (lower = finer LOD cut).
+    pub vg_error_threshold_px: f32,
+    /// Virtual geometry 64 KiB streaming page pool budget in MiB (`0` = automatic tier default).
+    pub vg_page_pool_mb: u32,
+
+    /// When `mobile_upscaler == MobileUpscaler::Sgsr2`, run the 3-pass pipeline
+    /// (`Convert -> Activate -> Upscale`, default `true`) vs 2-pass (`Convert -> Upscale`).
+    pub sgsr2_three_pass: bool,
 }
 
 impl Default for RenderSettings {
@@ -372,6 +383,10 @@ impl Default for RenderSettings {
             anf_fg: false,
             mobile_upscaler: MobileUpscaler::Off,
             upscaler_sharpness: 0.5,
+            virtual_geometry_enabled: false,
+            vg_error_threshold_px: 1.0,
+            vg_page_pool_mb: 0,
+            sgsr2_three_pass: true,
         }
     }
 }

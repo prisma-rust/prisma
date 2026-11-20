@@ -90,6 +90,7 @@ docs/
   ├── src-gi-design.md                    # [L2 渲染进阶] SRC GI（面元辐射级联）移动端动态 GI 备选设计蓝图
   ├── voxel-software-gi-design.md         # [L2 渲染进阶] 立方体素专用软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联）
   ├── voxel-rtx-gi-design.md              # [L2 渲染进阶] 立方体素专用硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI）
+  ├── virtual-geometry-design.md          # [L2 渲染进阶] 多平台虚拟几何体（Beyond-Nanite Cluster-DAG / 软硬混合光栅 / 光追同源）
   │
   ├── ai-workflow.md                      # [L3 协作流程] AI 协同工作流与五条硬规则（精简速查）
   ├── ai-workflow-details.md              # [L3 协作流程] 多 Agent 协作与测试 Harness 详解
@@ -134,6 +135,7 @@ docs/
 | | [`src-gi-design.md`](src-gi-design.md) | SRC GI（Surfel 软件光追 + 3D 辐射级联）移动端 UGC 备选蓝图 | `prism-render`（规划） |
 | | [`voxel-software-gi-design.md`](voxel-software-gi-design.md) | 立方体素软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联） | `prism-render`（规划） |
 | | [`voxel-rtx-gi-design.md`](voxel-rtx-gi-design.md) | 立方体素硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI / DLSS-RR） | `prism-render`（规划） |
+| | [`virtual-geometry-design.md`](virtual-geometry-design.md) | 多平台虚拟几何体（Cluster-DAG / 软硬混合光栅 / CLAS 光追同源 / DMM / SGGX） | `prism-asset`, `prism-cooker`, `prism-render` |
 | | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang 编译、绑定代码生成、Bindless 纹理表 | `assets/shaders/`, `xtask` |
 | **协作规范** | [`ai-workflow.md`](ai-workflow.md) | 五条硬规则、原子提交、自检门禁、速查命令 | 全仓库 |
 | | [`ai-workflow-details.md`](ai-workflow-details.md) | 多 Agent 协作、文档分层、测试 Harness 详解 | 全仓库 |

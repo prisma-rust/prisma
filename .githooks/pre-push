@@ -1,4 +1,58 @@
-#!/bin/sh
-# Pre-push hook: run fast pre-PR check before pushing.
-set -eu
-exec python3 scripts/pr_ready.py --quick
+#!/usr/bin/env bash
+# Prisma pre-push gate. Mirrors the contract in AGENTS.md §1.
+#
+# Install once per clone (also enables .githooks/commit-msg):
+#   git config core.hooksPath .githooks
+#
+# Escape hatch (humans only, prints a warning):
+#   PRISMA_SKIP_VERIFY=1 git push
+#
+# Debug without running the suite:
+#   PRISMA_HOOK_DRY_RUN=1 git push
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [ "${PRISMA_SKIP_VERIFY:-0}" = "1" ]; then
+  echo "prisma: PRISMA_SKIP_VERIFY=1 — pre-push verification skipped by request." >&2
+  exit 0
+fi
+
+base="origin/master"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [ "$branch" = "dev" ] && git rev-parse --verify -q origin/dev >/dev/null; then
+  base="origin/dev"
+elif [ "$branch" != "dev" ] && [ "$branch" != "master" ] \
+  && git rev-parse --verify -q "origin/$branch" >/dev/null; then
+  base="origin/$branch"
+fi
+
+python_bin=""
+for candidate in python3 python py; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    python_bin="$candidate"
+    break
+  fi
+done
+if [ -z "$python_bin" ]; then
+  echo "prisma: no python interpreter found; cannot run the pre-push gate." >&2
+  exit 1
+fi
+
+args=(scripts/pr_ready.py --base "$base")
+arch="$(uname -m 2>/dev/null || true)"
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ] \
+  || [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; then
+  args+=(--quick)
+  echo "prisma: Termux / aarch64 host — running static checks only." >&2
+fi
+
+if [ "${PRISMA_HOOK_DRY_RUN:-0}" = "1" ]; then
+  echo "prisma: dry run — would execute: $python_bin ${args[*]}" >&2
+  exit 0
+fi
+
+echo "prisma: running ${python_bin} ${args[*]}" >&2
+exec "$python_bin" "${args[@]}"

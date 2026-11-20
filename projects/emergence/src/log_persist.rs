@@ -117,7 +117,10 @@ pub fn init_session_file_logger() -> Option<PathBuf> {
     let logger = match FileTeeLogger::open(&path, file_level, stderr_level) {
         Ok(logger) => logger,
         Err(err) => {
-            eprintln!("[emergence][log] failed to open log file {}: {err}", path.display());
+            eprintln!(
+                "[emergence][log] failed to open log file {}: {err}",
+                path.display()
+            );
             return None;
         }
     };
@@ -145,9 +148,18 @@ mod tests {
             format_log_filename("20261117-231800", 42),
             "emergence_log_20261117-231800_pid42.log"
         );
-        assert_eq!(resolve_levels(None), (LevelFilter::Info, LevelFilter::Error));
-        assert_eq!(resolve_levels(Some("debug")), (LevelFilter::Debug, LevelFilter::Debug));
-        assert_eq!(resolve_levels(Some("warn")), (LevelFilter::Info, LevelFilter::Warn));
+        assert_eq!(
+            resolve_levels(None),
+            (LevelFilter::Info, LevelFilter::Error)
+        );
+        assert_eq!(
+            resolve_levels(Some("debug")),
+            (LevelFilter::Debug, LevelFilter::Debug)
+        );
+        assert_eq!(
+            resolve_levels(Some("warn")),
+            (LevelFilter::Info, LevelFilter::Warn)
+        );
         assert!(default_log_cache_dir().ends_with(Path::new(".cache").join("logs")));
     }
 

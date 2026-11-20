@@ -15,9 +15,7 @@
 //! - 大资源流式读取（阶段 3，特性 `streaming`）。
 
 use crate::core::{AnyHandle, AssetId, AssetType, Handle};
-#[cfg(feature = "streaming")]
-use crate::package::PackageError;
-use crate::package::PackageReader;
+use crate::package::{PackageError, PackageReader};
 #[cfg(feature = "streaming")]
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -45,6 +43,7 @@ pub mod typed;
 pub use typed::{
     Anim2DAsset, AnimClipAsset, AnimGraphAsset, AtlasAsset, MaterialAsset, MeshAsset, SceneAsset,
     ShaderAsset, SkeletonAsset, SkinnedMeshAsset, StateMachineAsset, TextureAsset, TilemapAsset,
+    VirtualGeoAsset,
 };
 
 pub use crate::formats::{
@@ -777,6 +776,46 @@ impl ResourceManager {
         for package in &self.packages {
             if let Some(data) = package.reader.read_asset_data(id)? {
                 return Ok(data);
+            }
+        }
+        Err(RuntimeError::NotFound(id))
+    }
+
+    /// Read a byte sub-range `[sub_offset .. sub_offset + length]` from an asset.
+    ///
+    /// For uncompressed or `FLAG_STREAMED` `.pak` entries (such as 64 KiB `RCLD`
+    /// geometry pages), this fetches only the requested span without loading the
+    /// full asset into `ResourceManager`.
+    pub fn read_asset_range(
+        &self,
+        id: AssetId,
+        sub_offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        if let Some(slot_index) = self.slot_index(id) {
+            let slot = &self.slots[slot_index as usize];
+            if let Some(data) = slot.data.as_ref() {
+                let sub_end = sub_offset.checked_add(length as u64).ok_or_else(|| {
+                    RuntimeError::Package(PackageError::Truncated(
+                        "asset sub-range overflows u64".into(),
+                    ))
+                })?;
+                if sub_end > data.len() as u64 {
+                    return Err(RuntimeError::Package(PackageError::Truncated(format!(
+                        "asset sub-range {sub_end} exceeds cached asset size {}",
+                        data.len()
+                    ))));
+                }
+                slot.last_access.set(Instant::now());
+                let start_idx = sub_offset as usize;
+                let end_idx = sub_end as usize;
+                return Ok(data[start_idx..end_idx].to_vec());
+            }
+        }
+
+        for package in &self.packages {
+            if let Some(bytes) = package.reader.read_asset_range(id, sub_offset, length)? {
+                return Ok(bytes);
             }
         }
         Err(RuntimeError::NotFound(id))

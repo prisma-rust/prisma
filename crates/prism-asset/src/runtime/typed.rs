@@ -495,3 +495,40 @@ impl Asset for TilemapAsset {
         self.raw
     }
 }
+
+/// Decoded virtual geometry (`RCLD`) cluster-DAG asset.
+#[derive(Debug, Clone)]
+pub struct VirtualGeoAsset {
+    pub info: crate::formats_virtual_geo::RcldAsset,
+    raw: Vec<u8>,
+}
+
+impl VirtualGeoAsset {
+    /// Raw `RCLD` wire bytes.
+    pub fn raw_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+}
+
+impl Asset for VirtualGeoAsset {
+    fn asset_type() -> AssetType {
+        AssetType::Mesh
+    }
+
+    fn from_bytes(data: &[u8]) -> Result<Self, RuntimeError> {
+        let info = crate::formats_virtual_geo::decode_rcld(data).ok_or_else(|| {
+            RuntimeError::DeserializeFailed {
+                asset_type: AssetType::Mesh,
+                reason: "invalid RCLD virtual geometry data (bad magic / truncated)".into(),
+            }
+        })?;
+        Ok(Self {
+            info,
+            raw: data.to_vec(),
+        })
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.raw
+    }
+}

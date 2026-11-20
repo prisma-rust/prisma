@@ -68,6 +68,10 @@ pub const RT_RENDER_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt
 pub const RT_RENDER_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/rt_render.vert.spv");
 pub const SCENE_FRAG_FRAG_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/scene_frag.frag.spv");
+pub const SGSR2_ACTIVATE_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/sgsr2_activate.comp.spv");
+pub const SGSR2_CONVERT_COMP_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/sgsr2_convert.comp.spv");
 pub const SGSR2_UPSCALE_COMP_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/sgsr2_upscale.comp.spv");
 pub const SHADOW_DEPTH_FRAG_SPV: &[u8] =
