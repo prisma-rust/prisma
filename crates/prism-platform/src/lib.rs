@@ -20,6 +20,7 @@
 
 mod config;
 mod event;
+mod platform;
 pub mod thread;
 mod window;
 
@@ -38,6 +39,7 @@ pub use config::WindowConfig;
 pub use event::{
     scroll_lines_from_pixels, Key, Modifiers, PlatformEvent, TouchPhase, PIXELS_PER_SCROLL_LINE,
 };
+pub use platform::{current_platform, is_android, is_desktop, is_mobile, TargetPlatform};
 #[cfg(windows)]
 pub use window::raw_win32_window_handles;
 pub use window::{

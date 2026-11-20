@@ -33,6 +33,40 @@ pub use prism_project_api::keys;
 pub use prism_project_api::{EntityHandle, InputSnapshot};
 /// Background job pool shared by both static Player and preview-module builds.
 pub mod jobs;
+
+/// Returns `true` when compiled for Android mobile targets.
+pub const fn is_android() -> bool {
+    cfg!(target_os = "android")
+}
+
+/// Returns `true` when compiled for mobile targets (currently Android).
+pub const fn is_mobile() -> bool {
+    cfg!(target_os = "android")
+}
+
+/// Returns `true` when compiled for desktop OS targets (Windows, macOS, Linux).
+pub const fn is_desktop() -> bool {
+    cfg!(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux"
+    ))
+}
+
+/// Canonical lowercase target OS identifier (`"android"`, `"windows"`, `"macos"`, `"linux"`, or `"other"`).
+pub const fn target_os_name() -> &'static str {
+    if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    }
+}
 /// Shared 2D geometry used by both static Player and preview-module builds.
 pub mod physics2d {
     pub use prism_physics2d::*;

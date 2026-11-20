@@ -64,10 +64,8 @@ fn parse_upscaler_mode_id(raw: &str) -> Option<u8> {
         "asr" | "arm_asr" | "arm-asr" | "armasr" => Some(2),
         "nearest" | "point" => Some(3),
         "linear" | "bilinear" => Some(4),
-        #[cfg(not(target_os = "android"))]
-        "dlss" => Some(5),
-        #[cfg(not(target_os = "android"))]
-        "fsr" => Some(6),
+        "dlss" if prism_game_api::is_desktop() => Some(5),
+        "fsr" if prism_game_api::is_desktop() => Some(6),
         _ => None,
     }
 }

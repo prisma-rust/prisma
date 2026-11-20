@@ -15,61 +15,61 @@ struct ModeOption {
     label: &'static str,
 }
 
-#[cfg(not(target_os = "android"))]
-const MODE_OPTIONS: &[ModeOption] = &[
-    ModeOption {
-        id: 0,
-        label: "Off",
-    },
-    ModeOption {
-        id: 3,
-        label: "Nearest",
-    },
-    ModeOption {
-        id: 4,
-        label: "Linear",
-    },
-    ModeOption {
-        id: 1,
-        label: "SGSR 2",
-    },
-    ModeOption {
-        id: 2,
-        label: "Arm ASR",
-    },
-    ModeOption {
-        id: 5,
-        label: "DLSS*",
-    },
-    ModeOption {
-        id: 6,
-        label: "FSR*",
-    },
-];
-
-#[cfg(target_os = "android")]
-const MODE_OPTIONS: &[ModeOption] = &[
-    ModeOption {
-        id: 0,
-        label: "Off",
-    },
-    ModeOption {
-        id: 3,
-        label: "Nearest",
-    },
-    ModeOption {
-        id: 4,
-        label: "Linear",
-    },
-    ModeOption {
-        id: 1,
-        label: "SGSR 2",
-    },
-    ModeOption {
-        id: 2,
-        label: "Arm ASR",
-    },
-];
+const MODE_OPTIONS: &[ModeOption] = if prism_game_api::is_desktop() {
+    &[
+        ModeOption {
+            id: 0,
+            label: "Off",
+        },
+        ModeOption {
+            id: 3,
+            label: "Nearest",
+        },
+        ModeOption {
+            id: 4,
+            label: "Linear",
+        },
+        ModeOption {
+            id: 1,
+            label: "SGSR 2",
+        },
+        ModeOption {
+            id: 2,
+            label: "Arm ASR",
+        },
+        ModeOption {
+            id: 5,
+            label: "DLSS*",
+        },
+        ModeOption {
+            id: 6,
+            label: "FSR*",
+        },
+    ]
+} else {
+    &[
+        ModeOption {
+            id: 0,
+            label: "Off",
+        },
+        ModeOption {
+            id: 3,
+            label: "Nearest",
+        },
+        ModeOption {
+            id: 4,
+            label: "Linear",
+        },
+        ModeOption {
+            id: 1,
+            label: "SGSR 2",
+        },
+        ModeOption {
+            id: 2,
+            label: "Arm ASR",
+        },
+    ]
+};
 
 const SCALE_PRESETS: &[f32] = &[0.50, 0.67, 0.75, 0.85, 1.00];
 const SHARP_PRESETS: &[f32] = &[0.00, 0.25, 0.50, 0.75, 1.00];
@@ -543,10 +543,11 @@ impl RenderSettingsUi {
             TextAlign::Left,
         );
 
-        #[cfg(not(target_os = "android"))]
-        let hint_text = "Up/Down/Left/Right or Click | *DLSS/FSR are PC placeholders (= Off)";
-        #[cfg(target_os = "android")]
-        let hint_text = "Up/Down/Left/Right or Click | /upscaler <mode> [scale] [sharp]";
+        let hint_text = if prism_game_api::is_desktop() {
+            "Up/Down/Left/Right or Click | *DLSS/FSR are PC placeholders (= Off)"
+        } else {
+            "Up/Down/Left/Right or Click | /upscaler <mode> [scale] [sharp]"
+        };
 
         set_text(
             world,
