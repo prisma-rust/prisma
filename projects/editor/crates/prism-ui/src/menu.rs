@@ -584,9 +584,14 @@ fn dropdown(
         .radius(theme.menu_dropdown_radius);
 
     panel = if nested {
-        // The panel's corner sits on the row's corner. Its own inset pads the
-        // items, so the frame and the content align independently.
-        panel.anchored_beside(trigger, Vec2::ZERO, PopupAlign::Start)
+        // The pointer lands on the first item, not on the frame, so the item is
+        // lifted onto the row's top edge; the frame then starts one inset above
+        // the row. The inset itself is unchanged.
+        panel.anchored_beside(
+            trigger,
+            Vec2::new(0.0, -theme.menu_dropdown_padding.top),
+            PopupAlign::Start,
+        )
     } else {
         panel.anchored(
             trigger,

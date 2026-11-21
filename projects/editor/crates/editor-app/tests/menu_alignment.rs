@@ -84,15 +84,27 @@ fn assert_shared_inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKe
     );
 }
 
-/// A nested panel's frame corner sits on the corner of the row that opened it.
-/// Its items are then padded by the same inset a top-level panel uses, so the
-/// frame aligns and the content is inset — two facts, not one compromise.
-fn assert_frame_on_row(state: &EditorUiState, scope: &str, row: NodeKey, first_item_command: &str) {
+/// The first item of a nested panel sits on the row that opened it, which is
+/// what the pointer actually lands on. The frame starts one inset above the row
+/// so the shared inset stays intact.
+fn assert_first_item_on_row(
+    state: &EditorUiState,
+    scope: &str,
+    row: NodeKey,
+    first_item_command: &str,
+) {
+    let pad = state.theme.menu_dropdown_padding;
     let row_rect = rect(state, row);
     let panel = rect(state, panel_key(scope));
+    let first = rect(state, MenuNodeKey::item_key(scope, first_item_command));
     assert!(
-        (panel.y - row_rect.y).abs() < 0.5,
-        "the frame's top must sit on the row's top: panel={panel:?} row={row_rect:?}"
+        (first.y - row_rect.y).abs() < 0.5,
+        "the first item must sit on the row's top: first={first:?} row={row_rect:?}"
+    );
+    assert!(
+        (panel.y - (row_rect.y - pad.top)).abs() < 0.5,
+        "the frame starts one inset above the row: panel={panel:?} row={row_rect:?} inset={:?}",
+        pad.top
     );
     assert!(
         (panel.x - (row_rect.x + row_rect.w)).abs() < 0.5,
@@ -115,7 +127,7 @@ fn a_nested_panel_puts_its_first_item_level_with_the_row_that_opened_it() {
 
     // Level 2: the "New" row inside the File panel.
     hover(&mut state, row_key("file", "New"));
-    assert_frame_on_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
+    assert_first_item_on_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
 }
 
 #[test]
@@ -126,7 +138,7 @@ fn a_third_level_panel_aligns_the_same_way() {
 
     hover(&mut state, row_key("file", "New"));
     hover(&mut state, row_key("file/New", "From Template"));
-    assert_frame_on_row(
+    assert_first_item_on_row(
         &state,
         "file/New/From Template",
         row_key("file/New", "From Template"),
