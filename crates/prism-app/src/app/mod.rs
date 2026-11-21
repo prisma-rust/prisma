@@ -130,10 +130,10 @@ impl Subsystem {
             Subsystem::Render => 1 << 0,
             Subsystem::Audio => 1 << 1,
             Subsystem::Physics => 1 << 2,
-            Subsystem::Scene => 1 << 4,
-            Subsystem::Asset => 1 << 5,
-            Subsystem::UI => 1 << 7,
-            Subsystem::Animation => 1 << 8,
+            Subsystem::Scene => 1 << 3,
+            Subsystem::Asset => 1 << 4,
+            Subsystem::UI => 1 << 5,
+            Subsystem::Animation => 1 << 6,
         }
     }
 }
@@ -770,6 +770,10 @@ impl App {
     /// 由宿主按自己的节奏调用 [`Self::host_tick`] 并取走
     /// [`Self::take_hosted_frame`] 返回的像素。
     pub fn start_hosted(&mut self, width: u32, height: u32) {
+        // Every entry point that starts delivering frames must drain the pending
+        // plugin list first, or a host driving the app itself (`start_hosted` +
+        // `host_tick`) silently loses every plugin it registered.
+        self.build_plugins();
         let width = width.max(1);
         let height = height.max(1);
         self.host_extent = Some((width, height));
@@ -1129,7 +1133,7 @@ impl App {
 
     /// Run the application headlessly for `frames` ticks without creating a window.
     pub fn run_headless(&mut self, frames: u32, width: u32, height: u32) -> anyhow::Result<()> {
-        self.build_plugins();
+        // `start_hosted` drains pending plugins itself.
         self.start_hosted(width, height);
         for index in 0..frames.max(1) {
             self.host_tick(true);
