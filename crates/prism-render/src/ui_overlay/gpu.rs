@@ -726,7 +726,7 @@ impl UiOverlay {
             .image_view(atlas_view)
             .sampler(atlas_sampler);
         let backdrop_info = vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_layout(vk::ImageLayout::GENERAL)
             .image_view(backdrop_view)
             .sampler(backdrop_sampler);
         for set in &allocated {
@@ -1245,11 +1245,8 @@ impl UiOverlay {
             if let (Some(sigma), Some(capture_fn)) =
                 (seg.capture_before_sigma, on_backdrop.as_deref_mut())
             {
-                match capture_fn(cmd, sigma) {
-                    Ok(view) => self.set_backdrop(view, frame_index),
-                    Err(err) => {
-                        log::warn!("ui backdrop: filter pass failed, drawing flat surfaces: {err}");
-                    }
+                if let Err(err) = capture_fn(cmd, sigma) {
+                    log::warn!("ui backdrop: filter pass failed, drawing flat surfaces: {err}");
                 }
             }
 

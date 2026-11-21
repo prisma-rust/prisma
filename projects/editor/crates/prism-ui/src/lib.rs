@@ -1,8 +1,10 @@
 //! Composable, retained-mode UI kernel and modern declarative API for Prisma.
 
 pub mod behavior;
+pub mod dock;
 pub mod draw;
 pub mod elements;
+pub mod icons;
 mod layout;
 pub mod material;
 pub mod menu;
@@ -11,14 +13,22 @@ pub mod theme;
 pub mod tree;
 #[cfg(feature = "ui-tween")]
 pub mod tween;
+pub mod window;
 
 pub mod prelude {
     pub use crate::behavior::{DragPayload, DraggableValue, UiAction};
+    pub use crate::dock::{
+        DockArea, DockAreaId, DockNode, DockNodeKey, DockPosition, SplitAxis, SplitId, SplitView,
+        WindowLayout,
+    };
     pub use crate::draw::{TextAlign, UiDrawCommand, UiDrawList, UiTextureId};
     pub use crate::elements::{
         button, canvas, col, divider, label, muted_label, numeric_field, row, spacer, text_field,
         toggle_button, tree_view, vec3_field, viewport, virtual_list, ElementBox, UiContext,
         UiElement, UiPalette,
+    };
+    pub use crate::icons::{
+        hairline, icon_label, macos_traffic_lights, tab_close_icon, traffic_light_dot, IconKind,
     };
     pub use crate::material::{
         ImageMode, Material, MaterialValue, ShaderRef, Surface, MAX_BACKDROP_SIGMA,
@@ -32,6 +42,9 @@ pub mod prelude {
     pub use crate::tree::{Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree};
     #[cfg(feature = "ui-tween")]
     pub use crate::tween::{Ease, TweenProperty, TweenStore};
+    pub use crate::window::{
+        ContainerId, ContainerWindow, EditorWindowMeta, ResizeEdge, ShowMode, WindowId,
+    };
 }
 
 #[cfg(test)]

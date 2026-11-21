@@ -151,6 +151,22 @@ impl UiBackdropPass {
         self.pyramid.full_view
     }
 
+    /// Ensure every mip level is in `SHADER_READ_ONLY_OPTIMAL` before any
+    /// earlier UI render pass binds the pyramid descriptor.
+    pub fn ensure_readable_layout(&mut self, context: &VulkanContext, cmd: vk::CommandBuffer) {
+        for mip in 0..BACKDROP_MIP_LEVELS {
+            if self.pyramid.mip_layouts[mip] == vk::ImageLayout::UNDEFINED {
+                Self::transition_mip(
+                    context,
+                    cmd,
+                    &mut self.pyramid,
+                    mip,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                );
+            }
+        }
+    }
+
     /// Recreate the pyramid after a swapchain resize or format change.
     pub fn resize(
         &mut self,

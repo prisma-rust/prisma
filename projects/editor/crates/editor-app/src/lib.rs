@@ -14,7 +14,7 @@ use prism_editor_api::schema::{build_schema, Schema};
 use prism_ui::prelude::*;
 use serde_json::{json, Value};
 
-use crate::about::{build_about_dialog, ABOUT_CLOSE_KEY};
+use crate::about::{about_default_rect, build_about_body, ABOUT_CLOSE_KEY};
 use crate::inspector::{build_inspector_ui, field_node_key, FieldEdit, UndoStack};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +54,10 @@ pub struct EditorUiState {
     pub menu: MenuState,
     /// Whether the About dialog is on screen.
     pub about_open: bool,
+    /// Unity-style docking tree and floating container windows.
+    pub window_layout: WindowLayout,
+    /// Last known viewport size for centring newly opened floating windows.
+    last_viewport: Vec2,
 }
 
 impl Default for EditorUiState {
@@ -126,6 +130,8 @@ impl Default for EditorUiState {
             theme: Theme::dark(),
             menu: MenuState::default(),
             about_open: false,
+            window_layout: default_editor_layout(),
+            last_viewport: Vec2::new(1280.0, 720.0),
             assets: vec![
                 "scenes/main.scene.json".to_string(),
                 "materials/pbr_metal.mat.json".to_string(),
@@ -346,6 +352,29 @@ impl EditorUiState {
                     "scene.gizmo_scale",
                     "R",
                 )),
+            Menu::new("window", "Window")
+                .item(MenuEntry::checkbox(
+                    "Hierarchy",
+                    "window.hierarchy",
+                    self.window_layout.is_window_open(&"hierarchy".into()),
+                ))
+                .item(MenuEntry::checkbox(
+                    "Scene",
+                    "window.scene",
+                    self.window_layout.is_window_open(&"scene".into()),
+                ))
+                .item(MenuEntry::checkbox(
+                    "Assets",
+                    "window.assets",
+                    self.window_layout.is_window_open(&"assets".into()),
+                ))
+                .item(MenuEntry::checkbox(
+                    "Inspector",
+                    "window.inspector",
+                    self.window_layout.is_window_open(&"inspector".into()),
+                ))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item("Reset Layout", "window.reset_layout")),
             Menu::new("help", "Help")
                 .item(MenuEntry::item("Documentation", "help.docs"))
                 .item(MenuEntry::item("About Prisma", "help.about")),
@@ -360,7 +389,17 @@ impl EditorUiState {
         for action in actions {
             match action {
                 MenuAction::Command(command) => match command.as_str() {
-                    "help.about" => self.about_open = true,
+                    "help.about" => {
+                        let rect = about_default_rect(&self.theme, self.last_viewport);
+                        self.window_layout
+                            .show_floating(&"about".into(), rect, true);
+                        self.about_open = true;
+                    }
+                    "window.hierarchy" => self.window_layout.get_window(&"hierarchy".into()),
+                    "window.scene" => self.window_layout.get_window(&"scene".into()),
+                    "window.assets" => self.window_layout.get_window(&"assets".into()),
+                    "window.inspector" => self.window_layout.get_window(&"inspector".into()),
+                    "window.reset_layout" => self.window_layout = default_editor_layout(),
                     "scene.toggle_play" => self.playing = !self.playing,
                     "scene.gizmo_translate" => self.gizmo_mode = GizmoMode::Translate,
                     "scene.gizmo_rotate" => self.gizmo_mode = GizmoMode::Rotate,
@@ -406,6 +445,7 @@ impl EditorUiState {
         input: &UiInput,
         dt: f32,
     ) -> Vec<UiAction> {
+        self.last_viewport = viewport_size;
         self.tree.begin_frame();
 
         let playing = self.playing;
@@ -437,7 +477,13 @@ impl EditorUiState {
         let theme = self.theme;
         let menus = self.menus();
         let menu_state = self.menu.clone();
-        let about_open = self.about_open;
+        let workspace_top = theme.menu_bar_height + 37.0;
+        let workspace = Rect::new(
+            0.0,
+            workspace_top,
+            viewport_size.x,
+            (viewport_size.y - workspace_top).max(0.0),
+        );
         {
             let mut ctx = UiContext::new(&mut self.tree);
             let root = ctx.mount(
@@ -451,14 +497,7 @@ impl EditorUiState {
                     .menus(menus)
                     .mount(ctx, &menu_state);
             });
-            // Floating dialogs live on the popup layer so they draw above the
-            // panels and take the pointer before anything underneath.
-            if about_open {
-                let overlay = ctx.tree.overlay_root(viewport_size);
-                ctx.with_parent(overlay, |ctx| {
-                    ctx.mount(build_about_dialog(&theme, viewport_size));
-                });
-            }
+            let overlay = ctx.tree.overlay_root(viewport_size);
             ctx.with_parent(root, |ctx| {
                 ctx.mount(
                     col()
@@ -502,28 +541,44 @@ impl EditorUiState {
                                     if can_redo { "Redo" } else { "Redo (0)" },
                                 )),
                         )
-                        .child(divider(false))
-                        .child(
-                            // Middle workspace: Hierarchy | Viewport | Inspector
-                            row()
-                                .grow(1.0)
-                                .child(
+                        .child(divider(false)),
+                );
+                let mut tree_meta = Some(tree_meta);
+                let mut tree_depths = Some(tree_depths);
+                let mut tree_names = Some(tree_names);
+                let mut inspector_panel = Some(inspector_panel);
+                let mut assets = Some(assets);
+                let mut query = Some(query);
+                self.window_layout.mount(
+                    ctx,
+                    overlay,
+                    &theme,
+                    workspace,
+                    &mut |win_id, ctx| match win_id.as_str() {
+                        "hierarchy" => {
+                            if let (Some(meta), Some(depths), Some(names), Some(q)) = (
+                                tree_meta.take(),
+                                tree_depths.take(),
+                                tree_names.take(),
+                                query.take(),
+                            ) {
+                                ctx.mount(
                                     col()
-                                        .width(Length::Px(250.0))
+                                        .size(Length::Percent(100.0), Length::Percent(100.0))
                                         .pad(8.0)
                                         .gap(6.0)
                                         .bg(UiPalette::SURFACE_1)
                                         .child(muted_label("HIERARCHY"))
-                                        .child(text_field("hierarchy:search", query, "Filter..."))
+                                        .child(text_field("hierarchy:search", q, "Filter..."))
                                         .child(tree_view(
                                             "hierarchy:tree",
-                                            tree_meta,
-                                            tree_depths,
+                                            meta,
+                                            depths,
                                             24.0,
                                             (viewport_size.y - 220.0).max(120.0),
                                             0.0,
                                             move |idx| {
-                                                let (id, ref name) = tree_names[idx];
+                                                let (id, ref name) = names[idx];
                                                 toggle_button(
                                                     ("entity", id),
                                                     name.clone(),
@@ -531,43 +586,55 @@ impl EditorUiState {
                                                 )
                                             },
                                         )),
-                                )
-                                .child(divider(true))
-                                .child(
-                                    col().grow(1.0).child(viewport(UiTextureId(0))).child(
-                                        // Bottom Asset Browser (reuses virtual_list)
-                                        col()
-                                            .height(Length::Px(140.0))
-                                            .pad(8.0)
-                                            .gap(4.0)
-                                            .bg(UiPalette::SURFACE_1)
-                                            .child(muted_label("ASSETS"))
-                                            .child(virtual_list(
-                                                "assets:list",
-                                                assets.len(),
-                                                22.0,
-                                                100.0,
-                                                0.0,
-                                                move |idx| {
-                                                    button(
-                                                        ("asset", idx as u32),
-                                                        assets[idx].clone(),
-                                                    )
-                                                },
-                                            )),
-                                    ),
-                                )
-                                .child(divider(true))
-                                .child(
+                                );
+                            }
+                        }
+                        "scene" => {
+                            ctx.mount(viewport(UiTextureId(0)));
+                        }
+                        "assets" => {
+                            if let Some(asset_list) = assets.take() {
+                                ctx.mount(
                                     col()
-                                        .width(Length::Px(320.0))
+                                        .size(Length::Percent(100.0), Length::Percent(100.0))
+                                        .pad(8.0)
+                                        .gap(4.0)
+                                        .bg(UiPalette::SURFACE_1)
+                                        .child(muted_label("ASSETS"))
+                                        .child(virtual_list(
+                                            "assets:list",
+                                            asset_list.len(),
+                                            22.0,
+                                            100.0,
+                                            0.0,
+                                            move |idx| {
+                                                button(
+                                                    ("asset", idx as u32),
+                                                    asset_list[idx].clone(),
+                                                )
+                                            },
+                                        )),
+                                );
+                            }
+                        }
+                        "inspector" => {
+                            if let Some(insp) = inspector_panel.take() {
+                                ctx.mount(
+                                    col()
+                                        .size(Length::Percent(100.0), Length::Percent(100.0))
                                         .pad(10.0)
                                         .gap(8.0)
                                         .bg(UiPalette::SURFACE_1)
                                         .child(muted_label(format!("INSPECTOR (#{selected})")))
-                                        .child(inspector_panel),
-                                ),
-                        ),
+                                        .child(insp),
+                                );
+                            }
+                        }
+                        "about" => {
+                            ctx.mount(build_about_body(&theme));
+                        }
+                        _ => {}
+                    },
                 );
             });
         }
@@ -580,6 +647,8 @@ impl EditorUiState {
             let _input = prism_engine::util::timing::span("editor::ui_input");
             self.tree.process_input(input)
         };
+        self.window_layout.step_input(workspace, input, &actions);
+        self.about_open = self.window_layout.is_window_open(&"about".into());
         // Resolve the submenu branch while this frame's nodes still exist: the
         // panels are mounted from it on the next build.
         {
@@ -633,6 +702,7 @@ impl EditorUiState {
                 }
                 UiAction::Clicked(key) => {
                     if *key == ABOUT_CLOSE_KEY.into_node_key() {
+                        self.window_layout.close_window(&"about".into());
                         self.about_open = false;
                     } else if *key == "toolbar:undo".into_node_key() {
                         if let Some(edit) = self.undo.pop_undo() {
@@ -779,6 +849,62 @@ pub fn build_app() -> prism_app::App {
     app
 }
 
+/// Default Unity-inspired docking layout: Hierarchy | (Scene / Assets) | Inspector.
+fn default_editor_layout() -> WindowLayout {
+    let mut layout = WindowLayout::new();
+    layout.register_window(EditorWindowMeta::new("hierarchy", "Hierarchy").with_closable(true));
+    layout.register_window(EditorWindowMeta::new("scene", "Scene").with_closable(false));
+    layout.register_window(EditorWindowMeta::new("assets", "Assets").with_closable(true));
+    layout.register_window(EditorWindowMeta::new("inspector", "Inspector").with_closable(true));
+    layout.register_window(
+        EditorWindowMeta::new("about", "About Prisma")
+            .with_min_size(Vec2::new(360.0, 240.0))
+            .with_closable(true)
+            .with_close_key(ABOUT_CLOSE_KEY.into_node_key()),
+    );
+
+    let hierarchy_area = layout.alloc_area_id();
+    let scene_area = layout.alloc_area_id();
+    let assets_area = layout.alloc_area_id();
+    let inspector_area = layout.alloc_area_id();
+    let center_split = layout.alloc_split_id();
+    let right_split = layout.alloc_split_id();
+    let root_split = layout.alloc_split_id();
+
+    layout.main_root = DockNode::Split(SplitView {
+        id: root_split,
+        axis: SplitAxis::Horizontal,
+        ratio: 0.20,
+        first: Box::new(DockNode::Area(DockArea::new(
+            hierarchy_area,
+            vec!["hierarchy".into()],
+        ))),
+        second: Box::new(DockNode::Split(SplitView {
+            id: right_split,
+            axis: SplitAxis::Horizontal,
+            ratio: 0.68,
+            first: Box::new(DockNode::Split(SplitView {
+                id: center_split,
+                axis: SplitAxis::Vertical,
+                ratio: 0.76,
+                first: Box::new(DockNode::Area(DockArea::new(
+                    scene_area,
+                    vec!["scene".into()],
+                ))),
+                second: Box::new(DockNode::Area(DockArea::new(
+                    assets_area,
+                    vec!["assets".into()],
+                ))),
+            })),
+            second: Box::new(DockNode::Area(DockArea::new(
+                inspector_area,
+                vec!["inspector".into()],
+            ))),
+        })),
+    });
+    layout
+}
+
 /// An undo/redo entry that greys out when there is nothing to undo.
 fn undo_entry(label: &str, command: &str, shortcut: &str, enabled: bool) -> MenuEntry {
     let entry = MenuEntry::item_with_shortcut(label, command, shortcut);
@@ -917,19 +1043,15 @@ mod tests {
         editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
         bridge::submit_draw_list(&mut world, &editor.draw_list);
 
-        // Editor quads ride the external channel: they must be queued for the
-        // merge, not dropped.
-        let external = world
-            .get_resource::<prism_engine::ui::ExternalUiQuads>()
-            .expect("external quads resource exists");
-        assert!(
-            !external.0.is_empty(),
-            "editor quads must be queued for the merge"
-        );
-        // Editor text joins the engine's own draw list.
+        // Editor quads and text both join the engine's draw list with shared
+        // monotonically increasing order so widget occlusion survives sorting.
         let list = world
             .get_resource::<EngineUiDrawList>()
             .expect("draw list resource exists");
+        assert!(
+            list.quads().count() > 1,
+            "editor quads must be appended to the engine's draw list"
+        );
         assert!(
             list.texts().any(|t| t.content == "Prisma Editor"),
             "editor text must be appended to the engine's draw list"

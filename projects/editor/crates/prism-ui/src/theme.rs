@@ -26,6 +26,10 @@ pub struct Theme {
     pub panel_raised: Color,
     /// Toolbar / menu bar chrome.
     pub chrome: Color,
+    /// Default frosted-glass tint for floating windows and popovers.
+    pub glass_tint: Color,
+    /// Default backdrop blur radius (in pixels) for frosted-glass windows.
+    pub glass_blur_sigma: f32,
 
     // ---- borders ----
     pub border: Color,
@@ -136,6 +140,8 @@ impl Theme {
             panel_alt: Color::rgb(0.129, 0.129, 0.133),
             panel_raised: Color::rgb(0.145, 0.145, 0.149),
             chrome: Color::rgb(0.086, 0.086, 0.090),
+            glass_tint: Color::rgba(0.113, 0.125, 0.149, 0.14),
+            glass_blur_sigma: 14.0,
 
             border: Color::rgb(0.196, 0.196, 0.200),
             border_strong: Color::rgb(0.290, 0.290, 0.294),
@@ -190,6 +196,8 @@ impl Theme {
             panel_alt: Color::rgb(0.910, 0.910, 0.914),
             panel_raised: Color::rgb(0.984, 0.984, 0.988),
             chrome: Color::rgb(0.937, 0.937, 0.941),
+            glass_tint: Color::rgba(0.988, 0.992, 1.0, 0.22),
+            glass_blur_sigma: 14.0,
 
             border: Color::rgb(0.831, 0.831, 0.839),
             border_strong: Color::rgb(0.702, 0.702, 0.714),

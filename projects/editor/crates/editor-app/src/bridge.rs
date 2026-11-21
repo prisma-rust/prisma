@@ -2,7 +2,7 @@
 
 use glam::Vec2;
 use prism_engine::ecs::World;
-use prism_engine::ui::{ExternalUiQuads, ScreenSize, UiInputState};
+use prism_engine::ui::{ScreenSize, UiInputState};
 use prism_ui::prelude::*;
 use prism_ui_draw::{UiQuad, UiTextInput};
 
@@ -51,7 +51,7 @@ pub fn read_engine_input(world: &World, time_seconds: f64) -> UiInput {
 /// A border is its own quad under the fill: the packet has no border field, and
 /// the engine merge sorts by push order, so the fill lands on top unchanged.
 /// `PushClip` / `PopClip` / `Line` stay untranslated until a consumer needs them.
-fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDrawCommand) {
+fn push_command(out: &mut prism_ui_draw::UiOverlayInput, cmd: &UiDrawCommand) {
     match cmd {
         UiDrawCommand::Quad {
             rect,
@@ -76,14 +76,14 @@ fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDra
                     (rect.w - inset * 2.0).max(0.0),
                     (rect.h - inset * 2.0).max(0.0),
                 ];
-                dst.push(UiQuad {
+                out.push_quad(UiQuad {
                     rect: rect.to_array(),
                     color: border_color.to_array(),
                     border_radius: *radius,
                     texture: None,
-                    backdrop_sigma: 0.0,
+                    backdrop_sigma,
                 });
-                dst.push(UiQuad {
+                out.push_quad(UiQuad {
                     rect: inner,
                     color: color.to_array(),
                     border_radius: (*radius - inset).max(0.0),
@@ -91,7 +91,7 @@ fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDra
                     backdrop_sigma,
                 });
             } else {
-                dst.push(UiQuad {
+                out.push_quad(UiQuad {
                     rect: rect.to_array(),
                     color: color.to_array(),
                     border_radius: *radius,
@@ -108,7 +108,7 @@ fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDra
             align,
             wrap,
         } => {
-            texts.push(UiTextInput {
+            out.push_text(UiTextInput {
                 rect: rect.to_array(),
                 content: content.clone(),
                 font_size: *font_size,
@@ -129,7 +129,7 @@ fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDra
             offset,
             ..
         } => {
-            dst.push(UiQuad {
+            out.push_quad(UiQuad {
                 rect: [rect.x + offset.x, rect.y + offset.y, rect.w, rect.h],
                 color: color.to_array(),
                 border_radius: *radius,
@@ -144,19 +144,9 @@ fn push_command(dst: &mut Vec<UiQuad>, texts: &mut Vec<UiTextInput>, cmd: &UiDra
 /// Flatten the widget draw list into the packet the engine merges and the
 /// renderer rasterizes.
 pub fn to_ui_overlay(src: &UiDrawList) -> prism_ui_draw::UiOverlayInput {
-    let mut quads = Vec::new();
-    let mut texts = Vec::new();
-    for cmd in &src.commands {
-        push_command(&mut quads, &mut texts, cmd);
-    }
     let mut out = prism_ui_draw::UiOverlayInput::default();
-    // push_* records the interleaved draw order, so a consumer can replay the
-    // frame exactly as the widget tree emitted it (a scrim covers earlier text).
-    for quad in quads {
-        out.push_quad(quad);
-    }
-    for text in texts {
-        out.push_text(text);
+    for cmd in &src.commands {
+        push_command(&mut out, cmd);
     }
     out
 }
@@ -179,9 +169,6 @@ const EDITOR_LAYER: i32 = prism_engine::ui::EXTERNAL_LAYER;
 /// widget tree's exact quad/text sequence — a scrim still covers earlier text.
 pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
     let packet = to_ui_overlay(src);
-    let mut external = world
-        .remove_resource::<ExternalUiQuads>()
-        .unwrap_or_default();
     let mut engine_list = world
         .remove_resource::<prism_engine::ui::UiDrawList>()
         .unwrap_or_default();
@@ -190,7 +177,15 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
         match cmd {
             prism_ui_draw::UiOverlayDraw::Quad(index) => {
                 if let Some(quad) = packet.quads.get(index as usize) {
-                    external.0.push(quad.clone());
+                    engine_list.push_quad(prism_engine::ui::UiQuad {
+                        rect: quad.rect,
+                        color: quad.color,
+                        border_radius: quad.border_radius,
+                        texture: quad.texture,
+                        backdrop_sigma: quad.backdrop_sigma,
+                        layer: EDITOR_LAYER,
+                        order,
+                    });
                 }
             }
             prism_ui_draw::UiOverlayDraw::Text(index) => {
@@ -221,6 +216,5 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
         }
         order += 1;
     }
-    world.insert_resource(external);
     world.insert_resource(engine_list);
 }

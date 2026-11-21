@@ -258,7 +258,9 @@ impl UiOverlayHost {
                 );
             }
             let backdrop_slot = &mut self.backdrop;
-            let mut capture_backdrop = |cmd: vk::CommandBuffer, sigma: f32| {
+            let has_backdrop =
+                transfer_src && ui_overlay.quads.iter().any(|q| q.backdrop_sigma > 0.0);
+            if has_backdrop {
                 if backdrop_slot.is_none() {
                     *backdrop_slot = Some(crate::ui_backdrop::UiBackdropPass::new(
                         context,
@@ -270,6 +272,16 @@ impl UiOverlayHost {
                     .as_mut()
                     .context("backdrop pass missing after creation")?;
                 pass.resize(context, extent, color_format)?;
+                pass.ensure_readable_layout(context, cmd);
+                // Update the frame slot's descriptor BEFORE any segment binds it
+                // in `cmd`, because updating a bound descriptor set mid-command
+                // buffer invalidates the recording.
+                gpu.set_backdrop(pass.blurred_view(), frame_index);
+            }
+            let mut capture_backdrop = |cmd: vk::CommandBuffer, sigma: f32| {
+                let pass = backdrop_slot
+                    .as_mut()
+                    .context("backdrop pass missing")?;
                 transition_backdrop_source(
                     context,
                     cmd,
@@ -295,7 +307,7 @@ impl UiOverlayHost {
                 ui_overlay,
                 bindless_set,
                 frame_index,
-                transfer_src.then_some(&mut capture_backdrop),
+                has_backdrop.then_some(&mut capture_backdrop),
             )
             .context("ui overlay record")?;
         }

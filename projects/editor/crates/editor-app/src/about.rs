@@ -14,8 +14,8 @@ pub const ABOUT_PANEL_KEY: &str = "about:panel";
 /// Node key of the dismiss button.
 pub const ABOUT_CLOSE_KEY: &str = "about:close";
 
-/// Blur radius of the dialog's glass surface, in pixels.
-pub const ABOUT_GLASS_SIGMA: f32 = 14.0;
+/// Blur radius of the dialog's glass surface, in pixels (mirrors [`Theme::glass_blur_sigma`]).
+pub const ABOUT_GLASS_SIGMA: f32 = Theme::dark().glass_blur_sigma;
 /// Width of the card; its content decides the height.
 pub const ABOUT_WIDTH: f32 = 420.0;
 /// Corner radius of the card.
@@ -34,22 +34,21 @@ pub const ABOUT_FACTS: [(&str, &str); 4] = [
 /// The editor decides this because "how opaque may glass be before body text
 /// loses contrast" is a product decision; the kernel only knows how to blur.
 fn glass_tint(theme: &Theme) -> Color {
-    // Low alpha on purpose: this colour is mixed *over* the blurred backdrop,
-    // so a high value would hide the very filter the material paid for.
-    match theme.preset() {
-        ThemePreset::Dark => Color::rgba(0.113, 0.125, 0.149, 0.18),
-        ThemePreset::Light => Color::rgba(0.988, 0.992, 1.0, 0.28),
-    }
+    theme.glass_tint
 }
 
-/// Build the About dialog, centred in `viewport`.
-pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
-    let padding = Edges::symmetric(30.0, 26.0);
-    let width = ABOUT_WIDTH.min(viewport.x - padding.horizontal() * 2.0);
+/// Default floating window bounds for About, centred in `viewport`.
+pub fn about_default_rect(theme: &Theme, viewport: Vec2) -> Rect {
+    let width = ABOUT_WIDTH.min((viewport.x - 48.0).max(260.0));
+    let height = 276.0;
     let left = ((viewport.x - width) * 0.5).max(0.0);
+    let top = (viewport.y * 0.5 - 160.0).max(theme.menu_bar_height + 24.0);
+    Rect::new(left, top, width, height)
+}
 
-    let glass = Material::frosted_glass(ABOUT_GLASS_SIGMA).with_radius(ABOUT_RADIUS);
-
+/// Build the interior content of the About window (for mounting inside a
+/// [`ContainerWindow`](prism_ui::window::ContainerWindow) or [`build_about_dialog`]).
+pub fn build_about_body(theme: &Theme) -> ElementBox {
     let mut facts = col().width(Length::Percent(100.0)).gap(6.0);
     for (name, value) in ABOUT_FACTS {
         facts = facts.child(
@@ -64,32 +63,14 @@ pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
 
     col()
         .key(ABOUT_PANEL_KEY)
-        .absolute(
-            left,
-            (viewport.y * 0.5 - 180.0).max(theme.menu_bar_height + 24.0),
-        )
-        .width(Length::Px(width))
-        .padding(padding)
-        .gap(18.0)
-        .radius(ABOUT_RADIUS)
-        .border(1.0, theme.border)
-        // The fill is the glass tint: the shader mixes the blurred backdrop
-        // toward it, so the same colour reads as "how visible is the scene
-        // through this card".
-        .bg(glass_tint(theme))
-        .material(glass)
-        .child(
-            row()
-                .width(Length::Percent(100.0))
-                .align(Align::Center)
-                .justify(Justify::SpaceBetween)
-                .child(text(
-                    theme.text_strong,
-                    theme.font_size + 6.0,
-                    "Prisma Editor",
-                ))
-                .child(button(ABOUT_CLOSE_KEY, "Close")),
-        )
+        .width(Length::Percent(100.0))
+        .padding(Edges::symmetric(24.0, 20.0))
+        .gap(14.0)
+        .child(text(
+            theme.text_strong,
+            theme.font_size + 6.0,
+            "Prisma Editor",
+        ))
         .child(text(
             theme.text_soft,
             theme.font_size,
@@ -102,6 +83,24 @@ pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
                 .bg(theme.border_subtle),
         )
         .child(facts)
+}
+
+/// Build the standalone About dialog card, centred in `viewport`.
+pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
+    let rect = about_default_rect(theme, viewport);
+    let glass = Material::frosted_glass(ABOUT_GLASS_SIGMA).with_radius(ABOUT_RADIUS);
+
+    col()
+        .absolute(rect.x, rect.y)
+        .width(Length::Px(rect.w))
+        .radius(ABOUT_RADIUS)
+        .border(1.0, theme.border)
+        // The fill is the glass tint: the shader mixes the blurred backdrop
+        // toward it, so the same colour reads as "how visible is the scene
+        // through this card".
+        .bg(glass_tint(theme))
+        .material(glass)
+        .child(build_about_body(theme))
 }
 
 #[cfg(test)]
