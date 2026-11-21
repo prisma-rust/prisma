@@ -83,6 +83,7 @@ docs/
   ├── editor-egui.md                      # [L2 编辑器子系统] 原生 egui 编辑器架构与零拷贝采样
   ├── editor-mcp.md                       # [L2 编辑器子系统] MCP 自动化契约与工具注册表
   ├── editor-self-hosted-ui.md            # [L2 编辑器子系统] 自举式编辑器与统一引擎 UI API 架构设计
+  ├── editor-ui-requirements.md           # [L2 编辑器子系统] 新编辑器 UI 功能需求契约（编号需求 + 分期验收）
   ├── scripting-layer.md                  # [L2 模块宿主] 脚本层接缝：HostApi 复用、Lua/C# 分期与判据
   ├── feature-map.json                    # [L2 编辑器子系统] 编辑器 UI 节点树与交互功能地图
   ├── project-module-architecture.md      # [L2 模块宿主] 游戏工程 C ABI 与动态预览模块架构
@@ -131,6 +132,7 @@ docs/
 | **编辑器生态** | [`editor-egui.md`](editor-egui.md) | 零拷贝离屏采样、Split-tree 布局、控制通道 | `editor/`, `prism-editor-core` |
 | | [`editor-mcp.md`](editor-mcp.md) | MCP 工具集、场景审查、离屏截屏、自动化驱动 | `crates/prism-editor-mcp` |
 | | [`editor-self-hosted-ui.md`](editor-self-hosted-ui.md) | 自举编辑器分层、ECS UI 权威归属、能力补齐清单与分期 | `projects/editor`, `prism-scene::ui` |
+| | [`editor-ui-requirements.md`](editor-ui-requirements.md) | 新编辑器功能需求契约、检视器字段规格、UI 能力指标与分期验收 | `projects/editor`, `docs/editor-ui-requirements.md` |
 | | [`project-module-architecture.md`](project-module-architecture.md) | 预览模块 cdylib、C ABI 契约、HostApi 表 | `prism-project-api`, `prism-runtime-host` |
 | | [`scripting-layer.md`](scripting-layer.md) | 脚本层复用 HostApi、动态组件访问缺口、Lua / C# 分期判据 | `prism-game-api`, `prism-reflect` |
 | **渲染专题** | [`mobile-raytracing-gi-design.md`](mobile-raytracing-gi-design.md) | RayQuery inline、SHARC 辐射度缓存 | `prism-render` |
