@@ -7,6 +7,7 @@
 use glam::Vec2;
 
 use super::*;
+use crate::style::Rect;
 use crate::tree::{UiInput, UiTree};
 
 /// A four-level chain: File > New > From Template > Samples.
@@ -105,6 +106,17 @@ fn panel(scope: &str) -> NodeKey {
     ("menu", "dropdown", scope).into_node_key()
 }
 
+/// A nested panel's frame starts one panel inset above its row, so the panel's
+/// first item lands on the row's top edge instead of one inset below it.
+fn assert_first_item_level(panel: Rect, row: Rect) {
+    let inset = Theme::dark().menu_dropdown_padding.top;
+    assert!(
+        (panel.y - (row.y - inset)).abs() < 0.5,
+        "a nested panel sits one inset ({inset}) above its row: \
+         panel={panel:?} row={row:?}"
+    );
+}
+
 #[test]
 fn nested_panels_open_to_the_right_of_their_row() {
     let viewport = Vec2::new(1280.0, 720.0);
@@ -123,10 +135,7 @@ fn nested_panels_open_to_the_right_of_their_row() {
         l2.x >= row2.x + row2.w - 0.5,
         "level 2 must open at its row's right edge: panel={l2:?} row={row2:?}"
     );
-    assert!(
-        (l2.y - row2.y).abs() < 0.5,
-        "level 2's top must sit on its row's top: panel={l2:?} row={row2:?}"
-    );
+    assert_first_item_level(l2, row2);
 
     // Level 3.
     hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
@@ -136,10 +145,7 @@ fn nested_panels_open_to_the_right_of_their_row() {
         l3.x >= row3.x + row3.w - 0.5,
         "level 3 must open at its row's right edge: panel={l3:?} row={row3:?}"
     );
-    assert!(
-        (l3.y - row3.y).abs() < 0.5,
-        "level 3's top must sit on its row's top: panel={l3:?} row={row3:?}"
-    );
+    assert_first_item_level(l3, row3);
 
     // Level 4.
     hover_frame(
@@ -155,10 +161,7 @@ fn nested_panels_open_to_the_right_of_their_row() {
         l4.x >= row4.x + row4.w - 0.5,
         "level 4 must open at its row's right edge: panel={l4:?} row={row4:?}"
     );
-    assert!(
-        (l4.y - row4.y).abs() < 0.5,
-        "level 4's top must sit on its row's top: panel={l4:?} row={row4:?}"
-    );
+    assert_first_item_level(l4, row4);
 
     for (name, p) in [("l2", l2), ("l3", l3), ("l4", l4)] {
         assert!(

@@ -84,8 +84,41 @@ fn assert_shared_inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKe
     );
 }
 
+/// A nested panel's first item is level with the row that opened it, and its
+/// frame starts one inset above that row so the shared padding stays intact.
+fn assert_level_with_row(
+    state: &EditorUiState,
+    scope: &str,
+    row: NodeKey,
+    first_item_command: &str,
+) {
+    let pad = state.theme.menu_dropdown_padding;
+    let row_rect = rect(state, row);
+    let panel = rect(state, panel_key(scope));
+    let first = rect(state, MenuNodeKey::item_key(scope, first_item_command));
+    assert!(
+        (first.y - row_rect.y).abs() < 0.5,
+        "the first item must sit on the row's top: first={first:?} row={row_rect:?}"
+    );
+    assert!(
+        (panel.y - (row_rect.y - pad.top)).abs() < 0.5,
+        "the frame sits one inset above the row so the item lands on it: \
+         panel={panel:?} row={row_rect:?} inset={:?}",
+        pad.top
+    );
+    assert!(
+        (panel.x - (row_rect.x + row_rect.w)).abs() < 0.5,
+        "the frame starts at the row's right edge: panel={panel:?} row={row_rect:?}"
+    );
+    assert_shared_inset(
+        state,
+        panel_key(scope),
+        MenuNodeKey::item_key(scope, first_item_command),
+    );
+}
+
 #[test]
-fn a_nested_panel_starts_at_the_corner_of_the_row_that_opened_it() {
+fn a_nested_panel_puts_its_first_item_level_with_the_row_that_opened_it() {
     let mut state = EditorUiState::default();
     step(&mut state, UiInput::default());
     click(&mut state, MenuNodeKey::trigger_key("file"));
@@ -94,23 +127,7 @@ fn a_nested_panel_starts_at_the_corner_of_the_row_that_opened_it() {
 
     // Level 2: the "New" row inside the File panel.
     hover(&mut state, row_key("file", "New"));
-    let row = rect(&state, row_key("file", "New"));
-    let panel = rect(&state, panel_key("file/New"));
-
-    assert!(
-        (panel.x - (row.x + row.w)).abs() < 0.5,
-        "the panel's left edge must start at the row's right edge: \
-         panel={panel:?} row={row:?}"
-    );
-    assert!(
-        (panel.y - row.y).abs() < 0.5,
-        "the panel's top must sit on the row's top: panel={panel:?} row={row:?}"
-    );
-    assert_shared_inset(
-        &state,
-        panel_key("file/New"),
-        MenuNodeKey::item_key("file/New", "file.new.scene"),
-    );
+    assert_level_with_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
 }
 
 #[test]
@@ -121,22 +138,10 @@ fn a_third_level_panel_aligns_the_same_way() {
 
     hover(&mut state, row_key("file", "New"));
     hover(&mut state, row_key("file/New", "From Template"));
-
-    let row = rect(&state, row_key("file/New", "From Template"));
-    let panel = rect(&state, panel_key("file/New/From Template"));
-
-    assert!(
-        (panel.x - (row.x + row.w)).abs() < 0.5,
-        "level 3's left edge must start at its row's right edge: \
-         panel={panel:?} row={row:?}"
-    );
-    assert!(
-        (panel.y - row.y).abs() < 0.5,
-        "level 3's top must sit on its row's top: panel={panel:?} row={row:?}"
-    );
-    assert_shared_inset(
+    assert_level_with_row(
         &state,
-        panel_key("file/New/From Template"),
-        MenuNodeKey::item_key("file/New/From Template", "file.new.template.empty3d"),
+        "file/New/From Template",
+        row_key("file/New", "From Template"),
+        "file.new.template.empty3d",
     );
 }

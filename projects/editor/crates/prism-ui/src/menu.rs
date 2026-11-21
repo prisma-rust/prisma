@@ -584,9 +584,14 @@ fn dropdown(
         .radius(theme.menu_dropdown_radius);
 
     panel = if nested {
-        // Open to the right, frame against frame: the panel's own inset then
-        // holds its first item off the edge exactly as a top-level panel does.
-        panel.anchored_beside(trigger, Vec2::ZERO, PopupAlign::Start)
+        // Lift the panel by its own top inset so its first item lands on the
+        // row's top edge. The frame therefore starts one inset above the row,
+        // which is what makes the content read as level with the row.
+        panel.anchored_beside(
+            trigger,
+            Vec2::new(0.0, -theme.menu_dropdown_padding.top),
+            PopupAlign::Start,
+        )
     } else {
         panel.anchored(
             trigger,
