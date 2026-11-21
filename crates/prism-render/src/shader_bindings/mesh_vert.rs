@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/mesh_vert.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 
@@ -29,27 +27,27 @@ pub const PREV_MODELS_BINDING: u32 = 4; // UNIFORM_BUFFER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct FrameUBO {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 16
-    pub cameraPosition: [f32; 4],
+    pub camera_position: [f32; 4],
     /// offset 80, size 16
-    pub lightDirection: [f32; 4],
+    pub light_direction: [f32; 4],
     /// offset 96, size 16
-    pub lightColor: [f32; 4],
+    pub light_color: [f32; 4],
     /// offset 112, size 64
     pub view: [[f32; 4]; 4],
     /// offset 176, size 64
-    pub lightViewProj: [[f32; 4]; 4],
+    pub light_view_proj: [[f32; 4]; 4],
     /// offset 240, size 4
-    pub tonemapMode: u32,
+    pub tonemap_mode: u32,
     /// offset 244, size 4
-    pub viewportW: f32,
+    pub viewport_w: f32,
     /// offset 248, size 4
-    pub viewportH: f32,
+    pub viewport_h: f32,
     /// offset 252, size 4
     pub exposure: f32,
     /// offset 256, size 4
-    pub shadowStrength: f32,
+    pub shadow_strength: f32,
     /// std140 alignment hole at offset 260 (12 bytes)
     pub _pad_260: [u8; 12],
     /// offset 272, size 12
@@ -57,38 +55,38 @@ pub struct FrameUBO {
     /// std140 alignment hole at offset 284 (4 bytes)
     pub _pad_284: [u8; 4],
     /// offset 288, size 64
-    pub lightViewProj1: [[f32; 4]; 4],
+    pub light_view_proj1: [[f32; 4]; 4],
     /// offset 352, size 4
-    pub shadowSplit: f32,
+    pub shadow_split: f32,
     /// offset 356, size 4
-    pub shadowCascadeCount: u32,
+    pub shadow_cascade_count: u32,
     /// offset 360, size 8
     pub _pad3: [f32; 2],
     /// offset 368, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<FrameUBO>() == 432);
-    assert!(::std::mem::offset_of!(FrameUBO, viewProj) == 0);
-    assert!(::std::mem::offset_of!(FrameUBO, cameraPosition) == 64);
-    assert!(::std::mem::offset_of!(FrameUBO, lightDirection) == 80);
-    assert!(::std::mem::offset_of!(FrameUBO, lightColor) == 96);
+    assert!(::std::mem::offset_of!(FrameUBO, view_proj) == 0);
+    assert!(::std::mem::offset_of!(FrameUBO, camera_position) == 64);
+    assert!(::std::mem::offset_of!(FrameUBO, light_direction) == 80);
+    assert!(::std::mem::offset_of!(FrameUBO, light_color) == 96);
     assert!(::std::mem::offset_of!(FrameUBO, view) == 112);
-    assert!(::std::mem::offset_of!(FrameUBO, lightViewProj) == 176);
-    assert!(::std::mem::offset_of!(FrameUBO, tonemapMode) == 240);
-    assert!(::std::mem::offset_of!(FrameUBO, viewportW) == 244);
-    assert!(::std::mem::offset_of!(FrameUBO, viewportH) == 248);
+    assert!(::std::mem::offset_of!(FrameUBO, light_view_proj) == 176);
+    assert!(::std::mem::offset_of!(FrameUBO, tonemap_mode) == 240);
+    assert!(::std::mem::offset_of!(FrameUBO, viewport_w) == 244);
+    assert!(::std::mem::offset_of!(FrameUBO, viewport_h) == 248);
     assert!(::std::mem::offset_of!(FrameUBO, exposure) == 252);
-    assert!(::std::mem::offset_of!(FrameUBO, shadowStrength) == 256);
+    assert!(::std::mem::offset_of!(FrameUBO, shadow_strength) == 256);
     assert!(::std::mem::offset_of!(FrameUBO, _pad_260) == 260);
     assert!(::std::mem::offset_of!(FrameUBO, _pad2) == 272);
     assert!(::std::mem::offset_of!(FrameUBO, _pad_284) == 284);
-    assert!(::std::mem::offset_of!(FrameUBO, lightViewProj1) == 288);
-    assert!(::std::mem::offset_of!(FrameUBO, shadowSplit) == 352);
-    assert!(::std::mem::offset_of!(FrameUBO, shadowCascadeCount) == 356);
+    assert!(::std::mem::offset_of!(FrameUBO, light_view_proj1) == 288);
+    assert!(::std::mem::offset_of!(FrameUBO, shadow_split) == 352);
+    assert!(::std::mem::offset_of!(FrameUBO, shadow_cascade_count) == 356);
     assert!(::std::mem::offset_of!(FrameUBO, _pad3) == 360);
-    assert!(::std::mem::offset_of!(FrameUBO, prevViewProj) == 368);
+    assert!(::std::mem::offset_of!(FrameUBO, prev_view_proj) == 368);
 };
 
 /// GPU layout struct (auto-generated from Slang `MeshPush`).

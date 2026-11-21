@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/particles.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -22,16 +20,16 @@ pub const PUSH_CONSTANT_SIZE: u32 = 96;
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct ParticlePush {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 16
-    pub camRight: [f32; 4],
+    pub cam_right: [f32; 4],
     /// offset 80, size 16
-    pub camUp: [f32; 4],
+    pub cam_up: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<ParticlePush>() == 96);
-    assert!(::std::mem::offset_of!(ParticlePush, viewProj) == 0);
-    assert!(::std::mem::offset_of!(ParticlePush, camRight) == 64);
-    assert!(::std::mem::offset_of!(ParticlePush, camUp) == 80);
+    assert!(::std::mem::offset_of!(ParticlePush, view_proj) == 0);
+    assert!(::std::mem::offset_of!(ParticlePush, cam_right) == 64);
+    assert!(::std::mem::offset_of!(ParticlePush, cam_up) == 80);
 };

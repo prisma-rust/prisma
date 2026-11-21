@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/shadow_depth.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -28,7 +26,7 @@ pub struct ShadowPush {
     /// offset 0, size 64
     pub model: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub lightViewProj: [[f32; 4]; 4],
+    pub light_view_proj: [[f32; 4]; 4],
     /// offset 128, size 4
     pub bone_offset: u32,
     /// std140 alignment hole at offset 132 (12 bytes)
@@ -40,7 +38,7 @@ pub struct ShadowPush {
 const _: () = {
     assert!(::std::mem::size_of::<ShadowPush>() == 156);
     assert!(::std::mem::offset_of!(ShadowPush, model) == 0);
-    assert!(::std::mem::offset_of!(ShadowPush, lightViewProj) == 64);
+    assert!(::std::mem::offset_of!(ShadowPush, light_view_proj) == 64);
     assert!(::std::mem::offset_of!(ShadowPush, bone_offset) == 128);
     assert!(::std::mem::offset_of!(ShadowPush, _pad_132) == 132);
     assert!(::std::mem::offset_of!(ShadowPush, _pad) == 144);

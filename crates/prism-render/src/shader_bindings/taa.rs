@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/taa.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -33,22 +31,22 @@ pub const NORMAL_TEX_BINDING: u32 = 5; // COMBINED_IMAGE_SAMPLER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct TaaParams {
     /// offset 0, size 64
-    pub invViewProj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 128, size 8
     pub resolution: [f32; 2],
     /// offset 136, size 4
     pub strength: f32,
     /// offset 140, size 4
-    pub validHistory: f32,
+    pub valid_history: f32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<TaaParams>() == 144);
-    assert!(::std::mem::offset_of!(TaaParams, invViewProj) == 0);
-    assert!(::std::mem::offset_of!(TaaParams, prevViewProj) == 64);
+    assert!(::std::mem::offset_of!(TaaParams, inv_view_proj) == 0);
+    assert!(::std::mem::offset_of!(TaaParams, prev_view_proj) == 64);
     assert!(::std::mem::offset_of!(TaaParams, resolution) == 128);
     assert!(::std::mem::offset_of!(TaaParams, strength) == 136);
-    assert!(::std::mem::offset_of!(TaaParams, validHistory) == 140);
+    assert!(::std::mem::offset_of!(TaaParams, valid_history) == 140);
 };

@@ -786,11 +786,11 @@ impl RestirGiPass {
             && self.sharc_resolved.is_some();
         let camera_pos = frame.camera_pos;
         let constants = RestirGiFrame {
-            invViewProj: mat_inverse(&frame.view_proj),
-            invViewRot: frame.inv_view_rot,
-            cameraPos: camera_pos,
-            lightDir: frame.light_dir,
-            lightColor: frame.light_color,
+            inv_view_proj: mat_inverse(&frame.view_proj),
+            inv_view_rot: frame.inv_view_rot,
+            camera_pos,
+            light_dir: frame.light_dir,
+            light_color: frame.light_color,
             viewport: [
                 gi_extent.width as f32,
                 gi_extent.height as f32,
@@ -803,7 +803,7 @@ impl RestirGiPass {
                 ctx.settings.restir_gi_rays_per_pixel.max(1) as f32,
                 ctx.settings.restir_gi_max_history.max(1) as f32,
             ],
-            giParams: [
+            gi_params: [
                 ctx.settings.restir_gi_spatial_samples as f32,
                 ctx.settings.restir_gi_max_secondary_dist.max(0.0),
                 if ctx.settings.restir_gi_temporal_reuse {
@@ -817,7 +817,7 @@ impl RestirGiPass {
                     0.0
                 },
             ],
-            sharcParams: [
+            sharc_params: [
                 ctx.settings.sharc_scene_scale,
                 self.sharc_capacity as f32,
                 if sharc_enabled {
@@ -829,9 +829,9 @@ impl RestirGiPass {
             ],
             // The cache is keyed off the camera that produced the samples, so
             // the sharc camera position mirrors the current one.
-            sharcCameraPos: camera_pos,
-            prevViewProj: self.prev_view_proj,
-            prevCameraPos: self.prev_camera_pos,
+            sharc_camera_pos: camera_pos,
+            prev_view_proj: self.prev_view_proj,
+            prev_camera_pos: self.prev_camera_pos,
         };
         frame_constants.upload(&constants);
 

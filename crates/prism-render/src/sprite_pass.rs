@@ -251,8 +251,8 @@ impl SpritePass {
                     &[],
                 );
                 let push = bindings::SpritePush {
-                    viewProj: *view_proj,
-                    lightParams: [lights.len().min(SPRITE_LIGHT_MAX) as f32, 0.0, 0.0, 0.0],
+                    view_proj: *view_proj,
+                    light_params: [lights.len().min(SPRITE_LIGHT_MAX) as f32, 0.0, 0.0, 0.0],
                 };
                 device.cmd_push_constants(
                     cmd,

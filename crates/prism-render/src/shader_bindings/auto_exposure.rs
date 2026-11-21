@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/auto_exposure.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_LUMINANCE_HISTOGRAM: &str = "luminanceHistogram"; // stage: COMPUTE
 pub const ENTRY_EXPOSURE_ADAPTATION: &str = "exposureAdaptation"; // stage: COMPUTE
@@ -30,40 +28,40 @@ pub const ADAPTED_LUMINANCE_BINDING: u32 = 2; // UNIFORM_BUFFER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct AutoExposurePush {
     /// offset 0, size 8
-    pub sourceSize: [u32; 2],
+    pub source_size: [u32; 2],
     /// offset 8, size 4
-    pub minLogLuminance: f32,
+    pub min_log_luminance: f32,
     /// offset 12, size 4
-    pub logLuminanceRange: f32,
+    pub log_luminance_range: f32,
     /// offset 16, size 4
-    pub recipLogLuminanceRange: f32,
+    pub recip_log_luminance_range: f32,
     /// offset 20, size 4
-    pub lowPercentile: f32,
+    pub low_percentile: f32,
     /// offset 24, size 4
-    pub highPercentile: f32,
+    pub high_percentile: f32,
     /// offset 28, size 4
-    pub adaptationSpeedUp: f32,
+    pub adaptation_speed_up: f32,
     /// offset 32, size 4
-    pub adaptationSpeedDown: f32,
+    pub adaptation_speed_down: f32,
     /// offset 36, size 4
-    pub frameTime: f32,
+    pub frame_time: f32,
     /// offset 40, size 4
-    pub resetAdaptation: u32,
+    pub reset_adaptation: u32,
     /// offset 44, size 4
-    pub exposureScale: f32,
+    pub exposure_scale: f32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<AutoExposurePush>() == 48);
-    assert!(::std::mem::offset_of!(AutoExposurePush, sourceSize) == 0);
-    assert!(::std::mem::offset_of!(AutoExposurePush, minLogLuminance) == 8);
-    assert!(::std::mem::offset_of!(AutoExposurePush, logLuminanceRange) == 12);
-    assert!(::std::mem::offset_of!(AutoExposurePush, recipLogLuminanceRange) == 16);
-    assert!(::std::mem::offset_of!(AutoExposurePush, lowPercentile) == 20);
-    assert!(::std::mem::offset_of!(AutoExposurePush, highPercentile) == 24);
-    assert!(::std::mem::offset_of!(AutoExposurePush, adaptationSpeedUp) == 28);
-    assert!(::std::mem::offset_of!(AutoExposurePush, adaptationSpeedDown) == 32);
-    assert!(::std::mem::offset_of!(AutoExposurePush, frameTime) == 36);
-    assert!(::std::mem::offset_of!(AutoExposurePush, resetAdaptation) == 40);
-    assert!(::std::mem::offset_of!(AutoExposurePush, exposureScale) == 44);
+    assert!(::std::mem::offset_of!(AutoExposurePush, source_size) == 0);
+    assert!(::std::mem::offset_of!(AutoExposurePush, min_log_luminance) == 8);
+    assert!(::std::mem::offset_of!(AutoExposurePush, log_luminance_range) == 12);
+    assert!(::std::mem::offset_of!(AutoExposurePush, recip_log_luminance_range) == 16);
+    assert!(::std::mem::offset_of!(AutoExposurePush, low_percentile) == 20);
+    assert!(::std::mem::offset_of!(AutoExposurePush, high_percentile) == 24);
+    assert!(::std::mem::offset_of!(AutoExposurePush, adaptation_speed_up) == 28);
+    assert!(::std::mem::offset_of!(AutoExposurePush, adaptation_speed_down) == 32);
+    assert!(::std::mem::offset_of!(AutoExposurePush, frame_time) == 36);
+    assert!(::std::mem::offset_of!(AutoExposurePush, reset_adaptation) == 40);
+    assert!(::std::mem::offset_of!(AutoExposurePush, exposure_scale) == 44);
 };

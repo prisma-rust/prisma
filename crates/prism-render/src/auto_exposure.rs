@@ -318,19 +318,19 @@ impl AutoExposurePass {
 
         let log_range = (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE).max(1.0);
         let push = bindings::AutoExposurePush {
-            sourceSize: [extent.width, extent.height],
-            minLogLuminance: MIN_LOG_LUMINANCE,
-            logLuminanceRange: log_range,
-            recipLogLuminanceRange: 1.0 / log_range,
-            lowPercentile: LOW_PERCENTILE,
-            highPercentile: HIGH_PERCENTILE,
-            adaptationSpeedUp: ADAPTATION_SPEED_UP,
-            adaptationSpeedDown: ADAPTATION_SPEED_DOWN,
-            frameTime: frame_time,
+            source_size: [extent.width, extent.height],
+            min_log_luminance: MIN_LOG_LUMINANCE,
+            log_luminance_range: log_range,
+            recip_log_luminance_range: 1.0 / log_range,
+            low_percentile: LOW_PERCENTILE,
+            high_percentile: HIGH_PERCENTILE,
+            adaptation_speed_up: ADAPTATION_SPEED_UP,
+            adaptation_speed_down: ADAPTATION_SPEED_DOWN,
+            frame_time,
             // Frame 0 has no history to adapt from, so snap to the metered
             // value instead of easing in from an arbitrary exposure.
-            resetAdaptation: u32::from(frame_time == 0.0),
-            exposureScale: ctx.frame.exposure,
+            reset_adaptation: u32::from(frame_time == 0.0),
+            exposure_scale: ctx.frame.exposure,
         };
 
         unsafe {

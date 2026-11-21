@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/nrc.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_NRC_CLEAR_MAIN: &str = "nrcClearMain"; // stage: COMPUTE
 pub const ENTRY_NRC_TRAIN_MAIN: &str = "nrcTrainMain"; // stage: COMPUTE

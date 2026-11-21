@@ -229,7 +229,7 @@ impl SkyboxPass {
             // Push the combined inverse projection/view rotation plus the sky parameters; the block
             // layout and size come from the Slang reflection.
             let push = bindings::SkyboxPush {
-                invViewProjRot: *inv_view_proj_rot,
+                inv_view_proj_rot: *inv_view_proj_rot,
                 params: [params.rotation, params.intensity.max(0.0), 0.0, 0.0],
                 _pad1: [0.0; 4],
             };

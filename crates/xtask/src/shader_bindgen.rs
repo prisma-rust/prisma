@@ -255,7 +255,7 @@ fn layout_push_fields(fields: &[StructField]) -> Result<(Vec<PushMember>, u64)> 
             });
         }
         members.push(PushMember::Field {
-            name: f.name.clone(),
+            name: to_snake_case(&f.name),
             rust_type: field_type_to_rust(&f.ty),
             offset,
             size: reserved,
@@ -495,6 +495,26 @@ fn classify(p: &Parameter) -> Option<ResolvedBinding> {
     })
 }
 
+/// Convert a reflected identifier (`sourceSize`) to the Rust field spelling
+/// (`source_size`) so generated structs need no `non_snake_case` suppression.
+fn to_snake_case(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_lower = false;
+    for c in s.chars() {
+        if c == '-' || c == ' ' {
+            out.push('_');
+            prev_lower = false;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev_lower {
+            out.push('_');
+        }
+        out.push(c.to_ascii_lowercase());
+        prev_lower = c.is_ascii_alphanumeric();
+    }
+    out
+}
+
 fn to_screaming_snake(s: &str) -> String {
     let mut out = String::new();
     let mut prev_lower = false;
@@ -551,7 +571,6 @@ fn process_file(path: &Path) -> Result<(String, String)> {
     out.push_str(&format!(
         "\n//! Bindings reflected from `shaders/slang/{shader}.slang`.\n\n"
     ));
-    out.push_str("#![allow(dead_code, non_snake_case)]\n\n");
 
     // Entry points.
     if !refl.entry_points.is_empty() {
@@ -662,7 +681,6 @@ fn main() -> Result<()> {
     mod_rs.push_str(
         "//   ../../assets/shaders/reflection ../../crates/prism-render/src/shader_bindings`\n",
     );
-    mod_rs.push_str("#![allow(dead_code, non_snake_case)]\n\n");
 
     for f in &files {
         let (mod_name, content) = process_file(f)?;

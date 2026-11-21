@@ -27,11 +27,11 @@ impl TemporalState {
             self.taa_frame = 0;
             [0.0, 0.0]
         };
-        let width = frame_data.viewportW.max(1.0);
-        let height = frame_data.viewportH.max(1.0);
+        let width = frame_data.viewport_w.max(1.0);
+        let height = frame_data.viewport_h.max(1.0);
         let jitter_ndc = [jitter[0] * 4.0 / width, jitter[1] * 4.0 / height];
-        frame_data.viewProj[3][0] += jitter_ndc[0];
-        frame_data.viewProj[3][1] += jitter_ndc[1];
+        frame_data.view_proj[3][0] += jitter_ndc[0];
+        frame_data.view_proj[3][1] += jitter_ndc[1];
         self.taa_jitter_ndc = jitter_ndc;
     }
 }

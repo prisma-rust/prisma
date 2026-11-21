@@ -96,24 +96,24 @@ fn emergence_seed_2026_renders_with_sgsr2_and_asr() {
 
         for _ in 0..frames {
             let mut frame_data = FrameUBOData {
-                viewProj: packet.scene.view_proj.to_cols_array_2d(),
+                view_proj: packet.scene.view_proj.to_cols_array_2d(),
                 view: packet.scene.view.to_cols_array_2d(),
-                cameraPosition: [
+                camera_position: [
                     packet.scene.eye[0],
                     packet.scene.eye[1],
                     packet.scene.eye[2],
                     packet.scene.lights.len() as f32,
                 ],
-                lightDirection: packet.scene.light_direction.to_array(),
-                lightColor: packet.scene.light_color.to_array(),
-                lightViewProj: packet.scene.light_view_proj.to_cols_array_2d(),
-                lightViewProj1: packet.scene.light_view_proj1.to_cols_array_2d(),
-                shadowSplit: packet.scene.shadow_split,
-                shadowCascadeCount: packet.scene.shadow_cascade_count,
-                viewportW: out_w as f32,
-                viewportH: out_h as f32,
+                light_direction: packet.scene.light_direction.to_array(),
+                light_color: packet.scene.light_color.to_array(),
+                light_view_proj: packet.scene.light_view_proj.to_cols_array_2d(),
+                light_view_proj1: packet.scene.light_view_proj1.to_cols_array_2d(),
+                shadow_split: packet.scene.shadow_split,
+                shadow_cascade_count: packet.scene.shadow_cascade_count,
+                viewport_w: out_w as f32,
+                viewport_h: out_h as f32,
                 exposure: packet.scene.exposure,
-                shadowStrength: packet.scene.shadow_strength,
+                shadow_strength: packet.scene.shadow_strength,
                 ..Default::default()
             };
             renderer.apply_taa_jitter(&mut frame_data);

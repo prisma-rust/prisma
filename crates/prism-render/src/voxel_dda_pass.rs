@@ -857,13 +857,13 @@ impl FrameSlot {
             scratch.flat_occ.extend_from_slice(&chunk.brick_occ);
             scratch.flat_cells.extend_from_slice(&chunk.brick_cells);
             scratch.gpu_chunks.push(VoxelChunkGpu {
-                originAndL1Offset: [
+                origin_and_l1_offset: [
                     chunk.origin_l1[0],
                     chunk.origin_l1[1],
                     chunk.origin_l1[2],
                     l1_offset as i32,
                 ],
-                dimsAndBrickOffset: [
+                dims_and_brick_offset: [
                     chunk.dims_l1[0],
                     chunk.dims_l1[1],
                     chunk.dims_l1[2],
@@ -943,9 +943,9 @@ impl FrameSlot {
         for &(_, idx) in &scratch.emitter_ranked {
             let e = &cached_emitters[idx];
             scratch.gpu_emitters.push(VoxelEmitterGpu {
-                bminRange: [e.bmin[0], e.bmin[1], e.bmin[2], e.range],
-                bmaxRadius: [e.bmax[0], e.bmax[1], e.bmax[2], e.radius],
-                colorIntensity: [e.radiance[0], e.radiance[1], e.radiance[2], e.power_weight],
+                bmin_range: [e.bmin[0], e.bmin[1], e.bmin[2], e.range],
+                bmax_radius: [e.bmax[0], e.bmax[1], e.bmax[2], e.radius],
+                color_intensity: [e.radiance[0], e.radiance[1], e.radiance[2], e.power_weight],
             });
         }
         if scratch.gpu_emitters.is_empty() {
@@ -1681,17 +1681,17 @@ impl RenderPassNode for VoxelDdaPass {
         let has_prev = u32::from(prev_valid && self.prev_view_proj.is_some());
 
         let ubo_data = VoxelFrameUbo {
-            viewProj: ctx.frame.view_proj,
-            invViewProj: inv_vp,
-            prevViewProj: prev_vp,
-            cameraPos: [
+            view_proj: ctx.frame.view_proj,
+            inv_view_proj: inv_vp,
+            prev_view_proj: prev_vp,
+            camera_pos: [
                 ctx.frame.camera_pos[0],
                 ctx.frame.camera_pos[1],
                 ctx.frame.camera_pos[2],
                 scene.elapsed_seconds,
             ],
-            sunDirRadiance: [sun_dir[0], sun_dir[1], sun_dir[2], sun_rad],
-            sunColorAmbient: sun_col,
+            sun_dir_radiance: [sun_dir[0], sun_dir[1], sun_dir[2], sun_rad],
+            sun_color_ambient: sun_col,
             counts: [
                 scene.chunks.len() as u32,
                 extent.width,
@@ -1704,19 +1704,19 @@ impl RenderPassNode for VoxelDdaPass {
                 has_prev,
                 u32::from(scene_changed),
             ],
-            cursorMin: [
+            cursor_min: [
                 cursor.min[0],
                 cursor.min[1],
                 cursor.min[2],
                 if scene.atlas.is_some() { 16.0 } else { 0.0 },
             ],
-            cursorMax: [
+            cursor_max: [
                 cursor.max[0],
                 cursor.max[1],
                 cursor.max[2],
                 ctx.frame.exposure.max(0.01),
             ],
-            cursorColor: cursor.color,
+            cursor_color: cursor.color,
         };
         slot.ubo_buf
             .write_bytes(ctx.device, bytemuck::bytes_of(&ubo_data))?;
@@ -2083,10 +2083,10 @@ impl RenderPassNode for VoxelDdaPass {
             denoise_passes.iter().enumerate()
         {
             let push = VoxelDenoisePush {
-                stepSize: step_size,
+                step_size,
                 width: extent.width,
                 height: extent.height,
-                passIndex: pass_index,
+                pass_index,
             };
             unsafe {
                 ctx.device.cmd_bind_descriptor_sets(

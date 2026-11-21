@@ -267,7 +267,7 @@ impl RenderPassNode for RtPreviewPass {
             );
         }
         let push = RtPreviewPush {
-            textureHandle: slot,
+            texture_handle: slot,
         };
         unsafe {
             device.cmd_push_constants(

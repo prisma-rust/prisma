@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/sprites.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -32,17 +30,17 @@ pub const SPRITE_LIGHTS_BINDING: u32 = 0; // UNIFORM_BUFFER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SpriteLight {
     /// offset 0, size 16
-    pub positionRange: [f32; 4],
+    pub position_range: [f32; 4],
     /// offset 16, size 16
-    pub colorKind: [f32; 4],
+    pub color_kind: [f32; 4],
     /// offset 32, size 16
     pub direction: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<SpriteLight>() == 48);
-    assert!(::std::mem::offset_of!(SpriteLight, positionRange) == 0);
-    assert!(::std::mem::offset_of!(SpriteLight, colorKind) == 16);
+    assert!(::std::mem::offset_of!(SpriteLight, position_range) == 0);
+    assert!(::std::mem::offset_of!(SpriteLight, color_kind) == 16);
     assert!(::std::mem::offset_of!(SpriteLight, direction) == 32);
 };
 
@@ -55,13 +53,13 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SpritePush {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 16
-    pub lightParams: [f32; 4],
+    pub light_params: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<SpritePush>() == 80);
-    assert!(::std::mem::offset_of!(SpritePush, viewProj) == 0);
-    assert!(::std::mem::offset_of!(SpritePush, lightParams) == 64);
+    assert!(::std::mem::offset_of!(SpritePush, view_proj) == 0);
+    assert!(::std::mem::offset_of!(SpritePush, light_params) == 64);
 };

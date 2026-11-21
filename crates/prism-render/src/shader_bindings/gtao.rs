@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/gtao.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -50,9 +48,9 @@ pub struct GtaoPush {
     /// offset 76, size 4
     pub mode: u32,
     /// offset 80, size 4
-    pub historyStrength: f32,
+    pub history_strength: f32,
     /// offset 84, size 4
-    pub validHistory: f32,
+    pub valid_history: f32,
 }
 
 const _: () = {
@@ -61,6 +59,6 @@ const _: () = {
     assert!(::std::mem::offset_of!(GtaoPush, viewport) == 64);
     assert!(::std::mem::offset_of!(GtaoPush, radius) == 72);
     assert!(::std::mem::offset_of!(GtaoPush, mode) == 76);
-    assert!(::std::mem::offset_of!(GtaoPush, historyStrength) == 80);
-    assert!(::std::mem::offset_of!(GtaoPush, validHistory) == 84);
+    assert!(::std::mem::offset_of!(GtaoPush, history_strength) == 80);
+    assert!(::std::mem::offset_of!(GtaoPush, valid_history) == 84);
 };

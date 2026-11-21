@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/post.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -34,9 +32,9 @@ pub const ADAPTED_LUMINANCE_BINDING: u32 = 4; // UNIFORM_BUFFER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct MotionBlurData {
     /// offset 0, size 64
-    pub invViewProj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 128, size 8
     pub resolution: [f32; 2],
     /// offset 136, size 8
@@ -45,8 +43,8 @@ pub struct MotionBlurData {
 
 const _: () = {
     assert!(::std::mem::size_of::<MotionBlurData>() == 144);
-    assert!(::std::mem::offset_of!(MotionBlurData, invViewProj) == 0);
-    assert!(::std::mem::offset_of!(MotionBlurData, prevViewProj) == 64);
+    assert!(::std::mem::offset_of!(MotionBlurData, inv_view_proj) == 0);
+    assert!(::std::mem::offset_of!(MotionBlurData, prev_view_proj) == 64);
     assert!(::std::mem::offset_of!(MotionBlurData, resolution) == 128);
     assert!(::std::mem::offset_of!(MotionBlurData, _pad) == 136);
 };
@@ -60,11 +58,11 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct PostPush {
     /// offset 0, size 4
-    pub tonemapMode: u32,
+    pub tonemap_mode: u32,
     /// offset 4, size 4
-    pub aaMode: u32,
+    pub aa_mode: u32,
     /// offset 8, size 8
-    pub invTexelSize: [f32; 2],
+    pub inv_texel_size: [f32; 2],
     /// offset 16, size 4
     pub contrast: f32,
     /// offset 20, size 4
@@ -72,58 +70,58 @@ pub struct PostPush {
     /// offset 24, size 4
     pub vignette: f32,
     /// offset 28, size 4
-    pub bloomIntensity: f32,
+    pub bloom_intensity: f32,
     /// offset 32, size 4
-    pub bloomThreshold: f32,
+    pub bloom_threshold: f32,
     /// offset 36, size 4
-    pub chromaticAberration: f32,
+    pub chromatic_aberration: f32,
     /// offset 40, size 4
-    pub filmGrain: f32,
+    pub film_grain: f32,
     /// offset 44, size 4
     pub temperature: f32,
     /// offset 48, size 4
     pub tint: f32,
     /// offset 52, size 4
-    pub nearPlane: f32,
+    pub near_plane: f32,
     /// offset 56, size 4
-    pub farPlane: f32,
+    pub far_plane: f32,
     /// offset 60, size 4
-    pub dofFocusDistance: f32,
+    pub dof_focus_distance: f32,
     /// offset 64, size 4
-    pub dofAperture: f32,
+    pub dof_aperture: f32,
     /// offset 68, size 4
-    pub dofMaxBlur: f32,
+    pub dof_max_blur: f32,
     /// offset 72, size 4
-    pub lutStrength: f32,
+    pub lut_strength: f32,
     /// offset 76, size 4
-    pub lutSize: f32,
+    pub lut_size: f32,
     /// offset 80, size 4
-    pub motionBlur: f32,
+    pub motion_blur: f32,
     /// offset 84, size 4
-    pub motionBlurMaxPixels: f32,
+    pub motion_blur_max_pixels: f32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<PostPush>() == 88);
-    assert!(::std::mem::offset_of!(PostPush, tonemapMode) == 0);
-    assert!(::std::mem::offset_of!(PostPush, aaMode) == 4);
-    assert!(::std::mem::offset_of!(PostPush, invTexelSize) == 8);
+    assert!(::std::mem::offset_of!(PostPush, tonemap_mode) == 0);
+    assert!(::std::mem::offset_of!(PostPush, aa_mode) == 4);
+    assert!(::std::mem::offset_of!(PostPush, inv_texel_size) == 8);
     assert!(::std::mem::offset_of!(PostPush, contrast) == 16);
     assert!(::std::mem::offset_of!(PostPush, saturation) == 20);
     assert!(::std::mem::offset_of!(PostPush, vignette) == 24);
-    assert!(::std::mem::offset_of!(PostPush, bloomIntensity) == 28);
-    assert!(::std::mem::offset_of!(PostPush, bloomThreshold) == 32);
-    assert!(::std::mem::offset_of!(PostPush, chromaticAberration) == 36);
-    assert!(::std::mem::offset_of!(PostPush, filmGrain) == 40);
+    assert!(::std::mem::offset_of!(PostPush, bloom_intensity) == 28);
+    assert!(::std::mem::offset_of!(PostPush, bloom_threshold) == 32);
+    assert!(::std::mem::offset_of!(PostPush, chromatic_aberration) == 36);
+    assert!(::std::mem::offset_of!(PostPush, film_grain) == 40);
     assert!(::std::mem::offset_of!(PostPush, temperature) == 44);
     assert!(::std::mem::offset_of!(PostPush, tint) == 48);
-    assert!(::std::mem::offset_of!(PostPush, nearPlane) == 52);
-    assert!(::std::mem::offset_of!(PostPush, farPlane) == 56);
-    assert!(::std::mem::offset_of!(PostPush, dofFocusDistance) == 60);
-    assert!(::std::mem::offset_of!(PostPush, dofAperture) == 64);
-    assert!(::std::mem::offset_of!(PostPush, dofMaxBlur) == 68);
-    assert!(::std::mem::offset_of!(PostPush, lutStrength) == 72);
-    assert!(::std::mem::offset_of!(PostPush, lutSize) == 76);
-    assert!(::std::mem::offset_of!(PostPush, motionBlur) == 80);
-    assert!(::std::mem::offset_of!(PostPush, motionBlurMaxPixels) == 84);
+    assert!(::std::mem::offset_of!(PostPush, near_plane) == 52);
+    assert!(::std::mem::offset_of!(PostPush, far_plane) == 56);
+    assert!(::std::mem::offset_of!(PostPush, dof_focus_distance) == 60);
+    assert!(::std::mem::offset_of!(PostPush, dof_aperture) == 64);
+    assert!(::std::mem::offset_of!(PostPush, dof_max_blur) == 68);
+    assert!(::std::mem::offset_of!(PostPush, lut_strength) == 72);
+    assert!(::std::mem::offset_of!(PostPush, lut_size) == 76);
+    assert!(::std::mem::offset_of!(PostPush, motion_blur) == 80);
+    assert!(::std::mem::offset_of!(PostPush, motion_blur_max_pixels) == 84);
 };

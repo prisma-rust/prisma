@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/rt_preview.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -28,10 +26,10 @@ pub const BINDLESS_SRVS_BINDING: u32 = 1; // UNIFORM_BUFFER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct RtPreviewPush {
     /// offset 0, size 4
-    pub textureHandle: u32,
+    pub texture_handle: u32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<RtPreviewPush>() == 4);
-    assert!(::std::mem::offset_of!(RtPreviewPush, textureHandle) == 0);
+    assert!(::std::mem::offset_of!(RtPreviewPush, texture_handle) == 0);
 };

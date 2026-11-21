@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/pt_render.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_PT_MAIN: &str = "ptMain"; // stage: COMPUTE
 
@@ -213,9 +211,9 @@ pub struct ReSTIRReservoir {
     /// offset 0, size 4
     pub light_idx: u32,
     /// offset 4, size 4
-    pub M: f32,
+    pub m: f32,
     /// offset 8, size 4
-    pub W: f32,
+    pub w: f32,
     /// offset 12, size 4
     pub target_pdf: f32,
 }
@@ -223,8 +221,8 @@ pub struct ReSTIRReservoir {
 const _: () = {
     assert!(::std::mem::size_of::<ReSTIRReservoir>() == 16);
     assert!(::std::mem::offset_of!(ReSTIRReservoir, light_idx) == 0);
-    assert!(::std::mem::offset_of!(ReSTIRReservoir, M) == 4);
-    assert!(::std::mem::offset_of!(ReSTIRReservoir, W) == 8);
+    assert!(::std::mem::offset_of!(ReSTIRReservoir, m) == 4);
+    assert!(::std::mem::offset_of!(ReSTIRReservoir, w) == 8);
     assert!(::std::mem::offset_of!(ReSTIRReservoir, target_pdf) == 12);
 };
 
@@ -254,18 +252,18 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct PtGuides {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 128, size 64
-    pub worldToView: [[f32; 4]; 4],
+    pub world_to_view: [[f32; 4]; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<PtGuides>() == 192);
-    assert!(::std::mem::offset_of!(PtGuides, viewProj) == 0);
-    assert!(::std::mem::offset_of!(PtGuides, prevViewProj) == 64);
-    assert!(::std::mem::offset_of!(PtGuides, worldToView) == 128);
+    assert!(::std::mem::offset_of!(PtGuides, view_proj) == 0);
+    assert!(::std::mem::offset_of!(PtGuides, prev_view_proj) == 64);
+    assert!(::std::mem::offset_of!(PtGuides, world_to_view) == 128);
 };
 
 /// GPU layout struct (auto-generated from Slang `PtPush`).

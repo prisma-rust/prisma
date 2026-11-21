@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/skybox.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -26,7 +24,7 @@ pub const ENV_CUBE_BINDING: u32 = 0; // COMBINED_IMAGE_SAMPLER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct SkyboxPush {
     /// offset 0, size 64
-    pub invViewProjRot: [[f32; 4]; 4],
+    pub inv_view_proj_rot: [[f32; 4]; 4],
     /// offset 64, size 16
     pub params: [f32; 4],
     /// offset 80, size 16
@@ -35,7 +33,7 @@ pub struct SkyboxPush {
 
 const _: () = {
     assert!(::std::mem::size_of::<SkyboxPush>() == 96);
-    assert!(::std::mem::offset_of!(SkyboxPush, invViewProjRot) == 0);
+    assert!(::std::mem::offset_of!(SkyboxPush, inv_view_proj_rot) == 0);
     assert!(::std::mem::offset_of!(SkyboxPush, params) == 64);
     assert!(::std::mem::offset_of!(SkyboxPush, _pad1) == 80);
 };

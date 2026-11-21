@@ -636,8 +636,8 @@ impl PostPass {
             return Ok(());
         }
         let uniform = MotionBlurUniform {
-            invViewProj: inv_view_proj,
-            prevViewProj: prev_view_proj,
+            inv_view_proj,
+            prev_view_proj,
             resolution,
             ..Default::default()
         };
@@ -1177,35 +1177,35 @@ impl RenderPassNode for PostPass {
             0.0
         };
         let push = shader_bindings::post::PostPush {
-            tonemapMode: ctx.frame.tonemap_mode,
-            aaMode: effective_aa_mode(ctx.frame.debug_rt, ctx.frame.aa_mode),
+            tonemap_mode: ctx.frame.tonemap_mode,
+            aa_mode: effective_aa_mode(ctx.frame.debug_rt, ctx.frame.aa_mode),
             contrast: ctx.frame.grade.contrast,
             saturation: ctx.frame.grade.saturation,
             vignette: ctx.frame.grade.vignette,
-            bloomIntensity: ctx.frame.grade.bloom_intensity,
-            bloomThreshold: ctx.frame.grade.bloom_threshold,
-            chromaticAberration: ctx.frame.grade.chromatic_aberration,
-            filmGrain: ctx.frame.grade.film_grain,
+            bloom_intensity: ctx.frame.grade.bloom_intensity,
+            bloom_threshold: ctx.frame.grade.bloom_threshold,
+            chromatic_aberration: ctx.frame.grade.chromatic_aberration,
+            film_grain: ctx.frame.grade.film_grain,
             temperature: ctx.frame.grade.temperature,
             tint: ctx.frame.grade.tint,
-            nearPlane: near,
-            farPlane: far,
-            dofFocusDistance: ctx.frame.grade.dof_focus_distance,
-            dofAperture: dof_aperture,
-            dofMaxBlur: ctx.frame.grade.dof_max_blur,
+            near_plane: near,
+            far_plane: far,
+            dof_focus_distance: ctx.frame.grade.dof_focus_distance,
+            dof_aperture,
+            dof_max_blur: ctx.frame.grade.dof_max_blur,
             // Debug RT views (depth / normals) must stay readable; a grade LUT
             // would tint the visualization, so it is disabled there like DOF.
-            lutStrength: if ctx.frame.debug_rt == 0 {
+            lut_strength: if ctx.frame.debug_rt == 0 {
                 ctx.frame.grade.lut_strength
             } else {
                 0.0
             },
-            lutSize: self.lut_size as f32,
-            motionBlur: motion_blur,
-            motionBlurMaxPixels: ctx.frame.grade.motion_blur_max_pixels,
+            lut_size: self.lut_size as f32,
+            motion_blur,
+            motion_blur_max_pixels: ctx.frame.grade.motion_blur_max_pixels,
             // #613：FXAA 采样的是**内部渲染目标**，一个 texel 的 UV 尺寸按它的
             // 分辨率算；用交换链尺寸会在内部分辨率缩小时把采样步长算小。
-            invTexelSize: [
+            inv_texel_size: [
                 if ctx.render_extent.width > 0 {
                     1.0 / ctx.render_extent.width as f32
                 } else {
@@ -1660,32 +1660,32 @@ mod tests {
     #[test]
     fn test_post_push_layout_matches_the_shader() {
         use shader_bindings::post::{PostPush, PUSH_CONSTANT_SIZE};
-        assert_eq!(std::mem::offset_of!(PostPush, tonemapMode), 0);
-        assert_eq!(std::mem::offset_of!(PostPush, aaMode), 4);
-        assert_eq!(std::mem::offset_of!(PostPush, invTexelSize), 8);
+        assert_eq!(std::mem::offset_of!(PostPush, tonemap_mode), 0);
+        assert_eq!(std::mem::offset_of!(PostPush, aa_mode), 4);
+        assert_eq!(std::mem::offset_of!(PostPush, inv_texel_size), 8);
         // #502 color grading rides in the same push-constant block.
         assert_eq!(std::mem::offset_of!(PostPush, contrast), 16);
         assert_eq!(std::mem::offset_of!(PostPush, saturation), 20);
         assert_eq!(std::mem::offset_of!(PostPush, vignette), 24);
-        assert_eq!(std::mem::offset_of!(PostPush, bloomIntensity), 28);
-        assert_eq!(std::mem::offset_of!(PostPush, bloomThreshold), 32);
-        assert_eq!(std::mem::offset_of!(PostPush, chromaticAberration), 36);
-        assert_eq!(std::mem::offset_of!(PostPush, filmGrain), 40);
+        assert_eq!(std::mem::offset_of!(PostPush, bloom_intensity), 28);
+        assert_eq!(std::mem::offset_of!(PostPush, bloom_threshold), 32);
+        assert_eq!(std::mem::offset_of!(PostPush, chromatic_aberration), 36);
+        assert_eq!(std::mem::offset_of!(PostPush, film_grain), 40);
         // #502 white balance rides after the Phase 2 effects.
         assert_eq!(std::mem::offset_of!(PostPush, temperature), 44);
         assert_eq!(std::mem::offset_of!(PostPush, tint), 48);
         // #502 depth of field: near/far planes plus focus / aperture / radius.
-        assert_eq!(std::mem::offset_of!(PostPush, nearPlane), 52);
-        assert_eq!(std::mem::offset_of!(PostPush, farPlane), 56);
-        assert_eq!(std::mem::offset_of!(PostPush, dofFocusDistance), 60);
-        assert_eq!(std::mem::offset_of!(PostPush, dofAperture), 64);
-        assert_eq!(std::mem::offset_of!(PostPush, dofMaxBlur), 68);
+        assert_eq!(std::mem::offset_of!(PostPush, near_plane), 52);
+        assert_eq!(std::mem::offset_of!(PostPush, far_plane), 56);
+        assert_eq!(std::mem::offset_of!(PostPush, dof_focus_distance), 60);
+        assert_eq!(std::mem::offset_of!(PostPush, dof_aperture), 64);
+        assert_eq!(std::mem::offset_of!(PostPush, dof_max_blur), 68);
         // #502 3D LUT: strength plus the edge length used for texel centres.
-        assert_eq!(std::mem::offset_of!(PostPush, lutStrength), 72);
-        assert_eq!(std::mem::offset_of!(PostPush, lutSize), 76);
+        assert_eq!(std::mem::offset_of!(PostPush, lut_strength), 72);
+        assert_eq!(std::mem::offset_of!(PostPush, lut_size), 76);
         // #502 camera motion blur: strength then pixel cap.
-        assert_eq!(std::mem::offset_of!(PostPush, motionBlur), 80);
-        assert_eq!(std::mem::offset_of!(PostPush, motionBlurMaxPixels), 84);
+        assert_eq!(std::mem::offset_of!(PostPush, motion_blur), 80);
+        assert_eq!(std::mem::offset_of!(PostPush, motion_blur_max_pixels), 84);
         assert_eq!(std::mem::size_of::<PostPush>(), 88);
         assert_eq!(PUSH_CONSTANT_SIZE, 88);
     }

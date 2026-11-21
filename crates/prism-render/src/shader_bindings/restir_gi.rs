@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/restir_gi.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_GI_MAIN: &str = "giMain"; // stage: COMPUTE
 
@@ -218,7 +216,7 @@ pub struct RestirGiReservoir {
     /// offset 32, size 16
     pub stats: [f32; 4],
     /// offset 48, size 16
-    pub hitPos: [f32; 4],
+    pub hit_pos: [f32; 4],
 }
 
 const _: () = {
@@ -226,7 +224,7 @@ const _: () = {
     assert!(::std::mem::offset_of!(RestirGiReservoir, direction) == 0);
     assert!(::std::mem::offset_of!(RestirGiReservoir, radiance) == 16);
     assert!(::std::mem::offset_of!(RestirGiReservoir, stats) == 32);
-    assert!(::std::mem::offset_of!(RestirGiReservoir, hitPos) == 48);
+    assert!(::std::mem::offset_of!(RestirGiReservoir, hit_pos) == 48);
 };
 
 /// GPU layout struct (auto-generated from Slang `SharcAccumulationData`).
@@ -255,43 +253,43 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct RestirGiFrame {
     /// offset 0, size 64
-    pub invViewProj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub invViewRot: [[f32; 4]; 4],
+    pub inv_view_rot: [[f32; 4]; 4],
     /// offset 128, size 16
-    pub cameraPos: [f32; 4],
+    pub camera_pos: [f32; 4],
     /// offset 144, size 16
-    pub lightDir: [f32; 4],
+    pub light_dir: [f32; 4],
     /// offset 160, size 16
-    pub lightColor: [f32; 4],
+    pub light_color: [f32; 4],
     /// offset 176, size 16
     pub viewport: [f32; 4],
     /// offset 192, size 16
     pub params: [f32; 4],
     /// offset 208, size 16
-    pub giParams: [f32; 4],
+    pub gi_params: [f32; 4],
     /// offset 224, size 16
-    pub sharcParams: [f32; 4],
+    pub sharc_params: [f32; 4],
     /// offset 240, size 16
-    pub sharcCameraPos: [f32; 4],
+    pub sharc_camera_pos: [f32; 4],
     /// offset 256, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 320, size 16
-    pub prevCameraPos: [f32; 4],
+    pub prev_camera_pos: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<RestirGiFrame>() == 336);
-    assert!(::std::mem::offset_of!(RestirGiFrame, invViewProj) == 0);
-    assert!(::std::mem::offset_of!(RestirGiFrame, invViewRot) == 64);
-    assert!(::std::mem::offset_of!(RestirGiFrame, cameraPos) == 128);
-    assert!(::std::mem::offset_of!(RestirGiFrame, lightDir) == 144);
-    assert!(::std::mem::offset_of!(RestirGiFrame, lightColor) == 160);
+    assert!(::std::mem::offset_of!(RestirGiFrame, inv_view_proj) == 0);
+    assert!(::std::mem::offset_of!(RestirGiFrame, inv_view_rot) == 64);
+    assert!(::std::mem::offset_of!(RestirGiFrame, camera_pos) == 128);
+    assert!(::std::mem::offset_of!(RestirGiFrame, light_dir) == 144);
+    assert!(::std::mem::offset_of!(RestirGiFrame, light_color) == 160);
     assert!(::std::mem::offset_of!(RestirGiFrame, viewport) == 176);
     assert!(::std::mem::offset_of!(RestirGiFrame, params) == 192);
-    assert!(::std::mem::offset_of!(RestirGiFrame, giParams) == 208);
-    assert!(::std::mem::offset_of!(RestirGiFrame, sharcParams) == 224);
-    assert!(::std::mem::offset_of!(RestirGiFrame, sharcCameraPos) == 240);
-    assert!(::std::mem::offset_of!(RestirGiFrame, prevViewProj) == 256);
-    assert!(::std::mem::offset_of!(RestirGiFrame, prevCameraPos) == 320);
+    assert!(::std::mem::offset_of!(RestirGiFrame, gi_params) == 208);
+    assert!(::std::mem::offset_of!(RestirGiFrame, sharc_params) == 224);
+    assert!(::std::mem::offset_of!(RestirGiFrame, sharc_camera_pos) == 240);
+    assert!(::std::mem::offset_of!(RestirGiFrame, prev_view_proj) == 256);
+    assert!(::std::mem::offset_of!(RestirGiFrame, prev_camera_pos) == 320);
 };

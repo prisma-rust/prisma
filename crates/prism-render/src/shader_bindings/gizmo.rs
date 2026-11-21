@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/gizmo.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VERTEX_MAIN: &str = "vertexMain"; // stage: VERTEX
 pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
@@ -22,13 +20,13 @@ pub const PUSH_CONSTANT_SIZE: u32 = 128;
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct GizmoPush {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
     pub model: [[f32; 4]; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<GizmoPush>() == 128);
-    assert!(::std::mem::offset_of!(GizmoPush, viewProj) == 0);
+    assert!(::std::mem::offset_of!(GizmoPush, view_proj) == 0);
     assert!(::std::mem::offset_of!(GizmoPush, model) == 64);
 };

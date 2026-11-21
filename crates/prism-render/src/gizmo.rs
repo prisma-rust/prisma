@@ -246,7 +246,7 @@ impl Gizmo {
             device.cmd_bind_vertex_buffers(cmd, 0, &buffers, &offsets);
             for instance in instances {
                 let push = GizmoPush {
-                    viewProj: *view_proj,
+                    view_proj: *view_proj,
                     model: instance.model,
                 };
                 device.cmd_push_constants(

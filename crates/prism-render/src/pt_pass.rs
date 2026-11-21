@@ -1479,9 +1479,9 @@ impl PtInner {
         }
         world_to_view[3][3] = 1.0;
         let guides = PtGuides {
-            viewProj: ctx.frame.view_proj,
-            prevViewProj: prev_view_proj,
-            worldToView: world_to_view,
+            view_proj: ctx.frame.view_proj,
+            prev_view_proj,
+            world_to_view,
         };
         unsafe {
             ptr::copy_nonoverlapping(

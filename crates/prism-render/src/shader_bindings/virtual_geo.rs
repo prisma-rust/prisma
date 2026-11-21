@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/virtual_geo.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VG_CULL_MAIN: &str = "vgCullMain"; // stage: COMPUTE
 pub const ENTRY_VG_SW_RASTER_MAIN: &str = "vgSwRasterMain"; // stage: COMPUTE
@@ -62,21 +60,21 @@ pub const OUT_VELOCITY_TEX_BINDING: u32 = 17; // COMBINED_IMAGE_SAMPLER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VgPushConstants {
     /// offset 0, size 4
-    pub passMode: u32,
+    pub pass_mode: u32,
     /// offset 4, size 4
     pub width: u32,
     /// offset 8, size 4
     pub height: u32,
     /// offset 12, size 4
-    pub mipLevel: u32,
+    pub mip_level: u32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VgPushConstants>() == 16);
-    assert!(::std::mem::offset_of!(VgPushConstants, passMode) == 0);
+    assert!(::std::mem::offset_of!(VgPushConstants, pass_mode) == 0);
     assert!(::std::mem::offset_of!(VgPushConstants, width) == 4);
     assert!(::std::mem::offset_of!(VgPushConstants, height) == 8);
-    assert!(::std::mem::offset_of!(VgPushConstants, mipLevel) == 12);
+    assert!(::std::mem::offset_of!(VgPushConstants, mip_level) == 12);
 };
 
 /// GPU layout struct (auto-generated from Slang `VgFrameUbo`).
@@ -88,32 +86,32 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VgFrameUbo {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub invViewProj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     /// offset 128, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 192, size 16
-    pub cameraPosNear: [f32; 4],
+    pub camera_pos_near: [f32; 4],
     /// offset 208, size 16
-    pub screenParams: [f32; 4],
+    pub screen_params: [f32; 4],
     /// offset 224, size 16
-    pub sunDirIntensity: [f32; 4],
+    pub sun_dir_intensity: [f32; 4],
     /// offset 240, size 16
-    pub sunColorAmbient: [f32; 4],
+    pub sun_color_ambient: [f32; 4],
     /// offset 256, size 16
     pub counts: [u32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VgFrameUbo>() == 272);
-    assert!(::std::mem::offset_of!(VgFrameUbo, viewProj) == 0);
-    assert!(::std::mem::offset_of!(VgFrameUbo, invViewProj) == 64);
-    assert!(::std::mem::offset_of!(VgFrameUbo, prevViewProj) == 128);
-    assert!(::std::mem::offset_of!(VgFrameUbo, cameraPosNear) == 192);
-    assert!(::std::mem::offset_of!(VgFrameUbo, screenParams) == 208);
-    assert!(::std::mem::offset_of!(VgFrameUbo, sunDirIntensity) == 224);
-    assert!(::std::mem::offset_of!(VgFrameUbo, sunColorAmbient) == 240);
+    assert!(::std::mem::offset_of!(VgFrameUbo, view_proj) == 0);
+    assert!(::std::mem::offset_of!(VgFrameUbo, inv_view_proj) == 64);
+    assert!(::std::mem::offset_of!(VgFrameUbo, prev_view_proj) == 128);
+    assert!(::std::mem::offset_of!(VgFrameUbo, camera_pos_near) == 192);
+    assert!(::std::mem::offset_of!(VgFrameUbo, screen_params) == 208);
+    assert!(::std::mem::offset_of!(VgFrameUbo, sun_dir_intensity) == 224);
+    assert!(::std::mem::offset_of!(VgFrameUbo, sun_color_ambient) == 240);
     assert!(::std::mem::offset_of!(VgFrameUbo, counts) == 256);
 };
 
@@ -126,17 +124,17 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VgGroupGpu {
     /// offset 0, size 16
-    pub boundingSphere: [f32; 4],
+    pub bounding_sphere: [f32; 4],
     /// offset 16, size 16
-    pub errorAndRange: [f32; 4],
+    pub error_and_range: [f32; 4],
     /// offset 32, size 16
     pub topology: [u32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VgGroupGpu>() == 48);
-    assert!(::std::mem::offset_of!(VgGroupGpu, boundingSphere) == 0);
-    assert!(::std::mem::offset_of!(VgGroupGpu, errorAndRange) == 16);
+    assert!(::std::mem::offset_of!(VgGroupGpu, bounding_sphere) == 0);
+    assert!(::std::mem::offset_of!(VgGroupGpu, error_and_range) == 16);
     assert!(::std::mem::offset_of!(VgGroupGpu, topology) == 32);
 };
 
@@ -149,33 +147,33 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VgClusterGpu {
     /// offset 0, size 16
-    pub aabbMin: [f32; 4],
+    pub aabb_min: [f32; 4],
     /// offset 16, size 16
-    pub aabbMax: [f32; 4],
+    pub aabb_max: [f32; 4],
     /// offset 32, size 16
-    pub normalCone: [f32; 4],
+    pub normal_cone: [f32; 4],
     /// offset 48, size 16
     pub meta: [u32; 4],
     /// offset 64, size 16
-    pub countsAndMat: [u32; 4],
+    pub counts_and_mat: [u32; 4],
     /// offset 80, size 16
-    pub splatCenterOpacity: [f32; 4],
+    pub splat_center_opacity: [f32; 4],
     /// offset 96, size 16
-    pub splatCovDiag: [f32; 4],
+    pub splat_cov_diag: [f32; 4],
     /// offset 112, size 16
-    pub splatCovOff: [f32; 4],
+    pub splat_cov_off: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VgClusterGpu>() == 128);
-    assert!(::std::mem::offset_of!(VgClusterGpu, aabbMin) == 0);
-    assert!(::std::mem::offset_of!(VgClusterGpu, aabbMax) == 16);
-    assert!(::std::mem::offset_of!(VgClusterGpu, normalCone) == 32);
+    assert!(::std::mem::offset_of!(VgClusterGpu, aabb_min) == 0);
+    assert!(::std::mem::offset_of!(VgClusterGpu, aabb_max) == 16);
+    assert!(::std::mem::offset_of!(VgClusterGpu, normal_cone) == 32);
     assert!(::std::mem::offset_of!(VgClusterGpu, meta) == 48);
-    assert!(::std::mem::offset_of!(VgClusterGpu, countsAndMat) == 64);
-    assert!(::std::mem::offset_of!(VgClusterGpu, splatCenterOpacity) == 80);
-    assert!(::std::mem::offset_of!(VgClusterGpu, splatCovDiag) == 96);
-    assert!(::std::mem::offset_of!(VgClusterGpu, splatCovOff) == 112);
+    assert!(::std::mem::offset_of!(VgClusterGpu, counts_and_mat) == 64);
+    assert!(::std::mem::offset_of!(VgClusterGpu, splat_center_opacity) == 80);
+    assert!(::std::mem::offset_of!(VgClusterGpu, splat_cov_diag) == 96);
+    assert!(::std::mem::offset_of!(VgClusterGpu, splat_cov_off) == 112);
 };
 
 /// GPU layout struct (auto-generated from Slang `VgDispatchedClusterGpu`).

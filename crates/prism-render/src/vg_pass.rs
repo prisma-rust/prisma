@@ -56,8 +56,8 @@ pub fn pack_vg_mesh_gpu_buffers(
         let packed_topo =
             u32::from(g.lod_level) | ((g.primitive_kind as u32) << 8) | (resident << 16);
         groups.push(VgGroupGpu {
-            boundingSphere: g.bounding_sphere,
-            errorAndRange: [g.parent_error, g.self_error, cfg.geomorph_window_ratio, 0.0],
+            bounding_sphere: g.bounding_sphere,
+            error_and_range: [g.parent_error, g.self_error, cfg.geomorph_window_ratio, 0.0],
             topology: [
                 g.group_id,
                 packed_topo,
@@ -73,24 +73,24 @@ pub fn pack_vg_mesh_gpu_buffers(
     for c in &mesh.clusters {
         let prim_packed = u32::from(c.material_index) | ((c.primitive_kind as u32) << 16);
         clusters.push(VgClusterGpu {
-            aabbMin: [c.aabb_min[0], c.aabb_min[1], c.aabb_min[2], c.parent_error],
-            aabbMax: [c.aabb_max[0], c.aabb_max[1], c.aabb_max[2], c.self_error],
-            normalCone: c.normal_cone,
+            aabb_min: [c.aabb_min[0], c.aabb_min[1], c.aabb_min[2], c.parent_error],
+            aabb_max: [c.aabb_max[0], c.aabb_max[1], c.aabb_max[2], c.self_error],
+            normal_cone: c.normal_cone,
             meta: [
                 c.cluster_id,
                 c.group_id,
                 vertex_word_cursor,
                 tri_word_cursor,
             ],
-            countsAndMat: [
+            counts_and_mat: [
                 u32::from(c.vertex_count),
                 u32::from(c.triangle_count),
                 prim_packed,
                 c.geomorph_scale.to_bits(),
             ],
-            splatCenterOpacity: [0.0, 0.0, 0.0, 1.0],
-            splatCovDiag: [1.0, 1.0, 1.0, 1.0],
-            splatCovOff: [0.0, 0.0, 0.0, 1.0],
+            splat_center_opacity: [0.0, 0.0, 0.0, 1.0],
+            splat_cov_diag: [1.0, 1.0, 1.0, 1.0],
+            splat_cov_off: [0.0, 0.0, 0.0, 1.0],
         });
         vertex_word_cursor = vertex_word_cursor.saturating_add(u32::from(c.vertex_count) * 5);
         tri_word_cursor = tri_word_cursor.saturating_add(u32::from(c.triangle_count));
@@ -111,23 +111,23 @@ pub fn build_vg_frame_ubo(
 ) -> VgFrameUbo {
     let flags = u32::from(cfg.hzb_reverse_z_projection) | (u32::from(has_prev_hzb) << 1);
     VgFrameUbo {
-        viewProj: cfg.view_proj,
-        invViewProj: crate::math::mat_inverse(&cfg.view_proj),
-        prevViewProj: prev_view_proj,
-        cameraPosNear: [
+        view_proj: cfg.view_proj,
+        inv_view_proj: crate::math::mat_inverse(&cfg.view_proj),
+        prev_view_proj,
+        camera_pos_near: [
             cfg.camera_pos[0],
             cfg.camera_pos[1],
             cfg.camera_pos[2],
             cfg.near_plane,
         ],
-        screenParams: [
+        screen_params: [
             cfg.output_extent[0].max(1) as f32,
             cfg.output_extent[1].max(1) as f32,
             cfg.cot_half_fovy,
             cfg.effective_error_threshold_px(),
         ],
-        sunDirIntensity: sun_dir,
-        sunColorAmbient: sun_color,
+        sun_dir_intensity: sun_dir,
+        sun_color_ambient: sun_color,
         counts: [group_count, cluster_count, 1, flags],
     }
 }
@@ -1058,10 +1058,10 @@ impl RenderPassNode for VirtualGeoPass {
             );
 
             let pc = VgPushConstants {
-                passMode: 0,
+                pass_mode: 0,
                 width: extent.width,
                 height: extent.height,
-                mipLevel: 0,
+                mip_level: 0,
             };
 
             ctx.device.cmd_bind_pipeline(
@@ -1175,10 +1175,10 @@ impl RenderPassNode for VirtualGeoPass {
             );
 
             let hzb_pc = VgPushConstants {
-                passMode: 1,
+                pass_mode: 1,
                 width: (extent.width / 2).max(1),
                 height: (extent.height / 2).max(1),
-                mipLevel: 0,
+                mip_level: 0,
             };
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
@@ -1406,8 +1406,8 @@ mod tests {
         assert_eq!(packed.clusters[0].meta[2], 0);
         assert_eq!(packed.clusters[1].meta[2], 50);
         assert_eq!(packed.clusters[1].meta[3], 8);
-        assert_eq!(packed.clusters[1].countsAndMat[2] & 0xFFFF, 5);
-        assert_eq!((packed.clusters[1].countsAndMat[2] >> 16) & 0xFF, 2);
+        assert_eq!(packed.clusters[1].counts_and_mat[2] & 0xFFFF, 5);
+        assert_eq!((packed.clusters[1].counts_and_mat[2] >> 16) & 0xFF, 2);
 
         let ubo = build_vg_frame_ubo(
             &cfg,

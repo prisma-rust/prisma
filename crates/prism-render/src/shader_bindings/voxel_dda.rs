@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/voxel_dda.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_VOXEL_DDA_MAIN: &str = "voxelDdaMain"; // stage: COMPUTE
 pub const ENTRY_VOXEL_GI_MAIN: &str = "voxelGiMain"; // stage: COMPUTE
@@ -76,21 +74,21 @@ pub const GLASS_OUT_TEX_BINDING: u32 = 24; // COMBINED_IMAGE_SAMPLER
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VoxelDenoisePush {
     /// offset 0, size 4
-    pub stepSize: i32,
+    pub step_size: i32,
     /// offset 4, size 4
     pub width: u32,
     /// offset 8, size 4
     pub height: u32,
     /// offset 12, size 4
-    pub passIndex: u32,
+    pub pass_index: u32,
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VoxelDenoisePush>() == 16);
-    assert!(::std::mem::offset_of!(VoxelDenoisePush, stepSize) == 0);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, step_size) == 0);
     assert!(::std::mem::offset_of!(VoxelDenoisePush, width) == 4);
     assert!(::std::mem::offset_of!(VoxelDenoisePush, height) == 8);
-    assert!(::std::mem::offset_of!(VoxelDenoisePush, passIndex) == 12);
+    assert!(::std::mem::offset_of!(VoxelDenoisePush, pass_index) == 12);
 };
 
 /// GPU layout struct (auto-generated from Slang `VoxelFrameUbo`).
@@ -102,42 +100,42 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VoxelFrameUbo {
     /// offset 0, size 64
-    pub viewProj: [[f32; 4]; 4],
+    pub view_proj: [[f32; 4]; 4],
     /// offset 64, size 64
-    pub invViewProj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     /// offset 128, size 64
-    pub prevViewProj: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
     /// offset 192, size 16
-    pub cameraPos: [f32; 4],
+    pub camera_pos: [f32; 4],
     /// offset 208, size 16
-    pub sunDirRadiance: [f32; 4],
+    pub sun_dir_radiance: [f32; 4],
     /// offset 224, size 16
-    pub sunColorAmbient: [f32; 4],
+    pub sun_color_ambient: [f32; 4],
     /// offset 240, size 16
     pub counts: [u32; 4],
     /// offset 256, size 16
     pub counts2: [u32; 4],
     /// offset 272, size 16
-    pub cursorMin: [f32; 4],
+    pub cursor_min: [f32; 4],
     /// offset 288, size 16
-    pub cursorMax: [f32; 4],
+    pub cursor_max: [f32; 4],
     /// offset 304, size 16
-    pub cursorColor: [f32; 4],
+    pub cursor_color: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VoxelFrameUbo>() == 320);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, viewProj) == 0);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, invViewProj) == 64);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, prevViewProj) == 128);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cameraPos) == 192);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunDirRadiance) == 208);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, sunColorAmbient) == 224);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, view_proj) == 0);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, inv_view_proj) == 64);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, prev_view_proj) == 128);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, camera_pos) == 192);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, sun_dir_radiance) == 208);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, sun_color_ambient) == 224);
     assert!(::std::mem::offset_of!(VoxelFrameUbo, counts) == 240);
     assert!(::std::mem::offset_of!(VoxelFrameUbo, counts2) == 256);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMin) == 272);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorMax) == 288);
-    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursorColor) == 304);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursor_min) == 272);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursor_max) == 288);
+    assert!(::std::mem::offset_of!(VoxelFrameUbo, cursor_color) == 304);
 };
 
 /// GPU layout struct (auto-generated from Slang `VoxelChunkGpu`).
@@ -149,15 +147,15 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VoxelChunkGpu {
     /// offset 0, size 16
-    pub originAndL1Offset: [i32; 4],
+    pub origin_and_l1_offset: [i32; 4],
     /// offset 16, size 16
-    pub dimsAndBrickOffset: [u32; 4],
+    pub dims_and_brick_offset: [u32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VoxelChunkGpu>() == 32);
-    assert!(::std::mem::offset_of!(VoxelChunkGpu, originAndL1Offset) == 0);
-    assert!(::std::mem::offset_of!(VoxelChunkGpu, dimsAndBrickOffset) == 16);
+    assert!(::std::mem::offset_of!(VoxelChunkGpu, origin_and_l1_offset) == 0);
+    assert!(::std::mem::offset_of!(VoxelChunkGpu, dims_and_brick_offset) == 16);
 };
 
 /// GPU layout struct (auto-generated from Slang `VoxelEmitterGpu`).
@@ -169,16 +167,16 @@ const _: () = {
 #[derive(Clone, Copy, Debug, Default, PartialEq, ::bytemuck::Pod, ::bytemuck::Zeroable)]
 pub struct VoxelEmitterGpu {
     /// offset 0, size 16
-    pub bminRange: [f32; 4],
+    pub bmin_range: [f32; 4],
     /// offset 16, size 16
-    pub bmaxRadius: [f32; 4],
+    pub bmax_radius: [f32; 4],
     /// offset 32, size 16
-    pub colorIntensity: [f32; 4],
+    pub color_intensity: [f32; 4],
 }
 
 const _: () = {
     assert!(::std::mem::size_of::<VoxelEmitterGpu>() == 48);
-    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bminRange) == 0);
-    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bmaxRadius) == 16);
-    assert!(::std::mem::offset_of!(VoxelEmitterGpu, colorIntensity) == 32);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bmin_range) == 0);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, bmax_radius) == 16);
+    assert!(::std::mem::offset_of!(VoxelEmitterGpu, color_intensity) == 32);
 };

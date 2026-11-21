@@ -245,7 +245,7 @@ impl GroundGrid {
             [0.0, 0.0, 0.0, 1.0],
         ];
         let push = GizmoPush {
-            viewProj: *view_proj,
+            view_proj: *view_proj,
             model: identity,
         };
         unsafe {

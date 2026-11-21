@@ -136,9 +136,9 @@ impl ParticlePass {
             0.0,
         ];
         let push = bindings::ParticlePush {
-            viewProj: *view_proj,
-            camRight: camera_right,
-            camUp: camera_up,
+            view_proj: *view_proj,
+            cam_right: camera_right,
+            cam_up: camera_up,
         };
 
         unsafe {
@@ -362,15 +362,15 @@ mod tests {
         assert_eq!(bindings::PUSH_CONSTANT_SIZE, 96);
         let push = bindings::ParticlePush::default();
         assert_eq!(
-            (&push.viewProj as *const _ as usize) - (&push as *const _ as usize),
+            (&push.view_proj as *const _ as usize) - (&push as *const _ as usize),
             0
         );
         assert_eq!(
-            (&push.camRight as *const _ as usize) - (&push as *const _ as usize),
+            (&push.cam_right as *const _ as usize) - (&push as *const _ as usize),
             64
         );
         assert_eq!(
-            (&push.camUp as *const _ as usize) - (&push as *const _ as usize),
+            (&push.cam_up as *const _ as usize) - (&push as *const _ as usize),
             80
         );
     }

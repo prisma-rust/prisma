@@ -534,26 +534,26 @@ fn render_one_frame(
     renderer.set_anf_sr(settings.anf_sr, settings.anf_sharpness);
     renderer.set_mobile_upscaler(settings.mobile_upscaler, settings.upscaler_sharpness);
     let mut frame_data = FrameUBOData {
-        viewProj: scene.view_proj.to_cols_array_2d(),
-        cameraPosition: [
+        view_proj: scene.view_proj.to_cols_array_2d(),
+        camera_position: [
             scene.eye[0],
             scene.eye[1],
             scene.eye[2],
             scene.lights.len() as f32,
         ],
-        lightDirection: scene.light_direction.to_array(),
-        lightColor: scene.light_color.to_array(),
+        light_direction: scene.light_direction.to_array(),
+        light_color: scene.light_color.to_array(),
         view: scene.view.to_cols_array_2d(),
-        lightViewProj: scene.light_view_proj.to_cols_array_2d(),
-        lightViewProj1: scene.light_view_proj1.to_cols_array_2d(),
-        shadowSplit: scene.shadow_split,
-        shadowCascadeCount: scene.shadow_cascade_count,
-        tonemapMode: settings.tonemap_mode,
-        viewportW: extent.width as f32,
-        viewportH: extent.height as f32,
+        light_view_proj: scene.light_view_proj.to_cols_array_2d(),
+        light_view_proj1: scene.light_view_proj1.to_cols_array_2d(),
+        shadow_split: scene.shadow_split,
+        shadow_cascade_count: scene.shadow_cascade_count,
+        tonemap_mode: settings.tonemap_mode,
+        viewport_w: extent.width as f32,
+        viewport_h: extent.height as f32,
         exposure: scene.exposure,
-        shadowStrength: scene.shadow_strength,
-        prevViewProj: [
+        shadow_strength: scene.shadow_strength,
+        prev_view_proj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],

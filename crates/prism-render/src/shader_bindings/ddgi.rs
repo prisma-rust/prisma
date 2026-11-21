@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/ddgi.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_DDGI_CLEAR_MAIN: &str = "ddgiClearMain"; // stage: COMPUTE
 pub const ENTRY_DDGI_UPDATE_IRRADIANCE_MAIN: &str = "ddgiUpdateIrradianceMain"; // stage: COMPUTE

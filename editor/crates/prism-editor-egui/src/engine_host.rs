@@ -1073,26 +1073,26 @@ impl EngineHost {
         let current_view_proj = scene.view_proj.to_cols_array_2d();
         let prev_view_proj = self.prev_view_proj.unwrap_or(current_view_proj);
         let mut frame_data = FrameUBOData {
-            viewProj: current_view_proj,
-            cameraPosition: [
+            view_proj: current_view_proj,
+            camera_position: [
                 scene.eye.x,
                 scene.eye.y,
                 scene.eye.z,
                 scene.lights.len() as f32,
             ],
-            lightDirection: scene.light_direction.to_array(),
-            lightColor: scene.light_color.to_array(),
+            light_direction: scene.light_direction.to_array(),
+            light_color: scene.light_color.to_array(),
             view: scene.view.to_cols_array_2d(),
-            lightViewProj: scene.light_view_proj.to_cols_array_2d(),
-            lightViewProj1: scene.light_view_proj1.to_cols_array_2d(),
-            shadowSplit: scene.shadow_split,
-            shadowCascadeCount: scene.shadow_cascade_count,
-            tonemapMode: self.settings.tonemap_mode,
-            viewportW: extent.width as f32,
-            viewportH: extent.height as f32,
+            light_view_proj: scene.light_view_proj.to_cols_array_2d(),
+            light_view_proj1: scene.light_view_proj1.to_cols_array_2d(),
+            shadow_split: scene.shadow_split,
+            shadow_cascade_count: scene.shadow_cascade_count,
+            tonemap_mode: self.settings.tonemap_mode,
+            viewport_w: extent.width as f32,
+            viewport_h: extent.height as f32,
             exposure: scene.exposure,
-            shadowStrength: scene.shadow_strength,
-            prevViewProj: prev_view_proj,
+            shadow_strength: scene.shadow_strength,
+            prev_view_proj,
             ..Default::default()
         };
         self.renderer.apply_taa_jitter(&mut frame_data);

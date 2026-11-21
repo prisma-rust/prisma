@@ -4,8 +4,6 @@
 
 //! Bindings reflected from `shaders/slang/ibl_bake.slang`.
 
-#![allow(dead_code, non_snake_case)]
-
 /// Entry point names (for VkPipelineShaderStageCreateInfo).
 pub const ENTRY_EQUIRECT_TO_CUBE_MAIN: &str = "equirectToCubeMain"; // stage: COMPUTE
 pub const ENTRY_IRRADIANCE_MAIN: &str = "irradianceMain"; // stage: COMPUTE

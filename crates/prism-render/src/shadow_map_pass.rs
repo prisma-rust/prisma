@@ -1016,7 +1016,7 @@ impl RenderPassNode for ShadowMapPass {
                         .unwrap_or(0);
                     let pc = bindings::ShadowPush {
                         model: item.model,
-                        lightViewProj: light_view_proj,
+                        light_view_proj,
                         bone_offset: item.bone_offset.unwrap_or(0),
                         _pad_132: [0; 12],
                         _pad: [instance_offset, instance_count, 0],

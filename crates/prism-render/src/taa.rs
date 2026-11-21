@@ -469,11 +469,11 @@ impl RenderPassNode for TaaPass {
             self.history_valid = [false; 2];
         }
         let params = TaaParams {
-            invViewProj: inv_view_proj,
-            prevViewProj: prev_view_proj,
+            inv_view_proj,
+            prev_view_proj,
             resolution: [self.extent.width as f32, self.extent.height as f32],
             strength: ctx.settings.taa_strength.clamp(0.0, 0.95),
-            validHistory: if valid { 1.0 } else { 0.0 },
+            valid_history: if valid { 1.0 } else { 0.0 },
         };
         self.upload_params(ctx.device, frame, &params)?;
         self.prev_view_proj = Some(view_proj);
