@@ -114,6 +114,31 @@ unsafe { device.destroy_image(image, None) };
 
 没有 issue 就删掉；不要把待办留在注释里当隐形需求。
 
+### `#[allow(...)]` 与 `#[expect(...)]`
+
+`#[allow(...)]` / `#![allow(...)]` 在本仓库**一律禁止**，没有例外：`dead_code` 不是理由，
+`clippy::too_many_arguments` 不是理由，生成代码也不是理由。Lint 报错时，删掉它指向的代码，
+或者改设计直到 lint 不再报——需要长期压制的 lint，本身就说明设计有问题。
+
+唯一的逃生口是 `#[expect(<lint>, reason = "<原因>")]`：它把"这里故意如此"写进代码，并且在
+lint 不再触发时**直接编译失败**，所以不会烂成死重。只在 lint 判断错误、代码本身正确时使用
+（FFI 签名、Vulkan 句柄），不能用来压 `dead_code`。
+
+```rust
+// 允许：超长参数列表来自 C ABI 的固定形状。
+#[expect(clippy::too_many_arguments, reason = "mirrors the C ABI signature")]
+pub unsafe extern "C" fn create(...) {}
+
+// 禁止：lint 指出这段代码没人用，那就删掉它。
+#[allow(dead_code)]
+fn legacy_path() {}
+```
+
+### 警告即错误
+
+整个 workspace 必须通过 `cargo clippy --all-targets -- -D warnings`，**不是**只通过本次改动的
+crate。没被改到的 crate 里的警告同样是缺陷：修掉它，或者删掉那段代码。
+
 ### 分隔线
 
 不要使用：
@@ -199,7 +224,8 @@ python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 - 注释中的 CJK 字符；
 - 装饰性分隔线；
 - 没有 issue 的 `TODO` / `FIXME` / `XXX` / `HACK`；
-- 未附带 `reason = "..."` 的裸 `#[allow(...)]` / `#![allow(...)]`（建议改用 `#[expect(..., reason = "...")]`）。
+- 任何 `#[allow(...)]` / `#![allow(...)]`（一律禁止，改为 `#[expect(..., reason = "...")]`）；
+- 未附带 `reason = "..."` 的 `#[expect(...)]`。
 
 字符串里的中文（UI 文案、错误信息）不会被标记；生成文件
 （`crates/prism-render/src/shader_bindings/`、`launcher/src-tauri/gen/`、

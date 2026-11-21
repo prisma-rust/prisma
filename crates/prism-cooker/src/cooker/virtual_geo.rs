@@ -431,8 +431,8 @@ impl Quadric {
 
     fn add(self, rhs: Self) -> Self {
         let mut out = [0.0; 10];
-        for i in 0..10 {
-            out[i] = self.0[i] + rhs.0[i];
+        for (slot, (lhs, rhs)) in out.iter_mut().zip(self.0.iter().zip(rhs.0.iter())) {
+            *slot = lhs + rhs;
         }
         Self(out)
     }
@@ -1635,8 +1635,8 @@ mod tests {
             let grp = &decoded.groups[gi];
             let start = grp.child_group_first as usize;
             let end = start + usize::from(grp.child_group_count);
-            for ci in start..end {
-                let child = &decoded.groups[ci];
+            for (offset, child) in decoded.groups[start..end].iter().enumerate() {
+                let ci = start + offset;
                 assert!(
                     (child.parent_error - grp.self_error).abs() < 1e-6,
                     "child parent_error {} must equal parent self_error {}",

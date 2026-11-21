@@ -4,6 +4,7 @@
     python scripts/pr_ready.py                 # full self-check (default)
     python scripts/pr_ready.py --quick         # fast loop: fmt + clippy only
     python scripts/pr_ready.py --all           # whole workspace + every standalone workspace
+    python scripts/pr_ready.py --lint          # whole-workspace clippy, no tests
     python scripts/pr_ready.py --base origin/master
     python scripts/pr_ready.py --verbose       # print the full output on failure
 
@@ -14,6 +15,7 @@ untracked files):
   * changed .rs files are checked for comment style (warns during migration, see `docs/code-style.md`);
   * the root `Cargo.toml` and every standalone workspace must carry one version (`scripts/version.py`);
   * touched root-workspace crates: clippy --all-targets -D warnings + cargo test;
+  * `--lint`: clippy the whole workspace (-D warnings), not only the touched crates;
   * shader/reflection/bindings changes: re-run shader-bindgen into a temp dir and compare for drift;
   * editor/ changes: cargo test (standalone workspace, data layer + egui shell);
   * projects/* and launcher/ changes: cargo check per standalone workspace;
@@ -601,6 +603,11 @@ def main() -> int:
         help="static/script gates only (skips cargo clippy and tests; for Termux or docs/CI PRs)",
     )
     parser.add_argument("--all", action="store_true", help="check every workspace and standalone project")
+    parser.add_argument(
+        "--lint",
+        action="store_true",
+        help="clippy the whole workspace with -D warnings, not only the touched crates",
+    )
     parser.add_argument("--verbose", action="store_true", help="print the full output on failure")
     args = parser.parse_args()
 
@@ -646,7 +653,26 @@ def main() -> int:
     checks.append(comment_check(base))
     checks.append(version_check())
 
-    if default_crates and not args.static_only:
+    if args.lint and not args.static_only:
+        # `prism-app` links android-activity, which only compiles for the NDK target;
+        # CI excludes it too. Every other crate must be warning-free.
+        checks.append(
+            Check(
+                "clippy (workspace)",
+                [
+                    "cargo",
+                    "clippy",
+                    "--workspace",
+                    "--exclude",
+                    "prism-app",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )
+        )
+    elif default_crates and not args.static_only:
         clippy_cmd = ["cargo", "clippy"]
         for crate in default_crates:
             clippy_cmd += ["-p", crate]
@@ -794,7 +820,7 @@ def main() -> int:
     mode = (
         "static-only"
         if args.static_only
-        else ("quick" if args.quick else ("all" if args.all else "full"))
+        else ("quick" if args.quick else ("all" if args.all else ("lint" if args.lint else "full")))
     )
 
     lines = [

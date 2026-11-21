@@ -10,7 +10,8 @@ What it flags:
   * CJK characters in comments (comments must be English);
   * decorative separators such as `// ----------`;
   * `TODO` / `FIXME` / `XXX` / `HACK` without an issue reference;
-  * bare `#[allow(...)]` / `#![allow(...)]` without `reason = "..."`.
+  * any `#[allow(...)]` / `#![allow(...)]` (banned outright, see `docs/code-style.md`);
+  * `#[expect(...)]` / `#![expect(...)]` without `reason = "..."`.
 
 Strings and user-facing text are not comments, so Chinese UI strings and
 error messages are not flagged. Generated files such as shader bindings and
@@ -43,7 +44,7 @@ CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff0
 SEPARATOR_RE = re.compile(r"^[\s\-=_*#~`^+─━┄┅┈┉…·.]+$")
 TODO_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
 ISSUE_RE = re.compile(r"(#\d+|https?://\S+|issues?/\d+)")
-ALLOW_ATTR_RE = re.compile(r"#!?\[\s*allow\s*\([^]]*\)\s*\]")
+ATTR_RE = re.compile(r"#!?\[\s*(allow|expect)\s*\(")
 REASON_RE = re.compile(r"\breason\s*=")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -206,6 +207,32 @@ def added_line_numbers(rel_path: str, base: str | None, staged_only: bool) -> se
     return lines
 
 
+def attributes(source: str) -> list[tuple[int, str, str]]:
+    """Return `(line, attribute_text, kind)` for every `allow` / `expect` attribute.
+
+    Attributes routinely span several lines, so the text is matched by bracket depth
+    rather than by scanning a single line.
+    """
+    found: list[tuple[int, str, str]] = []
+    for match in ATTR_RE.finditer(source):
+        depth = 0
+        end = -1
+        for offset in range(match.start(), len(source)):
+            char = source[offset]
+            if char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if depth == 0:
+                    end = offset
+                    break
+        if end < 0:
+            continue
+        line = source.count("\n", 0, match.start()) + 1
+        found.append((line, source[match.start() : end + 1], match.group(1)))
+    return found
+
+
 def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[str, int, str]]:
     path = ROOT / rel_path
     try:
@@ -229,19 +256,25 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
                 ("todo", token.line, "TODO/FIXME without an issue reference (`TODO(#123)`)")
             )
 
-    for line_no, raw_line in enumerate(source.splitlines(), start=1):
+    for line_no, attr, kind in attributes(source):
         if only_lines is not None and line_no not in only_lines:
             continue
-        for match in ALLOW_ATTR_RE.finditer(raw_line):
-            attr = match.group(0)
-            if not REASON_RE.search(attr):
-                issues.append(
-                    (
-                        "allow",
-                        line_no,
-                        "bare `#[allow(...)]` without `reason = \"...\"` (prefer `#[expect(..., reason = \"...\")]`)",
-                    )
+        if kind == "allow":
+            issues.append(
+                (
+                    "allow",
+                    line_no,
+                    "`#[allow(...)]` is banned; use `#[expect(..., reason = \"...\")]`",
                 )
+            )
+        elif not REASON_RE.search(attr):
+            issues.append(
+                (
+                    "expect",
+                    line_no,
+                    "`#[expect(...)]` requires `reason = \"...\"`",
+                )
+            )
 
     return issues
 
@@ -254,7 +287,8 @@ def markdown_row(total: int, counts: dict[str, int], warn_only: bool) -> str:
         f"{total} finding(s): cjk {counts.get('cjk', 0)}, "
         f"separator {counts.get('separator', 0)}, "
         f"todo {counts.get('todo', 0)}, "
-        f"allow {counts.get('allow', 0)}"
+        f"allow {counts.get('allow', 0)}, "
+        f"expect {counts.get('expect', 0)}"
     )
     return f"| comment style | {status} | {detail} |"
 
@@ -348,7 +382,8 @@ def main() -> int:
         summary = (
             f"comments: {total} finding(s) in {len(issues_by_file)} file(s) "
             f"(cjk={counts.get('cjk', 0)}, separator={counts.get('separator', 0)}, "
-            f"todo={counts.get('todo', 0)}, allow={counts.get('allow', 0)})"
+            f"todo={counts.get('todo', 0)}, allow={counts.get('allow', 0)}, "
+            f"expect={counts.get('expect', 0)})"
         )
         if not args.quiet:
             print(summary, file=sys.stderr if args.markdown else sys.stdout)

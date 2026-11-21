@@ -215,12 +215,11 @@ jobs:
       - name: version consistency
         run: python3 scripts/version.py check
 
-      # Desktop crates only (prism-app needs the NDK target for Android).
-      - name: clippy (desktop crates)
+      # Whole workspace: a warning in a crate nobody touched is still a defect.
+      # `prism-app` is excluded (it links android-activity, which needs the NDK target).
+      - name: clippy (workspace)
         run: >
-          cargo clippy
-          -p prism-ecs -p prism-gfx -p prism-render -p prism-engine -p prism-platform
-          --all-targets -- -D warnings
+          cargo clippy --workspace --exclude prism-app --all-targets -- -D warnings
 
       # xtask is workspace-excluded, so --all/-p don't reach it. Check it here.
       - name: fmt + clippy (xtask)

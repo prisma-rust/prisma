@@ -180,7 +180,7 @@ pub fn pick_rotation_axis_oriented(
 }
 
 /// Project a 3D rotation ring around `basis[axis]` as 2D screen-space polyline segments.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "Explicit camera frame, basis, and viewport extent avoid bundled state"
 )]
@@ -223,7 +223,7 @@ pub fn screen_ring_segments(
     )
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "Shared ring tessellation helper across axis and screen-space rings"
 )]
@@ -262,7 +262,7 @@ fn ring_segments_from_basis(
 }
 
 /// Pick the closest projected 3D rotation ring or outer screen-space ring under `point`.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "Explicit camera frame, basis, and viewport extent avoid bundled state"
 )]
@@ -1208,7 +1208,7 @@ fn point_in_quad(point: (f32, f32), quad: [(f32, f32); 4]) -> bool {
 }
 
 /// Pick center, axis arrows, or planar quads of a translate/scale gizmo under `point`.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "Explicit camera frame, basis, and viewport dimensions avoid bundled UI state"
 )]

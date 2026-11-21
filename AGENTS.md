@@ -16,7 +16,18 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
 - Paste the Markdown block `pr_ready` prints into the PR. Where behavior is observable, attach
   runtime evidence: headless logs, state snapshots, `PRISMA_BENCH_REPORT` JSON, or
   `PRISMA_SCREENSHOT` PNGs. A diff alone is not evidence.
-- When a check fails, fix the invariant it names. Never edit the check, add `#[allow(...)]`, skip
+- **Zero suppression.** `#[allow(...)]` and `#![allow(...)]` are banned in this workspace, with no
+  exceptions: not for `dead_code`, not for `too_many_arguments`, not for generated code. When a
+  lint fires, delete the code it points at or change the design until the lint stops firing.
+  A suppression that must survive proves the design is wrong.
+- The one escape hatch is `#[expect(<lint>, reason = "<why>")]`: it documents a deliberate
+  boundary and **fails the build once the lint stops firing**, so it cannot rot into dead weight.
+  Use it only where the lint is wrong about correct code (FFI signatures, Vulkan handles); never
+  to silence `dead_code`.
+- **Warnings are errors.** Every crate must pass `cargo clippy --all-targets -- -D warnings` for
+  the whole workspace, not only the crates a commit happens to touch. A warning in an untouched
+  crate is still a defect; fix it or delete the code.
+- When a check fails, fix the invariant it names. Never edit the check, add a suppression, skip
   a test, or relax a budget to get green.
 - Termux / aarch64 only: static checks (`cargo fmt`, `cargo clippy`) may replace the full gate, and
   the reply must list what was not verified. The full gate resumes on any other host.
