@@ -1129,10 +1129,7 @@ pub fn anim_graph(
                         state.status = match workspace.write_asset_json(&path, &value) {
                             Ok(()) => {
                                 workspace.record_asset_edit(&path, &before, &value);
-                                workspace.tf(
-                                    "desktop.status.savedStateMachine",
-                                    &[("path", &path)],
-                                )
+                                workspace.tf("desktop.status.savedStateMachine", &[("path", &path)])
                             }
                             Err(error) => workspace.tf(
                                 "desktop.status.saveTransitionsFailed",
@@ -1152,10 +1149,9 @@ pub fn anim_graph(
                 if let Some((index, new_name)) = state.anim_graph_edit.sm_state_rename.take() {
                     state.status =
                         match workspace.rename_state_machine_state(&path, index, &new_name) {
-                            Ok(updated) if updated.is_empty() => workspace.tf(
-                                "desktop.status.renamedState",
-                                &[("new", &new_name)],
-                            ),
+                            Ok(updated) if updated.is_empty() => {
+                                workspace.tf("desktop.status.renamedState", &[("new", &new_name)])
+                            }
                             Ok(updated) => workspace.tf(
                                 "desktop.status.renamedStateUpdated",
                                 &[("new", &new_name), ("updated", &updated.join(", "))],
@@ -1266,9 +1262,12 @@ pub(super) fn draw_notifies_asset(
             state.status = match workspace.write_asset_json(path, &value) {
                 Ok(()) => {
                     workspace.record_asset_edit(path, &before, &value);
-                    format!("saved notifies in {path}")
+                    workspace.tf("desktop.status.savedNotifies", &[("path", path)])
                 }
-                Err(error) => format!("save notifies failed: {error}"),
+                Err(error) => workspace.tf(
+                    "desktop.status.saveNotifiesFailed",
+                    &[("error", &error.to_string())],
+                ),
             };
         }
         Ok(false) => {}
@@ -1715,9 +1714,12 @@ pub(super) fn draw_montages_asset(
             state.status = match workspace.write_asset_json(path, &value) {
                 Ok(()) => {
                     workspace.record_asset_edit(path, &before, &value);
-                    format!("saved montage sections in {path}")
+                    workspace.tf("desktop.status.savedMontageSections", &[("path", path)])
                 }
-                Err(error) => format!("save montage sections failed: {error}"),
+                Err(error) => workspace.tf(
+                    "desktop.status.saveMontageSectionsFailed",
+                    &[("error", &error.to_string())],
+                ),
             };
         }
         Ok(false) => {}
@@ -2237,9 +2239,12 @@ pub(super) fn draw_sync_markers_asset(
             state.status = match workspace.write_asset_json(path, &value) {
                 Ok(()) => {
                     workspace.record_asset_edit(path, &before, &value);
-                    format!("saved sync markers in {path}")
+                    workspace.tf("desktop.status.savedSyncMarkers", &[("path", path)])
                 }
-                Err(error) => format!("save sync markers failed: {error}"),
+                Err(error) => workspace.tf(
+                    "desktop.status.saveSyncMarkersFailed",
+                    &[("error", &error.to_string())],
+                ),
             };
         }
         Ok(false) => {}
