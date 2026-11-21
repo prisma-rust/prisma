@@ -404,6 +404,24 @@ impl UiTree {
             .iter()
             .map(|(id, anchor)| (id, *anchor))
             .collect();
+        // Resolve in dependency order. Popup panels are siblings on the popup
+        // layer, so tree depth cannot order them; what matters is that a panel
+        // anchored to a row *inside another panel* is resolved after that other
+        // panel. Sorting by the anchor target's depth is not enough — measure the
+        // dependency chain explicitly.
+        let mut entries = entries;
+        let mut ordered: Vec<(NodeId, Anchor, usize)> = entries
+            .drain(..)
+            .map(|(id, anchor)| {
+                let level = self.anchor_chain_len(&anchor);
+                (id, anchor, level)
+            })
+            .collect();
+        ordered.sort_by_key(|(_, _, level)| *level);
+        let entries: Vec<(NodeId, Anchor)> = ordered
+            .into_iter()
+            .map(|(id, anchor, _)| (id, anchor))
+            .collect();
         for (id, anchor) in entries {
             let Some(target) = self.key_to_id.get(&anchor.target).copied() else {
                 continue;
@@ -449,6 +467,54 @@ impl UiTree {
             // the items behind.
             self.translate_subtree(id, x - own.x, y - own.y);
         }
+    }
+
+    /// How many other anchored nodes `anchor` depends on, transitively.
+    ///
+    /// A panel anchored to a row that is itself inside an anchored panel depends
+    /// on that outer panel; resolving the outer one first is what makes the
+    /// inner panel measure a row that has already been moved.
+    fn anchor_chain_len(&self, anchor: &Anchor) -> usize {
+        let mut level = 0;
+        let mut target = self.key_to_id.get(&anchor.target).copied();
+        let mut guard = 0;
+        while let Some(id) = target {
+            guard += 1;
+            if guard > 64 {
+                break;
+            }
+            // Walk up until we find an ancestor that is itself anchored.
+            let mut cursor = self.nodes.get(id).and_then(|node| node.parent);
+            let mut found = None;
+            while let Some(parent) = cursor {
+                if self.anchors.contains_key(parent) {
+                    found = Some(parent);
+                    break;
+                }
+                cursor = self.nodes.get(parent).and_then(|node| node.parent);
+            }
+            let Some(outer) = found else {
+                break;
+            };
+            level += 1;
+            // Continue from the outer panel's own anchor target.
+            target = self
+                .anchors
+                .get(outer)
+                .and_then(|a| self.key_to_id.get(&a.target).copied());
+        }
+        level
+    }
+
+    /// Number of ancestors between `id` and the root.
+    fn depth_of(&self, id: NodeId) -> Option<usize> {
+        let mut depth = 0;
+        let mut cursor = self.nodes.get(id).and_then(|node| node.parent);
+        while let Some(parent) = cursor {
+            depth += 1;
+            cursor = self.nodes.get(parent).and_then(|node| node.parent);
+        }
+        Some(depth)
     }
 
     /// Offset a node and every descendant by `(dx, dy)`.
