@@ -78,8 +78,9 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
 - Take the idea, not the bytes: study the algorithm, data flow, and pipeline shape, then implement
   it independently against this repo's own abstractions. Never copy code, shader source, comments,
   identifiers, or assets from a reference.
-- Say in the PR which reference file shaped the design, so a reviewer can check the clean-room
-  boundary was kept.
+- The reference is scaffolding for your own reasoning only. Once you are writing, it does not
+  exist: shipped code, comments, commit messages, PR bodies, and review replies must never name the
+  reference project, its files, or its authors.
 
 ## 7. Git and review
 
