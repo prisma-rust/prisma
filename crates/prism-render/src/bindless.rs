@@ -19,7 +19,7 @@
 //! ## INVALID handle fallback
 //!
 //! Unregistered or not-yet-ready textures get [`TextureHandle::INVALID`].
-//! The shader checks for this and returns a magenta fallback color,
+//! The shader checks for this and returns the fallback color,
 //! avoiding crashes from reading unbound descriptors — critical on mobile
 //! where async resource loading is common.
 //!
@@ -174,7 +174,7 @@ impl SlotAllocator {
     /// Claim a specific 槽 The 调用者 must know the 槽 is not
     /// live in use otherwise the previous view is silently overwritten
     /// by the subsequent descriptor 写入 This is what
-    /// `register_with_handle` uses for the magenta 回退 槽
+    /// `register_with_handle` uses for the fallback slot
     ///
     /// If the 槽 was at or past 下一个 下一个 becomes 槽 + 1` so a later
     /// `claim` cannot hand the same 槽 out twice.
@@ -400,7 +400,7 @@ impl BindlessTextureTable {
     /// ensure the slot is currently free (otherwise the previous view is
     /// silently overwritten, which is what `write_srv` does). This is
     /// the path `RenderTextureManager` uses to claim slot 0 for the
-    /// magenta fallback at construction time.
+    /// fallback at construction time.
     ///
     /// If the requested slot is at or past `next`, `next` is bumped to
     /// `slot + 1` so a subsequent `register` call will not overwrite
@@ -422,7 +422,7 @@ impl BindlessTextureTable {
     /// This only reclaims the *slot number*: the SRV descriptor still
     /// points at whatever view was last written into it. Callers that
     /// destroyed that view must first [`write_srv`](Self::write_srv) a
-    /// live view (e.g. the magenta fallback) so a shader holding the old
+    /// live view (e.g. the fallback) so a shader holding the old
     /// handle cannot sample a freed view.
     ///
     /// Returns `false` when the 槽 was never claimed or is already free.

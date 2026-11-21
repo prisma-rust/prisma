@@ -350,38 +350,42 @@ impl GpuAssetResolver {
             .ok()?;
 
         let mip0 = tex.info.mip_data.first().cloned().unwrap_or_default();
-        let magenta = || TextureUploadInput {
+        // Neutral mid grey: a texture that failed to decode reads as an
+        // untextured surface rather than as a loud error marker.
+        let placeholder = || TextureUploadInput {
             width: 1,
             height: 1,
             format: TextureFormat::Rgba8,
             mip_levels: 1,
-            pixels: vec![255, 0, 255, 255],
+            pixels: vec![128, 128, 128, 255],
         };
 
         let Some(format) = texture_format_for(tex.info.format, srgb) else {
             log::warn!(
                 "load_texture_data: texture {tex_id} uses unsupported RTEX format {}; \
-                 using magenta fallback",
+                 using the neutral placeholder",
                 tex.info.format
             );
-            return Some(magenta());
+            return Some(placeholder());
         };
 
         let input = if mip0.is_empty() {
-            log::warn!("load_texture_data: texture {tex_id} has no mip 0; using magenta fallback");
-            magenta()
+            log::warn!(
+                "load_texture_data: texture {tex_id} has no mip 0; using the neutral placeholder"
+            );
+            placeholder()
         } else {
             let expected = format.compressed_byte_len(tex.info.width, tex.info.height);
             if mip0.len() != expected {
                 log::warn!(
                     "load_texture_data: texture {tex_id} mip0 size {} != {}x{} {format:?} ({}); \
-                     using magenta fallback",
+                     using the neutral placeholder",
                     mip0.len(),
                     tex.info.width,
                     tex.info.height,
                     expected
                 );
-                magenta()
+                placeholder()
             } else if tex.info.mip_data.len() > 1 {
                 let mut chain_valid = true;
                 let mut total_len = mip0.len();

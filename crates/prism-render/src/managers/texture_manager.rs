@@ -535,16 +535,18 @@ impl RenderTextureManager {
             .unwrap_or(self.fallback_srv)
     }
 
-    /// 放置 a single entry and 释放 its GPU image/memory/view and
-    /// reclaims its bindless SRV 槽 The 槽 is rewritten with the
-    /// magenta fallback view first, so a stale handle sampling it gets
-    /// magenta instead of a freed-view use-after-free. The 槽 number is
-    /// returned to the free-list so a later `reserve` reuses it.
+    /// Drop a single entry, free its GPU image/memory/view, and reclaim its
+    /// bindless SRV slot.
+    ///
+    /// The slot is rewritten with the fallback view first, so a stale handle
+    /// sampling it gets the checkerboard instead of a freed-view
+    /// use-after-free. The slot number returns to the free-list so a later
+    /// `reserve` reuses it.
     pub fn unregister(&mut self, handle: AssetTextureHandle, device: &ash::Device) {
         if let Some(tex) = self.textures.remove(handle) {
             // Rewrite the descriptor with the fallback view before the
             // image view is destroyed, so any shader holding the old
-            // handle samples magenta rather than a freed view.
+            // handle samples the fallback rather than a freed view.
             self.bindless.write_srv(tex.srv.0, self.fallback_view);
             self.bindless.release_slot(tex.srv);
             unsafe {
@@ -555,11 +557,13 @@ impl RenderTextureManager {
         }
     }
 
-    /// 按 **bindless SRV 槽位** 释放（#495 热重载 / 实体销毁）。
+    /// Release by **bindless SRV slot** (hot reload / entity teardown).
     ///
-    /// 引擎侧组件只存槽位（`SpriteRef.texture_slot` 等），拿不到管理器的
-    /// `AssetTextureHandle`；这里反查一次再走 `unregister`，保证图像 / 内存 /
-    /// 视图与槽位一起回收，而不是留在显存里。
+    /// Engine-side components store only the slot (`SpriteRef.texture_slot`
+    /// and friends) and cannot name the manager's `AssetTextureHandle`, so the
+    /// handle is resolved here and then routed through `unregister`, which
+    /// frees the image, memory, view and slot together instead of leaving them
+    /// resident.
     pub fn unregister_srv(&mut self, srv: u32, device: &ash::Device) -> bool {
         let Some(handle) = self
             .textures

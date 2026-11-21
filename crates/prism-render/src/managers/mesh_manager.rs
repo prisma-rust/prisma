@@ -4,7 +4,7 @@
 //! The manager owns a `Mesh` per handle and exposes the underlying
 //! `vk::Buffer` / `vk::DeviceAddress` to the renderer for the draw loop. A
 //! `MeshHandle` that returns `None` from `get()` is treated as "not on the
-//! GPU yet" by the renderer (it falls back to the magenta-fallback path
+//! GPU yet" by the renderer (it falls back to the same missing-resource path
 //! used for textures).
 //!
 //! P0 scope: synchronous upload via the existing `buffer::create_buffer` +
@@ -333,12 +333,13 @@ impl Drop for RenderMeshManager {
 /// Translate `MeshUploadInput` into the interleaved `Vertex` layout. Missing
 /// UVs / colors / tangents are filled with safe defaults so the GPU vertex
 /// format is always well-defined (the shader treats "no UVs" as
-/// "sample the magenta fallback" via the same INVALID-handle path used for
+/// "sample the fallback" via the same INVALID-handle path used for
 /// textures).
 fn build_vertices(input: &MeshUploadInput) -> Vec<crate::mesh::Vertex> {
     let n = input.positions.len();
-    // 导入网格的切线是常量占位（中间格式没有切线槽位，#515），这里按 UV 现算一份；
-    // 自己带了真切线的网格（图元、手写网格）原样使用。
+    // Imported meshes carry no tangent channel (the intermediate format has no
+    // slot for one), so tangents are derived from the UVs here; meshes that do
+    // carry real tangents (primitives, hand-authored) pass through unchanged.
     let generated = if crate::tangents::are_placeholders(&input.tangents, n) {
         crate::tangents::generate(&input.positions, &input.normals, &input.uvs, &input.indices)
     } else {

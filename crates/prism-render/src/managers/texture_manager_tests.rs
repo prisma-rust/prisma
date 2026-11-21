@@ -156,3 +156,55 @@ fn bc1_and_bc3_map_to_vulkan_block_formats() {
         ash::vk::Format::BC3_SRGB_BLOCK
     );
 }
+// --- Missing-texture fallback pattern ---
+
+#[test]
+fn the_fallback_is_a_neutral_checkerboard_not_a_loud_marker() {
+    let pixels = super::fallback_pixels();
+    assert_eq!(
+        pixels.len(),
+        (super::FALLBACK_EDGE * super::FALLBACK_EDGE * 4) as usize
+    );
+
+    // Every texel is opaque and grey-valued: red, green and blue agree, so the
+    // pattern cannot read as a colour-coded error.
+    for texel in pixels.as_chunks::<4>().0 {
+        assert_eq!(texel[3], 255, "the fallback must be opaque");
+        assert_eq!(
+            (texel[0], texel[1], texel[2]),
+            (texel[0], texel[0], texel[0]),
+            "fallback texels must be neutral grey, got {texel:?}"
+        );
+    }
+
+    // Both tones are present, one of them black.
+    let mut tones: Vec<u8> = pixels.as_chunks::<4>().0.iter().map(|t| t[0]).collect();
+    tones.sort_unstable();
+    tones.dedup();
+    assert_eq!(
+        tones,
+        vec![0, 128],
+        "expected black and mid grey, got {tones:?}"
+    );
+}
+
+#[test]
+fn the_fallback_tile_is_square_and_repeats_seamlessly() {
+    let edge = super::FALLBACK_EDGE;
+    let pixels = super::fallback_pixels();
+    let at = |x: u32, y: u32| pixels[((y * edge + x) * 4) as usize];
+
+    // Four cells across the edge means the tile is centred and the pattern
+    // wraps without a half-cell seam.
+    assert_eq!(
+        edge % 4,
+        0,
+        "the edge must hold a whole number of 2-texel tiles"
+    );
+    for y in 0..edge {
+        for x in 0..edge {
+            let expected = if (x / 2 + y / 2) % 2 == 0 { 128 } else { 0 };
+            assert_eq!(at(x, y), expected, "cell mismatch at ({x}, {y})");
+        }
+    }
+}
