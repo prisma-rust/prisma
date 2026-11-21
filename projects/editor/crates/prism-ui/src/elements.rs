@@ -97,6 +97,7 @@ pub struct ElementBox {
     text_editable: Option<TextEditable>,
     drag_source: Option<DragPayload>,
     drop_target: bool,
+    hover_target: bool,
     margin: Edges,
     anchor: Option<Anchor>,
     children: Vec<ChildBuilder>,
@@ -118,6 +119,7 @@ impl Default for ElementBox {
             text_editable: None,
             drag_source: None,
             drop_target: false,
+            hover_target: false,
             margin: Edges::default(),
             anchor: None,
             children: Vec::new(),
@@ -249,6 +251,16 @@ impl ElementBox {
     #[cfg(feature = "ui-blur")]
     pub fn backdrop_blur(mut self, sigma: f32) -> Self {
         self.ensure_visual().base.backdrop_blur = sigma;
+        self
+    }
+
+    /// Make the node hit-testable without accepting clicks.
+    ///
+    /// For widgets that react to the pointer but never emit
+    /// [`crate::behavior::UiAction::Clicked`]: submenu rows, tooltip anchors,
+    /// hover-only chrome.
+    pub fn hoverable(mut self) -> Self {
+        self.hover_target = true;
         self
     }
 
@@ -395,6 +407,9 @@ impl UiElement for ElementBox {
         }
         if self.drop_target {
             ctx.tree.drop_targets.insert(id, true);
+        }
+        if self.hover_target {
+            ctx.tree.hover_targets.insert(id, ());
         }
         if let Some(anchor) = self.anchor {
             ctx.tree.anchors.insert(id, anchor);

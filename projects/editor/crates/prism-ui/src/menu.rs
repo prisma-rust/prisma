@@ -129,6 +129,10 @@ impl MenuState {
                     self.close();
                     out.push(MenuAction::OpenChanged(None));
                 }
+                MenuNodeKey::Submenu { .. } => {
+                    // Submenu rows open on hover; a click is intentionally inert
+                    // so the menu stays open while the pointer crosses the row.
+                }
                 MenuNodeKey::Dismiss => {
                     if self.close() {
                         out.push(MenuAction::OpenChanged(None));
@@ -147,6 +151,8 @@ pub enum MenuNodeKey {
     Trigger(String),
     /// An item inside `menu` carrying `command`.
     Item { menu: String, command: String },
+    /// A submenu row inside `menu`, identified by its label.
+    Submenu { menu: String, label: String },
     /// The invisible backdrop that closes menus when clicked.
     Dismiss,
 }
@@ -155,6 +161,11 @@ impl MenuNodeKey {
     /// Stable node key for a trigger.
     pub fn trigger_key(id: &str) -> NodeKey {
         ("menu", "trigger", id).into_node_key()
+    }
+
+    /// Stable node key for a submenu row.
+    pub fn submenu_key(menu: &str, label: &str) -> NodeKey {
+        submenu_row_key(menu, label)
     }
 
     /// Stable node key for an item.
@@ -178,14 +189,24 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Node key of a submenu row, shared by the builder and the hover resolver.
+fn submenu_row_key(menu_id: &str, label: &str) -> NodeKey {
+    ("menu", "submenu", menu_id, label).into_node_key()
+}
+
 fn register(key: NodeKey, node: MenuNodeKey) {
     REGISTRY.with(|registry| {
         registry.borrow_mut().insert(key, node);
     });
 }
 
-/// Clear the key registry; call at the start of each frame's menu build.
-pub fn begin_frame() {
+/// Clear the key registry.
+///
+/// Deliberately not called per frame: menus are built before input is
+/// processed, but a click is handled on the frame *after* the one that
+/// registered the key. Entries are stable for a given menu definition, so the
+/// registry only needs resetting when that definition changes.
+pub fn reset_key_registry() {
     REGISTRY.with(|registry| registry.borrow_mut().clear());
 }
 
@@ -330,7 +351,6 @@ impl MenuBar {
         let mut bar = ElementBox::default()
             .key(MENU_BAR_KEY)
             .height(Length::Px(theme.menu_bar_height))
-            .width(Length::Percent(100.0))
             .padding(theme.menu_bar_padding)
             .gap(theme.menu_bar_gap)
             .align(Align::Center)
@@ -350,10 +370,64 @@ impl MenuBar {
         };
         let overlay = ctx.tree.overlay_root(viewport);
         let trigger = MenuNodeKey::trigger_key(&open_menu.id);
+        // Resolved before mounting: the hovered branch decides what exists.
+        let branch = resolve_open_branch(ctx.tree, &open_menu.id, &open_menu.entries);
         ctx.with_parent(overlay, |ctx| {
-            ctx.mount(dropdown(&theme, open_menu, trigger));
+            ctx.mount(dropdown(&theme, &open_menu.id, &open_menu.entries, trigger));
+
+            // Each open submenu level is anchored to its row in the parent
+            // panel. Depth comes from the menu definition, never from input.
+            let mut entries: &[MenuEntry] = &open_menu.entries;
+            let mut scope = open_menu.id.clone();
+            for label in &branch {
+                let Some(MenuEntry::Submenu {
+                    entries: child_entries,
+                    ..
+                }) = entries.iter().find(
+                    |entry| matches!(entry, MenuEntry::Submenu { label: l, .. } if l == label),
+                )
+                else {
+                    break;
+                };
+                let row_key = submenu_row_key(&scope, label);
+                scope = format!("{scope}/{label}");
+                ctx.mount(dropdown(&theme, &scope, child_entries, row_key));
+                entries = child_entries;
+            }
         });
     }
+}
+
+/// Which submenu labels are open, decided by which row the pointer is on.
+///
+/// Hovering a submenu row opens it, which implicitly closes its siblings; moving
+/// onto a plain row closes the whole branch. That is what makes a menu feel like
+/// a menu rather than a sticky tree.
+fn resolve_open_branch(
+    tree: &crate::tree::UiTree,
+    menu_id: &str,
+    entries: &[MenuEntry],
+) -> Vec<String> {
+    let mut branch = Vec::new();
+    let mut level = entries;
+    let mut scope = menu_id.to_string();
+    loop {
+        let hovered = level.iter().find(|entry| {
+            matches!(entry, MenuEntry::Submenu { label, .. }
+                if tree.is_hovered(submenu_row_key(&scope, label)))
+        });
+        let Some(MenuEntry::Submenu {
+            label,
+            entries: child_entries,
+        }) = hovered
+        else {
+            break;
+        };
+        branch.push(label.clone());
+        scope = format!("{scope}/{label}");
+        level = child_entries;
+    }
+    branch
 }
 
 /// A menu bar trigger: looks like a toolbar label until hovered or opened.
@@ -380,9 +454,9 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
 }
 
 /// The dropdown panel for one menu, anchored under its trigger.
-fn dropdown(theme: &Theme, menu: &Menu, trigger: NodeKey) -> ElementBox {
+fn dropdown(theme: &Theme, menu_id: &str, entries: &[MenuEntry], trigger: NodeKey) -> ElementBox {
     let mut panel = ElementBox::default()
-        .key(("menu", "dropdown", menu.id.as_str()))
+        .key(("menu", "dropdown", menu_id))
         .direction(FlexDirection::Column)
         .padding(theme.menu_dropdown_padding)
         .gap(1.0)
@@ -396,16 +470,17 @@ fn dropdown(theme: &Theme, menu: &Menu, trigger: NodeKey) -> ElementBox {
             PopupAlign::Start,
         );
 
-    for entry in &menu.entries {
-        panel = panel.child(entry_row(theme, &menu.id, entry));
+    for entry in entries {
+        panel = panel.child(entry_row(theme, menu_id, entry));
     }
     panel
 }
 
 fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
     match entry {
+        // Width stays Auto so the rule stretches to the panel's inner width; a
+        // Percent would resolve against the viewport and blow the panel open.
         MenuEntry::Separator => ElementBox::default()
-            .width(Length::Percent(100.0))
             .height(Length::Px(1.0))
             .margin_vertical(theme.menu_separator_margin)
             .bg(theme.border_subtle),
@@ -475,20 +550,28 @@ fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
             label: text_label,
             entries,
         } => {
-            // A submenu row is not clickable on its own: it opens on hover.
-            // Hover-open needs a per-frame pointer check, which the element
-            // kernel does not expose yet, so the row is rendered but inert.
-            // Hosts that need nesting should build it explicitly until the
-            // hover-open behavior lands (tracked in the menu widget roadmap).
+            // Submenu rows are hover targets, not click targets: hovering opens
+            // the child panel and moving away closes it.
+            let key = submenu_row_key(menu_id, text_label);
+            register(
+                key,
+                MenuNodeKey::Submenu {
+                    menu: menu_id.to_string(),
+                    label: text_label.clone(),
+                },
+            );
             let _ = entries;
             ElementBox::default()
+                .key(key)
                 .height(Length::Px(theme.menu_item_height))
                 .padding(theme.menu_item_padding)
                 .radius(theme.menu_item_radius)
                 .align(Align::Center)
                 .gap(8.0)
                 .bg(Color::TRANSPARENT)
-                .child(text(theme.muted, theme.font_size, text_label))
+                .hover_bg(theme.menu_hover)
+                .hoverable()
+                .child(text(theme.text, theme.font_size, text_label))
                 .child(
                     ElementBox::default()
                         .width(Length::Grow(1.0))
@@ -503,7 +586,6 @@ fn item_row(theme: &Theme, key: NodeKey, _label: &str, enabled: bool) -> Element
     let row = ElementBox::default()
         .key(key)
         .height(Length::Px(theme.menu_item_height))
-        .width(Length::Percent(100.0))
         .padding(theme.menu_item_padding)
         .radius(theme.menu_item_radius)
         .align(Align::Center)
@@ -517,6 +599,14 @@ fn item_row(theme: &Theme, key: NodeKey, _label: &str, enabled: bool) -> Element
         row.bg(Color::TRANSPARENT)
     }
 }
+
+#[cfg(test)]
+#[path = "menu_geometry_tests.rs"]
+mod geometry_tests;
+
+#[cfg(test)]
+#[path = "menu_fullscreen_tests.rs"]
+mod fullscreen_tests;
 
 #[cfg(test)]
 mod tests {

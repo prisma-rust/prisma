@@ -205,6 +205,10 @@ pub struct UiTree {
     pub drag_sources: SecondaryMap<NodeId, DragPayload>,
     pub drop_targets: SecondaryMap<NodeId, bool>,
     pub anchors: SecondaryMap<NodeId, Anchor>,
+    /// Nodes that react to hover without accepting clicks (submenu rows,
+    /// tooltip anchors). They must be hit-testable or the pointer never
+    /// enters them.
+    pub hover_targets: SecondaryMap<NodeId, ()>,
     /// Root of the popup layer: drawn last and hit-tested first, so dropdowns
     /// and tooltips are never covered by the panels they belong to.
     overlay_root: Option<NodeId>,
@@ -241,6 +245,7 @@ impl UiTree {
             drag_sources: SecondaryMap::new(),
             drop_targets: SecondaryMap::new(),
             anchors: SecondaryMap::new(),
+            hover_targets: SecondaryMap::new(),
             overlay_root: None,
             hovered_key: None,
             active_pointer_key: None,
@@ -288,6 +293,7 @@ impl UiTree {
         self.drag_sources.clear();
         self.drop_targets.clear();
         self.anchors.clear();
+        self.hover_targets.clear();
         self.actions.clear();
     }
 
@@ -306,6 +312,11 @@ impl UiTree {
             node.layout.top = crate::style::Length::Px(0.0);
             node.layout.width = crate::style::Length::Px(viewport.x);
             node.layout.height = crate::style::Length::Px(viewport.y);
+            // Popups size to their content. The default cross-axis alignment
+            // stretches children to the container, which would make every
+            // dropdown as tall as the window.
+            node.layout.align_items = crate::style::Align::Start;
+            node.layout.justify_content = crate::style::Justify::Start;
             node.is_overlay = true;
         }
         self.overlay_root = Some(id);
@@ -315,6 +326,21 @@ impl UiTree {
     /// The popup layer node, if anything requested one this frame.
     pub fn overlay_layer(&self) -> Option<NodeId> {
         self.overlay_root
+    }
+
+    /// Whether `key` is under the pointer.
+    ///
+    /// Builders call this while mounting, before layout runs, so it reflects the
+    /// previous frame's hit test. That is the correct input for hover-open
+    /// behaviour: the pointer has not moved since the hit test that produced the
+    /// current hover, and the current frame's rects do not exist yet.
+    pub fn is_hovered(&self, key: NodeKey) -> bool {
+        self.hovered_key == Some(key)
+    }
+
+    /// The key currently under the pointer, if any.
+    pub fn hovered(&self) -> Option<NodeKey> {
+        self.hovered_key
     }
 
     /// Resolve every anchored node's rect against its target.
@@ -346,10 +372,28 @@ impl UiTree {
             // bottom edge is unusable, so clamp instead of clipping it.
             let x = x.clamp(0.0, (viewport.x - own.w).max(0.0));
             let y = y.clamp(0.0, (viewport.y - own.h).max(0.0));
-            if let Some(node) = self.nodes.get_mut(id) {
-                node.computed_rect.x = x;
-                node.computed_rect.y = y;
-            }
+            // Translate the whole subtree: children were arranged relative to the
+            // node's provisional position, so moving only the parent would leave
+            // the items behind.
+            self.translate_subtree(id, x - own.x, y - own.y);
+        }
+    }
+
+    /// Offset a node and every descendant by `(dx, dy)`.
+    fn translate_subtree(&mut self, id: NodeId, dx: f32, dy: f32) {
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let children: Vec<NodeId> = match self.nodes.get(id) {
+            Some(node) => node.children.clone(),
+            None => return,
+        };
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.computed_rect.x += dx;
+            node.computed_rect.y += dy;
+        }
+        for child in children {
+            self.translate_subtree(child, dx, dy);
         }
     }
 
@@ -508,6 +552,7 @@ impl UiTree {
             || self.text_editables.contains_key(id)
             || self.focusables.contains_key(id)
             || self.drop_targets.contains_key(id)
+            || self.hover_targets.contains_key(id)
     }
 
     pub fn process_input(&mut self, input: &UiInput) -> Vec<UiAction> {
