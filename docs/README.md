@@ -102,6 +102,7 @@ docs/
   ├── versioning.md                       # [L3 版本治理] SemVer 规则、1.0 前零兼容逻辑与发版
   ├── integrations.md                     # [L3 工程治理] CI/CD、Discord 机器人与 Agent 认领契约
   ├── agent-issues.md                     # [L3 规范门禁] Agent 提 Issue 准则与查重机制
+  ├── agents-contract-audit.md            # [L3 规范门禁] 外部 Agent 契约模板对照本仓库现状的审计快照
   │
   ├── android-apk.md                      # [L4 平台运维] Android 纯游戏独立 APK 构建与打包
   ├── android-arm64.md                    # [L4 平台运维] aarch64 宿主机构建 Android 工具链替换
@@ -150,6 +151,7 @@ docs/
 | | [`versioning.md`](versioning.md) | 0.1 演进策略、单一版本源、格式版本升级 | `Cargo.toml`, `scripts/version.py` |
 | | [`integrations.md`](integrations.md) | CI/CD 标签门禁、Issue 自动化认领 | `.github/workflows/` |
 | | [`agent-issues.md`](agent-issues.md) | 查重准则、复现模板、禁止提虚假兼容回归 | GitHub Issues |
+| | [`agents-contract-audit.md`](agents-contract-audit.md) | 外部契约模板逐条对照、存量实测数据、待决策项 | `AGENTS.md`, `scripts/` |
 | **平台实战** | [`android-apk.md`](android-apk.md) | Gradle 宿主、GameActivity、产物瘦身 | `projects/template/android/` |
 | | [`android-arm64.md`](android-arm64.md) | aarch64 宿主独立工具链与 NDK 替换 | `scripts/build-android-game.sh` |
 | | [`build-guide-termux.md`](build-guide-termux.md) | 移动端终端原生编译、静态检查验证例外 | Termux 终端环境 |

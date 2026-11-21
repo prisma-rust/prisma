@@ -8,9 +8,11 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
 
 ## 1. Verification gate (non-negotiable)
 
-- Do not call a task done, commit for `master`, or open a PR until `python scripts/pr_ready.py`
-  exits 0. `--quick` (fmt + clippy) is for the inner loop; `--all` is required after dependency,
-  toolchain, or workspace-level edits.
+- On `dev`, per-commit verification is the inner loop: `python scripts/pr_ready.py --quick`
+  (fmt + clippy on touched crates). Do not run the full gate for every `dev` commit.
+- Do not call a task done, commit for `master`, or open a `dev → master` PR until the full
+  `python scripts/pr_ready.py` exits 0. `--all` is required after dependency, toolchain, or
+  workspace-level edits.
 - Paste the Markdown block `pr_ready` prints into the PR. Where behavior is observable, attach
   runtime evidence: headless logs, state snapshots, `PRISMA_BENCH_REPORT` JSON, or
   `PRISMA_SCREENSHOT` PNGs. A diff alone is not evidence.
@@ -119,3 +121,10 @@ English only. A comment may state an invariant that code cannot express or link 
 Never restate code, narrate a diff, or leave a `TODO`. `scripts/check_comment_only.py` and
 `docs/code-style.md` are the authority. New docs use kebab-case, carry a domain prefix, and are
 registered in `docs/README.md`.
+
+- **Touch it, clean it.** A file you modify is yours to garden. In the region you touch, delete
+  stale, redundant, self-justifying, or commented-out code, drop decorative separators, and
+  rewrite Chinese comments in English. Do it inside the same edit that changes the code; never
+  leave the slop behind for a later sweep.
+- A repository-wide comment sweep stays a separate comment-only PR; `check_comment_only.py`
+  proves it changed no code. "Touch it, clean it" never licenses an unrelated refactor.
