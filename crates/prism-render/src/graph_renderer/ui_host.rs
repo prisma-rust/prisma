@@ -23,7 +23,7 @@ pub(super) struct UiOverlayHost {
     ui_fonts: BTreeMap<String, Vec<u8>>,
 }
 
-/// Move the composited swapchain image between the graph's final layout and
+/// Move the composited swapchain image between `COLOR_ATTACHMENT_OPTIMAL` and
 /// the transfer source the backdrop filter copies from.
 fn transition_backdrop_source(
     context: &crate::context::VulkanContext,
@@ -36,7 +36,7 @@ fn transition_backdrop_source(
     let (from, src_stage, src_access, dst_stage, dst_access) =
         if to == vk::ImageLayout::TRANSFER_SRC_OPTIMAL {
             (
-                vk::ImageLayout::PRESENT_SRC_KHR,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
                 vk::PipelineStageFlags::TRANSFER,
@@ -48,7 +48,7 @@ fn transition_backdrop_source(
                 vk::PipelineStageFlags::TRANSFER,
                 vk::AccessFlags::TRANSFER_READ,
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::COLOR_ATTACHMENT_READ,
             )
         };
     let barrier = vk::ImageMemoryBarrier::default()
@@ -208,7 +208,7 @@ impl UiOverlayHost {
         bindless_layout: vk::DescriptorSetLayout,
         bindless_set: vk::DescriptorSet,
         frame_index: u32,
-        backdrop_view: Option<vk::ImageView>,
+        transfer_src: bool,
     ) -> anyhow::Result<()> {
         if self.ui_overlay.is_none() {
             let mut gpu = crate::ui_overlay::UiOverlay::with_color_format(
@@ -224,9 +224,6 @@ impl UiOverlayHost {
         if let Some(gpu) = self.ui_overlay.as_mut() {
             gpu.set_color_format(color_format)
                 .context("ui overlay color format")?;
-            if let Some(view) = backdrop_view {
-                gpu.set_backdrop(view, frame_index);
-            }
             // PostPass leaves the swapchain image in PRESENT; turn it
             // back into a color attachment for the UI load pass.
             let barrier = vk::ImageMemoryBarrier::default()
@@ -243,7 +240,10 @@ impl UiOverlayHost {
                     layer_count: 1,
                 })
                 .src_access_mask(vk::AccessFlags::NONE)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+                .dst_access_mask(
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags::COLOR_ATTACHMENT_READ,
+                );
             unsafe {
                 context.device.cmd_pipeline_barrier(
                     cmd,
@@ -255,7 +255,36 @@ impl UiOverlayHost {
                     std::slice::from_ref(&barrier),
                 );
             }
-            gpu.record(
+            let backdrop_slot = &mut self.backdrop;
+            let mut capture_backdrop = |cmd: vk::CommandBuffer, sigma: f32| {
+                if backdrop_slot.is_none() {
+                    *backdrop_slot = Some(crate::ui_backdrop::UiBackdropPass::new(
+                        context,
+                        extent,
+                        color_format,
+                    )?);
+                }
+                let pass = backdrop_slot
+                    .as_mut()
+                    .context("backdrop pass missing after creation")?;
+                pass.resize(context, extent, color_format)?;
+                transition_backdrop_source(
+                    context,
+                    cmd,
+                    image,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                );
+                let exec = pass.execute(context, cmd, image, sigma);
+                transition_backdrop_source(
+                    context,
+                    cmd,
+                    image,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                );
+                exec?;
+                Ok(pass.blurred_view())
+            };
+            gpu.record_with_backdrop(
                 context,
                 cmd,
                 extent,
@@ -264,6 +293,7 @@ impl UiOverlayHost {
                 ui_overlay,
                 bindless_set,
                 frame_index,
+                transfer_src.then_some(&mut capture_backdrop),
             )
             .context("ui overlay record")?;
         }
@@ -349,38 +379,6 @@ impl UiOverlayHost {
             .context("offscreen ui overlay record")?;
         }
         Ok(())
-    }
-
-    /// Blur the composited scene for this frame's backdrop surfaces.
-    ///
-    /// `image` is the swapchain image after the render graph, in
-    /// `PRESENT_SRC_KHR`; it is left in the same layout. Returns the blurred
-    /// view the UI overlay must bind, or `None` when the surface cannot be
-    /// copied or the pass cannot be created.
-    pub(super) fn record_backdrop(
-        &mut self,
-        context: &crate::context::VulkanContext,
-        cmd: vk::CommandBuffer,
-        image: vk::Image,
-        extent: vk::Extent2D,
-        format: vk::Format,
-        sigma: f32,
-    ) -> anyhow::Result<vk::ImageView> {
-        if self.backdrop.is_none() {
-            self.backdrop = Some(crate::ui_backdrop::UiBackdropPass::new(
-                context, extent, format,
-            )?);
-        }
-        let pass = self
-            .backdrop
-            .as_mut()
-            .context("backdrop pass missing after creation")?;
-        pass.resize(context, extent, format)?;
-
-        transition_backdrop_source(context, cmd, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-        pass.execute(context, cmd, image, sigma)?;
-        transition_backdrop_source(context, cmd, image, vk::ImageLayout::PRESENT_SRC_KHR);
-        Ok(pass.blurred_view())
     }
 
     pub(super) fn has_external_overlay_content(&self) -> bool {

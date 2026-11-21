@@ -413,6 +413,11 @@ pub struct UiOverlay {
     vertex_memory: vk::DeviceMemory,
     vertex_capacity: u32,
     render_pass: vk::RenderPass,
+    /// Intermediate render pass used when splitting UI draws around a backdrop
+    /// capture: leaves the target in `COLOR_ATTACHMENT_OPTIMAL` instead of
+    /// `final_layout`. `None` when `final_layout` is already
+    /// `COLOR_ATTACHMENT_OPTIMAL`.
+    intermediate_render_pass: Option<vk::RenderPass>,
     /// 创建 `render_pass` 时使用的颜色格式；swapchain 格式变化时用来判断
     /// 是否需要重建（见 [`UiOverlay::set_color_format`]）。
     color_format: vk::Format,
@@ -428,9 +433,10 @@ pub struct UiOverlay {
     /// Cleared by [`UiOverlay::on_swapchain_views_changed`] because the old
     /// image views are destroyed during swapchain recreation.
     framebuffers: Vec<CachedFramebuffer>,
-    /// Filtered backdrop sampled by surfaces whose material asks for it.
-    /// Owned by `GraphRenderer`; this overlay only borrows the handles.
-    backdrop_view: vk::ImageView,
+    /// Filtered backdrop sampled by surfaces whose material asks for it,
+    /// tracked per frame-in-flight descriptor slot so every slot updates when
+    /// the view is created or recreated.
+    backdrop_views: [vk::ImageView; crate::swapchain::FRAMES_IN_FLIGHT],
     backdrop_sampler: vk::Sampler,
     /// Objects still referenced by in-flight command buffers (see `crate::retire`).
     retire: crate::retire::RetireQueue,
@@ -495,6 +501,16 @@ impl UiOverlay {
     ) -> Result<Self> {
         let device = context.device.clone();
         let render_pass = Self::create_render_pass(&device, color_format, final_layout)?;
+        let intermediate_render_pass = if final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        {
+            None
+        } else {
+            Some(Self::create_render_pass(
+                &device,
+                color_format,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )?)
+        };
         let atlas = GlyphAtlas::new(context, command_pool)?;
 
         let init_vertices = 1024u32;
@@ -521,7 +537,7 @@ impl UiOverlay {
         )?;
 
         Ok(Self {
-            backdrop_view: atlas.view,
+            backdrop_views: [atlas.view; crate::swapchain::FRAMES_IN_FLIGHT],
             backdrop_sampler,
             pipeline: None,
             layout: None,
@@ -532,6 +548,7 @@ impl UiOverlay {
             vertex_memory,
             vertex_capacity: init_vertices,
             render_pass,
+            intermediate_render_pass,
             color_format,
             final_layout,
             bindless_layout,
@@ -543,17 +560,18 @@ impl UiOverlay {
         })
     }
 
-    /// Bind the renderer's filtered backdrop.
+    /// Bind the renderer's filtered backdrop for `frame_index`'s descriptor slot.
     ///
-    /// Called once per frame before `record`; the descriptor is only rewritten
-    /// when the view actually changes, which on a steady frame rate means once
-    /// per swapchain resize.
+    /// Called once per frame (or per backdrop capture) before drawing; each
+    /// frame-in-flight slot tracks its own bound view so every slot is updated
+    /// on first use and after swapchain resizes.
     pub fn set_backdrop(&mut self, view: vk::ImageView, frame_index: u32) {
-        if self.backdrop_view == view {
+        let slot = frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT;
+        if self.backdrop_views[slot] == view {
             return;
         }
-        self.backdrop_view = view;
-        self.write_backdrop_descriptor(frame_index);
+        self.backdrop_views[slot] = view;
+        self.write_backdrop_descriptor(slot);
     }
 
     fn create_backdrop_sampler(device: &ash::Device) -> Result<vk::Sampler> {
@@ -576,22 +594,22 @@ impl UiOverlay {
 
     /// Rewrite the backdrop binding of one frame slot's set.
     ///
-    /// `frame_index` selects the set whose command buffer is *not* in flight;
+    /// `slot` selects the set whose command buffer is *not* in flight;
     /// using the slot being recorded keeps the write out of a live submission.
-    fn write_backdrop_descriptor(&self, frame_index: u32) {
+    fn write_backdrop_descriptor(&self, slot: usize) {
         let image_info = vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(self.backdrop_view)
+            .image_view(self.backdrop_views[slot])
             .sampler(self.backdrop_sampler);
-        let set =
-            self.descriptor_sets[frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT];
+        let set = self.descriptor_sets[slot];
         let write = vk::WriteDescriptorSet::default()
             .dst_set(set)
             .dst_binding(BACKDROP_TEX_BINDING)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(std::slice::from_ref(&image_info));
         unsafe {
-            self.device.update_descriptor_sets(std::slice::from_ref(&write), &[]);
+            self.device
+                .update_descriptor_sets(std::slice::from_ref(&write), &[]);
         }
     }
 
@@ -607,6 +625,16 @@ impl UiOverlay {
         }
         // 先建新的再拆旧的，创建失败时旧 pass 仍然有效。
         let render_pass = Self::create_render_pass(&self.device, color_format, self.final_layout)?;
+        let intermediate_render_pass = if self.final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        {
+            None
+        } else {
+            Some(Self::create_render_pass(
+                &self.device,
+                color_format,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )?)
+        };
         // 管线在下一次 record 时按新 render pass 重建；这里只换 pass。上一次提交的
         // 命令缓冲可能还在引用这个 render pass / pipeline，交给回收队列延后销毁。
         {
@@ -632,8 +660,15 @@ impl UiOverlay {
                 self.frame_index,
                 crate::retire::RetiredResource::RenderPass(self.render_pass),
             );
+            if let Some(old_intermediate) = self.intermediate_render_pass.take() {
+                self.retire.retire(
+                    self.frame_index,
+                    crate::retire::RetiredResource::RenderPass(old_intermediate),
+                );
+            }
         }
         self.render_pass = render_pass;
+        self.intermediate_render_pass = intermediate_render_pass;
         self.color_format = color_format;
         log::debug!("UiOverlay: render pass rebuilt for {color_format:?}");
         Ok(())
@@ -663,14 +698,15 @@ impl UiOverlay {
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
-        let layout_info =
-            vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None) }
             .context("UiOverlay: descriptor set layout")?;
 
+        // Two bindings per set, one set per frame-in-flight: the pool has to
+        // hold every descriptor those sets will ever use, not just one set's.
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 2,
+            descriptor_count: 2 * crate::swapchain::FRAMES_IN_FLIGHT as u32,
         };
         let pool_info = vk::DescriptorPoolCreateInfo::default()
             .max_sets(crate::swapchain::FRAMES_IN_FLIGHT as u32)
@@ -807,8 +843,7 @@ impl UiOverlay {
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
-        let set_layout_info =
-            vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
+        let set_layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&set_layout_info, None) }
             .context("UiOverlay: pipeline set layout")?;
         // set 1 = 场景共享的 bindless 纹理表（UI 背景图，#591）。
@@ -997,6 +1032,38 @@ impl UiOverlay {
         bindless_set: vk::DescriptorSet,
         frame_index: u32,
     ) -> Result<()> {
+        self.record_with_backdrop(
+            context,
+            cmd,
+            extent,
+            dest,
+            target_view,
+            input,
+            bindless_set,
+            frame_index,
+            None,
+        )
+    }
+
+    /// Record UI overlay draw commands into `cmd`, splitting render passes
+    /// around backdrop-sampling quads so `on_backdrop` can capture and blur
+    /// the already-drawn underlying UI and scene into `backdrop_views`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recording needs the command buffer, per-frame UI inputs, and optional backdrop callback"
+    )]
+    pub fn record_with_backdrop(
+        &mut self,
+        context: &VulkanContext,
+        cmd: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        dest: vk::Rect2D,
+        target_view: vk::ImageView,
+        input: &UiOverlayInput,
+        bindless_set: vk::DescriptorSet,
+        frame_index: u32,
+        mut on_backdrop: Option<&mut dyn FnMut(vk::CommandBuffer, f32) -> Result<vk::ImageView>>,
+    ) -> Result<()> {
         // The frame slot that just waited its fence is free again: release what
         // this overlay parked during the previous pass through the queue.
         self.retire.collect(&context.device, frame_index);
@@ -1050,9 +1117,52 @@ impl UiOverlay {
             );
         };
 
+        struct DrawSegment {
+            first_vertex: u32,
+            vertex_count: u32,
+            capture_before_sigma: Option<f32>,
+        }
+
+        let mut segments: Vec<DrawSegment> = Vec::new();
+        let mut seg_start = 0u32;
+        let mut seg_capture: Option<f32> = None;
+        let mut dirty_since_capture = true;
+
+        let close_segment = |segments: &mut Vec<DrawSegment>,
+                             seg_start: &mut u32,
+                             seg_capture: &mut Option<f32>,
+                             cur_len: usize| {
+            let cur = cur_len as u32;
+            if cur > *seg_start {
+                segments.push(DrawSegment {
+                    first_vertex: *seg_start,
+                    vertex_count: cur - *seg_start,
+                    capture_before_sigma: seg_capture.take(),
+                });
+                *seg_start = cur;
+            }
+        };
+
+        let mut record_quad = |vertices: &mut Vec<UiVertex>,
+                               dirty_since_capture: &mut bool,
+                               quad: &crate::ui_overlay::UiQuad| {
+            if on_backdrop.is_some() && quad.backdrop_sigma > 0.0 {
+                if *dirty_since_capture {
+                    close_segment(&mut segments, &mut seg_start, &mut seg_capture, vertices.len());
+                    seg_capture = Some(quad.backdrop_sigma);
+                    *dirty_since_capture = false;
+                } else {
+                    seg_capture = Some(seg_capture.map_or(quad.backdrop_sigma, |s| s.max(quad.backdrop_sigma)));
+                }
+            } else {
+                *dirty_since_capture = true;
+            }
+            push_quad(vertices, quad);
+        };
+
         if input.order.is_empty() {
             for quad in &input.quads {
-                push_quad(&mut vertices, quad);
+                record_quad(&mut vertices, &mut dirty_since_capture, quad);
             }
             for t in &input.texts {
                 self.emit_text(&mut vertices, t, w, h);
@@ -1062,7 +1172,7 @@ impl UiOverlay {
                 match *draw {
                     crate::ui_overlay::UiOverlayDraw::Quad(index) => {
                         if let Some(quad) = input.quads.get(index as usize) {
-                            push_quad(&mut vertices, quad);
+                            record_quad(&mut vertices, &mut dirty_since_capture, quad);
                         }
                     }
                     crate::ui_overlay::UiOverlayDraw::Text(index) => {
@@ -1073,6 +1183,7 @@ impl UiOverlay {
                 }
             }
         }
+        close_segment(&mut segments, &mut seg_start, &mut seg_capture, vertices.len());
 
         // 上传与 draw 都使用实际顶点数：估算值可能高于 `vertices.len()`，
         // 按它复制会读到 Vec 之外未初始化内存（UB，GPU 上是杂散三角形）。
@@ -1164,67 +1275,88 @@ impl UiOverlay {
             }
         };
 
-        // Record draw.
-        let rp_begin = vk::RenderPassBeginInfo::default()
-            .render_pass(self.render_pass)
-            .framebuffer(fb)
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent,
-            });
-        unsafe {
-            context
-                .device
-                .cmd_begin_render_pass(cmd, &rp_begin, vk::SubpassContents::INLINE);
-            context.device.cmd_bind_pipeline(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline.unwrap(),
-            );
-            context.device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.layout.unwrap(),
-                0,
-                std::slice::from_ref(
-                    &self.descriptor_sets[frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT],
-                ),
-                &[],
-            );
-            if bindless_set != vk::DescriptorSet::null() {
+        // Record draw segments, capturing and blurring the backdrop before any
+        // segment that introduces frosted-glass surfaces.
+        let last_idx = segments.len().saturating_sub(1);
+        for (i, seg) in segments.iter().enumerate() {
+            if let (Some(sigma), Some(capture_fn)) = (seg.capture_before_sigma, on_backdrop.as_deref_mut()) {
+                match capture_fn(cmd, sigma) {
+                    Ok(view) => self.set_backdrop(view, frame_index),
+                    Err(err) => {
+                        log::warn!("ui backdrop: filter pass failed, drawing flat surfaces: {err}");
+                    }
+                }
+            }
+
+            let rp = if i == last_idx {
+                self.render_pass
+            } else {
+                self.intermediate_render_pass.unwrap_or(self.render_pass)
+            };
+            let rp_begin = vk::RenderPassBeginInfo::default()
+                .render_pass(rp)
+                .framebuffer(fb)
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent,
+                });
+            unsafe {
+                context
+                    .device
+                    .cmd_begin_render_pass(cmd, &rp_begin, vk::SubpassContents::INLINE);
+                context.device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipeline.unwrap(),
+                );
                 context.device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
                     self.layout.unwrap(),
-                    1,
-                    std::slice::from_ref(&bindless_set),
+                    0,
+                    std::slice::from_ref(
+                        &self.descriptor_sets
+                            [frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT],
+                    ),
                     &[],
                 );
+                if bindless_set != vk::DescriptorSet::null() {
+                    context.device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.layout.unwrap(),
+                        1,
+                        std::slice::from_ref(&bindless_set),
+                        &[],
+                    );
+                }
+
+                // NDC [-1,1] 映射到 `dest`：UI 与场景一起被整数倍放大并居中，
+                // 黑边留在外面（scissor 同时挡住越界像素）。
+                let vp = vk::Viewport::default()
+                    .x(dest.offset.x as f32)
+                    .y(dest.offset.y as f32)
+                    .width(dest.extent.width as f32)
+                    .height(dest.extent.height as f32)
+                    .min_depth(0.0)
+                    .max_depth(1.0);
+                let sc = dest;
+                context
+                    .device
+                    .cmd_set_viewport(cmd, 0, std::slice::from_ref(&vp));
+                context
+                    .device
+                    .cmd_set_scissor(cmd, 0, std::slice::from_ref(&sc));
+
+                let bufs = [self.vertex_buffer];
+                context
+                    .device
+                    .cmd_bind_vertex_buffers(cmd, 0, &bufs, &[0u64]);
+                context
+                    .device
+                    .cmd_draw(cmd, seg.vertex_count, 1, seg.first_vertex, 0);
+                context.device.cmd_end_render_pass(cmd);
             }
-
-            // NDC [-1,1] 映射到 `dest`：UI 与场景一起被整数倍放大并居中，
-            // 黑边留在外面（scissor 同时挡住越界像素）。
-            let vp = vk::Viewport::default()
-                .x(dest.offset.x as f32)
-                .y(dest.offset.y as f32)
-                .width(dest.extent.width as f32)
-                .height(dest.extent.height as f32)
-                .min_depth(0.0)
-                .max_depth(1.0);
-            let sc = dest;
-            context
-                .device
-                .cmd_set_viewport(cmd, 0, std::slice::from_ref(&vp));
-            context
-                .device
-                .cmd_set_scissor(cmd, 0, std::slice::from_ref(&sc));
-
-            let bufs = [self.vertex_buffer];
-            context
-                .device
-                .cmd_bind_vertex_buffers(cmd, 0, &bufs, &[0u64]);
-            context.device.cmd_draw(cmd, vert_count, 1, 0, 0);
-            context.device.cmd_end_render_pass(cmd);
         }
         Ok(())
     }
@@ -1517,6 +1649,9 @@ impl Drop for UiOverlay {
                 self.device.destroy_framebuffer(cached.handle, None);
             }
             self.device.destroy_render_pass(self.render_pass, None);
+            if let Some(rp) = self.intermediate_render_pass {
+                self.device.destroy_render_pass(rp, None);
+            }
             self.device.destroy_buffer(self.vertex_buffer, None);
             self.device.free_memory(self.vertex_memory, None);
             self.device.destroy_sampler(self.backdrop_sampler, None);

@@ -3152,44 +3152,6 @@ impl GraphRenderer {
                 let bindless_set = self.texture_manager.bindless().set;
                 let bindless_layout = self.texture_manager.bindless().layout;
 
-                // A surface whose material samples the backdrop needs the
-                // composited frame blurred first. The blur radius is the
-                // largest any surface asked for this frame: one pass serves
-                // every glass surface, and the shader only samples it where
-                // the vertex carries a non-zero radius.
-                let backdrop_sigma = ui_overlay
-                    .map(|overlay| {
-                        overlay
-                            .quads
-                            .iter()
-                            .map(|quad| quad.backdrop_sigma)
-                            .fold(0.0_f32, f32::max)
-                    })
-                    .unwrap_or(0.0);
-                let mut backdrop_view = None;
-                if backdrop_sigma > 0.0 {
-                    if let Some(sw) = self.swapchain.as_ref() {
-                        if sw.transfer_src {
-                            let image = sw.images[image_index as usize];
-                            match self.ui_host.record_backdrop(
-                                &self.runtime.context,
-                                cmd,
-                                image,
-                                extent,
-                                sw.format.format,
-                                backdrop_sigma,
-                            ) {
-                                Ok(view) => backdrop_view = Some(view),
-                                Err(err) => {
-                                    log::warn!(
-                                        "ui backdrop: filter pass failed, drawing flat surfaces: {err}"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-
                 if let Some(sw) = self.swapchain.as_ref() {
                     let dest = crate::render_graph::post_destination(
                         extent,
@@ -3210,7 +3172,7 @@ impl GraphRenderer {
                         bindless_layout,
                         bindless_set,
                         ctx.frame_index,
-                        backdrop_view,
+                        sw.transfer_src,
                     );
                     log_slow_ui("swapchain", ui_start.elapsed());
                 } else if let Some((image, view, target_extent, color_format)) =

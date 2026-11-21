@@ -13,8 +13,8 @@
 use anyhow::Context as _;
 use ash::vk;
 
-use crate::context::VulkanContext;
 use crate::buffer::{find_memory_type, MemoryProperties};
+use crate::context::VulkanContext;
 use crate::shader_bindings::ui_backdrop as bindings;
 
 const _: () =
@@ -96,7 +96,8 @@ impl UiBackdropPass {
             .stage_flags(vk::ShaderStageFlags::FRAGMENT);
         let set_layout = unsafe {
             device.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(std::slice::from_ref(&binding)),
+                &vk::DescriptorSetLayoutCreateInfo::default()
+                    .bindings(std::slice::from_ref(&binding)),
                 None,
             )
         }
@@ -141,7 +142,10 @@ impl UiBackdropPass {
         Ok(pass)
     }
 
-    /// The blurred image the UI overlay samples (target 1).
+    /// The blurred image the UI overlay samples.
+    ///
+    /// Fixed role: the vertical pass always writes target 1, so the descriptor
+    /// that points at it never has to change after creation.
     pub fn blurred_view(&self) -> vk::ImageView {
         self.targets[1].view
     }
@@ -203,7 +207,6 @@ impl UiBackdropPass {
 
         self.ensure_pipeline(context)?;
         self.copy_scene(context, cmd, scene_image)?;
-
         // Horizontal: target 0 (scene copy) -> target 1.
         Self::transition(
             context,
@@ -224,8 +227,8 @@ impl UiBackdropPass {
             extent,
         )?;
 
-        // Vertical: target 1 -> target 0. The horizontal result becomes a
-        // texture and target 0 becomes the attachment.
+        // Vertical: target 1 -> target 0, then the result is copied into target
+        // 1, which is the fixed role the UI descriptor points at.
         Self::transition(
             context,
             cmd,
@@ -260,7 +263,11 @@ impl UiBackdropPass {
     ///
     /// Fixed roles are what let the UI descriptor be written once per frame
     /// instead of being rewritten while a command buffer still references it.
-    fn copy_result(&mut self, context: &VulkanContext, cmd: vk::CommandBuffer) -> anyhow::Result<()> {
+    fn copy_result(
+        &mut self,
+        context: &VulkanContext,
+        cmd: vk::CommandBuffer,
+    ) -> anyhow::Result<()> {
         let extent = self.targets[0].extent;
         let device = &context.device;
         let regions = [vk::ImageCopy::default()
@@ -323,9 +330,7 @@ impl UiBackdropPass {
         push: bindings::UiBackdropPush,
         extent: vk::Extent2D,
     ) -> anyhow::Result<()> {
-        let pipeline = self
-            .pipeline
-            .context("UiBackdropPass: pipeline missing")?;
+        let pipeline = self.pipeline.context("UiBackdropPass: pipeline missing")?;
         let layout = self
             .pipeline_layout
             .context("UiBackdropPass: pipeline layout missing")?;
@@ -354,6 +359,28 @@ impl UiBackdropPass {
                 vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(&push),
+            );
+            // The pipeline declares viewport and scissor as dynamic state, so
+            // they must be set before the draw covers the target.
+            device.cmd_set_viewport(
+                cmd,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: extent.width as f32,
+                    height: extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            device.cmd_set_scissor(
+                cmd,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent,
+                }],
             );
             // Fullscreen triangle from SV_VertexID: no vertex buffer.
             device.cmd_draw(cmd, 3, 1, 0, 0);
@@ -391,17 +418,15 @@ impl UiBackdropPass {
                 depth: 1,
             })];
 
-        let barriers = [
-            vk::ImageMemoryBarrier::default()
-                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(scene_image)
-                .subresource_range(color_range())
-                .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                .dst_access_mask(vk::AccessFlags::TRANSFER_READ),
-        ];
+        let barriers = [vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(scene_image)
+            .subresource_range(color_range())
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
         Self::transition(
             context,
             cmd,
@@ -426,13 +451,33 @@ impl UiBackdropPass {
                 &[],
                 &barriers,
             );
-            device.cmd_copy_image(
+            device.cmd_blit_image(
                 cmd,
                 scene_image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.targets[0].image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &regions,
+                &[vk::ImageBlit {
+                    src_subresource: regions[0].src_subresource,
+                    src_offsets: [
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: extent.width as i32,
+                            y: extent.height as i32,
+                            z: 1,
+                        },
+                    ],
+                    dst_subresource: regions[0].dst_subresource,
+                    dst_offsets: [
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: extent.width as i32,
+                            y: extent.height as i32,
+                            z: 1,
+                        },
+                    ],
+                }],
+                vk::Filter::NEAREST,
             );
         }
         // The horizontal pass samples this copy, so it becomes a texture.
@@ -470,18 +515,16 @@ impl UiBackdropPass {
             return Ok(());
         }
         let device = &self.device;
-        let vert = crate::shader::load_shader_module(device, prism_render_shaders::UI_BACKDROP_VERT_SPV)
-            .context("UiBackdropPass: load vertex shader")?;
-        let frag = crate::shader::load_shader_module(device, prism_render_shaders::UI_BACKDROP_FRAG_SPV)
-            .context("UiBackdropPass: load fragment shader")?;
+        let vert =
+            crate::shader::load_shader_module(device, prism_render_shaders::UI_BACKDROP_VERT_SPV)
+                .context("UiBackdropPass: load vertex shader")?;
+        let frag =
+            crate::shader::load_shader_module(device, prism_render_shaders::UI_BACKDROP_FRAG_SPV)
+                .context("UiBackdropPass: load fragment shader")?;
         let vert_entry = std::ffi::CString::new(bindings::ENTRY_VERTEX_MAIN).unwrap();
         let frag_entry = std::ffi::CString::new(bindings::ENTRY_FRAGMENT_MAIN).unwrap();
         let stages = [
-            crate::shader::shader_stage(
-                vk::ShaderStageFlags::VERTEX,
-                vert,
-                vert_entry.as_c_str(),
-            ),
+            crate::shader::shader_stage(vk::ShaderStageFlags::VERTEX, vert, vert_entry.as_c_str()),
             crate::shader::shader_stage(
                 vk::ShaderStageFlags::FRAGMENT,
                 frag,
@@ -544,10 +587,10 @@ impl UiBackdropPass {
             .layout(layout)
             .render_pass(self.render_pass)
             .subpass(0);
-        let pipeline = unsafe {
-            device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
-        }
-        .map_err(|(_, err)| anyhow::anyhow!("UiBackdropPass: create pipeline: {err:?}"))?[0];
+        let pipeline =
+            unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None) }
+                .map_err(|(_, err)| anyhow::anyhow!("UiBackdropPass: create pipeline: {err:?}"))?
+                [0];
         unsafe {
             device.destroy_shader_module(vert, None);
             device.destroy_shader_module(frag, None);
@@ -651,7 +694,10 @@ impl UiBackdropPass {
         }
     }
 
-    fn create_render_pass(device: &ash::Device, format: vk::Format) -> anyhow::Result<vk::RenderPass> {
+    fn create_render_pass(
+        device: &ash::Device,
+        format: vk::Format,
+    ) -> anyhow::Result<vk::RenderPass> {
         let attachment = vk::AttachmentDescription::default()
             .format(format)
             .samples(vk::SampleCountFlags::TYPE_1)

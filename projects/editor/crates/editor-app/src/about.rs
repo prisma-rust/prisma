@@ -34,9 +34,11 @@ pub const ABOUT_FACTS: [(&str, &str); 4] = [
 /// The editor decides this because "how opaque may glass be before body text
 /// loses contrast" is a product decision; the kernel only knows how to blur.
 fn glass_tint(theme: &Theme) -> Color {
+    // Low alpha on purpose: this colour is mixed *over* the blurred backdrop,
+    // so a high value would hide the very filter the material paid for.
     match theme.preset() {
-        ThemePreset::Dark => Color::rgba(0.145, 0.157, 0.180, 0.70),
-        ThemePreset::Light => Color::rgba(0.980, 0.984, 0.992, 0.80),
+        ThemePreset::Dark => Color::rgba(0.113, 0.125, 0.149, 0.42),
+        ThemePreset::Light => Color::rgba(0.988, 0.992, 1.0, 0.55),
     }
 }
 
