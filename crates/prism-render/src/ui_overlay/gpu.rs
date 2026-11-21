@@ -580,12 +580,12 @@ impl UiOverlay {
                 &vk::SamplerCreateInfo::default()
                     .mag_filter(vk::Filter::LINEAR)
                     .min_filter(vk::Filter::LINEAR)
-                    .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                     .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .min_lod(0.0)
-                    .max_lod(1.0),
+                    .max_lod((crate::ui_backdrop::BACKDROP_MIP_LEVELS - 1) as f32),
                 None,
             )
         }
@@ -625,16 +625,16 @@ impl UiOverlay {
         }
         // 先建新的再拆旧的，创建失败时旧 pass 仍然有效。
         let render_pass = Self::create_render_pass(&self.device, color_format, self.final_layout)?;
-        let intermediate_render_pass = if self.final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        {
-            None
-        } else {
-            Some(Self::create_render_pass(
-                &self.device,
-                color_format,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            )?)
-        };
+        let intermediate_render_pass =
+            if self.final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
+                None
+            } else {
+                Some(Self::create_render_pass(
+                    &self.device,
+                    color_format,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                )?)
+            };
         // 管线在下一次 record 时按新 render pass 重建；这里只换 pass。上一次提交的
         // 命令缓冲可能还在引用这个 render pass / pipeline，交给回收队列延后销毁。
         {
@@ -1117,54 +1117,15 @@ impl UiOverlay {
             );
         };
 
-        struct DrawSegment {
-            first_vertex: u32,
-            vertex_count: u32,
-            capture_before_sigma: Option<f32>,
-        }
-
-        let mut segments: Vec<DrawSegment> = Vec::new();
-        let mut seg_start = 0u32;
-        let mut seg_capture: Option<f32> = None;
-        let mut dirty_since_capture = true;
-
-        let close_segment = |segments: &mut Vec<DrawSegment>,
-                             seg_start: &mut u32,
-                             seg_capture: &mut Option<f32>,
-                             cur_len: usize| {
-            let cur = cur_len as u32;
-            if cur > *seg_start {
-                segments.push(DrawSegment {
-                    first_vertex: *seg_start,
-                    vertex_count: cur - *seg_start,
-                    capture_before_sigma: seg_capture.take(),
-                });
-                *seg_start = cur;
-            }
-        };
-
-        let mut record_quad = |vertices: &mut Vec<UiVertex>,
-                               dirty_since_capture: &mut bool,
-                               quad: &crate::ui_overlay::UiQuad| {
-            if on_backdrop.is_some() && quad.backdrop_sigma > 0.0 {
-                if *dirty_since_capture {
-                    close_segment(&mut segments, &mut seg_start, &mut seg_capture, vertices.len());
-                    seg_capture = Some(quad.backdrop_sigma);
-                    *dirty_since_capture = false;
-                } else {
-                    seg_capture = Some(seg_capture.map_or(quad.backdrop_sigma, |s| s.max(quad.backdrop_sigma)));
-                }
-            } else {
-                *dirty_since_capture = true;
-            }
-            push_quad(vertices, quad);
-        };
+        let mut tracker = BackdropSegmentTracker::new(on_backdrop.is_some(), w, h);
 
         if input.order.is_empty() {
             for quad in &input.quads {
-                record_quad(&mut vertices, &mut dirty_since_capture, quad);
+                tracker.on_quad(quad, vertices.len());
+                push_quad(&mut vertices, quad);
             }
             for t in &input.texts {
+                tracker.on_text(text_ndc_rect(t, w, h));
                 self.emit_text(&mut vertices, t, w, h);
             }
         } else {
@@ -1172,18 +1133,20 @@ impl UiOverlay {
                 match *draw {
                     crate::ui_overlay::UiOverlayDraw::Quad(index) => {
                         if let Some(quad) = input.quads.get(index as usize) {
-                            record_quad(&mut vertices, &mut dirty_since_capture, quad);
+                            tracker.on_quad(quad, vertices.len());
+                            push_quad(&mut vertices, quad);
                         }
                     }
                     crate::ui_overlay::UiOverlayDraw::Text(index) => {
                         if let Some(t) = input.texts.get(index as usize) {
+                            tracker.on_text(text_ndc_rect(t, w, h));
                             self.emit_text(&mut vertices, t, w, h);
                         }
                     }
                 }
             }
         }
-        close_segment(&mut segments, &mut seg_start, &mut seg_capture, vertices.len());
+        let segments = tracker.finish(vertices.len());
 
         // 上传与 draw 都使用实际顶点数：估算值可能高于 `vertices.len()`，
         // 按它复制会读到 Vec 之外未初始化内存（UB，GPU 上是杂散三角形）。
@@ -1279,7 +1242,9 @@ impl UiOverlay {
         // segment that introduces frosted-glass surfaces.
         let last_idx = segments.len().saturating_sub(1);
         for (i, seg) in segments.iter().enumerate() {
-            if let (Some(sigma), Some(capture_fn)) = (seg.capture_before_sigma, on_backdrop.as_deref_mut()) {
+            if let (Some(sigma), Some(capture_fn)) =
+                (seg.capture_before_sigma, on_backdrop.as_deref_mut())
+            {
                 match capture_fn(cmd, sigma) {
                     Ok(view) => self.set_backdrop(view, frame_index),
                     Err(err) => {
@@ -1755,9 +1720,120 @@ fn pixel_y_to_ndc(py: f32, h: f32) -> f32 {
     (py / h) * 2.0 - 1.0
 }
 
+#[derive(Debug, PartialEq)]
+struct DrawSegment {
+    first_vertex: u32,
+    vertex_count: u32,
+    capture_before_sigma: Option<f32>,
+}
+
+fn rects_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+}
+
+fn expand_ndc(rect: [f32; 4], sigma: f32, w: f32, h: f32) -> [f32; 4] {
+    let px = (sigma * 3.0) / w.max(1.0) * 2.0;
+    let py = (sigma * 3.0) / h.max(1.0) * 2.0;
+    [rect[0] - px, rect[1] - py, rect[2] + px, rect[3] + py]
+}
+
+fn text_ndc_rect(t: &crate::ui_overlay::UiTextInput, w: f32, h: f32) -> [f32; 4] {
+    let [px, py, pw, ph] = t.rect;
+    let x0 = (px / w.max(1.0)) * 2.0 - 1.0;
+    let y0 = (py / h.max(1.0)) * 2.0 - 1.0;
+    let x1 = ((px + pw) / w.max(1.0)) * 2.0 - 1.0;
+    let y1 = ((py + ph) / h.max(1.0)) * 2.0 - 1.0;
+    [x0, y0, x1, y1]
+}
+
+/// Splits UI draw commands into render-pass segments, only triggering a new
+/// backdrop capture when a frosted-glass quad overlaps content drawn since the
+/// previous capture.
+struct BackdropSegmentTracker {
+    segments: Vec<DrawSegment>,
+    seg_start: u32,
+    seg_capture: Option<f32>,
+    has_captured: bool,
+    dirty_rects: Vec<[f32; 4]>,
+    pending_glass_rects: Vec<[f32; 4]>,
+    enabled: bool,
+    viewport_w: f32,
+    viewport_h: f32,
+}
+
+impl BackdropSegmentTracker {
+    fn new(enabled: bool, viewport_w: f32, viewport_h: f32) -> Self {
+        Self {
+            segments: Vec::new(),
+            seg_start: 0,
+            seg_capture: None,
+            has_captured: false,
+            dirty_rects: Vec::new(),
+            pending_glass_rects: Vec::new(),
+            enabled,
+            viewport_w,
+            viewport_h,
+        }
+    }
+
+    fn close_segment(&mut self, cur_len: usize) {
+        let cur = cur_len as u32;
+        if cur > self.seg_start {
+            self.segments.push(DrawSegment {
+                first_vertex: self.seg_start,
+                vertex_count: cur - self.seg_start,
+                capture_before_sigma: self.seg_capture.take(),
+            });
+            self.seg_start = cur;
+        }
+    }
+
+    fn on_quad(&mut self, quad: &crate::ui_overlay::UiQuad, cur_len: usize) {
+        if self.enabled && quad.backdrop_sigma > 0.0 {
+            let check_rect = expand_ndc(
+                quad.rect,
+                quad.backdrop_sigma,
+                self.viewport_w,
+                self.viewport_h,
+            );
+            let overlaps_dirty = self
+                .dirty_rects
+                .iter()
+                .any(|r| rects_overlap(*r, check_rect));
+            if !self.has_captured || overlaps_dirty {
+                self.close_segment(cur_len);
+                self.seg_capture = Some(quad.backdrop_sigma);
+                self.has_captured = true;
+                self.dirty_rects.clear();
+                self.pending_glass_rects.clear();
+            } else if let Some(s) = self.seg_capture.as_mut() {
+                *s = s.max(quad.backdrop_sigma);
+            }
+            self.pending_glass_rects.push(quad.rect);
+        } else {
+            if !self.pending_glass_rects.is_empty() {
+                self.dirty_rects.append(&mut self.pending_glass_rects);
+            }
+            self.dirty_rects.push(quad.rect);
+        }
+    }
+
+    fn on_text(&mut self, ndc_rect: [f32; 4]) {
+        if !self.pending_glass_rects.is_empty() {
+            self.dirty_rects.append(&mut self.pending_glass_rects);
+        }
+        self.dirty_rects.push(ndc_rect);
+    }
+
+    fn finish(mut self, total_vertices: usize) -> Vec<DrawSegment> {
+        self.close_segment(total_vertices);
+        self.segments
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{pixel_y_to_ndc, srgb_rgba_to_linear, wrap_text};
+    use super::{pixel_y_to_ndc, srgb_rgba_to_linear, wrap_text, BackdropSegmentTracker};
 
     /// 等宽 10px 的度量，测试断行只关心宽度，不依赖真实字体。
     fn ten_px(_ch: char) -> f32 {
@@ -1829,6 +1905,84 @@ mod tests {
             [0.0, 0.0, 0.0, 0.5]
         );
         assert_eq!(srgb_rgba_to_linear([1.0; 4]), [1.0; 4]);
+    }
+
+    #[test]
+    fn non_overlapping_glass_panels_share_one_capture() {
+        let mut tracker = BackdropSegmentTracker::new(true, 1280.0, 720.0);
+        let bg = crate::ui_overlay::UiQuad {
+            rect: [-1.0, -1.0, 1.0, 1.0],
+            ..Default::default()
+        };
+        let left_glass = crate::ui_overlay::UiQuad {
+            rect: [-0.9, -0.8, -0.4, 0.8],
+            backdrop_sigma: 20.0,
+            ..Default::default()
+        };
+        let right_glass = crate::ui_overlay::UiQuad {
+            rect: [0.4, -0.8, 0.9, 0.8],
+            backdrop_sigma: 20.0,
+            ..Default::default()
+        };
+
+        tracker.on_quad(&bg, 0);
+        tracker.on_quad(&left_glass, 6);
+        tracker.on_text([-0.85, -0.7, -0.5, -0.6]);
+        tracker.on_quad(&right_glass, 18);
+
+        let segs = tracker.finish(24);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].capture_before_sigma, None);
+        assert_eq!(segs[1].capture_before_sigma, Some(20.0));
+        assert_eq!(segs[1].first_vertex, 6);
+        assert_eq!(segs[1].vertex_count, 18);
+    }
+
+    #[test]
+    fn overlapping_glass_layers_trigger_second_capture() {
+        let mut tracker = BackdropSegmentTracker::new(true, 1280.0, 720.0);
+        let panel_a = crate::ui_overlay::UiQuad {
+            rect: [-0.5, -0.5, 0.5, 0.5],
+            backdrop_sigma: 28.0,
+            ..Default::default()
+        };
+        let panel_b = crate::ui_overlay::UiQuad {
+            rect: [-0.2, -0.2, 0.4, 0.4],
+            backdrop_sigma: 16.0,
+            ..Default::default()
+        };
+
+        tracker.on_quad(&panel_a, 0);
+        tracker.on_text([-0.4, -0.4, 0.2, -0.3]);
+        tracker.on_quad(&panel_b, 12);
+
+        let segs = tracker.finish(18);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].capture_before_sigma, Some(28.0));
+        assert_eq!(segs[1].capture_before_sigma, Some(16.0));
+    }
+
+    #[test]
+    fn consecutive_border_and_inner_glass_share_one_capture() {
+        let mut tracker = BackdropSegmentTracker::new(true, 1280.0, 720.0);
+        let border = crate::ui_overlay::UiQuad {
+            rect: [-0.3, -0.3, 0.3, 0.3],
+            backdrop_sigma: 28.0,
+            ..Default::default()
+        };
+        let inner = crate::ui_overlay::UiQuad {
+            rect: [-0.29, -0.29, 0.29, 0.29],
+            backdrop_sigma: 28.0,
+            ..Default::default()
+        };
+
+        tracker.on_quad(&border, 0);
+        tracker.on_quad(&inner, 6);
+
+        let segs = tracker.finish(12);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].capture_before_sigma, Some(28.0));
+        assert_eq!(segs[0].vertex_count, 12);
     }
 
     #[test]

@@ -133,7 +133,12 @@ float4 fragmentMain(UiVaryings in) : SV_Target0
     // surface read as glass.
     if (in.backdrop > 0.0)
     {
-        float3 blurred = backdropTex.SampleLevel(in.screenUv, 0.0).rgb;
+        // Map blur sigma in pixels to mip level in the 1/2..1/16 blur pyramid.
+        float lod = clamp(log2(max(in.backdrop, 1.0) * 0.125), 0.0, 3.0);
+        float3 blurred = backdropTex.SampleLevel(in.screenUv, lod).rgb;
+        // Subtle vibrancy boost so dark/light glass keeps colour richness.
+        float luma = dot(blurred, float3(0.2126, 0.7152, 0.0722));
+        blurred = max(lerp(float3(luma, luma, luma), blurred, 1.25), 0.0);
         float3 glass = lerp(blurred, in.color.rgb * sampled.rgb, in.color.a);
         return float4(glass, coverage);
     }

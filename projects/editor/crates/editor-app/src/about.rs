@@ -15,7 +15,7 @@ pub const ABOUT_PANEL_KEY: &str = "about:panel";
 pub const ABOUT_CLOSE_KEY: &str = "about:close";
 
 /// Blur radius of the dialog's glass surface, in pixels.
-pub const ABOUT_GLASS_SIGMA: f32 = 28.0;
+pub const ABOUT_GLASS_SIGMA: f32 = 14.0;
 /// Width of the card; its content decides the height.
 pub const ABOUT_WIDTH: f32 = 420.0;
 /// Corner radius of the card.
@@ -37,8 +37,8 @@ fn glass_tint(theme: &Theme) -> Color {
     // Low alpha on purpose: this colour is mixed *over* the blurred backdrop,
     // so a high value would hide the very filter the material paid for.
     match theme.preset() {
-        ThemePreset::Dark => Color::rgba(0.113, 0.125, 0.149, 0.42),
-        ThemePreset::Light => Color::rgba(0.988, 0.992, 1.0, 0.55),
+        ThemePreset::Dark => Color::rgba(0.113, 0.125, 0.149, 0.18),
+        ThemePreset::Light => Color::rgba(0.988, 0.992, 1.0, 0.28),
     }
 }
 

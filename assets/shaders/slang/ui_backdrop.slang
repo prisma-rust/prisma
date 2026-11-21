@@ -66,24 +66,29 @@ VsOut vertexMain(uint vid : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(VsOut input) : SV_Target0
 {
-    // Separable Gaussian: sample along one axis only, weighted by the
-    // normalised exponential kernel. Centred tap plus `taps` on each side.
-    float sigma = max(pc.sigma, 0.0001);
-    float invTwoSigmaSq = 1.0 / (2.0 * sigma * sigma);
-    uint side = min(pc.taps, MAX_TAPS);
-
-    float weightSum = 0.0;
-    float4 accum = float4(0.0, 0.0, 0.0, 0.0);
-    for (uint i = 0u; i <= side; ++i)
+    float2 halfPixel = pc.texel_step * 0.5;
+    if (pc.taps == 0u)
     {
-        float offset = float(i);
-        float weight = exp(-(offset * offset) * invTwoSigmaSq);
-        float2 delta = pc.texel_step * offset;
-        accum += srcTex.SampleLevel(input.uv + delta, 0.0) * weight;
-        if (i > 0u)
-            accum += srcTex.SampleLevel(input.uv - delta, 0.0) * weight;
-        weightSum += (i > 0u) ? (weight * 2.0) : weight;
+        // Dual-Kawase downsample (5-tap): center weighted 4x + 4 diagonal corners.
+        float4 sum = srcTex.SampleLevel(input.uv, 0.0) * 4.0;
+        sum += srcTex.SampleLevel(input.uv - halfPixel, 0.0);
+        sum += srcTex.SampleLevel(input.uv + halfPixel, 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2( halfPixel.x, -halfPixel.y), 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2(-halfPixel.x,  halfPixel.y), 0.0);
+        return sum / 8.0;
     }
-
-    return accum / max(weightSum, 0.0001);
+    else
+    {
+        // Dual-Kawase upsample (8-tap tent): 85% weight on the wider blurred mip
+        // eliminates two-step halos on high-contrast edges while keeping Mip 0..3 distinct.
+        float4 sum = srcTex.SampleLevel(input.uv + float2(-pc.texel_step.x, 0.0), 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2( pc.texel_step.x, 0.0), 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2(0.0, -pc.texel_step.y), 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2(0.0,  pc.texel_step.y), 0.0);
+        sum += srcTex.SampleLevel(input.uv + float2(-halfPixel.x, -halfPixel.y), 0.0) * 2.0;
+        sum += srcTex.SampleLevel(input.uv + float2( halfPixel.x, -halfPixel.y), 0.0) * 2.0;
+        sum += srcTex.SampleLevel(input.uv + float2(-halfPixel.x,  halfPixel.y), 0.0) * 2.0;
+        sum += srcTex.SampleLevel(input.uv + float2( halfPixel.x,  halfPixel.y), 0.0) * 2.0;
+        return float4(sum.rgb / 12.0, 0.85);
+    }
 }

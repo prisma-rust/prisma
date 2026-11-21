@@ -71,6 +71,12 @@ pub struct UiTextCmd {
 /// 没有层级来源的绘制命令（外部提交的 quad / 粒子）排在所有 UI 实体之后。
 pub const EXTERNAL_UI_ORDER: u32 = u32::MAX;
 
+/// 外部提交命令所在的层级：高于一切 ECS UI 实体（#462 的排序键）。
+///
+/// 宿主不填 layer；合并时统一盖成这个值，quad 与文本同层，提交顺序决定
+/// 两者谁压谁。
+pub const EXTERNAL_LAYER: i32 = 9_500;
+
 /// 一条绘制命令。
 ///
 /// 背景矩形和文本放在**同一个**列表里，按 `(layer, order, 类型)` 排序后交错
@@ -148,19 +154,19 @@ pub fn ui_render_system(world: &mut World) {
     let mut pending: Vec<((i32, u32, u8, u32), UiDrawItem)> = Vec::new();
 
     // 外部提交的四边形先并入，随后的排序会把它们放到正确的层。宿主不填
-    // layer / order，这里统一盖成 EXTERNAL_UI_ORDER：外部命令排在所有
-    // ECS UI 实体之后，帧内的先后由提交顺序（seq）保持。
+    // layer / order：四边形落在 EXTERNAL_LAYER 层、EXTERNAL_UI_ORDER 序，
+    // 排在所有 ECS UI 实体之后；帧内的先后由提交顺序（seq）保持。
     if let Some(external) = world.remove_resource::<ExternalUiQuads>() {
         for (seq, quad) in external.0.into_iter().enumerate() {
             pending.push((
-                (0, EXTERNAL_UI_ORDER, 0, seq as u32),
+                (EXTERNAL_LAYER, EXTERNAL_UI_ORDER, 0, seq as u32),
                 UiDrawItem::Quad(UiQuad {
                     rect: quad.rect,
                     color: quad.color,
                     border_radius: quad.border_radius,
                     texture: quad.texture,
                     backdrop_sigma: quad.backdrop_sigma,
-                    layer: 0,
+                    layer: EXTERNAL_LAYER,
                     order: EXTERNAL_UI_ORDER,
                 }),
             ));
@@ -276,7 +282,7 @@ pub fn merge_external_quads(world: &mut World) {
         border_radius: quad.border_radius,
         texture: quad.texture,
         backdrop_sigma: quad.backdrop_sigma,
-        layer: 0,
+        layer: EXTERNAL_LAYER,
         order: EXTERNAL_UI_ORDER,
     }));
     // 列表本来就有序，`sort_by_key` 稳定，所以只把后加的元素插回正确的位置。

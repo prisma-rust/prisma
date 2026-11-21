@@ -15,6 +15,7 @@ use crate::external_overlay::{OverlayMessage, OverlayRecordCtx, SwapchainOverlay
 pub(super) struct UiOverlayHost {
     external_overlay: Option<Box<dyn SwapchainOverlay>>,
     /// Blurs the composited scene when a UI surface samples the backdrop.
+    #[cfg(feature = "ui")]
     backdrop: Option<crate::ui_backdrop::UiBackdropPass>,
     #[cfg(feature = "ui")]
     ui_overlay: Option<crate::ui_overlay::UiOverlay>,
@@ -25,6 +26,7 @@ pub(super) struct UiOverlayHost {
 
 /// Move the composited swapchain image between `COLOR_ATTACHMENT_OPTIMAL` and
 /// the transfer source the backdrop filter copies from.
+#[cfg(feature = "ui")]
 fn transition_backdrop_source(
     context: &crate::context::VulkanContext,
     cmd: vk::CommandBuffer,

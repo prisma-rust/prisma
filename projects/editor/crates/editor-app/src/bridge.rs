@@ -150,49 +150,77 @@ pub fn to_ui_overlay(src: &UiDrawList) -> prism_ui_draw::UiOverlayInput {
         push_command(&mut quads, &mut texts, cmd);
     }
     let mut out = prism_ui_draw::UiOverlayInput::default();
-    out.quads = quads;
-    out.texts = texts;
+    // push_* records the interleaved draw order, so a consumer can replay the
+    // frame exactly as the widget tree emitted it (a scrim covers earlier text).
+    for quad in quads {
+        out.push_quad(quad);
+    }
+    for text in texts {
+        out.push_text(text);
+    }
     out
 }
 
-/// Hand the editor draw packet to the engine as external UI quads.
+/// The layer every editor chrome command lands on: the engine merges
+/// externals into this same layer, so both channels sort together and the
+/// packet's interleaved quad/text sequence survives.
+const EDITOR_LAYER: i32 = prism_engine::ui::EXTERNAL_LAYER;
+
+/// Hand the editor draw packet to the engine.
 ///
 /// The engine rebuilds `UiDrawList` in `ui::render` from ECS UI entities, and the
 /// editor system runs before it, so the merge in `merge_external_quads` keeps both:
-/// engine commands stay in their layers, editor commands go on top in their own
-/// layer so editor chrome cannot be drawn under a scene UI.
+/// engine commands stay in their layers, editor commands go on top in
+/// `EDITOR_LAYER` so editor chrome cannot be drawn under a scene UI.
+///
+/// Quads ride the `ExternalUiQuads` channel; text has no external channel and
+/// joins the engine's own draw list directly. Both carry a shared increasing
+/// `order` within `EDITOR_LAYER`, so replaying `packet.order` reproduces the
+/// widget tree's exact quad/text sequence — a scrim still covers earlier text.
 pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
     let packet = to_ui_overlay(src);
-    // Quads ride the ExternalUiQuads channel; the merge in ui::render stamps
-    // them with the external order, which sorts past every ECS UI entity.
     let mut external = world
         .remove_resource::<ExternalUiQuads>()
         .unwrap_or_default();
-    external.0.extend(packet.quads);
-    world.insert_resource(external);
-    // Text has no external channel, so it joins the engine's own draw list on
-    // a layer above the scene UI, keeping quad/text order from the packet.
     let mut engine_list = world
         .remove_resource::<prism_engine::ui::UiDrawList>()
         .unwrap_or_default();
-    for text in packet.texts {
-        engine_list.push_text(prism_engine::ui::UiTextCmd {
-            rect: text.rect,
-            content: text.content,
-            font_size: text.font_size,
-            color: text.color,
-            alignment: match text.alignment {
-                prism_ui_draw::UiTextAlign::Left => prism_engine::ui::components::TextAlign::Left,
-                prism_ui_draw::UiTextAlign::Center => {
-                    prism_engine::ui::components::TextAlign::Center
+    let mut order = 0u32;
+    for cmd in packet.order {
+        match cmd {
+            prism_ui_draw::UiOverlayDraw::Quad(index) => {
+                if let Some(quad) = packet.quads.get(index as usize) {
+                    external.0.push(quad.clone());
                 }
-                prism_ui_draw::UiTextAlign::Right => prism_engine::ui::components::TextAlign::Right,
-            },
-            font: String::new(),
-            wrap: text.wrap,
-            layer: 0,
-            order: prism_engine::ui::EXTERNAL_UI_ORDER,
-        });
+            }
+            prism_ui_draw::UiOverlayDraw::Text(index) => {
+                if let Some(text) = packet.texts.get(index as usize) {
+                    engine_list.push_text(prism_engine::ui::UiTextCmd {
+                        rect: text.rect,
+                        content: text.content.clone(),
+                        font_size: text.font_size,
+                        color: text.color,
+                        alignment: match text.alignment {
+                            prism_ui_draw::UiTextAlign::Left => {
+                                prism_engine::ui::components::TextAlign::Left
+                            }
+                            prism_ui_draw::UiTextAlign::Center => {
+                                prism_engine::ui::components::TextAlign::Center
+                            }
+                            prism_ui_draw::UiTextAlign::Right => {
+                                prism_engine::ui::components::TextAlign::Right
+                            }
+                        },
+                        font: String::new(),
+                        wrap: text.wrap,
+                        layer: EDITOR_LAYER,
+                        order,
+                    });
+                }
+            }
+        }
+        order += 1;
     }
+    world.insert_resource(external);
     world.insert_resource(engine_list);
 }
