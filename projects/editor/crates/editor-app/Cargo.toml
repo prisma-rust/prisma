@@ -7,6 +7,7 @@ description = "Prisma self-hosted editor ('editor as a game') built on prism-app
 
 [dependencies]
 prism-ui = { path = "../prism-ui", features = ["ui-tween", "ui-blur", "ui-effects", "ui-desktop"] }
+prism-ui-draw = { workspace = true }
 prism-app = { path = "../../../../crates/prism-app", default-features = false, features = [
     "winit-backend",
     "x11",

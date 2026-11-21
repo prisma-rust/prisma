@@ -232,7 +232,11 @@ impl Material {
     pub fn with_param(mut self, name: impl Into<String>, value: impl Into<MaterialValue>) -> Self {
         let name = name.into();
         let value = value.into();
-        match self.params.iter_mut().find(|(existing, _)| *existing == name) {
+        match self
+            .params
+            .iter_mut()
+            .find(|(existing, _)| *existing == name)
+        {
             Some(slot) => slot.1 = value,
             None => self.params.push((name, value)),
         }

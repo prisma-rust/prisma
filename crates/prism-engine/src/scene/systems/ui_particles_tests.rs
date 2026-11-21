@@ -1,7 +1,7 @@
 use super::*;
 use crate::scene::components::UiParticleKind;
 use crate::scene::runtime_components::Hidden;
-use crate::ui::{ExternalUiQuads, UiQuad};
+use crate::ui::ExternalUiQuads;
 
 fn screen(world: &mut World, width: u32, height: u32) {
     world.insert_resource(ScreenSize::new(width, height));
@@ -45,7 +45,6 @@ fn spawns_quads_on_the_component_layer() {
         .expect("quads must be queued for the UI pass");
     assert_eq!(queued.0.len(), alive);
     for quad in &queued.0 {
-        assert_eq!(quad.layer, 7, "layer comes from the component");
         assert!((quad.rect[2] - 2.0).abs() < 1e-3, "width in pixels");
         assert!((quad.rect[3] - 4.0).abs() < 1e-3, "trail length in pixels");
         assert!(quad.color[3] > 0.0);
@@ -109,16 +108,22 @@ fn quads_are_appended_to_quads_queued_by_the_project() {
     screen(&mut world, 800, 600);
     let entity = world.spawn();
     world.insert(entity, spark_emitter(1));
-    world.insert_resource(ExternalUiQuads(vec![UiQuad {
+    world.insert_resource(ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 10.0, 10.0],
-        layer: 900,
-        ..UiQuad::default()
+        color: [1.0, 1.0, 1.0, 1.0],
+        border_radius: 0.0,
+        texture: None,
+        backdrop_sigma: 0.0,
     }]));
 
     let alive = ui_particle_emitter_system(&mut world, 0.1);
     let queued = world.get_resource::<ExternalUiQuads>().expect("quads");
     assert_eq!(queued.0.len(), alive + 1);
-    assert_eq!(queued.0[0].layer, 900, "project quads keep their slot");
+    assert_eq!(
+        queued.0[0].rect,
+        [0.0, 0.0, 10.0, 10.0],
+        "project quads keep their slot"
+    );
 }
 
 #[test]

@@ -14,7 +14,7 @@
 //! types so a host still depends on a single rendering crate.
 
 /// A filled rectangle in NDC space.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiQuad {
     /// `[xmin, ymin, xmax, ymax]` in normalized device coordinates.
     pub rect: [f32; 4],

@@ -126,11 +126,12 @@ impl UiDrawList {
 
 /// 外部（宿主 / 项目模块）提交的 UI 四边形。
 ///
-/// `ui_render_system` 每帧重建 `UiDrawList`，所以提交方必须在**同一帧的 UI
-/// 渲染系统之前**写入本资源；系统会把它们并入绘制列表（参与 `layer`/`order`
-/// 排序）并清空资源，避免跨帧重复绘制。
+/// 元素是 [`prism_ui_draw::UiQuad`]：宿主直接提交与渲染侧相同的数据结构，
+/// 不必为 layer / order 填占位值。`ui_render_system` 每帧重建 `UiDrawList`，
+/// 所以提交方必须在**同一帧的 UI 渲染系统之前**写入本资源；系统会把它们并入
+/// 绘制列表（参与 `layer`/`order` 排序）并清空资源，避免跨帧重复绘制。
 #[derive(Clone, Debug, Default)]
-pub struct ExternalUiQuads(pub Vec<UiQuad>);
+pub struct ExternalUiQuads(pub Vec<prism_ui_draw::UiQuad>);
 
 /// 布局节点的 Canvas 缩放（#463）；坏值按 1 处理，避免 NaN 扩散到顶点。
 fn layout_scale(layout: &ComputedLayout) -> f32 {
@@ -146,12 +147,23 @@ pub fn ui_render_system(world: &mut World) {
     // (layer, order, 类型：0 = 矩形 / 1 = 文本, 序号) —— 序号让排序稳定。
     let mut pending: Vec<((i32, u32, u8, u32), UiDrawItem)> = Vec::new();
 
-    // 外部提交的四边形先并入，随后的排序会把它们放到正确的层。
+    // 外部提交的四边形先并入，随后的排序会把它们放到正确的层。宿主不填
+    // layer / order，这里统一盖成 EXTERNAL_UI_ORDER：外部命令排在所有
+    // ECS UI 实体之后，帧内的先后由提交顺序（seq）保持。
     if let Some(external) = world.remove_resource::<ExternalUiQuads>() {
         for (seq, quad) in external.0.into_iter().enumerate() {
-            let layer = quad.layer;
-            let order = quad.order;
-            pending.push(((layer, order, 0, seq as u32), UiDrawItem::Quad(quad)));
+            pending.push((
+                (0, EXTERNAL_UI_ORDER, 0, seq as u32),
+                UiDrawItem::Quad(UiQuad {
+                    rect: quad.rect,
+                    color: quad.color,
+                    border_radius: quad.border_radius,
+                    texture: quad.texture,
+                    backdrop_sigma: quad.backdrop_sigma,
+                    layer: 0,
+                    order: EXTERNAL_UI_ORDER,
+                }),
+            ));
         }
     }
 
@@ -258,7 +270,15 @@ pub fn merge_external_quads(world: &mut World) {
         return;
     }
     let mut draw_list = world.remove_resource::<UiDrawList>().unwrap_or_default();
-    draw_list.extend_quads(external.0);
+    draw_list.extend_quads(external.0.into_iter().map(|quad| UiQuad {
+        rect: quad.rect,
+        color: quad.color,
+        border_radius: quad.border_radius,
+        texture: quad.texture,
+        backdrop_sigma: quad.backdrop_sigma,
+        layer: 0,
+        order: EXTERNAL_UI_ORDER,
+    }));
     // 列表本来就有序，`sort_by_key` 稳定，所以只把后加的元素插回正确的位置。
     draw_list.items.sort_by_key(|item| match item {
         UiDrawItem::Quad(quad) => (quad.layer, quad.order, 0u8),

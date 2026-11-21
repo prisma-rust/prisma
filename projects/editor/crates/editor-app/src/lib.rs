@@ -894,9 +894,9 @@ mod tests {
     fn engine_draw_list_conversion_preserves_viewport_and_text() {
         let mut editor = EditorUiState::default();
         editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
-        let engine_list = bridge::convert_to_engine_draw_list(&editor.draw_list);
-        assert!(engine_list.quads().any(|q| q.texture == Some(0)));
-        assert!(engine_list.texts().any(|t| t.content == "Prisma Editor"));
+        let packet = bridge::to_ui_overlay(&editor.draw_list);
+        assert!(packet.quads.iter().any(|q| q.texture == Some(0)));
+        assert!(packet.texts.iter().any(|t| t.content == "Prisma Editor"));
     }
 
     #[test]
@@ -917,16 +917,26 @@ mod tests {
         editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
         bridge::submit_draw_list(&mut world, &editor.draw_list);
 
+        // Editor quads ride the external channel: they must be queued for the
+        // merge, not dropped.
+        let external = world
+            .get_resource::<prism_engine::ui::ExternalUiQuads>()
+            .expect("external quads resource exists");
+        assert!(
+            !external.0.is_empty(),
+            "editor quads must be queued for the merge"
+        );
+        // Editor text joins the engine's own draw list.
         let list = world
             .get_resource::<EngineUiDrawList>()
             .expect("draw list resource exists");
         assert!(
-            list.quads().any(|q| q.color == [1.0, 0.0, 0.0, 1.0]),
-            "editor submission must append to the engine's draw list, not replace it"
+            list.texts().any(|t| t.content == "Prisma Editor"),
+            "editor text must be appended to the engine's draw list"
         );
         assert!(
-            list.len() > 1,
-            "editor draw commands should be present alongside the engine's"
+            list.quads().any(|q| q.color == [1.0, 0.0, 0.0, 1.0]),
+            "engine quads must survive the submission"
         );
     }
 

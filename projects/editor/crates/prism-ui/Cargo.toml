@@ -19,3 +19,6 @@ ui-desktop = []
 [dependencies]
 glam = { workspace = true }
 slotmap = { workspace = true }
+# The engine consumes UI output as a flat draw packet; building it directly
+# removes the per-command translation layer between the kernel and the renderer.
+prism-ui-draw = { workspace = true }

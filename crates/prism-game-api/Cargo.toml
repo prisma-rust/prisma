@@ -11,7 +11,7 @@ description = "Engine-independent gameplay API shared by the runtime host and pr
 # 插件构建只需 `--no-default-features --features plugin`。
 [features]
 default = ["host", "plugin"]
-host = ["dep:prism-engine"]
+host = ["dep:prism-engine", "dep:prism-ui-draw"]
 plugin = []
 
 [dependencies]
@@ -28,6 +28,9 @@ prism-physics2d = { path = "../prism-physics2d" }
 # **Must use default-features = false**: otherwise prism-engine defaults (such as `pathtrace`)
 # are forced onto every player, breaking project template building-block toggles (#535 verified).
 prism-engine = { path = "../prism-engine", optional = true, default-features = false }
+# The draw packet a project module pushes through `draw_quad`; the host backend
+# queues it into the engine's `ExternalUiQuads` resource.
+prism-ui-draw = { path = "../prism-ui-draw", optional = true }
 log.workspace = true
 
 [dev-dependencies]

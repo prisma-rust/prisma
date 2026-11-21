@@ -86,9 +86,10 @@ fn the_glass_surface_reaches_the_engine_draw_list() {
     let mut state = EditorUiState::default();
     open_about(&mut state);
 
-    let engine_list = editor_app::bridge::convert_to_engine_draw_list(&state.draw_list);
-    let sigma = engine_list
-        .quads()
+    let packet = editor_app::bridge::to_ui_overlay(&state.draw_list);
+    let sigma = packet
+        .quads
+        .iter()
         .map(|quad| quad.backdrop_sigma)
         .fold(0.0_f32, f32::max);
     assert_eq!(

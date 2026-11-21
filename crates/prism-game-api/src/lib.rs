@@ -755,15 +755,15 @@ impl<'a> GameWorld<'a> {
                 let mut external = world
                     .remove_resource::<prism_engine::ui::ExternalUiQuads>()
                     .unwrap_or_default();
-                external.0.push(prism_engine::ui::UiQuad {
+                // Project quads are solid colour only (no bindless texture slot);
+                // layering happens in the merge, which orders externals past all
+                // ECS UI entities.
+                external.0.push(prism_ui_draw::UiQuad {
                     rect: quad.rect,
                     color: quad.color,
                     border_radius: quad.border_radius,
-                    // Project quads are solid colour only (no bindless texture slot).
                     texture: None,
                     backdrop_sigma: 0.0,
-                    layer: quad.layer,
-                    order: prism_engine::ui::EXTERNAL_UI_ORDER,
                 });
                 world.insert_resource(external);
             }
@@ -1868,10 +1868,7 @@ mod tests {
         let mut world = World::new();
         {
             let mut api = GameWorld::host(&mut world);
-            api.draw_quad(UiQuad {
-                layer: 3,
-                ..UiQuad::default()
-            });
+            api.draw_quad(UiQuad::default());
         }
 
         // The `GameWorld` is gone; the quad survives in the world resource the
@@ -1880,8 +1877,11 @@ mod tests {
             .remove_resource::<prism_engine::ui::ExternalUiQuads>()
             .expect("quad queued in the world");
         assert_eq!(external.0.len(), 1);
-        assert_eq!(external.0[0].layer, 3);
-        assert_eq!(external.0[0].order, prism_engine::ui::EXTERNAL_UI_ORDER);
+        assert_eq!(
+            external.0[0],
+            prism_ui_draw::UiQuad::default(),
+            "the quad must pass through unchanged; layering happens in the merge"
+        );
     }
 
     #[cfg(feature = "plugin")]

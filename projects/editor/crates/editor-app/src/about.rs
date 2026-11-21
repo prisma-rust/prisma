@@ -57,10 +57,7 @@ pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
                 .width(Length::Percent(100.0))
                 .gap(12.0)
                 .align(Align::Center)
-                .child(
-                    text(theme.muted, theme.font_size_small, name)
-                        .width(Length::Px(88.0)),
-                )
+                .child(text(theme.muted, theme.font_size_small, name).width(Length::Px(88.0)))
                 .child(text(theme.text, theme.font_size, value)),
         );
     }
@@ -86,7 +83,11 @@ pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
                 .width(Length::Percent(100.0))
                 .align(Align::Center)
                 .justify(Justify::SpaceBetween)
-                .child(text(theme.text_strong, theme.font_size + 6.0, "Prisma Editor"))
+                .child(text(
+                    theme.text_strong,
+                    theme.font_size + 6.0,
+                    "Prisma Editor",
+                ))
                 .child(button(ABOUT_CLOSE_KEY, "Close")),
         )
         .child(text(

@@ -186,9 +186,7 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
                 prism_ui_draw::UiTextAlign::Center => {
                     prism_engine::ui::components::TextAlign::Center
                 }
-                prism_ui_draw::UiTextAlign::Right => {
-                    prism_engine::ui::components::TextAlign::Right
-                }
+                prism_ui_draw::UiTextAlign::Right => prism_engine::ui::components::TextAlign::Right,
             },
             font: String::new(),
             wrap: text.wrap,

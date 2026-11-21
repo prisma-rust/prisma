@@ -606,12 +606,14 @@ fn an_external_layer_still_draws_above_the_whole_ui() {
 
     spawn_node(&mut world, Some([1.0, 0.0, 0.0, 1.0]), Some("Intro"));
 
-    world.insert_resource(crate::ui::ExternalUiQuads(vec![crate::ui::UiQuad {
+    // The packet type carries no layer: externals are stamped with
+    // EXTERNAL_UI_ORDER, which sorts past every ECS UI entity.
+    world.insert_resource(crate::ui::ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 8.0, 6.0],
         color: [0.5, 0.5, 0.5, 1.0],
         border_radius: 0.0,
-        layer: 1,
-        ..crate::ui::UiQuad::default()
+        texture: None,
+        backdrop_sigma: 0.0,
     }]));
 
     crate::ui::layout::ui_layout_system(&mut world);
@@ -620,8 +622,11 @@ fn an_external_layer_still_draws_above_the_whole_ui() {
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
     assert_eq!(draw_list.items.len(), 3);
     assert!(
-        matches!(&draw_list.items[2], UiDrawItem::Quad(q) if q.layer == 1),
-        "layer 1 的外部 quad 必须画在所有 layer 0 之上"
+        matches!(
+            &draw_list.items[2],
+            UiDrawItem::Quad(q) if q.order == crate::ui::EXTERNAL_UI_ORDER
+        ),
+        "外部 quad 必须画在所有 ECS UI 实体之上"
     );
     assert_eq!(draw_texts(draw_list), vec!["Intro".to_string()]);
 }
@@ -635,17 +640,22 @@ fn quads_submitted_after_the_render_system_are_merged() {
     ui_render_system(&mut world);
 
     // 项目 system 注册在 `ui::render` 之后（静态 Player，见 #1048）。
-    world.insert_resource(crate::ui::ExternalUiQuads(vec![crate::ui::UiQuad {
+    world.insert_resource(crate::ui::ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 4.0, 4.0],
-        layer: 1,
-        ..crate::ui::UiQuad::default()
+        color: [0.5, 0.5, 0.5, 1.0],
+        border_radius: 0.0,
+        texture: None,
+        backdrop_sigma: 0.0,
     }]));
     crate::ui::merge_external_quads(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
     assert_eq!(draw_list.items.len(), 3);
     assert!(
-        matches!(draw_list.items.last(), Some(UiDrawItem::Quad(q)) if q.layer == 1),
+        matches!(
+            draw_list.items.last(),
+            Some(UiDrawItem::Quad(q)) if q.order == crate::ui::EXTERNAL_UI_ORDER
+        ),
         "晚于 ui::render 提交的 quad 必须补进同一帧的列表"
     );
     assert!(

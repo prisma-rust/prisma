@@ -35,7 +35,6 @@
 //! world.get_resource_mut::<UiDrawList>().unwrap().quads.extend(quads);
 //! ```
 
-use super::render::UiQuad;
 use crate::scene::components::{UiParticleEmitter, UiParticleKind};
 
 // ── 单个粒子 ───────────────────────────────────────────────────
@@ -334,9 +333,9 @@ impl ParticleSystem2D {
         });
     }
 
-    /// 输出当前存活粒子对应的 `UiQuad` 列表（像素坐标矩形，可直接追加进
-    /// `UiDrawList::quads`）。`layer` 固定为 1，绘制在黑场之上、文本之下。
-    pub fn emit_quads(&self) -> Vec<UiQuad> {
+    /// 输出当前存活粒子对应的 draw-packet quad 列表（像素坐标矩形，经
+    /// `ExternalUiQuads` 并入 `UiDrawList`）。绘制在黑场之上、文本之下。
+    pub fn emit_quads(&self) -> Vec<prism_ui_draw::UiQuad> {
         let h = self.height;
         let mut quads = Vec::with_capacity(self.particles.len());
         for p in &self.particles {
@@ -359,12 +358,12 @@ impl ParticleSystem2D {
                 p.width,
                 p.len.max(p.width),
             ];
-            quads.push(UiQuad {
+            quads.push(prism_ui_draw::UiQuad {
                 rect,
                 color: [self.color[0], self.color[1], self.color[2], a],
                 border_radius: p.width * 0.5, // 胶囊状端点
-                layer: self.layer,
-                ..UiQuad::default()
+                texture: None,
+                backdrop_sigma: 0.0,
             });
         }
         quads

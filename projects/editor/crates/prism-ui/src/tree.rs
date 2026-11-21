@@ -910,9 +910,10 @@ impl UiTree {
                     border_width: 0.0,
                     radius: 0.0,
                     texture: Some(*texture),
-                    material: node.visual.as_ref().and_then(|vbox| {
-                        vbox.resolve(&node.state).material
-                    }),
+                    material: node
+                        .visual
+                        .as_ref()
+                        .and_then(|vbox| vbox.resolve(&node.state).material),
                 });
             }
             NodeContent::Custom(cmds) => {
