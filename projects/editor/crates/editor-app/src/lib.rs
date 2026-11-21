@@ -49,7 +49,12 @@ pub struct EditorUiState {
 
 impl Default for EditorUiState {
     fn default() -> Self {
-        let schema = build_schema();
+        let schema = {
+            let mut span = prism_engine::util::timing::span("editor::build_schema");
+            let schema = build_schema();
+            span.detail(format!("types={}", schema.types.len()));
+            schema
+        };
         let mut expanded = HashSet::new();
         expanded.insert(1);
 
@@ -290,11 +295,21 @@ impl EditorUiState {
             );
         }
 
-        self.tree.compute_layout(viewport_size);
-        let actions = self.tree.process_input(input);
+        {
+            let _layout = prism_engine::util::timing::span("editor::ui_layout");
+            self.tree.compute_layout(viewport_size);
+        }
+        let actions = {
+            let _input = prism_engine::util::timing::span("editor::ui_input");
+            self.tree.process_input(input)
+        };
         self.apply_actions(&actions);
         self.tree.step_animations(dt);
-        self.tree.build_draw_list(&mut self.draw_list);
+        {
+            let mut draw = prism_engine::util::timing::span("editor::ui_draw_list");
+            self.tree.build_draw_list(&mut self.draw_list);
+            draw.detail(format!("commands={}", self.draw_list.commands.len()));
+        }
         actions
     }
 
@@ -437,6 +452,7 @@ impl EditorUiState {
 }
 
 fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
+    let _span = prism_engine::util::timing::span("editor::tick");
     let mut state = world.remove_resource::<EditorUiState>().unwrap_or_default();
     state.elapsed_time += dt as f64;
     let screen = bridge::screen_size(world);
@@ -455,11 +471,16 @@ fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
 /// fail (an editor checkout has no scene manifest), and paint the
 /// "no scene" placeholder over the whole window.
 pub fn build_app() -> prism_app::App {
-    let mut app =
-        prism_app::App::hosted(prism_app::load_config()).with_subsystem(Subsystem::Render);
-    app.engine_mut()
-        .world_mut()
-        .insert_resource(EditorUiState::default());
+    let _span = prism_engine::util::timing::span("editor::build_app");
+    let mut app = prism_app::App::hosted(prism_app::load_config())
+        .with_pointer_lock_policy(prism_app::PointerLockPolicy::Manual)
+        .with_subsystem(Subsystem::Render);
+    {
+        let _state = prism_engine::util::timing::span("editor::state_default");
+        app.engine_mut()
+            .world_mut()
+            .insert_resource(EditorUiState::default());
+    }
     app.add_system("editor::tick", editor_system);
     app
 }

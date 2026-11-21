@@ -180,14 +180,6 @@ pub struct InputManager {
     // Pointer-lock state
     /// Whether the cursor is hidden + grabbed for FPS-style look.
     pub pointer_locked: bool,
-    /// Whether ALT is held and has temporarily released a locked pointer.
-    pub alt_temp_release: bool,
-    /// Set when the window regains focus; the next left-click focuses the
-    /// window instead of entering pointer lock.
-    pub focus_return_click: bool,
-    /// Whether the pointer was locked before the inspector/visualizer was
-    /// opened, so it can be re-locked when the UI closes.
-    pub lock_before_inspector: bool,
 }
 
 impl InputManager {

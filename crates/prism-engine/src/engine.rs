@@ -102,6 +102,7 @@ impl Engine {
 
     /// 创建空引擎——不运行任何初始化阶段。
     pub fn empty() -> Self {
+        let _span = crate::util::timing::span("engine::empty");
         let mut world = World::new();
         // 一次性音效队列（#987）：项目代码排队，宿主每帧取走。
         world.insert_resource(crate::sound::SoundCommands::default());
@@ -304,109 +305,20 @@ impl Engine {
         crate::scene_state::load_scene_state(&mut self.world)
     }
 
-    /// 运行时初始化：所有「一切就绪」的收尾钩子。
+    /// Runtime init: the "everything is wired" finishing hooks.
     ///
-    /// 若无相机实体则生成回退相机，并向 [`Schedule`](crate::ecs::schedule::Schedule)
-    /// 注册默认 ECS 系统与资源。
+    /// Registers the default ECS systems and resources. It deliberately does
+    /// **not** spawn a camera: a world without a `Camera` renders through
+    /// [`fallback_camera_output`](crate::scene::systems::camera::fallback_camera_output),
+    /// and hosts that want a free-fly camera ask for one with
+    /// [`crate::util::camera::spawn_default_camera`].
     pub fn runtime_initialize(&mut self) {
-        // ── fallback camera ──────────────────────────────────────────
-        let has_camera = self
-            .world
-            .query::<crate::scene::components::Camera>()
-            .next()
-            .is_some();
-        if !has_camera {
-            Self::spawn_default_camera(&mut self.world);
-        }
-
-        // ── default schedule ─────────────────────────────────────────
-        // 默认系统（UI 基础设施）**合并**进现有调度而非整体替换：
-        // 用户在 `runtime_initialize` 之前注册的 system 不会被冲掉。
+        let _span = crate::util::timing::span("engine::runtime_initialize");
+        // Default systems (UI infrastructure) are **merged** into the existing
+        // schedule rather than replacing it, so systems a user registered before
+        // `runtime_initialize` survive.
         self.schedule.merge_if_absent(default_schedule());
     }
-
-    /// Spawn a demo cube entity into the world.
-    ///
-    /// Uploads the procedural cube mesh and a default material to the
-    /// renderer, then spawns an entity with `MeshRef`+`MaterialRef` (the
-    /// existing extraction path) plus `MeshRenderer` (the future authoring
-    /// 路径）。从 [`LegacyApp::on_resumed`] 在渲染器创建后调用。
-    /// created.
-    // pub fn spawn_demo_cube(
-    //     world: &mut World,
-    //     renderer: &mut prism_render::GraphRenderer,
-    // ) -> anyhow::Result<()> {
-    //     use crate::scene::components::*;
-    //     use prism_render::managers::{MaterialUploadInput, MeshUploadInput};
-    //
-    //     // Upload cube 网格
-    //     let cpu_mesh = crate::asset::procedural::make_cube();
-    //     let upload = MeshUploadInput {
-    //         positions: cpu_mesh.positions,
-    //         normals: cpu_mesh.normals,
-    //         colors: Vec::new(), // all white
-    //         uvs: cpu_mesh.uvs,
-    //         tangents: Vec::new(),
-    //         indices: cpu_mesh.indices,
-    //     };
-    //     let mesh_handle = renderer.register_mesh(&upload)?;
-    //
-    //     // Register 默认 材质
-    //     let mat_input = MaterialUploadInput {
-    //         base_color: [0.8, 0.8, 0.8, 1.0],
-    //         metallic: 0.0,
-    //         roughness: 0.5,
-    //         emissive: [0.0; 3],
-    //         albedo_tex: None,
-    //         normal_tex: None,
-    //         metallic_roughness_tex: None,
-    //         emissive_tex: None,
-    //         occlusion_tex: None,
-    //         normal_scale: 1.0,
-    //         occlusion_strength: 1.0,
-    //         transmission: 0.0,
-    //         ior: 1.5,
-    //         translucency: 0.0,
-    //         anisotropy: 0.0,
-    //         clearcoat: 0.0,
-    //         clearcoat_roughness: 0.0,
-    //         emissive_strength: 1.0,
-    //     };
-    //     let mat_handle = renderer.register_material(mat_input)?;
-    //     let mat_slot = renderer
-    //         .material_slot(mat_handle)
-    //         .ok_or_else(|| anyhow::anyhow!("no material slot for demo cube"))?;
-    //
-    //     // 生成 cube 实体 at origin.
-    //     let entity = world.spawn();
-    //     world.insert(
-    //         entity,
-    //         LocalTransform {
-    //             position: glam::Vec3::ZERO,
-    //             rotation: glam::Quat::IDENTITY,
-    //             scale: glam::Vec3::ONE,
-    //         },
-    //     );
-    //     world.insert(entity, LocalToWorld(glam::Mat4::IDENTITY));
-    //     world.insert(
-    //         entity,
-    //         MeshRef {
-    //             asset_id: crate::scene::components::SceneAssetId::generate(),
-    //             render_handle: mesh_handle,
-    //             generation: 1,
-    //         },
-    //     );
-    //     world.insert(
-    //         entity,
-    //         MaterialRef {
-    //             asset_id: crate::scene::components::SceneAssetId::generate(),
-    //             material_slot: mat_slot,
-    //             generation: 1,
-    //         },
-    //     );
-    //     log::info!("ECS: spawned demo cube entity");
-    //     Ok(())
-    // }
 
     // ======================================================================
     // Timer API
@@ -692,45 +604,6 @@ impl Engine {
     pub fn fixed_schedule_mut(&mut self) -> &mut Schedule {
         &mut self.fixed_schedule
     }
-
-    // ── default camera spawn ───────────────────────────────────────
-
-    /// Spawn a fallback camera + controller + transform entity.
-    /// Called automatically when no Camera entity exists at runtime init.
-    fn spawn_default_camera(world: &mut World) {
-        use crate::scene::components::{Camera, FlyCameraController, LocalToWorld, LocalTransform};
-
-        let entity = world.spawn();
-        world.insert(
-            entity,
-            LocalTransform {
-                position: glam::Vec3::new(0.0, 2.0, 5.0),
-                rotation: glam::Quat::IDENTITY,
-                scale: glam::Vec3::ONE,
-            },
-        );
-        world.insert(entity, LocalToWorld(glam::Mat4::IDENTITY));
-        world.insert(
-            entity,
-            Camera {
-                fov_y_degrees: 60.0,
-                near: 0.1,
-                far: 1000.0,
-                exposure: 1.0,
-                ..Camera::default()
-            },
-        );
-        world.insert(
-            entity,
-            FlyCameraController {
-                yaw: 0.0,
-                pitch: 0.0,
-                move_speed: 5.0,
-                look_sensitivity: 0.005,
-            },
-        );
-        log::info!("ECS: spawned default camera entity");
-    }
 }
 
 /// Build the default system schedule.
@@ -739,8 +612,8 @@ impl Engine {
 /// Consumers can extend or replace the schedule via
 /// [`Engine::schedule_mut`].
 ///
-/// 只含引擎基础设施（UI 布局/输入/渲染）；演示内容（如
-/// [`orbit_camera_demo_system`]）不在此列，由应用层按需显式注册。
+/// Contains engine infrastructure only (UI layout / input / render). Demo content
+/// is never registered here; entry points add whatever they need.
 fn default_schedule() -> Schedule {
     use crate::ecs::schedule::Schedule;
 
@@ -822,18 +695,6 @@ fn default_schedule() -> Schedule {
 #[cfg(test)]
 #[path = "transform_propagation_tests.rs"]
 mod transform_propagation_tests;
-
-/// 演示用：绕 Y 轴缓慢旋转所有 `Transform`。
-///
-/// 默认调度**不**包含此系统（游戏项目不应继承"所有实体自动旋转"）；
-/// 需要演示行为的入口（如 `prism_app::run()`）显式注册它。
-pub fn orbit_camera_demo_system(world: &mut World, dt: f32) {
-    use crate::ecs::components::Transform;
-    for (_, transform) in world.query_mut::<Transform>() {
-        // yaw
-        transform.rotation.y += dt * 0.3;
-    }
-}
 
 #[cfg(test)]
 #[path = "engine_scene_tests.rs"]

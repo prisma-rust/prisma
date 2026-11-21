@@ -107,6 +107,7 @@ use hot_reload::spawn_pak_watcher;
 use input::{
     apply_device_mouse_motion, apply_key_event, apply_window_cursor_move, engine_touch_phase,
 };
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subsystem {
     /// 渲染子系统（窗口 + Vulkan + 渲染线程）。
@@ -147,6 +148,19 @@ impl Subsystem {
 // ===========================================================================
 
 /// Application shell：拥有引擎、窗口与渲染线程。
+/// Who owns the cursor: the app (FPS-style games) or the host (editors, tools).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PointerLockPolicy {
+    /// The app grabs the pointer on the first left click, releases it on Esc, and
+    /// re-grabs when the window regains focus. The engine camera reads
+    /// `pointer_locked`, so this is the behaviour every FPS project expects.
+    #[default]
+    Auto,
+    /// The host owns the cursor. The app forwards mouse input but never grabs or
+    /// releases the pointer, so the cursor stays visible and usable.
+    Manual,
+}
+
 pub struct App {
     // ---------- 启动配置 ----------
     config: AppConfig,
@@ -187,6 +201,9 @@ pub struct App {
 
     // ---------- 输入（主线程） ----------
     input: InputManager,
+    /// Whether the app grabs the pointer on its own (FPS-style games) or leaves
+    /// cursor ownership to the host (editors, tools).
+    pointer_lock: PointerLockPolicy,
 
     // ---------- 音频（主线程，`audio` feature） ----------
     #[cfg(feature = "audio")]
@@ -339,6 +356,7 @@ impl App {
     }
 
     fn build(config: AppConfig, load_scene: bool) -> Self {
+        let mut build_span = prism_engine::util::timing::span("app::build");
         let mut engine = Engine::empty();
 
         // Phase 1 – Subsystem registration
@@ -363,6 +381,7 @@ impl App {
 
         // 存档目录跟随工程 `[app] company/name`（AppConfig 已从 settings 读好）。
         // 以前 `scene_state_path()` 用默认配置，所有项目共用一个目录（#484）。
+        let _save_dir_span = prism_engine::util::timing::span("app::open_save_directory");
         if let Some(dir) = prism_engine::config::app_data_dir_for(&config) {
             // 玩家存档（#984）与场景存档同目录：都跟着 `[app] company/name` 走。
             // 设了 `PRISMA_USER_DATA` 时改用它（便携版 / Android 宿主）。
@@ -383,6 +402,11 @@ impl App {
         // 项目级渲染默认值（`[render]` 段）。
         let mut render_settings = RenderSettings::default();
         config.render.apply(&mut render_settings);
+        build_span.detail(format!(
+            "load_scene={} assets={}",
+            load_scene,
+            asset_resolver.resource_manager.asset_count()
+        ));
 
         Self {
             config,
@@ -398,7 +422,10 @@ impl App {
             #[cfg(feature = "engine-debug")]
             debug_hud: DebugHud::default(),
             display_aspect: 16.0 / 9.0,
-            pak_watcher: spawn_pak_watcher(),
+            pak_watcher: {
+                let _watcher_span = prism_engine::util::timing::span("app::spawn_pak_watcher");
+                spawn_pak_watcher()
+            },
             surface_rotation: glam::Mat4::IDENTITY,
             input: InputManager::new(),
             #[cfg(feature = "audio")]
@@ -417,6 +444,7 @@ impl App {
             one_shot_sounds: std::collections::HashMap::new(),
             #[cfg(feature = "physics")]
             physics: None,
+            pointer_lock: PointerLockPolicy::Auto,
             needs_resize: false,
             host_extent: None,
             host_surface: None,
@@ -435,6 +463,11 @@ impl App {
     // -----------------------------------------------------------------------
 
     /// 完全 ECS 访问——world / schedule / timer 等入口都通过 `Engine`。
+    /// Current pointer-ownership policy (diagnostics / tests).
+    pub fn pointer_lock_policy(&self) -> PointerLockPolicy {
+        self.pointer_lock
+    }
+
     /// Read-only engine access (diagnostics / tests).
     pub fn engine(&self) -> &Engine {
         self.engine.as_ref().expect("engine alive")
@@ -548,6 +581,21 @@ impl App {
     /// 以闭包配置应用级渲染设置。
     pub fn with_render_settings(mut self, configure: impl FnOnce(&mut RenderSettings)) -> Self {
         configure(&mut self.render_settings);
+        self
+    }
+
+    /// Stop the app from grabbing or releasing the pointer on its own.
+    ///
+    /// The default (`PointerLockPolicy::Auto`) is the FPS behaviour: the first
+    /// left click grabs the cursor, Esc releases it, and regaining focus re-grabs.
+    /// That is wrong for a host that owns the cursor itself — an editor needs a
+    /// visible pointer for selecting and dragging, and the auto-grab hides it on
+    /// the first click anywhere in the window.
+    ///
+    /// With `Manual` the app still forwards mouse motion and button events to the
+    /// engine; it just never calls `grab_pointer` / `release_pointer`.
+    pub fn with_pointer_lock_policy(mut self, policy: PointerLockPolicy) -> Self {
+        self.pointer_lock = policy;
         self
     }
 
@@ -981,9 +1029,11 @@ impl App {
     /// 若环境变量设置了 `PRISMA_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
     #[cfg(feature = "winit-backend")]
     pub fn run(mut self) {
+        prism_engine::util::timing::init();
         // 兜底：`App::hosted` 之外的构造路径也要在事件循环前有 logger（幂等）。
         crate::logging::init_player_logging();
         Self::log_asset_root();
+        prism_engine::util::timing::event("app::event_loop_ready", "");
 
         if let Some(frames) = Self::headless_frames_from_env() {
             log::info!("headless mode requested via PRISMA_HEADLESS ({frames} frames)");
@@ -993,7 +1043,9 @@ impl App {
             return;
         }
 
+        let loop_span = prism_engine::util::timing::span("app::create_event_loop");
         let event_loop = winit::event_loop::EventLoop::new().expect("failed to create event loop");
+        drop(loop_span);
         self.run_on(event_loop).expect("fatal application error");
     }
 
@@ -1131,6 +1183,7 @@ impl App {
     /// 返回 `Some(message)` 表示渲染线程已经死亡（初始化失败 / panic），
     /// 调用方应弹出致命错误并关闭窗口，而不是空转一个白窗口。
     fn tick_frame(&mut self) -> Option<String> {
+        let _frame_span = prism_engine::util::timing::span("app::tick_frame");
         // The render thread exclusively owns the Vulkan context. If it exited
         // (renderer init failure or panic), stop instead of spinning a blank
         // window at 100% CPU.
@@ -1217,6 +1270,7 @@ impl App {
 
         let resumed_entry = crate::render_shared::startup_ms();
         let window_config = self.window_config();
+        let window_span = prism_engine::util::timing::span("app::create_window_native");
         let platform = match PlatformContext::create_window_native(&window_config) {
             Ok(platform) => platform,
             Err(error) => {
@@ -1225,10 +1279,13 @@ impl App {
             }
         };
         let window_built = crate::render_shared::startup_ms();
+        drop(window_span);
 
         self.platform = Some(platform);
         // 渲染线程异步构建渲染器 + 启动帧循环（重量级初始化不阻塞主线程）。
+        let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
         self.spawn_render_thread();
+        drop(spawn_span);
 
         let spawned = crate::render_shared::startup_ms();
         if let Some(shared) = self.render_shared.as_ref() {
@@ -1452,6 +1509,7 @@ impl App {
     /// `simulate = false` 是编辑器「编辑态」：只传播层级后直接 extract，不跑
     /// 任何游戏 system（相机控制器 / UI / 用户逻辑都不该在点 Play 之前动场景）。
     fn tick_sim(&mut self, simulate: bool) {
+        let _sim_span = prism_engine::util::timing::span("app::tick_sim");
         // Poll mode may call this at any event rate. Time is measured once from
         // the monotonic clock; input events must never determine simulation speed.
         let now = Instant::now();
@@ -1597,6 +1655,7 @@ impl App {
             let aspect = self.render_settings.render_aspect(self.display_aspect);
             // #978：亚像素折线按场景实际渲染高度换算「1 像素」的世界长度。
             let render_height = self.render_settings.render_height(surface_w, surface_h);
+            let mut extract_span = prism_engine::util::timing::span("app::extract_frame_packet");
             extract_frame_packet_into_with_shadow_cascades_and_render_height(
                 engine.world_mut(),
                 aspect,
@@ -1633,6 +1692,12 @@ impl App {
                 );
             }
 
+            extract_span.detail(format!(
+                "draws={} sprites={} ui_quads={}",
+                packet.draw_items.len(),
+                packet.sprite_items.len(),
+                packet.ui_overlay.quads.len()
+            ));
             shared.send_packet(packet);
         }
     }
@@ -1646,6 +1711,7 @@ impl App {
     /// 渲染器在渲染线程异步构建，故此函数可在首帧前安全地每帧调用——
     /// 请求会暂存在通道中直到渲染器就绪。
     fn pump_asset_requests(&mut self) {
+        let _span = prism_engine::util::timing::span("app::pump_asset_requests");
         let (Some(shared), Some(engine)) = (self.render_shared.as_ref(), self.engine.as_mut())
         else {
             return;
@@ -1766,17 +1832,22 @@ impl App {
         match event {
             PlatformEvent::CloseRequested => return false,
             PlatformEvent::Focused(focused) => {
-                self.input.focus_return_click = !focused;
+                // A host that owns the cursor gets no grab/release from us.
+                if self.pointer_lock == PointerLockPolicy::Manual {
+                    return true;
+                }
                 if !focused && self.input.pointer_locked {
                     prism_platform::release_pointer(window);
                     self.input.set_locked(false);
                 }
-                // 窗口重新拿到焦点：指针锁定是「点一下才算」的，切换出去再切回来
-                // 要重按一次左键，走位键却没反应，读起来就是「键盘坏了」。这里直接
-                // 恢复锁定（Esc 仍是唯一的解锁手势，见 should_release_pointer_lock）。
+                // Regaining focus re-grabs: pointer lock is click-to-enter, so
+                // alt-tabbing out and back would otherwise leave the player with
+                // dead movement keys until they click again. Esc stays the only
+                // way out (see `should_release_pointer_lock`).
                 if focused && !self.input.pointer_locked {
-                    // 以平台的真实结果为准：抓取被系统拒绝时不能再记「已锁定」，
-                    // 否则光标可见可动、相机却照样吃 WASD 和鼠标增量。
+                    // Trust the platform result: if the OS refused the grab, do
+                    // not record "locked", or the cursor stays visible and free
+                    // while the camera keeps eating WASD and mouse deltas.
                     let grabbed = prism_platform::grab_pointer(window);
                     self.input.set_locked(grabbed);
                 }
@@ -1806,7 +1877,11 @@ impl App {
                     4 => MouseButton::Forward,
                     other => MouseButton::Other(other),
                 };
-                if pressed && button == MouseButton::Left && !self.input.pointer_locked {
+                if pressed
+                    && button == MouseButton::Left
+                    && !self.input.pointer_locked
+                    && self.pointer_lock == PointerLockPolicy::Auto
+                {
                     let grabbed = prism_platform::grab_pointer(window);
                     self.input.set_locked(grabbed);
                 }
@@ -1823,7 +1898,9 @@ impl App {
                 // 键码换算 + Esc 解锁 + 写进 InputManager 收在 `apply_key_event`，
                 // 单测才能覆盖「平台键 -> 引擎键 -> key_held」整条链路；
                 // 只有真正碰窗口的 release_pointer 留在外面。
-                if apply_key_event(&mut self.input, key, pressed) {
+                if apply_key_event(&mut self.input, key, pressed)
+                    && self.pointer_lock == PointerLockPolicy::Auto
+                {
                     prism_platform::release_pointer(window);
                 }
             }
@@ -1959,13 +2036,17 @@ impl ApplicationHandler for App {
             // 主线程仅创建窗口（快速，~数毫秒），随后立即返回——窗口事件
             // （关闭/移动/缩放）此刻起即可被 winit 派发，不被任何初始化阻塞。
             let window_config = self.window_config();
+            let window_span = prism_engine::util::timing::span("app::create_window");
             let platform = PlatformContext::create_window(event_loop, &window_config);
             let window_built = crate::render_shared::startup_ms();
+            drop(window_span);
 
             self.platform = Some(platform);
 
             // 渲染线程异步构建渲染器 + 启动帧循环（重量级初始化不阻塞主线程）。
+            let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
             self.spawn_render_thread();
+            drop(spawn_span);
 
             // 记录启动里程碑：resumed 返回时刻 = event_loop_free（事件循环已解锁）。
             let spawned = crate::render_shared::startup_ms();

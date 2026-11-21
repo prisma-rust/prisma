@@ -88,6 +88,15 @@ struct GlyphAtlas {
     device: ash::Device,
 }
 
+/// Log a sub-step of the UI overlay record that is slow enough to explain a
+/// first-frame stall (lazy pipeline build, font parse, buffer growth).
+fn log_slow_step(step: &str, elapsed: std::time::Duration) {
+    let ms = elapsed.as_secs_f64() * 1000.0;
+    if ms >= 1.0 {
+        log::debug!(target: "startup", "[startup] ui_overlay: {step} {ms:.3}ms");
+    }
+}
+
 impl GlyphAtlas {
     fn new(context: &VulkanContext, command_pool: vk::CommandPool) -> Result<Self> {
         let device = context.device.clone();
@@ -152,7 +161,13 @@ impl GlyphAtlas {
             device.unmap_memory(memory);
         }
 
+        let font_start = std::time::Instant::now();
         let rasterizer = text::create();
+        log::debug!(
+            target: "startup",
+            "[startup] ui_overlay: text backend + font load {:.3}ms",
+            font_start.elapsed().as_secs_f64() * 1000.0
+        );
         if let Some(backend) = rasterizer.as_deref() {
             if let Some(m) = backend.line_metrics(None, 16.0) {
                 log::debug!(
@@ -873,7 +888,9 @@ impl UiOverlay {
         if input.is_empty() {
             return Ok(());
         }
+        let pipeline_start = std::time::Instant::now();
         self.ensure_pipeline(&context.device, extent)?;
+        log_slow_step("ensure_pipeline", pipeline_start.elapsed());
 
         // 估算值只用于预留容量：单个字符只有在有字形位图时才写顶点
         // （空格没有 rect、atlas 满或无字体时直接跳过），实际顶点数通常更少。
@@ -946,7 +963,9 @@ impl UiOverlay {
         if vert_count == 0 {
             return Ok(());
         }
+        let buffer_start = std::time::Instant::now();
         self.grow_buffer(context, vert_count)?;
+        log_slow_step("grow_buffer", buffer_start.elapsed());
 
         // Upload vertex data.
         let vert_bytes = vertices.len() * size_of::<UiVertex>();

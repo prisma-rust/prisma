@@ -3115,6 +3115,16 @@ impl GraphRenderer {
         // 图 末尾 pass（RtPreview）final = PRESENT_SRC_KHR，所以 swapchain
         // image 在 graph 后已是展示布局；UI/overlay render pass 期望
         // COLOR_ATTACHMENT_OPTIMAL 初始布局 → 各自 record 前都要显式转回。
+        /// Log a slow UI-overlay record, which is where lazy glyph-atlas and pipeline
+        /// creation land on the first frame.
+        #[cfg(feature = "ui")]
+        fn log_slow_ui(path: &str, elapsed: std::time::Duration) {
+            let ms = elapsed.as_secs_f64() * 1000.0;
+            if ms >= 1.0 {
+                log::debug!(target: "startup", "[startup] ui_overlay record ({path}) {ms:.3}ms");
+            }
+        }
+
         #[cfg(feature = "ui")]
         if record.is_ok() {
             let has_ui = ui_overlay.is_some_and(|o| !o.quads.is_empty() || !o.texts.is_empty());
@@ -3128,6 +3138,7 @@ impl GraphRenderer {
                         render_extent,
                         self.settings.internal_scale_mode,
                     );
+                    let ui_start = std::time::Instant::now();
                     record = self.ui_host.record_ecs_ui_swapchain(
                         &self.runtime.context,
                         self.runtime.command_pool,
@@ -3142,6 +3153,7 @@ impl GraphRenderer {
                         bindless_set,
                         ctx.frame_index,
                     );
+                    log_slow_ui("swapchain", ui_start.elapsed());
                 } else if let Some((image, view, target_extent, color_format)) =
                     self.offscreen.as_ref().map(|target| {
                         (
@@ -3157,6 +3169,7 @@ impl GraphRenderer {
                         offset: vk::Offset2D { x: 0, y: 0 },
                         extent: target_extent,
                     };
+                    let ui_start = std::time::Instant::now();
                     record = self.ui_host.record_ecs_ui_offscreen(
                         &self.runtime.context,
                         self.runtime.command_pool,
@@ -3171,6 +3184,7 @@ impl GraphRenderer {
                         bindless_set,
                         ctx.frame_index,
                     );
+                    log_slow_ui("offscreen", ui_start.elapsed());
                 }
             }
         }

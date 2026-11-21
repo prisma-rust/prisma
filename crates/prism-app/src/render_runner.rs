@@ -113,11 +113,13 @@ pub fn render_thread_main(
     let mut graph_report = crate::render_graph_report::ReportWriter::from_env();
 
     log::info!("Render thread started");
+    prism_engine::util::timing::event("render::thread_started", "");
 
     // -------------------------------------------------------------------
     // 异步构建渲染器（~数百毫秒，但运行在渲染线程，不阻塞窗口事件）
     // -------------------------------------------------------------------
     // 原始句柄包装成 Has*Handle——raw 句柄是进程级的，跨线程安全。
+    let create_span = prism_engine::util::timing::span("render::create_renderer");
     let created = match &target {
         RenderTarget::Surface {
             handles,
@@ -167,6 +169,7 @@ pub fn render_thread_main(
             shadow_cascade_count,
         ),
     };
+    drop(create_span);
     let mut renderer = match created {
         Ok(r) => r,
         Err(e) => {
@@ -183,12 +186,15 @@ pub fn render_thread_main(
     }
 
     shared.mark("renderer_built");
+    prism_engine::util::timing::event("render::renderer_built", "");
     log::info!("Render thread: renderer built");
 
     if warmup {
+        let warmup_span = prism_engine::util::timing::span("render::warmup_pipelines");
         if let Err(e) = renderer.warmup_pipelines() {
             log::warn!("Render thread: pipeline warmup failed (continuing): {e:#}");
         }
+        drop(warmup_span);
         shared.mark("warmup_done");
     }
 
@@ -196,9 +202,11 @@ pub fn render_thread_main(
     // （或 `.rscn` 自带环境贴图）时才跑 CPU 预卷积；否则依赖启动期廉价空 IBL。
     if let Some(bytes) = scene_env {
         log::info!("scene lighting: building IBL environment (with convolve)");
+        let env_span = prism_engine::util::timing::span("render::set_environment_ibl");
         if let Err(e) = renderer.set_environment(Some(bytes)) {
             log::warn!("Render thread: failed to set scene environment: {e:#}");
         }
+        drop(env_span);
     } else {
         log::info!("scene lighting: no IBL environment — cheap empty IBL (no convolve)");
     }
@@ -259,6 +267,16 @@ pub fn render_thread_main(
             Some(packet) => {
                 if !first_packet_received {
                     first_packet_received = true;
+                    prism_engine::util::timing::event(
+                        "render::first_packet_received",
+                        &format!(
+                            "draws={} camera={} extent={}x{}",
+                            packet.draw_items.len(),
+                            packet.scene.has_camera,
+                            renderer.extent().width,
+                            renderer.extent().height
+                        ),
+                    );
                     log::info!(
                         "first render packet received: draws={}, camera={}, gizmos={}, extent={}x{}",
                         packet.draw_items.len(),
@@ -342,7 +360,17 @@ pub fn render_thread_main(
                 },
             );
             shared.mark("first_frame");
+            prism_engine::util::timing::event(
+                "render::first_frame",
+                &format!(
+                    "draws={} extent={}x{}",
+                    packet.draw_items.len(),
+                    renderer.extent().width,
+                    renderer.extent().height
+                ),
+            );
             shared.print_startup_report();
+            prism_engine::util::timing::print_report();
         }
 
         if frame_plan.is_some() {
@@ -578,10 +606,12 @@ fn render_one_frame(
         renderer_settings.dlss_rr_enabled = settings.dlss_rr_enabled;
     }
 
+    let begin_span = prism_engine::util::timing::span("render::begin_frame");
     let ctx = match renderer.begin_frame()? {
         Some(c) => c,
         None => return Ok(false),
     };
+    drop(begin_span);
     // #1007：上一帧粗深度在 `begin_frame` 里读回，所以过滤放在它之后。
     let mut occlusion_items = Vec::new();
     let main_pass_items: &[prism_render::render_graph::DrawItem] = if settings.occlusion_culling {
@@ -636,17 +666,22 @@ fn render_one_frame(
         renderer.request_screenshot(plan.path.clone(), plan.size, plan.scale);
     }
     renderer.set_voxel_scene(packet.voxel_scene.clone());
-    renderer
-        .prepare(&ctx, &input)
-        .and_then(|_| renderer.execute(&ctx, &input))
-        .inspect_err(|_| {
-            let _ = renderer.present(&ctx);
-            let _ = renderer.end_frame(&ctx, false);
-        })?;
+    let prepare_span = prism_engine::util::timing::span("render::prepare");
+    let prepared = renderer.prepare(&ctx, &input);
+    drop(prepare_span);
+    let execute_span = prism_engine::util::timing::span("render::execute");
+    let executed = prepared.and_then(|_| renderer.execute(&ctx, &input));
+    drop(execute_span);
+    executed.inspect_err(|_| {
+        let _ = renderer.present(&ctx);
+        let _ = renderer.end_frame(&ctx, false);
+    })?;
     // `GraphRenderer::present` returns whether the swapchain was out of date,
     // not whether queue submission/present succeeded. Reaching this point
     // means the frame was submitted to the native surface.
+    let present_span = prism_engine::util::timing::span("render::present");
     let out_of_date = renderer.present(&ctx)?;
+    drop(present_span);
     if screenshot.is_some() {
         if let Err(err) = renderer.finish_screenshot(&ctx) {
             log::error!("screenshot failed: {err:#}");

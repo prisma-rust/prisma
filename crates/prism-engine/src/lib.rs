@@ -16,8 +16,6 @@ pub mod asset_resolver;
 pub mod audio;
 pub mod cache_paths;
 pub mod calibration_spheres;
-pub mod camera;
-pub mod camera_controller;
 pub mod config;
 pub mod dirty_router;
 pub mod ecs;
@@ -40,7 +38,7 @@ pub mod user_data;
 pub mod util;
 
 pub use app::{AppBuilder, DefaultSubsystems, ScheduleLabel, Subsystem, System};
-pub use engine::{orbit_camera_demo_system, Engine};
+pub use engine::Engine;
 pub use input_actions::{key_code_from_vk, EngineAction, KeyBinding, KeyBindings};
 pub use input_view::Input;
 pub use render_system::{euler_xyz_deg_to_dir, render_system};

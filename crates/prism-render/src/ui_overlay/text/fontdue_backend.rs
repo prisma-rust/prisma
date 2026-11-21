@@ -64,15 +64,25 @@ fn first_available<T>(
 /// 存在，那时游戏要能自带一份字体，而不是默默丢掉所有文字。
 fn load_system_font() -> Option<Font> {
     let load = |path: &str, collection_index: u32| {
+        let read_start = std::time::Instant::now();
         let data = std::fs::read(path).ok()?;
-        Font::from_bytes(
+        let read_ms = read_start.elapsed().as_secs_f64() * 1000.0;
+        let parse_start = std::time::Instant::now();
+        let font = Font::from_bytes(
             data,
             fontdue::FontSettings {
                 collection_index,
                 ..Default::default()
             },
         )
-        .ok()
+        .ok();
+        log::debug!(
+            target: "startup",
+            "[startup] ui font '{path}': read {read_ms:.3}ms, parse {:.3}ms, loaded={}",
+            parse_start.elapsed().as_secs_f64() * 1000.0,
+            font.is_some()
+        );
+        font
     };
 
     if let Some(path) = std::env::var_os("PRISMA_UI_FONT") {

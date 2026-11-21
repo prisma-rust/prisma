@@ -219,6 +219,7 @@ impl GpuAssetResolver {
     /// 字体走 `.pak` 的路径清单（`AssetType::Font`），所以打包产物和编辑器里
     /// 看到的是同一份文件。
     pub fn prepare_ui_fonts(&mut self, world: &World) -> Vec<(String, Vec<u8>)> {
+        let _span = crate::util::timing::span("asset::prepare_ui_fonts");
         let mut paths: Vec<String> = Vec::new();
         for (_, text) in world.query::<crate::ui::components::Text>() {
             let path = text.font.trim();
@@ -418,6 +419,7 @@ impl GpuAssetResolver {
     /// cwd, so launching the executable from any directory still finds the
     /// package that sits next to it.
     pub fn load_resource_package(&mut self) {
+        let mut span = crate::util::timing::span("asset::load_resource_package");
         let Some(asset_dir) = crate::asset_paths::asset_dir() else {
             log::warn!("resource package unavailable: no `assets/` directory found");
             return;
@@ -437,6 +439,12 @@ impl GpuAssetResolver {
         }
 
         let loaded = self.mount_packages(&paks);
+        span.detail(format!(
+            "paks={} mounted={} assets={}",
+            paks.len(),
+            loaded.len(),
+            self.resource_manager.asset_count()
+        ));
 
         log::info!(
             "resource packages loaded from {}: {} package(s), {} assets registered",
@@ -507,6 +515,8 @@ impl GpuAssetResolver {
     fn mount_packages(&mut self, paks: &[PathBuf]) -> Vec<PathBuf> {
         let mut loaded = Vec::new();
         for pak_path in paks {
+            let mut pak_span = crate::util::timing::span("asset::mount_package");
+            pak_span.detail(pak_path.display().to_string());
             if let Err(e) = self.resource_manager.load_package(pak_path) {
                 log::warn!(
                     "resource package {} could not be loaded: {e}; \
@@ -523,6 +533,8 @@ impl GpuAssetResolver {
             // 每个包旁边有 `<name>.pak.meta.json`（路径清单）时一并加载。
             let manifest_path = pak_path.with_extension("pak.meta.json");
             if manifest_path.is_file() {
+                let mut manifest_span = crate::util::timing::span("asset::load_path_manifest");
+                manifest_span.detail(manifest_path.display().to_string());
                 if let Err(e) = self.resource_manager.load_path_manifest(&manifest_path) {
                     log::warn!(
                         "failed to load path manifest {}: {e} \
@@ -553,6 +565,7 @@ impl GpuAssetResolver {
             return;
         }
         self.stamps_checked = true;
+        let _span = crate::util::timing::span("asset::check_cook_stamps_once");
         let paks = std::mem::take(&mut self.mounted_paks);
         for pak in &paks {
             self.check_cook_stamp(pak);
@@ -577,10 +590,15 @@ impl GpuAssetResolver {
             .and_then(|id| self.resource_manager.load_with_deps_raw(id).ok())
             .and_then(|bytes| stamp_mod::CookStamp::parse(&String::from_utf8_lossy(&bytes)));
         // 发布版没有 `assets/scenes/*.scene.json`，扫出来是 0 = 只比对 schema。
-        let newest = pak_path
-            .parent()
-            .map(stamp_mod::newest_source_mtime)
-            .unwrap_or(0);
+        let newest = {
+            let mut walk_span = crate::util::timing::span("asset::newest_source_mtime");
+            let newest = pak_path
+                .parent()
+                .map(stamp_mod::newest_source_mtime)
+                .unwrap_or(0);
+            walk_span.detail(format!("newest={newest}"));
+            newest
+        };
         match stamp_mod::check(
             stamp,
             prism_scene::registry::builtin_schema_fingerprint(),
@@ -647,6 +665,7 @@ impl GpuAssetResolver {
     /// 槽位会记入失败缓存（[`GpuAssetResolver::failed`]），同一坏路径只尝试一次，
     /// 直到路径被改写。
     pub fn prepare_requests(&mut self, world: &World) -> Vec<(Entity, AssetResolveRequest)> {
+        let mut span = crate::util::timing::span("asset::prepare_requests");
         // #976：构建戳在**第一次**取资源时才校验。启动时的挂包发生在
         // `App::build`，那时 `env_logger` 还没初始化，任何 warn/error 都会被丢掉
         // ——这正是「旧包静默画错」能长期存在的原因之一。
@@ -1079,10 +1098,13 @@ impl GpuAssetResolver {
             ));
         }
 
-        log::info!(
-            "prepare_requests: staged {} entit(y/ies) for async GPU upload",
-            reqs.len()
-        );
+        span.detail(format!("staged={}", reqs.len()));
+        if !reqs.is_empty() {
+            log::info!(
+                "prepare_requests: staged {} entit(y/ies) for async GPU upload",
+                reqs.len()
+            );
+        }
         reqs
     }
 
@@ -1429,6 +1451,7 @@ impl GpuAssetResolver {
     /// 需要 `&mut World`（要写资源），所以不进调度系统；调用方在每帧的
     /// `prepare_requests` 附近调用一次即可（重复调用是幂等的）。
     pub fn load_animation_assets(&mut self, world: &mut World) -> usize {
+        let _span = crate::util::timing::span("asset::load_animation_assets");
         use crate::scene::systems::animator::SkeletonLibrary;
 
         // 蒙皮实体不一定有 `MeshRef` / `MaterialRef`（loader 只为 `MeshRenderer`

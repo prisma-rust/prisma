@@ -26,6 +26,13 @@ use crate::managers::RenderMeshManager;
 pub mod draw_items;
 pub mod settings;
 
+/// Passes slower than this are logged with `target: "startup"`.
+///
+/// Lazy pipeline compilation makes the first frame of a pass far slower than
+/// every frame after it, so a startup trace needs those numbers; logging every
+/// pass at frame rate would be noise.
+const SLOW_PASS_MS: f64 = 1.0;
+
 pub use draw_items::*;
 pub use settings::*;
 
@@ -1327,7 +1334,16 @@ impl RenderGraph {
                 .as_deref_mut()
                 .map(|timer| timer.begin_pass(ctx.device, ctx.cmd, ctx.frame_index, pass.name()))
                 .unwrap_or(false);
+            let pass_start = Instant::now();
             pass.execute(ctx, &mut self.graph_resources)?;
+            let pass_ms = pass_start.elapsed().as_secs_f64() * 1000.0;
+            if pass_ms >= SLOW_PASS_MS {
+                log::debug!(
+                    target: "startup",
+                    "[startup] render_graph pass '{}' {pass_ms:.3}ms",
+                    pass.name()
+                );
+            }
             if timed {
                 if let Some(timer) = timer.as_deref_mut() {
                     timer.end_pass(ctx.device, ctx.cmd, ctx.frame_index);

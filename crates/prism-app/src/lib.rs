@@ -121,7 +121,7 @@ compile_error!(
     "prism-app: 至少启用一个窗口后端（`winit-backend`，或 Windows 上的 `win32-native`）"
 );
 
-pub use app::{App, Subsystem};
+pub use app::{App, PointerLockPolicy, Subsystem};
 pub use debug_hud::DebugHud;
 pub use hook::FrameHook;
 pub use plugin::{
@@ -153,6 +153,7 @@ pub use android_assets::init_android_assets;
 /// （并提示迁移）。路径经 `prism_engine::asset_paths` 解析（cwd / 可执行文件
 /// 目录 / 父目录 / `PRISMA_ASSET_ROOT`），因此从任意目录启动 exe 都能读到配置。
 pub fn load_config() -> AppConfig {
+    let _span = prism_engine::util::timing::span("app::load_config");
     for (name, legacy) in [("settings.ini", false), ("settings.toml", true)] {
         let Some(path) = prism_engine::asset_paths::asset_path(name) else {
             return AppConfig::default();
