@@ -100,6 +100,12 @@ windows = { workspace = true, optional = true, features = [
     "Win32_Graphics_Gdi",
 ] }
 
+[[test]]
+# Streamline smoke test needs the `dlss` brick: it probes the runtime and drives
+# `DlssMode` through the graph. Without the feature those symbols do not exist.
+name = "streamline_gpu"
+required-features = ["dlss"]
+
 [dev-dependencies]
 bytemuck = { workspace = true }
 gltf = { workspace = true }

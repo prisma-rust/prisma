@@ -65,6 +65,9 @@ pub struct VulkanContext {
     ownership: ContextOwnership,
 
     /// Whether `ash::Entry` was loaded through `sl.interposer` (Streamline Vulkan hooks active).
+    ///
+    /// Only the Streamline runtime reads it, so it exists only with the `dlss` brick.
+    #[cfg(any(feature = "dlss", feature = "nrd"))]
     pub(crate) streamline_interposed: bool,
 
     // Held for drop ordering / FFI lifetime.
@@ -86,23 +89,37 @@ impl VulkanContext {
     /// (obtained via [`ash_window::enumerate_required_extensions`]).
     pub fn new(window_extensions: &[&str]) -> anyhow::Result<Self> {
         use anyhow::Context as _;
-        let interposer_path = crate::streamline::StreamlineRuntime::pre_init_interposer();
-        let (entry, streamline_interposed) = if let Some(path) = interposer_path.as_deref() {
-            match unsafe { ash::Entry::load_from(path) } {
-                Ok(entry) => (entry, true),
-                Err(err) => {
-                    log::warn!("ash::Entry::load_from({path}) failed ({err}), falling back to system Vulkan loader");
-                    (
-                        unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?,
-                        false,
-                    )
+        // Streamline's interposer must be loaded before the Vulkan entry so every
+        // Vulkan call is routed through it; without the `dlss` brick there is no
+        // interposer to load and the system loader is used directly.
+        #[cfg(not(any(feature = "dlss", feature = "nrd")))]
+        let entry = unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?;
+        #[cfg(all(feature = "nrd", not(feature = "dlss")))]
+        let (entry, streamline_interposed) = (
+            unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?,
+            false,
+        );
+        #[cfg(feature = "dlss")]
+        let (entry, streamline_interposed) = {
+            let interposer_path = crate::streamline::StreamlineRuntime::pre_init_interposer();
+            if let Some(path) = interposer_path.as_deref() {
+                match unsafe { ash::Entry::load_from(path) } {
+                    Ok(entry) => (entry, true),
+                    Err(err) => {
+                        log::warn!("ash::Entry::load_from({path}) failed ({err}), falling back to system Vulkan loader");
+                        (
+                            unsafe { ash::Entry::load() }
+                                .context("failed to load Vulkan loader")?,
+                            false,
+                        )
+                    }
                 }
+            } else {
+                (
+                    unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?,
+                    false,
+                )
             }
-        } else {
-            (
-                unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?,
-                false,
-            )
         };
 
         let enable_debug = cfg!(debug_assertions);
@@ -169,6 +186,7 @@ impl VulkanContext {
             acceleration_structure_fn,
             enabled_extensions,
             ownership: ContextOwnership::Owned,
+            #[cfg(any(feature = "dlss", feature = "nrd"))]
             streamline_interposed,
             _debug_messenger: debug_messenger,
         })
@@ -238,6 +256,7 @@ impl VulkanContext {
             acceleration_structure_fn,
             enabled_extensions,
             ownership: ContextOwnership::External,
+            #[cfg(any(feature = "dlss", feature = "nrd"))]
             streamline_interposed: false,
             _debug_messenger: None,
         })

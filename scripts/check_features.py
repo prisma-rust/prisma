@@ -78,6 +78,21 @@ MATRIX: list[tuple[str, list[str]]] = [
         "prism-app 3D 极简（无 skybox/shadows/gtao）",
         ["check", "-p", "prism-app", "--no-default-features", "--features", "x11,group-3d,ibl"],
     ),
+    # NVIDIA 桌面扩展：Streamline（DLSS-SR / DLSS-RR / DLFG）与 NRD 都是默认关的砖块。
+    # 各自单独成立，且 dlfg 蕴含 dlss；nrd 复用 Streamline 的动态库加载器但不需要
+    # DLSS 运行时，所以这两条都要钉住（DESIGN §12.2）。
+    (
+        "prism-render dlss（无 nrd）",
+        ["check", "-p", "prism-render", "--no-default-features", "--features", "dlss"],
+    ),
+    (
+        "prism-render nrd（无 dlss）",
+        ["check", "-p", "prism-render", "--no-default-features", "--features", "nrd"],
+    ),
+    (
+        "prism-render dlfg",
+        ["check", "-p", "prism-render", "--no-default-features", "--features", "dlfg"],
+    ),
     ("prism-app 默认（全量）", ["check", "-p", "prism-app"]),
 ]
 

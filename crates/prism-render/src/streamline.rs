@@ -224,14 +224,7 @@ pub const CONSTANTS_GUID: StructType = StructType {
     data4: [0xa9, 0x0c, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe],
 };
 
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DlssgMode {
-    #[default]
-    Off = 0,
-    On = 1,
-    Auto = 2,
-}
+pub use crate::render_graph::settings::DlssgMode;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -729,6 +722,7 @@ impl SharedLib {
 }
 
 /// Probe whether a shared library can be loaded on the current host.
+#[cfg(feature = "nrd")]
 #[must_use]
 pub(crate) fn probe_shared_library(name: &str) -> bool {
     SharedLib::open(name).is_some()
@@ -751,6 +745,8 @@ extern "system" {
 /// Dynamically loaded Streamline 2.x interposer function table.
 pub struct StreamlineBinding {
     _library: SharedLib,
+    /// Path the interposer was loaded from; only the interposer hand-off reads it.
+    #[cfg_attr(not(feature = "dlss"), allow(dead_code))]
     loaded_path: String,
     loaded_dir: Option<std::path::PathBuf>,
     pub sl_init: PFunSlInit,
@@ -959,6 +955,7 @@ pub struct StreamlineRuntime {
 impl StreamlineRuntime {
     /// Load `sl.interposer` and call `slInit()` before `ash::Entry` / `vkCreateInstance`
     /// so `ash::Entry::load_from(path)` can route all Vulkan calls through Streamline.
+    #[cfg(feature = "dlss")]
     pub fn pre_init_interposer() -> Option<String> {
         let binding = StreamlineBinding::try_load()?;
         let path = binding.loaded_path.clone();

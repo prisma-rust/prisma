@@ -1205,7 +1205,9 @@ cp target/release/template /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后�
 | SHaRC（NVIDIA RTXGI v1.6） | `prism-render/sharc` | on | NVIDIA RTXGI SHARC v1.6 世界空间辐射缓存（`sharc.rs` + resolve 计算管线 + 3 个持久 GPU 缓冲）。**默认开**：不拉新依赖。**不再依赖 `pathtrace`**：缓存有两个平级消费者——PT 训练/查询（`gi_mode = Sharc`）与光栅 ReSTIR GI 自己 deposit/查询（`gi_mode = Restir`，见 §6.8）。关掉 = 两条实时 GI 路径都退化为 baked probe volume（并 warn 一次） |
 | ReSTIR GI（光栅） | `prism-render/restir_gi` | on | `restir_gi.rs` + `restir_gi.slang`（~1.2k 行 Rust + ~590 行 slang）+ 双缓冲 GI 图 + reservoir 缓冲。**不依赖 `pathtrace`**：只要求 `VK_KHR_ray_query`，无 RT 管线的设备也能跑；缺 ray query 时 `gi_mode = Restir` 退回 baked probe volume 并 warn 一次。`sharc` 是**可选**加速：编了就把缓存当弹射终点，没编就只有单次弹射 + 天空 |
 | NRC | `prism-render/nrc`（依赖 `pathtrace`） | off | NVIDIA Neural Radiance Cache 接入 |
-| DLSS | `prism-render/dlss` | off | NVIDIA Streamline / DLSS 超分辨率与光线重构接入 |
+| DLSS | `prism-render/dlss` | off | NVIDIA Streamline / DLSS 超分辨率与光线重构接入；同时是 `sl.interposer` 的加载者（没有它就不拦截 Vulkan 调用） |
+| DLFG | `prism-render/dlfg` | off | DLSS 帧生成（依赖 `dlss`） |
+| NRD | `prism-render/nrd` | off | NVIDIA Real-Time Denoisers；复用 Streamline 的动态库加载器与能力探测，但不需要 DLSS 运行时 |
 | 音频 | `prism-app/audio` + `prism-engine/audio` | off | cpal + firewheel + symphonia（~60 crate，−3.1 MB） |
 | 物理 | `prism-app/physics` | off | rapier3d + parry3d（~40 crate） |
 | 异步资产 IO | `prism-asset/async-io` | off | tokio |

@@ -61,6 +61,20 @@ pub enum PtGiMode {
     Nrc,
 }
 
+/// DLSS Frame Generation mode (DLFG / `kFeatureDLSS_G`).
+///
+/// Lives here rather than in `crate::streamline` so render settings stay
+/// constructible when the `dlss` feature is off: the enum is pure data, the
+/// Streamline FFI around it is not.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DlssgMode {
+    #[default]
+    Off = 0,
+    On = 1,
+    Auto = 2,
+}
+
 /// DLSS upscaling mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum DlssMode {
@@ -254,7 +268,7 @@ pub struct RenderSettings {
     /// Pre-upscale filter when `render_extent < dlss_min`.
     pub dlss_pre_upscale: DlssPreUpscaleMode,
     /// DLSS Frame Generation (DLFG) mode via Streamline.
-    pub dlfg_mode: crate::streamline::DlssgMode,
+    pub dlfg_mode: DlssgMode,
     /// Number of generated frames per rendered frame for DLFG (`1` = 2x, `2` = 3x, `3` = 4x).
     pub dlfg_frames: u32,
     /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
@@ -363,7 +377,7 @@ impl Default for RenderSettings {
             restir_gi_max_secondary_dist: 30.0,
             dlss_mode: DlssMode::Off,
             dlss_pre_upscale: DlssPreUpscaleMode::Linear,
-            dlfg_mode: crate::streamline::DlssgMode::Off,
+            dlfg_mode: DlssgMode::Off,
             dlfg_frames: 1,
             dlss_rr_enabled: false,
             shadow_mode: ShadowMode::Auto,

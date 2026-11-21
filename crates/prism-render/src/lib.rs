@@ -53,6 +53,8 @@ pub mod ddgi;
 pub mod ddgi_pass;
 pub mod descriptor;
 pub mod dirty_dispatch;
+/// NVIDIA Streamline DLSS-SR / DLSS-RR / DLFG pass (building-block feature `dlss`).
+#[cfg(feature = "dlss")]
 pub mod dlss_pass;
 pub mod external_overlay;
 pub mod forward_pass;
@@ -76,6 +78,8 @@ mod math;
 pub mod mesh;
 pub mod mobile_upscaler;
 pub mod nrc;
+/// NVIDIA Real-Time Denoisers (building-block feature `nrd`).
+#[cfg(feature = "nrd")]
 pub mod nrd;
 pub mod offscreen;
 pub mod particle_pass;
@@ -137,6 +141,10 @@ pub mod shadow_map_pass;
 pub mod sharc;
 pub mod skybox_pass;
 pub mod sprite_pass;
+/// NVIDIA Streamline FFI. Compiled for `dlss` and for `nrd`, which reuses its
+/// dynamic-library loader and capability probe; no Streamline runtime is loaded
+/// unless `dlss` is on.
+#[cfg(any(feature = "dlss", feature = "nrd"))]
 pub mod streamline;
 pub mod suballocator;
 pub mod swapchain;
@@ -169,6 +177,7 @@ pub use descriptor::{
     LIGHT_MAX, PT_EMISSIVE_MAX, PT_LIGHT_MAX,
 };
 pub use dirty_dispatch::DirtyDispatchPlan;
+#[cfg(feature = "dlss")]
 pub use dlss_pass::DlssPass;
 pub use external_overlay::{OverlayMessage, OverlayRecordCtx, SwapchainOverlay};
 pub use forward_pass::ForwardPass;
@@ -183,6 +192,7 @@ pub use ground_grid::GroundGrid;
 pub use gtao::{GtaoFrameInputs, GtaoPass};
 pub use hdr_readback::HdrReadback;
 pub use mesh::{Mesh, Vertex};
+#[cfg(feature = "nrd")]
 pub use nrd::{
     select_pt_denoiser, NrdAccumulationMode, NrdCaps, NrdCommonSettings, NrdDenoiserMode,
     PtDenoiserKind, PT_DIFFUSE_H, PT_HIT_DISTANCE_H, PT_SPECULAR_H,
@@ -196,12 +206,12 @@ pub use pt_pass::{PathTracePass, PtVariant, SharcTrainPass};
 pub use render_debug::{MaterialOverride, RenderDebugControl};
 pub use render_graph::{
     clip_bounds, internal_extent, post_destination, sort_draw_items, trim_sprite_lights, DlssMode,
-    DlssPreUpscaleMode, DrawItem, DrawState, InternalScaleMode, MobileUpscaler, ParticleDrawItem,
-    PassInfo, PassKind, PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot, RenderMode,
-    RenderSettings, ResourceHandle, ResourceInfo, ResourceType, ShadowMode, SpriteDrawItem,
-    SpriteLight, DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H, NO_CLIP,
-    PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL, SPRITE_LIGHT_MAX,
-    SPRITE_LIGHT_POINT, UPSCALED_COLOR_H,
+    DlssPreUpscaleMode, DlssgMode, DrawItem, DrawState, InternalScaleMode, MobileUpscaler,
+    ParticleDrawItem, PassInfo, PassKind, PostGrade, PtGiMode, RasterGiMode, RenderGraphSnapshot,
+    RenderMode, RenderSettings, ResourceHandle, ResourceInfo, ResourceType, ShadowMode,
+    SpriteDrawItem, SpriteLight, DLSS_COLOR_H, FORWARD_COLOR_H, FORWARD_DEPTH_H, FORWARD_NORMAL_H,
+    NO_CLIP, PT_COLOR_H, SHADOW_MAP_H, SPRITE_LIGHT_AMBIENT, SPRITE_LIGHT_DIRECTIONAL,
+    SPRITE_LIGHT_MAX, SPRITE_LIGHT_POINT, UPSCALED_COLOR_H,
 };
 pub use render_pass::{DepthImage, Framebuffers, NormalImage, RenderPass};
 #[cfg(feature = "restir_gi")]
@@ -216,9 +226,10 @@ pub use sharc::{
 };
 pub use skybox_pass::SkyboxSettings;
 pub use sprite_pass::SpritePass;
+#[cfg(feature = "dlss")]
 pub use streamline::{
-    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, DlssgMode,
-    SlResult, StreamlineBinding, StreamlineCaps,
+    DlssOptions, DlssPreset, DlssdNormalRoughnessMode, DlssdOptions, DlssdPreset, SlResult,
+    StreamlineBinding, StreamlineCaps,
 };
 pub use suballocator::{MemorySuballocator, StagingArena, Suballocation, SuballocatorStats};
 pub use swapchain::Swapchain;
