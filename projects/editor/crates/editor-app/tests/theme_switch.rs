@@ -71,6 +71,10 @@ fn the_theme_menu_marks_the_active_preset() {
     }
     assert_eq!(state.menu.open(), Some("view"));
 
+    // The dropdown is mounted on the frame *after* the menu opens, so it needs
+    // one more build before its nodes exist.
+    state.build_and_step(viewport, &UiInput::default(), 0.016);
+
     let key = prism_ui::menu::MenuNodeKey::item_key("view", "view.theme.light");
     assert!(
         state.tree.node_by_key(key).is_some(),
