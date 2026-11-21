@@ -171,10 +171,41 @@ impl EditorUiState {
         let can_redo = self.undo.can_redo();
         vec![
             Menu::new("file", "File")
-                .item(MenuEntry::item_with_shortcut(
-                    "New Scene",
-                    "file.new",
-                    "Ctrl+N",
+                .item(MenuEntry::submenu(
+                    "New",
+                    vec![
+                        MenuEntry::item_with_shortcut("Scene", "file.new.scene", "Ctrl+N"),
+                        MenuEntry::item_with_shortcut("Prefab", "file.new.prefab", ""),
+                        MenuEntry::separator(),
+                        MenuEntry::submenu(
+                            "From Template",
+                            vec![
+                                MenuEntry::item("Empty 3D", "file.new.template.empty3d"),
+                                MenuEntry::item("Empty 2D", "file.new.template.empty2d"),
+                                MenuEntry::separator(),
+                                MenuEntry::submenu(
+                                    "Samples",
+                                    vec![
+                                        MenuEntry::item("Spinning Cube", "file.new.sample.cube"),
+                                        MenuEntry::item("Voxel World", "file.new.sample.voxel"),
+                                        MenuEntry::item(
+                                            "Sprite Playground",
+                                            "file.new.sample.sprites",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ))
+                .item(MenuEntry::submenu(
+                    "Open Recent",
+                    vec![
+                        MenuEntry::item("scenes/main.scene.json", "file.recent.main"),
+                        MenuEntry::item("scenes/arena.scene.json", "file.recent.arena"),
+                        MenuEntry::separator(),
+                        MenuEntry::item("Clear List", "file.recent.clear"),
+                    ],
                 ))
                 .item(MenuEntry::item_with_shortcut(
                     "Open Scene",
@@ -187,6 +218,35 @@ impl EditorUiState {
                     "Save As",
                     "file.save_as",
                     "Ctrl+Shift+S",
+                ))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::submenu(
+                    "Build",
+                    vec![
+                        MenuEntry::item("Scene Package", "file.build.scene"),
+                        MenuEntry::item("Player", "file.build.player"),
+                        MenuEntry::separator(),
+                        MenuEntry::submenu(
+                            "Configuration",
+                            vec![
+                                MenuEntry::item("Debug", "file.build.config.debug"),
+                                MenuEntry::item("Release", "file.build.config.release"),
+                                MenuEntry::separator(),
+                                MenuEntry::submenu(
+                                    "Advanced",
+                                    vec![
+                                        MenuEntry::checkbox(
+                                            "Strip Symbols",
+                                            "file.build.strip",
+                                            true,
+                                        ),
+                                        MenuEntry::checkbox("LTO", "file.build.lto", false),
+                                        MenuEntry::item("Edit Profiles...", "file.build.profiles"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
                 ))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::item_with_shortcut("Exit", "file.exit", "Alt+F4")),
@@ -211,16 +271,48 @@ impl EditorUiState {
                     "Ctrl+A",
                 )),
             Menu::new("view", "View")
+                .item(MenuEntry::submenu(
+                    "Panels",
+                    vec![
+                        MenuEntry::checkbox("Hierarchy", "view.panel.hierarchy", true),
+                        MenuEntry::checkbox("Inspector", "view.panel.inspector", true),
+                        MenuEntry::checkbox("Asset Browser", "view.panel.assets", true),
+                        MenuEntry::checkbox("Console", "view.panel.console", false),
+                        MenuEntry::separator(),
+                        MenuEntry::submenu(
+                            "Layouts",
+                            vec![
+                                MenuEntry::item("Default", "view.layout.default"),
+                                MenuEntry::item("Wide Viewport", "view.layout.wide"),
+                                MenuEntry::item("Tall Panels", "view.layout.tall"),
+                                MenuEntry::separator(),
+                                MenuEntry::submenu(
+                                    "Saved",
+                                    vec![
+                                        MenuEntry::item("My Layout", "view.layout.saved.mine"),
+                                        MenuEntry::item("Manage...", "view.layout.saved.manage"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ))
                 .item(MenuEntry::checkbox("Show Grid", "view.grid", false))
                 .item(MenuEntry::checkbox("Show Gizmos", "view.gizmos", true))
                 .item(MenuEntry::separator())
-                .items(ThemePreset::ALL.iter().map(|preset| {
-                    MenuEntry::checkbox(
-                        format!("{} Theme", preset.label()),
-                        format!("view.theme.{}", preset.id()),
-                        self.theme.preset() == *preset,
-                    )
-                }))
+                .item(MenuEntry::submenu(
+                    "Theme",
+                    ThemePreset::ALL
+                        .iter()
+                        .map(|preset| {
+                            MenuEntry::checkbox(
+                                preset.label(),
+                                format!("view.theme.{}", preset.id()),
+                                self.theme.preset() == *preset,
+                            )
+                        })
+                        .collect(),
+                ))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::item_with_shortcut(
                     "Reset Layout",
@@ -659,6 +751,16 @@ pub fn build_app() -> prism_app::App {
     app
 }
 
+/// An undo/redo entry that greys out when there is nothing to undo.
+fn undo_entry(label: &str, command: &str, shortcut: &str, enabled: bool) -> MenuEntry {
+    let entry = MenuEntry::item_with_shortcut(label, command, shortcut);
+    if enabled {
+        entry
+    } else {
+        entry.disabled()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,14 +977,5 @@ mod tests {
             "clicking the Play button must emit an action, got {actions:?}"
         );
         assert!(editor.playing, "the Play toggle must reach editor state");
-    }
-}
-/// An undo/redo entry that greys out when there is nothing to undo.
-fn undo_entry(label: &str, command: &str, shortcut: &str, enabled: bool) -> MenuEntry {
-    let entry = MenuEntry::item_with_shortcut(label, command, shortcut);
-    if enabled {
-        entry
-    } else {
-        entry.disabled()
     }
 }

@@ -14,7 +14,9 @@ use crate::style::{
     Align, Color, Edges, FlexDirection, Justify, LayoutStyle, Length, PositionType, VisualBox,
     VisualPatch,
 };
-use crate::tree::{Anchor, IntoNodeKey, NodeContent, NodeId, NodeKey, PopupAlign, UiTree};
+use crate::tree::{
+    Anchor, IntoNodeKey, NodeContent, NodeId, NodeKey, PopupAlign, PopupSide, UiTree,
+};
 
 /// Default dark-mode palette used by built-in composed widgets (overridable via modifiers).
 pub struct UiPalette;
@@ -353,11 +355,26 @@ impl ElementBox {
     }
 
     /// Anchor this node to another node's rect instead of its layout position.
+    ///
+    /// The popup hangs below the target; nested menus use
+    /// [`Self::anchored_beside`] to open to the right instead.
     pub fn anchored(mut self, target: NodeKey, offset: Vec2, align: PopupAlign) -> Self {
         self.anchor = Some(Anchor {
             target,
             offset,
             align,
+            side: PopupSide::Below,
+        });
+        self
+    }
+
+    /// Anchor this node to the right of another node's rect.
+    pub fn anchored_beside(mut self, target: NodeKey, offset: Vec2, align: PopupAlign) -> Self {
+        self.anchor = Some(Anchor {
+            target,
+            offset,
+            align,
+            side: PopupSide::Right,
         });
         self
     }

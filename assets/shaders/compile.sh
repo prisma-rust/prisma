@@ -263,15 +263,30 @@ emit_reflection() {
   fi
 }
 
+# Windows slangc emits CRLF while the committed JSON is LF, so comparing raw
+# bytes reports every module as changed. Compare content: strip a trailing CR
+# from each line before diffing.
+strip_cr() {
+  sed 's/\r$//' "$1"
+}
+
+reflection_matches() {
+  local staged="$1" committed="$2"
+  [ -f "$committed" ] || return 1
+  cmp -s "$staged" "$committed" && return 0
+  cmp -s <(strip_cr "$staged") <(strip_cr "$committed")
+}
+
 # Compare the freshly generated reflection with the committed files. Only
-# --write-reflection copies the new files into the repo.
+# --write-reflection copies the new files into the repo, and it always writes
+# LF so the checkout stays platform independent.
 settle_reflection() {
   local staged name committed differing=0
   for staged in "$STAGE"/*.json; do
     [ -e "$staged" ] || continue
     name="$(basename "$staged")"
     committed="$REFL/$name"
-    if [ -f "$committed" ] && cmp -s "$staged" "$committed"; then
+    if reflection_matches "$staged" "$committed"; then
       continue
     fi
     differing=$((differing + 1))
@@ -282,7 +297,7 @@ settle_reflection() {
         echo "  add    reflection/$name"
       fi
       mkdir -p "$REFL"
-      cp "$staged" "$committed"
+      strip_cr "$staged" >"$committed"
     else
       if [ -f "$committed" ]; then
         echo "  differs reflection/$name" >&2

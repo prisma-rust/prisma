@@ -275,6 +275,14 @@ impl MenuEntry {
         Self::Separator
     }
 
+    /// A nested menu opened by hovering its row.
+    pub fn submenu(label: impl Into<String>, entries: Vec<MenuEntry>) -> Self {
+        Self::Submenu {
+            label: label.into(),
+            entries,
+        }
+    }
+
     pub fn disabled(mut self) -> Self {
         match &mut self {
             Self::Item { enabled, .. } | Self::Checkbox { enabled, .. } => *enabled = false,
@@ -373,7 +381,13 @@ impl MenuBar {
         // Resolved before mounting: the hovered branch decides what exists.
         let branch = resolve_open_branch(ctx.tree, &open_menu.id, &open_menu.entries);
         ctx.with_parent(overlay, |ctx| {
-            ctx.mount(dropdown(&theme, &open_menu.id, &open_menu.entries, trigger));
+            ctx.mount(dropdown(
+                &theme,
+                &open_menu.id,
+                &open_menu.entries,
+                trigger,
+                false,
+            ));
 
             // Each open submenu level is anchored to its row in the parent
             // panel. Depth comes from the menu definition, never from input.
@@ -391,7 +405,7 @@ impl MenuBar {
                 };
                 let row_key = submenu_row_key(&scope, label);
                 scope = format!("{scope}/{label}");
-                ctx.mount(dropdown(&theme, &scope, child_entries, row_key));
+                ctx.mount(dropdown(&theme, &scope, child_entries, row_key, true));
                 entries = child_entries;
             }
         });
@@ -453,8 +467,17 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
         .child(text(theme.text_soft, theme.font_size, &menu.title))
 }
 
-/// The dropdown panel for one menu, anchored under its trigger.
-fn dropdown(theme: &Theme, menu_id: &str, entries: &[MenuEntry], trigger: NodeKey) -> ElementBox {
+/// The dropdown panel for one menu.
+///
+/// Top-level menus hang below their trigger; nested menus open beside the row
+/// that spawned them, which is what keeps a deep chain readable.
+fn dropdown(
+    theme: &Theme,
+    menu_id: &str,
+    entries: &[MenuEntry],
+    trigger: NodeKey,
+    nested: bool,
+) -> ElementBox {
     let mut panel = ElementBox::default()
         .key(("menu", "dropdown", menu_id))
         .direction(FlexDirection::Column)
@@ -463,12 +486,21 @@ fn dropdown(theme: &Theme, menu_id: &str, entries: &[MenuEntry], trigger: NodeKe
         .min_width(theme.menu_dropdown_min_width)
         .bg(theme.panel_raised)
         .border(1.0, theme.border)
-        .radius(theme.menu_dropdown_radius)
-        .anchored(
+        .radius(theme.menu_dropdown_radius);
+
+    panel = if nested {
+        panel.anchored_beside(
+            trigger,
+            Vec2::new(0.0, -theme.menu_dropdown_padding.top),
+            PopupAlign::Start,
+        )
+    } else {
+        panel.anchored(
             trigger,
             Vec2::new(0.0, theme.menu_dropdown_offset),
             PopupAlign::Start,
-        );
+        )
+    };
 
     for entry in entries {
         panel = panel.child(entry_row(theme, menu_id, entry));
@@ -607,6 +639,10 @@ mod geometry_tests;
 #[cfg(test)]
 #[path = "menu_fullscreen_tests.rs"]
 mod fullscreen_tests;
+
+#[cfg(test)]
+#[path = "menu_nested_tests.rs"]
+mod nested_tests;
 
 #[cfg(test)]
 mod tests {

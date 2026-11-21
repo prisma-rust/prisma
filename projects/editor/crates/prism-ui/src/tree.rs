@@ -163,6 +163,16 @@ pub enum PopupAlign {
     End,
 }
 
+/// Which edge of the anchor a popup hangs off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PopupSide {
+    /// Below the anchor: menu bar triggers open their dropdown this way.
+    #[default]
+    Below,
+    /// To the right of the anchor: nested menus open beside their parent row.
+    Right,
+}
+
 /// Positions a popup (dropdown, tooltip, context menu) against another node.
 ///
 /// Anchors are resolved after the normal layout pass, because the anchor's
@@ -173,6 +183,7 @@ pub struct Anchor {
     /// Offset from the resolved corner of the target rect.
     pub offset: Vec2,
     pub align: PopupAlign,
+    pub side: PopupSide,
 }
 
 /// Per-frame platform input snapshot fed into [`UiTree::process_input`].
@@ -363,13 +374,34 @@ impl UiTree {
             let Some(own) = self.nodes.get(id).map(|n| n.computed_rect) else {
                 continue;
             };
-            let x = match anchor.align {
-                PopupAlign::Start => target_rect.x,
-                PopupAlign::End => target_rect.x + target_rect.w - own.w,
-            } + anchor.offset.x;
-            let y = target_rect.y + target_rect.h + anchor.offset.y;
-            // Keep the popup inside the viewport; a dropdown that runs off the
-            // bottom edge is unusable, so clamp instead of clipping it.
+            let (mut x, mut y) = match anchor.side {
+                PopupSide::Below => {
+                    let x = match anchor.align {
+                        PopupAlign::Start => target_rect.x,
+                        PopupAlign::End => target_rect.x + target_rect.w - own.w,
+                    };
+                    (x, target_rect.y + target_rect.h)
+                }
+                PopupSide::Right => (
+                    target_rect.x + target_rect.w,
+                    // Align the panel's first row with the row that opened it,
+                    // which is what makes a chain of menus readable.
+                    match anchor.align {
+                        PopupAlign::Start => target_rect.y,
+                        PopupAlign::End => target_rect.y + target_rect.h - own.h,
+                    },
+                ),
+            };
+            x += anchor.offset.x;
+            y += anchor.offset.y;
+            // Flip a side panel that would leave the viewport: a nested menu
+            // opening off the right edge is unreachable, so open it leftwards
+            // instead of clamping it over its parent.
+            if anchor.side == PopupSide::Right && x + own.w > viewport.x {
+                x = target_rect.x - own.w + anchor.offset.x;
+            }
+            // Keep the popup on screen; a dropdown that runs off an edge is
+            // unusable, so clamp rather than clip it.
             let x = x.clamp(0.0, (viewport.x - own.w).max(0.0));
             let y = y.clamp(0.0, (viewport.y - own.h).max(0.0));
             // Translate the whole subtree: children were arranged relative to the

@@ -185,7 +185,7 @@ impl Theme {
 
             text: Color::rgb(0.157, 0.173, 0.204),
             text_strong: Color::rgb(0.055, 0.067, 0.090),
-            text_soft: Color::rgb(0.290, 0.318, 0.361),
+            text_soft: Color::rgb(0.290, 0.3176, 0.361),
             muted: Color::rgb(0.478, 0.510, 0.561),
 
             row_hover: Color::rgb(0.906, 0.925, 0.953),

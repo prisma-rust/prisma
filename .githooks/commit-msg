@@ -1,5 +1,5 @@
 #!/bin/sh
-# 启用：git config core.hooksPath .githooks
+# Enable with: git config core.hooksPath .githooks
 root=$(git rev-parse --show-toplevel)
 if command -v python3 >/dev/null 2>&1; then
     exec python3 "$root/scripts/check_commit_msg.py" "$1"
