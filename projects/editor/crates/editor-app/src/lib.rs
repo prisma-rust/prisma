@@ -165,32 +165,68 @@ impl EditorUiState {
     ///
     /// Entries carry stable command ids; `apply_menu_actions` maps them onto
     /// editor behaviour, so adding a command never touches the widget layer.
-    fn menus(&self) -> Vec<Menu> {
+    pub fn menus(&self) -> Vec<Menu> {
         let playing = self.playing;
         let can_undo = self.undo.can_undo();
         let can_redo = self.undo.can_redo();
         vec![
             Menu::new("file", "File")
-                .item(MenuEntry::item_with_shortcut("New Scene", "file.new", "Ctrl+N"))
-                .item(MenuEntry::item_with_shortcut("Open Scene", "file.open", "Ctrl+O"))
+                .item(MenuEntry::item_with_shortcut(
+                    "New Scene",
+                    "file.new",
+                    "Ctrl+N",
+                ))
+                .item(MenuEntry::item_with_shortcut(
+                    "Open Scene",
+                    "file.open",
+                    "Ctrl+O",
+                ))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::item_with_shortcut("Save", "file.save", "Ctrl+S"))
-                .item(MenuEntry::item_with_shortcut("Save As", "file.save_as", "Ctrl+Shift+S"))
+                .item(MenuEntry::item_with_shortcut(
+                    "Save As",
+                    "file.save_as",
+                    "Ctrl+Shift+S",
+                ))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::item_with_shortcut("Exit", "file.exit", "Alt+F4")),
             Menu::new("edit", "Edit")
-                .item(MenuEntry::item_with_shortcut("Undo", "edit.undo", "Ctrl+Z"))
-                .item(MenuEntry::item_with_shortcut("Redo", "edit.redo", "Ctrl+Y"))
+                .item(undo_entry("Undo", "edit.undo", "Ctrl+Z", can_undo))
+                .item(undo_entry("Redo", "edit.redo", "Ctrl+Y", can_redo))
                 .item(MenuEntry::separator())
-                .item(MenuEntry::item_with_shortcut("Duplicate", "edit.duplicate", "Ctrl+D"))
-                .item(MenuEntry::item_with_shortcut("Delete", "edit.delete", "Del"))
+                .item(MenuEntry::item_with_shortcut(
+                    "Duplicate",
+                    "edit.duplicate",
+                    "Ctrl+D",
+                ))
+                .item(MenuEntry::item_with_shortcut(
+                    "Delete",
+                    "edit.delete",
+                    "Del",
+                ))
                 .item(MenuEntry::separator())
-                .item(MenuEntry::item_with_shortcut("Select All", "edit.select_all", "Ctrl+A")),
+                .item(MenuEntry::item_with_shortcut(
+                    "Select All",
+                    "edit.select_all",
+                    "Ctrl+A",
+                )),
             Menu::new("view", "View")
                 .item(MenuEntry::checkbox("Show Grid", "view.grid", false))
                 .item(MenuEntry::checkbox("Show Gizmos", "view.gizmos", true))
                 .item(MenuEntry::separator())
-                .item(MenuEntry::item_with_shortcut("Reset Layout", "view.reset_layout", "")),
+                .items(ThemePreset::ALL.iter().map(|preset| {
+                    MenuEntry::checkbox(
+                        format!("{} Theme", preset.label()),
+                        format!("view.theme.{}", preset.id()),
+                        self.theme.preset() == *preset,
+                    )
+                }))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut(
+                    "Reset Layout",
+                    "view.reset_layout",
+                    "",
+                )),
             Menu::new("scene", "Scene")
                 .item(MenuEntry::item_with_shortcut(
                     if playing { "Stop" } else { "Play" },
@@ -208,7 +244,11 @@ impl EditorUiState {
                     "scene.gizmo_rotate",
                     "E",
                 ))
-                .item(MenuEntry::item_with_shortcut("Gizmo: Scale", "scene.gizmo_scale", "R")),
+                .item(MenuEntry::item_with_shortcut(
+                    "Gizmo: Scale",
+                    "scene.gizmo_scale",
+                    "R",
+                )),
             Menu::new("help", "Help")
                 .item(MenuEntry::item("Documentation", "help.docs"))
                 .item(MenuEntry::item("About Prisma", "help.about")),
@@ -216,7 +256,10 @@ impl EditorUiState {
     }
 
     /// Apply the menu commands the user triggered this frame.
-    fn apply_menu_actions(&mut self, actions: Vec<MenuAction>) {
+    pub fn apply_menu_actions(&mut self, actions: Vec<MenuAction>) {
+        // Silence the unused-binding lint when the match below handles nothing.
+        let _ = ();
+        let _ = &actions;
         for action in actions {
             match action {
                 MenuAction::Command(command) => match command.as_str() {
@@ -291,114 +334,135 @@ impl EditorUiState {
             .map(|e| build_inspector_ui(&self.schema, e.id, &e.components))
             .unwrap_or_else(|| muted_label("No entity selected"));
 
+        // Built before the tree is borrowed mutably: the menu definition reads
+        // editor state (undo availability, play mode, theme) that lives on `self`.
+        let theme = self.theme;
+        let menus = self.menus();
+        let menu_state = self.menu.clone();
         {
             let mut ctx = UiContext::new(&mut self.tree);
-            ctx.mount(
+            let root = ctx.mount(
                 col()
                     .size(Length::Px(viewport_size.x), Length::Px(viewport_size.y))
-                    .bg(self.theme.bg)
-                    .child(
-                        // Secondary toolbar: gizmo / playback controls. The menu
-                        // bar is mounted separately so its dropdowns land on the
-                        // popup layer instead of inside this row.
-                        row()
-                            .height(Length::Px(36.0))
-                            .padding(Edges::symmetric(10.0, 4.0))
-                            .gap(6.0)
-                            .align(Align::Center)
-                            .bg(self.theme.panel)
-                            .child(label("Prisma Editor"))
-                            .child(divider(true))
-                            .child(toggle_button(
-                                "gizmo:translate",
-                                "W",
-                                gizmo == GizmoMode::Translate,
-                            ))
-                            .child(toggle_button(
-                                "gizmo:rotate",
-                                "E",
-                                gizmo == GizmoMode::Rotate,
-                            ))
-                            .child(toggle_button("gizmo:scale", "R", gizmo == GizmoMode::Scale))
-                            .child(spacer())
-                            .child(toggle_button(
-                                "toolbar:play",
-                                if playing { "Stop" } else { "Play" },
-                                playing,
-                            ))
-                            .child(button(
-                                "toolbar:undo",
-                                if can_undo { "Undo" } else { "Undo (0)" },
-                            ))
-                            .child(button(
-                                "toolbar:redo",
-                                if can_redo { "Redo" } else { "Redo (0)" },
-                            )),
-                    )
-                    .child(divider(false))
-                    .child(
-                        // Middle workspace: Hierarchy | Viewport | Inspector
-                        row()
-                            .grow(1.0)
-                            .child(
-                                col()
-                                    .width(Length::Px(250.0))
-                                    .pad(8.0)
-                                    .gap(6.0)
-                                    .bg(UiPalette::SURFACE_1)
-                                    .child(muted_label("HIERARCHY"))
-                                    .child(text_field("hierarchy:search", query, "Filter..."))
-                                    .child(tree_view(
-                                        "hierarchy:tree",
-                                        tree_meta,
-                                        tree_depths,
-                                        24.0,
-                                        (viewport_size.y - 220.0).max(120.0),
-                                        0.0,
-                                        move |idx| {
-                                            let (id, ref name) = tree_names[idx];
-                                            toggle_button(
-                                                ("entity", id),
-                                                name.clone(),
-                                                id == selected,
-                                            )
-                                        },
-                                    )),
-                            )
-                            .child(divider(true))
-                            .child(
-                                col().grow(1.0).child(viewport(UiTextureId(0))).child(
-                                    // Bottom Asset Browser (reuses virtual_list)
+                    .bg(theme.bg),
+            );
+            // Menu bar first, so it sits at the top of the window.
+            ctx.with_parent(root, |ctx| {
+                MenuBar::new(theme, viewport_size)
+                    .menus(menus)
+                    .mount(ctx, &menu_state);
+            });
+            ctx.with_parent(root, |ctx| {
+                ctx.mount(
+                    col()
+                        .width(Length::Percent(100.0))
+                        .grow(1.0)
+                        .child(
+                            // Secondary toolbar: gizmo / playback controls. The menu
+                            // bar is mounted separately so its dropdowns land on the
+                            // popup layer instead of inside this row.
+                            row()
+                                .height(Length::Px(36.0))
+                                .padding(Edges::symmetric(10.0, 4.0))
+                                .gap(6.0)
+                                .align(Align::Center)
+                                .bg(theme.panel)
+                                .child(label("Prisma Editor"))
+                                .child(divider(true))
+                                .child(toggle_button(
+                                    "gizmo:translate",
+                                    "W",
+                                    gizmo == GizmoMode::Translate,
+                                ))
+                                .child(toggle_button(
+                                    "gizmo:rotate",
+                                    "E",
+                                    gizmo == GizmoMode::Rotate,
+                                ))
+                                .child(toggle_button("gizmo:scale", "R", gizmo == GizmoMode::Scale))
+                                .child(spacer())
+                                .child(toggle_button(
+                                    "toolbar:play",
+                                    if playing { "Stop" } else { "Play" },
+                                    playing,
+                                ))
+                                .child(button(
+                                    "toolbar:undo",
+                                    if can_undo { "Undo" } else { "Undo (0)" },
+                                ))
+                                .child(button(
+                                    "toolbar:redo",
+                                    if can_redo { "Redo" } else { "Redo (0)" },
+                                )),
+                        )
+                        .child(divider(false))
+                        .child(
+                            // Middle workspace: Hierarchy | Viewport | Inspector
+                            row()
+                                .grow(1.0)
+                                .child(
                                     col()
-                                        .height(Length::Px(140.0))
+                                        .width(Length::Px(250.0))
                                         .pad(8.0)
-                                        .gap(4.0)
+                                        .gap(6.0)
                                         .bg(UiPalette::SURFACE_1)
-                                        .child(muted_label("ASSETS"))
-                                        .child(virtual_list(
-                                            "assets:list",
-                                            assets.len(),
-                                            22.0,
-                                            100.0,
+                                        .child(muted_label("HIERARCHY"))
+                                        .child(text_field("hierarchy:search", query, "Filter..."))
+                                        .child(tree_view(
+                                            "hierarchy:tree",
+                                            tree_meta,
+                                            tree_depths,
+                                            24.0,
+                                            (viewport_size.y - 220.0).max(120.0),
                                             0.0,
                                             move |idx| {
-                                                button(("asset", idx as u32), assets[idx].clone())
+                                                let (id, ref name) = tree_names[idx];
+                                                toggle_button(
+                                                    ("entity", id),
+                                                    name.clone(),
+                                                    id == selected,
+                                                )
                                             },
                                         )),
+                                )
+                                .child(divider(true))
+                                .child(
+                                    col().grow(1.0).child(viewport(UiTextureId(0))).child(
+                                        // Bottom Asset Browser (reuses virtual_list)
+                                        col()
+                                            .height(Length::Px(140.0))
+                                            .pad(8.0)
+                                            .gap(4.0)
+                                            .bg(UiPalette::SURFACE_1)
+                                            .child(muted_label("ASSETS"))
+                                            .child(virtual_list(
+                                                "assets:list",
+                                                assets.len(),
+                                                22.0,
+                                                100.0,
+                                                0.0,
+                                                move |idx| {
+                                                    button(
+                                                        ("asset", idx as u32),
+                                                        assets[idx].clone(),
+                                                    )
+                                                },
+                                            )),
+                                    ),
+                                )
+                                .child(divider(true))
+                                .child(
+                                    col()
+                                        .width(Length::Px(320.0))
+                                        .pad(10.0)
+                                        .gap(8.0)
+                                        .bg(UiPalette::SURFACE_1)
+                                        .child(muted_label(format!("INSPECTOR (#{selected})")))
+                                        .child(inspector_panel),
                                 ),
-                            )
-                            .child(divider(true))
-                            .child(
-                                col()
-                                    .width(Length::Px(320.0))
-                                    .pad(10.0)
-                                    .gap(8.0)
-                                    .bg(UiPalette::SURFACE_1)
-                                    .child(muted_label(format!("INSPECTOR (#{selected})")))
-                                    .child(inspector_panel),
-                            ),
-                    ),
-            );
+                        ),
+                );
+            });
         }
 
         {
@@ -409,6 +473,10 @@ impl EditorUiState {
             let _input = prism_engine::util::timing::span("editor::ui_input");
             self.tree.process_input(input)
         };
+        // Menu policy runs first: it owns open/close state and turns clicks into
+        // commands, so the generic action handler never sees menu node keys.
+        let menu_actions = self.menu.handle_actions(&actions);
+        self.apply_menu_actions(menu_actions);
         self.apply_actions(&actions);
         self.tree.step_animations(dt);
         {
@@ -807,5 +875,14 @@ mod tests {
             "clicking the Play button must emit an action, got {actions:?}"
         );
         assert!(editor.playing, "the Play toggle must reach editor state");
+    }
+}
+/// An undo/redo entry that greys out when there is nothing to undo.
+fn undo_entry(label: &str, command: &str, shortcut: &str, enabled: bool) -> MenuEntry {
+    let entry = MenuEntry::item_with_shortcut(label, command, shortcut);
+    if enabled {
+        entry
+    } else {
+        entry.disabled()
     }
 }

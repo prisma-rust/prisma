@@ -390,7 +390,10 @@ impl UiTree {
     /// wheel during `process_input`. Reading it back here is what makes a wheel
     /// scroll actually move the list instead of only moving a hidden counter.
     pub fn scroll_offset(&self, key: NodeKey) -> Vec2 {
-        self.retained_scroll.get(&key).copied().unwrap_or(Vec2::ZERO)
+        self.retained_scroll
+            .get(&key)
+            .copied()
+            .unwrap_or(Vec2::ZERO)
     }
 
     pub fn restore_scroll(&mut self, id: NodeId, mut scroll: Scrollable) {
@@ -779,4 +782,3 @@ impl UiTree {
             .collect()
     }
 }
-

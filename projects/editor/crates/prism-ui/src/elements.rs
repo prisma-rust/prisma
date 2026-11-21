@@ -14,9 +14,7 @@ use crate::style::{
     Align, Color, Edges, FlexDirection, Justify, LayoutStyle, Length, PositionType, VisualBox,
     VisualPatch,
 };
-use crate::tree::{
-    Anchor, IntoNodeKey, NodeContent, NodeId, NodeKey, PopupAlign, UiTree,
-};
+use crate::tree::{Anchor, IntoNodeKey, NodeContent, NodeId, NodeKey, PopupAlign, UiTree};
 
 /// Default dark-mode palette used by built-in composed widgets (overridable via modifiers).
 pub struct UiPalette;

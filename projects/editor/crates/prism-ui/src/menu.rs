@@ -241,11 +241,7 @@ impl MenuEntry {
         }
     }
 
-    pub fn checkbox(
-        label: impl Into<String>,
-        command: impl Into<String>,
-        checked: bool,
-    ) -> Self {
+    pub fn checkbox(label: impl Into<String>, command: impl Into<String>, checked: bool) -> Self {
         Self::Checkbox {
             label: label.into(),
             command: command.into(),
@@ -349,11 +345,7 @@ impl MenuBar {
 
         // Popups are mounted on the popup layer so they escape the bar's clip
         // and stacking order.
-        let Some(open_menu) = self
-            .menus
-            .iter()
-            .find(|menu| state.is_open(&menu.id))
-        else {
+        let Some(open_menu) = self.menus.iter().find(|menu| state.is_open(&menu.id)) else {
             return;
         };
         let overlay = ctx.tree.overlay_root(viewport);
@@ -368,7 +360,11 @@ impl MenuBar {
 fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
     let key = MenuNodeKey::trigger_key(&menu.id);
     register(key, MenuNodeKey::Trigger(menu.id.clone()));
-    let base_bg = if open { theme.menu_active } else { Color::TRANSPARENT };
+    let base_bg = if open {
+        theme.menu_active
+    } else {
+        Color::TRANSPARENT
+    };
     ElementBox::default()
         .key(key)
         .padding(theme.menu_trigger_padding)
@@ -457,7 +453,11 @@ fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
                     command: format!("toggle:{command}"),
                 },
             );
-            let check_color = if *checked { theme.accent } else { Color::TRANSPARENT };
+            let check_color = if *checked {
+                theme.accent
+            } else {
+                Color::TRANSPARENT
+            };
             let text_color = if *enabled { theme.text } else { theme.muted };
             item_row(theme, key, text_label, *enabled)
                 .gap(8.0)
@@ -517,8 +517,6 @@ fn item_row(theme: &Theme, key: NodeKey, _label: &str, enabled: bool) -> Element
         row.bg(Color::TRANSPARENT)
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

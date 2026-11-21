@@ -40,7 +40,9 @@ pub fn read_engine_input(world: &World, time_seconds: f64) -> UiInput {
         ctrl_held: input.ctrl_held,
         text_committed: String::new(),
         backspace_pressed: false,
-        escape_pressed: input.pressed_keys.contains(&prism_engine::input::KeyCode::Escape),
+        escape_pressed: input
+            .pressed_keys
+            .contains(&prism_engine::input::KeyCode::Escape),
         time_seconds,
     }
 }

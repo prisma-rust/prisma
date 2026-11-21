@@ -19,17 +19,13 @@ pub mod prelude {
         toggle_button, tree_view, vec3_field, viewport, virtual_list, ElementBox, UiContext,
         UiElement, UiPalette,
     };
+    pub use crate::menu::{Menu, MenuAction, MenuBar, MenuEntry, MenuNodeKey, MenuState};
     pub use crate::style::{
         Align, Color, Edges, FlexDirection, InteractionState, Justify, LayoutStyle, Length,
         PositionType, Rect, VisualBox, VisualStyle,
     };
-    pub use crate::menu::{
-        Menu, MenuAction, MenuBar, MenuEntry, MenuNodeKey, MenuState,
-    };
-    pub use crate::theme::Theme;
-    pub use crate::tree::{
-        Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree,
-    };
+    pub use crate::theme::{Theme, ThemePreset};
+    pub use crate::tree::{Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree};
     #[cfg(feature = "ui-tween")]
     pub use crate::tween::{Ease, TweenProperty, TweenStore};
 }
@@ -250,14 +246,9 @@ mod tests {
             ctx.mount(
                 row()
                     .size(Length::Px(200.0), Length::Px(100.0))
-                    .child(virtual_list(
-                        list_key,
-                        100,
-                        20.0,
-                        100.0,
-                        0.0,
-                        |idx| button(("asset", idx as u32), format!("item {idx}")),
-                    )),
+                    .child(virtual_list(list_key, 100, 20.0, 100.0, 0.0, |idx| {
+                        button(("asset", idx as u32), format!("item {idx}"))
+                    })),
             );
             t.compute_layout(Vec2::new(200.0, 100.0));
         };

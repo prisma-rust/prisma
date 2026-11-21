@@ -87,6 +87,35 @@ pub struct Theme {
     pub font_size_small: f32,
 }
 
+/// Built-in colour presets.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ThemePreset {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ThemePreset {
+    /// Stable id used in menus, config files and node keys.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    /// Human-readable name for menus.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
+    /// Every preset, in menu order.
+    pub const ALL: [ThemePreset; 2] = [ThemePreset::Dark, ThemePreset::Light];
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self::dark()
@@ -170,9 +199,32 @@ impl Theme {
         }
     }
 
-    /// Fill for a dropdown panel, including its shadow colour.
+    /// Resolve a named preset.
+    pub fn from_preset(preset: ThemePreset) -> Self {
+        match preset {
+            ThemePreset::Dark => Self::dark(),
+            ThemePreset::Light => Self::light(),
+        }
+    }
+
+    /// The preset this theme matches, decided by background brightness.
+    ///
+    /// The two presets differ by a wide margin there, so no tolerance is needed.
+    pub fn preset(self) -> ThemePreset {
+        if self.panel.r > 0.5 {
+            ThemePreset::Light
+        } else {
+            ThemePreset::Dark
+        }
+    }
+
+    /// Fill for a dropdown panel's shadow.
     pub fn dropdown_shadow(self) -> Color {
-        Color::rgba(0.0, 0.0, 0.0, 0.38)
+        match self.preset() {
+            ThemePreset::Dark => Color::rgba(0.0, 0.0, 0.0, 0.38),
+            // A hard shadow reads as a cutout on light surfaces.
+            ThemePreset::Light => Color::rgba(0.06, 0.09, 0.16, 0.18),
+        }
     }
 
     /// A size that fits the theme's standard row height.
