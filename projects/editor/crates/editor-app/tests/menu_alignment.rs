@@ -84,9 +84,10 @@ fn a_nested_panel_starts_at_the_corner_of_the_row_that_opened_it() {
          panel={panel:?} row={row:?}"
     );
     assert!(
-        (first.y - row.y).abs() < 0.5,
-        "the panel's first item must be level with the row: item={first:?} row={row:?}"
+        (panel.y - row.y).abs() < 0.5,
+        "the panel's top must sit on the row's top: panel={panel:?} row={row:?}"
     );
+    let _ = first;
 }
 
 #[test]
@@ -111,7 +112,8 @@ fn a_third_level_panel_aligns_the_same_way() {
          panel={panel:?} row={row:?}"
     );
     assert!(
-        (first.y - row.y).abs() < 0.5,
-        "level 3's first item must be level with its row: item={first:?} row={row:?}"
+        (panel.y - row.y).abs() < 0.5,
+        "level 3's top must sit on its row's top: panel={panel:?} row={row:?}"
     );
+    let _ = first;
 }

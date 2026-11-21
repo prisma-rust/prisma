@@ -125,8 +125,8 @@ fn nested_panels_open_to_the_right_of_their_row() {
         "level 2 must open at its row's right edge: panel={l2:?} row={row2:?}"
     );
     assert!(
-        (item2.y - row2.y).abs() < 0.5,
-        "level 2's first item must be level with its row: item={item2:?} row={row2:?}"
+        (l2.y - row2.y).abs() < 0.5,
+        "level 2's top must sit on its row's top: panel={l2:?} row={row2:?}"
     );
 
     // Level 3.
@@ -142,8 +142,8 @@ fn nested_panels_open_to_the_right_of_their_row() {
         "level 3 must open at its row's right edge: panel={l3:?} row={row3:?}"
     );
     assert!(
-        (item3.y - row3.y).abs() < 0.5,
-        "level 3's first item must be level with its row: item={item3:?} row={row3:?}"
+        (l3.y - row3.y).abs() < 0.5,
+        "level 3's top must sit on its row's top: panel={l3:?} row={row3:?}"
     );
 
     // Level 4.
@@ -165,8 +165,8 @@ fn nested_panels_open_to_the_right_of_their_row() {
         "level 4 must open at its row's right edge: panel={l4:?} row={row4:?}"
     );
     assert!(
-        (item4.y - row4.y).abs() < 0.5,
-        "level 4's first item must be level with its row: item={item4:?} row={row4:?}"
+        (l4.y - row4.y).abs() < 0.5,
+        "level 4's top must sit on its row's top: panel={l4:?} row={row4:?}"
     );
 
     for (name, p) in [("l2", l2), ("l3", l3), ("l4", l4)] {

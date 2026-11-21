@@ -584,15 +584,10 @@ fn dropdown(
         .radius(theme.menu_dropdown_radius);
 
     panel = if nested {
-        // Open to the right with the first *item* level with the row that
-        // spawned it. The panel's own top padding pushes its content down, so
-        // lift the panel by exactly that much; aligning the panel's edge instead
-        // would leave the first item sitting one padding step too low.
-        panel.anchored_beside(
-            trigger,
-            Vec2::new(0.0, -theme.menu_dropdown_padding.top),
-            PopupAlign::Start,
-        )
+        // Open to the right with the panel's top-left corner exactly on the
+        // row's top-right corner. Offsetting by the panel's own padding would
+        // lift it above the row and read as misaligned.
+        panel.anchored_beside(trigger, Vec2::ZERO, PopupAlign::Start)
     } else {
         panel.anchored(
             trigger,
