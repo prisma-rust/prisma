@@ -82,6 +82,7 @@ docs/
   ├── anim-retarget.md                    # [L2 动画子系统] 骨骼姿态重定向纯数学层
   ├── editor-egui.md                      # [L2 编辑器子系统] 原生 egui 编辑器架构与零拷贝采样
   ├── editor-mcp.md                       # [L2 编辑器子系统] MCP 自动化契约与工具注册表
+  ├── editor-self-hosted-ui.md            # [L2 编辑器子系统] 自举式编辑器与统一引擎 UI API 架构设计
   ├── feature-map.json                    # [L2 编辑器子系统] 编辑器 UI 节点树与交互功能地图
   ├── project-module-architecture.md      # [L2 模块宿主] 游戏工程 C ABI 与动态预览模块架构
   ├── mobile-raytracing-gi-design.md      # [L2 渲染进阶] 移动端 RayQuery 与实时 GI 管线蓝图
