@@ -447,10 +447,18 @@ fn default_command(root: &Path) -> String {
     )
 }
 
+/// Walk up from `root` to the repository root that owns the egui editor.
+///
+/// `editor/Cargo.toml` alone is ambiguous: a user project may legitimately live at
+/// `projects/editor/` and carry its own workspace manifest. The crate directory is
+/// what identifies this repository's editor, so anchor on that instead.
 fn find_editor_root(root: &Path) -> Option<PathBuf> {
     let mut current = Some(root);
     while let Some(dir) = current {
-        if dir.join("editor/Cargo.toml").is_file() {
+        if dir
+            .join("editor/crates/prism-editor-egui/Cargo.toml")
+            .is_file()
+        {
             return Some(dir.to_path_buf());
         }
         current = dir.parent();
@@ -469,7 +477,10 @@ mod tests {
     )]
     fn finds_editor_from_nested_user_project() {
         let mut repo = std::env::current_dir().unwrap();
-        while !repo.join("editor/Cargo.toml").is_file() {
+        while !repo
+            .join("editor/crates/prism-editor-egui/Cargo.toml")
+            .is_file()
+        {
             repo = repo.parent().expect("repository root").to_path_buf();
         }
         let fishing = repo.join("projects/fishing");
