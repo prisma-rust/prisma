@@ -87,6 +87,21 @@ impl MenuState {
         tree: &crate::tree::UiTree,
         entries_of: impl Fn(&str) -> Option<Vec<MenuEntry>>,
     ) -> bool {
+        // While a menu is open, hovering a different trigger switches to it —
+        // that is what makes the bar feel like one control rather than a set of
+        // independent buttons. Hover alone never opens a closed menu; that stays
+        // a click, so passing over the bar does not leave menus behind.
+        if self.open.is_some() {
+            if let Some(MenuNodeKey::Trigger(hovered_id)) =
+                tree.hovered().and_then(MenuNodeKey::parse)
+            {
+                if self.open.as_deref() != Some(hovered_id.as_str()) {
+                    self.open = Some(hovered_id);
+                    self.submenu_branch.clear();
+                    return true;
+                }
+            }
+        }
         let Some(menu_id) = self.open.clone() else {
             let changed = !self.submenu_branch.is_empty();
             self.submenu_branch.clear();
@@ -95,12 +110,34 @@ impl MenuState {
         let Some(entries) = entries_of(&menu_id) else {
             return false;
         };
-        let branch = resolve_branch(tree, &menu_id, &entries);
+        let mut branch = resolve_branch(tree, &menu_id, &entries);
+        // Crossing from a row into the panel it opened passes over panel space
+        // that enters nothing, so an empty resolution means "in transit", not
+        // "left the branch". Only a real target ends the branch.
+        if branch.is_empty() && self.pointer_in_branch(tree, &menu_id) {
+            branch = self.submenu_branch.clone();
+        }
         if branch == self.submenu_branch {
             return false;
         }
         self.submenu_branch = branch;
         true
+    }
+
+    /// Whether the pointer is inside a panel the current branch already opened.
+    ///
+    /// Only the branch's own panels count: the top-level menu panel holds plain
+    /// rows too, and the pointer resting on one of those means the branch really
+    /// has been left.
+    fn pointer_in_branch(&self, tree: &crate::tree::UiTree, menu_id: &str) -> bool {
+        let mut scope = menu_id.to_string();
+        for label in &self.submenu_branch {
+            scope = format!("{scope}/{label}");
+            if tree.is_hovered_within(("menu", "dropdown", scope.as_str()).into_node_key()) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Close any open submenu branch. Returns whether anything changed.
@@ -215,6 +252,11 @@ impl MenuNodeKey {
     /// Stable node key for an item.
     pub fn item_key(menu: &str, command: &str) -> NodeKey {
         ("menu", "item", menu, command).into_node_key()
+    }
+
+    /// Stable node key for the backdrop that closes menus on an outside click.
+    pub fn dismiss_key() -> NodeKey {
+        ("menu", "dismiss").into_node_key()
     }
 
     /// Recover the semantic identity from a node key.
@@ -427,6 +469,27 @@ impl MenuBar {
         // `begin_frame` has already cleared.
         let branch = state.submenu_branch().to_vec();
         ctx.with_parent(overlay, |ctx| {
+            // A full-viewport backdrop under the popups: clicking anywhere the
+            // popups do not cover closes the menu. It is mounted first so the
+            // dropdowns hit-test above it.
+            // It starts below the bar on purpose: the popup layer hit-tests
+            // before everything else, so a backdrop covering the bar would
+            // swallow the triggers and hover-switching between menus would stop
+            // working.
+            let dismiss = MenuNodeKey::dismiss_key();
+            register(dismiss, MenuNodeKey::Dismiss);
+            ctx.mount(
+                ElementBox::default()
+                    .key(dismiss)
+                    .absolute(0.0, theme.menu_bar_height)
+                    .size(
+                        Length::Px(viewport.x),
+                        Length::Px((viewport.y - theme.menu_bar_height).max(0.0)),
+                    )
+                    .bg(Color::TRANSPARENT)
+                    .clickable(),
+            );
+
             ctx.mount(dropdown(
                 &theme,
                 &open_menu.id,
@@ -581,7 +644,11 @@ fn dropdown(
         .min_width(theme.menu_dropdown_min_width)
         .bg(theme.panel_raised)
         .border(1.0, theme.border)
-        .radius(theme.menu_dropdown_radius);
+        .radius(theme.menu_dropdown_radius)
+        // The panel's padding and the gaps between its rows are part of the
+        // panel, not holes: without this, crossing one of them reports "no
+        // hover" for a frame and collapses the branch the pointer is entering.
+        .hoverable();
 
     panel = if nested {
         // The pointer lands on the first item, not on the frame, so the item is
