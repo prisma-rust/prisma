@@ -622,9 +622,7 @@
   },
   "about": {
     "title": "关于 Prisma Editor",
-    "subtitle": "",
-    "version": "版本 {version}",
-    "description": ""
+    "version": "版本 {version}"
   },
   "desktop": {
     "search": "搜索",

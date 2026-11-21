@@ -622,9 +622,7 @@
   },
   "about": {
     "title": "About Prisma Editor",
-    "subtitle": "",
-    "version": "Version {version}",
-    "description": ""
+    "version": "Version {version}"
   },
   "desktop": {
     "search": "Search",

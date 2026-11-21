@@ -294,6 +294,7 @@ pub(super) fn draw_blend_axis(
 
 pub(super) fn draw_blend_pad(
     ui: &mut egui::Ui,
+    workspace: &Workspace,
     positions: &[[f32; 2]],
     point: [f32; 2],
 ) -> Option<[f32; 2]> {
@@ -338,7 +339,7 @@ pub(super) fn draw_blend_pad(
             );
         }
     }
-    response.on_hover_text("2D blend parameter — click or drag on the plane");
+    response.on_hover_text(workspace.t("desktop.anim.blendScrub2d"));
     None
 }
 
@@ -507,6 +508,7 @@ pub(super) fn animator_editor(
         );
         if let Some(next) = draw_blend_pad(
             ui,
+            workspace,
             &blend_2d_positions,
             [blend_parameter, blend_parameter_y],
         ) {
@@ -1064,9 +1066,13 @@ pub fn anim_graph(
                             state.status = match workspace.write_asset_json(&path, &value) {
                                 Ok(()) => {
                                     workspace.record_asset_edit(&path, &before, &value);
-                                    format!("saved nodes/links in {path}")
+                                    workspace
+                                        .tf("desktop.status.savedNodesLinks", &[("path", &path)])
                                 }
-                                Err(error) => format!("save graph failed: {error}"),
+                                Err(error) => workspace.tf(
+                                    "desktop.status.saveGraphFailed",
+                                    &[("error", &error.to_string())],
+                                ),
                             };
                         }
                         if let Some((old_name, new_name)) =
@@ -1075,14 +1081,22 @@ pub fn anim_graph(
                             state.status = match workspace
                                 .rename_anim_graph_parameter(&path, &old_name, &new_name)
                             {
-                                Ok(updated) if updated.is_empty() => {
-                                    format!("renamed parameter '{old_name}' to '{new_name}'")
-                                }
-                                Ok(updated) => format!(
-                                    "renamed parameter '{old_name}' to '{new_name}', updated {}",
-                                    updated.join(", ")
+                                Ok(updated) if updated.is_empty() => workspace.tf(
+                                    "desktop.status.renamedParameter",
+                                    &[("old", &old_name), ("new", &new_name)],
                                 ),
-                                Err(error) => error,
+                                Ok(updated) => workspace.tf(
+                                    "desktop.status.renamedParameterUpdated",
+                                    &[
+                                        ("old", &old_name),
+                                        ("new", &new_name),
+                                        ("updated", &updated.join(", ")),
+                                    ],
+                                ),
+                                Err(error) => workspace.tf(
+                                    "desktop.status.animationGraphError",
+                                    &[("error", &error.to_string())],
+                                ),
                             };
                         }
                     }
@@ -1115,9 +1129,15 @@ pub fn anim_graph(
                         state.status = match workspace.write_asset_json(&path, &value) {
                             Ok(()) => {
                                 workspace.record_asset_edit(&path, &before, &value);
-                                format!("saved state machine in {path}")
+                                workspace.tf(
+                                    "desktop.status.savedStateMachine",
+                                    &[("path", &path)],
+                                )
                             }
-                            Err(error) => format!("save transitions failed: {error}"),
+                            Err(error) => workspace.tf(
+                                "desktop.status.saveTransitionsFailed",
+                                &[("error", &error.to_string())],
+                            ),
                         };
                     }
                     Ok(false) => {}
@@ -1132,14 +1152,18 @@ pub fn anim_graph(
                 if let Some((index, new_name)) = state.anim_graph_edit.sm_state_rename.take() {
                     state.status =
                         match workspace.rename_state_machine_state(&path, index, &new_name) {
-                            Ok(updated) if updated.is_empty() => {
-                                format!("renamed state to '{new_name}'")
-                            }
-                            Ok(updated) => format!(
-                                "renamed state to '{new_name}', updated {}",
-                                updated.join(", ")
+                            Ok(updated) if updated.is_empty() => workspace.tf(
+                                "desktop.status.renamedState",
+                                &[("new", &new_name)],
                             ),
-                            Err(error) => format!("state machine: {error}"),
+                            Ok(updated) => workspace.tf(
+                                "desktop.status.renamedStateUpdated",
+                                &[("new", &new_name), ("updated", &updated.join(", "))],
+                            ),
+                            Err(error) => workspace.tf(
+                                "desktop.status.stateMachineError",
+                                &[("error", &error.to_string())],
+                            ),
                         };
                 }
             }
