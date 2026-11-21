@@ -446,8 +446,17 @@ fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
     world.insert_resource(state);
 }
 
+/// Build the editor application.
+///
+/// Uses [`prism_app::App::hosted`] rather than the player entry point
+/// [`prism_app::app`]: the editor owns its own documents and loads them through
+/// [`prism_app::App::load_scene_json_file`], so it must not attempt a startup
+/// scene load. A player entry point would try to resolve `assets/scenes.json`,
+/// fail (an editor checkout has no scene manifest), and paint the
+/// "no scene" placeholder over the whole window.
 pub fn build_app() -> prism_app::App {
-    let mut app = prism_app::app().with_subsystem(Subsystem::Render);
+    let mut app =
+        prism_app::App::hosted(prism_app::load_config()).with_subsystem(Subsystem::Render);
     app.engine_mut()
         .world_mut()
         .insert_resource(EditorUiState::default());

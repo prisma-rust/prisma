@@ -309,10 +309,18 @@ impl App {
         Self::build(config, true)
     }
 
-    /// 宿主（编辑器）模式：**不加载 manifest 场景、不创建 winit 窗口**。
+    /// Host (editor / tool) mode: **no startup scene load**.
     ///
-    /// 编辑器持有 engine 实例，场景由 [`Self::load_scene_json_file`] 从当前
-    /// 编辑中的 `.scene.json` 载入，渲染走离屏目标，帧由宿主取走。
+    /// The only difference from [`Self::with_config`] is that `init_scene_named`
+    /// is never called, so the process does not try to resolve `assets/scenes.json`
+    /// and is therefore never marked "scene missing" (which would paint the
+    /// full-window `ui::no_scene` placeholder). The host loads documents itself
+    /// through [`Self::load_scene_json_file`].
+    ///
+    /// The window depends on how the app is then driven: [`Self::run`] /
+    /// [`Self::run_on`] still create a winit window (the self-hosted editor takes
+    /// this path), while [`Self::start_hosted`] renders offscreen and lets the host
+    /// pull frames at its own pace.
     pub fn hosted(config: AppConfig) -> Self {
         Self::build(config, false)
     }
@@ -339,10 +347,14 @@ impl App {
         let mut asset_resolver = GpuAssetResolver::new();
         asset_resolver.load_resource_package();
 
-        if load_scene {
+        // The launch config can declare that this process wants no scene at all
+        // (editor / tool host). Skip manifest resolution entirely: a missing
+        // `assets/scenes.json` would otherwise be recorded as "scene missing" and
+        // `update` would paint the full-window placeholder.
+        let launch = prism_engine::launch_config::LaunchConfig::from_env();
+        if load_scene && !launch.no_scene {
             // 场景 loading — 启动配置可指定场景名（编辑器/启动器预览用）；
             // 未指定时沿用「manifest 第一个可解析场景」的默认行为。
-            let launch = prism_engine::launch_config::LaunchConfig::from_env();
             engine.init_scene_named(
                 &mut asset_resolver.resource_manager,
                 launch.scene.as_deref(),
@@ -423,6 +435,11 @@ impl App {
     // -----------------------------------------------------------------------
 
     /// 完全 ECS 访问——world / schedule / timer 等入口都通过 `Engine`。
+    /// Read-only engine access (diagnostics / tests).
+    pub fn engine(&self) -> &Engine {
+        self.engine.as_ref().expect("engine alive")
+    }
+
     pub fn engine_mut(&mut self) -> &mut Engine {
         self.engine.as_mut().expect("engine alive")
     }

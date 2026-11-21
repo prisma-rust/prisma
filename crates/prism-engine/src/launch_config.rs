@@ -24,6 +24,17 @@ pub struct LaunchConfig {
     /// 编辑器 / 启动器可据此直接预览指定场景。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene: Option<String>,
+    /// This process loads **no startup scene at all** (editor / tool host).
+    ///
+    /// Overrides [`Self::scene`]: when set, `scene` is ignored. Defaults to
+    /// `false`, i.e. the historical "load the manifest's first resolvable scene"
+    /// behaviour.
+    ///
+    /// This is not the same as `SceneManager`'s "scene missing" state: that means
+    /// **a load was attempted and failed** (and paints the placeholder), while this
+    /// means **no scene was ever wanted**.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_scene: bool,
     /// 日志级别覆盖（如 `"debug"` / `"warn"`）；`None` = 平台默认。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_level: Option<String>,
@@ -87,6 +98,18 @@ mod tests {
     fn json_roundtrip_omits_absent_scene() {
         let json = LaunchConfig::default().to_json();
         assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn no_scene_declares_a_host_without_a_startup_scene() {
+        let launch = LaunchConfig::from_json(r#"{"no_scene":true}"#);
+        assert!(launch.no_scene);
+        assert_eq!(launch.scene, None);
+
+        // The default is still "load the manifest's first resolvable scene".
+        assert!(!LaunchConfig::default().no_scene);
+        // Absent fields are not serialized, keeping the historical `{}` shape.
+        assert_eq!(LaunchConfig::default().to_json(), "{}");
     }
 
     #[test]

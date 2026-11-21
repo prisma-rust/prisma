@@ -636,6 +636,15 @@ impl Engine {
     }
 
     /// 当前场景名（由场景系统持有）；未加载任何 manifest 场景时为 `None`。
+    /// No resolvable startup scene was loaded (usually `assets/*.pak` is missing).
+    ///
+    /// The render side uses it to decide whether to draw the "no scene"
+    /// placeholder. Host mode (the editor) never attempts a startup load, so this
+    /// stays `false` there.
+    pub fn is_missing_scene(&self) -> bool {
+        self.scene.is_missing_scene()
+    }
+
     pub fn current_scene_name(&self) -> Option<&str> {
         self.scene.current_scene_name()
     }
