@@ -84,14 +84,12 @@ fn assert_shared_inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKe
     );
 }
 
-/// A nested panel's frame corner sits on the corner of the row that opened it,
-/// and its items are padded by the shared panel inset. These are two separate
-/// facts: treating them as one is what made the alignment flip between versions.
+/// A nested panel's frame corner sits on the corner of the row that opened it.
+/// Its items are then padded by the same inset a top-level panel uses, so the
+/// frame aligns and the content is inset — two facts, not one compromise.
 fn assert_frame_on_row(state: &EditorUiState, scope: &str, row: NodeKey, first_item_command: &str) {
-    let pad = state.theme.menu_dropdown_padding;
     let row_rect = rect(state, row);
     let panel = rect(state, panel_key(scope));
-    let first = rect(state, MenuNodeKey::item_key(scope, first_item_command));
     assert!(
         (panel.y - row_rect.y).abs() < 0.5,
         "the frame's top must sit on the row's top: panel={panel:?} row={row_rect:?}"
@@ -100,11 +98,10 @@ fn assert_frame_on_row(state: &EditorUiState, scope: &str, row: NodeKey, first_i
         (panel.x - (row_rect.x + row_rect.w)).abs() < 0.5,
         "the frame's left must sit on the row's right: panel={panel:?} row={row_rect:?}"
     );
-    assert!(
-        (first.y - (panel.y + pad.top)).abs() < 0.5,
-        "the items are padded inside the frame, they do not sit on its edge: \
-         first={first:?} panel={panel:?} inset={:?}",
-        pad.top
+    assert_shared_inset(
+        state,
+        panel_key(scope),
+        MenuNodeKey::item_key(scope, first_item_command),
     );
 }
 

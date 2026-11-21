@@ -107,7 +107,6 @@ fn panel(scope: &str) -> NodeKey {
 }
 
 /// A nested panel's frame corner sits on the corner of the row that opened it.
-/// The panel's own inset then pads the items; the two are independent.
 fn assert_frame_on_row(panel: Rect, row: Rect) {
     assert!(
         (panel.y - row.y).abs() < 0.5,
