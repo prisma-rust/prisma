@@ -85,6 +85,16 @@ pub struct Theme {
     // ---- metrics: typography ----
     pub font_size: f32,
     pub font_size_small: f32,
+
+    // ---- metrics: floating dialogs ----
+    /// Blur radius, in pixels, of a frosted-glass surface over the backdrop.
+    pub glass_blur_sigma: f32,
+    /// Corner radius of a floating dialog.
+    pub dialog_radius: f32,
+    /// Inner margin of a floating dialog.
+    pub dialog_padding: Edges,
+    /// Width of a floating dialog; its content decides the height.
+    pub dialog_width: f32,
 }
 
 /// Built-in colour presets.
@@ -123,79 +133,121 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// Dark preset; the default look of the self-hosted editor.
+    /// Dark preset: neutral graphite surfaces with a warm accent.
+    ///
+    /// The ramp is deliberately grey — every surface shares one hue and differs
+    /// only in brightness — so panels read as machined metal rather than as
+    /// tinted glass. Chrome sits slightly darker than the panels it frames, and
+    /// the accent is a saturated warm tone that stands clear of the grey.
     pub const fn dark() -> Self {
         Self {
-            bg: Color::rgb(0.086, 0.094, 0.110),
-            panel: Color::rgb(0.118, 0.129, 0.149),
-            panel_alt: Color::rgb(0.145, 0.157, 0.180),
-            panel_raised: Color::rgb(0.180, 0.196, 0.227),
-            chrome: Color::rgb(0.098, 0.106, 0.125),
+            bg: Color::rgb(0.071, 0.071, 0.075),
+            panel: Color::rgb(0.106, 0.106, 0.110),
+            panel_alt: Color::rgb(0.129, 0.129, 0.133),
+            panel_raised: Color::rgb(0.145, 0.145, 0.149),
+            chrome: Color::rgb(0.086, 0.086, 0.090),
 
-            border: Color::rgb(0.239, 0.259, 0.298),
-            border_strong: Color::rgb(0.353, 0.380, 0.431),
-            border_subtle: Color::rgb(0.180, 0.196, 0.227),
+            border: Color::rgb(0.196, 0.196, 0.200),
+            border_strong: Color::rgb(0.290, 0.290, 0.294),
+            border_subtle: Color::rgb(0.153, 0.153, 0.157),
 
-            text: Color::rgb(0.878, 0.890, 0.914),
-            text_strong: Color::rgb(0.965, 0.973, 0.984),
-            text_soft: Color::rgb(0.741, 0.765, 0.804),
-            muted: Color::rgb(0.541, 0.573, 0.620),
+            text: Color::rgb(0.784, 0.784, 0.788),
+            text_strong: Color::rgb(0.941, 0.941, 0.945),
+            text_soft: Color::rgb(0.659, 0.659, 0.663),
+            muted: Color::rgb(0.478, 0.478, 0.482),
 
-            row_hover: Color::rgb(0.200, 0.220, 0.259),
-            menu_hover: Color::rgb(0.196, 0.216, 0.255),
-            menu_active: Color::rgb(0.231, 0.255, 0.302),
-            selection: Color::rgb(0.153, 0.267, 0.451),
-            accent: Color::rgb(0.247, 0.529, 0.961),
-            on_accent: Color::rgb(0.976, 0.984, 0.996),
+            row_hover: Color::rgb(0.173, 0.173, 0.176),
+            menu_hover: Color::rgb(0.192, 0.192, 0.196),
+            menu_active: Color::rgb(0.235, 0.235, 0.239),
+            selection: Color::rgb(0.302, 0.223, 0.102),
+            accent: Color::rgb(0.976, 0.604, 0.145),
+            on_accent: Color::rgb(0.078, 0.078, 0.082),
 
-            menu_bar_height: 30.0,
-            menu_bar_padding: Edges::symmetric(6.0, 0.0),
-            menu_bar_gap: 2.0,
-            menu_trigger_padding: Edges::symmetric(9.0, 4.0),
-            menu_trigger_radius: 4.0,
+            // Metrics are shared with the light preset; only colours and
+            // corner radii differ, so a preset switch cannot relayout the UI.
+            menu_bar_height: 28.0,
+            menu_bar_padding: Edges::symmetric(5.0, 0.0),
+            menu_bar_gap: 1.0,
+            menu_trigger_padding: Edges::symmetric(8.0, 3.0),
+            // Squared-off corners: this theme reads as a tool, not a page.
+            menu_trigger_radius: 2.0,
 
-            menu_dropdown_padding: Edges::symmetric(4.0, 5.0),
-            menu_dropdown_radius: 6.0,
+            menu_dropdown_padding: Edges::symmetric(3.0, 4.0),
+            menu_dropdown_radius: 3.0,
             menu_dropdown_min_width: 208.0,
-            menu_dropdown_offset: 2.0,
-            menu_item_height: 24.0,
-            menu_item_padding: Edges::symmetric(10.0, 3.0),
-            menu_item_radius: 4.0,
+            menu_dropdown_offset: 1.0,
+            menu_item_height: 22.0,
+            menu_item_padding: Edges::symmetric(8.0, 3.0),
+            menu_item_radius: 2.0,
             menu_item_gap: 16.0,
             menu_shortcut_width: 64.0,
-            menu_separator_margin: 4.0,
+            menu_separator_margin: 3.0,
 
             font_size: 13.0,
             font_size_small: 12.0,
+
+            glass_blur_sigma: 28.0,
+            dialog_radius: 14.0,
+            dialog_padding: Edges::symmetric(30.0, 26.0),
+            dialog_width: 420.0,
         }
     }
 
-    /// Light preset; same token set, so widgets need no conditional styling.
+    /// Light preset: cool-neutral paper surfaces, blue accent, soft shadows.
+    ///
+    /// Surfaces sit close together in brightness and are separated by hairlines
+    /// rather than by fills, which keeps a light UI from turning into a grid of
+    /// boxes. The accent carries selection; hover states stay a neutral wash.
     pub const fn light() -> Self {
         Self {
-            bg: Color::rgb(0.961, 0.965, 0.973),
-            panel: Color::rgb(0.988, 0.990, 0.996),
-            panel_alt: Color::rgb(0.945, 0.953, 0.965),
-            panel_raised: Color::rgb(1.0, 1.0, 1.0),
-            chrome: Color::rgb(0.925, 0.933, 0.945),
+            bg: Color::rgb(0.925, 0.925, 0.929),
+            panel: Color::rgb(0.961, 0.961, 0.965),
+            panel_alt: Color::rgb(0.910, 0.910, 0.914),
+            panel_raised: Color::rgb(0.984, 0.984, 0.988),
+            chrome: Color::rgb(0.937, 0.937, 0.941),
 
-            border: Color::rgb(0.816, 0.831, 0.855),
-            border_strong: Color::rgb(0.647, 0.671, 0.710),
-            border_subtle: Color::rgb(0.894, 0.906, 0.925),
+            border: Color::rgb(0.831, 0.831, 0.839),
+            border_strong: Color::rgb(0.702, 0.702, 0.714),
+            border_subtle: Color::rgb(0.882, 0.882, 0.890),
 
-            text: Color::rgb(0.157, 0.173, 0.204),
-            text_strong: Color::rgb(0.055, 0.067, 0.090),
-            text_soft: Color::rgb(0.290, 0.3176, 0.361),
-            muted: Color::rgb(0.478, 0.510, 0.561),
+            text: Color::rgb(0.114, 0.114, 0.122),
+            text_strong: Color::rgb(0.0, 0.0, 0.0),
+            text_soft: Color::rgb(0.290, 0.290, 0.306),
+            muted: Color::rgb(0.525, 0.525, 0.545),
 
-            row_hover: Color::rgb(0.906, 0.925, 0.953),
-            menu_hover: Color::rgb(0.898, 0.918, 0.949),
-            menu_active: Color::rgb(0.855, 0.886, 0.941),
-            selection: Color::rgb(0.812, 0.878, 0.976),
-            accent: Color::rgb(0.145, 0.388, 0.922),
+            row_hover: Color::rgb(0.898, 0.898, 0.906),
+            menu_hover: Color::rgb(0.898, 0.898, 0.906),
+            menu_active: Color::rgb(0.843, 0.843, 0.855),
+            selection: Color::rgb(0.796, 0.875, 1.0),
+            accent: Color::rgb(0.0, 0.478, 1.0),
             on_accent: Color::rgb(1.0, 1.0, 1.0),
 
-            ..Self::dark()
+            // Metrics match the dark preset; generous radii are what make this
+            // theme read as a system surface rather than a tool panel.
+            menu_bar_height: 28.0,
+            menu_bar_padding: Edges::symmetric(5.0, 0.0),
+            menu_bar_gap: 1.0,
+            menu_trigger_padding: Edges::symmetric(8.0, 3.0),
+            menu_trigger_radius: 6.0,
+
+            menu_dropdown_padding: Edges::symmetric(3.0, 4.0),
+            menu_dropdown_radius: 9.0,
+            menu_dropdown_min_width: 208.0,
+            menu_dropdown_offset: 1.0,
+            menu_item_height: 22.0,
+            menu_item_padding: Edges::symmetric(8.0, 3.0),
+            menu_item_radius: 5.0,
+            menu_item_gap: 16.0,
+            menu_shortcut_width: 64.0,
+            menu_separator_margin: 3.0,
+
+            font_size: 13.0,
+            font_size_small: 12.0,
+
+            glass_blur_sigma: 28.0,
+            dialog_radius: 14.0,
+            dialog_padding: Edges::symmetric(30.0, 26.0),
+            dialog_width: 420.0,
         }
     }
 
@@ -215,6 +267,25 @@ impl Theme {
             ThemePreset::Light
         } else {
             ThemePreset::Dark
+        }
+    }
+
+    /// Backdrop tint of a frosted-glass surface.
+    ///
+    /// Light glass has to stay opaque enough for body text to keep its
+    /// contrast; dark glass can let more of the scene through.
+    pub fn glass_tint(self) -> Color {
+        match self.preset() {
+            ThemePreset::Dark => Color::rgba(0.106, 0.106, 0.110, 0.72),
+            ThemePreset::Light => Color::rgba(0.984, 0.984, 0.988, 0.82),
+        }
+    }
+
+    /// Hairline highlight along the top edge of a raised glass surface.
+    pub fn glass_highlight(self) -> Color {
+        match self.preset() {
+            ThemePreset::Dark => Color::rgba(1.0, 1.0, 1.0, 0.10),
+            ThemePreset::Light => Color::rgba(1.0, 1.0, 1.0, 0.90),
         }
     }
 
