@@ -1232,7 +1232,7 @@ impl App {
                 self.pending_show = false;
                 log::debug!(
                     target: "startup",
-                    "[startup] window shown (renderer ready, first frame next)"
+                    "[startup] window shown (first frame already presented)"
                 );
             }
         }

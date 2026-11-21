@@ -216,12 +216,6 @@ pub fn render_thread_main(
         renderer.set_external_overlay(factory());
     }
 
-    // Everything heavy is done: let the main thread reveal the window. The
-    // first frame follows immediately, so the window never shows empty.
-    shared
-        .renderer_ready
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-
     // 帧计时
     let mut smoothed_fps = 0.0f32;
     let mut frame_count: u64 = 0;
@@ -366,6 +360,13 @@ pub fn render_thread_main(
                 },
             );
             shared.mark("first_frame");
+            // The first frame is on the surface: reveal the window now.
+            // Signalling after warmup instead would still leave a visible gap,
+            // because the render thread only picks up the queued packet after
+            // the warmup finishes.
+            shared
+                .renderer_ready
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             prism_engine::util::timing::event(
                 "render::first_frame",
                 &format!(
