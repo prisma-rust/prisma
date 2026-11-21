@@ -565,6 +565,17 @@ impl EditorUiState {
             let _input = prism_engine::util::timing::span("editor::ui_input");
             self.tree.process_input(input)
         };
+        // Resolve the submenu branch while this frame's nodes still exist: the
+        // panels are mounted from it on the next build.
+        {
+            let definitions = self.menus();
+            self.menu.sync_hover(&self.tree, |id| {
+                definitions
+                    .iter()
+                    .find(|menu| menu.id == id)
+                    .map(|menu| menu.entries.clone())
+            });
+        }
         // Menu policy runs first: it owns open/close state and turns clicks into
         // commands, so the generic action handler never sees menu node keys.
         let menu_actions = self.menu.handle_actions(&actions);

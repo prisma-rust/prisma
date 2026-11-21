@@ -51,7 +51,15 @@ fn a_submenu_panel_is_not_full_screen() {
         ..Default::default()
     });
 
-    // Next frame mounts the submenu panel.
+    // Resolve the branch from the hover, then rebuild so the panel mounts. The
+    // host does these two steps on consecutive frames.
+    let definitions = menus();
+    state.sync_hover(&tree, |id| {
+        definitions
+            .iter()
+            .find(|menu| menu.id == id)
+            .map(|menu| menu.entries.clone())
+    });
     frame(&mut tree, &state, menus(), theme, viewport);
 
     let panel_key = ("menu", "dropdown", "file/Export").into_node_key();

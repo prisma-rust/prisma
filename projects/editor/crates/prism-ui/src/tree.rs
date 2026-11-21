@@ -354,6 +354,46 @@ impl UiTree {
         self.hovered_key
     }
 
+    /// Keys from `key` up to the root, innermost first.
+    ///
+    /// Popups are mounted as siblings on the popup layer, so this walks the node
+    /// tree rather than the popup chain; callers that need the popup nesting
+    /// derive it from the row keys they find on the path.
+    pub fn ancestor_keys(&self, key: NodeKey) -> Option<Vec<NodeKey>> {
+        let mut out = Vec::new();
+        let mut cursor = self.key_to_id.get(&key).copied();
+        while let Some(id) = cursor {
+            let node = self.nodes.get(id)?;
+            out.push(node.key);
+            cursor = node.parent;
+        }
+        Some(out)
+    }
+
+    /// Whether the pointer is on `key` or anywhere inside the subtree it roots.
+    ///
+    /// A menu row that spawns a panel stays "entered" while the pointer is on any
+    /// item of that panel, which is what keeps an open branch open.
+    pub fn is_hovered_within(&self, key: NodeKey) -> bool {
+        let Some(hovered) = self.hovered_key else {
+            return false;
+        };
+        let Some(root) = self.key_to_id.get(&key).copied() else {
+            return false;
+        };
+        let Some(target) = self.key_to_id.get(&hovered).copied() else {
+            return false;
+        };
+        let mut cursor = Some(target);
+        while let Some(id) = cursor {
+            if id == root {
+                return true;
+            }
+            cursor = self.nodes.get(id).and_then(|node| node.parent);
+        }
+        false
+    }
+
     /// Resolve every anchored node's rect against its target.
     ///
     /// Runs after layout so the target rect is final; a missing target leaves

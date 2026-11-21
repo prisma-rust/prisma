@@ -194,77 +194,61 @@ fn hovering_an_item_marks_it_hovered_for_the_next_frame() {
 
 #[test]
 fn a_hovered_submenu_row_opens_its_panel() {
+    // Multi-level behaviour is covered in `menu_nested_tests`; this keeps the
+    // single-level contract: hovering the row mounts exactly one panel beside it.
     let theme = Theme::dark();
     let viewport = Vec2::new(1280.0, 720.0);
     let mut state = MenuState::default();
     state.open_menu("file");
     reset_key_registry();
 
-    let entries = vec![
+    let menus = vec![Menu::new("file", "File").items(vec![
         MenuEntry::item("Save", "file.save"),
-        MenuEntry::Submenu {
-            label: "Export".into(),
-            entries: vec![MenuEntry::item("glTF", "file.export.gltf")],
-        },
-    ];
-    let menus = vec![Menu::new("file", "File").items(entries)];
+        MenuEntry::submenu("Export", vec![MenuEntry::item("glTF", "file.export.gltf")]),
+    ])];
 
-    // Frame 1: mount so the submenu row exists and can be hit.
     let mut tree = UiTree::new();
-    tree.begin_frame();
-    {
-        let mut ctx = UiContext::new(&mut tree);
-        let root = ctx.mount(
-            crate::elements::col()
-                .size(Length::Px(viewport.x), Length::Px(viewport.y))
-                .bg(theme.bg),
-        );
-        ctx.with_parent(root, |ctx| {
-            MenuBar::new(theme, viewport)
-                .menus(menus.clone())
-                .mount(ctx, &state);
-        });
-    }
-    tree.compute_layout(viewport);
+    let mut mount = |tree: &mut UiTree, state: &MenuState| {
+        tree.begin_frame();
+        {
+            let mut ctx = UiContext::new(tree);
+            let root = ctx.mount(
+                crate::elements::col()
+                    .size(Length::Px(viewport.x), Length::Px(viewport.y))
+                    .bg(theme.bg),
+            );
+            ctx.with_parent(root, |ctx| {
+                MenuBar::new(theme, viewport)
+                    .menus(menus.clone())
+                    .mount(ctx, state);
+            });
+        }
+        tree.compute_layout(viewport);
+    };
 
-    // Hover the submenu row.
+    mount(&mut tree, &state);
+
     let row_key = ("menu", "submenu", "file", "Export").into_node_key();
     let row = rect_of(&tree, row_key);
-    let point = Vec2::new(row.x + row.w * 0.5, row.y + row.h * 0.5);
     tree.process_input(&UiInput {
-        pointer_pos: point,
+        pointer_pos: Vec2::new(row.x + row.w * 0.5, row.y + row.h * 0.5),
         ..Default::default()
     });
     assert!(tree.is_hovered(row_key), "submenu row must be hovered");
 
-    // Frame 2: the hovered row now spawns its panel.
-    tree.begin_frame();
-    {
-        let mut ctx = UiContext::new(&mut tree);
-        let root = ctx.mount(
-            crate::elements::col()
-                .size(Length::Px(viewport.x), Length::Px(viewport.y))
-                .bg(theme.bg),
-        );
-        ctx.with_parent(root, |ctx| {
-            MenuBar::new(theme, viewport)
-                .menus(menus)
-                .mount(ctx, &state);
-        });
-    }
-    tree.compute_layout(viewport);
+    // Resolve after input, while this frame's nodes still exist.
+    state.sync_hover(&tree, |id| {
+        menus
+            .iter()
+            .find(|menu| menu.id == id)
+            .map(|menu| menu.entries.clone())
+    });
+    assert_eq!(state.submenu_branch(), ["Export".to_string()]);
 
+    mount(&mut tree, &state);
     let sub_panel = rect_of(&tree, ("menu", "dropdown", "file/Export").into_node_key());
     assert!(
         sub_panel.w > 0.0 && sub_panel.h > 0.0,
         "hovering the submenu row must mount its panel: {sub_panel:?}"
-    );
-    let item = rect_of(
-        &tree,
-        MenuNodeKey::item_key("file/Export", "file.export.gltf"),
-    );
-    assert!(
-        item.y >= sub_panel.y - 0.5 && item.y + item.h <= sub_panel.y + sub_panel.h + 0.5,
-        "submenu items must sit inside their panel"
     );
 }

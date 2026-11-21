@@ -75,9 +75,27 @@ fn the_theme_menu_marks_the_active_preset() {
     // one more build before its nodes exist.
     state.build_and_step(viewport, &UiInput::default(), 0.016);
 
-    let key = prism_ui::menu::MenuNodeKey::item_key("view", "view.theme.light");
+    // Theme is a submenu now: its rows only mount once the Theme row is entered,
+    // so assert on the definition rather than on the open panel.
+    let view = state
+        .menus()
+        .into_iter()
+        .find(|menu| menu.id == "view")
+        .expect("View menu exists");
+    let theme_entry = view
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            prism_ui::menu::MenuEntry::Submenu { label, entries } if label == "Theme" => {
+                Some(entries.clone())
+            }
+            _ => None,
+        })
+        .expect("View must expose a Theme submenu");
     assert!(
-        state.tree.node_by_key(key).is_some(),
-        "the View menu must offer the Light preset"
+        theme_entry
+            .iter()
+            .any(|entry| matches!(entry, prism_ui::menu::MenuEntry::Checkbox { command, .. } if command == "view.theme.light")),
+        "the Theme submenu must offer the Light preset"
     );
 }

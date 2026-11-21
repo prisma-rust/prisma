@@ -48,7 +48,12 @@ pub enum MenuAction {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MenuState {
     open: Option<String>,
-    hovered_trigger: Option<String>,
+    /// Open submenu labels inside the open menu, outermost first.
+    ///
+    /// Resolved from hover **after** input is processed, while the frame's nodes
+    /// still exist, and then read back while mounting the next frame. Resolving
+    /// during the build would query a tree that `begin_frame` just cleared.
+    submenu_branch: Vec<String>,
 }
 
 impl MenuState {
@@ -65,6 +70,45 @@ impl MenuState {
     /// Whether any menu is open.
     pub fn any_open(&self) -> bool {
         self.open.is_some()
+    }
+
+    /// Labels of the open submenu branch, outermost first.
+    pub fn submenu_branch(&self) -> &[String] {
+        &self.submenu_branch
+    }
+
+    /// Recompute the open submenu branch from the tree's current hover.
+    ///
+    /// Call once per frame **after** [`crate::tree::UiTree::process_input`]: the
+    /// answer depends on which node the pointer landed on, and on the panel that
+    /// node belongs to. Returns whether the branch changed.
+    pub fn sync_hover(
+        &mut self,
+        tree: &crate::tree::UiTree,
+        entries_of: impl Fn(&str) -> Option<Vec<MenuEntry>>,
+    ) -> bool {
+        let Some(menu_id) = self.open.clone() else {
+            let changed = !self.submenu_branch.is_empty();
+            self.submenu_branch.clear();
+            return changed;
+        };
+        let Some(entries) = entries_of(&menu_id) else {
+            return false;
+        };
+        let branch = resolve_branch(tree, &menu_id, &entries);
+        if branch == self.submenu_branch {
+            return false;
+        }
+        self.submenu_branch = branch;
+        true
+    }
+
+    /// Close any open submenu branch. Returns whether anything changed.
+    pub fn close_submenus(&mut self) -> bool {
+        !self.submenu_branch.is_empty() && {
+            self.submenu_branch.clear();
+            true
+        }
     }
 
     /// Close every menu. Returns whether anything actually changed.
@@ -378,8 +422,10 @@ impl MenuBar {
         };
         let overlay = ctx.tree.overlay_root(viewport);
         let trigger = MenuNodeKey::trigger_key(&open_menu.id);
-        // Resolved before mounting: the hovered branch decides what exists.
-        let branch = resolve_open_branch(ctx.tree, &open_menu.id, &open_menu.entries);
+        // The branch was resolved last frame, after input, while the previous
+        // frame's nodes still existed; re-resolving here would query a tree that
+        // `begin_frame` has already cleared.
+        let branch = state.submenu_branch().to_vec();
         ctx.with_parent(overlay, |ctx| {
             ctx.mount(dropdown(
                 &theme,
@@ -417,30 +463,79 @@ impl MenuBar {
 /// Hovering a submenu row opens it, which implicitly closes its siblings; moving
 /// onto a plain row closes the whole branch. That is what makes a menu feel like
 /// a menu rather than a sticky tree.
-fn resolve_open_branch(
-    tree: &crate::tree::UiTree,
-    menu_id: &str,
-    entries: &[MenuEntry],
-) -> Vec<String> {
-    let mut branch = Vec::new();
-    let mut level = entries;
-    let mut scope = menu_id.to_string();
-    loop {
-        let hovered = level.iter().find(|entry| {
-            matches!(entry, MenuEntry::Submenu { label, .. }
-                if tree.is_hovered(submenu_row_key(&scope, label)))
-        });
-        let Some(MenuEntry::Submenu {
-            label,
-            entries: child_entries,
-        }) = hovered
-        else {
-            break;
-        };
-        branch.push(label.clone());
-        scope = format!("{scope}/{label}");
-        level = child_entries;
+fn resolve_branch(tree: &crate::tree::UiTree, menu_id: &str, entries: &[MenuEntry]) -> Vec<String> {
+    // A submenu row is open when the pointer is on the row itself, or inside the
+    // panel it spawned, or on any row below it. Those three cases collapse into
+    // one question — "is the pointer in this row's subtree?" — so the branch is
+    // simply the ancestor path of the deepest entered row.
+    //
+    // Panels are siblings of rows on the popup layer, so subtree containment is
+    // decided by scope rather than by the node tree.
+    /// Whether the pointer is on any row reachable below `scope`.
+    ///
+    /// Used to keep an ancestor open while the pointer is further out along the
+    /// same branch, which is the only way a four-level chain stays on screen.
+    fn enters_subtree(tree: &crate::tree::UiTree, scope: &str, entries: &[MenuEntry]) -> bool {
+        for entry in entries {
+            let MenuEntry::Submenu {
+                label,
+                entries: children,
+            } = entry
+            else {
+                continue;
+            };
+            let child_scope = format!("{scope}/{label}");
+            let panel = ("menu", "dropdown", child_scope.as_str()).into_node_key();
+            if tree.is_hovered(submenu_row_key(scope, label)) || tree.is_hovered_within(panel) {
+                return true;
+            }
+            if enters_subtree(tree, &child_scope, children) {
+                return true;
+            }
+        }
+        false
     }
+
+    fn deepest(
+        tree: &crate::tree::UiTree,
+        scope: &str,
+        entries: &[MenuEntry],
+        trail: &mut Vec<String>,
+    ) -> bool {
+        let mut best: Option<(String, String, &[MenuEntry])> = None;
+        for entry in entries {
+            let MenuEntry::Submenu {
+                label,
+                entries: children,
+            } = entry
+            else {
+                continue;
+            };
+            let child_scope = format!("{scope}/{label}");
+            let panel = ("menu", "dropdown", child_scope.as_str()).into_node_key();
+            let on_row = tree.is_hovered(submenu_row_key(scope, label));
+            let in_panel = tree.is_hovered_within(panel);
+            // A deeper row of this same submenu also counts as "entered", which
+            // is what keeps the ancestors alive as the pointer moves outward.
+            let deeper = enters_subtree(tree, &child_scope, children);
+            if on_row || in_panel || deeper {
+                best = Some((label.clone(), child_scope, children));
+                break;
+            }
+        }
+        let Some((label, child_scope, children)) = best else {
+            return false;
+        };
+        trail.push(label);
+        // Descend so a deeper entered row extends the same path. The recursion's
+        // result is deliberately ignored: once this level is entered, the trail
+        // keeps it even when nothing deeper is hovered.
+        let _ = deepest(tree, &child_scope, children, trail);
+        true
+    }
+
+    let mut branch = Vec::new();
+    deepest(tree, menu_id, entries, &mut branch);
     branch
 }
 

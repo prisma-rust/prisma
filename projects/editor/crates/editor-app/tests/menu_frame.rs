@@ -74,7 +74,9 @@ fn opening_a_menu_draws_its_items_on_top() {
     let texts = draw_texts(&mut state, viewport);
 
     assert_eq!(state.menu.open(), Some("file"), "File menu must open");
-    for expected in ["New Scene", "Save", "Exit"] {
+    // "New" is a submenu row, so it draws with its chevron; the flat entries sit
+    // beside it.
+    for expected in ["New", ">", "Save", "Exit"] {
         assert!(
             texts.iter().any(|t| t == expected),
             "open File menu must draw '{expected}'; drew: {texts:?}"

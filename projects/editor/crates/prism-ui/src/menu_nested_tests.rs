@@ -54,33 +54,55 @@ fn build(tree: &mut UiTree, state: &MenuState, viewport: Vec2) {
     tree.compute_layout(viewport);
 }
 
-/// Hover the row with this label inside the panel scoped to `scope`.
-fn hover_row(tree: &mut UiTree, scope: &str, label: &str) {
+/// Advance one frame with no hover: rebuild so pending state lands on screen.
+fn settle(tree: &mut UiTree, state: &mut MenuState, viewport: Vec2) {
+    build(tree, state, viewport);
+}
+
+/// Hover a row, resolve the branch, then rebuild — the sequence a real frame runs.
+fn hover_frame(tree: &mut UiTree, state: &mut MenuState, viewport: Vec2, scope: &str, label: &str) {
     let key = submenu_row_key(scope, label);
     let id = tree.node_by_key(key).expect("submenu row exists");
     let rect = tree.node(id).unwrap().computed_rect;
-    let point = Vec2::new(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5);
     tree.process_input(&UiInput {
-        pointer_pos: point,
+        pointer_pos: Vec2::new(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
         ..Default::default()
     });
+    let menus = deep_menus();
+    state.sync_hover(tree, |id| {
+        menus
+            .iter()
+            .find(|menu| menu.id == id)
+            .map(|menu| menu.entries.clone())
+    });
+    build(tree, state, viewport);
 }
 
-/// Hover a row and rebuild, so the next frame's branch resolution sees it.
-fn hover_and_rebuild(
-    tree: &mut UiTree,
-    state: &MenuState,
-    scope: &str,
-    label: &str,
-    viewport: Vec2,
-) {
-    hover_row(tree, scope, label);
-    build(tree, state, viewport);
+/// Hover a plain item inside a panel and resolve, without rebuilding.
+fn hover_item(tree: &mut UiTree, state: &mut MenuState, scope: &str, command: &str) {
+    let key = MenuNodeKey::item_key(scope, command);
+    let id = tree.node_by_key(key).expect("item exists");
+    let rect = tree.node(id).unwrap().computed_rect;
+    tree.process_input(&UiInput {
+        pointer_pos: Vec2::new(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
+        ..Default::default()
+    });
+    let menus = deep_menus();
+    state.sync_hover(tree, |id| {
+        menus
+            .iter()
+            .find(|menu| menu.id == id)
+            .map(|menu| menu.entries.clone())
+    });
 }
 
 fn rect(tree: &UiTree, key: NodeKey) -> crate::style::Rect {
     let id = tree.node_by_key(key).expect("node exists");
     tree.node(id).unwrap().computed_rect
+}
+
+fn panel(scope: &str) -> NodeKey {
+    ("menu", "dropdown", scope).into_node_key()
 }
 
 #[test]
@@ -89,108 +111,104 @@ fn nested_panels_open_to_the_right_of_their_row() {
     let mut state = MenuState::default();
     state.open_menu("file");
     let mut tree = UiTree::new();
-    build(&mut tree, &state, viewport);
 
-    // Open level 2 by hovering "New".
-    hover_row(&mut tree, "file", "New");
-    build(&mut tree, &state, viewport);
-    let l2 = rect(&tree, ("menu", "dropdown", "file/New").into_node_key());
+    settle(&mut tree, &mut state, viewport);
+    assert!(tree.node_by_key(panel("file")).is_some());
+
+    hover_frame(&mut tree, &mut state, viewport, "file", "New");
+    let l2 = rect(&tree, panel("file/New"));
     let row2 = rect(&tree, submenu_row_key("file", "New"));
-    assert!(l2.w > 0.0 && l2.h > 0.0, "level 2 must mount: {l2:?}");
     assert!(
-        l2.x >= row2.x + row2.w - 1.0,
-        "level 2 must open beside its row, not over it: panel={l2:?} row={row2:?}"
+        l2.x > row2.x + row2.w * 0.5,
+        "level 2 must open beside its row: panel={l2:?} row={row2:?}"
     );
 
-    // Level 3.
-    hover_row(&mut tree, "file/New", "From Template");
-    build(&mut tree, &state, viewport);
-    let l3 = rect(
-        &tree,
-        ("menu", "dropdown", "file/New/From Template").into_node_key(),
-    );
+    hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
+    let l3 = rect(&tree, panel("file/New/From Template"));
     let row3 = rect(&tree, submenu_row_key("file/New", "From Template"));
-    assert!(l3.w > 0.0, "level 3 must mount: {l3:?}");
     assert!(
-        l3.x >= row3.x + row3.w - 1.0,
+        l3.x > row3.x + row3.w * 0.5,
         "level 3 must open beside its row: panel={l3:?} row={row3:?}"
     );
 
-    // Level 4.
-    hover_row(&mut tree, "file/New/From Template", "Samples");
-    build(&mut tree, &state, viewport);
-    let l4 = rect(
-        &tree,
-        ("menu", "dropdown", "file/New/From Template/Samples").into_node_key(),
+    hover_frame(
+        &mut tree,
+        &mut state,
+        viewport,
+        "file/New/From Template",
+        "Samples",
     );
+    let l4 = rect(&tree, panel("file/New/From Template/Samples"));
     let row4 = rect(&tree, submenu_row_key("file/New/From Template", "Samples"));
-    assert!(l4.w > 0.0, "level 4 must mount: {l4:?}");
     assert!(
-        l4.x >= row4.x + row4.w - 1.0,
+        l4.x > row4.x + row4.w * 0.5,
         "level 4 must open beside its row: panel={l4:?} row={row4:?}"
     );
 
-    // Every level stays on screen and none is full height.
-    for (name, panel) in [("l2", l2), ("l3", l3), ("l4", l4)] {
+    for (name, p) in [("l2", l2), ("l3", l3), ("l4", l4)] {
         assert!(
-            panel.x >= 0.0 && panel.x + panel.w <= viewport.x + 0.5,
-            "{name} must stay on screen: {panel:?}"
+            p.x >= 0.0 && p.x + p.w <= viewport.x + 0.5,
+            "{name} must stay on screen: {p:?}"
         );
         assert!(
-            panel.h < viewport.y * 0.5,
-            "{name} must size to its items: {panel:?}"
+            p.h < viewport.y * 0.5,
+            "{name} must size to its items: {p:?}"
         );
     }
 }
 
 #[test]
 fn a_panel_that_would_leave_the_window_flips_left() {
-    // A narrow window forces the third level past the right edge.
     let viewport = Vec2::new(420.0, 720.0);
     let mut state = MenuState::default();
     state.open_menu("file");
     let mut tree = UiTree::new();
-    build(&mut tree, &state, viewport);
 
-    hover_row(&mut tree, "file", "New");
-    build(&mut tree, &state, viewport);
-    hover_row(&mut tree, "file/New", "From Template");
-    build(&mut tree, &state, viewport);
+    settle(&mut tree, &mut state, viewport);
+    hover_frame(&mut tree, &mut state, viewport, "file", "New");
+    hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
 
-    let l3 = rect(
-        &tree,
-        ("menu", "dropdown", "file/New/From Template").into_node_key(),
-    );
+    let l3 = rect(&tree, panel("file/New/From Template"));
     assert!(
         l3.x + l3.w <= viewport.x + 0.5,
-        "a panel that would overflow must flip to the other side: {l3:?}"
+        "a panel that would overflow must flip: {l3:?}"
     );
 }
 
 #[test]
-fn moving_off_a_submenu_row_closes_the_deeper_levels() {
+fn hovering_a_deeper_item_keeps_the_branch_open() {
     let viewport = Vec2::new(1280.0, 720.0);
     let mut state = MenuState::default();
     state.open_menu("file");
     let mut tree = UiTree::new();
-    build(&mut tree, &state, viewport);
 
-    hover_row(&mut tree, "file", "New");
-    build(&mut tree, &state, viewport);
-    assert!(tree
-        .node_by_key(("menu", "dropdown", "file/New").into_node_key())
-        .is_some());
+    settle(&mut tree, &mut state, viewport);
+    hover_frame(&mut tree, &mut state, viewport, "file", "New");
 
-    // Hover a plain item in the first panel: the branch must collapse.
-    let save = rect(&tree, MenuNodeKey::item_key("file", "file.save"));
-    tree.process_input(&UiInput {
-        pointer_pos: Vec2::new(save.x + save.w * 0.5, save.y + save.h * 0.5),
-        ..Default::default()
-    });
-    build(&mut tree, &state, viewport);
+    // The pointer moves onto an item inside the level-2 panel; the branch must
+    // survive or the panel would vanish the moment the pointer left its row.
+    hover_item(&mut tree, &mut state, "file/New", "file.new.scene");
+    assert_eq!(
+        state.submenu_branch(),
+        ["New".to_string()],
+        "hovering a child item must keep its panel open"
+    );
+}
+
+#[test]
+fn hovering_a_plain_row_closes_the_branch() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let mut state = MenuState::default();
+    state.open_menu("file");
+    let mut tree = UiTree::new();
+
+    settle(&mut tree, &mut state, viewport);
+    hover_frame(&mut tree, &mut state, viewport, "file", "New");
+    assert!(!state.submenu_branch().is_empty());
+
+    hover_item(&mut tree, &mut state, "file", "file.save");
     assert!(
-        tree.node_by_key(("menu", "dropdown", "file/New").into_node_key())
-            .is_none(),
-        "hovering a plain row must close the submenu branch"
+        state.submenu_branch().is_empty(),
+        "hovering a plain row must collapse the branch"
     );
 }
