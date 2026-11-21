@@ -506,17 +506,6 @@ impl UiTree {
         level
     }
 
-    /// Number of ancestors between `id` and the root.
-    fn depth_of(&self, id: NodeId) -> Option<usize> {
-        let mut depth = 0;
-        let mut cursor = self.nodes.get(id).and_then(|node| node.parent);
-        while let Some(parent) = cursor {
-            depth += 1;
-            cursor = self.nodes.get(parent).and_then(|node| node.parent);
-        }
-        Some(depth)
-    }
-
     /// Offset a node and every descendant by `(dx, dy)`.
     fn translate_subtree(&mut self, id: NodeId, dx: f32, dy: f32) {
         if dx == 0.0 && dy == 0.0 {
