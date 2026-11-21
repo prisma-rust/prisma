@@ -122,6 +122,10 @@ fn nested_panels_open_to_the_right_of_their_row() {
         l2.x > row2.x + row2.w * 0.5,
         "level 2 must open beside its row: panel={l2:?} row={row2:?}"
     );
+    assert!(
+        (l2.y - row2.y).abs() < 0.5,
+        "level 2 must be top-aligned with its row: panel={l2:?} row={row2:?}"
+    );
 
     hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
     let l3 = rect(&tree, panel("file/New/From Template"));
@@ -129,6 +133,10 @@ fn nested_panels_open_to_the_right_of_their_row() {
     assert!(
         l3.x > row3.x + row3.w * 0.5,
         "level 3 must open beside its row: panel={l3:?} row={row3:?}"
+    );
+    assert!(
+        (l3.y - row3.y).abs() < 0.5,
+        "level 3 must be top-aligned with its row: panel={l3:?} row={row3:?}"
     );
 
     hover_frame(
@@ -143,6 +151,10 @@ fn nested_panels_open_to_the_right_of_their_row() {
     assert!(
         l4.x > row4.x + row4.w * 0.5,
         "level 4 must open beside its row: panel={l4:?} row={row4:?}"
+    );
+    assert!(
+        (l4.y - row4.y).abs() < 0.5,
+        "level 4 must be top-aligned with its row: panel={l4:?} row={row4:?}"
     );
 
     for (name, p) in [("l2", l2), ("l3", l3), ("l4", l4)] {
