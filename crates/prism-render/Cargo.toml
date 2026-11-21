@@ -74,6 +74,9 @@ gtao = []
 [dependencies]
 prism-gfx = { path = "../prism-gfx" }
 prism-render-shaders = { path = "../prism-render-shaders" }
+# The UI draw packet is pure data, so producers in any layer can build it
+# without depending on the renderer.
+prism-ui-draw = { path = "../prism-ui-draw" }
 ash = { workspace = true }
 ash-window = { workspace = true }
 raw-window-handle = { workspace = true }

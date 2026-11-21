@@ -48,6 +48,8 @@ prism-ini = { path = "../prism-ini" }
 # 必须 default-features = false：否则组件组开关会被 prism-scene 的默认特性重新打开。
 prism-scene = { path = "../prism-scene", default-features = false }
 prism-render = { path = "../prism-render", default-features = false }
+# The engine builds UI draw packets directly, without naming the renderer.
+prism-ui-draw = { path = "../prism-ui-draw" }
 prism-asset = { path = "../prism-asset", default-features = false, features = ["runtime"] }
 prism-anim = { path = "../prism-anim" }
 prism-anim-ik = { path = "../prism-anim-ik" }

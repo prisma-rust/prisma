@@ -1,7 +1,7 @@
 //! 运行时诊断 HUD（无 UI 框架依赖）。
 //!
 //! egui 编辑器移除后，帧率 / 渲染模式 / 调试状态的屏幕显示由本模块接管：
-//! 它只向已有的 ECS UI 叠加（[`prism_render::UiOverlayInput`]）追加文本命令，
+//! 它只向已有的 ECS UI 叠加（[`prism_ui_draw::UiOverlayInput`]）追加文本命令，
 //! 由 `prism-render` 的 `ui_overlay` 通道统一光栅化，因此不需要任何外部 UI
 //! 框架或额外渲染 pass。
 //!
@@ -9,8 +9,8 @@
 //! - `F3`：显示 / 隐藏 HUD。
 
 use prism_engine::render_settings::{pbr_flag_label, RenderMode, RenderSettings};
-use prism_render::ui_overlay::{UiTextAlign, UiTextInput};
-use prism_render::UiOverlayInput;
+use prism_ui_draw::UiOverlayInput;
+use prism_ui_draw::{UiTextAlign, UiTextInput};
 
 use crate::render_shared::RenderStats;
 

@@ -64,6 +64,7 @@ FOUNDATION_CRATES = {
     "prism-reflect",
     "prism-reflect-derive",
     "prism-render-shaders",
+    "prism-ui-draw",
 }
 
 DATA_SCHEMA_CRATES = {

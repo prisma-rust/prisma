@@ -1,0 +1,6 @@
+[package]
+name = "prism-ui-draw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "UI draw packet: the flat, ordered quad and text commands a UI producer hands to the rasterizer"

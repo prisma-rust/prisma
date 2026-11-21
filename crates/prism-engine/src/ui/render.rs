@@ -270,8 +270,8 @@ pub fn merge_external_quads(world: &mut World) {
 /// 将引擎的 `UiDrawList`（像素坐标）转换为渲染器的 `UiOverlayInput`（NDC）。
 ///
 /// 从 world 的 `ScreenSize` resource 读取屏幕尺寸。
-pub fn convert_ui_draw_list_to_overlay(world: &World) -> prism_render::UiOverlayInput {
-    let mut out = prism_render::UiOverlayInput::default();
+pub fn convert_ui_draw_list_to_overlay(world: &World) -> prism_ui_draw::UiOverlayInput {
+    let mut out = prism_ui_draw::UiOverlayInput::default();
     convert_ui_draw_list_to_overlay_into(world, &mut out);
     out
 }
@@ -280,7 +280,10 @@ pub fn convert_ui_draw_list_to_overlay(world: &World) -> prism_render::UiOverlay
 ///
 /// The frame packet owns the `UiOverlayInput` across frames, so this refills
 /// the existing `quads` / `texts` allocations instead of building new ones (#66).
-pub fn convert_ui_draw_list_to_overlay_into(world: &World, out: &mut prism_render::UiOverlayInput) {
+pub fn convert_ui_draw_list_to_overlay_into(
+    world: &World,
+    out: &mut prism_ui_draw::UiOverlayInput,
+) {
     out.clear();
 
     let screen = world
@@ -302,15 +305,15 @@ pub fn convert_ui_draw_list_to_overlay_into(world: &World, out: &mut prism_rende
             UiDrawItem::Quad(quad) => quad,
             UiDrawItem::Text(text) => {
                 // 文本命令按像素坐标原样透传（record 时展开成逐字形四边形）。
-                out.push_text(prism_render::ui_overlay::UiTextInput {
+                out.push_text(prism_ui_draw::UiTextInput {
                     rect: text.rect,
                     content: text.content.clone(),
                     font_size: text.font_size,
                     color: text.color,
                     alignment: match text.alignment {
-                        TextAlign::Left => prism_render::ui_overlay::UiTextAlign::Left,
-                        TextAlign::Center => prism_render::ui_overlay::UiTextAlign::Center,
-                        TextAlign::Right => prism_render::ui_overlay::UiTextAlign::Right,
+                        TextAlign::Left => prism_ui_draw::UiTextAlign::Left,
+                        TextAlign::Center => prism_ui_draw::UiTextAlign::Center,
+                        TextAlign::Right => prism_ui_draw::UiTextAlign::Right,
                     },
                     font: (!text.font.is_empty()).then(|| text.font.clone()),
                     wrap: text.wrap,
@@ -335,7 +338,7 @@ pub fn convert_ui_draw_list_to_overlay_into(world: &World, out: &mut prism_rende
         } else {
             0.0
         };
-        out.push_quad(prism_render::ui_overlay::UiQuad {
+        out.push_quad(prism_ui_draw::UiQuad {
             rect: [x0, y0, x1, y1], // NDC [xmin, ymin, xmax, ymax]
             color: q.color,
             border_radius: br_ndc,
