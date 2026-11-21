@@ -12,6 +12,25 @@ pub struct UiQuad {
     pub border_radius: f32,
     /// Bindless SRV slot of a background image (`None` = flat colour, #591).
     pub texture: Option<u32>,
+    /// Backdrop blur radius in pixels; `0.0` = the quad does not sample the
+    /// backdrop.
+    ///
+    /// The host runs one filter pass over the composited scene when any quad
+    /// asks for it, then the UI shader samples the filtered result. A surface
+    /// opts in by naming a backdrop-filtering material, not by a widget flag.
+    pub backdrop_sigma: f32,
+}
+
+impl Default for UiQuad {
+    fn default() -> Self {
+        Self {
+            rect: [0.0; 4],
+            color: [0.0; 4],
+            border_radius: 0.0,
+            texture: None,
+            backdrop_sigma: 0.0,
+        }
+    }
 }
 
 /// 文本绘制命令 — screen-space pixel 矩形 (top-left origin) + 内容.

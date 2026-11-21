@@ -85,16 +85,6 @@ pub struct Theme {
     // ---- metrics: typography ----
     pub font_size: f32,
     pub font_size_small: f32,
-
-    // ---- metrics: floating dialogs ----
-    /// Blur radius, in pixels, of a frosted-glass surface over the backdrop.
-    pub glass_blur_sigma: f32,
-    /// Corner radius of a floating dialog.
-    pub dialog_radius: f32,
-    /// Inner margin of a floating dialog.
-    pub dialog_padding: Edges,
-    /// Width of a floating dialog; its content decides the height.
-    pub dialog_width: f32,
 }
 
 /// Built-in colour presets.
@@ -185,11 +175,6 @@ impl Theme {
 
             font_size: 13.0,
             font_size_small: 12.0,
-
-            glass_blur_sigma: 28.0,
-            dialog_radius: 14.0,
-            dialog_padding: Edges::symmetric(30.0, 26.0),
-            dialog_width: 420.0,
         }
     }
 
@@ -243,11 +228,6 @@ impl Theme {
 
             font_size: 13.0,
             font_size_small: 12.0,
-
-            glass_blur_sigma: 28.0,
-            dialog_radius: 14.0,
-            dialog_padding: Edges::symmetric(30.0, 26.0),
-            dialog_width: 420.0,
         }
     }
 
@@ -267,25 +247,6 @@ impl Theme {
             ThemePreset::Light
         } else {
             ThemePreset::Dark
-        }
-    }
-
-    /// Backdrop tint of a frosted-glass surface.
-    ///
-    /// Light glass has to stay opaque enough for body text to keep its
-    /// contrast; dark glass can let more of the scene through.
-    pub fn glass_tint(self) -> Color {
-        match self.preset() {
-            ThemePreset::Dark => Color::rgba(0.106, 0.106, 0.110, 0.72),
-            ThemePreset::Light => Color::rgba(0.984, 0.984, 0.988, 0.82),
-        }
-    }
-
-    /// Hairline highlight along the top edge of a raised glass surface.
-    pub fn glass_highlight(self) -> Color {
-        match self.preset() {
-            ThemePreset::Dark => Color::rgba(1.0, 1.0, 1.0, 0.10),
-            ThemePreset::Light => Color::rgba(1.0, 1.0, 1.0, 0.90),
         }
     }
 

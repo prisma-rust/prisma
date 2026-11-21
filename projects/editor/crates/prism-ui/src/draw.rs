@@ -2,6 +2,7 @@
 
 use glam::Vec2;
 
+use crate::material::Material;
 use crate::style::{Color, Rect};
 
 /// Bindless SRV texture slot or registered offscreen viewport texture handle.
@@ -18,7 +19,13 @@ pub enum TextAlign {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiDrawCommand {
-    /// Filled rounded rectangle, optionally textured (e.g. icons or zero-copy 3D viewports).
+    /// Filled rounded rectangle, optionally textured (e.g. icons or zero-copy
+    /// 3D viewports).
+    ///
+    /// `material` names the shader that produces the surface and its parameters;
+    /// `None` is the host default (a flat tinted fill). A material that samples
+    /// the backdrop makes the host run its filter pass before this quad, so
+    /// glass needs no draw command of its own.
     Quad {
         rect: Rect,
         color: Color,
@@ -26,6 +33,7 @@ pub enum UiDrawCommand {
         border_width: f32,
         radius: f32,
         texture: Option<UiTextureId>,
+        material: Option<Material>,
     },
     /// Crisp text run in screen-space pixel coordinates (top-left origin).
     Text {
@@ -45,14 +53,6 @@ pub enum UiDrawCommand {
         b: Vec2,
         width: f32,
         color: Color,
-    },
-    /// Render-graph Dual-Kawase backdrop blur pass over the given rect.
-    #[cfg(feature = "ui-blur")]
-    BackdropBlur {
-        rect: Rect,
-        radius: f32,
-        blur_sigma: f32,
-        tint: Color,
     },
     /// Analytical SDF drop shadow pass.
     #[cfg(feature = "ui-effects")]

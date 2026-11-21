@@ -20,6 +20,12 @@ pub struct UiQuad {
     pub border_radius: f32,
     /// 背景图 bindless 槽位（#591）；`None` = 纯色填充。
     pub texture: Option<u32>,
+    /// Backdrop blur radius in pixels; `0.0` means the background is not sampled.
+    ///
+    /// When a quad needs a blur, the host filters the composited scene once and the
+    /// UI shader samples the result. The surface declares this through its material
+    /// rather than through a per-widget toggle bit.
+    pub backdrop_sigma: f32,
     /// 绘制层级（z-index）。层级内再按 [`UiQuad::order`] 排。
     ///
     /// 普通 UI 节点都是 0；需要「永远压在某层之上」的东西（雨滴粒子、调试
@@ -36,6 +42,7 @@ impl Default for UiQuad {
             color: [0.0; 4],
             border_radius: 0.0,
             texture: None,
+            backdrop_sigma: 0.0,
             layer: 0,
             order: EXTERNAL_UI_ORDER,
         }
@@ -185,6 +192,7 @@ pub fn ui_render_system(world: &mut World) {
                 color: bg,
                 border_radius: style.border_radius * scale,
                 texture,
+                backdrop_sigma: 0.0,
                 layer: 0,
                 order: layout.order,
             }),
@@ -332,6 +340,7 @@ pub fn convert_ui_draw_list_to_overlay_into(world: &World, out: &mut prism_rende
             color: q.color,
             border_radius: br_ndc,
             texture: q.texture,
+            backdrop_sigma: q.backdrop_sigma,
         });
     }
 }

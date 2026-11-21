@@ -10,6 +10,7 @@ use crate::behavior::{
     DragPayload, DraggableValue, Focusable, Interactable, Scrollable, TextEditable,
 };
 use crate::draw::{TextAlign, UiDrawCommand, UiTextureId};
+use crate::material::Material;
 use crate::style::{
     Align, Color, Edges, FlexDirection, Justify, LayoutStyle, Length, PositionType, VisualBox,
     VisualPatch,
@@ -250,9 +251,20 @@ impl ElementBox {
         self
     }
 
-    #[cfg(feature = "ui-blur")]
-    pub fn backdrop_blur(mut self, sigma: f32) -> Self {
-        self.ensure_visual().base.backdrop_blur = sigma;
+    /// Render this node's surface with `material`.
+    ///
+    /// The material names the shader and its parameters; a surface that samples
+    /// the backdrop asks the host for its filter pass, so glass is one material
+    /// among many rather than a dedicated widget flag.
+    pub fn material(mut self, material: Material) -> Self {
+        self.ensure_visual().base.material = Some(material);
+        self
+    }
+
+    /// Render this node's surface with `material` while hovered.
+    pub fn hover_material(mut self, material: Material) -> Self {
+        let v = self.ensure_visual();
+        v.hover.get_or_insert_with(VisualPatch::default).material = Some(material);
         self
     }
 

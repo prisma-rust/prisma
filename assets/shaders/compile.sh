@@ -458,6 +458,12 @@ compile_stage ui_overlay vertexMain vertex
 compile_stage ui_overlay fragmentMain fragment
 emit_reflection ui_overlay vertexMain vertex fragmentMain fragment
 
+# ui_backdrop: separable Gaussian the UI overlay samples when a surface
+# material asks for a backdrop filter.
+compile_stage ui_backdrop vertexMain vertex
+compile_stage ui_backdrop fragmentMain fragment
+emit_reflection ui_backdrop vertexMain vertex fragmentMain fragment
+
 # sprites: vertex + fragment (2D sprite quads sampled through the bindless
 # texture table, drawn inside ForwardPass' HDR render pass).
 compile_stage sprites vertexMain vertex

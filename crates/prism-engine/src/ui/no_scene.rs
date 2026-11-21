@@ -58,6 +58,7 @@ pub fn push_no_scene_screen(list: &mut UiDrawList, width: f32, height: f32, time
         color: PANEL,
         border_radius: 14.0,
         texture: None,
+        backdrop_sigma: 0.0,
         layer: PANEL_LAYER,
         order: 0,
     });
@@ -134,6 +135,7 @@ fn push_checkerboard(list: &mut UiDrawList, width: f32, height: f32, time: f32) 
                 color,
                 border_radius: 0.0,
                 texture: None,
+                backdrop_sigma: 0.0,
                 layer: PATTERN_LAYER,
                 order: 0,
             });

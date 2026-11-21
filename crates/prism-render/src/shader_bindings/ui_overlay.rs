@@ -11,6 +11,8 @@ pub const ENTRY_FRAGMENT_MAIN: &str = "fragmentMain"; // stage: FRAGMENT
 // --- descriptor set 0 ---
 pub const GLYPH_ATLAS_SET: u32 = 0;
 pub const GLYPH_ATLAS_BINDING: u32 = 0; // COMBINED_IMAGE_SAMPLER
+pub const BACKDROP_TEX_SET: u32 = 0;
+pub const BACKDROP_TEX_BINDING: u32 = 1; // COMBINED_IMAGE_SAMPLER
 
 // --- descriptor set 1 ---
 pub const GLOBAL_SAMPLERS_SET: u32 = 1;

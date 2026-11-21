@@ -20,6 +20,9 @@ struct UiVertex {
     radius: f32,
     /// Bindless SRV slot of a background image; `u32::MAX` = glyph atlas (#591).
     texture: u32,
+    /// Backdrop blur radius in pixels; `0` = this quad does not sample the
+    /// backdrop.
+    backdrop: f32,
 }
 
 use std::collections::HashMap;
@@ -37,6 +40,9 @@ use crate::shader_bindings::ui_overlay::*;
 
 pub(crate) const VERTICES_PER_QUAD: u32 = 6;
 const VERTEX_SIZE: vk::DeviceSize = size_of::<UiVertex>() as vk::DeviceSize;
+
+/// Descriptor slot of the filtered backdrop inside the UI's own set 0.
+const BACKDROP_TEX_BINDING: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // 字形图集
@@ -399,7 +405,10 @@ pub struct UiOverlay {
     layout: Option<vk::PipelineLayout>,
     set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet,
+    /// One set per frame-in-flight: the backdrop view changes between frames,
+    /// and writing a set that a still-executing command buffer references is
+    /// a validation error, so updates rotate through these instead.
+    descriptor_sets: [vk::DescriptorSet; crate::swapchain::FRAMES_IN_FLIGHT],
     vertex_buffer: vk::Buffer,
     vertex_memory: vk::DeviceMemory,
     vertex_capacity: u32,
@@ -419,6 +428,10 @@ pub struct UiOverlay {
     /// Cleared by [`UiOverlay::on_swapchain_views_changed`] because the old
     /// image views are destroyed during swapchain recreation.
     framebuffers: Vec<CachedFramebuffer>,
+    /// Filtered backdrop sampled by surfaces whose material asks for it.
+    /// Owned by `GraphRenderer`; this overlay only borrows the handles.
+    backdrop_view: vk::ImageView,
+    backdrop_sampler: vk::Sampler,
     /// Objects still referenced by in-flight command buffers (see `crate::retire`).
     retire: crate::retire::RetireQueue,
     /// Frame slot being recorded; growth parks the old buffer in this slot.
@@ -494,15 +507,27 @@ impl UiOverlay {
         )
         .context("UiOverlay: create vertex buffer")?;
 
-        let (set_layout, descriptor_pool, descriptor_set) =
-            Self::create_descriptors(&device, atlas.view, atlas.sampler)?;
+        let backdrop_sampler = Self::create_backdrop_sampler(&device)?;
+
+        // Until the renderer supplies a real backdrop, this slot points at the
+        // glyph atlas: it is always alive and already in a sampled layout, and
+        // the shader only reads the slot for quads that ask for a backdrop.
+        let (set_layout, descriptor_pool, descriptor_sets) = Self::create_descriptors(
+            &device,
+            atlas.view,
+            atlas.sampler,
+            atlas.view,
+            backdrop_sampler,
+        )?;
 
         Ok(Self {
+            backdrop_view: atlas.view,
+            backdrop_sampler,
             pipeline: None,
             layout: None,
             set_layout,
             descriptor_pool,
-            descriptor_set,
+            descriptor_sets,
             vertex_buffer,
             vertex_memory,
             vertex_capacity: init_vertices,
@@ -516,6 +541,58 @@ impl UiOverlay {
             retire: crate::retire::RetireQueue::new(),
             frame_index: 0,
         })
+    }
+
+    /// Bind the renderer's filtered backdrop.
+    ///
+    /// Called once per frame before `record`; the descriptor is only rewritten
+    /// when the view actually changes, which on a steady frame rate means once
+    /// per swapchain resize.
+    pub fn set_backdrop(&mut self, view: vk::ImageView, frame_index: u32) {
+        if self.backdrop_view == view {
+            return;
+        }
+        self.backdrop_view = view;
+        self.write_backdrop_descriptor(frame_index);
+    }
+
+    fn create_backdrop_sampler(device: &ash::Device) -> Result<vk::Sampler> {
+        unsafe {
+            device.create_sampler(
+                &vk::SamplerCreateInfo::default()
+                    .mag_filter(vk::Filter::LINEAR)
+                    .min_filter(vk::Filter::LINEAR)
+                    .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .min_lod(0.0)
+                    .max_lod(1.0),
+                None,
+            )
+        }
+        .context("UiOverlay: backdrop sampler")
+    }
+
+    /// Rewrite the backdrop binding of one frame slot's set.
+    ///
+    /// `frame_index` selects the set whose command buffer is *not* in flight;
+    /// using the slot being recorded keeps the write out of a live submission.
+    fn write_backdrop_descriptor(&self, frame_index: u32) {
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(self.backdrop_view)
+            .sampler(self.backdrop_sampler);
+        let set =
+            self.descriptor_sets[frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT];
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(set)
+            .dst_binding(BACKDROP_TEX_BINDING)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(std::slice::from_ref(&image_info));
+        unsafe {
+            self.device.update_descriptor_sets(std::slice::from_ref(&write), &[]);
+        }
     }
 
     /// 让 render pass 跟随 swapchain 的实际颜色格式。
@@ -567,51 +644,76 @@ impl UiOverlay {
         device: &ash::Device,
         atlas_view: vk::ImageView,
         atlas_sampler: vk::Sampler,
+        backdrop_view: vk::ImageView,
+        backdrop_sampler: vk::Sampler,
     ) -> Result<(
         vk::DescriptorSetLayout,
         vk::DescriptorPool,
-        vk::DescriptorSet,
+        [vk::DescriptorSet; crate::swapchain::FRAMES_IN_FLIGHT],
     )> {
-        let binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(GLYPH_ATLAS_BINDING)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        let bindings_desc = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(GLYPH_ATLAS_BINDING)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BACKDROP_TEX_BINDING)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
         let layout_info =
-            vk::DescriptorSetLayoutCreateInfo::default().bindings(std::slice::from_ref(&binding));
+            vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None) }
             .context("UiOverlay: descriptor set layout")?;
 
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1,
+            descriptor_count: 2,
         };
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(1)
+            .max_sets(crate::swapchain::FRAMES_IN_FLIGHT as u32)
             .pool_sizes(std::slice::from_ref(&pool_size));
         let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }
             .context("UiOverlay: descriptor pool")?;
 
+        let layouts = [set_layout; crate::swapchain::FRAMES_IN_FLIGHT];
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(pool)
-            .set_layouts(std::slice::from_ref(&set_layout));
-        let set = unsafe { device.allocate_descriptor_sets(&alloc_info) }
-            .context("UiOverlay: allocate descriptor set")?[0];
+            .set_layouts(&layouts);
+        let allocated = unsafe { device.allocate_descriptor_sets(&alloc_info) }
+            .context("UiOverlay: allocate descriptor sets")?;
 
-        let image_info = vk::DescriptorImageInfo::default()
+        let atlas_info = vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
             .image_view(atlas_view)
             .sampler(atlas_sampler);
-        let write = vk::WriteDescriptorSet::default()
-            .dst_set(set)
-            .dst_binding(GLYPH_ATLAS_BINDING)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(std::slice::from_ref(&image_info));
-        unsafe {
-            device.update_descriptor_sets(std::slice::from_ref(&write), &[]);
+        let backdrop_info = vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(backdrop_view)
+            .sampler(backdrop_sampler);
+        for set in &allocated {
+            let writes = [
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(GLYPH_ATLAS_BINDING)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(std::slice::from_ref(&atlas_info)),
+                vk::WriteDescriptorSet::default()
+                    .dst_set(*set)
+                    .dst_binding(BACKDROP_TEX_BINDING)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(std::slice::from_ref(&backdrop_info)),
+            ];
+            unsafe {
+                device.update_descriptor_sets(&writes, &[]);
+            }
         }
 
-        Ok((set_layout, pool, set))
+        let mut sets = [vk::DescriptorSet::null(); crate::swapchain::FRAMES_IN_FLIGHT];
+        sets.copy_from_slice(&allocated);
+        Ok((set_layout, pool, sets))
     }
 
     fn create_render_pass(
@@ -693,13 +795,20 @@ impl UiOverlay {
         ];
 
         // set 0 binding 0 — glyph atlas（见 GlyphAtlas::create_descriptors）。
-        let binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(GLYPH_ATLAS_BINDING)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        let bindings_desc = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(GLYPH_ATLAS_BINDING)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BACKDROP_TEX_BINDING)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
         let set_layout_info =
-            vk::DescriptorSetLayoutCreateInfo::default().bindings(std::slice::from_ref(&binding));
+            vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&set_layout_info, None) }
             .context("UiOverlay: pipeline set layout")?;
         // set 1 = 场景共享的 bindless 纹理表（UI 背景图，#591）。
@@ -751,6 +860,11 @@ impl UiOverlay {
                 .location(6)
                 .format(vk::Format::R32_UINT)
                 .offset(52),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(7)
+                .format(vk::Format::R32_SFLOAT)
+                .offset(56),
         ];
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(std::slice::from_ref(&binding_desc))
@@ -932,6 +1046,7 @@ impl UiOverlay {
                 [r, g, b, a],
                 Some((half, radius)),
                 quad.texture.unwrap_or(u32::MAX),
+                quad.backdrop_sigma,
             );
         };
 
@@ -1071,7 +1186,9 @@ impl UiOverlay {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.layout.unwrap(),
                 0,
-                std::slice::from_ref(&self.descriptor_set),
+                std::slice::from_ref(
+                    &self.descriptor_sets[frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT],
+                ),
                 &[],
             );
             if bindless_set != vk::DescriptorSet::null() {
@@ -1214,6 +1331,7 @@ impl UiOverlay {
                         [r, g, b, a],
                         None,
                         u32::MAX,
+                        0.0,
                     );
                 }
                 cursor_x += glyph.advance;
@@ -1346,6 +1464,7 @@ fn emit_quad(
     color: [f32; 4],
     rounded: Option<([f32; 2], f32)>,
     texture: u32,
+    backdrop: f32,
 ) {
     let [x0, y0] = p0;
     let [x1, y1] = p1;
@@ -1374,6 +1493,7 @@ fn emit_quad(
             half_size,
             radius,
             texture,
+            backdrop,
         });
     }
 }
@@ -1399,6 +1519,7 @@ impl Drop for UiOverlay {
             self.device.destroy_render_pass(self.render_pass, None);
             self.device.destroy_buffer(self.vertex_buffer, None);
             self.device.free_memory(self.vertex_memory, None);
+            self.device.destroy_sampler(self.backdrop_sampler, None);
         }
     }
 }

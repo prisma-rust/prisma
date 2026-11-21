@@ -867,18 +867,11 @@ impl UiTree {
                     blur: shadow.blur,
                 });
             }
-            #[cfg(feature = "ui-blur")]
-            if style.backdrop_blur > 0.0 {
-                out.push(UiDrawCommand::BackdropBlur {
-                    rect,
-                    radius: style.radius,
-                    blur_sigma: style.backdrop_blur,
-                    tint: style.bg.unwrap_or(Color::TRANSPARENT),
-                });
-            }
             let bg = style.bg.unwrap_or(Color::TRANSPARENT);
             let bc = style.border_color.unwrap_or(Color::TRANSPARENT);
-            if bg.a > 0.0 || (bc.a > 0.0 && style.border_width > 0.0) {
+            // A material owns the surface, so it draws even when the fill is
+            // clear: a frosted panel with no flat colour still has to composite.
+            if bg.a > 0.0 || (bc.a > 0.0 && style.border_width > 0.0) || style.material.is_some() {
                 out.push(UiDrawCommand::Quad {
                     rect,
                     color: bg.with_alpha(bg.a * style.opacity),
@@ -886,6 +879,7 @@ impl UiTree {
                     border_width: style.border_width,
                     radius: style.radius,
                     texture: None,
+                    material: style.material.clone(),
                 });
             }
         }
@@ -916,6 +910,9 @@ impl UiTree {
                     border_width: 0.0,
                     radius: 0.0,
                     texture: Some(*texture),
+                    material: node.visual.as_ref().and_then(|vbox| {
+                        vbox.resolve(&node.state).material
+                    }),
                 });
             }
             NodeContent::Custom(cmds) => {

@@ -2,6 +2,7 @@
 
 #![deny(warnings)]
 
+pub mod about;
 pub mod bridge;
 pub mod inspector;
 
@@ -13,6 +14,7 @@ use prism_editor_api::schema::{build_schema, Schema};
 use prism_ui::prelude::*;
 use serde_json::{json, Value};
 
+use crate::about::{build_about_dialog, ABOUT_CLOSE_KEY};
 use crate::inspector::{build_inspector_ui, field_node_key, FieldEdit, UndoStack};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub struct EditorUiState {
     /// Which menu is open. Editor policy, so it lives here rather than in the
     /// UI kernel.
     pub menu: MenuState,
+    /// Whether the About dialog is on screen.
+    pub about_open: bool,
 }
 
 impl Default for EditorUiState {
@@ -121,6 +125,7 @@ impl Default for EditorUiState {
             elapsed_time: 0.0,
             theme: Theme::dark(),
             menu: MenuState::default(),
+            about_open: false,
             assets: vec![
                 "scenes/main.scene.json".to_string(),
                 "materials/pbr_metal.mat.json".to_string(),
@@ -355,6 +360,7 @@ impl EditorUiState {
         for action in actions {
             match action {
                 MenuAction::Command(command) => match command.as_str() {
+                    "help.about" => self.about_open = true,
                     "scene.toggle_play" => self.playing = !self.playing,
                     "scene.gizmo_translate" => self.gizmo_mode = GizmoMode::Translate,
                     "scene.gizmo_rotate" => self.gizmo_mode = GizmoMode::Rotate,
@@ -431,6 +437,7 @@ impl EditorUiState {
         let theme = self.theme;
         let menus = self.menus();
         let menu_state = self.menu.clone();
+        let about_open = self.about_open;
         {
             let mut ctx = UiContext::new(&mut self.tree);
             let root = ctx.mount(
@@ -444,6 +451,14 @@ impl EditorUiState {
                     .menus(menus)
                     .mount(ctx, &menu_state);
             });
+            // Floating dialogs live on the popup layer so they draw above the
+            // panels and take the pointer before anything underneath.
+            if about_open {
+                let overlay = ctx.tree.overlay_root(viewport_size);
+                ctx.with_parent(overlay, |ctx| {
+                    ctx.mount(build_about_dialog(&theme, viewport_size));
+                });
+            }
             ctx.with_parent(root, |ctx| {
                 ctx.mount(
                     col()
@@ -617,7 +632,9 @@ impl EditorUiState {
                     }
                 }
                 UiAction::Clicked(key) => {
-                    if *key == "toolbar:undo".into_node_key() {
+                    if *key == ABOUT_CLOSE_KEY.into_node_key() {
+                        self.about_open = false;
+                    } else if *key == "toolbar:undo".into_node_key() {
                         if let Some(edit) = self.undo.pop_undo() {
                             self.apply_field_value(
                                 edit.entity_id,

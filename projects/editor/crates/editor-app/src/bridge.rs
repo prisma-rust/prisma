@@ -61,13 +61,20 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
                 border_width,
                 radius,
                 texture,
+                material,
             } => {
+                // A surface whose material samples the backdrop asks the renderer
+                // for its filter pass; the tint stays the shader's own colour.
+                let backdrop_sigma = material
+                    .as_ref()
+                    .map_or(0.0, |material| material.backdrop_sigma);
                 if *border_width > 0.0 && border_color.a > 0.0 {
                     dst.push_quad(EngineUiQuad {
                         rect: rect.to_array(),
                         color: border_color.to_array(),
                         border_radius: *radius,
                         texture: None,
+                        backdrop_sigma: 0.0,
                         layer: 0,
                         order,
                     });
@@ -84,6 +91,7 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
                         color: color.to_array(),
                         border_radius: (*radius - inset).max(0.0),
                         texture: texture.map(|t| t.0),
+                        backdrop_sigma,
                         layer: 0,
                         order,
                     });
@@ -93,6 +101,7 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
                         color: color.to_array(),
                         border_radius: *radius,
                         texture: texture.map(|t| t.0),
+                        backdrop_sigma,
                         layer: 0,
                         order,
                     });
@@ -124,20 +133,6 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
                 });
                 order += 1;
             }
-            UiDrawCommand::BackdropBlur {
-                rect, radius, tint, ..
-            } => {
-                // Fallback quad until Render Graph Dual-Kawase backdrop pass is wired.
-                dst.push_quad(EngineUiQuad {
-                    rect: rect.to_array(),
-                    color: tint.with_alpha(tint.a.max(0.72)).to_array(),
-                    border_radius: *radius,
-                    texture: None,
-                    layer: 1,
-                    order,
-                });
-                order += 1;
-            }
             UiDrawCommand::DropShadow {
                 rect,
                 radius,
@@ -150,6 +145,7 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
                     color: color.to_array(),
                     border_radius: *radius,
                     texture: None,
+                    backdrop_sigma: 0.0,
                     layer: 0,
                     order,
                 });

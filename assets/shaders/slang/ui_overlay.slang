@@ -8,8 +8,14 @@
 //   - glyph quads (text): uv spans the glyph's rect in the R8 glyph atlas
 //     (fontdue-rasterized); the sampled alpha modulates the vertex color.
 //
+// A third quad kind samples the filtered backdrop: when a surface's material
+// asks for a backdrop, the host blurs the scene into an image and the
+// fragment shader composites that instead of a flat fill. The vertex carries
+// the blur radius; zero means "do not sample the backdrop at all".
+//
 // Sets (must match `UiOverlay::create_pipeline`):
 //   set 0, binding 0 - font glyph atlas (R8 UNORM, combined image sampler)
+//   set 0, binding 1 - filtered backdrop (combined image sampler)
 //   set 1, binding 0 - bindless samplers (`globalSamplers[4]`, shared table)
 //   set 1, binding 1 - bindless SRVs (`bindlessSrvs[]`, shared table)
 //
@@ -26,6 +32,11 @@
 // is reserved as white so untextured quads (uv = 0) sample 1.0.
 [[vk::binding(0, 0)]]
 Sampler2D glyphAtlas;
+
+// Filtered scene colour, produced by the backdrop pass. Bound even when no
+// surface asks for it; the shader only samples it for backdrop quads.
+[[vk::binding(1, 0)]]
+Sampler2D backdropTex;
 
 [[vk::binding(0, 1)]]
 SamplerState globalSamplers[];
@@ -47,6 +58,7 @@ struct UiVertexIn
     float2 halfSize : TEXCOORD2;  // location 4 — quad half size in pixels
     float  radius   : TEXCOORD3;  // location 5 — corner radius in pixels (<0 = skip)
     uint   texture  : TEXCOORD4;  // location 6 — bindless slot (0xFFFFFFFF = atlas)
+    float  backdrop : TEXCOORD5;  // location 7 — backdrop sigma in pixels (0 = none)
 };
 
 struct UiVaryings
@@ -58,6 +70,8 @@ struct UiVaryings
     float2 halfSize : TEXCOORD2;
     float  radius   : TEXCOORD3;
     uint   texture  : TEXCOORD4;
+    float  backdrop : TEXCOORD5;
+    float2 screenUv : TEXCOORD6;
 };
 
 [shader("vertex")]
@@ -71,6 +85,11 @@ UiVaryings vertexMain(UiVertexIn in)
     out.halfSize = in.halfSize;
     out.radius   = in.radius;
     out.texture  = in.texture;
+    out.backdrop = in.backdrop;
+    // NDC -> screen UV for backdrop sampling. Vulkan NDC y = -1 is the top of
+    // the screen, and the blurred image is written top-down, so y is not
+    // flipped here.
+    out.screenUv = in.position * float2(0.5, 0.5) + float2(0.5, 0.5);
     return out;
 }
 
@@ -105,6 +124,18 @@ float4 fragmentMain(UiVaryings in) : SV_Target0
     {
         float d = sdRoundBox(in.local, in.halfSize, in.radius);
         coverage *= 1.0 - smoothstep(-1.0, 1.0, d);
+    }
+
+    // Backdrop surfaces replace the destination rather than tint it: the
+    // destination still holds the *unfiltered* scene, so blending the tint over
+    // it would just be a translucent rectangle. Mixing the filtered colour with
+    // the tint and writing opaque rgb (coverage on alpha) is what makes the
+    // surface read as glass.
+    if (in.backdrop > 0.0)
+    {
+        float3 blurred = backdropTex.SampleLevel(in.screenUv, 0.0).rgb;
+        float3 glass = lerp(blurred, in.color.rgb * sampled.rgb, in.color.a);
+        return float4(glass, coverage);
     }
 
     // Straight alpha: the pipeline blends with SRC_ALPHA/ONE_MINUS_SRC_ALPHA,

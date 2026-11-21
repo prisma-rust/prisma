@@ -1,11 +1,11 @@
-//! `RenderTextureManager` — 由无绑定 SRV 表支持的 RGBA8 纹理
+//! `RenderTextureManager` — RGBA8 textures backed by the bindless SRV table.
 //!
-//! 管理器拥有每个纹理的设备本地图像+内存+图像视图，
-//! 以及它在无绑定描述符集中占用的槽位。
-//! 构造时在槽 0 注册了一个永久的 1×1 洋红色回退，
-//! 因此未注册/尚未上传的句柄永远不会产生未绑定描述符读取。
-//! 渲染器的着色器路径检查 `TextureHandle::INVALID` 并返回回退颜色，
-//! CPU 端的 `get_srv` 始终返回真实槽位。
+//! The manager owns each texture's device-local image, memory and view, plus
+//! the bindless slot it occupies. Construction registers a permanent
+//! checkerboard fallback in slot 0, so an unregistered or not-yet-uploaded
+//! handle can never read an unbound descriptor. The shader path checks
+//! `TextureHandle::INVALID` and returns the fallback colour; the CPU-side
+//! `get_srv` always returns a real slot.
 //!
 //! P0 范围（提交 3）：
 //! - `RenderTextureManager::new` 构建无绑定表并在槽 0 注册回退视图。
@@ -14,10 +14,8 @@
 //!   结果 `ImageView` 通过 `attach_image_view` 在此连接。
 //!   这种分离使管理器足够 Vulkan 无关，提交 3 无需拖入暂存缓冲区/屏障代码即可编译和单元测试。
 //!
-//! P0 scope (commit 9): the `register` path will be replaced with an
-//! end-to-end image upload (image + memory + view + bindless write in
-//! one call), using the existing `buffer::create_buffer` + a small
-//! one-shot command buffer helper.
+//! Textures are uploaded end to end (image + memory + view + bindless write in
+//! one call) through `buffer::create_and_upload_image`.
 
 use anyhow::Context as _;
 use ash::vk;
@@ -26,6 +24,29 @@ use slotmap::{new_key_type, SlotMap};
 use crate::bindless::{BindlessTextureTable, TextureHandle};
 use crate::buffer::create_and_upload_image;
 use crate::context::VulkanContext;
+
+/// Edge length of the missing-texture fallback image, in texels.
+///
+/// Eight keeps the checker readable when a surface maps it 1:1 and still
+/// averages to a neutral mid grey when it is minified.
+const FALLBACK_EDGE: u32 = 8;
+
+/// RGBA8 texels of the missing-texture fallback: a grey/black checkerboard.
+///
+/// Two rows of black and two of dark grey make a 4×4 tile, which repeats
+/// seamlessly because eight is a whole number of tiles.
+fn fallback_pixels() -> Vec<u8> {
+    const GREY: [u8; 4] = [128, 128, 128, 255];
+    const BLACK: [u8; 4] = [0, 0, 0, 255];
+    let mut pixels = Vec::with_capacity((FALLBACK_EDGE * FALLBACK_EDGE * 4) as usize);
+    for y in 0..FALLBACK_EDGE {
+        for x in 0..FALLBACK_EDGE {
+            let cell = (x / 2 + y / 2) % 2;
+            pixels.extend_from_slice(if cell == 0 { &GREY } else { &BLACK });
+        }
+    }
+    pixels
+}
 
 // Local handle. The engine layer translates asset texture handles
 // into this when it calls `RenderTextureManager::reserve` so the render
@@ -233,12 +254,12 @@ pub struct UploadedTexture {
 pub struct RenderTextureManager {
     bindless: BindlessTextureTable,
     textures: SlotMap<AssetTextureHandle, UploadedTexture>,
-    /// Slot 0 of the bindless table is reserved for the magenta fallback
-    /// and is never reallocated.
+    /// Slot 0 of the bindless table is reserved for the missing-texture
+    /// fallback and is never reallocated.
     fallback_srv: TextureHandle,
     /// The fallback image view — written into any slot that is released
-    /// via `unregister` so a stale handle sampling the freed view hits
-    /// magenta instead of a use-after-free.
+    /// via `unregister` so a stale handle sampling the freed view hits the
+    /// checkerboard instead of a use-after-free.
     fallback_view: vk::ImageView,
     /// Total slots the bindless table can hold. User textures start at
     /// slot 1 (slot 0 is the fallback). The total is `fallback_capacity +
@@ -248,8 +269,8 @@ pub struct RenderTextureManager {
 }
 
 impl RenderTextureManager {
-    /// Construct a new manager with a 1×1 magenta fallback already in slot
-    /// 0 of the bindless table.
+    /// Construct a new manager with the checkerboard fallback already in
+    /// slot 0 of the bindless table.
     ///
     /// `user_capacity` is the maximum number of user textures the manager
     /// will accept; the fallback is allocated *in addition* to this.
@@ -266,24 +287,24 @@ impl RenderTextureManager {
         let mut bindless = BindlessTextureTable::new(&context.device, total)
             .map_err(|e| anyhow::anyhow!("RenderTextureManager::new: bindless: {e}"))?;
 
-        // Magenta fallback: 1×1 opaque magenta (R=1,G=0,B=1,A=1) in the
-        // engine's linear working space (the shader applies sRGB→linear on
-        // sampled albedo; the fallback is only a "missing texture" marker so
-        // its exact color space is irrelevant). Written into bindless slot 0.
-        let magenta = [255u8, 0, 255, 255];
+        // Missing-texture fallback: a neutral checkerboard, written into
+        // bindless slot 0. It marks "nothing is bound here" without shouting:
+        // the pattern is recognisable at any scale, and a 1×1 sample of it is
+        // just mid grey, so a surface that samples one texel reads as
+        // untextured rather than as an error.
         let (fb_image, fb_memory, fb_view) = unsafe {
             create_and_upload_image(
                 context,
                 command_pool,
                 graphics_queue,
-                1,
-                1,
-                &magenta,
+                FALLBACK_EDGE,
+                FALLBACK_EDGE,
+                &fallback_pixels(),
                 1,
                 vk::Format::R8G8B8A8_UNORM,
             )
         }
-        .context("RenderTextureManager::new: create magenta fallback")?;
+        .context("RenderTextureManager::new: create checkerboard fallback")?;
         bindless
             .register_with_handle(0, fb_view)
             .context("RenderTextureManager::new: register fallback in slot 0")?;
@@ -316,7 +337,7 @@ impl RenderTextureManager {
         })
     }
 
-    /// The bindless SRV slot of the magenta fallback.
+    /// The bindless SRV slot of the missing-texture fallback.
     pub fn fallback_srv(&self) -> TextureHandle {
         self.fallback_srv
     }
@@ -343,9 +364,10 @@ impl RenderTextureManager {
         graphics_queue: vk::Queue,
         input: &TextureUploadInput,
     ) -> anyhow::Result<AssetTextureHandle> {
-        // 块压缩能不能采样由设备决定（很多移动 GPU 没有 BC，桌面没有 ASTC）。
-        // 不先查就会变成 VUID 刷屏 + 上传失败；这里明确报错，调用方（引擎的
-        // 资产解析）会退化成洋红占位（#519）。
+        // Whether a block-compressed format is sampleable depends on the device
+        // (many mobile GPUs lack BC, desktops lack ASTC). Checking up front
+        // turns a VUID flood plus a failed upload into one explicit error that
+        // the caller degrades to the fallback surface.
         if input.format.is_compressed()
             && !texture_format_supported(
                 &context.instance,
@@ -411,7 +433,7 @@ impl RenderTextureManager {
         }
         .context("RenderTextureManager::reserve: upload texture")?;
 
-        // Reserve the next bindless SRV slot (slot 0 is the magenta fallback,
+        // Reserve the next bindless SRV slot (slot 0 is the fallback,
         // already taken, so this returns 1, 2, ...).
         let srv = self
             .bindless

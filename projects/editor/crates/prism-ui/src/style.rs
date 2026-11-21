@@ -2,6 +2,8 @@
 
 use glam::{Vec2, Vec4};
 
+use crate::material::Material;
+
 /// Normalized RGBA color (`[0.0, 1.0]`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
@@ -227,15 +229,19 @@ pub struct ShadowStyle {
     pub spread: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VisualStyle {
     pub bg: Option<Color>,
     pub border_color: Option<Color>,
     pub border_width: f32,
     pub radius: f32,
     pub opacity: f32,
-    #[cfg(feature = "ui-blur")]
-    pub backdrop_blur: f32,
+    /// Shader and parameters that produce this node's surface.
+    ///
+    /// Widgets set a material instead of piling up look-specific fields: a
+    /// frosted panel, a textured sprite and a project shader all travel the
+    /// same path.
+    pub material: Option<Material>,
     #[cfg(feature = "ui-effects")]
     pub shadow: Option<ShadowStyle>,
 }
@@ -248,8 +254,7 @@ impl Default for VisualStyle {
             border_width: 0.0,
             radius: 0.0,
             opacity: 1.0,
-            #[cfg(feature = "ui-blur")]
-            backdrop_blur: 0.0,
+            material: None,
             #[cfg(feature = "ui-effects")]
             shadow: None,
         }
@@ -273,21 +278,25 @@ impl VisualStyle {
         if let Some(o) = patch.opacity {
             self.opacity = o;
         }
+        if let Some(material) = &patch.material {
+            self.material = Some(material.clone());
+        }
     }
 }
 
 /// Partial style override applied when an interaction state is active.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VisualPatch {
     pub bg: Option<Color>,
     pub border_color: Option<Color>,
     pub border_width: Option<f32>,
     pub radius: Option<f32>,
     pub opacity: Option<f32>,
+    pub material: Option<Material>,
 }
 
 /// Uniform state-driven visual style: one resolution rule for all widgets.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VisualBox {
     pub base: VisualStyle,
     pub hover: Option<VisualPatch>,
@@ -299,7 +308,7 @@ pub struct VisualBox {
 
 impl VisualBox {
     pub fn resolve(&self, state: &InteractionState) -> VisualStyle {
-        let mut out = self.base;
+        let mut out = self.base.clone();
         if state.disabled {
             if let Some(p) = &self.disabled {
                 out.apply_patch(p);

@@ -88,6 +88,10 @@ pub const SPRITES_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/spri
 pub const SPRITES_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/sprites.vert.spv");
 pub const TAA_FRAG_SPV: &[u8] = include_bytes!("../../../assets/shaders/taa.frag.spv");
 pub const TAA_VERT_SPV: &[u8] = include_bytes!("../../../assets/shaders/taa.vert.spv");
+pub const UI_BACKDROP_FRAG_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ui_backdrop.frag.spv");
+pub const UI_BACKDROP_VERT_SPV: &[u8] =
+    include_bytes!("../../../assets/shaders/ui_backdrop.vert.spv");
 pub const UI_OVERLAY_FRAG_SPV: &[u8] =
     include_bytes!("../../../assets/shaders/ui_overlay.frag.spv");
 pub const UI_OVERLAY_VERT_SPV: &[u8] =

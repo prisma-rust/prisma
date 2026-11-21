@@ -1,0 +1,160 @@
+//! The About dialog: editor identity, shown on a frosted-glass card.
+//!
+//! This is editor policy, not a UI-kernel widget: it names the product, lists
+//! what is running and decides its own layout. The kernel only supplies the
+//! generic pieces it is built from — a [`Material`] for the glass surface and
+//! the usual primitives for the rows.
+
+use glam::Vec2;
+use prism_ui::elements::text;
+use prism_ui::prelude::*;
+
+/// Node key of the dialog's outer panel.
+pub const ABOUT_PANEL_KEY: &str = "about:panel";
+/// Node key of the dismiss button.
+pub const ABOUT_CLOSE_KEY: &str = "about:close";
+
+/// Blur radius of the dialog's glass surface, in pixels.
+pub const ABOUT_GLASS_SIGMA: f32 = 28.0;
+/// Width of the card; its content decides the height.
+pub const ABOUT_WIDTH: f32 = 420.0;
+/// Corner radius of the card.
+pub const ABOUT_RADIUS: f32 = 14.0;
+
+/// Rows of the dialog body, in draw order.
+pub const ABOUT_FACTS: [(&str, &str); 4] = [
+    ("Version", env!("CARGO_PKG_VERSION")),
+    ("Renderer", "Vulkan"),
+    ("UI", "prism-ui"),
+    ("License", "MIT OR Apache-2.0"),
+];
+
+/// Backdrop tint of the glass card for `theme`.
+///
+/// The editor decides this because "how opaque may glass be before body text
+/// loses contrast" is a product decision; the kernel only knows how to blur.
+fn glass_tint(theme: &Theme) -> Color {
+    match theme.preset() {
+        ThemePreset::Dark => Color::rgba(0.145, 0.157, 0.180, 0.70),
+        ThemePreset::Light => Color::rgba(0.980, 0.984, 0.992, 0.80),
+    }
+}
+
+/// Build the About dialog, centred in `viewport`.
+pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
+    let padding = Edges::symmetric(30.0, 26.0);
+    let width = ABOUT_WIDTH.min(viewport.x - padding.horizontal() * 2.0);
+    let left = ((viewport.x - width) * 0.5).max(0.0);
+
+    let glass = Material::frosted_glass(ABOUT_GLASS_SIGMA).with_radius(ABOUT_RADIUS);
+
+    let mut facts = col().width(Length::Percent(100.0)).gap(6.0);
+    for (name, value) in ABOUT_FACTS {
+        facts = facts.child(
+            row()
+                .width(Length::Percent(100.0))
+                .gap(12.0)
+                .align(Align::Center)
+                .child(
+                    text(theme.muted, theme.font_size_small, name)
+                        .width(Length::Px(88.0)),
+                )
+                .child(text(theme.text, theme.font_size, value)),
+        );
+    }
+
+    col()
+        .key(ABOUT_PANEL_KEY)
+        .absolute(
+            left,
+            (viewport.y * 0.5 - 180.0).max(theme.menu_bar_height + 24.0),
+        )
+        .width(Length::Px(width))
+        .padding(padding)
+        .gap(18.0)
+        .radius(ABOUT_RADIUS)
+        .border(1.0, theme.border)
+        // The fill is the glass tint: the shader mixes the blurred backdrop
+        // toward it, so the same colour reads as "how visible is the scene
+        // through this card".
+        .bg(glass_tint(theme))
+        .material(glass)
+        .child(
+            row()
+                .width(Length::Percent(100.0))
+                .align(Align::Center)
+                .justify(Justify::SpaceBetween)
+                .child(text(theme.text_strong, theme.font_size + 6.0, "Prisma Editor"))
+                .child(button(ABOUT_CLOSE_KEY, "Close")),
+        )
+        .child(text(
+            theme.text_soft,
+            theme.font_size,
+            "A self-hosted editor: the engine draws its own chrome.",
+        ))
+        .child(
+            ElementBox::default()
+                .width(Length::Percent(100.0))
+                .height(Length::Px(1.0))
+                .bg(theme.border_subtle),
+        )
+        .child(facts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(theme: &Theme, viewport: Vec2) -> UiDrawList {
+        let mut tree = UiTree::new();
+        tree.begin_frame();
+        {
+            let mut ctx = UiContext::new(&mut tree);
+            ctx.mount(build_about_dialog(theme, viewport));
+        }
+        tree.compute_layout(viewport);
+        let mut list = UiDrawList::default();
+        tree.build_draw_list(&mut list);
+        list
+    }
+
+    fn glass_quad(list: &UiDrawList) -> Option<(Rect, Material)> {
+        list.commands.iter().find_map(|cmd| match cmd {
+            UiDrawCommand::Quad {
+                rect,
+                material: Some(material),
+                ..
+            } if material.needs_backdrop() => Some((*rect, material.clone())),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn the_dialog_paints_a_frosted_surface() {
+        let theme = Theme::dark();
+        let list = render(&theme, Vec2::new(1280.0, 720.0));
+        let (_, material) = glass_quad(&list).expect("the dialog paints a glass surface");
+        assert_eq!(material.shader, ShaderRef::FrostedGlass);
+        assert_eq!(material.backdrop_sigma, ABOUT_GLASS_SIGMA);
+    }
+
+    #[test]
+    fn the_card_stays_inside_a_narrow_viewport() {
+        let viewport = Vec2::new(360.0, 640.0);
+        let list = render(&Theme::dark(), viewport);
+        let (rect, _) = glass_quad(&list).expect("glass surface");
+        assert!(rect.x >= 0.0, "card starts off-screen: {rect:?}");
+        assert!(
+            rect.x + rect.w <= viewport.x + 0.5,
+            "card overflows the viewport: {rect:?}"
+        );
+    }
+
+    #[test]
+    fn light_and_dark_glass_share_their_geometry() {
+        let viewport = Vec2::new(1280.0, 720.0);
+        let dark = glass_quad(&render(&Theme::dark(), viewport)).unwrap().0;
+        let light = glass_quad(&render(&Theme::light(), viewport)).unwrap().0;
+        assert_eq!(dark, light, "a theme switch must not relayout");
+    }
+}

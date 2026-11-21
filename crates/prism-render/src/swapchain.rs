@@ -50,6 +50,11 @@ pub struct Swapchain {
 
     pub images: Vec<vk::Image>,
     pub views: Vec<vk::ImageView>,
+    /// Whether a swapchain image can be used as a transfer source.
+    ///
+    /// The UI backdrop filter copies the composited frame before blurring it;
+    /// a surface that forbids the copy leaves the filter disabled.
+    pub transfer_src: bool,
 
     /// Acquire semaphores, one per frame-in-flight, rotated by `current_frame`.
     image_available: Vec<vk::Semaphore>,
@@ -115,6 +120,7 @@ impl Swapchain {
             swapchain,
             images,
             views,
+            transfer_src,
         } = create_swapchain(context, surface, vk::SwapchainKHR::null(), present_mode)?
             .context("surface has zero extent during initial swapchain creation")?;
         let n_images = images.len();
@@ -150,6 +156,7 @@ impl Swapchain {
             render_finished,
             in_flight_fences,
             current_frame: 0,
+            transfer_src,
         })
     }
 
@@ -211,6 +218,7 @@ impl Swapchain {
             swapchain,
             images,
             views,
+            transfer_src,
         }) = create_swapchain(context, self.surface, old_swapchain, self.present_mode).map_err(
             |e| {
                 log::warn!("swapchain recreate failed, keeping old swapchain: {e}");
@@ -248,6 +256,7 @@ impl Swapchain {
         self.images = images;
         self.views = views;
         self.render_finished = new_render_finished;
+        self.transfer_src = transfer_src;
         Ok(true)
     }
 
@@ -368,6 +377,9 @@ struct SwapchainOutput {
     swapchain: vk::SwapchainKHR,
     images: Vec<vk::Image>,
     views: Vec<vk::ImageView>,
+    /// Whether the surface supports copying a swapchain image, which the UI
+    /// backdrop filter needs.
+    transfer_src: bool,
 }
 
 fn create_swapchain(
@@ -422,6 +434,18 @@ fn create_swapchain(
         image_count
     };
 
+    // The backdrop filter copies the composited frame into an offscreen image
+    // before blurring it. That needs the swapchain image as a transfer source,
+    // which a surface may not support; ask only when it does, and let the
+    // filter fall back to an unblurred tint otherwise.
+    let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST;
+    if capabilities
+        .supported_usage_flags
+        .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+    {
+        usage |= vk::ImageUsageFlags::TRANSFER_SRC;
+    }
+
     let queue_families = [context.graphics_queue_family];
     let create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
@@ -430,7 +454,7 @@ fn create_swapchain(
         .image_color_space(format.color_space)
         .image_extent(extent)
         .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
+        .image_usage(usage)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .queue_family_indices(&queue_families)
         .pre_transform(pre_transform)
@@ -458,6 +482,7 @@ fn create_swapchain(
         swapchain,
         images,
         views,
+        transfer_src: usage.contains(vk::ImageUsageFlags::TRANSFER_SRC),
     }))
 }
 

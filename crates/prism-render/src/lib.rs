@@ -142,6 +142,7 @@ pub mod streamline;
 pub mod suballocator;
 pub mod swapchain;
 pub mod tangents;
+pub mod ui_backdrop;
 pub mod ui_overlay;
 pub mod vg_pass;
 pub mod virtual_geo;

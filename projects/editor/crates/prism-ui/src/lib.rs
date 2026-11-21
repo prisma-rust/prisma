@@ -4,6 +4,7 @@ pub mod behavior;
 pub mod draw;
 pub mod elements;
 mod layout;
+pub mod material;
 pub mod menu;
 pub mod style;
 pub mod theme;
@@ -18,6 +19,9 @@ pub mod prelude {
         button, canvas, col, divider, label, muted_label, numeric_field, row, spacer, text_field,
         toggle_button, tree_view, vec3_field, viewport, virtual_list, ElementBox, UiContext,
         UiElement, UiPalette,
+    };
+    pub use crate::material::{
+        ImageMode, Material, MaterialValue, ShaderRef, Surface, MAX_BACKDROP_SIGMA,
     };
     pub use crate::menu::{Menu, MenuAction, MenuBar, MenuEntry, MenuNodeKey, MenuState};
     pub use crate::style::{

@@ -761,6 +761,7 @@ impl<'a> GameWorld<'a> {
                     border_radius: quad.border_radius,
                     // Project quads are solid colour only (no bindless texture slot).
                     texture: None,
+                    backdrop_sigma: 0.0,
                     layer: quad.layer,
                     order: prism_engine::ui::EXTERNAL_UI_ORDER,
                 });
