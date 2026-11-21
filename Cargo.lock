@@ -3108,6 +3108,7 @@ dependencies = [
  "prism-reflect",
  "prism-runtime-host",
  "prism-scene",
+ "prism-ui-draw",
 ]
 
 [[package]]
