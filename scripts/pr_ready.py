@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Prisma 提交前自检：一条命令，一个可粘贴到 PR 的 Markdown 块。
+"""Prisma pre-commit self-check: one command, one Markdown block for the PR body.
 
-    python scripts/pr_ready.py                 # 完整自检（默认）
-    python scripts/pr_ready.py --quick         # 快速回路：只做 fmt + clippy
-    python scripts/pr_ready.py --all           # 全 workspace + 所有独立 workspace
+    python scripts/pr_ready.py                 # full self-check (default)
+    python scripts/pr_ready.py --quick         # fast loop: fmt + clippy only
+    python scripts/pr_ready.py --all           # whole workspace + every standalone workspace
     python scripts/pr_ready.py --base origin/master
-    python scripts/pr_ready.py --verbose       # 失败时打印完整输出
+    python scripts/pr_ready.py --verbose       # print the full output on failure
 
-它根据分支相对 --base 的改动（含未提交、未跟踪文件）决定要跑什么：
+The checks are chosen from the diff against --base (including uncommitted and
+untracked files):
 
-  * 只对**改动过的 .rs 文件**跑 rustfmt（仓库既有 fmt 漂移不算在每个 PR 头上）；
-  * 对改动的 .rs 检查注释规范（迁移期只告警，见 `docs/code-style.md`）；
-  * 校验根 `Cargo.toml` 与各独立 workspace 的版本号一致（`scripts/version.py`）；
-  * 改动到的根 workspace crate：clippy --all-targets -D warnings + cargo test；
-  * 改到 shader/reflection/bindings：在临时目录重跑 shader-bindgen，比对是否漂移；
-  * 改到 editor/：cargo test（独立 workspace，含数据层与 egui 壳）；
-  * 改到 projects/*、launcher/：各自 cargo check（独立 workspace）；
-  * 拦截生成物 / 签名材料（.pak、keystore 等）和空白错误（.spv 已入库，不拦）。
+  * rustfmt runs on **changed .rs files** only (pre-existing fmt drift is not charged to every PR);
+  * changed .rs files are checked for comment style (warns during migration, see `docs/code-style.md`);
+  * the root `Cargo.toml` and every standalone workspace must carry one version (`scripts/version.py`);
+  * touched root-workspace crates: clippy --all-targets -D warnings + cargo test;
+  * shader/reflection/bindings changes: re-run shader-bindgen into a temp dir and compare for drift;
+  * editor/ changes: cargo test (standalone workspace, data layer + egui shell);
+  * projects/* and launcher/ changes: cargo check per standalone workspace;
+  * generated artifacts / signing material (.pak, keystore, ...) and whitespace errors are blocked (.spv is committed, never blocked).
 
-stdout 只输出 Markdown；进度和失败详情走 stderr。任何检查失败 → 退出码 1。
+stdout carries Markdown only; progress and failure details go to stderr. Any failed check exits 1.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from lib.console import force_utf8_streams  # noqa: E402
 
 force_utf8_streams()
 
-# 这些文件变化会影响整个根 workspace。
+# A change to any of these files affects the whole root workspace.
 WORKSPACE_WIDE = {
     "Cargo.toml",
     "Cargo.lock",
@@ -48,8 +49,8 @@ WORKSPACE_WIDE = {
 }
 WORKSPACE_PREFIXES = (".cargo/",)
 
-# CI 的 desktop job 不覆盖 prism-app（它只作为用户项目依赖被构建）。
-# 本地默认也跳过，除非它自己改动或 --all；projects/template 的 check 会覆盖它。
+# CI's desktop job does not cover prism-app (it is built only as a user-project dependency).
+# It is skipped locally too unless it changed itself or --all is passed; projects/template's check covers it.
 SKIP_BY_DEFAULT = {"prism-app"}
 
 BAD_SUFFIXES = (
@@ -62,14 +63,15 @@ BAD_SUFFIXES = (
     ".pem",
     ".key",
 )
-# 整段目录名匹配，不是子串：`crates/prism-anim-retarget/` 这类合法路径里也有
-# `target/` 字样，按子串判断会让新 crate 直接判成构建产物。
+# Whole path components, not substrings: legitimate paths such as
+# `crates/prism-anim-retarget/` also contain `target`, and a substring test would
+# flag a new crate as build output.
 BAD_PARTS = ("node_modules", "target", "dist")
 BAD_NAMES = {".env", "local.properties", "id_rsa", "id_ed25519"}
 
 
 # --------------------------------------------------------------------------- #
-# 基础设施
+# Infrastructure
 # --------------------------------------------------------------------------- #
 
 def eprint(*args: object) -> None:
@@ -78,7 +80,7 @@ def eprint(*args: object) -> None:
 
 def run(cmd: list[str], cwd: Path = ROOT) -> tuple[int, str]:
     if cmd:
-        # Windows 上 npm/pnpm/tsc 是 .cmd shim，CreateProcess 不会自动补 PATHEXT。
+        # On Windows npm/pnpm/tsc are .cmd shims, and CreateProcess does not apply PATHEXT.
         resolved = shutil.which(cmd[0])
         if resolved:
             cmd = [resolved, *cmd[1:]]
@@ -102,7 +104,7 @@ def git(*args: str) -> tuple[int, str]:
 
 
 def ensure_toolchain_in_path() -> None:
-    """从 Explorer / 新 shell 启动 python 时，cargo 可能不在 PATH。"""
+    """cargo may be missing from PATH when python is started from Explorer or a fresh shell."""
     cargo = shutil.which("cargo")
     if cargo:
         return
@@ -178,9 +180,10 @@ def crate_test_command(crate: str) -> list[str]:
         command.append("--bins")
     command.append("--tests")
     if crate == "prism-render":
-        # 每个 GPU 集成测试都在同一个二进制里自建 `VkInstance` / `VkDevice`。
-        # 并行初始化在 lavapipe 上偶发 SIGSEGV（#847），二进制内串行化；
-        # 其他 crate 仍保持默认并行，避免整体自检变慢。
+        # Every GPU integration test creates its own `VkInstance` / `VkDevice` in the
+        # same binary. Parallel initialization intermittently SIGSEGVs on lavapipe
+        # (#847), so serialize inside this binary; other crates keep the default
+        # parallelism so the whole self-check does not slow down.
         command.extend(["--", "--test-threads=1"])
     return command
 
@@ -201,7 +204,7 @@ def display_cmd(cmd: list[str], cwd: Path) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 检查项
+# Checks
 # --------------------------------------------------------------------------- #
 class Check:
     def __init__(self, name: str, cmd: list[str], cwd: Path = ROOT, detail: str = "") -> None:
@@ -245,12 +248,13 @@ def test_summary(output: str) -> str:
 
 
 def file_matches_generated(generated: Path, checked_in: Path) -> bool:
-    """生成物与已提交文件是否等价。
+    """Whether a generated file is equivalent to the committed one.
 
-    bindgen 始终写 LF；Windows 上 `core.autocrlf=true`（仓库没有 .gitattributes）
-    会把检出的 `.rs` 转成 CRLF，于是逐字节比较会在**内容完全一致**时假报漂移。
-    这里先做逐字节比较（快路径），不同则把两侧行尾归一化成 LF 再比；
-    真正的字段 / 常量 / 顺序变化依然会被抓出来。
+    bindgen always writes LF; on Windows `core.autocrlf=true` (the repo has no
+    .gitattributes) turns the checked-out `.rs` into CRLF, so a byte comparison
+    reports drift even when the **content is identical**. Compare bytes first
+    (fast path), then normalize both sides to LF; real field / constant /
+    ordering changes are still caught.
     """
     produced = generated.read_bytes()
     existing = checked_in.read_bytes()
@@ -301,7 +305,7 @@ def shader_budget_check(changed: list[str]) -> Check:
 
 
 def shader_bindings_check(changed: list[str]) -> Check:
-    """在临时目录重跑 bindgen，与已提交的 bindings 比对；不修改工作区。"""
+    """Re-run bindgen into a temp dir and compare against the committed bindings; the worktree is untouched."""
     check = Check("shader bindings drift", ["shader-bindgen", "(temp out)"])
     check.done = True
     touched = has_prefix(changed, "assets/shaders/") or has_prefix(
@@ -412,6 +416,8 @@ def standalone_lockfiles_check() -> Check:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if res.returncode != 0:
             stale.append(str(manifest.relative_to(ROOT).parent))
@@ -522,7 +528,7 @@ def comment_check(base: str) -> Check:
         check.status = "fail"
         match = re.search(r"comments: (\d+) finding\(s\)", out)
         count = int(match.group(1)) if match else 0
-        check.detail = f"{count} 处违规新增" if count else "check_comments.py failed"
+        check.detail = f"{count} new violation(s)" if count else "check_comments.py failed"
         eprint("  FAILED")
         eprint("\n".join(out.rstrip().splitlines()[-10:]))
         return check
@@ -534,10 +540,10 @@ def comment_check(base: str) -> Check:
 
 
 def editor_checks(changed: list[str], quick: bool) -> list[Check]:
-    """`editor/` 是独立 workspace（egui + ash），只能在有 Vulkan 的桌面上运行。
+    """`editor/` is a standalone workspace (egui + ash) that only runs on a desktop with Vulkan.
 
-    Termux 上只做类型检查：它同时链接 `prism-render` / `prism-engine`，所以
-    根 workspace 的渲染 / 引擎改动也要复查一遍编辑器。
+    On Termux only a type check is possible: it links `prism-render` / `prism-engine`,
+    so rendering / engine changes in the root workspace re-check the editor as well.
     """
     manifest = ROOT / "editor" / "Cargo.toml"
     tests = Check(
@@ -572,7 +578,7 @@ def editor_checks(changed: list[str], quick: bool) -> list[Check]:
     code, installed = run(["rustup", "target", "list", "--installed"])
     if code != 0 or "x86_64-pc-windows-gnu" not in installed:
         check.status = "skip"
-        check.detail = "rustup target x86_64-pc-windows-gnu 未安装"
+        check.detail = "rustup target x86_64-pc-windows-gnu is not installed"
         check.done = True
     if quick:
         for item in (tests, check):
@@ -583,19 +589,19 @@ def editor_checks(changed: list[str], quick: bool) -> list[Check]:
 
 
 # --------------------------------------------------------------------------- #
-# 主流程
+# Main flow
 # --------------------------------------------------------------------------- #
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prisma pre-PR self-check")
-    parser.add_argument("--base", help="比较基准（默认 origin/master）")
-    parser.add_argument("--quick", action="store_true", help="只做 fmt + clippy，不跑测试")
+    parser.add_argument("--base", help="comparison base (defaults to origin/master)")
+    parser.add_argument("--quick", action="store_true", help="fmt + clippy only, no tests")
     parser.add_argument(
         "--static-only",
         action="store_true",
-        help="只跑静态/脚本门禁（跳过 cargo clippy 与测试，适用于 Termux 或纯文档/CI PR）",
+        help="static/script gates only (skips cargo clippy and tests; for Termux or docs/CI PRs)",
     )
-    parser.add_argument("--all", action="store_true", help="检查所有 workspace 与独立项目")
-    parser.add_argument("--verbose", action="store_true", help="失败时打印完整输出")
+    parser.add_argument("--all", action="store_true", help="check every workspace and standalone project")
+    parser.add_argument("--verbose", action="store_true", help="print the full output on failure")
     args = parser.parse_args()
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -620,8 +626,9 @@ def main() -> int:
         if any(p in WORKSPACE_WIDE or p.startswith(WORKSPACE_PREFIXES) for p in changed):
             crates = set(members)
 
-    # `prism-app` 只在对它的检查成本高 / CI 不覆盖时默认跳过；当它**自己**被
-    # 改动时必须跑，否则改 `prism-app` 的自检会显示「touched crates: (none)」。
+    # `prism-app` is skipped by default only because checking it is expensive and
+    # CI does not cover it; when it **itself** changed it must run, otherwise a
+    # `prism-app` self-check would report "touched crates: (none)".
     directly_changed = {
         path.split("/")[1]
         for path in changed
@@ -749,7 +756,7 @@ def main() -> int:
     if not failed:
         failed = any(check.status == "fail" for check in checks)
 
-    # 特定检查的 detail 需要在运行后才能确定。
+    # Some checks only know their detail after they have run.
     for check in checks:
         if check.name.startswith("test (") and check.status == "ok":
             check.detail = test_summary(check.output)

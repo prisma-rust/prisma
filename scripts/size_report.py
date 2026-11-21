@@ -37,7 +37,7 @@ COMBOS: list[tuple[str, list[str]]] = [
 
 
 def build(features: list[str]) -> int:
-    original = (PROJECT / "Cargo.toml").read_text()
+    original = (PROJECT / "Cargo.toml").read_text(encoding="utf-8")
     try:
         feat = ", ".join(f'"{f}"' for f in features)
         patched = original.replace(
@@ -51,17 +51,22 @@ def build(features: list[str]) -> int:
         )
         if patched == original:
             raise SystemExit("size_report: 找不到 template 的 prism-app/prism-engine 依赖行")
-        (PROJECT / "Cargo.toml").write_text(patched)
+        (PROJECT / "Cargo.toml").write_text(patched, encoding="utf-8")
 
         proc = subprocess.run(
-            ["cargo", "build", "-p", "template", "--release"], cwd=PROJECT, capture_output=True, text=True
+            ["cargo", "build", "-p", "template", "--release"],
+            cwd=PROJECT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr[-3000:])
             raise SystemExit("size_report: 构建失败")
         return (PROJECT / "target" / "release" / "template").stat().st_size
     finally:
-        (PROJECT / "Cargo.toml").write_text(original)
+        (PROJECT / "Cargo.toml").write_text(original, encoding="utf-8")
 
 
 def main() -> int:

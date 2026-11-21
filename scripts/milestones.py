@@ -11,6 +11,8 @@ def main() -> int:
         ["gh", "api", "repos/prisma-rust/prisma/milestones?state=all"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if res.returncode != 0:

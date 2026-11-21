@@ -15,7 +15,9 @@ import time
 
 
 def run_gh(args: list[str]) -> tuple[int, str, str]:
-    proc = subprocess.run(["gh", *args], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     return proc.returncode, proc.stdout, proc.stderr
 
 

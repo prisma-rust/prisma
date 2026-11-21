@@ -46,7 +46,13 @@ def format_event(ev: dict) -> str | None:
 
 
 def gh_token() -> str | None:
-    proc = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["gh", "auth", "token"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     tok = proc.stdout.strip()
     return tok if proc.returncode == 0 and tok else None
 
@@ -101,7 +107,14 @@ def main() -> int:
                 if line:
                     print(line, flush=True)
                     if args.hook_cmd:
-                        subprocess.run(args.hook_cmd, shell=True, input=json.dumps(ev), text=True)
+                        subprocess.run(
+                            args.hook_cmd,
+                            shell=True,
+                            input=json.dumps(ev),
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                        )
         if args.once:
             return 0
         time.sleep(max(10, interval))

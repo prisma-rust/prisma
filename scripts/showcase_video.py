@@ -25,7 +25,11 @@ try:
     import numpy as np
 except ImportError:
     print("Error: moviepy not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "moviepy", "numpy"])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "moviepy", "numpy"],
+        text=True,
+        encoding="utf-8",
+    )
     import moviepy
     from moviepy import (
         VideoClip, ImageClip, TextClip, CompositeVideoClip,
@@ -158,7 +162,10 @@ def capture_engine_screenshots(scenes: List[str], output_dir: Path) -> List[Path
                     env=env,
                     cwd=str(project_root),
                     timeout=60,
-                    capture_output=True
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 
                 if screenshot_path.exists():

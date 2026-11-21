@@ -230,11 +230,11 @@ mod tests {
         )));
     }
 
-    /// 滚轮必须真的移动列表，而不只是改一个没人读的偏移量。
+    /// The wheel has to move the list, not just bump a counter nobody reads.
     ///
-    /// `virtual_list` 的可见区间来自列表自己的保留滚动偏移，所以滚动后
-    /// 挂载的首个项目必须变化；否则滚轮在编辑器的 Hierarchy / Asset 面板上
-    /// 等于没有接线。
+    /// `virtual_list` derives its visible range from the list's own retained scroll
+    /// offset, so the first mounted item must change after scrolling; otherwise the
+    /// wheel is unwired for the editor's Hierarchy and Asset panels.
     #[test]
     fn wheel_scroll_moves_the_virtual_list_window() {
         let mut tree = UiTree::new();

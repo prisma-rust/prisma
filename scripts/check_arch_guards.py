@@ -34,6 +34,8 @@ def check_added_lines(base: str = "origin/master") -> list[str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         return []

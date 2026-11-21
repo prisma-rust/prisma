@@ -100,6 +100,8 @@ def player_tree() -> list[str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
@@ -136,6 +138,8 @@ def check_layers() -> tuple[list[str], int]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)

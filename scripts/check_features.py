@@ -110,7 +110,14 @@ def main() -> int:
     failed: list[str] = []
     for label, cmd in MATRIX:
         sys.stderr.write(f"→ {label}: cargo {' '.join(cmd)}\n")
-        proc = subprocess.run(["cargo", *cmd], cwd=ROOT, capture_output=True, text=True)
+        proc = subprocess.run(
+            ["cargo", *cmd],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         if proc.returncode != 0:
             failed.append(label)
             sys.stderr.write(proc.stderr[-4000:] + "\n")

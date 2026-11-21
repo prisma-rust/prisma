@@ -433,8 +433,8 @@ impl Engine {
             .copied()
             .unwrap_or_default();
         let cursor = mapping.window_to_layout([pos[0] as f32, pos[1] as f32]);
-        // 滚轮与修饰键同样只在这里折进布局空间：宿主 UI 读不到平台事件，
-        // 少一项就等于少一条交互路径（滚动、拖拽改值的精细/吸附档）。
+        // Wheel and modifiers fold into layout space here too: host UI never sees
+        // platform events, and dropping either deletes an entire interaction path.
         self.world.insert_resource(crate::ui::UiInputState {
             cursor_pos: cursor,
             left_clicked: input_manager.mouse_just_pressed(crate::input::MouseButton::Left),

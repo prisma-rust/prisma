@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""校验 commit 标题是否符合 docs/ai-workflow.md §3。
+"""Validate that a commit subject matches docs/ai-workflow.md §3.
 
-由 .githooks/commit-msg 调用；也可以手动跑：
+Called by .githooks/commit-msg; can also be run by hand:
 
     python scripts/check_commit_msg.py .git/COMMIT_EDITMSG
 """
@@ -37,24 +37,24 @@ def main() -> int:
     )
 
     if not subject:
-        print("commit-msg: 标题为空", file=sys.stderr)
+        print("commit-msg: empty subject", file=sys.stderr)
         return 1
     if subject.startswith(ALLOWED_PREFIXES):
         return 0
     if not PATTERN.match(subject):
         print(
-            "commit-msg: 标题不符合规范\n"
-            "  期望: <type>(<scope>): <祈使句摘要>\n"
+            "commit-msg: subject does not match the convention\n"
+            "  expected: <type>(<scope>): <imperative summary>\n"
             f"  type: {' | '.join(TYPES)}\n"
-            f"  实际: {subject}\n"
-            "  详见 docs/ai-workflow.md §3",
+            f"  actual: {subject}\n"
+            "  see docs/ai-workflow.md §3",
             file=sys.stderr,
         )
         return 1
     if len(subject) > MAX_SUBJECT:
         print(
-            f"commit-msg: 标题 {len(subject)} 字符，超过 {MAX_SUBJECT}；"
-            "把细节移到正文。",
+            f"commit-msg: subject is {len(subject)} characters, over the {MAX_SUBJECT} limit; "
+            "move the detail into the body.",
             file=sys.stderr,
         )
         return 1

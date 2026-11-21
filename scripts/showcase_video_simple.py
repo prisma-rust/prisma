@@ -21,7 +21,11 @@ try:
     import numpy as np
 except ImportError:
     print("Installing dependencies...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "moviepy", "numpy"])
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-q", "moviepy", "numpy"],
+        text=True,
+        encoding="utf-8",
+    )
     import moviepy
     from moviepy import (
         VideoClip, TextClip, CompositeVideoClip,
