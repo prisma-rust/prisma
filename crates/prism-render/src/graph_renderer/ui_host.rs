@@ -132,7 +132,10 @@ impl UiOverlayHost {
     }
 
     #[cfg(feature = "ui")]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     pub(super) fn record_ecs_ui_swapchain(
         &mut self,
         context: &VulkanContext,
@@ -206,7 +209,10 @@ impl UiOverlayHost {
     }
 
     #[cfg(feature = "ui")]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     pub(super) fn record_ecs_ui_offscreen(
         &mut self,
         context: &VulkanContext,

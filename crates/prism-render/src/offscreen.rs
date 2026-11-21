@@ -639,7 +639,10 @@ fn find_memory_type(
     None
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arity mirrors the float-parameter packing that the callers already flatten"
+)]
 fn image_barrier(
     device: &ash::Device,
     cmd: vk::CommandBuffer,

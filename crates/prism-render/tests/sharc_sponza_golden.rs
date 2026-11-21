@@ -104,7 +104,10 @@ fn simple_material(base_color: [f32; 4], roughness: f32, metallic: f32) -> Mater
 }
 
 #[test]
-#[allow(clippy::vec_init_then_push)]
+#[expect(
+    clippy::vec_init_then_push,
+    reason = "the golden frame is built incrementally per cascade"
+)]
 fn test_sponza_sharc_real_render_and_comparison() {
     let mut renderer = match GraphRenderer::offscreen_new(SIZE as u32, SIZE as u32, None) {
         Ok(r) => r,
@@ -287,22 +290,22 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let eye = [0.0, 2.0, 7.0];
     let (view_proj, view) = camera_sponza(eye);
     let frame_data = FrameUBOData {
-        viewProj: view_proj,
-        cameraPosition: [eye[0], eye[1], eye[2], 0.0],
-        lightDirection: [0.4, 0.75, 0.5, 2.0],
-        lightColor: [1.0, 0.95, 0.88, 0.3],
+        view_proj,
+        camera_position: [eye[0], eye[1], eye[2], 0.0],
+        light_direction: [0.4, 0.75, 0.5, 2.0],
+        light_color: [1.0, 0.95, 0.88, 0.3],
         view,
-        lightViewProj: [
+        light_view_proj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemapMode: 1,
-        viewportW: SIZE as f32,
-        viewportH: SIZE as f32,
+        tonemap_mode: 1,
+        viewport_w: SIZE as f32,
+        viewport_h: SIZE as f32,
         exposure: 1.0,
-        shadowStrength: 0.8,
+        shadow_strength: 0.8,
         ..Default::default()
     };
 
@@ -318,7 +321,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
         .render(
             &draw_items,
             &frame_data,
-            frame_data.lightViewProj,
+            frame_data.light_view_proj,
             [[0.0; 4]; 4],
             0,
             1,
@@ -357,7 +360,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.lightViewProj,
+                frame_data.light_view_proj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -402,7 +405,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.lightViewProj,
+                frame_data.light_view_proj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -476,7 +479,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.lightViewProj,
+                frame_data.light_view_proj,
                 [[0.0; 4]; 4],
                 0,
                 1,
@@ -531,7 +534,7 @@ fn test_sponza_sharc_real_render_and_comparison() {
             .render(
                 &draw_items,
                 &frame_data,
-                frame_data.lightViewProj,
+                frame_data.light_view_proj,
                 [[0.0; 4]; 4],
                 0,
                 1,

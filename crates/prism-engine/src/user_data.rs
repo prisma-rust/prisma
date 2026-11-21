@@ -155,24 +155,13 @@ fn sanitize(project: &str) -> String {
 ///
 /// 作为 ECS resource 挂在 `World` 上，所以 `GameWorld`（host 后端）和引擎
 /// 系统都能直接读写，不需要额外通道。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UserStore {
     path: Option<PathBuf>,
     data: UserData,
     /// 读到的是更高版本的存档：只读，不覆盖。
     read_only: bool,
     dirty: bool,
-}
-
-impl Default for UserStore {
-    fn default() -> Self {
-        Self {
-            path: None,
-            data: UserData::default(),
-            read_only: false,
-            dirty: false,
-        }
-    }
 }
 
 impl UserStore {

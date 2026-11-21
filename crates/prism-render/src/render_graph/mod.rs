@@ -1605,7 +1605,10 @@ impl RenderGraph {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn record_dump(
         &mut self,
         ctx: &RenderContext,

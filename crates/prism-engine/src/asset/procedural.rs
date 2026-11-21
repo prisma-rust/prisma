@@ -13,11 +13,13 @@ use crate::asset::types::{MaterialAsset, MeshAsset};
 /// Normals are face-aligned; UVs span [0,1] per face.
 pub fn make_cube() -> MeshAsset {
     // Each face has its own set of 4 vertices so face normals are flat.
+    type FaceData = ([f32; 3], [f32; 3], [[f32; 3]; 4], [[f32; 2]; 4]);
+
     let (positions, uvs): (Vec<[f32; 3]>, Vec<[f32; 2]>) = {
         let mut p = Vec::with_capacity(24);
         let mut u = Vec::with_capacity(24);
         // Front (+Z), Back (-Z), Top (+Y), Bottom (-Y), Right (+X), Left (-X)
-        let face_data: [([f32; 3], [f32; 3], [[f32; 3]; 4], [[f32; 2]; 4]); 6] = [
+        let face_data: [FaceData; 6] = [
             // (normal, tangent, positions, uvs)
             (
                 [0.0, 0.0, 1.0],

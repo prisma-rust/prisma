@@ -519,11 +519,11 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     let w = size
         .map(|size| size[0])
         .or(style.width)
-        .unwrap_or_else(|| (anchor_right - anchor_left) - margin.left - margin.right);
+        .unwrap_or((anchor_right - anchor_left) - margin.left - margin.right);
     let h = size
         .map(|size| size[1])
         .or(style.height)
-        .unwrap_or_else(|| (anchor_bottom - anchor_top) - margin.top - margin.bottom);
+        .unwrap_or((anchor_bottom - anchor_top) - margin.top - margin.bottom);
     let w = w.max(0.0);
     let h = h.max(0.0);
 

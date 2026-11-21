@@ -734,7 +734,7 @@ pub struct AnimatorPlayhead {
 impl AnimatorPlayhead {
     /// 过渡权重：`0` = 完全是旧剪辑，`1` = 完全是新剪辑。
     pub fn blend_weight(&self, blend_duration: f32) -> Option<f32> {
-        if self.previous_pose.is_none() || !(blend_duration > 0.0) {
+        if self.previous_pose.is_none() || blend_duration <= 0.0 {
             return None;
         }
         Some((self.blend_elapsed / blend_duration).clamp(0.0, 1.0))
@@ -1207,7 +1207,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                     sanitize_time(animator.time)
                 },
                 finished: false,
-                previous_pose: if head.pose.len() > 0 {
+                previous_pose: if !head.pose.is_empty() {
                     Some(head.pose.clone())
                 } else {
                     head.previous_pose.clone()
@@ -1288,7 +1288,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         // 没有名单时就是「仅根骨」；首次进入先完整求值一帧，避免 T-pose 突变。
         if root_only_entities.contains(&entity)
             && playhead.pose.len() == skeleton.joints().len()
-            && playhead.pose.len() > 0
+            && !playhead.pose.is_empty()
         {
             let mut pose = playhead.pose.clone();
             if let Some(clip) = clip.as_ref() {
@@ -1401,7 +1401,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             let reference = skeleton.rest_pose();
             let mut stack = BlendStack::new(pose, reference.clone());
             for layer in &animator.layers {
-                if layer.clip_path.trim().is_empty() || !(layer.weight > 0.0) {
+                if layer.clip_path.trim().is_empty() || layer.weight <= 0.0 {
                     continue;
                 }
                 let Some(clip) = library.clip(layer.clip_path.as_str()) else {

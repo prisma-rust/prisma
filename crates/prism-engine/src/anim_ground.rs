@@ -47,7 +47,7 @@ impl<'a> SceneGroundQuery<'a> {
 
 impl GroundQuery for SceneGroundQuery<'_> {
     fn cast(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<GroundHit> {
-        if !origin.is_finite() || !direction.is_finite() || !(max_distance > 0.0) {
+        if !origin.is_finite() || !direction.is_finite() || max_distance <= 0.0 {
             return None;
         }
         let hit = match self.excluded {

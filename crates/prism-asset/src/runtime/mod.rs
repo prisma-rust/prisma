@@ -106,9 +106,6 @@ struct Slot {
     asset_type: AssetType,
     /// The raw cooked data, as stored in the .pak (uncompressed).
     data: Option<Vec<u8>>,
-    /// Handle of the slot for type-safe access.
-    #[allow(dead_code)]
-    handle: AnyHandle,
     /// 最后一个 访问 时间戳 (for LRU eviction). `Cell` lets read-only
     /// accessors (`get_raw`, `read_stream`) refresh recency without `&mut`.
     last_access: Cell<Instant>,
@@ -121,13 +118,12 @@ struct Slot {
 }
 
 impl Slot {
-    fn new(index: u32) -> Self {
+    fn new() -> Self {
         Self {
             generation: 0,
             asset_id: AssetId::from_raw(0),
             asset_type: AssetType::Unknown,
             data: None,
-            handle: AnyHandle::from_raw(index as u64),
             last_access: Cell::new(Instant::now()),
             size_bytes: 0,
             load_epoch: 0,
@@ -491,14 +487,13 @@ impl ResourceManager {
 
             if index as usize >= self.slots.len() {
                 // Extend the vec to include this index.
-                self.slots.resize(index as usize + 1, Slot::new(0));
+                self.slots.resize(index as usize + 1, Slot::new());
             }
             self.slots[index as usize] = Slot {
                 generation: 0,
                 asset_id,
                 asset_type: AssetType::from_u32(record.type_id),
                 data: None,
-                handle: AnyHandle::from_raw(index as u64),
                 last_access: Cell::new(Instant::now()),
                 size_bytes: record.size, // track uncompressed size
                 load_epoch: 0,

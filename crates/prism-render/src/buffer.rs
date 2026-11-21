@@ -201,6 +201,10 @@ pub unsafe fn upload_to_buffer(
 /// - The returned `vk::Image`/`vk::DeviceMemory`/`vk::ImageView` are freed by the caller
 ///   (the bindless table keeps the `VkImageView` alive only as an opaque handle; the
 ///   image/memory behind it must outlive the descriptor).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "callers already hold the frame state this signature flattens"
+)]
 pub unsafe fn create_and_upload_image(
     context: &VulkanContext,
     command_pool: vk::CommandPool,

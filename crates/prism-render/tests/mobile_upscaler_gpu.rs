@@ -348,12 +348,12 @@ fn mobile_upscalers_render_valid_images_on_gpu() {
 
         for _ in 0..frames {
             let mut frame_data = FrameUBOData {
-                viewProj: vp,
-                cameraPosition: [eye[0], eye[1], eye[2], 0.0],
-                lightDirection: [0.42, 0.80, -0.42, 0.0],
-                lightColor: [1.0, 0.88, 0.72, 4.2],
-                viewportW: out_w as f32,
-                viewportH: out_h as f32,
+                view_proj: vp,
+                camera_position: [eye[0], eye[1], eye[2], 0.0],
+                light_direction: [0.42, 0.80, -0.42, 0.0],
+                light_color: [1.0, 0.88, 0.72, 4.2],
+                viewport_w: out_w as f32,
+                viewport_h: out_h as f32,
                 exposure: 1.1,
                 ..Default::default()
             };

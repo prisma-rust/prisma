@@ -165,6 +165,10 @@ impl Heightfield {
     ///
     /// 两端格子始终保留，所以每一级的边界与相邻块 / 更细一级对齐；级内
     /// 只是减少中间的采样行。整张地形统一选级时不会出现跨块裂缝。
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
+    )]
     pub fn build_chunk_mesh_lod(
         &self,
         size: [f32; 2],
@@ -179,7 +183,10 @@ impl Heightfield {
     }
 
     /// 带步长 + 可选程序化色带 splat 的 chunk 网格。
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
+    )]
     pub fn build_chunk_mesh_lod_with_splat(
         &self,
         size: [f32; 2],
@@ -208,7 +215,10 @@ impl Heightfield {
     }
 
     /// 纹理层 splat 的 4 层权重（写进顶点色 R/G/B，第四层隐式）。
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
+    )]
     pub fn build_chunk_mesh_lod_with_weights(
         &self,
         size: [f32; 2],
@@ -245,7 +255,10 @@ impl Heightfield {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "chunk bounds, LOD step and splat mode are one flat rectangle plus selectors"
+    )]
     fn build_chunk_mesh_lod_mode(
         &self,
         size: [f32; 2],
@@ -605,7 +618,7 @@ pub fn terrain_raycast(
 ) -> Option<TerrainHit> {
     let dir = glam::Vec3::from_array(direction);
     let length = dir.length();
-    if !length.is_finite() || length <= 1e-6 || !(max_distance > 0.0) || !max_distance.is_finite() {
+    if !length.is_finite() || length <= 1e-6 || !max_distance.is_finite() || max_distance <= 0.0 {
         return None;
     }
     let dir = dir / length;
@@ -1020,7 +1033,6 @@ fn splitmix64(mut value: u64) -> u64 {
 ///
 /// 所有实例共用同一个网格路径，交给渲染器的静态实例化合批；陡坡（法线 Y < 0.55）
 /// 跳过。没有自定义网格时生成双面 cross-quad。
-#[allow(clippy::too_many_arguments)]
 fn spawn_vegetation(
     world: &mut prism_ecs::World,
     owner: prism_ecs::Entity,

@@ -74,21 +74,21 @@ fn prt_pass_executes_with_dynamic_lights_on_gpu() {
     }
 
     let ubo = FrameUBOData {
-        viewProj: view_proj,
-        cameraPosition: [0.0, 1.0, 4.0, 1.0],
-        lightDirection: [0.0, 1.0, 0.0, 0.0],
-        lightColor: [1.0, 0.95, 0.9, 0.2],
+        view_proj,
+        camera_position: [0.0, 1.0, 4.0, 1.0],
+        light_direction: [0.0, 1.0, 0.0, 0.0],
+        light_color: [1.0, 0.95, 0.9, 0.2],
         view: view_proj,
-        lightViewProj: view_proj,
-        tonemapMode: 2,
-        viewportW: SIZE as f32,
-        viewportH: SIZE as f32,
+        light_view_proj: view_proj,
+        tonemap_mode: 2,
+        viewport_w: SIZE as f32,
+        viewport_h: SIZE as f32,
         exposure: 1.0,
-        shadowStrength: 1.0,
-        lightViewProj1: view_proj,
-        shadowSplit: 15.0,
-        shadowCascadeCount: 1,
-        prevViewProj: view_proj,
+        shadow_strength: 1.0,
+        light_view_proj1: view_proj,
+        shadow_split: 15.0,
+        shadow_cascade_count: 1,
+        prev_view_proj: view_proj,
         ..Default::default()
     };
 
@@ -163,21 +163,21 @@ fn prt_16_dynamic_lights_and_overflow_abort_on_gpu() {
     }
 
     let ubo = FrameUBOData {
-        viewProj: view_proj,
-        cameraPosition: [0.0, 1.0, 4.0, 1.0],
-        lightDirection: [0.0, 1.0, 0.0, 0.0],
-        lightColor: [1.0, 0.95, 0.9, 0.2],
+        view_proj,
+        camera_position: [0.0, 1.0, 4.0, 1.0],
+        light_direction: [0.0, 1.0, 0.0, 0.0],
+        light_color: [1.0, 0.95, 0.9, 0.2],
         view: view_proj,
-        lightViewProj: view_proj,
-        tonemapMode: 2,
-        viewportW: SIZE as f32,
-        viewportH: SIZE as f32,
+        light_view_proj: view_proj,
+        tonemap_mode: 2,
+        viewport_w: SIZE as f32,
+        viewport_h: SIZE as f32,
         exposure: 1.0,
-        shadowStrength: 1.0,
-        lightViewProj1: view_proj,
-        shadowSplit: 15.0,
-        shadowCascadeCount: 1,
-        prevViewProj: view_proj,
+        shadow_strength: 1.0,
+        light_view_proj1: view_proj,
+        shadow_split: 15.0,
+        shadow_cascade_count: 1,
+        prev_view_proj: view_proj,
         ..Default::default()
     };
 

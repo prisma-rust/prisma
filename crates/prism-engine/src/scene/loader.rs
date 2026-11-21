@@ -67,9 +67,7 @@ const FLAG_HAS_SKYBOX: u8 = 0b10000;
 // ---------------------------------------------------------------------------
 
 const LIGHT_DIRECTIONAL: u8 = 0;
-#[allow(dead_code)]
 const LIGHT_POINT: u8 = 1;
-#[allow(dead_code)]
 const LIGHT_SPOT: u8 = 2;
 
 // ---------------------------------------------------------------------------
@@ -109,7 +107,6 @@ pub struct SceneInstance {
 /// The fields correspond one-to-one with the RSCN on-disk format (see module
 /// docs).  `name` is currently stored for debug/inspector use only.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct ParsedEntity {
     pub name: String,
     pub parent: Option<u32>,
@@ -192,7 +189,7 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
         return Err("bad RSCN magic".into());
     }
     let version = data[4];
-    if version < 1 || version > 2 {
+    if !(1..=2).contains(&version) {
         return Err(format!("unsupported RSCN version {}", version));
     }
 
@@ -698,7 +695,7 @@ impl SceneLoader {
         let mut entities: Vec<Entity> = Vec::with_capacity(entity_count);
 
         // Phase 1: spawn all entities, insert transform + scene components.
-        for (_i, ej) in scene.entities.iter().enumerate() {
+        for ej in scene.entities.iter() {
             let entity = world.spawn();
             entities.push(entity);
 
@@ -1013,7 +1010,7 @@ mod tests;
 /// loads their CPU vertex data via [`ResourceManager`], and returns:
 ///
 /// - `instances` — one [`PtGeometryInstance`] per entity that carries
-/// a 网格 + 材质 (world-space 顶点 from `LocalToWorld`).
+///   a mesh plus material (world-space vertices from `LocalToWorld`).
 /// - `materials_bytes` — a flat `GpuMaterial[112]` array (one entry per
 ///   unique material path, indexed by `PtGeometryInstance::material_slot`).
 pub fn collect_bake_instances(
@@ -1038,7 +1035,7 @@ pub fn collect_bake_instances(
                     let mat = load_material_for_bake(rm, &mr.material_path);
                     gpu_materials.push(
                         mat.as_ref()
-                            .map(|r_info| rmat_to_gpu(r_info))
+                            .map(rmat_to_gpu)
                             .unwrap_or_else(default_gpu_material),
                     );
                     slot

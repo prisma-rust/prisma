@@ -796,7 +796,7 @@ impl PtInner {
                 .expect("ensure_reservoir_buffers: create_buffer");
             let mem_reqs = unsafe { device.get_buffer_memory_requirements(buf) };
             let mem_type = crate::buffer::find_memory_type(
-                &context,
+                context,
                 mem_reqs.memory_type_bits,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
@@ -1626,7 +1626,7 @@ impl PtInner {
         // Resize accumulation buffers if needed
         self.resize_images(device, &ctx.context.physical_device_memory_properties, w, h)?;
         // Resize ReSTIR reservoir ping-pong buffers if needed
-        self.ensure_reservoir_buffers(device, &ctx.context, w, h);
+        self.ensure_reservoir_buffers(device, ctx.context, w, h);
 
         // Camera detection. Compared against the unjittered transform: with TAA
         // enabled the projection changes every frame by a sub-pixel offset, and
@@ -2360,7 +2360,6 @@ fn find_mem_type(
 
 #[cfg(test)]
 mod mat_inverse_tests {
-    #![allow(clippy::approx_constant, clippy::needless_range_loop)]
     use super::mat_inverse;
 
     fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
@@ -2378,7 +2377,7 @@ mod mat_inverse_tests {
     /// A representative Vulkan view-projection (y-flip, depth [0,1]) with a
     /// yawed view - exercises the rotation terms that exposed the old bug.
     fn sample_vp() -> [[f32; 4]; 4] {
-        let inv_tan = 1.0_f32 / (1.0472_f32 * 0.5).tan();
+        let inv_tan = 1.0_f32 / (std::f32::consts::FRAC_PI_3 * 0.5).tan();
         let mut proj = [[0.0f32; 4]; 4];
         proj[0][0] = inv_tan / 1.7777;
         proj[1][1] = -inv_tan;
@@ -2400,11 +2399,11 @@ mod mat_inverse_tests {
         let vp = sample_vp();
         let ivp = mat_inverse(&vp);
         let prod = mul(&vp, &ivp);
-        for i in 0..4 {
-            for j in 0..4 {
+        for (i, row) in prod.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
                 let want = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    (prod[i][j] - want).abs() < 1e-3,
+                    (value - want).abs() < 1e-3,
                     "vp*inv(vp)[{}][{}] = {} (want {})",
                     i,
                     j,
@@ -2430,7 +2429,7 @@ mod mat_inverse_tests {
         // This guards against the original symptom (nonsense world points ->
         // all-white path-traced image).
         let mut proj = [[0.0f32; 4]; 4];
-        let inv_tan = 1.0_f32 / (1.0472_f32 * 0.5).tan();
+        let inv_tan = 1.0_f32 / (std::f32::consts::FRAC_PI_3 * 0.5).tan();
         proj[0][0] = inv_tan / 1.7777;
         proj[1][1] = -inv_tan;
         proj[2][2] = 100.0 / (0.1 - 100.0);

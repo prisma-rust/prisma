@@ -7,8 +7,8 @@
 //! - [`camera_controller_system`] 将输入应用于 `FlyCameraController` +
 //!   同级 `LocalTransform`（写入偏航/俯仰/平移，并把朝向同步进
 //!   `LocalTransform.rotation`，让子节点与 `LocalToWorld` 跟随视角）。
-//! - [`compute_camera_output`] 读取 `Camera` + `FlyCameraController` +
-//! `LocalToWorld` 并生成渲染器所需的矩阵。
+//! - [`compute_camera_output`] reads `Camera` + `FlyCameraController` +
+//!   `LocalToWorld` and derives the matrices the renderer needs.
 //!
 //! 坐标系约定：右手系，+Y 向上，相机看向 −Z 方向。
 //! Vulkan y-flip 投影，深度范围 [0,1]。

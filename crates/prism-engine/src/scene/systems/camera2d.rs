@@ -33,10 +33,10 @@ pub fn resolve_target_pos(world: &World, target_id: u64) -> Option<Vec2> {
     if let Some(l2w) = world.get::<LocalToWorld>(target) {
         let col3 = l2w.0.col(3);
         Some(glam::vec2(col3.x, col3.y))
-    } else if let Some(tf) = world.get::<LocalTransform>(target) {
-        Some(glam::vec2(tf.position.x, tf.position.y))
     } else {
-        None
+        world
+            .get::<LocalTransform>(target)
+            .map(|tf| glam::vec2(tf.position.x, tf.position.y))
     }
 }
 

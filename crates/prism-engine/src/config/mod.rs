@@ -17,7 +17,7 @@ use crate::render_settings::{InternalScaleMode, RenderMode, RenderSettings};
 // Top-level config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct AppConfig {
     pub app: AppInfo,
     pub window: WindowConfig,
@@ -410,7 +410,7 @@ fn parse_internal_resolution(value: &str) -> Option<[u32; 2]> {
     if lower.is_empty() || lower == "off" || lower == "native" || lower == "none" {
         return Some([0, 0]);
     }
-    let mut parts = lower.split(|ch| ch == 'x' || ch == ',' || ch == '*');
+    let mut parts = lower.split(['x', ',', '*']);
     let width: u32 = parts.next()?.trim().parse().ok()?;
     let height: u32 = parts.next()?.trim().parse().ok()?;
     if parts.next().is_some() {
@@ -718,14 +718,27 @@ impl AppConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            app: AppInfo::default(),
-            window: WindowConfig::default(),
-            render: RenderConfig::default(),
-        }
-    }
+/// Returns the platform-specific data directory for the application
+/// (e.g., `%APPDATA%\Excurs1ons\Prisma\` on Windows
+///
+/// Reads company/app name from the default [`AppConfig`] (it does **not** read
+/// `settings.ini`; callers with a loaded config should use
+/// [`app_data_dir_for`]).  Creates the directory if it doesn't exist.  Returns
+/// `None` if the platform data dir cannot be determined (unlikely on desktop,
+/// possible on unusual platforms).
+pub fn app_data_dir() -> Option<std::path::PathBuf> {
+    let cfg = AppConfig::default();
+    app_data_dir_for(&cfg)
+}
+
+/// Compute the persistent data directory from a caller-provided config.
+///
+/// Unlike [`app_data_dir`], this never reads `settings.ini` from disk.
+pub fn app_data_dir_for(cfg: &AppConfig) -> Option<std::path::PathBuf> {
+    let base = dirs::data_dir()?;
+    let dir = base.join(&cfg.app.company).join(&cfg.app.name);
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 #[cfg(test)]
@@ -898,29 +911,4 @@ mod tests {
         let cfg = AppConfig::from_ini(&ini.render());
         assert_eq!(cfg.app.name, "ok");
     }
-}
-
-// ---------------------------------------------------------------------------
-// App data directory (like 's Application.persistentDataPath)
-// ---------------------------------------------------------------------------
-
-/// Returns the platform-specific data directory for the application
-/// (e.g., `%APPDATA%\Excurs1ons\Prisma\` on Windows
-///
-/// Reads company/app name from the default [`AppConfig`] (it does **not** read
-/// `settings.ini`; callers with a loaded config should use
-/// [`app_data_dir_for`]).  Creates the directory if it doesn't exist.  Returns
-/// `None` if the platform data dir cannot be determined (unlikely on desktop,
-/// possible on unusual platforms).
-pub fn app_data_dir() -> Option<std::path::PathBuf> {
-    let cfg = AppConfig::default();
-    app_data_dir_for(&cfg)
-}
-
-/// 根据调用方已加载的配置计算持久化目录，不读取文件系统中的配置。
-pub fn app_data_dir_for(cfg: &AppConfig) -> Option<std::path::PathBuf> {
-    let base = dirs::data_dir()?;
-    let dir = base.join(&cfg.app.company).join(&cfg.app.name);
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
 }

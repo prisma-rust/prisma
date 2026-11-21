@@ -75,7 +75,7 @@ macro_rules! export_project {
             if out.is_null() {
                 return $crate::__project_api::INVALID_ARGUMENT;
             }
-            #[allow(unused_mut)]
+            #[expect(unused_mut, reason = "the macro expands to a mutable local only in some configurations")]
             let mut api = $crate::__project_api::ProjectApi {
                 abi_version: $crate::__project_api::ABI_VERSION,
                 schema_fingerprint: $crate::builtin_schema_fingerprint(),
@@ -97,7 +97,7 @@ macro_rules! export_project {
             unsafe { prism_project_get_api(out) }
         }
 
-        #[allow(clippy::macro_metavars_in_unsafe)]
+        #[expect(clippy::macro_metavars_in_unsafe, reason = "the macro expands to a mutable local only in some configurations")]
         unsafe extern "C" fn create(
             host: *const $crate::__project_api::HostApi,
             out: *mut *mut core::ffi::c_void,
@@ -122,7 +122,6 @@ macro_rules! export_project {
             })
         }
 
-        #[allow(clippy::macro_metavars_in_unsafe)]
         unsafe extern "C" fn tick(
             host_api: *const $crate::__project_api::HostApi,
             state: *mut core::ffi::c_void,
@@ -149,7 +148,7 @@ macro_rules! export_project {
         }
 
         $(
-            #[allow(clippy::macro_metavars_in_unsafe)]
+            #[expect(clippy::macro_metavars_in_unsafe, reason = "the macro expands to a mutable local only in some configurations")]
             unsafe extern "C" fn fixed_update(
                 host_api: *const $crate::__project_api::HostApi,
                 state: *mut core::ffi::c_void,
@@ -180,7 +179,7 @@ macro_rules! export_project {
             if state.is_null() {
                 return;
             }
-            #[allow(unused_mut)]
+            #[expect(unused_mut, reason = "the macro expands to a mutable local only in some configurations")]
             let mut runtime = unsafe { Box::from_raw(state.cast::<__PrismProjectRuntime>()) };
             $(
                 if let Some(state) = runtime.state.as_mut() {

@@ -161,7 +161,10 @@ impl AssetIdGenerator {
     ///
     /// Panics after 2^32 allocations instead of silently truncating the serial
     /// and reusing IDs.
-    #[allow(clippy::should_implement_trait)]
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "`from_raw` is the deliberate deserialization entry point"
+    )]
     pub fn next(&mut self) -> AssetId {
         let serial = self.next_serial;
         assert!(

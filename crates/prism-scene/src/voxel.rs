@@ -869,7 +869,10 @@ impl VoxelChunk {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn raycast_brick(
         &self,
         origin: [f32; 3],
@@ -1002,7 +1005,10 @@ impl VoxelChunk {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn raycast_l3_mask(
         &self,
         origin: [f32; 3],
@@ -1113,7 +1119,10 @@ impl VoxelChunk {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn build_hit(
         &self,
         origin: [f32; 3],

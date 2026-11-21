@@ -494,7 +494,10 @@ impl AnimGraphEvaluator {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn evaluate_node(
         &mut self,
         index: u32,
@@ -786,7 +789,10 @@ impl AnimGraphEvaluator {
     }
 
     /// 让权重最大的 BlendSpace 样本按自己的本地时间区间发 Notify。
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn record_blend_space_notifies(
         &mut self,
         node_name: &str,
@@ -840,7 +846,10 @@ impl AnimGraphEvaluator {
             .collect()
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn evaluate_slot(
         &mut self,
         index: usize,
@@ -927,7 +936,10 @@ impl AnimGraphEvaluator {
         Ok(blended)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     fn evaluate_stack(
         &mut self,
         node: &GraphNodeInfo,

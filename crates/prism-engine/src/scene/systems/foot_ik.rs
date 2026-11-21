@@ -83,7 +83,7 @@ impl GroundQuery for ModelGroundQuery<'_> {
         let origin = self.to_world.transform_point3(origin);
         let direction = self.to_world.transform_vector3(direction);
         let scale = direction.length();
-        if !scale.is_finite() || scale <= 1e-6 || !(max_distance > 0.0) {
+        if !scale.is_finite() || scale <= 1e-6 || max_distance <= 0.0 {
             return None;
         }
         let hit = SceneGroundQuery::new(self.world, self.layer_mask)
@@ -115,7 +115,7 @@ pub fn apply_foot_ik(
     let Some(component) = world.get::<FootIk>(entity) else {
         return false;
     };
-    if !component.enabled || !(component.weight > 0.0) {
+    if !component.enabled || component.weight <= 0.0 {
         return false;
     }
     if pose.len() != skeleton.joint_count() {

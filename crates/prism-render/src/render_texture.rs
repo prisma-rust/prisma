@@ -553,7 +553,10 @@ mod tests {
     /// 纯逻辑测试构造：GPU 句柄全空（device 零值），仅验证更新状态机。
     /// Drop 检测 null image 直接跳过资源销毁。device 零值本身是 UB 构造，
     /// 但测试从不读它（只有状态机字段被访问），用 allow 显式豁免。
-    #[allow(invalid_value)]
+    #[expect(
+        invalid_value,
+        reason = "`MaybeUninit` buffer is initialized before every read"
+    )]
     fn test_rt(mode: RtUpdateMode, period: u32) -> RenderTexture {
         RenderTexture {
             // `mem::zeroed` 在 debug 构建会做 invalid_value 运行时检查并 abort；

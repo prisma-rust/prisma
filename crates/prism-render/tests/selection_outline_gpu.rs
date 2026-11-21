@@ -60,31 +60,31 @@ fn camera() -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
 
 fn frame_data(view_proj: [[f32; 4]; 4], view: [[f32; 4]; 4]) -> FrameUBOData {
     FrameUBOData {
-        viewProj: view_proj,
-        cameraPosition: [0.0, 0.0, 3.0, 0.0],
-        lightDirection: [0.3, 0.8, 0.5, 0.8],
-        lightColor: [1.0, 0.98, 0.95, 0.25],
+        view_proj,
+        camera_position: [0.0, 0.0, 3.0, 0.0],
+        light_direction: [0.3, 0.8, 0.5, 0.8],
+        light_color: [1.0, 0.98, 0.95, 0.25],
         view,
-        lightViewProj: [
+        light_view_proj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        tonemapMode: 1,
-        viewportW: 256.0,
-        viewportH: 256.0,
+        tonemap_mode: 1,
+        viewport_w: 256.0,
+        viewport_h: 256.0,
         exposure: 1.0,
-        shadowStrength: 0.0,
-        lightViewProj1: [
+        shadow_strength: 0.0,
+        light_view_proj1: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
-        shadowSplit: 0.0,
-        shadowCascadeCount: 1,
-        prevViewProj: [
+        shadow_split: 0.0,
+        shadow_cascade_count: 1,
+        prev_view_proj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
@@ -135,7 +135,7 @@ fn render_with(
         .render(
             std::slice::from_ref(item),
             &frame_data,
-            frame_data.lightViewProj,
+            frame_data.light_view_proj,
             [[0.0; 4]; 4],
             0,
             1,

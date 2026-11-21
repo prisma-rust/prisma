@@ -99,7 +99,10 @@ impl ParticlePass {
     /// `inv_view_rot` 是「视图旋转的转置」（`GraphFrame::inv_view_rot`），
     /// 它的第 0 / 1 列就是相机的世界空间 right / up，用来把四边形展开成
     /// billboard。
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     pub fn draw(
         &mut self,
         device: &ash::Device,

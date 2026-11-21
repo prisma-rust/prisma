@@ -63,9 +63,7 @@ fn legacy_three_component_rotation_loads_as_identity() {
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(entity, LocalTransform::default());
-    let json = format!(
-        "{{\"version\":3,\"transforms\":[{{\"position\":[1,2,3],\"rotation\":[0,0,0],\"scale\":[1,1,1]}}]}}"
-    );
+    let json = "{\"version\":3,\"transforms\":[{\"position\":[1,2,3],\"rotation\":[0,0,0],\"scale\":[1,1,1]}]}".to_string();
 
     apply_scene_state(&mut world, &json);
 

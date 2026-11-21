@@ -106,7 +106,7 @@ fn raycast_inner(
 ) -> Option<RayHit> {
     let dir = glam::Vec3::from_array(direction);
     let length = dir.length();
-    if !length.is_finite() || length <= 1e-6 || !(max_distance > 0.0) {
+    if !length.is_finite() || length <= 1e-6 || max_distance <= 0.0 {
         return None;
     }
     let dir = dir / length;

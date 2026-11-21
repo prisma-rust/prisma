@@ -128,6 +128,12 @@ pub struct ParticleSystem2D {
     spawn_accum: f32,
 }
 
+impl Default for ParticleSystem2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParticleSystem2D {
     /// 构造一个通用粒子系统（默认雨形态）。具体表现由调用方配置。
     pub fn new() -> Self {

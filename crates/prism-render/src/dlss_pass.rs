@@ -869,7 +869,10 @@ fn dlss_min_extent(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arity mirrors the float-parameter packing that the callers already flatten"
+)]
 unsafe fn blit_2d(
     device: &ash::Device,
     cmd: vk::CommandBuffer,

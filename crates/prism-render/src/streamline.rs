@@ -50,7 +50,10 @@ pub const BUFFER_TYPE_SPECULAR_HIT_DISTANCE: BufferType = 42;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlResult(pub i32);
 
-#[allow(non_upper_case_globals)]
+#[expect(
+    non_upper_case_globals,
+    reason = "constants mirror the Streamline SDK's own spelling"
+)]
 impl SlResult {
     pub const Ok: Self = Self(0);
     pub const ErrorIO: Self = Self(1);

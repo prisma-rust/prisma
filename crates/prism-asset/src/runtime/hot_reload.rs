@@ -95,9 +95,6 @@ fn stamp_changed(old: Stamp, new: Stamp) -> bool {
 pub struct HotReloadWatcher {
     /// Channel receiver for polling events.
     rx: mpsc::Receiver<HotReloadEvent>,
-    /// Join handle for the polling thread (kept alive).
-    #[allow(dead_code)]
-    handle: thread::JoinHandle<()>,
     /// Shared stop signal.
     stop: Arc<Mutex<bool>>,
 }
@@ -142,7 +139,7 @@ impl HotReloadWatcher {
             }
         }
 
-        let handle = thread::Builder::new()
+        thread::Builder::new()
             .name("hot-reload-poller".into())
             .spawn(move || {
                 on_thread_start();
@@ -178,7 +175,7 @@ impl HotReloadWatcher {
             })
             .map_err(|e| HotReloadError::Io(std::io::Error::other(e)))?;
 
-        Ok(Self { rx, handle, stop })
+        Ok(Self { rx, stop })
     }
 
     /// Get a reference to the event receiver.

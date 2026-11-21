@@ -475,8 +475,9 @@ fn the_animator_produces_a_palette_and_advances_time() {
     assert!((head.time - 0.5).abs() < 1e-5);
     // (2,1,0) 绕关节转 45°：x = 2 - sin45, y = cos45。
     let tip = child_tip(&world, entity);
-    assert!((tip.x - (2.0 - 0.70710678)).abs() < 1e-4, "tip {tip:?}");
-    assert!((tip.y - 0.70710678).abs() < 1e-4, "tip {tip:?}");
+    let half_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((tip.x - (2.0 - half_sqrt2)).abs() < 1e-4, "tip {tip:?}");
+    assert!((tip.y - half_sqrt2).abs() < 1e-4, "tip {tip:?}");
 }
 
 #[test]

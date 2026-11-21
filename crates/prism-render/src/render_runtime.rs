@@ -19,9 +19,7 @@ use crate::descriptor::{DescriptorLayout, DescriptorPool, FrameUBO};
 pub struct RenderRuntime {
     pub command_pool: vk::CommandPool,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    #[allow(dead_code)]
     pub descriptor_layout: DescriptorLayout,
-    #[allow(dead_code)]
     pub descriptor_pool: DescriptorPool,
     pub frame_ubos: Vec<FrameUBO>,
     /// **Must be the last field** — Rust drops struct fields in declaration

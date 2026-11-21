@@ -11,6 +11,8 @@
 
 mod support;
 
+use std::time::Duration;
+
 use support::{BufferSpec, GpuHarness};
 
 /// Reinterpret a POD slice as bytes for a buffer upload.
@@ -35,8 +37,8 @@ fn harness_runs_a_compute_kernel_with_push_constants() {
         .flat_map(u32::to_ne_bytes)
         .collect();
 
-    let results = harness
-        .dispatch(
+    let timed = harness
+        .dispatch_repeated(
             prism_render_shaders::HARNESS_COPY_COMP_SPV,
             c"main",
             &[
@@ -45,8 +47,11 @@ fn harness_runs_a_compute_kernel_with_push_constants() {
             ],
             &push,
             [4, 1, 1],
+            1,
         )
         .expect("compute dispatch failed");
+    assert!(timed.elapsed > Duration::ZERO, "submission must take time");
+    let results = timed.outputs;
 
     assert_eq!(results.len(), 2);
     assert!(results[0].is_empty(), "input buffer must not be read back");

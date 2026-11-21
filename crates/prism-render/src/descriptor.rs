@@ -229,7 +229,10 @@ pub const PT_EMISSIVE_MAX: u32 = 1024;
 /// binding 10 for next frame's temporal reuse.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(non_snake_case)]
+#[expect(
+    non_snake_case,
+    reason = "field name mirrors the Vulkan `pNext` chain terminology"
+)]
 pub struct ReSTIRReservoir {
     pub light_idx: u32,  // 0=sun, 1..PT_LIGHT_MAX=analytic
     pub M: f32,          // effective sample count

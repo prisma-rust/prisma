@@ -13,14 +13,6 @@
 //! [AssetDatabase] 记录已创建/更新
 //! ```
 
-// CI: clippy lints, fix when time permits.
-#![allow(
-    clippy::doc_lazy_continuation,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo
-)]
-
 mod skinned;
 
 use crate::db::{AssetDatabase, AssetRecord, ImportCache};
@@ -648,7 +640,6 @@ fn write_mesh_intermediate(
 }
 
 impl GltfImporter {
-    #[allow(clippy::type_complexity)]
     fn read_gltf(path: &Path) -> Result<MeshData, ImportError> {
         let (document, buffers, images) = gltf::import(path)
             .map_err(|e| ImportError::ImportFailed(format!("glTF parse failed: {e}")))?;
@@ -2591,7 +2582,7 @@ fn setting_str(settings: &Value, key: &str) -> Option<String> {
 ///
 /// Entry-point / stage / profile are resolved in this priority order:
 /// 1. `settings["slang_entry"]` / `["slang_stage"]` / `["slang_profile"]`
-///   (per-asset 导入 overrides passed by the 编辑器 / CLI).
+///    (per-asset import overrides passed by the editor or CLI).
 /// 2. Filename convention (see [`infer_entry_stage_from_name`]).
 /// 3. Defaults: entry = `vertexMain`, stage = `vertex`, profile = `spirv_1_5`.
 ///

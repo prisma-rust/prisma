@@ -22,14 +22,6 @@
 
 // Crate-level lint enforcement (applies only to this crate, not deps).
 #![deny(warnings)]
-// New clippy lints in Rust 1.97 — pre-existing issues, fix when time permits.
-#![allow(
-    clippy::missing_safety_doc,
-    clippy::doc_lazy_continuation,
-    clippy::needless_borrow,
-    clippy::manual_div_ceil,
-    clippy::too_many_arguments
-)]
 
 pub mod acceleration_structure;
 #[cfg(feature = "anf")]
@@ -83,11 +75,12 @@ pub mod nrc;
 pub mod nrd;
 pub mod offscreen;
 pub mod particle_pass;
-/// `PRISMA_PASS_DUMP`：headless 下把各个 pass 的附件写成 PNG。
+/// `PRISMA_PASS_DUMP`: write each pass's attachments to PNG while headless.
 pub(crate) mod pass_dump;
 pub mod pipeline;
-/// pass 级 feature（`shadows` / `gtao`）关闭时的 1×1 占位资源，以及
-/// `giTex` 在 ReSTIR GI 尚未产出时的 1×1 兜底图（该 binding 在着色器里无条件声明）。
+/// The 1x1 placeholders used when a pass-level feature (`shadows` / `gtao`) is
+/// off, plus the 1x1 fallback for `giTex` before ReSTIR GI has produced one
+/// (the shader declares that binding unconditionally).
 pub(crate) mod placeholder;
 pub mod plugin;
 pub mod post;

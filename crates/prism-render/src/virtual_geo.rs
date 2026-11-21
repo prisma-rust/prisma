@@ -1348,6 +1348,10 @@ pub fn select_dmm_subdivision_level(projected_tri_area_px2: f32) -> u8 {
 }
 
 /// Uniformly subdivides a base triangle along a `2^level` barycentric grid and applies scalar displacement.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "three input corners plus the subdivision level and displacement inputs"
+)]
 pub fn subdivide_dmm_triangle(
     p0: [f32; 3],
     p1: [f32; 3],

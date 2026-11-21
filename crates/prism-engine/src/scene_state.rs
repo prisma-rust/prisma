@@ -165,10 +165,6 @@ fn fmt3(a: Vec3) -> String {
 fn fmt4(a: Quat) -> String {
     format!("{},{},{},{}", a.x, a.y, a.z, a.w)
 }
-#[allow(dead_code)]
-fn fmt4_vec(a: glam::Vec4) -> String {
-    format!("{},{},{},{}", a.x, a.y, a.z, a.w)
-}
 
 impl CameraState {
     fn to_json(&self) -> String {
@@ -476,7 +472,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
         .unwrap_or_default();
 
     // --- 相机（data components on 被渲染的那台相机实体，见 `state_camera`）---
-    if let Some(cs) = extract_object(&text, "camera").and_then(|json| CameraState::from_json(&json))
+    if let Some(cs) = extract_object(text, "camera").and_then(|json| CameraState::from_json(&json))
     {
         // 先一次性解析出实体，随后逐组件的 `get_mut` 不会和查询的
         // 世界借用重叠。
@@ -499,7 +495,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
     }
 
     // --- Directional light ---
-    if let Some(dl_json) = extract_object(&text, "directionalLight") {
+    if let Some(dl_json) = extract_object(text, "directionalLight") {
         if let Some(dl) = dir_light_from_json(&dl_json) {
             for (_, existing) in world.query_mut::<SceneDirLight>() {
                 *existing = dl;
@@ -516,7 +512,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
         old_point_entities.iter().copied().collect();
     let mut legacy_point_transform_count = 0;
 
-    if let Some(pl_array) = extract_array(&text, "pointLights") {
+    if let Some(pl_array) = extract_array(text, "pointLights") {
         let mut parsed = parse_pt_light_array(&pl_array);
 
         // Version 1 wrote point-light and transform arrays independently. At
@@ -574,7 +570,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
     // --- Time of day ---
     // v5 pairs clocks with the scene by stable id; records without an id fall
     // back to pool order, like every other array in this file.
-    if let Some(clock_array) = extract_array(&text, "timeOfDay") {
+    if let Some(clock_array) = extract_array(text, "timeOfDay") {
         let parsed = parse_time_of_day_array(&clock_array);
         let parsed_count = parsed.len();
         let mut remaining: Vec<Entity> = world
@@ -680,7 +676,7 @@ fn apply_saved_light(
             world.insert(
                 entity,
                 LocalTransform {
-                    position: position.into(),
+                    position,
                     ..Default::default()
                 },
             );

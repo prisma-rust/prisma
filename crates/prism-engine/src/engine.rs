@@ -371,7 +371,7 @@ impl Engine {
             let screen = self
                 .world
                 .get_resource::<crate::ui::ScreenSize>()
-                .map(|size| [size.width as f32, size.height as f32])
+                .map(|size| [size.width, size.height])
                 .unwrap_or([0.0, 0.0]);
             self.begin_frame(input_manager, screen);
         }
@@ -406,7 +406,7 @@ impl Engine {
             let screen = self
                 .world
                 .get_resource::<crate::ui::ScreenSize>()
-                .map(|size| [size.width as f32, size.height as f32])
+                .map(|size| [size.width, size.height])
                 .unwrap_or([0.0, 0.0]);
             self.begin_frame(input_manager, screen);
         }
@@ -455,7 +455,7 @@ impl Engine {
         let screen = self
             .world
             .get_resource::<crate::ui::ScreenSize>()
-            .map(|size| [size.width as f32, size.height as f32])
+            .map(|size| [size.width, size.height])
             .unwrap_or([0.0, 0.0]);
         self.frame_input.screen = screen;
         self.frame_input.interpolation_alpha = self.interpolation_alpha;

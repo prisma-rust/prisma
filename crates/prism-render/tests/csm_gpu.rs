@@ -42,21 +42,21 @@ fn try_create() -> Option<GraphRenderer> {
 
 fn frame_data() -> FrameUBOData {
     FrameUBOData {
-        viewProj: IDENTITY,
-        cameraPosition: [0.0, 0.0, 3.0, 0.0],
-        lightDirection: [0.0, -1.0, 0.0, 1.0],
-        lightColor: [1.0, 1.0, 1.0, 1.0],
+        view_proj: IDENTITY,
+        camera_position: [0.0, 0.0, 3.0, 0.0],
+        light_direction: [0.0, -1.0, 0.0, 1.0],
+        light_color: [1.0, 1.0, 1.0, 1.0],
         view: IDENTITY,
-        lightViewProj: IDENTITY,
-        lightViewProj1: IDENTITY,
-        shadowSplit: 30.0,
-        shadowCascadeCount: 2,
-        tonemapMode: 2,
-        viewportW: SIZE as f32,
-        viewportH: SIZE as f32,
+        light_view_proj: IDENTITY,
+        light_view_proj1: IDENTITY,
+        shadow_split: 30.0,
+        shadow_cascade_count: 2,
+        tonemap_mode: 2,
+        viewport_w: SIZE as f32,
+        viewport_h: SIZE as f32,
         exposure: 1.0,
-        shadowStrength: 1.0,
-        prevViewProj: [
+        shadow_strength: 1.0,
+        prev_view_proj: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
@@ -181,9 +181,9 @@ fn casters_outside_the_light_frustum_are_not_submitted() {
     outside.world_bounds = Some(Aabb::new([10.0, -0.5, 0.1], [11.0, 0.5, 0.9]));
 
     let mut data = frame_data();
-    data.lightViewProj = unit_box_ortho();
-    data.lightViewProj1 = unit_box_ortho();
-    data.shadowCascadeCount = 1;
+    data.light_view_proj = unit_box_ortho();
+    data.light_view_proj1 = unit_box_ortho();
+    data.shadow_cascade_count = 1;
 
     renderer
         .render(
@@ -248,9 +248,9 @@ fn identical_static_casters_share_one_shadow_draw_call() {
     right.model[3] = [0.5, 0.0, 0.0, 1.0];
 
     let mut data = frame_data();
-    data.lightViewProj = IDENTITY;
-    data.lightViewProj1 = IDENTITY;
-    data.shadowCascadeCount = 1;
+    data.light_view_proj = IDENTITY;
+    data.light_view_proj1 = IDENTITY;
+    data.shadow_cascade_count = 1;
 
     renderer
         .render(

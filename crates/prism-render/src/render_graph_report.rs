@@ -137,7 +137,6 @@ pub struct ReportSettings {
 
 impl ReportSettings {
     /// 从原始字段构造（`prism-engine` 的 `RenderSettings` 用它填表）。
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         render_mode: RenderMode,
         debug_flags: u32,
@@ -404,6 +403,10 @@ impl ReportWriter {
     }
 
     /// 同 [`Self::maybe_write`]，附带 per-pass GPU 时间（#518）。
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "timing report pulls scene, frame and pass data in one call"
+    )]
     pub fn maybe_write_with_timings(
         &mut self,
         snapshot: &RenderGraphSnapshot,

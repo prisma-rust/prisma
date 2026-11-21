@@ -345,90 +345,6 @@ impl InputManager {
 #[path = "input_tests.rs"]
 mod tests;
 
-#[cfg(test)]
-mod abi_key_tests {
-    use super::KeyCode;
-    use prism_project_api::keys;
-
-    /// 键位编号是宿主/项目共用的 ABI：改 `bit_index` 必须同步更新
-    /// `prism_project_api::keys`，否则动态模块读到的输入会错位。
-    #[test]
-    fn abi_key_table_matches_bit_index() {
-        assert_eq!(KeyCode::KeyW.bit_index(), Some(keys::KEY_W));
-        assert_eq!(KeyCode::KeyA.bit_index(), Some(keys::KEY_A));
-        assert_eq!(KeyCode::KeyS.bit_index(), Some(keys::KEY_S));
-        assert_eq!(KeyCode::KeyD.bit_index(), Some(keys::KEY_D));
-        assert_eq!(KeyCode::KeyQ.bit_index(), Some(keys::KEY_Q));
-        assert_eq!(KeyCode::KeyE.bit_index(), Some(keys::KEY_E));
-        assert_eq!(KeyCode::Space.bit_index(), Some(keys::SPACE));
-        assert_eq!(KeyCode::ShiftLeft.bit_index(), Some(keys::SHIFT_LEFT));
-        assert_eq!(KeyCode::ShiftRight.bit_index(), Some(keys::SHIFT_RIGHT));
-        assert_eq!(KeyCode::ControlLeft.bit_index(), Some(keys::CONTROL_LEFT));
-        assert_eq!(KeyCode::ControlRight.bit_index(), Some(keys::CONTROL_RIGHT));
-        assert_eq!(KeyCode::AltLeft.bit_index(), Some(keys::ALT_LEFT));
-        assert_eq!(KeyCode::AltRight.bit_index(), Some(keys::ALT_RIGHT));
-        assert_eq!(KeyCode::Escape.bit_index(), Some(keys::ESCAPE));
-        assert_eq!(KeyCode::Tab.bit_index(), Some(keys::TAB));
-        assert_eq!(KeyCode::Enter.bit_index(), Some(keys::ENTER));
-        assert_eq!(KeyCode::ArrowUp.bit_index(), Some(keys::ARROW_UP));
-        assert_eq!(KeyCode::ArrowDown.bit_index(), Some(keys::ARROW_DOWN));
-        assert_eq!(KeyCode::ArrowLeft.bit_index(), Some(keys::ARROW_LEFT));
-        assert_eq!(KeyCode::ArrowRight.bit_index(), Some(keys::ARROW_RIGHT));
-        assert_eq!(KeyCode::Digit0.bit_index(), Some(keys::DIGIT_0));
-        // `KeyT` / `F1..=F12` 追加在 `Other` 之前：旧键位编号一个没变，
-        // `Other` 的基址从 30 移到 43（跨 ABI 的位移，已在 `keys` 文档注明）。
-        assert_eq!(KeyCode::KeyT.bit_index(), Some(keys::KEY_T));
-        assert_eq!(KeyCode::F1.bit_index(), Some(keys::F1));
-        assert_eq!(KeyCode::F12.bit_index(), Some(keys::F12));
-        assert_eq!(KeyCode::Other(5).bit_index(), Some(keys::OTHER_BASE + 5));
-    }
-
-    /// 不同键码不能共用一个位：#986 之前 `Other(code)` 取模，
-    /// vk 与另一个 vk 落到同一位，按一个冷门键会报出另一个键。
-    #[test]
-    fn other_key_codes_never_alias_each_other() {
-        let mut seen = [None; 256];
-        for code in 0u32..=212 {
-            let index = KeyCode::Other(code)
-                .bit_index()
-                .expect("code <= 212 必须放得进位图");
-            assert!(index < 256, "code {code} → {index} 越界");
-            assert!(
-                seen[index].is_none(),
-                "code {code} 与 {:?} 抢同一个位 {index}",
-                seen[index]
-            );
-            seen[index] = Some(code);
-        }
-    }
-
-    /// 位图只剩 213 个槽位（`KeyT` + `F1..=F12` 占掉 13 个）：超出必须**丢弃**
-    /// （`None`），不能折叠。
-    #[test]
-    fn other_key_codes_above_the_table_are_dropped() {
-        for code in [213u32, 226, 255, 452, 1000, u32::MAX] {
-            assert_eq!(
-                KeyCode::Other(code).bit_index(),
-                None,
-                "code {code} 不该被折叠成别的键"
-            );
-        }
-    }
-
-    /// 位图边界：最大可表示键码正好落在最后一个 bit 上。
-    #[test]
-    fn the_last_representable_key_fills_the_last_bit() {
-        assert_eq!(KeyCode::Other(212).bit_index(), Some(255));
-        let mut snapshot = prism_project_api::InputSnapshot::default();
-        snapshot.set_key(255, true);
-        assert_eq!(
-            snapshot.keys[3] >> 63,
-            1,
-            "第 255 位应在最后一个 word 的最高位"
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 跨 ABI 的输入快照（#589）
 // ---------------------------------------------------------------------------
@@ -511,5 +427,91 @@ fn touch_phase_code(phase: TouchPhase) -> u32 {
         TouchPhase::Moved => TOUCH_PHASE_MOVED,
         TouchPhase::Ended => TOUCH_PHASE_ENDED,
         TouchPhase::Cancelled => TOUCH_PHASE_CANCELLED,
+    }
+}
+
+#[cfg(test)]
+mod abi_key_tests {
+    use super::KeyCode;
+    use prism_project_api::keys;
+
+    /// Bit indices are a host/project ABI: changing `bit_index` must update
+    /// `prism_project_api::keys`, or dynamic modules read the wrong inputs.
+    #[test]
+    fn abi_key_table_matches_bit_index() {
+        assert_eq!(KeyCode::KeyW.bit_index(), Some(keys::KEY_W));
+        assert_eq!(KeyCode::KeyA.bit_index(), Some(keys::KEY_A));
+        assert_eq!(KeyCode::KeyS.bit_index(), Some(keys::KEY_S));
+        assert_eq!(KeyCode::KeyD.bit_index(), Some(keys::KEY_D));
+        assert_eq!(KeyCode::KeyQ.bit_index(), Some(keys::KEY_Q));
+        assert_eq!(KeyCode::KeyE.bit_index(), Some(keys::KEY_E));
+        assert_eq!(KeyCode::Space.bit_index(), Some(keys::SPACE));
+        assert_eq!(KeyCode::ShiftLeft.bit_index(), Some(keys::SHIFT_LEFT));
+        assert_eq!(KeyCode::ShiftRight.bit_index(), Some(keys::SHIFT_RIGHT));
+        assert_eq!(KeyCode::ControlLeft.bit_index(), Some(keys::CONTROL_LEFT));
+        assert_eq!(KeyCode::ControlRight.bit_index(), Some(keys::CONTROL_RIGHT));
+        assert_eq!(KeyCode::AltLeft.bit_index(), Some(keys::ALT_LEFT));
+        assert_eq!(KeyCode::AltRight.bit_index(), Some(keys::ALT_RIGHT));
+        assert_eq!(KeyCode::Escape.bit_index(), Some(keys::ESCAPE));
+        assert_eq!(KeyCode::Tab.bit_index(), Some(keys::TAB));
+        assert_eq!(KeyCode::Enter.bit_index(), Some(keys::ENTER));
+        assert_eq!(KeyCode::ArrowUp.bit_index(), Some(keys::ARROW_UP));
+        assert_eq!(KeyCode::ArrowDown.bit_index(), Some(keys::ARROW_DOWN));
+        assert_eq!(KeyCode::ArrowLeft.bit_index(), Some(keys::ARROW_LEFT));
+        assert_eq!(KeyCode::ArrowRight.bit_index(), Some(keys::ARROW_RIGHT));
+        assert_eq!(KeyCode::Digit0.bit_index(), Some(keys::DIGIT_0));
+        // `KeyT` / `F1..=F12` sit before `Other`, so every previously assigned
+        // key keeps its bit; `Other`'s base moved 30 -> 43 (an ABI shift that
+        // `keys` documents).
+        assert_eq!(KeyCode::KeyT.bit_index(), Some(keys::KEY_T));
+        assert_eq!(KeyCode::F1.bit_index(), Some(keys::F1));
+        assert_eq!(KeyCode::F12.bit_index(), Some(keys::F12));
+        assert_eq!(KeyCode::Other(5).bit_index(), Some(keys::OTHER_BASE + 5));
+    }
+
+    /// Distinct key codes must not share a bit: before #986 `Other(code)` was
+    /// taken modulo the table, so two vk codes collided and pressing one rare
+    /// key reported another.
+    #[test]
+    fn other_key_codes_never_alias_each_other() {
+        let mut seen = [None; 256];
+        for code in 0u32..=212 {
+            let index = KeyCode::Other(code)
+                .bit_index()
+                .expect("code <= 212 必须放得进位图");
+            assert!(index < 256, "code {code} → {index} 越界");
+            assert!(
+                seen[index].is_none(),
+                "code {code} 与 {:?} 抢同一个位 {index}",
+                seen[index]
+            );
+            seen[index] = Some(code);
+        }
+    }
+
+    /// Only 213 bitmap slots remain (`KeyT` plus `F1..=F12` take 13): codes past
+    /// the table must be dropped (`None`), never folded onto another key.
+    #[test]
+    fn other_key_codes_above_the_table_are_dropped() {
+        for code in [213u32, 226, 255, 452, 1000, u32::MAX] {
+            assert_eq!(
+                KeyCode::Other(code).bit_index(),
+                None,
+                "code {code} 不该被折叠成别的键"
+            );
+        }
+    }
+
+    /// Bitmap edge: the largest representable key code lands on the last bit.
+    #[test]
+    fn the_last_representable_key_fills_the_last_bit() {
+        assert_eq!(KeyCode::Other(212).bit_index(), Some(255));
+        let mut snapshot = prism_project_api::InputSnapshot::default();
+        snapshot.set_key(255, true);
+        assert_eq!(
+            snapshot.keys[3] >> 63,
+            1,
+            "第 255 位应在最后一个 word 的最高位"
+        );
     }
 }

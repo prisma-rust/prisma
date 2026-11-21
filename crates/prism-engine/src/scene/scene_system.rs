@@ -618,7 +618,7 @@ impl SceneManager {
                 continue;
             }
             if let Some(name) = scene_name {
-                if &entry.name != name {
+                if entry.name != name {
                     continue;
                 }
             }

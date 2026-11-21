@@ -182,6 +182,10 @@ impl SpritePass {
     ///
     /// `bindless_set` / `bindless_layout` 由 ForwardPass 提供；`view_proj`
     /// 是本帧世界→裁剪矩阵（2D 时即正交相机矩阵）。
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "draw takes the per-frame matrices and descriptor sets the caller owns"
+    )]
     pub fn draw(
         &mut self,
         device: &ash::Device,

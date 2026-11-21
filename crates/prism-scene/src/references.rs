@@ -173,7 +173,10 @@ where
     changed
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arity mirrors the float-parameter packing that the callers already flatten"
+)]
 fn sync_single<G, P>(
     fields: &mut Map<String, Value>,
     path_field: &str,
@@ -227,7 +230,10 @@ where
     changed
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arity mirrors the float-parameter packing that the callers already flatten"
+)]
 fn sync_array<G, P>(
     fields: &mut Map<String, Value>,
     path_field: &str,

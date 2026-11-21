@@ -11,8 +11,6 @@
 //! `audio_decode_thread_main` 已被 `App::start_audio_decode_thread` 启动，
 //! 但音频播放系统尚未调用，多数变体暂未构造。保留以抑制 dead_code 警告。
 
-#![allow(dead_code)]
-
 use flume::{Receiver, Sender};
 use prism_audio::AudioData;
 

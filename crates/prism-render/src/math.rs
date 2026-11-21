@@ -66,7 +66,6 @@ mod tests {
 }
 
 /// Transform a 3D point by a 4x4 column-major affine model matrix (w = 1).
-#[allow(dead_code)]
 pub(crate) fn transform_point(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
     [
         m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0],
@@ -76,7 +75,6 @@ pub(crate) fn transform_point(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
 }
 
 /// Transform a 3D vector by a 4x4 column-major affine model matrix (w = 0) and normalize.
-#[allow(dead_code)]
 pub(crate) fn transform_vector_normalized(m: &[[f32; 4]; 4], v: [f32; 3]) -> [f32; 3] {
     let x = m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2];
     let y = m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2];
@@ -90,20 +88,12 @@ pub(crate) fn transform_vector_normalized(m: &[[f32; 4]; 4], v: [f32; 3]) -> [f3
     }
 }
 
-/// Transpose a 4x4 matrix (swaps rows and columns).
-#[allow(dead_code)]
-pub(crate) fn mat_transpose(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
-    let mut out = [[0.0f32; 4]; 4];
-    for col in 0..4 {
-        for row in 0..4 {
-            out[row][col] = m[col][row];
-        }
-    }
-    out
-}
-
 #[cfg(test)]
-#[allow(clippy::needless_range_loop, clippy::excessive_precision)]
+#[expect(
+    clippy::needless_range_loop,
+    clippy::excessive_precision,
+    reason = "test helper indexes a fixed-size matrix by row and column"
+)]
 mod inverse_tests {
     use super::*;
 

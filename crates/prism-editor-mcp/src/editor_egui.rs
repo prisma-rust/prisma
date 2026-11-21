@@ -16,7 +16,7 @@
 //! | `editor_input` | Injects keyboard/mouse into Play (one event per frame) for automation |
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -456,30 +456,6 @@ fn find_editor_root(root: &Path) -> Option<PathBuf> {
         current = dir.parent();
     }
     None
-}
-
-/// The port file exists but the editor is dead: remove the stale file (used
-/// before `editor_launch`).
-#[allow(dead_code)]
-pub fn stale_port_file(root: &Path) -> bool {
-    let file = port_file(root);
-    if let Ok(text) = std::fs::read_to_string(&file) {
-        if let Ok(port) = text.trim().parse::<u16>() {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                return false;
-            }
-        }
-    }
-    let _ = std::fs::remove_file(&file);
-    true
-}
-
-#[allow(dead_code)]
-fn free_port_probe() -> Option<u16> {
-    TcpListener::bind(("127.0.0.1", 0))
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
 }
 
 #[cfg(test)]

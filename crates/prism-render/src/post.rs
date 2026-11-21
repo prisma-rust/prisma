@@ -17,13 +17,13 @@
 //!   匹配其刚写入的帧缓冲）。
 //!
 //! ## `execute` 中记录的布局转换
-//! 1. 屏障：HDR `COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL`
-//! 2. 屏障：交换链 `UNDEFINED → COLOR_ATTACHMENT_OPTIMAL`（通过渲染通道的
-//!    load op).
+//! 1. barrier: HDR `COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL`.
+//! 2. barrier: swapchain `UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL` via the render
+//!    pass load op.
 //! 3. begin render pass (writes swapchain), draw fullscreen triangle, end.
-//! 4. The caller (GraphRenderer::render) barriers swapchain
-//! `COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR` (or the external overlay does
-//! it via its own load+transition pass
+//! 4. The caller (`GraphRenderer::render`) barriers the swapchain to
+//!    `PRESENT_SRC_KHR`; the external overlay does the same through its own
+//!    load and transition pass.
 
 use anyhow::Context as _;
 use ash::vk;
@@ -660,6 +660,10 @@ impl PostPass {
     /// 交换链 to PRESENT_SRC_KHR (or the external overlay handles it) after this.
     /// `frame_index` selects the per-frame-in-flight descriptor set; `image_index`
     /// selects the per-swapchain-image framebuffer.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pass already owns the rest of its state; these are per-frame inputs"
+    )]
     pub fn execute(
         &mut self,
         device: &ash::Device,
@@ -1318,7 +1322,6 @@ fn create_render_pass(
 // future HDR-image helpers (currently none - the HDR image is owned by
 // ForwardPass). Kept here as a placeholder 导入 to avoid an unused 警告
 // if no callers use it.
-#[allow(dead_code)]
 fn _memory_type_for_hdr(context: &VulkanContext, mem_type_bits: u32) -> anyhow::Result<u32> {
     find_memory_type(
         &context.physical_device_memory_properties,

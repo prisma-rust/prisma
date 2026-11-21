@@ -161,7 +161,10 @@ pub(super) fn shadow_matrix_fitting(light_dir: &Vec4, corners: &[Vec3], texels: 
 /// `camera_front` is the near plane depth and `distance` caps how far shadows
 /// reach; the corners come from the main camera's frustum, so the map covers
 /// exactly what the player can see rather than a fixed box in front of the eye.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "arity mirrors the float-parameter packing that the callers already flatten"
+)]
 pub(super) fn shadow_cascade_matrices(
     light_dir: &Vec4,
     inv_view_proj: &Mat4,
@@ -203,10 +206,4 @@ pub(super) fn shadow_cascade_matrices(
         shadow_matrix_fitting(light_dir, &far_corners, texels),
         split,
     )
-}
-
-#[allow(dead_code)]
-fn norm3(a: [f32; 3]) -> [f32; 3] {
-    let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).max(1e-8).sqrt();
-    [a[0] / l, a[1] / l, a[2] / l]
 }

@@ -559,6 +559,7 @@ impl GpuAssetResolver {
     /// - 没有戳 → 包由更旧的管线构建，无法判断新鲜度（warn，不阻断）；
     /// - schema 指纹不同 → 引擎换了组件布局，旧包可能解出错误数据（error）；
     /// - 工程文档比包新 → 改了场景忘改打包（error，带重建命令）。
+    ///
     /// 首次取资源时统一校验一次已挂载的包（logger 此时已就绪）。
     fn check_cook_stamps_once(&mut self) {
         if self.stamps_checked {
@@ -589,7 +590,8 @@ impl GpuAssetResolver {
             .id_by_path(stamp_mod::COOK_STAMP_NAME)
             .and_then(|id| self.resource_manager.load_with_deps_raw(id).ok())
             .and_then(|bytes| stamp_mod::CookStamp::parse(&String::from_utf8_lossy(&bytes)));
-        // 发布版没有 `assets/scenes/*.scene.json`，扫出来是 0 = 只比对 schema。
+        // Release builds ship no `assets/scenes/*.scene.json`, so the newest source
+        // timestamp is 0 and only the schema fingerprint is compared.
         let newest = {
             let mut walk_span = crate::util::timing::span("asset::newest_source_mtime");
             let newest = pak_path
@@ -660,10 +662,12 @@ impl GpuAssetResolver {
     ///
     /// 返回数量即本帧新投递的实体数。已 enqueue 但尚未写回结果的实体会被去重跳过。
     ///
-    /// 每个实体只携带「仍然缺失」的那几半：网格已解析、材质还缺时不会再加载/上传
-    /// 网格（旧实现会把整份请求重发一遍，导致每帧注册新的 GPU 资源）。加载失败的
-    /// 槽位会记入失败缓存（[`GpuAssetResolver::failed`]），同一坏路径只尝试一次，
-    /// 直到路径被改写。
+    /// Each entity only carries the halves that are still missing: when the mesh
+    /// resolved but the material is pending, the mesh is neither loaded nor
+    /// uploaded again (the old implementation re-sent the whole request, which
+    /// registered fresh GPU resources every frame). A slot that fails to load is
+    /// recorded in the failure cache ([`GpuAssetResolver::failed`]), so one bad
+    /// path is tried exactly once until someone rewrites it.
     pub fn prepare_requests(&mut self, world: &World) -> Vec<(Entity, AssetResolveRequest)> {
         let mut span = crate::util::timing::span("asset::prepare_requests");
         // #976：构建戳在**第一次**取资源时才校验。启动时的挂包发生在
@@ -1446,10 +1450,11 @@ impl GpuAssetResolver {
     // 骨骼动画资产（#560 P0-2）
     // -----------------------------------------------------------------------
 
-    /// 把场景里引用的 `.rskel` / `.ranim` 读进 [`SkeletonLibrary`]。
+    /// Read the `.rskel` / `.ranim` files a scene references into [`SkeletonLibrary`].
     ///
-    /// 需要 `&mut World`（要写资源），所以不进调度系统；调用方在每帧的
-    /// `prepare_requests` 附近调用一次即可（重复调用是幂等的）。
+    /// Takes `&mut World` because it writes resources, so it is not a scheduled
+    /// system: callers run it once per frame next to `prepare_requests` (repeat
+    /// calls are idempotent).
     pub fn load_animation_assets(&mut self, world: &mut World) -> usize {
         let _span = crate::util::timing::span("asset::load_animation_assets");
         use crate::scene::systems::animator::SkeletonLibrary;

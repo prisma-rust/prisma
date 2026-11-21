@@ -43,7 +43,6 @@ pub enum CrashChoice {
 
 #[cfg(any(target_os = "android", test))]
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct AndroidAppHandles {
     vm_ptr: *mut std::ffi::c_void,
     activity_ptr: *mut std::ffi::c_void,

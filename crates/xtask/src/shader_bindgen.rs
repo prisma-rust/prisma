@@ -65,7 +65,6 @@ struct TypeInfo {
 
 /// Info about a struct type nested inside a parameter's type.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct StructTypeInfo {
     #[serde(default)]
     kind: Option<String>,

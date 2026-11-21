@@ -85,7 +85,6 @@ mod bench_report;
 pub mod crash_dialog;
 mod debug_hud;
 mod hook;
-mod io_runner;
 pub mod logging;
 #[cfg(feature = "physics")]
 mod physics_runner;

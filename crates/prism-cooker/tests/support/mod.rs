@@ -4,11 +4,13 @@
 //! import them with the real pipelines, cook them into a `.pak`, then load the
 //! cooked bytes through `prism-asset` and compare decoded data / metadata.
 
-#![allow(dead_code)] // Reusable helper surface; individual scenarios use a subset.
+// This module is compiled into several test binaries; each one exercises a
+// different subset, so per-binary dead-code expectations cannot all be met.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use prism_asset::core::{AssetId, AssetType};
@@ -54,10 +56,6 @@ impl AssetHarness {
             intermediate: HashMap::new(),
             ids: HashMap::new(),
         }
-    }
-
-    pub fn root(&self) -> &Path {
-        self.dir.path()
     }
 
     pub fn assets_dir(&self) -> PathBuf {

@@ -301,7 +301,7 @@ impl SharcResolvePass {
                 0,
                 bytemuck::bytes_of(push),
             );
-            let groups = (push.capacity + 255) / 256;
+            let groups = push.capacity.div_ceil(256);
             device.cmd_dispatch(cmd, groups, 1, 1);
         }
     }

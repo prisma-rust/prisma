@@ -452,7 +452,7 @@ pub(super) fn deinterleave_rmes(
     info: &prism_asset::formats::RmesInfo,
 ) -> Option<(MeshUploadInput, Vec<MeshSubmesh>)> {
     let stride = info.stride_bytes as usize;
-    if stride == 0 || stride % 4 != 0 {
+    if stride == 0 || !stride.is_multiple_of(4) {
         log::warn!("load_mesh_inputs: bad stride {stride} for '{path}'");
         return None;
     }

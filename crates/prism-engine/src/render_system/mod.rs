@@ -531,35 +531,17 @@ pub struct FramePacket {
 /// a [`SceneChanges`] snapshot for the current frame.
 /// 采集一帧的 scene 快照（不带复用的便捷包装，测试用）。
 #[cfg(test)]
-#[allow(dead_code)] // 仅测试用：生产路径直接走 `extract_frame_packet_*`。
 fn collect_scene_changes(
     world: &mut World,
     display_aspect: f32,
     surface_rotation: &Mat4,
-) -> SceneChanges {
-    collect_scene_changes_with_shadow(
-        world,
-        display_aspect,
-        surface_rotation,
-        DEFAULT_SHADOW_DISTANCE,
-    )
-}
-
-/// 阴影覆盖距离（米）参与的场景采集。`extract_frame_packet*` 的默认入口用
-/// [`DEFAULT_SHADOW_DISTANCE`]，宿主可以传 `RenderSettings::shadow_distance`。
-#[allow(dead_code)] // 同上：只有测试从这一层进去（阴影距离由测试显式给）。
-fn collect_scene_changes_with_shadow(
-    world: &mut World,
-    display_aspect: f32,
-    surface_rotation: &Mat4,
-    shadow_distance: f32,
 ) -> SceneChanges {
     let mut out = SceneChanges::default();
     collect_scene_changes_into(
         world,
         display_aspect,
         surface_rotation,
-        shadow_distance,
+        DEFAULT_SHADOW_DISTANCE,
         1,
         &mut out,
     );
@@ -934,9 +916,9 @@ pub fn render_system(
         ..Default::default()
     };
 
-    // 2.5. 统一脏分派计划（DESIGN §9 / #1157）：
-    //      draw_items 内容变化（矩阵 / mesh / material / 阴影标志）
-    //      也视为场景脏，收敛到统一的 DirtyDispatchPlan。
+    // 2.5. Unified dirty-dispatch plan (DESIGN §9 / #1157): a change to the
+    //      draw_items contents (matrix / mesh / material / shadow flags) also
+    //      counts as a dirty scene and converges on DirtyDispatchPlan.
     let draw_items_dirty = dirty_router.draw_items_dirty(draw_items_signature(draw_items));
     if draw_items_dirty {
         log::trace!("dirty: draw_items changed");
@@ -1015,13 +997,11 @@ pub fn render_system(
     };
     // §8 五阶段：prepare 阶段批量同步（当前实现 dirty 日志 + 未来上传点）
     renderer.set_voxel_scene(voxel_scene.clone());
-    renderer.prepare(&ctx, &input).map_err(|e| {
+    renderer.prepare(&ctx, &input).inspect_err(|_e| {
         let _ = renderer.present(&ctx);
-        e
     })?;
-    renderer.execute(&ctx, &input).map_err(|e| {
+    renderer.execute(&ctx, &input).inspect_err(|_e| {
         let _ = renderer.present(&ctx);
-        e
     })?;
     let _ = renderer.present(&ctx)?;
     Ok(())

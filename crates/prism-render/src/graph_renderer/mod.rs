@@ -209,13 +209,8 @@ pub struct GraphRenderer {
     /// [`Self::set_outline_entities`] 更新；空 = 不画。
     outline_entities: Vec<u32>,
     shadow_sampler: vk::Sampler,
-    // Captured from the graph's allocated shadow map; consumed via the
-    // 描述符 集合 in `forward_pass`.
-    #[allow(dead_code)]
-    shadow_view: vk::ImageView,
     /// `ForwardPass` 在可选 pass 关闭/未就绪时的 1×1 占位纹理集合。
     placeholders: crate::placeholder::ForwardPlaceholders,
-    #[allow(dead_code)]
     color_format: vk::Format,
     /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
     ui_host: UiOverlayHost,
@@ -680,7 +675,6 @@ impl GraphRenderer {
             applied_lut: None,
             outline_entities: Vec::new(),
             shadow_sampler,
-            shadow_view,
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
@@ -1208,7 +1202,6 @@ impl GraphRenderer {
             applied_lut: None,
             outline_entities: Vec::new(),
             shadow_sampler,
-            shadow_view,
             placeholders,
             color_format,
             ui_host: UiOverlayHost::default(),
@@ -3155,7 +3148,7 @@ impl GraphRenderer {
         if record.is_ok() {
             let has_ui = ui_overlay.is_some_and(|o| !o.quads.is_empty() || !o.texts.is_empty());
             if has_ui {
-                // UI 背景图（#591）从场景共享的 bindless 表取样。
+                // UI background images (#591) sample the scene-shared bindless table.
                 let bindless_set = self.texture_manager.bindless().set;
                 let bindless_layout = self.texture_manager.bindless().layout;
                 if let Some(sw) = self.swapchain.as_ref() {
@@ -3217,10 +3210,11 @@ impl GraphRenderer {
 
         // --- Transition swapchain image to PRESENT_SRC_KHR ---
         //
-        // 外部叠加层（宿主 UI）在 ECS UI 之后 record：image 此时
-        // 已是 PRESENT_SRC_KHR（graph 末尾 RtPreview 或 ECS UI 的 final
-        // layout），叠加 render pass 期望 COLOR_ATTACHMENT_OPTIMAL 初始
-        // 布局 → record 前显式转回。无叠加时无需任何转换。
+        // The external overlay (host UI) records after ECS UI: the image is then
+        // in PRESENT_SRC_KHR (the final layout of RtPreview or ECS UI at the end
+        // of the graph), while the overlay pass expects COLOR_ATTACHMENT_OPTIMAL
+        // as its initial layout, so transition back before recording. No overlay
+        // means no transition at all.
         if record.is_ok() && self.ui_host.has_external_overlay_content() {
             if let Some(sw) = self.swapchain.as_ref() {
                 let image = sw.images[image_index as usize];
@@ -3384,7 +3378,10 @@ impl GraphRenderer {
     ///
     /// This is a compatibility wrapper; new code should prefer the explicit
     /// phase API for finer error handling and future prepare-stage insertion.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     pub fn render(
         &mut self,
         draw_items: &[DrawItem],
@@ -3553,8 +3550,8 @@ impl GraphRenderer {
         self.graph.discard_pass_dump(device);
 
         // Destroy IBL resources (env/irradiance/prefiltered cubes, BRDF LUT).
-        // 共享的 set2 描述符 布局 由 GraphRenderer 持有，此处单独销毁
-        // （在 ibl.destroy() 把字段置空前取出句柄）。
+        // The shared set2 descriptor layout belongs to GraphRenderer and is
+        // destroyed here (grab the handle before `ibl.destroy()` clears it).
         let ibl_ds_layout = self.ibl.descriptor_set_layout;
         self.ibl.destroy();
         if ibl_ds_layout != vk::DescriptorSetLayout::null() {

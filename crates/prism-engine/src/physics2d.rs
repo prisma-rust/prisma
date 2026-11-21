@@ -329,7 +329,7 @@ impl WorldShape2D {
                     })
                     .intersect_ray(origin, dir, max_dist)
                     {
-                        if best.map_or(true, |(bd, _)| d < bd) {
+                        if best.is_none_or(|(bd, _)| d < bd) {
                             best = Some((d, n));
                         }
                     }
@@ -340,7 +340,7 @@ impl WorldShape2D {
                     vertices: vec![*a + n, *b + n, *b - n, *a - n],
                 };
                 if let Some((d, norm)) = quad.intersect_ray(origin, dir, max_dist) {
-                    if best.map_or(true, |(bd, _)| d < bd) {
+                    if best.is_none_or(|(bd, _)| d < bd) {
                         best = Some((d, norm));
                     }
                 }
@@ -393,7 +393,7 @@ pub fn raycast_2d_excluding(
         let shape = WorldShape2D::from_collider(collider, pos, rot);
 
         if let Some((dist, normal)) = shape.intersect_ray(origin, dir, max_distance) {
-            if dist <= max_distance && best.map_or(true, |b| dist < b.distance) {
+            if dist <= max_distance && best.is_none_or(|b| dist < b.distance) {
                 let hit_pt = origin + dir * dist;
                 best = Some(RayHit2D {
                     entity,
@@ -878,10 +878,10 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         if !prev_contacts.pairs.contains(&pair) {
             let is_sensor = world
                 .get::<PhysicsCollider2D>(pair.0)
-                .map_or(false, |c| c.is_sensor)
+                .is_some_and(|c| c.is_sensor)
                 || world
                     .get::<PhysicsCollider2D>(pair.1)
-                    .map_or(false, |c| c.is_sensor);
+                    .is_some_and(|c| c.is_sensor);
             events.push(Physics2DEvent {
                 kind: Physics2DEventKind::Started,
                 entity_a: pair.0,
@@ -895,10 +895,10 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         if !current_contacts.contains(&pair) {
             let is_sensor = world
                 .get::<PhysicsCollider2D>(pair.0)
-                .map_or(false, |c| c.is_sensor)
+                .is_some_and(|c| c.is_sensor)
                 || world
                     .get::<PhysicsCollider2D>(pair.1)
-                    .map_or(false, |c| c.is_sensor);
+                    .is_some_and(|c| c.is_sensor);
             events.push(Physics2DEvent {
                 kind: Physics2DEventKind::Stopped,
                 entity_a: pair.0,

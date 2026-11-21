@@ -282,8 +282,8 @@ pub fn convert_ui_draw_list_to_overlay_into(world: &World, out: &mut prism_rende
             width: 1920.0,
             height: 1080.0,
         });
-    let w = screen.width as f32;
-    let h = screen.height as f32;
+    let w = screen.width;
+    let h = screen.height;
 
     let Some(draw_list) = world.get_resource::<UiDrawList>() else {
         return;

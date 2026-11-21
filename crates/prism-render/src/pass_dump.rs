@@ -24,7 +24,6 @@ use ash::vk;
 /// The `Albedo` / `Velocity` / `Grayscale` / `RawRgba8` kinds are wired by the
 /// headless diagnostic runners, not by the default pass list, so they stay
 /// unused in configurations that only dump the default targets.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DumpKind {
     /// HDR radiance: clamp to `[0, 1]` then gamma encode.
@@ -110,7 +109,6 @@ impl PassDump {
     }
 
     /// Programmatic constructor for automated tests and headless runners.
-    #[allow(dead_code)]
     pub(crate) fn new(dir: PathBuf, target_frame: u64, filter: Option<Vec<String>>) -> Self {
         Self {
             dir: Some(dir),

@@ -890,7 +890,7 @@ fn make_test_rtex(width: u32, height: u32, format: u8, mips: &[&[u8]]) -> Vec<u8
 fn load_texture_data_preserves_prebaked_mip_chain() {
     let mip0 = vec![10u8; 4 * 4 * 4];
     let mip1 = vec![20u8; 2 * 2 * 4];
-    let mip2 = vec![30u8; 1 * 1 * 4];
+    let mip2 = vec![30u8; 4];
     let rtex = make_test_rtex(4, 4, RTEX_FORMAT_RGBA8, &[&mip0, &mip1, &mip2]);
 
     let (pak, manifest) = tiny_pak(&[(

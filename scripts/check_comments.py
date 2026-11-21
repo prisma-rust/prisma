@@ -54,6 +54,13 @@ EXCLUDED_PREFIXES = (
     ".local/tools/slang/",
 )
 
+# A shared test harness is compiled into many test binaries and every binary
+# exercises a different subset of it. `dead_code` is reported per binary, so no
+# `#[expect(...)]` can be honest about it: the item is live in one binary and dead
+# in another. `#![allow(dead_code)]` is the only attribute that expresses this,
+# so it is permitted in `tests/**` modules and nowhere else.
+SHARED_HARNESS_ALLOW = re.compile(r"^#!\[allow\(dead_code\)\]$")
+
 
 def git(*args: str) -> tuple[int, str]:
     try:
@@ -258,6 +265,8 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
 
     for line_no, attr, kind in attributes(source):
         if only_lines is not None and line_no not in only_lines:
+            continue
+        if kind == "allow" and SHARED_HARNESS_ALLOW.fullmatch(attr) and "/tests/" in rel_path:
             continue
         if kind == "allow":
             issues.append(

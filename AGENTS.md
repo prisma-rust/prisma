@@ -24,6 +24,10 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
   boundary and **fails the build once the lint stops firing**, so it cannot rot into dead weight.
   Use it only where the lint is wrong about correct code (FFI signatures, Vulkan handles); never
   to silence `dead_code`.
+- One exception, and only this one: a shared test harness under `tests/` that several test
+  binaries include may carry `#![allow(dead_code)]`. `dead_code` is reported per binary, so a
+  helper is live in one binary and dead in another; no single `expect` can be honest about that.
+  Everywhere else `allow` stays banned and `scripts/check_comments.py` enforces it.
 - **Warnings are errors.** Every crate must pass `cargo clippy --all-targets -- -D warnings` for
   the whole workspace, not only the crates a commit happens to touch. A warning in an untouched
   crate is still a defect; fix it or delete the code.

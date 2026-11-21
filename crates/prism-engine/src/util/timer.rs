@@ -83,8 +83,6 @@ struct RegMsg {
     id: u32,
     group_id: Option<u32>,
     params: TimerParams,
-    #[allow(dead_code)]
-    deadline: Instant,
 }
 struct FireEvent {
     id: u32,
@@ -138,7 +136,6 @@ impl TimerClient {
             id,
             group_id,
             params,
-            deadline,
         }));
         let _ = self.cmd_tx.send(WorkerCmd { id, deadline });
         id
@@ -292,12 +289,9 @@ impl TimerService {
             if let Some(p) = self.params.get_mut(&id) {
                 (p.callback)();
                 if let Some(period) = p.interval {
-                    self.client
-                        .state
-                        .lock()
-                        .unwrap()
-                        .get_mut(id)
-                        .map(|st| st.remaining = period);
+                    if let Some(st) = self.client.state.lock().unwrap().get_mut(id) {
+                        st.remaining = period;
+                    }
                     let _ = self.client.cmd_tx.send(WorkerCmd {
                         id,
                         deadline: Instant::now() + period,
@@ -308,6 +302,12 @@ impl TimerService {
                 }
             }
         }
+    }
+}
+
+impl Default for TimerService {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -18,22 +18,26 @@ use crate::swapchain::FRAMES_IN_FLIGHT;
 
 /// A Vulkan object awaiting its frame slot to retire.
 ///
-/// Not every variant is used by every feature combination (`Image` belongs to
-/// the ReSTIR GI resize path), so the enum is allowed to have unused variants.
-#[allow(dead_code)]
+/// Variants are gated by the feature that constructs them, so no build carries
+/// a variant it can never reach.
 pub(crate) enum RetiredResource {
     Buffer {
         buffer: vk::Buffer,
         memory: vk::DeviceMemory,
     },
+    #[cfg(feature = "restir_gi")]
     Image {
         view: vk::ImageView,
         image: vk::Image,
         memory: vk::DeviceMemory,
     },
+    #[cfg(feature = "ui")]
     Pipeline(vk::Pipeline),
+    #[cfg(feature = "ui")]
     PipelineLayout(vk::PipelineLayout),
+    #[cfg(feature = "ui")]
     Framebuffer(vk::Framebuffer),
+    #[cfg(feature = "ui")]
     RenderPass(vk::RenderPass),
 }
 
@@ -49,6 +53,7 @@ impl RetiredResource {
                         device.free_memory(memory, None);
                     }
                 }
+                #[cfg(feature = "restir_gi")]
                 Self::Image {
                     view,
                     image,
@@ -64,21 +69,25 @@ impl RetiredResource {
                         device.free_memory(memory, None);
                     }
                 }
+                #[cfg(feature = "ui")]
                 Self::Pipeline(pipeline) => {
                     if pipeline != vk::Pipeline::null() {
                         device.destroy_pipeline(pipeline, None);
                     }
                 }
+                #[cfg(feature = "ui")]
                 Self::PipelineLayout(layout) => {
                     if layout != vk::PipelineLayout::null() {
                         device.destroy_pipeline_layout(layout, None);
                     }
                 }
+                #[cfg(feature = "ui")]
                 Self::Framebuffer(framebuffer) => {
                     if framebuffer != vk::Framebuffer::null() {
                         device.destroy_framebuffer(framebuffer, None);
                     }
                 }
+                #[cfg(feature = "ui")]
                 Self::RenderPass(render_pass) => {
                     if render_pass != vk::RenderPass::null() {
                         device.destroy_render_pass(render_pass, None);
@@ -147,12 +156,20 @@ impl RetireQueue {
 mod tests {
     use super::*;
 
+    /// A destroyed-nothing buffer, the one variant every feature set constructs.
+    fn null_buffer() -> RetiredResource {
+        RetiredResource::Buffer {
+            buffer: vk::Buffer::null(),
+            memory: vk::DeviceMemory::null(),
+        }
+    }
+
     /// Objects parked in slot N are released when slot N comes around again,
     /// never in the frame that parked them.
     #[test]
     fn a_resource_survives_until_its_slot_rotates_back() {
         let mut queue = RetireQueue::new();
-        queue.retire(0, RetiredResource::Pipeline(vk::Pipeline::null()));
+        queue.retire(0, null_buffer());
         for slot in 1..FRAMES_IN_FLIGHT as u32 {
             queue.clear_slot(slot);
             assert_eq!(
@@ -170,7 +187,7 @@ mod tests {
     fn slots_do_not_share_buckets() {
         let mut queue = RetireQueue::new();
         for slot in 0..FRAMES_IN_FLIGHT as u32 {
-            queue.retire(slot, RetiredResource::Pipeline(vk::Pipeline::null()));
+            queue.retire(slot, null_buffer());
         }
         for slot in 0..FRAMES_IN_FLIGHT as u32 {
             assert_eq!(queue.slot_len(slot), 1);
@@ -183,10 +200,7 @@ mod tests {
     #[test]
     fn frame_indices_wrap_to_slots() {
         let mut queue = RetireQueue::new();
-        queue.retire(
-            FRAMES_IN_FLIGHT as u32,
-            RetiredResource::Pipeline(vk::Pipeline::null()),
-        );
+        queue.retire(FRAMES_IN_FLIGHT as u32, null_buffer());
         assert_eq!(queue.slot_len(0), 1);
     }
 }

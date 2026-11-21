@@ -121,38 +121,38 @@ impl TextureFormat {
             | TextureFormat::Bc7Srgb
             | TextureFormat::Bc5Unorm
             | TextureFormat::Bc6HUfloat => {
-                let bw = (width + 3) / 4;
-                let bh = (height + 3) / 4;
+                let bw = width.div_ceil(4);
+                let bh = height.div_ceil(4);
                 (bw as usize) * (bh as usize) * 16
             }
             TextureFormat::Bc4Unorm | TextureFormat::Bc1Unorm | TextureFormat::Bc1Srgb => {
-                let bw = (width + 3) / 4;
-                let bh = (height + 3) / 4;
+                let bw = width.div_ceil(4);
+                let bh = height.div_ceil(4);
                 (bw as usize) * (bh as usize) * 8
             }
             TextureFormat::Astc4x4Unorm | TextureFormat::Astc4x4Srgb => {
-                let bw = (width + 3) / 4;
-                let bh = (height + 3) / 4;
+                let bw = width.div_ceil(4);
+                let bh = height.div_ceil(4);
                 (bw as usize) * (bh as usize) * 16
             }
             TextureFormat::Astc6x6Unorm | TextureFormat::Astc6x6Srgb => {
-                let bw = (width + 5) / 6;
-                let bh = (height + 5) / 6;
+                let bw = width.div_ceil(6);
+                let bh = height.div_ceil(6);
                 (bw as usize) * (bh as usize) * 16
             }
             TextureFormat::Astc8x8Unorm | TextureFormat::Astc8x8Srgb => {
-                let bw = (width + 7) / 8;
-                let bh = (height + 7) / 8;
+                let bw = width.div_ceil(8);
+                let bh = height.div_ceil(8);
                 (bw as usize) * (bh as usize) * 16
             }
             TextureFormat::Astc12x12Unorm | TextureFormat::Astc12x12Srgb => {
-                let bw = (width + 11) / 12;
-                let bh = (height + 11) / 12;
+                let bw = width.div_ceil(12);
+                let bh = height.div_ceil(12);
                 (bw as usize) * (bh as usize) * 16
             }
             TextureFormat::Etc2R8G8B8A8Unorm | TextureFormat::Etc2R8G8B8A8Srgb => {
-                let bw = (width + 3) / 4;
-                let bh = (height + 3) / 4;
+                let bw = width.div_ceil(4);
+                let bh = height.div_ceil(4);
                 (bw as usize) * (bh as usize) * 16
             }
         }
@@ -243,7 +243,6 @@ pub struct RenderTextureManager {
     /// Total slots the bindless table can hold. User textures start at
     /// slot 1 (slot 0 is the fallback). The total is `fallback_capacity +
     /// user_capacity` to keep the math simple.
-    #[allow(dead_code)]
     user_capacity: u32,
     destroyed: bool,
 }

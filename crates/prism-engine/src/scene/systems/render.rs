@@ -630,7 +630,7 @@ pub(crate) fn tessellate_line(
         let v = Vec2::new(point[0], point[1]);
         if pts
             .last()
-            .map_or(true, |(last, _)| last.distance_squared(v) > 1e-10)
+            .is_none_or(|(last, _)| last.distance_squared(v) > 1e-10)
         {
             pts.push((v, point[2]));
         }

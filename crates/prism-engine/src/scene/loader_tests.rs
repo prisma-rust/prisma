@@ -14,7 +14,6 @@ use prism_ecs::World;
 /// has_mesh, mesh_path, has_material, mat_path, has_light, light_type,
 /// light_color, light_intensity, light_range, has_camera, camera_fov,
 /// camera_near, camera_far, has_skybox, skybox_hdr_path, skybox_enabled)`.
-#[allow(clippy::too_many_arguments)]
 fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RSCN");
@@ -340,7 +339,7 @@ fn spawn_has_scene_member_and_active() {
 #[test]
 fn spawn_has_local_transform() {
     let e = RscnEntity {
-        position: [10.0, 20.0, 30.0].into(),
+        position: [10.0, 20.0, 30.0],
         ..simple_entity("Moved", None)
     };
     let bytes = make_rscn(&[e]);
@@ -848,7 +847,7 @@ fn load_committed_default_rscn() {
     let mut loader = SceneLoader::new();
     let registry = crate::scene::ComponentRegistry::new();
     let inst = loader
-        .load_and_spawn(&mut world, SceneSource::CookedFile(path.into()), &registry)
+        .load_and_spawn(&mut world, SceneSource::CookedFile(path), &registry)
         .expect("default.rscn should parse");
 
     // 6 entities: 1 skybox + 1 相机 + 1 directional 光源 + 3 point lights.

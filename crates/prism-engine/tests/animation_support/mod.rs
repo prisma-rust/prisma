@@ -13,7 +13,9 @@
 //! The harness is intentionally test-only: it owns a bare `World` and has no
 //! wall-clock dependency.
 
-#![allow(dead_code)] // Reusable helper surface; individual scenarios use a subset.
+// This module is compiled into several test binaries; each one exercises a
+// different subset, so per-binary dead-code expectations cannot all be met.
+#![allow(dead_code)]
 
 use glam::{Quat, Vec3};
 
@@ -256,34 +258,6 @@ impl AnimationHarness {
             },
         );
         self
-    }
-
-    pub fn entity(&self) -> Entity {
-        self.entity
-    }
-
-    pub fn step(&self) -> f32 {
-        self.step
-    }
-
-    pub fn world(&self) -> &World {
-        &self.world
-    }
-
-    pub fn clip(&self) -> &KeyframeAnimation {
-        self.world
-            .get::<KeyframeAnimation>(self.entity)
-            .expect("harness entity keeps its clip")
-    }
-
-    pub fn clip_mut(&mut self) -> &mut KeyframeAnimation {
-        self.world
-            .get_mut::<KeyframeAnimation>(self.entity)
-            .expect("harness entity keeps its clip")
-    }
-
-    pub fn ticks(&self) -> &[Tick] {
-        &self.ticks
     }
 
     pub fn last(&self) -> &Tick {

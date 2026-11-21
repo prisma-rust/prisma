@@ -1316,6 +1316,10 @@ struct SlotBuffers {
     emitters: vk::Buffer,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one write per binding in the fixed voxel-DDA descriptor layout"
+)]
 fn write_full_descriptor_set(
     device: &ash::Device,
     ds: vk::DescriptorSet,

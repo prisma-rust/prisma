@@ -436,8 +436,10 @@ mod tests {
 
     #[test]
     fn post_grade_only_passes_bloom_when_enabled() {
-        let mut settings = RenderSettings::default();
-        settings.bloom_intensity = 0.7;
+        let mut settings = RenderSettings {
+            bloom_intensity: 0.7,
+            ..RenderSettings::default()
+        };
         assert_eq!(settings.post_grade().bloom_intensity, 0.0);
 
         settings.bloom = true;

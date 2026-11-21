@@ -21,9 +21,6 @@ pub struct VoxelRtGiPass {
     descriptor_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    descriptor_pool: vk::DescriptorPool,
-    #[allow(dead_code)]
-    descriptor_set: vk::DescriptorSet,
 }
 
 impl VoxelRtGiPass {
@@ -121,43 +118,12 @@ impl VoxelRtGiPass {
             device.destroy_shader_module(shader_module, None);
         }
 
-        let pool_sizes = [
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(1),
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(5),
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
-                .descriptor_count(1),
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::SAMPLED_IMAGE)
-                .descriptor_count(2),
-            vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::STORAGE_IMAGE)
-                .descriptor_count(1),
-        ];
-        let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .max_sets(1)
-            .pool_sizes(&pool_sizes);
-        let descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None) }
-            .context("VoxelRtGiPass: create descriptor pool")?;
-
-        let alloc_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(descriptor_pool)
-            .set_layouts(std::slice::from_ref(&descriptor_layout));
-        let descriptor_set = unsafe { device.allocate_descriptor_sets(&alloc_info) }
-            .context("VoxelRtGiPass: allocate descriptor set")?[0];
-
         Ok(Self {
             device,
             accel: VoxelRtAccel::new(),
             descriptor_layout,
             pipeline_layout,
             pipeline,
-            descriptor_pool,
-            descriptor_set,
         })
     }
 
@@ -178,8 +144,6 @@ impl VoxelRtGiPass {
 impl Drop for VoxelRtGiPass {
     fn drop(&mut self) {
         unsafe {
-            self.device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
             self.device.destroy_pipeline(self.pipeline, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);

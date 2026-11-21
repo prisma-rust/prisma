@@ -35,8 +35,6 @@ use crate::buffer::{create_buffer, BufferUsage, MemoryProperties};
 use crate::context::VulkanContext;
 use crate::shader_bindings::ui_overlay::*;
 
-#[allow(dead_code)]
-const MAX_QUADS: usize = 16_384;
 pub(crate) const VERTICES_PER_QUAD: u32 = 6;
 const VERTEX_SIZE: vk::DeviceSize = size_of::<UiVertex>() as vk::DeviceSize;
 
@@ -867,6 +865,10 @@ impl UiOverlay {
     }
 
     /// Record UI overlay draw commands into `cmd`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recording needs the command buffer plus the per-frame UI inputs"
+    )]
     pub fn record(
         &mut self,
         context: &VulkanContext,
@@ -892,8 +894,9 @@ impl UiOverlay {
         self.ensure_pipeline(&context.device, extent)?;
         log_slow_step("ensure_pipeline", pipeline_start.elapsed());
 
-        // 估算值只用于预留容量：单个字符只有在有字形位图时才写顶点
-        // （空格没有 rect、atlas 满或无字体时直接跳过），实际顶点数通常更少。
+        // The estimate only sizes the reservation: a character writes vertices
+        // only when it has a glyph bitmap (spaces have no rect, and a full atlas
+        // or missing font skips entirely), so the real count is usually lower.
         let estimated_vertices = self.estimate_vertex_count(input);
 
         // Build 顶点 (quads + 逐字形展开的 texts)。
@@ -1329,8 +1332,11 @@ fn wrap_paragraph(
     }
 }
 
-/// 往顶点流里推一个四边形（两个三角形，顺时针）。
-/// 往顶点流里推一个四边形（两个三角形，顺时针）。
+/// Push one quad (two clockwise triangles) into the vertex stream.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a quad is four corners plus its UV rect and colour"
+)]
 fn emit_quad(
     out: &mut Vec<UiVertex>,
     p0: [f32; 2],

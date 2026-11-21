@@ -8,8 +8,6 @@
 //! 数据库位于 `Project/Library/AssetDatabase.json`，将 `Assets/` 下的每个文件
 //! 映射到导入的 AssetId 和元数据。
 
-#![allow(clippy::pedantic, clippy::nursery, clippy::cargo)]
-
 use prism_asset::core::{AssetId, AssetType};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

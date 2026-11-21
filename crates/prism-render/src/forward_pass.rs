@@ -750,7 +750,10 @@ impl ForwardPass {
     ///
     /// `frame_ubo_buffers` length determines the frame-in-flight count (== set0
     /// set count). `materials_buffer` is the `RenderMaterialManager` SSBO.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arity mirrors the float-parameter packing that the callers already flatten"
+    )]
     pub fn set_resources(
         &mut self,
         context: &crate::context::VulkanContext,

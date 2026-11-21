@@ -11,8 +11,6 @@
 //! ImportResult（中间数据）→ [Cooker] → .pak data → [PackageBuilder]
 //! ```
 
-#![allow(clippy::pedantic, clippy::nursery, clippy::cargo)]
-
 use crate::db::AssetRecord;
 use prism_asset::core::{AssetId, AssetType};
 // RTEX format bytes are part of the wire format; the single source of truth

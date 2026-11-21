@@ -8,7 +8,9 @@
 //! advances exactly `step` seconds. Randomness is opt-in through
 //! [`SimHarness::install_random_walker`], which uses a seeded SplitMix64 stream.
 
-#![allow(dead_code)] // Reusable helper surface; individual scenarios use a subset.
+// This module is compiled into several test binaries; each one exercises a
+// different subset, so per-binary dead-code expectations cannot all be met.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -97,14 +99,6 @@ impl SimHarness {
 
     pub fn tick_count(&self) -> u64 {
         self.tick
-    }
-
-    pub fn engine(&self) -> &Engine {
-        &self.engine
-    }
-
-    pub fn engine_mut(&mut self) -> &mut Engine {
-        &mut self.engine
     }
 
     pub fn world(&self) -> &World {

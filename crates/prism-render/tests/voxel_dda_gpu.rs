@@ -166,12 +166,12 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
     let vp = make_camera_vp(eye, target, 1.0);
 
     let frame_data = FrameUBOData {
-        viewProj: vp,
-        cameraPosition: [eye[0], eye[1], eye[2], 0.0],
-        lightDirection: [0.4, 0.8, -0.45, 2.5],
-        lightColor: [1.0, 0.98, 0.92, 0.4],
-        viewportW: 256.0,
-        viewportH: 256.0,
+        view_proj: vp,
+        camera_position: [eye[0], eye[1], eye[2], 0.0],
+        light_direction: [0.4, 0.8, -0.45, 2.5],
+        light_color: [1.0, 0.98, 0.92, 0.4],
+        viewport_w: 256.0,
+        viewport_h: 256.0,
         exposure: 1.0,
         ..Default::default()
     };
@@ -299,12 +299,12 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
             let target = [2.0, 1.7, 4.0];
             let vp = make_camera_vp(eye, target, 1.0);
             let frame_data = FrameUBOData {
-                viewProj: vp,
-                cameraPosition: [eye[0], eye[1], eye[2], 0.0],
-                lightDirection: [0.0, 1.0, 0.0, 0.0],
-                lightColor: [0.0, 0.0, 0.0, 0.0],
-                viewportW: 256.0,
-                viewportH: 256.0,
+                view_proj: vp,
+                camera_position: [eye[0], eye[1], eye[2], 0.0],
+                light_direction: [0.0, 1.0, 0.0, 0.0],
+                light_color: [0.0, 0.0, 0.0, 0.0],
+                viewport_w: 256.0,
+                viewport_h: 256.0,
                 exposure: 1.0,
                 ..Default::default()
             };

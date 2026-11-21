@@ -413,6 +413,10 @@ fn push_box(v: &mut Vec<GizmoVertex>, center: [f32; 3], half: [f32; 3], color: [
     push_tri(v, p[3], p[6], p[2], color);
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "callers already hold the frame state this signature flattens"
+)]
 fn push_ring(
     v: &mut Vec<GizmoVertex>,
     dir: [f32; 3],

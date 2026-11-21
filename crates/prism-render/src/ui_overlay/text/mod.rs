@@ -93,8 +93,9 @@ pub(crate) trait TextRasterizer {
 mod directwrite;
 #[cfg(feature = "ui-fontdue")]
 mod fontdue_backend;
-// 纯像素运算，平台无关（Linux 上跑单测；非 Windows 构建里没有调用方）。
-#[allow(dead_code)]
+// Only the DirectWrite backend reads back BGRA bitmaps, so the module must
+// vanish with it instead of carrying an unused-code suppression.
+#[cfg(all(windows, feature = "ui-directwrite"))]
 mod coverage;
 
 /// 按编译进来的 feature 构造后端；`None` = 只画 quad、不画文字。

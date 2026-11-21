@@ -5,7 +5,9 @@
 //! times, and assert on poses / sleeping state / collision events with explicit
 //! tolerances. No window, renderer or wall-clock time is involved.
 
-#![allow(dead_code)] // Reusable helper surface; individual scenarios use a subset.
+// This module is compiled into several test binaries; each one exercises a
+// different subset, so per-binary dead-code expectations cannot all be met.
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashMap};
 

@@ -5,7 +5,7 @@
 //!
 //! ```ignore
 //! let harness = GpuHarness::new().expect("Vulkan");
-//! let result = harness.dispatch(
+//! let result = harness.dispatch_repeated(
 //!     include_bytes!(".../kernel.comp.spv"),
 //!     c"main",
 //!     &[BufferSpec::input(&input), BufferSpec::output(output_len)],
@@ -62,9 +62,8 @@ impl<'a> BufferSpec<'a> {
 /// Outputs plus wall-clock time spent submitting and waiting for a batch of
 /// dispatches.
 #[derive(Debug)]
-#[allow(dead_code)] // `elapsed` is only read by benchmark tests.
 pub struct TimedDispatch {
-    /// One entry per buffer, matching [`GpuHarness::dispatch`].
+    /// One entry per buffer, matching [`GpuHarness::dispatch_repeated`].
     pub outputs: Vec<Vec<u8>>,
     /// Time from `queue_submit` through `wait_for_fences`.
     pub elapsed: Duration,
@@ -114,26 +113,6 @@ impl GpuHarness {
             context,
             command_pool,
         })
-    }
-
-    /// Compile-time SPIR-V + runtime binding, dispatch, readback.
-    ///
-    /// `buffers` are bound to set 0 in order (`binding = index`), all as
-    /// `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER`. `push_constants` may be empty.
-    /// The result has one entry per buffer; only buffers with
-    /// `readback_bytes > 0` contain data.
-    #[allow(dead_code)] // Not every test binary that includes this module benchmarks.
-    pub fn dispatch(
-        &self,
-        spirv: &[u8],
-        entry_point: &CStr,
-        buffers: &[BufferSpec<'_>],
-        push_constants: &[u8],
-        groups: [u32; 3],
-    ) -> Result<Vec<Vec<u8>>> {
-        Ok(self
-            .dispatch_repeated(spirv, entry_point, buffers, push_constants, groups, 1)?
-            .outputs)
     }
 
     /// Dispatch the same kernel `repeats` times in one submission and measure

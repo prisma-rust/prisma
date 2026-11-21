@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 use super::*;
 
 const EPS: f32 = 1e-4;
@@ -178,8 +177,8 @@ fn trilinear_weights_at_grid_origin() {
     let (base, w) = trilinear_weights([0.0, 0.0, 0.0], [4, 4, 4]);
     assert_eq!(base, [0, 0, 0]);
     assert!(approx_eq(w[0], 1.0));
-    for i in 1..8 {
-        assert!(approx_eq(w[i], 0.0));
+    for weight in &w[1..8] {
+        assert!(approx_eq(*weight, 0.0));
     }
 }
 
@@ -189,8 +188,8 @@ fn trilinear_weights_at_far_corner() {
     let (base, w) = trilinear_weights([3.0, 3.0, 3.0], [4, 4, 4]);
     assert_eq!(base, [2, 2, 2]);
     assert!(approx_eq(w[7], 1.0));
-    for i in 0..7 {
-        assert!(approx_eq(w[i], 0.0));
+    for weight in &w[..7] {
+        assert!(approx_eq(*weight, 0.0));
     }
 }
 
@@ -199,8 +198,8 @@ fn trilinear_weights_at_cell_midpoint() {
     // Midpoint of cell (0,0,0): all 8 corners 权重 1/8.
     let (base, w) = trilinear_weights([0.5, 0.5, 0.5], [4, 4, 4]);
     assert_eq!(base, [0, 0, 0]);
-    for i in 0..8 {
-        assert!(approx_eq(w[i], 0.125));
+    for weight in &w {
+        assert!(approx_eq(*weight, 0.125));
     }
 }
 
