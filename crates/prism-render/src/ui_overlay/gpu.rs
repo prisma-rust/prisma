@@ -59,7 +59,15 @@ const SDF_PAD: usize = 8;
 /// Distance spread (in canonical pixels) mapped to `[0.0, 1.0]` (`0.5` = edge).
 const SDF_SPREAD: f32 = 8.0;
 
-/// A cached SDF glyph packed into the atlas (normalized to `SDF_FONT_SIZE`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum GlyphKind {
+    /// Direct antialiased coverage bitmap rasterized at `size_tenths` (0.1 px units).
+    Bitmap(u16),
+    /// Resolution-independent unit-slope SDF rasterized at `SDF_FONT_SIZE`.
+    Sdf,
+}
+
+/// A cached glyph packed into the atlas (either direct bitmap or SDF).
 #[derive(Clone, Copy)]
 struct CachedGlyph {
     /// 图集内 rect。空白字形（w/h = 0）不占图集空间。
@@ -97,8 +105,8 @@ struct GlyphAtlas {
     font_ids: HashMap<String, u32>,
     /// id → 字体路径；`None` = 系统默认字体。
     font_names: Vec<Option<String>>,
-    /// `(font_id, char)` -> normalized SDF glyph
-    glyphs: HashMap<(u32, char), CachedGlyph>,
+    /// `(font_id, char, kind)` -> cached glyph
+    glyphs: HashMap<(u32, char, GlyphKind), CachedGlyph>,
     /// 行打包游标
     x: u32,
     y: u32,
@@ -337,30 +345,53 @@ impl GlyphAtlas {
         unsafe { device.create_sampler(&info, None) }.context("GlyphAtlas: sampler")
     }
 
-    /// Fetch an SDF glyph (rasterized once at `SDF_FONT_SIZE`, converted to EDT SDF, scaled to `font_size`).
-    fn glyph(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<ScaledGlyph> {
+    /// Fetch a glyph as either an exact-size antialiased bitmap (`use_sdf = false`)
+    /// or a resolution-independent SDF (`use_sdf = true`).
+    fn glyph(
+        &mut self,
+        font: Option<&str>,
+        ch: char,
+        font_size: f32,
+        use_sdf: bool,
+    ) -> Option<ScaledGlyph> {
         let font_id = self.font_id(font);
-        let key = (font_id, ch);
+        let size_tenths = (font_size * 10.0).round().clamp(10.0, 2400.0) as u16;
+        let kind = if use_sdf {
+            GlyphKind::Sdf
+        } else {
+            GlyphKind::Bitmap(size_tenths)
+        };
+        let key = (font_id, ch, kind);
         if !self.glyphs.contains_key(&key) {
             let name = self.font_names[font_id as usize].clone();
+            let raster_size = if use_sdf {
+                SDF_FONT_SIZE
+            } else {
+                size_tenths as f32 * 0.1
+            };
             let glyph = self
                 .rasterizer
                 .as_mut()?
-                .rasterize(name.as_deref(), ch, SDF_FONT_SIZE)?;
+                .rasterize(name.as_deref(), ch, raster_size)?;
             let (rect, xmin, ymin) = if glyph.width > 0 && glyph.height > 0 {
-                let (sdf, sw, sh) = bitmap_to_sdf(
-                    &glyph.pixels,
-                    glyph.width,
-                    glyph.height,
-                    SDF_PAD,
-                    SDF_SPREAD,
-                );
-                let rect = self.pack(&sdf, sw, sh);
-                (
-                    rect,
-                    glyph.xmin as f32 - SDF_PAD as f32,
-                    glyph.ymin as f32 - SDF_PAD as f32,
-                )
+                if use_sdf {
+                    let (sdf, sw, sh) = bitmap_to_sdf(
+                        &glyph.pixels,
+                        glyph.width,
+                        glyph.height,
+                        SDF_PAD,
+                        SDF_SPREAD,
+                    );
+                    let rect = self.pack(&sdf, sw, sh);
+                    (
+                        rect,
+                        glyph.xmin as f32 - SDF_PAD as f32,
+                        glyph.ymin as f32 - SDF_PAD as f32,
+                    )
+                } else {
+                    let rect = self.pack(&glyph.pixels, glyph.width, glyph.height);
+                    (rect, glyph.xmin as f32, glyph.ymin as f32)
+                }
             } else {
                 (None, glyph.xmin as f32, glyph.ymin as f32)
             };
@@ -375,7 +406,11 @@ impl GlyphAtlas {
             );
         }
         let cached = self.glyphs.get(&key)?;
-        let scale = font_size / SDF_FONT_SIZE;
+        let scale = if use_sdf {
+            font_size / SDF_FONT_SIZE
+        } else {
+            1.0
+        };
         let (width, height) = cached.rect.map_or((0.0, 0.0), |[_, _, gw, gh]| {
             (gw as f32 * scale, gh as f32 * scale)
         });
@@ -1404,11 +1439,12 @@ impl UiOverlay {
         }
 
         let font = t.font.as_deref();
+        let use_sdf = (t.outline_width > 0.0 && t.outline_color[3] > 0.0) || t.font_size > 24.0;
 
         // 1. 断行（#527）：`\n` 总是换行；`wrap` 时再按矩形宽度贪心断行。
         //    没有 `wrap` 也没有 `\n` 时就是原来的一行，行为不变。
         let lines = if t.wrap {
-            let mut advance = |ch: char| self.advance_of(font, t.font_size, ch);
+            let mut advance = |ch: char| self.advance_of(font, t.font_size, ch, use_sdf);
             wrap_text(&t.content, rect_w, &mut advance)
         } else {
             t.content.split('\n').map(str::to_string).collect()
@@ -1430,7 +1466,7 @@ impl UiOverlay {
             // 2. 测量这一行的宽度（advance 求和）。
             let mut total = 0.0f32;
             for ch in line.chars() {
-                total += self.advance_of(font, t.font_size, ch);
+                total += self.advance_of(font, t.font_size, ch, use_sdf);
             }
             if total <= 0.0 {
                 continue;
@@ -1443,15 +1479,16 @@ impl UiOverlay {
                 UiTextAlign::Right => left + rect_w - total,
             };
 
-            // 4. Emit per-glyph SDF quads (shadow pass first, then main face + outline).
+            // 4. Emit per-glyph quads (shadow pass first, then main face + optional SDF outline).
             let baseline = line_top + self.atlas.baseline_offset(font, t.font_size);
             let scale = t.font_size / SDF_FONT_SIZE;
-            let outline_norm = if t.outline_width > 0.0 && t.outline_color[3] > 0.0 {
+            let outline_norm = if use_sdf && t.outline_width > 0.0 && t.outline_color[3] > 0.0 {
                 (0.5 * t.outline_width / (SDF_SPREAD * scale.max(0.05))).clamp(0.0, 0.42)
             } else {
                 0.0
             };
-            let main_radius = -2.0 - outline_norm;
+            let base_radius = if use_sdf { -2.0 } else { -1.0 };
+            let main_radius = if use_sdf { -2.0 - outline_norm } else { -1.0 };
             let outline_rgba8 = pack_linear_unorm(srgb_rgba_to_linear(t.outline_color));
             let has_shadow = t.shadow_color[3] > 0.0;
 
@@ -1459,7 +1496,7 @@ impl UiOverlay {
                 |offset: [f32; 2], color: [f32; 4], radius_val: f32, outline: [u8; 4]| {
                     let mut cursor_x = start_x + offset[0];
                     for ch in line.chars() {
-                        let Some(glyph) = self.atlas.glyph(font, ch, t.font_size) else {
+                        let Some(glyph) = self.atlas.glyph(font, ch, t.font_size, use_sdf) else {
                             continue;
                         };
                         if let Some([gx, gy, gw, gh]) = glyph.rect {
@@ -1494,16 +1531,16 @@ impl UiOverlay {
                 };
 
             if has_shadow {
-                emit_line_glyphs(t.shadow_offset, t.shadow_color, -2.0, [0; 4]);
+                emit_line_glyphs(t.shadow_offset, t.shadow_color, base_radius, [0; 4]);
             }
             emit_line_glyphs([0.0, 0.0], [r, g, b, a], main_radius, outline_rgba8);
         }
     }
 
     /// 单个字符的推进量（px）；字体里没有该字形时按 0 处理。
-    fn advance_of(&mut self, font: Option<&str>, font_size: f32, ch: char) -> f32 {
+    fn advance_of(&mut self, font: Option<&str>, font_size: f32, ch: char, use_sdf: bool) -> f32 {
         self.atlas
-            .glyph(font, ch, font_size)
+            .glyph(font, ch, font_size, use_sdf)
             .map(|glyph| glyph.advance)
             .filter(|advance| advance.is_finite() && *advance > 0.0)
             .unwrap_or(0.0)
@@ -1833,20 +1870,11 @@ fn bitmap_to_sdf(
     let mut inside = vec![0.0f32; n];
     for y in 0..h {
         for x in 0..w {
-            let a = bitmap[y * w + x] as f32 / 255.0;
+            let a = bitmap[y * w + x];
             let idx = (y + pad) * sw + (x + pad);
-            if a >= 0.5 {
+            if a >= 128 {
                 outside[idx] = 0.0;
-                inside[idx] = if a < 1.0 {
-                    // Sub-pixel edge distance from 0.5 prevents binary stair-stepping.
-                    let e = a - 0.5;
-                    e * e
-                } else {
-                    INF
-                };
-            } else if a > 0.0 {
-                let e = 0.5 - a;
-                outside[idx] = e * e;
+                inside[idx] = INF;
             }
         }
     }
@@ -1857,7 +1885,9 @@ fn bitmap_to_sdf(
     let inv_spread = 0.5 / spread.max(1e-3);
     let mut sdf = Vec::with_capacity(n);
     for i in 0..n {
-        let dist = inside[i].sqrt() - outside[i].sqrt();
+        // Subtract 0.5 so the 0-contour sits midway between adjacent inside/outside
+        // pixel centers with exact unit slope across the boundary.
+        let dist = (inside[i].sqrt() - 0.5).max(0.0) - (outside[i].sqrt() - 0.5).max(0.0);
         let norm = (0.5 + dist * inv_spread).clamp(0.0, 1.0);
         sdf.push((norm * 255.0).round() as u8);
     }

@@ -30,9 +30,66 @@ fn resolve_length(len: Length, available: f32, intrinsic: f32) -> f32 {
     }
 }
 
+fn is_fullwidth_char(ch: char) -> bool {
+    let c = ch as u32;
+    matches!(
+        c,
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3040..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE6F
+            | 0xFF01..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x20000..=0x2FFFF
+    )
+}
+
+fn char_width_factor(ch: char) -> f32 {
+    if is_fullwidth_char(ch) {
+        1.0
+    } else if matches!(ch, 'M' | 'W' | '@' | '%' | '#') {
+        0.78
+    } else if matches!(
+        ch,
+        'i' | 'l'
+            | 'I'
+            | 'j'
+            | 't'
+            | 'f'
+            | 'r'
+            | '1'
+            | '.'
+            | ','
+            | ':'
+            | ';'
+            | '!'
+            | '|'
+            | '\''
+            | ' '
+    ) {
+        0.34
+    } else {
+        0.56
+    }
+}
+
 fn measure_text_approx(text: &str, font_size: f32) -> Vec2 {
-    let width = (text.chars().count() as f32) * font_size * 0.56;
-    Vec2::new(width.ceil(), (font_size * 1.35).ceil())
+    let mut max_w = 0.0f32;
+    let mut lines = 0usize;
+    for line in text.split('\n') {
+        lines += 1;
+        let line_w: f32 = line
+            .chars()
+            .map(|ch| font_size * char_width_factor(ch))
+            .sum();
+        max_w = max_w.max(line_w);
+    }
+    let lines = lines.max(1) as f32;
+    Vec2::new(max_w.ceil(), (font_size * 1.35 * lines).ceil())
 }
 
 fn measure_node(nodes: &mut SlotMap<NodeId, UiNode>, id: NodeId, available: Vec2) -> Vec2 {
