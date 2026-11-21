@@ -402,7 +402,8 @@
     "expressionHintAngle": "Type an expression: 90/2, 45+15",
     "keyframesLength": "Keyframes · {duration}",
     "appendKeyHint": "Append a key one second after the last one",
-    "worldSize": "world {x} × {z} m"
+    "worldSize": "world {x} × {z} m",
+    "readFileFailed": "cannot read {path}: {error}"
   },
   "field": {
     "readOnly": "·ReadOnly",
@@ -760,7 +761,11 @@
       "appliedOverride": "applied {entity} · {field}",
       "building": "building: {label}",
       "panelMissing": "panel '{panel}' not implemented",
-      "readFailed": "read {path} failed: {error}"
+      "readFailed": "read {path} failed: {error}",
+      "duplicatedAssets": "duplicated {count} asset(s)",
+      "duplicateAssetsFailed": "duplicate failed: {error}",
+      "layoutWritten": "layout written: {path}",
+      "saveImportSettingsFailed": "save import settings failed: {error}"
     },
     "dialog": {
       "fileChanged": "File Changed on Disk",
@@ -1253,6 +1258,17 @@
       "stateMachineHint": "anim/hero.rasm",
       "axisX": "x ",
       "axisY": "y "
+    },
+    "buildKind": {
+      "scenePack": "build-scenes",
+      "cook": "cook {path}",
+      "player": "player build",
+      "playerRun": "player build + run",
+      "clean": "cargo clean (player)",
+      "cleanEngine": "cargo clean (engine)",
+      "bakeGi": "bake-gi {rays} rays / {bounces} bounces → {output}",
+      "heightmap": "heightmap {width}x{height} → {output}",
+      "scenePackCustom": "build-scenes → {output}"
     }
   },
   "material": {

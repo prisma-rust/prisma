@@ -89,26 +89,45 @@ fn player_plan(root: &Path) -> BuildPlan {
 }
 
 impl BuildKind {
-    pub fn label(&self) -> String {
+    pub fn label(&self, i18n: &prism_editor_core::I18n) -> String {
         match self {
-            BuildKind::ScenePack => "build-scenes".to_string(),
-            BuildKind::Cook(path) => format!("cook {}", path.display()),
-            BuildKind::Player => "player build".to_string(),
-            BuildKind::PlayerRun => "player build + run".to_string(),
-            BuildKind::Clean => "cargo clean (player)".to_string(),
-            BuildKind::CleanEngine => "cargo clean (engine)".to_string(),
+            BuildKind::ScenePack => i18n.t1("desktop.buildKind.scenePack"),
+            BuildKind::Cook(path) => i18n.t(
+                "desktop.buildKind.cook",
+                &[("path", &path.display().to_string())],
+            ),
+            BuildKind::Player => i18n.t1("desktop.buildKind.player"),
+            BuildKind::PlayerRun => i18n.t1("desktop.buildKind.playerRun"),
+            BuildKind::Clean => i18n.t1("desktop.buildKind.clean"),
+            BuildKind::CleanEngine => i18n.t1("desktop.buildKind.cleanEngine"),
             BuildKind::BakeGi {
                 output,
                 rays,
                 bounces,
-            } => format!("bake-gi {rays} rays / {bounces} bounces → {output}"),
+            } => i18n.t(
+                "desktop.buildKind.bakeGi",
+                &[
+                    ("rays", &rays.to_string()),
+                    ("bounces", &bounces.to_string()),
+                    ("output", output),
+                ],
+            ),
             BuildKind::Heightmap {
                 output,
                 width,
                 height,
                 ..
-            } => format!("heightmap {width}x{height} → {output}"),
-            BuildKind::ScenePackCustom { output, .. } => format!("build-scenes → {output}"),
+            } => i18n.t(
+                "desktop.buildKind.heightmap",
+                &[
+                    ("width", &width.to_string()),
+                    ("height", &height.to_string()),
+                    ("output", output),
+                ],
+            ),
+            BuildKind::ScenePackCustom { output, .. } => {
+                i18n.t("desktop.buildKind.scenePackCustom", &[("output", output)])
+            }
         }
     }
 
@@ -280,8 +299,7 @@ fn forward_cargo_json(
 
 impl BuildJob {
     /// 启动任务。`root` 是项目根（含 `assets/` 与根 `Cargo.toml`）。
-    pub fn spawn(kind: BuildKind, root: &Path) -> Self {
-        let label = kind.label();
+    pub fn spawn(kind: BuildKind, root: &Path, label: String) -> Self {
         let (tx, rx) = channel();
         let root = root.to_path_buf();
         let cancel = Arc::new(AtomicBool::new(false));

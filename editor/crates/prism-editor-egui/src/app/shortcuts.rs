@@ -623,9 +623,15 @@ impl EditorApp {
             }
         }
         self.state.status = if failures.is_empty() {
-            format!("duplicated {} asset(s)", created.len())
+            self.tf(
+                "desktop.status.duplicatedAssets",
+                &[("count", &created.len().to_string())],
+            )
         } else {
-            format!("duplicate failed: {}", failures.join("; "))
+            self.tf(
+                "desktop.status.duplicateAssetsFailed",
+                &[("error", &failures.join("; "))],
+            )
         };
         if let Some(last) = created.last() {
             self.state.select_asset_only(last.clone());

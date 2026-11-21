@@ -1056,7 +1056,7 @@ impl EditorApp {
             );
             return;
         }
-        let label = kind.label();
+        let label = kind.label(&self.workspace.i18n);
         self.workspace.log(
             prism_editor_core::LogSource::System,
             prism_editor_core::LogLevel::Info,
@@ -1084,7 +1084,7 @@ impl EditorApp {
             );
         }
         self.build_diagnostics.clear();
-        self.build = Some(crate::build::BuildJob::spawn(kind, &root));
+        self.build = Some(crate::build::BuildJob::spawn(kind, &root, label));
     }
 
     pub(super) fn cook_active_scene(&mut self) {

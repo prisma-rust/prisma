@@ -2208,7 +2208,13 @@ pub(super) fn terrain_editor(ui: &mut Ui, workspace: &Workspace, value: &Value) 
         Err(error) => {
             ui.colored_label(
                 Color32::from_rgb(220, 90, 90),
-                format!("cannot read {}: {error}", path.display()),
+                workspace.tf(
+                    "inspector.readFileFailed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("error", &error.to_string()),
+                    ],
+                ),
             );
             return;
         }
@@ -3364,8 +3370,14 @@ pub(super) fn texture_import_settings(
         if ui.button(workspace.t("common.apply")).clicked() {
             state.status = match std::fs::write(&sidecar, import_settings_json(buffer.0, buffer.1))
             {
-                Ok(()) => format!("saved {}", sidecar.display()),
-                Err(error) => format!("save import settings failed: {error}"),
+                Ok(()) => workspace.tf(
+                    "desktop.status.saved",
+                    &[("path", &sidecar.display().to_string())],
+                ),
+                Err(error) => workspace.tf(
+                    "desktop.status.saveImportSettingsFailed",
+                    &[("error", &error.to_string())],
+                ),
             };
             ui.data_mut(|data| data.insert_temp(id, buffer));
         }

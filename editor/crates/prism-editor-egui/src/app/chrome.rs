@@ -1368,7 +1368,12 @@ impl EditorApp {
                     &path,
                     serde_json::to_string_pretty(&self.current_layout_json()).unwrap_or_default(),
                 )
-                .map(|()| format!("layout written: {}", path.display()))
+                .map(|()| {
+                    self.tf(
+                        "desktop.status.layoutWritten",
+                        &[("path", &path.display().to_string())],
+                    )
+                })
             }
             panels::PromptKind::LayoutFileLoad => {
                 let text = std::fs::read_to_string(&value);

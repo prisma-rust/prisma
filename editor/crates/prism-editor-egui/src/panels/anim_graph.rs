@@ -2859,6 +2859,15 @@ pub(super) fn graph_node_kind_key(kind: &str) -> &str {
         .unwrap_or(kind)
 }
 
+pub(super) fn parameter_kind_label(workspace: &Workspace, kind: &str) -> String {
+    match kind.to_ascii_lowercase().as_str() {
+        "float" => workspace.t("desktop.anim.kindFloat"),
+        "bool" => workspace.t("desktop.anim.kindBool"),
+        "trigger" => workspace.t("desktop.anim.kindTrigger"),
+        _ => kind.to_string(),
+    }
+}
+
 pub(super) fn is_clip_player(kind: &str) -> bool {
     matches!(
         kind.to_ascii_lowercase().as_str(),
@@ -2932,9 +2941,12 @@ pub(super) fn draw_anim_graph_view(
                 }
             }
             ui.label(
-                RichText::new(format!("· {}", parameter.kind))
-                    .monospace()
-                    .size(10.0),
+                RichText::new(format!(
+                    "· {}",
+                    parameter_kind_label(workspace, &parameter.kind)
+                ))
+                .monospace()
+                .size(10.0),
             );
             let bool_like = !parameter.kind.eq_ignore_ascii_case("float");
             let mut value = parameter.default;
@@ -2966,7 +2978,7 @@ pub(super) fn draw_anim_graph_view(
                     .desired_width(110.0),
             );
             egui::ComboBox::from_id_salt("anim-graph-param-kind")
-                .selected_text(&draft.1)
+                .selected_text(parameter_kind_label(workspace, &draft.1))
                 .show_ui(ui, |ui| {
                     for (kind, key) in [
                         ("float", "desktop.anim.kindFloat"),
@@ -3858,7 +3870,10 @@ pub(super) fn draw_state_machine_view(
                 speed_edits.push((index, speed));
             }
             let mut looped = state.looped;
-            if ui.checkbox(&mut looped, "loop").changed() {
+            if ui
+                .checkbox(&mut looped, workspace.t("desktop.anim.loopLower"))
+                .changed()
+            {
                 loop_edits.push((index, looped));
             }
             let last = machine.states.len().saturating_sub(1);
