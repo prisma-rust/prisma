@@ -23,6 +23,8 @@ struct UiVertex {
     /// Backdrop blur radius in pixels; `0` = this quad does not sample the
     /// backdrop.
     backdrop: f32,
+    /// Packed RGBA8 UNORM linear outline color for SDF text.
+    outline_color: [u8; 4],
 }
 
 use std::collections::HashMap;
@@ -48,16 +50,33 @@ const BACKDROP_TEX_BINDING: u32 = 1;
 // 字形图集
 // ---------------------------------------------------------------------------
 
-/// 图集边长（px）。R8 = 1MB 显存，intro 级 UI 用不完。
-const ATLAS_SIZE: u32 = 1024;
+/// Atlas side length (px). R8 = 4 MB VRAM, enough for thousands of CJK + Latin SDF glyphs.
+const ATLAS_SIZE: u32 = 2048;
+/// Canonical pixel size used when generating TextMeshPro-style SDF glyphs.
+const SDF_FONT_SIZE: f32 = 32.0;
+/// Padding (in canonical pixels) around each SDF glyph for spread & outline.
+const SDF_PAD: usize = 8;
+/// Distance spread (in canonical pixels) mapped to `[0.0, 1.0]` (`0.5` = edge).
+const SDF_SPREAD: f32 = 8.0;
 
-/// 一个已光栅化并打包进图集的字形。
+/// A cached SDF glyph packed into the atlas (normalized to `SDF_FONT_SIZE`).
+#[derive(Clone, Copy)]
 struct CachedGlyph {
     /// 图集内 rect。空白字形（w/h = 0）不占图集空间。
     rect: Option<[u32; 4]>,
     advance: f32,
-    xmin: i32,
-    ymin: i32,
+    xmin: f32,
+    ymin: f32,
+}
+
+#[derive(Clone, Copy)]
+struct ScaledGlyph {
+    rect: Option<[u32; 4]>,
+    advance: f32,
+    xmin: f32,
+    ymin: f32,
+    width: f32,
+    height: f32,
 }
 
 /// 字形光栅 + 行打包的 R8 字形图集（host-visible，LINEAR tiling）。
@@ -78,8 +97,8 @@ struct GlyphAtlas {
     font_ids: HashMap<String, u32>,
     /// id → 字体路径；`None` = 系统默认字体。
     font_names: Vec<Option<String>>,
-    /// (字体 id, 字符, font_size 量化到 0.5px) → 字形
-    glyphs: HashMap<(u32, char, u32), CachedGlyph>,
+    /// `(font_id, char)` -> normalized SDF glyph
+    glyphs: HashMap<(u32, char), CachedGlyph>,
     /// 行打包游标
     x: u32,
     y: u32,
@@ -154,14 +173,16 @@ impl GlyphAtlas {
         }
         submit_and_wait(&device, context.graphics_queue, command_pool, cmd)?;
 
-        // Reserve 像素 (0,0) = 白色（plain quad 采样它得到 alpha 1）。
+        // Reserve 2x2 white pixels at (0,0) so linear sampling at uv=(0,0) yields alpha 1.
         let ptr = unsafe {
             device
                 .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
                 .context("GlyphAtlas: map")?
         };
         unsafe {
-            std::ptr::write_bytes(ptr as *mut u8, 255, 1);
+            let base = ptr as *mut u8;
+            std::ptr::write_bytes(base, 255, 2);
+            std::ptr::write_bytes(base.add(row_pitch), 255, 2);
             device.unmap_memory(memory);
         }
 
@@ -192,9 +213,9 @@ impl GlyphAtlas {
             font_ids: HashMap::new(),
             font_names: vec![None],
             glyphs: HashMap::new(),
-            x: 1,
+            x: 3,
             y: 0,
-            row_h: 0,
+            row_h: 3,
             dirty: false,
             row_pitch,
             device,
@@ -306,8 +327,8 @@ impl GlyphAtlas {
 
     fn create_sampler(device: &ash::Device) -> Result<vk::Sampler> {
         let info = vk::SamplerCreateInfo::default()
-            .mag_filter(vk::Filter::NEAREST)
-            .min_filter(vk::Filter::NEAREST)
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
             .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -316,33 +337,56 @@ impl GlyphAtlas {
         unsafe { device.create_sampler(&info, None) }.context("GlyphAtlas: sampler")
     }
 
-    /// 取字形（光栅化 + 打包，缓存）。空格等空白字形不占图集。
-    fn glyph(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<&CachedGlyph> {
+    /// Fetch an SDF glyph (rasterized once at `SDF_FONT_SIZE`, converted to EDT SDF, scaled to `font_size`).
+    fn glyph(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<ScaledGlyph> {
         let font_id = self.font_id(font);
-        let key = (font_id, ch, (font_size * 2.0).round() as u32);
+        let key = (font_id, ch);
         if !self.glyphs.contains_key(&key) {
-            // 名字要克隆出来：`rasterizer` 是可变的，`font_names` 的借用不能跨过去。
             let name = self.font_names[font_id as usize].clone();
             let glyph = self
                 .rasterizer
                 .as_mut()?
-                .rasterize(name.as_deref(), ch, font_size)?;
-            let rect = if glyph.width > 0 && glyph.height > 0 {
-                self.pack(&glyph.pixels, glyph.width, glyph.height)
+                .rasterize(name.as_deref(), ch, SDF_FONT_SIZE)?;
+            let (rect, xmin, ymin) = if glyph.width > 0 && glyph.height > 0 {
+                let (sdf, sw, sh) = bitmap_to_sdf(
+                    &glyph.pixels,
+                    glyph.width,
+                    glyph.height,
+                    SDF_PAD,
+                    SDF_SPREAD,
+                );
+                let rect = self.pack(&sdf, sw, sh);
+                (
+                    rect,
+                    glyph.xmin as f32 - SDF_PAD as f32,
+                    glyph.ymin as f32 - SDF_PAD as f32,
+                )
             } else {
-                None
+                (None, glyph.xmin as f32, glyph.ymin as f32)
             };
             self.glyphs.insert(
                 key,
                 CachedGlyph {
                     rect,
                     advance: glyph.advance,
-                    xmin: glyph.xmin,
-                    ymin: glyph.ymin,
+                    xmin,
+                    ymin,
                 },
             );
         }
-        self.glyphs.get(&key)
+        let cached = self.glyphs.get(&key)?;
+        let scale = font_size / SDF_FONT_SIZE;
+        let (width, height) = cached.rect.map_or((0.0, 0.0), |[_, _, gw, gh]| {
+            (gw as f32 * scale, gh as f32 * scale)
+        });
+        Some(ScaledGlyph {
+            rect: cached.rect,
+            advance: cached.advance * scale,
+            xmin: cached.xmin * scale,
+            ymin: cached.ymin * scale,
+            width,
+            height,
+        })
     }
 
     /// 行打包：把 bitmap 拷贝进图集，返回图集 rect。
@@ -900,6 +944,11 @@ impl UiOverlay {
                 .location(7)
                 .format(vk::Format::R32_SFLOAT)
                 .offset(56),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(8)
+                .format(vk::Format::R8G8B8A8_UNORM)
+                .offset(60),
         ];
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(std::slice::from_ref(&binding_desc))
@@ -1004,11 +1053,12 @@ impl UiOverlay {
         Ok(())
     }
 
-    /// 估算顶点数：quads × 6 + 每个文本字符 × 6。
+    /// Estimate vertex count: quads * 6 + chars * 6 (doubled when drop shadow is enabled).
     fn estimate_vertex_count(&self, input: &UiOverlayInput) -> u32 {
         let mut chars = 0usize;
         for t in &input.texts {
-            chars += t.content.chars().count();
+            let mult = if t.shadow_color[3] > 0.0 { 2 } else { 1 };
+            chars += t.content.chars().count() * mult;
         }
         input.quads.len() as u32 * VERTICES_PER_QUAD + (chars as u32) * VERTICES_PER_QUAD
     }
@@ -1293,8 +1343,8 @@ impl UiOverlay {
                     );
                 }
 
-                // NDC [-1,1] 映射到 `dest`：UI 与场景一起被整数倍放大并居中，
-                // 黑边留在外面（scissor 同时挡住越界像素）。
+                // Map NDC [-1,1] to `dest`: UI and scene scale together and stay centered
+                // inside `dest`, while scissor clips any out-of-bounds pixels.
                 let vp = vk::Viewport::default()
                     .x(dest.offset.x as f32)
                     .y(dest.offset.y as f32)
@@ -1393,43 +1443,60 @@ impl UiOverlay {
                 UiTextAlign::Right => left + rect_w - total,
             };
 
-            // 4. 逐字形发射四边形。基线来自后端行度量（ascent）。
+            // 4. Emit per-glyph SDF quads (shadow pass first, then main face + outline).
             let baseline = line_top + self.atlas.baseline_offset(font, t.font_size);
-            let mut cursor_x = start_x;
-            for ch in line.chars() {
-                let Some(glyph) = self.atlas.glyph(font, ch, t.font_size) else {
-                    continue;
+            let scale = t.font_size / SDF_FONT_SIZE;
+            let outline_norm = if t.outline_width > 0.0 && t.outline_color[3] > 0.0 {
+                (0.5 * t.outline_width / (SDF_SPREAD * scale.max(0.05))).clamp(0.0, 0.42)
+            } else {
+                0.0
+            };
+            let main_radius = -2.0 - outline_norm;
+            let outline_rgba8 = pack_linear_unorm(srgb_rgba_to_linear(t.outline_color));
+            let has_shadow = t.shadow_color[3] > 0.0;
+
+            let mut emit_line_glyphs =
+                |offset: [f32; 2], color: [f32; 4], radius_val: f32, outline: [u8; 4]| {
+                    let mut cursor_x = start_x + offset[0];
+                    for ch in line.chars() {
+                        let Some(glyph) = self.atlas.glyph(font, ch, t.font_size) else {
+                            continue;
+                        };
+                        if let Some([gx, gy, gw, gh]) = glyph.rect {
+                            let px = cursor_x + glyph.xmin;
+                            let py = baseline + offset[1] - glyph.ymin - glyph.height;
+                            let x0 = (px / w) * 2.0 - 1.0;
+                            let y0 = pixel_y_to_ndc(py, h);
+                            let x1 = ((px + glyph.width) / w) * 2.0 - 1.0;
+                            let y1 = pixel_y_to_ndc(py + glyph.height, h);
+                            let inv = 1.0 / ATLAS_SIZE as f32;
+                            let u0 = gx as f32 * inv;
+                            let v0 = gy as f32 * inv;
+                            let u1 = (gx + gw) as f32 * inv;
+                            let v1 = (gy + gh) as f32 * inv;
+                            emit_quad_raw(
+                                vertices,
+                                [x0, y0],
+                                [x1, y1],
+                                [u0, v0],
+                                [u1, v1],
+                                color,
+                                [0.0; 2],
+                                [0.0; 2],
+                                radius_val,
+                                u32::MAX,
+                                0.0,
+                                outline,
+                            );
+                        }
+                        cursor_x += glyph.advance;
+                    }
                 };
-                if let Some([gx, gy, gw, gh]) = glyph.rect {
-                    let px = cursor_x + glyph.xmin as f32;
-                    // fontdue 的 `ymin` 是 PositiveYUp 下相对基线的下边界；我们的
-                    // 像素坐标 PositiveYDown，字形顶边 = baseline - ymin - height。
-                    let py = baseline - glyph.ymin as f32 - gh as f32;
-                    // 像素坐标（左上角原点，y 向下）→ Vulkan NDC（y=-1 屏幕顶，y=+1 屏幕底）。
-                    // 两者 y 方向一致，所以不做翻转；翻一次会把文字画成倒的。
-                    let x0 = (px / w) * 2.0 - 1.0;
-                    let y0 = pixel_y_to_ndc(py, h);
-                    let x1 = ((px + gw as f32) / w) * 2.0 - 1.0;
-                    let y1 = pixel_y_to_ndc(py + gh as f32, h);
-                    let inv = 1.0 / ATLAS_SIZE as f32;
-                    let u0 = gx as f32 * inv;
-                    let v0 = gy as f32 * inv;
-                    let u1 = (gx + gw) as f32 * inv;
-                    let v1 = (gy + gh) as f32 * inv;
-                    emit_quad(
-                        vertices,
-                        [x0, y0],
-                        [x1, y1],
-                        [u0, v0],
-                        [u1, v1],
-                        [r, g, b, a],
-                        None,
-                        u32::MAX,
-                        0.0,
-                    );
-                }
-                cursor_x += glyph.advance;
+
+            if has_shadow {
+                emit_line_glyphs(t.shadow_offset, t.shadow_color, -2.0, [0; 4]);
             }
+            emit_line_glyphs([0.0, 0.0], [r, g, b, a], main_radius, outline_rgba8);
         }
     }
 
@@ -1544,6 +1611,66 @@ fn wrap_paragraph(
     }
 }
 
+fn pack_linear_unorm(c: [f32; 4]) -> [u8; 4] {
+    [
+        (c[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (c[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (c[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (c[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+    ]
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "low-level vertex emitter for quads and SDF glyphs"
+)]
+fn emit_quad_raw(
+    out: &mut Vec<UiVertex>,
+    p0: [f32; 2],
+    p1: [f32; 2],
+    uv0: [f32; 2],
+    uv1: [f32; 2],
+    color: [f32; 4],
+    local_override: [f32; 2],
+    half_override: [f32; 2],
+    radius_override: f32,
+    texture: u32,
+    backdrop: f32,
+    outline_color: [u8; 4],
+) {
+    let [x0, y0] = p0;
+    let [x1, y1] = p1;
+    let [u0, v0] = uv0;
+    let [u1, v1] = uv1;
+    let color = srgb_rgba_to_linear(color);
+    let use_half = radius_override >= 0.0;
+    for &(px, py, u, v, sx, sy) in &[
+        (x0, y0, u0, v0, -1.0, -1.0),
+        (x1, y0, u1, v0, 1.0, -1.0),
+        (x0, y1, u0, v1, -1.0, 1.0),
+        (x1, y1, u1, v1, 1.0, 1.0),
+        (x1, y0, u1, v0, 1.0, -1.0),
+        (x0, y1, u0, v1, -1.0, 1.0),
+    ] {
+        let local = if use_half {
+            [sx * half_override[0], sy * half_override[1]]
+        } else {
+            local_override
+        };
+        out.push(UiVertex {
+            pos: [px, py],
+            uv: [u, v],
+            color,
+            local,
+            half_size: half_override,
+            radius: radius_override,
+            texture,
+            backdrop,
+            outline_color,
+        });
+    }
+}
+
 /// Push one quad (two clockwise triangles) into the vertex stream.
 #[expect(
     clippy::too_many_arguments,
@@ -1560,36 +1687,10 @@ fn emit_quad(
     texture: u32,
     backdrop: f32,
 ) {
-    let [x0, y0] = p0;
-    let [x1, y1] = p1;
-    let [u0, v0] = uv0;
-    let [u1, v1] = uv1;
-    // UI 颜色是作者写的 sRGB 值（#592）；渲染目标是线性 / sRGB 交换链，
-    // 这里先解码到线性，最终由硬件（或 egui 的 sRGB 交换链）统一编码一次。
-    let color = srgb_rgba_to_linear(color);
-    for &(px, py, u, v, sx, sy) in &[
-        (x0, y0, u0, v0, -1.0, -1.0),
-        (x1, y0, u1, v0, 1.0, -1.0),
-        (x0, y1, u0, v1, -1.0, 1.0),
-        (x1, y1, u1, v1, 1.0, 1.0),
-        (x1, y0, u1, v0, 1.0, -1.0),
-        (x0, y1, u0, v1, -1.0, 1.0),
-    ] {
-        let (local, half_size, radius) = match rounded {
-            Some((half, radius)) => ([sx * half[0], sy * half[1]], half, radius),
-            None => ([0.0; 2], [0.0; 2], -1.0),
-        };
-        out.push(UiVertex {
-            pos: [px, py],
-            uv: [u, v],
-            color,
-            local,
-            half_size,
-            radius,
-            texture,
-            backdrop,
-        });
-    }
+    let (half, radius) = rounded.unwrap_or(([0.0; 2], -1.0));
+    emit_quad_raw(
+        out, p0, p1, uv0, uv1, color, [0.0; 2], half, radius, texture, backdrop, [0; 4],
+    );
 }
 
 impl Drop for UiOverlay {
@@ -1713,6 +1814,120 @@ fn srgb_rgba_to_linear(color: [f32; 4]) -> [f32; 4] {
 /// 相机投影里的 `p[1][1] = -inv_tan` 就是按这个约定翻的，所以 UI 这里**不能再翻**：
 /// 早先写成 `(h - py) / h * 2 - 1`（OpenGL 的 Y-up 直觉）把整个 UI 层画成了上下镜像
 /// —— intro 的标题倒着显示、锚在底部的 prompt 跑到屏幕顶部。
+/// Convert an 8-bit antialiased glyph bitmap (`w × h`) into a padded Signed
+/// Distance Field (`(w + 2*pad) × (h + 2*pad)`), where `128` (`0.5`) marks the
+/// contour and `spread` pixels map across `[0.0, 1.0]`.
+fn bitmap_to_sdf(
+    bitmap: &[u8],
+    w: usize,
+    h: usize,
+    pad: usize,
+    spread: f32,
+) -> (Vec<u8>, usize, usize) {
+    let sw = w + pad * 2;
+    let sh = h + pad * 2;
+    let n = sw * sh;
+    const INF: f32 = 1e12;
+
+    let mut outside = vec![INF; n];
+    let mut inside = vec![0.0f32; n];
+    for y in 0..h {
+        for x in 0..w {
+            let a = bitmap[y * w + x] as f32 / 255.0;
+            let idx = (y + pad) * sw + (x + pad);
+            if a >= 0.5 {
+                outside[idx] = 0.0;
+                inside[idx] = if a < 1.0 {
+                    // Sub-pixel edge distance from 0.5 prevents binary stair-stepping.
+                    let e = a - 0.5;
+                    e * e
+                } else {
+                    INF
+                };
+            } else if a > 0.0 {
+                let e = 0.5 - a;
+                outside[idx] = e * e;
+            }
+        }
+    }
+
+    edt_2d(&mut outside, sw, sh);
+    edt_2d(&mut inside, sw, sh);
+
+    let inv_spread = 0.5 / spread.max(1e-3);
+    let mut sdf = Vec::with_capacity(n);
+    for i in 0..n {
+        let dist = inside[i].sqrt() - outside[i].sqrt();
+        let norm = (0.5 + dist * inv_spread).clamp(0.0, 1.0);
+        sdf.push((norm * 255.0).round() as u8);
+    }
+    (sdf, sw, sh)
+}
+
+/// 2D Euclidean squared-distance transform (`O(w * h)`) via separable 1D passes.
+fn edt_2d(grid: &mut [f32], w: usize, h: usize) {
+    let max_dim = w.max(h);
+    let mut f = vec![0.0f32; max_dim];
+    let mut v = vec![0usize; max_dim];
+    let mut z = vec![0.0f32; max_dim + 1];
+
+    // Vertical pass (columns)
+    for x in 0..w {
+        for y in 0..h {
+            f[y] = grid[y * w + x];
+        }
+        edt_1d(&f[..h], &mut v, &mut z, |y, val| grid[y * w + x] = val);
+    }
+    // Horizontal pass (rows)
+    for y in 0..h {
+        let row = &grid[y * w..(y + 1) * w];
+        f[..w].copy_from_slice(row);
+        edt_1d(&f[..w], &mut v, &mut z, |x, val| grid[y * w + x] = val);
+    }
+}
+
+fn edt_1d(f: &[f32], v: &mut [usize], z: &mut [f32], mut write: impl FnMut(usize, f32)) {
+    let n = f.len();
+    if n == 0 {
+        return;
+    }
+    let mut k = 0usize;
+    v[0] = 0;
+    z[0] = f32::NEG_INFINITY;
+    z[1] = f32::INFINITY;
+
+    for q in 1..n {
+        let fq = f[q];
+        loop {
+            let r = v[k];
+            let s =
+                ((fq + (q * q) as f32) - (f[r] + (r * r) as f32)) / (2.0 * (q as f32 - r as f32));
+            if s <= z[k] {
+                if k == 0 {
+                    break;
+                }
+                k -= 1;
+            } else {
+                k += 1;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = f32::INFINITY;
+                break;
+            }
+        }
+    }
+
+    k = 0;
+    for q in 0..n {
+        while z[k + 1] < q as f32 {
+            k += 1;
+        }
+        let r = v[k];
+        let dx = q as f32 - r as f32;
+        write(q, dx * dx + f[r]);
+    }
+}
+
 fn pixel_y_to_ndc(py: f32, h: f32) -> f32 {
     (py / h) * 2.0 - 1.0
 }
@@ -1830,7 +2045,9 @@ impl BackdropSegmentTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::{pixel_y_to_ndc, srgb_rgba_to_linear, wrap_text, BackdropSegmentTracker};
+    use super::{
+        bitmap_to_sdf, pixel_y_to_ndc, srgb_rgba_to_linear, wrap_text, BackdropSegmentTracker,
+    };
 
     /// 等宽 10px 的度量，测试断行只关心宽度，不依赖真实字体。
     fn ten_px(_ch: char) -> f32 {
@@ -1980,6 +2197,22 @@ mod tests {
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].capture_before_sigma, Some(28.0));
         assert_eq!(segs[0].vertex_count, 12);
+    }
+
+    #[test]
+    fn bitmap_to_sdf_produces_centered_contour() {
+        let mut bmp = vec![0u8; 8 * 8];
+        for y in 2..6 {
+            for x in 2..6 {
+                bmp[y * 8 + x] = 255;
+            }
+        }
+        let (sdf, sw, sh) = bitmap_to_sdf(&bmp, 8, 8, 4, 4.0);
+        assert_eq!((sw, sh), (16, 16));
+        // Center of the filled 4x4 square should be well inside (> 128).
+        assert!(sdf[8 * sw + 8] > 140);
+        // Far corner should be well outside (< 128).
+        assert!(sdf[0] < 80);
     }
 
     #[test]

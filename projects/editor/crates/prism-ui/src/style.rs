@@ -229,6 +229,15 @@ pub struct ShadowStyle {
     pub spread: f32,
 }
 
+/// SDF outline and drop-shadow parameters for text runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextEffect {
+    pub outline_width: f32,
+    pub outline_color: Color,
+    pub shadow_offset: Vec2,
+    pub shadow_color: Color,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualStyle {
     pub bg: Option<Color>,
@@ -242,6 +251,7 @@ pub struct VisualStyle {
     /// frosted panel, a textured sprite and a project shader all travel the
     /// same path.
     pub material: Option<Material>,
+    pub text_effect: TextEffect,
     #[cfg(feature = "ui-effects")]
     pub shadow: Option<ShadowStyle>,
 }
@@ -255,6 +265,7 @@ impl Default for VisualStyle {
             radius: 0.0,
             opacity: 1.0,
             material: None,
+            text_effect: TextEffect::default(),
             #[cfg(feature = "ui-effects")]
             shadow: None,
         }

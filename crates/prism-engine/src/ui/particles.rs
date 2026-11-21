@@ -333,8 +333,8 @@ impl ParticleSystem2D {
         });
     }
 
-    /// 输出当前存活粒子对应的 draw-packet quad 列表（像素坐标矩形，经
-    /// `ExternalUiQuads` 并入 `UiDrawList`）。绘制在黑场之上、文本之下。
+    /// Emit draw-packet quads for all live particles (pixel-space rects merged
+    /// into `UiDrawList` via `ExternalUiQuads`), drawn above backdrop and below text.
     pub fn emit_quads(&self) -> Vec<prism_ui_draw::UiQuad> {
         let h = self.height;
         let mut quads = Vec::with_capacity(self.particles.len());

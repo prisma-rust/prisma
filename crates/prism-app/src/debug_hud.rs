@@ -1,7 +1,7 @@
 //! 运行时诊断 HUD（无 UI 框架依赖）。
 //!
 //! egui 编辑器移除后，帧率 / 渲染模式 / 调试状态的屏幕显示由本模块接管：
-//! 它只向已有的 ECS UI 叠加（[`prism_ui_draw::UiOverlayInput`]）追加文本命令，
+//! It only appends text commands to the existing ECS UI overlay ([`prism_ui_draw::UiOverlayInput`]),
 //! 由 `prism-render` 的 `ui_overlay` 通道统一光栅化，因此不需要任何外部 UI
 //! 框架或额外渲染 pass。
 //!
@@ -139,6 +139,7 @@ impl DebugHud {
                 alignment: UiTextAlign::Center,
                 font: None,
                 wrap: false,
+                ..Default::default()
             });
         }
 
@@ -156,6 +157,7 @@ impl DebugHud {
                 alignment: UiTextAlign::Left,
                 font: None,
                 wrap: false,
+                ..Default::default()
             });
         }
     }

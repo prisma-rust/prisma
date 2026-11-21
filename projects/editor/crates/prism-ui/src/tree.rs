@@ -893,6 +893,11 @@ impl UiTree {
                 align,
                 wrap,
             } => {
+                let text_effect = node
+                    .visual
+                    .as_ref()
+                    .map(|v| v.resolve(&node.state).text_effect)
+                    .unwrap_or_default();
                 out.push(UiDrawCommand::Text {
                     rect,
                     content: text.clone(),
@@ -900,6 +905,10 @@ impl UiTree {
                     color: *color,
                     align: *align,
                     wrap: *wrap,
+                    outline_width: text_effect.outline_width,
+                    outline_color: text_effect.outline_color,
+                    shadow_offset: text_effect.shadow_offset,
+                    shadow_color: text_effect.shadow_color,
                 });
             }
             NodeContent::Image { texture, tint } => {

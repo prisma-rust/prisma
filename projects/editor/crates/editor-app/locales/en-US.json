@@ -1,0 +1,34 @@
+{
+  "menu": {
+    "file": "File",
+    "edit": "Edit",
+    "view": "View",
+    "scene": "Scene",
+    "window": "Window",
+    "help": "Help",
+    "theme": "Theme",
+    "language": "Language",
+    "about": "About Prisma",
+    "reset_layout": "Reset Layout"
+  },
+  "window": {
+    "hierarchy": "Hierarchy",
+    "scene": "Scene",
+    "assets": "Assets",
+    "inspector": "Inspector",
+    "about": "About Prisma"
+  },
+  "toolbar": {
+    "play": "Play",
+    "stop": "Stop",
+    "undo": "Undo",
+    "redo": "Redo"
+  },
+  "about": {
+    "subtitle": "A self-hosted editor: the engine draws its own chrome.",
+    "version": "Version",
+    "renderer": "Renderer",
+    "ui": "UI",
+    "license": "License"
+  }
+}

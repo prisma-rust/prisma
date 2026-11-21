@@ -4,6 +4,7 @@
 
 pub mod about;
 pub mod bridge;
+pub mod i18n;
 pub mod inspector;
 
 use std::collections::{BTreeMap, HashSet};
@@ -14,7 +15,8 @@ use prism_editor_api::schema::{build_schema, Schema};
 use prism_ui::prelude::*;
 use serde_json::{json, Value};
 
-use crate::about::{about_default_rect, build_about_body, ABOUT_CLOSE_KEY};
+use crate::about::{about_default_rect, build_about_body_localized, ABOUT_CLOSE_KEY};
+use crate::i18n::EditorI18n;
 use crate::inspector::{build_inspector_ui, field_node_key, FieldEdit, UndoStack};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +58,10 @@ pub struct EditorUiState {
     pub about_open: bool,
     /// Unity-style docking tree and floating container windows.
     pub window_layout: WindowLayout,
+    /// Uploaded Lucide SVG icon bindless textures.
+    pub icons: IconSet,
+    /// Config-driven JSON localization (`locales/*.json`).
+    pub i18n: EditorI18n,
     /// Last known viewport size for centring newly opened floating windows.
     last_viewport: Vec2,
 }
@@ -131,6 +137,8 @@ impl Default for EditorUiState {
             menu: MenuState::default(),
             about_open: false,
             window_layout: default_editor_layout(),
+            icons: IconSet::default(),
+            i18n: EditorI18n::default(),
             last_viewport: Vec2::new(1280.0, 720.0),
             assets: vec![
                 "scenes/main.scene.json".to_string(),
@@ -312,7 +320,7 @@ impl EditorUiState {
                 .item(MenuEntry::checkbox("Show Gizmos", "view.gizmos", true))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::submenu(
-                    "Theme",
+                    self.i18n.t("menu.theme"),
                     ThemePreset::ALL
                         .iter()
                         .map(|preset| {
@@ -324,15 +332,32 @@ impl EditorUiState {
                         })
                         .collect(),
                 ))
+                .item(MenuEntry::submenu(
+                    self.i18n.t("menu.language"),
+                    Locale::ALL
+                        .iter()
+                        .map(|loc| {
+                            MenuEntry::checkbox(
+                                loc.label(),
+                                format!("view.lang.{}", loc.id()),
+                                self.i18n.locale == *loc,
+                            )
+                        })
+                        .collect(),
+                ))
                 .item(MenuEntry::separator())
                 .item(MenuEntry::item_with_shortcut(
-                    "Reset Layout",
+                    self.i18n.t("menu.reset_layout"),
                     "view.reset_layout",
                     "",
                 )),
-            Menu::new("scene", "Scene")
+            Menu::new("scene", self.i18n.t("menu.scene"))
                 .item(MenuEntry::item_with_shortcut(
-                    if playing { "Stop" } else { "Play" },
+                    if playing {
+                        self.i18n.t("toolbar.stop")
+                    } else {
+                        self.i18n.t("toolbar.play")
+                    },
                     "scene.toggle_play",
                     "Ctrl+P",
                 ))
@@ -352,32 +377,35 @@ impl EditorUiState {
                     "scene.gizmo_scale",
                     "R",
                 )),
-            Menu::new("window", "Window")
+            Menu::new("window", self.i18n.t("menu.window"))
                 .item(MenuEntry::checkbox(
-                    "Hierarchy",
+                    self.i18n.t("window.hierarchy"),
                     "window.hierarchy",
                     self.window_layout.is_window_open(&"hierarchy".into()),
                 ))
                 .item(MenuEntry::checkbox(
-                    "Scene",
+                    self.i18n.t("window.scene"),
                     "window.scene",
                     self.window_layout.is_window_open(&"scene".into()),
                 ))
                 .item(MenuEntry::checkbox(
-                    "Assets",
+                    self.i18n.t("window.assets"),
                     "window.assets",
                     self.window_layout.is_window_open(&"assets".into()),
                 ))
                 .item(MenuEntry::checkbox(
-                    "Inspector",
+                    self.i18n.t("window.inspector"),
                     "window.inspector",
                     self.window_layout.is_window_open(&"inspector".into()),
                 ))
                 .item(MenuEntry::separator())
-                .item(MenuEntry::item("Reset Layout", "window.reset_layout")),
-            Menu::new("help", "Help")
+                .item(MenuEntry::item(
+                    self.i18n.t("menu.reset_layout"),
+                    "window.reset_layout",
+                )),
+            Menu::new("help", self.i18n.t("menu.help"))
                 .item(MenuEntry::item("Documentation", "help.docs"))
-                .item(MenuEntry::item("About Prisma", "help.about")),
+                .item(MenuEntry::item(self.i18n.t("menu.about"), "help.about")),
         ]
     }
 
@@ -399,7 +427,20 @@ impl EditorUiState {
                     "window.scene" => self.window_layout.get_window(&"scene".into()),
                     "window.assets" => self.window_layout.get_window(&"assets".into()),
                     "window.inspector" => self.window_layout.get_window(&"inspector".into()),
-                    "window.reset_layout" => self.window_layout = default_editor_layout(),
+                    "window.reset_layout" => {
+                        let icons = self.window_layout.icons.clone();
+                        self.window_layout = default_editor_layout();
+                        self.window_layout.icons = icons;
+                        sync_window_titles(&mut self.window_layout, &self.i18n);
+                    }
+                    "view.lang.en-US" => {
+                        self.i18n.locale = Locale::EnUs;
+                        sync_window_titles(&mut self.window_layout, &self.i18n);
+                    }
+                    "view.lang.zh-CN" => {
+                        self.i18n.locale = Locale::ZhCn;
+                        sync_window_titles(&mut self.window_layout, &self.i18n);
+                    }
                     "scene.toggle_play" => self.playing = !self.playing,
                     "scene.gizmo_translate" => self.gizmo_mode = GizmoMode::Translate,
                     "scene.gizmo_rotate" => self.gizmo_mode = GizmoMode::Rotate,
@@ -494,6 +535,7 @@ impl EditorUiState {
             // Menu bar first, so it sits at the top of the window.
             ctx.with_parent(root, |ctx| {
                 MenuBar::new(theme, viewport_size)
+                    .icons(self.icons.clone())
                     .menus(menus)
                     .mount(ctx, &menu_state);
             });
@@ -515,29 +557,55 @@ impl EditorUiState {
                                 .bg(theme.panel)
                                 .child(label("Prisma Editor"))
                                 .child(divider(true))
-                                .child(toggle_button(
+                                .child(toolbar_toggle_icon(
+                                    &self.icons,
+                                    &theme,
                                     "gizmo:translate",
+                                    IconKind::Move,
                                     "W",
                                     gizmo == GizmoMode::Translate,
                                 ))
-                                .child(toggle_button(
+                                .child(toolbar_toggle_icon(
+                                    &self.icons,
+                                    &theme,
                                     "gizmo:rotate",
+                                    IconKind::Rotate,
                                     "E",
                                     gizmo == GizmoMode::Rotate,
                                 ))
-                                .child(toggle_button("gizmo:scale", "R", gizmo == GizmoMode::Scale))
+                                .child(toolbar_toggle_icon(
+                                    &self.icons,
+                                    &theme,
+                                    "gizmo:scale",
+                                    IconKind::Scale,
+                                    "R",
+                                    gizmo == GizmoMode::Scale,
+                                ))
                                 .child(spacer())
-                                .child(toggle_button(
+                                .child(toolbar_toggle_icon(
+                                    &self.icons,
+                                    &theme,
                                     "toolbar:play",
+                                    if playing {
+                                        IconKind::Stop
+                                    } else {
+                                        IconKind::Play
+                                    },
                                     if playing { "Stop" } else { "Play" },
                                     playing,
                                 ))
-                                .child(button(
+                                .child(toolbar_button_icon(
+                                    &self.icons,
+                                    &theme,
                                     "toolbar:undo",
+                                    IconKind::Undo,
                                     if can_undo { "Undo" } else { "Undo (0)" },
                                 ))
-                                .child(button(
+                                .child(toolbar_button_icon(
+                                    &self.icons,
+                                    &theme,
                                     "toolbar:redo",
+                                    IconKind::Redo,
                                     if can_redo { "Redo" } else { "Redo (0)" },
                                 )),
                         )
@@ -549,93 +617,94 @@ impl EditorUiState {
                 let mut inspector_panel = Some(inspector_panel);
                 let mut assets = Some(assets);
                 let mut query = Some(query);
-                self.window_layout.mount(
-                    ctx,
-                    overlay,
-                    &theme,
-                    workspace,
-                    &mut |win_id, ctx| match win_id.as_str() {
-                        "hierarchy" => {
-                            if let (Some(meta), Some(depths), Some(names), Some(q)) = (
-                                tree_meta.take(),
-                                tree_depths.take(),
-                                tree_names.take(),
-                                query.take(),
-                            ) {
-                                ctx.mount(
-                                    col()
-                                        .size(Length::Percent(100.0), Length::Percent(100.0))
-                                        .pad(8.0)
-                                        .gap(6.0)
-                                        .bg(UiPalette::SURFACE_1)
-                                        .child(muted_label("HIERARCHY"))
-                                        .child(text_field("hierarchy:search", q, "Filter..."))
-                                        .child(tree_view(
-                                            "hierarchy:tree",
-                                            meta,
-                                            depths,
-                                            24.0,
-                                            (viewport_size.y - 220.0).max(120.0),
-                                            0.0,
-                                            move |idx| {
-                                                let (id, ref name) = names[idx];
-                                                toggle_button(
-                                                    ("entity", id),
-                                                    name.clone(),
-                                                    id == selected,
-                                                )
-                                            },
-                                        )),
-                                );
+                self.window_layout
+                    .mount(
+                        ctx,
+                        overlay,
+                        &theme,
+                        workspace,
+                        &mut |win_id, ctx| match win_id.as_str() {
+                            "hierarchy" => {
+                                if let (Some(meta), Some(depths), Some(names), Some(q)) = (
+                                    tree_meta.take(),
+                                    tree_depths.take(),
+                                    tree_names.take(),
+                                    query.take(),
+                                ) {
+                                    ctx.mount(
+                                        col()
+                                            .size(Length::Percent(100.0), Length::Percent(100.0))
+                                            .pad(8.0)
+                                            .gap(6.0)
+                                            .bg(UiPalette::SURFACE_1)
+                                            .child(muted_label("HIERARCHY"))
+                                            .child(text_field("hierarchy:search", q, "Filter..."))
+                                            .child(tree_view(
+                                                "hierarchy:tree",
+                                                meta,
+                                                depths,
+                                                24.0,
+                                                (viewport_size.y - 220.0).max(120.0),
+                                                0.0,
+                                                move |idx| {
+                                                    let (id, ref name) = names[idx];
+                                                    toggle_button(
+                                                        ("entity", id),
+                                                        name.clone(),
+                                                        id == selected,
+                                                    )
+                                                },
+                                            )),
+                                    );
+                                }
                             }
-                        }
-                        "scene" => {
-                            ctx.mount(viewport(UiTextureId(0)));
-                        }
-                        "assets" => {
-                            if let Some(asset_list) = assets.take() {
-                                ctx.mount(
-                                    col()
-                                        .size(Length::Percent(100.0), Length::Percent(100.0))
-                                        .pad(8.0)
-                                        .gap(4.0)
-                                        .bg(UiPalette::SURFACE_1)
-                                        .child(muted_label("ASSETS"))
-                                        .child(virtual_list(
-                                            "assets:list",
-                                            asset_list.len(),
-                                            22.0,
-                                            100.0,
-                                            0.0,
-                                            move |idx| {
-                                                button(
-                                                    ("asset", idx as u32),
-                                                    asset_list[idx].clone(),
-                                                )
-                                            },
-                                        )),
-                                );
+                            "scene" => {
+                                ctx.mount(viewport(UiTextureId(0)));
                             }
-                        }
-                        "inspector" => {
-                            if let Some(insp) = inspector_panel.take() {
-                                ctx.mount(
-                                    col()
-                                        .size(Length::Percent(100.0), Length::Percent(100.0))
-                                        .pad(10.0)
-                                        .gap(8.0)
-                                        .bg(UiPalette::SURFACE_1)
-                                        .child(muted_label(format!("INSPECTOR (#{selected})")))
-                                        .child(insp),
-                                );
+                            "assets" => {
+                                if let Some(asset_list) = assets.take() {
+                                    ctx.mount(
+                                        col()
+                                            .size(Length::Percent(100.0), Length::Percent(100.0))
+                                            .pad(8.0)
+                                            .gap(4.0)
+                                            .bg(UiPalette::SURFACE_1)
+                                            .child(muted_label("ASSETS"))
+                                            .child(virtual_list(
+                                                "assets:list",
+                                                asset_list.len(),
+                                                22.0,
+                                                100.0,
+                                                0.0,
+                                                move |idx| {
+                                                    button(
+                                                        ("asset", idx as u32),
+                                                        asset_list[idx].clone(),
+                                                    )
+                                                },
+                                            )),
+                                    );
+                                }
                             }
-                        }
-                        "about" => {
-                            ctx.mount(build_about_body(&theme));
-                        }
-                        _ => {}
-                    },
-                );
+                            "inspector" => {
+                                if let Some(insp) = inspector_panel.take() {
+                                    ctx.mount(
+                                        col()
+                                            .size(Length::Percent(100.0), Length::Percent(100.0))
+                                            .pad(10.0)
+                                            .gap(8.0)
+                                            .bg(UiPalette::SURFACE_1)
+                                            .child(muted_label(format!("INSPECTOR (#{selected})")))
+                                            .child(insp),
+                                    );
+                                }
+                            }
+                            "about" => {
+                                ctx.mount(build_about_body_localized(&theme, &self.i18n));
+                            }
+                            _ => {}
+                        },
+                    );
             });
         }
 
@@ -815,9 +884,28 @@ impl EditorUiState {
     }
 }
 
+fn sync_uploaded_icons(world: &prism_engine::ecs::World, state: &mut EditorUiState) {
+    let Some(uploaded) = world.get_resource::<prism_engine::ui::UploadedUiImages>() else {
+        return;
+    };
+    let Ok(slots) = uploaded.slots.lock() else {
+        return;
+    };
+    for kind in IconKind::ALL {
+        if state.icons.get(kind).is_none() {
+            if let Some(&slot) = slots.get(kind.key()) {
+                let tex = UiTextureId(slot);
+                state.icons.insert(kind, tex);
+                state.window_layout.icons.insert(kind, tex);
+            }
+        }
+    }
+}
+
 fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
     let _span = prism_engine::util::timing::span("editor::tick");
     let mut state = world.remove_resource::<EditorUiState>().unwrap_or_default();
+    sync_uploaded_icons(world, &mut state);
     state.elapsed_time += dt as f64;
     let screen = bridge::screen_size(world);
     let input = bridge::read_engine_input(world, state.elapsed_time);
@@ -841,12 +929,38 @@ pub fn build_app() -> prism_app::App {
         .with_subsystem(Subsystem::Render);
     {
         let _state = prism_engine::util::timing::span("editor::state_default");
-        app.engine_mut()
-            .world_mut()
-            .insert_resource(EditorUiState::default());
+        let world = app.engine_mut().world_mut();
+        world.insert_resource(EditorUiState::default());
+
+        let mut uploads = prism_engine::ui::PendingUiImageUploads::default();
+        for kind in IconKind::ALL {
+            uploads.items.push(prism_engine::ui::PendingUiImageUpload {
+                key: kind.key().to_string(),
+                width: 48,
+                height: 48,
+                pixels: rasterize_lucide_svg(kind.lucide_svg(), 48),
+            });
+        }
+        world.insert_resource(uploads);
+        world.insert_resource(prism_engine::ui::UploadedUiImages::default());
     }
     app.add_system("editor::tick", editor_system);
     app
+}
+
+fn sync_window_titles(layout: &mut WindowLayout, i18n: &EditorI18n) {
+    let pairs = [
+        ("hierarchy", "window.hierarchy"),
+        ("scene", "window.scene"),
+        ("assets", "window.assets"),
+        ("inspector", "window.inspector"),
+        ("about", "window.about"),
+    ];
+    for (id, key) in pairs {
+        if let Some(meta) = layout.windows.get_mut(&WindowId::from(id)) {
+            meta.title = i18n.t(key).to_string();
+        }
+    }
 }
 
 /// Default Unity-inspired docking layout: Hierarchy | (Scene / Assets) | Inspector.
@@ -903,6 +1017,65 @@ fn default_editor_layout() -> WindowLayout {
         })),
     });
     layout
+}
+
+fn toolbar_button_icon(
+    icons: &IconSet,
+    theme: &Theme,
+    key: impl IntoNodeKey,
+    icon: IconKind,
+    text: &str,
+) -> ElementBox {
+    row()
+        .key(key)
+        .padding(Edges::symmetric(9.0, 5.0))
+        .gap(5.0)
+        .align(Align::Center)
+        .justify(Justify::Center)
+        .bg(theme.panel_alt)
+        .hover_bg(theme.row_hover)
+        .border(1.0, theme.border)
+        .focus_border(theme.accent)
+        .radius(6.0)
+        .focusable(0)
+        .clickable()
+        .child(icon_view(icons, icon, 13.0, theme.text))
+        .child(label(text))
+}
+
+fn toolbar_toggle_icon(
+    icons: &IconSet,
+    theme: &Theme,
+    key: impl IntoNodeKey,
+    icon: IconKind,
+    text: &str,
+    active: bool,
+) -> ElementBox {
+    let base_bg = if active {
+        theme.accent
+    } else {
+        theme.panel_alt
+    };
+    let fg = if active { theme.on_accent } else { theme.text };
+    row()
+        .key(key)
+        .padding(Edges::symmetric(9.0, 5.0))
+        .gap(5.0)
+        .align(Align::Center)
+        .justify(Justify::Center)
+        .bg(base_bg)
+        .hover_bg(if active {
+            theme.accent
+        } else {
+            theme.row_hover
+        })
+        .border(1.0, if active { theme.accent } else { theme.border })
+        .focus_border(theme.accent)
+        .radius(6.0)
+        .focusable(0)
+        .toggleable(active)
+        .child(icon_view(icons, icon, 13.0, fg))
+        .child(label(text))
 }
 
 /// An undo/redo entry that greys out when there is nothing to undo.

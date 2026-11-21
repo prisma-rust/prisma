@@ -50,7 +50,7 @@ impl Default for UiQuad {
 }
 
 /// 一个文本绘制命令。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct UiTextCmd {
     pub rect: [f32; 4],
     pub content: String,
@@ -62,6 +62,14 @@ pub struct UiTextCmd {
     pub font: String,
     /// 按矩形宽度换行（#527）；`false` = 单行。
     pub wrap: bool,
+    /// Optional SDF outline width in pixels (`0.0` = no outline).
+    pub outline_width: f32,
+    /// SDF outline RGBA color (sRGB).
+    pub outline_color: [f32; 4],
+    /// Optional drop-shadow offset in pixels.
+    pub shadow_offset: [f32; 2],
+    /// Drop-shadow RGBA color (sRGB, alpha `0.0` = no shadow).
+    pub shadow_color: [f32; 4],
     /// 见 [`UiQuad::layer`]。
     pub layer: i32,
     /// 见 [`UiQuad::order`]。
@@ -71,10 +79,10 @@ pub struct UiTextCmd {
 /// 没有层级来源的绘制命令（外部提交的 quad / 粒子）排在所有 UI 实体之后。
 pub const EXTERNAL_UI_ORDER: u32 = u32::MAX;
 
-/// 外部提交命令所在的层级：高于一切 ECS UI 实体（#462 的排序键）。
+/// Layer for externally submitted commands: above all ECS UI entities (#462).
 ///
-/// 宿主不填 layer；合并时统一盖成这个值，quad 与文本同层，提交顺序决定
-/// 两者谁压谁。
+/// Hosts omit layer; merging stamps this value so quads and text share one layer
+/// and submission order decides draw order.
 pub const EXTERNAL_LAYER: i32 = 9_500;
 
 /// 一条绘制命令。
@@ -132,10 +140,10 @@ impl UiDrawList {
 
 /// 外部（宿主 / 项目模块）提交的 UI 四边形。
 ///
-/// 元素是 [`prism_ui_draw::UiQuad`]：宿主直接提交与渲染侧相同的数据结构，
-/// 不必为 layer / order 填占位值。`ui_render_system` 每帧重建 `UiDrawList`，
-/// 所以提交方必须在**同一帧的 UI 渲染系统之前**写入本资源；系统会把它们并入
-/// 绘制列表（参与 `layer`/`order` 排序）并清空资源，避免跨帧重复绘制。
+/// Items are [`prism_ui_draw::UiQuad`] so hosts submit the same struct used on the
+/// render side without placeholder layer/order values. `ui_render_system` rebuilds
+/// `UiDrawList` every frame, so callers must insert this before UI rendering; the
+/// system merges and drains it each frame.
 #[derive(Clone, Debug, Default)]
 pub struct ExternalUiQuads(pub Vec<prism_ui_draw::UiQuad>);
 
@@ -153,9 +161,8 @@ pub fn ui_render_system(world: &mut World) {
     // (layer, order, 类型：0 = 矩形 / 1 = 文本, 序号) —— 序号让排序稳定。
     let mut pending: Vec<((i32, u32, u8, u32), UiDrawItem)> = Vec::new();
 
-    // 外部提交的四边形先并入，随后的排序会把它们放到正确的层。宿主不填
-    // layer / order：四边形落在 EXTERNAL_LAYER 层、EXTERNAL_UI_ORDER 序，
-    // 排在所有 ECS UI 实体之后；帧内的先后由提交顺序（seq）保持。
+    // Merge externally submitted quads first; sorting places them in EXTERNAL_LAYER
+    // at EXTERNAL_UI_ORDER after all ECS UI entities, preserving intra-frame seq order.
     if let Some(external) = world.remove_resource::<ExternalUiQuads>() {
         for (seq, quad) in external.0.into_iter().enumerate() {
             pending.push((
@@ -245,6 +252,7 @@ pub fn ui_render_system(world: &mut World) {
                 wrap: text.wrap,
                 layer: 0,
                 order: layout.order,
+                ..Default::default()
             }),
         ));
     }
@@ -343,6 +351,10 @@ pub fn convert_ui_draw_list_to_overlay_into(
                     },
                     font: (!text.font.is_empty()).then(|| text.font.clone()),
                     wrap: text.wrap,
+                    outline_width: text.outline_width,
+                    outline_color: text.outline_color,
+                    shadow_offset: text.shadow_offset,
+                    shadow_color: text.shadow_color,
                 });
                 continue;
             }

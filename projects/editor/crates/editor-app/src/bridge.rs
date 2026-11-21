@@ -107,6 +107,10 @@ fn push_command(out: &mut prism_ui_draw::UiOverlayInput, cmd: &UiDrawCommand) {
             color,
             align,
             wrap,
+            outline_width,
+            outline_color,
+            shadow_offset,
+            shadow_color,
         } => {
             out.push_text(UiTextInput {
                 rect: rect.to_array(),
@@ -120,6 +124,10 @@ fn push_command(out: &mut prism_ui_draw::UiOverlayInput, cmd: &UiDrawCommand) {
                 },
                 font: None,
                 wrap: *wrap,
+                outline_width: *outline_width,
+                outline_color: outline_color.to_array(),
+                shadow_offset: shadow_offset.to_array(),
+                shadow_color: shadow_color.to_array(),
             });
         }
         UiDrawCommand::DropShadow {
@@ -208,6 +216,10 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
                         },
                         font: String::new(),
                         wrap: text.wrap,
+                        outline_width: text.outline_width,
+                        outline_color: text.outline_color,
+                        shadow_offset: text.shadow_offset,
+                        shadow_color: text.shadow_color,
                         layer: EDITOR_LAYER,
                         order,
                     });

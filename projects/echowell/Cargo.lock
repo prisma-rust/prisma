@@ -2217,6 +2217,7 @@ dependencies = [
  "prism-game-api",
  "prism-platform",
  "prism-render",
+ "prism-ui-draw",
  "raw-window-handle",
  "serde",
  "serde_json",
@@ -2275,6 +2276,7 @@ dependencies = [
  "prism-reflect",
  "prism-render",
  "prism-scene",
+ "prism-ui-draw",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -2291,6 +2293,7 @@ dependencies = [
  "prism-project-api",
  "prism-reflect",
  "prism-scene",
+ "prism-ui-draw",
 ]
 
 [[package]]
@@ -2361,6 +2364,7 @@ dependencies = [
  "log",
  "prism-gfx",
  "prism-render-shaders",
+ "prism-ui-draw",
  "raw-window-handle",
  "serde",
  "serde_json",
@@ -2386,6 +2390,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "prism-ui-draw"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro-crate"

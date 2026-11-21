@@ -261,6 +261,28 @@ impl ElementBox {
         self
     }
 
+    /// Render a bindless RGBA texture tinted by `tint` inside this node's box.
+    pub fn image(mut self, texture: UiTextureId, tint: Color) -> Self {
+        self.content = NodeContent::Image { texture, tint };
+        self
+    }
+
+    /// Add an SDF outline around this node's text.
+    pub fn text_outline(mut self, width: f32, color: Color) -> Self {
+        let te = &mut self.ensure_visual().base.text_effect;
+        te.outline_width = width;
+        te.outline_color = color;
+        self
+    }
+
+    /// Add a drop shadow behind this node's text.
+    pub fn text_shadow(mut self, offset: Vec2, color: Color) -> Self {
+        let te = &mut self.ensure_visual().base.text_effect;
+        te.shadow_offset = offset;
+        te.shadow_color = color;
+        self
+    }
+
     /// Render this node's surface with `material` while hovered.
     pub fn hover_material(mut self, material: Material) -> Self {
         let v = self.ensure_visual();
@@ -558,7 +580,7 @@ fn button_core(key: impl IntoNodeKey, text: impl Into<String>, toggle: Option<bo
         .pressed_bg(UiPalette::SURFACE_PRESS)
         .border(1.0, UiPalette::BORDER)
         .focus_border(UiPalette::ACCENT)
-        .radius(4.0)
+        .radius(6.0)
         .focusable(0)
         .child(label(text));
     b = match toggle {
@@ -596,7 +618,7 @@ pub fn text_field(
         .bg(UiPalette::SURFACE_0)
         .border(1.0, UiPalette::BORDER)
         .focus_border(UiPalette::ACCENT)
-        .radius(4.0)
+        .radius(6.0)
         .text_editable(text_str, ph_str)
         .child(label(display))
 }
@@ -618,7 +640,7 @@ pub fn numeric_field(
         .hover_bg(UiPalette::SURFACE_1)
         .border(1.0, UiPalette::BORDER)
         .focus_border(UiPalette::ACCENT)
-        .radius(4.0)
+        .radius(6.0)
         .focusable(0)
         .draggable_value(DraggableValue {
             value,

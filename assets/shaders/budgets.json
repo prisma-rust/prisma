@@ -211,14 +211,24 @@
       "descriptors": 6,
       "push_constant_bytes": 0
     },
-    "ui_overlay": {
+    "ui_backdrop": {
       "sampled_images": 1,
+      "sampled_image_arrays": 0,
+      "samplers": 0,
+      "uniform_buffers": 0,
+      "storage_buffers": 0,
+      "acceleration_structures": 0,
+      "descriptors": 1,
+      "push_constant_bytes": 16
+    },
+    "ui_overlay": {
+      "sampled_images": 2,
       "sampled_image_arrays": 1,
       "samplers": 1,
       "uniform_buffers": 0,
       "storage_buffers": 0,
       "acceleration_structures": 0,
-      "descriptors": 3,
+      "descriptors": 4,
       "push_constant_bytes": 0
     },
     "virtual_geo": {

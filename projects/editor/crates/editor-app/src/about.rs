@@ -9,6 +9,8 @@ use glam::Vec2;
 use prism_ui::elements::text;
 use prism_ui::prelude::*;
 
+use crate::i18n::EditorI18n;
+
 /// Node key of the dialog's outer panel.
 pub const ABOUT_PANEL_KEY: &str = "about:panel";
 /// Node key of the dismiss button.
@@ -46,11 +48,16 @@ pub fn about_default_rect(theme: &Theme, viewport: Vec2) -> Rect {
     Rect::new(left, top, width, height)
 }
 
-/// Build the interior content of the About window (for mounting inside a
-/// [`ContainerWindow`](prism_ui::window::ContainerWindow) or [`build_about_dialog`]).
-pub fn build_about_body(theme: &Theme) -> ElementBox {
+/// Build the interior content of the About window using `i18n`.
+pub fn build_about_body_localized(theme: &Theme, i18n: &EditorI18n) -> ElementBox {
+    let fact_labels = [
+        (i18n.t("about.version"), env!("CARGO_PKG_VERSION")),
+        (i18n.t("about.renderer"), "Vulkan (SDF + Dual-Kawase)"),
+        (i18n.t("about.ui"), "prism-ui"),
+        (i18n.t("about.license"), "MIT OR Apache-2.0"),
+    ];
     let mut facts = col().width(Length::Percent(100.0)).gap(6.0);
-    for (name, value) in ABOUT_FACTS {
+    for (name, value) in fact_labels {
         facts = facts.child(
             row()
                 .width(Length::Percent(100.0))
@@ -66,15 +73,14 @@ pub fn build_about_body(theme: &Theme) -> ElementBox {
         .width(Length::Percent(100.0))
         .padding(Edges::symmetric(24.0, 20.0))
         .gap(14.0)
-        .child(text(
-            theme.text_strong,
-            theme.font_size + 6.0,
-            "Prisma Editor",
-        ))
+        .child(
+            text(theme.text_strong, theme.font_size + 6.0, "Prisma Editor")
+                .text_shadow(Vec2::new(0.0, 1.0), Color::rgba(0.0, 0.0, 0.0, 0.35)),
+        )
         .child(text(
             theme.text_soft,
             theme.font_size,
-            "A self-hosted editor: the engine draws its own chrome.",
+            i18n.t("about.subtitle"),
         ))
         .child(
             ElementBox::default()
@@ -83,6 +89,12 @@ pub fn build_about_body(theme: &Theme) -> ElementBox {
                 .bg(theme.border_subtle),
         )
         .child(facts)
+}
+
+/// Build the interior content of the About window (for mounting inside a
+/// [`ContainerWindow`](prism_ui::window::ContainerWindow) or [`build_about_dialog`]).
+pub fn build_about_body(theme: &Theme) -> ElementBox {
+    build_about_body_localized(theme, &EditorI18n::default())
 }
 
 /// Build the standalone About dialog card, centred in `viewport`.

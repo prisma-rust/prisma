@@ -43,6 +43,10 @@ pub enum UiDrawCommand {
         color: Color,
         align: TextAlign,
         wrap: bool,
+        outline_width: f32,
+        outline_color: Color,
+        shadow_offset: Vec2,
+        shadow_color: Color,
     },
     /// Push a scissor clip rect (intersected with parent clip).
     PushClip(Rect),

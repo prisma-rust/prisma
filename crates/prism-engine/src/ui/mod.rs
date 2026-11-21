@@ -49,6 +49,27 @@ pub use render::{
     EXTERNAL_UI_ORDER,
 };
 
+/// One RGBA8 UI image queued for upload into the renderer's bindless table.
+#[derive(Clone, Debug)]
+pub struct PendingUiImageUpload {
+    pub key: String,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+/// Queue of UI RGBA8 textures (e.g. rasterized SVG icons) waiting for GPU upload.
+#[derive(Clone, Debug, Default)]
+pub struct PendingUiImageUploads {
+    pub items: Vec<PendingUiImageUpload>,
+}
+
+/// Bindless SRV slots assigned by the renderer for uploaded UI images.
+#[derive(Clone, Debug, Default)]
+pub struct UploadedUiImages {
+    pub slots: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
+}
+
 /// 实体及其祖先链是否全部处于激活状态。
 ///
 /// `Active` 缺失视为激活 —— 只有显式关闭的实体才带 `Active(false)`。

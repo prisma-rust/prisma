@@ -4,11 +4,13 @@ pub mod behavior;
 pub mod dock;
 pub mod draw;
 pub mod elements;
+pub mod i18n;
 pub mod icons;
 mod layout;
 pub mod material;
 pub mod menu;
 pub mod style;
+pub mod svg;
 pub mod theme;
 pub mod tree;
 #[cfg(feature = "ui-tween")]
@@ -27,8 +29,10 @@ pub mod prelude {
         toggle_button, tree_view, vec3_field, viewport, virtual_list, ElementBox, UiContext,
         UiElement, UiPalette,
     };
+    pub use crate::i18n::{I18nTable, Locale};
     pub use crate::icons::{
-        hairline, icon_label, macos_traffic_lights, tab_close_icon, traffic_light_dot, IconKind,
+        hairline, icon_view, macos_traffic_lights, tab_close_icon, traffic_light_dot, IconKind,
+        IconSet,
     };
     pub use crate::material::{
         ImageMode, Material, MaterialValue, ShaderRef, Surface, MAX_BACKDROP_SIGMA,
@@ -38,6 +42,7 @@ pub mod prelude {
         Align, Color, Edges, FlexDirection, InteractionState, Justify, LayoutStyle, Length,
         PositionType, Rect, VisualBox, VisualStyle,
     };
+    pub use crate::svg::rasterize_lucide_svg;
     pub use crate::theme::{Theme, ThemePreset};
     pub use crate::tree::{Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree};
     #[cfg(feature = "ui-tween")]

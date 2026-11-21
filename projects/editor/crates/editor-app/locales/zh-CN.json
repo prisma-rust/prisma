@@ -1,0 +1,34 @@
+{
+  "menu": {
+    "file": "文件",
+    "edit": "编辑",
+    "view": "视图",
+    "scene": "场景",
+    "window": "窗口",
+    "help": "帮助",
+    "theme": "主题",
+    "language": "语言",
+    "about": "关于 Prisma",
+    "reset_layout": "重置布局"
+  },
+  "window": {
+    "hierarchy": "层级",
+    "scene": "场景视口",
+    "assets": "资源",
+    "inspector": "检查器",
+    "about": "关于 Prisma"
+  },
+  "toolbar": {
+    "play": "运行",
+    "stop": "停止",
+    "undo": "撤销",
+    "redo": "重做"
+  },
+  "about": {
+    "subtitle": "自举编辑器：由引擎自身管线绘制全部界面。",
+    "version": "版本",
+    "renderer": "渲染器",
+    "ui": "界面内核",
+    "license": "开源协议"
+  }
+}

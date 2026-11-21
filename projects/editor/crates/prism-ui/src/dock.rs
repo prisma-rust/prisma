@@ -13,7 +13,7 @@ use glam::Vec2;
 
 use crate::behavior::UiAction;
 use crate::elements::{col, row, text, ElementBox, UiContext};
-use crate::icons::{hairline, macos_traffic_lights, tab_close_icon};
+use crate::icons::{hairline, macos_traffic_lights, tab_close_icon, IconSet};
 use crate::material::Material;
 use crate::style::{Align, Color, Edges, Justify, Length, Rect};
 use crate::theme::Theme;
@@ -82,7 +82,9 @@ impl DockArea {
     }
 
     pub fn active_window(&self) -> Option<&WindowId> {
-        self.windows.get(self.active_tab).or_else(|| self.windows.first())
+        self.windows
+            .get(self.active_tab)
+            .or_else(|| self.windows.first())
     }
 
     pub fn set_active(&mut self, id: &WindowId) -> bool {
@@ -116,7 +118,9 @@ impl DockNode {
         match self {
             Self::Empty => false,
             Self::Area(area) => area.windows.iter().any(|w| w == id),
-            Self::Split(split) => split.first.contains_window(id) || split.second.contains_window(id),
+            Self::Split(split) => {
+                split.first.contains_window(id) || split.second.contains_window(id)
+            }
         }
     }
 
@@ -149,7 +153,10 @@ impl DockNode {
         match self {
             Self::Empty => None,
             Self::Area(area) => Some(area.id),
-            Self::Split(split) => split.first.first_area_id().or_else(|| split.second.first_area_id()),
+            Self::Split(split) => split
+                .first
+                .first_area_id()
+                .or_else(|| split.second.first_area_id()),
         }
     }
 
@@ -263,6 +270,7 @@ pub struct WindowLayout {
     pub main_root: DockNode,
     pub floating: Vec<ContainerWindow>,
     pub windows: BTreeMap<WindowId, EditorWindowMeta>,
+    pub icons: IconSet,
     next_id: u64,
     cached_splits: Vec<CachedSplitHit>,
     cached_areas: Vec<CachedAreaHit>,
@@ -287,6 +295,7 @@ impl WindowLayout {
             main_root: DockNode::Empty,
             floating: Vec::new(),
             windows: BTreeMap::new(),
+            icons: IconSet::default(),
             next_id: 1,
             cached_splits: Vec::new(),
             cached_areas: Vec::new(),
@@ -332,7 +341,8 @@ impl WindowLayout {
 
     /// Whether `id` is currently open in either `main_root` or `floating`.
     pub fn is_window_open(&self, id: &WindowId) -> bool {
-        self.main_root.contains_window(id) || self.floating.iter().any(|c| c.root.contains_window(id))
+        self.main_root.contains_window(id)
+            || self.floating.iter().any(|c| c.root.contains_window(id))
     }
 
     /// Focus an already-open window (selecting its tab and raising its container),
@@ -381,7 +391,11 @@ impl WindowLayout {
         if self.main_root.focus_window(id) {
             return true;
         }
-        if let Some(idx) = self.floating.iter().position(|c| c.root.contains_window(id)) {
+        if let Some(idx) = self
+            .floating
+            .iter()
+            .position(|c| c.root.contains_window(id))
+        {
             self.floating[idx].root.focus_window(id);
             let win = self.floating.remove(idx);
             self.floating.push(win);
@@ -567,7 +581,11 @@ impl WindowLayout {
             }
 
             if let Some(resize) = &self.active_window_resize {
-                if let Some(win) = self.floating.iter_mut().find(|w| w.id == resize.container_id) {
+                if let Some(win) = self
+                    .floating
+                    .iter_mut()
+                    .find(|w| w.id == resize.container_id)
+                {
                     apply_resize(win, resize, input.pointer_pos);
                     win.clamp_to_bounds(workspace);
                 }
@@ -719,14 +737,28 @@ impl WindowLayout {
                         container_rect: rect,
                         hit_rect,
                     });
-                    self.mount_node(ctx, theme, &split.first, first_rect, in_floating, draw_content);
+                    self.mount_node(
+                        ctx,
+                        theme,
+                        &split.first,
+                        first_rect,
+                        in_floating,
+                        draw_content,
+                    );
                     ctx.mount(
                         ElementBox::default()
                             .absolute(rect.x + first_w, rect.y)
                             .size(Length::Px(SPLITTER_VISUAL_PX), Length::Px(rect.h))
                             .bg(theme.border_subtle),
                     );
-                    self.mount_node(ctx, theme, &split.second, second_rect, in_floating, draw_content);
+                    self.mount_node(
+                        ctx,
+                        theme,
+                        &split.second,
+                        second_rect,
+                        in_floating,
+                        draw_content,
+                    );
                 }
                 SplitAxis::Vertical => {
                     let first_h = ((rect.h - SPLITTER_VISUAL_PX) * split.ratio).max(0.0);
@@ -750,14 +782,28 @@ impl WindowLayout {
                         container_rect: rect,
                         hit_rect,
                     });
-                    self.mount_node(ctx, theme, &split.first, first_rect, in_floating, draw_content);
+                    self.mount_node(
+                        ctx,
+                        theme,
+                        &split.first,
+                        first_rect,
+                        in_floating,
+                        draw_content,
+                    );
                     ctx.mount(
                         ElementBox::default()
                             .absolute(rect.x, rect.y + first_h)
                             .size(Length::Px(rect.w), Length::Px(SPLITTER_VISUAL_PX))
                             .bg(theme.border_subtle),
                     );
-                    self.mount_node(ctx, theme, &split.second, second_rect, in_floating, draw_content);
+                    self.mount_node(
+                        ctx,
+                        theme,
+                        &split.second,
+                        second_rect,
+                        in_floating,
+                        draw_content,
+                    );
                 }
             },
             DockNode::Area(area) => {
@@ -768,8 +814,7 @@ impl WindowLayout {
                 });
 
                 let panel = if in_floating {
-                    col()
-                        .size(Length::Percent(100.0), Length::Percent(100.0))
+                    col().size(Length::Percent(100.0), Length::Percent(100.0))
                 } else {
                     col()
                         .absolute(rect.x, rect.y)
@@ -782,9 +827,10 @@ impl WindowLayout {
                         // macOS-style titlebar: traffic lights on the left, centered title
                         // (or compact pill tabs when multiple panels are grouped), 1px hairline.
                         let active_win = area.active_window().cloned();
-                        let close_key = active_win
-                            .as_ref()
-                            .map_or_else(|| DockNodeKey::close(&"".into()), |w| self.close_key_for(w));
+                        let close_key = active_win.as_ref().map_or_else(
+                            || DockNodeKey::close(&"".into()),
+                            |w| self.close_key_for(w),
+                        );
                         let lights_rect = Rect::new(rect.x + 8.0, rect.y + 4.0, 62.0, 24.0);
                         let show_glyphs = lights_rect.contains(self.last_pointer);
 
@@ -795,7 +841,13 @@ impl WindowLayout {
                                 .padding(Edges::symmetric(12.0, 0.0))
                                 .align(Align::Center)
                                 .justify(Justify::SpaceBetween)
-                                .child(macos_traffic_lights(close_key, None, None, show_glyphs)),
+                                .child(macos_traffic_lights(
+                                    &self.icons,
+                                    close_key,
+                                    None,
+                                    None,
+                                    show_glyphs,
+                                )),
                         );
                         ctx.with_parent(titlebar, |ctx| {
                             if area.windows.len() <= 1 {
@@ -872,7 +924,9 @@ impl WindowLayout {
                             }
                             // Right balance spacer matching the 52px traffic-light cluster
                             // so the center title/pills sit at the true window midpoint.
-                            ctx.mount(ElementBox::default().size(Length::Px(52.0), Length::Px(1.0)));
+                            ctx.mount(
+                                ElementBox::default().size(Length::Px(52.0), Length::Px(1.0)),
+                            );
                         });
                         ctx.mount(hairline(theme.border_subtle.with_alpha(0.45)));
                     } else {
@@ -900,7 +954,12 @@ impl WindowLayout {
                                 self.cached_tabs.push(CachedTabHit {
                                     area_id: area.id,
                                     window_id: win_id.clone(),
-                                    rect: Rect::new(tab_x, rect.y + 3.0, tab_w, TAB_BAR_HEIGHT - 6.0),
+                                    rect: Rect::new(
+                                        tab_x,
+                                        rect.y + 3.0,
+                                        tab_w,
+                                        TAB_BAR_HEIGHT - 6.0,
+                                    ),
                                 });
                                 tab_x += tab_w + 4.0;
 
@@ -929,7 +988,7 @@ impl WindowLayout {
                                 if closable {
                                     let close_key = self.close_key_for(win_id);
                                     ctx.with_parent(tab_row, |ctx| {
-                                        ctx.mount(tab_close_icon(close_key, theme));
+                                        ctx.mount(tab_close_icon(&self.icons, close_key, theme));
                                     });
                                 }
                             }
@@ -939,11 +998,7 @@ impl WindowLayout {
 
                     // Active window body
                     if let Some(active) = area.active_window().cloned() {
-                        let body = ctx.mount(
-                            col()
-                                .width(Length::Percent(100.0))
-                                .grow(1.0),
-                        );
+                        let body = ctx.mount(col().width(Length::Percent(100.0)).grow(1.0));
                         ctx.with_parent(body, |ctx| {
                             draw_content(&active, ctx);
                         });
@@ -1075,10 +1130,26 @@ fn mount_dock_compass(ctx: &mut UiContext, theme: &Theme, target: Rect, active: 
     let gap = 30.0;
     let zones = [
         (DockPosition::Tab, cx - box_sz * 0.5, cy - box_sz * 0.5),
-        (DockPosition::Left, cx - box_sz * 0.5 - gap, cy - box_sz * 0.5),
-        (DockPosition::Right, cx - box_sz * 0.5 + gap, cy - box_sz * 0.5),
-        (DockPosition::Top, cx - box_sz * 0.5, cy - box_sz * 0.5 - gap),
-        (DockPosition::Bottom, cx - box_sz * 0.5, cy - box_sz * 0.5 + gap),
+        (
+            DockPosition::Left,
+            cx - box_sz * 0.5 - gap,
+            cy - box_sz * 0.5,
+        ),
+        (
+            DockPosition::Right,
+            cx - box_sz * 0.5 + gap,
+            cy - box_sz * 0.5,
+        ),
+        (
+            DockPosition::Top,
+            cx - box_sz * 0.5,
+            cy - box_sz * 0.5 - gap,
+        ),
+        (
+            DockPosition::Bottom,
+            cx - box_sz * 0.5,
+            cy - box_sz * 0.5 + gap,
+        ),
     ];
     for (zone, x, y) in zones {
         let is_active = zone == active;
@@ -1092,7 +1163,14 @@ fn mount_dock_compass(ctx: &mut UiContext, theme: &Theme, target: Rect, active: 
                 .absolute(x, y)
                 .size(Length::Px(box_sz), Length::Px(box_sz))
                 .radius(4.0)
-                .border(1.0, if is_active { theme.accent } else { theme.border_strong })
+                .border(
+                    1.0,
+                    if is_active {
+                        theme.accent
+                    } else {
+                        theme.border_strong
+                    },
+                )
                 .bg(bg),
         );
     }
@@ -1166,13 +1244,19 @@ mod tests {
             id: split_l,
             axis: SplitAxis::Horizontal,
             ratio: 0.2,
-            first: Box::new(DockNode::Area(DockArea::new(left, vec!["hierarchy".into()]))),
+            first: Box::new(DockNode::Area(DockArea::new(
+                left,
+                vec!["hierarchy".into()],
+            ))),
             second: Box::new(DockNode::Split(SplitView {
                 id: split_r,
                 axis: SplitAxis::Horizontal,
                 ratio: 0.7,
                 first: Box::new(DockNode::Area(DockArea::new(center, vec!["scene".into()]))),
-                second: Box::new(DockNode::Area(DockArea::new(right, vec!["inspector".into()]))),
+                second: Box::new(DockNode::Area(DockArea::new(
+                    right,
+                    vec!["inspector".into()],
+                ))),
             })),
         });
         (layout, left, center, right)
@@ -1196,7 +1280,11 @@ mod tests {
     fn undocking_to_floating_and_redocking_collapses_empty_splits() {
         let (mut layout, left, center, _right) = sample_layout();
         let cid = layout
-            .undock_window(&"hierarchy".into(), Rect::new(80.0, 80.0, 300.0, 240.0), true)
+            .undock_window(
+                &"hierarchy".into(),
+                Rect::new(80.0, 80.0, 300.0, 240.0),
+                true,
+            )
             .expect("hierarchy undocked");
         assert_eq!(layout.floating.len(), 1);
         assert_eq!(layout.floating[0].id, cid);
@@ -1236,7 +1324,11 @@ mod tests {
         layout.step_input(workspace, &drag, &[]);
 
         if let DockNode::Split(split) = &layout.main_root {
-            assert!((split.ratio - 0.4).abs() < 0.02, "got ratio {}", split.ratio);
+            assert!(
+                (split.ratio - 0.4).abs() < 0.02,
+                "got ratio {}",
+                split.ratio
+            );
         } else {
             panic!("expected root split");
         }

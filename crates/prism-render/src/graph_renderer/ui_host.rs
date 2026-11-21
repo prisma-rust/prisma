@@ -279,9 +279,7 @@ impl UiOverlayHost {
                 gpu.set_backdrop(pass.blurred_view(), frame_index);
             }
             let mut capture_backdrop = |cmd: vk::CommandBuffer, sigma: f32| {
-                let pass = backdrop_slot
-                    .as_mut()
-                    .context("backdrop pass missing")?;
+                let pass = backdrop_slot.as_mut().context("backdrop pass missing")?;
                 transition_backdrop_source(
                     context,
                     cmd,

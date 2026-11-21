@@ -1746,6 +1746,43 @@ impl App {
             }));
         }
 
+        // Upload UI RGBA8 icon textures (e.g. rasterized SVGs) into bindless slots.
+        if let Some(mut pending) = engine
+            .world_mut()
+            .remove_resource::<prism_engine::ui::PendingUiImageUploads>()
+        {
+            if !pending.items.is_empty() {
+                let uploaded = engine
+                    .world()
+                    .get_resource::<prism_engine::ui::UploadedUiImages>()
+                    .map(|u| u.slots.clone())
+                    .unwrap_or_else(|| {
+                        let u = prism_engine::ui::UploadedUiImages::default();
+                        let slots = u.slots.clone();
+                        engine.world_mut().insert_resource(u);
+                        slots
+                    });
+                let items = std::mem::take(&mut pending.items);
+                shared.send_renderer_message(Box::new(move |renderer| {
+                    for item in items {
+                        let input = prism_render::managers::TextureUploadInput {
+                            width: item.width,
+                            height: item.height,
+                            format: prism_render::managers::TextureFormat::Rgba8,
+                            mip_levels: 1,
+                            pixels: item.pixels,
+                        };
+                        if let Ok(handle) = renderer.register_texture(&input) {
+                            let slot = renderer.texture_srv(handle).0;
+                            if let Ok(mut guard) = uploaded.lock() {
+                                guard.insert(item.key, slot);
+                            }
+                        }
+                    }
+                }));
+            }
+        }
+
         // 骨骼动画资产（#560 P0-2）：幂等，只有出现新的 `.rskel` / `.ranim` 才读盘。
         self.asset_resolver
             .load_animation_assets(engine.world_mut());

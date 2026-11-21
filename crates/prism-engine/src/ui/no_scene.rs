@@ -164,6 +164,7 @@ fn push_text(
         wrap: true,
         layer: TEXT_LAYER,
         order: 0,
+        ..Default::default()
     });
 }
 

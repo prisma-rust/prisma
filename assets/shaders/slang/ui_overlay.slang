@@ -44,48 +44,51 @@ SamplerState globalSamplers[];
 [[vk::binding(1, 1)]]
 Texture2D bindlessSrvs[];
 
-// Sampler slot order is fixed by `bindless::SamplerType`: 2 = nearest.
-static const uint SAMPLER_NEAREST = 2u;
+// Sampler slot order is fixed by `bindless::SamplerType`: 1 = linear clamp.
+static const uint SAMPLER_LINEAR_CLAMP = 1u;
 // Vertex-side sentinel: sample the glyph atlas instead of a bindless SRV.
 static const uint ATLAS_TEXTURE = 0xFFFFFFFFu;
 
 struct UiVertexIn
 {
-    float2 position : POSITION;   // location 0 — NDC position
-    float2 uv       : TEXCOORD0;  // location 1 — atlas uv (0,0 for plain quads)
-    float4 color    : COLOR0;     // location 2 — RGBA color
-    float2 local    : TEXCOORD1;  // location 3 — pixel offset from quad centre
-    float2 halfSize : TEXCOORD2;  // location 4 — quad half size in pixels
-    float  radius   : TEXCOORD3;  // location 5 — corner radius in pixels (<0 = skip)
-    uint   texture  : TEXCOORD4;  // location 6 — bindless slot (0xFFFFFFFF = atlas)
-    float  backdrop : TEXCOORD5;  // location 7 — backdrop sigma in pixels (0 = none)
+    float2 position     : POSITION;   // location 0 — NDC position
+    float2 uv           : TEXCOORD0;  // location 1 — atlas uv (0,0 for plain quads)
+    float4 color        : COLOR0;     // location 2 — RGBA color
+    float2 local        : TEXCOORD1;  // location 3 — pixel offset from quad centre
+    float2 halfSize     : TEXCOORD2;  // location 4 — quad half size in pixels
+    float  radius       : TEXCOORD3;  // location 5 — corner radius (>=0), -1=bitmap, <=-2=SDF+outline
+    uint   texture      : TEXCOORD4;  // location 6 — bindless slot (0xFFFFFFFF = atlas)
+    float  backdrop     : TEXCOORD5;  // location 7 — backdrop sigma in pixels (0 = none)
+    float4 outlineColor : COLOR1;     // location 8 — SDF outline RGBA (unpacked UNORM)
 };
 
 struct UiVaryings
 {
-    float4 clipPos  : SV_Position;
-    float2 uv       : TEXCOORD0;
-    float4 color    : COLOR0;
-    float2 local    : TEXCOORD1;
-    float2 halfSize : TEXCOORD2;
-    float  radius   : TEXCOORD3;
-    uint   texture  : TEXCOORD4;
-    float  backdrop : TEXCOORD5;
-    float2 screenUv : TEXCOORD6;
+    float4 clipPos      : SV_Position;
+    float2 uv           : TEXCOORD0;
+    float4 color        : COLOR0;
+    float2 local        : TEXCOORD1;
+    float2 halfSize     : TEXCOORD2;
+    float  radius       : TEXCOORD3;
+    uint   texture      : TEXCOORD4;
+    float  backdrop     : TEXCOORD5;
+    float2 screenUv     : TEXCOORD6;
+    float4 outlineColor : COLOR1;
 };
 
 [shader("vertex")]
 UiVaryings vertexMain(UiVertexIn in)
 {
     UiVaryings out;
-    out.clipPos  = float4(in.position, 0.0, 1.0);
-    out.uv       = in.uv;
-    out.color    = in.color;
-    out.local    = in.local;
-    out.halfSize = in.halfSize;
-    out.radius   = in.radius;
-    out.texture  = in.texture;
-    out.backdrop = in.backdrop;
+    out.clipPos      = float4(in.position, 0.0, 1.0);
+    out.uv           = in.uv;
+    out.color        = in.color;
+    out.local        = in.local;
+    out.halfSize     = in.halfSize;
+    out.radius       = in.radius;
+    out.texture      = in.texture;
+    out.backdrop     = in.backdrop;
+    out.outlineColor = in.outlineColor;
     // NDC -> screen UV for backdrop sampling. Vulkan NDC y = -1 is the top of
     // the screen, and the blurred image is written top-down, so y is not
     // flipped here.
@@ -108,12 +111,30 @@ float4 fragmentMain(UiVaryings in) : SV_Target0
     //     white pixel, so coverage = 1);
     //   - background images sample the bindless table and tint with the
     //     vertex colour (#591).
+    if (in.texture == ATLAS_TEXTURE && in.radius <= -2.0)
+    {
+        // TextMeshPro-style SDF glyph rendering (0.5 = glyph contour).
+        float sdf = glyphAtlas.Sample(in.uv).r;
+        float grad = length(float2(ddx(sdf), ddy(sdf)));
+        float aa = clamp(grad * 0.75, 0.02, 0.35);
+        float outlineW = clamp(-(in.radius + 2.0), 0.0, 0.42);
+        float faceAlpha = smoothstep(0.5 - aa, 0.5 + aa, sdf);
+        if (outlineW > 0.001)
+        {
+            float outerAlpha = smoothstep(0.5 - outlineW - aa, 0.5 - outlineW + aa, sdf);
+            float3 rgb = lerp(in.outlineColor.rgb, in.color.rgb, faceAlpha);
+            float alpha = max(faceAlpha * in.color.a, outerAlpha * in.outlineColor.a);
+            return float4(rgb, alpha);
+        }
+        return float4(in.color.rgb, in.color.a * faceAlpha);
+    }
+
     float4 sampled = float4(1.0, 1.0, 1.0, 1.0);
     if (in.texture == ATLAS_TEXTURE)
         sampled = float4(1.0, 1.0, 1.0, glyphAtlas.Sample(in.uv).r);
     else
         sampled = bindlessSrvs[NonUniformResourceIndex(in.texture)]
-            .SampleLevel(globalSamplers[NonUniformResourceIndex(SAMPLER_NEAREST)], in.uv, 0.0);
+            .SampleLevel(globalSamplers[NonUniformResourceIndex(SAMPLER_LINEAR_CLAMP)], in.uv, 0.0);
 
     float coverage = sampled.a;
 

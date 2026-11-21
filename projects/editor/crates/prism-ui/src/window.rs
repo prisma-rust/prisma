@@ -159,8 +159,16 @@ impl ContainerWindow {
     /// Clamp `self.rect` so the window stays within `bounds` and never shrinks
     /// below `self.min_size`.
     pub fn clamp_to_bounds(&mut self, bounds: Rect) {
-        self.rect.w = self.rect.w.max(self.min_size.x).min(bounds.w.max(self.min_size.x));
-        self.rect.h = self.rect.h.max(self.min_size.y).min(bounds.h.max(self.min_size.y));
+        self.rect.w = self
+            .rect
+            .w
+            .max(self.min_size.x)
+            .min(bounds.w.max(self.min_size.x));
+        self.rect.h = self
+            .rect
+            .h
+            .max(self.min_size.y)
+            .min(bounds.h.max(self.min_size.y));
         let max_x = (bounds.x + bounds.w - 48.0).max(bounds.x);
         let min_x = bounds.x - self.rect.w + 48.0;
         self.rect.x = self.rect.x.clamp(min_x, max_x);

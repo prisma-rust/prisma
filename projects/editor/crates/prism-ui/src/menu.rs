@@ -22,6 +22,8 @@ use glam::Vec2;
 
 use crate::behavior::UiAction;
 use crate::elements::{text, ElementBox, UiContext};
+use crate::icons::{icon_view, IconKind, IconSet};
+use crate::material::Material;
 use crate::style::{Align, Color, FlexDirection, Justify, Length};
 use crate::theme::Theme;
 use crate::tree::{IntoNodeKey, NodeKey, PopupAlign};
@@ -413,6 +415,7 @@ pub struct MenuBar {
     theme: Theme,
     menus: Vec<Menu>,
     viewport: Vec2,
+    icons: IconSet,
 }
 
 impl MenuBar {
@@ -421,7 +424,13 @@ impl MenuBar {
             theme,
             menus: Vec::new(),
             viewport,
+            icons: IconSet::default(),
         }
+    }
+
+    pub fn icons(mut self, icons: IconSet) -> Self {
+        self.icons = icons;
+        self
     }
 
     pub fn menu(mut self, menu: Menu) -> Self {
@@ -441,6 +450,7 @@ impl MenuBar {
     pub fn mount(self, ctx: &mut UiContext<'_>, state: &MenuState) {
         let theme = self.theme;
         let viewport = self.viewport;
+        let icons = self.icons;
 
         let mut bar = ElementBox::default()
             .key(MENU_BAR_KEY)
@@ -448,7 +458,8 @@ impl MenuBar {
             .padding(theme.menu_bar_padding)
             .gap(theme.menu_bar_gap)
             .align(Align::Center)
-            .bg(theme.chrome);
+            .bg(menu_bar_glass_tint(&theme))
+            .material(Material::frosted_glass(theme.glass_blur_sigma));
 
         for menu in &self.menus {
             let open = state.is_open(&menu.id);
@@ -492,6 +503,7 @@ impl MenuBar {
 
             ctx.mount(dropdown(
                 &theme,
+                &icons,
                 &open_menu.id,
                 &open_menu.entries,
                 trigger,
@@ -514,7 +526,14 @@ impl MenuBar {
                 };
                 let row_key = submenu_row_key(&scope, label);
                 scope = format!("{scope}/{label}");
-                ctx.mount(dropdown(&theme, &scope, child_entries, row_key, true));
+                ctx.mount(dropdown(
+                    &theme,
+                    &icons,
+                    &scope,
+                    child_entries,
+                    row_key,
+                    true,
+                ));
                 entries = child_entries;
             }
         });
@@ -611,6 +630,7 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
     } else {
         Color::TRANSPARENT
     };
+    let label_color = if open { theme.text_strong } else { theme.text };
     ElementBox::default()
         .key(key)
         .padding(theme.menu_trigger_padding)
@@ -622,7 +642,19 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
         .pressed_bg(theme.menu_active)
         .clickable()
         .focusable(0)
-        .child(text(theme.text_soft, theme.font_size, &menu.title))
+        .child(text(label_color, theme.font_size, &menu.title))
+}
+
+fn menu_bar_glass_tint(theme: &Theme) -> Color {
+    theme
+        .glass_tint
+        .with_alpha((theme.glass_tint.a + 0.22).min(0.65))
+}
+
+fn dropdown_glass_tint(theme: &Theme) -> Color {
+    theme
+        .glass_tint
+        .with_alpha((theme.glass_tint.a + 0.14).min(0.55))
 }
 
 /// The dropdown panel for one menu.
@@ -631,6 +663,7 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
 /// that spawned them, which is what keeps a deep chain readable.
 fn dropdown(
     theme: &Theme,
+    icons: &IconSet,
     menu_id: &str,
     entries: &[MenuEntry],
     trigger: NodeKey,
@@ -642,8 +675,11 @@ fn dropdown(
         .padding(theme.menu_dropdown_padding)
         .gap(1.0)
         .min_width(theme.menu_dropdown_min_width)
-        .bg(theme.panel_raised)
-        .border(1.0, theme.border)
+        .bg(dropdown_glass_tint(theme))
+        .material(
+            Material::frosted_glass(theme.glass_blur_sigma).with_radius(theme.menu_dropdown_radius),
+        )
+        .border(1.0, theme.border.with_alpha(0.75))
         .radius(theme.menu_dropdown_radius)
         // The panel's padding and the gaps between its rows are part of the
         // panel, not holes: without this, crossing one of them reports "no
@@ -668,12 +704,12 @@ fn dropdown(
     };
 
     for entry in entries {
-        panel = panel.child(entry_row(theme, menu_id, entry));
+        panel = panel.child(entry_row(theme, icons, menu_id, entry));
     }
     panel
 }
 
-fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
+fn entry_row(theme: &Theme, icons: &IconSet, menu_id: &str, entry: &MenuEntry) -> ElementBox {
     match entry {
         // Width stays Auto so the rule stretches to the panel's inner width; a
         // Percent would resolve against the viewport and blow the panel open.
@@ -725,22 +761,15 @@ fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
                     command: format!("toggle:{command}"),
                 },
             );
-            let check_color = if *checked {
-                theme.accent
-            } else {
-                Color::TRANSPARENT
-            };
             let text_color = if *enabled { theme.text } else { theme.muted };
+            let indicator = if *checked {
+                icon_view(icons, IconKind::Check, 13.0, theme.accent)
+            } else {
+                ElementBox::default().size(Length::Px(13.0), Length::Px(13.0))
+            };
             item_row(theme, key, text_label, *enabled)
                 .gap(8.0)
-                .child(
-                    ElementBox::default()
-                        .width(Length::Px(14.0))
-                        .height(Length::Px(14.0))
-                        .radius(3.0)
-                        .border(1.0, if *checked { theme.accent } else { theme.border })
-                        .bg(check_color),
-                )
+                .child(indicator)
                 .child(text(text_color, theme.font_size, text_label))
         }
         MenuEntry::Submenu {
@@ -774,7 +803,7 @@ fn entry_row(theme: &Theme, menu_id: &str, entry: &MenuEntry) -> ElementBox {
                         .width(Length::Grow(1.0))
                         .height(Length::Px(1.0)),
                 )
-                .child(text(theme.muted, theme.font_size_small, ">"))
+                .child(icon_view(icons, IconKind::ChevronRight, 12.0, theme.muted))
         }
     }
 }

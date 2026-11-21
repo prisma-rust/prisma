@@ -48,7 +48,7 @@ impl Default for UiQuad {
 /// One text run: a screen-space pixel rectangle plus its content.
 ///
 /// With the `ui` feature on, the renderer expands this into one quad per glyph.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct UiTextInput {
     /// Pixel rectangle `[left, top, width, height]`, top-left origin.
     pub rect: [f32; 4],
@@ -60,6 +60,14 @@ pub struct UiTextInput {
     pub font: Option<String>,
     /// Wrap at the rectangle width; `false` = single line.
     pub wrap: bool,
+    /// Optional SDF outline width in pixels (`0.0` = no outline).
+    pub outline_width: f32,
+    /// SDF outline RGBA color (sRGB).
+    pub outline_color: [f32; 4],
+    /// Optional drop-shadow offset in pixels (`[0.0, 0.0]` = no shadow).
+    pub shadow_offset: [f32; 2],
+    /// Drop-shadow RGBA color (sRGB, alpha `0.0` = no shadow).
+    pub shadow_color: [f32; 4],
 }
 
 /// Horizontal alignment, resolved against the measured width of the whole run.
@@ -129,6 +137,7 @@ mod tests {
             alignment: UiTextAlign::Left,
             font: None,
             wrap: false,
+            ..Default::default()
         }
     }
 

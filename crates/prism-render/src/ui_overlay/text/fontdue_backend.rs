@@ -108,6 +108,8 @@ fn load_system_font() -> Option<Font> {
 pub(crate) struct FontdueRasterizer {
     /// 系统默认字体；`None` 时只有注册过的工程字体能用。
     default: Option<Font>,
+    /// CJK fallback font when the primary/project font lacks a glyph.
+    fallback_cjk: Option<Font>,
     /// 工程自带字体：资产路径（`assets/fonts/x.ttf`）→ 解析后的字体。
     fonts: HashMap<String, Font>,
     /// 已经 warn 过「这个路径没注册」的集合：`line_metrics` 是 `&self`，用
@@ -118,6 +120,19 @@ pub(crate) struct FontdueRasterizer {
 impl FontdueRasterizer {
     pub(crate) fn new() -> Self {
         let default = load_system_font();
+        let fallback_cjk = first_available(FONT_CANDIDATES, |path, collection_index| {
+            let data = std::fs::read(path).ok()?;
+            let font = Font::from_bytes(
+                data,
+                fontdue::FontSettings {
+                    collection_index,
+                    ..Default::default()
+                },
+            )
+            .ok()?;
+            (font.lookup_glyph_index('中') != 0).then_some(font)
+        })
+        .map(|(_, f)| f);
         if default.is_none() {
             // 不再直接放弃：工程可以在运行时注册自带字体（#583）。但如果整个
             // 生命周期都没注册，文字仍然一个都不画——这里必须留下线索。
@@ -129,6 +144,7 @@ impl FontdueRasterizer {
         }
         Self {
             default,
+            fallback_cjk,
             fonts: HashMap::new(),
             reported_missing: RefCell::new(HashSet::new()),
         }
@@ -147,7 +163,20 @@ impl FontdueRasterizer {
                 );
             }
         }
-        self.default.as_ref()
+        self.default.as_ref().or(self.fallback_cjk.as_ref())
+    }
+
+    fn resolve_for_char(&self, font: Option<&str>, ch: char) -> Option<&Font> {
+        let primary = self.resolve(font)?;
+        if primary.lookup_glyph_index(ch) != 0 {
+            return Some(primary);
+        }
+        if let Some(cjk) = self.fallback_cjk.as_ref() {
+            if cjk.lookup_glyph_index(ch) != 0 {
+                return Some(cjk);
+            }
+        }
+        Some(primary)
     }
 }
 
@@ -165,7 +194,7 @@ impl TextRasterizer for FontdueRasterizer {
 
     fn rasterize(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<GlyphBitmap> {
         // 先解析出字体再可变借用 rasterize：`resolve` 只读。
-        let found = self.resolve(font)?;
+        let found = self.resolve_for_char(font, ch)?;
         let (metrics, pixels) = found.rasterize(ch, font_size);
         Some(GlyphBitmap {
             width: metrics.width,
@@ -218,6 +247,7 @@ mod tests {
     fn registering_broken_bytes_fails_without_dropping_the_default() {
         let mut backend = FontdueRasterizer {
             default: None,
+            fallback_cjk: None,
             fonts: HashMap::new(),
             reported_missing: RefCell::new(HashSet::new()),
         };
@@ -244,6 +274,7 @@ mod tests {
         };
         let mut backend = FontdueRasterizer {
             default: None,
+            fallback_cjk: None,
             fonts: HashMap::new(),
             reported_missing: RefCell::new(HashSet::new()),
         };

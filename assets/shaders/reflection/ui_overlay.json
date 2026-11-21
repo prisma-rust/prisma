@@ -183,7 +183,7 @@
                     {
                         "name": "in",
                         "stage": "vertex",
-                        "binding": {"kind": "varyingInput", "index": 0, "count": 8},
+                        "binding": {"kind": "varyingInput", "index": 0, "count": 9},
                         "type": {
                             "kind": "struct",
                             "name": "UiVertexIn",
@@ -316,10 +316,28 @@
                                     "binding": {"kind": "varyingInput", "index": 7},
                                     "semanticName": "TEXCOORD",
                                     "semanticIndex": 5
+                                },
+                                {
+                                    "name": "outlineColor",
+                                    "type": {
+                                        "kind": "vector",
+                                        "elementCount": 4,
+                                        "elementType": {
+                                            "kind": "scalar",
+                                            "scalarType": "float32"
+                                        },
+                                        "sizes": [
+                                            {"kind": "varyingInput", "value": 1}
+                                        ]
+                                    },
+                                    "stage": "vertex",
+                                    "binding": {"kind": "varyingInput", "index": 8},
+                                    "semanticName": "COLOR",
+                                    "semanticIndex": 1
                                 }
                             ],
                             "sizes": [
-                                {"kind": "varyingInput", "value": 8}
+                                {"kind": "varyingInput", "value": 9}
                             ]
                         }
                     }
@@ -329,7 +347,7 @@
                 {
                     "name": "in",
                     "stage": "vertex",
-                    "binding": {"kind": "varyingInput", "index": 0, "count": 8},
+                    "binding": {"kind": "varyingInput", "index": 0, "count": 9},
                     "type": {
                         "kind": "struct",
                         "name": "UiVertexIn",
@@ -462,17 +480,35 @@
                                 "binding": {"kind": "varyingInput", "index": 7},
                                 "semanticName": "TEXCOORD",
                                 "semanticIndex": 5
+                            },
+                            {
+                                "name": "outlineColor",
+                                "type": {
+                                    "kind": "vector",
+                                    "elementCount": 4,
+                                    "elementType": {
+                                        "kind": "scalar",
+                                        "scalarType": "float32"
+                                    },
+                                    "sizes": [
+                                        {"kind": "varyingInput", "value": 1}
+                                    ]
+                                },
+                                "stage": "vertex",
+                                "binding": {"kind": "varyingInput", "index": 8},
+                                "semanticName": "COLOR",
+                                "semanticIndex": 1
                             }
                         ],
                         "sizes": [
-                            {"kind": "varyingInput", "value": 8}
+                            {"kind": "varyingInput", "value": 9}
                         ]
                     }
                 }
             ],
             "result": {
                 "stage": "vertex",
-                "binding": {"kind": "varyingOutput", "index": 0, "count": 8},
+                "binding": {"kind": "varyingOutput", "index": 0, "count": 9},
                 "type": {
                     "kind": "struct",
                     "name": "UiVaryings",
@@ -621,10 +657,28 @@
                             "binding": {"kind": "varyingOutput", "index": 7},
                             "semanticName": "TEXCOORD",
                             "semanticIndex": 6
+                        },
+                        {
+                            "name": "outlineColor",
+                            "type": {
+                                "kind": "vector",
+                                "elementCount": 4,
+                                "elementType": {
+                                    "kind": "scalar",
+                                    "scalarType": "float32"
+                                },
+                                "sizes": [
+                                    {"kind": "varyingOutput", "value": 1}
+                                ]
+                            },
+                            "stage": "vertex",
+                            "binding": {"kind": "varyingOutput", "index": 8},
+                            "semanticName": "COLOR",
+                            "semanticIndex": 1
                         }
                     ],
                     "sizes": [
-                        {"kind": "varyingOutput", "value": 8}
+                        {"kind": "varyingOutput", "value": 9}
                     ]
                 }
             },
@@ -656,7 +710,7 @@
                     {
                         "name": "in",
                         "stage": "fragment",
-                        "binding": {"kind": "varyingInput", "index": 0, "count": 8},
+                        "binding": {"kind": "varyingInput", "index": 0, "count": 9},
                         "type": {
                             "kind": "struct",
                             "name": "UiVaryings",
@@ -805,10 +859,28 @@
                                     "binding": {"kind": "varyingInput", "index": 7},
                                     "semanticName": "TEXCOORD",
                                     "semanticIndex": 6
+                                },
+                                {
+                                    "name": "outlineColor",
+                                    "type": {
+                                        "kind": "vector",
+                                        "elementCount": 4,
+                                        "elementType": {
+                                            "kind": "scalar",
+                                            "scalarType": "float32"
+                                        },
+                                        "sizes": [
+                                            {"kind": "varyingInput", "value": 1}
+                                        ]
+                                    },
+                                    "stage": "fragment",
+                                    "binding": {"kind": "varyingInput", "index": 8},
+                                    "semanticName": "COLOR",
+                                    "semanticIndex": 1
                                 }
                             ],
                             "sizes": [
-                                {"kind": "varyingInput", "value": 8}
+                                {"kind": "varyingInput", "value": 9}
                             ]
                         }
                     }
@@ -818,7 +890,7 @@
                 {
                     "name": "in",
                     "stage": "fragment",
-                    "binding": {"kind": "varyingInput", "index": 0, "count": 8},
+                    "binding": {"kind": "varyingInput", "index": 0, "count": 9},
                     "type": {
                         "kind": "struct",
                         "name": "UiVaryings",
@@ -967,10 +1039,28 @@
                                 "binding": {"kind": "varyingInput", "index": 7},
                                 "semanticName": "TEXCOORD",
                                 "semanticIndex": 6
+                            },
+                            {
+                                "name": "outlineColor",
+                                "type": {
+                                    "kind": "vector",
+                                    "elementCount": 4,
+                                    "elementType": {
+                                        "kind": "scalar",
+                                        "scalarType": "float32"
+                                    },
+                                    "sizes": [
+                                        {"kind": "varyingInput", "value": 1}
+                                    ]
+                                },
+                                "stage": "fragment",
+                                "binding": {"kind": "varyingInput", "index": 8},
+                                "semanticName": "COLOR",
+                                "semanticIndex": 1
                             }
                         ],
                         "sizes": [
-                            {"kind": "varyingInput", "value": 8}
+                            {"kind": "varyingInput", "value": 9}
                         ]
                     }
                 }
