@@ -563,13 +563,11 @@ gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经�
 | `<cache>/ibl/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
 | **总计** | **~28.5 MB** | 每 HDR 环境占 ~28MB 磁盘 |
 
-**实现位置**：`crates/prism-render/src/ibl.rs` 内的 5 个辅助函数（`ensure_cache_dir` / `cache_path` / `env_content_hash` / `save_f32_cache` / `load_f32_cache`）。
+**后续演进（当前形态）**：CPU 卷积 + 磁盘缓存这条路径**已被整体取代**，`cache_paths` 模块与 `GraphRenderer::set_ibl_cache` 注入随之删除。
 
-**缓存根（后续修正）**：最初缓存写死成相对工作目录的 `assets/ibr`，导致每个 crate / 工程目录各生成一份（实测仓库里同时存在 6 份、共 197 MB，命中率为 0）。
-现在缓存根由 `prism_engine::cache_paths` 统一解析为**可执行文件同目录下的 `cache/`**（即 `target/<profile>/cache/`，按类别分子目录 `ibl/` / `shader/` / `gi/`），经 `GraphRenderer::set_ibl_cache` 注入渲染层。
+现在 IBL 由**离线 GPU 烘焙**产出：`assets/shaders/slang/ibl_bake.slang`（`ibl_brdf_lut` / `ibl_equirect_to_cube` / `ibl_irradiance` / `ibl_prefilter` 四个 compute entry point）在资产管线里烘焙成 `prism_gfx::ibl::CookedIbl`，运行期 `crates/prism-render/src/ibl.rs` 只做 `decode` + staging 上传，不再有运行时卷积，也不再有磁盘缓存目录。
 
-`prism-render` 不依赖 `prism-engine`（依赖方向是 `engine → render`），所以走注入而不是直接调用；渲染层自己绝不拼路径。
-缓存也不再进 `assets/`：那是只读构建输入（装到 `Program Files` 后不可写，Android 上更在 APK 内）。
+**教训本身仍然成立**：运行期生成物不能写进 `assets/`（只读构建输入，装到 `Program Files` 后不可写，Android 上更在 APK 内）。只是本节的解法从「运行期算 + 缓存」换成了「构建期算 + 直接读资产」，缓存问题随之消失。
 
 #### 32.3 改动的权衡
 

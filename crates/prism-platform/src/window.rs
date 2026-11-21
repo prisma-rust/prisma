@@ -136,6 +136,19 @@ impl PlatformWindow {
 }
 
 impl PlatformWindow {
+    /// Show or hide the window.
+    ///
+    /// Used to keep the window invisible until the first frame is presented, so
+    /// startup does not look like a frozen white rectangle.
+    pub fn set_visible(&self, visible: bool) {
+        match &self.backend {
+            #[cfg(feature = "winit-backend")]
+            Backend::Winit { window, .. } => window.set_visible(visible),
+            #[cfg(all(windows, feature = "win32-native"))]
+            Backend::Win32(window) => window.set_visible(visible),
+        }
+    }
+
     /// Client-area size in physical pixels.
     pub fn inner_size(&self) -> (u32, u32) {
         match &self.backend {

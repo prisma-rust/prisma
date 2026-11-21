@@ -571,6 +571,14 @@ pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow
 }
 
 impl Win32Window {
+    /// Show or hide the window without touching its style or position.
+    pub(crate) fn set_visible(&self, visible: bool) {
+        let command = if visible { SW_SHOW } else { SW_HIDE };
+        unsafe {
+            ShowWindow(self.hwnd, command);
+        }
+    }
+
     pub(crate) fn inner_size(&self) -> (u32, u32) {
         let mut rect = RECT::default();
         if unsafe { GetClientRect(self.hwnd, &mut rect) } == 0 {

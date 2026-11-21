@@ -52,7 +52,7 @@
 
 - **拒绝设计模式后缀**：
   - ❌ `input_facade.rs`（把设计模式 Facade 当成业务核心名）
-  - ✅ **`input_view.rs`**（准确抽象：当帧输入只读借用视口 `Input<'a>`）
+  - ✅ **`input_snapshot.rs`**（准确抽象：某一帧输入状态的不可变快照，跨模块传递的数据本体）
 - **拒绝口语化俚语，使用精准的技术抽象名词**：
   - ❌ `dummy.rs`（测试替身口语，模糊了真实 GPU 资源的意义）
   - ✅ **`placeholder.rs`**（准确抽象：在特性关闭时填充 Descriptor 的 1x1 常量可采样资源 `SolidImage`）

@@ -123,10 +123,24 @@ pub struct RenderShared {
     pub frame_requested: AtomicBool,
     /// 最近一次读回的离屏帧（渲染线程→主线程）。
     pub frame: Mutex<Option<FrameImage>>,
+    /// The render thread finished building the renderer and warming up.
+    ///
+    /// The main thread keeps the window hidden until this is set, so startup
+    /// shows nothing instead of an empty rectangle; the first frame follows
+    /// within a frame interval because all heavy initialization is already done.
+    pub renderer_ready: AtomicBool,
 }
 
 impl RenderShared {
     /// Create a new shared state with `running = true`.
+    /// Whether the render thread finished building and warming up the renderer.
+    ///
+    /// The main thread keeps the window hidden until this flips, so startup
+    /// shows nothing instead of an empty rectangle.
+    pub fn is_renderer_ready(&self) -> bool {
+        self.renderer_ready.load(Ordering::Relaxed)
+    }
+
     pub fn new() -> (Arc<Self>, Arc<AtomicBool>) {
         let running = Arc::new(AtomicBool::new(true));
         let shared = Arc::new(Self {
@@ -144,6 +158,7 @@ impl RenderShared {
             render_failure: Mutex::new(None),
             frame_requested: AtomicBool::new(false),
             frame: Mutex::new(None),
+            renderer_ready: AtomicBool::new(false),
         });
         (shared, running)
     }

@@ -249,6 +249,12 @@ pub struct App {
     /// 后台挂起标志：`suspended()` 置位、`resumed()` 复位。置位期间
     /// `about_to_wait` 跳过 `tick_sim`，防止后台空转烧电（T4）。
     suspended: bool,
+    /// The window was created hidden and must be shown once a frame exists.
+    ///
+    /// Renderer construction and pipeline/font warmup take hundreds of
+    /// milliseconds; showing the window before that paints an empty rectangle
+    /// the user reads as a hang.
+    pending_show: bool,
 
     // ---------- timing ----------
     last_frame: Option<Instant>,
@@ -447,6 +453,7 @@ impl App {
             modifiers: Modifiers::empty(),
             fatal_error: None,
             suspended: false,
+            pending_show: false,
             last_frame: None,
             fixed_accumulator: Duration::ZERO,
             plugin_registry: crate::plugin::PluginRegistry::new(),
@@ -1207,6 +1214,27 @@ impl App {
                 &stats,
                 shared,
             );
+        }
+
+        // Reveal the window once the render thread has finished building and
+        // warming up. Everything expensive is behind us at that point, so the
+        // first frame follows within one frame interval and the window never
+        // appears as an empty rectangle.
+        if self.pending_show {
+            let ready = self
+                .render_shared
+                .as_ref()
+                .is_some_and(|shared| shared.is_renderer_ready());
+            if ready {
+                if let Some(platform) = self.platform.as_ref() {
+                    platform.window().set_visible(true);
+                }
+                self.pending_show = false;
+                log::debug!(
+                    target: "startup",
+                    "[startup] window shown (renderer ready, first frame next)"
+                );
+            }
         }
 
         None
@@ -2026,7 +2054,14 @@ impl ApplicationHandler for App {
             // （关闭/移动/缩放）此刻起即可被 winit 派发，不被任何初始化阻塞。
             let window_config = self.window_config();
             let window_span = prism_engine::util::timing::span("app::create_window");
-            let platform = PlatformContext::create_window(event_loop, &window_config);
+            // Create hidden: the first frame is hundreds of milliseconds away
+            // (renderer build + pipeline/font warmup), and an empty window in
+            // that gap reads as a hang. `tick_frame` shows it once a frame has
+            // actually been presented.
+            let mut hidden_config = window_config.clone();
+            hidden_config.visible = false;
+            let platform = PlatformContext::create_window(event_loop, &hidden_config);
+            self.pending_show = window_config.visible;
             let window_built = crate::render_shared::startup_ms();
             drop(window_span);
 
