@@ -1,0 +1,21 @@
+[package]
+name = "prism-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Composable, retained-mode UI kernel and modern declarative API for Prisma games and editor"
+
+[features]
+default = ["ui-tween"]
+# Declarative property tweening and spring animations across retained node keys.
+ui-tween = []
+# Render-graph backdrop frosted glass / Kawase blur commands.
+ui-blur = []
+# Analytical SDF shadows, glow, and custom Slang UI shader bindings.
+ui-effects = []
+# Full desktop editor capabilities (multi-line text, IME, virtualized trees, docking).
+ui-desktop = []
+
+[dependencies]
+glam = { workspace = true }
+slotmap = { workspace = true }
