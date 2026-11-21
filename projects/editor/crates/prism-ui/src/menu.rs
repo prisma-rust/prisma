@@ -22,7 +22,7 @@ use glam::Vec2;
 
 use crate::behavior::UiAction;
 use crate::elements::{text, ElementBox, UiContext};
-use crate::style::{Align, Color, Edges, FlexDirection, Justify, Length};
+use crate::style::{Align, Color, FlexDirection, Justify, Length};
 use crate::theme::Theme;
 use crate::tree::{IntoNodeKey, NodeKey, PopupAlign};
 
@@ -573,21 +573,10 @@ fn dropdown(
     trigger: NodeKey,
     nested: bool,
 ) -> ElementBox {
-    // A nested panel hangs off a row, so its frame and its first item both have
-    // to sit on that row's top edge. Keeping the top padding would leave the
-    // frame aligned while pushing the content down by exactly that much.
-    let padding = if nested {
-        Edges {
-            top: 0.0,
-            ..theme.menu_dropdown_padding
-        }
-    } else {
-        theme.menu_dropdown_padding
-    };
     let mut panel = ElementBox::default()
         .key(("menu", "dropdown", menu_id))
         .direction(FlexDirection::Column)
-        .padding(padding)
+        .padding(theme.menu_dropdown_padding)
         .gap(1.0)
         .min_width(theme.menu_dropdown_min_width)
         .bg(theme.panel_raised)
@@ -595,8 +584,8 @@ fn dropdown(
         .radius(theme.menu_dropdown_radius);
 
     panel = if nested {
-        // Open to the right with the panel's top-left corner exactly on the
-        // row's top-right corner.
+        // Open to the right, frame against frame: the panel's own inset then
+        // holds its first item off the edge exactly as a top-level panel does.
         panel.anchored_beside(trigger, Vec2::ZERO, PopupAlign::Start)
     } else {
         panel.anchored(

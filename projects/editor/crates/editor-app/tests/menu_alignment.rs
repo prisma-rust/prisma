@@ -66,17 +66,36 @@ fn hover(state: &mut EditorUiState, key: NodeKey) {
     }
 }
 
+/// Inset of a panel's first item from the panel's own top-left corner.
+fn inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKey) -> Vec2 {
+    let p = rect(state, panel);
+    let f = rect(state, first_item);
+    Vec2::new(f.x - p.x, f.y - p.y)
+}
+
+/// Every dropdown, whatever its depth, insets its items by the theme's panel
+/// padding. A nested panel that drops the inset sits flush against its frame.
+fn assert_shared_inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKey) {
+    let pad = state.theme.menu_dropdown_padding;
+    let got = inset(state, panel, first_item);
+    assert!(
+        (got.x - pad.left).abs() < 0.5 && (got.y - pad.top).abs() < 0.5,
+        "a dropdown insets its items by the theme padding ({pad:?}), not {got:?}"
+    );
+}
+
 #[test]
 fn a_nested_panel_starts_at_the_corner_of_the_row_that_opened_it() {
     let mut state = EditorUiState::default();
     step(&mut state, UiInput::default());
     click(&mut state, MenuNodeKey::trigger_key("file"));
 
+    assert_shared_inset(&state, panel_key("file"), row_key("file", "New"));
+
     // Level 2: the "New" row inside the File panel.
     hover(&mut state, row_key("file", "New"));
     let row = rect(&state, row_key("file", "New"));
     let panel = rect(&state, panel_key("file/New"));
-    let first = rect(&state, MenuNodeKey::item_key("file/New", "file.new.scene"));
 
     assert!(
         (panel.x - (row.x + row.w)).abs() < 0.5,
@@ -87,10 +106,10 @@ fn a_nested_panel_starts_at_the_corner_of_the_row_that_opened_it() {
         (panel.y - row.y).abs() < 0.5,
         "the panel's top must sit on the row's top: panel={panel:?} row={row:?}"
     );
-    assert!(
-        (first.y - row.y).abs() < 0.5,
-        "the panel's first item must sit on the row's top too, or the frame \
-         aligns while the content does not: first={first:?} row={row:?}"
+    assert_shared_inset(
+        &state,
+        panel_key("file/New"),
+        MenuNodeKey::item_key("file/New", "file.new.scene"),
     );
 }
 
@@ -105,10 +124,6 @@ fn a_third_level_panel_aligns_the_same_way() {
 
     let row = rect(&state, row_key("file/New", "From Template"));
     let panel = rect(&state, panel_key("file/New/From Template"));
-    let first = rect(
-        &state,
-        MenuNodeKey::item_key("file/New/From Template", "file.new.template.empty3d"),
-    );
 
     assert!(
         (panel.x - (row.x + row.w)).abs() < 0.5,
@@ -119,9 +134,9 @@ fn a_third_level_panel_aligns_the_same_way() {
         (panel.y - row.y).abs() < 0.5,
         "level 3's top must sit on its row's top: panel={panel:?} row={row:?}"
     );
-    assert!(
-        (first.y - row.y).abs() < 0.5,
-        "level 3's first item must sit on its row's top too: first={first:?} \
-         row={row:?}"
+    assert_shared_inset(
+        &state,
+        panel_key("file/New/From Template"),
+        MenuNodeKey::item_key("file/New/From Template", "file.new.template.empty3d"),
     );
 }

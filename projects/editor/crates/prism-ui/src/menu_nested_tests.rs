@@ -119,7 +119,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     hover_frame(&mut tree, &mut state, viewport, "file", "New");
     let row2 = rect(&tree, submenu_row_key("file", "New"));
     let l2 = rect(&tree, panel("file/New"));
-    let item2 = rect(&tree, MenuNodeKey::item_key("file/New", "file.new.scene"));
     assert!(
         l2.x >= row2.x + row2.w - 0.5,
         "level 2 must open at its row's right edge: panel={l2:?} row={row2:?}"
@@ -133,10 +132,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
     let row3 = rect(&tree, submenu_row_key("file/New", "From Template"));
     let l3 = rect(&tree, panel("file/New/From Template"));
-    let item3 = rect(
-        &tree,
-        MenuNodeKey::item_key("file/New/From Template", "file.new.tpl.empty3d"),
-    );
     assert!(
         l3.x >= row3.x + row3.w - 0.5,
         "level 3 must open at its row's right edge: panel={l3:?} row={row3:?}"
@@ -156,10 +151,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     );
     let row4 = rect(&tree, submenu_row_key("file/New/From Template", "Samples"));
     let l4 = rect(&tree, panel("file/New/From Template/Samples"));
-    let item4 = rect(
-        &tree,
-        MenuNodeKey::item_key("file/New/From Template/Samples", "file.new.sample.cube"),
-    );
     assert!(
         l4.x >= row4.x + row4.w - 0.5,
         "level 4 must open at its row's right edge: panel={l4:?} row={row4:?}"

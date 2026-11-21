@@ -208,7 +208,7 @@ fn a_hovered_submenu_row_opens_its_panel() {
     ])];
 
     let mut tree = UiTree::new();
-    let mut mount = |tree: &mut UiTree, state: &MenuState| {
+    let mount = |tree: &mut UiTree, state: &MenuState| {
         tree.begin_frame();
         {
             let mut ctx = UiContext::new(tree);
