@@ -347,11 +347,6 @@ impl Engine {
         self.timer.client.resume(handle);
     }
 
-    /// 销毁定时器。
-    pub fn destroy_timer(&self, handle: crate::util::timer::TimerId) {
-        self.timer.client.destroy(handle);
-    }
-
     // ======================================================================
     // Frame tick phases
     // ======================================================================

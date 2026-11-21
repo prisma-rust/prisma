@@ -234,25 +234,11 @@ impl InputManager {
         self.mouse_just_pressed.contains(&button)
     }
 
-    /// 本帧刚按下的所有鼠标键（`Input.anyKeyDown` 的鼠标部分）。
-    pub fn buttons_just_pressed(&self) -> &[MouseButton] {
-        &self.mouse_just_pressed
-    }
-
     /// 鼠标键本帧刚释放（`Input.GetMouseButtonUp`）。
     pub fn mouse_just_released(&self, button: MouseButton) -> bool {
         self.mouse_just_released.contains(&button)
     }
 
-    /// 当前是否有任意键按住（`Input.anyKey` 的键盘部分）。
-    pub fn any_key_held(&self) -> bool {
-        !self.keys_held.is_empty()
-    }
-
-    /// 当前是否有任意鼠标键按住。
-    pub fn any_mouse_button_held(&self) -> bool {
-        !self.mouse_buttons_held.is_empty()
-    }
     pub fn mouse_delta(&self) -> [f64; 2] {
         self.mouse_delta
     }

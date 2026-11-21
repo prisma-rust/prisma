@@ -14,17 +14,16 @@
 //! 每个 UI 元素是一个 ECS Entity，通过组件组合定义外观和行为。
 //! Panel 基类封装了常用的 UI Entity 创建逻辑。
 //!
-//! # 集成到 Engine
+//! # Integration
+//!
+//! The layout / input / render systems are part of `Engine::default_schedule()`, so
+//! they run on every tick without registration. A host that builds its own schedule
+//! adds them the same way any other system is added:
 //!
 //! ```ignore
-//! engine.schedule_mut().add_systems(
-//!     crate::app::ScheduleLabel::Update,
-//!     crate::ui::ui_layout_system,
-//! );
-//! engine.schedule_mut().add_systems(
-//!     crate::app::ScheduleLabel::PostRender,
-//!     crate::ui::ui_render_system,
-//! );
+//! engine.schedule_mut().add_system("ui::layout", |world, _dt| {
+//!     crate::ui::ui_layout_system(world)
+//! });
 //! ```
 
 pub mod components {

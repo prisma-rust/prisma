@@ -86,6 +86,51 @@ impl UiOverlayHost {
         }
     }
 
+    /// Create the UI overlays ahead of the first frame.
+    ///
+    /// Overlay construction parses the system font (tens to hundreds of
+    /// milliseconds for a CJK collection) and allocates the glyph atlas. Doing
+    /// that lazily inside the first `record_*` call stalls a frame that is
+    /// already on screen; warming up here moves it before the first present.
+    #[cfg(feature = "ui")]
+    pub(super) fn warmup(
+        &mut self,
+        context: &VulkanContext,
+        command_pool: vk::CommandPool,
+        swapchain_format: Option<vk::Format>,
+        offscreen_format: Option<vk::Format>,
+        bindless_layout: vk::DescriptorSetLayout,
+    ) -> anyhow::Result<()> {
+        if self.ui_overlay.is_none() {
+            if let Some(format) = swapchain_format {
+                let mut gpu = crate::ui_overlay::UiOverlay::with_color_format(
+                    context,
+                    command_pool,
+                    format,
+                    bindless_layout,
+                )
+                .context("warmup: create ui overlay")?;
+                apply_ui_fonts(&self.ui_fonts, &mut gpu);
+                self.ui_overlay = Some(gpu);
+            }
+        }
+        if self.ui_overlay_offscreen.is_none() {
+            if let Some(format) = offscreen_format {
+                let mut gpu = crate::ui_overlay::UiOverlay::with_color_format_and_final_layout(
+                    context,
+                    command_pool,
+                    format,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    bindless_layout,
+                )
+                .context("warmup: create offscreen ui overlay")?;
+                apply_ui_fonts(&self.ui_fonts, &mut gpu);
+                self.ui_overlay_offscreen = Some(gpu);
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "ui")]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn record_ecs_ui_swapchain(

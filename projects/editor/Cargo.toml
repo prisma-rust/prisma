@@ -14,3 +14,11 @@ license = "MIT OR Apache-2.0"
 glam = { version = "0.33.2", features = ["serde"] }
 slotmap = "1.0"
 log = "0.4"
+# 与根 workspace 一致：ash/Vulkan 代码量巨大，opt-level=1 让 debug 构建可用。
+# 缺这一段时依赖全部按 opt-level=0 编译——字体解析会从 ~220ms 涨到 ~1.5s。
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

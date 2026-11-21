@@ -116,13 +116,10 @@ pub enum Subsystem {
     Audio,
     /// 物理模拟（Rapier 后台线程）。
     Physics,
-    /// 网络子系统
-    Network,
     /// 场景系统
     Scene,
     /// 资源系统
     Asset,
-    AI,
     UI,
     Animation,
 }
@@ -133,10 +130,8 @@ impl Subsystem {
             Subsystem::Render => 1 << 0,
             Subsystem::Audio => 1 << 1,
             Subsystem::Physics => 1 << 2,
-            Subsystem::Network => 1 << 3,
             Subsystem::Scene => 1 << 4,
             Subsystem::Asset => 1 << 5,
-            Subsystem::AI => 1 << 6,
             Subsystem::UI => 1 << 7,
             Subsystem::Animation => 1 << 8,
         }
@@ -655,12 +650,6 @@ impl App {
                 log::warn!(
                     "audio subsystem requested but this build has no `audio` feature — \
                      rebuild with `--features audio` to enable sound"
-                );
-            }
-            Subsystem::Network | Subsystem::AI => {
-                log::warn!(
-                    "{:?} subsystem requested — not implemented yet, ignoring",
-                    subsystem
                 );
             }
             Subsystem::Scene | Subsystem::Asset | Subsystem::UI | Subsystem::Animation => {

@@ -1535,7 +1535,33 @@ impl GraphRenderer {
     /// [`execute`](Self::execute).
     pub fn warmup_pipelines(&mut self) -> anyhow::Result<()> {
         let device = self.runtime.context.device.clone();
-        self.graph.warmup_passes(&device, &self.runtime.context)
+        self.graph.warmup_passes(&device, &self.runtime.context)?;
+
+        // The UI overlay is otherwise built lazily inside the first `record_*`
+        // call, where the system font parse (up to ~200 ms for a CJK
+        // collection) stalls a frame the user is already looking at.
+        #[cfg(feature = "ui")]
+        {
+            let swapchain_format = self.swapchain.as_ref().map(|s| s.format.format);
+            let offscreen_format = self.offscreen.as_ref().map(|target| target.format());
+            if swapchain_format.is_some() || offscreen_format.is_some() {
+                let bindless_layout = self.texture_manager.bindless().layout;
+                let ui_start = std::time::Instant::now();
+                self.ui_host.warmup(
+                    &self.runtime.context,
+                    self.runtime.command_pool,
+                    swapchain_format,
+                    offscreen_format,
+                    bindless_layout,
+                )?;
+                log::debug!(
+                    target: "startup",
+                    "[startup] warmup: ui overlay {:.3}ms",
+                    ui_start.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn suspend_surface(&mut self) {
