@@ -19,9 +19,13 @@ use crate::ui::is_ui_active;
 use prism_ecs::{Entity, World};
 
 /// 鼠标/触摸输入状态 —— 由 Engine 每帧从 `InputManager` 拷贝到 World。
+///
+/// 这是宿主 UI 拿指针的**唯一**来源：`InputManager` 本身不是 World 资源，
+/// 而 `InputSnapshot` 是给项目模块的跨 ABI 位图（没有光标换算、没有滚轮）。
+/// 本帧所有 UI 需要的指针量都在这里，宿主不必再自己读平台层。
 #[derive(Clone, Debug, Default)]
 pub struct UiInputState {
-    /// 鼠标在窗口中的位置（像素）。
+    /// 光标位置，已由 `UiScreenMapping` 换算进 UI 布局空间（像素，左上原点）。
     pub cursor_pos: [f32; 2],
     /// 当前帧是否按下了左键（按下边沿）。
     pub left_clicked: bool,
@@ -29,6 +33,12 @@ pub struct UiInputState {
     pub left_held: bool,
     /// 当前帧是否松开了左键（松开边沿）。点击在**松开**时成立。
     pub left_released: bool,
+    /// 本帧滚轮增量（行）。y 正 = 向上滚。
+    pub scroll_delta: [f32; 2],
+    /// Shift 当前是否按住（拖拽改值的精细档）。
+    pub shift_held: bool,
+    /// Ctrl 当前是否按住（拖拽改值的吸附档）。
+    pub ctrl_held: bool,
     /// 本帧新按下的按键列表（去重，任意键跳过等用）。
     pub pressed_keys: Vec<crate::input::KeyCode>,
 }

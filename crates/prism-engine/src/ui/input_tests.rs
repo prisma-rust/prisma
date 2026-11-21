@@ -28,7 +28,7 @@ fn input(world: &mut World, cursor: [f32; 2], clicked: bool, held: bool) {
         left_clicked: clicked,
         left_held: held,
         left_released: false,
-        pressed_keys: Vec::new(),
+        ..UiInputState::default()
     });
 }
 
@@ -51,7 +51,7 @@ fn release(world: &mut World, cursor: [f32; 2]) {
         left_clicked: false,
         left_held: false,
         left_released: true,
-        pressed_keys: Vec::new(),
+        ..UiInputState::default()
     });
     ui_input_system(world);
 }
@@ -166,6 +166,7 @@ fn enter_activates_the_focused_button() {
         left_held: false,
         left_released: false,
         pressed_keys: vec![crate::input::KeyCode::Enter],
+        ..UiInputState::default()
     });
     ui_input_system(&mut world);
     assert!(
@@ -181,6 +182,7 @@ fn enter_activates_the_focused_button() {
         left_held: false,
         left_released: false,
         pressed_keys: vec![crate::input::KeyCode::Space],
+        ..UiInputState::default()
     });
     ui_input_system(&mut world);
     assert!(state_of(&world, button).clicked);

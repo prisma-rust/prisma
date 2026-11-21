@@ -433,11 +433,18 @@ impl Engine {
             .copied()
             .unwrap_or_default();
         let cursor = mapping.window_to_layout([pos[0] as f32, pos[1] as f32]);
+        // 滚轮与修饰键同样只在这里折进布局空间：宿主 UI 读不到平台事件，
+        // 少一项就等于少一条交互路径（滚动、拖拽改值的精细/吸附档）。
         self.world.insert_resource(crate::ui::UiInputState {
             cursor_pos: cursor,
             left_clicked: input_manager.mouse_just_pressed(crate::input::MouseButton::Left),
             left_held: input_manager.mouse_held(crate::input::MouseButton::Left),
             left_released: input_manager.mouse_just_released(crate::input::MouseButton::Left),
+            scroll_delta: [0.0, input_manager.scroll_delta() as f32],
+            shift_held: input_manager.key_held(crate::input::KeyCode::ShiftLeft)
+                || input_manager.key_held(crate::input::KeyCode::ShiftRight),
+            ctrl_held: input_manager.key_held(crate::input::KeyCode::ControlLeft)
+                || input_manager.key_held(crate::input::KeyCode::ControlRight),
             pressed_keys: input_manager.pressed_keys().to_vec(),
         });
 

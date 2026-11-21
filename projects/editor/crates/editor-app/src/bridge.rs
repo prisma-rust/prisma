@@ -1,10 +1,9 @@
-//! Bridge between `prism_ui` and `prism_engine` (`InputManager`, `ScreenSize`, `UiDrawList`).
+//! Bridge between `prism_ui` and `prism_engine` (`UiInputState`, `ScreenSize`, `UiDrawList`).
 
 use glam::Vec2;
 use prism_engine::ecs::World;
-use prism_engine::input::{InputManager, KeyCode, MouseButton};
 use prism_engine::ui::components::TextAlign as EngineTextAlign;
-use prism_engine::ui::ScreenSize;
+use prism_engine::ui::{ScreenSize, UiInputState};
 use prism_engine::ui::{UiDrawList as EngineUiDrawList, UiQuad as EngineUiQuad, UiTextCmd};
 use prism_ui::prelude::*;
 
@@ -16,26 +15,32 @@ pub fn screen_size(world: &World) -> Vec2 {
         .unwrap_or(Vec2::new(1280.0, 720.0))
 }
 
-/// Sample `prism_engine::input::InputManager` into a `prism_ui::UiInput` frame snapshot.
+/// Sample the engine's per-frame `UiInputState` into a `prism_ui::UiInput` snapshot.
+///
+/// `UiInputState` is the engine's published pointer state: it already carries the
+/// `UiScreenMapping` conversion into layout space plus wheel and modifier state.
+/// `InputManager` is NOT a `World` resource — it lives on `App` and is only folded
+/// into `InputSnapshot` for gameplay — so reading it here returned `default()` every
+/// frame: a cursor parked at (0,0) with no buttons, i.e. no editor interaction at all.
 pub fn read_engine_input(world: &World, time_seconds: f64) -> UiInput {
-    let Some(input) = world.get_resource::<InputManager>() else {
+    let Some(input) = world.get_resource::<UiInputState>() else {
         return UiInput {
             time_seconds,
             ..Default::default()
         };
     };
-    let [mx, my] = input.mouse_position();
+    let [mx, my] = input.cursor_pos;
     UiInput {
-        pointer_pos: Vec2::new(mx as f32, my as f32),
-        primary_down: input.mouse_held(MouseButton::Left),
-        primary_just_pressed: input.mouse_just_pressed(MouseButton::Left),
-        primary_just_released: input.mouse_just_released(MouseButton::Left),
-        scroll_delta: Vec2::new(0.0, input.scroll_delta() as f32),
-        shift_held: input.key_held(KeyCode::ShiftLeft) || input.key_held(KeyCode::ShiftRight),
-        ctrl_held: input.key_held(KeyCode::ControlLeft) || input.key_held(KeyCode::ControlRight),
+        pointer_pos: Vec2::new(mx, my),
+        primary_down: input.left_held,
+        primary_just_pressed: input.left_clicked,
+        primary_just_released: input.left_released,
+        scroll_delta: Vec2::new(input.scroll_delta[0], input.scroll_delta[1]),
+        shift_held: input.shift_held,
+        ctrl_held: input.ctrl_held,
         text_committed: String::new(),
         backspace_pressed: false,
-        escape_pressed: input.key_just_pressed(KeyCode::Escape),
+        escape_pressed: input.pressed_keys.contains(&prism_engine::input::KeyCode::Escape),
         time_seconds,
     }
 }
@@ -155,7 +160,22 @@ pub fn convert_to_engine_draw_list(src: &UiDrawList) -> EngineUiDrawList {
     dst
 }
 
+/// Append the editor's draw list to this frame's engine [`UiDrawList`].
+///
+/// The engine rebuilds `UiDrawList` in `ui::render` from ECS UI entities, and the
+/// editor system runs after it (a system added after `runtime_initialize` is
+/// appended to the schedule). Replacing the resource outright deleted whatever the
+/// engine had just produced, so ECS UI entities — the ones this editor is meant to
+/// migrate onto — never reached the renderer at all.
+///
+/// Appending keeps both: engine commands stay in their layers, editor commands go
+/// on top in their own layer so editor chrome cannot be drawn under a scene's UI.
+/// The renderer sorts on `layer`, so nothing here needs a re-sort.
 pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
-    let engine_list = convert_to_engine_draw_list(src);
+    let editor_list = convert_to_engine_draw_list(src);
+    let mut engine_list = world
+        .remove_resource::<EngineUiDrawList>()
+        .unwrap_or_default();
+    engine_list.items.extend(editor_list.items);
     world.insert_resource(engine_list);
 }

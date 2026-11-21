@@ -594,4 +594,112 @@ mod tests {
         assert!(engine_list.quads().any(|q| q.texture == Some(0)));
         assert!(engine_list.texts().any(|t| t.content == "Prisma Editor"));
     }
+
+    #[test]
+    fn submitting_the_editor_draw_list_does_not_erase_engine_ui() {
+        use prism_engine::ui::{UiDrawList as EngineUiDrawList, UiQuad};
+
+        let mut world = prism_engine::ecs::World::new();
+        // Stand-in for what `ui::render` produced this frame from ECS UI entities.
+        let mut engine_list = EngineUiDrawList::default();
+        engine_list.push_quad(UiQuad {
+            rect: [0.0, 0.0, 10.0, 10.0],
+            color: [1.0, 0.0, 0.0, 1.0],
+            ..Default::default()
+        });
+        world.insert_resource(engine_list);
+
+        let mut editor = EditorUiState::default();
+        editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
+        bridge::submit_draw_list(&mut world, &editor.draw_list);
+
+        let list = world
+            .get_resource::<EngineUiDrawList>()
+            .expect("draw list resource exists");
+        assert!(
+            list.quads().any(|q| q.color == [1.0, 0.0, 0.0, 1.0]),
+            "editor submission must append to the engine's draw list, not replace it"
+        );
+        assert!(
+            list.len() > 1,
+            "editor draw commands should be present alongside the engine's"
+        );
+    }
+
+    /// The editor's pointer source is the engine-published `UiInputState`, not
+    /// `InputManager`: the latter is not a `World` resource (it lives on `App`),
+    /// so sampling it every frame yielded `default()` — cursor at the origin, no
+    /// buttons — and no click could ever reach the UI tree.
+    #[test]
+    fn editor_pointer_input_comes_from_the_engine_ui_state() {
+        let mut world = prism_engine::ecs::World::new();
+        let empty = bridge::read_engine_input(&world, 0.0);
+        assert_eq!(empty.pointer_pos, Vec2::ZERO);
+        assert!(!empty.primary_down);
+
+        world.insert_resource(prism_engine::ui::UiInputState {
+            cursor_pos: [321.0, 123.0],
+            left_clicked: true,
+            left_held: true,
+            scroll_delta: [0.0, 2.0],
+            shift_held: true,
+            pressed_keys: vec![prism_engine::input::KeyCode::Escape],
+            ..Default::default()
+        });
+        let input = bridge::read_engine_input(&world, 0.5);
+        assert_eq!(input.pointer_pos, Vec2::new(321.0, 123.0));
+        assert!(input.primary_down);
+        assert!(input.primary_just_pressed);
+        assert!(!input.primary_just_released);
+        assert_eq!(input.scroll_delta, Vec2::new(0.0, 2.0));
+        assert!(input.shift_held);
+        assert!(!input.ctrl_held);
+        assert!(input.escape_pressed);
+        assert_eq!(input.time_seconds, 0.5);
+    }
+
+    /// End to end: a press and a release at the Play button's rectangle, both
+    /// coming through the engine's `UiInputState`, must reach editor state.
+    #[test]
+    fn engine_pointer_state_reaches_the_ui_tree() {
+        let mut editor = EditorUiState::default();
+        editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
+        let rect = editor
+            .tree
+            .node(
+                editor
+                    .tree
+                    .node_by_key("toolbar:play".into_node_key())
+                    .expect("play button exists"),
+            )
+            .unwrap()
+            .computed_rect;
+        let center = [rect.x + rect.w * 0.5, rect.y + rect.h * 0.5];
+
+        let mut world = prism_engine::ecs::World::new();
+        world.insert_resource(prism_engine::ui::UiInputState {
+            cursor_pos: center,
+            left_clicked: true,
+            left_held: true,
+            ..Default::default()
+        });
+        let press = bridge::read_engine_input(&world, 0.0);
+        editor.build_and_step(Vec2::new(1280.0, 720.0), &press, 0.016);
+
+        world.insert_resource(prism_engine::ui::UiInputState {
+            cursor_pos: center,
+            left_released: true,
+            ..Default::default()
+        });
+        let release = bridge::read_engine_input(&world, 0.1);
+        let actions = editor.build_and_step(Vec2::new(1280.0, 720.0), &release, 0.016);
+
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, UiAction::Toggled { .. } | UiAction::Clicked(_))),
+            "clicking the Play button must emit an action, got {actions:?}"
+        );
+        assert!(editor.playing, "the Play toggle must reach editor state");
+    }
 }
