@@ -1665,20 +1665,10 @@ impl RenderPassNode for VoxelDdaPass {
         } else {
             sun_dir = [0.408, 0.816, 0.408];
         }
-        let sun_rad = if ctx.frame.light_dir[3] > 0.01 {
-            ctx.frame.light_dir[3]
-        } else {
-            1.8
-        };
-        let sun_col = if ctx.frame.light_color[0]
-            + ctx.frame.light_color[1]
-            + ctx.frame.light_color[2]
-            > 0.01
-        {
-            ctx.frame.light_color
-        } else {
-            [1.0, 0.96, 0.90, 0.35]
-        };
+        // Sun radiance and IBL ambient pass through verbatim: with no directional
+        // light the engine writes zero intensity, and it must stay zero here. Any
+        // non-zero floor turns a night scene back into daylight.
+        let (sun_rad, sun_col) = (ctx.frame.light_dir[3].max(0.0), ctx.frame.light_color);
         let cursor = scene.cursor.unwrap_or(VoxelCursorUpload {
             active: false,
             min: [0.0; 3],

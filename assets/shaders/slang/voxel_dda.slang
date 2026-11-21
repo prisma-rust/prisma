@@ -1334,8 +1334,8 @@ float3 shade_translucent_glass(
     float3 V = normalize(viewDir);
     float3 L = normalize(ubo.sunDirRadiance.xyz);
     float3 H = normalize(L + V);
-    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
-    float ambientStrength = max(0.20, ubo.sunColorAmbient.w * 1.35);
+    float3 sunCol = ubo.sunColorAmbient.rgb * (ubo.sunDirRadiance.w * 2.3);
+    float ambientStrength = ubo.sunColorAmbient.w * 1.35;
 
     float ndl = max(dot(N, L), 0.0);
     float ndv = max(dot(N, V), 1e-4);
@@ -1397,9 +1397,9 @@ void voxelDdaMain(uint3 tid : SV_DispatchThreadID)
     TraceHit res = trace_world(rayOrigin, rayDir, min(farDist, 256.0), false);
 
     float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
-    float3 skyCol = ubo.sunColorAmbient.rgb * max(0.25, ubo.sunDirRadiance.w * 2.3);
-    float ambientStrength = max(0.20, ubo.sunColorAmbient.w * 1.35);
+    float3 sunCol = ubo.sunColorAmbient.rgb * (ubo.sunDirRadiance.w * 2.3);
+    float3 skyCol = ubo.sunColorAmbient.rgb * (ubo.sunDirRadiance.w * 2.3);
+    float ambientStrength = ubo.sunColorAmbient.w * 1.35;
 
     float3 bgColor = (forwardDepth >= 0.9995)
         ? render_procedural_sky(rayDir, sunDir, skyCol)
@@ -1515,8 +1515,8 @@ void voxelGiMain(uint3 tid : SV_DispatchThreadID)
     float hitDist = specEnvReadTex.Load(px).w;
 
     float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-    float3 sunCol = ubo.sunColorAmbient.rgb * max(0.65, ubo.sunDirRadiance.w * 2.3);
-    float ambientStrength = max(0.20, ubo.sunColorAmbient.w * 1.35);
+    float3 sunCol = ubo.sunColorAmbient.rgb * (ubo.sunDirRadiance.w * 2.3);
+    float ambientStrength = ubo.sunColorAmbient.w * 1.35;
     float time = ubo.cameraPos.w;
     float3 L = sunDir;
     float3 N = normal;
@@ -1700,7 +1700,7 @@ void voxelCompositeMain(uint3 tid : SV_DispatchThreadID)
         outColor += indirect;
 
         float3 sunDir = normalize(ubo.sunDirRadiance.xyz);
-        float3 sunCol = ubo.sunColorAmbient.rgb * max(0.25, ubo.sunDirRadiance.w * 2.3);
+        float3 sunCol = ubo.sunColorAmbient.rgb * (ubo.sunDirRadiance.w * 2.3);
         float hitDist = specEnvData.a;
         float fog = clamp((hitDist - 45.0) / 110.0, 0.0, 0.60);
         float3 fogCol = sample_atmosphere(rayDir, sunDir, sunCol);
