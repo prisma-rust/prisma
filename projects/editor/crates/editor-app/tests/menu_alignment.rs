@@ -84,36 +84,27 @@ fn assert_shared_inset(state: &EditorUiState, panel: NodeKey, first_item: NodeKe
     );
 }
 
-/// A nested panel's first item is level with the row that opened it, and its
-/// frame starts one inset above that row so the shared padding stays intact.
-fn assert_level_with_row(
-    state: &EditorUiState,
-    scope: &str,
-    row: NodeKey,
-    first_item_command: &str,
-) {
+/// A nested panel's frame corner sits on the corner of the row that opened it,
+/// and its items are padded by the shared panel inset. These are two separate
+/// facts: treating them as one is what made the alignment flip between versions.
+fn assert_frame_on_row(state: &EditorUiState, scope: &str, row: NodeKey, first_item_command: &str) {
     let pad = state.theme.menu_dropdown_padding;
     let row_rect = rect(state, row);
     let panel = rect(state, panel_key(scope));
     let first = rect(state, MenuNodeKey::item_key(scope, first_item_command));
     assert!(
-        (first.y - row_rect.y).abs() < 0.5,
-        "the first item must sit on the row's top: first={first:?} row={row_rect:?}"
-    );
-    assert!(
-        (panel.y - (row_rect.y - pad.top)).abs() < 0.5,
-        "the frame sits one inset above the row so the item lands on it: \
-         panel={panel:?} row={row_rect:?} inset={:?}",
-        pad.top
+        (panel.y - row_rect.y).abs() < 0.5,
+        "the frame's top must sit on the row's top: panel={panel:?} row={row_rect:?}"
     );
     assert!(
         (panel.x - (row_rect.x + row_rect.w)).abs() < 0.5,
-        "the frame starts at the row's right edge: panel={panel:?} row={row_rect:?}"
+        "the frame's left must sit on the row's right: panel={panel:?} row={row_rect:?}"
     );
-    assert_shared_inset(
-        state,
-        panel_key(scope),
-        MenuNodeKey::item_key(scope, first_item_command),
+    assert!(
+        (first.y - (panel.y + pad.top)).abs() < 0.5,
+        "the items are padded inside the frame, they do not sit on its edge: \
+         first={first:?} panel={panel:?} inset={:?}",
+        pad.top
     );
 }
 
@@ -127,7 +118,7 @@ fn a_nested_panel_puts_its_first_item_level_with_the_row_that_opened_it() {
 
     // Level 2: the "New" row inside the File panel.
     hover(&mut state, row_key("file", "New"));
-    assert_level_with_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
+    assert_frame_on_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
 }
 
 #[test]
@@ -138,7 +129,7 @@ fn a_third_level_panel_aligns_the_same_way() {
 
     hover(&mut state, row_key("file", "New"));
     hover(&mut state, row_key("file/New", "From Template"));
-    assert_level_with_row(
+    assert_frame_on_row(
         &state,
         "file/New/From Template",
         row_key("file/New", "From Template"),
