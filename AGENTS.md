@@ -38,6 +38,11 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
 - `.githooks/pre-push` runs the same gate once installed with
   `git config core.hooksPath .githooks` (that path also enforces commit subjects). Do not bypass
   either hook with `--no-verify`.
+- A git hook is executed directly, so only `#!/bin/sh` is portable: git spawns hooks through
+  MSYS `env` on Windows, which rejects a relative path and reports `Permission denied` for
+  `#!/usr/bin/env bash`. `pre-push` is therefore a POSIX wrapper that `exec`s `pre-push.sh`
+  through `bash`, so the gate itself keeps arrays and `pipefail`. Never put bash syntax in a
+  file git executes, and never rename `pre-push.sh` to a hook name.
 
 ## 2. Root-cause discipline
 

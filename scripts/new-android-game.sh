@@ -94,11 +94,13 @@ while IFS= read -r -d '' file; do
     case "$file" in
         *.jar) continue ;;
     esac
-    sed -i \
+    # `sed -i` takes no backup suffix on GNU but requires one on BSD/macOS, so the
+    # substitute is written to a temp file and moved back: identical on both.
+    sed \
         -e "s|__GAME_NAME__|$LIB_SED|g" \
         -e "s|__PACKAGE__|$PACKAGE_SED|g" \
         -e "s|__LABEL__|$LABEL_SED|g" \
-        "$file"
+        "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 done < <(find "$ANDROID_DIR" -type f -print0)
 
 chmod +x "$ANDROID_DIR/gradlew"

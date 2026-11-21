@@ -95,7 +95,7 @@ SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 }
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
 if [ -z "$NDK" ]; then
-    NDK=$(ls -d "$SDK"/ndk/*/ 2>/dev/null | sort -V | tail -n1)
+    NDK=$(ls -d "$SDK"/ndk/*/ 2>/dev/null | sed -e 's|/$||' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)
     NDK="${NDK%/}"
 fi
 [ -n "$NDK" ] && [ -d "$NDK/toolchains/llvm" ] || {
@@ -178,14 +178,14 @@ fi
 # ---- 3. APK ---------------------------------------------------------------
 # aarch64 主机上 AGP 默认从 Maven 拉 aapt2（x86_64，跑不起来）；指向 SDK 里能跑的那个。
 GRADLE_ARGS=(-p "$ANDROID_DIR" "$GRADLE_TASK" --console=plain)
-for cand in $(ls -d "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V -r); do
+for cand in $(ls -d "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -r -t. -k1,1n -k2,2n -k3,3n); do
     if "$cand" version >/dev/null 2>&1; then
         echo "aapt2: $cand"
         GRADLE_ARGS+=("-Pandroid.aapt2FromMavenOverride=$cand")
         break
     fi
 done
-if ! ls "$SDK"/build-tools/*/aapt2 >/dev/null 2>&1 || ! "$(ls -d "$SDK"/build-tools/*/aapt2 | sort -V -r | head -n1)" version >/dev/null 2>&1; then
+if ! ls "$SDK"/build-tools/*/aapt2 >/dev/null 2>&1 || ! "$(ls -d "$SDK"/build-tools/*/aapt2 | sort -r -t. -k1,1n -k2,2n -k3,3n | head -n1)" version >/dev/null 2>&1; then
     echo "提示：SDK 里没有能在本机执行的 aapt2（aarch64 主机见 docs/android-arm64.md）。" >&2
 fi
 

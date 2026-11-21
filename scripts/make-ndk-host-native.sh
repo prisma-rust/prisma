@@ -62,7 +62,10 @@ SHIM="$BIN/ndk-clang-shim.sh"
 cat > "$SHIM" <<EOF
 #!/bin/sh
 # 由 scripts/make-ndk-host-native.sh 生成。改写 NDK prebuilt 目录后重跑该脚本即可。
-self=\$(readlink -f "\$0")
+self=\$0
+# `readlink -f` is GNU-only; resolve through cd instead, which works in POSIX sh.
+case \$self in /*) ;; *) self=\$(pwd)/\$self ;; esac
+self=\$(CDPATH= cd -- "\$(dirname -- \"\$self\")" && pwd)/\$(basename -- "\$self")
 PRE=\$(dirname "\$(dirname "\$self")")
 name=\$(basename "\$0")
 case "\$name" in
