@@ -91,8 +91,17 @@ fn measure_node(nodes: &mut SlotMap<NodeId, UiNode>, id: NodeId, available: Vec2
     };
 
     let pad = node.layout.padding;
-    let raw_w = resolve_length(node.layout.width, available.x, inner.x + pad.horizontal());
-    let raw_h = resolve_length(node.layout.height, available.y, inner.y + pad.vertical());
+    let margin = node.margin;
+    let raw_w = resolve_length(
+        node.layout.width,
+        available.x,
+        inner.x + pad.horizontal() + margin.horizontal(),
+    );
+    let raw_h = resolve_length(
+        node.layout.height,
+        available.y,
+        inner.y + pad.vertical() + margin.vertical(),
+    );
     let clamped = Vec2::new(
         raw_w.clamp(node.layout.min_width, node.layout.max_width),
         raw_h.clamp(node.layout.min_height, node.layout.max_height),

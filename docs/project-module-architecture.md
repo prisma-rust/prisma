@@ -61,6 +61,23 @@ The engine may expose the project-module load operation through its runtime
 API, but the host supplies the module path and owns the resulting session.
 This keeps `prism-engine` independent from repository layout and project names.
 
+### 1.1 Three extension paths (do not mix them up)
+
+`prism-app::plugin::AppPlugin` (#1165) sits next to the project entry points in
+the same crate, so it is easy to read it as the way project code runs. It is not.
+Three separate mechanisms exist, and only the first two are in use:
+
+| Path | What it decides | Entry point | In use |
+|---|---|---|---|
+| `add_game_system` / `export_project!` | Project gameplay registration | project crate's `build_app()`, or `prism_project_get_api` for the preview module | every project |
+| `Subsystem` enum + cargo features | Which engine capabilities are compiled in (render / audio / physics) | the project's `Cargo.toml` feature list | every project |
+| `AppPlugin` | Replacing an engine **built-in module** (e.g. custom 2D physics instead of Rapier) | `App::add_plugin` | reserved, no callers |
+
+A standalone player and the preview module both run project code through the
+first row. Neither goes through `AppPlugin`: no project calls `add_plugin`, and
+the only `AppPlugin` implementations are the `Default*` shims in
+`prism-app/src/plugin.rs`, each of which just calls `enable_subsystem`.
+
 ## 2. Why change the current shape
 
 The current editor already runs a hosted engine in-process:

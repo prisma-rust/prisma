@@ -11,7 +11,7 @@ use crate::behavior::{
 };
 use crate::draw::{TextAlign, UiDrawCommand, UiDrawList, UiTextureId};
 use crate::layout;
-use crate::style::{Color, InteractionState, LayoutStyle, Rect, VisualBox};
+use crate::style::{Color, Edges, InteractionState, LayoutStyle, Rect, VisualBox};
 
 slotmap::new_key_type! {
     /// Generational arena handle to a node in [`UiTree`].
@@ -40,6 +40,13 @@ impl Hasher for Fnv1a64 {
             self.0 ^= b as u64;
             self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
         }
+    }
+}
+
+impl NodeKey {
+    /// Stable key for the single popup layer node.
+    pub fn for_overlay_layer(self) -> Self {
+        NodeKey(0x0f1a_c3d5_e7b9_2468)
     }
 }
 
@@ -123,6 +130,8 @@ pub struct UiNode {
     pub visual: Option<VisualBox>,
     pub content: NodeContent,
     pub is_overlay: bool,
+    /// Outer spacing that reserves room around the node in its parent's flow.
+    pub margin: Edges,
 }
 
 impl UiNode {
@@ -139,8 +148,31 @@ impl UiNode {
             visual: None,
             content: NodeContent::Empty,
             is_overlay: false,
+            margin: Edges::default(),
         }
     }
+}
+
+/// Where a popup sits relative to its anchor node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PopupAlign {
+    /// Align the popup's left edge with the anchor's left edge.
+    #[default]
+    Start,
+    /// Align the popup's right edge with the anchor's right edge.
+    End,
+}
+
+/// Positions a popup (dropdown, tooltip, context menu) against another node.
+///
+/// Anchors are resolved after the normal layout pass, because the anchor's
+/// rect is only known once its own siblings have been arranged.
+#[derive(Clone, Copy, Debug)]
+pub struct Anchor {
+    pub target: NodeKey,
+    /// Offset from the resolved corner of the target rect.
+    pub offset: Vec2,
+    pub align: PopupAlign,
 }
 
 /// Per-frame platform input snapshot fed into [`UiTree::process_input`].
@@ -172,6 +204,10 @@ pub struct UiTree {
     pub text_editables: SecondaryMap<NodeId, TextEditable>,
     pub drag_sources: SecondaryMap<NodeId, DragPayload>,
     pub drop_targets: SecondaryMap<NodeId, bool>,
+    pub anchors: SecondaryMap<NodeId, Anchor>,
+    /// Root of the popup layer: drawn last and hit-tested first, so dropdowns
+    /// and tooltips are never covered by the panels they belong to.
+    overlay_root: Option<NodeId>,
     // Retained cross-frame interaction state
     hovered_key: Option<NodeKey>,
     active_pointer_key: Option<NodeKey>,
@@ -204,6 +240,8 @@ impl UiTree {
             text_editables: SecondaryMap::new(),
             drag_sources: SecondaryMap::new(),
             drop_targets: SecondaryMap::new(),
+            anchors: SecondaryMap::new(),
+            overlay_root: None,
             hovered_key: None,
             active_pointer_key: None,
             focused_key: None,
@@ -240,6 +278,7 @@ impl UiTree {
         }
         self.nodes.clear();
         self.root = None;
+        self.overlay_root = None;
         self.key_to_id.clear();
         self.interactables.clear();
         self.focusables.clear();
@@ -248,7 +287,70 @@ impl UiTree {
         self.text_editables.clear();
         self.drag_sources.clear();
         self.drop_targets.clear();
+        self.anchors.clear();
         self.actions.clear();
+    }
+
+    /// Root of the popup layer, created on first use.
+    ///
+    /// The popup layer is a full-viewport, non-interactive container that
+    /// normally sits last in draw order and first in hit-test order.
+    pub fn overlay_root(&mut self, viewport: Vec2) -> NodeId {
+        if let Some(id) = self.overlay_root {
+            return id;
+        }
+        let id = self.spawn_node(NodeKey::default().for_overlay_layer(), None);
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.layout.position = crate::style::PositionType::Absolute;
+            node.layout.left = crate::style::Length::Px(0.0);
+            node.layout.top = crate::style::Length::Px(0.0);
+            node.layout.width = crate::style::Length::Px(viewport.x);
+            node.layout.height = crate::style::Length::Px(viewport.y);
+            node.is_overlay = true;
+        }
+        self.overlay_root = Some(id);
+        id
+    }
+
+    /// The popup layer node, if anything requested one this frame.
+    pub fn overlay_layer(&self) -> Option<NodeId> {
+        self.overlay_root
+    }
+
+    /// Resolve every anchored node's rect against its target.
+    ///
+    /// Runs after layout so the target rect is final; a missing target leaves
+    /// the node at its arranged position rather than teleporting it.
+    pub fn resolve_anchors(&mut self, viewport: Vec2) {
+        let entries: Vec<(NodeId, Anchor)> = self
+            .anchors
+            .iter()
+            .map(|(id, anchor)| (id, *anchor))
+            .collect();
+        for (id, anchor) in entries {
+            let Some(target) = self.key_to_id.get(&anchor.target).copied() else {
+                continue;
+            };
+            let Some(target_rect) = self.nodes.get(target).map(|n| n.computed_rect) else {
+                continue;
+            };
+            let Some(own) = self.nodes.get(id).map(|n| n.computed_rect) else {
+                continue;
+            };
+            let x = match anchor.align {
+                PopupAlign::Start => target_rect.x,
+                PopupAlign::End => target_rect.x + target_rect.w - own.w,
+            } + anchor.offset.x;
+            let y = target_rect.y + target_rect.h + anchor.offset.y;
+            // Keep the popup inside the viewport; a dropdown that runs off the
+            // bottom edge is unusable, so clamp instead of clipping it.
+            let x = x.clamp(0.0, (viewport.x - own.w).max(0.0));
+            let y = y.clamp(0.0, (viewport.y - own.h).max(0.0));
+            if let Some(node) = self.nodes.get_mut(id) {
+                node.computed_rect.x = x;
+                node.computed_rect.y = y;
+            }
+        }
     }
 
     pub fn spawn_node(&mut self, key: NodeKey, parent: Option<NodeId>) -> NodeId {
@@ -279,6 +381,16 @@ impl UiTree {
 
     pub fn node_by_key(&self, key: NodeKey) -> Option<NodeId> {
         self.key_to_id.get(&key).copied()
+    }
+
+    /// Retained scroll offset for `key` (zero when it never scrolled).
+    ///
+    /// Virtualized builders need it *before* mounting: the visible item range is
+    /// derived from the offset, while the offset itself is only updated by the
+    /// wheel during `process_input`. Reading it back here is what makes a wheel
+    /// scroll actually move the list instead of only moving a hidden counter.
+    pub fn scroll_offset(&self, key: NodeKey) -> Vec2 {
+        self.retained_scroll.get(&key).copied().unwrap_or(Vec2::ZERO)
     }
 
     pub fn restore_scroll(&mut self, id: NodeId, mut scroll: Scrollable) {
@@ -316,6 +428,10 @@ impl UiTree {
         if let Some(root) = self.root {
             layout::compute_layout(&mut self.nodes, root, viewport_size);
         }
+        if let Some(overlay) = self.overlay_root {
+            layout::compute_layout(&mut self.nodes, overlay, viewport_size);
+        }
+        self.resolve_anchors(viewport_size);
         for (id, scroll) in &mut self.scrollables {
             if let Some(node) = self.nodes.get(id) {
                 scroll.clamp(Vec2::new(node.computed_rect.w, node.computed_rect.h));
@@ -337,6 +453,12 @@ impl UiTree {
 
     /// Hit-test from front to back (overlays first, reverse child order).
     pub fn hit_test(&self, pos: Vec2) -> Option<NodeId> {
+        // The popup layer wins over everything below it, mirroring draw order.
+        if let Some(overlay) = self.overlay_root {
+            if let Some(hit) = self.hit_test_node(overlay, pos, None) {
+                return Some(hit);
+            }
+        }
         let root = self.root?;
         self.hit_test_node(root, pos, None)
     }
@@ -541,6 +663,12 @@ impl UiTree {
         if let Some(root) = self.root {
             self.emit_node_draw(root, out);
         }
+        // Popups draw last so they sit above every panel.
+        if let Some(overlay) = self.overlay_root {
+            for &cid in &self.nodes[overlay].children {
+                self.emit_node_draw(cid, out);
+            }
+        }
     }
 
     fn emit_node_draw(&self, id: NodeId, out: &mut UiDrawList) {
@@ -651,3 +779,4 @@ impl UiTree {
             .collect()
     }
 }
+

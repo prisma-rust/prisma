@@ -14,7 +14,9 @@ use crate::style::{
     Align, Color, Edges, FlexDirection, Justify, LayoutStyle, Length, PositionType, VisualBox,
     VisualPatch,
 };
-use crate::tree::{IntoNodeKey, NodeContent, NodeId, NodeKey, UiTree};
+use crate::tree::{
+    Anchor, IntoNodeKey, NodeContent, NodeId, NodeKey, PopupAlign, UiTree,
+};
 
 /// Default dark-mode palette used by built-in composed widgets (overridable via modifiers).
 pub struct UiPalette;
@@ -97,6 +99,8 @@ pub struct ElementBox {
     text_editable: Option<TextEditable>,
     drag_source: Option<DragPayload>,
     drop_target: bool,
+    margin: Edges,
+    anchor: Option<Anchor>,
     children: Vec<ChildBuilder>,
 }
 
@@ -116,6 +120,8 @@ impl Default for ElementBox {
             text_editable: None,
             drag_source: None,
             drop_target: false,
+            margin: Edges::default(),
+            anchor: None,
             children: Vec::new(),
         }
     }
@@ -316,6 +322,36 @@ impl ElementBox {
         self
     }
 
+    /// Minimum width, letting the node grow past it with its content.
+    pub fn min_width(mut self, min_w: f32) -> Self {
+        self.layout.min_width = min_w;
+        self
+    }
+
+    /// Vertical margin rendered as extra space above and below the node.
+    pub fn margin_vertical(mut self, margin: f32) -> Self {
+        self.margin = Edges::symmetric(0.0, margin);
+        self
+    }
+
+    /// Right-align this node's text content.
+    pub fn align_text_right(mut self) -> Self {
+        if let NodeContent::Text { align, .. } = &mut self.content {
+            *align = TextAlign::Right;
+        }
+        self
+    }
+
+    /// Anchor this node to another node's rect instead of its layout position.
+    pub fn anchored(mut self, target: NodeKey, offset: Vec2, align: PopupAlign) -> Self {
+        self.anchor = Some(Anchor {
+            target,
+            offset,
+            align,
+        });
+        self
+    }
+
     pub fn child<E: UiElement + 'static>(mut self, child: E) -> Self {
         self.children.push(Box::new(move |ctx| {
             ctx.mount(child);
@@ -336,6 +372,7 @@ impl UiElement for ElementBox {
         if let Some(node) = ctx.tree.node_mut(id) {
             node.debug_label = self.debug_label;
             node.layout = self.layout;
+            node.margin = self.margin;
             node.visual = self.visual;
             node.content = self.content;
             node.is_overlay = self.is_overlay;
@@ -360,6 +397,9 @@ impl UiElement for ElementBox {
         }
         if self.drop_target {
             ctx.tree.drop_targets.insert(id, true);
+        }
+        if let Some(anchor) = self.anchor {
+            ctx.tree.anchors.insert(id, anchor);
         }
         if !self.children.is_empty() {
             ctx.with_parent(id, |child_ctx| {
@@ -395,6 +435,21 @@ pub fn divider(vertical: bool) -> ElementBox {
             .width(Length::Percent(100.0))
             .height(Length::Px(1.0))
             .bg(UiPalette::BORDER)
+    }
+}
+
+/// A text run with explicit size and colour, for widgets that style their own
+/// typography instead of using the built-in label presets.
+pub fn text(color: Color, font_size: f32, content: impl Into<String>) -> ElementBox {
+    ElementBox {
+        content: NodeContent::Text {
+            text: content.into(),
+            font_size,
+            color,
+            align: TextAlign::Left,
+            wrap: false,
+        },
+        ..Default::default()
     }
 }
 
@@ -559,6 +614,11 @@ pub fn vec3_field(key_prefix: &str, v: [f32; 3], step: f64) -> ElementBox {
 }
 
 /// Fixed-height virtualized list: only mounts visible items `[start..end)`.
+///
+/// The mounted range is derived from the list's **retained** scroll offset, so a
+/// wheel gesture over the list scrolls it. `scroll_offset_y` is only the
+/// first-frame seed (scroll-to-item requests, and tests that mount without a wheel);
+/// once the list has scrolled, the retained offset wins.
 pub fn virtual_list<F>(
     key: impl IntoNodeKey,
     item_count: usize,
@@ -571,17 +631,19 @@ where
     F: FnMut(usize) -> ElementBox + 'static,
 {
     let total_h = (item_count as f32) * item_height;
-    let first = (scroll_offset_y / item_height).floor().max(0.0) as usize;
-    let visible = (viewport_height / item_height).ceil() as usize + 2;
-    let start = first.min(item_count);
-    let end = (start + visible).min(item_count);
-    let top_pad = (start as f32) * item_height;
+    let list_key = key.into_node_key();
 
     col()
-        .key(key)
+        .key(list_key)
         .grow(1.0)
         .scrollable(true, false, Vec2::new(0.0, total_h))
         .children_fn(move |ctx| {
+            let offset = ctx.tree.scroll_offset(list_key).y.max(scroll_offset_y);
+            let first = (offset / item_height).floor().max(0.0) as usize;
+            let visible = (viewport_height / item_height).ceil() as usize + 2;
+            let start = first.min(item_count);
+            let end = (start + visible).min(item_count);
+            let top_pad = (start as f32) * item_height;
             if top_pad > 0.0 {
                 ctx.mount(ElementBox::default().height(Length::Px(top_pad)));
             }

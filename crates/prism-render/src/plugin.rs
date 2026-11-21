@@ -1,7 +1,14 @@
-//! Render Plugin 模型（DESIGN §8.4 PR-L3 预留）
+//! Render-plugin model — reserved, not wired up.
 //!
-//! 每个 Plugin 在 setup 时向 RenderGraph 注册 pass 节点，在 update/prepare/render
-//! 阶段被 App 调用。当前提供 trait 定义 + 空白实现，下一步扩展将 Shadow/GTAO 等迁移为 Plugin。
+//! DESIGN §8.4 sketches a model where each plugin registers its pass nodes into
+//! the RenderGraph in `setup` and is driven through update / prepare / render.
+//! Only the trait and the registry exist: nothing constructs `PluginRegistry`,
+//! nothing calls `setup_all`, and no type implements `RenderPlugin`.
+//!
+//! The graph today is assembled directly in `GraphRenderer::new`
+//! (`ForwardPass` → `ShadowMapPass` → `GtaoPass` → `PostPass` in a fixed order).
+//! Do not read this module as evidence that passes are pluggable; it is a
+//! placeholder kept for the extension route described in DESIGN §8.4.
 
 use crate::render_graph::{RenderGraphBuilder, RenderSettings};
 

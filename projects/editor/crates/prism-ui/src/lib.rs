@@ -4,7 +4,9 @@ pub mod behavior;
 pub mod draw;
 pub mod elements;
 mod layout;
+pub mod menu;
 pub mod style;
+pub mod theme;
 pub mod tree;
 #[cfg(feature = "ui-tween")]
 pub mod tween;
@@ -21,7 +23,13 @@ pub mod prelude {
         Align, Color, Edges, FlexDirection, InteractionState, Justify, LayoutStyle, Length,
         PositionType, Rect, VisualBox, VisualStyle,
     };
-    pub use crate::tree::{IntoNodeKey, NodeId, NodeKey, UiInput, UiTree};
+    pub use crate::menu::{
+        Menu, MenuAction, MenuBar, MenuEntry, MenuNodeKey, MenuState,
+    };
+    pub use crate::theme::Theme;
+    pub use crate::tree::{
+        Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree,
+    };
     #[cfg(feature = "ui-tween")]
     pub use crate::tween::{Ease, TweenProperty, TweenStore};
 }
@@ -224,5 +232,74 @@ mod tests {
             c,
             UiDrawCommand::Text { content, .. } if content == "Hierarchy"
         )));
+    }
+
+    /// 滚轮必须真的移动列表，而不只是改一个没人读的偏移量。
+    ///
+    /// `virtual_list` 的可见区间来自列表自己的保留滚动偏移，所以滚动后
+    /// 挂载的首个项目必须变化；否则滚轮在编辑器的 Hierarchy / Asset 面板上
+    /// 等于没有接线。
+    #[test]
+    fn wheel_scroll_moves_the_virtual_list_window() {
+        let mut tree = UiTree::new();
+        let list_key = "assets:list".into_node_key();
+
+        let build = |t: &mut UiTree| {
+            t.begin_frame();
+            let mut ctx = UiContext::new(t);
+            ctx.mount(
+                row()
+                    .size(Length::Px(200.0), Length::Px(100.0))
+                    .child(virtual_list(
+                        list_key,
+                        100,
+                        20.0,
+                        100.0,
+                        0.0,
+                        |idx| button(("asset", idx as u32), format!("item {idx}")),
+                    )),
+            );
+            t.compute_layout(Vec2::new(200.0, 100.0));
+        };
+
+        build(&mut tree);
+        assert!(
+            tree.node_by_key(("asset", 0u32).into_node_key()).is_some(),
+            "first item is mounted before any scrolling"
+        );
+        assert!(
+            tree.node_by_key(("asset", 10u32).into_node_key()).is_none(),
+            "items past the first window are not mounted"
+        );
+
+        let list_rect = tree
+            .node(tree.node_by_key(list_key).expect("list node"))
+            .unwrap()
+            .computed_rect;
+        let over_list = Vec2::new(
+            list_rect.x + list_rect.w * 0.5,
+            list_rect.y + list_rect.h * 0.5,
+        );
+        let actions = tree.process_input(&UiInput {
+            pointer_pos: over_list,
+            scroll_delta: Vec2::new(0.0, -2.0),
+            ..Default::default()
+        });
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, UiAction::Scrolled { key, .. } if *key == list_key)),
+            "the wheel must be routed to the list, got {actions:?}"
+        );
+
+        build(&mut tree);
+        assert!(
+            tree.node_by_key(("asset", 0u32).into_node_key()).is_none(),
+            "scrolling away from the top must unmount the first item"
+        );
+        assert!(
+            tree.node_by_key(("asset", 5u32).into_node_key()).is_some(),
+            "the window must advance to the scrolled region"
+        );
     }
 }

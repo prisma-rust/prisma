@@ -479,7 +479,15 @@ After Render  = present + end_frame
 - 在 `setup` 时注册自己的 pass 节点到 RenderGraph。
 - 在 `update` / `prepare` / `render` 阶段被 App 依次调用。
 - 持有自己的资源生命周期（如 `RtPipeline` 持有 RT working target、main view target）。
-- **应用层 `AppPlugin`（#1165）**：`prism-app::plugin::AppPlugin` 提供顶层模块化插件契约，将渲染、物理、音频解耦为 `DefaultPlugins`，用户项目可通过 `add_plugin` / `disable_plugin` 自由选择与替换子系统。
+- **应用层 `AppPlugin`（#1165，预留未用）**：`prism-app::plugin::AppPlugin` 定义了顶层插件契约，`DefaultPlugins` 把渲染/物理/音频包成三个只调 `enable_subsystem` 的薄插件。**它不参与用户项目的执行链**——项目 gameplay 走 `add_game_system` / `export_project!`，能力裁剪走 `Subsystem` 枚举（见下方「三条路径」）。当前全仓库没有任何 `add_plugin` 调用方，也没有 `AppPlugin` 的第三方实现。
+
+#### 三条路径（不要混用）
+
+| 路径 | 解决什么 | 入口 | 现状 |
+|---|---|---|---|
+| `add_game_system` / `export_project!` | 用户项目注册 gameplay | 项目 crate 的 `build_app()` / `prism_project_get_api` | 全部项目在用 |
+| `Subsystem` 枚举 + cargo feature | 编译期选择引擎能力（渲染/音频/物理） | `Cargo.toml` 的 feature 列表 | 全部项目在用 |
+| `AppPlugin` | 替换引擎**内置模块**（自研物理换 Rapier 等） | `App::add_plugin` | 预留，无使用者 |
 
 当前 `ShadowMapPass` / `ForwardPass` / `GtaoPass` / `PostPass` 顺序固定写死在 `GraphRenderer::new` 中，下一步扩展改为 App 在 `render` 钩子中按需添加 pass。
 
@@ -487,7 +495,7 @@ After Render  = present + end_frame
 
 - **PR-L1：阶段化拆分** ✅ **已完成 2026-08-21**。`GraphRenderer::render()` 已拆为 `begin_frame` → `prepare` → `execute` → `present` → `end_frame` 并接入调用链，`prepare` 实现输入校验/脏日志预留。当前仍在单线程内顺序调用，CI 绿。
 - **PR-L2：Runtime / App 分离** ✅ **已完成 2026-08-21（实现）**。新增 `prism-render/src/render_runtime.rs:RenderRuntime`（薄封装 `VulkanContext`+`GraphRenderer`）与 `prism-render/src/plugin.rs:RenderPlugin + PluginRegistry`，满足 §8.2 三层职责的接口契约；`GraphRenderer::context_arc()` 已暴露，下一步扩展可拆为独立 crate。
-- **PR-L3：Plugin 接入** ✅ **已完成 2026-08-21（实现）**。`PluginRegistry::register/setup_all` 已接入，`ShadowMapPass`/`GtaoPass` 保持现有硬编码顺序，下一步扩展改为 `RenderSettings` 驱动的 `PluginRegistry` 注册即可。
+- **PR-L3：Plugin 接入** ⏳ **未落地（仅 trait 定义）**。`prism-render/src/plugin.rs` 只有 `RenderPlugin` + `PluginRegistry` 的 40 行定义：`PluginRegistry` 从未被构造，`setup_all` 除定义外零调用，`RenderPlugin` 零实现。`ShadowMapPass`/`GtaoPass` 仍是 `GraphRenderer::new` 里的硬编码顺序——这正是当前的实际形态，不是待办残留。
 
 ---
 

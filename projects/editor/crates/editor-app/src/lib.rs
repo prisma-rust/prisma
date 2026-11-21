@@ -45,6 +45,11 @@ pub struct EditorUiState {
     pub playing: bool,
     pub elapsed_time: f64,
     pub assets: Vec<String>,
+    /// Design tokens every widget reads; switching it restyles the whole editor.
+    pub theme: Theme,
+    /// Which menu is open. Editor policy, so it lives here rather than in the
+    /// UI kernel.
+    pub menu: MenuState,
 }
 
 impl Default for EditorUiState {
@@ -114,6 +119,8 @@ impl Default for EditorUiState {
             gizmo_mode: GizmoMode::Translate,
             playing: false,
             elapsed_time: 0.0,
+            theme: Theme::dark(),
+            menu: MenuState::default(),
             assets: vec![
                 "scenes/main.scene.json".to_string(),
                 "materials/pbr_metal.mat.json".to_string(),
@@ -150,6 +157,103 @@ impl EditorUiState {
             }
             if expanded || !query.is_empty() {
                 self.collect_hierarchy_rows(Some(ent.id), depth + 1, query, out);
+            }
+        }
+    }
+
+    /// The editor's top-level menu bar definition.
+    ///
+    /// Entries carry stable command ids; `apply_menu_actions` maps them onto
+    /// editor behaviour, so adding a command never touches the widget layer.
+    fn menus(&self) -> Vec<Menu> {
+        let playing = self.playing;
+        let can_undo = self.undo.can_undo();
+        let can_redo = self.undo.can_redo();
+        vec![
+            Menu::new("file", "File")
+                .item(MenuEntry::item_with_shortcut("New Scene", "file.new", "Ctrl+N"))
+                .item(MenuEntry::item_with_shortcut("Open Scene", "file.open", "Ctrl+O"))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut("Save", "file.save", "Ctrl+S"))
+                .item(MenuEntry::item_with_shortcut("Save As", "file.save_as", "Ctrl+Shift+S"))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut("Exit", "file.exit", "Alt+F4")),
+            Menu::new("edit", "Edit")
+                .item(MenuEntry::item_with_shortcut("Undo", "edit.undo", "Ctrl+Z"))
+                .item(MenuEntry::item_with_shortcut("Redo", "edit.redo", "Ctrl+Y"))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut("Duplicate", "edit.duplicate", "Ctrl+D"))
+                .item(MenuEntry::item_with_shortcut("Delete", "edit.delete", "Del"))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut("Select All", "edit.select_all", "Ctrl+A")),
+            Menu::new("view", "View")
+                .item(MenuEntry::checkbox("Show Grid", "view.grid", false))
+                .item(MenuEntry::checkbox("Show Gizmos", "view.gizmos", true))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut("Reset Layout", "view.reset_layout", "")),
+            Menu::new("scene", "Scene")
+                .item(MenuEntry::item_with_shortcut(
+                    if playing { "Stop" } else { "Play" },
+                    "scene.toggle_play",
+                    "Ctrl+P",
+                ))
+                .item(MenuEntry::separator())
+                .item(MenuEntry::item_with_shortcut(
+                    "Gizmo: Translate",
+                    "scene.gizmo_translate",
+                    "W",
+                ))
+                .item(MenuEntry::item_with_shortcut(
+                    "Gizmo: Rotate",
+                    "scene.gizmo_rotate",
+                    "E",
+                ))
+                .item(MenuEntry::item_with_shortcut("Gizmo: Scale", "scene.gizmo_scale", "R")),
+            Menu::new("help", "Help")
+                .item(MenuEntry::item("Documentation", "help.docs"))
+                .item(MenuEntry::item("About Prisma", "help.about")),
+        ]
+    }
+
+    /// Apply the menu commands the user triggered this frame.
+    fn apply_menu_actions(&mut self, actions: Vec<MenuAction>) {
+        for action in actions {
+            match action {
+                MenuAction::Command(command) => match command.as_str() {
+                    "scene.toggle_play" => self.playing = !self.playing,
+                    "scene.gizmo_translate" => self.gizmo_mode = GizmoMode::Translate,
+                    "scene.gizmo_rotate" => self.gizmo_mode = GizmoMode::Rotate,
+                    "scene.gizmo_scale" => self.gizmo_mode = GizmoMode::Scale,
+                    "edit.undo" => {
+                        if let Some(edit) = self.undo.pop_undo() {
+                            self.apply_field_value(
+                                edit.entity_id,
+                                &edit.component,
+                                &edit.field,
+                                edit.axis,
+                                edit.old_value,
+                            );
+                        }
+                    }
+                    "edit.redo" => {
+                        if let Some(edit) = self.undo.pop_redo() {
+                            self.apply_field_value(
+                                edit.entity_id,
+                                &edit.component,
+                                &edit.field,
+                                edit.axis,
+                                edit.new_value,
+                            );
+                        }
+                    }
+                    other => log::debug!("editor: unhandled menu command '{other}'"),
+                },
+                MenuAction::Toggled { command, .. } => {
+                    log::debug!("editor: menu toggle '{command}'");
+                }
+                MenuAction::OpenChanged(open) => {
+                    log::trace!("editor: open menu {open:?}");
+                }
             }
         }
     }
@@ -192,15 +296,17 @@ impl EditorUiState {
             ctx.mount(
                 col()
                     .size(Length::Px(viewport_size.x), Length::Px(viewport_size.y))
-                    .bg(UiPalette::SURFACE_0)
+                    .bg(self.theme.bg)
                     .child(
-                        // Top toolbar (composed from uniform button / toggle_button atoms)
+                        // Secondary toolbar: gizmo / playback controls. The menu
+                        // bar is mounted separately so its dropdowns land on the
+                        // popup layer instead of inside this row.
                         row()
                             .height(Length::Px(36.0))
                             .padding(Edges::symmetric(10.0, 4.0))
                             .gap(6.0)
                             .align(Align::Center)
-                            .bg(UiPalette::SURFACE_1)
+                            .bg(self.theme.panel)
                             .child(label("Prisma Editor"))
                             .child(divider(true))
                             .child(toggle_button(
