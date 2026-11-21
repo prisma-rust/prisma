@@ -61,7 +61,8 @@
     "noneSelected": "未选择",
     "yes": "是",
     "add": "添加",
-    "output": "输出"
+    "output": "输出",
+    "play": "播放"
   },
   "menu": {
     "file": "文件",
@@ -728,6 +729,20 @@
       "notifyFileError": "通知文件：{error}",
       "montageFileError": "蒙太奇文件：{error}",
       "syncMarkersError": "同步标记：{error}",
+      "savedNodesLinks": "已保存 {path} 中的节点/链接",
+      "saveGraphFailed": "保存动画图失败：{error}",
+      "renamedParameter": "已将参数 '{old}' 重命名为 '{new}'",
+      "renamedParameterUpdated": "已将参数 '{old}' 重命名为 '{new}'，更新了 {updated}",
+      "savedStateMachine": "已保存 {path} 中的状态机",
+      "saveTransitionsFailed": "保存过渡失败：{error}",
+      "renamedState": "已将状态重命名为 '{new}'",
+      "renamedStateUpdated": "已将状态重命名为 '{new}'，更新了 {updated}",
+      "savedNotifies": "已保存 {path} 中的通知",
+      "saveNotifiesFailed": "保存通知失败：{error}",
+      "savedMontageSections": "已保存 {path} 中的蒙太奇片段",
+      "saveMontageSectionsFailed": "保存蒙太奇片段失败：{error}",
+      "savedSyncMarkers": "已保存 {path} 中的同步标记",
+      "saveSyncMarkersFailed": "保存同步标记失败：{error}",
       "settingsSaved": "已保存 assets/settings.ini",
       "settingsSaveFailed": "设置保存失败：{error}",
       "settingsReverted": "设置已还原",
@@ -1027,7 +1042,9 @@
       "tonemapAces": "ACES",
       "tonemapPassthrough": "直通",
       "aaOff": "关闭",
-      "aaFxaa": "FXAA"
+      "aaFxaa": "FXAA",
+      "radius": "半径",
+      "exposure": "曝光"
     },
     "confirm": {
       "cleanBuildBody": "清理玩家工程（projects/template）的编译产物，下次构建会全量重编。",
@@ -1229,6 +1246,7 @@
       "notifyHover": "通知：{name}",
       "jumpToKeyframe": "跳到此关键帧",
       "blendScrub": "混合参数 — 点击或拖动以调整混合",
+      "blendScrub2d": "二维混合参数 — 在平面上点击或拖动",
       "clipPathHint": "clips/aim.ranim",
       "sectionNameHint": "区段名称",
       "clipGlTFNameHint": "剪辑（glTF 名称）",

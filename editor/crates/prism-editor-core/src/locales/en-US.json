@@ -61,7 +61,8 @@
     "noneSelected": "Nothing selected",
     "yes": "yes",
     "add": "Add",
-    "output": "output"
+    "output": "output",
+    "play": "Play"
   },
   "menu": {
     "file": "File",
@@ -728,6 +729,20 @@
       "notifyFileError": "notify file: {error}",
       "montageFileError": "montage file: {error}",
       "syncMarkersError": "sync markers: {error}",
+      "savedNodesLinks": "saved nodes/links in {path}",
+      "saveGraphFailed": "save graph failed: {error}",
+      "renamedParameter": "renamed parameter '{old}' to '{new}'",
+      "renamedParameterUpdated": "renamed parameter '{old}' to '{new}', updated {updated}",
+      "savedStateMachine": "saved state machine in {path}",
+      "saveTransitionsFailed": "save transitions failed: {error}",
+      "renamedState": "renamed state to '{new}'",
+      "renamedStateUpdated": "renamed state to '{new}', updated {updated}",
+      "savedNotifies": "saved notifies in {path}",
+      "saveNotifiesFailed": "save notifies failed: {error}",
+      "savedMontageSections": "saved montage sections in {path}",
+      "saveMontageSectionsFailed": "save montage sections failed: {error}",
+      "savedSyncMarkers": "saved sync markers in {path}",
+      "saveSyncMarkersFailed": "save sync markers failed: {error}",
       "settingsSaved": "assets/settings.ini saved",
       "settingsSaveFailed": "settings save failed: {error}",
       "settingsReverted": "settings reverted",
@@ -1027,7 +1042,9 @@
       "tonemapAces": "ACES",
       "tonemapPassthrough": "Passthrough",
       "aaOff": "Off",
-      "aaFxaa": "FXAA"
+      "aaFxaa": "FXAA",
+      "radius": "radius",
+      "exposure": "exposure"
     },
     "confirm": {
       "cleanBuildBody": "Clean the player project build artifacts; the next build recompiles everything.",
@@ -1229,6 +1246,7 @@
       "notifyHover": "Notify: {name}",
       "jumpToKeyframe": "Jump to this keyframe",
       "blendScrub": "Blend parameter — click or drag to scrub the blend",
+      "blendScrub2d": "2D blend parameter — click or drag on the plane",
       "clipPathHint": "clips/aim.ranim",
       "sectionNameHint": "section name",
       "clipGlTFNameHint": "clip (glTF name)",
