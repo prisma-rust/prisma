@@ -69,7 +69,19 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
 - Runtime scenes load from `assets/scenes.pak`; rebuild it with
   `cargo run -p prism-build-pipeline -- build-scenes` after editing scene documents.
 
-## 6. Git and review
+## 6. Reference projects (clean-room)
+
+- "Reference <project>" means read `.local/reference/<project>/` first. If it is not there, shallow
+  clone the upstream open-source repository into that path (`git clone --depth 1 <url>
+  .local/reference/<project>`); `.local/` is gitignored, so nothing is vendored and no dependency
+  is added.
+- Take the idea, not the bytes: study the algorithm, data flow, and pipeline shape, then implement
+  it independently against this repo's own abstractions. Never copy code, shader source, comments,
+  identifiers, or assets from a reference.
+- Say in the PR which reference file shaped the design, so a reviewer can check the clean-room
+  boundary was kept.
+
+## 7. Git and review
 
 - `master`: one task = one branch = one PR, default diff under ~500 lines. `dev`: direct commits
   and pushes are allowed, still atomic and still gated. `dev → master` goes through a PR.
@@ -81,8 +93,26 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
   comments. Never impersonate a human.
 - Stop and ask before changing public APIs, save formats (RSCN / RTTIBin / `.pak`), coordinate
   conventions, workspace layering, or adding dependencies.
+- **MANDATORY — ask a human first.** Before running any destructive command, stop and get explicit
+  human approval. This is not a judgement call and there is no "it is probably safe" exception.
+  Destructive commands include, at minimum: `git reset --hard`, `git reset`, `git checkout -- .`,
+  `git checkout <path>`, `git restore .`, `git restore <path>`, `git clean -f`/`-fd`/`-fdx`,
+  `git stash drop`/`clear`, `git branch -D`, `git push --force`, `git worktree remove --force`,
+  `rm -rf`, `rm` on tracked files, and any truncating or redirecting write over uncommitted work.
+  A human approval covers exactly the one command it was requested for; a second destructive
+  command needs a second approval. State the exact command, the paths it touches, and what
+  uncommitted work it would destroy.
+- Uncommitted work is the one thing git cannot recover: `reflog`, `git fsck --lost-found` and IDE
+  local history do not hold it, so one mistyped probe destroys it permanently. Diagnose in a
+  scratch copy (`cp`) or a separate `git worktree add`; never probe the live worktree. Record
+  `git status` and `git rev-parse HEAD` before and after any command that can change history or
+  the worktree, and compare.
+- A "modified" worktree you cannot explain is a stat-cache or line-ending question, not a licence
+  to reset: compare `git hash-object FILE` against `git rev-parse HEAD:FILE` first, and treat a
+  match as proof the content is intact. Normalize endings with `python scripts/to_lf.py`, never
+  with an ad-hoc `reset`/`checkout`.
 
-## 7. Comments and docs
+## 8. Comments and docs
 
 English only. A comment may state an invariant that code cannot express or link an external spec.
 Never restate code, narrate a diff, or leave a `TODO`. `scripts/check_comment_only.py` and
