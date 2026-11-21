@@ -1419,7 +1419,16 @@ pub(super) fn draw_clip_asset(ui: &mut Ui, workspace: &mut Workspace, path: &str
             let x = prism_editor_core::timeline_x(notify.time, duration, left, usable);
             let distance = (x - pos.x).abs();
             if distance <= 8.0 && closest.as_ref().is_none_or(|(best, _)| distance < *best) {
-                closest = Some((distance, format!("{} @ {:.2}s", notify.name, notify.time)));
+                closest = Some((
+                    distance,
+                    workspace.tf(
+                        "desktop.anim.notifyAt",
+                        &[
+                            ("name", &notify.name),
+                            ("time", &format!("{:.2}", notify.time)),
+                        ],
+                    ),
+                ));
             }
         }
         for phase in &clip.sync_markers {
@@ -1660,7 +1669,10 @@ pub(super) fn draw_clip_asset(ui: &mut Ui, workspace: &mut Workspace, path: &str
                 },
             );
         }
-        ui.label(format!("t {time:.2}s"));
+        ui.label(format!(
+            "{}{time:.2}s",
+            workspace.t("desktop.anim.timePrefix")
+        ));
     });
     if matches && track.clicked() {
         if let Some(pos) = track.interact_pointer_pos() {
@@ -2415,7 +2427,11 @@ pub(super) fn draw_sync_markers_view(
                 {
                     phase_edits.push((clip.clip.clone(), index, phase));
                 }
-                if ui.small_button("×").clicked() {
+                if ui
+                    .small_button("×")
+                    .on_hover_text(workspace.t("desktop.anim.removeSync"))
+                    .clicked()
+                {
                     removals.push((clip.clip.clone(), index));
                 }
             });
@@ -2642,7 +2658,11 @@ pub(super) fn draw_notifies_view(
                         }
                     }
                 }
-                if ui.small_button("×").clicked() {
+                if ui
+                    .small_button("×")
+                    .on_hover_text(workspace.t("desktop.anim.removeNotify"))
+                    .clicked()
+                {
                     removals.push((clip.clip.clone(), index));
                 }
             });
@@ -2859,6 +2879,32 @@ pub(super) fn graph_node_kind_key(kind: &str) -> &str {
         .unwrap_or(kind)
 }
 
+pub(super) fn graph_node_kind_label(workspace: &Workspace, kind: &str) -> String {
+    if is_clip_player(kind) {
+        workspace.t("desktop.anim.nodeClip")
+    } else if is_blend_space_2d(kind) {
+        workspace.t("desktop.anim.nodeBlendSpace2d")
+    } else if is_blend_space(kind) {
+        workspace.t("desktop.anim.nodeBlendSpace")
+    } else {
+        match kind.to_ascii_lowercase().as_str() {
+            "blend_stack" | "blendstack" => workspace.t("desktop.anim.nodeBlendStack"),
+            "slot" => workspace.t("desktop.anim.nodeSlot"),
+            "layered_blend" | "layeredblend" => workspace.t("desktop.anim.nodeLayeredBlend"),
+            "cached_pose" | "cachedpose" => workspace.t("desktop.anim.nodeCachedPose"),
+            "state_machine" | "statemachine" => workspace.t("desktop.anim.nodeStateMachine"),
+            _ => {
+                let key = graph_node_kind_key(kind);
+                if key.starts_with("desktop.") {
+                    workspace.t(key)
+                } else {
+                    kind.to_string()
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn parameter_kind_label(workspace: &Workspace, kind: &str) -> String {
     match kind.to_ascii_lowercase().as_str() {
         "float" => workspace.t("desktop.anim.kindFloat"),
@@ -3063,7 +3109,7 @@ pub(super) fn draw_anim_graph_view(
     let mut sample_adds = Vec::new();
     let mut sample_draft_cancel = false;
     for node in &graph.nodes {
-        let kind = workspace.t(graph_node_kind_key(&node.kind));
+        let kind = graph_node_kind_label(workspace, &node.kind);
         let title = if node.is_output() {
             workspace.tf(
                 "desktop.anim.nodeTitleOutput",
@@ -3295,7 +3341,11 @@ pub(super) fn draw_anim_graph_view(
                             {
                                 sample_speed_edits.push((node.name.clone(), index, speed));
                             }
-                            if ui.small_button("×").clicked() {
+                            if ui
+                                .small_button("×")
+                                .on_hover_text(workspace.t("desktop.anim.removeSample"))
+                                .clicked()
+                            {
                                 sample_removals.push((node.name.clone(), index));
                             }
                         });
@@ -3567,7 +3617,11 @@ pub(super) fn draw_anim_graph_view(
                                 {
                                     weight_edits.push((node.name.clone(), index, weight));
                                 }
-                                if ui.small_button("×").clicked() {
+                                if ui
+                                    .small_button("×")
+                                    .on_hover_text(workspace.t("desktop.anim.removeLink"))
+                                    .clicked()
+                                {
                                     remove = Some(index);
                                 }
                             });
@@ -3718,7 +3772,7 @@ pub(super) fn draw_anim_graph_view(
                 .desired_width(96.0),
         );
         egui::ComboBox::from_id_salt("anim-graph-new-node-kind")
-            .selected_text(workspace.t(graph_node_kind_key(&edit.new_node_kind)))
+            .selected_text(graph_node_kind_label(workspace, &edit.new_node_kind))
             .show_ui(ui, |ui| {
                 for (kind, key) in GRAPH_NODE_KINDS {
                     let label = workspace.t(key);
@@ -3768,18 +3822,18 @@ pub struct StateConditionDraft {
 }
 
 pub(super) const STATE_CONDITION_KINDS: [(&str, &str); 4] = [
-    ("float_greater", "float >"),
-    ("float_less", "float <"),
-    ("bool_is", "bool =="),
-    ("trigger", "trigger"),
+    ("float_greater", "desktop.anim.condFloatGreater"),
+    ("float_less", "desktop.anim.condFloatLess"),
+    ("bool_is", "desktop.anim.condBoolIs"),
+    ("trigger", "desktop.anim.kindTrigger"),
 ];
 
-pub(super) fn condition_kind_label(kind: &str) -> &str {
+pub(super) fn condition_kind_label(workspace: &Workspace, kind: &str) -> String {
     STATE_CONDITION_KINDS
         .iter()
         .find(|(value, _)| *value == kind)
-        .map(|(_, label)| *label)
-        .unwrap_or(kind)
+        .map(|(_, key)| workspace.t(key))
+        .unwrap_or_else(|| kind.to_string())
 }
 
 pub(super) fn draw_state_machine_view(
@@ -4133,9 +4187,10 @@ pub(super) fn draw_state_machine_view(
                             index,
                             condition_index,
                         ))
-                        .selected_text(condition_kind_label(&condition.kind))
+                        .selected_text(condition_kind_label(workspace, &condition.kind))
                         .show_ui(ui, |ui| {
-                            for (value, label) in STATE_CONDITION_KINDS {
+                            for (value, key) in STATE_CONDITION_KINDS {
+                                let label = workspace.t(key);
                                 if ui
                                     .selectable_label(condition.kind.as_str() == value, label)
                                     .clicked()
@@ -4192,7 +4247,11 @@ pub(super) fn draw_state_machine_view(
                             }
                             _ => {}
                         }
-                        if ui.small_button("×").clicked() {
+                        if ui
+                            .small_button("×")
+                            .on_hover_text(workspace.t("desktop.anim.removeCondition"))
+                            .clicked()
+                        {
                             remove_condition = Some((index, condition_index));
                         }
                     });
@@ -4217,9 +4276,10 @@ pub(super) fn draw_state_machine_view(
                     ui.separator();
                     ui.horizontal(|ui| {
                         egui::ComboBox::from_id_salt(("anim-sm-condition-kind", index))
-                            .selected_text(condition_kind_label(&draft.kind))
+                            .selected_text(condition_kind_label(workspace, &draft.kind))
                             .show_ui(ui, |ui| {
-                                for (kind, label) in STATE_CONDITION_KINDS {
+                                for (kind, key) in STATE_CONDITION_KINDS {
+                                    let label = workspace.t(key);
                                     ui.selectable_value(&mut draft.kind, kind.to_string(), label);
                                 }
                             });
