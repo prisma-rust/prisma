@@ -1,14 +1,14 @@
-//! 单行内联输入的编辑模型。
+//! The editing model for single-line inline input.
 //!
-//! 层级重命名、字段数值、搜索框、另存为路径共用同一套行为：光标、选区、
-//! 按词移动、Unicode 安全。UI 只负责把按键翻译成这里的方法，再把
-//! [`TextInput::text`] / [`TextInput::cursor`] 画出来。
+//! Hierarchy renaming, field values, search boxes, and "save as" paths share the same behavior:
+//! cursor, selection, word-by-word movement, Unicode-safe. The UI only translates keystrokes into
+//! methods here, then renders [`TextInput::text`] / [`TextInput::cursor`].
 //!
-//! 光标与选区都用 **字节偏移**（始终落在 `char` 边界上），方便直接切片。
+//! Cursor and selection both use **byte offsets** (always landing on `char` boundaries), making direct slicing convenient.
 
 use std::ops::Range;
 
-/// 一段可编辑的单行文本。
+/// A single line of editable text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextInput {
     text: String,
@@ -17,7 +17,7 @@ pub struct TextInput {
 }
 
 impl TextInput {
-    /// 新建并把光标放到末尾（打开输入框时的默认行为）。
+    /// Create a new input with the cursor at the end (default behavior when opening an input).
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         let cursor = text.len();
@@ -28,7 +28,7 @@ impl TextInput {
         }
     }
 
-    /// 指定初始光标（越界或非边界时夹到最近的合法位置）。
+    /// Set an initial cursor (clamped to the nearest valid position when out of bounds or not on a boundary).
     pub fn with_cursor(text: impl Into<String>, cursor: usize) -> Self {
         let mut input = Self::new(text);
         input.set_cursor(cursor);
@@ -39,12 +39,12 @@ impl TextInput {
         &self.text
     }
 
-    /// 光标所在字节偏移。
+    /// The byte offset of the cursor.
     pub fn cursor(&self) -> usize {
         self.cursor
     }
 
-    /// 光标在第几个字符（渲染/测试用）。
+    /// The character index of the cursor (for rendering/tests).
     pub fn cursor_char_index(&self) -> usize {
         self.text[..self.cursor].chars().count()
     }
@@ -57,7 +57,7 @@ impl TextInput {
         self.text.is_empty()
     }
 
-    /// 有序选区；没有选中时为 `None`。
+    /// An ordered selection; `None` when nothing is selected.
     pub fn selection(&self) -> Option<Range<usize>> {
         if self.cursor == self.anchor {
             None
@@ -84,14 +84,14 @@ impl TextInput {
         self.cursor = self.text.len();
     }
 
-    /// 折叠选区并移动光标（夹到边界）。
+    /// Collapse selection and move cursor (clamped to boundary).
     pub fn set_cursor(&mut self, offset: usize) {
         let offset = floor_boundary(&self.text, offset.min(self.text.len()));
         self.cursor = offset;
         self.anchor = offset;
     }
 
-    /// 替换整段文本，光标移到末尾。
+    /// Replace whole text, cursor moves to end.
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
         self.cursor = self.text.len();
@@ -102,7 +102,7 @@ impl TextInput {
         self.set_text("");
     }
 
-    /// 插入文本；有选区时先删除选区。
+    /// Insert text; if there's a selection, delete it first.
     pub fn insert(&mut self, text: &str) {
         let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
         if text.is_empty() {
@@ -114,7 +114,7 @@ impl TextInput {
         self.anchor = self.cursor;
     }
 
-    /// 退格：删除选区，否则删光标前一个字符。
+    /// Backspace: delete selection, otherwise delete char before cursor.
     pub fn backspace(&mut self) {
         if self.delete_selection() {
             return;
@@ -126,7 +126,7 @@ impl TextInput {
         }
     }
 
-    /// Delete：删除选区，否则删光标后一个字符。
+    /// Delete: delete selection, otherwise delete char after cursor.
     pub fn delete_forward(&mut self) {
         if self.delete_selection() {
             return;
@@ -137,7 +137,7 @@ impl TextInput {
         }
     }
 
-    /// Ctrl+Backspace：删光标前一个词（先吃掉空白）。
+    /// Ctrl+Backspace: delete word before cursor (eat whitespace first).
     pub fn delete_word_backward(&mut self) {
         if self.delete_selection() {
             return;
@@ -149,7 +149,7 @@ impl TextInput {
         }
     }
 
-    /// Ctrl+Delete：删光标后一个词。
+    /// Ctrl+Delete: delete word after cursor.
     pub fn delete_word_forward(&mut self) {
         if self.delete_selection() {
             return;
@@ -205,7 +205,7 @@ impl TextInput {
         }
     }
 
-    /// 删除选区，返回是否删了东西。
+    /// Delete selection, return whether something was deleted.
     fn delete_selection(&mut self) -> bool {
         let Some(range) = self.selection() else {
             return false;
@@ -222,7 +222,7 @@ impl TextInput {
         if !word {
             return chars.next().map(|(index, _)| index);
         }
-        // 光标前是空白/标点时先跳过它们，再跳过整词；否则只跳当前词。
+        // If cursor is at whitespace/punct, skip it first, then skip whole word; otherwise skip only current word.
         let mut result = offset;
         let mut at_word = false;
         if let Some((_, ch)) = chars.clone().next() {
@@ -257,7 +257,7 @@ impl TextInput {
                 .next()
                 .map(|(index, ch)| offset + index + ch.len_utf8());
         }
-        // 先走完当前词，再吃掉后面的空白/标点，停在下个词首。
+        // Finish current word first, then eat following whitespace/punctuation, stop at next word start.
         let mut result = offset;
         let mut in_word = suffix.chars().next().map(is_word_char).unwrap_or(false);
         for (index, ch) in chars {
@@ -285,7 +285,7 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-/// 把任意字节偏移夹到最近的前一个 `char` 边界。
+/// Clamp any byte offset back to the previous char boundary.
 fn floor_boundary(text: &str, mut offset: usize) -> usize {
     offset = offset.min(text.len());
     while offset > 0 && !text.is_char_boundary(offset) {

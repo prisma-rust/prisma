@@ -1,29 +1,29 @@
-//! 同步组 / Sync marker（#560 P1）。
+//! Sync group / Sync marker (#560 P1).
 //!
-//! 走路、跑步这类循环剪辑的「相位」不能只按归一化时间对齐：脚落地的位置在
-//! 不同剪辑里可能落在 0.18 / 0.62，而不是同一个 0.0。同步组用一组标记把
-//! **领跑剪辑的相位**分段映射到**跟随剪辑的相位**，让两只脚在混合时踩在同一
-//! 个节拍上。
+//! "Phase" for looping clips like walking/running cannot be aligned solely by normalized time:
+//! footfall position may land at 0.18 / 0.62 in different clips, not the same 0.0. Sync group
+//! uses a set of markers to map **leader clip phase** segment-by-segment to **follower clip phase**,
+//! so both feet step on the same beat when mixing.
 //!
-//! 这一层只做数学：标记是归一化相位 `[0, 1)`，不依赖剪辑 / 资产 / ECS。
-//! 图求值器和混合空间可以在采样前调用 [`SyncGroup::map_phase`]。
+//! This layer only does math: markers are normalized phase `[0, 1)`, independent of clip / asset / ECS.
+//! Graph evaluator and blend space can call [`SyncGroup::map_phase`] before sampling.
 //!
-//! 约定：
+//! Convention:
 //!
-//! - 每个剪辑的标记数量必须相同；标记按相位升序、重复值去重；
-//! - 映射在相邻标记之间线性插值，最后一段从最后一个标记回绕到第一个标记；
-//! - 标记只有 1 个时，所有相位都映射到该标记；
-//! - 非有限相位、越界剪辑下标、非法组都安全回退（返回领跑相位或 `None`）。
+//! - Each clip must have the same number of markers; markers sorted by ascending phase, duplicates removed;
+//! - Mapping linearly interpolates between adjacent markers; last segment wraps from last marker back to first;
+//! - When there is only 1 marker, all phases map to that marker;
+//! - Non-finite phase / out-of-bounds clip index / illegal group safely fall back (return leader phase or `None`).
 
-/// 一个剪辑的同步标记，相位归一化到 `[0, 1)`。
+/// A sync marker set for one clip, phase normalized to `[0, 1)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncMarkerSet {
     phases: Vec<f32>,
 }
 
 impl SyncMarkerSet {
-    /// 从标记相位构造。非有限值丢弃，相位按 `rem_euclid(1)` 归一化，
-    /// 排序后去掉重复值；空集合返回 `None`。
+    /// Construct from marker phases. Non-finite values discarded, phase normalized via `rem_euclid(1)`,
+    /// sorted and deduplicated; empty collection returns `None`.
     pub fn new(phases: impl IntoIterator<Item = f32>) -> Option<Self> {
         let mut phases: Vec<f32> = phases
             .into_iter()
@@ -39,7 +39,7 @@ impl SyncMarkerSet {
         }
     }
 
-    /// 升序、去重后的标记相位。
+    /// Ascending, deduplicated marker phases.
     pub fn phases(&self) -> &[f32] {
         &self.phases
     }
@@ -53,15 +53,15 @@ impl SyncMarkerSet {
     }
 }
 
-/// 一组共享标记结构的剪辑。下标 0 通常作为领跑剪辑，但 [`Self::map_phase`]
-/// 允许任意两个下标互转。
+/// A set of clips sharing a marker structure. Index 0 usually serves as the leader clip,
+/// but [`Self::map_phase`] allows arbitrary index conversion.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncGroup {
     sets: Vec<SyncMarkerSet>,
 }
 
 impl SyncGroup {
-    /// 构造同步组；所有剪辑的标记数量必须相同且非空。
+    /// Construct sync group; all clips must have the same number of markers and non-empty.
     pub fn new(sets: Vec<SyncMarkerSet>) -> Option<Self> {
         let count = sets.first()?.len();
         if sets.iter().any(|set| set.len() != count) {
@@ -83,10 +83,10 @@ impl SyncGroup {
         self.sets.get(clip)
     }
 
-    /// 把 `from` 剪辑的归一化相位映射到 `to` 剪辑。
+    /// Maps normalized phase of `from` clip to `to` clip.
     ///
-    /// 越界下标 / 非有限相位时原样返回 `phase`（调用方仍能继续采样，
-    /// 不会因为一条坏标记把整个混合打断）。
+    /// Out-of-bounds index / non-finite phase returns `phase` as-is (caller can keep sampling,
+    /// one bad marker won't break the whole mix).
     pub fn map_phase(&self, from: usize, to: usize, phase: f32) -> f32 {
         if !phase.is_finite() || from >= self.sets.len() || to >= self.sets.len() {
             return phase;
@@ -102,8 +102,8 @@ impl SyncGroup {
             return phase;
         }
 
-        // 找到领跑剪辑包含 `phase` 的段；`phase` 在第一个标记之前时属于
-        // 最后一段（相位 +1 后与回绕的段比较）。
+        // Find the segment of the leader clip containing `phase`; `phase` before the first marker belongs
+        // to the last segment (phase + 1 compared with the wrap-around segment).
         let (segment, local) = if phase < leader[0] {
             let start = leader[count - 1];
             let end = leader[0] + 1.0;

@@ -1,48 +1,48 @@
-# 反射层与 RTTIBin
+# Reflection layer and RTTIBin
 
-Prisma 把“工具格式”和“运行时格式”分开：RTTIBin 自带完整 schema，供编辑器、
-独立 player 和外部工具使用；shipped RSCN 只存类型 id + schema 指纹，字段布局来自
-编译进运行时的 `TypeDesc`。两者共用同一份反射描述。
+Prisma separates "tool format" from "runtime format": RTTIBin carries a complete schema, used by editors,
+standalone players, and external tools; shipped RSCN stores only type id + schema fingerprint, with field layout
+from `TypeDesc` compiled into the runtime. Both share the same reflection description.
 
-## 分层
+## Layering
 
 ```
-prism-reflect-derive   #[derive(Reflect)]  (proc-macro，仅编译期)
+prism-reflect-derive   #[derive(Reflect)]  (proc-macro, compile-time only)
         │
         ▼
 prism-reflect          Reflect / ReflectType / TypeDesc / Value / Object
-        │              TypeRegistry（id → 描述 + 动态构造）
-        │              rtti_bin（类型表 + 对象表的二进制）
+        │              TypeRegistry (id → description + dynamic construction)
+        │              rtti_bin (binary of type table + object table)
         ▼
-prism-scene            #[derive(Reflect)] 的组件 + ComponentRegistry
-                       RSCN v4（type_id + schema_hash + 位置编码）
+prism-scene            #[derive(Reflect)] components + ComponentRegistry
+                       RSCN v4 (type_id + schema_hash + position encoding)
         │
         ▼
-prism-cooker           SceneCooker（.scene.json → RSCN）
-prism-engine           SceneLoader（RSCN → ECS）
+prism-cooker           SceneCooker (.scene.json → RSCN)
+prism-engine           SceneLoader (RSCN → ECS)
 ```
 
-- 反射层 **不依赖 egui**，也不依赖 `prism-engine` / `prism-render`；
-  `prism-engine` 依赖它，用户项目（`game`）通过 engine 间接获得。
-- `prism-reflect` 不依赖 `serde`。作者格式仍用 JSON + serde；RTTIBin 是编辑器、
-  独立 player 与外部工具之间的自描述交换格式。
+- Reflection layer **does not depend on egui**, nor on `prism-engine` / `prism-render`;
+  `prism-engine` depends on it, and user projects (`game`) indirectly obtain it via engine.
+- `prism-reflect` does not depend on `serde`. The authoring format still uses JSON + serde; RTTIBin is the self-describing
+  exchange format between editors, standalone players, and external tools.
 
-## 稳定类型 id
+## Stable type id
 
-`TypeId` 不是 `std::any::TypeId`（每次编译都会变），而是：
+`TypeId` is not `std::any::TypeId` (changes every compilation), but:
 
 ```text
-fnv1a64(规范化类型名)
+fnv1a64(canonicalized type name)
 ```
 
-规范化名字默认是 `module_path!()::TypeName`。组件用
-`#[reflect(name = "prism_engine::scene::Camera")]` 固定成场景格式里的名字，
-保证 cook / 运行时 / 编辑器三方一致。
+The canonicalized name defaults to `module_path!()::TypeName`. Components use
+`#[reflect(name = "prism_engine::scene::Camera")]` to fix the name in the scene format,
+ensuring consistency among cook / runtime / editor.
 
-**改名 = 换类型**。需要保留旧数据时，在 loader 里按 `TypeTable` 的名字做迁移，
-不要复用旧的 id。
+**Renaming = changing type**. When old data needs to be retained, migrate in the loader by `TypeTable` name;
+do not reuse the old id.
 
-## 新增一个可反射组件
+## Adding a new reflectable component
 
 ```rust
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Reflect)]
@@ -50,67 +50,56 @@ fnv1a64(规范化类型名)
 pub struct MyComponent {
     pub speed: f32,
 
-    // 运行时缓存：不参与反射，反序列化时保留 Default。
+    // Runtime cache: does not participate in reflection, retains Default during deserialization.
     #[reflect(skip)]
     pub cache: u64,
 
-    // 编辑器不可写；反序列化仍可恢复（走 set_field_force）。
+    // Editor-not-writable; deserialization can still restore (via set_field_force).
     #[reflect(read_only)]
     pub id: u32,
 
-    // schema 里的字段名可以独立于 Rust 字段名。
+    // Field names in schema can be independent of Rust field names.
     #[reflect(rename = "radius")]
     pub range: f32,
 }
 ```
 
-然后：
+Then:
 
 ```rust
 registry.register_reflect::<MyComponent>();
 ```
 
-字段类型必须实现 `ReflectType`：
+Field types must implement `ReflectType`:
 
-- 原生数值 / `bool` / `String`
-- `Vec<T>` / `Option<T>`（`T: ReflectType`）
-- `#[derive(Reflect)]` 的结构体
-- `glam::Vec2/Vec3/Vec4/Quat`（内置实现，固定名 `glam::Vec3` 等）
+- Native numeric / `bool` / `String`
+- `Vec<T>` / `Option<T>` (`T: ReflectType`)
+- Structs with `#[derive(Reflect)]`
+- `glam::Vec2/Vec3/Vec4/Quat` (built-in implementations, fixed names `glam::Vec3` etc.)
 
-嵌套结构体/glam 类型需要额外注册 **类型描述**（不是组件）：
+Nested structs / glam types need to additionally register **type descriptions** (not components):
 
 ```rust
 registry.register_reflect_type::<glam::Vec3>();
 ```
 
-`register_builtin_components()` 已注册内置组件用到的 glam 类型。
+`register_builtin_components()` has already registered the glam types used by built-in components.
 
-## 语义约定
+## Semantic conventions
 
-- `Reflect: Default`。`from_object` 以 `Default` 起步：
-  - 缺失字段 → 保留默认值（旧数据加载新代码）；
-  - 未知字段 → 忽略（新数据加载旧代码时由调用方按 `TypeTable` 决定是否拒绝）；
-  - 类型 id 不一致 → `ReflectError::TypeIdMismatch`。
-- `set_field` 拒绝 `read_only` 字段；`set_field_force` 忽略该限制，供反序列化使用。
-- 一个 reflect name 只能对应一个 Rust 类型：`TypeRegistry::register` 发现同名已被
-  **另一个** Rust 类型占用时直接 panic（重复注册同一类型是幂等的）。否则先写出的数据
-  会被同名的新类型解码成字段全默认的实例，而且没有任何报错。
-- `to_object()` 的字段顺序由 `BTreeMap` 决定，编码结果确定。
-- **变换是结构字段，不是可挂载组件**：作者只写 `EntityJson::transform`，loader / cooker
-  负责把它 bake 成 `LocalTransform` + `LocalToWorld`（作者态的 `Transform`
-  不可移除，`LocalTransform` 只属于运行时）。因此 `LocalTransform` 只在 `TypeRegistry`
-  里登记类型，不在 `ComponentRegistry` 的可挂载列表里；`.scene.json` 的 `components`
-  出现它会在迁移时折回 `transform`（`json::DERIVED_COMPONENTS`），手工构造的文档
-  则被 `SceneJson::validate()` 拒绝。否则 `registry.apply` 会在 `LocalToWorld`
-  算完之后覆盖 `LocalTransform`，留下一个按旧变换得到的世界矩阵。
-- **UI 布局输出同理**：`ComputedLayout` 的 `rect` 每帧由 `prism-engine` 的
-  `ui::layout` 重写，并且组件本身由该系按需插入；作者只需要 `Node` + `Style`。
-  它也在 `json::DERIVED_COMPONENTS` 里，所以文档里的旧值会被迁移剥离，
-  不会在检查器里留下一个永远被覆盖的假字段。
+- `Reflect: Default`. `from_object` starts from `Default`:
+  - Missing field → retains default value (old data loaded with new code);
+  - Unknown field → ignored (when new data is loaded with old code, the caller decides whether to reject per `TypeTable`);
+  - Type id mismatch → `ReflectError::TypeIdMismatch`.
+- `set_field` rejects `read_only` fields; `set_field_force` ignores this restriction, for deserialization use.
+- One reflect name can only correspond to one Rust type: `TypeRegistry::register` panics directly when the same name is already occupied by **another** Rust type (re-registering the same type is idempotent). Otherwise previously written data would be decoded by the same-named new type into an instance with all-default fields, with no error at all.
+- `to_object()` field order is determined by `BTreeMap`, so the encoding result is deterministic.
+- **Transform is a structural field, not a mountable component**: the author only writes `EntityJson::transform`, and the loader / cooker bakes it into `LocalTransform` + `LocalToWorld` (the author-side `Transform` cannot be removed, `LocalTransform` belongs only to the runtime). Therefore `LocalTransform` only registers a type in `TypeRegistry`, not in `ComponentRegistry`'s mountable list; if `.scene.json`'s `components` contains it, it falls back to `transform` during migration (`json::DERIVED_COMPONENTS`), and manually constructed documents are rejected by `SceneJson::validate()`. Otherwise `registry.apply` would overwrite `LocalTransform` after `LocalToWorld` is computed, leaving a world matrix derived from the old transform.
+- **UI layout output is analogous**: `ComputedLayout`'s `rect` is rewritten every frame by `prism-engine`'s `ui::layout`, and the component itself is inserted by that system as needed; the author only needs `Node` + `Style`. It is also in `json::DERIVED_COMPONENTS`, so old values in documents are stripped during migration and will not leave a dummy field that is always overwritten in the inspector.
 
-## RTTIBin 格式（v1）
+## RTTIBin format (v1)
 
-小端。完整定义见 `crates/prism-reflect/src/rtti_bin.rs`。
+Little-endian. Full definition see `crates/prism-reflect/src/rtti_bin.rs`.
 
 ```text
 magic   "PRTB" (4)
@@ -124,84 +113,72 @@ objects u32
     name str | value
 ```
 
-- `str` = `u32` 字节长度 + UTF-8。
-- 类型表按 `TypeId` 排序；对象字段按名字排序 → 同一输入字节确定。
-- `field_type` tag：`0..=11` 原生类型，`12` = `Struct(TypeId)`，
-  `13` = `List`，`14` = `Optional`，`15` = `Array`。
-- `value` tag：`0` None、`1` Bool、`2` I64、`3` U64、`4` F64、
-  `5` Str、`6` List、`7` Object。
-- 解码有深度（64）与数量上限，损坏数据返回 `RttiError` 而不是 panic。
+- `str` = `u32` byte length + UTF-8.
+- Type table sorted by `TypeId`; object fields sorted by name → identical input bytes are determined.
+- `field_type` tag: `0..=11` native types, `12` = `Struct(TypeId)`, `13` = `List`, `14` = `Optional`, `15` = `Array`.
+- `value` tag: `0` None, `1` Bool, `2` I64, `3` U64, `4` F64, `5` Str, `6` List, `7` Object.
+- Decoding has depth (64) and count limits; corrupted data returns `RttiError` instead of panicking.
 
-### 编解码 API
+### Encode/decode API
 
 ```rust
 let bytes = rtti_bin::encode(&objects, registry.type_registry())?;
-let decoded = rtti_bin::decode(&bytes)?;        // 不需要注册任何类型
+let decoded = rtti_bin::decode(&bytes)?;        // No need to register any type
 
 for object in &decoded.objects {
-    registry.apply_object(&mut world, entity, object); // 需要注册
+    registry.apply_object(&mut world, entity, object); // Needs registration
 }
 ```
 
-编辑器可以只 `decode` + 读 `TypeTable` 来显示属性，不依赖游戏侧的组件注册表；
-player 则按 `TypeId` 查 `ComponentRegistry` 还原成 ECS 组件。
+Editors can just `decode` + read `TypeTable` to display properties, without depending on the game side's component registry;
+players look up `ComponentRegistry` by `TypeId` to restore into ECS components.
 
-## 现状与后续
+## Status and roadmap
 
-已完成：
+Completed:
 
-- 反射派生、注册表、RTTIBin 编解码与单元/集成测试。
-- `TypeDesc::schema_hash()`：与内存布局无关的 schema 指纹（类型名 + version +
-  字段名/类型/顺序），用于紧凑运行时格式的版本校验。
-- 内置组件的反射：`Active`、`Name`、`LocalTransform`、`Camera`、
-  `FlyCameraController`、`DirectionalLight`、`PointLight`、`SpotLight`、
-  `Skybox`、`EnvironmentLighting`、`GiConfig`。
-- `ComponentRegistry::apply_object` / `extract_object`，可在不知道具体类型
-  的代码里读写组件。
+- Reflection derive, registry, RTTIBin encode/decode, and unit/integration tests.
+- `TypeDesc::schema_hash()`: layout-independent schema fingerprint (type name + version + field names/types/order), used for version checking of compact runtime formats.
+- Reflection of built-in components: `Active`, `Name`, `LocalTransform`, `Camera`,
+  `FlyCameraController`, `DirectionalLight`, `PointLight`, `SpotLight`,
+  `Skybox`, `EnvironmentLighting`, `GiConfig`.
+- `ComponentRegistry::apply_object` / `extract_object`, can read/write components
+  without knowing the concrete type.
 
-### RSCN v4：运行时格式与工具格式分离
+### RSCN v4: Runtime format vs tool format separation
 
-RTTIBin 是**交换/工具格式**：完整类型表 + 字段名，供编辑器、独立 player、
-外部资产工具读取。它**不进入运行时热路径**，也不按场景重复存一份。
+RTTIBin is **exchange/tool format**: complete type table + field names, for editors,
+standalone players, and external asset tools to read. It **does not enter the runtime hot path**, nor is it stored repeatedly per scene.
 
-RSCN v4 的 runtime 负载只保留：
+RSCN v4 runtime payload only retains:
 
 ```text
-type_id u64 | schema_hash u64        // 每个场景只列用到的类型一次
-component payload                    // 按 TypeDesc 字段顺序，不含字段名/类型
+type_id u64 | schema_hash u64        // Each scene lists each used type only once
+component payload                    // By TypeDesc field order, without field names/types
 ```
 
-加载时用编译进二进制的 `TypeDesc` 重新计算 `schema_hash`：
+When loading, recalculate `schema_hash` using `TypeDesc` compiled into the binary:
 
-- 一致 → 按位置解码（仍经 `set_field`，不依赖 Rust 内存布局）；
-- 不一致 → 硬错误（立即报错，拒绝加载损坏或过时的二进制场景；迁移只发生在作者格式 `.scene.json`）；编辑器/工具可使用自描述的 RTTIBin 格式。
+- Match → decode by position (still via `set_field`, not relying on Rust memory layout);
+- Mismatch → hard error (immediately reports error, refuses to load corrupted or outdated binary scenes; migration only happens in authoring format `.scene.json`); editors/tools can use self-describing RTTIBin format.
 
-这样运行时不会带冗余 schema；工具侧仍能无编译期类型读取。`TypeId` 只哈希
-类型名，不能替代 `schema_hash`。
+This way the runtime does not carry redundant schema; the tool side can still read without compile-time types. `TypeId` only hashes the type name and cannot replace `schema_hash`.
 
-### 谁负责 cook
+### Who is responsible for cook
 
-职责按“schema / 构建期 / 运行时”拆开：
+Responsibilities split by "schema / build time / runtime":
 
-- **`prism-scene`**：组件定义、`ComponentRegistry`、`.scene.json` 作者格式、RSCN v4
-  编解码。这是 cooker 与运行时共用的唯一 schema；它不依赖 render/audio/asset IO。
-- **`prism-cooker`**：构建期编排。`SceneCooker` 解析并校验 `.scene.json`，
-  调用 `prism-scene::rscn::encode_scene` 产出 RSCN v4；同时还负责纹理/网格等
-  通用 importer/cooker、资产数据库与 `prism-cook` CLI。
-- **`prism-build-pipeline`**：批处理入口（GI bake、场景 cook、heightmap）。
-  `cook` 子命令直接调用 `SceneCooker`，不把 cooker 链带进游戏运行时。
-- **`prism-engine`**：只负责运行时解码。`SceneLoader` 用同一份 `ComponentRegistry`
-  把 RSCN 还原成 ECS 组件，并在之后注入 `MeshRef` / `MaterialRef` 等 GPU 绑定。
-- **编辑器**：通过同一个 registry 做增量 cook / PIE 前 cook。
+- **`prism-scene`**: component definitions, `ComponentRegistry`, `.scene.json` authoring format, RSCN v4 encode/decode. This is the only schema shared by cooker and runtime; it does not depend on render/audio/asset IO.
+- **`prism-cooker`**: Build-time orchestration. `SceneCooker` parses and validates `.scene.json`, calls `prism-scene::rscn::encode_scene` to produce RSCN v4; also responsible for general importer/cooker of textures/meshes etc., asset database and `prism-cook` CLI.
+- **`prism-build-pipeline`**: Batch processing entry (GI bake, scene cook, heightmap). The `cook` subcommand directly calls `SceneCooker`, without bringing the cooker chain into the game runtime.
+- **`prism-engine`**: Only responsible for runtime decoding. `SceneLoader` uses the same `ComponentRegistry` to restore RSCN into ECS components, and afterwards injects GPU bindings such as `MeshRef` / `MaterialRef`.
+- **Editor**: Does incremental cook / pre-PIE cook through the same registry.
 
-`prism-asset` 只保留运行时 `.pak`、`AssetId`/`Handle`、`ResourceManager`，
-不再包含 cooker/importer/db/CLI。`prism-cook` 负责非场景资产；
-场景资产由 `prism-build-pipeline build-scenes`（或单场景 `cook`）或编辑器调用
-`SceneCooker`，最终统一落在 `assets/scenes.pak`。
+`prism-asset` only retains runtime `.pak`, `AssetId`/`Handle`, `ResourceManager`, no longer containing cooker/importer/db/CLI. `prism-cook` handles non-scene assets; scene assets are handled by `prism-build-pipeline build-scenes` (or single-scene `cook`) or the editor calling `SceneCooker`, ultimately all landing in `assets/scenes.pak`.
 
-### serde 的定位
+### Positioning of serde
 
-组件仍 `derive(Serialize, Deserialize)` 是为了 `.scene.json` 作者格式和
-`ComponentRegistry::register_reflect_serde` 的 JSON → `Object` 转换。
-RSCN 的运行时载荷只走反射字段顺序，不写字段名；RTTIBin 才保留完整字段名与类型表。
+Components still `derive(Serialize, Deserialize)` for the `.scene.json` authoring format and
+`ComponentRegistry::register_reflect_serde`'s JSON → `Object` conversion.
+RSCN's runtime payload only goes through reflection field order, without writing field names; RTTIBin is what retains complete field names and the type table.
 

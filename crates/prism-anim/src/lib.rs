@@ -1,20 +1,21 @@
 //! # prism-anim
 //!
-//! 骨骼、动画剪辑与蒙皮求值（#560 P0-2）。
+//! Skeleton, animation clip, and skinning evaluation (#560 P0-2).
 //!
-//! 这一层只做数学，不依赖 engine / render / ECS，因此可以被引擎、编辑器和
-//! 离线工具共用：
+//! This layer only does math and does not depend on engine / render / ECS, so it can be shared
+//! by the engine, editor, and offline tools:
 //!
-//! - [`Skeleton`] —— 从 cooked 的 `SkeletonInfo` 建的层次（父必在子前），带
-//!   reference（bind）姿态与 `inverse_bind` 矩阵；
-//! - [`Clip`] / [`Track`] —— 从 `AnimClipInfo` 来的关键帧轨道；
-//! - [`Pose`] —— 每个骨骼的作者空间局部 TRS；
-//! - [`Skeleton::bone_palette`] —— `world(pose) * inverse_bind`，GPU 蒙皮与
-//!   CPU 参考实现共用；
-//! - [`blend`] —— 姿态混合与一维混合空间（动画图 / BlendStack 的地基）；
-//! - [`skinning`] —— CPU 参考蒙皮（GPU 路径的 golden 基准）。
+//! - [`Skeleton`] — hierarchy built from cooked `SkeletonInfo` (parent before child), with
+//!   reference (bind) pose and `inverse_bind` matrix;
+//! - [`Clip`] / [`Track`] — keyframe tracks from `AnimClipInfo`;
+//! - [`Pose`] — author-space local TRS of each bone;
+//! - [`Skeleton::bone_palette`] — `world(pose) * inverse_bind`, shared by GPU skinning and
+//!   the CPU reference implementation;
+//! - [`blend`] — pose blending and 1D blend space (foundation of animation graph / BlendStack);
+//! - [`skinning`] — CPU reference skinning (golden baseline for the GPU path).
 //!
-//! 约定：矩阵列主序（与 `prism-render` / 引擎一致），四元数 `xyzw`，右手 +Y up。
+//! Convention: column-major matrices (consistent with `prism-render` / engine), quaternion
+//! `xyzw`, right-handed +Y up.
 
 pub mod blend;
 pub mod blend_space2d;

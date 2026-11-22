@@ -1,18 +1,18 @@
-//! 有序组件表（#512）。
+//! Ordered component table (#512).
 //!
-//! `.scene.json` 的 `components` 是一个 JSON 对象，对象本身没有顺序语义，但
-//! **编辑器把它当序列化数据**：作者排好的顺序要能存盘、重开、进撤销，并且在
-//! 检查器里按原样渲染。`serde_json::Map` 背后是 `BTreeMap`（没有开
-//! `preserve_order`），插入顺序在第一次 Roundtrip 后就没了，所以这里用一个
-//! 手写的有序表替掉它。
+//! `components` in `.scene.json` is a JSON object, which has no order semantics itself, but
+//! **the editor treats it as serialized data**: the order the author arranged must be saved,
+//! reopened, and go through undo, and rendered as-is in the inspector. `serde_json::Map` is
+//! backed by `BTreeMap` (without `preserve_order`), so insertion order is lost after the first
+//! roundtrip; hence a hand-written ordered table replaces it.
 //!
-//! 之所以不是给 `serde_json` 打开 `preserve_order`：那会改掉全仓库每一个
-//! `Map`（包括组件字段值、manifest、`json!` 宏的输出顺序），影响面远超本需求。
-//! 存放顺序也不进入运行时：引擎 / cooker 仍然把组件表当无序集合读，RSCN 按
-//! `TypeDesc` 字段顺序编码。
+//! Not enabling `preserve_order` on `serde_json`: that would change every `Map` in the whole
+//! repo (component field values, manifest, `json!` macro output order), with impact far beyond
+//! this need. The stored order also doesn't enter the runtime: the engine / cooker still read
+//! the component table as an unordered collection, RSCN encodes per `TypeDesc` field order.
 //!
-//! 对外接口刻意贴着 `serde_json::Map` 的常用子集（`get` / `insert` / `remove` /
-//! `keys` / `iter` / `Index<&str>`），因此调用点基本不用改。
+//! The public interface deliberately mirrors the common subset of `serde_json::Map`
+//! (`get` / `insert` / `remove` / `keys` / `iter` / `Index<&str>`), so call sites barely change.
 
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::fmt;
 use std::ops::{Index, IndexMut};
 
-/// 组件名 → 组件值，**保留声明顺序**。
+/// Component name → component value, **preserving declaration order**.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ComponentMap(Vec<(String, Value)>);
 
@@ -42,7 +42,7 @@ impl ComponentMap {
         self.0.clear();
     }
 
-    /// 组件在表里的位置（检查器的渲染顺序）。
+    /// Position of the component in the table (inspector render order).
     pub fn position(&self, name: &str) -> Option<usize> {
         self.0.iter().position(|(key, _)| key == name)
     }
@@ -65,9 +65,9 @@ impl ComponentMap {
         self.position(name).is_some()
     }
 
-    /// 写入一个组件；已存在时**原地替换值**，位置不变。
+    /// Write a component; if it exists, **replace the value in place**, position unchanged.
     ///
-    /// 新组件追加到末尾，所以检查器里的顺序就是添加顺序。
+    /// New components are appended to the end, so inspector order is insertion order.
     pub fn insert(&mut self, name: String, value: Value) -> Option<Value> {
         if let Some(existing) = self.0.iter_mut().find(|(key, _)| *key == name) {
             return Some(std::mem::replace(&mut existing.1, value));
@@ -97,14 +97,14 @@ impl ComponentMap {
         self.0.iter().map(|(_, value)| value)
     }
 
-    /// 当前的组件顺序（组件名）。
+    /// Current component order (component names).
     pub fn order(&self) -> Vec<String> {
         self.0.iter().map(|(name, _)| name.clone()).collect()
     }
 
-    /// 把 `name` 沿检查器顺序移动 `delta` 格；到头不动。
+    /// Move `name` by `delta` slots along inspector order; stays put at the ends.
     ///
-    /// 返回是否真的移动过 —— 调用方用它决定要不要开一个撤销步。
+    /// Returns whether it actually moved — the caller uses it to decide whether to open an undo step.
     pub fn move_by(&mut self, name: &str, delta: isize) -> bool {
         let Some(index) = self.position(name) else {
             return false;
@@ -157,7 +157,7 @@ impl<'de> Deserialize<'de> for ComponentMap {
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-                // serde 按文件里的顺序把条目喂进来，所以这里天然还原了作者顺序。
+                // serde feeds entries in file order, so author order is naturally restored here.
                 let mut entries = Vec::with_capacity(access.size_hint().unwrap_or(0));
                 while let Some((name, value)) = access.next_entry::<String, Value>()? {
                     entries.push((name, value));
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(map.order(), vec!["z_camera", "m_renderer", "a_light"]);
         assert!(map.move_by("z_camera", 1));
         assert_eq!(map.order(), vec!["m_renderer", "z_camera", "a_light"]);
-        // 到头 / 到尾 / 不存在的名字都不动。
+        // At head / tail / nonexistent names all stay put.
         assert!(!map.move_by("m_renderer", -1));
         assert!(!map.move_by("a_light", 1));
         assert!(!map.move_by("nope", 1));

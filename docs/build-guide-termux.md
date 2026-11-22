@@ -1,65 +1,65 @@
-# Prisma 从拉取到编译（Termux / Android 实测流程）
+# Prisma from fetch to build (Termux / Android field-verified flow)
 
-适用于**没有 slangc** 的主机（Termux/Android）。桌面机流程更简单：装 slangc 后
-`bash assets/shaders/compile.sh` 再 `cargo build` 即可，跳过第 3 节的 CI 步骤。
+Applies to **hosts without slangc** (Termux / Android). Desktop flow is simpler: install slangc then
+`bash assets/shaders/compile.sh` and `cargo build`, skip section 3's CI steps.
 
-## 1. 环境准备
+## 1. Environment preparation
 
 ```bash
-pkg install rust git gh        # Termux；rust 需 ≥ 1.85（is_multiple_of 等新 API）
-gh auth login                  # GitHub CLI 认证（HTTPS token 即可）
+pkg install rust git gh        # Termux; rust ≥ 1.85 (is_multiple_of etc. new APIs)
+gh auth login                  # GitHub CLI auth (HTTPS token sufficient)
 ```
 
-git 网络坑（Termux IPv6 到 github.com 会超时，IPv4 正常）：
+git network pitfalls (Termux IPv6 to github.com times out, IPv4 normal):
 
 ```bash
 git config --global http.version HTTP/1.1
 ```
 
-可选（Android .so 目标，见第 5 节）：
+Optional (Android `.so` target, see section 5):
 
 ```bash
 rustup target add aarch64-linux-android
-pkg install cargo-ndk          # 或 cargo install cargo-ndk
+pkg install cargo-ndk          # or cargo install cargo-ndk
 ```
 
-## 2. 拉取
+## 2. Fetch
 
 ```bash
 git clone https://github.com/Excurs1ons/Prisma.git
 cd Prisma
 ```
 
-注意：`assets/shaders/*.spv` **已入库**，克隆下来就能直接 `cargo build`，不必先有
-`slangc`。只有改了 `assets/shaders/slang/*.slang` 时才需要第 3 节——重新生成 `.spv`
-并把它们一起提交。`crates/prism-render/build.rs` 会在编译前检查：能跑 `slangc` 时自己调
-`assets/shaders/compile.sh`；找不到时报**一条**可照抄的提示（恢复文件 / `compile.sh` /
-CI `spirv` artifact），而不是三十多条 `couldn't read … .spv`。
+Note: `assets/shaders/*.spv` **are committed**, clone and directly `cargo build`, no need for
+`slangc` first. Only when changing `assets/shaders/slang/*.slang` do you need section 3 — regenerate `.spv`
+and commit them together. `crates/prism-render/build.rs` checks before compilation: if `slangc` runs,
+it calls `assets/shaders/compile.sh` itself; if not found, reports **one** copyable hint (restore file /
+`compile.sh` / CI `spirv` artifact), instead of dozens of `couldn't read … .spv`.
 
-## 3. Shader 流程（无 slangc 主机）
+## 3. Shader flow (no slangc host)
 
-### 3a. 需要新的 `.spv` 时：从 CI 取产物
+### 3a. When new `.spv` needed: take products from CI
 
-> 平时用不到：`.spv` 已入库。只有改了 shader 又没装 slangc 时才走这条。
+> Normally not needed: `.spv` already committed. Only when changing shader but no slangc installed do you take this path.
 
 ```bash
-# 触发一次 CI（推送任意提交，或手动跑 workflow）
-git push   # 或 gh workflow run ci.yml
+# Trigger CI (push any commit, or manually run workflow)
+git push   # or gh workflow run ci.yml
 
-# 等 CI 的 "slang compile" job 完成（约 2-3 分钟）
-gh run list --limit 1           # 拿到 run id
-gh run watch <run_id>           # 等绿
+# Wait for CI "slang compile" job to complete (about 2-3 minutes)
+gh run list --limit 1           # get run id
+gh run watch <run_id>           # wait green
 gh run download <run_id> -n spirv -D ~/spirv
 
-# 部署到项目
+# Deploy to project
 cp ~/spirv/*.spv assets/shaders/
 cp ~/spirv/reflection/*.json assets/shaders/reflection/
 ```
 
-> `/tmp` 在 Termux 不可写，下载目录用 `~/` 下路径。
-> `spirv` artifact 每次 CI 都会上传（含 .spv + reflection JSON）。
+> `/tmp` is not writable on Termux, download directory uses `~/` path.
+> `spirv` artifact is uploaded every CI (contains .spv + reflection JSON).
 
-### 3b. 生成 Rust 绑定（bindgen）
+### 3b. Generate Rust bindings (bindgen)
 
 ```bash
 cd crates/xtask
@@ -68,73 +68,73 @@ cargo run --bin shader-bindgen -- \
 cd ../..
 ```
 
-规则：**push constant 结构体一律用生成的 `shader_bindings::模块::Struct`**，
-禁止手写。改过 `.slang` 后必须重跑此命令并提交 binding 差异
-（CI 的 binding drift job 会校验：不重跑就失败）。
+Rule: **push constant structs always use generated `shader_bindings::module::Struct`**,
+prohibit hand-writing. After changing `.slang`, must re-run this command and commit binding differences
+(CI binding drift job will verify: not re-running fails).
 
-### 3c. 改了 shader 后的更新流程
+### 3c. Update flow after shader change
 
 ```bash
-git add -A && git commit -m "..." && git push   # 触发 CI 编译新 shader
-gh run download <新run_id> -n spirv -D ~/spirv
+git add -A && git commit -m "..." && git push   # trigger CI to compile new shader
+gh run download <new_run_id> -n spirv -D ~/spirv
 cp ~/spirv/*.spv assets/shaders/
 cp ~/spirv/reflection/*.json assets/shaders/reflection/
 cd crates/xtask && cargo run --bin shader-bindgen -- ../../assets/shaders/reflection ../../crates/prism-render/src/shader_bindings && cd ../..
 cargo check --workspace
 ```
 
-## 4. 编译 / 检查 / 测试
+## 4. Build / check / test
 
 ```bash
-cargo check -p prism-render            # 快速验证渲染层
-cargo check --workspace                # 全部 crate
-cargo clippy --workspace --all-targets # 必须 0 警告（#![deny(warnings)]）
-cargo test --workspace                 # ~400 测试（含 CRT 状态机单测，无 GPU 可跑）
+cargo check -p prism-render            # quick render layer check
+cargo check --workspace                # all crates
+cargo clippy --workspace --all-targets # must be 0 warnings (#![deny(warnings)])
+cargo test --workspace                 # ~400 tests (incl. CRT state machine unit tests, no GPU)
 ```
 
-注意：
+Notes:
 
-- 根 workspace **没有可运行的 bin**。桌面入口在 `projects/template/`（`template` 二进制，
-  独立 workspace：`cd projects/template && cargo run`）；编辑器是 `editor/`（Tauri 2 + Vue 3，
-  需要 `pnpm tauri dev`）；`launcher/` 是 Android 启动壳（独立 workspace），
-  桌面 Hub 在独立仓库 [`Excurs1ons/prisma-hub`](https://github.com/Excurs1ons/prisma-hub)。
-- `projects/template/`、`projects/sponza/`、`launcher/`、`editor/`、
-  `crates/xtask` 不在根 workspace 的默认覆盖内——
-  根 workspace 构建不包含它们，需各自 `cd` 进去单独 build/clippy。
-- 首次全量构建较久（依赖多，磁盘约 2GB+）；`target/` 被外部清理后需重新构建。
-- 本地 Cargo 镜像（可选，加速）：`~/.cargo/config.toml` 用 rsproxy：
-  `sparse+https://rsproxy.cn/index/`。
+- Root workspace **has no runnable bin**. Desktop entry is in `projects/template/` (`template` binary,
+  independent workspace: `cd projects/template && cargo run`); editor is `editor/` (Tauri 2 + Vue 3,
+  needs `pnpm tauri dev`); `launcher/` is Android launcher shell (independent workspace),
+  desktop Hub in independent repo [`Excurs1ons/prisma-hub`](https://github.com/Excurs1ons/prisma-hub).
+- `projects/template/`, `projects/sponza/`, `launcher/`, `editor/`,
+  `crates/xtask` are not in root workspace default coverage —
+  root workspace build does not include them, need to `cd` into each and build/clippy separately.
+- First full build takes long (many deps, disk ~2GB+); if `target/` cleaned externally, need to rebuild.
+- Local cargo mirror (optional, speed up): `~/.cargo/config.toml` uses rsproxy:
+  `sparse+https://rsproxy.cn/index/`.
 
-## 5. Android APK（可选）
+## 5. Android APK (optional)
 
-两条路，按需选：
+Two paths, choose as needed:
 
-- **game-only（无 launcher）**：`projects/<p>/android/` + `scripts/build-android-game.sh <project>`
-  （宿主用 `scripts/new-android-game.sh <project>` 从 `templates/android-game/` 生成，#598）。
-  打出的 APK 里只有 `GameActivity` + `libtemplate_core.so` + `assets/game/`，不含 Tauri / WebView。
-  流程见 [`docs/android-apk.md`](android-apk.md)。
-- **launcher + 游戏（双 Activity）**：Tauri 的 `launcher/src-tauri/gen/android/`，
-  `scripts/build-android.ps1`（Windows）。Termux 上也可以直接把新 `.so` 替换进已有 APK
-  并用 `apksigner` 重签。
+- **game-only (no launcher)**: `projects/<p>/android/` + `scripts/build-android-game.sh <project>`
+  (host generated by `scripts/new-android-game.sh <project>` from `templates/android-game/`, #598).
+  Output APK contains only `GameActivity` + `libtemplate_core.so` + `assets/game/`, no Tauri / WebView.
+  Flow see [`docs/android-apk.md`](android-apk.md).
+- **launcher + game (dual Activity)**: Tauri's `launcher/src-tauri/gen/android/`,
+  `scripts/build-android.ps1` (Windows). On Termux can also directly replace new `.so` into existing APK
+  and re-sign with `apksigner`.
 
-> Termux / aarch64 主机额外要换 NDK 与 build-tools 里的 x86_64 原生二进制，
-> 见 [`docs/android-arm64.md`](android-arm64.md)（**x86_64 主机不需要**）。
+> Termux / aarch64 host additionally needs to replace x86_64 native binaries in NDK and build-tools,
+> see [`docs/android-arm64.md`](android-arm64.md) (**x86_64 host does not need**).
 
-只编 `.so`（不打包）时仍可用 cargo-ndk：
+Only compiling `.so` (not packaging) can still use cargo-ndk:
 
 ```bash
-# -P 必须 >= 26：libaaudio.so 从 API 26 才有，cargo-ndk 默认 21 会报 -laaudio not found。
-# 同时不要高于项目的 minSdk（当前为 31），否则会在旧设备上链接到不存在的符号。
-cargo ndk -P 26 -t arm64-v8a -o <输出目录> build
+# -P must be ≥ 26: libaaudio.so exists only from API 26, cargo-ndk default 21 reports -laaudio not found.
+# Also don't exceed project minSdk (currently 31), otherwise linking non-existent symbols on old devices.
+cargo ndk -P 26 -t arm64-v8a -o <output dir> build
 ```
 
-## 常见坑速查
+## Common pitfalls quick reference
 
-| 症状 | 原因 | 解决 |
-|---|---|---|
-| git pull/push 卡死超时 | Termux IPv6 连不上 github.com | `git config --global http.version HTTP/1.1` |
-| 编译报 include_bytes 找不到 .spv | .spv 已入库，多半被删了 | `git checkout -- assets/shaders`（或走第 3 节重新生成） |
-| CI binding drift job 红 | 改了 shader 没重跑 bindgen | 3b 重生成并提交 |
-| `mem::zeroed` 编译/运行报 invalid_value | ash::Device 含函数指针 | 测试构造用 `MaybeUninit` + `#[allow(invalid_value)]` |
-| clippy 报 manual is_multiple_of | Rust 新版 API | 用 `.is_multiple_of(n)` |
-| 修改 shader 后"什么都没变" | 跑的是旧 .spv | 重新编译/下载 shader 产物 |
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| git pull/push hangs timeout | Termux IPv6 can't reach github.com | `git config --global http.version HTTP/1.1` |
+| compile reports include_bytes can't find .spv | .spv committed, likely deleted | `git checkout -- assets/shaders` (or regenerate via section 3) |
+| CI binding drift job red | changed shader but didn't re-run bindgen | Re-generate per 3b and commit |
+| `mem::zeroed` compile/run invalid_value | ash::Device contains function pointers | Test construction uses `MaybeUninit` + `#[allow(invalid_value)]` |
+| clippy reports manual is_multiple_of | Rust new API | Use `.is_multiple_of(n)` |
+| After shader change "nothing changed" | Running old .spv | Recompile/download shader products |

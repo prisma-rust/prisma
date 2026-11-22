@@ -358,7 +358,7 @@ vkQueueSubmit(): command buffer expects VkImage ... to be in layout SHADER_READ_
 **教训**：
 - **跨 pass 数据依赖且有时序矛盾时，1 帧延迟是标准解法**。双缓冲 AO image（按 frame-in-flight），scene 读旧帧、GTAO 写新帧，互不干扰。
 - 镜头快速移动时 AO 会"拖影"一帧 -- 可接受；下一步扩展可加 temporal filter 抹平。
-- 半分辨率 GTAO + scene 用 linear sampler 上采样到全分辨率，GTAO 本身是低频信号，轻微模糊可接受。遵循 `DESIGN.md` 2.1 mobile-first（heavy pass 半分辨率，RayQuery 已有 `scale=0.5` 先例）。
+- 半分辨率 GTAO + scene 用 linear sampler 上采样到全分辨率，GTAO 本身是低频信号，轻微模糊可接受。遵循 `DESIGN.md` §2.2 高性能（heavy pass 半分辨率，RayQuery 已有 `scale=0.5` 先例）。
 
 ## 28. ForwardPass 改渲染到中间 HDR target + 拆 PostPass：比想象中改动大
 

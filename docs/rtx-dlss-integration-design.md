@@ -1,176 +1,174 @@
-# Prisma RTX 神经渲染接入设计（DLSS / 光线重构 / 帧生成）
+# Prisma RTX neural rendering integration design (DLSS / ray reconstruction / frame generation)
 
-> 目标：在**不破坏 mobile-first 与能力驱动降级**的前提下，把 NVIDIA RTX 神经渲染三件套接进 RenderGraph：
-> DLSS-SR（超分）、DLSS-RR（光线重构）、DLSS-G（帧生成）。
-> 参考实现：[NVIDIA-RTX/RTXPT](https://github.com/NVIDIA-RTX/RTXPT)（nvrhi + Donut，DX12/Vulkan 双后端）。
-> **只借它的数据契约，不借代码结构**：RTXPT 是 C++/nvrhi，本引擎是 ash 直连 Vulkan，两者在 pass 编排层没有可复用的代码。
+> Goal: under the premise of **not breaking cross-platform unity and capability-driven degradation**, integrate NVIDIA RTX neural rendering trio into RenderGraph:
+> DLSS-SR (upscaling), DLSS-RR (ray reconstruction), DLSS-G (frame generation).
+> Reference implementation: [NVIDIA-RTX/RTXPT](https://github.com/NVIDIA-RTX/RTXPT) (nvrhi + Donut, DX12 / Vulkan dual backend).
+> **Only borrow its data contract, not code structure**: RTXPT is C++ / nvrhi, this engine is ash direct Vulkan, the two have no reusable code at pass orchestration layer.
 
-本文是 **L2 子系统契约**：规定 guide buffer 的图资源句柄、格式、生产/消费关系与里程碑切分。
-实现细节以代码为准，本文与代码在同一个 PR 内同步更新。
-
----
-
-## 0. 设计约束与决策
-
-| 项 | 决策 | 理由 |
-|----|------|------|
-| 接入层 | **Streamline 2.x 动态加载**（仿 `crates/prism-render/src/anf.rs` 的 `AnfBinding` 函数指针表） | 与 `DlssMode` 枚举、`dlss` feature 开关共存；不装 SDK 的机器零影响 |
-| 平台分支 | **不写 `#[cfg(target_os)]`**，探测集中在 `crates/prism-render/src/capabilities.rs` | DESIGN.md §2.1 硬约束 |
-| 失败行为 | 缺 SDK / 非 NVIDIA / 驱动过旧 → 逐级降级到 TAA，**不静默黑屏** | 与 ANF 的 `AnfCaps::probe` 同一模式 |
-| 顺序 | **先补齐 PT 的 guide buffer，再接 SDK** | guide 是 DLSS-RR 的输入契约；没有 guide 就没有 RR，也不会有 NRD 备选 |
-| 拒绝 | 不把 NGX 原生 API 焊进 `pt_pass.rs` | Streamline 已封装 SR/RR/G + Reflex，NGX 是更低的、不可移植的一层 |
-| 拒绝 | 不做"DLSS 专用渲染路径" | 一套管线多端：DLSS 是 `PostPass` 之前的**可选替换**，不是分支 |
+This document is an **L2 subsystem contract**: defines guide buffer graph resource handles, formats, production/consumption relationships, and milestone splitting.
+Implementation details take code as authority; this document is updated synchronously with code in the same PR.
 
 ---
 
-## 1. 现状盘点（dev@18707482）
+## 0. Design constraints and decisions
 
-**已有**
-
-- `crates/prism-render/src/render_graph.rs:37-55` 固定图资源句柄表：`FORWARD_DEPTH_H`=1000、`FORWARD_NORMAL_H`=1001、`FORWARD_COLOR_H`=1002、`PT_COLOR_H`=1003、`SHADOW_MAP_H`=1004、`TAA_COLOR_H`=1005、`FORWARD_VELOCITY_H`=1006、`ANF_COLOR_H`=1007。
-- `crates/prism-render/src/render_graph.rs:251-261` 已定义 `DlssMode`（Off / Quality / Balanced / Performance / UltraPerformance / Dlaa），`RenderSettings::dlss_mode` 默认 `Off`（`render_graph.rs:307-308`）。**只有枚举，没有实现。**
-- `crates/prism-render/Cargo.toml` 已声明空 feature `dlss = []`（默认不开）。
-- `crates/prism-render/src/capabilities.rs:31` `RayTracingCaps` 已做 4 层光追探测，`capabilities.rs:165` `rt_extension_names()` 提供按需启用扩展名的范式。
-- `crates/prism-render/src/taa.rs` 完整 TAA（3×3 邻域 clamp、reproject、velocity 优先、reactive 掩码），`assets/shaders/slang/taa.slang:99-137` 是它的 shader。
-- `crates/prism-render/src/forward_pass.rs` 光栅路径已输出 velocity（`FORWARD_VELOCITY_H`），normal.w 用作 transparent/reactive 标记。
-- `crates/prism-render/src/anf.rs:42-57` `AnfCaps::probe` + `AnfBinding` 动态加载，是高通分支的现成模板（SR + FG 双能力位）。
-- `crates/prism-render/src/dummy.rs` `SolidImage` 提供 1×1 常量图，用于特性关闭时保持 descriptor layout 不变。
-
-**缺失（本设计要补的）**
-
-1. `PathTracePass` 只发布 `PT_COLOR_H`（`pt_pass.rs:1490-1492`），**不产深度与运动矢量** → PT 模式无重投影基础，TAA 在 PT 模式下被 `post.rs:962-967` 的 `!is_pt` 硬闸门挡掉。
-2. 没有 roughness 通路（只有 normal，且 `.w` 已被 reactive 占用）。
-3. PT 着色没有 path-space 分层（diffuse/specular 混合写进同一个 accumulator），出不了 RR 需要的分层 radiance 与 hit distance。
-4. 无 Streamline / NGX 接入。
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| Access layer | **Streamline 2.x dynamic loading** (modeled on `crates/prism-render/src/anf.rs` `AnfBinding` function pointer table) | Coexists with `DlssMode` enum and `dlss` feature flag; machines without SDK have zero impact |
+| Platform branches | **Do not write `#[cfg(target_os)]`**, probing concentrated in `crates/prism-render/src/capabilities.rs` | DESIGN.md §2.1 / §2.5 hard constraint |
+| Failure behavior | Missing SDK / non-NVIDIA / driver too old → degrade step by step to TAA, **no silent black screen** | Same pattern as ANF's `AnfCaps::probe` |
+| Order | **Complete PT's guide buffer first, then connect SDK** | Guide is DLSS-RR's input contract; without guide there is no RR, nor NRD fallback |
+| Reject | Do not weld NGX native API into `pt_pass.rs` | Streamline already encapsulates SR / RR / G + Reflex, NGX is lower, non-portable layer |
+| Reject | Do not make "DLSS-dedicated render path" | One pipeline for all platforms: DLSS is an **optional replacement before `PostPass`**, not a branch |
 
 ---
 
-## 2. 降级阶梯
+## 1. Status inventory (dev@18707482)
 
-能力驱动降级，从高到低，每一级都必须在缺少上一级能力时**自动**成立：
+**Already present**
+
+- `crates/prism-render/src/render_graph.rs:37-55` fixed graph resource handle table: `FORWARD_DEPTH_H`=1000, `FORWARD_NORMAL_H`=1001, `FORWARD_COLOR_H`=1002, `PT_COLOR_H`=1003, `SHADOW_MAP_H`=1004, `TAA_COLOR_H`=1005, `FORWARD_VELOCITY_H`=1006, `ANF_COLOR_H`=1007.
+- `crates/prism-render/src/render_graph.rs:251-261` already defined `DlssMode` (Off / Quality / Balanced / Performance / UltraPerformance / Dlaa), `RenderSettings::dlss_mode` default `Off` (`render_graph.rs:307-308`). **Only enum, no implementation.**
+- `crates/prism-render/Cargo.toml` already declares empty feature `dlss = []` (default off).
+- `crates/prism-render/src/capabilities.rs:31` `RayTracingCaps` already does 4-layer ray tracing probing, `capabilities.rs:165` `rt_extension_names()` provides pattern to enable extension names on demand.
+- `crates/prism-render/src/taa.rs` complete TAA (3×3 neighborhood clamp, reproject, velocity priority, reactive mask), `assets/shaders/slang/taa.slang:99-137` is its shader.
+- `crates/prism-render/src/forward_pass.rs` raster path already outputs velocity (`FORWARD_VELOCITY_H`), normal.w used as transparent / reactive marker.
+- `crates/prism-render/src/anf.rs:42-57` `AnfCaps::probe` + `AnfBinding` dynamic loading, ready template for Qualcomm branch (SR + FG dual capability bits).
+- `crates/prism-render/src/dummy.rs` `SolidImage` provides 1×1 constant image, used to keep descriptor layout unchanged when feature off.
+
+**Missing (what this design supplements)**
+
+1. `PathTracePass` only publishes `PT_COLOR_H` (`pt_pass.rs:1490-1492`), **does not produce depth and motion vectors** → PT mode has no reprojection basis, TAA blocked in PT mode by `post.rs:962-967` `!is_pt` hard gate.
+2. No roughness path (only normal, and `.w` already occupied by reactive).
+3. PT shading has no path-space layering (diffuse / specular mixed into same accumulator), cannot output layered radiance and hit distance needed by RR.
+4. No Streamline / NGX access.
+
+---
+
+## 2. Degradation ladder
+
+Capability-driven degradation, high to low, each level must **automatically** hold when missing upper-level capability:
 
 ```
-DLSS-RR（NVIDIA + Streamline + 驱动支持 RR）
-   ↓ 无 RR
-NRD（开源、免授权，AMD/Intel/NVIDIA 通用）+ DLSS-SR
-   ↓ 无 DLSS
-TAA（已有，taa.rs）
-   ↓ 关闭 TAA
-直出（PostPass 读 PT_COLOR_H / FORWARD_COLOR_H）
+DLSS-RR (NVIDIA + Streamline + driver supports RR)
+   ↓ no RR
+NRD (open source, license-free, AMD / Intel / NVIDIA universal) + DLSS-SR
+   ↓ no DLSS
+TAA (already present, taa.rs)
+   ↓ TAA off
+Direct output (PostPass reads PT_COLOR_H / FORWARD_COLOR_H)
 ```
 
-ANF 是同一阶梯在高通 Adreno 上的分支（SR + FG），不参与上述顺序，由 `AnfCaps` 单独决定。
+ANF is a branch on the same ladder on Qualcomm Adreno (SR + FG), not participating in above order, decided separately by `AnfCaps`.
 
-**关键决策**：NRD 与 DLSS-RR 共用同一套 guide buffer（§3）。因此 PR1–PR3 产出的图资源不绑定任何 NVIDIA SDK，
-在 AMD/Intel 上由 NRD 消费，在 NVIDIA 上由 DLSS-RR 消费。这是"一套管线多端"原则在本特性的落地方式。
-
----
-
-## 3. Guide buffer 契约
-
-新增句柄从 1008 起顺延（`render_graph.rs:55` 之后）。**格式一旦定下就是 ABI**：改格式等于改 shader 与所有消费者。
-
-| 句柄 | 值 | 格式 | 生产者 | 消费者 | 里程碑 |
-|------|----|------|--------|--------|--------|
-| `PT_DEPTH_H` | 1008 | `R32_SFLOAT`（NDC 深度，与 `FORWARD_DEPTH_H` 同语义） | `PathTracePass` | TAA / NRD / DLSS-RR | PR1 |
-| `PT_VELOCITY_H` | 1009 | `R32G32_SFLOAT`（屏幕空间 UV 位移，与 `FORWARD_VELOCITY_H` 同单位）。选 32 位是因为 `R16G16_SFLOAT` 不在 Vulkan 强制 `STORAGE_IMAGE` 格式表里，而本 pass 用 compute 写 | `PathTracePass` | TAA / NRD / DLSS-RR / DLSS-G | PR1 |
-| `PT_NORMAL_ROUGHNESS_H` | 1010 | `R16G16B16A16_SFLOAT`（view-space normal.xyz + roughness.w） | `PathTracePass` | NRD / DLSS-RR | PR2 |
-| `PT_DIFFUSE_H` | 1011 | `R16G16B16A16_SFLOAT`（diffuse 路径 radiance） | `PathTracePass` | NRD / DLSS-RR | PR3 |
-| `PT_SPECULAR_H` | 1012 | `R16G16B16A16_SFLOAT`（specular 路径 radiance） | `PathTracePass` | NRD / DLSS-RR | PR3 |
-| `PT_HIT_DISTANCE_H` | 1013 | `R16_SFLOAT`（主命中点距离，RR 的 `kBufferTypeDepth` 配套） | `PathTracePass` | DLSS-RR | PR3 |
-
-约定：
-
-- **不做格式版本号**。1.0 前零兼容（`docs/versioning.md`）：格式变了就改句柄格式与全部消费者，不保留双格式分支。
-- 句柄在 `PathTracePass::setup`（`pt_pass.rs:1290-1314`）里用 `create_resource_at` 声明；`execute` 内手工 barrier + `set_image_view` 发布，与 `PT_COLOR_H` 现有写法一致。
-- **resize 必须覆盖新图**：`pt_pass.rs:718-762` `resize_images` 现在只重建 accum / sampleCount / output 三组，新增图要一起加进去，否则换分辨率会持有一张旧尺寸 image。
-- 特性关闭时用 `dummy.rs` 的 1×1 常量图占位，保证 descriptor layout 不随开关变化（`dlss = []` 关闭时同样成立）。
-- **法线空间 = view space，roughness = 感知值（perceptual）**。依据：`sl_dlss_d.h:83-87` 的 `worldToCameraView` / `cameraViewToWorld` 说明 DLSS-RR 的 `kBufferTypeNormals` 期望相机空间；`ePacked` 模式（`sl_dlss_d.h:53-59`）把 roughness 放进 normal 的 w 通道，正是本表的布局。roughness 写 `SurfaceMaterial.roughness`（已 clamp 到 `0.04..1.0` 的艺术空间值），**不要**平方成 GGX 的 `alpha`：`path_integrator.slang` 只在 `ndf_ggx` 等函数内部平方。RTXPT 走的是"world normal + 真实 view 矩阵"的等价路线（`PrepareGuideBuffers.hlsl:54`），两种都合法，本仓库沿用 `scene_frag.slang:509-514` 既有的 view-space G-buffer ABI。
-- 主射线 miss 的像素写 `float4(normalize(-view_ray_dir), 0.5)`（朝向相机的一个假平面，与 RTXPT `PrepareGuideBuffers.hlsl:56` 的 `float4(-normalize(rayDir), 0.5)` 一致）：背景没有表面，但全零法线会让去噪器把它当成退化平面。
+**Key decision**: NRD and DLSS-RR share the same guide buffer (§3). Therefore graph resources produced by PR1–PR3 are not bound to any NVIDIA SDK; on AMD / Intel consumed by NRD, on NVIDIA consumed by DLSS-RR. This is the landing method of "one pipeline, multi-platform" principle in this feature.
 
 ---
 
-## 4. 管线拓扑
+## 3. Guide buffer contract
+
+New handles from 1008 onward (after `render_graph.rs:55`). **Format once defined is ABI**: changing format equals changing shader and all consumers.
+
+| Handle | Value | Format | Producer | Consumer | Milestone |
+|--------|-------|--------|----------|----------|-----------|
+| `PT_DEPTH_H` | 1008 | `R32_SFLOAT` (NDC depth, same semantics as `FORWARD_DEPTH_H`) | `PathTracePass` | TAA / NRD / DLSS-RR | PR1 |
+| `PT_VELOCITY_H` | 1009 | `R32G32_SFLOAT` (screen-space UV displacement, same unit as `FORWARD_VELOCITY_H`). Chose 32-bit because `R16G16_SFLOAT` is not in Vulkan mandatory `STORAGE_IMAGE` format table, while this pass uses compute write | `PathTracePass` | TAA / NRD / DLSS-RR / DLSS-G | PR1 |
+| `PT_NORMAL_ROUGHNESS_H` | 1010 | `R16G16B16A16_SFLOAT` (view-space normal.xyz + roughness.w) | `PathTracePass` | NRD / DLSS-RR | PR2 |
+| `PT_DIFFUSE_H` | 1011 | `R16G16B16A16_SFLOAT` (diffuse path radiance) | `PathTracePass` | NRD / DLSS-RR | PR3 |
+| `PT_SPECULAR_H` | 1012 | `R16G16B16A16_SFLOAT` (specular path radiance) | `PathTracePass` | NRD / DLSS-RR | PR3 |
+| `PT_HIT_DISTANCE_H` | 1013 | `R16_SFLOAT` (main hit distance, RR's `kBufferTypeDepth` pairing) | `PathTracePass` | DLSS-RR | PR3 |
+
+Conventions:
+
+- **No format version number**. Before 1.0 zero compatibility (`docs/versioning.md`): if format changes, change handle format and all consumers, no dual-format branches.
+- Handles declared via `create_resource_at` in `PathTracePass::setup` (`pt_pass.rs:1290-1314`); `execute` manually barriers + `set_image_view` publishes, consistent with existing `PT_COLOR_H` writing method.
+- **Resize must cover new images**: `pt_pass.rs:718-762` `resize_images` currently only rebuilds accum / sampleCount / output three groups, new images must be added together, otherwise resolution change holds old-size image.
+- When feature off, use `dummy.rs` 1×1 constant image as placeholder, ensuring descriptor layout does not change with switch (also holds when `dlss = []` off).
+- **Normal space = view space, roughness = perceptual value**. Basis: `sl_dlss_d.h:83-87` `worldToCameraView` / `cameraViewToWorld` explanation says DLSS-RR `kBufferTypeNormals` expects camera space; `ePacked` mode (`sl_dlss_d.h:53-59`) puts roughness into normal's w channel, exactly this table's layout. Roughness writes `SurfaceMaterial.roughness` (already clamped to `0.04..1.0` art-space value), **do not** square into GGX `alpha`: `path_integrator.slang` only squares inside `ndf_ggx` etc. functions. RTXPT follows equivalent route of "world normal + real view matrix" (`PrepareGuideBuffers.hlsl:54`), both valid, this repo continues existing `scene_frag.slang:509-514` view-space G-buffer ABI.
+- Main ray miss pixels write `float4(normalize(-view_ray_dir), 0.5)` (a fake plane facing camera), consistent with RTXPT `PrepareGuideBuffers.hlsl:56` `float4(-normalize(rayDir), 0.5)`: background has no surface, but all-zero normal would make denoiser treat it as degenerate plane.
+
+---
+
+## 4. Pipeline topology
 
 ```
-                   ┌─ 光栅 ─ ForwardPass ──────────────┐
-Camera ──▶ TLAS ───┤                                    ├─▶ [AA/超分/重建] ─▶ PostPass ─▶ Present
-                   └─ 光追 ─ PathTracePass ─────────────┘        │
-                              │                                   ├─ DLSS-RR  (NVIDIA + SL)
-                              ├─ PT_COLOR_H ──────────┐           ├─ NRD      (通用)
-                              ├─ PT_DEPTH_H           ├──────────▶└─ TAA      (已有)
-                              ├─ PT_VELOCITY_H        │
-                              ├─ PT_NORMAL_ROUGHNESS_H│
-                              ├─ PT_DIFFUSE/SPECULAR_H│
-                              └─ PT_HIT_DISTANCE_H ───┘
+                    ┌─ raster ─ ForwardPass ──────────────┐
+Camera ──▶ TLAS ───┤                                        ├─▶ [AA / upscale / recon] ─▶ PostPass ─▶ Present
+                    └─ ray tracing ─ PathTracePass ─────────┘        │
+                                          │                            ├─ DLSS-RR  (NVIDIA + SL)
+                                          ├─ PT_COLOR_H ──────────┐    ├─ NRD      (universal)
+                                          ├─ PT_DEPTH_H           ├────┼──────────▶└─ TAA      (already present)
+                                          ├─ PT_VELOCITY_H        │
+                                          ├─ PT_NORMAL_ROUGHNESS_H│
+                                          ├─ PT_DIFFUSE / SPECULAR_H│
+                                          └─ PT_HIT_DISTANCE_H ───┘
 ```
 
-注册位置沿用现有顺序（`graph_renderer.rs:722-743`）：`ForwardPass → GtaoPass → AnfPass → RtScheduler → PathTracePass → TaaPass → AutoExposure → PostPass`。
-`TaaPass` 排在 `PathTracePass` 之后（PR1 调整）：resolve 要消费路径追踪写出的 depth / velocity guide，注册顺序就是执行顺序。
-新增的神经渲染 pass 插在 **`PathTracePass` 之后、`AutoExposure` 之前**，即"颜色已经最终确定、还没做曝光与 tonemap"的位置——
-DLSS 要求线性 HDR 输入，`AutoExposure` 之后就不合法了。
+Registration position follows existing order (`graph_renderer.rs:722-743`): `ForwardPass → GtaoPass → AnfPass → RtScheduler → PathTracePass → TaaPass → AutoExposure → PostPass`.
+`TaaPass` scheduled after `PathTracePass` (PR1 adjustment): resolve needs to consume depth / velocity guide written by path tracing, registration order is execution order.
+New neural rendering pass inserted **after `PathTracePass`, before `AutoExposure`**, i.e. "color already finalized, before exposure and tonemap" position — DLSS requires linear HDR input, after `AutoExposure` is not legal.
 
 ---
 
-## 5. 里程碑
+## 5. Milestones
 
-每个 PR 独立可合并、可回滚，diff 控制在 ~500 行内（`AGENTS.md` 硬规则）。
+Each PR independently mergeable and rollbackable, diff controlled within ~500 lines (`AGENTS.md` hard rule).
 
-### PR1 — PT 输出深度与运动矢量（无 NVIDIA 依赖）
+### PR1 — PT outputs depth and motion vectors (no NVIDIA dependency)
 
-- 新增 `PT_DEPTH_H` / `PT_VELOCITY_H`；`pt_render.slang` 在 `ptMain` 尾部（累积写出之前）增加两个 `RWTexture2D` 写入（set 0 binding 15/16），并用新增的 set 0 binding 17（`PtGuides` UBO：`viewProj` + `prevViewProj`）在 CPU 侧提供两帧投影矩阵。之所以不用 push constant：`PtPush` 已占满 176 字节，`pt_pass_tests.rs` 与 `push_constant_sizes.rs` 都把它钉死为契约。
-- 深度：`float4 clip = mul(view_proj, float4(hit_pos, 1.0)); depth = clip.z / clip.w;`，与光栅 `D32_SFLOAT` 同语义；主射线 miss 写 1.0。
-- 运动矢量：用**去 jitter 的**当前 `view_proj` 与上一帧 `prev_view_proj` 对 `hit_pos` 求两次投影，`velocity = uv - prevUv`；miss 写 0。
-- 上一帧矩阵走 **set 0 新增 UBO（binding 17，128 字节：cur_view_proj + prev_view_proj）**，由 `PathTracePass` 每帧通过映射指针覆写（单块 host-visible buffer + CPU 侧缓存上一帧矩阵，不需要 `taa.rs` 那样的双缓冲，因为这张 UBO 只在 dispatch 内被读）。**不扩 push constant**：`PT_PUSH_RANGE_SIZE = 176`（`pt_pass.rs`）已经贴着 `max_push_constants_size` 的常见上限，再涨会撞 `context.rs` 的 176 校验。
-- 解开 `post.rs:962-967` 的 `!is_pt` 闸门，让 PT 模式也能读 `TAA_COLOR_H`。
-- 验收：Sponza PT 模式开 TAA 后静态画面无鬼影、相机运动无拖影；`cargo test -p prism-render --test taa_gpu` 通过。
+- Add `PT_DEPTH_H` / `PT_VELOCITY_H`; `pt_render.slang` adds two `RWTexture2D` writes at tail of `ptMain` (before accumulation writeout) (set 0 binding 15 / 16), and uses new set 0 binding 17 (`PtGuides` UBO: `viewProj` + `prevViewProj`) to provide two-frame projection matrices on CPU side. Not using push constant because `PtPush` already occupies 176 bytes, `pt_pass_tests.rs` and `push_constant_sizes.rs` pin it as contract.
+- Depth: `float4 clip = mul(view_proj, float4(hit_pos, 1.0)); depth = clip.z / clip.w;`, same semantics as raster `D32_SFLOAT`; main ray miss writes 1.0.
+- Motion vectors: use **jitter-removed** current `view_proj` and previous frame `prev_view_proj` to project `hit_pos` twice, `velocity = uv - prevUv`; miss writes 0.
+- Previous frame matrix uses **set 0 new UBO (binding 17, 128 bytes: cur_view_proj + prev_view_proj)**, overwritten each frame by `PathTracePass` via mapped pointer (single host-visible buffer + CPU-side caches previous frame matrix, no double buffering like `taa.rs`, because this UBO is only read inside dispatch). **Do not expand push constant**: `PT_PUSH_RANGE_SIZE = 176` (`pt_pass.rs`) already close to `max_push_constants_size` common ceiling, increasing further would hit `context.rs` 176 check.
+- Unlock `post.rs:962-967` `!is_pt` gate, allowing PT mode to also read `TAA_COLOR_H`.
+- Acceptance: Sponza PT mode with TAA enabled, static image no ghosting, camera movement no dragging; `cargo test -p prism-render --test taa_gpu` passes.
 
-### PR2 — 法线 + roughness 打包
+### PR2 — Normal + roughness packing
 
-- 新增 `PT_NORMAL_ROUGHNESS_H`；PT shader 写 view-space normal 与感知 roughness。
-- **不扩 push constant**：`PtGuides` UBO 从 128 字节扩到 192 字节，多一个 `worldToView` 矩阵。CPU 侧从 `GraphFrame::inv_view_rot`（view 旋转的转置）转置回来，因此 shader 里的写法与 `scene_frag.slang` 的 `mul((float3x3)frame.view, worldNormal)` 完全一致。
-- 注意 `FORWARD_NORMAL_H.w` 已被 TAA 当 reactive 用（`taa.slang:113`），**不能**把 roughness 塞进去——这是本 PR 另起一张图而不是复用 G-buffer 的原因。
-- **光栅侧 MRT 推迟到 PR5**：DLSS-RR 只消费路径追踪的输出，现在给 `ForwardPass` 加一路 MRT 会立刻多付全分辨率 RGBA16F 的带宽却没人读。等 PR5 真正接 RR 时再按当时的光栅 G-buffer 形态补（届时可能与 ReSTIR GI 的 `FORWARD_ALBEDO_H` 合并成一张 surface 图）。
+- Add `PT_NORMAL_ROUGHNESS_H`; PT shader writes view-space normal and perceptual roughness.
+- **Do not expand push constant**: `PtGuides` UBO expands from 128 bytes to 192 bytes, adding `worldToView` matrix. CPU side converts from `GraphFrame::inv_view_rot` (transpose of view rotation), so shader writing is fully consistent with `scene_frag.slang`'s `mul((float3x3)frame.view, worldNormal)`.
+- Note `FORWARD_NORMAL_H.w` already used by TAA as reactive (`taa.slang:113`), **cannot** stuff roughness into it — this is why this PR adds a new image rather than reusing G-buffer.
+- **Raster side MRT deferred to PR5**: DLSS-RR only consumes path tracing output, now adding an MRT to `ForwardPass` would immediately pay full-resolution RGBA16F bandwidth with no reader. Wait until PR5 truly connects RR then supplement based on raster G-buffer shape at that time (may merge with ReSTIR GI's `FORWARD_ALBEDO_H` into one surface image).
 
-### PR3 — 路径空间分层
+### PR3 — Path-space layering
 
-- `path_integrator.slang` 按首次 bounce 的 lobe 把 `throughput * radiance` 累到 diffuse 或 specular 两个 accumulator（`SurfaceMaterial` 已有 metal-roughness，判断用现有的 BRDF 选择分支）。
-- 新增 `PT_DIFFUSE_H` / `PT_SPECULAR_H` / `PT_HIT_DISTANCE_H`；`PT_COLOR_H` 仍写总和（Post 直出路径不变）。
-- 分层会翻倍 accumulator 带宽，移动端需在 `capabilities.rs` 之外用 `RenderSettings` 开关控制（默认跟随 `dlss_mode != Off || nrd`）。
+- `path_integrator.slang` accumulates `throughput * radiance` into diffuse or specular two accumulators by first-bounce lobe (judgment uses existing BRDF branch since `SurfaceMaterial` already has metal-roughness).
+- Add `PT_DIFFUSE_H` / `PT_SPECULAR_H` / `PT_HIT_DISTANCE_H`; `PT_COLOR_H` still writes total (Post direct output path unchanged).
+- Layering doubles accumulator bandwidth, mobile needs `RenderSettings` switch outside `capabilities.rs` (default follows `dlss_mode != Off || nrd`).
 
-### PR4 — Streamline 动态加载层（先只接 DLSS-SR）
+### PR4 — Streamline dynamic loading layer (first connect DLSS-SR only)
 
-- 新建 `crates/prism-render/src/dlss.rs`，形状照 `anf.rs`：`DlssCaps { available, sr, rr, fg }` + `probe(properties, driver_version)` + `DlssBinding` 函数指针表，加载失败返回 `None` 而不是 panic。
-- **Vulkan 特有难点**：Streamline 通过 interposer 包装 `vkCreateDevice` / `vkCreateSwapchainKHR` / `vkQueuePresentKHR`。ash 是直接 `vkGetInstanceProcAddr`，所以要在 `context.rs` 创建 instance 后**把 GIPA 换成 SL 的**，并且 swapchain 与 present（`swapchain.rs` 的 `Swapchain::present`）必须走 interposer 返回的函数指针。这是 PR4 的全部风险所在，先做 DLSS-SR 验证通路，再扩 RR/G。
-- 每帧 `sl::setTagForFrame`：color / depth / velocity / jitter / `inv_view_proj` / `prev_view_proj` / `sl::kBufferTypeScalingOutputColor`。
-- `DlssMode` 映射到 SL 的 quality 枚举；`Dlaa` = 输出尺寸与输入相同。
+- New `crates/prism-render/src/dlss.rs`, shape following `anf.rs`: `DlssCaps { available, sr, rr, fg }` + `probe(properties, driver_version)` + `DlssBinding` function pointer table, load failure returns `None` instead of panic.
+- **Vulkan-specific difficulty**: Streamline wraps `vkCreateDevice` / `vkCreateSwapchainKHR` / `vkQueuePresentKHR` via interposer. ash uses direct `vkGetInstanceProcAddr`, so after `context.rs` creates instance **replace GIPA with SL's**, and swapchain + present (`swapchain.rs`'s `Swapchain::present`) must walk interposer-returned function pointers. This is PR4's entire risk; first verify DLSS-SR path, then expand RR / G.
+- Each frame `sl::setTagForFrame`: color / depth / velocity / jitter / `inv_view_proj` / `prev_view_proj` / `sl::kBufferTypeScalingOutputColor`.
+- `DlssMode` maps to SL quality enum; `Dlaa` = output size same as input.
 
-### PR5 — DLSS-RR（光线重构）
+### PR5 — DLSS-RR (ray reconstruction)
 
-- 五路信号按 RTXPT 的契约接：`kBufferTypeScalingInputColor`、`kBufferTypeAlbedo`（diffuse）、`kBufferTypeSpecularAlbedo`、`kBufferTypeNormals` + `DLSSDNormalRoughnessMode::ePacked`、`kBufferTypeSpecularMotionVectors`，外加 `kBufferTypeTransparencyLayer` 与 `kBufferTypeDepth`。
-- **打包模式的确切通道顺序必须在动手前对照 `sl_dlss_d.h` 的 `ePacked` 注释核实**，不要凭记忆写；核实结果回填到本文 §3 表格。
-- RR 输入深度/运动矢量要用**副本**：RR 会改写它们的尺度（RTXPT 的 `EnsureRRDepthAndMotionVectors()` 就是为此复制一份），不能直接喂 `PT_DEPTH_H`。
+- Five signals connected per RTXPT contract: `kBufferTypeScalingInputColor`, `kBufferTypeAlbedo` (diffuse), `kBufferTypeSpecularAlbedo`, `kBufferTypeNormals` + `DLSSDNormalRoughnessMode::ePacked`, `kBufferTypeSpecularMotionVectors`, plus `kBufferTypeTransparencyLayer` and `kBufferTypeDepth`.
+- **Exact channel order of packing mode must be verified against `sl_dlss_d.h` `ePacked` comments before starting**, do not write from memory; verification results backfilled to this document §3 table.
+- RR input depth / motion vectors need **copies**: RR modifies their scale (RTXPT's `EnsureRRDepthAndMotionVectors()` is exactly for this copy), cannot directly feed `PT_DEPTH_H`.
 
-### PR6 — DLSS-G（帧生成）
+### PR6 — DLSS-G (frame generation)
 
-- 需要 present 支持"一次提交输出 N 帧"：`swapchain.rs` 的 `Swapchain::present` 目前是单次 `queue_present`，要改成由 SL 驱动并读回 `numFramesActuallyPresented`。
-- 需要 `inputsProcessingCompletionFence` 与 UI/色调分离层（HUD 必须在插值帧上正确合成）。
-- 依赖 PR4/PR5 稳定后再做；FG 的失败模式（画面撕裂/卡顿）比 RR 严重得多。
-
----
-
-## 6. 验证
-
-- 单元：`pt_pass_tests.rs` 的 push/push-constant 契约测试必须继续通过（PR1 不动 push 就是为了这个）。
-- GPU：`cargo test -p prism-render --test taa_gpu`（PR1）、`golden_frame`（PT 颜色不变）。
-- 手工：Sponza `SPONZA_RENDER_MODE` 三态（raster / pt_off / 默认 PathTrace+SHaRC）各跑一遍，DLSS 各级别与 Off 逐一切换，确认降级不黑屏。
-- 面板：`projects/sponza/src/tuning_ui.rs` 已有一行 `DLSS Mode` 循环（Off/Quality/Balanced/Performance/UltraPerformance/Dlaa），PR4 之后这一行才真正生效。
+- Needs present support "submit once output N frames": `swapchain.rs`'s `Swapchain::present` currently single `queue_present`, needs to be changed to SL-driven and read back `numFramesActuallyPresented`.
+- Needs `inputsProcessingCompletionFence` and UI / tone mapping separation layer (HUD must be correctly composited on interpolated frames).
+- Depends on PR4 / PR5 stability; FG failure mode (screen tearing / stuttering) is much more severe than RR.
 
 ---
 
-## 7. 明确不做
+## 6. Verification
 
-- 不做 DLSS 的 DX12 后端（本引擎只有 Vulkan）。
-- 不做 RTXPT 的 `nvrhi` / Donut 移植（框架层不兼容，收益为零）。
-- 不做"检测到 NVIDIA 就强制开"的隐式行为：`dlss_mode` 默认 `Off`，必须显式打开。
-- 不保留旧 guide 格式的兼容分支（1.0 前零兼容）。
+- Unit: `pt_pass_tests.rs` push / push-constant contract tests must continue passing (PR1 doesn't touch push for this reason).
+- GPU: `cargo test -p prism-render --test taa_gpu` (PR1), `golden_frame` (PT color unchanged).
+- Manual: Sponza `SPONZA_RENDER_MODE` three states (raster / pt_off / default PathTrace + SHaRC) each run one pass, DLSS each level and Off switched one by one, confirm degradation does not black screen.
+- Panel: `projects/sponza/src/tuning_ui.rs` already has a `DLSS Mode` cycle (Off / Quality / Balanced / Performance / UltraPerformance / Dlaa), this line only takes effect after PR4.
+
+---
+
+## 7. Explicitly not doing
+
+- No DLSS DX12 backend (this engine only has Vulkan).
+- No RTXPT `nvrhi` / Donut port (framework layer incompatible, zero benefit).
+- No implicit behavior of "force on when NVIDIA detected": `dlss_mode` default `Off`, must be explicitly turned on.
+- No compatibility branch retaining old guide format (zero compatibility before 1.0).

@@ -1,8 +1,8 @@
-// rt_preview.slang — 消费端示例：全屏采样 RenderTexture（bindless）。
+// rt_preview.slang — consumer example: fullscreen sampling of RenderTexture (bindless).
 //
-// 展示引擎式 RT 消费：RenderTexture 在创建时注册进 bindless SRV 表，
-// 拿到一个 TextureHandle；本 shader 用 push constant 接收该句柄，
-// 从 bindlessSrvs[] 直接采样 —— 与采样任何普通纹理无差别。
+// Demonstrates engine-style RT consumption: RenderTexture is registered into the bindless SRV table
+// at creation time, obtaining a TextureHandle; this shader receives the handle via push constant,
+// and samples directly from bindlessSrvs[] — no different from sampling any ordinary texture.
 
 // ---- set 1, binding 0 - bindless SAMPLER array (4 modes) ------------
 SamplerState globalSamplers[];
@@ -12,7 +12,7 @@ Texture2D bindlessSrvs[];
 
 struct RtPreviewPush
 {
-    uint textureHandle; // RenderTexture 的 bindless 槽位
+    uint textureHandle; // RenderTexture's bindless slot
 };
 [[vk::push_constant]] RtPreviewPush pc;
 
@@ -35,6 +35,6 @@ VsOut vertexMain(uint vid : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(VsOut i) : SV_Target
 {
-    // 线性采样 + wrap（SamplerType::LinearWrap = 槽 0），RT 内容放大到全屏。
+    // Linear sampling + wrap (SamplerType::LinearWrap = slot 0), RT content scaled to fullscreen.
     return bindlessSrvs[pc.textureHandle].SampleLevel(globalSamplers[0], i.uv, 0.0);
 }

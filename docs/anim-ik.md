@@ -1,94 +1,96 @@
-# 动画 IK（`prism-anim-ik`）
+# Animation IK (`prism-anim-ik`)
 
-`crates/prism-anim-ik` 是 #560 P4 的数学底座：解析式 IK，不依赖 engine / render /
-ECS，引擎、编辑器预览和离线工具共用同一份实现。当前只有两骨 IK；Foot Placement、
-LegIK、PBIK、IK Rig / Retargeter 是后续切片，落地前不要在其他地方另写一份。
+`crates/prism-anim-ik` is the math foundation for #560 P4: analytical IK, not depending on engine / render /
+ECS, shared by engine, editor preview, and offline tools. Currently only two-bone IK; Foot Placement,
+LegIK, PBIK, IK Rig / Retargeter are later slices, do not write another copy elsewhere before landing.
 
-## 约定
+## Conventions
 
-- 与 `prism-anim` 一致：右手系、+Y up、相机 −Z；四元数 `xyzw`（`glam::Quat`），
-  矩阵列主序。
-- 求解在**组件空间**进行 —— 也就是 `Skeleton::world_matrices(pose)` 输出的空间，
-  不是世界空间。目标点和 pole 方向都要先换到同一空间；实体自身的
-  `LocalToWorld` 不在这一层参与运算。
-- 权重 `weight` 是 `0..=1` 的混合系数，`slerp` 与位置 `lerp` 各按它插值；
-  `0` 表示不求解（返回 `None`，姿态不变）。
+- Consistent with `prism-anim`: right-handed, +Y up, camera −Z; quaternion `xyzw` (`glam::Quat`), column-major matrices.
+- Solving in **component space** — i.e. the space output by `Skeleton::world_matrices(pose)`, not world space.
+  Target points and pole directions must first be converted to the same space; the entity's own `LocalToWorld`
+  does not participate at this layer.
+- Weight `weight` is a `0..=1` blending coefficient; `slerp` and position `lerp` each interpolate by it;
+  `0` means no solve (return `None`, pose unchanged).
 
-## 两骨 IK
+## Two-bone IK
 
 ```rust
 use prism_anim_ik::{apply_two_bone_ik, solve_two_bone, TwoBoneChain};
 
-// 纯数学：给出三节骨骼的位置、目标与 pole，拿回两级世界空间增量旋转。
+// Pure math: given three-bone positions, target, and pole, get two-level world-space incremental rotations.
 let solution = solve_two_bone(hip, knee, foot, target, pole, 1.0);
 
-// 接骨架：把增量转成两条骨骼的 local 旋转写回 Pose。
+// Attach to skeleton: convert increments to local rotations of two bones and write back to Pose.
 apply_two_bone_ik(&skeleton, &mut pose, TwoBoneChain::new(0, 1, 2), target, pole, 1.0);
 ```
 
-- 中间关节的位置用余弦定理求出，弯曲平面由 `pole` 投影到「指向目标」的垂直面上
-  决定；`pole` 与目标方向平行时退回与目标方向最不对齐的坐标轴，保证结果稳定。
-- 够不到时把链路拉直，太近时按 `|a − b|` 折叠；两种情况都置
-  `TwoBoneSolution::clamped`，`reach` 是实际使用的距离。
-- 非有限输入、零长度骨骼、目标与根关节重合、骨骼下标重复或越界都返回 `None`，
-  不会写出 NaN 姿态。
-- `TwoBoneSolution` 的两个旋转是**世界空间增量**（`new = delta * old`）；
-  `apply_two_bone_ik` 用父级世界旋转把它们换算成 local 增量，返回的
-  `middle_position` / `end_position` 是应用后姿态真正到达的位置（`slerp` 后的
-  位置不等于对位置做 `lerp`）。
+- Middle joint position computed by law of cosines; bending plane determined by projecting `pole` onto the
+  plane perpendicular to "toward target" direction; when `pole` is parallel to target direction, fall back to
+  the coordinate axis least aligned with target direction, ensuring stable result.
+- When unreachable, straighten the chain; when too close, fold by `|a − b|`; both cases set
+  `TwoBoneSolution::clamped`, `reach` is the actual distance used.
+- Non-finite input, zero-length bones, target coincident with root joint, duplicate or out-of-range bone indices
+  all return `None`, no NaN pose written.
+- The two rotations in `TwoBoneSolution` are **world-space increments** (`new = delta * old`);
+  `apply_two_bone_ik` converts them to local increments using parent world rotation, returned
+  `middle_position` / `end_position` are positions actually reached after applying the pose
+  (position after `slerp` is not `lerp` of positions).
 
-## 测试
+## Tests
 
-`crates/prism-anim-ik/src/two_bone_tests.rs` 覆盖：命中目标、超出范围拉直、
-过近折叠、pole 决定弯曲方向、pole 平行回退、权重混合、各类退化输入、
-写回 `Pose` 后的实际位置、权重 0 不动姿态、非法骨骼下标。
+`crates/prism-anim-ik/src/two_bone_tests.rs` covers: hit target, out of range straighten,
+too close fold, pole determines bend direction, pole parallel fallback, weight blending,
+various degenerate inputs, actual position after writing back to `Pose`, weight 0 leaves pose unchanged,
+illegal bone indices.
 
 ## Foot Placement
 
-`FootPlacement`（`src/foot.rs`）按帧把两只脚贴到地面，再让骨盆跟着降下来：
+`FootPlacement` (`src/foot.rs`) plants both feet to the ground per frame, then lets the pelvis follow down:
 
 ```rust
 let report = placement.update(
     &skeleton, &mut pose,
-    0,                                  // 骨盆关节
+    0,                                  // hips joint
     [left_chain, right_chain],          // thigh -> knee -> ankle
     &settings, &ground_queries, dt,
 );
 ```
 
-- 地面由调用方注入：实现 `GroundQuery::cast(origin, direction, max_distance)` 即可。
-  引擎里接物理射线（#522），测试里是平面或台阶。
-- 每只脚从踝上方 `probe_height` 向下探测：打不到地面、地面高出 `max_step_up`
-  （墙）或低于 `max_step_down`（洞）都视为没地面，权重按 `blend_seconds` 衰减到 0，
-  脚留在最后一次的目标位置。
-- **骨盆只会下降**：以未叠加修正的骨盆为基准，算出最吃紧那条腿超出的距离，
-  向下移动并夹在 `pelvis_min..=0`。往上抬只会让已经着地的脚更够不着，抬脚由
-  两骨 IK 自己弯膝解决。修正量按「已烘焙进姿态的偏移」记差，重复调用不会累积。
-- 两条腿的 `upper` 必须都挂在骨盆关节下（`parent == hips`）；骨盆本身不被旋转，否则
-  两条腿会各自把同一根骨骼转一次。
-- `weight = 0` 直接清空状态并保持姿态不变；非法链 / 姿态长度不符返回
-  `applied = false`，不写任何骨骼。
+- Ground injected by caller: implement `GroundQuery::cast(origin, direction, max_distance)`.
+  Engine connects physics raycast (#522); tests use plane or stairs.
+- Each foot probes downward from `probe_height` above ankle: not hitting ground, ground higher than `max_step_up`
+  (wall), or lower than `max_step_down` (hole) all count as no ground, weight decays to 0 by `blend_seconds`,
+  foot stays at last target position.
+- **Pelvis only goes down**: based on un-corrected pelvis, compute the most exceeded distance of the tightest leg,
+  move down and clamp to `pelvis_min..=0`. Lifting up only makes already-planted feet even less reachable; lifting
+  foot is solved by two-bone IK bending knee. Correction amount is recorded as "already baked into pose offset",
+  repeated calls do not accumulate.
+- Both legs' `upper` must be under hips joint (`parent == hips`); pelvis itself is not rotated, otherwise
+  both legs would rotate the same bone each.
+- `weight = 0` directly clears state and keeps pose unchanged; illegal chain / mismatched pose length returns
+  `applied = false`, writes no bones.
 
-## 引擎侧的地面查询
+## Engine-side ground query
 
-`prism_anim_ik` 自己不认识 ECS 也不认识渲染，地面查询由调用方实现。引擎里现成的是
-`prism_engine::anim_ground::SceneGroundQuery`：
+`prism_anim_ik` itself knows neither ECS nor render; ground query is implemented by caller. Engine already has
+`prism_engine::anim_ground::SceneGroundQuery`:
 
 ```rust
 use prism_engine::anim_ground::SceneGroundQuery;
 
-// 只看 ground 层（1），并跳过角色自己的碰撞体。
+// Only ground layer (1), and skip character's own colliders.
 let ground = SceneGroundQuery::new(world, 1).excluding(character);
 ```
 
-- 底层走 `physics::raycast_excluding`（与 `raycast` 同一套盒 / 球 / 胶囊求交，纯 ECS 几何），
-  所以不需要 `prism-app/physics` feature，也不依赖 rapier 的步进顺序。
-- 触发器不算地面：`is_sensor` 体积无法承重。
-- 探针从角色胶囊内部出发，必须 `excluding(character)`，否则最近命中永远是角色自己。
+- Underlying uses `physics::raycast_excluding` (same box / sphere / capsule intersection as `raycast`, pure ECS geometry),
+  so no `prism-app/physics` feature needed, no dependency on rapier stepping order.
+- Triggers don't count as ground: `is_sensor` volumes cannot bear weight.
+- Probe starts from inside character's capsule, must `excluding(character)`, otherwise nearest hit is always character itself.
 
-## 引擎接线（`FootIk` 组件）
+## Engine wiring (`FootIk` component)
 
-场景实体上加 `FootIk`（`prism_engine::scene::FootIk`）就接上了，关节名按骨架解析：
+Add `FootIk` (`prism_engine::scene::FootIk`) on scene entity, joint names resolved by skeleton:
 
 ```json
 "foot_ik": {
@@ -99,13 +101,13 @@ let ground = SceneGroundQuery::new(world, 1).excluding(character);
 }
 ```
 
-- `Animator` 求值出姿态之后、算骨骼调色板之前调用（动画图分支与普通剪辑 / 状态机 /
-  混合空间分支都有；动画 LOD 冻结的远处实体**不跑**，避免和节流打架）。
-- 姿态是骨架根空间，碰撞体是世界空间：`prism_engine::scene::systems::foot_ik` 里的
-  `ModelGroundQuery` 用实体 `LocalToWorld` 把探针换算到世界、命中再换算回来。
-  模型缩放按均匀缩放处理（探测距离按方向长度缩放）。
-- `FootIk` 缺省 `ground_layer = 1`，所以地面碰撞体要放在第 1 层；`0` 等于什么都不探。
-- 任何关节名解析失败、`enabled = false`、`weight = 0` 或姿态长度不等于骨架关节数时，
-  **姿态原样返回**，不会半途写骨骼。
-- 平滑状态（着地点、已烘焙的骨盆偏移）是引擎自己的 `FootIkState`，不进作者文档、不进
-  RSCN，和 `AnimatorPlayhead` 一样由系统写回。
+- Called after `Animator` evaluates pose, before computing bone palette (both anim graph branch and regular clip /
+  state machine / blend space branches; animated LOD-frozen distant entities **do not run**, avoid conflicting with throttling).
+- Pose is skeleton root space, collider is world space: `ModelGroundQuery` in
+  `prism_engine::scene::systems::foot_ik` converts probe to world via entity `LocalToWorld`, hit converted back.
+  Model scale treated as uniform scale (probe distance scaled by directional length).
+- `FootIk` defaults `ground_layer = 1`, so ground colliders must be on layer 1; `0` means probe nothing.
+- Any joint name resolution failure, `enabled = false`, `weight = 0`, or pose length not equal to skeleton joint count,
+  **pose is returned as-is**, no mid-way bone writing.
+- Smooth state (plant position, baked pelvis offset) is engine's own `FootIkState`, not in authoring document, not in
+  RSCN, written back by system like `AnimatorPlayhead`.

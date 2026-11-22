@@ -1,70 +1,70 @@
-# Prisma 移动端光追 + 实时 GI 模块化管线设计
+# Prisma mobile ray tracing + real-time GI modular pipeline design
 
-> 目标:移动端优先、画面质量优先、稳定 60fps。模块化渲染特性(光追可开关、GI 可切换)。
-> 移植参考:TruvisRenderer 的 SHARC world-space radiance cache(v1.6, NVIDIA RTXGI 移植)与 RayQuery inline 用法。
-> 本文件是**架构蓝图**,实现前需确认。所有 shader ABI 遵循 Truvis `.agents/rules/shader-abi-layout.md` 精神(显式 padding、跨端布局验证)。
-
----
-
-## 0. 设计约束与决策
-
-| 项 | 决策 |
-|----|------|
-| 管线架构 | **全新 RenderGraph**(模块化 pass 节点),抛弃现有 `renderer.rs` 单体(995 行) |
-| 光追模型 | **RayQuery inline**(不是 RT pipeline)——移动端 RT pipeline 太重,inline query 只做 visibility,性价比最高 |
-| 光追范围(首版) | **阴影 + 反射** 两项都做(用户决策) |
-| GI 方案 | **直接移植 SHARC**(world-space hash-grid voxel radiance cache)——最现代、Truvis 已验证 |
-| 基础层 | 永远跑的 **raster GBuffer → deferred/forward+ PBR**,质量优先 |
-| 质量 vs 性能 | 质量优先,目标稳定 60fps(非极限性能) |
-| TBDR 友好 | transient attachment + subpass 内联(见 §6) |
-| Bindless | descriptor-indexing 运行时数组(现有 `bindless.rs` 升级为分离 SRV + 固定 sampler 数组,见 §5) |
+> Goal: mobile-first, visual quality first, stable 60fps. Modular render features (RT toggleable, GI switchable).
+> Porting reference: TruvisRenderer's SHARC world-space radiance cache (v1.6, NVIDIA RTXGI port) and RayQuery inline usage.
+> This file is an **architecture blueprint**, confirm before implementation. All shader ABIs follow Truvis `.agents/rules/shader-abi-layout.md` spirit (explicit padding, cross-platform layout verification).
 
 ---
 
-## 1. 模块化管线拓扑
+## 0. Design constraints and decisions
+
+| Item | Decision |
+|------|----------|
+| Pipeline architecture | **New RenderGraph** (modular pass nodes), abandon existing monolithic `renderer.rs` (995 lines) |
+| Ray tracing model | **RayQuery inline** (not RT pipeline) — mobile RT pipeline too heavy, inline query only does visibility, best cost/performance |
+| Ray tracing scope (v1) | **Shadows + reflections** both (user decision) |
+| GI scheme | **Directly port SHARC** (world-space hash-grid voxel radiance cache) — most modern, Truvis validated |
+| Base layer | Always-running **raster GBuffer → deferred/forward+ PBR**, quality first |
+| Quality vs performance | Quality first, target stable 60fps (not extreme performance) |
+| TBDR-friendly | transient attachment + subpass inline (see §6) |
+| Bindless | descriptor-indexing runtime array (existing `bindless.rs` upgraded to separate SRV + fixed sampler array, see §5) |
+
+---
+
+## 1. Modular pipeline topology
 
 ```
-                         ┌─ [光追:关] ── 走 raster PBR 直接光照 + IBL
-   Scene ──▶ GBuffer ────┤
-   (raster)              ├─ [光追:开] ── RayQuery pass:
-                         │                  · 软阴影 (visibility query vs TLAS)
-                         │                  · 反射   (query vs TLAS, 采样命中材质)
-                         │
-                         └─ [GI 模式] ── SHARC cache:
-                                       · Off     → IBL 仅环境
-                                       · Update  → 稀疏 path 写缓存(画面=Off)
-                                       · On      → 下一步扩展 bounce 查缓存
+                          ┌─ [RT: off] ── walk raster PBR direct lighting + IBL
+    Scene ──▶ GBuffer ────┤
+    (raster)              ├─ [RT: on] ── RayQuery pass:
+                          │                  · Soft shadows (visibility query vs TLAS)
+                          │                  · Reflections (query vs TLAS, sample hit material)
+                          │
+                          └─ [GI mode] ── SHARC cache:
+                                        · Off     → IBL environment only
+                                        · Update  → sparse path writes cache (screen = Off)
+                                        · On      → next step bounce cache query
 ```
 
-**RenderGraph 节点(模块化,可插拔):**
-1. `GbufferPass`(raster,基础)—— 永远运行
-2. `RayQueryPass`(compute,raster GBuffer 输入)—— 光追开关控制,输出 shadow/reflection 贡献
-3. `SharcUpdatePass`(compute,RayQuery 驱动)—— GI=Update/On 时运行
-4. `SharcResolvePass`(compute,1D dispatch)—— 跨帧合并/淘汰
-5. `LightingPass`(raster/compute)—— 合成 direct(±RT) + IBL + SHARC GI → HDR
-6. `PostPass`(tone map / SDR)—— 输出
+**RenderGraph nodes (modular, pluggable):**
+1. `GbufferPass` (raster, base) — always runs
+2. `RayQueryPass` (compute, raster GBuffer input) — RT switch controlled, outputs shadow/reflection contribution
+3. `SharcUpdatePass` (compute, RayQuery driven) — runs when GI=Update/On
+4. `SharcResolvePass` (compute, 1D dispatch) — cross-frame merge / eviction
+5. `LightingPass` (raster/compute) — composite direct (±RT) + IBL + SHARC GI → HDR
+6. `PostPass` (tone map / SDR) — output
 
-每个 pass 是 `RenderPassNode` trait 实现,有 `inputs/outputs/execute()`。开关 = 节点是否加入图。
+Each pass is a `RenderPassNode` trait implementation with `inputs/outputs/execute()`. Switch = whether node is added to graph.
 
 ---
 
-## 2. GBuffer 布局(移植 Truvis,Android 格式适配)
+## 2. GBuffer layout (ported from Truvis, Android format adaptation)
 
-| Attachment | 格式 | 内容 |
-|-----------|------|------|
+| Attachment | Format | Content |
+|-----------|--------|---------|
 | GBufferA | `R16G16B16A16_SFLOAT` | world normal.xyz + roughness |
 | GBufferB | `R16G16B16A16_SFLOAT` | world pos.xyz + linear depth |
 | GBufferC | `R8G8B8A8_UNORM` | albedo.rgb + metallic |
 
-> 移动端注意:`RGBA32F` GBuffer 在 TBDR tile 内存压力大但可读;若带宽吃紧,GBufferA/B 可降为 `R10G10B10A2` + 法线 octa-pack(质量优先先保 SFLOAT)。
+> Mobile note: `RGBA32F` GBuffer has high TBDR tile memory pressure but is readable; if bandwidth tight, GBufferA/B can downgrade to `R10G10B10A2` + normal octa-pack (quality first, keep SFLOAT first).
 
 ---
 
-## 3. RayQuery 光追(移动端 hybrid)
+## 3. RayQuery ray tracing (mobile hybrid)
 
-**只做 inline RayQuery,不建 RT pipeline。**
+**Only inline RayQuery, no RT pipeline.**
 
-### 3.1 阴影
+### 3.1 Shadows
 ```hlsl
 RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> rq;
 rq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xff, origin, t_min, dir, t_max);
@@ -72,105 +72,105 @@ rq.Proceed();
 bool shadowed = rq.CommittedStatus() == STATUS_CANDIDATE_NON_OPAQUE
              || rq.CommittedStatus() == STATUS_COMMITTED_TRIANGLE_HIT;
 ```
-- 每光源一次 query(或 clustered light 合批)
-- α-test 材质:需 `RAY_FLAG_FORCE_OPAQUE` 或 non-opaque candidate(参考 Truvis `material_access.slangi` 的 alpha mask 处理)
+- One query per light (or clustered light batching)
+- α-test materials: need `RAY_FLAG_FORCE_OPAQUE` or non-opaque candidate (refer to Truvis `material_access.slangi` alpha mask handling)
 
-### 3.2 反射
-- 对粗糙表面:1 次 query 取命中点,采样命中材质 albedo/emissive + 递归查 SHARC GI
-- 镜面:可做 1-bounce query,低粗糙度时查 SHARC 而非递归 ray
-- 质量优先:反射可每像素 1 query(60fps 预算)
+### 3.2 Reflections
+- For rough surfaces: 1 query takes hit point, samples hit material albedo/emissive + recursive SHARC GI query
+- Mirror: can do 1-bounce query, query SHARC instead of recursive ray at low roughness
+- Quality first: reflections can do 1 query per pixel (60fps budget)
 
 ### 3.3 TLAS
-- 移动端 `VK_KHR_acceleration_structure`:每帧从 PrismaECS mesh 组件构建/更新 BLAS+TLAS
-- 实例 mask 区分 opaque / alpha-mask(匹配 Truvis `FORCE_OPAQUE` 约定)
+- Mobile `VK_KHR_acceleration_structure`: build/update BLAS+TLAS each frame from PrismaECS mesh components
+- Instance mask distinguishes opaque / alpha-mask (matches Truvis `FORCE_OPAQUE` convention)
 
 ---
 
-## 4. SHARC GI(直接移植 Truvis,适配移动端)
+## 4. SHARC GI (directly port Truvis, adapt to mobile)
 
-### 4.1 三个持久 buffer(独立 descriptor set `SHARC_SET_NUM`)
-| Buffer | 类型 | 用途 |
-|--------|------|------|
-| `sharc_hash_entries` | `RWStructuredBuffer<uint64>` | 空间 hash key(0=空槽),64-bit atomic 抢占 |
-| `sharc_accumulation` | `RWStructuredBuffer<SharcAccumulationData>` | 本帧原子累积(u32 量化 radiance) |
-| `sharc_resolved` | `RWStructuredBuffer<SharcPackedData>` | 跨帧累积(fp16 radiance + 帧元数据) |
+### 4.1 Three persistent buffers (independent descriptor set `SHARC_SET_NUM`)
+| Buffer | Type | Purpose |
+|--------|------|---------|
+| `sharc_hash_entries` | `RWStructuredBuffer<uint64>` | spatial hash key (0=empty slot), 64-bit atomic contention |
+| `sharc_accumulation` | `RWStructuredBuffer<SharcAccumulationData>` | this-frame atomic accumulation (u32-quantized radiance) |
+| `sharc_resolved` | `RWStructuredBuffer<SharcPackedData>` | cross-frame accumulation (fp16 radiance + frame metadata) |
 
-元素类型(严格 ABI,来自 Truvis `realtime_rt.slangi`):
+Element types (strict ABI, from Truvis `realtime_rt.slangi`):
 ```hlsl
-struct SharcAccumulationData { uint4 data; };           // xyz=量化radiance, w=sample数
+struct SharcAccumulationData { uint4 data; };           // xyz=quantized radiance, w=sample count
 struct SharcPackedData { float16_t4 radianceData; uint sampleData; uint sampleDataExt; };
 ```
 
-### 4.2 移植文件映射
-| Truvis 源 | Prisma 目标 |
-|-----------|---------------|
+### 4.2 File mapping from Truvis source
+| Truvis source | Prisma target |
+|---------------|---------------|
 | `sharc_common.slangi` | `shaders/slang/sharc/common.slang` |
 | `sharc_hash_grid.slangi` | `shaders/slang/sharc/hash_grid.slang` |
 | `sharc_integration.slangi` | `shaders/slang/sharc/integration.slang` |
-| `realtime_rt.slangi`(buffer ABI 段) | `shaders/slang/sharc/buffers.slang` |
-| RayQuery 调用(`raygen_direct_lighting`) | `shaders/slang/rt/ray_query.slang` |
+| `realtime_rt.slangi`(buffer ABI section) | `shaders/slang/sharc/buffers.slang` |
+| RayQuery call(`raygen_direct_lighting`) | `shaders/slang/rt/ray_query.slang` |
 
-### 4.3 移动端适配要点
-- **64-bit atomics**:需 `shaderBufferInt64Atomics`(Android Vulkan 1.2+ Adreno/Mali 支持)。Truvis 已强制 `SHARC_ENABLE_64_BIT_ATOMICS=1`,我们同。
-- **voxel 容量**:移动端显存小,容量设为桌面 1/4~1/8(如 2^20 而非 2^23),`sharc_scene_scale` 调粗
-- **分辨率降采样**:SHARC Update/Query 可在半分辨率跑(质量优先可接受轻微模糊)
-- **着色器编译**:SHARC 用 `#define SHARC_UPDATE 1` + push-constant `sharc_phase` 分阶段(Update/Resolve),同 Truvis,不拆多 pipeline
+### 4.3 Mobile adaptation points
+- **64-bit atomics**: need `shaderBufferInt64Atomics` (Android Vulkan 1.2+ Adreno/Mali support). Truvis already forces `SHARC_ENABLE_64_BIT_ATOMICS=1`, we do the same.
+- **Voxel capacity**: mobile VRAM small, capacity set to 1/4~1/8 of desktop (e.g. 2^20 instead of 2^23), `sharc_scene_scale` adjusted coarser.
+- **Resolution downsample**: SHARC Update/Query can run at half resolution (quality-first accepts slight blur).
+- **Shader compilation**: SHARC uses `#define SHARC_UPDATE 1` + push-constant `sharc_phase` phased (Update/Resolve), same as Truvis, no multiple pipelines split.
 
-### 4.4 GI 模式状态机(移植 Truvis `realtime_rt` 常量)
+### 4.4 GI mode state machine (ported from Truvis `realtime_rt` constants)
 ```
-SHARC_MODE_OFF     = 0  // 完全不碰 SHARC buffer,走 IBL
-SHARC_MODE_UPDATE  = 1  // 只维护缓存,画面=Off
-SHARC_MODE_ON      = 2  // 下一步扩展 bounce 查缓存
-SHARC_PHASE_NONE/UPDATE/RESOLVE  // 同一条 compute dispatch 分阶段
+SHARC_MODE_OFF     = 0  // never touch SHARC buffer, walk IBL
+SHARC_MODE_UPDATE  = 1  // only maintain cache, screen = Off
+SHARC_MODE_ON      = 2  // next step bounce cache query
+SHARC_PHASE_NONE/UPDATE/RESOLVE  // same compute dispatch phased
 ```
 
 ---
 
-## 5. Bindless 升级(分离 SRV + 固定 sampler)
+## 5. Bindless upgrade (separate SRV + fixed sampler)
 
-现有 `bindless.rs`(combined `SamplerCube[]`)→ 升级为 Truvis 风格:
-- `bindless_srvs[]`:`texture_2d` / `texture_cube` 分离采样图数组
-- `global_samplers[]`:固定小型 sampler 数组(linear-wrap / linear-clamp / nearest / shadow)
-- `BindlessSrv::sample(handle, uv, samplerType)` 内部 `NonUniformResourceIndex`
-- **`INVALID_TEX_ID` fallback**:无效 handle → `INVALID_TEX_COLOR`(粉紫),避免读未定义描述符崩溃(移动端关键)
+Existing `bindless.rs` (combined `SamplerCube[]`) → upgrade to Truvis style:
+- `bindless_srvs[]`: `texture_2d` / `texture_cube` separate sampled image arrays
+- `global_samplers[]`: fixed small sampler array (linear-wrap / linear-clamp / nearest / shadow)
+- `BindlessSrv::sample(handle, uv, samplerType)` internally `NonUniformResourceIndex`
+- **`INVALID_TEX_ID` fallback**: invalid handle → `INVALID_TEX_COLOR` (magenta), avoid reading undefined descriptor crash (critical on mobile)
 
-Rust 侧 `TextureHandle` 改为 `struct { u32 index }` + `INVALID` 常量。
-
----
-
-## 6. TBDR 友好(移动端极致优化)
-
-| 优化 | 做法 |
-|------|------|
-| Transient attachment | 所有 GBuffer/depth 用 `LAZILY_ALLOCATED`,不占系统内存 |
-| Subpass 内联 | GBuffer → Lighting 同 renderpass,input attachment 传递,不写回主存 |
-| 紧凑格式 | HDR 用 `R11G11B10` / `RGB10A2`,GBuffer 优先 SFLOAT(质量) |
-| 避免全屏读回 | RayQuery/SHARC 走 compute,不强制 GBuffer resolve 到可读 |
-| Tile 并行 | 光栅 GBuffer 天然 tile 友好;compute pass 注意 tile 局部性 |
-
-> 60fps 稳定优先:若某中端 GPU 撑不住全特性,开关降级(RT 关 / GI=Off)即可,不牺牲架构。
+Rust side `TextureHandle` changed to `struct { u32 index }` + `INVALID` constant.
 
 ---
 
-## 7. 实现里程碑(建议顺序)
+## 6. TBDR-friendly (mobile extreme optimization)
 
-1. **RenderGraph 骨架**:`RenderPassNode` trait + 图构建 + 基础 GBuffer pass(raster PBR,质量优先) [完成]
-2. **Bindless 升级**:`bindless.rs` → 分离 SRV/sampler + INVALID fallback [完成]
-3. **TLAS 构建**:从 PrismaECS mesh 建 BLAS/TLAS(acceleration-structure 模块) [完成]
-4. **RayQuery 阴影**:`RayQueryPass` + `rt/ray_query.slang`(阴影先,最稳) [完成]
-5. **RayQuery 反射**:扩展 `RayQueryPass`(反射) [完成]
-6. **SHARC GI (RTXGI v1.6)**:模块化 `sharc` feature + `sharc.rs` (1M entries Hash Grid + Resolve Pass) + Vulkan 1.2+ `buffer_device_address` / 64位原子操作支持 [完成]
-7. **Sponza 验证与 Goldenframe 对比**:`projects/sponza` 用户项目接入 + 调参 UI + 离屏实测渲染与 RTXGI 官方参考图量化对比 [完成]
-8. **Lighting 合成与降噪扩展**:direct(±RT) + IBL + SHARC 混合 [推进中]
-9. **CI 扩展**:SHARC/GI shader 编译 + drift guard(复用现有 slang workflow) [完成]
+| Optimization | Approach |
+|-------------|----------|
+| Transient attachment | all GBuffer/depth use `LAZILY_ALLOCATED`, don't occupy system memory |
+| Subpass inline | GBuffer → Lighting same renderpass, input attachment passed, no writeback to main memory |
+| Compact format | HDR uses `R11G11B10` / `RGB10A2`, GBuffer prioritizes SFLOAT (quality) |
+| Avoid full-screen readback | RayQuery/SHARC walk compute, don't force GBuffer resolve to readable |
+| Tile parallel | raster GBuffer naturally tile-friendly; compute pass pay attention to tile locality |
+
+> Stable 60fps first: if some mid-tier GPU can't handle full features, downgrade via switches (RT off / GI=Off), don't sacrifice architecture.
 
 ---
 
-## 8. Sponza 与 RTXGI SHARC 验证与 Goldenframe 规范
+## 7. Implementation milestones (suggested order)
 
-- **架构隔离**：渲染管线改动与 RTXGI 接入严格属于引擎层（`crates/prism-render` 中的 `sharc.rs` 与 `render_graph`），用户项目 `projects/sponza` 仅包含资产与调参 UI（`tuning_ui.rs`），不越权污染管线逻辑。
-- **Goldenframe 规范对比**：
-  - 测试套件：`crates/prism-render/tests/sharc_sponza_golden.rs`
-  - 差分阈值：通道容差 12，4 倍增益热力图生成。
-  - 产出构件：`sponza_raster.actual.png`、`sponza_pt_cache_off.actual.png`、`sponza_pt_sharc_on.actual.png`、`sponza_sharc_diff.diff.png`、`sponza_raster_vs_pt.diff.png`、`rtxgi_reference_diff.diff.png`。
-  - RTXGI 官方参考图对比（1920x940）：变动像素 94.32%，平均差分 103.752，有效验证 SHARC 对间接光照 Monte Carlo 方差的平滑收敛能力。
+1. **RenderGraph skeleton**: `RenderPassNode` trait + graph construction + base GBuffer pass (raster PBR, quality first) [done]
+2. **Bindless upgrade**: `bindless.rs` → separate SRV/sampler + INVALID fallback [done]
+3. **TLAS construction**: build BLAS/TLAS from PrismaECS mesh (acceleration-structure module) [done]
+4. **RayQuery shadows**: `RayQueryPass` + `rt/ray_query.slang` (shadows first, most stable) [done]
+5. **RayQuery reflections**: extend `RayQueryPass` (reflections) [done]
+6. **SHARC GI (RTXGI v1.6)**: modular `sharc` feature + `sharc.rs` (1M entries Hash Grid + Resolve Pass) + Vulkan 1.2+ `buffer_device_address` / 64-bit atomic support [done]
+7. **Sponza validation and goldenframe comparison**: `projects/sponza` user project access + tuning UI + offscreen actual rendering and RTXGI official reference image quantitative comparison [done]
+8. **Lighting compositing and denoising extension**: direct(±RT) + IBL + SHARC mix [in progress]
+9. **CI extension**: SHARC/GI shader compilation + drift guard (reuse existing slang workflow) [done]
+
+---
+
+## 8. Sponza and RTXGI SHARC validation and goldenframe specification
+
+- **Architecture isolation**: rendering pipeline changes and RTXGI integration strictly belong to engine layer (`sharc.rs` and `render_graph` in `crates/prism-render`), user project `projects/sponza` only contains assets and tuning UI (`tuning_ui.rs`), does not overstep into pipeline logic.
+- **Goldenframe specification comparison**:
+  - Test suite: `crates/prism-render/tests/sharc_sponza_golden.rs`
+  - Differential threshold: channel tolerance 12, 4x gain heatmap generation.
+  - Output artifacts: `sponza_raster.actual.png`, `sponza_pt_cache_off.actual.png`, `sponza_pt_sharc_on.actual.png`, `sponza_sharc_diff.diff.png`, `sponza_raster_vs_pt.diff.png`, `rtxgi_reference_diff.diff.png`.
+  - RTXGI official reference image comparison (1920x940): changed pixels 94.32%, average difference 103.752, effectively validating SHARC's smoothing convergence capability for indirect light Monte Carlo variance.

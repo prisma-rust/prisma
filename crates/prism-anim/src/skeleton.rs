@@ -1,14 +1,14 @@
-//! 骨架：层次、参考姿态与 `bone_palette`。
+//! Skeleton: hierarchy, reference pose, and `bone_palette`.
 
 use glam::{Mat4, Quat, Vec3};
 
 use crate::pose::Pose;
 
-/// 一条骨骼的局部变换（与 cooked 格式的 10 个 f32 一一对应）。
+/// A bone's local transform (one-to-one with the cooked format's 10 f32s).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JointTransform {
     pub translation: Vec3,
-    /// 四元数，`xyzw` 布局（`glam::Quat`）。
+    /// Quaternion, `xyzw` layout (`glam::Quat`).
     pub rotation: Quat,
     pub scale: Vec3,
 }
@@ -34,7 +34,7 @@ impl JointTransform {
         }
     }
 
-    /// 从 cooked 布局（`t.xyz, r.xyzw, s.xyz`）解包。
+    /// Unpack from cooked layout (`t.xyz, r.xyzw, s.xyz`).
     pub fn from_array(values: [f32; 10]) -> Self {
         let rotation = Quat::from_xyzw(values[3], values[4], values[5], values[6]);
         Self {
@@ -44,7 +44,7 @@ impl JointTransform {
         }
     }
 
-    /// 打包回 cooked 布局。
+    /// Pack back to cooked layout.
     pub fn to_array(self) -> [f32; 10] {
         [
             self.translation.x,
@@ -60,12 +60,12 @@ impl JointTransform {
         ]
     }
 
-    /// 局部矩阵 `T * R * S`。
+    /// Local matrix `T * R * S`.
     pub fn matrix(self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
 
-    /// 线性插值（旋转走 slerp）。`t = 0` 返回 `self`。
+    /// Linear interpolation (rotation uses slerp). `t = 0` returns `self`.
     pub fn lerp(self, other: Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         Self {
@@ -75,7 +75,8 @@ impl JointTransform {
         }
     }
 
-    /// 从矩阵分解（缩放取列长，含负缩放时按最小分量翻到 X 轴）。
+    /// Decompose from matrix (scale takes column length; with negative scale, flip onto the X axis
+    /// by the smallest component).
     pub fn from_matrix(matrix: Mat4) -> Self {
         let (scale, rotation, translation) = matrix.to_scale_rotation_translation();
         Self {
@@ -100,26 +101,26 @@ fn normalize_quat(rotation: Quat) -> Quat {
     }
 }
 
-/// 一条骨骼。
+/// A bone.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Joint {
     pub name: String,
-    /// 父骨骼下标（cooked 数据保证父一定在子前面）。
+    /// Parent bone index (cooked data guarantees parent comes before child).
     pub parent: Option<usize>,
-    /// reference（bind）姿态下的父空间变换。
+    /// Parent-space transform in the reference (bind) pose.
     pub reference_local: JointTransform,
-    /// 蒙皮矩阵：把顶点从 reference 姿态空间变换到骨骼空间。
+    /// Skinning matrix: transforms vertices from reference pose space to bone space.
     pub inverse_bind: Mat4,
 }
 
-/// 骨架层次。
+/// Skeleton hierarchy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skeleton {
     joints: Vec<Joint>,
 }
 
 impl Skeleton {
-    /// 从 cooked `SkeletonInfo` 构建，顺手校验拓扑序（父下标必须小于自身）。
+    /// Build from cooked `SkeletonInfo`, also validating topological order (parent index must be less than self).
     pub fn from_info(info: &prism_asset::formats_skinned::SkeletonInfo) -> Option<Self> {
         if info.joints.is_empty() || !info.is_topologically_sorted() {
             return None;
@@ -141,7 +142,7 @@ impl Skeleton {
         Some(Self { joints })
     }
 
-    /// 直接用骨骼列表构造（测试与离线工具用）。
+    /// Construct directly from a joint list (for tests and offline tools).
     pub fn new(joints: Vec<Joint>) -> Option<Self> {
         let mut valid = !joints.is_empty();
         for (index, joint) in joints.iter().enumerate() {
@@ -164,7 +165,7 @@ impl Skeleton {
         self.joints.iter().position(|joint| joint.name == name)
     }
 
-    /// reference 姿态（每个骨骼的 `reference_local`）。
+    /// Reference pose (each bone's `reference_local`).
     pub fn rest_pose(&self) -> Pose {
         Pose::from_locals(
             self.joints
@@ -174,7 +175,7 @@ impl Skeleton {
         )
     }
 
-    /// 姿态下的骨骼世界矩阵（父空间乘积，父必在子前）。
+    /// World matrices of bones in a pose (parent-space product, parent guaranteed before child).
     pub fn world_matrices(&self, pose: &Pose) -> Vec<Mat4> {
         let mut world = Vec::with_capacity(self.joints.len());
         for (index, joint) in self.joints.iter().enumerate() {
@@ -191,7 +192,7 @@ impl Skeleton {
         world
     }
 
-    /// `bone_palette = world(pose) * inverse_bind`（GPU 直接上传这一份）。
+    /// `bone_palette = world(pose) * inverse_bind` (GPU uploads this directly).
     pub fn bone_palette(&self, pose: &Pose) -> Vec<Mat4> {
         self.world_matrices(pose)
             .into_iter()

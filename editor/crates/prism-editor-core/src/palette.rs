@@ -1,17 +1,17 @@
-//! 全局搜索（`Ctrl+K`）的数据层。
+//! Global search (`Ctrl+K`) data layer.
 //!
-//! 编辑器里有四个各自为政的搜索框（层级 / 资产 / Console / Add Component），
-//! 但「跳到某个实体 / 打开某个资产 / 跑某条命令」必须先想清楚它在哪个面板。
-//! 这里把工作区摊平成一份可搜索的条目表，排序是纯函数（便于测试）；
-//! 弹窗绘制在 `prism-editor-egui/src/palette.rs`，不依赖 egui。
+//! Editor has four separate search boxes (hierarchy / asset / Console / Add Component),
+//! but "jump to an entity / open an asset / run a command" must first figure out which panel it's in.
+//! Here workspace is flattened into a searchable entries table; sorting is a pure function (for testing);
+//! popup drawing is in `prism-editor-egui/src/palette.rs`, doesn't depend on egui.
 //!
-//! 不做索引：当前场景实体和资产表都在内存里，线性扫描足够（#425）。
+//! No index: current scene entities and asset table are both in memory, linear scan is enough (#425).
 
 use crate::keys::{Command, SHORTCUTS};
 use crate::workspace::Workspace;
 
-/// 条目分类。派生顺序就是「空查询」时的展示顺序：先跳到场景里的东西，
-/// 再是文档和资产，最后才是命令（命令一般靠输入名字过滤）。
+/// Entry category. Derived order is display order for empty query: jump to scene things first,
+/// then documents and assets, last commands (commands generally filtered by name input).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PaletteKind {
     Entity,
@@ -31,12 +31,12 @@ impl PaletteKind {
     }
 }
 
-/// 选中一条结果后要做的事。数据层只描述意图，执行留给 UI 层。
+/// What to do after selecting a result. Data layer only describes intent, execution left to UI layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaletteAction {
     RunCommand(Command),
     OpenDocument(usize),
-    /// 当前文档里的实体**下标**（`Workspace::select` 的入参）。
+    /// Entity **index** in current document (input param for `Workspace::select`).
     SelectEntity(usize),
     OpenAsset(String),
 }
@@ -44,17 +44,17 @@ pub enum PaletteAction {
 #[derive(Clone, Debug)]
 pub struct PaletteEntry {
     pub kind: PaletteKind,
-    /// 主标题（实体名 / 文件名 / 命令的人话名字）。
+    /// Main title (entity name / file name / human command name).
     pub title: String,
-    /// 次级信息：层级路径、资产路径、快捷键……
+    /// Secondary info: hierarchy path, asset path, shortcut……
     pub detail: String,
     pub action: PaletteAction,
 }
 
-/// `ResetSceneCamera` → `Reset Scene Camera`。
+/// `ResetSceneCamera` → `Reset Scene Camera`.
 ///
-/// `Command` 的名字是 Rust 标识符（`ui.click` 的 `command:<Name>` 靠它往返），
-/// 直接摆进搜索框里没法读。
+/// `Command` name is Rust identifier (`ui.click`'s `command:<Name>` uses it for round-trip),
+/// putting it directly in search box is unreadable.
 pub fn humanize(identifier: &str) -> String {
     let mut out = String::with_capacity(identifier.len() + 4);
     for (index, ch) in identifier.chars().enumerate() {
@@ -66,7 +66,7 @@ pub fn humanize(identifier: &str) -> String {
     out
 }
 
-/// 命令的快捷键文本（没有绑定就是空串）。
+/// Command shortcut text (empty string if no binding).
 pub fn shortcut_for(command: Command) -> &'static str {
     SHORTCUTS
         .iter()
@@ -75,7 +75,7 @@ pub fn shortcut_for(command: Command) -> &'static str {
         .unwrap_or("")
 }
 
-/// 把工作区摊平成条目表：命令 → 已打开的文档 → 当前文档的实体 → 资产。
+/// Flatten workspace into entries table: command → open documents → current document's entities → assets.
 pub fn entries(workspace: &Workspace) -> Vec<PaletteEntry> {
     let mut entries = Vec::new();
 
@@ -148,11 +148,11 @@ fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// `Parent/Child`，顶层实体返回空串。
+/// `Parent/Child`, top-level entity returns empty string.
 fn entity_path(doc: &crate::doc::SceneDoc, index: usize) -> String {
     let mut names = Vec::new();
     let mut current = doc.entities.get(index).and_then(|entity| entity.parent);
-    // 父实体是 `id` 不是下标，且可能成环（损坏的文档），最多走 entities.len() 步。
+    // Parent entity is `id` not index, and may form cycle (corrupted doc), max entities.len() steps.
     let mut guard = doc.entities.len();
     while let Some(id) = current {
         if guard == 0 {
@@ -172,7 +172,7 @@ fn entity_path(doc: &crate::doc::SceneDoc, index: usize) -> String {
     names.join("/")
 }
 
-/// 匹配等级，越小越好；`None` = 不匹配。
+/// Match rank, smaller is better; `None` = no match.
 fn rank(query: &str, entry: &PaletteEntry) -> Option<(u8, usize)> {
     let title = entry.title.to_lowercase();
     let start = if title == query {
@@ -193,7 +193,7 @@ fn rank(query: &str, entry: &PaletteEntry) -> Option<(u8, usize)> {
     } else {
         return None;
     };
-    // 同级里短的更靠前：`Save` 排在 `Save As` 前面。
+    // Shorter ranks higher within same level: `Save` before `Save As`.
     Some((start, entry.title.len()))
 }
 
@@ -202,7 +202,7 @@ fn subsequence(text: &str, query: &str) -> bool {
     query.chars().all(|needle| chars.any(|hay| hay == needle))
 }
 
-/// 排序后的下标；空查询 = 按分类展示全部（命令 → 文档 → 实体 → 资产）。
+/// Sorted indices; empty query = show all grouped by category (command → document → entity → asset).
 pub fn search(query: &str, entries: &[PaletteEntry]) -> Vec<usize> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -271,7 +271,7 @@ mod tests {
             ),
             entry(PaletteKind::Asset, "boat.png", "sprites/water/boat.png"),
         ];
-        // 同等级里短的在前：`water` 比 `water_tile.png` 先出现。
+        // Shorter ranks first within same level: `water` before `water_tile.png`.
         let order = search("wat", &entries);
         assert_eq!(order, vec![1, 0, 2, 3]);
     }
@@ -291,7 +291,7 @@ mod tests {
             entry(PaletteKind::Asset, "sprites/boat.png", ""),
             entry(PaletteKind::Asset, "sprites/lake.png", ""),
         ];
-        // b…o…a…t 是 "boat" 的子序列，但 "lake" 不行。
+        // b…o…a…t is subsequence of "boat", but not "lake".
         assert_eq!(search("boat", &entries), vec![0]);
     }
 
@@ -303,7 +303,7 @@ mod tests {
             && matches!(entry.action, PaletteAction::RunCommand(Command::Save))));
         assert!(all.iter().any(|entry| entry.kind == PaletteKind::Document));
         assert!(all.iter().any(|entry| entry.kind == PaletteKind::Entity));
-        // sample() 的文档里有实体，实体条目应该带层级路径或组件名。
+        // sample()'s document has entities, entity entries should carry hierarchy path or component name.
         let entity = all
             .iter()
             .find(|entry| entry.kind == PaletteKind::Entity)

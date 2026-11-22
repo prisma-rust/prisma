@@ -1,38 +1,39 @@
-//! 作者侧剪辑事件表（`*.skinning/notifies.json`）的视图与编辑（#560 Notify）。
+//! Author-side clip notification table view and editing (`*.skinning/notifies.json`, #560 Notify).
 //!
-//! 文件形状与 cooker 的 `authored_notifies` 一致：
+//! File shape matches cooker's `authored_notifies`:
 //!
 //! ```json
 //! { "clips": { "walk": [{ "time": 0.4, "name": "Footstep.L" }] } }
 //! ```
 //!
-//! 键是 glTF 里的动画**原名**，不是 cook 后的 `.ranim` 文件名。这里只做形状层面的
-//! 校验（名字非空、时间有限非负），「对上不对得上某个动画」仍由 cook 时 warn。
+//! Key is animation **original name** in glTF, not cooked `.ranim` filename. Only does shape-level
+//! validation (non-empty name, finite non-negative time); "matches an actual animation or not"
+//! still warned at cook time.
 
 use serde_json::{json, Value};
 
-/// 一条剪辑事件。
+/// A clip event.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NotifyEntryView {
     pub time: f32,
     pub name: String,
 }
 
-/// 一个剪辑的事件列表。
+/// A clip's event list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipNotifiesView {
     pub clip: String,
     pub entries: Vec<NotifyEntryView>,
 }
 
-/// 整个事件表，按剪辑名排序。
+/// Entire event table, sorted by clip name.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct NotifiesView {
     pub clips: Vec<ClipNotifiesView>,
 }
 
 impl NotifiesView {
-    /// 所有事件总数（面板标题用）。
+    /// Total event count (for panel title).
     pub fn len(&self) -> usize {
         self.clips.iter().map(|clip| clip.entries.len()).sum()
     }
@@ -42,7 +43,7 @@ impl NotifiesView {
     }
 }
 
-/// 解析事件表；缺 `clips` 当作空表。
+/// Parse event table; missing `clips` treated as empty table.
 pub fn parse_notifies_view(document: &Value) -> Result<NotifiesView, String> {
     let Some(clips) = document.get("clips") else {
         return Ok(NotifiesView::default());
@@ -87,7 +88,7 @@ fn validate(time: f32, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 给某个剪辑追加一条事件；剪辑键不存在时自动创建。
+/// Append an event to a clip; clip key auto-created if missing.
 pub fn add_notify(document: &mut Value, clip: &str, time: f32, name: &str) -> Result<(), String> {
     let clip = clip.trim();
     let name = name.trim();
@@ -109,7 +110,7 @@ pub fn add_notify(document: &mut Value, clip: &str, time: f32, name: &str) -> Re
     Ok(())
 }
 
-/// 删除某个剪辑的第 `index` 条事件。
+/// Remove event at `index` of a clip.
 pub fn remove_notify(document: &mut Value, clip: &str, index: usize) -> Result<(), String> {
     let Some(entries) = find_clip_mut(document, clip)? else {
         return Err(format!("notify file has no clip '{clip}'"));
@@ -121,7 +122,7 @@ pub fn remove_notify(document: &mut Value, clip: &str, index: usize) -> Result<(
     Ok(())
 }
 
-/// 改某条事件的时间与名字。
+/// Change an event's time and name.
 pub fn set_notify(
     document: &mut Value,
     clip: &str,
@@ -164,9 +165,9 @@ fn find_clip_mut<'a>(
     Ok(Some(entries))
 }
 
-/// 时间轴上的 x 坐标（`left..left+width`）映射成秒，夹到 `0..=span` 并量化到 0.01 秒。
+/// Map timeline x coordinate (`left..left+width`) to seconds, clamped to `0..=span` and quantized to 0.01s.
 ///
-/// 面板拖拽和单元测试共用这一份换算，避免 UI 与测试各写一套夹取逻辑。
+/// Panel drag and unit tests share this conversion, so UI and tests don't each write their own clamp logic.
 pub fn notify_time_at(x: f32, left: f32, width: f32, span: f32) -> f32 {
     if !x.is_finite() || !width.is_finite() || width <= 0.0 || !span.is_finite() || span <= 0.0 {
         return 0.0;
@@ -175,10 +176,10 @@ pub fn notify_time_at(x: f32, left: f32, width: f32, span: f32) -> f32 {
     ((fraction * span) * 100.0).round() / 100.0
 }
 
-/// 剪辑时间轴的窗口跨度：最晚事件 × 1.1，至少 2 秒（再留 10%）。
+/// Clip timeline window span: latest event × 1.1, at least 2 seconds (plus 10% margin).
 ///
-/// 作者侧 JSON 不知道 cook 后的 `.ranim` 时长，只能用已有事件推一个够用的范围；
-/// 空剪辑 / 全是坏值时退回 2 秒窗口。
+/// Author-side JSON doesn't know cooked `.ranim` duration, so infer usable range from existing events;
+/// empty clip / all bad values falls back to 2-second window.
 pub fn notify_timeline_span(entries: &[NotifyEntryView]) -> f32 {
     let latest = entries
         .iter()
@@ -188,7 +189,7 @@ pub fn notify_timeline_span(entries: &[NotifyEntryView]) -> f32 {
     latest * 1.1
 }
 
-/// 时间轴命中：返回离 `x` 最近、且像素距离不超过 `radius` 的事件下标。
+/// Timeline hit: return index of event nearest to `x` within pixel distance `radius`.
 pub fn nearest_notify_index(
     entries: &[NotifyEntryView],
     x: f32,
@@ -247,13 +248,13 @@ mod tests {
         assert!(parse_notifies_view(&json!({ "clips": { "walk": 3 } })).is_err());
         assert!(
             parse_notifies_view(&json!({ "clips": { "walk": [{ "time": 0.1 }] } })).is_err(),
-            "无名事件要报错"
+            "nameless event must error"
         );
     }
 
     #[test]
     fn timeline_coordinates_map_to_clamped_centisecond_times() {
-        // 100px 装 2 秒：中点 1 秒，两端夹住。
+        // 100px for 2 seconds: midpoint 1 second, both ends clamped.
         assert_eq!(notify_time_at(50.0, 0.0, 100.0, 2.0), 1.0);
         assert_eq!(notify_time_at(-40.0, 0.0, 100.0, 2.0), 0.0);
         assert_eq!(notify_time_at(400.0, 0.0, 100.0, 2.0), 2.0);
@@ -301,7 +302,7 @@ mod tests {
                 name: "B".to_string(),
             },
         ];
-        // 0..200px 装 2 秒 → A 在 50px、B 在 150px。
+        // 0..200px for 2 seconds → A at 50px, B at 150px.
         assert_eq!(
             nearest_notify_index(&entries, 52.0, 0.0, 200.0, 2.0, 8.0),
             Some(0)

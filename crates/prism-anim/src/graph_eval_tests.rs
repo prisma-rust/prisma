@@ -377,10 +377,10 @@ fn node_snapshots_report_link_weights() {
         .evaluate(&source, &skeleton, 0.0)
         .expect("evaluates");
     let snapshots = evaluator.node_snapshots();
-    assert!((snapshots[0].weight - 1.0).abs() < 1e-6, "base 权重 1");
+    assert!((snapshots[0].weight - 1.0).abs() < 1e-6, "base weight 1");
     assert!(
         (snapshots[1].weight - 0.25).abs() < 1e-6,
-        "layer 权重 0.25，得到 {}",
+        "layer weight 0.25, got {}",
         snapshots[1].weight
     );
     assert!((snapshots[2].weight - 1.0).abs() < 1e-6);
@@ -423,8 +423,8 @@ fn node_snapshots_report_time_state_and_blend() {
     assert!(!snapshots[0].blending);
     assert!((snapshots[0].time - 0.1).abs() < 1e-5);
     assert_eq!(snapshots[1].kind, GraphNodeKind::Output);
-    assert!((snapshots[0].weight - 1.0).abs() < 1e-6, "输出链上权重 1");
-    assert!((snapshots[1].weight - 1.0).abs() < 1e-6, "输出节点权重 1");
+    assert!((snapshots[0].weight - 1.0).abs() < 1e-6, "weight 1 on output chain");
+    assert!((snapshots[1].weight - 1.0).abs() < 1e-6, "output node weight 1");
 
     evaluator.parameters_mut().set_trigger("go");
     evaluator.evaluate(&source, &skeleton, 0.05).expect("walk");
@@ -432,7 +432,7 @@ fn node_snapshots_report_time_state_and_blend() {
     assert_eq!(snapshot.state, 1);
     assert_eq!(snapshot.state_name, "walk");
     assert_eq!(snapshot.state_clip, "walk.ranim");
-    assert!(snapshot.blending, "转移中");
+    assert!(snapshot.blending, "transitioning");
     assert!(
         snapshot.blend_weight > 0.0 && snapshot.blend_weight < 1.0,
         "weight {}",
@@ -546,7 +546,7 @@ fn a_missing_state_machine_is_reported() {
 
 #[test]
 fn every_node_kind_is_covered_by_the_switch() {
-    // 编译期保证枚举匹配完整；运行时确认 Slots / CachedPose 也是透明传递。
+    // Compile-time guarantees exhaustive enum match; at runtime confirm Slots / CachedPose are also transparent pass-through.
     let mut clip = node("clip", GraphNodeKind::ClipPlayer);
     clip.clips.push("a.ranim".into());
     let mut slot = node("slot", GraphNodeKind::Slot);
@@ -835,7 +835,7 @@ fn montage_snapshots_report_slot_state() {
     let source = Source::new(&[("base.ranim", translation_clip("base", 0.0))]);
     assert!(
         evaluator.montage_snapshots().is_empty(),
-        "没播放过就没有 Slot"
+        "no Slot if not played"
     );
 
     evaluator.play_montage(
@@ -946,15 +946,15 @@ fn blend_space_per_sample_speeds_drive_independent_playheads() {
     ]);
     let skeleton = skeleton();
 
-    // run 的播放头速度是 2：0.25s 后到相位 0.5，线性轨道 x = 10。
+    // run's playhead speed is 2: after 0.25s it reaches phase 0.5, linear track x = 10.
     let pose = evaluator.evaluate(&source, &skeleton, 0.25).expect("first");
     assert!((x(&pose) - 10.0).abs() < 1e-4, "x={}", x(&pose));
 
-    // 再来 0.25s 正好回到 0。
+    // another 0.25s exactly back to 0.
     let pose = evaluator.evaluate(&source, &skeleton, 0.25).expect("wrap");
     assert!(x(&pose).abs() < 1e-4, "x={}", x(&pose));
 
-    // 清空配置后回到共享 phase。
+    // back to shared phase after clearing config.
     evaluator.set_blend_space_speeds("locomotion", Vec::new());
     assert!(evaluator.blend_space_speeds("locomotion").is_none());
 }

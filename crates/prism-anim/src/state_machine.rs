@@ -1,23 +1,28 @@
-//! 数据驱动的状态机核心（#560 P1）。
+//! Data-driven state machine core (#560 P1).
 //!
-//! 只做**求值**：状态引用剪辑路径，转移带「参数条件 + 最早可打断比例 + 过渡时长」。
-//! 真正的播放（采样、交叉淡入、播放头）在 `prism-engine` 的 `animator` 里，这一层
-//! 不碰 ECS／渲染，因此可以单独测。
+//! Only does **evaluation**: states reference clip paths, transitions carry "parameter condition +
+//! earliest interruptible fraction + transition duration". Actual playback (sampling, cross-fade,
+//! playhead) lives in `prism-engine`'s `animator`; this layer does not touch ECS / rendering, so
+//! it can be tested standalone.
 //!
-//! 设计约定：
+//! Design conventions:
 //!
-//! - **转移按作者顺序求值，第一个「条件全真 + 已达最早打断比例」的胜出**；同一帧
-//!   只走一条转移（UE 的语义），避免一帧连跳两个状态。
-//! - **Trigger 是消耗型的**：`matches` 命中一次就从参数表里拿走，所以「按一下跳一次」
-//!   不会因为条件持续为真而每帧重进。
-//! - 非有限参数（NaN）永远不参与比较，条件视为不成立 —— 坏输入不该让角色乱跳状态。
+//! - **Transitions are evaluated in author order; the first "all conditions true + earliest
+//!   interruptible fraction reached" wins**; only one transition per frame (UE semantics), avoiding
+//!   double state jumps in one frame.
+//! - **Triggers are consumable**: once `matches` hits, the trigger is removed from the parameter
+//!   table, so "press once, jump once" won't re-enter every frame just because the condition stays
+//!   true.
+//! - Non-finite parameters (NaN) never participate in comparisons; the condition is considered
+//!   false — bad input shouldn't make the character jump states randomly.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// 动画参数表：状态机转移的输入。
+/// Animation parameter table: input to state machine transitions.
 ///
-/// 用 `BTreeMap` / `BTreeSet` 而不是 HashMap：参数名是作者写的字符串，条目个位数，
-/// 有序容器的遍历顺序确定（调试输出、序列化都稳定）。
+/// Uses `BTreeMap` / `BTreeSet` instead of HashMap: parameter names are author-written strings,
+/// with a handful of entries; ordered containers give deterministic iteration order (stable debug
+/// output and serialization).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnimParameters {
     floats: BTreeMap<String, f32>,
@@ -46,7 +51,7 @@ impl AnimParameters {
         self.bools.get(name).copied()
     }
 
-    /// 置一个 trigger，下一次匹配到它的转移会消耗掉。
+    /// Set a trigger; the next matching transition will consume it.
     pub fn set_trigger(&mut self, name: impl Into<String>) {
         self.triggers.insert(name.into());
     }
@@ -55,7 +60,7 @@ impl AnimParameters {
         self.triggers.contains(name)
     }
 
-    /// 取走 trigger；没置过返回 `false`。
+    /// Take a trigger; returns `false` if it was never set.
     pub fn take_trigger(&mut self, name: &str) -> bool {
         self.triggers.remove(name)
     }
@@ -69,23 +74,24 @@ impl AnimParameters {
     }
 }
 
-/// 一条转移条件。
+/// A transition condition.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransitionCondition {
-    /// 浮点参数「大于」阈值。
+    /// Float parameter "greater than" threshold.
     FloatGreater { name: String, threshold: f32 },
-    /// 浮点参数「小于」阈值。
+    /// Float parameter "less than" threshold.
     FloatLess { name: String, threshold: f32 },
-    /// 布尔参数等于给定值（参数缺失时按 `false`）。
+    /// Bool parameter equals given value (`false` when the parameter is missing).
     BoolIs { name: String, expected: bool },
-    /// 消耗一次 trigger。
+    /// Consume one trigger.
     Trigger { name: String },
 }
 
 impl TransitionCondition {
-    /// 求值；`Trigger` 命中时会把它从 `params` 里拿走。
+    /// Evaluate; when `Trigger` hits, it is removed from `params`.
     ///
-    /// 参数缺失 / 非有限 → `false`：宁可留在当前状态，也不要因为数据没填好乱跳。
+    /// Missing / non-finite parameter → `false`: better to stay in the current state than jump
+    /// around because data wasn't filled in.
     pub fn matches(&self, params: &mut AnimParameters) -> bool {
         match self {
             Self::FloatGreater { name, threshold } => match params.float(name) {
@@ -102,11 +108,11 @@ impl TransitionCondition {
     }
 }
 
-/// 一个状态：指向一段剪辑，外加播放参数。
+/// A state: points to a clip, plus playback parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimState {
     pub name: String,
-    /// `.ranim` 路径；空 = 这个状态不播东西（例如「死亡」靠别的手段表现）。
+    /// `.ranim` path; empty = this state plays nothing (e.g. "death" expressed by other means).
     pub clip_path: String,
     pub speed: f32,
     pub looped: bool,
@@ -123,16 +129,16 @@ impl AnimState {
     }
 }
 
-/// 一条转移。
+/// A transition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimTransition {
-    /// 源状态下标；`usize::MAX` 表示「任意状态」（`from_any`）。
+    /// Source state index; `usize::MAX` means "any state" (`from_any`).
     pub from: usize,
     pub to: usize,
-    /// 条件全真、且当前状态已播放到该比例（`0.0` = 随时可打断，`1.0` = 必须播完）
-    /// 之后才允许转移。
+    /// Conditions all true, and current state has played to this ratio (`0.0` = interruptible anytime, `1.0` = must play to end)
+    /// before transition is allowed.
     pub min_state_fraction: f32,
-    /// 过渡时长（秒）；`0` = 硬切。
+    /// Transition duration (seconds); `0` = hard cut.
     pub duration: f32,
     pub conditions: Vec<TransitionCondition>,
 }
@@ -148,7 +154,7 @@ impl AnimTransition {
         }
     }
 
-    /// 从任意状态出发的转移。
+    /// Transition from any state.
     pub fn from_any(to: usize) -> Self {
         Self::new(ANY_STATE, to)
     }
@@ -169,18 +175,18 @@ impl AnimTransition {
     }
 }
 
-/// `AnimTransition::from` 取这个值表示「任意状态」。
+/// `AnimTransition::from` takes this value meaning "any state".
 pub const ANY_STATE: usize = usize::MAX;
 
-/// 一次成功求值的结果。
+/// Result of a successful evaluation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransitionTarget {
     pub state: usize,
-    /// 过渡时长（秒），已经过滤掉非有限 / 负值。
+    /// Transition duration (seconds), non-finite / negative values already filtered out.
     pub duration: f32,
 }
 
-/// 状态机定义。
+/// State machine definition.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StateMachine {
     pub states: Vec<AnimState>,
@@ -188,12 +194,12 @@ pub struct StateMachine {
 }
 
 impl StateMachine {
-    /// 把 cooked 的 `.rasm`（`prism_asset::formats_state_machine`）转成可求值的状态机。
+    /// Converts cooked `.rasm` (`prism_asset::formats_state_machine`) into an evaluatable state machine.
     ///
-    /// cooker 已经把状态名字解析成下标，这里只做三件运行时才关心的事：
-    /// - 丢掉指向不存在状态的转移（坏资产不该让整台机器失效，只丢那一条）；
-    /// - `speed` 非有限 → 1.0，`min_state_fraction` 夹到 `0..=1`；
-    /// - `from` 的哨兵值 `u32::MAX` → [`ANY_STATE`]。
+    /// Cooker has already parsed state names into indices; here only three runtime-relevant things:
+    /// - Drop transitions pointing to non-existent states (bad assets shouldn't fail the whole machine, just drop that one);
+    /// - `speed` non-finite → 1.0, `min_state_fraction` clamped to `0..=1`;
+    /// - `from` sentinel value `u32::MAX` → [`ANY_STATE`].
     pub fn from_info(info: &prism_asset::formats_state_machine::StateMachineInfo) -> Self {
         use prism_asset::formats_state_machine::TransitionConditionInfo as Info;
 
@@ -285,13 +291,13 @@ impl StateMachine {
         self.states.get(index)
     }
 
-    /// 求下一条转移。
+    /// Finds the next transition.
     ///
-    /// `state_time` / `state_duration` 是**当前状态**已经播放的秒数与剪辑时长，
-    /// 用来判断最早打断比例（时长未知时按「已播完」处理，否则状态会卡死）。
+    /// `state_time` / `state_duration` are **current state** seconds played and clip duration,
+    /// used to determine earliest interruption ratio (duration unknown treated as "already played", otherwise state gets stuck).
     ///
-    /// 返回 `None` = 留在当前状态。命中的 trigger 会被消耗，未命中的保持原样 ——
-    /// 所以「同一帧先求值的转移消耗了 trigger」不会影响后面的转移判断。
+    /// Returns `None` = stay in current state. Hit trigger is consumed, un-hit ones kept as-is —
+    /// so "transition evaluated first in the same frame consumed the trigger" does not affect subsequent transition judgments.
     pub fn next_transition(
         &self,
         from: usize,
@@ -333,7 +339,7 @@ impl StateMachine {
     }
 }
 
-/// 当前状态播放到哪儿（0..=1）。时长未知 / 非有限 → 视为已播完。
+/// Current state progress (0..=1). Duration unknown / non-finite → treated as played to end.
 fn state_fraction(state_time: f32, state_duration: f32) -> f32 {
     if !state_duration.is_finite() || state_duration <= 0.0 {
         return 1.0;

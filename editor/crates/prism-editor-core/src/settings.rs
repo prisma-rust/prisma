@@ -1,10 +1,10 @@
-//! 项目设置（`assets/settings.ini` 的 `[app]` / `[window]` / `[build]` 段）。
+//! Project settings (`assets/settings.ini` `[app]` / `[window]` / `[build]` sections).
 //!
-//! 写回时**保留文件里其它段**（`[render]` 等），只覆盖这三个段里我们负责的键，
-//! 与 Web 编辑器 `prism-editor-api::settings` 的行为一致。
+//! Writing back **preserves other sections** in file (`[render]` etc.), only overwriting keys
+//! these three sections are responsible for, consistent with Web editor `prism-editor-api::settings` behavior.
 //!
-//! 方言见 [`crate::ini`]（`docs/DESIGN.md` §「项目配置文件」）。旧项目的
-//! `assets/settings.toml` 仍可读（只读回退），写端只产出 `settings.ini`。
+//! Dialect see [`crate::ini`] (`docs/DESIGN.md` "Project Configuration Files"). Old project's
+//! `assets/settings.toml` still readable (read-only fallback); write end only outputs `settings.ini`.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -84,17 +84,17 @@ pub struct ProjectSettings {
 }
 
 impl ProjectSettings {
-    /// 写端目标：`assets/settings.ini`。
+    /// Write target: `assets/settings.ini`.
     pub fn path(root: &Path) -> PathBuf {
         root.join("assets/settings.ini")
     }
 
-    /// 旧项目的 `assets/settings.toml`（只读回退）。
+    /// Old project's `assets/settings.toml` (read-only fallback).
     pub fn legacy_path(root: &Path) -> PathBuf {
         root.join("assets/settings.toml")
     }
 
-    /// 读取；文件不存在返回默认值。畸形行会被跳过（INI 解析不会整体失败）。
+    /// Read; file not found returns defaults. Malformed lines skipped (INI parsing won't fail overall).
     pub fn read(root: &Path) -> io::Result<Self> {
         Ok(Self::from_document(&Self::read_document(root)?))
     }
@@ -143,7 +143,7 @@ impl ProjectSettings {
         settings
     }
 
-    /// 合并写回：只覆盖 app/window/build 里我们负责的键，其它段原样保留。
+    /// Merge write back: only overwrite keys we're responsible for in app/window/build, other sections preserved as-is.
     pub fn write(&self, root: &Path) -> io::Result<()> {
         let mut document = Self::read_document(root)?;
 
@@ -171,22 +171,21 @@ impl ProjectSettings {
     }
 }
 
-/// `[build] target` 的常用取值（下拉里给提示，不限制手写成别的）。
+/// Common values for `[build] target` (dropdown hints, doesn't restrict manual input).
 pub const TARGET_CHOICES: &[&str] = &["windows", "android", "linux"];
-/// `[build] profile` 的常用取值（与 `scripts/build-dist.*` 的 profile 名一致）。
+/// Common values for `[build] profile` (consistent with `scripts/build-dist.*` profile names).
 pub const PROFILE_CHOICES: &[&str] = &["debug", "release", "dist", "tiny"];
 
-/// 「项目设置」面板的一个可编辑字段。
+/// One editable field in the "Project Settings" panel.
 ///
-/// 这张表是**唯一**的字段清单：面板按它渲染，搜索按它过滤。「13 个键都能改」
-/// 这条承诺由 `every_written_key_is_editable` 测试守着 —— 给 `write()` 加键却
-/// 忘了加表项，测试会红。
+/// This table is the **sole** field list: panel renders by it, search filters by it. "13 keys all editable"
+/// promise is guarded by `every_written_key_is_editable` test -- add key to `write()` but forget table entry, test turns red.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettingsField {
     pub section: &'static str,
     pub key: &'static str,
     pub label: &'static str,
-    /// 额外的搜索词（中文 / 同义词），不显示。
+    /// Extra search keywords (Chinese / synonyms), not displayed.
     pub keywords: &'static str,
 }
 
@@ -197,83 +196,83 @@ pub const SETTINGS_FIELDS: &[SettingsField] = &[
         section: "app",
         key: "company",
         label: "Company",
-        keywords: "公司 厂商 publisher",
+        keywords: "company publisher",
     },
     SettingsField {
         section: "app",
         key: "name",
         label: "App name",
-        keywords: "名字 应用 package",
+        keywords: "name app package",
     },
     SettingsField {
         section: "app",
         key: "version",
         label: "Version",
-        keywords: "版本号 版本",
+        keywords: "version",
     },
     SettingsField {
         section: "window",
         key: "title",
         label: "Window title",
-        keywords: "标题 窗口",
+        keywords: "title window",
     },
     SettingsField {
         section: "window",
         key: "width",
         label: "Window width",
-        keywords: "宽 分辨率 size",
+        keywords: "width resolution size",
     },
     SettingsField {
         section: "window",
         key: "height",
         label: "Window height",
-        keywords: "高 分辨率 size",
+        keywords: "height resolution size",
     },
     SettingsField {
         section: "window",
         key: "resizable",
         label: "Resizable",
-        keywords: "可缩放 拉伸",
+        keywords: "resizable stretch",
     },
     SettingsField {
         section: "window",
         key: "fullscreen",
         label: "Fullscreen",
-        keywords: "全屏",
+        keywords: "fullscreen",
     },
     SettingsField {
         section: "window",
         key: "vsync",
         label: "V-Sync",
-        keywords: "垂直同步 同步",
+        keywords: "vertical sync sync",
     },
     SettingsField {
         section: "build",
         key: "target",
         label: "Build target",
-        keywords: "平台 目标 android windows",
+        keywords: "platform target android windows",
     },
     SettingsField {
         section: "build",
         key: "profile",
         label: "Build profile",
-        keywords: "配置 debug release dist tiny",
+        keywords: "config debug release dist tiny",
     },
     SettingsField {
         section: "build",
         key: "output_dir",
         label: "Output dir",
-        keywords: "输出 目录 路径",
+        keywords: "output directory path",
     },
     SettingsField {
         section: "build",
         key: "run_after",
         label: "Run after build",
-        keywords: "运行 启动 play",
+        keywords: "run start play",
     },
 ];
 
-/// 字段是否命中查询（label / key / 段名 / 关键词，大小写不敏感）。
+/// Whether field matches query (label / key / section name / keyword, case-insensitive).
 pub fn field_matches(field: &SettingsField, query: &str) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -284,7 +283,7 @@ pub fn field_matches(field: &SettingsField, query: &str) -> bool {
         .any(|text| text.to_lowercase().contains(&query))
 }
 
-/// 按搜索词过滤字段表；空查询返回全部。
+/// Filter field table by search query; empty query returns all.
 pub fn matching_fields(query: &str) -> Vec<&'static SettingsField> {
     SETTINGS_FIELDS
         .iter()
@@ -293,7 +292,7 @@ pub fn matching_fields(query: &str) -> Vec<&'static SettingsField> {
 }
 
 impl ProjectSettings {
-    /// 恢复某一段的默认值（`app` / `window` / `build`）。
+    /// Restore defaults for one section (`app` / `window` / `build`).
     pub fn reset_section(&mut self, section: &str) {
         match section {
             "app" => self.app = AppSettings::default(),
@@ -304,22 +303,22 @@ impl ProjectSettings {
     }
 }
 
-/// 面板的读盘缓存：只在「首次 / 文件内容变了 / 手动重载」时解析，
-/// 编辑中的值留在这里，显式 Apply 才落盘（#428 的 1、2、5 条）。
+/// Panel's read cache: only parses on "first time / file content changed / manual reload",
+/// edited-in values kept here, explicit Apply writes to disk (#428 items 1, 2, 5).
 pub struct SettingsCache {
     root: PathBuf,
-    /// 编辑中的值。
+    /// Values being edited.
     pub settings: ProjectSettings,
-    /// 磁盘上的值（Apply 后同步）。
+    /// Disk values (synced after Apply).
     saved: ProjectSettings,
-    /// 上次读到的问题（解析/IO），面板顶部展示。
+    /// Last read problem (parse / IO), shown on panel top.
     pub error: Option<String>,
-    /// 上次读到的原始文本；用它判断「磁盘上的文件变了没有」。
+    /// Original text last read; used to judge "did disk file change".
     ///
-    /// 只比 mtime 在粗粒度文件系统上会漏掉同一秒内的覆盖写（已知 flaky 测试就是
-    /// 这个原因）；决策面板是显式打开的，读一个 1–2 KB 的配置文件可以接受。
+    /// Only comparing mtime misses same-second overwrites on coarse-grained filesystems (known flaky test
+    /// cause); panel open decision is explicit, reading a 1-2 KB config file is fine.
     text: Option<String>,
-    /// 编辑期间磁盘被改过（面板提示，但不覆盖用户输入）。
+    /// Disk changed during edit (panel hinted, but user input not overwritten).
     external_change: bool,
 }
 
@@ -349,8 +348,8 @@ impl SettingsCache {
         self.external_change
     }
 
-    /// 文件在磁盘上变了就重读一次。有未保存改动时**不覆盖**编辑中的值，
-    /// 只把 `external_change` 立起来让面板提示。
+    /// File changed on disk, re-read once. If unsaved edits exist, **don't overwrite** edited values,
+    /// just set `external_change` to let panel hint.
     pub fn refresh(&mut self) -> bool {
         let current = read_settings_text(&self.root);
         if current == self.text {
@@ -382,7 +381,7 @@ impl SettingsCache {
         }
     }
 
-    /// 落盘 + 同步「已保存」快照。
+    /// Write to disk + sync "saved" snapshot.
     pub fn apply(&mut self) -> io::Result<()> {
         self.settings.write(&self.root)?;
         self.saved = self.settings.clone();
@@ -392,12 +391,12 @@ impl SettingsCache {
         Ok(())
     }
 
-    /// 丢掉未保存的改动。
+    /// Discard unsaved edits.
     pub fn revert(&mut self) {
         self.settings = self.saved.clone();
     }
 
-    /// 丢弃未保存改动并整份重读（文件坏了也能用：读到默认值）。
+    /// Discard unsaved edits and re-read everything from disk (file broken OK: reads defaults).
     pub fn reload_from_disk(&mut self) {
         self.settings = self.saved.clone();
         self.reload();
@@ -412,7 +411,7 @@ impl SettingsCache {
     }
 }
 
-/// 读 `assets/settings.ini`（缺省回退旧 `settings.toml`）的原始文本。
+/// Read raw text of `assets/settings.ini` (falling back to old `settings.toml`).
 fn read_settings_text(root: &std::path::Path) -> Option<String> {
     for path in [
         ProjectSettings::path(root),
@@ -503,7 +502,7 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].key, "vsync");
 
-        assert!(matching_fields("全屏")
+        assert!(matching_fields("fullscreen")
             .iter()
             .any(|field| field.key == "fullscreen"));
         assert!(matching_fields("BUILD")
@@ -536,7 +535,7 @@ mod tests {
         cache.settings.app.name = "edited".into();
         assert!(cache.is_dirty());
 
-        // 同长度 / 同一秒内的覆盖写也要能检测到（按内容比较，不看 mtime）。
+        // Same-length / same-second overwrites also need detecting (compare content, not mtime).
         let mut other = ProjectSettings::default();
         other.app.name = "external".into();
         other.write(&temp.root).unwrap();
@@ -627,7 +626,10 @@ title = "Old"
         let mut settings = ProjectSettings::read(&temp.root).unwrap();
         assert_eq!(settings.app.company, "Old");
         assert_eq!(settings.window.width, 800);
-        assert_eq!(settings.window.height, 900, "缺失键用默认值");
+        assert_eq!(
+            settings.window.height, 900,
+            "missing key uses default value"
+        );
 
         settings.app.company = "New".into();
         settings.write(&temp.root).unwrap();
@@ -653,7 +655,7 @@ title = "Old"
         assert_eq!(settings.app.company, "Legacy");
         assert_eq!(settings.window.width, 800);
 
-        // 写端只产出 settings.ini。
+        // Write side only outputs settings.ini.
         settings.write(&temp.root).unwrap();
         assert!(ProjectSettings::path(&temp.root).is_file());
         assert!(ProjectSettings::legacy_path(&temp.root).is_file());

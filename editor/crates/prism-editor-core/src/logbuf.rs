@@ -1,8 +1,8 @@
-//! 控制台日志缓冲（`EditorLogger` / `preview-log` 的等价物）。
+//! Console log buffer (equivalent of `EditorLogger` / `preview-log`).
 //!
-//! 面板本身是窗口化的：只渲染视口附近的行，其余用 spacer 占位。
-//! 这里提供数据侧需要的全部操作：环形缓冲、级别过滤、来源过滤、搜索、
-//! 以及「给我视口附近的 index 区间」。
+//! The panel itself is windowed: only rows near the viewport are rendered, the rest use spacers as placeholders.
+//! This provides all operations needed by the data side: ring buffer, level filtering, source filtering, search,
+//! and "give me the index range near the viewport".
 
 use std::collections::VecDeque;
 
@@ -48,7 +48,7 @@ impl LogLevel {
         LogLevel::Info
     }
 
-    /// 从 `env_logger` 风格的一行里推断级别（`[WARN] ...` / `WARN ...`）。
+    /// Infer the level from an `env_logger`-style line (`[WARN] ...` / `WARN ...`).
     pub fn from_line(line: &str) -> LogLevel {
         let head: String = line.chars().take(24).collect();
         LogLevel::parse(&head)
@@ -57,13 +57,13 @@ impl LogLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogSource {
-    /// 编辑器自身（UI / 命令 / 文档）。
+    /// The editor itself (UI / commands / docs).
     Editor,
-    /// 引擎（进程内视口线程里的 `prism_render` / `prism_engine`）。
+    /// The engine (`prism_render` / `prism_engine` in the in-process viewport thread).
     Engine,
-    /// 游戏进程的 stdout/stderr。
+    /// The game process's stdout/stderr.
     Game,
-    /// 编辑器产生的过程记录（构建、cook）。
+    /// Process records produced by the editor (build, cook).
     System,
 }
 
@@ -92,15 +92,15 @@ pub struct LogLine {
     pub source: LogSource,
     pub level: LogLevel,
     pub text: String,
-    /// 单调递增的序号（用于 `uniform_list` 的稳定 id）。
+    /// Monotonically increasing sequence number (used as stable id for `uniform_list`).
     pub seq: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LogFilter {
-    /// 选中的级别；空 = 全部。
+    /// Selected levels; empty = all.
     pub levels: Vec<LogLevel>,
-    /// 选中的来源；空 = 全部。
+    /// Selected sources; empty = all.
     pub sources: Vec<LogSource>,
     pub search: String,
 }
@@ -152,9 +152,9 @@ pub struct LogBuffer {
     capacity: usize,
     filter: LogFilter,
     next_seq: u64,
-    /// 每次追加/清空自增，供 UI 判断是否需要重新计算过滤结果。
+    /// Increments on each append/clear, so the UI can tell whether it needs to recompute filter results.
     revision: u64,
-    /// 过滤结果的缓存（`revision` 变化时重建）。
+    /// Cache of filtered results (rebuilt when `revision` changes).
     visible_cache: Vec<usize>,
     cache_revision: u64,
 }
@@ -226,7 +226,7 @@ impl LogBuffer {
         self.revision += 1;
     }
 
-    /// 追加一行「已经是文本」的日志，级别从文本前缀推断。
+    /// Append a line that is already text; level is inferred from the text prefix.
     pub fn push_line(&mut self, source: LogSource, text: impl Into<String>) {
         let text = text.into();
         let level = LogLevel::from_line(&text);
@@ -254,7 +254,7 @@ impl LogBuffer {
         &self.lines
     }
 
-    /// 过滤后的行数（面板滚动区高度）。
+    /// Number of filtered rows (panel scroll area height).
     pub fn visible_len(&mut self) -> usize {
         self.ensure_cache();
         self.visible_cache.len()
@@ -267,8 +267,8 @@ impl LogBuffer {
             .and_then(|raw| self.lines.get(*raw))
     }
 
-    /// 视口窗口（前端的 `windowRange`）：总行数、起始行、结束行。
-    /// 当前过滤结果的一份快照（`uniform_list` 的 processor 不能借用宿主状态）。
+    /// Viewport window (frontend's `windowRange`): total rows, first row, last row.
+    /// A snapshot of the current filtered results (`uniform_list`'s processor cannot borrow host state).
     pub fn visible_lines(&mut self) -> Vec<LogLine> {
         self.ensure_cache();
         self.visible_cache
@@ -334,9 +334,9 @@ pub struct LogWindow {
     pub total: usize,
     pub first: usize,
     pub last: usize,
-    /// 上方 spacer 高度（像素）。
+    /// Top spacer height (pixels).
     pub top_spacer: f32,
-    /// 下方 spacer 高度（像素）。
+    /// Bottom spacer height (pixels).
     pub bottom_spacer: f32,
 }
 
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(buffer.visible_len(), 3);
 
         buffer.filter_mut().toggle_level(LogLevel::Info);
-        assert_eq!(buffer.visible_len(), 1, "只留 Info");
+        assert_eq!(buffer.visible_len(), 1, "Info only");
 
         buffer.filter_mut().levels.clear();
         buffer.filter_mut().toggle_source(LogSource::Engine);
@@ -384,7 +384,7 @@ mod tests {
 
         buffer.filter_mut().sources.clear();
         buffer.filter_mut().search = "PANIC".into();
-        assert_eq!(buffer.visible_len(), 1, "搜索不区分大小写");
+        assert_eq!(buffer.visible_len(), 1, "search is case-insensitive");
     }
 
     #[test]
@@ -410,11 +410,11 @@ mod tests {
         let window = buffer.window(9.0 * LOG_ROW_HEIGHT, LOG_ROW_HEIGHT, 180.0);
         assert_eq!(window.total, 100);
         assert_eq!(window.first, 9);
-        assert_eq!(window.last, 20, "180/18 = 10 行 + 1");
+        assert_eq!(window.last, 20, "180/18 = 10 rows + 1");
         assert_eq!(window.top_spacer, 9.0 * LOG_ROW_HEIGHT);
         assert_eq!(window.bottom_spacer, 80.0 * LOG_ROW_HEIGHT);
 
-        // 滚过底部的越界请求被夹住。
+        // Out-of-bounds requests past the bottom are clamped.
         let window = buffer.window(1_000.0 * LOG_ROW_HEIGHT, LOG_ROW_HEIGHT, 18.0);
         assert_eq!(window.first, 100);
         assert_eq!(window.last, 100);

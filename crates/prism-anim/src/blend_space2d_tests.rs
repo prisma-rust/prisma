@@ -32,7 +32,7 @@ fn reference() -> Pose {
     Pose::from_locals(vec![JointTransform::IDENTITY])
 }
 
-/// 四个样本构成一个 0..10 × 0..10 的正方形，位置写进 x 轴位移，方便断言。
+/// Four samples form a 0..10 × 0..10 square; positions are written to x-axis translation, convenient for assertions.
 fn square() -> BlendSpace2D {
     BlendSpace2D::new(
         vec![
@@ -66,8 +66,8 @@ fn a_square_produces_two_triangles() {
 
 #[test]
 fn the_centre_sits_on_the_shared_diagonal_of_both_triangles() {
-    // 正方形沿 a–c 对角线拆成两个三角形；中心落在这条公共边上，两个三角形给出
-    // 同一个结果：a(0) 与 c(20) 各一半。
+    // Square split along diagonal a-c into two triangles; centre lies on this shared edge, both triangles yield
+    // the same result: a(0) and c(20) each half.
     let mut space = square();
     let mut out = Pose::from_locals(Vec::new());
     assert!(space.evaluate_into([5.0, 5.0], 0.0, &mut out));
@@ -96,7 +96,7 @@ fn a_point_on_an_edge_weights_only_its_two_endpoints() {
 fn a_point_outside_the_hull_clamps_to_the_boundary() {
     let mut space = square();
     let mut out = Pose::from_locals(Vec::new());
-    // 从中心往 +x 拉出去：应停在 x = 10 那条边上，仍按 y = 5 混合。
+    // Pull out from centre toward +x: should stop at x = 10 edge, still blend by y = 5.
     assert!(space.evaluate_into([100.0, 5.0], 0.0, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 15.0).abs() < 1e-3, "expected 15, got {x}");
@@ -211,7 +211,7 @@ fn non_finite_queries_are_rejected() {
 
 #[test]
 fn phase_is_normalised_per_clip() {
-    // 两个剪辑时长不同，同一归一化相位各自采到自己的时间点。
+    // Two clips have different durations; same normalized phase each samples its own time point.
     let short = Arc::new(Clip {
         name: "short".into(),
         duration: 1.0,
@@ -275,7 +275,7 @@ fn phase_is_normalised_per_clip() {
     );
     let mut out = Pose::from_locals(Vec::new());
     assert!(space.evaluate_into([5.0, 0.0], 0.5, &mut out));
-    // 两段都到各自时长的中点：1 * 0.5 和 3 * 0.5，混合后 1.0。
+    // Both segments reach midpoint of their own duration: 1 * 0.5 and 3 * 0.5, mixed to 1.0.
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.0).abs() < 1e-4, "expected 1.0, got {x}");
 }

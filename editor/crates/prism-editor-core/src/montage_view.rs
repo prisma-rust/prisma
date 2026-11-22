@@ -1,6 +1,6 @@
-//! 作者侧 Montage 段表（`*.skinning/montages.json`）的视图与编辑（#560 P4）。
+//! Author-side Montage section table view and editing (`*.skinning/montages.json`, #560 P4).
 //!
-//! 文件形状与 cooker 的 `authored_montages` 一致：
+//! File shape matches cooker's `authored_montages`:
 //!
 //! ```json
 //! {
@@ -15,23 +15,23 @@
 //! }
 //! ```
 //!
-//! 键是 glTF 里的动画**原名**，不是 cook 后的 `.ranim` 文件名。这里只做形状层面
-//! 的校验（名字非空 / 唯一、时间有限且 `0 <= start <= end`），「对上不对得上某个
-//! 动画」仍由 cook 时 warn。
+//! Key is animation **original name** in glTF, not cooked `.ranim` filename. Only does shape-level
+//! validation (non-empty/unique names, finite times and `0 <= start <= end`); "matches an actual
+//! animation or not" still warned at cook time.
 
 use serde_json::{json, Value};
 
-/// 一段 Montage 区间。
+/// A Montage section interval.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MontageSectionView {
     pub name: String,
-    /// 起点（秒）。
+    /// Start time (seconds).
     pub start: f32,
-    /// 终点（秒）；可以等于 `start`。
+    /// End time (seconds); can equal `start`.
     pub end: f32,
 }
 
-/// 一段 MotionWarping 窗口。
+/// A MotionWarping window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MontageWarpWindowView {
     pub name: String,
@@ -39,7 +39,7 @@ pub struct MontageWarpWindowView {
     pub end: f32,
 }
 
-/// 一个剪辑的 Montage 段 / warp window 列表。
+/// A clip's Montage sections / warp windows list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipMontageView {
     pub clip: String,
@@ -47,14 +47,14 @@ pub struct ClipMontageView {
     pub warp_windows: Vec<MontageWarpWindowView>,
 }
 
-/// 整个 Montage 段表，按剪辑名排序。
+/// Entire Montage section table, sorted by clip name.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MontagesView {
     pub clips: Vec<ClipMontageView>,
 }
 
 impl MontagesView {
-    /// 所有段 + warp window 总数（面板标题用）。
+    /// Total sections + warp windows (for panel title).
     pub fn len(&self) -> usize {
         self.clips
             .iter()
@@ -127,7 +127,7 @@ fn parse_ranges(
     Ok(ranges)
 }
 
-/// 解析 Montage 段 / warp window 表；缺 `clips` 当作空表。
+/// Parse Montage sections / warp window table; missing `clips` treated as empty table.
 pub fn parse_montages_view(document: &Value) -> Result<MontagesView, String> {
     let Some(clips) = document.get("clips") else {
         return Ok(MontagesView::default());
@@ -190,7 +190,7 @@ fn ensure_clip<'a>(document: &'a mut Value, clip: &str) -> Result<&'a mut Value,
     Ok(entry)
 }
 
-/// 给某个剪辑追加一段；剪辑键不存在时自动创建。
+/// Append a section to a clip; clip key auto-created if missing.
 pub fn add_montage_section(
     document: &mut Value,
     clip: &str,
@@ -220,7 +220,7 @@ pub fn add_montage_section(
     Ok(())
 }
 
-/// 删除某个剪辑的第 `index` 段。
+/// Remove section at `index` of a clip.
 pub fn remove_montage_section(
     document: &mut Value,
     clip: &str,
@@ -239,7 +239,7 @@ pub fn remove_montage_section(
     Ok(())
 }
 
-/// 改某一段的名字 / 时间；同一剪辑内段名不能重复。
+/// Change a section's name / time; section names unique within same clip.
 pub fn set_montage_section(
     document: &mut Value,
     clip: &str,
@@ -279,7 +279,7 @@ pub fn set_montage_section(
     Ok(())
 }
 
-/// 时间点落在哪一段（左闭右开；零长度段命中起点）。
+/// Which section a time point falls into (left-closed right-open; zero-length section hits start).
 pub fn montage_section_at(time: f32, sections: &[MontageSectionView]) -> Option<usize> {
     if !time.is_finite() {
         return None;
@@ -296,7 +296,7 @@ pub fn montage_section_at(time: f32, sections: &[MontageSectionView]) -> Option<
     })
 }
 
-/// 给某个剪辑追加一个 warp window；剪辑键不存在时自动创建。
+/// Append a warp window to a clip; clip key auto-created if missing.
 pub fn add_montage_warp_window(
     document: &mut Value,
     clip: &str,
@@ -326,7 +326,7 @@ pub fn add_montage_warp_window(
     Ok(())
 }
 
-/// 删除某个剪辑的第 `index` 个 warp window。
+/// Remove warp window at `index` of a clip.
 pub fn remove_montage_warp_window(
     document: &mut Value,
     clip: &str,
@@ -345,7 +345,7 @@ pub fn remove_montage_warp_window(
     Ok(())
 }
 
-/// 改某个 warp window 的名字 / 时间；同一剪辑内名字不能重复。
+/// Change a warp window's name / time; names unique within same clip.
 pub fn set_montage_warp_window(
     document: &mut Value,
     clip: &str,
@@ -385,7 +385,7 @@ pub fn set_montage_warp_window(
     Ok(())
 }
 
-/// 时间点落在哪个 warp window（左闭右开；零长度窗口命中起点）。
+/// Which warp window a time point falls into (left-closed right-open; zero-length window hits start).
 pub fn montage_warp_window_at(time: f32, windows: &[MontageWarpWindowView]) -> Option<usize> {
     if !time.is_finite() {
         return None;

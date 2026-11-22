@@ -1,11 +1,11 @@
-//! 动画剪辑：关键帧轨道与采样。
+//! Animation clip: keyframe tracks and sampling.
 
 use glam::{Quat, Vec3};
 
 use crate::pose::Pose;
 use crate::sync::SyncMarkerSet;
 
-/// 单个骨骼的一条通道关键帧（时间升序）。
+/// A single channel keyframe for one bone (time in ascending order).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vec3Key {
     pub time: f32,
@@ -18,9 +18,10 @@ pub struct QuatKey {
     pub value: Quat,
 }
 
-/// 一条轨道：一个骨骼的 position / rotation / scale 通道。
+/// One track: the position / rotation / scale channels of one bone.
 ///
-/// 空通道表示「这个剪辑不动这条通道」，采样时保留姿态里原有的值。
+/// An empty channel means "this clip doesn't move this channel"; sampling keeps the value
+/// already in the pose.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Track {
     pub joint: usize,
@@ -35,29 +36,31 @@ impl Track {
     }
 }
 
-/// 剪辑里的一个关键帧事件（#560 P1 Notify）。
+/// A keyframe event in the clip (#560 P1 Notify).
 ///
-/// `name` 由项目解释（`Footstep.L` / `Traversal.Window` / …）：动画层只负责「在这一帧
-/// 跨过了这个时间点」的事实，不决定它意味着什么。
+/// `name` is interpreted by the project (`Footstep.L` / `Traversal.Window` / …): the animation
+/// layer is only responsible for the fact that "this time point was crossed in this frame",
+/// not for what it means.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipNotify {
-    /// 触发时间（秒，剪辑本地时间）。
+    /// Trigger time (seconds, clip-local time).
     pub time: f32,
     pub name: String,
 }
 
-/// 一段 Montage 区间（#560 P4）：按名字跳转 / 调试时显示。
+/// A Montage segment (#560 P4): jump to by name / show while debugging.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipSection {
     pub name: String,
-    /// 段起点（秒，剪辑本地时间）。
+    /// Segment start (seconds, clip-local time).
     pub start: f32,
-    /// 段终点（秒，剪辑本地时间）；可以等于 `start`。
+    /// Segment end (seconds, clip-local time); may equal `start`.
     pub end: f32,
 }
 
 impl ClipSection {
-    /// 这个时间点是否落在段内（左闭右开；零长度段命中 `start`）。
+    /// Whether this time point falls inside the segment (left-closed right-open; zero-length
+    /// segment hits `start`).
     pub fn contains(&self, time: f32) -> bool {
         if !time.is_finite() || !self.start.is_finite() || !self.end.is_finite() {
             return false;
@@ -70,8 +73,8 @@ impl ClipSection {
     }
 }
 
-/// 一段 MotionWarping 窗口（#560 P4）：root motion 只在这个时间区间内允许被
-/// 目标点 / 朝向扭曲。
+/// A MotionWarping window (#560 P4): root motion is only allowed to be warped by target
+/// point / direction within this time interval.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipWarpWindow {
     pub name: String,
@@ -91,7 +94,7 @@ impl ClipWarpWindow {
         }
     }
 
-    /// 窗口内的归一化进度；零长度窗口在命中时返回 1。
+    /// Normalized progress within the window; a zero-length window returns 1 on hit.
     pub fn progress(&self, time: f32) -> Option<f32> {
         if !self.contains(time) {
             return None;
@@ -103,7 +106,7 @@ impl ClipWarpWindow {
     }
 }
 
-/// 一段动画剪辑。
+/// An animation clip.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Clip {
     pub name: String,
@@ -112,13 +115,13 @@ pub struct Clip {
     pub looped: bool,
     pub additive: bool,
     pub tracks: Vec<Track>,
-    /// 关键帧事件（时间升序由 `from_info` / 编码器保证，这里不再排序）。
+    /// Keyframe events (time ascending guaranteed by `from_info` / encoder, not sorted here).
     pub notifies: Vec<ClipNotify>,
-    /// 同步标记的归一化相位（升序；`from_info` 保证有限、去重）。
+    /// Normalized phases of sync markers (ascending; `from_info` guarantees finite, deduplicated).
     pub sync_markers: Vec<f32>,
-    /// Montage 段（按 `start` 升序；普通剪辑为空）。
+    /// Montage segments (ascending by `start`; empty for regular clips).
     pub sections: Vec<ClipSection>,
-    /// MotionWarping 窗口（按 `start` 升序；普通剪辑为空）。
+    /// MotionWarping windows (ascending by `start`; empty for regular clips).
     pub warp_windows: Vec<ClipWarpWindow>,
 }
 
@@ -220,7 +223,7 @@ impl Clip {
         }
     }
 
-    /// 这段剪辑的同步标记；没有标记时返回 `None`。
+    /// The sync markers of this clip; returns `None` when there are no markers.
     pub fn sync_marker_set(&self) -> Option<SyncMarkerSet> {
         SyncMarkerSet::new(self.sync_markers.iter().copied())
     }
@@ -229,11 +232,13 @@ impl Clip {
         self.tracks.iter().all(Track::is_empty)
     }
 
-    /// 这一帧跨越的事件：区间 `(from, to]`；循环剪辑跨过结尾时把 `[0, to]` 也算上。
+    /// Events crossed by this frame: interval `(from, to]`; for looped clips crossing the end,
+    /// `[0, to]` is also counted.
     ///
-    /// `from` / `to` 都是**已折算的本地时间**（`0..=duration`）。起点取开区间是有意的：
-    /// 事件在它恰好等于 `from` 的那一帧已经触发过，再用闭区间会让停在某帧上反复播。
-    /// 结果按时间升序。
+    /// `from` / `to` are both **converted local times** (`0..=duration`). Taking the start as an
+    /// open interval is intentional: an event that already fired at exactly `from` would replay
+    /// repeatedly on a paused frame if a closed interval were used.
+    /// Results are sorted by time ascending.
     pub fn notifies_between(&self, from: f32, to: f32) -> Vec<&ClipNotify> {
         if self.notifies.is_empty() || !from.is_finite() || !to.is_finite() {
             return Vec::new();
@@ -243,7 +248,7 @@ impl Clip {
             return Vec::new();
         }
         let mut fired: Vec<&ClipNotify> = Vec::new();
-        // `to < from` 只可能是循环回绕（`rem_euclid` 之后），分两段扫。
+        // `to < from` can only be loop wrap-around (after `rem_euclid`), scan in two segments.
         let wrapped = to < from;
         for notify in &self.notifies {
             let hit = if wrapped {
@@ -260,7 +265,8 @@ impl Clip {
         fired
     }
 
-    /// 把本地时间折算成采样时间：循环剪辑取余、单次剪辑夹到 `[0, duration]`。
+    /// Convert local time to sampling time: looped clips take the remainder, one-shot clips clamp
+    /// to `[0, duration]`.
     pub fn wrap_time(&self, time: f32) -> f32 {
         if !time.is_finite() {
             return 0.0;
@@ -275,10 +281,10 @@ impl Clip {
         }
     }
 
-    /// 把剪辑在 `time` 处的采样写进 `pose`，返回是否有任何通道被写入。
+    /// Write the clip's sampling at `time` into `pose`, returning whether any channel was written.
     ///
-    /// `time` 是**局部时间**：调用方决定要不要先过 [`Clip::wrap_time`]
-    /// （`Animator` 组件允许覆盖剪辑自带的循环设置，所以这里不替它绕回）。
+    /// `time` is **local time**: the caller decides whether to first pass through [`Clip::wrap_time`]
+    /// (the `Animator` component may override the clip's own loop setting, so we don't wrap it here).
     pub fn sample_into(&self, time: f32, pose: &mut Pose) -> bool {
         let time = if time.is_finite() { time } else { 0.0 };
         let mut touched = false;
@@ -306,11 +312,12 @@ impl Clip {
         touched
     }
 
-    /// 只采样一个关节（动画 LOD 仅根骨 / 根运动用），返回该关节是否有轨道。
+    /// Sample only one joint (animation LOD for root bone / root motion only), returning whether
+    /// the joint has a track.
     ///
-    /// 没被采样到的关节保持 `pose` 里的值；轨道缺少某个通道（平移 / 旋转 / 缩放）
-    /// 时那个通道也不动，和 [`Self::sample_into`] 的语义一致。越界关节返回
-    /// `false`。
+    /// Joints not sampled keep their values in `pose`; when a track is missing a channel
+    /// (translation / rotation / scale), that channel doesn't move either, consistent with the
+    /// semantics of [`Self::sample_into`]. Out-of-range joints return `false`.
     pub fn sample_joint_into(&self, time: f32, joint: usize, pose: &mut Pose) -> bool {
         let time = if time.is_finite() { time } else { 0.0 };
         let Some(current) = pose.local(joint) else {
@@ -341,17 +348,18 @@ impl Clip {
         touched
     }
 
-    /// 先按剪辑自己的 `looped` 折算时间再采样（单独使用剪辑时的方便入口）。
+    /// First convert time by the clip's own `looped`, then sample (convenient entry point when
+    /// using the clip standalone).
     pub fn sample_wrapped_into(&self, time: f32, pose: &mut Pose) -> bool {
         let local = self.wrap_time(time);
         self.sample_into(local, pose)
     }
 
-    /// 轨道覆盖的时间上限（没有关键帧时是 `duration`）。
-    /// 所有轨道用到的关键帧时间点（升序、去重、只要有限值）。
+    /// Upper bound of time covered by tracks (`duration` when there are no keyframes).
+    /// All keyframe time points used by tracks (ascending, deduplicated, finite values only).
     ///
-    /// 编辑器画时间轴刻度用：剪辑里各轨道的关键帧往往错开，合并后才是「这个剪辑
-    /// 在哪些时刻会变」。
+    /// Used by editors to draw timeline ticks: keyframes across tracks in a clip are often
+    /// staggered, and only after merging is it "the moments this clip changes".
     pub fn key_times(&self) -> Vec<f32> {
         let mut times: Vec<f32> = Vec::new();
         for track in &self.tracks {
@@ -388,7 +396,8 @@ impl Clip {
     }
 }
 
-/// 时间 `time` 处的值：首帧前/末帧后保持端点，中间线性插值。
+/// The value at time `time`: hold endpoints before the first / after the last keyframe,
+/// linear interpolation in between.
 pub fn sample_vec3(keys: &[Vec3Key], time: f32) -> Option<Vec3> {
     let (first, rest) = keys.split_first()?;
     if rest.is_empty() || time <= first.time {
@@ -408,12 +417,12 @@ pub fn sample_vec3(keys: &[Vec3Key], time: f32) -> Option<Vec3> {
                 Some(before.value.lerp(after.value, t))
             }
         }
-        // 只有一个关键帧覆盖这个时间点。
+        // Only one keyframe covers this time point.
         None => Some(keys[0].value),
     }
 }
 
-/// 四元数版本：slerp（自动走短弧）。
+/// Quaternion version: slerp (automatically takes the short arc).
 pub fn sample_quat(keys: &[QuatKey], time: f32) -> Option<Quat> {
     let (first, rest) = keys.split_first()?;
     if rest.is_empty() || time <= first.time {
@@ -437,7 +446,7 @@ pub fn sample_quat(keys: &[QuatKey], time: f32) -> Option<Quat> {
     }
 }
 
-/// 二分找 `key.time <= time` 的最后一帧及其后继。
+/// Binary search for the last frame with `key.time <= time` and its successor.
 fn find_span<T>(keys: &[T], time: f32, time_of: impl Fn(&T) -> f32) -> Option<(&T, &T)> {
     let mut low = 0usize;
     let mut high = keys.len() - 1;

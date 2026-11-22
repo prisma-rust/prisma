@@ -1,64 +1,64 @@
-# 立方体素专用软件 GI 设计（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联）
+# Voxel-specific Software GI Design (64-ary tree bitmask DDA + face cache + 3D radiance cascades)
 
-> **层级**：L2 专项子系统设计 · 渲染进阶
-> **状态**：备选设计蓝图（面向无硬件光追的移动端 / 通用 GPU，支持 UGC 实时拆建方块）
-> **关联**：[DESIGN.md](DESIGN.md) §6、[prt-gi-64tree-design.md](prt-gi-64tree-design.md)、[src-gi-design.md](src-gi-design.md)
+> **Tier**: L2 subsystem design · Rendering advanced
+> **Status**: Optional design blueprint (for mobile / general GPU without hardware ray tracing, supports UGC real-time build/destroy)
+> **Related**: [DESIGN.md](DESIGN.md) §6, [prt-gi-64tree-design.md](prt-gi-64tree-design.md), [src-gi-design.md](src-gi-design.md)
 
-本文定义一套**完全不依赖硬件光追、也不依赖三角形 BVH 或 Surfel 圆盘近似**的立方体素专用软件 GI 方案。利用立方体素“轴对齐 + 整数格点 + 6 离散法线”的天然结构红利，在移动端实现**零圆盘漏光、UGC 秒级响应、低随机访存**的实时漫反射全局光照。
+This document defines a **fully hardware-ray-tracing-independent, triangle-BVH-independent, and surfel-disk-approximation-independent** voxel-specific software GI solution. Leveraging the voxel's natural structural benefits of "axis-aligned + integer grid points + 6 discrete normals", it achieves **zero disk light leakage, UGC second-level response, low random memory access** real-time diffuse global illumination on mobile.
 
 ---
 
-## 1. 核心优势（相比通用网格 SRC GI）
+## 1. Core advantages (vs. general mesh SRC GI)
 
-| 痛点（通用网格 SRC GI） | 体素专用软件 GI 的天然解法 |
+| Pain point (general mesh SRC GI) | Voxel-specific software GI natural solution |
 |---|---|
-| Surfel 圆盘近似导致薄墙缝隙、自遮挡与“透明外环”补丁 | **分层 64 叉树位掩码精确 DDA**，1 格厚墙 100% 严丝合缝，零几何漏光 |
-| 空间哈希冲突 + Surfel 动态分配/回收池 + LOD 合并 | **Chunk 级静态槽位 + 体素 6 向面缓存**，拆建方块仅置脏局部 Chunk |
-| 依赖“室内体积（Indoor Volume）”人工/规则分类屏蔽内外采样 | DDA 直接在精确体素占据位图中步进，物理遮挡即真值 |
+| Surfel disk approximation causes thin-wall gaps, self-occlusion, and "transparent outer ring" patches | **Hierarchical 64-ary tree bitmask exact DDA**, 1-voxel-thick wall 100% tight, zero geometric light leakage |
+| Spatial hash conflicts + Surfel dynamic allocation/recycle pool + LOD merging | **Chunk-level static slots + voxel 6-direction face cache**, build/destroy only marks local Chunk dirty |
+| Depends on manual/rule-based "indoor volume" classification to shield inner/outer sampling | DDA steps directly in exact voxel occupancy bitmap, physical occlusion is ground truth |
 
 ---
 
-## 2. 几何表示：三层 64 叉树位掩码（`uint64` / `uvec2`）
+## 2. Geometry representation: three-layer 64-ary tree bitmask (`uint64` / `uvec2`)
 
-沿用 Prisma `uvec2` 双字位运算约定，将体素世界按 `Chunk` 组织为三层 `4×4×4` 位掩码树：
+Following Prisma `uvec2` dual-word bit arithmetic convention, organize the voxel world by `Chunk` as a three-layer `4×4×4` bitmask tree:
 
-- **L0（Leaf Brick，`4×4×4` 体素）**：单个 `uvec2`（64 bit）表示 64 个体素的实心占据状态（1 bit/voxel）。
-- **L1（Macro Brick，`16×16×16` 体素）**：单个 `uvec2` 表示 `4×4×4` 个 L0 Brick 的非空状态。
-- **L2（Chunk Root，`64×64×64` 体素）**：单个 `uvec2` 表示 `4×4×4` 个 L1 的非空状态，配合 Clipmap / Chunk 页表覆盖相机周围世界。
+- **L0 (Leaf Brick, `4×4×4` voxels)**: a single `uvec2` (64 bits) represents solid occupancy of 64 voxels (1 bit/voxel).
+- **L1 (Macro Brick, `16×16×16` voxels)**: a single `uvec2` represents non-empty state of `4×4×4` L0 bricks.
+- **L2 (Chunk Root, `64×64×64` voxels)**: a single `uvec2` represents non-empty state of `4×4×4` L1s, combined with Clipmap / Chunk page table covering the world around the camera.
 
-**分层 DDA 步进**：
-- 射线进入空 L2/L1 时，按 **Amanatides–Woo 整数 DDA** 直接跳过整个 `16^3` 或 `4^3` 块；
-- 仅在掩码 bit 为 1 的 L0 Brick 内逐体素步进；
-- **零浮点三角形求交、零圆盘求交**，命中时直接得到 `(voxel_coord, face_id ∈ 0..5, hit_t)`。
-
----
-
-## 3. 光照缓存：体素 6 向面缓存（Voxel Face Cache）
-
-不再维护动态 Surfel 列表，直接把直接光与上一帧间接光缓存到**暴露体素面**上：
-
-- **索引键**：仅当体素某朝向 `face_id`（`±X, ±Y, ±Z`）相邻格为空气时才存在暴露面；通过 Chunk 局部紧凑索引或轻量 3D 页表映射。
-- **存储格式**：每面存 `f16x4`（`rgb = 离面出射辐射度 E/π * albedo`，`a = 有效时间戳/脏标记`），**天然支持全向 RGB 彩色溢色**（无需亮度/色度分离妥协）。
-- **UGC 实时更新**：玩家增删方块时，仅将受影响方块的 6 邻域暴露面标记为脏，在下一帧刷新（单帧即可重置局部 Hit 缓存，无需全图重烘焙）。
+**Hierarchical DDA stepping**:
+- When ray enters empty L2/L1, directly skip entire `16^3` or `4^3` block via **Amanatides–Woo integer DDA**.
+- Step voxel by voxel only inside L0 bricks where mask bit is 1.
+- **Zero float triangle intersection, zero disk intersection**, on hit directly get `(voxel_coord, face_id ∈ 0..5, hit_t)`.
 
 ---
 
-## 4. 辐射传播与合成：3D 辐射级联（Direction-First）
+## 3. Lighting cache: voxel 6-direction face cache (Voxel Face Cache)
 
-在获得精确体素 DDA 命中与 Face Cache 后，采用 3D 辐射级联做无噪点最终收集（Final Gather）：
+No longer maintain dynamic Surfel list; directly cache direct light and previous frame's indirect light on **exposed voxel faces**:
 
-1. **级联分级**：
-   - Cascade 0（近景高空间分辨率，1~2 m 内软接触阴影与角落颜色溢出）；
-   - Cascade 1..N（空间分辨率逐级 `1/8`，角分辨率逐级 `4×`），按多帧分摊（常规 8–16 帧，灯光/方块剧变时局部快速重置）发射少量分层 DDA 射线。
-2. **Direction-First 硬件三线性**：
-   - 同方向切片连续存放于 `R16G16B16A16_SFLOAT` 3D 纹理，片元着色器直接用硬件 `SampleLevel` 三线性插值。
-3. **体素角点 AO（Voxel Corner AO）叠加**：
-   - 将极高频的 1 格内棱角接触阴影交给零成本的邻域位掩码 Corner AO，与级联间接光互补，进一步压低 Cascade 0 所需的探针密度。
+- **Index key**: an exposed face exists only when the neighboring voxel in direction `face_id` (`±X, ±Y, ±Z`) is air; mapped via Chunk-local compact index or lightweight 3D page table.
+- **Storage format**: each face stores `f16x4` (`rgb = E/π * albedo` radiance leaving the face, `a = valid timestamp / dirty flag`), **naturally supports omnidirectional RGB color bleeding** (no need for brightness/chrominance separation compromise).
+- **UGC real-time update**: when player adds/removes blocks, only mark the 6-neighborhood exposed faces of affected blocks as dirty, refresh next frame (single frame can reset local hit cache, no full re-bake).
 
 ---
 
-## 5. 移动端适配要点
+## 4. Radiance propagation and compositing: 3D radiance cascades (Direction-First)
 
-- **全整型/位运算内循环**：DDA 与 64-bit 掩码测试尽量避免分支发散；L0 命中即终止。
-- **带宽控制**：Face Cache 与级联纹理统一采用 `RGBA16F`；远距离级联写入前做 4 方向预平均。
-- **可选降分解析**：低端机支持 70% 分辨率 GI 解析 + `FSR1` / `TAA` 空间恢复。
+After obtaining exact voxel DDA hit and Face Cache, use 3D radiance cascades for noise-free final collection (Final Gather):
+
+1. **Cascade tiering**:
+   - Cascade 0 (near-field high spatial resolution, soft contact shadows and corner color bleeding within 1~2 m);
+   - Cascade 1..N (spatial resolution down by `1/8` per level, angular resolution up by `4×` per level), amortized over multiple frames (typically 8–16 frames, fast local reset on light/block dramatic change) emitting a small number of layered DDA rays.
+2. **Direction-First hardware trilinear**:
+   - Same-direction slices stored contiguously in `R16G16B16A16_SFLOAT` 3D texture; fragment shader directly uses hardware `SampleLevel` trilinear interpolation.
+3. **Voxel Corner AO overlay**:
+   - Ultra-high-frequency 1-voxel-edge contact shadow handled by zero-cost neighbor bitmask Corner AO, complementing cascade indirect light, further reducing probe density needed for Cascade 0.
+
+---
+
+## 5. Mobile adaptation points
+
+- **All-integer/bitwise inner loop**: DDA and 64-bit mask tests avoid branch divergence as much as possible; L0 hit terminates immediately.
+- **Bandwidth control**: Face Cache and cascade textures uniformly use `RGBA16F`; distant cascade writes pre-average 4 directions before write.
+- **Optional resolution downgrade**: low-end devices support 70% GI resolution parsing + `FSR1` / `TAA` spatial recovery.

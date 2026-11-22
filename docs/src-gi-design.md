@@ -1,77 +1,77 @@
-# SRC GI（Surfel Radiance Cascades）移动端动态全局光照备选设计
+# SRC GI (Surfel Radiance Cascades) mobile dynamic global illumination optional design
 
-> **层级**：L2 专项子系统设计 · 渲染进阶
-> **状态**：备选设计蓝图（尚未落地代码；面向未来 UGC / 强动态几何且无硬件光追的移动端场景）
-> **关联**：[DESIGN.md](DESIGN.md) §6、[prt-gi-64tree-design.md](prt-gi-64tree-design.md)、[mobile-raytracing-gi-design.md](mobile-raytracing-gi-design.md)
+> **Tier**: L2 subsystem design · Rendering advanced
+> **Status**: Optional design blueprint (not yet implemented; for future UGC / strong dynamic geometry without hardware ray tracing mobile scenarios)
+> **Related**: [DESIGN.md](DESIGN.md) §6, [prt-gi-64tree-design.md](prt-gi-64tree-design.md), [mobile-raytracing-gi-design.md](mobile-raytracing-gi-design.md)
 
-本文记录 **SRC GI（Surfel Radiance Cascades，GIBS@SIGGRAPH2021 移动端变体）** 的完整技术设计，作为 Prisma 日后若需支持 **UGC 玩家自由建造 / 强动态几何破坏** 时的可选 GI 管线蓝图。
-
----
-
-## 1. 设计目标与适用边界
-
-- **目标**：在**不依赖硬件光追（无需 `VK_KHR_ray_query` / BVH 遍历）**的移动设备上，为**全动态 / UGC 场景**提供免人工摆放探针、免离线烘焙的实时漫反射全局光照。
-- **与 PRT GI 的边界划分**：
-  - **PRT GI（`RasterGiMode::Prt`）**：静态几何为主 + 动态光照；运行时零求交、单帧响应、RGB 全向色彩保真、固定 4 MB 预算。
-  - **SRC GI（本蓝图）**：UGC 自由建造 / 强动态几何；运行时软件求交 + 跨帧收敛（5–28 帧）+ 相机跟随局部 64 m 覆盖。
+This document records the complete technical design of **SRC GI (Surfel Radiance Cascades, GIBS@SIGGRAPH2021 mobile variant)** as an optional GI pipeline blueprint for Prisma to optionally support **UGC player free building / strong dynamic geometry destruction** in the future.
 
 ---
 
-## 2. 核心管线：基于多级哈希网格的软件光追
+## 1. Design goals and applicability boundary
 
-不再构建与遍历三角形 BVH，而是把 **Surfel（统一半径的圆盘面元）** 本身作为光线求交目标：
-
-1. **光线发射与多帧分摊步进**：
-   - 光线从世界空间探针发射，最大追踪距离上限 **64 m**。
-   - 默认每次反弹分摊到 **28 帧** 收敛；**快速模式**（首次进入场景或灯光开关切换时触发）在 **5 帧** 内完成收敛。
-2. **空格子跳过（32-bit 空间哈希）**：
-   - 光线步进跨越网格单元时，以离散 3D 坐标 `loc` 与当前 `level` 计算唯一 **32 位整型哈希键**查询素数缓冲区。
-   - 缓冲区为空则判定为空格子直接跳过；命中数据则停下进入求交阶段。
-3. **简化圆盘求交**：
-   - 仅与网格单元内携带 `(position, radius, normal)` 的 Surfel 执行 **光线-圆盘相交测试**（开销远低于光线-三角形求交），命中后将表面辐照度缓存回探针。
-   - 由于 Surfel 半径统一，天然支持按距离动态调节分辨率与 LOD。
+- **Goal**: on mobile devices **without hardware ray tracing** (no `VK_KHR_ray_query` / BVH traversal needed), provide **free manually-placed probes, free offline baking** real-time diffuse global illumination for **fully dynamic / UGC scenes**.
+- **Boundary with PRT GI**:
+  - **PRT GI (`RasterGiMode::Prt`)**: static geometry primary + dynamic lights; zero runtime intersection, single-frame response, full RGB color fidelity, fixed 4 MB budget.
+  - **SRC GI (this blueprint)**: UGC free building / strong dynamic geometry; runtime software intersection + cross-frame convergence (5–28 frames) + camera-following local 64 m coverage.
 
 ---
 
-## 3. 世界空间探针布局与辐照度压缩
+## 2. Core pipeline: software ray tracing based on multi-level hash grid
 
-- **自动化随行布局**：世界空间探针随相机自动平移跟随，无需美术手工摆放或离线烘焙。
-- **三级 Clipmap**：
-  - 共 3 级，每级 **`32 × 32 × 16`** 个探针。
-  - **LOD 0** 间距约 **1 m**，外层随 LOD 等级逐级翻倍，整体覆盖半径约 **64 m**。
-- **辐照度压缩存储**（参考《刺客信条：影》方案）：
-  - **亮度分量**存为球谐函数（SH），保留方向性。
-  - **色度分量**退化为无方向标量。
-  - 每通道 **16-bit**，打包进 `uint3` 纹理，严格控制移动端显存与带宽。
+No longer build and traverse triangle BVH; instead take **Surfel (unified-radius disk surface element)** itself as ray intersection target:
 
----
-
-## 4. 3D 辐射级联（3D Radiance Cascades）与内存布局
-
-引入 Alexander Sannikov 提出的辐射级联思想，按距离划分多层级联：
-
-1. **远近分辨率权衡**：
-   - 近距离级联（Cascade 0）保持高空间分辨率以保留近景几何边缘与阴影细节。
-   - 每向下一级：空间分辨率降为 **`1/8`**，角度分辨率提升 **`4×`**（如 64 → 256 方向），总分辨率上限控制在 Cascade 0 的 **`2×`** 以内，显著减少射线步进次数。
-2. **方向优先布局（Direction-First Layout）**：
-   - 将“方向”维度排在最外层（同一方向切片内连续存放所有探针），使 GPU **硬件纹理采样器**可以直接执行 3D 三线性插值，大幅降低手动插值的 ALU 开销。
-3. **远距离级联预平均（Pre-averaging）**：
-   - 对 0 级以上远距离级联，在写入内存前提前将每 4 个方向的光照结果做平均合并，将 0 级以上级联的内存与带宽开销压至约 **`1/4`**。
+1. **Ray emission and multi-frame amortized stepping**:
+   - Rays emitted from world-space probes, max trace distance capped at **64 m**.
+   - Default each bounce amortized over **28 frames** to converge; **fast mode** (triggered on first scene entry or light switch) completes convergence in **5 frames**.
+2. **Empty cell skipping (32-bit spatial hash)**:
+   - When ray steps across grid cells, compute unique **32-bit integer hash key** from discrete 3D coordinate `loc` and current `level`, query prime buffer.
+   - Empty buffer means empty cell, directly skip; hit data stops and enters intersection phase.
+3. **Simplified disk intersection**:
+   - Only perform **ray-disk intersection test** with Surfels carrying `(position, radius, normal)` inside grid cells (cost far lower than ray-triangle intersection); after hit, cache surface irradiance back to probe.
+   - Since Surfel radius is uniform, naturally supports distance-based dynamic resolution and LOD adjustment.
 
 ---
 
-## 5. 移动端性能优化与漏光容错
+## 3. World-space probe layout and irradiance compression
 
-1. **Hit-hash 缓存**：在首轮追踪中缓存 Hit 距离，后续帧在几何未失效时直接跳过重复步进，使追踪开销接近零（几何变动时需对受影响网格做局部失效重算）。
-2. **70% 基础分辨率 + 超分辨率解析**：GI 基础计算分辨率降至 **70%**（约节省 **50%** 带宽与执行时间），再通过 **FSR1** 或 **NSS**（Arm Neural Super Sampling）还原到全分辨率。
-3. **漏光控制**：
-   - 针对移动端无物理厚度的单面薄片几何，引入 Surfel **“透明外环”** 衰减机制，抑制圆盘间隙与穿透漏光。
-   - 结合基于**室内体积（Indoor Volume）**的探针分类，屏蔽室内外错误交叉采样。
+- **Automatic follow layout**: world-space probes automatically follow camera movement, no manual probe placement or offline baking needed by artists.
+- **Three-level Clipmap**:
+  - Total 3 levels, each level **`32 × 32 × 16`** probes.
+  - **LOD 0** spacing approx **1 m**, outer layers double with LOD level, overall coverage radius approx **64 m**.
+- **Irradiance compressed storage** (referencing *Assassin's Creed: Mirage* scheme):
+  - **Luminance component** stored as spherical harmonics (SH), retaining directionality.
+  - **Chrominance component** degenerated to directionless scalar.
+  - **16-bit per channel**, packed into `uint3` texture, strictly controlling mobile VRAM and bandwidth.
 
 ---
 
-## 6. 日后接入 Prisma 的前置评估要点
+## 4. 3D radiance cascades (3D Radiance Cascades) and memory layout
 
-1. **管线位置**：作为 `RasterGiMode::Src`（待定枚举）接入 `RenderGraph`，与 `PrtPass` / `RestirGiPass` 互斥。
-2. **与现有设施的复用**：空间哈希表与原子累积可参考 [sharc.rs](file:///root/prisma/crates/prism-render/src/sharc.rs)；硬件三线性 `Direction-First` 布局经验可直接反哺 `PrtPass` 的 `gi_volume` 优化。
-3. **已知权衡**：28 帧稳态收敛延迟、色度方向性损失、以及依赖室内体积分类对纯开放 UGC 场景的边界要求，需在立项前结合目标项目类型评估。
+Introduce radiance cascade idea from Alexander Sannikov, dividing into multiple levels by distance:
+
+1. **Near-far resolution trade-off**:
+   - Near-field cascade (Cascade 0) keeps high spatial resolution to preserve near-field geometry edges and shadow details.
+   - Each lower level: spatial resolution down to **`1/8`**, angular resolution up by **`4×`** (e.g. 64 → 256 directions), total resolution capped at Cascade 0's **`2×`**, significantly reducing ray stepping count.
+2. **Direction-first layout**:
+   - Place "direction" dimension outermost (all probes within same direction slice stored contiguously), allowing GPU **hardware texture sampler** to directly perform 3D trilinear interpolation, greatly reducing manual interpolation ALU cost.
+3. **Far-field cascade pre-averaging**:
+   - For level 0 and above far-field cascades, average every 4 directions' lighting results before writing to memory, compressing level 0+ cascade memory and bandwidth to approx **`1/4`**.
+
+---
+
+## 5. Mobile performance optimization and light-leak tolerance
+
+1. **Hit-hash cache**: cache hit distance in first trace; subsequent frames skip repeated stepping when geometry unchanged (local re-computation needed on affected meshes when geometry changes, making trace overhead near zero).
+2. **70% base resolution + super-resolution parsing**: GI base calculation resolution lowered to **70%** (saving approx **50%** bandwidth and execution time), then restored to full resolution via **FSR1** or **NSS** (Arm Neural Super Sampling).
+3. **Light-leak control**:
+   - For mobile single-sided thin-sheet geometry without physical thickness, introduce Surfel **"transparent outer ring"** attenuation mechanism to suppress inter-disk gaps and penetration light leakage.
+   - Combined with probe classification based on **indoor volume**, shield erroneous cross-sampling between indoor and outdoor.
+
+---
+
+## 6. Pre-access assessment points for future integration into Prisma
+
+1. **Pipeline position**: integrate as `RasterGiMode::Src` (tentative enum) into `RenderGraph`, mutually exclusive with `PrtPass` / `RestirGiPass`.
+2. **Reuse with existing facilities**: spatial hash table and atomic accumulation can reference [sharc.rs](file:///root/prisma/crates/prism-render/src/sharc.rs); hardware trilinear `Direction-First` layout experience can directly feedback to `PrtPass`'s `gi_volume` optimization.
+3. **Known trade-offs**: 28-frame steady-state convergence latency, chrominance directionality loss, and boundary requirements of indoor volume classification for pure open UGC scenarios need to be evaluated in combination with target project type before project initiation.

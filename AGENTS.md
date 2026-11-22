@@ -1,6 +1,7 @@
 # Prisma — Agent Contract
 
-Rust game engine: Vulkan, Android + desktop, data-oriented ECS.
+Rust game engine: Vulkan, desktop + Android, experimental multi-platform rendering pipeline,
+deterministic ECS.
 
 This file holds only rules that compilers, linters, and scripts cannot enforce. Everything else
 belongs to tooling. Code map: `README.md`. Subsystem specs and doc levels: `docs/README.md`.

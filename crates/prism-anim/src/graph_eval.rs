@@ -1,28 +1,33 @@
-//! 动画图求值器（#560 P1）。
+//! Animation graph evaluator (#560 P1).
 //!
-//! [`AnimGraphEvaluator`] 把 cooked 的 [`AnimGraphInfo`]（RAGP v1）求成一个
-//! [`Pose`]。它不依赖 ECS / 渲染 / 资产加载；调用方通过 [`AnimGraphSource`]
-//! 提供已解码的剪辑和状态机，再传入骨架（取 reference 姿态与骨骼名 → 下标）。
+//! [`AnimGraphEvaluator`] evaluates a cooked [`AnimGraphInfo`] (RAGP v1) into a [`Pose`].
+//! It does not depend on ECS / rendering / asset loading; the caller provides decoded clips
+//! and state machines via [`AnimGraphSource`], then passes in the skeleton (for reference pose
+//! and bone name → index).
 //!
-//! 求值是每帧一次的有向无环图遍历：
+//! Evaluation is a per-frame directed acyclic graph traversal:
 //!
-//! - ClipPlayer / BlendSpace / StateMachine 各自维护时间；
-//! - BlendStack / LayeredBlend 把第一个输入当 base，其余输入按顺序叠加；
-//! - Slot 在基础输入上可选覆盖一段 montage 剪辑（无剪辑时透明传递）；
-//! - CachedPose / Output 是透明传递节点；
-//! - 同一帧内一个节点只求值一次（fan-out 不会重复推进时间）；
-//! - 成环的图（例如手工构造的 `AnimGraphInfo`）返回错误而不是栈溢出。
+//! - ClipPlayer / BlendSpace / StateMachine each maintain their own time;
+//! - BlendStack / LayeredBlend take the first input as base, the rest are stacked in order;
+//! - Slot optionally overlays a montage clip on top of the base input (passes through transparently
+//!   when there is no clip);
+//! - CachedPose / Output are transparent pass-through nodes;
+//! - Each node is evaluated at most once per frame (fan-out does not advance time repeatedly);
+//! - A cyclic graph (e.g. hand-constructed `AnimGraphInfo`) returns an error instead of stack overflow.
 //!
-//! 状态机节点在求值器内部维护「当前状态 + 状态时间 + 交叉淡入快照」：转移条件
-//! 用 [`StateMachine::next_transition`] 求值，Trigger 会被消耗；转移时长 > 0 时
-//! 从转移前的姿态淡入。这和引擎 `animator` 的播放头语义一致，但这一层不碰 ECS。
+//! State machine nodes maintain "current state + state time + cross-fade snapshot" inside the
+//! evaluator. Transition conditions are evaluated via [`StateMachine::next_transition`], Triggers
+//! are consumed; when the transition duration is > 0, fade in from the pre-transition pose.
+//! This is consistent with the engine `animator` playhead semantics, but this layer does not
+//! touch ECS.
 //!
-//! Slot 的 montage 可以通过 [`AnimGraphEvaluator::play_montage`] /
-//! [`AnimGraphEvaluator::enqueue_montage`] 立即覆盖或排队，`stop_montage` /
-//! `stop_montage_after_current` 清空对应状态；Montage Notify 会并入图事件。
+//! A Slot's montage can be immediately overridden or queued via
+//! [`AnimGraphEvaluator::play_montage`] / [`AnimGraphEvaluator::enqueue_montage`],
+//! `stop_montage` / `stop_montage_after_current` clear the corresponding state; Montage Notify
+//! events are merged into graph events.
 //!
-//! 已知边界：Montage Notify 区间（State Notify）还未实现；CachedPose 复用
-//! 每帧缓存，不跨帧冻结姿态。
+//! Known boundaries: Montage Notify intervals (State Notify) are not yet implemented; CachedPose
+//! reuses per-frame cache and does not freeze poses across frames.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -40,25 +45,25 @@ use crate::pose::Pose;
 use crate::skeleton::Skeleton;
 use crate::state_machine::{AnimParameters, StateMachine};
 
-/// 求值器需要的资源：按路径查已解码的剪辑 / 状态机。
+/// Resources needed by the evaluator: look up decoded clips / state machines by path.
 pub trait AnimGraphSource {
     fn clip(&self, path: &str) -> Option<Arc<Clip>>;
     fn state_machine(&self, path: &str) -> Option<Arc<StateMachine>>;
 }
 
-/// 图求值过程中跨过的一个剪辑 Notify（#560 P1）。
+/// A clip Notify crossed during graph evaluation (#560 P1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphNotifyEvent {
-    /// 触发事件的图节点名。
+    /// Name of the graph node that triggered the event.
     pub node: String,
-    /// 事件所属剪辑路径。
+    /// Path of the clip the event belongs to.
     pub clip_path: String,
     pub name: String,
-    /// 事件在剪辑里的本地时间（秒）。
+    /// Local time of the event within the clip (seconds).
     pub time: f32,
 }
 
-/// 图求值错误。坏数据不应该 panic，也不应该让宿主渲染一半姿态。
+/// Graph evaluation errors. Bad data should not panic, nor leave the host rendering half a pose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphEvalError {
     MissingOutput,
@@ -105,9 +110,10 @@ struct NodeRuntime {
     blend: Option<StateBlend>,
     stamp: u64,
     cached: Pose,
-    /// 每样本独立播放头的归一化相位（仅配置了速度的 BlendSpace 节点使用）。
+    /// Normalized phase of each sample's independent playhead (used only by BlendSpace nodes with
+    /// speeds configured).
     sample_times: Vec<f32>,
-    /// 状态机节点当前状态名 / 剪辑路径（其他节点为空），调试快照用。
+    /// Current state name / clip path of state machine nodes (empty for other nodes), for debug snapshots.
     state_name: String,
     state_clip: String,
 }
@@ -119,73 +125,77 @@ struct StateBlend {
     total: f32,
 }
 
-/// BlendSpace 节点的 Notify 策略（#560）。
+/// Notify policy for BlendSpace nodes (#560).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlendSpaceNotifyPolicy {
-    /// 不产生事件（旧行为，避免多个采样点重复脚步声）。
+    /// No events are produced (old behavior, avoids duplicate footstep sounds from multiple samples).
     None,
-    /// 只让当前权重最大的样本产生事件；用一个剪辑的本地时间区间扫描。
+    /// Only the currently highest-weight sample produces events; scans a single clip's local time interval.
     #[default]
     Dominant,
 }
 
-/// 状态机发生转移的那一帧，离开状态的事件怎么处理（#560 Notify 区间）。
+/// How to handle events leaving a state on the frame a state machine transitions (#560 Notify interval).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StateTransitionNotifyPolicy {
-    /// 照常扫描到转移点为止（旧行为）。
+    /// Scan normally up to the transition point (old behavior).
     #[default]
     Keep,
-    /// 本帧发生了转移就不发离开状态的事件，避免刚抬脚就被切走的脚步声。
+    /// If a transition occurs this frame, do not emit events leaving the state, avoiding footstep
+    /// sounds right as the foot is lifted and cut away.
     SuppressOnTransition,
 }
 
-/// 一个节点在这一帧的运行时摘要（[`AnimGraphEvaluator::node_snapshots`]）。
+/// A runtime summary of a node for this frame ([`AnimGraphEvaluator::node_snapshots`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphNodeSnapshot {
     pub name: String,
     pub kind: GraphNodeKind,
-    /// 节点本地时间（秒）；状态机节点是当前状态自己的时间。
+    /// Node local time (seconds); for state machine nodes, the current state's own time.
     pub time: f32,
-    /// 状态机节点的当前状态下标；其他节点为 0。
+    /// Current state index of the state machine node; 0 for other nodes.
     pub state: usize,
-    /// 状态机是否正在交叉淡入。
+    /// Whether the state machine is currently cross-fading in.
     pub blending: bool,
-    /// 交叉淡入权重 `0..=1`（没有过渡时为 1）。
+    /// Cross-fade weight `0..=1` (1 when there is no transition).
     pub blend_weight: f32,
-    /// `cached_pose` 节点是否已经有缓存姿态。
+    /// Whether the `cached_pose` node already has a cached pose.
     pub cached: bool,
-    /// 这个节点对最终姿态的权重 `0..=1`（从输出节点按连线权重往下乘）。
+    /// This node's weight on the final pose `0..=1` (multiplied down from the output node along
+    /// connection weights).
     pub weight: f32,
-    /// 状态机节点的当前状态名；其他节点为空串。
+    /// Current state name of the state machine node; empty string for other nodes.
     pub state_name: String,
-    /// 状态机节点当前状态的剪辑路径；其他节点为空串。
+    /// Clip path of the current state of the state machine node; empty string for other nodes.
+    pub state_clip: String,
+}
     pub state_clip: String,
 }
 
-/// 一个 Slot 的 Montage 运行时摘要（[`AnimGraphEvaluator::montage_snapshots`]）。
+/// A runtime summary of a Slot's Montage ([`AnimGraphEvaluator::montage_snapshots`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MontageSnapshot {
     pub slot: String,
-    /// 活动段的剪辑名；没有活动段时为 `None`。
+    /// Clip name of the active segment; `None` when there is no active segment.
     pub clip: Option<String>,
-    /// 当前时间所在的 Montage 段名；没有段 / 不在段内时为 `None`。
+    /// Name of the Montage segment at the current time; `None` when there is no segment / not in a segment.
     pub section: Option<String>,
-    /// 当前时间所在的 MotionWarping 窗口名；不在窗口内时为 `None`。
+    /// Name of the MotionWarping window at the current time; `None` when not in a window.
     pub warp_window: Option<String>,
-    /// 当前 warp window 内的归一化进度。
+    /// Normalized progress within the current warp window.
     pub warp_window_progress: Option<f32>,
-    /// 活动段已经播放的时间（秒）。
+    /// Time already played by the active segment (seconds).
     pub time: Option<f32>,
     pub weight: f32,
     pub playing: bool,
     pub paused: bool,
-    /// 活动段播完且队列为空。
+    /// Active segment finished and queue empty.
     pub finished: bool,
-    /// 排队等着的段数（不含活动段）。
+    /// Number of queued segments (excluding the active segment).
     pub queued: usize,
 }
 
-/// 一个动画图求值器实例，对应一个角色。
+/// An animation graph evaluator instance, corresponding to one character.
 #[derive(Debug, Clone)]
 pub struct AnimGraphEvaluator {
     graph: AnimGraphInfo,
@@ -193,18 +203,18 @@ pub struct AnimGraphEvaluator {
     parameters: AnimParameters,
     frame: u64,
     pending_events: Vec<GraphNotifyEvent>,
-    /// 每个 Slot 节点自己的 Montage 播放队列（#560 P1）。
+    /// Each Slot node's own Montage playback queue (#560 P1).
     montages: HashMap<String, MontagePlayer>,
-    /// BlendSpace 的事件策略（#560 Notify 区间）。
+    /// BlendSpace event policy (#560 Notify interval).
     blend_space_notify: BlendSpaceNotifyPolicy,
-    /// 状态转移帧的事件策略。
+    /// State transition frame event policy.
     state_transition_notify: StateTransitionNotifyPolicy,
-    /// 按节点名覆盖 BlendSpace 每样本播放速度（空 = 共享 phase）。
+    /// Per-sample playback speed for BlendSpace by node name (empty = shared phase).
     blend_space_speeds: HashMap<String, Vec<f32>>,
 }
 
 impl AnimGraphEvaluator {
-    /// 建立求值器，并按图参数声明初始化默认值。
+    /// Build the evaluator and initialize default values per graph parameter declaration.
     pub fn new(graph: AnimGraphInfo) -> Self {
         let mut parameters = AnimParameters::new();
         for parameter in &graph.parameters {
@@ -244,7 +254,7 @@ impl AnimGraphEvaluator {
         &mut self.parameters
     }
 
-    /// 立即在命名为 `slot` 的 Slot 节点上播放 Montage（替换该槽当前段）。
+    /// Play a Montage immediately on the Slot node named `slot` (replacing the slot's current segment).
     pub fn play_montage(&mut self, slot: &str, montage: Montage) -> bool {
         self.montages
             .entry(slot.to_string())
@@ -252,7 +262,7 @@ impl AnimGraphEvaluator {
             .play_now(montage)
     }
 
-    /// 在 `slot` 上排队一段 Montage；空闲时立即开始。
+    /// Queue a Montage on `slot`; starts immediately when idle.
     pub fn enqueue_montage(&mut self, slot: &str, montage: Montage) -> bool {
         self.montages
             .entry(slot.to_string())
@@ -260,21 +270,21 @@ impl AnimGraphEvaluator {
             .enqueue(montage)
     }
 
-    /// 停止 `slot` 的活动段与队列。
+    /// Stop the active segment and queue of `slot`.
     pub fn stop_montage(&mut self, slot: &str) {
         if let Some(player) = self.montages.get_mut(slot) {
             player.stop();
         }
     }
 
-    /// 让 `slot` 当前段播完后停止，不接队列下一段。
+    /// Let `slot`'s current segment finish then stop, without taking the next queued segment.
     pub fn stop_montage_after_current(&mut self, slot: &str) {
         if let Some(player) = self.montages.get_mut(slot) {
             player.stop_after_current();
         }
     }
 
-    /// 暂停 Slot 的活动 Montage（队列 / 权重不变）；Slot 不存在返回 `false`。
+    /// Pause the Slot's active Montage (queue / weight unchanged); return `false` if the Slot does not exist.
     pub fn pause_montage(&mut self, slot: &str) -> bool {
         match self.montages.get_mut(slot) {
             Some(player) => {
@@ -285,7 +295,7 @@ impl AnimGraphEvaluator {
         }
     }
 
-    /// 恢复 Slot 的活动 Montage；Slot 不存在返回 `false`。
+    /// Resume the Slot's active Montage; return `false` if the Slot does not exist.
     pub fn resume_montage(&mut self, slot: &str) -> bool {
         match self.montages.get_mut(slot) {
             Some(player) => {
@@ -300,7 +310,7 @@ impl AnimGraphEvaluator {
         self.montages.get(slot)
     }
 
-    /// 设置 BlendSpace 的 Notify 策略；`None` 恢复旧行为。
+    /// Set the BlendSpace Notify policy; `None` restores the old behavior.
     pub fn set_blend_space_notify_policy(&mut self, policy: BlendSpaceNotifyPolicy) {
         self.blend_space_notify = policy;
     }
@@ -309,7 +319,7 @@ impl AnimGraphEvaluator {
         self.blend_space_notify
     }
 
-    /// 设置状态转移帧的事件策略。
+    /// Set the state transition frame event policy.
     pub fn set_state_transition_notify_policy(&mut self, policy: StateTransitionNotifyPolicy) {
         self.state_transition_notify = policy;
     }
@@ -318,10 +328,11 @@ impl AnimGraphEvaluator {
         self.state_transition_notify
     }
 
-    /// 给 BlendSpace 节点配置每样本播放速度（按 `node.clips` 顺序）。
+    /// Configure per-sample playback speed for a BlendSpace node (in `node.clips` order).
     ///
-    /// 配置后该节点为每个样本维护独立播放头，不再共用全局 phase，也不再做
-    /// SyncGroup 映射；空列表 / 全为 1 等价于默认共享 phase。
+    /// After configuration, the node maintains an independent playhead per sample, no longer
+    /// sharing the global phase nor doing SyncGroup mapping; an empty list / all-1 is equivalent
+    /// to the default shared phase.
     pub fn set_blend_space_speeds(&mut self, node: &str, speeds: Vec<f32>) {
         if speeds.is_empty() || speeds.iter().all(|speed| (*speed - 1.0).abs() < 1e-6) {
             self.blend_space_speeds.remove(node);
@@ -334,11 +345,12 @@ impl AnimGraphEvaluator {
         self.blend_space_speeds.get(node).map(Vec::as_slice)
     }
 
-    /// 每个节点这一帧的运行时摘要（调试面板 / 叠加层用）。
+    /// Runtime summary of each node this frame (for debug panels / overlays).
     ///
-    /// 返回顺序与图里的节点顺序一致；`kind` 让调用方决定怎么显示，`time` 是节点
-    /// 自己的本地时间（状态机节点是当前状态的时间），`blending` / `blend_weight`
-    /// 反映状态机是否正在交叉淡入。只拷贝标量，不动求值器状态。
+    /// The return order matches the node order in the graph; `kind` lets the caller decide how
+    /// to display, `time` is the node's own local time (the current state's time for state
+    /// machine nodes), `blending` / `blend_weight` reflect whether the state machine is
+    /// cross-fading in. Only scalars are copied; evaluator state is not modified.
     pub fn node_snapshots(&self) -> Vec<GraphNodeSnapshot> {
         let weights = self.node_weights();
         self.graph
@@ -370,11 +382,13 @@ impl AnimGraphEvaluator {
             .collect()
     }
 
-    /// 从输出节点往下走，按连线权重给出每个节点对最终姿态的贡献（`0..=1`）。
+    /// From the output node downward, gives each node's contribution to the final pose (`0..=1`)
+    /// by connection weight.
     ///
-    /// 共享节点取路径上的最大值（同一个节点被两条线引用时按权重更大的那条算）；
-    /// 没连到输出节点的是 0。BlendStack / LayeredBlend 的连线权重就是层权重，
-    /// 其他节点通常是 1 —— 只用于调试显示，不参与求值。
+    /// Shared nodes take the maximum along the path (when one node is referenced by two edges,
+    /// the one with the larger weight counts); nodes not connected to the output node are 0.
+    /// BlendStack / LayeredBlend connection weights are the layer weights; other nodes are
+    /// usually 1 — for debug display only, not used in evaluation.
     fn node_weights(&self) -> Vec<f32> {
         let mut weights = vec![0.0f32; self.graph.nodes.len()];
         let mut seen = vec![false; self.graph.nodes.len()];
@@ -400,10 +414,10 @@ impl AnimGraphEvaluator {
         }
     }
 
-    /// 每个 Slot 的 Montage 运行时摘要（按 Slot 名排序，调试面板用）。
+    /// Runtime summary of each Slot's Montage (sorted by Slot name, for debug panels).
     ///
-    /// 只包含被 `play` / `enqueue` 过的 Slot；活动段播完且队列空时
-    /// `playing = false`、`finished = true`。
+    /// Only includes Slots that have been `play` / `enqueue`d; when the active segment finished
+    /// and the queue is empty, `playing = false`, `finished = true`.
     pub fn montage_snapshots(&self) -> Vec<MontageSnapshot> {
         let mut slots: Vec<(&String, &MontagePlayer)> = self.montages.iter().collect();
         slots.sort_by(|left, right| left.0.cmp(right.0));
@@ -427,17 +441,19 @@ impl AnimGraphEvaluator {
             .collect()
     }
 
-    /// 当前状态机节点的状态下标（调试面板 / 测试用）；不是状态机节点时返回 `None`。
+    /// Current state index of the state machine node (for debug panels / tests); returns `None`
+    /// when not a state machine node.
     pub fn state_machine_state(&self, name: &str) -> Option<usize> {
         let index = self.graph.nodes.iter().position(|node| node.name == name)?;
         (self.graph.nodes[index].kind == GraphNodeKind::StateMachine)
             .then_some(self.runtime[index].state)
     }
 
-    /// 求值一帧，返回输出节点的姿态。
+    /// Evaluate one frame, returning the output node's pose.
     ///
-    /// `dt` 非有限或为负时按 0；缺失资源返回错误。失败时求值器的缓存与状态可能
-    /// 已部分推进，调用方应保留上一帧姿态，而不是显示半份结果。
+    /// `dt` non-finite or negative is treated as 0; missing resources return an error. On failure,
+    /// the evaluator's cache and state may have partially advanced; the caller should keep the
+    /// previous frame's pose instead of showing half a result.
     pub fn evaluate(
         &mut self,
         source: &impl AnimGraphSource,
@@ -448,11 +464,12 @@ impl AnimGraphEvaluator {
             .map(|(pose, _)| pose)
     }
 
-    /// 求值一帧并返回这一帧跨过的 Notify。
+    /// Evaluate one frame and return the Notify events crossed this frame.
     ///
-    /// 只有 ClipPlayer / StateMachine 节点会产生事件；BlendSpace 同时采样多个
-    /// 剪辑，重复发事件会把一声脚步放大成几声，留给后续「主导样本」策略。
-    /// 第一帧不会补发 time = 0 的事件，循环回绕会按两段扫描。
+    /// Only ClipPlayer / StateMachine nodes produce events; BlendSpace samples multiple clips
+    /// at once, and repeatedly firing events would amplify one footstep into several, left for
+    /// later "dominant sample" policies. The first frame does not re-fire time = 0 events;
+    /// loop wrap-around scans in two segments.
     pub fn evaluate_with_events(
         &mut self,
         source: &impl AnimGraphSource,
@@ -624,7 +641,7 @@ impl AnimGraphEvaluator {
             0.0
         };
 
-        // 每样本速度：给这个节点维护独立播放头，相位数组按 node.clips 顺序。
+        // Per-sample speeds: this node maintains independent playheads, phase array in node.clips order.
         let speeds = self
             .blend_space_speeds
             .get(&node.name)
@@ -788,7 +805,7 @@ impl AnimGraphEvaluator {
         Ok(pose)
     }
 
-    /// 让权重最大的 BlendSpace 样本按自己的本地时间区间发 Notify。
+    /// Let the highest-weight BlendSpace sample fire Notify over its own local time interval.
     #[expect(
         clippy::too_many_arguments,
         reason = "arity mirrors the float-parameter packing that the callers already flatten"
@@ -821,7 +838,7 @@ impl AnimGraphEvaluator {
         self.record_notifies(node_name, path, &clip, from, to);
     }
 
-    /// 把按 `node.clips` 顺序的相位重排成 BlendSpace 内部样本顺序。
+    /// Reorder phases in `node.clips` order into BlendSpace's internal sample order.
     fn phases_in_space_order(
         &self,
         samples: &[Arc<Clip>],
@@ -868,7 +885,8 @@ impl AnimGraphEvaluator {
         };
         let base =
             self.evaluate_node(input.node, source, skeleton, reference, dt, visiting, stack)?;
-        // MontagePlayer 优先：游戏侧 play/enqueue 的段覆盖作者写的静态 slot 剪辑。
+        // MontagePlayer takes precedence: segments played/enqueued on the game side override
+        // the static slot clip authored by the author.
         let mut montage_events = Vec::new();
         let mut montage_pose = None;
         if let Some(player) = self.montages.get_mut(&node.name) {

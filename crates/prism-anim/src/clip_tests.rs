@@ -33,11 +33,11 @@ fn three_keys_pick_the_right_segment() {
         v3(1.0, Vec3::new(2.0, 0.0, 0.0)),
         v3(2.0, Vec3::new(0.0, 4.0, 0.0)),
     ];
-    // 1.5 落在第二段中间（2,0,0) → (0,4,0)。
+    // 1.5 falls in the middle of the second segment ((2,0,0) → (0,4,0)).
     let mid = sample_vec3(&keys, 1.5).unwrap();
     assert!((mid.x - 1.0).abs() < 1e-6, "got {mid:?}");
     assert!((mid.y - 2.0).abs() < 1e-6, "got {mid:?}");
-    // 第一段。
+    // First segment.
     let first = sample_vec3(&keys, 0.25).unwrap();
     assert!((first.x - 0.5).abs() < 1e-6, "got {first:?}");
 }
@@ -54,7 +54,7 @@ fn rotations_slerp_the_short_way() {
         rotated.z.abs() > 0.99,
         "half of 180° is 90°, got {rotated:?}"
     );
-    // 端点保持。
+    // Endpoints hold.
     assert!(sample_quat(&keys, -1.0)
         .unwrap()
         .abs_diff_eq(Quat::IDENTITY, 1e-6));
@@ -72,7 +72,7 @@ fn looping_times_wrap_and_once_clips_clamp() {
         ..Default::default()
     };
     assert!((clip.wrap_time(2.5) - 0.5).abs() < 1e-6);
-    assert!((clip.wrap_time(-0.5) - 1.5).abs() < 1e-6, "负时间也要绕回");
+    assert!((clip.wrap_time(-0.5) - 1.5).abs() < 1e-6, "negative time also wraps around");
     assert_eq!(clip.wrap_time(f32::NAN), 0.0);
 
     clip.looped = false;
@@ -105,7 +105,7 @@ fn sampling_writes_only_the_channels_that_have_keys() {
         ..Default::default()
     };
     assert!(clip.sample_into(0.0, &mut pose));
-    // 位置没有被写（剪辑不动 position 通道）。
+    // Position was not written (the clip doesn't move the position channel).
     assert_eq!(pose.local(1).unwrap().translation, Vec3::new(2.0, 0.0, 0.0));
     clip.sample_into(1.0, &mut pose);
     let rotated = pose.local(1).unwrap().rotation * Vec3::X;
@@ -131,7 +131,7 @@ fn a_track_for_a_missing_joint_is_ignored() {
     };
     let before = pose.clone();
     clip.sample_into(0.0, &mut pose);
-    assert_eq!(pose, before, "指向不存在骨骼的轨道不该改动姿态");
+    assert_eq!(pose, before, "track pointing to a nonexistent bone should not modify the pose");
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn key_times_merge_every_track_and_drop_duplicates() {
         ],
         ..Default::default()
     };
-    // 0.0 / 1.0 各出现两次 → 各留一个；NaN 丢掉。
+    // 0.0 / 1.0 each appear twice → keep one each; NaN dropped.
     assert_eq!(clip.key_times(), vec![0.0, 0.5, 1.0]);
 }
 
@@ -241,11 +241,11 @@ fn fired(clip: &Clip, from: f32, to: f32) -> Vec<&str> {
 fn notifies_fire_in_a_half_open_interval() {
     let clip = notified_clip(2.0, false, &[(0.5, "a"), (1.5, "b")]);
     assert_eq!(fired(&clip, 0.4, 0.6), vec!["a"]);
-    // 起点是开区间：0.5 那一帧已经触发过，停在上面不该反复播。
+    // Start is an open interval: 0.5 already fired that frame, paused on it shouldn't replay.
     assert!(fired(&clip, 0.5, 0.6).is_empty());
-    // 一帧跨过两个也不漏。
+    // One frame crossing two doesn't miss either.
     assert_eq!(fired(&clip, 0.0, 2.0), vec!["a", "b"]);
-    // 没有事件 / 非有限 / 零时长都安全。
+    // No events / non-finite / zero duration are all safe.
     assert!(fired(&notified_clip(2.0, false, &[]), 0.0, 2.0).is_empty());
     assert!(fired(&clip, f32::NAN, 1.0).is_empty());
     assert!(fired(&notified_clip(0.0, false, &[(0.5, "a")]), 0.0, 1.0).is_empty());
@@ -254,11 +254,11 @@ fn notifies_fire_in_a_half_open_interval() {
 #[test]
 fn a_looped_clip_fires_notifies_on_both_sides_of_the_wrap() {
     let clip = notified_clip(1.0, true, &[(0.05, "start"), (0.95, "end")]);
-    // 0.9 → 1.0 → 0.1：两段各命中一个。
+    // 0.9 → 1.0 → 0.1: each segment hits one.
     assert_eq!(fired(&clip, 0.9, 0.1), vec!["start", "end"]);
-    // 只跨过结尾。
+    // Only cross the end.
     assert_eq!(fired(&clip, 0.9, 0.98), vec!["end"]);
-    // 只跨过开头（0 点本身也要能触发）。
+    // Only cross the start (point 0 itself must also be able to trigger).
     assert_eq!(fired(&clip, 0.98, 0.05), vec!["start"]);
 }
 
@@ -310,10 +310,10 @@ fn sample_joint_into_only_touches_the_requested_joint() {
         crate::skeleton::JointTransform::IDENTITY,
     ]);
     assert!(clip.sample_joint_into(0.0, 1, &mut pose));
-    assert_eq!(pose.local(0).unwrap().translation, Vec3::ZERO, "根没动");
+    assert_eq!(pose.local(0).unwrap().translation, Vec3::ZERO, "root didn't move");
     assert!(
         (pose.local(1).unwrap().rotation.z - 0.5f32.sin()).abs() < 1e-6,
-        "关节 1 被采样"
+        "joint 1 sampled"
     );
-    assert!(!clip.sample_joint_into(0.0, 9, &mut pose), "越界关节");
+    assert!(!clip.sample_joint_into(0.0, 9, &mut pose), "out-of-range joint");
 }

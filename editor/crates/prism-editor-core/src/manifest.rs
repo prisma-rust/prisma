@@ -1,37 +1,37 @@
-//! `assets/scenes.json` 场景清单（与 Web 编辑器的 Build Settings 同语义）。
+//! `assets/scenes.json` scene manifest (same semantics as the Web editor's Build Settings).
 //!
-//! 顺序 = 构建顺序 = 启动顺序；第一个 `enabled = true` 的条目是启动场景。
-//! `path` 是 `.pak` 里的逻辑路径（`scenes/xxx.rscn`），作者文档用
-//! [`doc_relative_path`] 映射回 `assets/scenes/xxx.scene.json`。
+//! Order = build order = launch order; the first `enabled = true` entry is the launch scene.
+//! `path` is the logical path in the `.pak` (`scenes/xxx.rscn`); the authoring document uses
+//! [`doc_relative_path`] to map back to `assets/scenes/xxx.scene.json`.
 //!
-//! 形状：`{"scenes": [{"name": "...", "path": "...", "enabled": true, "guid": "..."}]}`。
-//! 旧项目的 `assets/scenes.toml`（`[[scenes]]` 数组表）仍可读，写端只产出
-//! `scenes.json`；一次性迁移由 `prism-build-pipeline build-scenes` 完成。
+//! Shape: `{"scenes": [{"name": "...", "path": "...", "enabled": true, "guid": "..."}]}`.
+//! Old projects' `assets/scenes.toml` (`[[scenes]]` array table) is still readable; the write side only emits
+//! `scenes.json`; one-time migration is done by `prism-build-pipeline build-scenes`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// 新格式清单路径（相对项目根）。
+/// New-format manifest path (relative to project root).
 pub const MANIFEST_FILE: &str = "assets/scenes.json";
-/// 旧格式清单路径（只读兼容）。
+/// Old-format manifest path (read-only compatibility).
 pub const LEGACY_MANIFEST_FILE: &str = "assets/scenes.toml";
 
 fn default_enabled() -> bool {
     true
 }
 
-/// 清单里的一条场景。
+/// One scene in the manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneEntry {
     pub name: String,
-    /// 逻辑路径（相对 `assets/`），例如 `scenes/default.rscn`。
+    /// Logical path (relative to `assets/`), e.g. `scenes/default.rscn`.
     pub path: String,
-    /// 是否参与构建 / 启动；缺省视为 true（兼容旧清单）。
+    /// Whether it participates in build / launch; defaults to true (compat with old manifests).
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// 场景源文档的稳定 GUID（#466）。旧清单没有该键时按路径工作。
+    /// Stable GUID of the scene source document (#466). Works by path when this key is absent from the old manifest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guid: Option<String>,
 }
@@ -47,7 +47,7 @@ impl SceneEntry {
     }
 }
 
-/// `assets/scenes.json` 的完整内容。
+/// The full content of `assets/scenes.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneManifest {
     #[serde(default)]
@@ -63,14 +63,14 @@ impl SceneManifest {
         let mut manifest = Self::parse(&text).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("解析 {} 失败: {error}", path.display()),
+                format!("failed to parse {}: {error}", path.display()),
             )
         })?;
         manifest.sync_guids(root);
         Ok(manifest)
     }
 
-    /// 实际存在的清单文件：`scenes.json` 优先，回退旧 `scenes.toml`。
+    /// The manifest file that actually exists: `scenes.json` preferred, falling back to old `scenes.toml`.
     pub fn existing_path(root: &Path) -> Option<PathBuf> {
         [MANIFEST_FILE, LEGACY_MANIFEST_FILE]
             .into_iter()
@@ -78,17 +78,17 @@ impl SceneManifest {
             .find(|path| path.is_file())
     }
 
-    /// 解析：JSON 优先，失败时回退旧 TOML 格式。
+    /// Parse: JSON preferred, falling back to old TOML format on failure.
     pub fn parse(text: &str) -> Result<Self, String> {
         match serde_json::from_str::<Self>(text) {
             Ok(manifest) => Ok(manifest),
             Err(json_error) => parse_legacy_toml(text).map_err(|toml_error| {
-                format!("不是 scenes.json（{json_error}），也不是旧 scenes.toml（{toml_error}）")
+                format!("not scenes.json ({json_error}), nor old scenes.toml ({toml_error})")
             }),
         }
     }
 
-    /// 校验后写回（新格式）。
+    /// Write back after validation (new format).
     pub fn write(&self, root: &Path) -> io::Result<()> {
         let mut manifest = self.clone();
         manifest.sync_guids(root);
@@ -96,7 +96,7 @@ impl SceneManifest {
         let json = serde_json::to_string_pretty(&manifest).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("序列化场景清单失败: {error}"),
+                format!("failed to serialize scene manifest: {error}"),
             )
         })?;
         let path = root.join(MANIFEST_FILE);
@@ -136,31 +136,31 @@ impl SceneManifest {
             if entry.name.trim().is_empty() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "场景名不能为空",
+                    "scene name cannot be empty",
                 ));
             }
             if entry.path.trim().is_empty() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("场景 '{}' 的路径不能为空", entry.name),
+                    format!("path of scene '{}' cannot be empty", entry.name),
                 ));
             }
             if !names.insert(entry.name.trim().to_string()) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("场景名重复：{}", entry.name),
+                    format!("duplicate scene name: {}", entry.name),
                 ));
             }
         }
         Ok(())
     }
 
-    /// 启动场景 = 第一个启用项。
+    /// Launch scene = the first enabled entry.
     pub fn active(&self) -> Option<&SceneEntry> {
         self.scenes.iter().find(|entry| entry.enabled)
     }
 
-    /// 构建顺序里的场景（只含启用项）。
+    /// Scenes in build order (enabled entries only).
     pub fn enabled(&self) -> impl Iterator<Item = &SceneEntry> {
         self.scenes.iter().filter(|entry| entry.enabled)
     }
@@ -176,7 +176,7 @@ impl SceneManifest {
         true
     }
 
-    /// 上移 / 下移一条，返回新的下标。
+    /// Move one entry up / down, returning the new index.
     pub fn move_entry(&mut self, index: usize, delta: i32) -> Option<usize> {
         if index >= self.scenes.len() {
             return None;
@@ -197,7 +197,7 @@ impl SceneManifest {
         Some(self.scenes.remove(index))
     }
 
-    /// 某作者文档（相对 `assets/`）是否已经在清单里。
+    /// Whether a given authoring document (relative to `assets/`) is already in the manifest.
     pub fn contains_document(&self, doc_relative: &str) -> bool {
         let doc_relative = doc_relative.trim_start_matches("assets/");
         self.scenes
@@ -206,9 +206,9 @@ impl SceneManifest {
             .any(|path| path == doc_relative)
     }
 
-    /// 把一个作者文档（相对 `assets/`，如 `scenes/foo.scene.json`）追加到清单末尾。
+    /// Append an authoring document (relative to `assets/`, e.g. `scenes/foo.scene.json`) to the end of the manifest.
     ///
-    /// 名字取文件名主干并自动去重（`foo-2`）；已存在同文档时返回 `None`。
+    /// The name is taken from the file stem and auto-deduped (`foo-2`); returns `None` when the same document already exists.
     pub fn add_document(&mut self, doc_relative: &str) -> Option<usize> {
         let doc_relative = doc_relative.trim_start_matches("assets/");
         if doc_relative.is_empty() || self.contains_document(doc_relative) {
@@ -243,7 +243,7 @@ impl SceneManifest {
     }
 }
 
-/// 旧格式 `scenes.toml` 的最小读取器（`[[scenes]]` + `name` / `path` / `enabled`）。
+/// Minimal reader for the old-format `scenes.toml` (`[[scenes]]` + `name` / `path` / `enabled`).
 fn parse_legacy_toml(text: &str) -> Result<SceneManifest, String> {
     let mut scenes: Vec<SceneEntry> = Vec::new();
     let mut current: Option<SceneEntry> = None;
@@ -292,14 +292,14 @@ fn parse_legacy_toml(text: &str) -> Result<SceneManifest, String> {
     }
 
     if !saw_table {
-        return Err("没有 [[scenes]] 表".into());
+        return Err("no [[scenes]] table".into());
     }
     Ok(SceneManifest { scenes })
 }
 
-/// 清单路径（`scenes/x.rscn` / `scenes/x.scene.json`）→ 作者文档路径。
+/// Manifest path (`scenes/x.rscn` / `scenes/x.scene.json`) → authoring document path.
 ///
-/// 其他格式（外部 glTF 等）没有对应的作者文档，返回 `None`。
+/// Other formats (external glTF, etc.) have no corresponding authoring document; return `None`.
 pub fn doc_relative_path(entry_path: &str) -> Option<String> {
     let path = entry_path.trim().trim_start_matches("assets/");
     let stem = path
@@ -416,7 +416,10 @@ mod tests {
             duplicate.write(&dir).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
-        assert!(!dir.join(MANIFEST_FILE).exists(), "校验失败不落盘");
+        assert!(
+            !dir.join(MANIFEST_FILE).exists(),
+            "validation failure does not hit disk"
+        );
     }
 
     #[test]
@@ -445,7 +448,7 @@ mod tests {
         assert_eq!(manifest.scenes[index].path, "scenes/level2.rscn");
         assert!(manifest.add_document("scenes/level2.scene.json").is_none());
 
-        // 同名（不同目录）自动加后缀。
+        // Same name (different directory) gets a suffix added automatically.
         let other = manifest
             .add_document("scenes/sub/level2.scene.json")
             .unwrap();
@@ -462,7 +465,10 @@ mod tests {
             ],
         };
         assert!(manifest.set_enabled(0, false));
-        assert!(!manifest.set_enabled(0, false), "重复写入返回 false");
+        assert!(
+            !manifest.set_enabled(0, false),
+            "duplicate write returns false"
+        );
         assert_eq!(manifest.active().unwrap().name, "b");
         assert_eq!(manifest.enabled().count(), 2);
 

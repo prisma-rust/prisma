@@ -173,19 +173,19 @@ fn a_paused_player_freezes_time_and_notifies_until_resumed() {
 
     player.set_paused(true);
     assert!(player.is_paused());
-    assert!(player.tick(0.5), "暂停时仍然在播");
+    assert!(player.tick(0.5), "still playing while paused");
     assert!(
         (player.active_time().unwrap() - 0.1).abs() < 1e-5,
-        "暂停不推进时间"
+        "pause does not advance time"
     );
-    assert!(player.take_notifies().is_empty(), "暂停不发 Notify");
+    assert!(player.take_notifies().is_empty(), "pause does not emit Notify");
 
     player.set_paused(false);
     assert!(!player.is_paused());
     player.tick(0.1);
     assert!((player.active_time().unwrap() - 0.2).abs() < 1e-5);
     let notifies = player.take_notifies();
-    assert_eq!(notifies.len(), 1, "恢复后跨过的 Notify 才发");
+    assert_eq!(notifies.len(), 1, "only after resume do crossed Notifies fire");
     assert_eq!(notifies[0].name, "step");
 }
 
@@ -195,7 +195,7 @@ fn playing_a_new_montage_resumes_the_player() {
     player.play_now(Montage::new(clip("a", 1.0, None)));
     player.set_paused(true);
     player.play_now(Montage::new(clip("b", 2.0, None)));
-    assert!(!player.is_paused(), "显式播放会解除暂停");
+    assert!(!player.is_paused(), "explicit play clears pause");
     assert!((player.active_time().unwrap()).abs() < 1e-5);
 }
 
@@ -209,7 +209,7 @@ fn a_montage_can_start_at_a_named_section() {
         Some("Vault")
     );
 
-    // 段名不存在时回退到 start_time，而不是卡在 0 或 panic。
+    // Falls back to start_time when the segment name doesn't exist, instead of getting stuck at 0 or panicking.
     player.play_now(
         Montage::new(sectioned_clip())
             .with_start_section("Missing")
@@ -238,7 +238,7 @@ fn jumping_to_a_section_moves_the_playhead_and_clears_pending_notifies() {
         player.active_section().map(|section| section.name.as_str()),
         Some("Land")
     );
-    assert!(player.take_notifies().is_empty(), "跳段不应重放中间 Notify");
+    assert!(player.take_notifies().is_empty(), "jumping segments should not replay intermediate Notifies");
     assert!(!player.jump_to_section("Missing"));
     assert!((player.active_time().unwrap() - 0.8).abs() < 1e-5);
 }
@@ -268,7 +268,7 @@ fn a_branch_in_notify_jumps_to_the_named_section() {
     player.tick(0.6);
     assert!(
         (player.active_time().unwrap() - 0.8).abs() < 1e-5,
-        "跨过 BranchIn.Land 后跳到 Land 段首"
+        "after crossing BranchIn.Land, jump to Land segment start"
     );
     assert_eq!(
         player.active_section().map(|section| section.name.as_str()),
@@ -277,7 +277,7 @@ fn a_branch_in_notify_jumps_to_the_named_section() {
     let events = player.take_notifies();
     assert!(
         events.iter().any(|event| event.name == "BranchIn.Land"),
-        "BranchIn 本身仍然是 Notify 事件: {events:?}"
+        "BranchIn itself is still a Notify event: {events:?}"
     );
 }
 
@@ -361,7 +361,7 @@ fn blend_in_ramps_the_weight_and_paused_time_does_not_count() {
             .with_blend_in(0.5)
             .with_weight(0.8),
     );
-    assert!(player.active_weight().abs() < 1e-5, "从 0 权重开始");
+    assert!(player.active_weight().abs() < 1e-5, "starts from 0 weight");
 
     player.tick(0.25);
     assert!((player.active_weight() - 0.4).abs() < 1e-5);
@@ -370,12 +370,12 @@ fn blend_in_ramps_the_weight_and_paused_time_does_not_count() {
     player.tick(0.5);
     assert!(
         (player.active_weight() - 0.4).abs() < 1e-5,
-        "暂停不推进淡入"
+        "pause does not advance fade-in"
     );
     player.set_paused(false);
 
     player.tick(0.25);
-    assert!((player.active_weight() - 0.8).abs() < 1e-5, "基准权重封顶");
+    assert!((player.active_weight() - 0.8).abs() < 1e-5, "baseline weight capped");
     player.tick(0.5);
     assert!((player.active_weight() - 0.8).abs() < 1e-5);
 }
@@ -392,7 +392,7 @@ fn blend_in_uses_wall_clock_not_playback_speed() {
     assert!((player.active_time().unwrap() - 0.5).abs() < 1e-5);
     assert!(
         (player.active_weight() - 0.5).abs() < 1e-5,
-        "淡入按 0.5s 墙钟"
+        "fade-in by 0.5s wall clock"
     );
 }
 
@@ -411,7 +411,7 @@ fn blend_out_only_applies_to_one_shot_montages() {
     player.tick(0.15);
     assert!((player.active_weight() - 0.125).abs() < 1e-5);
 
-    // 循环 Montage 不在每圈结尾闪一下。
+    // Looped Montages don't flash at the end of every cycle.
     let mut looping = MontagePlayer::new();
     looping.play_now(Montage::new(clip("loop", 0.0, None)).with_blend_out(0.4));
     looping.tick(0.9);
@@ -432,11 +432,11 @@ fn a_queued_montage_starts_its_own_blend_in() {
     player.tick(0.6);
     assert!(
         player.active_clip().is_some_and(|clip| clip.name == "b"),
-        "A 播完后接 B"
+        "after A finishes, connect B"
     );
     assert!(
         player.active_weight().abs() < 1e-5,
-        "B 从自己的淡入起点开始"
+        "B starts from its own fade-in start"
     );
     player.tick(0.25);
     assert!((player.active_weight() - 0.5).abs() < 1e-5);

@@ -1,488 +1,485 @@
-# egui 编辑器（`editor/`）
+# egui editor (`editor/`)
 
-Prisma 的编辑器（egui + ash），当前也是唯一编辑器。
+Prisma's editor (egui + ash), currently the only editor.
 
-设计目标只有两条：
+Design goals are only two:
 
-1. **经典桌面编辑器布局**：菜单 + 工具栏 + 状态栏、split-tree
-   docking、层级 / 检查器 / 资产 / 文档 / 日志 / 历史、预制体、撤销、项目读写。
-2. **Scene / Game 视图零拷贝**：引擎渲染的图像直接被 UI 采样，不经过 CPU。
+1. **Classic desktop editor layout**: menu + toolbar + status bar, split-tree
+   docking, hierarchy / inspector / asset / document / log / history, prefab, undo, project read/write.
+2. **Scene / Game view zero-copy**: engine-rendered images are directly sampled by UI, without CPU involvement.
 
-## 1. 为什么 egui 能做到零拷贝
+## 1. Why egui can achieve zero-copy
 
-egui 不是渲染器：它只产出 UI 的 mesh + 纹理 id，Vulkan 设备、命令缓冲区、
-swapchain 都在宿主手里。`egui-ash` 的 `AppCreator::create` 要求宿主自己创建
-instance / device 并返回 `AshRenderState`，因此可以做到引擎的模型：
+egui is not a renderer: it only produces UI mesh + texture id, Vulkan device, command buffer,
+swapchain are all in the host's hands. `egui-ash`'s `AppCreator::create` requires the host to create
+instance / device itself and return `AshRenderState`, thus enabling the engine's model:
 
 ```text
-同一个 VkDevice / VkQueue
-├─ prism-render GraphRenderer（Shadow → Scene → GTAO → Post → 离屏 image）
-├─ egui-ash（UI 顶点 / 字体纹理 / 采样视口 image）
+Same VkDevice / VkQueue
+├─ prism-render GraphRenderer (Shadow → Scene → GTAO → Post → offscreen image)
+├─ egui-ash (UI vertex / font texture / sampled viewport image)
 └─ swapchain present
 ```
 
-`ImageRegistry::register_user_texture(image_view, sampler)` 把引擎的离屏图像注册
-成 `egui::TextureId`，`painter.image()` 在**同一命令缓冲区**里采样它。GPU→GPU，
-没有读回。
+`ImageRegistry::register_user_texture(image_view, sampler)` registers the engine's offscreen image
+as `egui::TextureId`, `painter.image()` samples it in **the same command buffer**. GPU→GPU,
+no readback.
 
-## 2. 设备共享的接线
+## 2. Device sharing wiring
 
-`prism-render` 新增两个能力（都在 `crates/prism-render/src/context.rs`）：
+`prism-render` adds two capabilities (both in `crates/prism-render/src/context.rs`):
 
-- `create_host_instance(entry, extensions)`：宿主（UI 框架）自己持有 instance；
-- `VulkanContext::from_host(entry, instance, physical, family, extra_device_extensions)`：
-  用**与窗口模式完全相同的特性集**（bindless、synchronization2、时间线信号量、
-  设备地址、条件 RT）在宿主 instance 上创建设备，但**不拥有**它
-  （`ContextOwnership::External`，析构时不销毁，避免 UI 侧句柄悬空）。
+- `create_host_instance(entry, extensions)`: host (UI framework) holds instance itself;
+- `VulkanContext::from_host(entry, instance, physical, family, extra_device_extensions)`:
+  creates device on host instance with **exactly the same feature set** as window mode
+  (bindless, synchronization2, timeline semaphore, device address, conditional rendering),
+  but **does not own it** (`ContextOwnership::External`, not destroyed on drop, avoiding dangling handles on UI side).
 
-`pick_host_physical_device` / `pick_present_queue_family` 保证选中的物理设备与
-队列族同时支持图形和呈现（egui-ash 每个窗口自己建 surface + swapchain）。
+`pick_host_physical_device` / `pick_present_queue_family` guarantee the selected physical device
+and queue family both support graphics and present (egui-ash creates surface + swapchain per window itself).
 
-离屏图像侧（`crates/prism-render/src/offscreen.rs` + `graph_renderer.rs`）：
+Offscreen image side (`crates/prism-render/src/offscreen.rs` + `graph_renderer.rs`):
 
-- `OffscreenTarget` 从 `pub(crate)` 变成 `pub`，暴露 `image_view()` / `extent()` /
-  `format()`，图像 usage 增加 `SAMPLED`；
-- `GraphRenderer::offscreen_new_with_context(Arc<VulkanContext>, w, h, env)`：
-  在共享设备上建离屏渲染器；
-- `GraphRenderer::offscreen_present_for_sampling()`：帧结束（PostPass 的 final
-  layout 是 `PRESENT_SRC_KHR`）后插入 `PRESENT_SRC_KHR → SHADER_READ_ONLY_OPTIMAL`
-  的 barrier 并等待完成，随后图像可以交给 egui 采样；
-- `offscreen_image_view()`：注册纹理用的 `VkImageView`。
+- `OffscreenTarget` changed from `pub(crate)` to `pub`, exposing `image_view()` / `extent()` /
+  `format()`, image usage adds `SAMPLED`;
+- `GraphRenderer::offscreen_new_with_context(Arc<VulkanContext>, w, h, env)`:
+  builds offscreen renderer on shared device;
+- `GraphRenderer::offscreen_present_for_sampling()`: after frame ends (PostPass final layout is `PRESENT_SRC_KHR`),
+  inserts `PRESENT_SRC_KHR → SHADER_READ_ONLY_OPTIMAL` barrier and waits for completion, then image can be sampled by egui;
+- `offscreen_image_view()`: `VkImageView` for texture registration.
 
-下一次帧的 PostPass 用 `initial_layout = UNDEFINED`（load op clear），所以从
-`SHADER_READ_ONLY_OPTIMAL` 回到颜色附件是合法的，不需要额外的状态机。
+Next frame's PostPass uses `initial_layout = UNDEFINED` (load op clear), so transitioning from
+`SHADER_READ_ONLY_OPTIMAL` back to color attachment is valid, no extra state machine needed.
 
-## 3. 帧节奏
+## 3. Frame pacing
 
-编辑器**不建渲染线程**（与 `prism-app` 的 hosted 模式不同）：`Engine` +
-`GraphRenderer` 直接跑在 egui-ash 的事件循环线程上，`App::ui()` 里同步出帧。
+The editor **does not create a render thread** (unlike `prism-app`'s hosted mode): `Engine` +
+`GraphRenderer` run directly on egui-ash's event loop thread, `App::ui()` synchronously produces frames.
 
-- 资产上传也同步：`GpuAssetResolver::prepare_requests` → `GraphRenderer::
-  apply_asset_requests` → `apply_responses` 写回 ECS（原本是两个线程各一半）；
-- 视口只在「文档变化 / 相机变化 / 选中变化 / resize / Play / 首帧」时重渲染，
-  静止时零 GPU 工作。判断 resize 必须用 `GraphRenderer::offscreen_extent()`
-  （`extent()` 是 swapchain 的，离屏时恒为 `0x0`，拿它比较会让视口**每帧**
-  重建离屏目标并重渲染，约 15 ms/帧白烧 GPU）；
-- 两个引擎（Scene / Game）都在启动时建好：首个 Game view 要跑一次 IBL 预过滤
-  （约 1.5 s）+ 管线创建，留到第一次切 tab 才建就表现为「切 tab 卡半天」；
-- Play 时 Game view 每帧 `tick()` + 重渲染；Scene view 仍是编辑态。
+- Asset upload is also synchronous: `GpuAssetResolver::prepare_requests` → `GraphRenderer::
+  apply_asset_requests` → `apply_responses` writes back to ECS (originally split across two threads);
+- Viewport re-renders only when "document changed / camera changed / selection changed / resize / Play / first frame",
+  zero GPU work when idle. Resize detection must use `GraphRenderer::offscreen_extent()`
+  (`extent()` is swapchain's, constantly `0x0` when offscreen; comparing it causes viewport to
+  rebuild offscreen target and re-render **every frame**, wasting ~15 ms/frame GPU);
+- Both engines (Scene / Game) are built at startup: first Game view runs one IBL prefiltering
+  (~1.5 s) + pipeline creation, deferred to first tab switch, otherwise manifests as "tab switch freezes for a long time";
+- During Play, Game view `tick()` + re-renders every frame; Scene view remains in edit mode.
 
-**松散资产热重载（#495）**：Preferences 的
-`Rebuild scene pack when loose assets change`（默认开）每 1s 扫描 `assets/` 下
-**未打包**的作者资产（贴图 / 模型 / HDR / 字体 / 材质 / `scenes.json`…），排除
-`.pak` / `.pak.meta.json` / `.rscn` / `.spv` 与编辑器自己保存的 `.scene.json` /
-`.prefab.json`。检测到变化后等 800ms 安静期（连续保存 / 大文件分块写入不会连打多次），
-再触发一次现有的 `Build Scene Pack`；打完包由 `.pak` 轮询链路重开包并
-`invalidate_assets`，**Play 中也能直接看到新资源**，不用退出再进。构建期间不排队新任务，
-构建结束会重新对齐快照。
-检测用的是 `prism_editor_core::project::FileStamp`（**mtime + 长度**），与文档外部改动
-检测（`Workspace::check_external_changes`，焦点变化触发）共用同一套版本戳，不再各写一份；
-粗粒度文件系统上同一秒内的覆盖写也能被长度变化捕获。
+**Loose asset hot reload (#495)**: Preferences'
+`Rebuild scene pack when loose assets change` (default on) scans `assets/` every 1s for
+**unpacked** authoring assets (textures / models / HDR / fonts / materials / `scenes.json`...),
+excluding `.pak` / `.pak.meta.json` / `.rscn` / `.spv` and editor-saved `.scene.json` /
+`.prefab.json`. After detecting changes, waits 800ms quiet period (continuous saves / large file chunked writes
+won't trigger multiple times), then triggers existing `Build Scene Pack`; after packing,
+`.pak` polling chain reopens pack and `invalidate_assets`; **new assets visible directly during Play**,
+no need to exit and re-enter. No new tasks queued during build; build end re-aligns snapshot.
+Detection uses `prism_editor_core::project::FileStamp` (**mtime + length**), shares the same version stamp
+with external document change detection (`Workspace::check_external_changes`, triggered by focus change),
+no longer writes separately; coarse-grained filesystem overwrite within the same second can still be caught by length change.
 
-**Play 态的视觉提示（#500）**：播放中整窗四周有一圈绿色描边、暂停时变琥珀色；
-状态栏的 `PLAYING` / `PAUSED` 带同色底纹。检查器顶部在这期间显示横幅
-`Play mode — changes made now are discarded when Play stops.` —— 运行期的编辑仍写进
-作者文档，但 `Workspace::stop()` 会用进入 Play 前的快照原样盖回（文档、撤销栈、脏标记、
-选中），所以 Stop 之后这些改动不会留下。
+**Play mode visual cue (#500)**: during playback, entire window bordered in green, amber when paused;
+status bar `PLAYING` / `PAUSED` with matching color background. Inspector top shows banner
+`Play mode — changes made now are discarded when Play stops.` — edits during runtime still write to
+authoring document, but `Workspace::stop()` overwrites with snapshot taken before entering Play (document,
+undo stack, dirty flags, selection), so after Stop these changes are not retained.
 
-## 3.1 字体与图标
+## 3.1 Fonts and icons
 
-- 正文字体优先用系统 UI 无衬线（Segoe UI / Liberation Sans / Noto Sans），
-  找不到再用 egui 内置字体；CJK 字体作为回退追加在最末尾。
-- 图标用 **Phosphor Icons**（`egui-phosphor 0.11`，MIT OR Apache-2.0，对应 egui
-  0.33）：`egui_phosphor::regular::{PLAY, PAUSE, EYE, FOLDER, FLOPPY_DISK, ...}`
-  就是普通文本字形，因此传输控件 / 层级眼睛 / 资产文件夹 / 关闭按钮都不再依赖
-  Unicode 符号（`▶ ⏸ ✕ ⧉` 这类在多数 UI 字体里缺字形，会显示成方块）。
+- Body font prefers system UI sans-serif (Segoe UI / Liberation Sans / Noto Sans),
+  falls back to egui built-in font if not found; CJK font added as fallback at the end.
+- Icons use **Phosphor Icons** (`egui-phosphor 0.11`, MIT OR Apache-2.0, corresponding to egui
+  0.33): `egui_phosphor::regular::{PLAY, PAUSE, EYE, FOLDER, FLOPPY_DISK, ...}`
+  are ordinary text glyphs, so transport controls / hierarchy eye / asset folder / close button
+  no longer rely on Unicode symbols (`▶ ⏸ ✕ ⧉` which lack glyphs in most UI fonts, showing as boxes).
 
-## 3.2 用户项目代码（Game View Play）
+## 3.2 User project code (Game View Play)
 
-Game View 的 Play 执行**用户项目自己的 gameplay 代码**，不是只跑引擎内置 system：
+Game View Play executes **user project's own gameplay code**, not just engine built-in systems:
 
-- 编辑器把项目 manifest 的 `preview-module` feature 编译成 cdylib
-  （`cargo build --no-default-features --features preview-module --target-dir
-  <项目>/target/preview-module`），由 `prism-runtime-host` 用同构建 ABI 加载。
-  项目模块**不链接引擎**：`prism-game-api` 只开 `plugin` 后端。
-- 源码改动落定 **350 ms** 后自动重编；Play 期间不自动换模块（避免打断试玩），
-  `Ctrl+R` / File → Compile Project Module 强制重编。编译失败保留上一次成功的
-  模块继续跑，诊断进 Console 与 Problems 面板。
-- **重载是整模块替换，不是热重载**：旧 session 释放、模块 `create` 重跑，项目侧
-  静态状态归零。没有脚本层可以迁移状态，所以文案统一用 “reload”，不要用
-  “hot reload / domain reload”。
-- 工具栏右侧显示模块状态（`ready` / `changes not compiled` / `compiling…` /
-  `compile failed`）和 `Compile (Ctrl+R)` 按钮。源码时间戳晚于上一次编译尝试时是
-  `pending`，Auto Refresh 关掉也看得出来。
-- **Problems 面板**（Window → General → Problems）列出
-  `cargo --message-format=json` 的 error / warning，带
-  `file:line:col`，点一行用默认编辑器打开（先试 `code -g`，没有 `code` 就交给
-  系统默认处理程序）。编译成功时 warning 也保留；失败时第一条 error 同时进 Console。
-  面板有两段：**Project module**（Game View 的 `preview-module`）和
-  **Player build**（`File → Build Player` / `Build And Run` 的 `cargo build`，
-  它加 `--message-format`）。
-- Play 前如果模块已加载但源码有未编译改动（Auto Refresh 关、或上一次 build 被 Play
-  挡住），会先补编一次，避免试玩跑旧代码。
-- Play 每帧先 `ProjectSession::tick(WorldCommands)`，再跑引擎 system：项目写入的
-  组件和 `draw_quad` 提交的 UI 四边形在同一帧被 hierarchy / `ui::render` 看到。
-- 项目模块通过 `AssetIo` 读**项目自己的** `assets/`（不是仓库根的引擎资产）。
-- 输入：Play 时 Game view 把键鼠转发给引擎 `InputManager`，`InputSnapshot.keys`
-  是**按住**语义（fishing 的 `input.key(SPACE)` 需要持续收线）。
-- 没有 `preview-module` feature 的项目（任何还没改造的用户工程）只跑引擎，并在
-  Console 说明原因；`PRISMA_PROJECT_MODULE=/path/libgame.so` 可直接加载
-  预构建模块（测试 / 非 Cargo 项目）。
-- `projects/template` 与 `projects/fishing` 的 `preview-module` 必须显式打开
-  `prism-scene` 的三组组件（3D / 2D / UI）：模块是独立 workspace，拿不到引擎侧的
-  feature 统一，少一组就会在 `ProjectModule::load` 的 schema fingerprint 校验处被
-  拒绝。（实测踩过：`default-features = false` 的 `prism-scene` 只注册核心组件，
-  指纹 0x758a… vs 宿主 0x03b2…，加载直接失败。）
-- **符号文件跟着 dll 走**：构建产物复制成 `staged/<stem>-<nanos>/<原文件名>`，
-  `.pdb` 放在同一目录。唯一性只能放在**目录**上 —— dbghelp 是按 PE 里记录的
-  `fishing.pdb` 去模块目录找符号，把 dll 改名成 `fishing-<nanos>.dll` 会让调用栈里
-  工程帧全部退化成导出名（`prism_project_get_api`）。
-- **模块日志与 panic 要桥接**：模块是独立 dylib，自带一份 `log` 和 `std`，宿主的
-  logger / panic hook 都看不见它。工程的入口由 `prism_game_api::export_project!`
-  生成：它在 `create` 里调用 `install_host_logger` + `install_host_panic_hook`，
-  校验 ABI 与 schema fingerprint，并在场景代数变化时重建工程状态；之后
-  `log::info!` 与 `panicked at …` + `Backtrace` 都经 `HostApi::log` 进 Console
-  （target `project`，来源 `Game`）。panic 本身由 `prism_project_api::guard()` 在
-  ABI 边界兜住（不能跨 `extern "C"` unwind）。
-- **tick 失败会 latch**：模块返回错误（含 panic）后停止调用，直到重新编译 / 重新
-  加载。否则一个每帧 panic 的工程会 60 次/秒刷 stderr 并拖慢 GPU。
-- **Game view 的渲染默认值来自工程**：`EngineHost::new` 之后立刻用工程
-  `assets/settings.ini [render]` 覆盖（`apply_project_render_defaults`，与玩家启动
-  同一条 `AppConfig.render → RenderSettings`），渲染设置面板只作用于 Scene view ——
-  否则「编辑器里看到的」和「打包出来的」不是一张图。
-- **2D 像素画用 `tonemap_mode = 2`**：Reinhard / ACES 会改写美术调色板；passthrough
-  只做 `saturate`，配合 sRGB 交换链能 1:1 还原源图。`projects/fishing` 已默认开启。
-  UI 颜色按 sRGB 作者值写入，在顶点展开时解码到线性，最终只由交换链编码一次（#592）。
+- Editor compiles project manifest's `preview-module` feature into cdylib
+  (`cargo build --no-default-features --features preview-module --target-dir
+  <project>/target/preview-module`), loaded by `prism-runtime-host` with same build ABI.
+  Project module **does not link engine**: `prism-game-api` only opens `plugin` backend.
+- Source changes auto-rebuild after **350 ms** settle; Play does not auto-swap module (avoid interrupting playtest),
+  `Ctrl+R` / File → Compile Project Module forces rebuild. Compile failure keeps last successful
+  module running, diagnostics go to Console and Problems panel.
+- **Reload is whole-module replacement, not hot reload**: old session released, module `create` re-runs, project-side
+  static state reset. No script layer to migrate state, so copy uniformly uses "reload", not
+  "hot reload / domain reload".
+- Toolbar right shows module status (`ready` / `changes not compiled` / `compiling…` /
+  `compile failed`) and `Compile (Ctrl+R)` button. Source timestamp later than last compile attempt is
+  `pending`, Auto Refresh off still visible.
+- **Problems panel** (Window → General → Problems) lists
+  `cargo --message-format=json` errors / warnings, with
+  `file:line:col`; click a line opens with default editor (tries `code -g`, falls back to
+  system default handler). Warnings retained on successful compile; on failure first error also goes to Console.
+  Panel has two segments: **Project module** (Game View's `preview-module`) and
+  **Player build** (`File → Build Player` / `Build And Run`'s `cargo build`,
+  with `--message-format`).
+- Before Play if module loaded but source has uncompiled changes (Auto Refresh off, or last build blocked by Play),
+  compiles once first, avoiding playtest on stale code.
+- Each Play frame first `ProjectSession::tick(WorldCommands)`, then engine systems: project-written
+  components and `draw_quad`-submitted UI quads visible in same frame by hierarchy / `ui::render`.
+- Project module reads **project's own** `assets/` via `AssetIo` (not repo root engine assets).
+- Input: during Play, Game view forwards keyboard/mouse to engine `InputManager`, `InputSnapshot.keys`
+  is **hold-pressed** semantics (fishing's `input.key(SPACE)` needs continuous reeling).
+- Projects without `preview-module` feature (any not-yet-converted user project) only run engine, and
+  explains reason in Console; `PRISMA_PROJECT_MODULE=/path/libgame.so` can directly load
+  prebuilt module (testing / non-Cargo projects).
+- `projects/template` and `projects/fishing` `preview-module` must explicitly open
+  `prism-scene`'s three component groups (3D / 2D / UI): module is independent workspace, doesn't get engine-side
+  feature unification; missing one group rejected at `ProjectModule::load` schema fingerprint check.
+  (Measured: `default-features = false` `prism-scene` registers only core components,
+  fingerprint 0x758a… vs host 0x03b2…, load directly fails.)
+- **Symbol files follow dll**: build artifacts copied to `staged/<stem>-<nanos>/<original filename>`,
+  `.pdb` placed in same directory. Uniqueness only in **directory** — dbghelp looks for symbols
+  by PE-recorded `fishing.pdb` in module directory; renaming dll to `fishing-<nanos>.dll` degrades call stack
+  project frames to export names (`prism_project_get_api`).
+- **Module logs and panic bridged**: module is independent dylib, brings its own `log` and `std`, host's
+  logger / panic hook can't see it. Project entry generated by `prism_game_api::export_project!`:
+  calls `install_host_logger` + `install_host_panic_hook` in `create`,
+  validates ABI and schema fingerprint, rebuilds project state on scene generation change; afterwards
+  `log::info!` and `panicked at …` + `Backtrace` go through `HostApi::log` to Console
+  (target `project`, source `Game`). Panic itself caught by `prism_project_api::guard()` at
+  ABI boundary (cannot unwind across `extern "C"`).
+- **tick failure latches**: module returns error (including panic), stops being called until recompile / reload.
+  Otherwise a per-frame panicking project spams stderr 60 times/sec and slows GPU.
+- **Game view render defaults come from project**: right after `EngineHost::new`, project's
+  `assets/settings.ini [render]` overrides (`apply_project_render_defaults`, same as player launch
+  `AppConfig.render → RenderSettings`), render settings panel only applies to Scene view —
+  otherwise "what editor sees" and "packaged output" are not the same image.
+- **2D pixel art uses `tonemap_mode = 2`**: Reinhard / ACES alters art palette; passthrough
+  only does `saturate`, combined with sRGB swapchain can 1:1 restore source image. `projects/fishing` defaults on.
+  UI color written as sRGB author value, decoded to linear at vertex expansion, finally encoded once by swapchain (#592).
 
-## 4. 交互
+## 4. Interaction
 
-- 轨道：左键/右键拖拽 → `OrbitCamera::orbit`；滚轮 → `zoom`；
-- 点选：屏幕坐标 → 射线 → 与实体真实局部包围盒求交（网格用 cooked AABB，精灵用
-  `frame_size / pixels_per_unit` + pivot；无数据才退回单位立方体），索引即
-  `.scene.json` 的 `entities[i]`（#600）；
-- 平移 gizmo：`pick_gizmo_axis` 命中轴后，按「屏幕位移 · 轴屏幕方向 / 每世界
-  单位像素」换算世界位移，交给 `Workspace::translate_entity_world`；
-- 选中高亮复用引擎的 `Gizmo` 组件（世界三色轴箭头），不引入新的渲染概念。
-- **点选循环穿透（#416）**：同一个位置连续点击时，依次选中被挡住的下一层
-  （候选集按射线距离从近到远，4px 内算同一次点选；换位置 / 换候选集就回到最近的
-  一个）。Shift / Ctrl 的加选 / 减选不循环，永远取最近的一个；
-- **方向 gizmo（#416）**：Scene 视图右上角 6 个世界轴手柄（背向相机的更淡），
-  点一下把相机对齐到该轴；`OrbitCamera::align_to_axis` 直接解出 yaw / pitch，
-  正交视图同样可用。
-- **多选 gizmo 与枢轴模式（#416）**：Move / Rotate / Scale 拖动作用于**整个选择集**
-  （每次拖动仍是一个撤销步）。工具栏 `Pivot` 开关关闭时是 **Center** 模式：gizmo 落在
-  选择集中心，旋转 / 缩放会带动整组位置（绕中心公转 / 按轴心比例推开）；打开后是
-  **Pivot** 模式：gizmo 落在活动对象自己的轴心上，每个对象只改自身变换。
-- **View… 菜单（#416）**：Scene 视图工具栏里可调编辑器相机 FOV（20–110°）与
-  `near` / `far`，并分别开关**相机图标 / 光源图标**。FOV 与裁剪面同时写进引擎相机和
-  拾取射线（`CameraFrame::fov_y_degrees`），gizmo、点选与画面不会错位；
-  `2D` 开关仍是正交 XY 视图。
-- **视口浮层工具条（#421）**：Scene 视图左上角（8px 处）有一条半透明工具条，
-  不用把视线移到顶部工具栏：`Grid`（`G`）、`Sky`（`S`）、`2D`（正交 XY）、
-  `Snap` 开关与平移吸附步长（`Δ`，世界单位，0.01–100）。左侧箭头折叠成一个小方块；
-  折叠状态只存在 `UiState`，不进文档。它是这个 issue 建议的**最小实例**，
-  不是 Unity `OverlayCanvas` 那套可拖拽停靠系统。
-- 工具：`W` / `E` / `R` 切换移动 / 旋转 / 缩放 gizmo，`X` 切世界/局部，`G` 开关网格；
-  `S` 开关 Scene view 背景（场景天空盒 / 纯色，与引擎的
-  `SceneViewState.showSkybox` 同语义，默认开）；
-  旋转走 `pick_rotation_axis` + `screen_angle`，缩放走 `set_scale_axis`。
-- 空白拖拽 = 框选（`box_select`），`Alt`+拖 / 右键拖 = 轨道，双击 = 聚焦选中项。
+- Orbit: left/right drag → `OrbitCamera::orbit`; scroll → `zoom`;
+- Pick: screen coordinates → ray → intersect with entity's real local bounding box (mesh uses cooked AABB, sprite uses
+  `frame_size / pixels_per_unit` + pivot; falls back to unit cube when no data), index is
+  `.scene.json`'s `entities[i]` (#600);
+- Translate gizmo: after `pick_gizmo_axis` hits axis, compute world displacement by "screen displacement · axis screen direction / pixels per world unit",
+  handed to `Workspace::translate_entity_world`;
+- Selection highlight reuses engine's `Gizmo` component (world tri-color axis arrows), no new rendering concept.
+- **Pick loop-through (#416)**: when clicking same position continuously, sequentially select next layer occluded
+  (candidate set sorted by ray distance near to far, within 4px counts as same pick; change position / candidate set returns to nearest).
+  Shift / Ctrl add / remove selection does not loop, always takes nearest.
+- **Direction gizmo (#416)**: Scene view top-right 6 world axis handles (camera-facing one dimmer),
+  click to align camera to that axis; `OrbitCamera::align_to_axis` directly solves yaw / pitch,
+  orthographic view also works.
+- **Multi-select gizmo and pivot mode (#416)**: Move / Rotate / Scale drag applies to **entire selection set**
+  (each drag is still one undo step). Toolbar `Pivot` off is **Center** mode: gizmo at selection center,
+  rotate / scale moves whole group (orbit around center / push by pivot scale); on is **Pivot** mode: gizmo at active object's own pivot,
+  each object only modifies its own transform.
+- **View… menu (#416)**: Scene view toolbar can adjust editor camera FOV (20–110°) and
+  `near` / `far`, and toggle **camera icon / light icon** separately. FOV and clip planes written to both engine camera and
+  pick ray (`CameraFrame::fov_y_degrees`), gizmo, pick and image won't misalign;
+  `2D` toggle remains orthographic XY view.
+- **Viewport floating toolbar (#421)**: Scene view top-left (8px) has a semi-transparent toolbar,
+  no need to move gaze to top toolbar: `Grid` (`G`), `Sky` (`S`), `2D` (orthographic XY),
+  `Snap` toggle and translate snap step (`Δ`, world units, 0.01–100). Left arrow folds into a small square;
+  fold state exists only in `UiState`, not in document. It is this issue's suggested **minimal instance**,
+  not Unity `OverlayCanvas` draggable docking system.
+- Tools: `W` / `E` / `R` switch move / rotate / scale gizmo, `X` toggles world/local, `G` toggles grid;
+  `S` toggles Scene view background (scene skybox / solid color, same semantics as engine's
+  `SceneViewState.showSkybox`, default on);
+  rotation uses `pick_rotation_axis` + `screen_angle`, scale uses `set_scale_axis`.
+- Blank drag = box select (`box_select`), `Alt`+drag / right drag = orbit, double click = focus selection.
 
-## 4.1 日志
+## 4.1 Log
 
-`logging.rs` 把 `env_logger` 包一层 tee：同一条 `log` 记录既进终端（`RUST_LOG`
-语义不变），也进 `prism-editor-core` 的 `LogBuffer`，所以 Console 面板能看到
-视口里 `prism_render` / `prism_engine` 的警告（与引擎日志
-是同一思路）。`Trace` 不转发，避免淹没窗口。
+`logging.rs` wraps `env_logger` with a tee: the same `log` record goes both to terminal (`RUST_LOG`
+semantics unchanged) and to `prism-editor-core`'s `LogBuffer`, so Console panel can see
+warnings from `prism_render` / `prism_engine` in viewport (same idea as engine logs). `Trace` is not forwarded,
+to avoid flooding the window.
 
-**Console 的四个工具开关（#421）**：`Collapse` 把相同的 `(级别, 来源, 文本)` 合并成
-一行并显示 `×N`（保持首次出现的时间顺序）；`Clear on Play` 在 Play 开始时清空；
-`Error Pause` 在 Play 中第一次出现 Error / Panic 时自动暂停（并写一行说明，避免
-看起来像卡死）；日志行里带 `path:line[:col]` 时**双击**用默认编辑器跳到该位置
-（与 Problems 面板同一套 `open_source_location`）。
+**Console's four tool toggles (#421)**: `Collapse` merges identical `(level, source, text)` into one line
+and shows `×N` (keeping first occurrence's time order); `Clear on Play` clears at Play start;
+`Error Pause` auto-pauses on first Error / Panic during Play (and writes a line explaining, to avoid
+looking like a freeze); log lines with `path:line[:col]` **double-click** jumps to that location with default editor
+(same `open_source_location` set as Problems panel).
 
-**Play 自动最大化（#421）**：`Window → General → Maximize Game View on Play` 打开后，
-按 Play 自动最大化 Game 视图，Stop 恢复到进入前的布局（进入前没有最大化任何面板时
-也回到「都不最大化」，不会把用户自己最大化的面板吞掉）。
+**Play auto-maximize (#421)**: `Window → General → Maximize Game View on Play` turned on,
+pressing Play auto-maximizes Game view, Stop restores pre-entry layout (if no panel maximized before entry,
+also returns to "none maximized", won't swallow panels user maximized themselves).
 
-## 4.2 菜单（结构）
+## 4.2 Menu (structure)
 
-菜单按引擎的分组组织，二 / 三级菜单里都是真实命令：
+Menus organized by engine grouping, two/three-level menus are all real commands:
 
-| 菜单 | 二级 / 三级 |
+| Menu | Two/three-level |
 |---|---|
 | File | New Scene / New Scene From Template ▸ / New Prefab / Open / Recent Scenes ▸ / Save / Save As / Save Project / Reload / Build Settings / Build Scene Pack / Cook Active Scene / Build Player / Build And Run / Compile Project Module / Auto Refresh Project Module / Clean Build / Exit |
 | Edit | Undo / Redo / Cut / Copy / Paste / Duplicate / Delete / Select All / Deselect All / Invert Selection / Select Children / Select Prefab Root / Next·Previous Selection / Copy·Paste Transform ▸ / Paste Component / Play / Pause / Step / Project Settings / Preferences / Theme |
 | Assets | Create ▸ (Scene / Prefab / **Prefab Variant…** / Folder…) / Open / Show in Explorer / Copy Path / Duplicate / Delete / Instantiate In Scene / Find References In Scene / Find References In Project / Refresh |
 | GameObject | Create Empty / Create Empty Child / Create Empty Parent / Create Other ▸ (Rendering ▸ Mesh Renderer·Skybox / Light ▸ Directional·Point·Spot / Camera / UI) / Move To View / Align View to Selected / Snap to Ground |
-| Component | schema 分类 ▸ 组件列表 |
-| Window | General ▸ 面板开关 / Layouts ▸ 预设 + 命名布局（Load/Delete）+ Save Layout… + Save·Load Layout to File… + Reset All Layouts / Reset Layout |
+| Component | schema category ▸ component list |
+| Window | General ▸ panel toggles / Layouts ▸ presets + named layouts (Load/Delete) + Save Layout… + Save·Load Layout to File… + Reset All Layouts / Reset Layout |
 | Help | Shortcuts / Editor Guide / About |
 
-**玩家构建（`Build Player` / `Ctrl+B` = `Build And Run`）**按 `assets/settings.ini` 的
-`[build]` 段走：`profile` 选 `debug` / `release`（`cargo build [--release]`），然后
-`prism-build-pipeline build-scenes` 刷新 `scenes.pak`，再把可执行文件摆到
-`<output_dir>/<exe>`、产物摆到 `<output_dir>/assets/{scenes.pak,settings.ini}`
-（引擎只认 `<root>/assets/`，平铺在 `output_dir/` 根下双击会报 “no assets directory”）。
-`Build And Run` 运行的是这份**摆好的产物**，不是 `cargo run` 的调试版；
-非 0 退出、产物缺失都让状态栏显示 `build failed:`，完整 stderr 留在 Console。
+**Player build (`Build Player` / `Ctrl+B` = `Build And Run`)** follows `assets/settings.ini`'s
+`[build]` section: `profile` chooses `debug` / `release` (`cargo build [--release]`), then
+`prism-build-pipeline build-scenes` refreshes `scenes.pak`, then places executable at
+`<output_dir>/<exe>`, artifacts at `<output_dir>/assets/{scenes.pak,settings.ini}`
+(engine only recognizes `<root>/assets/`, placing flat at `output_dir/` root double-click reports "no assets directory").
+`Build And Run` runs this **placed artifact**, not `cargo run`'s debug build;
+non-zero exit or missing artifacts show `build failed:` on status bar, full stderr stays in Console.
 
-`Build*` / `Cook Active Scene` / `Clean Build` 通过子进程调用 `prism-build-pipeline`
-或 `cargo`（编辑器仍然不链接 cooker），输出进 Console。
+`Build*` / `Cook Active Scene` / `Clean Build` invoke `prism-build-pipeline`
+or `cargo` via subprocess (editor still does not link cooker), output to Console.
 
-快捷键（常用习惯）：`Ctrl+1..5` = Scene / Game / Inspector / Hierarchy / Project，
-`Ctrl+Shift+C` = Console，`Ctrl+B` = Build And Run，`Ctrl+R` = 重编并加载用户项目模块，
-`Ctrl+I` = 反选，
-`W/E/R` = 移动 / 旋转 / 缩放，`X` 世界/局部，`G` 网格，`S` 天空盒，`F` 框住全部，`Del` 删除。
+Shortcuts (common habits): `Ctrl+1..5` = Scene / Game / Inspector / Hierarchy / Project,
+`Ctrl+Shift+C` = Console, `Ctrl+B` = Build And Run, `Ctrl+R` = rebuild and load user project module,
+`Ctrl+I` = deselect,
+`W/E/R` = move / rotate / scale, `X` world/local, `G` grid, `S` skybox, `F` frame all, `Del` delete.
 
-**可重绑快捷键（#421）**：`Help → Shortcuts` 面板里**点一下键位**再按新组合键即可改绑
-（Esc / Cancel 取消，行尾 `Reset` 恢复单条，顶部 `Reset all` 清空全部）。捕获期间
-`handle_shortcuts` 整体让路，按键不会顺带触发命令；与其它命令冲突时拒绝改动并在面板
-里提示占用的命令。覆盖表存在 `Preferences::shortcut_overrides`（随编辑器状态
-`target/editor-egui/state.json` 持久化，键是 `Command::id()`），菜单提示与实际分发
-读的是同一张 `effective_bindings` 表，覆盖后旧的别名键位不再生效。
+**Rebindable shortcuts (#421)**: `Help → Shortcuts` panel **click a key** then press new combo to rebind
+(Esc / Cancel cancels, row-end `Reset` resets single one, top `Reset all` clears all). During capture,
+`handle_shortcuts` yields entirely, keys won't trigger commands along the way; conflicts with other commands reject change and hint occupied command in panel.
+Override table stored in `Preferences::shortcut_overrides` (persisted with editor state
+`target/editor-egui/state.json`, key is `Command::id()`), menu hints and actual dispatch read the same `effective_bindings` table,
+after override old alias keys no longer take effect.
 
-命名布局存在 `target/editor-egui/layouts.json`（`{name: {version,dock,floating}}`），
-可以整份导出/导入成 JSON 文件（与 Web 的 `prisma-editor.dock.v4` 同形）。
+Named layouts exist in `target/editor-egui/layouts.json` (`{name: {version,dock,floating}}`),
+can export/import whole as JSON file (same shape as Web's `prisma-editor.dock.v4`).
 
-`Create → Prefab Variant…`：把选中实例用 `extract_subtree_preserving_links` 存成
-「继承 base + 覆盖」的预制体文件，再把场景里的这个实例改指向新变体（行为）。
+`Create → Prefab Variant…`: takes selected instance stored via `extract_subtree_preserving_links` as
+"inherit base + override" prefab file, then repoints this scene instance to new variant (behavior).
 
-## 4.3 面板能力
+## 4.3 Panel capabilities
 
-- **层级**：搜索、引擎式拖拽（上/下 25% 插入、中间挂成子级）、双击定位（框住选中项）、
-  就地重命名（`F2`，macOS 上 `Return`）、
-  显隐、复制 / 删除 / 改父级、Create 下拉；
-- **检查器**：单选 + 多选（公共组件批量改字段，一次撤销；多选时最后点击 /
-  右键的对象是 Active，批量 Transform 显示它的值，#507）；预制体区块（Revert /
-  Sync All / Save as Prefab…）；组件卡头的复制 / 移除；Add Component 分类菜单；
-  **列表字段可编辑（#418）**：`Vec<T>` 每项一行，带 `▲` / `▼` / `✕`，底部
-  `+ Add` 按元素 schema 生成默认值（`Vec3` → `[0,0,0]`，嵌套 struct → 各字段默认值）；
-  定长数组不提供增删；元素内部仍然用它们真正的控件，路径是 `字段[i]`（`LineRenderer.points`
-  这类字段因此不必再手改 JSON）。`Option<T>` 用勾选框控制存在与否，嵌套 struct 可折叠展开。
-  **组件预设（#418）**：组件卡头的 `…` → `Presets` 可以把当前组件值存成命名预设
-  （同名覆盖），之后对任意实体套用（整份组件 = 一个撤销步）。预设随编辑器状态
-  （`target/editor-egui/state.json`）持久化，按完整反射名分组；`Reset` 仍恢复 schema
-  默认值。组件右键菜单还有 Copy / Paste Values / Move Up / Down / Remove，字段右键可
-  Copy / Paste Value 与 Copy Property Path；检查器右上角的锁按**实体 id** 钉住内容。
-  **组件卡头的 `…` 菜单**：Copy Component / Paste Values / Move Up·Down / Reset（写回
-  schema 的 `defaultJson`，一次撤销步）/ Remove；**字段右键**：Copy Value / Paste Value
-  （只有同形状的值可粘贴，不做类型强转）/ Copy Property Path。面板顶部的锁图标是
-  **Inspector Lock**：按实体 id 钉住当前对象，去别处点选不换内容，对象被删后自动解锁。
-  没有 schema 的组件（用户项目模块里的自有类型等）显示**可编辑的原始 JSON**：
-  Apply JSON / Reload，解析失败时按钮禁用并就地显示错误 —— 不用去手改场景文件。
-  Transform 行的数值框右键有 **Copy / Paste / Reset**（整行；Position 与 Scale 的剪贴板
-  互不串用，Reset 回到 0 / 单位四元数 / 1）。
-- **Project（资产）**：后退 / 前进 / 面包屑、目录浏览、类型过滤、搜索、重命名 /
-  复制 / 删除 / 复制路径 / 实例化预制体；**目录行**和文件一样可以选中（单击选中、
-  双击进入），右键有 Open / Rename / New Subfolder / Copy Path / Show in Explorer /
-  Delete（只能删空目录），`F2` 就地改名；**资产可拖拽**：拖到目录 = 移动并改写引用，
-  拖到层级实体 = 实例化预制体，拖到检查器的路径字段 = 直接写入路径（`AssetDrag` 载荷）。
-- **Project 面板的视图 / 搜索语法 / Ping（#419）**：搜索框右侧有三个开关 —— 列表 /
-  网格视图、单列 / 两列（左目录树 + 右内容）。搜索支持 Unity 风格的 `t:` 前缀：
-  `t:texture`（英文 slug / `Texture` / 中文标签 `纹理` 都认）、`dir:sprites`，
-  多个词之间是 AND，多个 `t:` 之间是 OR。选中资产后检查器显示资产详情（类型 / 体积 /
-  GUID / 引用数 / 预览），底部的 **Ping In Scene** 和右键菜单的 `Ping In Scene` 会
-  选中第一个引用该资产的实体并在 Scene 视图里框住它 —— 资产 ↔ 场景双向定位。
-- **资产身份（#466 第一步）**：打开或刷新项目时，编辑器给 `assets/` 下每个还缺
-  sidecar 的资产生成 `<path>.rmeta`（`{ "guid": "<32 hex>", "importer": "..." }`）；
-  已有且有效的 GUID 永不重写，损坏的按缺失处理。扫描会跳过 `.rmeta`（它不是可导入
-  资产），资产详情里的 GUID 优先显示 sidecar 的值，没有才回落到旧的路径哈希；
-  重命名 / 移动文件时 sidecar 跟着走，删除时一起删。`.scene.json` / `.prefab.json`
-  里现在会同时写路径和 `*_guid`：打开文档时 GUID 优先解析成路径（解析不到则回退
-  路径），保存时按 sidecar 补写 / 刷新 GUID；cooker 与开发期 JSON loader 也走同
-  一套规则，旧文档不需要迁移。重命名时，带 GUID 的引用**不再改写文档**（读取时
-  按 sidecar 解析到新路径）；只有旧的无 GUID 路径引用仍走兼容改写。引用分析 /
-  删除确认 / Find References / Ping / 层级树的断引用标记也按 GUID 匹配，stale path
-  不会漏掉引用，也不会被误报为断链。
-- **纹理缩略图（#982）**：Project 面板的列表行和网格格子会显示纹理本身，资产检查器的
-  预览也会画出贴图。解码 / 等比缩小到 64 px 在 `prism-editor-core::thumbnails`
-  （PNG，`image` 库，纯数据层），egui 侧第一次用到时上传成 `TextureHandle` 并缓存；
-  缓存按 `FileStamp`（mtime + 长度）失效，重新导入贴图后缩略图会自己更新。
-  一帧最多解码 12 张（`UiState::thumbnail_budget`），600 张精灵图的目录不会把面板卡住；
-  解码失败 / 不支持的格式只显示类型图标，不重复重试。
-- **纹理导入设置（#514）**：资产检查器选中纹理时多出 `Import Settings`
-  （`Max Size` 0 = 不限、`Mips` 开关）。`Apply` 写旁挂文件
-  `<asset>.import.json`（如 `assets/sprites/boat.png.import.json`），`Revert` 重新读盘，
-  `Reimport` 直接重打场景包（`BuildKind::ScenePack`，不要求先切到 Build 面板）。
-  cooker 在烘纹理时读同一份 JSON：`maxSize` 按**面积平均**缩小（保持宽高比，只缩不放），
-  `generateMips` 控制是否生成 mip 链；缺省字段跟随 profile。
-- **Problems**：项目模块与玩家构建的 error / warning 列表（`file:line:col`），
-  点一行打开源码；工具栏的模块状态与第一段同源，`Ctrl+R` / `Compile` 重新编译。
-- **Docking**：拖动标签页（行为）：拖到另一个 leaf 的左/右/上/下 25% = 分屏，
-  中间 = 合并成标签，拖出面板区 = 浮动窗口，拖到本 leaf 边缘 = 原地分屏。
-- **预制体**：实例区块有 **Open Prefab** / Revert / Sync All / **Apply to Prefab**
-  （当前子树覆盖预制体文件，再同步同源实例）/ Save as Prefab…（无链接时）。
-  **Open Prefab** 在工具栏留下面包屑 `← level.scene.json / crate.prefab.json`；
-  点 `←` 回到打开它的场景并选中原实例。预制体文档**干净**时会重新实例化该实例
-  （同步预制体里的改动，实体 id 会变，选中仍落在实例上），**脏**时只切回场景并选中、
-  不把未保存的内容同步出去。
-- **视口拖放**：预制体拖进 Scene / Game 视口 → 实例化并放到光标下的地面点
-  （射线 ∩ `y = 0`）；`.scene.json` 拖进视口 = 打开该场景文档。
-- **磁盘改动保护**：窗口重新获得焦点时比对每个已打开文档的 mtime（`git checkout`
-  之后能立刻发现），改动过的文档在 Documents 面板标 ⚠；此时保存会被挡下并弹
-  「Overwrite / Reload from Disk / Cancel」，不会静默覆盖别人的版本。
-  资产的增删也在同一次焦点变化时重新扫描。
-- **渲染图（Render Graph）**：Scene view 出首帧（以及每 60 帧）把当前图导出成
-  `<工程>/target/prism-render-graph.json`，面板直接读它——不需要任何环境变量；
-  游戏进程要同样的报告时设 `PRISMA_RENDER_GRAPH_REPORT=<path>`。
-  面板还会显示上一帧总 GPU 时间与按成本排序的 per-pass 表（#518；设备不报时间戳时
-  整段隐藏，不用 CPU 墙钟冒充），以及**纹理 / 网格 / 材质的驻留量**与估算字节
-  （#518 Phase 2，数据来自渲染器管理器，旧报告没有该字段时同样隐藏）。
-  同一段里还有 **Draw calls** 列表（#518 Phase 2 的数据层）：逐条列出 forward 网格
-  （网格序号 · 材质槽）、按混合状态合并的 sprite 批次、粒子 billboard 批次，带实例数、
-  三角形数与 **State** 列（渲染队列 / cull / z-write / 混合，sprite 显示实际混合状态）；
-  被剔除 / 只投影子的网格用弱化斜体标出。只读展示，不含 pipeline / descriptor 捕获与回放。
-- **分辨率倍率**：渲染图面板里的 `Viewport res`（0.5×–1.5×）只缩放离屏目标，
-  不改变 UI 的 points 布局，给高 DPI 屏 / 弱 GPU 一个折中。
-- **工程自带字体（UI 文本）**：把 `.ttf` / `.otf` / `.ttc` 放进 `assets/fonts/`，
-  在 `Text` 组件的 `font` 字段（检查器里有资产选择器）填相对路径即可；空 = 系统默认
-  字体。字体是普通资产：`AssetType::Font`、原样进 `.pak`、重命名时引用会被改写，
-  运行时由 `GpuAssetResolver::prepare_ui_fonts` 读出字节注册进 UI 图集
-  （多字体共用一张 R8 图集，仍然只有一次 draw call，#583）。
-- **UI 按钮（#528）**：给 `Node + Style` 元素再加 `prism_engine::ui::Button`
-  （Add Component 里就是 `Button`）就得到可点按钮：`normal` / `hover` / `pressed` /
-  `disabled` 四色由输入系统自动切换，`interactable = false` 只显示禁用色、不响应点击。
-  点击语义与 Unity `Clickable` 一致：在元素内按下并**在同一元素内松开**才置
-  `clicked`；点击后该按钮获得键盘焦点，`Enter` / `Space` 同样提交。`Interaction`
-  现在是可序列化组件，场景 / 预制体可以直接保存。
-- **UI 背景图（#591）**：`Node + Style` 加 `"image": "textures/icon.png"` 就在矩形里
-  画贴图（整张铺满、最近邻采样），`background` 改为 tint；不写 tint 时按不透明白色
-  显示图片原色。图片走场景共享的 bindless 纹理表，不需要新管线；`Button` 的交互色
-  同样会 tint 图标，所以同一个图标能跟着按钮变亮/变暗。贴图路径和精灵一样由
-  `GpuAssetResolver` 解析进 `.pak`（`UiImageRef`），资产重命名会改写引用。
-- **UI 布局组与文本换行（#527）**：`Style.layout` 让容器按方向排列子元素
-  （`direction = None` 仍是原来的锚点定位）：
-  - `spacing` 相邻间距、`padding` 内容区内边距（左/右/上/下）；
-  - `child_align` 控制子元素在**交叉轴**上的对齐（`Start` / `Center` / `End` /
-    `Stretch`），主轴按排列顺序推进；
-  - `fit_content` 让容器在没写 `width` / `height` 的轴上收缩到内容尺寸；
-  - 布局组的子元素由游标定位，自己写的锚点/pivot 被忽略；非布局组的节点行为不变。
-  检查器里 `Style` 上方有专门的 **Layout Group** 编辑块（方向下拉、间距、四边
-  padding、交叉轴对齐、fit content），写入走 `set_field` 的点路径，所以撤销 /
-  标脏 / 重载语义与其它字段一致。
-  `Text.wrap = true` 时文本按矩形宽度**按 UAX #14 的断点**换行（空格、连字符、
-  CJK 字间都能断，`，` / `。` 这类收尾标点不会落到行首；单个词过长按字符断），
-  `\n` 始终换行并保留空行；超出行底边的行不再绘制。
-- **UI Canvas 缩放（#463）**：给 UI 根节点加 `prism_engine::ui::Canvas`
-  （`reference_resolution` / `scale_mode` / `match_width_or_height`）后，整棵子树
-  按「设计分辨率 → 实际屏幕」等比缩放：布局在虚拟分辨率里算，写回
-  `ComputedLayout.rect` 时乘回系数，字号与圆角也一起放大。三种模式对应
-  Unity `CanvasScaler`：`ConstantPixelSize`（默认，1 屏幕像素 = 1 设计像素）、
-  `ScaleWithScreenSize`（宽高比例在对数空间按 `match` 插值）、
-  `MatchWidthOrHeight`（只用宽或高）。嵌套 Canvas 只继承最近的一层。
-  这样 1920×1080 的设计稿在 720p 与 4K 上构图一致，Game 视图选目标分辨率后
-  看到的就是真机比例。
-- **Game 视图分辨率 / 宽高比**：视口左上角下拉。默认读取工程
-  `assets/settings.ini [window]` 的 `width`/`height`（例如 1600×900），
-  按该分辨率离屏渲染并等比 letterbox，所以编辑器构图和打包产物一致。
-  还可以选固定分辨率（1920×1080 等）或「只锁比例」的 `16:9 (fit)` /
-  `4:3 (fit)` 等；`Match Window` 保留旧的跟面板缩放行为。控制通道用
-  `resolution:1600x900` / `resolution:fit:16x9` / `resolution:match`。
-- **内部分辨率 / 整数缩放（#613）**：工程 `assets/settings.ini [render]` 的
-  `internal_resolution = 640x360` + `internal_scale_mode = integer` 会让场景按 640×360
-  渲染、再整数倍放大到窗口（居中黑边），相机也按内部宽高比投影 —— 于是美术像素是
-  等大的方块。Game 视图与打包产物走同一份配置，`off`（默认）保持按窗口分辨率渲染。
-- **2D 网格**：Scene 视图切到 2D / 正交相机时，参考网格画在 `z = 0` 的 XY 平面
-  （X 红、Y 绿），而不是 3D 的 XZ 地面；位置和线宽沿用原来的 1m / 10m 分级（#602）。
-- **瓦片地图（`prism_engine::scene::Tilemap`）**：一个实体管一整张网格。`tiles` 行优先、
-  `0` = 空格、`n > 0` = tileset 第 `n - 1` 块；`columns = 0` 排成一行；第 0 行在上方。
-  引擎把非空格子展开成 `SpriteDrawItem`，与精灵共用实例缓冲 / bindless 图集（几百格仍是一次
-  draw call），并按主相机视锥逐格裁剪（#529）。检查器的 Transform 下方有网格编辑器：
-  `Columns` / `Rows` 改规模，`Palette` 决定左键循环范围，左键递增、右键单格清零。
-- **2D 光照（`prism_engine::scene::Light2D`，#611）**：精灵默认不受光照；给场景加一个
-  `Light2D` 实体（`kind` = `Point` / `Ambient` / `Directional`），再把需要被照亮的
-  `SpriteRenderer.receive_lights` 勾上即可。强度是美术单位（`1.0` = 原色），点光按
-  世界 XY 距离衰减（`radius = 0` 不衰减），氛围光适合夜景最低亮度。3D 的
-  `PointLight` / `SpotLight` / `DirectionalLight` 不影响 2D，场景里只有 3D 光时会打印
-  一次提示。`Light2D` 走反射注册，Add Component 里直接可见。
-- **精灵裁剪（`SpriteRenderer.clip_enabled` / `clip_rect`）**：勾上后按**世界空间**
-  矩形 `[x0, y0, x1, y1]` 逐像素裁剪（片元 `discard`，不打断 2D 的单 draw call）。
-  角点顺序随便写，引擎自己排序；关闭 / 非有限 / 零面积视为不裁剪，所以刚勾上开关
-  时精灵不会消失。多个精灵填同一个矩形 = Unity `SpriteMask` 的矩形模式，
-  湖面倒影「只显示水线以下」就是 `clip_rect = [-1e4, -1e4, 1e4, 水线 y]`（#582）。
-- **多选拖拽**：拖多选中的任一行且落在行的中间区 = `reparent_selection` 整组改父级。
-- **资产选择器**：检查器的路径字段右侧有 `⋯` 按钮，按字段名过滤扩展名
-  （`mesh_path` → 模型、`sprite_path` → 贴图、`hdr_path`/`env_map` → HDR…），
-  选中的相对路径直接写入字段。
+- **Hierarchy**: search, engine-style drag (insert at top/bottom 25%, attach as child in middle), double-click to focus (frame selection),
+  inline rename (`F2`, `Return` on macOS),
+  show/hide, copy / delete / reparent, Create dropdown;
+- **Inspector**: single + multi-select (public components batch-edit fields, one undo; multi-select the last clicked /
+  right-clicked object is Active, batch Transform shows its value, #507); prefab block (Revert /
+  Sync All / Save as Prefab…); component card header copy / remove; Add Component category menu;
+  **List field editable (#418)**: `Vec<T>` one row per item, with `▲` / `▼` / `✕`, bottom
+  `+ Add` generates default value by element schema (`Vec3` → `[0,0,0]`, nested struct → each field default);
+  fixed-length arrays do not provide add/remove; element interiors still use their real controls, path is `field[i]` (`LineRenderer.points`
+  such fields no longer need hand-editing JSON). `Option<T>` uses checkbox to control presence, nested struct collapsible.
+  **Component preset (#418)**: component card header `…` → `Presets` can save current component value as named preset
+  (same name overwrites), then apply to any entity (whole component = one undo step). Presets persisted with editor state
+  (`target/editor-egui/state.json`), grouped by full reflect name; `Reset` still restores schema default.
+  Component right-click menu has Copy / Paste Values / Move Up / Down / Remove, field right-click can
+  Copy / Paste Value and Copy Property Path; inspector top-right lock pins content by **entity id**.
+  **Component card header `…` menu**: Copy Component / Paste Values / Move Up·Down / Reset (writes back schema `defaultJson`, one undo step) / Remove;
+  **field right-click**: Copy Value / Paste Value (only same-shaped values paste, no type coercion) / Copy Property Path. Panel top lock icon is
+  **Inspector Lock**: pins current object by entity id, clicking elsewhere doesn't change content, auto-unlocks when object deleted.
+  Components without schema (user project module's own types etc.) show **editable raw JSON**:
+  Apply JSON / Reload, parse failure disables button and shows error inline — no need to hand-edit scene file.
+  Transform row numeric box right-click has **Copy / Paste / Reset** (whole row; Position and Scale clipboards separate,
+  Reset back to 0 / unit quaternion / 1).
+- **Project (asset)**: back / forward / breadcrumb, directory browsing, type filter, search, rename /
+  copy / delete / copy path / instantiate prefab; **directory row** selectable like file (single click select,
+  double click enter), right-click has Open / Rename / New Subfolder / Copy Path / Show in Explorer /
+  Delete (only empty directory), `F2` inline rename; **asset drag-and-drop**: drag to directory = move and rewrite references,
+  drag to hierarchy entity = instantiate prefab, drag to inspector path field = directly write path (`AssetDrag` payload).
+- **Project panel view / search syntax / Ping (#419)**: search box right has three toggles — list /
+  grid view, single column / two columns (left directory tree + right content). Search supports Unity-style `t:` prefix:
+  `t:texture` (English slug / `Texture` / Chinese label `纹理` all recognized), `dir:sprites`,
+  multiple words are AND, multiple `t:` are OR. After selecting asset, inspector shows asset details (type / size /
+  GUID / reference count / preview), bottom **Ping In Scene** and right-click menu's `Ping In Scene` will
+  select first entity referencing the asset and frame it in Scene view — asset ↔ scene bidirectional positioning.
+- **Asset identity (#466 step 1)**: when opening or refreshing project, editor generates `<path>.rmeta`
+  (`{ "guid": "<32 hex>", "importer": "..." }`) for each asset under `assets/` still missing sidecar;
+  existing valid GUID never rewritten, corrupted treated as missing. Scan skips `.rmeta` (not an importable
+  asset), asset details GUID prioritizes sidecar value, falls back to old path hash if none;
+  rename / move file sidecar follows, delete removes together. `.scene.json` / `.prefab.json`
+  now writes both path and `*_guid`: when opening document GUID prioritizes resolving to path (falls back to path if unresolvable),
+  on save sidecar supplements / refreshes GUID; cooker and dev-time JSON loader follow the
+  same rule, old documents need no migration. On rename, GUID-bearing references **no longer rewrite document** (read
+  resolves to new path via sidecar); only old GUID-less path references still take compatible rewrite. Reference analysis /
+  delete confirmation / Find References / Ping / hierarchy tree broken-reference marking also match by GUID, stale path
+  won't miss references nor be false-reported as broken links.
+- **Texture thumbnail (#982)**: Project panel list rows and grid cells show texture itself, asset inspector preview
+  draws texture. Decode / proportionally scale to 64 px in `prism-editor-core::thumbnails`
+  (PNG, `image` crate, pure data layer), egui side uploads as `TextureHandle` and caches on first use;
+  cache invalidated by `FileStamp` (mtime + length), thumbnail auto-updates after reimporting texture.
+  At most 12 decoded per frame (`UiState::thumbnail_budget`), 600-sprite directory won't freeze panel;
+  decode failure / unsupported format only shows type icon, no repeated retries.
+- **Texture import settings (#514)**: asset inspector when selecting texture adds `Import Settings`
+  (`Max Size` 0 = unlimited, `Mips` toggle). `Apply` writes sidecar file
+  `<asset>.import.json` (e.g. `assets/sprites/boat.png.import.json`), `Revert` re-reads from disk,
+  `Reimport` directly repacks scene pack (`BuildKind::ScenePack`, no need to switch to Build panel first).
+  Cooker reads the same JSON when baking texture: `maxSize` shrinks by **area average** (keeps aspect ratio, shrink only no upscale),
+  `generateMips` controls whether to generate mip chain; missing fields follow profile.
+- **Problems**: project module and player build error / warning list (`file:line:col`),
+  click a line to open source; toolbar module status shares source with first segment, `Ctrl+R` / `Compile` recompiles.
+- **Docking**: dragging tabs (behavior): drag to another leaf's left/right/top/bottom 25% = split,
+  middle = merge into tabs, drag out of panel area = floating window, drag to this leaf edge = split in place.
+- **Prefabs**: instance block has **Open Prefab** / Revert / Sync All / **Apply to Prefab**
+  (current subtree overwrites prefab file, then syncs same-source instances) / Save as Prefab… (no link).
+  **Open Prefab** leaves breadcrumb in toolbar `← level.scene.json / crate.prefab.json`;
+  click `←` returns to scene that opened it and selects original instance. Prefab document **clean** re-instantiates that entity
+  (syncs prefab changes, entity id changes, selection still on instance), **dirty** only switches back to scene and selects,
+  doesn't sync unsaved changes out.
+- **Viewport drag-and-drop**: prefab dragged into Scene / Game viewport → instantiated and placed at cursor's ground point
+  (ray ∩ `y = 0`); `.scene.json` dragged into viewport = open that scene document.
+- **Disk change protection**: when window regains focus, compares mtime of each open document (immediately detects after `git checkout`);
+  modified document marked ⚠ in Documents panel; save is blocked and pops
+  "Overwrite / Reload from Disk / Cancel", no silent overwrite of others' version.
+  Asset add/delete also re-scanned at the same focus change.
+- **Render Graph**: Scene view first frame (and every 60 frames) exports current graph to
+  `<project>/target/prism-render-graph.json`, panel reads it directly — no environment variable needed;
+  game process wanting same report sets `PRISMA_RENDER_GRAPH_REPORT=<path>`.
+  Panel also shows previous frame total GPU time and per-pass table sorted by cost (#518; device not reporting timestamps hides whole segment, no CPU wall clock substitution),
+  plus **texture / mesh / material residency** and estimated bytes
+  (#518 Phase 2, data from renderer manager; old report without that field also hidden).
+  Same segment also has **Draw calls** list (#518 Phase 2 data layer): lists forward meshes one by one
+  (mesh index · material slot), sprite batches merged by blend state, particle billboard batches, with instance count,
+  triangle count and **State** column (render queue / cull / z-write / blend, sprite shows actual blend state);
+  culled / shadow-only meshes marked with weakened italics. Read-only display, no pipeline / descriptor capture and replay.
+- **Resolution scale**: render graph panel's `Viewport res` (0.5×–1.5×) scales only offscreen target,
+  doesn't change UI points layout, a compromise for high-DPI screens / weak GPU.
+- **Project-built fonts (UI text)**: place `.ttf` / `.otf` / `.ttc` into `assets/fonts/`,
+  fill relative path in `Text` component's `font` field (inspector has asset selector); empty = system default font.
+  Font is normal asset: `AssetType::Font`, as-is into `.pak`, references rewritten on rename,
+  runtime `GpuAssetResolver::prepare_ui_fonts` reads bytes and registers into UI atlas
+  (multiple fonts share one R8 atlas, still only one draw call, #583).
+- **UI button (#528)**: add `prism_engine::ui::Button` to `Node + Style` element
+  (Add Component is just `Button`) to get clickable button: `normal` / `hover` / `pressed` /
+  `disabled` four colors auto-switched by input system, `interactable = false` only shows disabled color, no click response.
+  Click semantics consistent with Unity `Clickable`: pressed inside element and **released inside same element** sets
+  `clicked`; after click button gains keyboard focus, `Enter` / `Space` also submits. `Interaction`
+  is now serializable component, scene / prefab can directly save.
+- **UI background image (#591)**: `Node + Style` add `"image": "textures/icon.png"` draws texture in rectangle
+  (full stretch, nearest-neighbor sampling), `background` changed to tint; no tint shows image original color with opaque white.
+  Image walks scene-shared bindless texture table, no new pipeline; `Button`'s interaction color also tints icon,
+  so same icon brightens/darkens with button. Image path and sprite similarly resolved by `GpuAssetResolver` into `.pak` (`UiImageRef`),
+  asset rename rewrites references.
+- **UI layout group and text wrap (#527)**: `Style.layout` lets container arrange children by direction
+  (`direction = None` still old anchor positioning):
+  - `spacing` adjacent spacing, `padding` content area padding (left/right/top/bottom);
+  - `child_align` controls children alignment on **cross axis** (`Start` / `Center` / `End` /
+    `Stretch`), main axis advances by arrangement order;
+  - `fit_content` lets container shrink to content size on axes without `width` / `height`;
+  - Layout group's children positioned by cursor, manually written anchor/pivot ignored; non-layout-group nodes unchanged.
+  Inspector above `Style` has dedicated **Layout Group** edit block (direction dropdown, spacing, four-side
+  padding, cross-axis alignment, fit content), writes via `set_field` dot path, so undo /
+  dirty / reload semantics same as other fields.
+  `Text.wrap = true` wraps text by rectangle width **per UAX #14 break points** (spaces, hyphens,
+  CJK between characters can break, `，` / `。` terminal punctuation won't land at line start; single word too long breaks by char),
+  `\n` always wraps and keeps blank lines; lines beyond bottom not drawn.
+- **UI Canvas scale (#463)**: add `prism_engine::ui::Canvas` to UI root node
+  (`reference_resolution` / `scale_mode` / `match_width_or_height`), whole subtree
+  scales proportionally "design resolution → actual screen": layout computed at virtual resolution,
+  multiplied back when writing `ComputedLayout.rect`, font size and corner radius also scaled. Three modes correspond to
+  Unity `CanvasScaler`: `ConstantPixelSize` (default, 1 screen pixel = 1 design pixel),
+  `ScaleWithScreenSize` (aspect ratio interpolated in log space by `match`),
+  `MatchWidthOrHeight` (only width or height used). Nested Canvas inherits only nearest layer.
+  Thus 1920×1080 design composes consistently on 720p and 4K, Game view selecting target resolution sees real-device proportion.
+- **Game view resolution / aspect ratio**: viewport top-left dropdown. Default reads project
+  `assets/settings.ini [window]` `width`/`height` (e.g. 1600×900),
+  renders offscreen at that resolution and letterboxes proportionally, so editor composition matches packaged product.
+  Can also choose fixed resolution (1920×1080 etc.) or "aspect-only lock" `16:9 (fit)` /
+  `4:3 (fit)` etc.; `Match Window` keeps old panel-scaling behavior. Control channel uses
+  `resolution:1600x900` / `resolution:fit:16x9` / `resolution:match`.
+- **Internal resolution / integer scale (#613)**: project `assets/settings.ini [render]`'s
+  `internal_resolution = 640x360` + `internal_scale_mode = integer` renders scene at 640×360,
+  then integer-scales up to window (centered letterbox), camera projects by internal aspect ratio — so art pixels are
+  equal-sized squares. Game view and packaged product follow same config, `off` (default) keeps rendering at window resolution.
+- **2D grid**: Scene view switching to 2D / orthographic camera draws reference grid on `z = 0` XY plane
+  (X red, Y green), not 3D XZ ground; position and line width use original 1m / 10m grading (#602).
+- **Tilemap (`prism_engine::scene::Tilemap`)**: one entity manages whole grid. `tiles` row-major,
+  `0` = empty, `n > 0` = tileset's `n - 1` block; `columns = 0` single row; row 0 at top.
+  Engine expands non-empty cells into `SpriteDrawItem`, shares instance buffer / bindless atlas with sprites (hundreds of cells still one
+  draw call), and culls per-cell by main camera frustum (#529). Inspector below Transform has grid editor:
+  `Columns` / `Rows` set scale, `Palette` determines left-click cycle range, left-click increments, right-click clears single cell.
+- **2D lighting (`prism_engine::scene::Light2D`, #611)**: sprites not lit by default; add a
+  `Light2D` entity to scene (`kind` = `Point` / `Ambient` / `Directional`), then check `SpriteRenderer.receive_lights`
+  for sprites to be lit. Intensity is art unit (`1.0` = original color), point light attenuates by
+  world XY distance (`radius = 0` no attenuation), ambient light suits night scene minimum brightness. 3D's
+  `PointLight` / `SpotLight` / `DirectionalLight` don't affect 2D; scene with only 3D light prints
+  one hint. `Light2D` goes through reflection registration, directly visible in Add Component.
+- **Sprite clip (`SpriteRenderer.clip_enabled` / `clip_rect`)**: checking clips per-pixel by **world space**
+  rectangle `[x0, y0, x1, y1]` (fragment `discard`, doesn't break 2D single draw call).
+  Corner order arbitrary, engine sorts itself; closed / non-finite / zero area treated as no clip, so just checking
+  switch sprite won't disappear. Multiple sprites filling same rectangle = Unity `SpriteMask` rectangle mode,
+  lake reflection "only below waterline" is `clip_rect = [-1e4, -1e4, 1e4, waterline y]` (#582).
+- **Multi-select drag**: drag any row of multi-selection and drop in row's middle area = `reparent_selection` whole group changes parent.
+- **Asset selector**: inspector path field right has `⋯` button, filters extension by field name
+  (`mesh_path` → model, `sprite_path` → texture, `hdr_path`/`env_map` → HDR…),
+  selected relative path directly written to field.
 
-### 4.3.1 骨骼动画（#560 P0）
+### 4.3.1 Skeletal animation (#560 P0)
 
-cook 阶段把 glTF 的 `skins` / `JOINTS_0` / `WEIGHTS_0` / `animations` 烘成三份 side asset
-（`{mesh}.skinning/skeleton.rskel`、`mesh.rskin`、`clips/{n}_{name}.ranim`），并给场景实体
-自动补上 `SkinnedMeshRenderer` + `SkeletonRoot` + `Animator`（作者手写的组件优先，
-只有骨架没有权重时保持普通 `MeshRenderer`）。三件套：
+Cook stage bakes glTF's `skins` / `JOINTS_0` / `WEIGHTS_0` / `animations` into three side assets
+(`{mesh}.skinning/skeleton.rskel`, `mesh.rskin`, `clips/{n}_{name}.ranim`), and automatically adds
+`SkinnedMeshRenderer` + `SkeletonRoot` + `Animator` to scene entities (author-written components take priority,
+only skeleton without weights keeps normal `MeshRenderer`). Three-piece set:
 
-- **`Animator`**：检查器里是「▶/⏸、⏮ 重播、时间轴滑杆、Loop、speed」；滑杆下方一条 6px
-  刻度带标出所有轨道的关键帧时刻（`Clip::key_times` 合并去重），拖的时候能看出哪里会变。
-  改时间 / 勾 Loop 直接写回组件字段（一次撤销步），引擎的 `animator::pose` 系统下一帧按
-  新时间重算骨骼调色板。滑杆下方还有一条 Notify 色带（青色小三角）：剪辑里的关键帧事件
-  （`{mesh}.skinning/notifies.json` 里的 `Footstep.L` 这类）按时间画在轴上，悬停显示名字，
-  一眼能看出这段动画在哪几秒会触发事件。**`blend_duration`**（秒，默认 0.2）是运行时换剪辑的交叉淡入时长：
-  **淡出源是上一帧实际显示姿态的快照**（不是「旧剪辑 + 时间」），所以换剪辑、出入混合空间、
-  甚至旧剪辑被删 / 热重载，都能正常淡出而不是硬跳；`0` 表示硬切。权重到 1 就丢掉快照。
-- **叠加层（additive）**：`Animator.additive_clip_path` + `additive_weight`（默认 1）。叠加
-  剪辑的局部变换相对 **reference（bind）姿态**求差，再按权重打到最终姿态上（旋转 `slerp`
-  增量、平移加差值、缩放乘比值；参考缩放为 0 时按 1 处理）。所以呼吸 / 瞄准偏移 / 受击
-  抖动这类只改一部分骨骼的剪辑不需要再做一份基础剪辑，未覆盖的关节保持不动。它在交叉淡入
-  **之后**应用 —— 叠加层不参与两个基础剪辑之间的过渡。路径写错或权重为 0 / NaN 时安静地
-  跳过，不会把姿态打坏。
-- **Root motion 记录（#560 P0）**：动画系统每帧把根关节（joint 0）相对上一帧的**局部**平移
-  与绕 Y 偏航写进 `AnimatorPlayhead.root_motion`（`RootMotionDelta`，米 / 弧度，最短路径）；
-  首帧、换剪辑 / 换播放内容、被 LOD 冻结的帧都是零。默认只记录；开启
-  `root_motion_consume` 后把根**平移**按实体朝向旋到世界空间加到 `LocalTransform.position`，
-  并把姿态根平移清零，避免双倍位移（根旋转仍只记录，等 CharacterMovement 统一处理）。
-- **动画 LOD（`lod_enabled` / `lod_near` / `lod_far`，#560 P6）**：默认关闭。开启后实体离
-  **启用中的相机**超过 `lod_far` 米（默认 50，非有限或 `<= 0` 也按 50）时，动画系统这一帧
-  完全不推进 —— 时间、状态机转移、图求值器与 Montage 全部冻结在当前姿态，回到范围内接着走，
-  冻结期间不补时间。`lod_near..lod_far`（默认 25..50）之间隔帧求值：更新帧推进
-  `2 * dt`，所以播放速度不变；`lod_near` 非有限 / `<= 0` / 大于 `lod_far` 时没有降频档。
-  相机来自场景里第一个 `enabled` 的 `Camera`（读 `LocalToWorld`，没有就读 `LocalTransform`），
-  没有相机时 LOD 不生效（编辑器预览不会因为相机没摆好而停住）。
-  开启 `lod_root_only` 后，超过 `lod_far` 的**单剪辑**实体不再整体冻结：时间照常推进、
-  只采样根关节，其余骨骼保持上一帧姿态（第一次进入该档先完整求值一帧，避免 T-pose 突变），
-  根运动消费仍然生效。`lod_bones` 非空时是同一档的骨骼子集版本：根关节 + 名单里的骨骼
-  每帧采样，其余保持上一帧；名字按骨架解析，找不到的忽略，根关节总在更新。状态机 /
-  混合空间 / 动画图实体因为需要完整求值器推进，仍整体冻结。
-- **`SkeletonRoot`**：检查器里画骨骼树（`CollapsingHeader` 按父链缩进，成环有护栏）。
-- **混合参数平滑（`blend_smoothing`，#560 P1）**：默认 `0`，直接使用游戏侧写入的
-  `blend_parameter` / `blend_parameter_y`；大于 0 时按指数 `1 - exp(-dt / tau)` 趋近目标，
-  `tau` 就是该字段（秒）。首帧直接落在目标上，参数非有限或关闭平滑时回到直通。
-  只影响混合空间采样，不改组件里的参数值（游戏侧仍然看到自己写的数）。
-- **一维混合空间**：`Animator` 的 `blend_clip_paths` / `blend_positions` / `blend_parameter`
-  是一条参数轴（速度 0 → 走 → 跑 这种）。填了 ≥2 条剪辑、且 `blend_positions` 与之一一对应
-  时，姿态由 `blend_parameter` 在轴上插值得到，**优先于** `clip_path`；参数超出范围夹到两端。
-  剪辑时长不同时按**归一化相位**对齐（步幅对齐），走 ↔ 跑不会出现两只脚互相追。少一个样本
-  （路径写错 / 资产还没加载）就退回单剪辑，不会让整个角色不动。三个字段都是 `Vec` / 数字，
-  检查器里直接可编辑；`blend_clip_paths` 已进资产重命名清单。参数轴在检查器里画成一条
-  16px 条带：灰线是每个样本的位置、金色圆点是**当前参数**，点一下或拖动就直接改
-  `blend_parameter`（一次撤销步），拖的同时场景里的角色跟着变 —— 这是唯一能看出「现在落在
-  哪两个样本之间」的地方。
-- **二维混合空间**：`blend_2d_clip_paths` / `blend_2d_positions`（`[x, y]` 与剪辑一一对应）/
-  `blend_parameter` / `blend_parameter_y` 组成参数平面（x 通常是速度、y 是方向）。至少 3 个
-  样本且不共线时按 Delaunay 三角化 + 重心插值求姿态，**优先于一维混合空间与 `clip_path`**；
-  参数落在样本凸包外时负权重夹到 0 再归一化（投到最近的边界），不会把角色弹回某个样本。
-  样本不足 / 共线 / 坐标非有限时安静退回一维或单剪辑。检查器里画一块 120px 的参数平面：
-  灰点是样本、金色圆点是当前参数，点 / 拖直接改 `blend_parameter` + `blend_parameter_y`
-  （一次撤销步）。`blend_2d_clip_paths` 已进资产重命名清单。
-- **视口叠加**：工具栏 `Bones`（`Outline` 右边）控制，默认开。选中蒙皮实体时按
-  `BonePalette` 还原关节世界位置（`world = palette × inverse_bind⁻¹`），画父 → 子 1.6px
-  连线 + 关节圆点（根关节更大）。拖时间轴时叠加层跟着动，因为它读的就是动画系统当帧的
-  结果而不是作者数据。`show_skeleton` 与 `show_selection_outline` 一样存进 `state.json`
-  的 `scene` 段，旧存档默认开。
+- **`Animator`**: inspector shows "▶/⏸, ⏮ replay, timeline slider, Loop, speed"; slider below has 6px
+  tick strip marking all tracks' key times (`Clip::key_times` merged deduplicated), dragging shows where changes occur.
+  Change time / check Loop directly writes back component field (one undo step), engine's `animator::pose` system next frame
+  recomputes bone palette by new time. Slider below also has Notify strip (cyan small triangles): clip's keyframe events
+  (e.g. `Footstep.L` from `{mesh}.skinning/notifies.json`) drawn on axis by time, hover shows name,
+  at a glance see which seconds this animation triggers events. **`blend_duration`** (seconds, default 0.2) is runtime clip-switch cross-fade duration:
+  **fade-out source is snapshot of previous frame's actually displayed pose** (not "old clip + time"), so clip switch,
+  entering/exiting blend space, even old clip deleted / hot-reloaded, can all fade out normally instead of hard jump; `0` means hard cut.
+  Weight reaching 1 discards snapshot.
+- **Additive layer**: `Animator.additive_clip_path` + `additive_weight` (default 1). Additive clip's local transform
+  relative to **reference (bind) pose** computes difference, then applied to final pose by weight (rotation `slerp`
+  increment, translation adds difference, scale multiplies ratio; reference scale 0 treated as 1). So breathing / aim offset / hit
+  shake etc. clips only changing some bones don't need another base clip, uncovered joints stay unchanged. Applied **after**
+  cross-fade — additive layer doesn't participate in transition between two base clips. Wrong path or weight 0 / NaN silently
+  skipped, won't corrupt pose.
+- **Root motion recording (#560 P0)**: animation system each frame writes root joint (joint 0) **local** translation
+  relative to previous frame and yaw around Y into `AnimatorPlayhead.root_motion` (`RootMotionDelta`, meters / radians, shortest path);
+  first frame, clip switch / playback content switch, LOD-frozen frames are zero. Default only records; enabling
+  `root_motion_consume` rotates root **translation** to world space by entity orientation and adds to `LocalTransform.position`,
+  and clears root translation in pose, avoids double displacement (root rotation still only recorded, left to CharacterMovement unified handling).
+- **Animation LOD (`lod_enabled` / `lod_near` / `lod_far`, #560 P6)**: default off. Enabled, entity farther than
+  `lod_far` meters from **active camera** (default 50, non-finite or <= 0 treated as 50), animation system this frame
+  does not advance at all — time, state machine transitions, graph evaluator and Montage all frozen at current pose,
+  resumes when back in range, no catch-up during freeze. `lod_near..lod_far` (default 25..50) between evaluates every other frame:
+  update frame advances `2 * dt`, so playback speed unchanged; `lod_near` non-finite / <= 0 / greater than `lod_far` means no throttle tier.
+  Camera comes from first `enabled` `Camera` in scene (reads `LocalToWorld`, falls back to `LocalTransform`),
+  no camera means LOD not effective (editor preview won't stop because camera not placed).
+  Enabling `lod_root_only`, single-clip entities beyond `lod_far` no longer freeze entirely: time still advances,
+  only root joint sampled, other bones keep previous frame pose (first entering tier fully evaluates one frame, avoids T-pose pop),
+  root motion consumption still effective. `lod_bones` non-empty is same tier's bone subset version: root joint + listed bones
+  sampled each frame, others keep previous frame; names resolved by skeleton, not found ignored, root joint always updated. State machine /
+  blend space / animation graph entities because need full evaluator advance, still freeze entirely.
+- **`SkeletonRoot`**: inspector draws bone tree (`CollapsingHeader` indented by parent chain, cycle guard).
+- **Blend parameter smoothing (`blend_smoothing`, #560 P1)**: default `0`, directly uses game-written
+  `blend_parameter` / `blend_parameter_y`; greater than 0 approaches target with exponential `1 - exp(-dt / tau)`,
+  `tau` is that field (seconds). First frame directly lands on target; non-finite parameter or smoothing off falls back to passthrough.
+  Only affects blend space sampling, doesn't change component parameter values (game side still sees its own numbers).
+- **1D blend space**: `Animator`'s `blend_clip_paths` / `blend_positions` / `blend_parameter`
+  is one parameter axis (speed 0 → walk → run etc.). With >= 2 clips and `blend_positions` one-to-one,
+  pose obtained by interpolating `blend_parameter` on axis, **priority over** `clip_path`; parameter out of range clamped to ends.
+  Clips of different lengths aligned by **normalized phase** (stride alignment), walk ↔ run won't have two feet chasing each other.
+  Missing one sample (path wrong / asset not loaded) falls back to single clip, won't freeze whole character. All three fields are `Vec` / numbers,
+  directly editable in inspector; `blend_clip_paths` in asset rename list. Parameter axis drawn in inspector as 16px strip:
+  gray line each sample's position, gold dot **current parameter**, click or drag directly changes
+  `blend_parameter` (one undo step), dragging at same time scene character changes — only place to see "now between which two samples".
+- **2D blend space**: `blend_2d_clip_paths` / `blend_2d_positions` (`[x, y]` one-to-one with clips) /
+  `blend_parameter` / `blend_parameter_y` form parameter plane (x usually speed, y direction). At least 3 samples non-collinear,
+  pose computed by Delaunay triangulation + barycentric interpolation, **priority over 1D blend space and `clip_path**;
+  parameter outside sample convex hull negative weights clamped to 0 then normalized (projected to nearest boundary), won't snap character to a sample.
+  Insufficient samples / collinear / non-finite coordinates quietly fall back to 1D or single clip. Inspector draws 120px parameter plane:
+  gray dots samples, gold dot current parameter, click / drag directly changes `blend_parameter` + `blend_parameter_y`
+  (one undo step). `blend_2d_clip_paths` in asset rename list.
+- **Viewport overlay**: toolbar `Bones` (right of `Outline`) controls, default on. When skinned entity selected,
+  restores joint world positions by `BonePalette` (`world = palette × inverse_bind⁻¹`), draws parent → child 1.6px
+  lines + joint dots (root joint bigger). Dragging timeline overlay moves with it, because it reads animation system's current frame result,
+  not authoring data. `show_skeleton` and `show_selection_outline` both stored in `state.json`'s `scene` section,
+  old archives default on.
 
-**权重热图**：渲染模式下拉框（工具栏 `Shaded` 旁边）选 `Skin Weights`，等价于
-`debug_flags = 1 << 15`（游戏里是 `Shift+6`）。顶点阶段按**主导骨骼**算色相（金色角，
-相邻骨骼不会撞色）、按该骨骼权重算明度，片元阶段原样输出不做光照，所以一眼能看出
-「这块网格到底挂在哪根骨骼上」以及权重是不是均匀过渡；权重全 0 的顶点（坏导入、静态
-网格）是中灰，不会被误读成某根骨骼的颜色。这一位不是 PBR 分量，不参与 15 位 isolate 逻辑。
+**Weight heatmap**: render mode dropdown (next to toolbar `Shaded`) selects `Skin Weights`, equivalent to
+`debug_flags = 1 << 15` (in game it's `Shift+6`). Vertex stage computes hue by **dominant bone** (gold angle,
+adjacent bones don't collide), brightness by that bone's weight, fragment stage outputs as-is without lighting,
+so at a glance see "which bone this mesh hangs on" and whether weight transitions evenly; vertices with all-zero weight
+(bad import, static mesh) are mid-gray, won't be misread as some bone's color. This bit is not a PBR component, not involved in 15-bit isolate logic.
 
-时间轴刻度**可以点**：点中某根刻度（命中半径 4px，取最近的一根）就把 `time` 跳到那个
-关键帧，鼠标悬停时刻度加粗并显示 `Jump to this keyframe`；点空白处不跳，避免拖时间轴时
-被吸到某个关键帧。
+Timeline ticks **are clickable**: clicking a tick (hit radius 4px, nearest one) jumps `time` to that keyframe;
+hover on tick bolds and shows `Jump to this keyframe`; clicking blank doesn't jump, avoiding being sucked to a keyframe
+when dragging timeline.
 
-**关键帧事件（Notify，#560 P1）**：`.ranim` v5 在剪辑末尾追加事件表（`time` + 名字）、同步标记表和 Montage 段表，
-引擎每帧把「这一帧跨过的时间点」写进 `AnimEvents` 资源（整体重建，不是累加）：
+**Keyframe events (Notify, #560 P1)**: `.ranim` v5 appends event table (time + name) at clip end, sync marker table and Montage section table;
+engine each frame writes "time points crossed this frame" into `AnimEvents` resource (full rebuild, not accumulation):
 
 ```rust
 for event in world.get_resource::<AnimEvents>().map(|e| e.drain()).unwrap_or_default() {
@@ -493,12 +490,12 @@ for event in world.get_resource::<AnimEvents>().map(|e| e.drain()).unwrap_or_def
 }
 ```
 
-- 区间是 `(上一帧本地时间, 这一帧本地时间]`，循环回绕时把 `[0, 当前]` 也算上，所以
-  「0.9 → 1.0 → 0.1」能同时触发 0.95 和 0.05 两个事件；
-- 起点开区间：事件在恰好等于上一帧时间的那一帧已经触发过，停在上面不会反复播；
-- **刚创建 / 刚换剪辑 / 暂停 / 倒放都不触发**（倒放需要反向扫区间，暂时宁可不播）；
-- **事件从哪来**：glTF 没有事件通道，所以作者写一个侧车文件
-  `assets/<mesh>.skinning/notifies.json`（与源文件同级，键是 glTF 里的动画原名）：
+- Interval is `(previous frame local time, this frame local time]`, loop wraparound also counts `[0, current]`,
+  so "0.9 → 1.0 → 0.1" can trigger both 0.95 and 0.05 events;
+- Open start: event at exactly previous frame's time already triggered on that frame, staying won't replay repeatedly;
+- **Just created / just switched clip / paused / reverse playback all do not trigger** (reverse needs backward interval scan, tentatively not playing);
+- **Where events come from**: glTF has no event channel, so author writes sidecar file
+  `assets/<mesh>.skinning/notifies.json` (same level as source file, key is glTF's original animation name):
 
   ```json
   { "clips": { "walk": [
@@ -507,15 +504,15 @@ for event in world.get_resource::<AnimEvents>().map(|e| e.drain()).unwrap_or_def
   ] } }
   ```
 
-  cook 时按剪辑名合并进 `.ranim`（编码按时间排序、丢掉负时间/空名字）；文件**存在但
-  解析失败会让 build 失败**，名字对不上任何动画会 warn —— 打错的事件表不该静默消失。
-- 编辑器可以编辑事件表：在资产面板选中 `assets/<mesh>.skinning/notifies.json` 后打开
-  Window → General → Animation Graph，按剪辑列出每条事件（时间 DragValue + 名字文本框，
-  失焦写回），`×` 删除，`+ Notify` 草稿表单可以给已有或新的剪辑追加一条。每个剪辑上方还有
-  一条时间轴：金色圆点是事件，悬停显示「名字 @ 秒数」，左右拖动直接改时间（量化到 0.01s，
-  夹在 0..=窗口长度，窗口长度按最晚事件自动取 ≥2s），和 DragValue 共用同一个写回路径。
-  在空白处点一下会在该时间打开新增草稿（剪辑名与时间已填好，只差事件名），点已有标记不会新建。
-  保存后由松散资产热重载重新 cook，`.ranim` 里的 v5 事件表随之更新。
+  Cook merges into `.ranim` by clip name (encoding sorted by time, drops negative time / empty name); file **exists but
+  parse failure fails build**, name not matching any animation warns — wrong event table shouldn't silently disappear.
+- Editor can edit event table: after selecting `assets/<mesh>.skinning/notifies.json` in asset panel, open
+  Window → General → Animation Graph, lists each event by clip (time DragValue + name text box,
+  blur writes back), `×` deletes, `+ Notify` draft form can add one for existing or new clip. Above each clip is also
+  a timeline: gold dot is event, hover shows "name @ seconds", left-right drag directly changes time (quantized to 0.01s,
+  clamped to 0..=window length, window length auto takes >=2s by latest event), shares same write-back path with DragValue.
+  Clicking blank opens new draft at that time (clip name and time pre-filled, only event name missing), clicking existing mark doesn't create new.
+  After save, loose asset hot reload re-cooks, `.ranim`'s v5 event table updates accordingly.
 
 **剪辑检查器**：在资产面板选中 `.ranim` 后，Animation Graph 面板显示检查器：时长 / fps /
 loop / additive、轨道数与每条轨道的关键帧范围、Notify / 同步标记时间轴、根关节首尾位移与

@@ -1,12 +1,13 @@
-//! Montage 播放队列（#560 P1）。
+//! Montage playback queue (#560 P1).
 //!
-//! Montage 是一次性 / 循环的覆盖动画（受击、翻越、开火）。这一层只做播放状态：
-//! 立即播放、FIFO 排队、单次结束自动接下一段、`stop` / `stop_after_current`，
-//! 以及跨帧 Notify。采样仍然复用 [`Clip`]，姿态合成由调用方（图 Slot 节点或
-//! 引擎）决定。
+//! Montage is a one-shot / looping overlay animation (hit reaction, vault, fire). This layer
+//! only handles playback state: immediate play, FIFO queueing, auto-advance to the next segment
+//! on single-shot end, `stop` / `stop_after_current`, and cross-frame Notify. Sampling still
+//! reuses [`Clip`]; pose composition is decided by the caller (graph Slot node or engine).
 //!
-//! 与 `Animator` 的普通剪辑不同，Montage 自带开始时间 / 循环 / 速度 / 权重 /
-//! blend-in / blend-out，播放头只属于这个播放器，不会改写作者场景数据。
+//! Unlike `Animator`'s regular clips, Montage carries its own start time / loop / speed / weight /
+//! blend-in / blend-out; the playhead belongs only to this player and does not overwrite authored
+//! scene data.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -14,31 +15,32 @@ use std::sync::Arc;
 use crate::clip::{Clip, ClipSection, ClipWarpWindow};
 use crate::pose::Pose;
 
-/// 队列上限：坏逻辑（每帧 enqueue）不应该无限吃内存。
+/// Queue upper bound: bad logic (enqueueing every frame) should not eat memory without limit.
 pub const MAX_MONTAGE_QUEUE: usize = 32;
 
-/// Montage BranchIn 的 Notify 前缀：`BranchIn.<section>` 会在跨过该事件时跳到
-/// 同名段起点（#560 P4）。段不存在时事件照常发出，但不跳转。
+/// Montage BranchIn Notify prefix: `BranchIn.<section>` jumps to the same-named segment's
+/// start when the event is crossed (#560 P4). If the segment doesn't exist, the event is still
+/// emitted but no jump occurs.
 pub const BRANCH_IN_PREFIX: &str = "BranchIn.";
 
-/// 一段待播放的 Montage。
+/// A queued-up Montage waiting to be played.
 #[derive(Debug, Clone)]
 pub struct Montage {
     clip: Arc<Clip>,
     start_time: f32,
-    /// 从剪辑的哪个 Montage 段开始；找不到时回退到 `start_time`。
+    /// Which Montage segment of the clip to start from; falls back to `start_time` if not found.
     start_section: Option<String>,
     looped: bool,
     speed: f32,
     weight: f32,
-    /// 起始淡入时长（秒）；0 = 立即满权重。
+    /// Starting fade-in duration (seconds); 0 = immediately full weight.
     blend_in: f32,
-    /// 单次 Montage 结束前的淡出时长（秒）；循环 Montage 不使用。
+    /// Fade-out duration (seconds) before a single-shot Montage ends; not used for looped Montages.
     blend_out: f32,
 }
 
 impl Montage {
-    /// 默认：从 0 开始、循环、速度 1、权重 1。
+    /// Default: start from 0, looped, speed 1, weight 1.
     pub fn new(clip: Arc<Clip>) -> Self {
         Self {
             clip,
@@ -57,7 +59,8 @@ impl Montage {
         self
     }
 
-    /// 从指定 Montage 段开始播放；段不存在时在 `start` 时回退到 `start_time`。
+    /// Start playback from the specified Montage segment; falls back to `start_time` if the segment
+    /// doesn't exist.
     pub fn with_start_section(mut self, section: impl Into<String>) -> Self {
         let section = section.into();
         self.start_section = (!section.trim().is_empty()).then_some(section);
@@ -79,13 +82,13 @@ impl Montage {
         self
     }
 
-    /// 起始淡入时长（秒）；负数 / 非有限值按 0 处理。
+    /// Starting fade-in duration (seconds); negative / non-finite values treated as 0.
     pub fn with_blend_in(mut self, seconds: f32) -> Self {
         self.blend_in = sanitize_duration(seconds);
         self
     }
 
-    /// 单次 Montage 结束前的淡出时长（秒）；循环 Montage 不使用。
+    /// Fade-out duration (seconds) before a single-shot Montage ends; looped Montages do not use it.
     pub fn with_blend_out(mut self, seconds: f32) -> Self {
         self.blend_out = sanitize_duration(seconds);
         self
@@ -96,13 +99,13 @@ impl Montage {
     }
 }
 
-/// 跨过的一个 Montage Notify。
+/// A crossed Montage Notify.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MontageNotify {
-    /// 事件所属剪辑名（`Clip.name`，便于上层映射回资产）。
+    /// Name of the clip the event belongs to (`Clip.name`, for mapping back to assets by upper layers).
     pub clip_name: String,
     pub name: String,
-    /// 事件在剪辑里的本地时间（秒）。
+    /// Local time of the event within the clip (seconds).
     pub time: f32,
 }
 
@@ -110,22 +113,22 @@ pub struct MontageNotify {
 struct ActiveMontage {
     montage: Montage,
     time: f32,
-    /// 这一段已经播放的绝对时长（秒），用于 blend-in；暂停时不推进。
+    /// Absolute duration this segment has played (seconds), used for blend-in; does not advance while paused.
     elapsed: f32,
-    /// 作者设置的基准权重；实际权重还要乘淡入 / 淡出系数。
+    /// Baseline weight set by the author; actual weight is further multiplied by fade-in / fade-out factors.
     weight: f32,
 }
 
 impl ActiveMontage {
-    /// 这一帧实际用于姿态混合的权重。
+    /// Weight actually used for pose blending this frame.
     fn effective_weight(&self) -> f32 {
         let fade_in = if self.montage.blend_in > 0.0 {
             (self.elapsed / self.montage.blend_in).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        // 循环 Montage 每圈都会回到结尾，按剩余时间淡出会周期性闪一下；
-        // 因此只在单次 Montage 上应用 blend-out。
+        // Looped Montages return to the end every cycle; fading out by remaining time would
+        // flash periodically, so blend-out is applied only on single-shot Montages.
         let fade_out = if !self.montage.looped && self.montage.blend_out > 0.0 {
             let local = local_time(self.montage.clip.duration, self.montage.looped, self.time);
             let remaining = (self.montage.clip.duration - local).max(0.0);
@@ -137,7 +140,7 @@ impl ActiveMontage {
     }
 }
 
-/// Montage 播放器：一个活动段 + 一个 FIFO 队列。
+/// Montage player: one active segment + a FIFO queue.
 #[derive(Debug, Clone, Default)]
 pub struct MontagePlayer {
     active: Option<ActiveMontage>,
@@ -152,7 +155,7 @@ impl MontagePlayer {
         Self::default()
     }
 
-    /// 立即播放（替换当前段，清空队列）。返回是否接受。
+    /// Play immediately (replaces the current segment, clears the queue). Returns whether accepted.
     pub fn play_now(&mut self, montage: Montage) -> bool {
         self.active = Some(start(montage));
         self.queue.clear();
@@ -162,7 +165,7 @@ impl MontagePlayer {
         true
     }
 
-    /// 排队；空闲时立即开始。队列满时丢弃并返回 `false`。
+    /// Queue; starts immediately when idle. Returns `false` and drops when the queue is full.
     pub fn enqueue(&mut self, montage: Montage) -> bool {
         if self.active.is_none() {
             self.active = Some(start(montage));
@@ -176,7 +179,7 @@ impl MontagePlayer {
         true
     }
 
-    /// 停止并清空队列。
+    /// Stop and clear the queue.
     pub fn stop(&mut self) {
         self.active = None;
         self.queue.clear();
@@ -185,7 +188,7 @@ impl MontagePlayer {
         self.pending_notifies.clear();
     }
 
-    /// 当前段播完后停止，不再接队列里的下一段。
+    /// Stop after the current segment finishes; do not take the next queued segment.
     pub fn stop_after_current(&mut self) {
         self.queue.clear();
     }
@@ -194,8 +197,8 @@ impl MontagePlayer {
         self.active.is_some()
     }
 
-    /// 暂停 / 恢复活动段（#560 Montage 播放控制）。暂停期间 `tick` 不推进时间、
-    /// 不采样新的 Notify，队列和权重都保持不变。
+    /// Pause / resume the active segment (#560 Montage playback control). While paused, `tick`
+    /// does not advance time, does not sample new Notifies; queue and weight remain unchanged.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
     }
@@ -204,12 +207,12 @@ impl MontagePlayer {
         self.paused
     }
 
-    /// 活动段已经播放的时间（秒）；没有活动段返回 `None`。
+    /// Time already played by the active segment (seconds); returns `None` when there is no active segment.
     pub fn active_time(&self) -> Option<f32> {
         self.active.as_ref().map(|active| active.time)
     }
 
-    /// 当前时间所在的 Montage 段；没有活动段 / 不在任何段内时返回 `None`。
+    /// The Montage segment at the current time; returns `None` when there is no active segment / not in any segment.
     pub fn active_section(&self) -> Option<&ClipSection> {
         let active = self.active.as_ref()?;
         let local = local_time(
@@ -225,7 +228,7 @@ impl MontagePlayer {
             .find(|section| section.contains(local))
     }
 
-    /// 当前时间所在的 MotionWarping 窗口；没有活动段 / 不在任何窗口内时返回 `None`。
+    /// The MotionWarping window at the current time; returns `None` when there is no active segment / not in any window.
     pub fn active_warp_window(&self) -> Option<&ClipWarpWindow> {
         let active = self.active.as_ref()?;
         let local = local_time(
@@ -241,7 +244,7 @@ impl MontagePlayer {
             .find(|window| window.contains(local))
     }
 
-    /// 当前 warp window 内的归一化进度（0..=1）；不在窗口内返回 `None`。
+    /// Normalized progress (0..=1) within the current warp window; returns `None` when not in a window.
     pub fn warp_window_progress(&self) -> Option<f32> {
         let active = self.active.as_ref()?;
         let local = local_time(
@@ -257,9 +260,11 @@ impl MontagePlayer {
             .find_map(|window| window.progress(local))
     }
 
-    /// 跳到命名 Montage 段的起点；段不存在或没有活动段时返回 `false`。
+    /// Jump to the start of the named Montage segment; returns `false` if the segment doesn't exist
+    /// or there is no active segment.
     ///
-    /// 暂停状态保持不变：暂停中跳段后仍停在段首，恢复后才继续推进。
+    /// The paused state is unchanged: jumping segments while paused still stops at the segment start,
+    /// and only continues advancing after resume.
     pub fn jump_to_section(&mut self, name: &str) -> bool {
         let Some(active) = self.active.as_mut() else {
             return false;
@@ -290,7 +295,7 @@ impl MontagePlayer {
         self.active.as_ref().map(|active| &active.montage.clip)
     }
 
-    /// 当前实际混合权重（基准权重 × blend-in / blend-out 系数）。
+    /// Current actual blend weight (baseline weight × blend-in / blend-out factor).
     pub fn active_weight(&self) -> f32 {
         self.active
             .as_ref()
@@ -303,7 +308,8 @@ impl MontagePlayer {
         }
     }
 
-    /// 推进时间；单次 Montage 播完时自动接下一段。返回是否仍在一段里。
+    /// Advance time; a single-shot Montage auto-advances to the next segment when done. Returns
+    /// whether still in a segment.
     pub fn tick(&mut self, dt: f32) -> bool {
         if self.paused {
             return self.active.is_some();
@@ -319,7 +325,8 @@ impl MontagePlayer {
         );
         let speed = sanitize_speed(active.montage.speed);
         active.time += dt * speed;
-        // blend-in 是墙钟时长，不随播放倍速缩放；暂停时 tick 提前返回，所以会冻结。
+        // blend-in is wall-clock duration, not scaled by playback speed; paused tick returns early
+        // so it stays frozen.
         active.elapsed += dt;
         let local = local_time(
             active.montage.clip.duration,
@@ -348,7 +355,8 @@ impl MontagePlayer {
             }
         }
         if let Some(start) = branch_target {
-            // BranchIn 是显式跳段：不再按循环回绕，也不在同一帧继续扫目标段里的 Notify。
+            // BranchIn is an explicit segment jump: no longer loop-wrapping, and not scanning
+            // Notify in the target segment within the same frame.
             active.time = start;
         } else if active.montage.looped {
             active.time = local;
@@ -369,7 +377,8 @@ impl MontagePlayer {
         true
     }
 
-    /// 采样当前 Montage 到 `out`（先重置成 reference）。没有活动段返回 `false`。
+    /// Sample the current Montage into `out` (resetting to reference first). Returns `false` when
+    /// there is no active segment.
     pub fn sample_into(&self, reference: &Pose, out: &mut Pose) -> bool {
         let Some(active) = self.active.as_ref() else {
             return false;
@@ -384,7 +393,7 @@ impl MontagePlayer {
         true
     }
 
-    /// 取走这一帧跨过的 Notify（整体 drain）。
+    /// Drain the Notify events crossed this frame (whole drain).
     pub fn take_notifies(&mut self) -> Vec<MontageNotify> {
         std::mem::take(&mut self.pending_notifies)
     }

@@ -3,7 +3,7 @@ name = "prism-editor-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Prisma 编辑器的数据层：dock 布局树、场景文档、schema、撤销栈、主题、日志"
+description = "Prisma editor data layer: dock layout tree, scene document, schema, undo stack, theme, log"
 
 [dependencies]
 serde = { workspace = true }
@@ -12,5 +12,5 @@ log = { workspace = true }
 # Asset thumbnails (#982): decode only the formats the panel can preview.
 image = { workspace = true, features = ["png"] }
 glam = { workspace = true }
-# `assets/settings.ini` 方言（与引擎 / editor-api 共用一份解析器）。
+# `assets/settings.ini` dialect (shared parser with engine / editor-api).
 prism-ini = { path = "../../../crates/prism-ini" }

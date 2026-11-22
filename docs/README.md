@@ -1,174 +1,175 @@
-# Prisma 文档体系与目录规范
+# Prisma Documentation System and Directory Specification
 
-本文档是 `docs/` 目录的**总览地图**与**文档工程规范**，规定了全仓库文档的内容尺度分级、目录结构规范、文件命名格式及知识维护原则。
-
----
-
-## 🧭 一、核心维护原则
-
-1. **长期有效原则**：`docs/` 只沉淀具有长期架构指导价值、设计契约和工程规范的文档。会话临时计划、实施清单与临时备忘按 [`ai-workflow.md`](ai-workflow.md) §9 处理：可以临时放在 `docs/plans/`，但**做完即删**；有价值的结论合并进对应权威文档，计划文件本身不保留。
-2. **1.0 前零兼容逻辑**：当前版本处于 `0.1`，在 1.0 正式发布前，**严禁编写任何兼容性逻辑，旧版本兼容被明确视为冗余的垃圾代码**。文档中绝不保留已废弃过渡特性的维护说明或兼容回退建议，所有架构描述紧随最新最优实现。
-3. **单一事实源（Source of Truth）**：
-   - 全局架构与渲染意图以 [`DESIGN.md`](DESIGN.md) 为准；
-   - 运行时反射与二进制协议以 [`REFLECT.md`](REFLECT.md) 为准；
-   - 代码地图、矩阵坐标与硬约束以 [`../AGENTS.md`](../AGENTS.md) 为准；
-   - 协同流程与工程门禁以 [`ai-workflow.md`](ai-workflow.md) 为准。
-   代码与文档在**同一个 PR** 中同步更新，拒绝文档漂移。
+This document is the **overview map** and **documentation engineering specification** for the `docs/` directory, defining repository-wide documentation content granularity standards, directory structure conventions, file naming formats, and knowledge maintenance principles.
 
 ---
 
-## 📐 二、内容尺度分级规范（Content Granularity Standards）
+## 🧭 1. Core Maintenance Principles
 
-仓库文档按内容尺度与生命周期划分为 7 个层级，各层级职责边界明确，禁止越级堆叠或内容尺度失衡：
+1. **Long-term validity principle**: `docs/` only archives documents with long-term architectural guidance value, design contracts, and engineering specifications. Session-temporary plans, implementation checklists, and temporary notes are handled per [`ai-workflow.md`](ai-workflow.md) §9: they may be temporarily placed in `docs/plans/`, but **deleted once done**; valuable conclusions are merged into the corresponding authoritative document, and the plan files themselves are not retained.
+2. **Zero-compatibility logic before 1.0**: The current version is `0.1`. Before the official 1.0 release, **writing any compatibility logic is strictly prohibited; backward compatibility is explicitly regarded as redundant garbage code**. Documents must not retain maintenance notes or compatibility fallback suggestions for deprecated transitional features; all architecture descriptions follow the latest and best implementation.
+3. **Single Source of Truth**:
+   - Global architecture and rendering intent follow [`DESIGN.md`](DESIGN.md);
+   - Runtime reflection and binary protocol follow [`REFLECT.md`](REFLECT.md);
+   - Code map, matrix coordinates, and hard constraints follow [`../AGENTS.md`](../AGENTS.md);
+   - Collaboration workflow and engineering gates follow [`ai-workflow.md`](ai-workflow.md).
+   Code and documents are updated synchronously in **the same PR**; document drift is rejected.
+
+---
+
+## 📐 2. Content Granularity Standards
+
+Repository documents are divided into 7 levels by content granularity and lifecycle; each level has clear responsibility boundaries, prohibiting cross-level stacking or content granularity imbalance:
 
 ```text
-L0: 仓库门户与硬约束层 (README / AGENTS / CONTRIBUTING)
+L0: Repository portal and hard constraint layer (README / AGENTS / CONTRIBUTING)
       │
-L1: 核心架构与协议基石层 (DESIGN / REFLECT)
+L1: Core architecture and protocol foundation layer (DESIGN / REFLECT)
       │
-L2: 专项子系统设计契约层 (anim-* / editor-* / module / raytracing)
+L2: Specialized subsystem design contract layer (anim-* / editor-* / module / raytracing)
       │
-L3: 协同流程与工程治理层 (ai-workflow / code-style / versioning / ...)
+L3: Collaboration workflow and engineering governance layer (ai-workflow / code-style / versioning / ...)
       │
-L4: 平台接入与构建运维层 (android-* / termux / slang)
+L4: Platform access and build/ops layer (android-* / termux / slang)
       │
-L5: 诊断方法与排障知识层 (lessons-learned / rendering-investigation)
+L5: Diagnostic methods and troubleshooting knowledge layer (lessons-learned / rendering-investigation)
       │
-L6: 调研灵感与展示资料层 (shadertoy / showcase)
+L6: Research inspiration and showcase material layer (shadertoy / showcase)
 ```
 
-| 层级 | 职责与内容尺度 | 准入内容 | 严禁与淘汰内容 |
+| Level | Responsibilities and content granularity | Admissible content | Prohibited and eliminated content |
 |---|---|---|---|
-| **L0 仓库门户** | 项目门面、核心特性、快速开始、技术硬规则与代码地图 | 项目定位、架构特色、快速运行指令、不可触碰的红线 | 局部函数实现细节、临时调试日志、过时架构残留 |
-| **L1 核心架构** | 引擎全局系统拓扑、Render Graph 渲染管线、反射与二进制布局基石 | 架构原则、Pass 拓扑、内存模型、RSCN/RTTIBin 规范 | 单个 bug 修复流水账、过渡期临时兼容方案 |
-| **L2 子系统契约** | 各功能子系统的模块级规格、数学模型、状态转移与 ABI/API 契约 | 动画图/IK/重定向数学、编辑器数据层、项目模块 C ABI | 与最新实现冲突的历史设计稿、未落地的泛化幻想 |
-| **L3 流程治理** | AI / 人类协作流程、代码与注释风格、版本演进机制、门禁规则 | 五条硬规则、Commit/PR 模板、自检门禁、DoD | 随意更改的个人口头约定、未自动化的口号式规范 |
-| **L4 平台运维** | 平台编译、交叉编译工具链、打包发布实操指南 | Android NDK、Termux 构建命令、Slang 编译工作流 | 失去复现意义的旧环境补丁、过期版本系统配置 |
-| **L5 排障知识** | 深度调试排障决策树、Vulkan 同步与生命周期根因分析 | 二分诊断方法论、典型 VUID 根因剖析、不可重犯的教训 | 缺乏根因分析的表面报错报错备忘、零散调试片段 |
-| **L6 展示灵感** | 视听展示脚本、渲染算法与着色器灵感记录 | 展示视频视觉与音频参数、Shadertoy 移植算法思路 | 包含废弃架构描述的过期文案 |
+| **L0 Repository portal** | Project facade, core features, quick start, technical hard rules, and code map | Project positioning, architectural highlights, quick run commands, untouchable red lines | Local function implementation details, temporary debug logs, outdated architecture remnants |
+| **L1 Core architecture** | Engine global system topology, Render Graph rendering pipeline, reflection and binary layout foundation | Architecture principles, Pass topology, memory model, RSCN/RTTIBin specification | Single bug fix ledgers, transitional temporary compatibility solutions |
+| **L2 Subsystem contract** | Module-level specifications, mathematical models, state transitions, and ABI/API contracts for each functional subsystem | Animation graph/IK/retargeting math, editor data layer, project module C ABI | Historical design drafts conflicting with the latest implementation, unimplemented generalization fantasies |
+| **L3 Process governance** | AI/human collaboration workflows, code and comment style, version evolution mechanisms, gate rules | Five hard rules, Commit/PR templates, self-check gates, DoD | Arbitrarily changed personal verbal agreements, non-automated slogan-like norms |
+| **L4 Platform ops** | Platform compilation, cross-compilation toolchains, packaging and release operation guides | Android NDK, Termux build commands, Slang shader compilation workflow | Old environment patches without reproduction value, expired system configurations |
+| **L5 Troubleshooting knowledge** | Deep debugging troubleshooting decision trees, Vulkan synchronization and lifecycle root cause analysis | Binary-search diagnosis methodology, typical VUID root cause analysis, lessons never to repeat | Surface error memos without root cause analysis, scattered debug snippets |
+| **L6 Showcase inspiration** | Audiovisual showcase scripts, rendering algorithms, and shader inspiration notes | Showcase video visual and audio parameters, Shadertoy porting algorithm ideas | Expired copy containing abandoned architecture descriptions |
 
 ---
 
-## 🗂️ 三、目录结构与文件命名规范
+## 🗂️ 3. Directory Structure and File Naming Conventions
 
-### 1. 文件命名统一标准
+### 1. Unified File Naming Standard
 
-为确保跨操作系统（Windows / Linux / macOS）文件系统兼容性以及脚本/编译期宏的稳健性，所有文档命名遵循以下铁律：
+To ensure cross-operating system (Windows / Linux / macOS) file system compatibility and the robustness of scripts/compile-time macros, all document names follow these iron rules:
 
-1. **技术专题与流程文档一律全小写连字符命名**：`kebab-case.md`。
-2. **前缀聚类语义结构**：格式统一为 `[domain]-[topic][-detail].md`。相同子系统的文档必须共享领域前缀：
-   - 动画子系统：`anim-*.md`
-   - 编辑器子系统：`editor-*.md`
-   - 平台与环境：`android-*.md`
-3. **核心基石文档保留全大写**：
-   - `README.md`：目录入口索引与全景地图。
-   - `DESIGN.md`：引擎架构设计意图最高权威源头。
-   - `REFLECT.md`：反射体系与二进制格式最高权威源头。
-4. **命名反模式**：严禁使用驼峰式（`AnimGraph.md`）、下划线（`ai_workflow.md`）或无领域前缀的零碎命名。
+1. **Technical topics and process documents are all lowercase kebab-case**: `kebab-case.md`.
+2. **Prefix-clustered semantic structure**: The format is uniformly `[domain]-[topic][-detail].md`. Documents of the same subsystem must share a domain prefix:
+   - Animation subsystem: `anim-*.md`
+   - Editor subsystem: `editor-*.md`
+   - Platform and environment: `android-*.md`
+3. **Core foundational documents retain all-uppercase**:
+   - `README.md`: Directory entry index and panorama map.
+   - `DESIGN.md`: Highest authoritative source of engine architecture design intent.
+   - `REFLECT.md`: Highest authoritative source of reflection system and binary format.
+4. **Naming anti-patterns**: Strictly prohibit camelCase (`AnimGraph.md`), underscores (`ai_workflow.md`), or prefix-less fragmentary naming without a domain prefix.
 
-### 2. 目录组织拓扑
+### 2. Directory Organization Topology
 
-文档在物理上采用**前缀聚类扁平化目录**，在逻辑上按 6 大领域组织。扁平化前缀聚类兼顾了文件浏览器自然排序与跨模块相对引用安全（如 Rust `include_str!` 编译期宏直接绑定 `docs/editor-mcp.md`）：
+Documents physically use a **prefix-clustered flat directory**, and logically organize into 6 major domains. The flat prefix-clustered structure balances file browser natural ordering with cross-module relative reference safety (e.g., Rust `include_str!` compile-time macro directly binds `docs/editor-mcp.md`):
 
 ```text
 docs/
-  ├── README.md                           # 本文档（文档体系地图与规范）
-  ├── DESIGN.md                           # [L1 核心架构] 引擎与渲染总架构设计源头
-  ├── REFLECT.md                          # [L1 核心架构] 反射系统与自描述二进制规范
+  ├── README.md                           # This document (documentation system map and specification)
+  ├── DESIGN.md                           # [L1 Core architecture] Engine and rendering overall architecture design source
+  ├── DESIGN.zh-CN.md                     # [L1 Core architecture] DESIGN.md Chinese reference version (authoritative version is English)
+  ├── REFLECT.md                          # [L1 Core architecture] Reflection system and self-describing binary specification
   │
-  ├── anim-graph.md                       # [L2 动画子系统] 动画图架构与 .rag 规范
-  ├── anim-ik.md                          # [L2 动画子系统] 解析式两骨 IK 与地面贴合
-  ├── anim-motion-matching.md             # [L2 动画子系统] 动作匹配纯数学层与特征数据库
-  ├── anim-retarget.md                    # [L2 动画子系统] 骨骼姿态重定向纯数学层
-  ├── editor-egui.md                      # [L2 编辑器子系统] 原生 egui 编辑器架构与零拷贝采样
-  ├── editor-mcp.md                       # [L2 编辑器子系统] MCP 自动化契约与工具注册表
-  ├── editor-self-hosted-ui.md            # [L2 编辑器子系统] 自举式编辑器与统一引擎 UI API 架构设计
-  ├── editor-ui-requirements.md           # [L2 编辑器子系统] 新编辑器 UI 功能需求契约（编号需求 + 分期验收）
-  ├── scripting-layer.md                  # [L2 模块宿主] 脚本层接缝：HostApi 复用、Lua/C# 分期与判据
-  ├── feature-map.json                    # [L2 编辑器子系统] 编辑器 UI 节点树与交互功能地图
-  ├── project-module-architecture.md      # [L2 模块宿主] 游戏工程 C ABI 与动态预览模块架构
-  ├── mobile-raytracing-gi-design.md      # [L2 渲染进阶] 移动端 RayQuery 与实时 GI 管线蓝图
-  ├── rtx-dlss-integration-design.md      # [L2 渲染进阶] DLSS / 光线重构 / 帧生成的 guide buffer 契约与里程碑
-  ├── prt-gi-64tree-design.md             # [L2 渲染进阶] PRT64 预计算辐射度传输、64 叉树流式与 M1–M4 验收契约
-  ├── src-gi-design.md                    # [L2 渲染进阶] SRC GI（面元辐射级联）移动端动态 GI 备选设计蓝图
-  ├── voxel-software-gi-design.md         # [L2 渲染进阶] 立方体素专用软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联）
-  ├── voxel-rtx-gi-design.md              # [L2 渲染进阶] 立方体素专用硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI）
-  ├── virtual-geometry-design.md          # [L2 渲染进阶] 多平台虚拟几何体（Beyond-Nanite Cluster-DAG / 软硬混合光栅 / 光追同源）
+  ├── anim-graph.md                       # [L2 Animation subsystem] Animation graph architecture and .rag specification
+  ├── anim-ik.md                          # [L2 Animation subsystem] Analytical two-bone IK and ground contact
+  ├── anim-motion-matching.md             # [L2 Animation subsystem] Motion matching pure math layer and feature database
+  ├── anim-retarget.md                    # [L2 Animation subsystem] Skeletal pose retargeting pure math layer
+  ├── editor-egui.md                      # [L2 Editor subsystem] Native egui editor architecture and zero-copy sampling
+  ├── editor-mcp.md                       # [L2 Editor subsystem] MCP automation contract and tool registry
+  ├── editor-self-hosted-ui.md            # [L2 Editor subsystem] Self-hosted editor and unified engine UI API architecture design
+  ├── editor-ui-requirements.md           # [L2 Editor subsystem] New editor UI feature requirement contract (numbered requirements + phased acceptance)
+  ├── scripting-layer.md                  # [L2 Module host] Scripting layer seam: HostApi reuse, Lua/C# phasing and criteria
+  ├── feature-map.json                    # [L2 Editor subsystem] Editor UI node tree and interaction feature map
+  ├── project-module-architecture.md      # [L2 Module host] Game project C ABI and dynamic preview module architecture
+  ├── mobile-raytracing-gi-design.md      # [L2 Rendering advanced] Mobile RayQuery and real-time GI pipeline blueprint
+  ├── rtx-dlss-integration-design.md      # [L2 Rendering advanced] DLSS / ray reconstruction / frame generation guide buffer contract and milestones
+  ├── prt-gi-64tree-design.md             # [L2 Rendering advanced] PRT64 precomputed radiance transfer, 64-ary tree streaming and M1–M4 acceptance contracts
+  ├── src-gi-design.md                    # [L2 Rendering advanced] SRC GI (surfel radiance cascade) mobile dynamic GI alternative design blueprint
+  ├── voxel-software-gi-design.md         # [L2 Rendering advanced] Voxel-specific software GI (64-ary tree bitmask DDA + face cache + 3D radiance cascade)
+  ├── voxel-rtx-gi-design.md              # [L2 Rendering advanced] Voxel-specific hardware RTX GI (RT Core + face cache + ReSTIR GI)
+  ├── virtual-geometry-design.md          # [L2 Rendering advanced] Multi-platform virtual geometry (Beyond-Nanite Cluster-DAG / software-hardware hybrid rasterization / ray tracing same source)
   │
-  ├── ai-workflow.md                      # [L3 协作流程] AI 协同工作流与五条硬规则（精简速查）
-  ├── ai-workflow-details.md              # [L3 协作流程] 多 Agent 协作与测试 Harness 详解
-  ├── code-style.md                       # [L3 编码规范] 英文代码注释规范与冗余清理指南
-  ├── naming-and-abstraction-guide.md     # [L3 编码规范] 代码与着色器命名及内容抽象规范
-  ├── versioning.md                       # [L3 版本治理] SemVer 规则、1.0 前零兼容逻辑与发版
-  ├── integrations.md                     # [L3 工程治理] CI/CD、Discord 机器人与 Agent 认领契约
-  ├── agent-issues.md                     # [L3 规范门禁] Agent 提 Issue 准则与查重机制
-  ├── agents-contract-audit.md            # [L3 规范门禁] 外部 Agent 契约模板对照本仓库现状的审计快照
+  ├── ai-workflow.md                      # [L3 Collaboration workflow] AI collaboration workflow and five hard rules (concise quick reference)
+  ├── ai-workflow-details.md              # [L3 Collaboration workflow] Multi-Agent collaboration and test harness details
+  ├── code-style.md                       # [L3 Coding standard] English code comment standard and redundancy cleanup guide
+  ├── naming-and-abstraction-guide.md     # [L3 Coding standard] Code and shader naming and content abstraction specification
+  ├── versioning.md                       # [L3 Version governance] SemVer rules, zero-compatibility logic before 1.0 and releases
+  ├── integrations.md                     # [L3 Engineering governance] CI/CD, Discord bot and Agent claiming contract
+  ├── agent-issues.md                     # [L3 Specification gate] Agent issue raising criteria and deduplication mechanism
+  ├── agents-contract-audit.md            # [L3 Specification gate] External Agent contract template audit snapshot against repository status
   │
-  ├── android-apk.md                      # [L4 平台运维] Android 纯游戏独立 APK 构建与打包
-  ├── android-arm64.md                    # [L4 平台运维] aarch64 宿主机构建 Android 工具链替换
-  ├── android-chroot-turnip-gpu.md        # [L4 平台运维] 番外篇：Android chroot 容器直通 Adreno GPU（Turnip + KGSL）
-  ├── build-guide-termux.md               # [L4 平台运维] Termux / Android 原生终端编译指南
-  ├── slang-bindless-migration.md         # [L4 平台运维] Slang 着色器工具链与 Bindless 资源维护
+  ├── android-apk.md                      # [L4 Platform ops] Android game-only standalone APK build and packaging
+  ├── android-arm64.md                    # [L4 Platform ops] aarch64 host Android toolchain replacement
+  ├── android-chroot-turnip-gpu.md        # [L4 Platform ops] Sidebar: Android chroot container direct Adreno GPU (Turnip + KGSL)
+  ├── build-guide-termux.md               # [L4 Platform ops] Termux / Android native terminal compilation guide
+  ├── slang-bindless-migration.md         # [L4 Platform ops] Slang shader toolchain and Bindless resource maintenance
   │
-  ├── lessons-learned.md                  # [L5 经验沉淀] Vulkan 渲染循环与工程踩坑根因库
-  ├── rendering-pipeline-investigation.md # [L5 诊断方法] 渲染异常排查决策树与二分诊断方法论
-  ├── rendering-debug-isolation.md        # [L5 诊断方法] 渲染异常四维隔离分析（Pass/材质/同步/时域）与操作指南
+  ├── lessons-learned.md                  # [L5 Experience accumulation] Vulkan rendering loop and engineering pitfall root cause library
+  ├── rendering-pipeline-investigation.md # [L5 Diagnostic method] Rendering exception troubleshooting decision tree and binary-search diagnosis methodology
+  ├── rendering-debug-isolation.md        # [L5 Diagnostic method] Rendering exception four-dimensional isolation analysis (Pass/material/sync/time domain) and operation guide
   │
-  ├── shadertoy-inspirations.md           # [L6 调研灵感] 常见图形效果与 Shadertoy 算法笔记
-  └── showcase-video.md                   # [L6 展示资料] 引擎自动化展示视频技术脚本与参数
+  ├── shadertoy-inspirations.md           # [L6 Research inspiration] Common graphics effects and Shadertoy algorithm notes
+  └── showcase-video.md                   # [L6 Showcase material] Engine automated showcase video technical script and parameters
 ```
 
 ---
 
-## 🗺️ 四、全景文档速查索引
+## 🗺️ 4. Panorama Document Quick Reference Index
 
-| 类别 / 领域 | 推荐入口 | 核心关注点 | 关联代码 / 模块 |
+| Category / domain | Recommended entry | Core focus | Associated code / module |
 |---|---|---|---|
-| **架构总纲** | [`DESIGN.md`](DESIGN.md) | 全局分层、Render Graph 拓扑、TBDR 优化、零兼容包袱 | `prism-render`, `prism-engine` |
-| **反射与数据** | [`REFLECT.md`](REFLECT.md) | `#[derive(Reflect)]`、RTTIBin、RSCN 场景序列化 | `prism-reflect`, `prism-scene` |
-| **动画系统** | [`anim-graph.md`](anim-graph.md) | 状态机、剪辑混合、层级混合节点 | `prism-engine::anim` |
-| | [`anim-ik.md`](anim-ik.md) | 分析式两骨 IK、Foot Placement 接线 | `crates/prism-anim-ik` |
-| | [`anim-retarget.md`](anim-retarget.md) | 跨骨架旋转映射、骨长比例缩放 | `crates/prism-anim-retarget` |
-| | [`anim-motion-matching.md`](anim-motion-matching.md) | 轨迹采样、特征最近邻搜索、脚部锁定 | `crates/prism-motion-matching` |
-| **编辑器生态** | [`editor-egui.md`](editor-egui.md) | 零拷贝离屏采样、Split-tree 布局、控制通道 | `editor/`, `prism-editor-core` |
-| | [`editor-mcp.md`](editor-mcp.md) | MCP 工具集、场景审查、离屏截屏、自动化驱动 | `crates/prism-editor-mcp` |
-| | [`editor-self-hosted-ui.md`](editor-self-hosted-ui.md) | 自举编辑器分层、ECS UI 权威归属、能力补齐清单与分期 | `projects/editor`, `prism-scene::ui` |
-| | [`editor-ui-requirements.md`](editor-ui-requirements.md) | 新编辑器功能需求契约、检视器字段规格、UI 能力指标与分期验收 | `projects/editor`, `docs/editor-ui-requirements.md` |
-| | [`project-module-architecture.md`](project-module-architecture.md) | 预览模块 cdylib、C ABI 契约、HostApi 表 | `prism-project-api`, `prism-runtime-host` |
-| | [`scripting-layer.md`](scripting-layer.md) | 脚本层复用 HostApi、动态组件访问缺口、Lua / C# 分期判据 | `prism-game-api`, `prism-reflect` |
-| **渲染专题** | [`mobile-raytracing-gi-design.md`](mobile-raytracing-gi-design.md) | RayQuery inline、SHARC 辐射度缓存 | `prism-render` |
-| | [`rtx-dlss-integration-design.md`](rtx-dlss-integration-design.md) | DLSS-SR/RR/G、guide buffer 句柄与格式、降级阶梯 | `prism-render`, `assets/shaders/` |
-| | [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md) | PRT64 数据契约、Pass 1–4 拓扑、防漏光、M1–M4 验收口径 | `prism-render`, `prism-build-pipeline` |
-| | [`src-gi-design.md`](src-gi-design.md) | SRC GI（Surfel 软件光追 + 3D 辐射级联）移动端 UGC 备选蓝图 | `prism-render`（规划） |
-| | [`voxel-software-gi-design.md`](voxel-software-gi-design.md) | 立方体素软件 GI（64 叉树位掩码 DDA + 面缓存 + 3D 辐射级联） | `prism-render`（规划） |
-| | [`voxel-rtx-gi-design.md`](voxel-rtx-gi-design.md) | 立方体素硬件 RTX GI（RT Core + 面缓存 + ReSTIR GI / DLSS-RR） | `prism-render`（规划） |
-| | [`virtual-geometry-design.md`](virtual-geometry-design.md) | 多平台虚拟几何体（Cluster-DAG / 软硬混合光栅 / CLAS 光追同源 / DMM / SGGX） | `prism-asset`, `prism-cooker`, `prism-render` |
-| | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang 编译、绑定代码生成、Bindless 纹理表 | `assets/shaders/`, `xtask` |
-| **协作规范** | [`ai-workflow.md`](ai-workflow.md) | 五条硬规则、原子提交、自检门禁、速查命令 | 全仓库 |
-| | [`ai-workflow-details.md`](ai-workflow-details.md) | 多 Agent 协作、文档分层、测试 Harness 详解 | 全仓库 |
-| | [`code-style.md`](code-style.md) | 纯英文注释、删除代码复述、删除旧版本兼容垫片 | 全仓库 `.rs` 源码 |
-| | [`naming-and-abstraction-guide.md`](naming-and-abstraction-guide.md) | 代码与着色器命名及内容抽象规范（去歧义、去口语化、零兼容） | 全仓库源码与着色器 |
-| | [`versioning.md`](versioning.md) | 0.1 演进策略、单一版本源、格式版本升级 | `Cargo.toml`, `scripts/version.py` |
-| | [`integrations.md`](integrations.md) | CI/CD 标签门禁、Issue 自动化认领 | `.github/workflows/` |
-| | [`agent-issues.md`](agent-issues.md) | 查重准则、复现模板、禁止提虚假兼容回归 | GitHub Issues |
-| | [`agents-contract-audit.md`](agents-contract-audit.md) | 外部契约模板逐条对照、存量实测数据、待决策项 | `AGENTS.md`, `scripts/` |
-| **平台实战** | [`android-apk.md`](android-apk.md) | Gradle 宿主、GameActivity、产物瘦身 | `projects/template/android/` |
-| | [`android-arm64.md`](android-arm64.md) | aarch64 宿主独立工具链与 NDK 替换 | `scripts/build-android-game.sh` |
-| | [`build-guide-termux.md`](build-guide-termux.md) | 移动端终端原生编译、静态检查验证例外 | Termux 终端环境 |
-| **排障排查** | [`lessons-learned.md`](lessons-learned.md) | Vulkan 同步、Framebuffer 顺序、信号量复用 | `docs/lessons-learned.md` |
-| | [`rendering-pipeline-investigation.md`](rendering-pipeline-investigation.md) | 画面异常二分法、黑屏排查、环境解耦 | `crates/prism-render/tests/` |
-| | [`rendering-debug-isolation.md`](rendering-debug-isolation.md) | 四维正交隔离（Pass旁路/材质覆写/悲观屏障/时域冻结）SOP | `crates/prism-render/src/render_debug.rs` |
-| **展示灵感** | [`shadertoy-inspirations.md`](shadertoy-inspirations.md) | 噪声、体积云、着色器灵感公式 | `assets/shaders/` |
-| | [`showcase-video.md`](showcase-video.md) | 自动化合成视频脚本、动效与音频规范 | `scripts/showcase_video_simple.py` |
+| **Architecture overview** | [`DESIGN.md`](DESIGN.md) | Multi-end unified, experimental high-performance rendering pipeline, Render Graph topology, platform bricks and hot plugging, zero compatibility baggage; Chinese reference see [`DESIGN.zh-CN.md`](DESIGN.zh-CN.md) | `prism-render`, `prism-engine` |
+| **Reflection and data** | [`REFLECT.md`](REFLECT.md) | `#[derive(Reflect)]`, RTTIBin, RSCN scene serialization | `prism-reflect`, `prism-scene` |
+| **Animation system** | [`anim-graph.md`](anim-graph.md) | State machine, clip mixing, hierarchical mixing nodes | `prism-engine::anim` |
+| | [`anim-ik.md`](anim-ik.md) | Analytical two-bone IK, Foot Placement wiring | `crates/prism-anim-ik` |
+| | [`anim-retarget.md`](anim-retarget.md) | Cross-skeleton rotation mapping, bone length proportion scaling | `crates/prism-anim-retarget` |
+| | [`anim-motion-matching.md`](anim-motion-matching.md) | Trajectory sampling, feature nearest neighbor search, foot locking | `crates/prism-motion-matching` |
+| **Editor ecosystem** | [`editor-egui.md`](editor-egui.md) | Zero-copy offscreen sampling, Split-tree layout, control channel | `editor/`, `prism-editor-core` |
+| | [`editor-mcp.md`](editor-mcp.md) | MCP toolset, scene review, offscreen screenshot, automation drive | `crates/prism-editor-mcp` |
+| | [`editor-self-hosted-ui.md`](editor-self-hosted-ui.md) | Self-hosted editor layering, ECS UI authoritative ownership, capability checklist and phased delivery | `projects/editor`, `prism-scene::ui` |
+| | [`editor-ui-requirements.md`](editor-ui-requirements.md) | New editor feature requirement contract, inspector field specification, UI capability metrics and phased acceptance | `projects/editor`, `docs/editor-ui-requirements.md` |
+| | [`project-module-architecture.md`](project-module-architecture.md) | Preview module cdylib, C ABI contract, HostApi table | `prism-project-api`, `prism-runtime-host` |
+| | [`scripting-layer.md`](scripting-layer.md) | Script layer HostApi reuse, dynamic component access gap, Lua/C# phasing criteria | `prism-game-api`, `prism-reflect` |
+| **Rendering topics** | [`mobile-raytracing-gi-design.md`](mobile-raytracing-gi-design.md) | RayQuery inline, SHARC radiance cache | `prism-render` |
+| | [`rtx-dlss-integration-design.md`](rtx-dlss-integration-design.md) | DLSS-SR/RR/G, guide buffer handle and format, degradation ladder | `prism-render`, `assets/shaders/` |
+| | [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md) | PRT64 data contract, Pass 1–4 topology, anti-light-leak, M1–M4 acceptance criteria | `prism-render`, `prism-build-pipeline` |
+| | [`src-gi-design.md`](src-gi-design.md) | SRC GI (Surfel software ray tracing + 3D radiance cascade) mobile UGC alternative blueprint | `prism-render` (planned) |
+| | [`voxel-software-gi-design.md`](voxel-software-gi-design.md) | Voxel software GI (64-ary tree bitmask DDA + face cache + 3D radiance cascade) | `prism-render` (planned) |
+| | [`voxel-rtx-gi-design.md`](voxel-rtx-gi-design.md) | Voxel hardware RTX GI (RT Core + face cache + ReSTIR GI / DLSS-RR) | `prism-render` (planned) |
+| | [`virtual-geometry-design.md`](virtual-geometry-design.md) | Multi-platform virtual geometry (Cluster-DAG / software-hardware hybrid raster / CLAS ray tracing same source / DMM / SGGX) | `prism-asset`, `prism-cooker`, `prism-render` |
+| | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang compilation, binding code generation, Bindless texture table | `assets/shaders/`, `xtask` |
+| **Collaboration norms** | [`ai-workflow.md`](ai-workflow.md) | Five hard rules, atomic commit, self-check gate, quick commands | Entire repository |
+| | [`ai-workflow-details.md`](ai-workflow-details.md) | Multi-Agent collaboration, document layering, test harness details | Entire repository |
+| | [`code-style.md`](code-style.md) | Pure English comments, delete code repetition, delete old-version compatibility shims | Entire repository `.rs` source |
+| | [`naming-and-abstraction-guide.md`](naming-and-abstraction-guide.md) | Code and shader naming and content abstraction specification (disambiguation, de-colloquialization, zero compatibility) | Entire repository source and shaders |
+| | [`versioning.md`](versioning.md) | 0.1 evolution strategy, single version source, format version upgrade | `Cargo.toml`, `scripts/version.py` |
+| | [`integrations.md`](integrations.md) | CI/CD tag gate, Issue automation claiming | `.github/workflows/` |
+| | [`agent-issues.md`](agent-issues.md) | Deduplication criteria, reproduction template, prohibit false compatibility regression | GitHub Issues |
+| | [`agents-contract-audit.md`](agents-contract-audit.md) | External contract template line-by-line comparison, existing measurement data, pending decision items | `AGENTS.md`, `scripts/` |
+| **Platform practice** | [`android-apk.md`](android-apk.md) | Gradle host, GameActivity, product slimming | `projects/template/android/` |
+| | [`android-arm64.md`](android-arm64.md) | aarch64 host standalone toolchain and NDK replacement | `scripts/build-android-game.sh` |
+| | [`build-guide-termux.md`](build-guide-termux.md) | Mobile terminal native compilation, static check verification exception | Termux terminal environment |
+| **Troubleshooting** | [`lessons-learned.md`](lessons-learned.md) | Vulkan synchronization, Framebuffer ordering, semaphore reuse | `docs/lessons-learned.md` |
+| | [`rendering-pipeline-investigation.md`](rendering-pipeline-investigation.md) | Rendering anomaly binary search, black screen troubleshooting, environment decoupling | `crates/prism-render/tests/` |
+| | [`rendering-debug-isolation.md`](rendering-debug-isolation.md) | Four-dimensional orthogonal isolation (Pass bypass / material override / pessimistic barrier / time freeze) SOP | `crates/prism-render/src/render_debug.rs` |
+| **Showcase inspiration** | [`shadertoy-inspirations.md`](shadertoy-inspirations.md) | Noise, volumetric clouds, shader inspiration formulas | `assets/shaders/` |
+| | [`showcase-video.md`](showcase-video.md) | Automated video synthesis script, motion and audio specifications | `scripts/showcase_video_simple.py` |
 
 ---
 
-## 🛠️ 五、新增与修改文档检查清单（Checklist）
+## 🛠️ 5. New and Modified Document Checklist
 
-在编写或更新任何文档时，必须执行以下自查：
+When writing or updating any document, the following self-checks must be performed:
 
-- [ ] **尺度对齐**：内容是否符合所在层级的尺度定位？没有把临时 session 计划、局部流水账写入长效文档。
-- [ ] **命名合规**：新文档名称是否遵循 `kebab-case.md` 规范并包含正确的领域前缀？
-- [ ] **零兼容垃圾**：是否彻底清除了向前/向后兼容的冗余描述？涉及格式或 API 变更时直接阐述最新设计。
-- [ ] **地图登记**：新增文档是否已登记在本文件的「目录组织拓扑」与「全景速查索引」中？
-- [ ] **交叉验证**：文中引用的文件路径与行号是否在当前分支上真实存在且有效？
+- [ ] **Granularity alignment**: Does the content match the granularity positioning of its level? No temporary session plans or local ledgers written into long-term documents.
+- [ ] **Naming compliance**: Does the new document name follow the `kebab-case.md` specification and include the correct domain prefix?
+- [ ] **Zero compatibility garbage**: Have all forward/backward compatibility redundant descriptions been thoroughly cleared? When format or API changes are involved, state the latest design directly.
+- [ ] **Map registration**: Is the new document registered in this file's "directory organization topology" and "panorama quick reference index"?
+- [ ] **Cross-verification**: Do the file paths and line numbers referenced in the document truly exist and are valid on the current branch?

@@ -33,7 +33,7 @@ fn the_first_matching_transition_in_author_order_wins() {
     let machine = idle_run_machine();
     let mut params = AnimParameters::new();
 
-    // 速度 5 同时满足「> 0.1」和「> 4.0」，但 idle→walk 写在前面，所以先走 walk。
+    // Speed 5 satisfies both "> 0.1" and "> 4.0", but idle→walk is written first, so walk is taken first.
     params.set_float("speed", 5.0);
     assert_eq!(
         machine
@@ -41,14 +41,14 @@ fn the_first_matching_transition_in_author_order_wins() {
             .map(|t| t.state),
         Some(1)
     );
-    // 从 walk 出发只满足 walk→run。
+    // From walk only walk→run satisfied.
     assert_eq!(
         machine
             .next_transition(1, &mut params, 0.0, 1.0)
             .map(|t| t.state),
         Some(2)
     );
-    // run 状态下速度还是 5：run→walk 的条件（< 4）不成立。
+    // Run state speed still 5: run→walk condition (< 4) not met.
     assert_eq!(machine.next_transition(2, &mut params, 0.0, 1.0), None);
 }
 
@@ -58,12 +58,12 @@ fn a_slow_character_does_not_leave_idle() {
     let mut params = AnimParameters::new();
     params.set_float("speed", 0.05);
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
-    // 参数缺失同样不转移（数据没填好不该让角色乱动）。
+    // Missing parameters also don't transition (data not filled in shouldn't let character move randomly).
     assert_eq!(
         machine.next_transition(0, &mut AnimParameters::new(), 0.0, 1.0),
         None
     );
-    // NaN 也不成立。
+    // NaN also doesn't hold.
     params.set_float("speed", f32::NAN);
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
 }
@@ -90,9 +90,9 @@ fn a_trigger_fires_once_and_is_then_consumed() {
         .expect("trigger fires");
     assert_eq!(target.state, 1);
     assert!((target.duration - 0.15).abs() < 1e-6);
-    assert!(!params.has_trigger("jump"), "trigger 应该被消耗掉");
+    assert!(!params.has_trigger("jump"), "trigger should be consumed");
 
-    // 再求值不会重复触发。
+    // Re-evaluation won't retrigger.
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
 }
 
@@ -113,16 +113,16 @@ fn the_minimum_state_fraction_holds_the_transition_until_the_state_has_played() 
     let mut params = AnimParameters::new();
     params.set_bool("done", true);
 
-    // 播到 40%：条件满足但还没到最早打断点。
+    // Played to 40%: condition met but not yet earliest interruption point.
     assert_eq!(machine.next_transition(0, &mut params, 0.4, 1.0), None);
-    // 播完：允许转移。
+    // Played to end: transition allowed.
     assert_eq!(
         machine
             .next_transition(0, &mut params, 1.0, 1.0)
             .map(|t| t.state),
         Some(1)
     );
-    // 时长未知（0 / NaN）时按「已播完」处理，否则单次剪辑会卡在最后。
+    // Unknown duration (0 / NaN) treated as "played to end", otherwise single clip gets stuck at end.
     assert_eq!(
         machine
             .next_transition(0, &mut params, 0.0, 0.0)
@@ -145,11 +145,11 @@ fn transitions_from_other_states_and_self_loops_are_ignored() {
             AnimState::new("b", "b.ranim"),
         ],
         vec![
-            // 自环：永远不选。
+            // Self-loop: never chosen.
             AnimTransition::new(0, 0),
-            // 只从 b 出发：在 a 上不生效。
+            // Only from b: not effective on a.
             AnimTransition::new(1, 0),
-            // 越界目标：跳过。
+            // Out-of-bounds target: skip.
             AnimTransition::new(0, 99),
         ],
     );
@@ -157,7 +157,7 @@ fn transitions_from_other_states_and_self_loops_are_ignored() {
         machine.next_transition(0, &mut AnimParameters::new(), 0.0, 1.0),
         None
     );
-    // 越界源状态也不 panic。
+    // Out-of-bounds source state doesn't panic.
     assert_eq!(
         machine.next_transition(99, &mut AnimParameters::new(), 0.0, 1.0),
         None
@@ -211,7 +211,7 @@ fn states_are_looked_up_by_name_and_bad_durations_are_sanitized() {
     let target = machine
         .next_transition(0, &mut AnimParameters::new(), 0.0, 1.0)
         .expect("unconditional transition");
-    assert_eq!(target.duration, 0.0, "坏时长按硬切处理");
+    assert_eq!(target.duration, 0.0, "bad duration handled as hard cut");
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn a_cooked_machine_becomes_evaluable() {
             },
         ],
         transitions: vec![
-            // 指向不存在的状态：cooker 不会写出这种数据，但坏资产不该让整台机器失效。
+            // Points to non-existent state: cooker wouldn't write such data, but bad assets shouldn't fail the whole machine.
             AnimTransitionInfo {
                 from: None,
                 to: 9,
@@ -290,21 +290,21 @@ fn a_cooked_machine_becomes_evaluable() {
 
     let machine = StateMachine::from_info(&info);
     assert_eq!(machine.states.len(), 2);
-    assert_eq!(machine.transitions.len(), 2, "越界的转移被丢掉");
+    assert_eq!(machine.transitions.len(), 2, "out-of-bounds transitions dropped");
     assert!((machine.states[1].speed - 1.2).abs() < 1e-6);
 
-    // Idle 只播了 10%：min_state_fraction 挡住。
+    // Idle only played 10%: min_state_fraction blocks.
     let mut params = AnimParameters::new();
     params.set_float("speed", 2.0);
     assert!(machine.next_transition(0, &mut params, 0.1, 1.0).is_none());
-    // 播到 30%：进 Run，过渡 0.2s。
+    // Played to 30%: transition to Run, 0.2s.
     let target = machine
         .next_transition(0, &mut params, 0.3, 1.0)
         .expect("transitions");
     assert_eq!(target.state, 1);
     assert!((target.duration - 0.2).abs() < 1e-6);
 
-    // Run 里按 Stop：trigger 被消耗，方向回到 Idle。
+    // In Run press Stop: trigger consumed, direction back to Idle.
     params.set_trigger("Stop");
     let target = machine
         .next_transition(1, &mut params, 0.5, 1.0)
@@ -313,6 +313,6 @@ fn a_cooked_machine_becomes_evaluable() {
     assert!(!params.has_trigger("Stop"));
     assert!(
         machine.next_transition(1, &mut params, 0.5, 1.0).is_none(),
-        "trigger 只响一次"
+        "trigger only fires once"
     );
 }

@@ -314,7 +314,7 @@ float sample_shadow(float3 world_pos, float3 n)
         }
     }
     // `Light.shadowStrength`: 0 = fully lit, 1 = full shadow.
-    // (`lerp` 在 0 时直接返回 1.0，所以 shadows = None 的灯不会留下脏阴影。)
+    // (`lerp` returns 1.0 directly at 0, so shadows = None lights leave no dirty shadow.)
     return lerp(1.0, sum / 9.0, saturate(frame.shadowStrength));
 }
 

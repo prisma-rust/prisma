@@ -38,7 +38,7 @@ fn blending_at_the_middle_interpolates_translation_and_scale() {
 
 #[test]
 fn rotations_take_the_shortest_path() {
-    // 170° → 190°（= −170°）只差 20°，slerp 必须走 20° 那条路，而不是绕 340°。
+    // 170° → 190° (= −170°) differ by only 20°, slerp must take the 20° path, not the 340° detour.
     let from = JointTransform::new(
         Vec3::ZERO,
         Quat::from_rotation_y(170f32.to_radians()),
@@ -50,7 +50,7 @@ fn rotations_take_the_shortest_path() {
         Vec3::ONE,
     );
     let middle = blend_joint(&from, &to, 0.5);
-    // 最短路径的中点 = 180°（绕 Y）。
+    // Midpoint of the shortest path = 180° (around Y).
     let expected = Quat::from_rotation_y(180f32.to_radians());
     assert!(
         middle.rotation.dot(expected).abs() > 0.999,
@@ -74,12 +74,12 @@ fn mismatched_lengths_blend_the_shared_joints_and_keep_the_rest_of_a() {
     let b = pose(vec![t(Vec3::new(4.0, 0.0, 0.0))]);
     let mut out = pose(Vec::new());
     let shared = blend_into(&mut out, &a, &b, 0.5);
-    assert_eq!(shared, 1, "只有一根关节可以混");
-    assert_eq!(out.len(), 2, "长度按 a 保留，缺失的关节不塌到原点");
+    assert_eq!(shared, 1, "only one joint can be blended");
+    assert_eq!(out.len(), 2, "length kept per `a`, missing joints not collapsed to the origin");
     assert!((out.local(0).unwrap().translation.x - 2.0).abs() < 1e-6);
     assert!(
         (out.local(1).unwrap().translation.x - 1.0).abs() < 1e-6,
-        "b 没有的关节保持 a 的姿态"
+        "joints `b` doesn't have keep `a`'s pose"
     );
 }
 
@@ -120,7 +120,7 @@ fn blend_space_weights_reject_empty_and_non_finite_queries() {
     assert_eq!(blend_space_weights(&[], 1.0), None);
     assert_eq!(blend_space_weights(&[0.0, 1.0], f32::NAN), None);
     assert_eq!(blend_space_weights(&[0.0, 1.0], f32::INFINITY), None);
-    // 单个样本：左右都指向自己。
+    // Single sample: both left and right point to itself.
     assert_eq!(blend_space_weights(&[3.0], 0.0), Some((0, 0, 0.0)));
 }
 
@@ -156,7 +156,7 @@ fn reference() -> Pose {
 fn blend_space() -> BlendSpace1D {
     BlendSpace1D::new(
         vec![
-            // 故意打乱顺序：作者填的顺序不该影响结果。
+            // Intentionally out of order: the author's fill order shouldn't affect the result.
             BlendSample {
                 position: 300.0,
                 clip: clip("run", 2.0, Vec3::new(6.0, 0.0, 0.0)),
@@ -189,7 +189,7 @@ fn a_blend_space_evaluates_the_exact_sample_at_a_sample_position() {
     let mut out = Pose::from_locals(Vec::new());
     assert!(space.evaluate_into(0.0, 0.25, &mut out));
     let local = out.local(0).expect("joint 0");
-    assert!(local.translation.x.abs() < 1e-6, "idle 在原点");
+    assert!(local.translation.x.abs() < 1e-6, "idle at origin");
 
     assert!(space.evaluate_into(300.0, 0.25, &mut out));
     assert!((out.local(0).unwrap().translation.x - 6.0).abs() < 1e-6);
@@ -199,7 +199,7 @@ fn a_blend_space_evaluates_the_exact_sample_at_a_sample_position() {
 fn a_blend_space_blends_the_two_neighbours_in_between() {
     let mut space = blend_space();
     let mut out = Pose::from_locals(Vec::new());
-    // 75 = idle(0) 与 walk(150) 的中点。
+    // 75 = midpoint of idle(0) and walk(150).
     assert!(space.evaluate_into(75.0, 0.0, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.5).abs() < 1e-5, "expected 1.5, got {x}");
@@ -217,7 +217,7 @@ fn a_blend_space_clamps_outside_its_range() {
 
 #[test]
 fn the_phase_is_normalised_so_clips_of_different_lengths_stay_aligned() {
-    // 两个剪辑时长不同（1s / 2s），同一归一化相位下各自采到自己的关键帧。
+    // The two clips have different durations (1s / 2s); at the same normalized phase each samples its own keyframe.
     let mut space = BlendSpace1D::new(
         vec![
             BlendSample {
@@ -274,7 +274,7 @@ fn the_phase_is_normalised_so_clips_of_different_lengths_stay_aligned() {
         reference(),
     );
     let mut out = Pose::from_locals(Vec::new());
-    // 相位 0.5：short 采到 0.5s（x=0.5），long 采到 1.0s（x=1.5），按位置 0.5 混 → x=1.0。
+    // Phase 0.5: short samples 0.5s (x=0.5), long samples 1.0s (x=1.5), blended at position 0.5 → x=1.0.
     assert!(space.evaluate_into(0.5, 0.5, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.0).abs() < 1e-4, "expected 1.0, got {x}");
@@ -301,7 +301,7 @@ fn an_empty_blend_space_writes_nothing() {
     assert_eq!(space.range(), None);
     assert!(
         (out.local(0).unwrap().translation.x - 7.0).abs() < 1e-6,
-        "失败时不该清空调用方的姿态"
+        "on failure should not clear the caller's pose"
     );
 }
 
@@ -323,7 +323,7 @@ fn non_finite_positions_are_dropped_when_building() {
     assert_eq!(space.samples().len(), 1);
 }
 
-/// 绕 +Y 转 `deg` 的局部变换。
+/// Local transform rotated `deg` around +Y.
 fn rotated(deg: f32) -> JointTransform {
     JointTransform::new(
         Vec3::ZERO,
@@ -340,12 +340,12 @@ fn a_zero_weight_additive_layer_leaves_the_base_untouched() {
     let reference = pose(vec![rotated(0.0), t(Vec3::ZERO)]);
 
     assert_eq!(apply_additive(&mut base, &layer, &reference, 0.0), 0);
-    assert_eq!(base, before, "权重 0 不该动任何关节");
+    assert_eq!(base, before, "weight 0 should not move any joint");
 }
 
 #[test]
 fn additive_rotation_and_translation_are_applied_on_top_of_the_base() {
-    // 参考姿态是 0°，叠加层采样到 90° → 增量就是 90°；底姿态 30° 之上再转 90°。
+    // Reference pose is 0°, overlay sampled to 90° → increment is 90°; then rotate another 90° on top of base pose 30°.
     let mut base = pose(vec![rotated(30.0), t(Vec3::ZERO)]);
     let layer = pose(vec![rotated(90.0), t(Vec3::new(2.0, 0.0, 0.0))]);
     let reference = pose(vec![rotated(0.0), t(Vec3::ZERO)]);
@@ -356,10 +356,10 @@ fn additive_rotation_and_translation_are_applied_on_top_of_the_base() {
     let expected = Quat::from_rotation_y((120.0f32).to_radians());
     assert!(
         joint.rotation.dot(expected).abs() > 0.9999,
-        "30° + 90° = 120°，得到 {:?}",
+        "30° + 90° = 120°, got {:?}",
         joint.rotation
     );
-    // 平移是相对参考姿态的差值：参考在原点，所以直接把叠加层的位移加上去。
+    // Translation is the difference relative to the reference pose: reference is at origin, so just add the overlay's displacement directly.
     assert!((base.local(1).unwrap().translation.x - 2.0).abs() < 1e-6);
 }
 
@@ -371,12 +371,12 @@ fn half_weight_additive_halves_the_delta() {
 
     apply_additive(&mut base, &layer, &reference, 0.5);
 
-    // 增量 = 90° − 30° = 60°，一半 = 30°。
+    // Increment = 90° − 30° = 60°, half = 30°.
     let joint = base.local(0).expect("joint 0");
     let expected = Quat::from_rotation_y((30.0f32).to_radians());
     assert!(
         joint.rotation.dot(expected).abs() > 0.9999,
-        "得到 {:?}",
+        "got {:?}",
         joint.rotation
     );
 }
@@ -393,7 +393,7 @@ fn additive_scale_is_multiplicative_and_ignores_a_zero_reference() {
         Quat::IDENTITY,
         Vec3::new(3.0, 4.0, 8.0),
     )]);
-    // 参考缩放为 0（坏数据）时按 1 处理，而不是除出 inf。
+    // When reference scale is 0 (bad data), treat as 1 instead of dividing to inf.
     let reference = pose(vec![JointTransform::new(
         Vec3::ZERO,
         Quat::IDENTITY,
@@ -403,18 +403,18 @@ fn additive_scale_is_multiplicative_and_ignores_a_zero_reference() {
     apply_additive(&mut base, &layer, &reference, 1.0);
 
     let scale = base.local(0).unwrap().scale;
-    // 参考缩放为 0 → 增量按 1 处理（不动），而不是除出 inf / 塌成 0。
+    // Reference scale 0 → increment treated as 1 (unchanged), not divided to inf / collapsed to 0.
     assert!(
         (scale.x - 2.0).abs() < 1e-5,
-        "参考 0 时保持 2，得到 {scale:?}"
+        "reference 0 keeps 2, got {scale:?}"
     );
     assert!(
         (scale.y - 4.0).abs() < 1e-5,
-        "2 × (4/2) = 4，得到 {scale:?}"
+        "2 × (4/2) = 4, got {scale:?}"
     );
     assert!(
         (scale.z - 4.0).abs() < 1e-5,
-        "2 × (8/4) = 4，得到 {scale:?}"
+        "2 × (8/4) = 4, got {scale:?}"
     );
 }
 
@@ -427,7 +427,7 @@ fn an_additive_layer_only_touches_the_joints_it_shares() {
     assert_eq!(apply_additive(&mut base, &layer, &reference, 1.0), 1);
     assert!(
         base.local(1).unwrap().rotation.dot(Quat::IDENTITY).abs() > 0.9999,
-        "未覆盖的关节保持不动"
+        "uncovered joints stay put"
     );
 }
 
@@ -473,14 +473,14 @@ fn blend_space_sync_markers_remap_each_samples_phase() {
         ],
         reference.clone(),
     );
-    // 0.25 处 A 是领跑剪辑：B 的相位从 A 映射成 0.5；A 自己保持 0.25。
-    // A = 2.5, B = 10, 混合权重 0.75 / 0.25。
+    // At 0.25, A is the leading clip: B's phase is mapped from A to 0.5; A itself stays at 0.25.
+    // A = 2.5, B = 10, blend weight 0.75 / 0.25.
     let mut out = Pose::default();
     assert!(space.evaluate_into(0.25, 0.25, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 4.375).abs() < 1e-4, "x={x}");
 
-    // 参数移到 B 端后 leader 变成 B，B 的相位不再被映射（0.25），x = 5。
+    // After the parameter moves to B's end, leader becomes B; B's phase is no longer mapped (0.25), x = 5.
     assert!(space.evaluate_into(1.0, 0.25, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 5.0).abs() < 1e-4, "x={x}");

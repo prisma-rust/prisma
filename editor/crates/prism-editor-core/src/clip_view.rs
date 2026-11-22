@@ -1,10 +1,10 @@
-//! 动画剪辑时间轴与根运动的纯数据换算（#560 P0 编辑器）。
+//! Pure data conversion for animation clip timeline and root motion (#560 P0 editor).
 //!
-//! `.ranim` 本身是 cooked 二进制，编辑器只做**只读检查**：时间轴坐标、Notify /
-//! 同步标记位置、根关节首尾位移。真正的编辑仍走作者侧 `notifies.json` /
-//! `sync_markers.json` 侧车。
+//! `.ranim` itself is cooked binary; the editor only does **read-only checks**: timeline
+//! coordinates, Notify / sync marker positions, root joint start-to-end displacement. Real
+//! editing still goes through the authoring side `notifies.json` / `sync_markers.json` sidecars.
 
-/// 时间轴上的 x 坐标映射成秒，夹到 `0..=duration` 并量化到 0.01 秒。
+/// Map x coordinate on the timeline to seconds, clamped to `0..=duration` and quantized to 0.01 s.
 pub fn timeline_time_at(x: f32, left: f32, width: f32, duration: f32) -> f32 {
     if !x.is_finite()
         || !left.is_finite()
@@ -19,7 +19,7 @@ pub fn timeline_time_at(x: f32, left: f32, width: f32, duration: f32) -> f32 {
     ((fraction * duration) * 100.0).round() / 100.0
 }
 
-/// 秒映射回时间轴 x 坐标；超出剪辑范围夹到两端。
+/// Map seconds back to timeline x coordinate; out of clip range clamps to both ends.
 pub fn timeline_x(time: f32, duration: f32, left: f32, width: f32) -> f32 {
     if !time.is_finite()
         || !duration.is_finite()
@@ -33,10 +33,10 @@ pub fn timeline_x(time: f32, duration: f32, left: f32, width: f32) -> f32 {
     left + (time / duration).clamp(0.0, 1.0) * width
 }
 
-/// 根关节首尾位移与绕 Y 的偏航角（度）。
+/// Root joint start-to-end displacement and yaw around Y (degrees).
 ///
-/// Prisma 的 forward 是 `-Z`，所以 `atan2(dx, -dz)`：向 -Z 走是 0°，
-/// 向 +X 走是 +90°。垂直位移不参与偏航。
+/// Prisma's forward is `-Z`, so `atan2(dx, -dz)`: walking -Z is 0°, walking +X is +90°.
+/// Vertical displacement doesn't participate in yaw.
 pub fn root_motion_delta(start: [f32; 3], end: [f32; 3]) -> ([f32; 3], f32) {
     let delta = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
     let yaw = delta[0].atan2(-delta[2]).to_degrees();
@@ -68,13 +68,16 @@ mod tests {
     fn root_motion_reports_delta_and_yaw_with_minus_z_forward() {
         let (delta, yaw) = root_motion_delta([0.0, 0.0, 0.0], [0.0, 0.0, -2.0]);
         assert_eq!(delta, [0.0, 0.0, -2.0]);
-        assert!(yaw.abs() < 1e-4, "向 -Z 走是 0°");
+        assert!(yaw.abs() < 1e-4, "walking -Z is 0°");
 
         let (_, yaw) = root_motion_delta([0.0, 0.0, 0.0], [2.0, 0.0, 0.0]);
-        assert!((yaw - 90.0).abs() < 1e-4, "向 +X 走是 +90°");
+        assert!((yaw - 90.0).abs() < 1e-4, "walking +X is +90°");
 
         let (delta, yaw) = root_motion_delta([1.0, 2.0, 3.0], [4.0, 6.0, 5.0]);
         assert_eq!(delta, [3.0, 4.0, 2.0]);
-        assert!(yaw.is_finite(), "垂直位移不应产生 NaN");
+        assert!(
+            yaw.is_finite(),
+            "vertical displacement should not produce NaN"
+        );
     }
 }

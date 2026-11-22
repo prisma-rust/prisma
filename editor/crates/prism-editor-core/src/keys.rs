@@ -1,13 +1,13 @@
-//! 命令表与快捷键（`App.vue` 的 `MENUS` + 快捷键面板的等价物）。
+//! Command table and shortcuts (equivalent of `App.vue`'s `MENUS` + shortcuts panel).
 //!
-//! 所有菜单项都对应一个 `Command`；`SHORTCUTS` 是「命令 → 默认键位」的单一事实源，
-//! 菜单里显示的提示与按键分发用的是同一张表。
+//! Every menu item maps to a `Command`; `SHORTCUTS` is the single source of truth for
+//! "command → default key"; menu tooltips and key dispatch use the same table.
 
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Command {
-    // 文件
+    // File
     NewScene,
     NewPrefab,
     OpenDocument,
@@ -16,7 +16,7 @@ pub enum Command {
     RenameDocument,
     DeleteDocument,
     ReloadDocument,
-    // 编辑
+    // Edit
     Undo,
     Redo,
     DuplicateEntity,
@@ -30,16 +30,16 @@ pub enum Command {
     Preferences,
     ProjectSettings,
     ThemePanel,
-    // 构建
+    // Build
     BuildProject,
     CookScenes,
     OfflineTools,
-    // 运行
+    // Run
     Play,
     Pause,
     Stop,
     Step,
-    // 窗口
+    // Window
     ToggleSceneView,
     ToggleGameView,
     ToggleDocs,
@@ -52,10 +52,10 @@ pub enum Command {
     ToggleTools,
     ToggleHistory,
     ResetLayout,
-    // 帮助
+    // Help
     Shortcuts,
     About,
-    // 视口
+    // Viewport
     FrameAll,
     FrameSelection,
     ResetSceneCamera,
@@ -160,7 +160,7 @@ impl Command {
         }
     }
 
-    /// i18n key（`menu.*` / `toolbar.*` / `shortcuts.*`）。
+    /// i18n key (`menu.*` / `toolbar.*` / `shortcuts.*`).
     pub fn label_key(self) -> &'static str {
         match self {
             Command::NewScene => "menu.newScene",
@@ -218,7 +218,7 @@ impl Command {
             .map(|entry| entry.keys)
     }
 
-    /// 面板命令（`window/toggle/<id>`）→ 面板 id。
+    /// Panel command (`window/toggle/<id>`) → panel id.
     pub fn panel_id(self) -> Option<&'static str> {
         match self {
             Command::ToggleSceneView => Some("sceneView"),
@@ -332,7 +332,7 @@ pub const SHORTCUTS: &[ShortcutEntry] = &[
         command: Command::ResetSceneCamera,
         keys: "Ctrl+0",
     },
-    // 面板切换（引擎的 Ctrl+1..5）。
+    // Panel switching (engine's Ctrl+1..5).
     ShortcutEntry {
         command: Command::ToggleSceneView,
         keys: "Ctrl+1",
@@ -355,11 +355,11 @@ pub const SHORTCUTS: &[ShortcutEntry] = &[
     },
 ];
 
-/// 同一张表里的**额外**绑定：面板只展示 [`SHORTCUTS`] 里的那一条，但这些组合键
-/// 同样会触发命令（#516）。
+/// **Extra bindings** in the same table: panels only show the one in [`SHORTCUTS`], but these
+/// key combos also trigger commands (#516).
 ///
-/// 放这里的都是「用户肌肉记忆里的第二条路」：`Ctrl+Y` 是 Windows 习惯的重做，
-/// `Ctrl+Shift+C` 是 Console 在早期版本里的键位。
+/// These are "second paths in users' muscle memory": `Ctrl+Y` is Windows-style redo,
+/// `Ctrl+Shift+C` was Console's key in early versions.
 pub const SHORTCUT_ALIASES: &[ShortcutEntry] = &[
     ShortcutEntry {
         command: Command::Redo,
@@ -376,7 +376,7 @@ pub struct KeyChord {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
-    /// 规范化后的键名（小写；`delete` / `home` / `f` / `s` …）。
+    /// Normalized key name (lowercase; `delete` / `home` / `f` / `s` …).
     pub key: String,
 }
 
@@ -405,7 +405,7 @@ impl KeyChord {
         Some(chord)
     }
 
-    /// egui 的按键事件直接喂进来；`key` 是平台键名（`a` / `Delete` / `Home`）。
+    /// egui key events fed directly; `key` is platform key name (`a` / `Delete` / `Home`).
     pub fn from_event(ctrl: bool, shift: bool, alt: bool, key: &str) -> KeyChord {
         KeyChord {
             ctrl,
@@ -422,7 +422,7 @@ impl KeyChord {
             && self.key == event.key
     }
 
-    /// 菜单里显示的文本（与 `SHORTCUTS` 的写法一致）。
+    /// Text shown in menus (consistent with `SHORTCUTS` writing style).
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
         if self.ctrl {
@@ -465,7 +465,7 @@ fn normalize_key(key: &str) -> String {
     }
 }
 
-/// 按键 → 命令。先匹配完整 chord（含修饰键），再回退到无修饰键的单键动作。
+/// Key → command. Matches full chord (with modifiers) first, falls back to no-modifier single-key action.
 pub fn command_for(event: &KeyChord) -> Option<Command> {
     SHORTCUTS
         .iter()
@@ -477,7 +477,7 @@ pub fn command_for(event: &KeyChord) -> Option<Command> {
         .map(|entry| entry.command)
 }
 
-/// 命令的默认键位（[`SHORTCUTS`] 里那条）。
+/// Command's default key (the one in [`SHORTCUTS`]).
 pub fn default_keys(command: Command) -> Option<&'static str> {
     SHORTCUTS
         .iter()
@@ -485,7 +485,7 @@ pub fn default_keys(command: Command) -> Option<&'static str> {
         .map(|entry| entry.keys)
 }
 
-/// 命令当前生效的键位：用户覆盖优先，其次默认值。
+/// Command's currently effective key: user override takes priority, then default.
 pub fn effective_keys(command: Command, overrides: &BTreeMap<String, String>) -> Option<String> {
     overrides
         .get(command.id())
@@ -493,10 +493,10 @@ pub fn effective_keys(command: Command, overrides: &BTreeMap<String, String>) ->
         .or_else(|| default_keys(command).map(str::to_string))
 }
 
-/// 当前生效的全部绑定（主键 + 别名）。
+/// All currently effective bindings (main key + aliases).
 ///
-/// 被用户覆盖过的命令**不再使用旧别名**：一个命令只留一个键位，否则改键之后
-/// 旧键仍然生效，界面和实际行为对不上。
+/// Commands overridden by user **no longer use old aliases**: one command keeps only one key,
+/// otherwise after rebinding the old key remains effective, UI and actual behavior don't match.
 pub fn effective_bindings(overrides: &BTreeMap<String, String>) -> Vec<(Command, KeyChord)> {
     let mut out = Vec::new();
     for entry in SHORTCUTS {
@@ -518,7 +518,7 @@ pub fn effective_bindings(overrides: &BTreeMap<String, String>) -> Vec<(Command,
     out
 }
 
-/// 把 `chord` 绑给 `command` 是否与别的命令冲突（返回占用者）。
+/// Whether binding `chord` to `command` conflicts with another command (returns the occupant).
 pub fn conflicting_command(
     overrides: &BTreeMap<String, String>,
     command: Command,
@@ -579,7 +579,7 @@ mod tests {
         ids.sort_unstable();
         let count = ids.len();
         ids.dedup();
-        assert_eq!(ids.len(), count, "命令 id 必须唯一");
+        assert_eq!(ids.len(), count, "command id must be unique");
 
         for command in Command::ALL {
             assert!(!command.label_key().is_empty());
@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn overrides_replace_default_keys_and_drop_the_old_alias() {
-        // #421：改键后旧键不再生效；别名也不该继续触发同一个命令。
+        // #421: After rebinding old key no longer valid; alias should not trigger same command either.
         let mut overrides = BTreeMap::new();
         overrides.insert(Command::Play.id().to_string(), "Ctrl+Shift+P".to_string());
         assert_eq!(
@@ -612,7 +612,7 @@ mod tests {
             !bindings.iter().any(|(command, chord)| {
                 *command == Command::Redo && chord.matches(&KeyChord::parse("Ctrl+Y").unwrap())
             }),
-            "覆盖后 Ctrl+Y 这个别名必须失效"
+            "After rebinding Ctrl+Y alias must be invalid"
         );
         assert!(bindings.iter().any(|(command, chord)| {
             *command == Command::Redo && chord.matches(&KeyChord::parse("Ctrl+Alt+Z").unwrap())
@@ -627,10 +627,10 @@ mod tests {
             conflicting_command(&overrides, Command::Play, &save),
             Some(Command::Save)
         );
-        // 绑回自己原来的键不算冲突。
+        // Binding back to own original key is not a conflict.
         assert_eq!(conflicting_command(&overrides, Command::Save, &save), None);
 
-        // 覆盖表参与判断：把 Play 改成 Ctrl+Shift+P 后，别的命令不能再占它。
+        // Override table participates in judgment: after Play changed to Ctrl+Shift+P, other commands can't take it.
         let mut overrides = BTreeMap::new();
         overrides.insert(Command::Play.id().to_string(), "Ctrl+Shift+P".to_string());
         let chord = KeyChord::parse("Ctrl+Shift+P").unwrap();
@@ -646,14 +646,14 @@ mod tests {
             let chord = KeyChord::parse(entry.keys).unwrap_or_else(|| panic!("bad {}", entry.keys));
             assert_eq!(chord.display(), entry.keys.replace("Del", "Del"));
         }
-        // 同一 chord 不能绑两个命令。
+        // Same chord cannot bind two commands.
         for (index, first) in SHORTCUTS.iter().enumerate() {
             let first_chord = KeyChord::parse(first.keys).unwrap();
             for second in &SHORTCUTS[index + 1..] {
                 let second_chord = KeyChord::parse(second.keys).unwrap();
                 assert!(
                     !first_chord.matches(&second_chord) || first.command == second.command,
-                    "{} 与 {} 冲突",
+                    "{} conflicts with {}",
                     first.keys,
                     second.keys
                 );

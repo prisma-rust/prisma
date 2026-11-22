@@ -1,9 +1,9 @@
-//! 资产管理器数据层（`AssetBrowser.vue` / `editor_asset_*` 的等价物）。
+//! Asset browser data layer (the `AssetBrowser.vue` / `editor_asset_*` equivalent).
 //!
-//! 输入是 `assets/` 下的扁平路径列表（`AssetInfo`），这里负责：
-//! - 建目录树（`Project` 面板的两栏：目录树 + 列表）；
-//! - 按路径 / 分类 / 导入器检索；
-//! - 分类配色与体积格式化。
+//! Input is a flat path list under `assets/` (`AssetInfo`); this is responsible for:
+//! - building the directory tree (two columns of the `Project` panel: tree + list);
+//! - lookup by path / category / importer;
+//! - category colors and volume formatting.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ pub enum AssetKind {
     Material,
     Data,
     Audio,
-    /// 工程自带字体（`.ttf` / `.otf` / `.ttc`，#583）。
+    /// Engine-bundled fonts (`.ttf` / `.otf` / `.ttc`, #583).
     Font,
     Other,
 }
@@ -28,17 +28,17 @@ pub enum AssetKind {
 impl AssetKind {
     pub fn label(self) -> &'static str {
         match self {
-            AssetKind::Model => "模型",
-            AssetKind::Texture => "纹理",
-            AssetKind::Env => "环境",
-            AssetKind::Scene => "场景",
-            AssetKind::Prefab => "预制体",
-            AssetKind::Package => "包",
-            AssetKind::Material => "材质",
-            AssetKind::Data => "数据",
-            AssetKind::Audio => "音频",
-            AssetKind::Font => "字体",
-            AssetKind::Other => "其他",
+            AssetKind::Model => "model",
+            AssetKind::Texture => "texture",
+            AssetKind::Env => "environment",
+            AssetKind::Scene => "scene",
+            AssetKind::Prefab => "prefab",
+            AssetKind::Package => "package",
+            AssetKind::Material => "material",
+            AssetKind::Data => "data",
+            AssetKind::Audio => "audio",
+            AssetKind::Font => "font",
+            AssetKind::Other => "other",
         }
     }
 
@@ -58,7 +58,7 @@ impl AssetKind {
         }
     }
 
-    /// 与 `AssetBrowser.vue` 的分类色一致（`--accent-alt` 等强调色的用途）。
+    /// Consistent with `AssetBrowser.vue`'s category colors (used by `--accent-alt` etc.).
     pub fn is_text_like(self) -> bool {
         matches!(
             self,
@@ -83,10 +83,10 @@ impl AssetKind {
     }
 }
 
-/// 组件字段是否是资产路径（检查器里显示「选择资产」按钮）。
+/// Whether a component field is an asset path (the inspector shows a "select asset" button).
 ///
-/// 与 `prism-editor-api` 的 `ASSET_PATH_FIELDS` 保持同一判断口径：
-/// `*_path` 后缀 + 少数没有后缀的历史字段（`env_map` / `volume` / `prefab`）。
+/// Kept consistent with `prism-editor-api`'s `ASSET_PATH_FIELDS` judgment:
+/// `*_path` suffix plus a few suffix-less historical fields (`env_map` / `volume` / `prefab`).
 pub fn is_asset_path_field(component: &str, field: &str) -> bool {
     let leaf = field.rsplit('.').next().unwrap_or(field);
     leaf.ends_with("_path")
@@ -113,16 +113,18 @@ pub fn guid_field_for_path(component: &str, field: &str) -> Option<String> {
     }
 }
 
-/// 把文档里的一条引用解析成资产表里的路径。
+/// Parse one reference in a document into a path in the asset table.
 ///
-/// 项目里的引用有三种合法写法（见 #465），都要能验证：
-/// - `sprites/water.png` —— 相对 `assets/` 根（**最常见**的写法，没有 `assets/` 前缀）；
-/// - `assets/textures/wood.png` —— 带前缀的项目路径；
-/// - `../textures/wood.png` —— 相对**文档所在目录**；
-/// - `wood.png` —— 纯文件名，按「唯一同名文件」匹配。
+/// A project reference has three valid forms (see #465), all must be verifiable:
+/// - `sprites/water.png` — relative to the `assets/` root (the **most common** form, no `assets/`
+///   prefix);
+/// - `assets/textures/wood.png` — prefixed project path;
+/// - `../textures/wood.png` — relative to the **document's directory**;
+/// - `wood.png` — bare file name, matched by "unique same-named file".
 ///
-/// 返回 `None` 表示引用断掉了：文件被删、改名、或拼错。调用方据此给出可见提示
-/// （检查器的 `Missing` 标记 / 层级树的警告图标，见 #467）。
+/// Returns `None` when the reference is broken: file deleted, renamed, or misspelled. The caller
+/// uses this to surface a visible hint (inspector `Missing` marker / hierarchy tree warning icon,
+/// see #467).
 pub fn resolve_reference<'a>(
     assets: &'a [String],
     doc_dir: &str,
@@ -132,7 +134,7 @@ pub fn resolve_reference<'a>(
     if reference.is_empty() {
         return None;
     }
-    // 绝对路径 / 带盘符：不属于项目资产，别猜。
+    // Absolute path / drive letter: not a project asset, don't guess.
     if reference.starts_with('/') || reference.contains(':') {
         return None;
     }
@@ -154,11 +156,11 @@ pub fn resolve_reference<'a>(
         };
         return normalize_segments(&joined).and_then(|path| exact(&path));
     }
-    // 相对 `assets/` 根：`sprites/water.png` / `textures/wood.png`。
+    // Relative to the `assets/` root: `sprites/water.png` / `textures/wood.png`.
     if let Some(hit) = exact(&format!("assets/{reference}")) {
         return Some(hit);
     }
-    // 纯文件名：同名资产必须唯一，否则不猜。
+    // Bare file name: same-named assets must be unique, otherwise don't guess.
     let mut hits = assets
         .iter()
         .filter(|asset| file_name(asset) == reference)
@@ -167,7 +169,7 @@ pub fn resolve_reference<'a>(
     hits.next().is_none().then_some(first)
 }
 
-/// 消掉 `.` / `..` 段；`..` 越界（跑出 `assets/` 之外）时返回 `None`。
+/// Drop `.` / `..` segments; `..` out of bounds (running out of `assets/`) returns `None`.
 fn normalize_segments(path: &str) -> Option<String> {
     let mut out: Vec<&str> = Vec::new();
     for segment in path.split('/') {
@@ -196,8 +198,8 @@ pub struct AssetInfo {
     pub kind: AssetKind,
     #[serde(default)]
     pub importer: String,
-    /// 资产 sidecar（`<path>.rmeta`）里的稳定 GUID（#466）。旧调用方 / 没有
-    /// sidecar 的资产是 `None`，详情面板回落到路径哈希。
+    /// Stable GUID from the asset sidecar (`<path>.rmeta`, #466). Callers without a sidecar /
+    /// older callers get `None`; the details panel falls back to a path hash.
     #[serde(default)]
     pub guid: Option<String>,
 }
@@ -264,7 +266,8 @@ pub struct AssetTree {
 
 impl AssetTree {
     pub fn build(assets: &[AssetInfo]) -> Self {
-        // path -> 子节点（目录用 BTreeMap 保证稳定顺序：目录在前、同类按名字）。
+        // path -> child nodes (directories use BTreeMap for stable order: dirs first, then
+        // same category by name).
         #[derive(Default)]
         struct Dir {
             name: String,
@@ -280,7 +283,7 @@ impl AssetTree {
                 .split('/')
                 .filter(|part| !part.is_empty())
                 .collect();
-            // `assets/` 是项目资产根，不作为一个可折叠目录显示。
+            // `assets/` is the project asset root, not shown as a collapsible directory.
             if parts.first() == Some(&"assets") {
                 parts.remove(0);
             }
@@ -343,17 +346,17 @@ impl AssetTree {
         self.roots.iter().find_map(|root| root.find(path))
     }
 
-    /// 目录列表（`assets/` 下的直属目录）。
+    /// Directory list (directories directly under `assets/`).
     pub fn top_level(&self) -> Vec<&AssetNode> {
         self.roots.iter().filter(|node| node.is_dir).collect()
     }
 
-    /// 资产根目录下的散落文件（`assets/settings.ini` 之类）。
+    /// Loose files under the asset root (`assets/settings.ini` etc.).
     pub fn root_files(&self) -> Vec<&AssetNode> {
         self.roots.iter().filter(|node| !node.is_dir).collect()
     }
 
-    /// 某个目录的直接子项（`None` = 根）。
+    /// Direct children of a directory (`None` = root).
     pub fn children_of(&self, folder: Option<&str>) -> Vec<&AssetNode> {
         match folder {
             None | Some("assets") | Some("") => self.roots.iter().collect(),
@@ -364,7 +367,7 @@ impl AssetTree {
         }
     }
 
-    /// 深度优先的行（目录树面板）。
+    /// Depth-first rows (directory tree panel).
     pub fn visible_rows<'a>(
         &'a self,
         expanded: &std::collections::HashSet<String>,
@@ -387,7 +390,8 @@ impl AssetTree {
         out
     }
 
-    /// 插入一个空目录节点（`scan_assets` 只返回文件，空目录需要单独补）。
+    /// Insert an empty directory node (`scan_assets` only returns files, empty directories need
+    /// to be added separately).
     pub fn insert_dir(&mut self, path: &str) {
         let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
         let Some(start) = parts.iter().position(|part| *part != "assets") else {
@@ -428,7 +432,7 @@ impl AssetTree {
         }
     }
 
-    /// 某个目录下（递归）的全部文件。
+    /// All files under a directory (recursive).
     pub fn files_under<'a>(&'a self, folder: Option<&str>) -> Vec<&'a AssetNode> {
         let mut out = Vec::new();
         let mut stack: Vec<&AssetNode> = match folder {
@@ -450,9 +454,9 @@ impl AssetTree {
     }
 }
 
-/// 稳定的资产 GUID（32 位十六进制，形状与 `.meta` 里的 guid 一致）。
+/// Stable asset GUID (32-bit hex, same shape as the guid in `.meta`).
 ///
-/// 用 FNV-1a 64 位哈希路径：不引入 uuid 依赖，同一路径跨进程稳定。
+/// FNV-1a 64-bit hash of the path: no uuid dependency, stable across processes for the same path.
 pub fn asset_guid(path: &str) -> String {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in path.as_bytes() {
@@ -462,10 +466,10 @@ pub fn asset_guid(path: &str) -> String {
     format!("{hash:016x}{hash:016x}")
 }
 
-/// 复制资产时生成不冲突的路径：`rock.png` → `rock-2.png`。
+/// Generate a non-conflicting path when copying an asset: `rock.png` → `rock-2.png`.
 ///
-/// `.scene.json` / `.prefab.json` 的双后缀会整体保留（`a-2.scene.json`），
-/// 不会生成 `a.scene-2.json`。
+/// The double suffix of `.scene.json` / `.prefab.json` is kept as a whole (`a-2.scene.json`),
+/// not producing `a.scene-2.json`.
 pub fn unique_asset_path(assets: &[AssetInfo], path: &str) -> String {
     let taken: std::collections::HashSet<&str> =
         assets.iter().map(|asset| asset.path.as_str()).collect();
@@ -525,7 +529,7 @@ pub struct AssetDetails {
     pub references: Vec<AssetReference>,
 }
 
-/// 读文本预览（最多 `max_bytes`，按 UTF-8 边界截断）。
+/// Read a text preview (at most `max_bytes`, truncated at UTF-8 boundary).
 pub fn text_preview(
     root: &std::path::Path,
     relative: &str,
@@ -541,7 +545,8 @@ pub fn text_preview(
     Some((text, truncated))
 }
 
-/// 图片尺寸：支持 PNG / GIF / BMP / JPEG（只读文件头，不引入解码库）。
+/// Image dimensions: supports PNG / GIF / BMP / JPEG (reads only the file header, no decode
+/// library introduced).
 pub fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24 {
         let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
@@ -649,7 +654,7 @@ pub fn filter_assets<'a>(assets: &'a [AssetInfo], query: &AssetQuery) -> Vec<&'a
     assets.iter().filter(|asset| query.matches(asset)).collect()
 }
 
-/// 人类可读体积（与 `format.ts::formatBytes` 一致：1024 进制、1 位小数）。
+/// Human-readable size (consistent with `format.ts::formatBytes`: 1024-based, 1 decimal).
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     if bytes < 1024 {
@@ -729,7 +734,7 @@ mod tests {
         let names: Vec<&str> = scenes.child_names();
         assert_eq!(names, vec!["default.scene.json", "rocket.scene.json"]);
 
-        // 根目录的文件也在根节点里。
+        // Root directory files are also in the root node.
         assert!(tree.find("assets/settings.ini").is_some());
     }
 
@@ -737,7 +742,11 @@ mod tests {
     fn visible_rows_respect_expansion() {
         let tree = AssetTree::build(&sample());
         let mut expanded = std::collections::HashSet::new();
-        assert_eq!(tree.visible_rows(&expanded).len(), 4, "3 目录 + 1 根文件");
+        assert_eq!(
+            tree.visible_rows(&expanded).len(),
+            4,
+            "3 directories + 1 root file"
+        );
         assert_eq!(tree.children_of(Some("assets")).len(), 4);
 
         expanded.insert("assets/scenes".to_string());
@@ -767,7 +776,7 @@ mod tests {
 
         query.search = "SCENE".into();
         let hits = filter_assets(&assets, &query);
-        assert_eq!(hits.len(), 2, "搜索不区分大小写");
+        assert_eq!(hits.len(), 2, "search is case-insensitive");
 
         query.search.clear();
         query.kinds.push(AssetKind::Texture);
@@ -868,22 +877,22 @@ mod tests {
     #[test]
     fn references_resolve_in_all_three_writing_styles() {
         let assets = paths();
-        // 相对项目根
+        // Relative to project root
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "assets/textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // 相对文档目录（#465 允许的写法）
+        // Relative to document directory (a form allowed by #465)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes/deep", "../../textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // 相对 assets/ 根（项目里最常见的写法）
+        // Relative to assets/ root (the most common form in the project)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // 纯文件名（唯一时）
+        // Bare file name (when unique)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "wood.png"),
             Some("assets/textures/wood.png")
@@ -897,11 +906,11 @@ mod tests {
             resolve_reference(&assets, "assets/scenes", "assets/textures/stone.png"),
             None
         );
-        // 同名文件不唯一时不能瞎猜。
+        // Can't guess when same-named files aren't unique.
         assert_eq!(resolve_reference(&assets, "assets", "shared.png"), None);
-        // 空值 = 没设，不算断引用。
+        // Empty value = not set, not a broken reference.
         assert_eq!(resolve_reference(&assets, "assets", "   "), None);
-        // 相对路径跑出 assets/ 之外。
+        // Relative path runs out of assets/.
         assert_eq!(resolve_reference(&assets, "assets", "../outside.png"), None);
     }
 }

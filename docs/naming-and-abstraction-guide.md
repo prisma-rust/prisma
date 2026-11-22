@@ -1,84 +1,84 @@
-# 代码与着色器命名及内容抽象规范
+# Code and shader naming and content abstraction conventions
 
-本文档是 Prisma 代码库中 **Rust 源码与 Slang 着色器** 的内容抽象与命名契约指南。
+This document is the content abstraction and naming contract guide for **Rust source code and Slang shaders** in the Prisma codebase.
 
-核心宗旨：**文件名即抽象职责。拒绝名不副实、拒绝模式名词滥用、消除图形学缩写冲突，并在 1.0 前坚决落实零兼容垃圾代码原则。**
-
----
-
-## 🎨 一、着色器体系抽象与命名规范
-
-着色器位于 `assets/shaders/`，源码使用 Slang 语言（`slang/`），经 `compile.sh` 编译为 SPIR-V（`.spv`），并通过 `xtask shader-bindgen` 导出强类型 Rust 绑定（`crates/prism-render/src/shader_bindings/`）。
-
-### 1. 文件角色二元划分
-
-着色器文件根据其内容抽象严格划分为两类，禁止混合定义：
-
-| 类别 | 角色定义 | 包含内容 | 产物形态 | 命名规范 |
-|---|---|---|---|---|
-| **Entry Shaders**<br>（管线入口着色器） | 对应具体的 RenderPass 或 Compute 任务 | 包含 `[shader("vertex")]`、`[shader("fragment")]` 或 `[shader("compute")]` | 产出 `<name>.<stage>.spv`<br>及 `reflection/<name>.json` | `<pass_name>.slang`<br>（如 `gizmo.slang`, `post.slang`） |
-| **Module Libraries**<br>（共享算法与结构库） | 纯算法求值、数据结构定义或工具函数 | `struct`、公共常量、`import` 模块，**无入口点** | **不生成独立 .spv**，仅供其它 shader `import` | `<concept>.slang`<br>（如 `common.slang`, `probe_volume.slang`） |
-
-### 2. 图形学缩写去歧义铁律（Disambiguation）
-
-在渲染管线中，多个不同领域的技术常共享类似缩写，必须在抽象命名中彻底消除歧义：
-
-| 领域技术 | 规范前缀 / 缩写 | 严禁与歧义写法 | 理由与边界 |
-|---|---|---|---|
-| **光线追踪 / 路径追踪**<br>(Ray / Path Tracing) | `pt_` / `ray_` | 严禁缩写为 `rt_` | `pt_render.slang`、`pt_reference.slang`。<br>`pt_` 专指路径积分与光线查询。 |
-| **离屏渲染纹理**<br>(Render Texture) | `rtt_` / `render_texture_` | 严禁简写为 `rt_` | 历史上的 `rt_render` / `rt_preview` 极易被误解为 Ray Tracing。<br>用于离屏纹理生产与消费测试时统一使用 `rtt_` 前缀。 |
-| **探针全局光照**<br>(Probe-Volume SH) | `probe_` / `probe_volume_` | 严禁笼统命名为 `gi_` | 探针体积求值库（SH Radiance/Irradiance）只负责规则网格探针，命名必须具体到 `probe_volume`，不得冒充整体全局光照（GI）。 |
-| **屏幕空间遮蔽**<br>(Screen-Space Ambient Occlusion) | `gtao` | 保持小写行业标准名 | 对应 Ground Truth Ambient Occlusion。 |
-| **时间性抗锯齿**<br>(Temporal Anti-Aliasing) | `taa` | 保持小写行业标准名 | 对应 TAA Resolve Pass。 |
-
-### 3. 管线阶段后缀与重复命名反模式
-
-- **标准模式**：单一 Pass 的顶点与片段入口合并在一个 `<pass_name>.slang` 中，由 `compile.sh` 分别编译为 `<pass_name>.vert.spv` 与 `<pass_name>.frag.spv`。
-  - 正例：`post.slang` → `post.vert.spv` + `post.frag.spv`
-  - 正例：`gtao.slang` → `gtao.vert.spv` + `gtao.frag.spv`
-  - 正例：`shadow_depth.slang` → `shadow_depth.vert.spv` + `shadow_depth.frag.spv`
-- **反模式**：在基础文件名中硬编码阶段名，导致产出重复冗余的物理后缀。
-  - 历史反模式：`mesh_vert.slang` → `mesh_vert.vert.spv`（`vert` 重复两次）
-  - 历史反模式：`scene_frag.slang` → `scene_frag.frag.spv`（`frag` 重复两次）
-  - **规范化演进路线**：前向主渲染管线抽象为 `pbr_forward.slang`，共享统一的 `PbrPush` 常量块，输出 `pbr_forward.vert.spv` 与 `pbr_forward.frag.spv`。
+Core principle: **File name equals abstraction responsibility. Reject misnamed files, reject abuse of pattern nouns, eliminate graphics abbreviation conflicts, and firmly implement zero-compatibility garbage code principle before 1.0.**
 
 ---
 
-## 🦀 二、Rust 代码体系抽象与命名规范
+## 🎨 I. Shader system abstraction and naming conventions
 
-### 1. 领域概念驱动 vs 设计模式名词
+Shaders are located in `assets/shaders/`, source code uses Slang language (`slang/`), compiled to SPIR-V (`.spv`) via `compile.sh`, and strong-type Rust bindings exported via `xtask shader-bindgen` (`crates/prism-render/src/shader_bindings/`).
 
-在系统和引擎层代码中，模块和文件名应直接表达其所代表的**领域模型与物理/逻辑实体**，严禁使用空泛的设计模式名词污染抽象：
+### 1. File role binary division
 
-- **拒绝设计模式后缀**：
-  - ❌ `input_facade.rs`（把设计模式 Facade 当成业务核心名）
-  - ✅ **`input_snapshot.rs`**（准确抽象：某一帧输入状态的不可变快照，跨模块传递的数据本体）
-- **拒绝口语化俚语，使用精准的技术抽象名词**：
-  - ❌ `dummy.rs`（测试替身口语，模糊了真实 GPU 资源的意义）
-  - ✅ **`placeholder.rs`**（准确抽象：在特性关闭时填充 Descriptor 的 1x1 常量可采样资源 `SolidImage`）
-- **拒绝模糊的 `compat`，精准标识架构意图**：
+Shader files are strictly divided into two categories based on content abstraction, mixed definition is prohibited:
+
+| Category | Role definition | Content | Output form | Naming convention |
+|----------|----------------|---------|-------------|-------------------|
+| **Entry Shaders** (pipeline entry shaders) | Correspond to a specific RenderPass or Compute task | Contains `[shader("vertex")]`, `[shader("fragment")]` or `[shader("compute")]` | Output `<name>.<stage>.spv` and `reflection/<name>.json` | `<pass_name>.slang` (e.g. `gizmo.slang`, `post.slang`) |
+| **Module Libraries** (shared algorithm and structure libraries) | Pure algorithm evaluation, data structure definition, or utility functions | `struct`, public constants, `import` modules, **no entry points** | **No independent .spv generated**, only imported by other shaders | `<concept>.slang` (e.g. `common.slang`, `probe_volume.slang`) |
+
+### 2. Graphics abbreviation disambiguation iron law
+
+In the rendering pipeline, multiple different technical fields often share similar abbreviations, must be completely disambiguated in abstract naming:
+
+| Technical field | Convention prefix / abbreviation | Strictly prohibited ambiguous writing | Reason and boundary |
+|-----------------|----------------------------------|--------------------------------------|---------------------|
+| **Ray / Path Tracing** | `pt_` / `ray_` | Strictly prohibit abbreviation as `rt_` | `pt_render.slang`, `pt_reference.slang`. `pt_` specifically refers to path integration and ray query. |
+| **Render Texture** | `rtt_` / `render_texture_` | Strictly prohibit abbreviation as `rt_` | Historically `rt_render` / `rt_preview` easily misunderstood as Ray Tracing. Unified use `rtt_` prefix for offscreen texture production and consumption testing. |
+| **Probe-Volume SH GI** | `probe_` / `probe_volume_` | Strictly prohibit generic naming as `gi_` | Probe volume evaluation library (SH Radiance / Irradiance) only handles regular grid probes, naming must be specific to `probe_volume`, must not impersonate overall GI. |
+| **Screen-Space Ambient Occlusion** | `gtao` | Keep lowercase industry standard name | Corresponds to Ground Truth Ambient Occlusion. |
+| **Temporal Anti-Aliasing** | `taa` | Keep lowercase industry standard name | Corresponds to TAA Resolve Pass. |
+
+### 3. Pipeline stage suffix and duplicate naming anti-pattern
+
+- **Standard pattern**: single Pass vertex and fragment entry points combined in one `<pass_name>.slang`, compiled by `compile.sh` separately into `<pass_name>.vert.spv` and `<pass_name>.frag.spv`.
+  - Positive example: `post.slang` → `post.vert.spv` + `post.frag.spv`
+  - Positive example: `gtao.slang` → `gtao.vert.spv` + `gtao.frag.spv`
+  - Positive example: `shadow_depth.slang` → `shadow_depth.vert.spv` + `shadow_depth.frag.spv`
+- **Anti-pattern**: hardcode stage name in base filename, causing duplicate redundant physical suffixes.
+  - Historical anti-pattern: `mesh_vert.slang` → `mesh_vert.vert.spv` (`vert` repeated twice)
+  - Historical anti-pattern: `scene_frag.slang` → `scene_frag.frag.spv` (`frag` repeated twice)
+  - **Normalization evolution path**: forward main rendering pipeline abstracted as `pbr_forward.slang`, sharing unified `PbrPush` constant block, outputting `pbr_forward.vert.spv` and `pbr_forward.frag.spv`.
+
+---
+
+## 🦀 II. Rust code system abstraction and naming conventions
+
+### 1. Domain concept-driven vs design pattern nouns
+
+In system and engine layer code, module and file names should directly express the **domain model and physical/logical entities** they represent, strictly prohibit using empty design pattern nouns to pollute abstraction:
+
+- **Reject design pattern suffixes**:
+  - ❌ `input_facade.rs` (using design pattern Facade as business core name)
+  - ✅ **`input_snapshot.rs`** (accurate abstraction: immutable snapshot of input state for one frame, data entity passed across modules)
+- **Reject colloquial slang, use precise technical abstraction nouns**:
+  - ❌ `dummy.rs` (test double colloquial, blurs true GPU resource meaning)
+  - ✅ **`placeholder.rs`** (accurate abstraction: 1x1 constant samplable resource `SolidImage` filling descriptor when feature is off)
+- **Reject vague `compat`, precisely identify architecture intent**:
   - ❌ `vulkan_compat.rs`
-  - ✅ **`device_fallback.rs`**（准确抽象：当硬件未支持某项高级 Vulkan 扩展时的指令级降级调度分发）
+  - ✅ **`device_fallback.rs`** (accurate abstraction: instruction-level degradation scheduling dispatch when hardware does not support certain advanced Vulkan extensions)
 
-### 2. 1.0 前零兼容逻辑与命名清洁
+### 2. Zero-compatibility logic and naming cleanliness before 1.0
 
-在 1.0 版本发布前，坚决贯彻“**旧版本兼容被明确视为冗余的垃圾代码**”硬规则：
+Before 1.0 release, firmly implement the hard rule: **"old version compatibility is explicitly regarded as redundant garbage code"**:
 
-1. **严禁引入与保留带有 `legacy_` 前缀的函数或接口**：
-   - 彻底清除 `legacy_settings_path`、`legacy_manifest_path`、`parse_legacy_toml` 等回退逻辑；
-   - 配置文件唯一源为 `assets/settings.ini`，场景清单唯一源为 `assets/scenes.json`。读端与写端只认最新格式，不编写回退兼容分支。
-2. **严禁在公开 API 或内部模块中保留 `#[deprecated]` 垫片**：
-   - 需要修改签名、数据结构或协议时，直接按最优设计进行破坏性重构，清理所有旧实现，不留任何过渡兼容包袱。
+1. **Strictly prohibit introducing and retaining functions or interfaces with `legacy_` prefix**:
+   - Completely remove `legacy_settings_path`, `legacy_manifest_path`, `parse_legacy_toml` and other fallback logic;
+   - Configuration file unique source is `assets/settings.ini`, scene manifest unique source is `assets/scenes.json`. Read end and write end only recognize latest format, no writing fallback compatibility branches.
+2. **Strictly prohibit retaining `#[deprecated]` shims in public API or internal modules**:
+   - When needing to modify signature, data structure, or protocol, directly perform destructive refactoring with optimal design, clean up all old implementations, leaving no transitional compatibility baggage.
 
 ---
 
-## 📋 三、命名与抽象审查速查清单（Checklist）
+## 📋 III. Naming and abstraction review checklist
 
-在新增或重构代码、着色器文件时，必须核对以下维度：
+When adding or refactoring code, shader files, must check the following dimensions:
 
-- [ ] **语义真实性**：该文件名是否精确描述了文件内部的核心数据结构与算法？有没有借大词（如把局部离线追踪叫 `gi_render`）？
-- [ ] **缩写排他性**：若涉及图形学缩写，是否严格遵循了去歧义规则（`pt_` 光追 vs `rtt_` 离屏纹理）？
-- [ ] **对称性与阶段解耦**：着色器是否由 Pass 逻辑名称统一驱动，避免在源码主名中拼接 `_vert` / `_frag`？
-- [ ] **无模式名词污染**：模块名是否直接反映领域概念（如 `input_view`），而非设计模式名词（`input_facade`）？
-- [ ] **无口语化与俚语**：底层资源是否使用了正式的技术实体名（如 `placeholder`），杜绝使用 `dummy`、`temp`、`fake`？
-- [ ] **零兼容垃圾**：代码中是否不存在任何 `legacy_*`、`*_compat`、回退解析旧格式的代码？
+- [ ] **Semantic authenticity**: Does the file name precisely describe the core data structures and algorithms inside? Is there any borrowed big word (e.g. calling local offline tracing `gi_render`)?
+- [ ] **Abbreviation exclusivity**: If involving graphics abbreviations, is the disambiguation rule strictly followed (`pt_` ray tracing vs `rtt_` offscreen texture)?
+- [ ] **Symmetry and stage decoupling**: Is shader driven by Pass logic name, avoiding appending `_vert` / `_frag` in source main name?
+- [ ] **No design pattern noun pollution**: Does module name directly reflect domain concept (e.g. `input_view`), rather than design pattern noun (`input_facade`)?
+- [ ] **No colloquialism and slang**: Does underlying resource use formal technical entity name (e.g. `placeholder`), prohibiting `dummy`, `temp`, `fake`?
+- [ ] **Zero compatibility garbage**: Is there no `legacy_*`, `*_compat`, or old format fallback parsing code in code?

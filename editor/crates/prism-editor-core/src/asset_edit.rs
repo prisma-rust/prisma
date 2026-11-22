@@ -1,12 +1,14 @@
-//! 资产 JSON 编辑的撤销 / 重做（#560 动画图 / 状态机 / Notify 面板）。
+//! Undo / redo for asset JSON editing (#560 animation graph / state machine / notify panels).
 //!
-//! 场景编辑走 [`crate::undo`]，但图、状态机、事件表这些 sidecar 资产不在 `SceneDoc`
-//! 里，每次改动都直接写盘，所以需要单独一条历史。这里存的是**整份 JSON 快照**：
-//! 文件只有几 KB，比给每种编辑写求逆命令稳得多，也能覆盖「面板之外的字段保持原样」。
+//! Scene editing goes through [`crate::undo`], but graph, state machine, and event table sidecar
+//! assets are not in `SceneDoc`, so every change is written directly to disk and needs a
+//! separate history. Here we store **full JSON snapshots**: files are only a few KB, more
+//! stable than writing inverse commands per edit, and covers "fields outside the panel stay
+//! unchanged".
 //!
-//! 连续拖拽（DragValue / 时间轴）每帧都会产生一次改动，同一个文件、间隔在
-//! `coalesce_ms` 内、且新一步的 `before` 正好等于上一步的 `after` 时合并成一步，
-//! 否则撤销一次只退一帧。
+//! Continuous dragging (DragValue / timeline) produces one change per frame; for the same file,
+//! within `coalesce_ms`, and when the new step's `before` exactly equals the previous step's
+//! `after`, they are merged into one step, otherwise undoing only retreats one frame.
 
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const DEFAULT_LIMIT: usize = 100;
 const DEFAULT_COALESCE_MS: u64 = 800;
 
-/// 一步资产编辑：文件路径 + 改动前后的完整 JSON。
+/// One asset edit: file path + full JSON before and after the change.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssetEdit {
     pub path: String,
@@ -22,14 +24,14 @@ pub struct AssetEdit {
     pub after: Value,
 }
 
-/// 一步编辑可以同时改多个文件（例如参数改名连带状态机条件）。
+/// One step can edit multiple files at once (e.g. parameter rename plus state machine conditions).
 #[derive(Debug, Clone)]
 struct Entry {
     edits: Vec<AssetEdit>,
     at_ms: u64,
 }
 
-/// 资产编辑历史；`undo` / `redo` 返回要写回的状态，由调用方落盘。
+/// Asset edit history; `undo` / `redo` return the state to write back, the caller persists it.
 #[derive(Debug, Clone)]
 pub struct AssetEditHistory {
     undo: Vec<Entry>,
@@ -62,7 +64,7 @@ impl AssetEditHistory {
         self.coalesce_ms = ms;
     }
 
-    /// 记录一次编辑；`before == after` 不算改动。
+    /// Record one edit; `before == after` is not counted as a change.
     pub fn record(&mut self, path: &str, before: &Value, after: &Value) {
         self.record_at(path, before, after, now_ms());
     }
@@ -79,7 +81,7 @@ impl AssetEditHistory {
         );
     }
 
-    /// 把多个文件的改动记成**同一步**（撤销 / 重做一起回滚）。
+    /// Record multiple files' changes as **one step** (undo / redo roll back together).
     pub fn record_group(&mut self, edits: Vec<AssetEdit>) {
         self.record_group_at(edits, now_ms(), false);
     }
@@ -93,7 +95,8 @@ impl AssetEditHistory {
             return;
         }
         self.redo.clear();
-        // 只有单文件编辑参与拖拽合并；多文件事务一旦提交就是独立一步。
+        // Only single-file edits participate in drag coalescing; a multi-file transaction,
+        // once committed, is an independent step.
         if allow_coalesce && edits.len() == 1 {
             if let Some(last) = self.undo.last_mut() {
                 if last.edits.len() == 1 {
@@ -124,7 +127,7 @@ impl AssetEditHistory {
         !self.redo.is_empty()
     }
 
-    /// 下一次撤销会改的文件。
+    /// Files that the next undo will change.
     pub fn undo_path(&self) -> Option<&str> {
         self.undo
             .last()
@@ -132,7 +135,7 @@ impl AssetEditHistory {
             .map(|edit| edit.path.as_str())
     }
 
-    /// 下一次重做会改的文件。
+    /// Files that the next redo will change.
     pub fn redo_path(&self) -> Option<&str> {
         self.redo
             .last()
@@ -140,7 +143,7 @@ impl AssetEditHistory {
             .map(|edit| edit.path.as_str())
     }
 
-    /// 撤销一步，返回要写回的状态（每个文件的 `before`）。
+    /// Undo one step, return the state to write back (each file's `before`).
     pub fn undo(&mut self) -> Option<Vec<AssetEdit>> {
         let entry = self.undo.pop()?;
         let outcome = entry.edits.clone();
@@ -148,7 +151,7 @@ impl AssetEditHistory {
         Some(outcome)
     }
 
-    /// 重做一步，返回要写回的状态（每个文件的 `after`）。
+    /// Redo one step, return the state to write back (each file's `after`).
     pub fn redo(&mut self) -> Option<Vec<AssetEdit>> {
         let entry = self.redo.pop()?;
         let outcome = entry.edits.clone();
@@ -218,7 +221,7 @@ mod tests {
         let undo = history.undo().expect("one step");
         assert_eq!(undo[0].before, json!({ "x": 0 }));
         assert_eq!(undo[0].after, json!({ "x": 3 }));
-        assert!(!history.can_undo(), "拖拽只该占一步");
+        assert!(!history.can_undo(), "drag should only occupy one step");
     }
 
     #[test]
@@ -260,7 +263,7 @@ mod tests {
         assert_eq!(undo[0].path, "graph.json");
         assert_eq!(undo[1].path, "machine.json");
         assert_eq!(undo[0].before, json!({ "name": "speed" }));
-        assert!(!history.can_undo(), "两个文件只占一步");
+        assert!(!history.can_undo(), "two files only occupy one step");
         let redo = history.redo().expect("redo both");
         assert_eq!(redo[1].after, json!({ "name": "velocity" }));
         assert!(!history.can_redo());
@@ -299,7 +302,10 @@ mod tests {
             history.undo().expect("group 2")[0].before,
             json!({ "x": 1 })
         );
-        assert!(history.can_undo(), "多文件事务不与后续改动合并，各自成步");
+        assert!(
+            history.can_undo(),
+            "multi-file transactions don't merge with subsequent changes, each is its own step"
+        );
 
         let mut empty = AssetEditHistory::new();
         empty.record_group(Vec::new());
@@ -333,6 +339,6 @@ mod tests {
         }
         assert_eq!(history.undo().expect("step 3")[0].before, json!({ "x": 2 }));
         assert_eq!(history.undo().expect("step 2")[0].before, json!({ "x": 1 }));
-        assert!(!history.can_undo(), "最老的一步被挤掉");
+        assert!(!history.can_undo(), "the oldest step is pushed out");
     }
 }

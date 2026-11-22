@@ -1,11 +1,11 @@
-//! 编辑器本地状态持久化（对应 Web 编辑器的 localStorage 键）。
+//! Editor local state persistence (corresponds to Web editor localStorage keys).
 //!
-//! Web 侧存三份：`prisma-editor.dock.v4` / `prisma-editor.theme.v1` /
-//! `prisma-editor.locale.v1`（外加 preferences）。egui 壳把它们合并成**一个**
-//! JSON 文件（默认 `<project>/target/editor-egui/state.json`），方便备份与排查。
+//! The Web side stores three: `prisma-editor.dock.v4` / `prisma-editor.theme.v1` /
+//! `prisma-editor.locale.v1` (plus preferences). The egui shell merges them into **one**
+//! JSON file (default `<project>/target/editor-egui/state.json`), convenient for backup and troubleshooting.
 //!
-//! 语义与前端一致：主题只存「预设 + 被改过的 token」；布局走 `DockLayout`
-//! 的 sanitize；未知面板 / 非法颜色 / 不存在的预设都静默回退。
+//! Semantics consistent with the frontend: theme stores only "preset + modified tokens"; layout goes through `DockLayout`
+//! sanitize; unknown panels / illegal colors / nonexistent presets silently fall back.
 
 use crate::dock::DockLayout;
 use crate::i18n::Locale;
@@ -17,20 +17,20 @@ use std::collections::BTreeMap;
 
 pub const STATE_VERSION: u32 = 1;
 
-/// 本机首选项（与 Web 编辑器的 preferences 面板同字段）。
+/// Native preferences (same fields as the Web editor's preferences panel).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Preferences {
     pub autosave: bool,
     pub confirm_delete: bool,
     pub compact: bool,
-    /// 松散资产变化后自动重打场景包（#495）。默认开：改贴图 / HDR / 网格后
-    /// 不用退出 Play 就能看到；关掉可以避免频繁重打包。
+    /// Auto-rebuild scene packs after loose asset changes (#495). Default on: after changing
+    /// textures / HDR / meshes you see it without exiting Play; turning it off avoids frequent repacking.
     pub hot_reload_assets: bool,
-    /// 本地控制通道（MCP / 自动化，#1008）。默认开；关掉会停止监听并删除
-    /// `control.port`，`--no-control` 也能在启动时关掉。
+    /// Local control channel (MCP / automation, #1008). Default on; turning it off stops listening and deletes
+    /// `control.port`; `--no-control` can also turn it off at startup.
     pub control_channel: bool,
-    /// 快捷键覆盖：`Command::id()` → 键位（`"Ctrl+Shift+S"`）；空 = 默认表（#421）。
+    /// Shortcut overrides: `Command::id()` → key binding (`"Ctrl+Shift+S"`); empty = default table (#421).
     pub shortcut_overrides: BTreeMap<String, String>,
     pub max_log_lines: f32,
     pub locale_auto: bool,
@@ -51,26 +51,26 @@ impl Default for Preferences {
     }
 }
 
-/// Scene 视图与渲染设置（#432）：重启后保持上次的开关与工具。
+/// Scene view and render settings (#432): keeps toggles and tools across restarts.
 ///
-/// 引擎的 `RenderSettings` 不归 `core` 管，所以这里只存一段不透明 JSON，
-/// 由编辑器自己负责序列化/反序列化。
+/// Engine's `RenderSettings` is not owned by `core`, so here we only store an opaque JSON blob,
+/// serialized/deserialized by the editor itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SceneSettings {
     pub show_grid: bool,
     pub show_skybox: bool,
-    /// 选中物体的投影线框（#487）；旧存档没有这个键时默认开。
+    /// Projection wireframe for selected objects (#487); defaults to on for old archives lacking this key.
     #[serde(default = "default_selection_outline")]
     pub show_selection_outline: bool,
-    /// 选中蒙皮实体的骨架叠加（#560）；旧存档没有这个键时默认开。
+    /// Skeleton overlay for selected skinned entities (#560); defaults to on for old archives lacking this key.
     #[serde(default = "default_selection_outline")]
     pub show_skeleton: bool,
-    /// `World` / `Local`（ASCII，避免本地化文案进存档）。
+    /// `World` / `Local` (ASCII, avoid localized text creeping into archives).
     pub gizmo_space: String,
-    /// `Translate` / `Rotate` / `Scale`。
+    /// `Translate` / `Rotate` / `Scale`.
     pub gizmo_tool: String,
-    /// 引擎 `RenderSettings` 的 JSON 镜像；`None` = 旧存档，用默认值。
+    /// Mirror of engine `RenderSettings` as JSON; `None` = old archive, use defaults.
     pub render: Option<Value>,
 }
 
@@ -88,7 +88,7 @@ impl Default for SceneSettings {
     }
 }
 
-/// 旧 `state.json` 没有 `showSelectionOutline`：默认保持当前行为（开）。
+/// Old `state.json` had no `showSelectionOutline`; default to current behavior (on).
 fn default_selection_outline() -> bool {
     true
 }
@@ -97,24 +97,24 @@ fn default_selection_outline() -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct EditorState {
     pub version: u32,
-    /// `{version, dock, floating}`（与 Web 的 dock v4 同一形状）。
+    /// `{version, dock, floating}` (same shape as Web's dock v4).
     pub dock: Value,
     pub theme_preset: String,
-    /// token key（`bg` / `selection` …）→ `#rrggbb`。
+    /// token key (`bg` / `selection` …) → `#rrggbb`.
     #[serde(default)]
     pub theme_overrides: BTreeMap<String, String>,
-    /// `zh-CN` / `en-US`。
+    /// `zh-CN` / `en-US`.
     #[serde(default = "default_locale")]
     pub locale: String,
     #[serde(default)]
     pub preferences: Preferences,
-    /// Scene 视图 / 渲染设置（`#[serde(default)]` 保证旧 `state.json` 仍能读）。
+    /// Scene view / render settings (`#[serde(default)]` ensures old `state.json` still reads).
     #[serde(default)]
     pub scene: SceneSettings,
-    /// 被最大化的面板 tab（`#[serde(default)]`：旧存档 = 正常布局）。
+    /// Maximized panel tab (`#[serde(default)]`: old archive = normal layout).
     #[serde(default)]
     pub maximized: Option<String>,
-    /// 组件预设（#418）；旧存档没有时是空表。
+    /// Component presets (#418); empty table for old archives lacking them.
     #[serde(default)]
     pub component_presets: Vec<crate::workspace::ComponentPreset>,
 }
@@ -168,7 +168,7 @@ impl EditorState {
         serde_json::to_string_pretty(self).unwrap_or_default()
     }
 
-    /// 宽容读取：字段缺失用默认值，版本不符也尽量恢复已知字段。
+    /// Tolerant read: missing fields use defaults, mismatched versions still recover known fields.
     pub fn from_json(value: &Value) -> Self {
         let mut state: Self =
             serde_json::from_value(value.clone()).unwrap_or_else(|_| Self::default());
@@ -183,7 +183,7 @@ impl EditorState {
         }
     }
 
-    /// 应用到一个工作区（布局 / 主题 / 语言 / 首选项）。
+    /// Apply to a workspace (layout / theme / language / preferences).
     pub fn apply(&self, workspace: &mut Workspace, preferences: &mut Preferences) {
         let known = workspace.known_panels();
         let layout = DockLayout::from_json(&self.dock, &known, 1600.0, 900.0);
@@ -223,8 +223,8 @@ impl EditorState {
             "Local" | "local" => crate::viewport_math::GizmoSpace::Local,
             _ => crate::viewport_math::GizmoSpace::World,
         };
-        // 面板可能已经被删掉（旧存档 / 面板改名），指向不存在的 tab 会让整个
-        // dock 区空白，所以这里按当前 dock 过滤一次。
+        // Panels may have been deleted (old archive / panel renamed); pointing to a missing tab
+        // would blank the whole dock area, so filter against the current dock once.
         let maximized = self.maximized.clone().filter(|tab| {
             crate::dock::collect_tabs(&workspace.dock)
                 .iter()
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn component_presets_survive_a_state_round_trip() {
-        // #418：预设放在编辑器状态里，重开编辑器后还在。
+        // #418: presets live in editor state, reopen editor after and they're still there.
         let mut source = Workspace::sample();
         source.save_component_preset(
             "prism_engine::scene::Camera",
@@ -318,7 +318,8 @@ mod tests {
 
         assert_eq!(target.maximized_tab.as_deref(), Some("sceneView"));
 
-        // 存档里的面板已经不存在（改名 / 布局变了）：不能把整个 dock 区变成空白。
+        // Archived panel no longer exists (renamed / layout changed): pointing at it must not
+        // blank out the whole dock area.
         let mut stale = state.clone();
         stale.maximized = Some("no-such-panel".to_string());
         stale.apply(&mut target, &mut prefs);
@@ -383,7 +384,10 @@ mod tests {
         assert!(!restored.scene.show_grid);
         assert!(!restored.scene.show_skybox);
         assert!(!restored.scene.show_selection_outline);
-        assert!(!restored.scene.show_skeleton, "骨架开关也要进存档");
+        assert!(
+            !restored.scene.show_skeleton,
+            "skeleton toggle must be archived"
+        );
         assert_eq!(restored.scene.gizmo_space, "Local");
         assert_eq!(restored.scene.gizmo_tool, "Scale");
         assert!(restored.scene.render.is_some());
@@ -397,15 +401,18 @@ mod tests {
         assert!(!target.show_skeleton);
         assert_eq!(target.gizmo_space, crate::viewport_math::GizmoSpace::Local);
 
-        // 旧存档没有 `scene` 段：走默认值（描边默认开），不能读失败。
+        // Old archive without `scene` section: defaults (outline defaults on).
         let old = json!({ "version": 1, "dock": {}, "themePreset": "studio" });
         let old_state = EditorState::from_json(&old);
         assert!(old_state.scene.show_grid);
         assert!(old_state.scene.show_selection_outline);
-        assert!(old_state.scene.show_skeleton, "旧存档默认开骨架");
+        assert!(
+            old_state.scene.show_skeleton,
+            "old archive defaults skeleton on"
+        );
         assert_eq!(old_state.scene.gizmo_tool, "Translate");
 
-        // 有 `scene` 段但缺 `showSelectionOutline`（旧版本写出的状态）：默认开。
+        // Has `scene` section but missing `showSelectionOutline` (written by old version): default on.
         let partial = json!({
             "version": 1,
             "dock": {},
@@ -422,7 +429,7 @@ mod tests {
         let old = json!({ "version": 1, "dock": {}, "themePreset": "studio" });
         assert!(
             EditorState::from_json(&old).preferences.control_channel,
-            "旧存档没有 controlChannel：默认开，不能把 MCP 挡在门外"
+            "old archive has no controlChannel: default on, don't lock MCP out"
         );
         let off = json!({
             "version": 1,
@@ -445,14 +452,18 @@ mod tests {
         });
         let state = EditorState::from_json(&value);
         assert_eq!(state.theme_preset, DEFAULT_THEME_PRESET);
-        assert_eq!(state.theme_overrides.len(), 1, "只留下合法 token + 颜色");
+        assert_eq!(
+            state.theme_overrides.len(),
+            1,
+            "only legal token + color kept"
+        );
         assert!(state.theme_overrides.contains_key("bg"));
         assert_eq!(state.preferences.max_log_lines, 20_000.0);
 
         let mut workspace = workspace();
         let mut prefs = Preferences::default();
         state.apply(&mut workspace, &mut prefs);
-        // 未知面板被丢弃，回退到默认布局（至少有 sceneView）。
+        // Unknown panel is dropped, falls back to default layout (at least sceneView present).
         assert!(workspace.dock_tabs().iter().any(|tab| tab == "sceneView"));
         assert_eq!(workspace.i18n.locale(), Locale::ZhCn);
     }

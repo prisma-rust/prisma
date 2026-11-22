@@ -1,11 +1,11 @@
-//! 编辑器主题（`editor/src/theme.ts` 的 Rust 移植）。
+//! Editor theme (Rust port of `editor/src/theme.ts`).
 //!
-//! 主题只描述**颜色**：每个 token 对应一个具名颜色，UI 一律通过 `Theme::color`
-//! 取值，不再写死颜色。预设与 Web 编辑器完全一致（同一个预设 id 在两边看起来一样）。
+//! Theme only describes **colors**: each token corresponds to a named color, UI always reads via
+//! `Theme::color`, colors are no longer hardcoded. Presets match the Web editor exactly (same preset id looks the same on both sides).
 
 use std::collections::HashMap;
 
-/// sRGB 颜色（8 bit 分量）。
+/// sRGB color (8-bit components).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgba {
     pub r: u8,
@@ -19,7 +19,7 @@ impl Rgba {
         Self { r, g, b, a }
     }
 
-    /// `#rrggbb`（可带 `#rrggbbaa`）。非法输入回退到不透明黑。
+    /// `#rrggbb` (optionally `#rrggbbaa`). Invalid input falls back to opaque black.
     pub fn from_hex(hex: &str) -> Self {
         let hex = hex.trim().trim_start_matches('#');
         let parse = |range: std::ops::Range<usize>| {
@@ -39,7 +39,7 @@ impl Rgba {
         }
     }
 
-    /// 线性插值（用于 hover / 选中态的派生色）。
+    /// Linear interpolation (for hover / selected-state derived colors).
     pub fn mix(self, other: Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
@@ -56,7 +56,7 @@ impl Rgba {
     }
 }
 
-/// 所有可主题化的颜色 token（顺序与 `THEME_TOKEN_GROUPS` 一致）。
+/// All themeable color tokens (order matches `THEME_TOKEN_GROUPS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(usize)]
 pub enum ThemeToken {
@@ -193,49 +193,49 @@ impl ThemeToken {
 
     pub fn label(self) -> &'static str {
         match self {
-            ThemeToken::Bg => "应用背景",
-            ThemeToken::BgSunken => "凹陷区域（日志/输入）",
-            ThemeToken::Panel => "面板",
-            ThemeToken::PanelAlt => "次级面板（卡头/tab）",
-            ThemeToken::PanelRaised => "浮层（菜单/弹窗）",
-            ThemeToken::Chrome => "菜单栏/状态栏",
-            ThemeToken::Border => "边框",
-            ThemeToken::BorderStrong => "强边框/分隔线",
-            ThemeToken::BorderSubtle => "弱边框",
-            ThemeToken::Text => "正文",
-            ThemeToken::TextStrong => "高亮正文/标题",
-            ThemeToken::TextSoft => "次级正文",
-            ThemeToken::Muted => "弱化文本",
-            ThemeToken::MutedDim => "最弱文本（提示）",
-            ThemeToken::RowHover => "行悬停底色",
-            ThemeToken::MenuHover => "菜单悬停底色",
-            ThemeToken::MenuActive => "菜单展开/按下底色",
-            ThemeToken::Selection => "选中行底色",
-            ThemeToken::Accent => "强调色",
-            ThemeToken::AccentSolid => "实心强调块",
-            ThemeToken::OnAccent => "实心强调块上的文字",
-            ThemeToken::AccentInk => "渐变按钮上的文字",
-            ThemeToken::AccentAlt => "第二强调色",
-            ThemeToken::Success => "成功/运行指示",
-            ThemeToken::SuccessSoft => "成功文字",
-            ThemeToken::SuccessBg => "成功底色（Play）",
-            ThemeToken::SuccessBorder => "成功边框",
-            ThemeToken::Danger => "危险/错误",
-            ThemeToken::DangerSoft => "危险文字",
-            ThemeToken::DangerBg => "危险底色（Stop）",
-            ThemeToken::DangerBgSubtle => "危险悬停底色",
-            ThemeToken::DangerSolid => "危险实心块",
-            ThemeToken::DangerBorder => "危险边框",
-            ThemeToken::OnDanger => "危险块上的文字",
-            ThemeToken::Warning => "警告",
-            ThemeToken::WarningStrong => "警告强调",
-            ThemeToken::WarningBorder => "警告边框",
-            ThemeToken::Panic => "panic 日志",
+            ThemeToken::Bg => "app background",
+            ThemeToken::BgSunken => "sunken area (log / input)",
+            ThemeToken::Panel => "panel",
+            ThemeToken::PanelAlt => "secondary panel (tab header / tab)",
+            ThemeToken::PanelRaised => "float layer (menu / popup)",
+            ThemeToken::Chrome => "menu bar / status bar",
+            ThemeToken::Border => "border",
+            ThemeToken::BorderStrong => "strong border / divider",
+            ThemeToken::BorderSubtle => "weak border",
+            ThemeToken::Text => "text",
+            ThemeToken::TextStrong => "highlighted text / title",
+            ThemeToken::TextSoft => "secondary text",
+            ThemeToken::Muted => "muted text",
+            ThemeToken::MutedDim => "weakest text (tooltip)",
+            ThemeToken::RowHover => "row hover background",
+            ThemeToken::MenuHover => "menu hover background",
+            ThemeToken::MenuActive => "menu open / pressed background",
+            ThemeToken::Selection => "selected row background",
+            ThemeToken::Accent => "accent color",
+            ThemeToken::AccentSolid => "solid accent block",
+            ThemeToken::OnAccent => "text on solid accent block",
+            ThemeToken::AccentInk => "gradient button text",
+            ThemeToken::AccentAlt => "secondary accent color",
+            ThemeToken::Success => "success / running indication",
+            ThemeToken::SuccessSoft => "success text",
+            ThemeToken::SuccessBg => "success background (Play)",
+            ThemeToken::SuccessBorder => "success border",
+            ThemeToken::Danger => "danger / error",
+            ThemeToken::DangerSoft => "danger text",
+            ThemeToken::DangerBg => "danger background (Stop)",
+            ThemeToken::DangerBgSubtle => "danger hover background",
+            ThemeToken::DangerSolid => "danger solid block",
+            ThemeToken::DangerBorder => "danger border",
+            ThemeToken::OnDanger => "text on danger block",
+            ThemeToken::Warning => "warning",
+            ThemeToken::WarningStrong => "warning strong",
+            ThemeToken::WarningBorder => "warning border",
+            ThemeToken::Panic => "panic log",
         }
     }
 }
 
-/// 主题面板的分组（顺序即展示顺序）。
+/// Theme panel groups (display order).
 pub struct TokenGroup {
     pub id: &'static str,
     pub label: &'static str,
@@ -245,7 +245,7 @@ pub struct TokenGroup {
 pub const TOKEN_GROUPS: &[TokenGroup] = &[
     TokenGroup {
         id: "surface",
-        label: "背景与表面",
+        label: "backgrounds and surfaces",
         tokens: &[
             ThemeToken::Bg,
             ThemeToken::BgSunken,
@@ -257,7 +257,7 @@ pub const TOKEN_GROUPS: &[TokenGroup] = &[
     },
     TokenGroup {
         id: "border",
-        label: "边框与分隔",
+        label: "borders and dividers",
         tokens: &[
             ThemeToken::Border,
             ThemeToken::BorderStrong,
@@ -266,7 +266,7 @@ pub const TOKEN_GROUPS: &[TokenGroup] = &[
     },
     TokenGroup {
         id: "text",
-        label: "文本",
+        label: "text",
         tokens: &[
             ThemeToken::Text,
             ThemeToken::TextStrong,
@@ -277,7 +277,7 @@ pub const TOKEN_GROUPS: &[TokenGroup] = &[
     },
     TokenGroup {
         id: "interaction",
-        label: "交互状态",
+        label: "interaction states",
         tokens: &[
             ThemeToken::RowHover,
             ThemeToken::MenuHover,
@@ -287,7 +287,7 @@ pub const TOKEN_GROUPS: &[TokenGroup] = &[
     },
     TokenGroup {
         id: "accent",
-        label: "强调色",
+        label: "accent colors",
         tokens: &[
             ThemeToken::Accent,
             ThemeToken::AccentSolid,
@@ -298,7 +298,7 @@ pub const TOKEN_GROUPS: &[TokenGroup] = &[
     },
     TokenGroup {
         id: "status",
-        label: "状态色",
+        label: "status colors",
         tokens: &[
             ThemeToken::Success,
             ThemeToken::SuccessSoft,
@@ -331,7 +331,7 @@ impl ThemeMode {
     }
 }
 
-/// 一套完整主题 = 每个 token 一个颜色。
+/// A complete theme = one color per token.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeColors {
     values: [Rgba; ThemeToken::COUNT],
@@ -363,8 +363,8 @@ pub struct ThemePreset {
 pub const THEME_PRESETS: &[ThemePreset] = &[
     ThemePreset {
         id: "studio",
-        label: "工业暗色",
-        description: "Default UE5 / Unity 6 dark studio palette",
+        label: "industrial dark",
+        description: "default UE5 / Unity 6 dark studio palette",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
@@ -411,8 +411,8 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
     ThemePreset {
         id: "midnight",
-        label: "深空蓝",
-        description: "默认 · 冷蓝强调",
+        label: "deep space blue",
+        description: "default · cold blue accent",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
@@ -459,8 +459,8 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
     ThemePreset {
         id: "violet",
-        label: "午夜紫",
-        description: "紫罗兰强调 · 粉紫日志",
+        label: "midnight purple",
+        description: "violet accent · pink-purple log",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
@@ -507,8 +507,8 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
     ThemePreset {
         id: "graphite",
-        label: "石墨灰",
-        description: "中性灰底 · 琥珀强调",
+        label: "graphite",
+        description: "neutral gray base · amber accent",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
@@ -555,8 +555,8 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
     ThemePreset {
         id: "forest",
-        label: "森林绿",
-        description: "墨绿底 · 薄荷强调",
+        label: "forest green",
+        description: "ink green base · mint accent",
         mode: ThemeMode::Dark,
         colors: ThemeColors {
             values: [
@@ -603,8 +603,8 @@ pub const THEME_PRESETS: &[ThemePreset] = &[
     },
     ThemePreset {
         id: "paper",
-        label: "纸白",
-        description: "浅色底 · 高可读",
+        label: "paper white",
+        description: "light base · high readability",
         mode: ThemeMode::Light,
         colors: ThemeColors {
             values: [
@@ -662,7 +662,7 @@ impl ThemeColors {
             .colors
     }
 
-    /// 在预设之上叠加逐项覆盖（只存被改过的 token）。
+    /// Overlay per-token overrides on top of a preset (only storing changed tokens).
     pub fn with_overrides(id: &str, overrides: &HashMap<ThemeToken, Rgba>) -> ThemeColors {
         let mut colors = Self::preset(id);
         for (token, color) in overrides {
@@ -679,7 +679,7 @@ pub fn preset(id: &str) -> &'static ThemePreset {
         .unwrap_or(&THEME_PRESETS[0])
 }
 
-/// 界面主题状态（对应 `prisma-editor.theme.v1`）。
+/// UI theme state (corresponds to `prisma-editor.theme.v1`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThemeState {
     pub preset: String,
@@ -714,7 +714,7 @@ impl ThemeState {
     }
 }
 
-/// RGB（0..1）→ HSV（色相 0..360，饱和度/明度 0..1）。
+/// RGB (0..1) -> HSV (hue 0..360, saturation/value 0..1).
 pub fn rgb_to_hsv(rgb: [f32; 3]) -> [f32; 3] {
     let [r, g, b] = rgb.map(|value| value.clamp(0.0, 1.0));
     let max = r.max(g).max(b);
@@ -734,7 +734,7 @@ pub fn rgb_to_hsv(rgb: [f32; 3]) -> [f32; 3] {
     [hue, saturation, max]
 }
 
-/// HSV（色相 0..360，饱和度/明度 0..1）→ RGB（0..1）。
+/// HSV (hue 0..360, saturation/value 0..1) -> RGB (0..1).
 pub fn hsv_to_rgb(hsv: [f32; 3]) -> [f32; 3] {
     let hue = hsv[0].rem_euclid(360.0);
     let saturation = hsv[1].clamp(0.0, 1.0);
@@ -754,7 +754,7 @@ pub fn hsv_to_rgb(hsv: [f32; 3]) -> [f32; 3] {
     [r + m, g + m, b + m]
 }
 
-/// `[r, g, b, a]`（0..1）→ `#rrggbb`（`alpha` 为真时 `#rrggbbaa`）。
+/// `[r, g, b, a]` (0..1) -> `#rrggbb` (`#rrggbbaa` when `alpha` is true).
 pub fn rgba_to_hex(rgba: [f32; 4], alpha: bool) -> String {
     let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
     if alpha {
@@ -775,7 +775,7 @@ pub fn rgba_to_hex(rgba: [f32; 4], alpha: bool) -> String {
     }
 }
 
-/// `#rgb` / `#rrggbb` / `#rrggbbaa` → `[r, g, b, a]`（0..1）。
+/// `#rgb` / `#rrggbb` / `#rrggbbaa` -> `[r, g, b, a]` (0..1).
 pub fn hex_to_rgba(hex: &str) -> Option<[f32; 4]> {
     let hex = hex.trim().trim_start_matches('#');
     let parse = |range: std::ops::Range<usize>| {

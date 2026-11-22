@@ -1,18 +1,19 @@
-//! 姿态混合与一维混合空间（#560 P1 的地基）。
+//! Pose blending and 1D blend space (foundation of #560 P1).
 //!
-//! 动画图 / BlendStack / BlendSpace 都需要同一件事：**把两个姿态按权重合成
-//! 一个**。这一层只做数学，不依赖 engine / render / ECS，所以编辑器预览、离线
-//! 工具和运行时可以共用同一份实现。
+//! The animation graph, BlendStack, and BlendSpace all need the same thing: **blend two poses by weight**.
+//! This layer only does math and does not depend on engine / render / ECS, so editor preview,
+//! offline tools, and runtime can share the same implementation.
 //!
-//! 约定与 `prism-anim` 其余部分一致：四元数 `xyzw`、右手 +Y up、`Pose` 是每根
-//! 骨骼的**局部** TRS（父空间）。
+//! Convention consistent with the rest of `prism-anim`: quaternion `xyzw`, right-handed +Y up,
+//! `Pose` is per-joint **local** TRS (parent space).
 //!
-//! 两个刻意的设计选择：
+//! Two deliberate design choices:
 //!
-//! - 旋转走 `slerp`（最短路径），不是对四元数分量做 lerp —— 后者在接近 180°
-//!   时会让骨骼"抽一下"，而这正是动作混合最常见的失败形态；
-//! - 长度不一致时**只混合较短的关节数**，多出来的关节保留 `a` 的姿态。骨架
-//!   版本不一致时宁可少混一根骨骼，也不要 panic 或把缺失关节塌到原点。
+//! - Rotation uses `slerp` (shortest path), not component-wise lerp on quaternions — the latter
+//!   makes bones "twitch" near 180°, which is exactly the most common failure mode of motion blending;
+//! - When lengths differ, **blend only the shorter joint count**; extra joints keep `a`'s pose.
+//!   When skeleton versions mismatch, prefer blending one fewer bone over panicking or collapsing
+//!   missing joints to the origin.
 
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ use crate::pose::Pose;
 use crate::skeleton::JointTransform;
 use crate::sync::SyncGroup;
 
-/// 把 `t` 规范化到 `[0, 1]`（NaN → 0）。
+/// Clamp `t` to `[0, 1]` (NaN → 0).
 fn clamp_weight(t: f32) -> f32 {
     if t.is_nan() {
         0.0
@@ -32,7 +33,7 @@ fn clamp_weight(t: f32) -> f32 {
     }
 }
 
-/// 两个关节变换按权重混合：平移/缩放线性插值，旋转最短路径 slerp。
+/// Blend two joint transforms by weight: linear interpolation of translation/scale, shortest-path slerp of rotation.
 pub fn blend_joint(a: &JointTransform, b: &JointTransform, t: f32) -> JointTransform {
     JointTransform {
         translation: a.translation.lerp(b.translation, t),
@@ -41,15 +42,15 @@ pub fn blend_joint(a: &JointTransform, b: &JointTransform, t: f32) -> JointTrans
     }
 }
 
-/// 把 `a` → `b` 的混合写进 `out`，返回实际混合的关节数。
+/// Write the blend of `a` → `b` into `out`, returning the actual number of joints blended.
 ///
-/// `out` 会被重设成 `a` 的长度：多出来的关节（`b` 没有的部分）保持 `a` 的
-/// 姿态，`out` 里原本多出来的关节会被丢弃。返回的关节数是两者中较短的。
+/// `out` is resized to `a`'s length: extra joints (parts `b` does not have) keep `a`'s
+/// pose, and joints originally extra in `out` are discarded. The returned joint count is the shorter of the two.
 pub fn blend_into(out: &mut Pose, a: &Pose, b: &Pose, t: f32) -> usize {
     let t = clamp_weight(t);
     let shared = a.len().min(b.len());
-    // `out` 与 `a` / `b` 一定是不同的姿态（借用检查器保证），所以可以边算边写，
-    // 不需要中间缓冲。
+    // `out`, `a`, and `b` are guaranteed to be distinct poses (borrow checker guarantees it),
+    // so we can compute and write in place without an intermediate buffer.
     out.resize_with(a.len(), |index| {
         let from = a.local(index).unwrap_or(JointTransform::IDENTITY);
         match b.local(index).filter(|_| index < shared) {
@@ -60,20 +61,19 @@ pub fn blend_into(out: &mut Pose, a: &Pose, b: &Pose, t: f32) -> usize {
     shared
 }
 
-/// 把叠加层（additive）姿态按权重打到底层姿态上，返回实际处理的关节数。
+/// Apply an overlay (additive) pose onto the base pose by weight, returning the actual number of joints processed.
 ///
-/// 语义与 UE 的「local space additive」一致：叠加剪辑的局部变换相对**参考姿态**
-/// 的差值才是增量 ——
+/// Semantics match UE's "local space additive": the increment is the difference of the overlay clip's local transform relative to the **reference pose** —
 ///
-/// - 平移：`base + (additive - reference) * t`
-/// - 旋转：`base * slerp(identity, reference⁻¹ * additive, t)`
-/// - 缩放：`base * lerp(1, additive / reference, t)`（参考缩放为 0 时当 1）
+/// - Translation: `base + (additive - reference) * t`
+/// - Rotation: `base * slerp(identity, reference⁻¹ * additive, t)`
+/// - Scale: `base * lerp(1, additive / reference, t)` (reference scale of 0 treated as 1)
 ///
-/// `t = 0` 时结果与 `base` 完全一致，`t = 1` 时是完整的叠加结果。就地改写 `base`，
-/// 没有中间缓冲：叠加层只改一部分关节时，剩下的关节保持不动。
+/// At `t = 0` the result matches `base` exactly; at `t = 1` it is the full overlay result. `base` is overwritten in place,
+/// without an intermediate buffer: when the overlay layer only changes some joints, the rest stay put.
 ///
-/// 这是「Layer + Additive」的基础：呼吸、受击抖动、瞄准偏移这类只该改一部分骨骼的
-/// 剪辑，不需要再做一整套基础剪辑（#560 P1）。
+/// This is the foundation of "Layer + Additive": clips that only affect some bones, like breathing,
+/// hit flinch, aim offset, don't need a whole separate base clip (#560 P1).
 pub fn apply_additive(base: &mut Pose, additive: &Pose, reference: &Pose, weight: f32) -> usize {
     let t = clamp_weight(weight);
     if t <= 0.0 {
@@ -93,7 +93,7 @@ pub fn apply_additive(base: &mut Pose, additive: &Pose, reference: &Pose, weight
     shared
 }
 
-/// 单个关节的叠加结果（见 [`apply_additive`]）。
+/// Single joint's overlay result (see [`apply_additive`]).
 pub fn additive_joint(
     base: &JointTransform,
     additive: &JointTransform,
@@ -104,7 +104,7 @@ pub fn additive_joint(
     if t <= 0.0 {
         return *base;
     }
-    // 参考姿态的逆：旋转取共轭，缩放取倒数。
+    // Inverse of the reference pose: rotation takes conjugate, scale takes reciprocal.
     let rest_rotation = reference.rotation.normalize();
     let delta_rotation = rest_rotation.inverse() * additive.rotation.normalize();
     let rotation =
@@ -134,43 +134,43 @@ pub fn additive_joint(
     }
 }
 
-/// [`blend_into`] 的分配版本，方便工具与测试。
+/// Allocating version of [`blend_into`], convenient for tools and tests.
 pub fn blend_poses(a: &Pose, b: &Pose, t: f32) -> Pose {
     let mut out = Pose::from_locals(Vec::new());
     blend_into(&mut out, a, b, t);
     out
 }
 
-/// 一维混合空间的一个采样点：`position` 是参数轴上的位置，`clip` 是它对应的剪辑。
+/// One sample point of the 1D blend space: `position` is the position on the parameter axis, `clip` is the corresponding clip.
 #[derive(Debug, Clone)]
 pub struct BlendSample {
     pub position: f32,
     pub clip: Arc<Clip>,
 }
 
-/// 一维混合空间（速度 0 → 走 → 跑 这种）。
+/// 1D blend space (velocity 0 → walk → run, and so on).
 ///
-/// `evaluate_into` 的 `phase` 是**归一化时间**（0..1，按剪辑自己的时长循环）：
-/// 混合空间里各剪辑长度通常不同，按秒同步会让两个动画互相追着跑，归一化相位
-/// 才是「步幅对齐」的正确做法。
+/// The `phase` of `evaluate_into` is **normalized time** (0..1, looping per the clip's own duration):
+/// clip lengths in a blend space usually differ, syncing by seconds makes two animations chase each other,
+/// normalized phase is the correct approach for "stride alignment".
 ///
-/// 每个剪辑在采样前都会先把姿态重置成 `reference`（一般是骨架的 reference
-/// 姿态）：剪辑只覆盖部分轨道时，没被覆盖的关节保持 reference，而不是塌成
-/// 单位变换 —— 与 `Animator` 的求值顺序一致。[`Clip::sample_into`] 只写已存在
-/// 的关节，所以这一步是必须的。
+/// Each clip resets the pose to `reference` (generally the skeleton's reference pose) before sampling:
+/// when a clip only covers some tracks, uncovered joints keep reference instead of collapsing to
+/// identity — consistent with `Animator`'s evaluation order. [`Clip::sample_into`] only writes existing
+/// joints, so this step is necessary.
 #[derive(Debug, Clone, Default)]
 pub struct BlendSpace1D {
     samples: Vec<BlendSample>,
-    /// `samples` 的位置轴（与 `samples` 同步排序），每帧求值不再现算一遍。
+    /// The position axis of `samples` (sorted in sync with `samples`), not recomputed every frame during evaluation.
     positions: Vec<f32>,
     reference: Pose,
-    /// 所有样本都有同步标记时，用第一个样本做领跑剪辑映射相位。
+    /// When all samples have sync markers, use the first sample as the leading clip for phase mapping.
     sync: Option<SyncGroup>,
     scratch: [Pose; 2],
 }
 
 impl BlendSpace1D {
-    /// 建一个混合空间：丢掉非有限位置并按位置排序（作者填顺序无所谓）。
+    /// Build a blend space: drop non-finite positions and sort by position (author's fill order does not matter).
     pub fn new(samples: Vec<BlendSample>, reference: Pose) -> Self {
         let mut samples: Vec<BlendSample> = samples
             .into_iter()
@@ -193,10 +193,10 @@ impl BlendSpace1D {
         }
     }
 
-    /// 样本 `index` 实际使用的归一化相位。
+    /// The normalized phase actually used for sample `index`.
     ///
-    /// 有同步组时以当前权重最大的样本（`leader`）为领跑剪辑，把 phase 映射到
-    /// 每个样本自己的步幅；没有标记 / 标记结构不一致时所有样本共用同一个 phase。
+    /// When a sync group exists, use the current highest-weight sample (`leader`) as the leading clip, mapping phase
+    /// to each sample's own stride; without markers / inconsistent marker structure, all samples share the same phase.
     fn phase_for(&self, leader: usize, index: usize, phase: f32) -> f32 {
         self.sync
             .as_ref()
@@ -204,7 +204,7 @@ impl BlendSpace1D {
             .map_or(phase, |group| group.map_phase(leader, index, phase))
     }
 
-    /// 采样前重置用的姿态。
+    /// Pose used for reset before sampling.
     pub fn reference(&self) -> &Pose {
         &self.reference
     }
@@ -217,24 +217,24 @@ impl BlendSpace1D {
         self.samples.is_empty()
     }
 
-    /// 参数轴范围；空混合空间返回 `None`。
+    /// Range of the parameter axis; empty blend space returns `None`.
     pub fn range(&self) -> Option<(f32, f32)> {
         let first = self.samples.first()?.position;
         let last = self.samples.last()?.position;
         Some((first, last))
     }
 
-    /// 当前参数下权重最大的样本下标（Notify 的 Dominant 策略用）。
+    /// Index of the highest-weight sample at the current parameter (used by Notify's Dominant strategy).
     ///
-    /// 正好在左右样本中点时取右侧；只有一个样本时返回它。
+    /// Takes the right side when exactly at the midpoint between left and right samples; returns it when there is only one sample.
     pub fn dominant_sample(&self, at: f32) -> Option<usize> {
         let (left, right, t) = blend_space_weights(&self.positions, at)?;
         Some(if t < 0.5 { left } else { right })
     }
 
-    /// 在 `at` 处求值到 `out`。返回是否真的写入了姿态（空空间 / 采样失败 → `false`）。
+    /// Evaluate at `at` into `out`. Returns whether a pose was actually written (empty space / sampling failure → `false`).
     ///
-    /// 失败时**不动** `out`：调用方可以继续用上一帧的姿态，而不是拿到一个空骨架。
+    /// On failure `out` is **not touched**: the caller can keep using the previous frame's pose instead of getting an empty skeleton.
     pub fn evaluate_into(&mut self, at: f32, phase: f32, out: &mut Pose) -> bool {
         let Some((left, right, t)) = blend_space_weights(&self.positions, at) else {
             return false;
@@ -265,10 +265,10 @@ impl BlendSpace1D {
         true
     }
 
-    /// 每个样本用**自己的相位**求值（独立播放头，每样本速度不同时用）。
+    /// Evaluate each sample with **its own phase** (independent playheads, used when samples have different speeds).
     ///
-    /// `phases[i]` 是样本 `i` 的归一化相位；缺失的样本按 0 采样。这个入口不做
-    /// SyncGroup 相位映射——调用方已经为每个样本算好了自己的时间。
+    /// `phases[i]` is the normalized phase of sample `i`; missing samples are sampled at 0. This entry does not do
+    /// SyncGroup phase mapping — the caller has already computed its own time for each sample.
     pub fn evaluate_into_with_phases(&mut self, at: f32, phases: &[f32], out: &mut Pose) -> bool {
         let Some((left, right, t)) = blend_space_weights(&self.positions, at) else {
             return false;
@@ -301,11 +301,11 @@ impl BlendSpace1D {
     }
 }
 
-/// 一维混合空间的位置插值：返回 `(左样本下标, 右样本下标, t)`。
+/// Position interpolation of the 1D blend space: returns `(left sample index, right sample index, t)`.
 ///
-/// 纯函数，便于单测。`positions` 必须按升序排列（[`BlendSpace1D::new`] 保证）。
-/// 范围外夹到两端（`t = 0`），只有一个样本时左右都指向它，空表 / 非有限查询
-/// 返回 `None`。
+/// Pure function, convenient for unit tests. `positions` must be sorted ascending (guaranteed by [`BlendSpace1D::new`]).
+/// Out-of-range clamped to both ends (`t = 0`); with only one sample both left and right point to it,
+/// empty table / non-finite query returns `None`.
 pub fn blend_space_weights(positions: &[f32], at: f32) -> Option<(usize, usize, f32)> {
     if positions.is_empty() || !at.is_finite() {
         return None;
@@ -317,7 +317,7 @@ pub fn blend_space_weights(positions: &[f32], at: f32) -> Option<(usize, usize, 
     if at >= positions[last] {
         return Some((last, last, 0.0));
     }
-    // 线性扫描：混合空间的样本数是作者手填的量级（个位数到几十），二分不值得。
+    // Linear scan: the sample count of a blend space is hand-filled by the author (single digits to a few tens), binary search not worth it.
     for index in 0..last {
         let (low, high) = (positions[index], positions[index + 1]);
         if at >= low && at <= high {
@@ -330,11 +330,11 @@ pub fn blend_space_weights(positions: &[f32], at: f32) -> Option<(usize, usize, 
             return Some((index, index + 1, t));
         }
     }
-    // 未排序 / 含 NaN 的输入：夹到最后一个样本，而不是返回一个越界下标。
+    // Unsorted / NaN-containing input: clamp to the last sample, instead of returning an out-of-bounds index.
     Some((last, last, 0.0))
 }
 
-/// 按归一化相位采样一个剪辑（越界循环，`phase` 非有限时当 0）。
+/// Sample a clip by normalized phase (looping out of range, `phase` non-finite treated as 0).
 pub(crate) fn sample_at_phase(clip: &Clip, phase: f32, out: &mut Pose) -> bool {
     let phase = if phase.is_finite() { phase } else { 0.0 };
     let wrapped = phase - phase.floor();

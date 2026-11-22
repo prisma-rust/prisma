@@ -8,7 +8,7 @@ fn a_pose_is_indexed_and_bounds_checked() {
     assert!(pose.set_local(1, JointTransform::IDENTITY.translation_only(1.0)));
     assert!(
         !pose.set_local(2, JointTransform::IDENTITY),
-        "越界写必须失败"
+        "out-of-bounds write must fail"
     );
     assert!(pose.local(5).is_none());
     assert_eq!(pose.local(1).unwrap().translation.x, 1.0);
@@ -25,7 +25,7 @@ fn identity_resets_every_joint() {
 }
 
 impl JointTransform {
-    /// 只带平移的便捷构造函数（测试用）。
+    /// Convenience constructor with translation only (test use).
     fn translation_only(self, x: f32) -> Self {
         let _ = self;
         Self {

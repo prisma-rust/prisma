@@ -1,14 +1,15 @@
 /// @file sharc_hash_grid.slangi
-/// @brief SHARC 世界空间哈希网格（移植自 NVIDIA RTXGI SHARC `HashGridCommon.h`，v1.6）。
+/// @brief SHARC world-space hash grid (ported from NVIDIA RTXGI SHARC `HashGridCommon.h`, v1.6).
 ///
-/// 仅做 Slang 适配：强制 64-bit atomics 分支（移除 lock buffer 与 GLSL 分支），其余哈希、
-/// level、voxel、insert/find 逻辑与上游保持一致。buffer 以 `RWStructuredBuffer` 成员形式由
-/// `HashMapData` 承载，调用方从 pass-local 绑定的全局 buffer 填入。坐标系与上游一致：
-/// 世界空间位置经 `sceneScale` / `logarithmBase` 映射到对数分层 voxel。
+/// Only Slang adaptation: force 64-bit atomics branch (remove lock buffer and GLSL branch),
+/// remaining hash / level / voxel / insert/find logic consistent with upstream. Buffer carried as
+/// `RWStructuredBuffer` member by `HashMapData`; caller fills from pass-local bound global buffer.
+/// Coordinate system consistent with upstream: world-space position mapped via `sceneScale` /
+/// `logarithmBase` to log-tiered voxels.
 ///
-/// 关键不变量：
-/// - `HASH_GRID_INVALID_HASH_KEY = 0`，因此所有 buffer 初始必须清 0。
-/// - hash key 抢占使用 64-bit `InterlockedCompareExchange`，需要 `shaderBufferInt64Atomics`。
+/// Key invariants:
+/// - `HASH_GRID_INVALID_HASH_KEY = 0`, so all buffers must be initially cleared to 0.
+/// - Hash key contention uses 64-bit `InterlockedCompareExchange`, requires `shaderBufferInt64Atomics`.
 #pragma once
 
 // Constants
@@ -24,7 +25,7 @@
 
 // Tweakable parameters
 #ifndef HASH_GRID_USE_NORMALS
-#define HASH_GRID_USE_NORMALS               1       // 把法线纳入 hash key，区分同一 voxel 的正反面
+#define HASH_GRID_USE_NORMALS               1       // include normals in hash key, distinguish front/back of same voxel
 #endif
 
 #ifndef HASH_GRID_POSITION_OFFSET
@@ -32,7 +33,7 @@
 #endif
 
 #ifndef HASH_GRID_POSITION_BIAS
-#define HASH_GRID_POSITION_BIAS             1e-4f   // 极端场景尺度下可能需要调整
+#define HASH_GRID_POSITION_BIAS             1e-4f   // may need adjustment under extreme scene scales
 #endif
 
 #ifndef HASH_GRID_NORMAL_BIAS
@@ -161,8 +162,8 @@ struct HashMapData
 
 void HashMapAtomicCompareExchange(in HashMapData hashMapData, in uint dstOffset, in uint64_t compareValue, in uint64_t value, out uint64_t originalValue)
 {
-    // 仅保留 64-bit atomics 分支：truvis 设备已开启 shaderBufferInt64Atomics，
-    // 不使用上游 lock buffer 回退（其在 fuse 无限时存在 device hang 风险）。
+    // Only 64-bit atomics branch retained: truvis devices have shaderBufferInt64Atomics enabled,
+    // no upstream lock buffer fallback (device hang risk when fuse is infinite).
     InterlockedCompareExchange(hashMapData.hashEntriesBuffer[dstOffset], compareValue, value, originalValue);
 }
 

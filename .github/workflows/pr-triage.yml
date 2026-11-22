@@ -126,7 +126,7 @@ jobs:
           fi
 
           # AI participation
-          if printf '%s' "$BODY" | grep -qE '^> 🤖|🤖 由|Co-Authored-By:'; then
+          if printf '%s' "$BODY" | grep -qE '^> 🤖|🤖 by|Co-Authored-By:'; then
             gh pr edit "$PR" --add-label ai
           else
             gh pr edit "$PR" --remove-label ai >/dev/null 2>&1 || true

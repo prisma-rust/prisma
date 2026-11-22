@@ -1,309 +1,401 @@
-# Prisma 设计目标与设计原则
+# Prisma Design Goals and Design Principles
 
-> 本文件是 Prisma 的**权威设计蓝图（source of truth for intent）**。
-> 代码会变，但这里的约束不可违背。新增渲染特性、pass、平台支持前，
-> 先对照本文确认方向一致。具体的特性设计见 `docs/` 下的分文档
-> （如 `mobile-raytracing-gi-design.md`）。
+> This file is Prisma's **authoritative design blueprint (source of truth for intent)**.
+> Code changes, but the constraints here cannot be violated. Before adding rendering
+> features, passes, or platform support, first check alignment with this document.
+> Specific feature designs are in the split documents under `docs/`
+> (e.g. `mobile-raytracing-gi-design.md`).
 
-## 1. 一句话定位
+## 1. One-sentence positioning
 
-为**移动端（Android / TBDR GPU）优先**设计的、可扩展的**模块化渲染引擎**；
-一套统一管线覆盖桌面与移动端，按运行时探测到的 Vulkan 能力与扩展**自动降级 / 升级**，
-不携带任何历史单体渲染器的包袱。
+Prisma is an **experimental high-performance, high-quality rendering pipeline unified across
+platforms**: desktop and mobile share the same RenderGraph; path differences come from build-time
+bricks and runtime capability probing, not platform branches; platform-specific capabilities are
+compiled independently and loaded on demand, degrading wholesale when missing. The pipeline always
+tracks the latest graphics APIs / SDKs and dependency versions on each platform; components with an
+LTS channel use the latest LTS.
 
-## 2. 三条核心设计目标
+## 2. Seven core design goals
 
-### 2.1 移动端 TBDR 优化优先，抛弃历史包袱
+### 2.1 Unified across platforms: one pipeline, all platforms
 
-- **TBDR 友好**是首要约束，不是事后优化：
-  - pass 之间用 **transient attachment / lazy allocation**（移动端 tile memory），
-    避免全分辨率中间纹理在系统内存来回搬运。
-  - 严格遵守 **load/store op** 最小化；中间 RT 能 `DONT_CARE` 就 `DONT_CARE`。
-  - 避免跨 tile 的随机全局内存访问（bindless 大数组的访问模式要可控）。
-  - 半分辨率阴影 / GI 等重 pass 默认降采样（见 `RayQueryPass` 的 `scale = 0.5`）。
-  - shader 的资源用量有构建期上限（`assets/shaders/budgets.json` + `xtask` 的
-    `shader-budget`）：一个 pass 悄悄多接几张采样纹理、或 push constant 涨到几百字节，
-    自检就会失败，而不是等移动端跑不动才发现。
-- **不回移植旧架构**：不存在"为了兼容旧 renderer 将就"的妥协。
-  旧的单体 `renderer.rs`（995 行）已被拆掉，新代码一律走 **RenderGraph + pass 节点**。
-  任何"临时塞进 legacy_renderer"的写法都是 bug（legacy 仅作过渡，目标是彻底删除）。
+- **One pipeline, all platforms**: desktop (x86_64 Vulkan) and mobile (aarch64 Vulkan) share the
+  **exact same RenderGraph definition**; differences come only from runtime capability probing (2.6)
+  and build-time brick selection (2.5), **no platform branches**.
+- **Modularization = pass is node**: each render stage (GBuffer / Shadow / RayQuery / SHARC GI /
+  Lighting / Post) is an independent `RenderPassNode`, combined via `RenderGraphBuilder`.
+  New feature = new pass node, no changes to existing nodes.
+- **Resource and rendering decoupling**: source formats (glTF / PNG / HDR) are imported offline by
+  `prism-cooker` and cooked into RTEX / RMES / RSCN; runtime reads via `prism-asset`'s `.pak` +
+  `ResourceManager`; GPU-side `RenderMaterialManager` / `BindlessTextureTable` are in `prism-render`.
+  The engine crate does not depend on specific resource formats.
+- **New platform integration** only implements the Vulkan backend and window/input adaptation,
+  without changing pass and shader main paths.
 
-### 2.2 PC / 移动端 / 全平台统一的可扩展模块化渲染管线
+### 2.2 High performance: bandwidth and budget are hard constraints
 
-- **一套管线，多端运行**：桌面（x86_64 Vulkan）与移动端（aarch64 Vulkan）走**完全相同的
-  RenderGraph 定义**，差异只来自运行时能力探测（见 2.3）与可选特性开关，**不写平台分支**。
-- **模块化 = pass 即节点**：每个渲染阶段（GBuffer / Shadow / RayQuery / SHARC GI /
-  Lighting / Post）是独立的 `RenderPassNode`，通过 `RenderGraphBuilder` 组合。
-  新增特性 = 新增一个 pass 节点，不改动既有节点。
-- **特性可开关、可降级**：光追、GI、阴影、调试视图等都由 `RenderSettings` 控制。
-  中端 GPU 撑不住时关 RT / 把 GI 切到 Off 即可，**架构本身不因此变形**。
-- **资源与渲染解耦**：源格式（glTF / PNG / HDR）由 `prism-cooker` 离线导入并 cook 成
-  RTEX / RMES / RSCN，运行时经 `prism-asset` 的 `.pak` + `ResourceManager` 读取；GPU 侧的
-  `RenderMaterialManager` / `BindlessTextureTable` 在 `prism-render`。引擎 crate 不依赖
-  具体资源格式。
+- **TBDR-friendly is the default constraint**: pass structure is designed for tile memory; mobile
+  is not an afterthought port target.
+  - Passes use **transient attachment / lazy allocation** (mobile tile memory) between them,
+    avoiding full-resolution intermediate textures shuttling back and forth in system memory.
+  - Strictly minimize **load/store ops**; intermediate RT uses `DONT_CARE` when possible.
+  - Avoid cross-tile random global memory access (bindless large array access patterns must be controllable).
+  - Half-resolution shadows / GI and other heavy passes default to downsampling (see `RayQueryPass`'s `scale = 0.5`).
+  - Shader resource usage has a build-time limit (`assets/shaders/budgets.json` + `xtask`'s
+    `shader-budget`): if a pass quietly adds a few more sampled textures or push constants grow to
+    hundreds of bytes, self-check fails rather than waiting for mobile to choke.
+- **No backporting old architecture**: there is no compromise of "making do for old renderer compatibility".
+  The old monolithic `renderer.rs` (995 lines) has been torn down; new code all goes through
+  **RenderGraph + pass nodes**. Any "temporarily stuffed into legacy_renderer" approach is a bug
+  (legacy is only transitional, the goal is complete removal).
 
-### 2.3 运行时自动判断 Vulkan 版本与扩展支持
+### 2.3 High quality: quality tier determined by capability and budget
 
-- 引擎启动时**探测** `VkPhysicalDevice` 的 Vulkan 版本、可用扩展、可用的
-  descriptor-indexing / ray-query / dynamic-rendering 等特性，据此决定启用哪条路径。
-- **能力驱动降级**，不靠 `#[cfg(target_os)]` 平台硬编码：
-  - 有 `VK_KHR_ray_query` → 走 RayQuery 软阴影 / 反射；否则退化为 raster 硬阴影。
-  - 支持 Qualcomm Adreno Neural Fusion（ANF）与 Adreno 矩阵核心 → 启用 `AnfPass` 神经超分辨率（SR）与插帧（FG）；桌面 / 非高通 / 未预置 `libanf.so` 的设备自动退化为内置 TAA 或全分辨率渲染，保证跨平台统一二进制不崩溃。
-  - 支持 descriptor indexing → 走 bindless SRV 表；否则退化为传统 descriptor set。
-  - 高版本 Vulkan 可用 dynamic rendering / transient 附件 → 自动采用以省带宽。
-- 探测逻辑集中、可测试，不被散落到各 pass 里。
+- The same scene covers the quality range from mobile baseline to desktop ceiling **within one
+  pipeline**, switched via `RenderSettings` and capability probing, without producing a parallel
+  second implementation:
+  - GI: baked probe volume → raster ReSTIR GI → SHARC → path tracing.
+  - Shadows: raster shadow maps → RayQuery soft shadows → `None`.
+  - Upscaling and denoising: built-in TAA as baseline; DLSS / DLFG / NRD (NVIDIA) and ANF (Adreno)
+    as optional bricks.
+- **Quality is accepted on reproducible evidence**: `PRISMA_BENCH_REPORT` P50 / P99, per-pass GPU
+  timing, headless screenshots or `PRISMA_SCREENSHOT`, not subjective "looks better".
+- Heavy passes may sacrifice resolution for frame rate, but may not sacrifice pass structure unity.
 
-> **阴影实现状态（2026-08-21）**：当前已实现**单张光栅化阴影贴图**
-> （`ShadowMapPass` 深度预渲染 + `ForwardPass` 用 comparison sampler 采样，
-> 见 `shaders/slang/shadow_depth.slang` / `scene_frag.slang`）。`RenderSettings::
-> shadow_mode` 支持 `Auto`/`Raster`/`RayQuery`/`None`，由 `resolve_shadow`
-> 按 `VK_KHR_ray_query` 能力自动选择。`ShadowMapPass::SHADOW_CASCADE_COUNT = 1` 为预留。
-> 贴图边长由 `RenderSettings::shadow_map_size` 决定（`settings.ini [render] shadow_map_size`，
-> 默认 2048，钳制到 256..=8192，#526）；它在构造渲染器 / 重建渲染图时生效，运行中改
-> 字段不会重新分配图像。
+### 2.4 Experimental: leading-edge technology first, replacement allowed
+
+- The pipeline's primary purpose is to validate leading-edge rendering techniques (path tracing,
+  SHARC, ReSTIR GI, PRT, neural upscaling / frame generation, virtual geometry), not to stay in
+  conservative implementations for "stability".
+- Each technology enters as an independent brick (2.5): failure can disable the whole brick without
+  affecting the default path; experimental technology must not become a hard dependency of the default path.
+- Zero compatibility burden before 1.0: if technology hasn't converged, replace the design; no shims,
+  old-format fallbacks, or dual implementations; docs describe only the latest form.
+
+### 2.5 Platform features independently compilable
+
+- **Capability = brick, `Cargo.toml` = blueprint** (§12): a platform feature is a feature; turning it
+  off generates no code and links no dependencies; mutually exclusive combinations fail explicitly
+  via `compile_error!`, not silently retained.
+- **Every feature must be independently disabled and still compile**: `scripts/check_features.py`'s
+  matrix enforces this rule; new features must add a minimal combination.
+- Platform-specific implementations (DirectWrite, Streamline / DLSS, `libanf.so`) can only appear
+  inside bricks, not in common paths; common paths must not have `#[cfg(target_os)]` branches
+  deciding rendering behavior.
+
+### 2.6 Hot-pluggable: capability present means enabled, missing means degraded
+
+- At engine startup, **probe** `VkPhysicalDevice` Vulkan version, available extensions, and features
+  such as descriptor-indexing / ray-query / dynamic-rendering / transient attachment, then decide
+  which path to enable; probe logic is centralized and testable, not scattered across passes.
+- **Vendor runtime loaded on demand**: Streamline (DLSS / DLFG / NRD) and `libanf.so` (Adreno SR / FG)
+  are enabled if present, degrading to built-in TAA or full-resolution rendering if missing; the
+  cross-platform unified binary does not crash.
+- **Runtime switching**: GI mode, shadow mode, upscale tier controlled by `RenderSettings`; mid-tier
+  GPU turns off RT / GI, the architecture does not deform because of it.
+- **Pass registration boundary**: the goal is to add or replace passes by registration only, without
+  changing core. Currently `GraphRenderer::new` still hardcodes the order of four passes;
+  `PluginRegistry` has only type definitions and has never been constructed (§8.4) — this is a known
+  gap, not design intent.
+- What is swappable at runtime is **capability and implementation**, not cross-ABI dynamic library
+  passes: the latter needs resource and lifecycle contracts, and is not implemented before contracts
+  are defined.
+
+> **Shadow implementation status (2026-08-21)**: currently implemented **single rasterized shadow map**
+> (`ShadowMapPass` depth pre-pass + `ForwardPass` comparison sampler sampling,
+> see `shaders/slang/shadow_depth.slang` / `scene_frag.slang`). `RenderSettings::shadow_mode`
+> supports `Auto`/`Raster`/`RayQuery`/`None`, automatically selected by `resolve_shadow`
+> based on `VK_KHR_ray_query` capability. `ShadowMapPass::SHADOW_CASCADE_COUNT = 1` is reserved.
+> Texture edge length is determined by `RenderSettings::shadow_map_size`
+> (`settings.ini [render] shadow_map_size`, default 2048, clamped to 256..=8192, #526); it takes
+> effect when constructing the renderer / rebuilding the render graph; changing the field at runtime
+> does not reallocate images.
 >
-> **计划（CSM）**：级联阴影贴图（Cascaded Shadow Maps）尚已实现，仅单张
-> 固定范围正交阴影。下一步扩展在 `ShadowMapPass` 内按相机视锥切片拆成多张级联，
-> 并在 `scene.frag.slang::sample_shadow` 中按距离选择级联 —— 已预留常量与接口，不在本次 MVP 范围。
+> **Plan (CSM)**: Cascaded Shadow Maps not yet implemented, only a single fixed-range orthographic shadow.
+> Next step: split into multiple cascades inside `ShadowMapPass` by camera frustum slices, and select
+> cascade by distance in `scene.frag.slang::sample_shadow` — constants and interfaces reserved, not in this MVP scope.
 
-## 3. 派生约束（从目标推出来的硬规则）
+### 2.7 ECS boundary
 
-| 规则 | 理由 |
-|------|------|
-| 不写 `target_os` / `target_arch` 平台分支决定渲染路径 | 2.2 / 2.3：平台差异由能力探测吸收 |
-| 新渲染特性必须实现为 `RenderPassNode`，不得塞进 legacy renderer | 2.1：抛弃历史包袱 |
-| 中间 RT 默认 `DONT_CARE` store + transient/lazy 分配 | 2.1：TBDR 带宽 |
-| 重 pass（阴影/GI/反射）默认半分辨率 | 2.1：移动端带宽/算力 |
-| 所有跨端布局（push constant、UBO、SSBO）显式 padding 并验证 | 全平台一致 ABI |
-| 阴影 / GI / RT / 调试视图由 `RenderSettings` 统一开关 | 2.2：可降级不形变 |
-| 源格式（glTF / 纹理）由 `prism-cooker` 在构建期导入/烘焙，运行时经 `prism-asset` 读 `.pak`，引擎不直读源文件 | 2.2：解耦 |
+Prisma ECS is a **deterministic simulation core**, not a general-purpose ECS framework:
 
-## 4. 当前架构落点（与目标的对应关系）
+- **Storage**: type-indexed sparse set (`prism-ecs`), components are pure data, entities carry generation.
+- **Scheduling**: single-threaded execution in registration order; `update` and `fixed_update` schedules.
+- **Parallelism**: only through explicit batched jobs (`jobs.rs` scoped chunks), no system-level automatic parallelism.
+- **Change tracking**: handled by each system's own dirty flags (e.g. render side's `DirtyDispatchPlan`),
+  no built-in change tick, no observer / hook.
 
-| 设计目标 | 当前落地 |
-|----------|----------|
-| 模块化管线 | `prism-render/src/render_graph.rs`（`RenderPassNode` 图）+ `forward_pass.rs` / `shadow_map_pass.rs` / `skybox_pass.rs`。**现状（2026-08-21）**：`RenderGraph::execute()` 统一驱动四个 pass（`ShadowMapPass` -> `ForwardPass` -> `GtaoPass` -> `PostPass`，按注册顺序线性执行）。passes 通过 `read_usage` / `write_usage` 声明图边依赖，graph 据此自动插入跨 pass 的 `vkCmdPipelineBarrier`（layout cache 按 `(handle, image_index)` 跨帧持久，`recreate_swapchain` 时 `reset_layouts`）。跨帧延迟边（GTAO 双缓冲 AO 回喂）与 swapchain->`PRESENT_SRC_KHR` 保留手动，标注为图边界特例。环检测已实现（`validate_edges`），执行顺序不重排（接线顺序见 `GraphRenderer::new`）。`GraphRenderer::prepare` 已接入 `render_system`/`render_runner` 五阶段链（不再空转），资源生命周期区间已声明，TBDR 内存 aliasing 待下一步扩展。|
-| bindless / 全平台统一 | `prism-render/src/bindless.rs`（分离 SRV + 全局 sampler 表） |
-| 资源管理解耦 | 职责拆成三个 crate：`prism-cooker`（Import→Cook，仅构建期）、`prism-scene`（组件 schema + RSCN v4）、`prism-asset`（Package→Runtime，`.pak` + `ResourceManager`）。引擎侧 `GpuAssetResolver` 持 `ResourceManager`，用 `load_with_deps` 从 `.pak` 懒加载，再经 `GraphRenderer::apply_asset_requests` 在渲染线程上传；运行时链路不依赖 cooker。 |
-| 移动端 GI | **Baked probe-volume GI**（2 阶 SH，9 系数 × RGB，`R32G32B32A32_SFLOAT` 3D texture；float16 仅是后续可选压缩），设计见 §6。移动端仍不跑实时 SHARC（跑不动每帧 ray 填 cache）。桌面侧另有两条独立于 baked 的实时路径：PT + SHARC（`gi_mode = Sharc`）与光栅 ReSTIR GI（`gi_mode = Restir`，见 §6.8）。|
-| 阴影 / RT | 光栅化阴影贴图：`ShadowMapPass`（深度预渲染，见 `shadow_depth.slang`）+ `ForwardPass`（comparison sampler 采样，见 `scene_frag.slang`） |
-| 能力探测 | `prism-render/src/capabilities.rs`（集中探测，扩展中） |
-| 帧生命周期 | `GraphRenderer` 已提供 `begin_frame` → `prepare` → `execute` → `present` → `end_frame` 阶段（2026-08-21 起 `prepare` 已在 `render_system` 与 `render_runner::render_one_frame` 中实际调用，不再空转）；旧 `render()` 仅作为兼容门面。`prepare` 当前实现脏标记日志与输入校验，下一步扩展在此调度批量上传。细粒度 Runtime/Plugin 拆分仍待 PR-L2。 |
-| 场景同步（CPU→GPU） | **已完成（2026-11-10 / #1157）**。统一 `DirtyDispatchPlan` 已在 `prepare` 阶段统一消费，收敛纹理/网格/材质/光照/实例的批量调度与暂存上传。`SceneReadView` 已扩展为完整只读快照（相机、环境、光照、绘制项）。设计见 §9。 |
-| 只读场景视图 | `prism-engine::scene::SceneReadView` 已覆盖相机、光照、环境资源路径和扁平 `DrawItem` 提取；Pass 仅依赖只读快照。 |
+Trade-offs are clear: gain readability, debuggability, low structural change cost; pay with cache
+locality for large queries and less system-level parallelism than archetype + parallel scheduling.
+When the latter two are needed, first gather scale data proving the current implementation can't
+cope, then design separately, no rewrite before 1.0.
 
-## 5. 反目标（明确不做什么）
+### 2.8 Version strategy: follow latest platform API / SDK / dependency
 
-- **不**维护兼容旧单体 renderer 的兼容层。
-- **不**为桌面 / 移动写两套管线或两套 shader 主路径。
-- **不**用平台宏代替能力探测来决定渲染特性。
-- **不**引入未经验证、不可降级的"全开"硬依赖（如强制要求某个 Vulkan 扩展）。
+- **Target latest**: rendering paths target each platform's current latest graphics API, vendor
+  extensions, and SDK; components with an LTS channel take **latest LTS** (e.g. Android NDK LTS,
+  Linux graphics stack LTS), not stuck on expired versions for "stability".
+- **Toolchain**: Rust via `stable` (`rust-toolchain.toml`); Slang takes latest release, CI pins
+  a concrete version via `SLANG_VERSION`; upgrades recompile all shaders in one batch, update
+  `assets/shaders/compile-stamp.json`, and re-run binding drift; SPIR-V validation tool also takes latest.
+- **Dependencies**: third-party crates take latest available; `Cargo.lock` is committed, upgrades
+  run the full dependency budget (`check_deps.py`), feature matrix (`check_features.py`), and tests.
+- **No old-version compatibility**: no second implementation or version branch for old drivers / old SDKs;
+  capability gaps degrade via probing (2.6), not `if version < X`.
+- **Upgrade is routine**: dependency / toolchain / platform SDK upgrades enter as standalone commits;
+  per AGENTS §1, dependency / toolchain / workspace-level changes must run the full gate.
+
+## 3. Derived constraints (hard rules derived from goals)
+
+| Rule | Rationale |
+|------|-----------|
+| No `target_os` / `target_arch` platform branches deciding render path | 2.1 / 2.6: platform differences absorbed by capability probing |
+| New render features must be `RenderPassNode`, not stuffed into legacy renderer | 2.1 / 2.4: drop historical baggage |
+| Intermediate RT default `DONT_CARE` store + transient/lazy allocation | 2.2: TBDR bandwidth |
+| Heavy passes (shadow / GI / reflection) default half-resolution | 2.2: mobile bandwidth / compute |
+| All cross-platform layouts (push constant, UBO, SSBO) explicitly padded and verified | Consistent ABI across platforms |
+| Shadow / GI / RT / debug view unified under `RenderSettings` switch | 2.3 / 2.6: degradable without deformation |
+| Source formats (glTF / textures) imported/cooked at build time by `prism-cooker`, runtime reads `.pak` via `prism-asset`, engine does not read source files directly | 2.1: decoupling |
+| Platform-specific capabilities must live in independent feature bricks and compile standalone | 2.5: independently compilable |
+| Vendor runtime (Streamline / `libanf.so`) must not be a hard link dependency; missing must degrade | 2.6: hot-pluggable |
+| Experimental tech must be fully disableable in `RenderSettings` without dragging the default path | 2.4: experimental |
+| ECS must not rewrite archetype / automatic parallel scheduling / change tick without scale data | 2.7: determinism first |
+| Platform API / SDK / dependency follow latest; LTS channel takes latest LTS, no locked EOL versions | 2.8: version strategy |
+| No version branches for old drivers or old SDKs; capability gaps always degrade via probing | 2.8 / 2.6: no version compatibility |
+| Toolchain versions centralized in `rust-toolchain.toml` and CI `SLANG_VERSION`; upgrades submitted in same batch as shader recompile | 2.8: reproducible upgrades |
+
+## 4. Current architecture mapping (design goal vs. current state)
+
+| Design goal | Current state |
+|-------------|---------------|
+| Modular pipeline | `prism-render/src/render_graph.rs` (`RenderPassNode` graph) + `forward_pass.rs` / `shadow_map_pass.rs` / `skybox_pass.rs`. **Status (2026-08-21)**: `RenderGraph::execute()` uniformly drives four passes (`ShadowMapPass` -> `ForwardPass` -> `GtaoPass` -> `PostPass`, linear in registration order). Passes declare graph-edge deps via `read_usage` / `write_usage`, and the graph auto-inserts cross-pass `vkCmdPipelineBarrier`s (layout cache persistent across frames keyed by `(handle, image_index)`, `reset_layouts` on `recreate_swapchain`). Cross-frame latency edges (GTAO double-buffered AO feedback) and swapchain->`PRESENT_SRC_KHR` are kept manual, marked as graph-boundary exceptions. Cycle detection implemented (`validate_edges`); execution order not reordered (wiring order in `GraphRenderer::new`). `GraphRenderer::prepare` wired into `render_system`/`render_runner` five-stage chain (no longer a no-op); resource lifecycle intervals declared; TBDR memory aliasing left for next step. |
+| Bindless / unified across platforms | `prism-render/src/bindless.rs` (separate SRV + global sampler table) |
+| Resource management decoupling | Responsibilities split into three crates: `prism-cooker` (Import→Cook, build-time only), `prism-scene` (component schema + RSCN v4), `prism-asset` (Package→Runtime, `.pak` + `ResourceManager`). Engine-side `GpuAssetResolver` holds `ResourceManager`, lazily loads from `.pak` via `load_with_deps`, then uploads on the render thread via `GraphRenderer::apply_asset_requests`; runtime chain does not depend on cooker. |
+| Mobile GI | **Baked probe-volume GI** (2nd-order SH, 9 coeffs × RGB, `R32G32B32A32_SFLOAT` 3D texture; float16 is later optional compression); see §6. Mobile still does not run real-time SHARC (can't fill cache with per-frame rays). Desktop has two additional baked-independent real-time paths: PT + SHARC (`gi_mode = Sharc`) and raster ReSTIR GI (`gi_mode = Restir`, see §6.8). |
+| Shadow / RT | Rasterized shadow map: `ShadowMapPass` (depth pre-pass, see `shadow_depth.slang`) + `ForwardPass` (comparison sampler sampling, see `scene_frag.slang`) |
+| Capability probing | `prism-render/src/capabilities.rs` (centralized probing, in progress) |
+| Frame lifecycle | `GraphRenderer` provides `begin_frame` → `prepare` → `execute` → `present` → `end_frame` stages (since 2026-08-21 `prepare` actually called in `render_system` and `render_runner::render_one_frame`, no longer a no-op); old `render()` remains only as a compat facade. `prepare` currently implements dirty-mark logging and input validation; next step extends it to schedule batched uploads. Fine-grained Runtime/Plugin split still pending PR-L2. |
+| Scene sync (CPU→GPU) | **Done (2026-11-10 / #1157)**. Unified `DirtyDispatchPlan` consumed in `prepare` stage, converging batched scheduling and staging uploads of textures / meshes / materials / lights / instances. `SceneReadView` extended to a complete read-only snapshot (camera, env, lights, draw items); see §9. |
+| Read-only scene view | `prism-engine::scene::SceneReadView` covers camera, lights, env resource paths, and flat `DrawItem` extraction; passes depend only on the read-only snapshot. |
+
+## 5. Anti-goals (explicitly not doing)
+
+- **Not** maintaining a compat layer for the old monolithic renderer.
+- **Not** writing two pipelines or two shader main paths for desktop / mobile.
+- **Not** using platform macros instead of capability probing to decide render features.
+- **Not** introducing unverified, non-degradable "all-on" hard dependencies (e.g. forcing a particular Vulkan extension).
+- **Not** making ECS a general framework (archetype, system-level automatic parallelism, change tick) — revisit with scale data (2.7).
+- **Not** making experimental tech a hard dependency of the default path; failure must be able to disable the whole brick (2.4).
+- **Not** doing cross-ABI dynamic library pass hot-loading before contracts are defined (2.6).
 
 ---
 
-## 6. Baked GI 与 RenderGraph 重构（规划）
+## 6. Baked GI and RenderGraph refactor (planning)
 
-> 本节规格驱动 `RenderGraph` 的接口设计，避免"先空改架构再被 GI 打脸第二遍"。
-> GI 不是独立 pass，是 `ForwardPass` 内部的一个 diffuse 间接光采样分支；但它反过来
-> 要求图能区分**三类资源生命周期**，这是重构的核心约束。
+> This section's spec drives `RenderGraph` interface design, to avoid "refactor architecture first,
+> then get slapped by GI a second time".
+> GI is not an independent pass; it is a diffuse indirect-light sampling branch inside `ForwardPass`;
+> but it conversely requires the graph to model **three resource lifecycle classes**, which is the
+> core constraint of this refactor.
 
-### 6.1 资源分类与生命周期（图必须显式建模三类）
+### 6.1 Resource classification and lifecycle (graph must explicitly model three classes)
 
-| 类别 | 生命周期触发 | 示例 | 销毁责任 |
-|------|--------------|------|----------|
-| **场景级（scene）** | 场景/关卡加载/卸载时 | probe volume 3D texture、IBL env cube、材质表 | 场景管理器（非 swapchain 回调） |
-| **交换链级（swapchain）** | swapchain recreate（resize / 旋转 / 设备丢失恢复） | ForwardPass 的 HDR color / depth / normal MRT，**按 swapchain image 数**分配 | 图的 recreate：先 drop 这些资源的 framebuffer，再 recreate swapchain（见 lessons §21、§29 的 device-lost 警告） |
-| **帧级（frame）** | 每帧 in-flight | AO 双缓冲（GTAO 读上一帧、写本帧，1-frame latency）、per-frame-in-flight descriptor set | 图的帧循环（按 `frame_index`，不是 `image_index`） |
+| Class | Lifecycle trigger | Example | Destroy responsibility |
+|-------|-------------------|---------|------------------------|
+| **Scene-level (scene)** | Scene / level load / unload | probe volume 3D texture, IBL env cube, material table | Scene manager (not swapchain callback) |
+| **Swapchain-level (swapchain)** | swapchain recreate (resize / rotation / device-lost recovery) | ForwardPass HDR color / depth / normal MRT, allocated **per swapchain image count** | Graph recreate: drop these resources' framebuffers first, then recreate swapchain (see lessons §21, §29 device-lost warnings) |
+| **Frame-level (frame)** | Per frame in-flight | AO double buffering (GTAO reads last frame, writes current, 1-frame latency), per-frame-in-flight descriptor set | Graph frame loop (by `frame_index`, not `image_index`) |
 
-**关键陷阱（提前标出）**：probe volume 3D texture 是**场景级**，绝不能挂到 swapchain recreate 回调上。换关卡才换，resize 不动。图需要一个 `SceneScope` 资源表，独立于 `SwapchainScope` / `FrameScope`。
+**Key trap (flagged early)**: probe volume 3D texture is **scene-level**, must never be hooked to the swapchain recreate callback. Change only on level change, not on resize. The graph needs a `SceneScope` resource table, independent of `SwapchainScope` / `FrameScope`.
 
-### 6.2 RenderGraph 接口修订
+### 6.2 RenderGraph interface revision
 
-目标：资源句柄声明 + 图托管 + 自动屏障 + 生命周期范围。
+Goal: resource handle declaration + graph ownership + automatic barriers + lifecycle scope.
 
-- `RenderPassNode::setup(&mut self, graph: &mut RenderGraphBuilder, settings)` — 声明
-  读/写哪些 `ResourceHandle`（图边）**及资源的作用域**（scene / swapchain / frame），
-  物理资源由图在 `allocate_resources` / `import` 时统一建。
+- `RenderPassNode::setup(&mut self, graph: &mut RenderGraphBuilder, settings)` — declare
+  which `ResourceHandle`s (graph edges) to read/write **and resource scope** (scene / swapchain / frame);
+  physical resources are built uniformly by the graph at `allocate_resources` / `import`.
 - `RenderPassNode::execute(&mut self, ctx: &RenderContext, resources: &GraphResources)`
-  — 只拿 command buffer + 已绑定/可查询的资源句柄，**不**自己管 framebuffer 生命周期。
-- 资源句柄是图内 ID（`ResourceHandle(u32)`），pass 不持有裸 `vk::Image` / `vk::Framebuffer`。
-- 图在编译期做拓扑排序；图在运行时逐帧推导并插入 **自动屏障**——
-  `RenderGraphExecutor` 维护逐资源的 `ResourceStateTracker`，跟踪每个 image 的
-  `layout` / `access` / `stage`，在 pass 切换时自动插入 `vkCmdPipelineBarrier`，
-  不再依赖 pass 内显式手工 barrier。状态追踪按 `(handle, image_index, layer_count)` 分帧，
-  swapchain recreate 时重置全部 tracked state。
-  第一阶段可先过渡：手动依赖表排顺序 + pass 内显式 barrier，行为不变后再启用自动屏障。
-- **多相机合成（#461）**：`render_system` 枚举所有启用相机（`Camera.depth` 升序），每台相机一份 `CameraView`（view/proj、清屏色、`clear_flags`）。`ForwardPass` 在同一个 render pass 内逐相机 `vkCmdClearAttachments`（`Skybox`/`SolidColor` 清颜色 + 深度，`Depth` 只清深度，`Nothing` 不清）+ 重画一遍场景；UBO 用 `UNORM_BUFFER_DYNAMIC` 的相机槽位切换 view/proj。第一版只支持全屏不透明层叠加，没有逐相机 viewport rect / 后处理栈。
-- **局部后处理体积（#502 Phase 2）**：`PostProcessVolume` 组件用轴对齐盒（`size` 半尺寸 × 实体缩放，旋转忽略）圈出一块区域，带 `priority` / `blend_distance` / `global` 与调色、bloom、色差、颗粒、白平衡参数。主线程在写完 `FramePacket.settings` 后调用 `scene::systems::post_process::resolve_post_grade`：盒内权重 1，盒外 `blend_distance` 内线性淡出，按优先级从低到高把参数混进本帧 `PostGrade`。没有体积时与 `RenderSettings::post_grade()` 逐位一致；多相机合成共用一次后处理，所以只按主相机位置解析。
-- `ShadowMapPass` 已正确实现 `RenderPassNode`，作为参照。**#526 CSM**：`shadow_cascade_count = 1` 时分配旧的 `shadow_size²` 单张阴影图；`= 2` 时分配 `2 × shadow_size` 的 2×1 atlas，左右 tile 分别是近/远级联，片元按相机前向深度选级联。atlas 尺寸在构造渲染图时确定，运行中改设置需要重建。
+  — takes only command buffer + bound/queryable resource handles, **not** managing framebuffer lifecycle itself.
+- Resource handle is graph-internal ID (`ResourceHandle(u32)`); pass holds no raw `vk::Image` / `vk::Framebuffer`.
+- Graph topologically sorts at compile time; at runtime it per-frame deduces and inserts **automatic barriers** —
+  `RenderGraphExecutor` maintains a per-resource `ResourceStateTracker`, tracking each image's
+  `layout` / `access` / `stage`, and auto-inserts `vkCmdPipelineBarrier` on pass switches,
+  no longer relying on explicit manual barriers inside passes. State tracking is per `(handle, image_index, layer_count)` per frame;
+  all tracked state is reset on swapchain recreate.
+  Phase 1 can transition first: manual dep table for ordering + explicit barriers inside passes, behavior unchanged before enabling automatic barriers.
+- **Multi-camera compositing (#461)**: `render_system` enumerates all enabled cameras (`Camera.depth` ascending), each camera gets one `CameraView` (view/proj, clear color, `clear_flags`). `ForwardPass` in one render pass clears per camera via `vkCmdClearAttachments` (`Skybox`/`SolidColor` clear color+depth, `Depth` clears depth only, `Nothing` clears nothing) + redraws the scene; UBO switches view/proj via `UNORM_BUFFER_DYNAMIC` camera slot. Version 1 supports fullscreen opaque layering only, no per-camera viewport rect / post-process stack.
+- **Local post-process volume (#502 Phase 2)**: `PostProcessVolume` component uses an axis-aligned box (`size` half-extents × entity scale, rotation ignored) to bound an area, with `priority` / `blend_distance` / `global` and color grading, bloom, aberration, grain, white balance params. Main thread, after writing `FramePacket.settings`, calls `scene::systems::post_process::resolve_post_grade`: weight 1 inside box, linear fade-out outside within `blend_distance`, mixing params into current frame `PostGrade` from low to high priority. No volume = bit-identical with `RenderSettings::post_grade()`; multi-camera compositing shares one post-process, so resolved only by main camera position.
+- `ShadowMapPass` correctly implements `RenderPassNode`, as reference. **#526 CSM**: `shadow_cascade_count = 1` allocates old `shadow_size²` single shadow map; `= 2` allocates `2 × shadow_size` 2×1 atlas, left/right tiles are near/far cascades, pixels select cascade by camera forward depth. Atlas size determined at render graph construction; changing settings at runtime requires rebuild.
 
-### 6.3 Pass 拓扑（重构后）
+### 6.3 Pass topology (after refactor)
 
 ```
 ShadowMapPass → ForwardPass → GtaoPass → RestirGiPass → PostPass
-   (图边)         (图边)       (图边)        (图边)
+   (graph edge)   (graph edge)  (graph edge)  (graph edge)
 ```
 
-- **baked GI 不是独立 pass**：是 `ForwardPass` 内部一个 `if (flag(PBR_FLAG_GI))` 分支，采样 probe volume。
-- **实时 ReSTIR GI 是独立 pass**（`RestirGiPass`，见 §6.8）：它要读 G-buffer 追二次射线，塞进 `ForwardPass` 就变成片元里做 ray query，所以单独成节点；`ForwardPass` 只在下一帧按 `gi_mode` 采样它写出的屏幕空间信号。
-- 图边契约：
-  - `ShadowMapPass` 写 `shadow_map`（depth） → `ForwardPass` 读。
-  - `ForwardPass` 写 `hdr_color` / `normal_mrt` / `depth`（交换链级，按 image_index） →
-    `GtaoPass` 读 depth+normal；`PostPass` 读 hdr_color。
-  - `GtaoPass` 写 `ao[frame]`（帧级双缓冲） → `ForwardPass`（下一帧读，`ao[(frame+1)%2]`，1-frame latency）。
-    **跨帧依赖由 `GtaoPass::setup` 声明"读上一帧 AO / 写本帧 AO"，图据此不把 GTAO 排在它自己读的那个 slot 前面**；首帧上游 view 为 null，shader 不采样（PBR_FLAG_AO 默认 off）。
-  - `ForwardPass` 写 `albedo_roughness`（`SV_Target3`：rgb = base color，a = perceptual roughness） →
-    `RestirGiPass` 读，用于对间接漫反射做 demodulation。
-  - `RestirGiPass` 写 `restir_gi_color`（帧级双缓冲，`restir_gi_scale` 决定分辨率） → `ForwardPass`（下一帧读，1-frame latency，与 AO 同形）。
-    跨帧延迟边同样是"图边声明 + pass 内手工屏障"：`gi_view` 为 null 时 push constant `gi_mode = 0`，shader 退回 probe volume。
-  - `RestirGiPass` 与 `PathTracePass` 是 SHARC 世界空间缓存的**两个平级消费者**：`gi_mode = Sharc` 时缓存由 PT 训练、PT 查询；`gi_mode = Restir` 时由 `RestirGiPass` 自己 deposit 并查询，PT 不参与。
+- **Baked GI is not a separate pass**: it is an `if (flag(PBR_FLAG_GI))` branch inside `ForwardPass` that samples the probe volume.
+- **Real-time ReSTIR GI is a separate pass** (`RestirGiPass`, see §6.8): it must read the G-buffer and trace secondary rays; folding it into `ForwardPass` would mean doing ray queries per fragment, so it becomes its own node. `ForwardPass` only samples the screen-space signal it writes on the next frame, according to `gi_mode`.
+- Graph-edge contract:
+  - `ShadowMapPass` writes `shadow_map` (depth) → `ForwardPass` reads.
+  - `ForwardPass` writes `hdr_color` / `normal_mrt` / `depth` (swapchain-level, per image_index) →
+    `GtaoPass` reads depth+normal; `PostPass` reads hdr_color.
+  - `GtaoPass` writes `ao[frame]` (frame-level double buffer) → `ForwardPass` (reads on the next frame, `ao[(frame+1)%2]`, 1-frame latency).
+    **The cross-frame dependency is declared by `GtaoPass::setup` as "read the previous frame's AO / write the current frame's AO", so the graph does not order GTAO before the slot it itself reads**; on the first frame the upstream view is null and the shader does not sample (PBR_FLAG_AO is off by default).
+  - `ForwardPass` writes `albedo_roughness` (`SV_Target3`: rgb = base color, a = perceptual roughness) →
+    `RestirGiPass` reads it to demodulate indirect diffuse.
+  - `RestirGiPass` writes `restir_gi_color` (frame-level double buffer; `restir_gi_scale` sets the resolution) → `ForwardPass` (reads on the next frame, 1-frame latency, same shape as AO).
+    The cross-frame latency edge is likewise "graph-edge declaration + manual barrier inside the pass": when `gi_view` is null, push constant `gi_mode = 0` and the shader falls back to the probe volume.
+  - `RestirGiPass` and `PathTracePass` are the **two peer consumers** of the SHARC world-space cache: with `gi_mode = Sharc` the cache is trained and queried by PT; with `gi_mode = Restir` it is deposited and queried by `RestirGiPass` itself, and PT does not participate.
 
-### 6.4 Baked GI 数据规格（PR-5 更新）
+### 6.4 Baked GI data specification (PR-5 update)
 
-- **SH 阶数**：2 阶，9 个系数 × RGB。每系数 `float32`（当前实现 `R32G32B32A32_SFLOAT`；下一步扩展可切 `float16` 省带宽，移动端带宽紧）。
-- **SH 表示**：Probe volume 存储 **radiance SH**（非 irradiance SH）。Baker 不做 cosine 预卷积，仅对入射 radiance 做 Monte Carlo 积分投影到 SH 基。运行时通过两套求值路径区别使用：
-  - **Diffuse** → `EvalSH9Irradiance()` 应用 Ramamoorthi & Hanrahan A_l 因子（A₀=π, A₁=2π/3, A₂=π/4），返回 E(n) = ∫ L(ω) max(0, n·ω) dω。调用方除以 π 得 Lambertian BRDF。
-  - **Specular** → `EvalSH9Radiance()` 直接 SH 重建 L(ω)，输入分裂和（split-sum）近似代替 prefiltered env map。
-  - 同一份 9 系数数据供两条路径使用，无需额外存储。
-- **/π 一致性**：IBL irradiance cubemap 存储 E/π（cosine 加权平均），GI SH 存储 radiance（无 cosine）。运行时 diffuse 路径两者统一为 kd · albedo · E/π，消除旧实现中 GI 比 IBL 亮 π 倍的 bug。
-- **Probe grid**：`origin: vec3`、`spacing: vec3`、`dims: ivec3`（grid 分辨率），经 cbuffer/UBO 传入 shader。
-- **3D texture 打包**：每层一张 2D 切片（R32G32B32A32_SFLOAT），深度 = dims.z × 9
-  （每系数一层 RGB）。采样用 integer `Load` + 手动三线性插值，**不用硬件 sampler**，防止系数层间串扰。
-- **烘焙工具**（`prism-build-pipeline bake-gi` 子命令，不进运行时）：多 bounce 路径追踪（3 bounce + Russian roulette）对每条 Fibonacci 球面方向做完整 bounce 链，写出 `assets/gi/probe_volume.bin`（`prism-render::probe_loader::save_probe_volume`）；读回同样在 `prism-render`（`probe_loader::load_probe_volume` + `GraphRenderer::load_probe_volume_file`，上传到 `SceneScope`），**不经过 `prism-asset`**（后者只负责 `.pak`）。引擎侧目前还没有调用点，烘焙产物要手动接线才会生效。
-- **内存预算**：2 阶 SH + float32，单个 probe = 9×3×4 = 108 bytes；grid 16³ ≈ 432KB，32³ ≈ 3.5MB。
-  若下一步扩展切 float16：单个 probe = 54 bytes，32³ ≈ 1.8MB。
+- **SH order**: order 2, 9 coefficients × RGB. Each coefficient is `float32` (currently `R32G32B32A32_SFLOAT`; a later extension can switch to `float16` to save bandwidth, which is tight on mobile).
+- **SH representation**: the probe volume stores **radiance SH** (not irradiance SH). The baker does not pre-convolve with a cosine; it projects incident radiance onto the SH basis by Monte Carlo integration. At runtime two evaluation paths use it differently:
+  - **Diffuse** → `EvalSH9Irradiance()` applies the Ramamoorthi & Hanrahan A_l factors (A₀=π, A₁=2π/3, A₂=π/4) and returns E(n) = ∫ L(ω) max(0, n·ω) dω. The caller divides by π to obtain the Lambertian BRDF.
+  - **Specular** → `EvalSH9Radiance()` reconstructs L(ω) directly from SH; the split-sum approximation replaces the prefiltered env map.
+  - The same 9 coefficients serve both paths, with no extra storage.
+- **/π consistency**: the IBL irradiance cubemap stores E/π (cosine-weighted average), while GI SH stores radiance (no cosine). At runtime the diffuse path normalizes both to kd · albedo · E/π, removing the old bug where GI was π times brighter than IBL.
+- **Probe grid**: `origin: vec3`, `spacing: vec3`, `dims: ivec3` (grid resolution), passed to the shader through a cbuffer/UBO.
+- **3D texture packing**: one 2D slice per layer (`R32G32B32A32_SFLOAT`), depth = dims.z × 9
+  (one RGB layer per coefficient). Sampling uses integer `Load` plus manual trilinear interpolation, **not a hardware sampler**, to prevent cross-talk between coefficient layers.
+- **Baking tool** (`prism-build-pipeline bake-gi` subcommand, not part of the runtime): multi-bounce path tracing (3 bounces + Russian roulette) runs the full bounce chain for each Fibonacci sphere direction and writes `assets/gi/probe_volume.bin` (`prism-render::probe_loader::save_probe_volume`); reading it back also lives in `prism-render` (`probe_loader::load_probe_volume` + `GraphRenderer::load_probe_volume_file`, uploading into `SceneScope`), **bypassing `prism-asset`** (which only handles `.pak`). The engine side has no call site yet, so the baked output only takes effect after manual wiring.
+- **Memory budget**: order-2 SH with float32 gives 9×3×4 = 108 bytes per probe; a 16³ grid is ≈ 432KB, 32³ ≈ 3.5MB.
+  Switching to float16 in a later extension gives 54 bytes per probe, 32³ ≈ 1.8MB.
 
-### 6.5 `scene_frag.slang` 改动（PR-5 更新）
+### 6.5 `scene_frag.slang` changes (PR-5 update)
 
-- **Diffuse GI**：`SampleProbeVolumeIrradiance()` → `EvalSH9Irradiance(n)` 算出 E(n)，公式：
+- **Diffuse GI**: `SampleProbeVolumeIrradiance()` → `EvalSH9Irradiance(n)` computes E(n):
   `gi_diffuse = kd_ibl · ibl_intensity · (E(n) / π) · albedo`
-  替代 IBL irradiance cubemap 采样。
-- **Specular GI**：`SampleProbeVolumeRadiance()` → `EvalSH9Radiance(r)` 算出 L(r)，公式：
+  replacing IBL irradiance cubemap sampling.
+- **Specular GI**: `SampleProbeVolumeRadiance()` → `EvalSH9Radiance(r)` computes L(r):
   `specular_ibl = ibl_intensity · L(r) · (f_ibl · brdf_LUT.x + brdf_LUT.y)`
-  替代 IBL prefiltered env map 采样。SH 2 阶对镜面反射很模糊，但室内场景中 bounced light 本质低频，且比泄漏 env sky 正确。
-- `PBR_FLAG_GI`（bit 14）控制开关；`RenderSettings::gi_mode` 复用（0=Off，非0=On；baked 无 Update 状态，故只 0/非0）。
+  replacing prefiltered IBL env map sampling. Order-2 SH is very blurry for specular reflections, but bounced light in indoor scenes is inherently low-frequency and this is still more correct than leaking the env sky.
+- `PBR_FLAG_GI` (bit 14) controls the switch; `RenderSettings::gi_mode` is reused (0=Off, non-zero=On; baked has no Update state, hence only 0/non-zero).
 
-### 6.7 SH 表示变更记录（PR-5）
+### 6.7 SH representation change log (PR-5)
 
-| 版本 | SH 存储 | Diffuse 求值 | Specular 求值 | /π 一致性 |
+| Version | SH storage | Diffuse evaluation | Specular evaluation | /π consistency |
 |------|---------|-------------|--------------|----------|
-| PR-3 前 | **Irradiance SH**（cosine 预卷积） | `EvalSH9(n)` = E(n) | 无 GI specular（走 IBL env） | ❌ GI 比 IBL 亮 π 倍 |
-| PR-3 | **Irradiance SH** | `EvalSH9(n)` = E(n) | 复用 `EvalSH9(r)` 当 specular（错用 irradiance） | ❌ /π 缺失 + specular 物理错误 |
-| **PR-5** | **Radiance SH**（无 cosine 预卷积） | `EvalSH9Irradiance(n)` = E(n) 含 A_l 因子 | `EvalSH9Radiance(r)` = L(r) 直接重建 | ✅ 两路径统一为 kd·albedo·E/π |
+| Before PR-3 | **Irradiance SH** (cosine pre-convolved) | `EvalSH9(n)` = E(n) | no GI specular (uses IBL env) | ❌ GI is π times brighter than IBL |
+| PR-3 | **Irradiance SH** | `EvalSH9(n)` = E(n) | reuses `EvalSH9(r)` as specular (irradiance misused) | ❌ missing /π + physically wrong specular |
+| **PR-5** | **Radiance SH** (no cosine pre-convolution) | `EvalSH9Irradiance(n)` = E(n) with A_l factors | `EvalSH9Radiance(r)` = L(r) reconstructed directly | ✅ both paths normalized to kd·albedo·E/π |
 
-### 6.6 迁移步骤（可拆 PR，每步独立可验证、CI 不红）
+### 6.6 Migration steps (separable PRs, each independently verifiable, CI stays green)
 
-- **PR-1：图资源模型 + ForwardPass 进图（不改 shader）**。把 `ForwardPass` 改造成
-  `RenderPassNode`，HDR/depth/normal 改为图声明的交换链级资源；`GraphRenderer::render()`
-  删掉手动 set_target / set_ao / execute 编排，改构造一次 `RenderContext` 调 `graph.execute(ctx)`。
-  屏障先手工（pass 内显式），图只排顺序。行为不变 → CI 绿。
-- **PR-2：GtaoPass / PostPass 进图（不改 shader）**。同上模式，声明图边依赖，删手动编排。
-  重点验证 1-frame-latency AO 跨帧依赖的图表达正确。
-- **PR-3：probe volume 场景级资源 + `scene_frag` GI 分支**。新增 `SceneScope` 资源表、loader
-  接口（`prism-render::probe_loader`）、`PBR_FLAG_GI` 采样分支。此时 GI 接进来，图的"三类生命周期"被真实消费。
+- **PR-1: graph resource model + ForwardPass joins the graph (no shader changes)**. Convert `ForwardPass` into a
+  `RenderPassNode`; make HDR/depth/normal graph-declared swapchain-level resources; remove the manual
+  set_target / set_ao / execute orchestration from `GraphRenderer::render()` and instead build one `RenderContext`
+  and call `graph.execute(ctx)`. Barriers stay manual (explicit inside passes) and the graph only orders work.
+  Behavior is unchanged → CI green.
+- **PR-2: GtaoPass / PostPass join the graph (no shader changes)**. Same pattern: declare graph-edge dependencies,
+  delete manual orchestration. The focus is verifying that the graph expresses the 1-frame-latency AO cross-frame dependency correctly.
+- **PR-3: probe volume scene-level resource + `scene_frag` GI branch**. Add the `SceneScope` resource table, loader
+  interface (`prism-render::probe_loader`) and the `PBR_FLAG_GI` sampling branch. GI is now connected and the graph's "three lifecycle classes" are actually consumed.
 
-> **顺序原则**：PR-1/PR-2 先把图接口按"消费者（GI）需求"定下来（§6.1 三类生命周期），PR-3 才真正接入 GI。
-> 不在 PR-1 时空改接口猜 GI 需求（避免第二遍返工）。
+> **Ordering principle**: PR-1/PR-2 first pin down the graph interface against the needs of its consumer (GI) (§6.1's three lifecycle classes); PR-3 then connects GI for real.
+> Do not guess GI's requirements by changing the interface in PR-1 (that invites a second rework).
 
-### 6.8 实时 ReSTIR GI（光栅路径，独立于 PT）
+### 6.8 Real-time ReSTIR GI (raster path, independent of PT)
 
-> 目标：不打开路径追踪也能拿到实时间接漫反射；SHARC 世界空间缓存复用，但**训练者换成光栅 GI 自己**。
+> Goal: obtain real-time indirect diffuse without enabling path tracing; the SHARC world-space cache is reused, but **the trainer becomes raster GI itself**.
 
-- **触发条件**：`RenderSettings::gi_mode = GiMode::Restir` + `RenderMode::Raster` + `prism-render/restir_gi` feature + 设备支持 `VK_KHR_ray_query`。任一不满足即退化为 baked probe volume（`ForwardPass` 的 `gi_mode` push constant 为 0），不报错、不改图结构。
-- **数据流**：`ForwardPass` 的 G-buffer（depth / view-normal / albedo+roughness / velocity）→ `restir_gi.slang` 在 `restir_gi_scale`（默认 0.5）分辨率下重建世界位置，按余弦分布追 `restir_gi_rays_per_pixel` 条二次射线 → 命中点做 NEE + 环境光，miss 写天空 → 时间复用（velocity 重投影 + 深度校验，`restir_gi_max_history` 封顶）+ 空间复用（`restir_gi_spatial_samples` 个邻居）→ 输出 **E(n)/π**（不是出射辐亮度），`ForwardPass` 下一帧按 `kd · albedo · signal` 合成。
-- **/π 约定**：输出与 probe volume 的 `EvalSH9Irradiance / π` 同量纲，所以 `scene_frag.slang` 两条 GI 路径共用同一行合成公式；ReSTIR 分支只替换信号源，specular 仍走 prefiltered env cubemap。
-- **SHARC 复用**：`RestirGiPass` 通过 `set_sharc_buffers()` 拿到与 PT 相同的三个持久缓冲（hash entries / accumulation / resolved），在 `restir_gi.slang` 内做 `SharcInit` / `SharcUpdateHit` / `SharcUpdateMiss` / `SharcGetCachedRadiance`。射线命中已收敛体素时直接取缓存辐亮度并提前终止。缓存的 clear / resolve 仍由 `GraphRenderer` 的共享编排驱动（`SharcTargets` + `SharcResolvePass`），两个消费者只在"谁训练"上互斥。
-- **几何来源**：`RestirGiPass::set_geometry()` 接收与 PT 同形的 `PtGeometryInstance`（`bake_common`），内部 `build_pt_scene()` 建 BLAS/TLAS；`GraphRenderer::prepare` 在 `gi_mode = Restir` 且 pass 尚无几何时调用 `sync_restir_gi_geometry()`，与 `sync_pt_geometry()` 共用 `collect_rt_instances()` 的世界空间顶点变换。
-- **开关**：`restir_gi_scale`（分辨率倍率）、`restir_gi_rays_per_pixel`、`restir_gi_spatial_samples`、`restir_gi_max_history`、`restir_gi_temporal_reuse`、`restir_gi_spatial_reuse`、`restir_gi_max_secondary_dist`，逐字段经 `prism-engine::render_settings` → `prism-app::render_runner` 透传。
-- **不变量**：`RestirGiPass` 只声明图边（读 4 个 G-buffer、写 `restir_gi_color`），不碰 `ForwardPass` 的附件；关掉 feature 时 `ForwardPass` 的 set 4 binding 1 保持 null，push constant `gi_mode` 恒 0。
+- **Trigger conditions**: `RenderSettings::gi_mode = GiMode::Restir` + `RenderMode::Raster` + the `prism-render/restir_gi` feature + device support for `VK_KHR_ray_query`. If any condition fails, it degrades to the baked probe volume (`ForwardPass`'s `gi_mode` push constant is 0) without error and without changing the graph structure.
+- **Data flow**: `ForwardPass` G-buffer (depth / view-normal / albedo+roughness / velocity) → `restir_gi.slang` reconstructs world positions at `restir_gi_scale` (default 0.5) resolution, traces `restir_gi_rays_per_pixel` secondary rays with a cosine distribution → NEE + ambient light at hit points, sky on miss → temporal reuse (velocity reprojection + depth validation, capped by `restir_gi_max_history`) + spatial reuse (`restir_gi_spatial_samples` neighbors) → outputs **E(n)/π** (not outgoing radiance), and `ForwardPass` composites with `kd · albedo · signal` on the next frame.
+- **/π convention**: the output has the same dimension as the probe volume's `EvalSH9Irradiance / π`, so both GI paths in `scene_frag.slang` share one composite formula; the ReSTIR branch only replaces the signal source, and specular still uses the prefiltered env cubemap.
+- **SHARC reuse**: `RestirGiPass` receives the same three persistent buffers as PT through `set_sharc_buffers()` (hash entries / accumulation / resolved) and performs `SharcInit` / `SharcUpdateHit` / `SharcUpdateMiss` / `SharcGetCachedRadiance` inside `restir_gi.slang`. When a ray hits an already-converged voxel it takes the cached radiance and terminates early. Cache clear / resolve is still driven by `GraphRenderer`'s shared orchestration (`SharcTargets` + `SharcResolvePass`); the two consumers are mutually exclusive only over "who trains".
+- **Geometry source**: `RestirGiPass::set_geometry()` receives `PtGeometryInstance` in the same shape as PT (`bake_common`) and builds BLAS/TLAS internally with `build_pt_scene()`; `GraphRenderer::prepare` calls `sync_restir_gi_geometry()` when `gi_mode = Restir` and the pass has no geometry yet, sharing `collect_rt_instances()`'s world-space vertex transforms with `sync_pt_geometry()`.
+- **Switches**: `restir_gi_scale` (resolution multiplier), `restir_gi_rays_per_pixel`, `restir_gi_spatial_samples`, `restir_gi_max_history`, `restir_gi_temporal_reuse`, `restir_gi_spatial_reuse`, `restir_gi_max_secondary_dist`, passed through field by field from `prism-engine::render_settings` → `prism-app::render_runner`.
+- **Invariants**: `RestirGiPass` only declares graph edges (reads 4 G-buffers, writes `restir_gi_color`) and never touches `ForwardPass`'s attachments; when the feature is off, `ForwardPass`'s set 4 binding 1 stays null and the `gi_mode` push constant is always 0.
 
-### 6.9 PRT64 与 64 叉树（后续阶段）
+### 6.9 PRT64 and the 64-ary tree (later phase)
 
-> 本节到 §6.8 为止描述的是**已落地**的 SH 探针体积与 ReSTIR 路径。更高阶的预计算辐射度传输
-> （PRT64）、64 叉树分块流式、Cluster-Major 动态光传播属于**下一阶段**，其数据契约
-> （`.prtbin` 头部与 cluster 载荷）、Pass 1–4 拓扑、防漏光机制与 M1–M4 验收口径全部记录在
-> [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md)。本节不复述那些内容，改规格以该文为准；
-> §6.1 的三类生命周期与 §6.4 的 `E/π` 量纲约束对它**继续生效**。
+> Through §6.8, this section describes the **shipped** SH probe volume and ReSTIR path. Higher-order precomputed radiance transfer
+> (PRT64), 64-ary-tree chunked streaming and Cluster-Major dynamic light propagation belong to the **next phase**; their data contract
+> (`.prtbin` header and cluster payload), Pass 1–4 topology, light-leak prevention, and M1–M4 acceptance criteria are all recorded in
+> [`prt-gi-64tree-design.md`](prt-gi-64tree-design.md). This section does not repeat them; that document is authoritative for the spec.
+> §6.1's three lifecycle classes and §6.4's `E/π` dimension constraint **continue to apply**.
 
-*相关文档：`docs/lessons-learned.md`（§21/§29 framebuffer 销毁顺序、§30 CI 漂移）。*
+*Related documents: `docs/lessons-learned.md` (§21/§29 framebuffer destruction order, §30 CI drift).*
 
-## 7. 纹理管线（Texture Pipeline）
+## 7. Texture pipeline
 
-> 本节规格驱动纹理从"源 PNG/HDR"到"GPU 采样"的全链路设计。当前实现是
-> **运行时全量 RGBA8 上传**（§31 已记录：Intel Sponza 2022 4.5 GB 解压后
-> 像素、~1.8s 加载、GPU 占 4.5 GB），本节定义目标架构：**离线预处理 +
-> 块压缩 + 按需流式**。这是移动端 TBDR 之外另一条"mobile-first"硬约束 --
-> 移动端 GPU 内存和带宽比桌面更紧，不压缩根本跑不起来。
+> This section's spec drives the whole chain from "source PNG/HDR" to "GPU sampling". The current implementation is
+> **full RGBA8 upload at runtime** (§31 records: Intel Sponza 2022, 4.5 GB of decompressed
+> pixels, ~1.8s load, 4.5 GB of GPU memory), and this section defines the target architecture: **offline preprocessing +
+> block compression + on-demand streaming**. This is another hard constraint beyond TBDR bandwidth —
+> mobile GPUs have tighter memory and bandwidth than desktop, and cannot run uncompressed at all.
 
-### 7.1 设计原则
+### 7.1 Design principles
 
-| 原则 | 理由 |
+| Principle | Rationale |
 |------|------|
-| **离线预处理，运行时零解码** | PNG 解码（701ms）+ 块压缩编码（数十秒/张）都不该每次启动重做。源文件指纹变化才重导入。 |
-| **移动端格式优先，桌面能力探测降级** | 契合 §1/§2.1 mobile-first 定位。ASTC 是移动端新设备原生，桌面现代 GPU 也支持；BC 作为桌面老设备回退。 |
-| **产物不进 git，本地 / CI 生成** | 72 张 4K BC7 ≈ 2.25 GB，进 git 仓库爆。靠源文件 SHA256 保证一致性。 |
-| **glTF 不直读，经 `prism-cooker` 离线导入** | 契合 §3「源格式由构建期导入，引擎不直读文件」。导入 / cook 在 `prism-cooker`，运行时只读 `.pak` 内的 RTEX。 |
-| **mip chain 由容器承载，支持下一步扩展流式** | KTX2 原生存完整 mip chain；阶段 3 流式加载以此为前提。 |
+| **Offline preprocessing, zero decoding at runtime** | PNG decoding (701ms) + block-compression encoding (tens of seconds per image) should not be redone on every launch. Re-import only when the source fingerprint changes. |
+| **Mobile formats first, desktop capability-probed fallback** | Matches §2.2's bandwidth constraint and §2.6's capability probing. ASTC is native on new mobile devices and also supported by modern desktop GPUs; BC is the fallback for old desktop devices. |
+| **Artifacts do not enter git; generated locally / in CI** | 72 4K BC7 images ≈ 2.25 GB would blow up the git repository. Source SHA256 guarantees consistency. |
+| **glTF is not read directly; import offline through `prism-cooker`** | Matches §3 "source formats are imported at build time; the engine does not read files directly". Import / cook happens in `prism-cooker`; the runtime only reads RTEX inside `.pak`. |
+| **The container carries the mip chain, enabling later streaming** | KTX2 natively stores the full mip chain; phase 3 streaming builds on this. |
 
-### 7.2 格式选型（移动端新设备优先）
+### 7.2 Format selection (new mobile devices first)
 
-**ASTC 是首选格式**，覆盖移动端新设备 + 桌面现代 GPU；BC 作为桌面老设备回退；
+**ASTC is the primary format**, covering new mobile devices + modern desktop GPUs; BC is the fallback for old desktop devices;
 
-| 纹理类型 | 主格式（移动 + 桌面现代） | 桌面回退 | 移动低端回退 |
+| Texture type | Primary format (mobile + modern desktop) | Desktop fallback | Low-end mobile fallback |
 |----------|--------------------------|----------|--------------|
 | Albedo / Color (LDR) | **ASTC 6×6 sRGB** (3.56 bpp) | BC7 sRGB | ETC2 |
-| Normal map (tangent-space) | **ASTC 6×6** 或专用双通道变体 | BC5 | ETC2 |
-| Metallic / Roughness (打包) | **ASTC 6×6** | BC7 | ETC2 |
-| 单通道遮罩 / AO / 高度 | **ASTC 6×6** | BC4 | ETC2 R |
+| Normal map (tangent-space) | **ASTC 6×6** or a dedicated two-channel variant | BC5 | ETC2 |
+| Metallic / Roughness (packed) | **ASTC 6×6** | BC7 | ETC2 |
+| Single-channel mask / AO / height | **ASTC 6×6** | BC4 | ETC2 R |
 | Emissive (LDR) | **ASTC 6×6 sRGB** | BC7 sRGB | ETC2 |
-| Emissive (HDR) / IBL env / 光照贴图 | **ASTC HDR 6×6** (`VK_EXT_texture_compression_astc_hdr`) | BC6H | RGBA16f（不压缩，回退） |
-| UI / 字体 atlas | **ASTC 4×4** (8 bpp，画质优先) | BC7 | ETC2 |
+| Emissive (HDR) / IBL env / lightmap | **ASTC HDR 6×6** (`VK_EXT_texture_compression_astc_hdr`) | BC6H | RGBA16f (uncompressed fallback) |
+| UI / font atlas | **ASTC 4×4** (8 bpp, quality first) | BC7 | ETC2 |
 
-**为什么 ASTC 而不是 BC**：
-- ASTC 6×6 (3.56 bpp) 比 BC7 (8 bpp) **小 2.2×**，画质相近 -- 移动端带宽和内存更紧。
-- ASTC 是移动端硬件原生（Adreno 6xx+ / Mali Midgard+ / Apple A7+ 全支持），桌面 RTX 20+ / Intel Ice Lake+ / AMD RDNA2+ 也支持。
-- Vulkan 用 `vkGetPhysicalDeviceFeatures::textureCompressionASTC_LDR` 探测，契合 §2.3 "能力驱动降级"。
-- ASTC HDR 走 `VK_EXT_texture_compression_astc_hdr` 扩展探测，单独覆盖 HDR 浮点场景（BC6H 的 ASTC 对应物）。
+**Why ASTC rather than BC**:
+- ASTC 6×6 (3.56 bpp) is **2.2× smaller** than BC7 (8 bpp) at similar quality -- mobile bandwidth and memory are tighter.
+- ASTC is native on mobile hardware (Adreno 6xx+ / Mali Midgard+ / Apple A7+ all support it), and desktop RTX 20+ / Intel Ice Lake+ / AMD RDNA2+ also support it.
+- Vulkan probes it with `vkGetPhysicalDeviceFeatures::textureCompressionASTC_LDR`, matching §2.6 "capability-driven degradation".
+- ASTC HDR is probed through the `VK_EXT_texture_compression_astc_hdr` extension, covering HDR floating-point scenes separately (the ASTC counterpart of BC6H).
 
-**BC 作为桌面回退**：老桌面 GPU（pre-RTX20 / pre-RDNA2 / pre-Ice Lake）无 ASTC，回退到 BC7/BC5/BC4/BC6H。回退路径由 `capabilities.rs` 探测，不写 `#[cfg(target_os)]`。
+**BC as the desktop fallback**: old desktop GPUs (pre-RTX20 / pre-RDNA2 / pre-Ice Lake) lack ASTC and fall back to BC7/BC5/BC4/BC6H. The fallback path is probed by `capabilities.rs`, with no `#[cfg(target_os)]`.
 
-**神经纹理压缩（NTC）暂不采用**：NVIDIA NTC（SIGGRAPH 2023）和 Qualcomm Adreno 神经纹理压缩仍处研究/早期阶段，无标准 Vulkan 扩展、无跨厂商工具链、解码需 tensor core。**留待 Khronos 标准化后再评估**（见 `docs/lessons-learned.md` §31.6）。
+**Neural texture compression (NTC) is not adopted yet**: NVIDIA NTC (SIGGRAPH 2023) and Qualcomm Adreno neural texture compression are still research / early-stage, with no standard Vulkan extension, no cross-vendor toolchain, and tensor-core decoding. **Revisit after Khronos standardizes** (see `docs/lessons-learned.md` §31.6).
 
-### 7.3 资源生命周期分类（对齐 §6.1）
+### 7.3 Resource lifecycle classification (aligned with §6.1)
 
-纹理资源归入 §6.1 三类生命周期中的**场景级**：
+Textures fall into the **scene-level** class among §6.1's three lifecycles:
 
-| 类别 | 触发 | 示例 | 销毁责任 |
+| Class | Trigger | Example | Destroy responsibility |
 |------|------|------|----------|
-| **场景级（texture）** | 场景加载/卸载 | KTX2 解出的 BC/ASTC 纹理、IBL env cube、BRDF LUT | 场景管理器（非 swapchain 回调） |
+| **Scene-level (texture)** | Scene load / unload | BC/ASTC textures decoded from KTX2, IBL env cube, BRDF LUT | Scene manager (not the swapchain callback) |
 
-**关键**：纹理绝不能挂到 swapchain recreate 回调上。换关卡才换纹理，resize 不动。
-`RenderTextureManager` 的资源表是 `SceneScope`，独立于 `SwapchainScope` / `FrameScope`。
+**Key**: textures must never be attached to the swapchain recreate callback. Textures change only when the level changes; resize does not touch them.
+`RenderTextureManager`'s resource table is `SceneScope`, independent of `SwapchainScope` / `FrameScope`.
 
-### 7.4 离线导入管线（xtask 子命令）
+### 7.4 Offline import pipeline (xtask subcommand)
 
-新增 `xtask texture-import`，把 glTF 引用的源图（PNG/HDR）预转 KTX2 缓存。
+A new `xtask texture-import` pre-converts source images referenced by glTF (PNG/HDR) into a KTX2 cache.
 
-**输入**：glTF 文件（如 `NewSponza_Main_glTF_003.gltf`）
-**输出**：`scene_cache/<scene>/` 目录 + `manifest.json`
+**Input**: glTF file (e.g. `NewSponza_Main_glTF_003.gltf`)
+**Output**: `scene_cache/<scene>/` directory + `manifest.json`
 
 ```
 assets/
   scenes.json
   scene_cache/                          ← .gitignore
     sponza/
-      desktop/                          ← 桌面产物（BC7/BC5/BC4/BC6H）
+      desktop/                          ← desktop artifacts (BC7/BC5/BC4/BC6H)
         arch_stone_wall_01_BaseColor.bc7.ktx2
         arch_stone_wall_01_Normal.bc5.ktx2
         ...
-      android/                          ← 移动产物（ASTC 6×6 / ASTC HDR）
+      android/                          ← mobile artifacts (ASTC 6×6 / ASTC HDR)
         arch_stone_wall_01_BaseColor.astc6.ktx2
         arch_stone_wall_01_Normal.astc6.ktx2
         ...
-      manifest.json                     ← 集中元数据
+      manifest.json                     ← centralized metadata
 ```
 
-**manifest.json 结构**（每张图一条记录）：
+**manifest.json structure** (one record per image):
 ```json
 {
   "scene": "sponza",
@@ -314,7 +406,7 @@ assets/
       "source_uri": "textures/arch_stone_wall_01_BaseColor.png",
       "source_sha256": "b7c4...",
       "width": 4096, "height": 4096,
-      "kind": "albedo",                  // 决定 sRGB + 格式选型
+      "kind": "albedo",                  // determines sRGB + format selection
       "mip_levels": 12,
       "desktop": "desktop/arch_stone_wall_01_BaseColor.bc7.ktx2",
       "desktop_format": "BC7_SRGB",
@@ -325,14 +417,14 @@ assets/
 }
 ```
 
-**导入逻辑**：
-1. 解析 glTF，枚举 image URI 列表。
-2. 对每张图，按文件名启发式判定 `kind`（`*_BaseColor` -> albedo/sRGB，`*_Normal` -> normal/linear，`*_Roughness*Metalness` -> MR/linear，`*Normal` 后缀优先级高于 BaseColor）。
-3. 计算源文件 SHA256，与 manifest 对比；**命中且 sha 一致 -> 跳过**（增量导入）。
-4. 未命中 -> `image` crate 解码 PNG -> `bc7enc` / `astc-encoder` crate 编码 -> 写 KTX2。
-5. 更新 manifest。
+**Import logic**:
+1. Parse the glTF and enumerate the image URI list.
+2. For each image, infer `kind` heuristically from the filename (`*_BaseColor` -> albedo/sRGB, `*_Normal` -> normal/linear, `*_Roughness*Metalness` -> MR/linear, with the `*Normal` suffix taking priority over BaseColor).
+3. Compute the source file SHA256 and compare with the manifest; **hit with matching sha -> skip** (incremental import).
+4. Miss -> decode PNG with the `image` crate -> encode with `bc7enc` / `astc-encoder` -> write KTX2.
+5. Update the manifest.
 
-**kind -> 格式映射**（对齐 §7.2 表）：
+**kind -> format mapping** (aligned with the §7.2 table):
 ```rust
 match kind {
     TextureKind::Albedo | TextureKind::EmissiveLdr => {
@@ -353,301 +445,292 @@ match kind {
 }
 ```
 
-### 7.5 运行时加载路径（KTX2 直读，已被 §10 取代）
+### 7.5 Runtime load path (KTX2 direct read, superseded by §10)
 
-> **2026-10 分层重构后已废弃**：`gltf_loader` / `SceneStore` 随旧 `prism-asset` 拆分移除，
-> 导入 / cook 迁到 `prism-cooker`，运行时只读 `.pak` 内的 RTEX（见 §10.12）。本节 7.5–7.7
-> 保留为历史设计，不再按此实现。
+> **Obsolete after the 2026-10 layered refactor**: `gltf_loader` / `SceneStore` were removed along with the old `prism-asset` split;
+> import / cook moved to `prism-cooker`, and the runtime only reads RTEX inside `.pak` (see §10.12). Sections 7.5–7.7
+> are kept as historical design and are no longer implemented this way.
 
-`gltf_loader::load` 曾计划改为优先读 KTX2 缓存：
+`gltf_loader::load` was once planned to prefer the KTX2 cache:
 
 ```
-解析 glTF 拿 image URI 列表
-  -> 查 scene_cache/<scene>/manifest.json
-     ├─ 命中（sha256 匹配）：
-     │    mmap KTX2 字节（按平台选 desktop/ 或 android/ 子目录）
-     │    -> 直接传给 BatchUploader（已是 BC/ASTC 压缩块，无需解码）
-     │    -> 记录 (asset_h, vk::Format, width, height, mip_levels)
-     │    省掉：PNG 解码（701ms）+ to_rgba8 转换 + 压缩格式运行时编码
-     └─ 未命中：
-          回退到现有 PNG -> RGBA8 路径（保留，便于无缓存时仍能跑）
+Parse glTF to get the image URI list
+  -> look up scene_cache/<scene>/manifest.json
+     ├─ hit (sha256 matches):
+     │    mmap KTX2 bytes (choose desktop/ or android/ by platform)
+     │    -> pass directly to BatchUploader (already BC/ASTC-compressed blocks, no decoding)
+     │    -> record (asset_h, vk::Format, width, height, mip_levels)
+     │    saves: PNG decode (701ms) + to_rgba8 conversion + runtime compressed-format encoding
+     └─ miss:
+          fall back to the existing PNG -> RGBA8 path (kept so the app still runs without a cache)
           log::warn!("texture cache miss for {uri}, run `cargo run -p xtask -- texture-import <scene>`")
 ```
 
-**关键约束**：
-- 缓存未命中只是 warn，不是 error -- 首次运行或缓存被清时仍能跑（走 RGBA8 老路径），保证开发体验。
-- 运行时**不做编码**（BC7 编码 4K 图要几十秒，体验灾难）。编码只在 xtask 离线做。
-- KTX2 是 GPU-ready 字节，mmap 后 `vkCmdCopyBufferToImage` 直接传，**接近零 CPU 成本**。
+**Key constraints**:
+- A cache miss only warns, not errors -- a first run or cleared cache can still run (through the old RGBA8 path), preserving the developer experience.
+- The runtime **does no encoding** (encoding a 4K image with BC7 takes tens of seconds, a disastrous experience). Encoding happens only offline in xtask.
+- KTX2 is GPU-ready bytes; after mmap, `vkCmdCopyBufferToImage` uploads directly, at **near-zero CPU cost**.
 
-### 7.6 BatchUploader / TextureUploadInput 改造
+### 7.6 BatchUploader / TextureUploadInput changes
 
-**已实现（2026-08-21）** `TextureUploadInput` 已扩展支持压缩格式：
+**Implemented (2026-08-21)**: `TextureUploadInput` has been extended to support compressed formats:
 
 ```rust
 pub struct TextureUploadInput {
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat, // Rgba8 | Bc7* | Bc5 | Bc4 | Bc6H | Astc* | Etc2
-    pub mip_levels: u32,       // 0=自动推导(Rgba8) / 1=单级(压缩) / >1=KTX2 完整链
-    pub pixels: Vec<u8>,       // 压缩块字节（BC/ASTC）或 RGBA8
+    pub mip_levels: u32,       // 0=auto (Rgba8) / 1=single level (compressed) / >1=full KTX2 chain
+    pub pixels: Vec<u8>,       // compressed block bytes (BC/ASTC) or RGBA8
 }
 
 pub enum TextureFormat {
     Rgba8, Rgba8Srgb,
     Bc7Unorm, Bc7Srgb, Bc5Unorm, Bc4Unorm, Bc6HUfloat,
     Astc4x4Unorm/Srgb, Astc6x6Unorm/Srgb, Astc8x8Unorm/Srgb,
-    Etc2R8G8B8A8Srgb, // 覆盖 CookProfile 全量
+    Etc2R8G8B8A8Srgb, // covers the full CookProfile set
 }
 impl TextureFormat { fn is_compressed()->bool; fn compressed_byte_len()->usize; fn vk_format()->vk::Format }
 ```
 
-`BatchUploader::upload_image` 按格式分支：
-- **Rgba8**：创建 image + staging + copy + 生成 mip blit chain。
-- **BC/ASTC**：创建 image（带 `vk::Format`）+ staging + copy 全部 mip level（**不做 blit**，压缩格式不能 blit，mip chain 由 KTX2 预生成）。直接 transition 到 `SHADER_READ_ONLY_OPTIMAL`。
-- `RenderTextureManager::reserve/reserve_into` 已按 `is_compressed` 做 `compressed_byte_len` 校验与 `mip_levels` 分支。
+`BatchUploader::upload_image` branches by format:
+- **Rgba8**: create image + staging + copy + generate the mip blit chain.
+- **BC/ASTC**: create image (with `vk::Format`) + staging + copy all mip levels (**no blit**; compressed formats cannot be blitted, and the mip chain is pre-generated by KTX2). Transition directly to `SHADER_READ_ONLY_OPTIMAL`.
+- `RenderTextureManager::reserve/reserve_into` already validates `compressed_byte_len` and branches on `mip_levels` according to `is_compressed`.
 
-**mip chain 由 KTX2 承载**：离线工具用 `bc7enc` 等编码器从 mip 0 逐级降采样 + 编码，写入 KTX2 的 mip level 数组。运行时一次性 copy 全部 mip，无需运行时降采样。
+**The mip chain is carried by KTX2**: the offline tool downsamples and encodes level by level from mip 0 with encoders such as `bc7enc`, writing them into the KTX2 mip level array. The runtime copies all mips at once, with no runtime downsampling.
 
-### 7.7 阶段拆解（可独立 PR，每步 CI 绿）
+### 7.7 Phase breakdown (independent PRs, each step keeps CI green)
 
-- **PR-T1：BC/ASTC 上传支持（不改加载路径）** ✅ **已完成 2026-08-21**。`TextureFormat` 全量扩展 + `mip_levels` + `is_compressed/vk_format` + `RenderTextureManager` 校验/上传分支已落地。下一步扩展测试补充 BC7 编码走新路径的采样近似验证。**此 PR 不动 glTF 加载，运行时仍走 RGBA8（压缩路径可手动构造验证）**。
-- **PR-T1.1：BC / ASTC / ETC2 cooker 编码** ✅ **已完成 2026-11-02**。`TextureCooker` 按 `CookProfile.texture.compression` 真正编码格式：BC1/BC3/BC5/BC7 走纯 Rust `texture-compressor`，ASTC 4×4/6×6/8×8/12×12 走 vendored `ctt-astcenc`，ETC2 RGBA 走 vendored `ctt-etcpak`；同时补齐 RTEX 格式字节和运行时 sRGB / 线性映射。只有 BC6H（HDR）仍明确回退 RGBA8（#519）。
-- **PR-T2：xtask texture-import 离线工具**。新增 `xtask/src/bin/texture-import.rs`，依赖 `ktx2` + `bc7enc` + `astc-encoder` crate。扫 glTF -> 编码 -> 写 KTX2 + manifest.json。命令行：`cargo run -p xtask -- texture-import --scene sponza --platform desktop,android`。**此 PR 只产工具，不改引擎**。
-- **PR-T3：`prism-asset` 运行时优先读 KTX2**。`gltf_loader::load` 加 cache 查询分支，命中走 KTX2 路径，未命中回退 RGBA8（打 warn）。`SceneStore` 加 KTX2 解析（`ktx2` crate decode）。**此 PR 上线后，跑过一次 `xtask texture-import` 的场景加载时间从 ~1.8s 降到 ~0.5s 量级**。
-- **PR-T4（可选）：mip chain 流式加载**。KTX2 mip level 按可视距离动态加载/卸载，首帧只加载低 mip。需要 `SceneStore` 支持部分加载 + 渲染管线容忍"纹理未就绪"。工作量大，放下一步扩展里程碑。
+- **PR-T1: BC/ASTC upload support (without changing the load path)** ✅ **completed 2026-08-21**. The full `TextureFormat` extension + `mip_levels` + `is_compressed/vk_format` + `RenderTextureManager` validation/upload branches have landed. A later extension adds a sampling-approximation test for BC7 encoding through the new path. **This PR does not touch glTF loading; the runtime still uses RGBA8 (the compressed path can be exercised manually)**.
+- **PR-T1.1: BC / ASTC / ETC2 cooker encoding** ✅ **completed 2026-11-02**. `TextureCooker` really encodes formats according to `CookProfile.texture.compression`: BC1/BC3/BC5/BC7 go through pure-Rust `texture-compressor`, ASTC 4×4/6×6/8×8/12×12 through vendored `ctt-astcenc`, ETC2 RGBA through vendored `ctt-etcpak`; the RTEX format bytes and runtime sRGB / linear mapping were filled in as well. Only BC6H (HDR) still explicitly falls back to RGBA8 (#519).
+- **PR-T2: xtask texture-import offline tool**. Add `xtask/src/bin/texture-import.rs` with `ktx2` + `bc7enc` + `astc-encoder` dependencies. Scan glTF -> encode -> write KTX2 + manifest.json. Command line: `cargo run -p xtask -- texture-import --scene sponza --platform desktop,android`. **This PR only produces the tool; it does not change the engine**.
+- **PR-T3: `prism-asset` runtime prefers KTX2**. `gltf_loader::load` gains a cache lookup branch: a hit takes the KTX2 path, a miss falls back to RGBA8 (with a warning). `SceneStore` gains KTX2 parsing (`ktx2` crate decode). **After this PR lands, a scene that has run `xtask texture-import` once loads in ~0.5s instead of ~1.8s**.
+- **PR-T4 (optional): mip chain streaming**. KTX2 mip levels are loaded/unloaded dynamically by view distance, loading only low mips on the first frame. This requires `SceneStore` to support partial loads and the render pipeline to tolerate "texture not ready". It is a large effort, left for a later milestone.
 
-> **顺序原则**：PR-T1 先把"能传压缩格式"的能力做出来（不依赖导入工具），PR-T2 再做导入工具（不依赖引擎改造），PR-T3 才把两者接起来。每步独立可验证，避免"先改引擎再发现导入工具没法跟上"的返工。
-> **状态**：T1（压缩格式上传）已完成；T2 / T3 未按本节实施，纹理导入 / cook 改由 §10 的
-> `prism-cooker` 承担，运行时读 `.pak` 内的 RTEX。
+> **Ordering principle**: PR-T1 first builds the "can upload compressed formats" capability (independent of the import tool), PR-T2 then builds the import tool (independent of engine changes), and PR-T3 finally connects the two. Each step is independently verifiable, avoiding "change the engine first, then discover the import tool cannot keep up".
+> **Status**: T1 (compressed-format upload) is done; T2 / T3 were not implemented as described here, and texture import / cook moved to `prism-cooker` in §10, with the runtime reading RTEX inside `.pak`.
 
-### 7.8 不做 / 反目标
+### 7.8 Non-goals / anti-goals
 
-- **不**在运行时做 BC/ASTC 编码。编码慢（秒级/张），必须在离线工具做。
-- **不**把 KTX2 产物进 git。太大，靠 SHA256 保证一致性。
-- **不**用 Basis Universal UASTC 跨平台单编码。画质略损，且 Prisma 桌面/移动都支持 ASTC（桌面现代 GPU 全支持），不需要"一次编码到处转"。多平台产物分别生成更清晰。
-- **不**用神经纹理压缩（NTC / Adreno 神经纹理）。无标准扩展、无跨厂商工具链，留待 Khronos 标准化。
-- **不**为 BC1/BC2/BC3 单独支持。BC2/BC3 是 DX9 时代格式被 BC7 取代；BC1 仅极致体积场景用，移动端 ASTC 12×12 已覆盖该 niche。
+- **Do not** encode BC/ASTC at runtime. Encoding is slow (seconds per image) and must happen in the offline tool.
+- **Do not** commit KTX2 artifacts to git. They are too large; SHA256 guarantees consistency.
+- **Do not** use Basis Universal UASTC as a single cross-platform encoding. It loses a little quality, and Prisma supports ASTC on both desktop and mobile (all modern desktop GPUs do), so "encode once, transcode everywhere" is unnecessary. Separate per-platform artifacts are clearer.
+- **Do not** use neural texture compression (NTC / Adreno neural textures). There is no standard extension and no cross-vendor toolchain; wait for Khronos standardization.
+- **Do not** support BC1/BC2/BC3 separately. BC2/BC3 are DX9-era formats superseded by BC7; BC1 is only for extreme size cases, and mobile ASTC 12×12 already covers that niche.
 
-### 7.9 显存子分配与批量暂存 Arena（#1030）
+### 7.9 VRAM suballocation and batch staging arena (#1030)
 
-**已实现（2026-11-10）**：
-- **StagingArena 分块复用**：`BatchUploader` 内置 `StagingArena`，将数百次逐资源 `vkAllocateMemory` staging 合并为大块暂存缓冲分配（默认 16 MiB Chunk），按需扩容并按 16 字节（buffer）与 256 字节（image）对齐子分配。
-- **llvmpipe 驱动同步保障**：提交命令前通过 `unmap_all` 显式解映射所有暂存 Chunk，解决纯软件栅格化后端持久映射导致的脏缓存与复制竞争，保证跨驱动一致性。
-- **MemorySuballocator 核心**：实现纯 Rust 多内存类型索引的显存子分配器与区间合并（free-list coalescing），并在 `GraphRenderer` 与 `ReportStats` 暴露保留显存 / 活跃分配显存统计。
+**Implemented (2026-11-10)**:
+- **StagingArena chunk reuse**: `BatchUploader` embeds a `StagingArena` that merges hundreds of per-resource `vkAllocateMemory` staging allocations into large staging buffer allocations (16 MiB chunks by default), growing on demand and suballocating with 16-byte (buffer) and 256-byte (image) alignment.
+- **llvmpipe driver synchronization guarantee**: before submitting commands, `unmap_all` explicitly unmaps every staging chunk, fixing dirty caches and copy races caused by persistent mapping on the pure-software rasterization backend, and guaranteeing cross-driver consistency.
+- **MemorySuballocator core**: a pure-Rust VRAM suballocator indexed by multiple memory types with free-list coalescing, exposing reserved / active allocation VRAM statistics on `GraphRenderer` and `ReportStats`.
 
----
+## 8. Frame lifecycle and architecture layering (planning)
 
-## 8. 帧生命周期与架构分层（规划）
+> **2026-08-21 update**: `GraphRenderer::render()` has been split into `begin_frame` → `prepare` → `execute` → `present` → `end_frame`, and `prepare` is now actually called from `render_system`/`render_runner` (dirty detection reserved). As scene assets grow, the next extension needs to split further into the three layers `RenderRuntime`/`RenderAppShell`/`Plugin` (see §8.2) to guarantee thread safety and resource contracts.
 
-> **2026-08-21 更新**：`GraphRenderer::render()` 已拆为 `begin_frame` → `prepare` → `execute` → `present` → `end_frame`，`prepare` 已在 `render_system`/`render_runner` 中实际调用（脏检测预留）。随着场景资产增多，下一步扩展需进一步拆分为 `RenderRuntime`/`RenderAppShell`/`Plugin` 三层（见 §8.2）以保证线程安全和资源契约。
-
-### 8.1 一帧的不同阶段
+### 8.1 Phases of a frame
 
 ```
 Before Render = begin_frame + update + prepare + after_prepare
-Render        = app.render (RenderGraph 录制 + 提交)
+Render        = app.render (RenderGraph recording + submit)
 After Render  = present + end_frame
 ```
 
-各阶段的访问权限：
+Access permissions per phase:
 
-| 阶段 | 可访问 | 不可访问 |
+| Phase | Allowed | Not allowed |
 |------|--------|----------|
-| `update` | 修改 `World`（CPU 场景语义：增删 instance、换材质、改 transform） | GPU 资源、bindless 表 |
-| `prepare` | 读 `World` 当前快照，写 GPU scene buffer、descriptor、bindless | 修改 `World` |
-| `after_prepare` | 只读 query（批量 raycast、scene 版本检查） | 修改 `World` 或 GPU scene |
-| `render` | 只读 GPU scene（`SceneReadView`），通过 RenderGraph 录制 command | 修改 scene state |
+| `update` | Modify `World` (CPU scene semantics: add/remove instances, swap materials, change transforms) | GPU resources, bindless tables |
+| `prepare` | Read the current `World` snapshot, write GPU scene buffers, descriptors, bindless | Modify `World` |
+| `after_prepare` | Read-only queries (batch raycast, scene version checks) | Modify `World` or the GPU scene |
+| `render` | Read-only GPU scene (`SceneReadView`), record commands through the RenderGraph | Modify scene state |
 
-### 8.2 三层职责
+### 8.2 Three layers of responsibility
 
-| 层 | 职责 | 对应代码 |
+| Layer | Responsibility | Code |
 |----|------|---------|
-| **RenderRuntime** | GPU 资源 owner：`VulkanContext`、bindless manager、descriptor system、swapchain、command pool、render world（scene GPU 快照）。提供阶段化访问入口。 | 当前 `GraphRenderer` 拆出，新 crate `prism-render-runtime` |
-| **RenderAppShell** | 一帧顺序编排者：按固定顺序调用 runtime 的各阶段钩子，把窄化后的上下文传给 App。 | 新模块，依赖 runtime |
-| **App / Plugin** | 具体业务：决定 pass 顺序、持有窗口尺寸资源（RT targets、main view）、camera、GUI。 | 当前分散在 `app.rs` + `render_system.rs`，逐步拆为 Plugin |
+| **RenderRuntime** | GPU resource owner: `VulkanContext`, bindless manager, descriptor system, swapchain, command pool, render world (scene GPU snapshot). Provides phased access entry points. | Split out of the current `GraphRenderer` into the new crate `prism-render-runtime` |
+| **RenderAppShell** | Per-frame ordering: calls the runtime's phase hooks in a fixed order and passes a narrowed context to the App. | New module, depends on the runtime |
+| **App / Plugin** | Concrete business logic: decides pass order, owns window-sized resources (RT targets, main view), camera, GUI. | Currently spread across `app.rs` + `render_system.rs`, progressively split into Plugins |
 
-### 8.3 启动与 Resize
+### 8.3 Startup and resize
 
-- 启动入口唯一：平台层创建窗口，渲染线程通过 `Box<dyn RenderApp>` 驱动 App。
-- resize 只在 render loop 安全点处理。`RenderRuntime::handle_resize` 重建 swapchain + present 状态后，返回 `ResizeCtx`，App 据此通知需要重建窗口尺寸的 Plugin（RT working target、main view、GBuffer）。
-- 关闭流程：先调用 App 和 Plugin 的 `shutdown()`，再销毁 `RenderRuntime`（GPU idle → release 子资源 → destroy `Gfx` owner）。
+- Single startup entry point: the platform layer creates the window, and the render thread drives the App through `Box<dyn RenderApp>`.
+- resize is handled only at a safe point in the render loop. `RenderRuntime::handle_resize` rebuilds the swapchain + present state and returns `ResizeCtx`; the App uses it to notify Plugins that need window-sized resources rebuilt (RT working target, main view, GBuffer).
+- Shutdown: call `shutdown()` on the App and Plugins first, then destroy `RenderRuntime` (GPU idle → release subresources → destroy the `Gfx` owner).
 
-### 8.4 Plugin 模型（扩展路线）
+### 8.4 Plugin model (extension route)
 
-渲染管线能力拆为可插拔的 Plugin，每个 Plugin ：
+Rendering capabilities are split into pluggable Plugins; each Plugin:
 
-- 在 `setup` 时注册自己的 pass 节点到 RenderGraph。
-- 在 `update` / `prepare` / `render` 阶段被 App 依次调用。
-- 持有自己的资源生命周期（如 `RtPipeline` 持有 RT working target、main view target）。
-- **应用层 `AppPlugin`（#1165，预留未用）**：`prism-app::plugin::AppPlugin` 定义了顶层插件契约，`DefaultPlugins` 把渲染/物理/音频包成三个只调 `enable_subsystem` 的薄插件。**它不参与用户项目的执行链**——项目 gameplay 走 `add_game_system` / `export_project!`，能力裁剪走 `Subsystem` 枚举（见下方「三条路径」）。当前全仓库没有任何 `add_plugin` 调用方，也没有 `AppPlugin` 的第三方实现。
+- registers its own pass nodes with the RenderGraph during `setup`.
+- is called by the App in order during `update` / `prepare` / `render`.
+- owns its resource lifetimes (e.g. `RtPipeline` owns the RT working target and main view target).
+- **Application-layer `AppPlugin` (#1165, reserved and unused)**: `prism-app::plugin::AppPlugin` defines the top-level plugin contract, and `DefaultPlugins` wraps rendering/physics/audio into three thin plugins that only call `enable_subsystem`. **It is not part of a user project's execution chain**: project gameplay goes through `add_game_system` / `export_project!`, and capability pruning goes through the `Subsystem` enum (see "Three paths" below). There is currently no `add_plugin` caller anywhere in the repository, and no third-party `AppPlugin` implementation.
 
-#### 三条路径（不要混用）
+#### Three paths (do not mix)
 
-| 路径 | 解决什么 | 入口 | 现状 |
+| Path | What it solves | Entry point | Status |
 |---|---|---|---|
-| `add_game_system` / `export_project!` | 用户项目注册 gameplay | 项目 crate 的 `build_app()` / `prism_project_get_api` | 全部项目在用 |
-| `Subsystem` 枚举 + cargo feature | 编译期选择引擎能力（渲染/音频/物理） | `Cargo.toml` 的 feature 列表 | 全部项目在用 |
-| `AppPlugin` | 替换引擎**内置模块**（自研物理换 Rapier 等） | `App::add_plugin` | 预留，无使用者 |
+| `add_game_system` / `export_project!` | User projects register gameplay | The project crate's `build_app()` / `prism_project_get_api` | Used by every project |
+| `Subsystem` enum + cargo feature | Select engine capabilities at compile time (render/audio/physics) | The feature list in `Cargo.toml` | Used by every project |
+| `AppPlugin` | Replace engine **built-in modules** (swapping in Rapier for custom physics, etc.) | `App::add_plugin` | Reserved, no users |
 
-当前 `ShadowMapPass` / `ForwardPass` / `GtaoPass` / `PostPass` 顺序固定写死在 `GraphRenderer::new` 中，下一步扩展改为 App 在 `render` 钩子中按需添加 pass。
+The `ShadowMapPass` / `ForwardPass` / `GtaoPass` / `PostPass` order is currently hardcoded in `GraphRenderer::new`; a later extension changes this so the App adds passes on demand in the `render` hook.
 
-### 8.5 迁移步骤
+### 8.5 Migration steps
 
-- **PR-L1：阶段化拆分** ✅ **已完成 2026-08-21**。`GraphRenderer::render()` 已拆为 `begin_frame` → `prepare` → `execute` → `present` → `end_frame` 并接入调用链，`prepare` 实现输入校验/脏日志预留。当前仍在单线程内顺序调用，CI 绿。
-- **PR-L2：Runtime / App 分离** ✅ **已完成 2026-08-21（实现）**。新增 `prism-render/src/render_runtime.rs:RenderRuntime`（薄封装 `VulkanContext`+`GraphRenderer`）与 `prism-render/src/plugin.rs:RenderPlugin + PluginRegistry`，满足 §8.2 三层职责的接口契约；`GraphRenderer::context_arc()` 已暴露，下一步扩展可拆为独立 crate。
-- **PR-L3：Plugin 接入** ⏳ **未落地（仅 trait 定义）**。`prism-render/src/plugin.rs` 只有 `RenderPlugin` + `PluginRegistry` 的 40 行定义：`PluginRegistry` 从未被构造，`setup_all` 除定义外零调用，`RenderPlugin` 零实现。`ShadowMapPass`/`GtaoPass` 仍是 `GraphRenderer::new` 里的硬编码顺序——这正是当前的实际形态，不是待办残留。
+- **PR-L1: phase split** ✅ **completed 2026-08-21**. `GraphRenderer::render()` has been split into `begin_frame` → `prepare` → `execute` → `present` → `end_frame` and wired into the call chain, with input validation / dirty-log reservations in `prepare`. It still runs sequentially in a single thread; CI is green.
+- **PR-L2: Runtime / App separation** ✅ **completed 2026-08-21 (implementation)**. Added `prism-render/src/render_runtime.rs:RenderRuntime` (a thin wrapper over `VulkanContext`+`GraphRenderer`) and `prism-render/src/plugin.rs:RenderPlugin + PluginRegistry`, satisfying §8.2's three-layer responsibility contract; `GraphRenderer::context_arc()` is exposed, so a later extension can split it into its own crate.
+- **PR-L3: Plugin integration** ⏳ **not landed (trait definitions only)**. `prism-render/src/plugin.rs` contains only the 40-line `RenderPlugin` + `PluginRegistry` definitions: `PluginRegistry` is never constructed, `setup_all` has zero callers beyond its definition, and `RenderPlugin` has zero implementations. `ShadowMapPass`/`GtaoPass` still follow the hardcoded order in `GraphRenderer::new`—this is the actual current shape, not a TODO leftover.
 
----
+## 9. Scene data synchronization (CPU→GPU design)
 
-## 9. 场景数据同步（CPU→GPU 设计）
+> **2026-11-10 completed (#1157)**: the unified `DirtyDispatchPlan` has landed and is consumed in the `prepare` phase, converging batch uploads and releases; `SceneReadView` has advanced to a complete read-only scene snapshot.
 
-> **2026-11-10 已完成（#1157）**：统一 `DirtyDispatchPlan` 已正式落地并在 `prepare` 阶段消费，收敛批量上传与释放；`SceneReadView` 已推进为完整只读场景快照。
-
-### 9.1 同步管道总览
+### 9.1 Synchronization pipeline overview
 
 ```
-World (CPU 语义权威)
+World (authoritative CPU semantics)
   │
-  ├─ AssetHub 后台加载 glTF/纹理 → 发 ModelLoaded 事件
+  ├─ AssetHub loads glTF/textures in the background → emits ModelLoaded events
   │
-  └─ sync_for_render (每帧 update → prepare 边界)
+  └─ sync_for_render (every frame at the update → prepare boundary)
        │
-       ├─ SceneAssetIngestor：把 loader 产出的 CPU bytes 转为 typed handle
-       │   （TextureHandle / MeshHandle / MaterialHandle）
+       ├─ SceneAssetIngestor: turns loader-produced CPU bytes into typed handles
+       │   (TextureHandle / MeshHandle / MaterialHandle)
        │
-       ├─ SceneChanges：本帧 CPU 语义变化集合
-       │   （added/removed/changed instance / material / light / texture / sky）
+       ├─ SceneChanges: the set of CPU semantic changes this frame
+       │   (added/removed/changed instance / material / light / texture / sky)
        │
-       └─ DirtyRouter：SceneChanges + 静态规则 → DirtyDispatchPlan
+       └─ DirtyRouter: SceneChanges + static rules → DirtyDispatchPlan
             │
-            ├─ RenderTextureManager：上传 texture → bindless 注册
-            ├─ RenderMeshManager：submesh geometry upload + mesh BLAS
-            ├─ RenderMaterialManager：material buffer upload
-            ├─ RenderInstanceManager：instance slot 分配 + active render list
-            ├─ RenderSkyManager：HDRI importance alias table + sky dispatch
-            ├─ RenderAnalyticLightManager：analytic light buffer
-            └─ RenderEmissiveLightTable：emissive triangle records + alias table
+            ├─ RenderTextureManager: upload textures → bindless registration
+            ├─ RenderMeshManager: submesh geometry upload + mesh BLAS
+            ├─ RenderMaterialManager: material buffer upload
+            ├─ RenderInstanceManager: instance slot allocation + active render list
+            ├─ RenderSkyManager: HDRI importance alias table + sky dispatch
+            ├─ RenderAnalyticLightManager: analytic light buffer
+            └─ RenderEmissiveLightTable: emissive triangle records + alias table
 ```
 
-### 9.2 Dirty 路由规则
+### 9.2 Dirty routing rules
 
-Dirty dispatch 不采用通用事件总线，而是使用**静态规则集**，每类 SceneChange 映射到一个或多个 render manager 的 dispatch：
+Dirty dispatch does not use a general event bus; it uses a **static rule set**, where each SceneChange class maps to one or more render-manager dispatches:
 
-| CPU 变化 | 触发的 render dispatch |
+| CPU change | Triggered render dispatch |
 |----------|----------------------|
-| texture added / changed / removed | `RenderTextureManager` → 上传 / 更新 / 释放 bindless slot |
-| texture ready 完成 | → 标记依赖该 texture 的 material dirty |
+| texture added / changed / removed | `RenderTextureManager` → upload / update / release the bindless slot |
+| texture ready | → mark materials that depend on that texture dirty |
 | mesh added / changed / removed | `RenderMeshManager` → geometry upload + BLAS rebuild |
 | material changed | `RenderMaterialManager` → material buffer upload |
 | instance changed (transform / active / binding) | `RenderInstanceManager` → instance slot update + `RenderEmissiveLightTable` dirty |
 | sky changed | `RenderSkyManager` → sky dispatch |
 | analytic light changed | `RenderAnalyticLightManager` → light buffer rebuild |
-| emissive table rebuild (由 mesh / material / instance dirty 级联触发) | `RenderEmissiveLightTable` → emissive triangle records + alias table |
+| emissive table rebuild (cascaded from mesh / material / instance dirty) | `RenderEmissiveLightTable` → emissive triangle records + alias table |
 
-**关键规则**：
-- prepare 阶段**一次性**消费 `SceneChanges` 并生成 `DirtyDispatchPlan`，不允许多帧累积脏状态。
-- `RenderEmissiveLightTable` 依赖 `RenderInstanceManager` 的 prepare 结果（active instance list），因此它的 rebuild 排在 instance dispatch 之后。
-- texture → material → instance 的级联目前只由 `prism-engine::dirty_router` 对 `SceneChanges` /
-  draw item 签名做帧间比对；`RenderTextureManager` / `RenderMaterialManager` 按槽位更新，
-  没有跨层引用拒绝。上面的统一 `DirtyDispatchPlan` 是目标形态，尚未实现。
+**Key rules**:
+- The prepare phase consumes `SceneChanges` **once** and produces a `DirtyDispatchPlan`; dirty state must not accumulate across frames.
+- `RenderEmissiveLightTable` depends on `RenderInstanceManager`'s prepare result (the active instance list), so its rebuild is ordered after the instance dispatch.
+- The texture → material → instance cascade is currently only a frame-to-frame comparison of `SceneChanges` / draw-item signatures in `prism-engine::dirty_router`; `RenderTextureManager` / `RenderMaterialManager` update by slot, with no cross-layer reference rejection. The unified `DirtyDispatchPlan` above is the target shape, not yet implemented.
 
-### 9.3 只读场景视图
+### 9.3 Read-only scene view
 
-Pass 不直接访问 manager 内部状态，改为通过只读 `SceneReadView`：
+Passes do not access manager internals directly; they go through the read-only `SceneReadView`:
 
 ```rust
 pub struct SceneReadView<'a> {
-    /// scene root buffer（instance / material / light SSBOs）
+    /// scene root buffers (instance / material / light SSBOs)
     scene_buffers: &'a SceneGpuBuffers,
-    /// TLAS handle（ray query）
+    /// TLAS handle (ray query)
     tlas: vk::AccelerationStructureKHR,
     /// bindless texture table
     textures: &'a BindlessTextureTable,
-    /// sky distribution alias table（HDRI importance sampling）
+    /// sky distribution alias table (HDRI importance sampling)
     sky: &'a SkyGpuState,
 }
 ```
 
-- `SceneReadView` 在 prepare 之后产生，render 阶段只读。
-- 版本号快照（`accum_signature`）暴露 scene 语义是否变化，供 App 判断是否需要重置离线累积状态。
-- 不暴露 `RenderWorld` owner 或具体 GPU buffer 布局。
+- `SceneReadView` is produced after prepare and is read-only during render.
+- The version snapshot (`accum_signature`) exposes whether scene semantics changed, so the App can decide whether to reset offline accumulation state.
+- It does not expose the `RenderWorld` owner or concrete GPU buffer layouts.
 
-### 9.4 资源生命周期与同步阶段
+### 9.4 Resource lifecycle and synchronization phases
 
-按 scope 区分，prepare 阶段按以下顺序执行：
+Scoped by lifetime; the prepare phase runs in this order:
 
-1. **帧级同步**：acquire present target、FIF wait、command pool reset。
-2. **Dirty dispatch**：消费 `SceneChanges`，写入 render manager 的 pending 队列。
-3. **GPU upload**：texture → submesh geometry → material buffer → instance buffer。
-4. **Emissive table**：在 instance dispatch 之后、scene buffer upload 之前构建。
-5. **Descriptor update**：per-frame descriptor 写入（scene UBO、bindless table 版本）。
-6. **SceneReadView 生成**：所有 upload 完成后，构造不可变快照。
+1. **Frame-level synchronization**: acquire present target, FIF wait, command pool reset.
+2. **Dirty dispatch**: consume `SceneChanges`, write into render manager pending queues.
+3. **GPU upload**: texture → submesh geometry → material buffer → instance buffer.
+4. **Emissive table**: built after instance dispatch and before scene buffer upload.
+5. **Descriptor update**: per-frame descriptor writes (scene UBO, bindless table version).
+6. **SceneReadView generation**: construct the immutable snapshot after all uploads complete.
 
-### 9.5 迁移步骤
+### 9.5 Migration steps
 
-- **PR-S1：SceneChanges 提取** ✅ **已完成**。`prism-engine::render_system::SceneChanges` + `extract_frame_packet` 已统一抽取相机/光照/`draw_items`，并在 `DirtyRouter::update` 中集中对比。
-- **PR-S2：DirtyRouter 接入 RenderManager 与 DirtyDispatchPlan** ✅ **已完成（#1157）**。`DirtyRouter` 统一生成 `DirtyDispatchPlan` 并在 `prepare` 阶段消费，批量上传收敛到 `prepare`。
-- **PR-S3：SceneReadView 完整只读快照** ✅ **已完成（#1157）**。`SceneReadView` 已支持相机、光源、环境与绘制项的完整只读提取，Pass 仅依赖视图与 `GraphFrame`。
-- **PR-S4（可选）：后台 AssetHub 异步加载** ✅ **实现 已接线**。`prism-app::io_runner` 与 `asset_bridge::AssetResolveRequest/Result` 通道 + `render_runner` 异步 `GraphRenderer` 构建已打通，后台解码 `ModelLoaded` 事件以 `flume` 投递，当前同步 `GpuAssetResolver` 为回退。
+- **PR-S1: SceneChanges extraction** ✅ **completed**. `prism-engine::render_system::SceneChanges` + `extract_frame_packet` now uniformly extract camera/lights/`draw_items` and compare them centrally in `DirtyRouter::update`.
+- **PR-S2: DirtyRouter integration with RenderManager and DirtyDispatchPlan** ✅ **completed (#1157)**. `DirtyRouter` uniformly produces `DirtyDispatchPlan` and consumes it in the `prepare` phase, converging batch uploads into `prepare`.
+- **PR-S3: SceneReadView complete read-only snapshot** ✅ **completed (#1157)**. `SceneReadView` now supports complete read-only extraction of cameras, lights, environment and draw items; passes depend only on the view and `GraphFrame`.
+- **PR-S4 (optional): background AssetHub async loading** ✅ **implemented and wired**. The `prism-app::io_runner` + `asset_bridge::AssetResolveRequest/Result` channel + `render_runner`'s async `GraphRenderer` construction are connected, background-decoded `ModelLoaded` events are delivered via `flume`, and the synchronous `GpuAssetResolver` remains the fallback.
 
----
+## 10. Asset pipeline v2 — offline preprocessing pipeline
 
-## 10. 资源管线 v2 —— 离线预处理管线
+> Added 2026-07-25, layered refactor 2026-10. Asset responsibilities are split into three crates:
+> **`prism-asset`** (runtime `.pak` / `ResourceManager`), **`prism-scene`**
+> (component schema + `.scene.json` + RSCN v4 encoding/decoding), **`prism-cooker`**
+> (importer / cooker / db / `prism-cook` CLI). The old 7-crate split is not coming back.
+> Build orchestration lives in `prism-build-pipeline` and the editor, and does not enter the game runtime.
 
-> 2026-07-25 新增，2026-10 分层重构。资产职责拆成三个 crate：
-> **`prism-asset`**（运行时 `.pak` / `ResourceManager`）、**`prism-scene`**
-> （组件 schema + `.scene.json` + RSCN v4 编解码）、**`prism-cooker`**
-> （importer / cooker / db / `prism-cook` CLI）。旧的 7-crate 拆分不再恢复。
-> 构建编排在 `prism-build-pipeline` 与编辑器中，不进入游戏运行时。
-
-### 10.1 架构总览
+### 10.1 Architecture overview
 
 ```
-源文件 (Assets/)
+Source files (Assets/)
     │
-    ▼  [Import]  ← importer 模块 + db 模块
+    ▼  [Import]  ← importer module + db module
   ┌─────────────┐
-  │  中间格式     │  RTXI（纹理）、RMXI（网格）
+  │ Intermediate │  RTXI (texture), RMXI (mesh)
   └──────┬──────┘
          │
-         ▼  [Cook]  ← prism-cooker（+ CookProfile）
+         ▼  [Cook]  ← prism-cooker (+ CookProfile)
   ┌─────────────┐
-  │  运行时格式    │  RTEX（纹理 mip 链）、RMES（交错顶点）、RSCN v4（场景）
+  │ Runtime fmt  │  RTEX (texture mip chain), RMES (planar vertices), RSCN v4 (scene)
   └──────┬──────┘
          │
          ▼  [Package]  ← prism-asset::package
   ┌─────────────┐
-  │  .pak 归档   │  RPAK 格式 + xxh3 校验和
+  │  .pak archive│  RPAK format + xxh3 checksum
   └──────┬──────┘
          │
          ▼  [Runtime]  ← prism-asset::runtime
   ┌─────────────┐
-  │  Handle<T>  │  懒加载 + 内存预算 + 依赖解析 + 热重载
+  │  Handle<T>  │  lazy loading + memory budget + dependency resolution + hot reload
   └─────────────┘
 ```
 
-**核心设计原则**：
-- **编辑器离线完成重计算**，运行时只读 `.pak`，零解码、零编码。
-- **运行时无构建工具依赖**：`prism-asset` 不依赖 `prism-cooker` / `prism-scene`；
-  `prism-cooker` 只在构建机/编辑器中使用。
-- **场景 schema 只有一份**：cooker 与运行时都通过 `prism-scene` 的
-  `ComponentRegistry` + `TypeDesc` 解释组件，RSCN v4 不按场景重复存 schema。
-- **Handle<T> 与 ECS Entity 分离**：Handle 是资产生命周期概念（代沟计数 slot），
-  Entity 是帧级 ECS 概念，二者不混用。
+**Core design principles**:
+- **The editor does the heavy computation offline**; the runtime only reads `.pak`, with zero decode and zero encode.
+- **No build-tool dependency at runtime**: `prism-asset` does not depend on `prism-cooker` / `prism-scene`;
+  `prism-cooker` is used only on build machines / in the editor.
+- **One scene schema only**: both cooker and runtime interpret components through `prism-scene`'s
+  `ComponentRegistry` + `TypeDesc`; RSCN v4 does not duplicate the schema per scene.
+- **`Handle<T>` is separate from ECS `Entity`**: a Handle is an asset-lifetime concept (generation-counted slot),
+  an Entity is a frame-level ECS concept; the two are never mixed.
 
-### 10.2 crate 分层及其职责
+### 10.2 Crate layering and responsibilities
 
-| crate | 角色 | 职责 | 主要依赖 |
+| crate | Role | Responsibility | Main dependencies |
 |-------|------|------|----------|
-| `prism-asset` | 运行时 | `AssetId`（64 bit gen+serial）、`AssetType`、`Handle<T>`、`.pak`（RPAK + zstd + xxh3）、`ResourceManager`（懒加载/预算/热重载）、streaming | serde, zstd, tokio（feature-gated） |
-| `prism-gfx` | 共享数据 | 形状的渲染状态枚举（`CullMode`/`CompareFunction`/`BlendMode`/`RenderQueue`/`ShadowCastingMode`/光照与相机枚举）+ 反射编码；Vulkan-free、ECS-free | `prism-reflect`、serde、glam |
-| `prism-scene` | schema | 场景/UI 组件、`ComponentRegistry`、`.scene.json` 作者格式、场景清单、RSCN v4 编解码、高度场纯数据 | `prism-ecs`、`prism-reflect`、`prism-gfx`、`prism-ini`、serde |
-| `prism-cooker` | 构建期 | importer 框架、cooker 框架、CookProfile、资产数据库/导入缓存、`SceneCooker`、CLI `prism-cook` | `prism-asset`、`prism-scene`、image、gltf |
-| `prism-build-pipeline` | 编排 | `cook`、`build-scenes`、`pack`、`heightmap` 等批处理入口；`bake-gi` 需要 `gi-bake` feature | `prism-cooker`、`prism-scene`；`gi-bake` 额外要 `prism-engine`、`prism-render` |
+| `prism-asset` | Runtime | `AssetId` (64-bit generation+serial), `AssetType`, `Handle<T>`, `.pak` (RPAK + zstd + xxh3), `ResourceManager` (lazy load/budget/hot reload), streaming | serde, zstd, tokio (feature-gated) |
+| `prism-gfx` | Shared data | Render-state enums for shapes (`CullMode`/`CompareFunction`/`BlendMode`/`RenderQueue`/`ShadowCastingMode`/lighting and camera enums) + reflection encoding; Vulkan-free, ECS-free | `prism-reflect`, serde, glam |
+| `prism-scene` | Schema | Scene/UI components, `ComponentRegistry`, `.scene.json` authoring format, scene manifest, RSCN v4 encoding/decoding, heightfield pure data | `prism-ecs`, `prism-reflect`, `prism-gfx`, `prism-ini`, serde |
+| `prism-cooker` | Build time | Importer framework, cooker framework, CookProfile, asset database/import cache, `SceneCooker`, `prism-cook` CLI | `prism-asset`, `prism-scene`, image, gltf |
+| `prism-build-pipeline` | Orchestration | Batch entry points such as `cook`, `build-scenes`, `pack`, `heightmap`; `bake-gi` requires the `gi-bake` feature | `prism-cooker`, `prism-scene`; `gi-bake` additionally needs `prism-engine`, `prism-render` |
 
-`prism-asset` 的 feature 只服务运行时裁剪（`runtime` / `package` / `types` /
-`streaming` / `hot-reload`），不再包含 `cooker` / `importer` / `db` / `cli`。
-构建工具消费 `prism-asset` 的 `core` / `package`，但不会反向进入游戏依赖链。
+`prism-asset` features serve only runtime pruning (`runtime` / `package` / `types` /
+`streaming` / `hot-reload`) and no longer include `cooker` / `importer` / `db` / `cli`.
+Build tools consume `prism-asset`'s `core` / `package` but do not enter the game dependency chain in reverse.
 
 ```sh
 cargo build -p prism-asset -p prism-scene -p prism-cooker
@@ -655,63 +738,63 @@ cargo test  -p prism-asset -p prism-scene -p prism-cooker
 cargo run   -p prism-cooker --bin prism-cook -- init
 ```
 
-### 10.3 资源类型系统（core 模块）
+### 10.3 Asset type system (core module)
 
-**`AssetId`**（`id.rs`）：
+**`AssetId`** (`id.rs`):
 ```
-高 32 位 = generation（单调 epoch），低 32 位 = serial
-AssetId::generate()       → 进程级原子递增
-AssetId::tombstone(n)     → 删除标记（gen=u32::MAX，排序在所有活 ID 之后）
-AssetIdGenerator           → 编辑器侧持久化 ID 发生器
+high 32 bits = generation (monotonic epoch), low 32 bits = serial
+AssetId::generate()       → process-wide atomic increment
+AssetId::tombstone(n)     → deletion marker (gen=u32::MAX, sorts after all live IDs)
+AssetIdGenerator          → persistent ID generator for the editor
 ```
 
-**`AssetType`**（`type.rs`）—— `#[repr(u32)]` 枚举，运行时通过 u32 判别：
+**`AssetType`** (`type.rs`) — a `#[repr(u32)]` enum, discriminated by u32 at runtime:
 ```
 Binary(0) / Texture(1) / Mesh(2) / Material(3) / Shader(4) /
 Prefab(5) / Scene(6) / Audio(7) / Font(8) / Unknown(0xFF)
 ```
-- `from_extension()` 由扩展名推断类型（字体：`ttf` / `otf` / `ttc`）
-- `Font` 原样进包，不做 cook：运行时读出字节交给 UI 文本光栅器（`Text.font`，#583）
-- `AssetRef { id, asset_type }`——可序列化的轻量跨资产引用
+- `from_extension()` infers the type from the extension (fonts: `ttf` / `otf` / `ttc`)
+- `Font` goes into the package as-is, without cooking: the runtime reads the bytes and hands them to the UI text rasterizer (`Text.font`, #583)
+- `AssetRef { id, asset_type }` — a serializable lightweight cross-asset reference
 
-**`Handle<T>`**（`handle.rs`）——代沟计数句柄，`u64` 大小：
+**`Handle<T>`** (`handle.rs`) — a generation-counted handle, `u64`-sized:
 ```
-低 32 位 = slot index，高 32 位 = generation
-null = (0, 0)，static 区 = index < 1024
-AnyHandle = 类型擦除版本，支持异构存储
+low 32 bits = slot index, high 32 bits = generation
+null = (0, 0), static region = index < 1024
+AnyHandle = type-erased version, supporting heterogeneous storage
 ```
 
-### 10.4 中间格式（Importer→Cooker 契约）
+### 10.4 Intermediate formats (Importer→Cooker contract)
 
-| 格式 | 魔数 | 载荷 |
+| Format | Magic | Payload |
 |------|------|------|
-| **RTXI**（纹理中间） | `b"RTXI"` | `[magic:4][w:4][h:4][ch:1][fmt:1][RGBA8 pixels:N]` |
-| **RMXI**（网格中间） | `b"RMXI"` | v1：`[magic:4][ver:1][verts:4][idxs:4][uv_ch:4][pos:N][nrm:N][uv:N][idx:N]`；v2 末尾追加 `[submesh_count:4][index_start:4][index_count:4][material_index:4]…` |
+| **RTXI** (intermediate texture) | `b"RTXI"` | `[magic:4][w:4][h:4][ch:1][fmt:1][RGBA8 pixels:N]` |
+| **RMXI** (intermediate mesh) | `b"RMXI"` | v1: `[magic:4][ver:1][verts:4][idxs:4][uv_ch:4][pos:N][nrm:N][uv:N][idx:N]`; v2 appends `[submesh_count:4][index_start:4][index_count:4][material_index:4]…` at the end |
 
-中间格式是纯 CPU 数据，无 GPU 依赖。Importer 负责从源文件解码，
-Cooker 负责消费中间格式生成运行时格式。
+Intermediate formats are pure CPU data with no GPU dependency. Importers decode source files;
+the Cooker consumes intermediate formats to produce runtime formats.
 
-### 10.5 运行时格式（Cooker→Package 契约）
+### 10.5 Runtime formats (Cooker→Package contract)
 
-| 格式 | 魔数 | 结构 |
+| Format | Magic | Structure |
 |------|------|------|
-| **RTEX**（cooked 纹理） | `b"RTEX"` | header + mip 偏移表 + 各级 mip 数据（box filter 降采样） |
-| **RMES**（cooked 网格） | `b"RMES"` | header + 属性偏移表 + **平面**顶点块（positions → normals → uv，偏移字段为权威寻址）+ 索引数据；v2 末尾追加同一份 submesh 表 |
-| **RATL**（cooked 精灵图集元数据） | `b"RATL"` | header + `texture_path` + 尺寸 + 切片列表（`name_hash`、`pixel_rect`、`uv_rect`、`original_size`、`trimmed_offset`、`pivot`、`nine_slice`，#1158） |
-| **RA2D**（cooked 2D 动画元数据） | `b"RA2D"` | header + `atlas_path` + 帧列表（`sprite_name`、`duration_ms`）+ Tags（`from`、`to`、`direction`）+ Slices（#1159） |
-| **RTMG**（cooked 瓦片地图关卡） | `b"RTMG"` | header + 尺寸 + `tileset_path` + 多图层 GID 阵列 + 对象层实体 + 贪心合并碰撞盒（#1159） |
+| **RTEX** (cooked texture) | `b"RTEX"` | header + mip offset table + per-level mip data (box-filter downsampling) |
+| **RMES** (cooked mesh) | `b"RMES"` | header + attribute offset table + **planar** vertex blocks (positions → normals → uv; the offset fields are the authoritative addressing) + index data; v2 appends the same submesh table at the end |
+| **RATL** (cooked sprite atlas metadata) | `b"RATL"` | header + `texture_path` + dimensions + slice list (`name_hash`, `pixel_rect`, `uv_rect`, `original_size`, `trimmed_offset`, `pivot`, `nine_slice`, #1158) |
+| **RA2D** (cooked 2D animation metadata) | `b"RA2D"` | header + `atlas_path` + frame list (`sprite_name`, `duration_ms`) + Tags (`from`, `to`, `direction`) + Slices (#1159) |
+| **RTMG** (cooked tilemap level) | `b"RTMG"` | header + dimensions + `tileset_path` + multi-layer GID arrays + object-layer entities + greedy-merged collision boxes (#1159) |
 
-> RMES v2 的 submesh 表让一个实体按 `MeshRenderer.material_paths` 拆成多个
-> `DrawItem`（`index_start` / `index_count`），同一网格的不同区间可以使用不同材质。
+> RMES v2's submesh table lets one entity split into multiple `DrawItem`s according to
+> `MeshRenderer.material_paths` (`index_start` / `index_count`), so different ranges of the same mesh can use different materials.
 
-> RMES 头里的 `stride` 字段不用于定位属性：`MeshCooker::write_rmes` 写的是平面块，
-> `stride` 只是记录交错尺寸。`prism-render/src/asset_decoders.rs` 的 `decode_rmes`
-> 按偏移字段解析，不按 `stride` 交错读取。
+> The `stride` field in the RMES header is not used to locate attributes: `MeshCooker::write_rmes` writes planar blocks,
+> and `stride` only records the interleaved size. `decode_rmes` in `prism-render/src/asset_decoders.rs`
+> parses by offset fields, not by interleaved `stride` reads.
 
-RTEX 的 mip 链由 Cooker 通过 2×2 box filter 生成（`TextureCooker::generate_mips`），
-运行时无需降采样。后期可替换为更高质量的 Kaiser/ Lanczos 滤波。
+RTEX's mip chain is generated by the Cooker with a 2×2 box filter (`TextureCooker::generate_mips`);
+no downsampling is needed at runtime. It can later be replaced with higher-quality Kaiser/Lanczos filtering.
 
-### 10.6 .pak 归档格式（package 模块）
+### 10.6 .pak archive format (package module)
 
 ```
 ┌─ PackageHeader ────────────────────────┬── 52 bytes ─┐
@@ -729,87 +812,87 @@ RTEX 的 mip 链由 Cooker 通过 2×2 box filter 生成（`TextureCooker::gener
 │ [asset 0 data][asset 1 data]...         │
 └─────────────────────────────────────────┘
 ```
-- **压缩**：zstd（按 asset 粒度，`FLAG_COMPRESSED` 标记）
-- **流式**：`FLAG_STREAMED` 标记的资源保持未压缩，读取端可只按 offset/length 取块；
-  `CookSettings.streaming` 打开后，cooked 大小达到 `streaming_threshold_bytes`
-  （默认 4 MiB，移动端 1 MiB）的资源自动带此标记。`prism-build-pipeline pack/build-scenes
-  --stream-threshold <bytes>` 可对已 cook 目录按文件大小设置同一阈值。
-- **多包 / 分包（#509）**：`prism-build-pipeline pack <cooked-dir> --optional-dir <dir>`
-  （可重复，最长前缀优先）把指定子目录拆到 `optional/optional_<group>.pak`，其余进基础包
-  （默认 `assets/packed/game.pak`）。资产 ID 只由包内相对路径派生，所以拆包不会重编号；
-  基础包的 `.pak.meta.json` 用 `optional_paks` 列出每个可选包的 `group` / `pak` /
-  `asset_count`。运行时**自动挂载只扫描 `assets/` 顶层**，`assets/optional/` 里的包不会在
-  启动时常驻；需要时调用 `GpuAssetResolver::load_optional_packages()`（已挂过的包会跳过）。
-- **校验**：xxh3-64 覆盖 `header[4..44]`（version / asset_count / 各偏移与长度；`magic` 与
-  `checksum` 自身除外）+ registry + deps + data。读取端在**解析 registry 之前**校验，
-  篡改 `version` / `asset_count` 会直接得到 `ChecksumMismatch`（#89）。
-- **读取**：`PackageReader` 按 offset 从文件 `pread`（未压缩 asset 仍是拷贝），
-  打开时只读 header + registry + deps。
+- **Compression**: zstd (per asset, marked `FLAG_COMPRESSED`)
+- **Streaming**: `FLAG_STREAMED` assets stay uncompressed, and the reader can fetch blocks by offset/length only;
+  when `CookSettings.streaming` is on, cooked assets at or above `streaming_threshold_bytes`
+  (default 4 MiB, 1 MiB on mobile) get this flag automatically. `prism-build-pipeline pack/build-scenes
+  --stream-threshold <bytes>` can set the same threshold by file size for an already-cooked directory.
+- **Multi-package / split packages (#509)**: `prism-build-pipeline pack <cooked-dir> --optional-dir <dir>`
+  (repeatable, longest prefix wins) splits the given subdirectory into `optional/optional_<group>.pak`, with the rest going into the base package
+  (default `assets/packed/game.pak`). Asset IDs are derived only from the in-package relative path, so splitting does not renumber anything;
+  the base package's `.pak.meta.json` lists each optional package's `group` / `pak` /
+  `asset_count` under `optional_paks`. At runtime, **automatic mounting only scans the top level of `assets/`**, so packages inside
+  `assets/optional/` are not resident at startup; call `GpuAssetResolver::load_optional_packages()` when needed (already-mounted packages are skipped).
+- **Checksum**: xxh3-64 covers `header[4..44]` (version / asset_count / offsets and lengths; `magic` and
+  `checksum` themselves excluded) + registry + deps + data. The reader validates **before parsing the registry**, so
+  tampering with `version` / `asset_count` yields `ChecksumMismatch` immediately (#89).
+- **Reading**: `PackageReader` `pread`s by offset from the file (uncompressed assets are still copied),
+  and opening reads only the header + registry + deps.
 
-### 10.7 Cook Profile 系统（`prism-cooker`，src/cooker/profile.rs）
+### 10.7 Cook Profile system (`prism-cooker`, src/cooker/profile.rs)
 
-**优先级链**（高→低）：
+**Priority chain** (high→low):
 ```
-1. CLI 覆盖（命令行参数）
-2. 活动项目配置（`--profile`；没有持久化的 active 配置文件，缺省用平台默认）
-3. 平台默认配置（--platform → desktop/android/ios/embedded）
-4. base.json（最低）
+1. CLI overrides (command-line arguments)
+2. Active project config (`--profile`; no persisted active profile, platform default otherwise)
+3. Platform default (`--platform` → desktop/android/ios/embedded)
+4. base.json (lowest)
 ```
 
-**内置 5 个配置**：
+**Five built-in profiles**:
 
-| 配置 | 纹理压缩 | 最大尺寸 | 生成切线 | 顶点压缩 | 流式 |
+| Profile | Texture compression | Max size | Generate tangents | Vertex compression | Streaming |
 |------|---------|---------|---------|---------|------|
-| base | RGBA8 | 不限 | 否 | 否 | 否 |
-| desktop | **BC7** | 4096 | **是** | 否 | 否 |
-| android | **ASTC 8×8** | 2048 | 否 | **是** | **是** |
-| ios | ASTC 8×8 | 2048 | 否 | 是 | 是 |
-| embedded | ETC2 RGBA | 1024 | 否 | 是 | 是 |
+| base | RGBA8 | unlimited | no | no | no |
+| desktop | **BC7** | 4096 | **yes** | no | no |
+| android | **ASTC 8×8** | 2048 | no | **yes** | **yes** |
+| ios | ASTC 8×8 | 2048 | no | yes | yes |
+| embedded | ETC2 RGBA | 1024 | no | yes | yes |
 
-**重要说明（2026-11-02 更新）**：`TextureCooker` 已按 profile 生成 BC1/BC3/BC5/BC7、ASTC 4×4/6×6/8×8/12×12 和 ETC2 RGBA 的压缩 RTEX；运行时的 `TextureFormat/vk_format` 与 `RenderTextureManager` 上传侧支持同一组格式，并按纹理槽位选择 sRGB / 线性变体。BC6H（HDR）仍回退 RGBA8。
+**Important note (2026-11-02 update)**: `TextureCooker` now produces compressed RTEX for BC1/BC3/BC5/BC7, ASTC 4×4/6×6/8×8/12×12 and ETC2 RGBA according to the profile; the runtime's `TextureFormat/vk_format` and `RenderTextureManager` upload side support the same set of formats and select the sRGB / linear variant per texture slot. BC6H (HDR) still falls back to RGBA8.
 
-**`CookSettings`** 提供 `settings_hash()`：确定性 JSON → xxh3-64，
-用于增量构建缓存键。
+**`CookSettings`** provides `settings_hash()`: deterministic JSON → xxh3-64,
+used as the incremental build cache key.
 
-**覆盖语义**：profile 文件里的字段是逐字段 `Option`（`TextureOverrides` / `MeshOverrides` /
-`ShaderOverrides` / `CompressionOverrides`），只有**写出来的**字段才覆盖父级或内置值，
-缺省字段保持继承结果。所以 `{"texture":{"quality":95}}` 不会把父级的 `max_size` 清成 0，
-显式写入默认值（`"compression":"rgba8"`、`"generate_mips":false`）也能生效。
-`streaming_threshold_bytes` 同样是可覆盖字段：只有 `streaming: true` 时生效，
-cooked 资源达到阈值就带 `FLAG_STREAMED` 并跳过 zstd；`prism-cook build
---stream-threshold` 可临时覆盖 profile 值。
+**Override semantics**: fields in a profile file are per-field `Option`s (`TextureOverrides` / `MeshOverrides` /
+`ShaderOverrides` / `CompressionOverrides`); only **written** fields override the parent or built-in value,
+and absent fields keep the inherited result. So `{"texture":{"quality":95}}` does not reset the parent's `max_size` to 0,
+and explicitly writing a default value (`"compression":"rgba8"`, `"generate_mips":false`) also takes effect.
+`streaming_threshold_bytes` is likewise overridable: it only applies when `streaming: true`, and a
+cooked asset at or above the threshold gets `FLAG_STREAMED` and skips zstd; `prism-cook build
+--stream-threshold` can temporarily override the profile value.
 
-**`ProfileManager`：**
-- `resolve(name)` → 递归继承合并 → `CookSettings`
-- 循环检测（环路径文字报告）
-- `apply_cli_overrides()` → 命令行覆盖叠加
-- 内置配置由 `BUILTIN_DEFAULTS` 静态 `LazyLock<HashMap>` 承载，
-  用户配置从磁盘 `profiles_dir/{name}.json` 加载；`prism-cook build` 的 `profiles_dir`
-  是 `<project>/Library/Profiles/`，解析顺序 `--profile` → `--platform` → `desktop`。
+**`ProfileManager`:**
+- `resolve(name)` → recursive inheritance merge → `CookSettings`
+- cycle detection (text report of the cycle path)
+- `apply_cli_overrides()` → stack command-line overrides
+- built-in profiles are held by `BUILTIN_DEFAULTS` as a static `LazyLock<HashMap>`;
+  user profiles load from disk at `profiles_dir/{name}.json`; for `prism-cook build`, `profiles_dir`
+  is `<project>/Library/Profiles/`, and resolution order is `--profile` → `--platform` → `desktop`.
 
-### 10.8 运行时 ResourceManager（`prism-asset::runtime`）
+### 10.8 Runtime ResourceManager (`prism-asset::runtime`)
 
-**核心流程**：
-1. `load_package("game.pak")` → 注册所有资产（填充 slot 数组 + `AssetId→index` 映射）
-2. `load::<T: Asset>(id)` → 首次按需从 `.pak` 读取数据，缓存到 slot，返回 `Handle<T>`
-3. `get::<T>(handle)` → 代沟校验 → 反序列化 → 返回 `T`
-4. `unload(handle)` / `unload_all()` → 释放数据，更新内存追踪
+**Core flow**:
+1. `load_package("game.pak")` → register all assets (fill the slot array + `AssetId→index` map)
+2. `load::<T: Asset>(id)` → on first use, read data from `.pak` on demand, cache it in the slot, return `Handle<T>`
+3. `get::<T>(handle)` → generation check → deserialize → return `T`
+4. `unload(handle)` / `unload_all()` → release data, update memory tracking
 
-**内存预算**：
+**Memory budget**:
 - `set_memory_budget(bytes)` + `set_eviction_policy(Lru|Fifo|None)`
-- `load()` 时预算超额 → 自动淘汰最久未访问资源
-- `evict(target_bytes)` 手动触发淘汰
+- when `load()` exceeds the budget → automatically evict the least recently used resources
+- `evict(target_bytes)` triggers eviction manually
 
-**依赖解析**：
-- `load_with_deps<T>(id)` → DFS 拓扑序加载所有依赖
-- 循环检测（warn + 跳过）
+**Dependency resolution**:
+- `load_with_deps<T>(id)` → DFS topological load of all dependencies
+- cycle detection (warn + skip)
 
-**热重载**（feature-gated `hot-reload`）：
-- `HotReloadWatcher`：轮询 `.pak` 文件修改时间
-- `on_pak_changed()`：重读数据 → **原地**更新 slot（不递增 generation：句柄身份不变，
-  热重载前发出的 `Handle` 继续可用）
+**Hot reload** (feature-gated `hot-reload`):
+- `HotReloadWatcher`: polls `.pak` file modification times
+- `on_pak_changed()`: re-read data → update the slot **in place** (generation is not incremented: handle identity stays the same,
+  so `Handle`s issued before the hot reload keep working)
 
-**`Asset` trait**：
+**`Asset` trait**:
 ```rust
 pub trait Asset: Sized + Send + 'static {
     fn asset_type() -> AssetType;
@@ -817,149 +900,161 @@ pub trait Asset: Sized + Send + 'static {
     fn into_bytes(self) -> Vec<u8>;
 }
 ```
-内建 `impl Asset for Vec<u8>`（二进制 blob）。
+Built-in `impl Asset for Vec<u8>` (binary blob).
 
-### 10.9 CLI 工具（`prism-cooker`，bin: `prism-cook`）
+### 10.9 CLI tools (`prism-cooker`, bin: `prism-cook`)
 
-| 命令 | 功能 |
+| Command | Function |
 |------|------|
-| `init` | 创建 `Assets/` + `Library/` 目录结构 |
-| `scan` | 扫描 `Assets/`，按扩展名推断类型，写入数据库 |
-| `import` | 对每个文件运行匹配的 Importer，增量缓存 |
-| `build --output game.pak` | 烹饪所有资产 → 打包 `.pak`；`--profile <name>` / `--platform <p>` 先解析 profile（`--compression` 覆盖 profile 的 level） |
-| `validate game.pak` | 验证魔数 + 版本 + 校验和 |
-| `verify` | 校验 `Library/Intermediate/`：每个记录都要有内容寻址的中间文件，并列出孤儿文件 |
-| `list` | 列出数据库全部资产 |
-| `inspect <id>` | 查看单资产详情（依赖树可见） |
+| `init` | Create the `Assets/` + `Library/` directory structure |
+| `scan` | Scan `Assets/`, infer types by extension, write to the database |
+| `import` | Run the matching Importer for each file, with an incremental cache |
+| `build --output game.pak` | Cook all assets → pack `.pak`; `--profile <name>` / `--platform <p>` resolve the profile first (`--compression` overrides the profile's level) |
+| `validate game.pak` | Validate magic + version + checksum |
+| `verify` | Validate `Library/Intermediate/`: every record must have a content-addressed intermediate file, and list orphan files |
+| `list` | List all assets in the database |
+| `inspect <id>` | Show details for a single asset (dependency tree visible) |
 
-`Library/Intermediate/` 的文件名是内容寻址的：
-`<source-hash>-<settings-hash>-v<importer-version>.bin`（三个键与 `ImportCache`
-的判定键相同）。同一个源文件用同一份设置导入，在任何项目 / checkout 里都落到同名文件，
-所以中间产物可以跨项目复用；换设置或换 importer 版本会得到新名字，旧文件由 `verify`
-报成孤儿，等 `gc` 清理（尚未实现）。`AssetId` 仍只是 `.pak` 内的运行时标识。
+`Library/Intermediate/` filenames are content-addressed:
+`<source-hash>-<settings-hash>-v<importer-version>.bin` (the same three keys `ImportCache` uses for its decision). The same
+source file imported with the same settings lands on the same filename in any project / checkout, so intermediate artifacts can be
+reused across projects; changing settings or the importer version produces a new name, and old files are reported as orphans by `verify`
+and cleaned up by `gc` (not yet implemented). `AssetId` remains only a runtime identifier inside `.pak`.
 
-### 10.10 场景 cook 与运行时的接缝
+### 10.10 Scene cook and the runtime seam
 
-场景资产走一条独立的类型化路径，不再把 JSON 塞进 RSCN：
+Scene assets follow a separate typed path and no longer stuff JSON into RSCN:
 
 ```text
 .scene.json
-   │  prism-cooker::SceneCooker（parse + validate）
+   │  prism-cooker::SceneCooker (parse + validate)
    ▼
 prism-scene::rscn::encode_scene
-   │  type_id + schema_hash + 位置编码载荷
+   │  type_id + schema_hash + position-encoded payload
    ▼
-.rscn  ──►  prism-engine::SceneLoader（decode_scene + ComponentRegistry）
+.rscn  ──►  prism-engine::SceneLoader (decode_scene + ComponentRegistry)
 ```
 
-- `prism-build-pipeline build-scenes` 读取 `assets/scenes.json`，按其中的路径 cook 场景、
-  把 manifest 中 `.scene.json` 路径重写为 `.rscn` 后打进包，并产出运行时使用的
-  `assets/scenes.pak` + `.pak.meta.json`；这是发布入口。
-  它同时**递归收集场景引用的资源**：环境 HDR、`SpriteRenderer.sprite_path`、
-  `MeshRenderer.mesh_path`（glTF/GLB → RMES）与
-  `material_path` / `material_paths`（`.mat.json` → RMAT，连同 5 张贴图）、
-  `Style.image` / `Tilemap.tileset_path` / `Text.font`。glTF/GLB 自带的
-  `materials` / `images` 也会在打网格时 cook 成
-  `{mesh}.materials/*.mat.json`（RMAT）与 `{mesh}.textures/*.png`（RTEX）；
-  实体没有作者材质时，cook 场景会按 submesh 自动补上这些生成路径（#520）。
-  任何引用解析
-  不到（文件不存在、绝对路径、逃出 `assets/`）都会让 `build-scenes` **非零退出**并列
-  出路径——否则打包产物会在运行期静默缺资源（#530）；
-  与场景引用无关、运行时按**路径字符串**读取的内容按「目录即内容」整体打包：
-  `sprites/`（运行时生成的精灵）、`audio/`（`play_sound("audio/…")`）、
-  `data/`（关卡配置等工程数据，#1049）。`asset_paths::read_asset_text` /
-  `asset_exists` 先找松散文件、再按包内路径清单回退到 `.pak`，所以桌面与
-  Android 打包版读同一份数据；
-- `prism-build-pipeline cook <input.scene.json>` 单场景 cook，直接调用 `SceneCooker`；
-- 通用纹理/网格/二进制资产仍走 `prism-cook import/build`；
-- `prism-build-pipeline pack <cooked-dir>` 把已 cook 的目录打成 `.pak`，并写
-  `.pak.meta.json` 路径清单；资产 ID 由**包内相对路径**派生（FNV-1a，
-  [`AssetId::from_path`]），因此往目录里加文件不会重编号已有资源——材质数据的
-  `RMAT` 里烘的是贴图 `AssetId`，只有路径派生才能与包内 ID 对上（#530）。
-  `--optional-dir <dir>`（可重复）把该子目录拆到 `optional/optional_<group>.pak`，
-  运行时按需挂载（见 §10.6）；`--stream-threshold <bytes>` 仍按包内文件大小标记
-  `FLAG_STREAMED`（#509）；
-- 运行时只读 `.rscn` / `.pak`，不依赖 `prism-cooker`；
-- 开发期也可以从松散的 `.rscn` 文件加载，路径由 `SceneSource` 决定。
+- `prism-build-pipeline build-scenes` reads `assets/scenes.json`, cooks the scenes at the listed paths,
+  rewrites the `.scene.json` paths in the manifest to `.rscn`, packs them, and produces the runtime
+  `assets/scenes.pak` + `.pak.meta.json`; this is the release entry point.
+  It also **recursively collects resources referenced by scenes**: environment HDR, `SpriteRenderer.sprite_path`,
+  `MeshRenderer.mesh_path` (glTF/GLB → RMES) and
+  `material_path` / `material_paths` (`.mat.json` → RMAT, along with the 5 textures),
+  `Style.image` / `Tilemap.tileset_path` / `Text.font`. Materials/images embedded in glTF/GLB are also cooked into
+  `{mesh}.materials/*.mat.json` (RMAT) and `{mesh}.textures/*.png` (RTEX) when the mesh is packed;
+  when an entity has no authored material, scene cooking automatically fills in these generated paths per submesh (#520).
+  Any unresolvable reference
+  (missing file, absolute path, escaping `assets/`) makes `build-scenes` **exit non-zero** and list
+  the paths—otherwise the packaged build would silently lack resources at runtime (#530);
+  content unrelated to scene references that the runtime reads by **path string** is packed wholesale as "directory = content":
+  `sprites/` (runtime-generated sprites), `audio/` (`play_sound("audio/…")`),
+  `data/` (level configs and other project data, #1049). `asset_paths::read_asset_text` /
+  `asset_exists` look for loose files first, then fall back to `.pak` through the in-package path manifest, so desktop and
+  Android packaged builds read the same data;
+- `prism-build-pipeline cook <input.scene.json>` cooks a single scene, calling `SceneCooker` directly;
+- generic texture/mesh/binary assets still go through `prism-cook import/build`;
+- `prism-build-pipeline pack <cooked-dir>` packs an already-cooked directory into `.pak` and writes
+  the `.pak.meta.json` path manifest; asset IDs are derived from the **in-package relative path** (FNV-1a,
+  [`AssetId::from_path`]), so adding files to the directory does not renumber existing resources—the texture `AssetId`
+  baked into `RMAT` material data only lines up with in-package IDs when derived from the path (#530).
+  `--optional-dir <dir>` (repeatable) splits that subdirectory into `optional/optional_<group>.pak`,
+  mounted on demand at runtime (see §10.6); `--stream-threshold <bytes>` still marks
+  `FLAG_STREAMED` by in-package file size (#509);
+- the runtime reads only `.rscn` / `.pak` and does not depend on `prism-cooker`;
+- during development you can also load from loose `.rscn` files, with the path decided by `SceneSource`.
 
-**开发模式与发布模式**：二者共用同一条运行时解码路径；区别只在资源来源
-（松散文件 vs `.pak`），不是两套格式。
+**Development mode vs release mode**: both share the same runtime decode path; the only difference is the asset source
+(loose files vs `.pak`), not two formats.
 
-### 10.11 接入引擎的待办清单（Integration Gate）
+### 10.11 Integration Gate
 
-要完成"离线预处理 → .pak → 引擎运行时"的闭环，需要以下 PR：
+To close the loop from "offline preprocessing → .pak → engine runtime", the following PRs are needed:
 
-- **[G1] 运行时格式解码器** 🟡 **部分完成**：
-  - `prism-asset/src/formats.rs`（`decode_rtex` / `decode_rmes`）解析成纯数据 `RtexInfo` / `RmesInfo`，
-    由 `runtime/typed.rs` 的 `TextureAsset` / `MeshAsset` 使用；
-  - `prism-render/src/asset_decoders.rs`（`decode_rtex` / `decode_rmes`）按 Cooker 真实布局
-    （RTEX 版本字段 + mip 偏移表、RMES 属性偏移 + 平面顶点块）解析成
-    `TextureUploadInput` / `MeshUploadInput`，含格式码映射（RGBA8 / BC5 / BC6H）与越界校验；
-  - **进展**：`prism-engine` 的 `load_texture_data` 已支持完整拼接预烘焙 RTEX mip 链（`TextureUploadInput.mip_levels > 1` + 紧密打包所有 mip 级像素），由 `BatchUploader` 直接拷贝至 GPU，避免多余 blit 并保留各向异性过滤质量（#1156）。两处 GPU 解码器（`asset_decoders.rs`）可继续作为独立解析备选。
+- **[G1] Runtime format decoders** 🟡 **partially complete**:
+  - `prism-asset/src/formats.rs` (`decode_rtex` / `decode_rmes`) parses into pure-data `RtexInfo` / `RmesInfo`,
+    used by `TextureAsset` / `MeshAsset` in `runtime/typed.rs`;
+  - `prism-render/src/asset_decoders.rs` (`decode_rtex` / `decode_rmes`) parses the Cooker's actual layout
+    (RTEX version field + mip offset table, RMES attribute offsets + planar vertex blocks) into
+    `TextureUploadInput` / `MeshUploadInput`, including format-code mapping (RGBA8 / BC5 / BC6H) and bounds checks;
+  - **Progress**: `prism-engine`'s `load_texture_data` now supports concatenating the full pre-baked RTEX mip chain
+    (`TextureUploadInput.mip_levels > 1` + tightly packed pixels for all mip levels), and `BatchUploader` copies it
+    straight to the GPU, avoiding redundant blits and preserving anisotropic filtering quality (#1156). The two GPU decoders
+    (`asset_decoders.rs`) can remain as independent parsing fallbacks.
 
-- **[G2] Cooker 输出格式与引擎对接** ✅ **场景链路已打通**：`SceneCooker` 产出 RSCN v4，`prism-engine` 的 `SceneLoader` 用同一份 `prism-scene` schema 解码；`prism-cooker` 中有真实 `.scene.json` 的 cook/decode 测试。纹理/网格的压缩数据端到端对比仍待补。
+- **[G2] Cooker output format and engine integration** ✅ **scene path connected**: `SceneCooker` produces RSCN v4, and
+  `prism-engine`'s `SceneLoader` decodes it with the same `prism-scene` schema; `prism-cooker` has cook/decode tests with real
+  `.scene.json` files. End-to-end comparison of compressed texture/mesh data is still pending.
 
-- **换场（#482）**：`Engine::{load_scene_json_file_with_mode, unload_scene}` +
-  `Persistent` 标记是引擎原语；宿主 `App::load_scene_json_file` 复用同一个 `Engine`，
-  所以 `Persistent` 子树与用户 system 能活过换场，旧实体的 GPU 句柄经解析器回收。
-- **GPU 资源回收**（#495）：`GpuAssetResolver` 记录每个 `(实体, 槽位)` 当前使用的
-  槽位 / 句柄；热重载、组件移除、实体销毁或路径改写时把记录交回
-  `GraphRenderer::release_assets`，由渲染器按 bindless 槽 / `MeshHandle` / 材质槽
-  反查并销毁（纹理还会先把该槽描述符改写成洋红回退，避免采样已释放视图）。
-  重新上传到新槽位的同一帧就释放旧的，不产生「还在采样的已释放槽位」的中间帧。
-- **[G3] ResourceManager → Engine 桥接** ✅ **部分完成**：`GpuAssetResolver` 已持 `ResourceManager` 并支持 `load_package/load_package_bytes` 与 `load_with_deps`，`App::new` 中 `load_resource_package()` 会挂载 `assets/` 下**所有** `.pak`（每个包旁有同名 `.pak.meta.json` 时一并加载路径清单），不再写死 `scenes.pak`；`Handle<T>`→`Entity` 的映射由 `GpuAssetResolver` 的引用缓存维护（`MeshRef` / `MaterialRef` /
-  `SpriteRef` 持 `Handle`），全链路 `CLI build → .pak → ResourceManager → GPU` 可手动验证。
+- **Scene switching (#482)**: `Engine::{load_scene_json_file_with_mode, unload_scene}` +
+  the `Persistent` marker are engine primitives; the host's `App::load_scene_json_file` reuses the same `Engine`,
+  so `Persistent` subtrees and user systems survive scene switches, and GPU handles of old entities are reclaimed by the resolver.
+- **GPU resource reclamation** (#495): `GpuAssetResolver` records the slot / handle currently used by each
+  `(entity, slot)`; on hot reload, component removal, entity destruction, or path rewrite, it hands the record back to
+  `GraphRenderer::release_assets`, and the renderer looks up and destroys it by bindless slot / `MeshHandle` / material slot
+  (for textures it first rewrites that slot's descriptor to the magenta fallback, avoiding sampling a released view).
+  The old slot is released in the same frame that the new slot is uploaded to, so there is never an intermediate frame with
+  "a released slot still being sampled".
+- **[G3] ResourceManager → Engine bridge** ✅ **partially complete**: `GpuAssetResolver` now holds a `ResourceManager`
+  and supports `load_package/load_package_bytes` and `load_with_deps`; `load_resource_package()` in `App::new`
+  mounts **all** `.pak` files under `assets/` (loading the path manifest alongside each package when a same-named
+  `.pak.meta.json` exists), no longer hardcoding `scenes.pak`; the `Handle<T>`→`Entity` mapping is maintained by
+  `GpuAssetResolver`'s reference cache (`MeshRef` / `MaterialRef` / `SpriteRef` hold `Handle`s). The full chain
+  `CLI build → .pak → ResourceManager → GPU` can be verified manually.
 
-- **[G4] 构建脚本集成** ✅ **已落地**：`prism-build-pipeline build-scenes` 统一完成
-  `scenes.json → cooked RSCN → scenes.pak + path manifest`；泛资产仍走 `prism-cook build`，
-  `scripts/run.ps1` 在 `cargo build` 后自动调用它。`scripts/build-android.ps1` /
-  `build-android-game.sh` 按扩展名复制 `assets/` 下**全部** `.pak` 与 `.pak.meta.json`
-  到 APK 的 `assets/game/`（一个都没有就报错）；Android 启动时 `run_on_android` 再把
-  `game/` 复制到内部存储并切 cwd。
-  CI 的资产构建步骤仍待补。
+- **[G4] Build script integration** ✅ **landed**: `prism-build-pipeline build-scenes` uniformly performs
+  `scenes.json → cooked RSCN → scenes.pak + path manifest`; generic assets still go through `prism-cook build`,
+  and `scripts/run.ps1` calls it automatically after `cargo build`. `scripts/build-android.ps1` /
+  `build-android-game.sh` copy **all** `.pak` and `.pak.meta.json` under `assets/` by extension
+  into the APK's `assets/game/` (erroring if there are none); at Android startup `run_on_android` copies
+  `game/` to internal storage and switches cwd. The CI asset-build step is still pending.
 
-- **[G5] CookProfile 集成到引擎设置** ⏳ **配置已就绪**：`CookProfile` 5 档 + `settings_hash` 已实现，`--profile` CLI 透传待接入 `AppConfig` 启动参数。
+- **[G5] CookProfile integration into engine settings** ⏳ **config ready**: the 5 `CookProfile` tiers + `settings_hash`
+  are implemented; passing `--profile` through to `AppConfig` startup parameters is still pending.
 
-- **[G6] 热重载管道** ✅ **编辑器 + 播放器都已接线**：`ResourceManager::on_pak_changed` 换掉陈旧 reader（`Handle` 保持有效），`HotReloadWatcher` 总是随 `runtime` 编译。编辑器在 500ms 轮询里重开重建的 `.pak` 并 `invalidate_assets`；播放器（`prism-app`）在 `PRISMA_HOT_RELOAD=1` 时做同一件事（发布版默认关，不起线程也不 stat）。剩余：旧 GPU 句柄按句柄回收、松散资产（`assets/` 下未打包的文件）热重载、播放器侧端到端画面验证。
+- **[G6] Hot reload pipeline** ✅ **wired in both editor and player**: `ResourceManager::on_pak_changed` swaps out the stale
+  reader (`Handle`s stay valid), and `HotReloadWatcher` is always compiled with `runtime`. The editor reopens the rebuilt
+  `.pak` in its 500ms poll and calls `invalidate_assets`; the player (`prism-app`) does the same when `PRISMA_HOT_RELOAD=1`
+  (off by default in release builds; no thread, no stat). Remaining: reclaim old GPU handles by handle, hot reload loose assets
+  (files under `assets/` that are not packed), and end-to-end visual verification on the player side.
 
-> **里程碑建议**：G1+G2+G3 为"闭环 MVP"✅ 实现 已打通（可手动端到端），G4+G5 为"开发体验完善"⏳，G6 为"编辑器体验"✅ 实现。
+> **Milestone suggestion**: G1+G2+G3 form the "closed-loop MVP" ✅ implemented and connected (manually verifiable end to end);
+> G4+G5 are "developer experience polish" ⏳; G6 is "editor experience" ✅ implemented.
 
-### 10.12 §7 纹理管线与 §10 的关系
+### 10.12 Relationship between §7's texture pipeline and §10
 
-§7（纹理管线）设计的 KTX2/BC/ASTC 离线压缩方案，在概念上属于 §10 管线中
-`TextureImporter` → `TextureCooker` 链的增强。具体来说：
+The KTX2/BC/ASTC offline compression scheme designed in §7 is conceptually an enhancement of the
+`TextureImporter` → `TextureCooker` chain in §10. Specifically:
 
-- §7 的 **PR-T1（压缩格式上传支持）** 属于 §10 G1 的一部分——扩展
-  `BatchUploader::upload_image` 支持 BC/ASTC `vk::Format`。
-- §7 的 **PR-T2（xtask texture-import）** 属于 §10 Cooker 的离线编码增强——
-  在 `TextureCooker` 中添加 `compress: Some(Bc7|Astc|...)` 路径，
-  替代当前的 RGBA8 直通路径。
-- §7 的 **PR-T3（运行时优先读 KTX2）** 被 §10 `.pak` 方案取代——
-  运行时不再读 KTX2 文件，而是读内含已压缩 RTEX 数据的 `.pak`。
+- **PR-T1 (compressed-format upload support)** from §7 is part of §10's G1—extending
+  `BatchUploader::upload_image` to support BC/ASTC `vk::Format`.
+- **PR-T2 (xtask texture-import)** from §7 is an offline encoding enhancement of §10's Cooker—
+  adding a `compress: Some(Bc7|Astc|...)` path to `TextureCooker`, replacing the current RGBA8 passthrough.
+- **PR-T3 (runtime prefers KTX2)** from §7 is superseded by §10's `.pak` scheme—
+  the runtime no longer reads KTX2 files, but reads `.pak` files containing already-compressed RTEX data.
 
-因此 §7 不删除，而是被 §10 框架吸纳为内部实现细节。新增纹理压缩功能
-应在 §10 的 Cooker 和 Package 层级实现，而非绕过管线直读文件系统。
+So §7 is not deleted; it is absorbed by the §10 framework as an internal implementation detail. New texture compression features
+should be implemented at §10's Cooker and Package layers, not by bypassing the pipeline and reading the filesystem directly.
 
-### 10.13 作者格式 v3：实体身份（设计决策）
+### 10.13 Authoring format v3: entity identity (design decision)
 
-**状态**：**已实现**（#31）。`prism-scene`（`id` 字段 / 校验 / 迁移 / cook）与 `prism-editor-api`（子树操作改用 id、删掉下标重映射）同批落地；前置改动见 #23（transform 单一来源）与 #29（cook 线性化）。
+**Status**: **implemented** (#31). `prism-scene` (`id` field / validation / migration / cook) and `prism-editor-api` (subtree operations use ids, index remapping removed) landed together; prerequisites are #23 (single transform source) and #29 (cook linearization).
 
-#### 现状与问题
+#### Current state and problem
 
-`.scene.json` v2 的实体用**数组下标**当身份：
+`.scene.json` v2 uses **array indices** as entity identity:
 
 ```json
 { "entities": [ { "name": "Root" }, { "name": "Child", "parent": 0 } ] }
 ```
 
-顺序同时承担三件事：遍历顺序、实体身份、父引用目标。代价在 `prism-editor-api` 里全部显性化：
-`move_entity` / `delete_entities` / `sync_prefab_instances` / `instantiate_prefab` 各自维护一套
-`remap[]` 并**全量重写每个实体的 `parent`**；任何一处漏改都是静默错挂，且无法表达
-「跨场景引用」或让外部工具往返编辑。
+Order carries three things at once: traversal order, entity identity, and parent-reference target. The cost becomes explicit in `prism-editor-api`:
+`move_entity` / `delete_entities` / `sync_prefab_instances` / `instantiate_prefab` each maintain a `remap[]` and **rewrite every entity's `parent`**; any missed update silently mis-parents an entity, and the format cannot express
+"cross-scene references" or round-trip editing by external tools.
 
-#### 决定
+#### Decision
 
-v3 引入稳定 id，`parent` 指向 id：
+v3 introduces stable ids, with `parent` pointing at an id:
 
 ```json
 {
@@ -971,682 +1066,671 @@ v3 引入稳定 id，`parent` 指向 id：
 }
 ```
 
-- **id 单调递增**（`max(id) + 1`），由编辑器在新建 / 复制 / 实例化时分配；删除后**不复用**，
-  避免旧引用"复活"到新实体。
-- **数组顺序不再是身份**，只表示文件布局与编辑顺序。
-- **位宽定为 `u32`**（不是 `u64` / UUID），理由三条：
-  1. UUID 让 diff 充满噪声、难以人工 review，还会污染测试与 fixture 的确定性（需注入生成器）；
-     本项目是单人 + agent 的 git 流，并发创建实体的冲突概率极低，且重复 id 会被 `validate` 抓住。
-  2. `u64` 的唯一卖点是"高位留命名空间"，但这条路在本技术栈里走不通：`parent` 在编辑器中是
-     TS `number`，安全整数上限 **2^53**；把命名空间放进高 32 位会让 id 越过该上限，
-     `JSON.parse` 静默丢精度 —— 那比撞号更危险（撞号会被校验拦住，精度丢失不会）。
-     而 JSON 里位宽本身不可见（小数字序列化等长），`u64` 的可读性收益也是零。
-  3. 真要命名空间就得用字符串 id，等于回到 UUID 的代价，已被否决。
-- 代码侧把 id 当作**不透明不变量**（只保证"文档内唯一且不复用"），不假设它等于下标或连续，
-  这样将来若有强度更大的需求，改动面被限制在类型宽度 + 一次迁移。
+- **Ids increase monotonically** (`max(id) + 1`), assigned by the editor on create / duplicate / instantiate; deleted ids are **never reused**,
+  preventing old references from "resurrecting" onto a new entity.
+- **Array order is no longer identity**; it only expresses file layout and editing order.
+- **The width is `u32`** (not `u64` / UUID), for three reasons:
+  1. UUIDs fill diffs with noise, are hard to review manually, and pollute test/fixture determinism (requiring an injected generator);
+     this project uses a single-developer + agent git flow, where concurrent entity-creation conflicts are extremely unlikely, and duplicate ids are caught by `validate`.
+  2. The only selling point of `u64` is "reserve high bits for a namespace", but that path does not work in this stack: `parent` is a TS `number` in the editor, with a safe-integer limit of **2^53**; putting a namespace in the high 32 bits pushes ids past that limit,
+     and `JSON.parse` silently loses precision—which is more dangerous than a collision (collisions are caught by validation, precision loss is not).
+     And the width is not visible in JSON anyway (small numbers serialize as-is), so `u64`'s readability benefit is zero.
+  3. If a namespace is truly needed, string ids are the only option, which is back to UUID cost and has already been rejected.
+- The code treats ids as an **opaque invariant** (only "unique within the document and never reused"), not assuming they equal indices or are contiguous,
+  so any future requirement change is confined to the type width plus one migration.
 
-#### 不变量（`SceneJson::validate`）
+#### Invariants (`SceneJson::validate`)
 
-1. 至少一个实体；`id` 唯一。
-2. `parent` 必须指向**存在**的 id，且不得指向自身。
-3. 环：**加载侧容错**（`topological_order` 把未访问到的实体按数组顺序追加到末尾，结果确定），
-   **编辑器侧拒绝**成环（`reparent` 已有的 descendants 检查保留）。
-   硬失败会让一个手写错环直接打不开场景，代价大于收益；cook 时对环记 `warn`。
+1. At least one entity; `id`s are unique.
+2. `parent` must point at an **existing** id and must not point at itself.
+3. Cycles: **tolerant on load** (`topological_order` appends unvisited entities in array order, giving a deterministic result),
+   **rejected by the editor** (`reparent`'s existing descendant check is kept).
+   A hard failure would make a hand-written bad cycle render the scene unopenable, costing more than it gains; cooking logs a `warn` for cycles.
 
-#### 迁移 v2 → v3
+#### Migration v2 → v3
 
-- `id = 数组下标`（恒等映射），`parent` 数值**不变** → 迁移是纯增量，老文档 diff 只有 `id` 字段。
-- 幂等：已含 `id` 的文档不重写；缺 `id` 的补齐。
-- 旧引擎读 v3 会命中 `migrate_scene_doc` 的「版本高于支持范围」错误（明确失败，不静默降级）。
-- `.prefab.json` 与场景共用同一套 `SceneJson` 形状与迁移，因此一并升级。
+- `id = array index` (identity mapping), `parent` values **unchanged** → migration is purely additive; old documents' diff contains only the `id` field.
+- Idempotent: documents that already have `id`s are not rewritten; missing `id`s are filled in.
+- An old engine reading v3 hits `migrate_scene_doc`'s "version above supported range" error (explicit failure, no silent downgrade).
+- `.prefab.json` shares the same `SceneJson` shape and migration as scenes, so it is upgraded too.
 
-#### 编辑器职责（净删代码的位置）
+#### Editor responsibilities (where code gets deleted)
 
-| 操作 | v2（现状） | v3 |
+| Operation | v2 (current) | v3 |
 |---|---|---|
-| 移动实体 | 移动数组 + **全量重写所有 parent** | 只移动数组元素 |
-| 改父级 | 走 `move_entity` 的下标重映射 | 只写目标实体的 `parent` 一个字段 |
-| 删除 | 算 `removed[]` + `remap[]` 全量重写 | 移除行；把指向被删 id 的子级 `parent = null` |
-| 复制 / 实例化 | 数组尾部追加 + 计算 `base` 偏移 | 子树分配连续 id 块，根挂到目标 parent |
-| 存为预制体 | 提取子树并平移内部父索引 | 子树 id **重新编号为 `0..k`**（预制体自带 id 空间） |
-| 同步预制体实例 | 按数组位置匹配 + 全量平移 | 替换子树，内部重新分配 id；`PrefabInstance` 元数据不变 |
+| Move entity | move the array + **rewrite all parents** | move the array element only |
+| Change parent | go through `move_entity`'s index remapping | write only the target entity's `parent` field |
+| Delete | compute `removed[]` + `remap[]` and rewrite everything | remove the row; set children pointing at the deleted id to `parent = null` |
+| Duplicate / instantiate | append at the end + compute a `base` offset | allocate a contiguous id block for the subtree, attach the root to the target parent |
+| Save as prefab | extract the subtree and shift internal parent indices | renumber subtree ids to **`0..k`** (prefabs own their id space) |
+| Sync prefab instance | match by array position + shift everything | replace the subtree, reallocating internal ids; `PrefabInstance` metadata unchanged |
 
-#### 与 RSCN 的关系
+#### Relationship with RSCN
 
-**RSCN v4 不变**。运行时只按拓扑序建立层级，不需要 id：
+**RSCN v4 is unchanged**. The runtime builds the hierarchy in topological order only and does not need ids:
 
-- cook 仍写出 `parent: i32`（拓扑序下标），比存 id 更小、解码更快；
-- `encode_scene` 用 `id → 拓扑位置` 的 `Vec` 映射（O(n)，见 §10.10 与 #29）；
-- 只有在出现「运行时跨实体引用」（UI 事件绑定、脚本字段指向实体）时才考虑给 RSCN 加可选 id 表，
-  在此之前不引入。
+- cooking still writes `parent: i32` (topological index), which is smaller and faster to decode than storing ids;
+- `encode_scene` uses an `id → topological position` `Vec` mapping (O(n), see §10.10 and #29);
+- only when "runtime cross-entity references" appear (UI event bindings, script fields pointing at entities) should RSCN gain an optional id table;
+  until then, do not introduce one.
 
-#### 否决的替代方案
+#### Rejected alternatives
 
-| 方案 | 否决理由 |
+| Alternative | Reason for rejection |
 |---|---|
-| 嵌套 `children` 树 | 与 ECS 平铺冲突；移动子树要搬整块数据；diff 噪声大；随机访问退化 |
-| UUID / GUID | 单场景内无收益，diff 与可读性变差；冲突率在本项目可忽略 |
-| 维持数组下标 | 编辑器每加一个层级功能就多一套 remap，成本线性增长，且无法跨场景引用 |
-| 在 `components` 里存 `Entity` | 运行时句柄（index+generation）不可持久化，加载即失效 |
+| Nested `children` tree | Conflicts with flat ECS; moving a subtree moves a whole block of data; diff noise; random access degrades |
+| UUID / GUID | No benefit within a single scene, worse diffs and readability; collision rate is negligible in this project |
+| Keep array indices | Every new hierarchy feature in the editor adds another remap; cost grows linearly and cross-scene references remain impossible |
+| Store `Entity` in `components` | Runtime handles (index+generation) cannot be persisted; they become invalid on load |
 
-#### 验收判据
+#### Acceptance criteria
 
-1. 所有现存 `.scene.json` / `.prefab.json` 迁移后层级**完全等价**（迁移前后 `topological_order`
-   与父子关系快照一致）。
-2. 移动 / 删除 / 复制 / 实例化的随机操作序列之后，`validate()` 通过且无悬空 id。
-3. 编辑器 `scene.rs` 里 `remap` 相关代码行数下降 ≥ 60%（本决策的主要收益是**删代码**）。
-4. 真实场景 cook + decode 的层级与迁移前一致（扩展 `prism-cooker` 的 `cooks_real_default_scene`）。
+1. All existing `.scene.json` / `.prefab.json` files migrate to a **fully equivalent** hierarchy (`topological_order`
+   and the parent-child snapshot match before and after migration).
+2. After random sequences of move / delete / duplicate / instantiate, `validate()` passes and no id dangles.
+3. The line count of `remap`-related code in the editor's `scene.rs` drops by ≥ 60% (the main benefit of this decision is **deleting code**).
+4. Cooking + decoding a real scene yields the same hierarchy as before migration (extend `prism-cooker`'s `cooks_real_default_scene`).
 
-#### 分期
+#### Phasing
 
-id 的语义和编辑器的下标重映射**不能分开落地**：只要 `parent` 从下标变成 id，
-`move_entity` / `delete_entities` 里那套 `remap[]` 就会把 id 当索引用而静默改写。因此：
+The semantics of ids and the editor's index remapping **cannot land separately**: as soon as `parent` changes from an index to an id,
+the `remap[]` machinery in `move_entity` / `delete_entities` would treat ids as indices and silently rewrite them. Therefore:
 
-- **PR-1（数据层 + 编辑器，必须同一个 PR）**：
-  - `prism-scene`：`id` 字段、`validate` 不变量、`migrate` v2→v3、`topological_order` / `encode_scene`
-    走 `id → index` 映射、现有 `.scene.json` / `.prefab.json` 迁移、测试；
-  - `prism-editor-api`：新建 / 复制 / 实例化时分配 id，删除全部 `remap[]` 路径，
-    `extract_subtree` 重编号；
-  - 前端只需确认 `parent` 仍是 `number`（语义变化对 TS 透明）。
-- **PR-2（可选）**：RSCN 可选 id 表，仅在需要运行时实体引用时。
+- **PR-1 (data layer + editor, must be one PR)**:
+  - `prism-scene`: the `id` field, `validate` invariants, v2→v3 `migrate`, `topological_order` / `encode_scene`
+    using the `id → index` mapping, migration of existing `.scene.json` / `.prefab.json`, tests;
+  - `prism-editor-api`: assign ids on create / duplicate / instantiate, delete every `remap[]` path, renumber in `extract_subtree`;
+  - the frontend only needs to confirm that `parent` is still a `number` (the semantic change is transparent to TS).
+- **PR-2 (optional)**: an optional RSCN id table, only when runtime entity references are needed.
 
-#### 未决问题
+#### Open questions
 
-- `extract_subtree` 重编号后，预制体实例的「差异对比」是否要按结构路径而非 id 匹配 —— 留到
-  预制体工作流真正落地时再定。
+- After `extract_subtree` renumbering, should prefab-instance "diffing" match by structural path instead of id—decide when the prefab workflow actually lands.
 
-### 10.14 项目配置文件（`settings.ini` / `scenes.json`）
+### 10.14 Project configuration files (`settings.ini` / `scenes.json`)
 
-项目级配置只有两个文件，都放在 `assets/` 下：
+There are only two project-level configuration files, both under `assets/`:
 
-| 文件 | 作用 | 格式 |
+| File | Purpose | Format |
 |------|------|------|
-| `assets/settings.ini` | `[app]` / `[build]` / `[render]` / `[window]` 段 | 自写 INI 方言（见下） |
-| `assets/scenes.json` | 场景清单（顺序 = 构建 = 启动顺序） | `{"scenes":[{"name","path","enabled"}]}` |
+| `assets/settings.ini` | `[app]` / `[build]` / `[render]` / `[window]` sections | custom INI dialect (see below) |
+| `assets/scenes.json` | scene manifest (order = build = launch order) | `{"scenes":[{"name","path","enabled"}]}` |
 
-**为什么不用 TOML**：配置只有几十个标量字段，TOML 引入的是
-`toml` + `toml_parser` + `winnow` + `toml_datetime` 整条链（玩家树里 60–80 KB）。
-场景清单本来就是数组，`serde_json` 已经在树里（`.scene.json` / `.pak.meta.json`），
-换成 JSON 不增加任何依赖。`serde_json` 保留，**`toml` 不再出现在任何 crate 里**
-（`cargo tree -p prism-app -e normal | grep toml` 必须为空）。
+**Why not TOML**: the configuration has only a few dozen scalar fields, while TOML pulls in the whole
+`toml` + `toml_parser` + `winnow` + `toml_datetime` chain (60–80 KB in the player tree). The scene manifest is an array anyway,
+and `serde_json` is already in the tree (`.scene.json` / `.pak.meta.json`), so switching to JSON adds no dependency. `serde_json` stays, and
+**`toml` no longer appears in any crate** (`cargo tree -p prism-app -e normal | grep toml` must be empty).
 
-#### 内部分辨率 / 整数缩放（`[render]`，#613）
+#### Internal resolution / integer scaling (`[render]`, #613)
 
-2D 项目按设计分辨率作画（`projects/fishing` 是 640×360），但窗口往往大得多：
-在 2000×1125 上直接按窗口分辨率渲染，最近邻放大会得到 3.125× 这种非整数比例，
-一块美术像素变成大小不一的矩形。两个键把「渲染分辨率」和「输出分辨率」分开：
+2D projects draw at a design resolution (`projects/fishing` is 640×360), but windows are often much larger:
+rendering directly at window resolution on 2000×1125 and upscaling with nearest-neighbor gives a non-integer 3.125× ratio,
+turning one art pixel into rectangles of varying size. Two keys separate "render resolution" from "output resolution":
 
 ```ini
 [render]
-; 留空 / off / native = 按窗口分辨率渲染（默认，行为与之前完全一致）
+; empty / off / native = render at window resolution (default, behavior identical to before)
 internal_resolution = 640x360
-; stretch = 铺满窗口（像素不等宽）；integer = 最大整数倍 + 居中黑边
+; stretch = fill the window (non-square pixels); integer = largest integer multiple + centered letterbox
 internal_scale_mode = integer
 ```
 
-- 两个轴都写了才生效；只写一边时另一边按窗口宽高比推导；
-- 场景（ForwardPass 的 HDR / 深度 / 法线中间目标、路径追踪累积）按内部尺寸渲染，
-  UI 叠加仍按窗口尺寸（文字保持清晰）；
-- `PostPass` 把内部图放大到窗口：`stretch` 铺满，`integer` 取
-  `min(窗口宽/内部宽, 窗口高/内部高)` 的整数倍并居中，四周留黑边；
-  `integer` 时采样器切到最近邻，像素画不会被插值糊掉；
-- 相机投影用**内部**宽高比（`RenderSettings::render_aspect`），否则 2D 构图会被拉伸；
-- 编辑器 Game 视图走同一条链路（`EngineHost::render` + `GraphRenderer::set_internal_resolution`），
-  所以 Play 看到的像素比例就是打包产物的比例。
+- It takes effect only when both axes are written; if only one is written, the other is derived from the window aspect ratio;
+- the scene (ForwardPass's HDR / depth / normal intermediate targets, path-tracing accumulation) renders at the internal size,
+  while the UI overlay still uses window size (text stays sharp);
+- `PostPass` upscales the internal image to the window: `stretch` fills, `integer` takes an integer multiple of
+  `min(window width/internal width, window height/internal height)` and centers it with black bars;
+  with `integer` the sampler switches to nearest-neighbor, so pixel art is not blurred by interpolation;
+- camera projection uses the **internal** aspect ratio (`RenderSettings::render_aspect`), otherwise 2D composition is stretched;
+- the editor's Game view goes through the same chain (`EngineHost::render` + `GraphRenderer::set_internal_resolution`),
+  so Play shows the same pixel ratio as the packaged build.
 
-#### INI 方言（唯一实现标准）
+#### INI dialect (single implementation standard)
 
-1. `[section]` 行，节内 `key = value`；节与节之间顺序无关；
-2. 整行注释：`#` 或 `;` 开头（前导空白忽略）；**行内不解析注释**
-   ——路径里的 `#` / `;` 不会被截断；
-3. 值可加双引号，引号内支持 `\"` `\\` `\n`；不加引号时取到行尾并 trim；
-   未知转义（如 `C:\temp`）保留反斜杠本体；
-4. 解析器**只产出 `String`**；`u32` / `bool` / `f32` 转换由调用方做，
-   失败时用默认值 + `log::warn!`（配置文件坏了也要能启动）；
-5. 未知 section / 未知 key 一律忽略，`log::debug!` 记一条（编辑器会把
-   `[build]` 写进同一份文件，引擎不该报错）；
-6. 同一 section 出现两次：**合并**，同名 key 后者覆盖前者。
+1. `[section]` lines, with `key = value` inside; section order does not matter;
+2. full-line comments start with `#` or `;` (leading whitespace ignored); **inline comments are not parsed**,
+   so `#` / `;` in paths are not truncated;
+3. values may be double-quoted, with `\"` `\\` `\n` inside quotes; unquoted values run to the end of the line and are trimmed;
+   unknown escapes (e.g. `C:\temp`) keep the backslash;
+4. the parser **produces only `String`**; `u32` / `bool` / `f32` conversion is the caller's job, and failure uses the default + `log::warn!`
+   (a broken config file must not prevent startup);
+5. unknown sections / keys are ignored with a `log::debug!` entry (the editor writes
+   `[build]` into the same file, so the engine must not error);
+6. the same section appearing twice is **merged**, with the later value of a duplicated key winning.
 
-写回时数字 / 布尔裸写（`width = 1600`、`vsync = false`），其余字符串加引号
-（`company = "Acme"`）；注释不在模型里，写回会丢（与之前的 TOML 往返一致）。
+On write-back, numbers/booleans are bare (`width = 1600`, `vsync = false`) and other strings are quoted
+(`company = "Acme"`); comments are not in the model and are lost on write-back (same as the previous TOML round-trip).
 
-实现只有一处，方言改这里即可：
+There is exactly one implementation; the dialect changes only here:
 
-- `crates/prism-ini` —— 解析 / 写回 / 类型转换（只依赖 `log`，无业务依赖）；
-- 三个使用方都只是 re-export：`crates/prism-engine/src/config/ini.rs` —— 引擎读取
-  （`AppConfig::from_ini`）；`crates/prism-editor-api/src/ini.rs` —— MCP / 工具的文档模型
-  （保留未知段）；`editor/crates/prism-editor-core/src/ini.rs` —— 编辑器数据层
-  （独立 workspace）。
+- `crates/prism-ini` — parsing / write-back / type conversion (depends only on `log`, no business dependencies);
+- the three consumers are all re-exports: `crates/prism-engine/src/config/ini.rs` — engine reads
+  (`AppConfig::from_ini`); `crates/prism-editor-api/src/ini.rs` — the MCP / tool document model
+  (preserving unknown sections); `editor/crates/prism-editor-core/src/ini.rs` — the editor data layer
+  (separate workspace).
 
-#### 加载顺序与迁移
+#### Load order and migration
 
-两个文件都遵循「新文件优先、旧文件只读回退」：
+Both files follow "new file first, old file read-only fallback":
 
-1. `assets/settings.ini` → 回退 `assets/settings.toml`（`log::warn!` 提示迁移）；
-2. `assets/scenes.json` → 回退 `assets/scenes.toml`（同上；`.pak` 内的旧清单
-   `scenes.toml` 同样可解析，所以旧场景包不会失效）。
+1. `assets/settings.ini` → fallback `assets/settings.toml` (`log::warn!` prompting migration);
+2. `assets/scenes.json` → fallback `assets/scenes.toml` (same; the old manifest
+   `scenes.toml` inside `.pak` is also parseable, so old scene packs keep working).
 
-**写端只产出新格式**：编辑器与构建流水线都不再写 `.toml`。
+**The write side produces only the new format**: neither the editor nor the build pipeline writes `.toml` anymore.
 
-一次性迁移由 `prism-build-pipeline build-scenes` 完成：
-`migrate_legacy_config(assets/)` 在**新文件不存在**时把 `settings.toml` 重排成
-`settings.ini`、把 `scenes.toml` 转成 `scenes.json`，并打印一行 `migrated …`；
-旧文件保留（引擎优先读新文件），确认无碍后可手工删除。迁移是幂等的，
-重复执行不会再写。
+The one-time migration is done by `prism-build-pipeline build-scenes`:
+`migrate_legacy_config(assets/)` rewrites `settings.toml` into `settings.ini` and `scenes.toml` into `scenes.json` when **the new file does not exist**,
+printing one `migrated …` line; old files are kept (the engine prefers the new ones) and can be deleted manually once confirmed. Migration is idempotent
+and will not rewrite on repeated runs.
 
----
+## 11. Dependency budget (player tree)
 
-## 11. 依赖预算（玩家树）
+"Lightweight" must be enforced by CI, otherwise it will inevitably creep back. The player binary's only top-level dependency is
+`prism-app`; every extra crate it carries is one more crate per user project and per Android build
+(historical peak: 255 crates, including rapier3d/parry3d, tokio, exr, jpeg decoders).
 
-「轻量」必须被 CI 强制，否则一定会回涨。玩家二进制唯一的顶层依赖是
-`prism-app`，它多带一个 crate，每个用户项目、每次 Android 打包就多带一个
-（历史峰值：255 个 crate，含 rapier3d/parry3d、tokio、exr、jpeg 解码器）。
+Rules:
 
-规则：
-
-| 规则 | 落地 |
+| Rule | Enforcement |
 |------|------|
-| 构建期依赖（`gltf` / `clap` / `rayon` / 图片编解码器）不得进入玩家树 | `scripts/check_deps.py` 黑名单 |
-| 可选能力必须是 feature，默认关闭 | `prism-app/physics`、`prism-app/audio`、`prism-asset/async-io` |
-| `image` 的 workspace 依赖零默认 codec，各 crate 只声明自己用到的格式 | 根 `Cargo.toml` |
-| 玩家树 crate 总数 ≤ `MAX_PLAYER_CRATES`（当前 155） | 同上 |
+| Build-time dependencies (`gltf` / `clap` / `rayon` / image codecs) must not enter the player tree | `scripts/check_deps.py` blacklist |
+| Optional capabilities must be features, off by default | `prism-app/physics`, `prism-app/audio`, `prism-asset/async-io` |
+| The workspace `image` dependency has zero default codecs; each crate declares only the formats it uses | Root `Cargo.toml` |
+| Total crates in the player tree ≤ `MAX_PLAYER_CRATES` (currently 155) | Same |
 
-检查在 `cargo check` 之外单独跑，只做依赖解析（不需要 `.spv`、不编译）：
-`python3 scripts/check_deps.py`，已接入 `scripts/pr_ready.py` 与 CI 的 `deps` job。
-超预算时**不要**调高常量：要么把依赖做成 feature，要么在 PR 里说明它为什么必须随玩家发布。
+The check runs separately from `cargo check` and only does dependency resolution (no `.spv`, no compilation):
+`python3 scripts/check_deps.py`, wired into `scripts/pr_ready.py` and the CI `deps` job.
+When over budget, **do not** raise the constant: either make the dependency a feature, or explain in the PR why it must ship with the player.
 
-### 实测基线
+### Measured baseline
 
-桌面玩家二进制（`projects/template` 的 `template`，Termux aarch64，`cargo build --release`，
-`lto = "thin"` + `opt-level = 3`）。复现：
+Desktop player binary (`projects/template`'s `template`, Termux aarch64, `cargo build --release`,
+`lto = "thin"` + `opt-level = 3`). Reproduce:
 
 ```bash
 cd projects/template && cargo build --release
-ls -l target/release/template        # 未 strip
-cp target/release/template /tmp/p && strip /tmp/p && ls -l /tmp/p   # strip 后（发布形态）
+ls -l target/release/template        # unstripped
+cp target/release/template /tmp/p && strip /tmp/p && ls -l /tmp/p   # stripped (release shape)
 ```
 
-| 版本 | 玩家树 crate | 未 strip | strip 后 |
+| Version | Player-tree crates | Unstripped | Stripped |
 |------|-------------|---------|---------|
-| 初始（rapier3d + tokio + exr/jpeg + 整条 audio 默认带） | 255 | 15.49 MB | 10.37 MB |
-| #532 依赖瘦身（rapier/tokio/exr 移除） | 196 | 14.72 MB | 9.78 MB |
-| #532 之后 + audio feature 化（默认关） | **144** | **10.38 MB** | **6.70 MB** |
+| Initial (rapier3d + tokio + exr/jpeg + the whole audio stack on by default) | 255 | 15.49 MB | 10.37 MB |
+| #532 dependency diet (rapier/tokio/exr removed) | 196 | 14.72 MB | 9.78 MB |
+| After #532 + audio as a feature (off by default) | **144** | **10.38 MB** | **6.70 MB** |
 
-总计：crate −44%，strip 后体积 −35%（10.37 MB → 6.70 MB）。
+Total: crates −44%, stripped size −35% (10.37 MB → 6.70 MB).
 
-两次减重的收益结构完全不同，这决定了下一步该做什么：
+The two reductions have completely different benefit structures, which determines what to do next:
 
-- **构建期依赖（rapier / tokio / exr / jpeg）几乎不改变体积**：−59 个 crate 只换来
-  −0.60 MB。别再为了体积去砍零散 crate。
-- **audio 栈是体积大头**：一个 feature 开关就 −3.09 MB（strip 后 −32%），因为
-  cpal + firewheel + symphonia（mp3/flac/vorbis/ogg/isomp4 全套编解码 + FFT 重采样）
-  是真正的运行时大件。体积敏感的项目（小游戏、demo）关掉它即可。
-- 剩下的 6.7 MB 主要是 winit / x11 / wayland 的窗口栈、ash + Vulkan 加载层、
-  字体与 2D（fontdue / tiny-skia）——都是渲染与窗口真正需要的，除非做 headless 构建。
+- **Build-time dependencies (rapier / tokio / exr / jpeg) barely change size**: −59 crates bought only
+  −0.60 MB. Stop cutting scattered crates for size.
+- **The audio stack is the size hog**: one feature switch is −3.09 MB (stripped −32%), because
+  cpal + firewheel + symphonia (the full mp3/flac/vorbis/ogg/isomp4 codec set + FFT resampling)
+  are the real runtime heavyweights. Size-sensitive projects (small games, demos) can turn it off.
+- The remaining 6.7 MB is mainly the winit / x11 / wayland window stack, ash + the Vulkan loader,
+  fonts and 2D (fontdue / tiny-skia)—all genuinely needed for rendering and windows, unless building headless.
 
-**结论**：依赖数量与编译时间是"默认清爽"的指标；**二进制体积靠 feature 关掉大件能力**，
-不靠删零散依赖。
+**Conclusion**: dependency count and compile time are the "clean by default" metrics; **binary size comes from turning off big capabilities via features**,
+not from deleting scattered dependencies.
 
 ---
 
-## 12. 积木：项目模板决定编译哪些子系统
+## 12. Bricks: the project template decides which subsystems compile
 
-引擎不替项目做取舍。**能力 = 砖块，`Cargo.toml` = 图纸**：项目模板挑哪些 feature，
-就只编译、只链接哪些子系统。引擎自身的 `default` 保持「全量」，这样库和示例不会被
-某个项目的口味绑架；精简来自**模板**，不是来自删默认值。
+The engine does not make trade-offs for projects. **Capability = bricks, `Cargo.toml` = blueprint**: whichever features a project template picks,
+only those subsystems compile and link. The engine's own `default` stays "everything", so libraries and examples are not
+held hostage by one project's taste; pruning comes from the **template**, not from deleting defaults.
 
-### 12.1 两层机制（不要混用）
+### 12.1 Two mechanisms (do not mix)
 
-| 层 | 机制 | 例子 |
+| Layer | Mechanism | Example |
 |---|---|---|
-| **子系统** | cargo feature（编译期，真的不生成代码/不链接依赖） | `pathtrace`、`audio`、`physics`、`async-io` |
-| **组件** | `ComponentRegistry` 分组（运行期注册） | 场景里用不到的组件组不注册，加载时按「未知组件」处理 |
+| **Subsystem** | cargo feature (compile time; genuinely no code generated / dependency linked) | `pathtrace`, `audio`, `physics`, `async-io` |
+| **Component** | `ComponentRegistry` grouping (registered at runtime) | Component groups unused by a scene are not registered and are treated as "unknown components" on load |
 
-组件**不要**做成 cargo feature：N 个组件就是 2^N 个组合，CI 编不完、模板也写不出来。
-组件级的取舍交给注册表分组 + 场景 cook（未注册组 = 不被提取，代码不链接）。
+Components must **not** be cargo features: N components means 2^N combinations, CI cannot compile them and templates cannot express them.
+Component-level trade-offs go through registry grouping + scene cooking (unregistered groups are not extracted, and their code is not linked).
 
-### 12.2 当前砖块
+### 12.2 Current bricks
 
-| 砖块 | feature | 默认 | 关掉后省什么 |
+| Brick | feature | Default | What turning it off saves |
 |---|---|---|---|
-| 路径追踪 | `prism-render/pathtrace` | on | `pt_pass.rs`（~1.6k 行）+ 累积/BLAS-TLAS 资源 |
-| SHaRC（NVIDIA RTXGI v1.6） | `prism-render/sharc` | on | NVIDIA RTXGI SHARC v1.6 世界空间辐射缓存（`sharc.rs` + resolve 计算管线 + 3 个持久 GPU 缓冲）。**默认开**：不拉新依赖。**不再依赖 `pathtrace`**：缓存有两个平级消费者——PT 训练/查询（`gi_mode = Sharc`）与光栅 ReSTIR GI 自己 deposit/查询（`gi_mode = Restir`，见 §6.8）。关掉 = 两条实时 GI 路径都退化为 baked probe volume（并 warn 一次） |
-| ReSTIR GI（光栅） | `prism-render/restir_gi` | on | `restir_gi.rs` + `restir_gi.slang`（~1.2k 行 Rust + ~590 行 slang）+ 双缓冲 GI 图 + reservoir 缓冲。**不依赖 `pathtrace`**：只要求 `VK_KHR_ray_query`，无 RT 管线的设备也能跑；缺 ray query 时 `gi_mode = Restir` 退回 baked probe volume 并 warn 一次。`sharc` 是**可选**加速：编了就把缓存当弹射终点，没编就只有单次弹射 + 天空 |
-| NRC | `prism-render/nrc`（依赖 `pathtrace`） | off | NVIDIA Neural Radiance Cache 接入 |
-| DLSS | `prism-render/dlss` | off | NVIDIA Streamline / DLSS 超分辨率与光线重构接入；同时是 `sl.interposer` 的加载者（没有它就不拦截 Vulkan 调用） |
-| DLFG | `prism-render/dlfg` | off | DLSS 帧生成（依赖 `dlss`） |
-| NRD | `prism-render/nrd` | off | NVIDIA Real-Time Denoisers；复用 Streamline 的动态库加载器与能力探测，但不需要 DLSS 运行时 |
-| 音频 | `prism-app/audio` + `prism-engine/audio` | off | cpal + firewheel + symphonia（~60 crate，−3.1 MB） |
-| 物理 | `prism-app/physics` | off | rapier3d + parry3d（~40 crate） |
-| 异步资产 IO | `prism-asset/async-io` | off | tokio |
-| 窗口后端 | `prism-app/x11`、`prism-app/wayland`（透传 `prism-platform`） | 两个都 on | Linux 上只留一个：−0.46 MB（wayland 独留）～ −1.05 MB（x11 独留） |
-| UI 叠加 | `prism-render/ui`（透传 `prism-app/ui`） | on | 字形图集 + ui_overlay 管线；关掉后 UI 命令照常填充、渲染侧忽略。文本光栅由下面的后端决定 |
-| 文本光栅 A | `prism-render/ui-fontdue`（透传） | on | fontdue + ttf-parser（全平台，约 90 KB）；换成 `ui-directwrite` 可省掉 |
-| 文本光栅 B | `prism-render/ui-directwrite`（透传，**Windows 专属**） | off | 用系统 `dwrite.dll` 光栅，fontdue/ttf-parser 不进二进制 |
-| 组件组 3D | `prism-scene/group-3d`（透传 `prism-app`/`prism-engine`） | on | 灯光/天空盒/网格/相机控制/GI 配置不注册，serde 与反射代码不链接 |
-| 组件组 2D | `prism-scene/group-2d` | on | 精灵/线段/瓦片地图/2D相机/2D物理（RigidBody2D/Collider2D）不注册 |
-| 组件组 UI | `prism-scene/group-ui` | on | Node/Style/Text/布局类型不注册 |
-| IBL | `prism-render/ibl`（透传） | on | 环境 cubemap 卷积/irradiance/prefilter/BRDF LUT/HDR 解码不编译；退化为 1x1 中性灰，descriptor 布局不变。3D 档 −64 KB |
-| 天空盒 | `prism-render/skybox`（依赖 `ibl`） | on | `skybox.vert/frag.spv` + 管线；`SkyboxPass` 退化成空实现，调用点不变 |
-| 阴影贴图 | `prism-render/shadows` | on | `shadow_map_pass` 不编译；forward 的 set 3 退化为 1x1 远深度 dummy |
-| GTAO | `prism-render/gtao` | on | 半分辨率 AO pass 不编译；forward 的 set 4 退化为 1x1 白色 dummy |
+| Path tracing | `prism-render/pathtrace` | on | `pt_pass.rs` (~1.6k lines) + accumulation/BLAS-TLAS resources |
+| SHaRC (NVIDIA RTXGI v1.6) | `prism-render/sharc` | on | NVIDIA RTXGI SHARC v1.6 world-space radiance cache (`sharc.rs` + resolve compute pipeline + 3 persistent GPU buffers). **On by default**: adds no new dependency. **No longer depends on `pathtrace`**: the cache has two peer consumers—PT training/query (`gi_mode = Sharc`) and raster ReSTIR GI depositing/querying on its own (`gi_mode = Restir`, see §6.8). Off = both real-time GI paths degrade to the baked probe volume (with one warning) |
+| ReSTIR GI (raster) | `prism-render/restir_gi` | on | `restir_gi.rs` + `restir_gi.slang` (~1.2k lines Rust + ~590 lines slang) + double-buffered GI image + reservoir buffer. **Does not depend on `pathtrace`**: only requires `VK_KHR_ray_query`, so devices without an RT pipeline can still run it; without ray query, `gi_mode = Restir` falls back to the baked probe volume and warns once. `sharc` is an **optional** accelerator: when compiled, the cache serves as bounce endpoints; otherwise only a single bounce + sky |
+| NRC | `prism-render/nrc` (depends on `pathtrace`) | off | NVIDIA Neural Radiance Cache integration |
+| DLSS | `prism-render/dlss` | off | NVIDIA Streamline / DLSS super-resolution and ray reconstruction integration; also the loader for `sl.interposer` (without it, Vulkan calls are not intercepted) |
+| DLFG | `prism-render/dlfg` | off | DLSS frame generation (depends on `dlss`) |
+| NRD | `prism-render/nrd` | off | NVIDIA Real-Time Denoisers; reuses Streamline's dynamic-library loader and capability probing, but does not need the DLSS runtime |
+| Audio | `prism-app/audio` + `prism-engine/audio` | off | cpal + firewheel + symphonia (~60 crates, −3.1 MB) |
+| Physics | `prism-app/physics` | off | rapier3d + parry3d (~40 crates) |
+| Async asset IO | `prism-asset/async-io` | off | tokio |
+| Window backends | `prism-app/x11`, `prism-app/wayland` (re-exported through `prism-platform`) | both on | Keep only one on Linux: −0.46 MB (wayland only) to −1.05 MB (x11 only) |
+| UI overlay | `prism-render/ui` (re-exported through `prism-app/ui`) | on | Glyph atlas + ui_overlay pipeline; when off, UI commands are still filled in and the render side ignores them. Text rasterization is decided by the backend below |
+| Text raster A | `prism-render/ui-fontdue` (re-exported) | on | fontdue + ttf-parser (all platforms, ~90 KB); switching to `ui-directwrite` removes it |
+| Text raster B | `prism-render/ui-directwrite` (re-exported, **Windows only**) | off | Rasterize with the system `dwrite.dll`; fontdue/ttf-parser stay out of the binary |
+| Component group 3D | `prism-scene/group-3d` (re-exported through `prism-app`/`prism-engine`) | on | Lights/skybox/mesh/camera control/GI config are not registered, and their serde and reflection code is not linked |
+| Component group 2D | `prism-scene/group-2d` | on | Sprites/line segments/tilemaps/2D cameras/2D physics (RigidBody2D/Collider2D) are not registered |
+| Component group UI | `prism-scene/group-ui` | on | Node/Style/Text/layout types are not registered |
+| IBL | `prism-render/ibl` (re-exported) | on | Environment cubemap convolution/irradiance/prefilter/BRDF LUT/HDR decoding are not compiled; degrades to 1x1 neutral gray with an unchanged descriptor layout. −64 KB for 3D |
+| Skybox | `prism-render/skybox` (depends on `ibl`) | on | `skybox.vert/frag.spv` + pipeline; `SkyboxPass` degrades to an empty implementation with unchanged call sites |
+| Shadow map | `prism-render/shadows` | on | `shadow_map_pass` is not compiled; forward's set 3 degrades to a 1x1 far-depth dummy |
+| GTAO | `prism-render/gtao` | on | The half-resolution AO pass is not compiled; forward's set 4 degrades to a 1x1 white dummy |
 
-**文本光栅后端**（`ui` 只决定「画不画 UI」，后端决定「谁来做字形位图」）：
+**Text raster backends** (`ui` only decides "draw UI or not"; the backend decides "who produces glyph bitmaps"):
 
-| | `ui-fontdue`（默认） | `ui-directwrite` |
+| | `ui-fontdue` (default) | `ui-directwrite` |
 |---|---|---|
-| 平台 | 全平台 | 仅 Windows（其它目标开它 = `compile_error!`） |
-| 字形来源 | `fontdue` 读系统字体文件（msyh/Noto/DejaVu…）；`PRISMA_UI_FONT` 可指定项目自带字体 | 系统 `IDWriteFactory` → `IDWriteBitmapRenderTarget`（GDI interop） |
-| 字体族 | 按路径候选表 | `Microsoft YaHei` → `Microsoft YaHei UI` → `SimHei` → `Arial` → 兜底 `Segoe UI` |
-| 度量 | `horizontal_line_metrics` | `DWRITE_FONT_METRICS` |
-| 表单 | `fontdue::Font::rasterize` 直接给覆盖度 | 位图刷白 + 黑色灰度 AA 画字形，覆盖度 = `255 − R` |
-| 额外依赖 | fontdue + ttf-parser（~90 KB） | `windows` 绑定（`Win32_Graphics_DirectWrite` / `Gdi`，只在 Windows 目标） |
+| Platform | All platforms | Windows only (enabling it on another target = `compile_error!`) |
+| Glyph source | `fontdue` reads system font files (msyh/Noto/DejaVu…); `PRISMA_UI_FONT` can point at a project-bundled font | System `IDWriteFactory` → `IDWriteBitmapRenderTarget` (GDI interop) |
+| Font family | Path-based candidate list | `Microsoft YaHei` → `Microsoft YaHei UI` → `SimHei` → `Arial` → `Segoe UI` fallback |
+| Metrics | `horizontal_line_metrics` | `DWRITE_FONT_METRICS` |
+| Form | `fontdue::Font::rasterize` gives coverage directly | White bitmap + black grayscale AA glyphs; coverage = `255 − R` |
+| Extra dependencies | fontdue + ttf-parser (~90 KB) | `windows` bindings (`Win32_Graphics_DirectWrite` / `Gdi`, Windows targets only) |
 
-两条硬规则：
+Two hard rules:
 
-1. **互斥**：`ui-fontdue` 与 `ui-directwrite` 同时打开是 `compile_error!`——否则
-   fontdue/ttf-parser 会静默留在二进制里，开关等于没生效。
-2. **只开 `ui` 不开任何后端**是合法组合：只画屏幕空间四边形、不画文字（省 90 KB），
-   启动时 `warn` 一次说明缺哪个 feature。
+1. **Mutually exclusive**: enabling both `ui-fontdue` and `ui-directwrite` is a `compile_error!`—otherwise
+   fontdue/ttf-parser would silently stay in the binary and the switch would be a no-op.
+2. **Enabling `ui` without any backend** is a legal combination: draw only screen-space quads, no text (saves 90 KB),
+   and warn once at startup about which feature is missing.
 
-两个后端都只做**单字形 cmap 查表 + 覆盖度光栅**，明确不支持：复杂文本整形
-（阿拉伯 / 印度语系的连写与上下文替换）、可变字体 axis、Emoji 彩色字形、
-kerning / ligature。需要这些能力要引入 HarfBuzz / `IDWriteTextLayout` 级的整形管线，
-不在当前两个后端的范围内。DirectWrite 后端目前**只做过交叉编译验证**，
-真机还需冒烟：文本清晰度（灰度 AA）、DPI 缩放、字体回退（无微软雅黑时走 `Segoe UI`）。
+Both backends only do **single-glyph cmap lookup + coverage rasterization**, and explicitly do not support: complex text shaping
+(Arabic / Indic ligatures and contextual substitution), variable font axes, color emoji glyphs,
+kerning / ligatures. Those require a HarfBuzz / `IDWriteTextLayout`-level shaping pipeline,
+outside either backend's scope. The DirectWrite backend has so far **only been cross-compile verified**;
+real hardware still needs a smoke test: text clarity (grayscale AA), DPI scaling, font fallback (using `Segoe UI` when Microsoft YaHei is absent).
 
-**待拆**（按收益排序，每拆一块都要进 §12.2 表格与 `check_features.py` 矩阵）：
+**To be split** (ordered by benefit; each split must be added to the §12.2 table and the `check_features.py` matrix):
 
-- `2d` / `3d`：`SpritePass` 目前寄生在 `ForwardPass` 的 render pass 里，拆成独立 pass
-  之后，2D 项目可以完全不编译 3D（forward/shadow/skybox/mesh/primitives）。
-- `gi`（probe 烘焙）、`screenshot`。
-- `ui`（fontdue/tiny-skia + `ui_overlay`）。
+- `2d` / `3d`: `SpritePass` currently lives inside `ForwardPass`'s render pass; after splitting it into its own pass,
+  2D projects can avoid compiling 3D entirely (forward/shadow/skybox/mesh/primitives).
+- `gi` (probe baking), `screenshot`.
+- `ui` (fontdue/tiny-skia + `ui_overlay`).
 
-### 12.3 硬规则
+### 12.3 Hard rules
 
-1. **每个 feature 必须能被单独关掉并编译通过**——`scripts/check_features.py` 的矩阵 +
-   CI 的 `features` job 就是这条规则的执行者；新增 feature 必须加一条最小组合。
-2. **默认值只增不减**：新能力默认进 `default`，模板要精简就显式 `default-features = false`；
-   不要为了某个项目的体积去改引擎默认值（会让其它项目静默失去功能）。
-3. **关掉要可诊断**：feature 关闭导致某能力不可用时，启动/使用时 `log::warn!` 说明
-   「需要开哪个 feature」，不要静默降级（`Subsystem::Audio` 已按此实现）。
-4. **模板 = `Cargo.toml` 的 feature 列表 + `build_app()` 的子系统列表**；两者必须一致
-   （开了 feature 却不装子系统等于白编译，装了子系统却没开 feature 会告警）。
+1. **Every feature must be independently disableable and still compile**—`scripts/check_features.py`'s matrix +
+   the CI `features` job enforce this; a new feature must add a minimal combination.
+2. **Defaults only grow**: new capabilities go into `default`; templates that want trimming set `default-features = false` explicitly;
+   do not change engine defaults for one project's size (it would silently remove functionality from other projects).
+3. **Disabling must be diagnosable**: when a disabled feature makes a capability unavailable, `log::warn!` at startup/runtime explains
+   "which feature to enable", rather than silently degrading (`Subsystem::Audio` already does this).
+4. **Template = the `Cargo.toml` feature list + `build_app()`'s subsystem list**; the two must agree
+   (enabling a feature without installing the subsystem wastes compilation; installing a subsystem without the feature warns).
 
-### 12.4 体积账本（每块砖值多少字节）
+### 12.4 Size ledger (how many bytes each brick is worth)
 
-方法：`scripts/size_report.py` 临时改写 `projects/template` 的 feature 列表、按同一
-`release` profile 构建、记录未 strip 二进制大小。差值只来自 feature。
+Method: `scripts/size_report.py` temporarily rewrites `projects/template`'s feature list, builds with the same
+`release` profile, and records the unstripped binary size. The difference comes only from features.
 
-| 砖块 | Δ 二进制（未 strip） | 说明 |
+| Brick | Δ binary (unstripped) | Notes |
 |---|---|---|
-| `audio`（cpal+firewheel+symphonia） | **+4.14 MB** | 体积大头，50 个 crate 的运行时栈 |
-| `pathtrace` | +135 KB | 1.6k 行 + SPIR-V + BLAS/TLAS |
-| `physics` | +3 KB（接线前测量） | #522 后 `physics_runner` 真正步进刚体；rapier 仍只在打开 `prism-app/physics` 时编入 |
-| base（全关） | 10.24 MB | 见下方构成 |
+| `audio` (cpal+firewheel+symphonia) | **+4.14 MB** | The size hog, a runtime stack of 50 crates |
+| `pathtrace` | +135 KB | 1.6k lines + SPIR-V + BLAS/TLAS |
+| `physics` | +3 KB (measured before wiring) | After #522 `physics_runner` really steps rigid bodies; rapier is still compiled in only with `prism-app/physics` |
+| base (all off) | 10.24 MB | See the breakdown below |
 
-`ui-fontdue` → `ui-directwrite`（Windows / `x86_64-pc-windows-gnu` / `dist` 档 +
-`build-dist.sh` 的 build-std，**已 strip**）：
+`ui-fontdue` → `ui-directwrite` (Windows / `x86_64-pc-windows-gnu` / `dist` profile +
+`build-dist.sh`'s build-std, **stripped**):
 
-| 配置 | 二进制 | 差值 |
+| Configuration | Binary | Difference |
 |---|---|---|
-| `ui-fontdue`（默认） | 3 145 728 B | 基准 |
-| `ui-directwrite` | 3 084 288 B | **−61 440 B（−60 KiB，−2.0 %）** |
+| `ui-fontdue` (default) | 3 145 728 B | baseline |
+| `ui-directwrite` | 3 084 288 B | **−61 440 B (−60 KiB, −2.0 %)** |
 
-省下来的是 fontdue + ttf-parser；`windows` 绑定（DirectWrite/GDI 那几十个 import）
-抵掉了其中一部分，所以差距小于 §12.2 里估的「fontdue 约 90 KB」。两个数字都是同一
-profile、同一 target、同一条构建命令，差值只来自文本后端。
+What is saved is fontdue + ttf-parser; the `windows` binding (the dozens of DirectWrite/GDI imports) offsets part of it,
+so the difference is smaller than the "fontdue ~90 KB" estimate in §12.2. Both numbers come from the same
+profile, target, and build command; the difference comes only from the text backend.
 
-按 crate 归因（`nm -S`，base 构建）：自研代码合计 **~731 KB**（`prism-render` 205 KB、
-`prism-scene` 192 KB、`prism-ecs` 107 KB、`prism-engine` 98 KB、其余 ~130 KB），
-其余 ~4.7 MB 是 Rust 基线 + 窗口栈 + 第三方。
+Attribution by crate (`nm -S`, base build): our own code totals **~731 KB** (`prism-render` 205 KB,
+`prism-scene` 192 KB, `prism-ecs` 107 KB, `prism-engine` 98 KB, the rest ~130 KB);
+the remaining ~4.7 MB is the Rust baseline + window stack + third parties.
 
-两个必须记住的结论：
+Two conclusions to remember:
 
-1. **代码行数 ≈ 体积是错的**。1.6k 行的路径追踪只值 135 KB；一个「没接线」的物理模块
-   几乎为 0（链接器会删掉），但它仍然消耗 40 个 crate 的编译时间和依赖面。
-2. **3D/2D 拆分对体积几乎无收益**（3D pass 合计 ~200 KB 量级），它的收益是
-   **依赖面、编译时间、API 清晰度**。真正能改变二进制量级的是：
-   第三方大件（audio 4.1 MB、UI/字体栈、窗口栈）、release profile（`panic = "abort"`、
-   `lto = "fat"`、`codegen-units = 1`、strip）。
-3. **组件不是体积单位**。组件是 POD 数据 + 反射元数据，`prism-scene` 整个 crate
-   才 192 KB；关掉一个组件不改变二进制（代码共享、链接器本来就只保留被调用路径），
-   只影响场景数据与注册表。组件级的取舍是**运行期复杂度**问题，不是体积问题。
+1. **Lines of code ≈ size is wrong**. 1.6k lines of path tracing are worth only 135 KB; a physics module that is "not wired"
+   is almost 0 (the linker removes it), but it still costs 40 crates of compile time and dependency surface.
+2. **3D/2D splitting yields almost no size benefit** (3D passes total ~200 KB); its benefit is
+   **dependency surface, compile time, API clarity**. What actually changes the binary's order of magnitude:
+   big third-party pieces (audio 4.1 MB, UI/font stack, window stack), release profile (`panic = "abort"`,
+   `lto = "fat"`, `codegen-units = 1`, strip).
+3. **Components are not size units**. Components are POD data + reflection metadata; the whole `prism-scene` crate
+   is only 192 KB; disabling one component does not change the binary (code is shared, and the linker only keeps called paths anyway),
+   it only affects scene data and the registry. Component-level trade-offs are a **runtime complexity** question, not a size question.
 
-### 12.5 发布配置分层（debug / release / dist）
+### 12.5 Release profile layering (debug / release / dist)
 
-构建配置也属于「图纸」的一部分：不同消费者用不同 profile，不要用一个 release 硬扛。
+Build configuration is also part of the "blueprint": different consumers use different profiles; do not force one release to carry everything.
 
-| profile | 用途 | 关键设置 |
+| profile | Use | Key settings |
 |---|---|---|
-| `dev` | 开发、编辑器 | `opt-level = 1`、`line-tables-only` 调试信息（依赖不带）、`panic = unwind` |
-| `release` | 编辑器 / 工具 / CI | `opt-level = 3`、`lto = "thin"`、`panic = unwind` |
-| `dist` | 玩家 / Android 打包 | `lto = "fat"`、`codegen-units = 1`、`panic = "abort"`、`strip = "symbols"` |
+| `dev` | Development, editor | `opt-level = 1`, `line-tables-only` debug info (not for dependencies), `panic = unwind` |
+| `release` | Editor / tools / CI | `opt-level = 3`, `lto = "thin"`, `panic = unwind` |
+| `dist` | Players / Android packaging | `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = "symbols"` |
 
-`dev` 只保留行号表：workspace crate 仍能定位 panic 的 file:line，依赖 crate 不带 DWARF。
-完整调试信息会让 `target/` 与 `incremental/` 膨胀到数 GB，对日常调试的收益很低。
+`dev` keeps only line tables: workspace crates can still locate a panic's file:line, and dependency crates carry no DWARF.
+Full debug info bloats `target/` and `incremental/` to several GB with little daily debugging benefit.
 
-`panic = "abort"` **不能**进 `release`：editor 在进程内跑引擎，abort 会让整个编辑器
-崩溃而不是让某个视口失败。用法：`cargo build --profile dist`（Android 打包脚本已切到它）。
+`panic = "abort"` **must not** go into `release`: the editor runs the engine in-process, and abort would crash the whole editor
+instead of failing one viewport. Usage: `cargo build --profile dist` (the Android packaging scripts already use it).
 
-实测（`projects/template`，默认 feature，Termux aarch64）：
+Measured (`projects/template`, default features, Termux aarch64):
 
-| 配置 | 未 strip | strip 后 |
+| Configuration | Unstripped | Stripped |
 |---|---|---|
-| `release`（thin LTO, cu=16, unwind） | 10.38 MB | 6.70 MB |
-| `release` + fat LTO + cu=1（仍 unwind） | 7.41 MB（−28.6%） | 5.64 MB（−15.7%） |
-| `dist`（再加 panic=abort, strip） | **6.61 MB（−36.3%）** | **5.12 MB（−23.5%）** |
+| `release` (thin LTO, cu=16, unwind) | 10.38 MB | 6.70 MB |
+| `release` + fat LTO + cu=1 (still unwind) | 7.41 MB (−28.6%) | 5.64 MB (−15.7%) |
+| `dist` (plus panic=abort, strip) | **6.61 MB (−36.3%)** | **5.12 MB (−23.5%)** |
 
-结论：**收益主要来自 fat LTO + 单 codegen unit（−28.6%），不是 panic=abort**（后者再省
-0.81 MB）。因此编辑器完全可以留在 `release`（保留 unwind 与回溯），只让玩家/Android 走 `dist`。
-本机实测 fat LTO 的构建时间几乎没变（1m31s vs 1m35s），不必为它担心 CI。
+Conclusion: **the gain comes mainly from fat LTO + a single codegen unit (−28.6%), not from panic=abort** (the latter saves another
+0.81 MB). So the editor can stay on `release` (keeping unwind and backtraces) and only players/Android use `dist`.
+On this machine, fat LTO barely changed build time (1m31s vs 1m35s), so no need to worry about CI.
 
-#### 5 MB 是怎么构成的（`dist`，5.12 MB strip 后）
+#### What the 5 MB is made of (`dist`, 5.12 MB stripped)
 
-按 section（`size -A`）：`.text` 3.86 MB（75%）、`.rodata` 0.49 MB（10%）、
-`.eh_frame` 0.35 MB（7%）、`.rela.dyn` 0.20 MB（4%）、`.data` 0.15 MB。
+By section (`size -A`): `.text` 3.86 MB (75%), `.rodata` 0.49 MB (10%),
+`.eh_frame` 0.35 MB (7%), `.rela.dyn` 0.20 MB (4%), `.data` 0.15 MB.
 
-按代码来源（`nm -S` 归因，fat LTO 后符号会记在调用方，故为近似值）：
+By code origin (`nm -S` attribution; after fat LTO symbols are attributed to callers, so approximate):
 
-| 类别 | 大小 | 占比 | 可否再减 |
+| Category | Size | Share | Reducible |
 |---|---|---|---|
-| Rust 基线（core/std/alloc/hashbrown/gimli） | 0.88 MB | 22% | 只能靠 `build-std` + panic_abort（nightly） |
-| 引擎自研（prism_*） | 0.85 MB | 22% | 拆 feature |
-| 窗口栈（winit/wayland/x11/smithay） | 0.84 MB | 21% | Linux 税；Windows 上换成系统 DLL，Android 换 android-activity |
-| 其它第三方 | 0.49 MB | 12% | 个案处理 |
-| **日志正则（env_logger → regex）** | **0.47 MB** | **12%** | **最容易的一刀：换掉 env_filter/regex 即可** |
-| 字体/2D（tiny_skia/ttf_parser/fontdue） | 0.23 MB | 6% | `ui` feature；Windows 上换 `ui-directwrite`（−61 KiB） |
-| 序列化（serde_json；`toml` 已移除，−128 KB） | ~0.02 MB | <1% | 场景文档/清单共用，基本到底 |
-| 压缩（zstd/flate2） | 0.04 MB | 1% | 几乎不值得 |
+| Rust baseline (core/std/alloc/hashbrown/gimli) | 0.88 MB | 22% | Only via `build-std` + panic_abort (nightly) |
+| Engine code (prism_*) | 0.85 MB | 22% | Split into features |
+| Window stack (winit/wayland/x11/smithay) | 0.84 MB | 21% | Linux tax; on Windows it becomes system DLLs, on Android android-activity |
+| Other third parties | 0.49 MB | 12% | Case by case |
+| **Logging regex (env_logger → regex)** | **0.47 MB** | **12%** | **Easiest cut: drop env_filter/regex** |
+| Fonts/2D (tiny_skia/ttf_parser/fontdue) | 0.23 MB | 6% | `ui` feature; on Windows switch to `ui-directwrite` (−61 KiB) |
+| Serialization (serde_json; `toml` removed, −128 KB) | ~0.02 MB | <1% | Shared by scene documents/manifest, essentially at the floor |
+| Compression (zstd/flate2) | 0.04 MB | 1% | Almost not worth it |
 
-**窗口栈按平台裁剪**（实测，`dist` strip 后）：
+**Window stack pruned by platform** (measured, `dist` stripped):
 
-| 组合 | 二进制 | 说明 |
+| Combination | Binary | Notes |
 |---|---|---|
-| X11 + Wayland（默认） | 5.12 MB | 两种会话都能启动 |
-| 仅 Wayland | 4.66 MB（−0.46 MB） | 纯 X11 环境无法启动 |
-| 仅 X11 | **4.07 MB（−1.05 MB）** | 纯 Wayland 环境需要 XWayland 兜底 |
+| X11 + Wayland (default) | 5.12 MB | Both session types can start |
+| Wayland only | 4.66 MB (−0.46 MB) | Cannot start in a pure X11 environment |
+| X11 only | **4.07 MB (−1.05 MB)** | A pure Wayland environment needs XWayland as a fallback |
 
-- **Windows / Android 本来就不付这笔钱**：winit 的平台依赖按 target 裁剪，
-  `cargo tree --target aarch64-linux-android` 里 wayland/x11 计数为 0，Windows 用系统 DLL。
-- 只有 Linux 需要选，而且**必须选一个**（winit 无后端会编译失败），所以模板的最小组合是
-  `--no-default-features --features x11`，而不是"全关"。
+- **Windows / Android never pay this cost**: winit's platform dependencies are pruned by target;
+  `cargo tree --target aarch64-linux-android` has zero wayland/x11, and Windows uses system DLLs.
+- Only Linux has to choose, and **must choose one** (winit fails to compile without a backend), so the template's minimal combination is
+  `--no-default-features --features x11`, not "all off".
 
-**Windows：可以完全不要 winit**（`win32-native`，2026-10）。`prism-platform` 里新增了
-一个只用 Win32 API 的窗口后端（`RegisterClassExW` / `CreateWindowExW` / `PeekMessageW`
-消息泵），`prism-app` 的 `winit` 变成可选依赖，两个后端共用同一套引擎/渲染/关闭逻辑，
-事件先落到中立的 `PlatformEvent` 再进 `InputManager`。启用 `win32-native` 时依赖树里
-winit 计数为 0（`cargo tree --target x86_64-pc-windows-gnu | grep -c winit`），
-不是"编进来再被 LTO 删掉"。
+**Windows: winit can be dropped entirely** (`win32-native`, 2026-10). A window backend using only Win32 APIs was added to
+`prism-platform` (`RegisterClassExW` / `CreateWindowExW` / `PeekMessageW` message pump), `prism-app`'s `winit` became an optional dependency,
+both backends share the same engine/render/shutdown logic, and events land in a neutral `PlatformEvent` before entering `InputManager`.
+With `win32-native` enabled, winit's count in the dependency tree is 0 (`cargo tree --target x86_64-pc-windows-gnu | grep -c winit`),
+not "compiled in and then removed by LTO".
 
-实测（`bash scripts/build-dist.sh projects/template x86_64-pc-windows-gnu`，dist + strip）：
+Measured (`bash scripts/build-dist.sh projects/template x86_64-pc-windows-gnu`, dist + strip):
 
-| Windows 窗口后端 | `template.exe` | 说明 |
+| Windows window backend | `template.exe` | Notes |
 |---|---|---|
-| `winit-window`（默认） | 3,146,240 B（3.00 MB） | winit 0.30 + 系统 DLL |
-| `win32-window`（`win32-native`） | **2,978,816 B（2.84 MB）** | −167,424 B（−163.5 KiB / −5.3%） |
+| `winit-window` (default) | 3,146,240 B (3.00 MB) | winit 0.30 + system DLLs |
+| `win32-window` (`win32-native`) | **2,978,816 B (2.84 MB)** | −167,424 B (−163.5 KiB / −5.3%) |
 
-- 比 Linux 那边的 `winit ≈ 375 KB` 小得多：Windows 上 winit 的窗口/消息/DPI 全靠
-  user32/dwmapi，不像 Linux 要自带 x11/wayland/smithay 一整套协议栈。
-- 代价：Win32 后端没有 IME、拖放、多显示器 DPI 平滑、任务栏进度、触摸；
-  指针锁定是「隐藏 + ClipCursor + 回中」而非 Raw Input。见
-  `crates/prism-platform/src/win32.rs` 的模块文档与 `AGENTS.md`。
+- Much smaller than Linux's `winit ≈ 375 KB`: on Windows, winit's window/message/DPI handling relies entirely on
+  user32/dwmapi, unlike Linux which must bundle the whole x11/wayland/smithay protocol stack.
+- Cost: the Win32 backend lacks IME, drag-and-drop, multi-monitor DPI smoothing, taskbar progress, and touch;
+  pointer lock is "hide + ClipCursor + recenter" rather than Raw Input. See
+  the module docs in `crates/prism-platform/src/win32.rs` and `AGENTS.md`.
 
-结论：**5 MB 里真正属于「引擎」的只有 0.85 MB**，其余是语言基线、窗口栈和两个
-可以替换的第三方件（regex 日志、字体栈）。下一步优先级：去掉 env_logger 的 regex
-（−0.47 MB）> `ui` 砖块（−0.23 MB）> 序列化（−0.14 MB）。
+Conclusion: **only 0.85 MB of the 5 MB actually belongs to "the engine"**; the rest is the language baseline, the window stack, and two
+replaceable third-party pieces (regex logging, font stack). Next priorities: remove env_logger's regex
+(−0.47 MB) > the `ui` brick (−0.23 MB) > serialization (−0.14 MB).
 
-#### 跨平台二进制体积（`dist` profile，strip 后）
+#### Cross-platform binary size (`dist` profile, stripped)
 
-| 目标 | 产物 | 大小 | text |
+| Target | Artifact | Size | text |
 |---|---|---|---|
-| Linux x86_64 / aarch64（x11 + wayland） | `template` | 5.12 MB | 4.97 MB |
-| Linux（仅 x11） | `template` | 4.07 MB | — |
-| Windows `x86_64-pc-windows-gnu`（winit） | `template.exe` | 4.11 MB | 4.09 MB |
-| Windows `x86_64-pc-windows-gnu`（`win32-native`，无 winit） | `template.exe` | 见下方「窗口栈按平台裁剪」 | — |
+| Linux x86_64 / aarch64 (x11 + wayland) | `template` | 5.12 MB | 4.97 MB |
+| Linux (x11 only) | `template` | 4.07 MB | — |
+| Windows `x86_64-pc-windows-gnu` (winit) | `template.exe` | 4.11 MB | 4.09 MB |
+| Windows `x86_64-pc-windows-gnu` (`win32-native`, no winit) | `template.exe` | See "Window stack pruned by platform" above | — |
 | Android `aarch64-linux-android` | `libtemplate_core.so` | **3.26 MB** | 3.15 MB |
 
-- Windows 与「Linux x11-only」几乎一样（4.11 vs 4.07 MB），差值就是 wayland 栈——**印证了
-  0.84 MB 的窗口栈只在 Linux 双后端时存在**。
-- Android 最小（没 winit 平台栈，只有 NDK 胶水）；APK 体积另算（`.pak` 资产 + Java 壳）。
-- 交叉编译在本机可复现：Windows 用 mingw 链接器；Android 用
-  `scripts/make-ndk-host-native.sh` 处理过的 NDK（aarch64 主机 + x86_64 prebuilt shim），
-  需要同时设 `CC_/CXX_/AR_aarch64_linux_android`（`android-activity` 的 build.rs 会找 `clang++`）。
+- Windows and "Linux x11-only" are nearly identical (4.11 vs 4.07 MB); the difference is the wayland stack—**confirming that
+  the 0.84 MB window stack exists only with both Linux backends**.
+- Android is smallest (no winit platform stack, only NDK glue); APK size is separate (`.pak` assets + Java shell).
+- Cross-compilation is reproducible on this machine: Windows uses the mingw linker; Android uses
+  an NDK processed by `scripts/make-ndk-host-native.sh` (aarch64 host + x86_64 prebuilt shim),
+  and requires setting `CC_/CXX_/AR_aarch64_linux_android` together (`android-activity`'s build.rs looks for `clang++`).
 
-#### 回收日志正则（env_logger → env_filter → regex）
+#### Reclaiming the regex in logging (env_logger → env_filter → regex)
 
-`env_logger` 的默认特性 `regex` 只为 `RUST_LOG` 的正则过滤服务，却会拉进整套正则引擎
-（regex-automata + regex-syntax + aho-corasick）。我们只用 `module=level` 这种指令，
-`env_filter` 在关闭 `regex` 后会用**子串匹配**，语义足够。
+`env_logger`'s default `regex` feature exists only for `RUST_LOG` regex filtering, yet it pulls in the whole regex engine
+(regex-automata + regex-syntax + aho-corasick). We only use directives like `module=level`;
+with `regex` off, `env_filter` uses **substring matching**, which is sufficient.
 
-- 根 workspace 的 `env_logger` 改为 `default-features = false`，构建工具显式打开
-  `["auto-color", "humantime", "regex"]`，**玩家运行时只开 `["auto-color", "humantime"]`**。
-- Android 还有第二条路径：`android_logger` 的默认特性同样带 `env_filter/regex`，
-  一并关掉。
-- 代价：`RUST_LOG` 里不能再写正则（如 `prism_(render|engine)=debug`），
-  需要时给对应 crate 打开 `regex` 特性。
+- The root workspace's `env_logger` switches to `default-features = false`; build tools explicitly enable
+  `["auto-color", "humantime", "regex"]`, **the player runtime enables only `["auto-color", "humantime"]`**.
+- Android has a second path: `android_logger`'s defaults also bring in `env_filter/regex`,
+  turned off as well.
+- Cost: `RUST_LOG` can no longer contain regexes (e.g. `prism_(render|engine)=debug`);
+  enable the `regex` feature on the relevant crate when needed.
 
-实测（`dist`，strip 后）：
+Measured (`dist`, stripped):
 
-| 平台 | 改前 | 改后 | Δ |
+| Platform | Before | After | Δ |
 |---|---|---|---|
-| Linux（x11+wayland） | 5.12 MB | **4.47 MB** | −0.66 MB（−12.8%） |
-| Windows | 4.11 MB | **3.26 MB** | −0.85 MB（−20.7%） |
-| Android | 3.26 MB | 3.26 MB | 0（regex 代码在 fat LTO 下本来就被回收，但仍占编译时间与依赖面） |
+| Linux (x11+wayland) | 5.12 MB | **4.47 MB** | −0.66 MB (−12.8%) |
+| Windows | 4.11 MB | **3.26 MB** | −0.85 MB (−20.7%) |
+| Android | 3.26 MB | 3.26 MB | 0 (the regex code was already removed by fat LTO, but it still costs compile time and dependency surface) |
 
-#### 剩余"水分"地图（`dist`，strip 后，Linux）
+#### Remaining "water" map (`dist`, stripped, Linux)
 
-| crate / 来源 | 大小 | 说明 / 可减性 |
+| crate / source | Size | Notes / reducibility |
 |---|---|---|
-| `winit` | 375 KB | 平台后端本身；已可按 x11/wayland 裁剪 |
-| `core` + `std` + `alloc` + `hashbrown` | 678 KB | Rust 基线，只能 nightly `build-std` |
-| `prism_scene` | 244 KB | 组件注册表 + 全组件 serde：**下一个大件** |
-| `wayland_client` / `x11_dl` / `x11rb` / `smithay` / `tiny_skia` | ~450 KB | 只在 Linux 双后端；x11-only 或 Windows 直接消失 |
-| `prism_render` / `prism_engine` / `prism_app` / `prism_ecs` / `prism_reflect` | ~640 KB | 自研主体 |
-| `serde_json` | 未单列 | `.scene.json` / `scenes.json` / `.pak.meta.json` 共用，必需（`toml` 已移除，实测 −128 KB） |
-| `fontdue` 系（`ttf_parser` 等） | ~90 KB→64 KB | `ui` feature；Windows 上 `ui-directwrite` 换系统 DirectWrite（实测 −61 KiB） |
-| `gimli` / `addr2line` | 33 KB | std 的 panic 回溯；需 build-std |
-| `libloading` | 33 KB | ash 动态加载 `vulkan-1`；必需的代价 |
-| `image` + png | ~21 KB | 截图；可做成 `screenshot` feature |
-| `zstd` / flate2 / crc32 | ~44 KB | `.pak` 解压；资产压缩必需 |
+| `winit` | 375 KB | The platform backend itself; already prunable by x11/wayland |
+| `core` + `std` + `alloc` + `hashbrown` | 678 KB | Rust baseline, only nightly `build-std` |
+| `prism_scene` | 244 KB | Component registry + serde for all components: **the next big item** |
+| `wayland_client` / `x11_dl` / `x11rb` / `smithay` / `tiny_skia` | ~450 KB | Only with both Linux backends; disappears with x11-only or Windows |
+| `prism_render` / `prism_engine` / `prism_app` / `prism_ecs` / `prism_reflect` | ~640 KB | The engine body |
+| `serde_json` | not listed separately | Shared by `.scene.json` / `scenes.json` / `.pak.meta.json`, required (`toml` removed, measured −128 KB) |
+| `fontdue` family (`ttf_parser`, etc.) | ~90 KB→64 KB | `ui` feature; on Windows `ui-directwrite` uses system DirectWrite (measured −61 KiB) |
+| `gimli` / `addr2line` | 33 KB | std panic backtraces; needs build-std |
+| `libloading` | 33 KB | ash dynamically loads `vulkan-1`; a required cost |
+| `image` + png | ~21 KB | Screenshots; could become a `screenshot` feature |
+| `zstd` / flate2 / crc32 | ~44 KB | `.pak` decompression; required for asset compression |
 
-按这个地图，**还能稳定拿到的**是：`screenshot`（~20 KB）、`prism_scene` 组件分组（百 KB 量级，
-但要先设计注册表分组）。其余要么是平台必需的，要么要 nightly。
+Based on this map, **what can still be reliably reclaimed** is: `screenshot` (~20 KB), `prism_scene` component grouping (hundreds of KB,
+but registry grouping must be designed first). The rest is either required by the platform or needs nightly.
 
-#### 预设档位（`dist`，strip，x11+wayland；crate 数含 workspace 内 crate）
+#### Preset tiers (`dist`, stripped, x11+wayland; crate counts include workspace crates)
 
-| 档位 | feature 组合 | crate | 体积 |
+| Tier | Feature combination | Crates | Size |
 |------|-------------|-------|------|
-| 3D 全量 | `pathtrace,ui,x11,wayland,group-3d,group-2d,group-ui` | 148 | 4.47 MB |
-| 2D + UI | `pathtrace,ui,x11,wayland,group-2d,group-ui` | 148 | 4.27 MB（−197 KB） |
-| 2D 极简 | `pathtrace,x11,wayland,group-2d` | 141 | 4.14 MB（−331 KB） |
-| 2D 极简 + 仅 X11 | `pathtrace,x11,group-2d` | 130 | 3.02 MB（−1.45 MB） |
-| **2D 极简 + 仅 X11 + 无光追** | `x11,group-2d` | 128 | **2.89 MB（−1.58 MB，−35%）** |
+| 3D full | `pathtrace,ui,x11,wayland,group-3d,group-2d,group-ui` | 148 | 4.47 MB |
+| 2D + UI | `pathtrace,ui,x11,wayland,group-2d,group-ui` | 148 | 4.27 MB (−197 KB) |
+| 2D minimal | `pathtrace,x11,wayland,group-2d` | 141 | 4.14 MB (−331 KB) |
+| 2D minimal + X11 only | `pathtrace,x11,group-2d` | 130 | 3.02 MB (−1.45 MB) |
+| **2D minimal + X11 only + no ray tracing** | `x11,group-2d` | 128 | **2.89 MB (−1.58 MB, −35%)** |
 
-这几档就是 hub「新建项目」向导的选项组合（2D/3D × UI × 路径追踪 × 窗口后端）。
+These tiers are the options in the hub's "New Project" wizard (2D/3D × UI × path tracing × window backend).
 
-**Wayland 是 Linux 上最大的单项**：`winit` 的 `sctk-adwaita`（客户端装饰）会带进
-`tiny-skia` + `ttf-parser` + `wayland-client` 整条链，共约 1.1 MB。仅 X11 的构建
-连字体光栅化都不需要——所以「Linux 极简」档直接把 2D 项目压到 3 MB 出头。**预设是语义承诺**：
-往某一档里加 feature 等于给该档所有项目加负担，改动必须写清理由。
+**Wayland is the single largest item on Linux**: winit's `sctk-adwaita` (client-side decorations) brings in
+`tiny-skia` + `ttf-parser` + `wayland-client`, about 1.1 MB total. An X11-only build does not even need font rasterization—so the
+"Linux minimal" tier pushes 2D projects to just over 3 MB. **Presets are semantic promises**:
+adding a feature to a tier adds weight to every project in that tier, and the rationale must be written down.
 
-#### 组件分组的实测
+#### Component grouping measurements
 
-| 组合 | 大小 | 说明 |
+| Combination | Size | Notes |
 |---|---|---|
-| 全部组（默认） | 4.47 MB | 3D + 2D + UI 组件都注册 |
-| 关掉 `group-3d` | **4.27 MB（−197 KB）** | 灯光/天空盒/网格/GI 配置的 serde 与反射代码不再链接 |
-| 关掉 3D 再关 UI | 再 −50 KB 量级 | Node/Style/Text |
+| All groups (default) | 4.47 MB | 3D + 2D + UI components all registered |
+| `group-3d` off | **4.27 MB (−197 KB)** | serde and reflection code for lights/skybox/mesh/GI config is no longer linked |
+| 3D off, then UI off | another −50 KB | Node/Style/Text |
 
-**关键坑**：`prism-scene` 的默认特性会在任何直接依赖它的地方（`prism-engine`、三个用户项目）
-把组件组重新打开，`prism-app` 的 `--no-default-features` 就失效了。所以凡是直接依赖
-`prism-scene` 的地方都必须写 `default-features = false`——这与 `prism-game-api` 那次是同一类
-错误，已在工程里全部修掉。
+**Key pitfall**: `prism-scene`'s default features re-enable component groups anywhere that depends on it directly (`prism-engine`, the three user projects),
+so `prism-app`'s `--no-default-features` stops working. Therefore every place that directly depends on
+`prism-scene` must write `default-features = false`—the same class of mistake as the `prism-game-api` incident, now fixed everywhere in the project.
 
-组件分组的收益之所以远小于「一个组件 20 KB」的直觉：serde 的反序列化代码在多个类型间
-共享（同一个 `serde_json::from_value` 泛型实例化被 ICF 合并），关掉一组只回收该组独有的部分。
+The reason component grouping's benefit is far smaller than the "20 KB per component" intuition: serde's deserialization code is shared across types
+(the same `serde_json::from_value` generic instantiation is merged by ICF), so disabling one group only reclaims the parts unique to that group.
 
-#### 3D pass 级裁剪：代码 −24 KB，但 strip 后文件不变
+#### 3D pass-level pruning: −24 KB of code, but the stripped file is unchanged
 
-`ibl`（#543，−64 KB）之后，`shadow_map` / `gtao` / `skybox` 也做成了 feature
-（`skybox` 依赖 `ibl`）。测法：临时把 `projects/template` 的 `prism-app` 改成
-`default-features = false, features = ["x11", "group-3d", ...]`，同一 worktree、
-同一 target、`--profile dist`（fat LTO + cu=1 + panic=abort + strip）。
+After `ibl` (#543, −64 KB), `shadow_map` / `gtao` / `skybox` also became features
+(`skybox` depends on `ibl`). Method: temporarily change `projects/template`'s `prism-app` to
+`default-features = false, features = ["x11", "group-3d", ...]`, same worktree,
+same target, `--profile dist` (fat LTO + cu=1 + panic=abort + strip).
 
-| 组合 | 文件字节 | Δ 文件 | `.text`+`.rodata`+… 合计 | Δ 代码 |
+| Combination | File bytes | Δ file | `.text`+`.rodata`+… total | Δ code |
 |---|---|---|---|---|
-| 全开（ibl+skybox+shadows+gtao） | 3,022,664 | — | 2,993,578 | — |
-| 关 `shadows` | 3,022,664 | **0** | 2,988,274 | −5,304 |
-| 关 `gtao` | 3,022,664 | **0** | 2,979,746 | −13,832 |
-| 关 `skybox` | 3,022,664 | **0** | 2,988,426 | −5,152 |
-| 全关（无 ibl/skybox/shadows/gtao） | **2,957,128** | −65,536 | 2,931,602 | −61,976 |
+| All on (ibl+skybox+shadows+gtao) | 3,022,664 | — | 2,993,578 | — |
+| `shadows` off | 3,022,664 | **0** | 2,988,274 | −5,304 |
+| `gtao` off | 3,022,664 | **0** | 2,979,746 | −13,832 |
+| `skybox` off | 3,022,664 | **0** | 2,988,426 | −5,152 |
+| All off (no ibl/skybox/shadows/gtao) | **2,957,128** | −65,536 | 2,931,602 | −61,976 |
 
-两个必须记住的点：
+Two points to remember:
 
-1. **代码真的少了**，但**文件一个字节都没少**：aarch64 的 LOAD 段按 64 KB 对齐
-   （`readelf -l` 的 `Align 0x10000`），RW 段偏移跟着 RO 段末尾向上取整，≤33 KB 的
-   收缩全部落进段间 padding。只有 `ibl`（−64 KB）跨过了 64 KB 的台阶。
-   所以这三项**不能当体积预设的卖点**（写进预设等于承诺一个不存在的收益），
-   只当能力开关：2D / 不需要阴影、AO、天空盒的项目少编译 24 KB 代码 + 3 个 SPIR-V，
-   在 4 KB 对齐的平台（x86_64 / Windows）与 debug 构建上差额才可见。
-2. 这也是为什么 **3D/2D 拆分的价值是依赖面、编译时间和 API 清晰度，不是二进制大小**——
-   §12.4 的结论在这里再次成立。
+1. **The code really shrank, but the file did not lose a single byte**: aarch64 LOAD segments are 64 KB aligned
+   (`readelf -l`'s `Align 0x10000`), and the RW segment offset follows the rounded-up end of the RO segment, so any shrink ≤ 33 KB
+   lands entirely in inter-segment padding. Only `ibl` (−64 KB) crossed the 64 KB step.
+   So these three **must not be sold as size presets** (writing them into a preset promises a benefit that does not exist);
+   treat them as capability switches only: projects that do not need shadows, AO, or a skybox compile 24 KB less code + 3 fewer SPIR-V modules,
+   and the difference is visible only on 4 KB-aligned platforms (x86_64 / Windows) and in debug builds.
+2. This is also why **3D/2D splitting's value is dependency surface, compile time and API clarity, not binary size**—
+   §12.4's conclusion holds again here.
 
-数字用的是 stable `--profile dist`（与 §12.5 左列同口径）；`scripts/build-dist.sh` 的
-build-std 档绝对值更小，但 64 KB 段对齐的结论不变。
+Numbers use stable `--profile dist` (same basis as §12.5's left column); `scripts/build-dist.sh`'s
+build-std tier has smaller absolute values, but the 64 KB segment-alignment conclusion is unchanged.
 
-剩下能动的只有两块：
+Only two things remain movable:
 
-- Rust 基线 ~678 KB（core/std/alloc/hashbrown）——要 nightly `build-std`，会抬高贡献门槛（§12.5）；
-- `serde_json`（配置、场景清单、`.pak` 路径清单共用；`toml` 已整条移除，实测 −128 KB）——
-  再想减小只能换二进制配置，作者体验会明显变差。
+- Rust baseline ~678 KB (core/std/alloc/hashbrown)—needs nightly `build-std`, which raises the contribution barrier (§12.5);
+- `serde_json` (shared by config, scene manifest, `.pak` path manifest; `toml` was removed entirely, measured −128 KB)—
+  further reduction would mean a binary config format and a noticeably worse authoring experience.
 
-#### 发布档：nightly `-Z build-std`（`scripts/build-dist.sh`）
+#### Release tier: nightly `-Z build-std` (`scripts/build-dist.sh`)
 
-发布包里再拿回 9~10%：`-Z build-std=std,panic_abort` 让 std 和工程一起走 fat LTO，
-`-Cpanic=immediate-abort` 删掉 panic 格式化（`core::fmt`）那一大片。
+Recover another 9–10% in release packages: `-Z build-std=std,panic_abort` makes std go through fat LTO with the project,
+and `-Cpanic=immediate-abort` deletes the large panic formatting (`core::fmt`) chunk.
 
-| 配置 | stable `dist` | build-std + immediate-abort | 变化 |
+| Configuration | stable `dist` | build-std + immediate-abort | Change |
 |------|--------------|------------------------------|------|
-| 3D 全量 | 4,465,304 | 4,006,440 | −459 KB（−10.3%） |
-| 2D 极简 + 仅 X11 | 2,891,032 | 2,628,768 | −262 KB（−9.1%） |
+| 3D full | 4,465,304 | 4,006,440 | −459 KB (−10.3%) |
+| 2D minimal + X11 only | 2,891,032 | 2,628,768 | −262 KB (−9.1%) |
 
-关键设计：**参数只走命令行，不写进任何 `Cargo.toml`**。
-`panic = "immediate-abort"` 写进 profile 会让 stable cargo 直接拒绝解析整个清单，
-而 `RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort"` 只影响这一次构建——
-所以开发仍是 stable（`cargo run` 一行不变），只有 `scripts/build-dist.sh` 需要 nightly + `rust-src`。
+Key design: **flags go only on the command line, never into any `Cargo.toml`**.
+Writing `panic = "immediate-abort"` into a profile makes stable cargo refuse to parse the whole manifest,
+whereas `RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort"` affects only that one build—
+so development stays on stable (`cargo run` unchanged), and only `scripts/build-dist.sh` needs nightly + `rust-src`.
 
-体积账本（`§12.4`）里的 dist 数字默认指 stable 档；发布包按本节再乘 ~0.9。
+Dist numbers in the size ledger (§12.4) refer to the stable tier by default; release packages multiply by ~0.9 according to this section.
 
-#### 极限体积档：`--size`（竞赛 / 演示用）
+#### Extreme size tier: `--size` (for competitions / demos)
 
 ```bash
 bash scripts/build-dist.sh --size projects/template
-powershell -File scripts/build-dist.ps1 -Size projects/template   # Windows 主机，等价
+powershell -File scripts/build-dist.ps1 -Size projects/template   # Windows host, equivalent
 ```
 
-= `tiny` profile（`opt-level = "z"` + fat LTO + `cu=1` + `panic=abort` + strip）
+= `tiny` profile (`opt-level = "z"` + fat LTO + `cu=1` + `panic=abort` + strip)
 + `-C llvm-args=-inline-threshold=0 -C llvm-args=-inlinehint-threshold=0`
-+ `build-std` + `immediate-abort`。
++ `build-std` + `immediate-abort`.
 
-| 档位（aarch64 Linux，3D 全量） | 体积 |
+| Tier (aarch64 Linux, 3D full) | Size |
 |------|------|
-| stable `dist`（opt-level 3） | 4,465,304 |
-| `dist` + build-std（`build-dist.sh`） | 3,940,904 |
-| **`tiny` + build-std（`--size`）** | **2,695,720（−40%）** |
+| stable `dist` (opt-level 3) | 4,465,304 |
+| `dist` + build-std (`build-dist.sh`) | 3,940,904 |
+| **`tiny` + build-std (`--size`)** | **2,695,720 (−40%)** |
 
-代价：禁内联后 CPU 热路径慢 10–30%，GPU-bound 场景基本无感、CPU-bound 场景明显。
-想两者兼得就给关键 crate 单独开回 `opt-level = 3`：
+Cost: disabling inlining slows CPU hot paths by 10–30%; GPU-bound scenes barely notice, CPU-bound scenes notice clearly.
+To get both, set key crates back to `opt-level = 3` individually:
 
 ```toml
 [profile.tiny.package.prism-engine]
 opt-level = 3
 ```
 
-**边界要说清**：`--size` 的现实区间是 **2.5–3.2 MB**。真正的 64k intro（30–60 KB）
-靠的是 `no_std` + 手写系统 API + Crinkler 类 PE 压缩器，和这里的 flag 不是一回事；
-不要在向导里把「体积档」宣传成竞赛级。
+**State the boundary clearly**: `--size`'s realistic range is **2.5–3.2 MB**. True 64k intros (30–60 KB)
+rely on `no_std` + hand-written system APIs + a Crinkler-style PE compressor, which is not the same thing as these flags;
+do not advertise the "size tier" as competition-grade in the wizard.
 
-#### 压缩壳（`--pack`）
+#### Compression shell (`--pack`)
 
 ```bash
-bash scripts/build-dist.sh --size --pack projects/template   # Linux / macOS 主机
-powershell -File scripts/build-dist.ps1 -Pack projects/template   # Windows 主机
+bash scripts/build-dist.sh --size --pack projects/template   # Linux / macOS host
+powershell -File scripts/build-dist.ps1 -Pack projects/template   # Windows host
 ```
 
-构建完成后对产物跑一次 `upx --best --lzma <bin>`，再打印压缩前后体积与压缩率。
-它与 `--size` / `--profile` 正交，是**最后一道**可选工序，位置参数不变。
+After building, run `upx --best --lzma <bin>` once on the artifact, then print the before/after sizes and compression ratio.
+It is orthogonal to `--size` / `--profile` and is an optional **last** step; positional arguments are unchanged.
 
-**只在 dist / 发布档使用，且产物必须做代码签名。** 这条不是建议而是前提：
+**Use it only for dist / release builds, and the artifact must be code-signed.** This is a precondition, not a suggestion:
 
-- UPX 的本质是**自解压壳**：原二进制被压缩后写进一段 stub，运行时先在内存里解压再跳进去。
-  所以「能运行」依赖 stub 会 `mprotect` 出一段可执行内存——这正是主流 EDR / 杀软
-  检测「打包恶意软件」的经典启发式（UPX 也长期是恶意样本最爱的壳）。
-- **未签名的压缩产物在 Windows Defender 上大概率直接被报毒**，而签名（Authenticode /
-  带时间戳的代码签名证书）通常能把「未知壳」降级成「已知发行者」，这是唯一可靠的降级手段。
-  没有证书就不要给 Windows 产物加 `--pack`。
-- 部分 AV **即使签名后仍可能报**（尤其是启发式严格的企业环境）：这是外部因素，
-  引擎侧无法修，发行前要自己在目标环境跑一次。
-- 找不到 `upx` 时脚本**只提示、不失败**，并保留未压缩产物：`--pack` 是可选项，
-  不该让 CI / 别人的机器因为缺个工具就变红。Android 产物（`lib*.so`）自动跳过——
-  系统加载器 / Play 的扫描主导，压缩壳只换来误报和更慢的首次 page-in。
+- UPX is essentially a **self-extracting shell**: the original binary is compressed into a stub, which decompresses it in memory at runtime
+  and jumps in. So "it runs" depends on the stub `mprotect`ing an executable region—exactly the classic heuristic that mainstream EDR / antivirus
+  products use to detect "packed malware" (UPX has long been a favorite packer for malicious samples).
+- **Unsigned packed artifacts will very likely be flagged by Windows Defender**, and signing (Authenticode /
+  a timestamped code-signing certificate) usually downgrades "unknown packer" to "known publisher", which is the only reliable mitigation.
+  Without a certificate, do not add `--pack` to Windows artifacts.
+- Some AV products **may still flag it even after signing** (especially strict enterprise environments): that is an external factor
+  the engine cannot fix; test in the target environment before release.
+- When `upx` is missing the script **only warns and does not fail**, keeping the uncompressed artifact: `--pack` is optional and
+  should not turn CI or someone else's machine red because a tool is missing. Android artifacts (`lib*.so`) are skipped automatically—
+  the system loader / Play scanning dominates, and a packer only buys false positives and slower first page-in.
 
-**代价**（接受不了就别开）：
+**Costs** (skip it if you cannot accept them):
 
-| 代价 | 说明 |
+| Cost | Notes |
 |---|---|
-| 启动时间 +10~30 ms | 首次解压 + 校验；冷启动、SSD 上更明显 |
-| 内存峰值 | 解压那一瞬间要同时持有压缩数据 + 解压后的映像（近似 2× 代码段） |
-| 调试困难 | 回栈全是 stub 地址，符号/strip 信息与运行时映像对不上；崩溃转储也别指望 |
-| 反作弊 / 部分商店渠道 | 壳会触发签名一致性检查或人工审核，别在受管发行链上想当然 |
-| 体积收益随配置变化 | 已经 fat LTO + strip 的产物压缩率通常 40%~55%，不是固定的 |
+| Startup time +10~30 ms | First decompression + verification; more noticeable on cold starts and SSDs |
+| Memory peak | The moment of decompression holds both the compressed data and the decompressed image (roughly 2× the code section) |
+| Debugging difficulty | Backtraces are all stub addresses; symbols/strip info do not match the runtime image; forget about crash dumps too |
+| Anti-cheat / some store channels | Packers trigger signature-consistency checks or manual review; do not assume they are fine in a managed release chain |
+| Size benefit varies by configuration | Artifacts already fat-LTO'd and stripped usually compress to 40%–55%, not a fixed number |
 
-**不要**把 `--pack` 加进默认流程、CI 的 `dist-size` job 或任何 `[profile.*]`：
-它换的是体积与启动时间，和「代码更小」不是同一类手段，混进默认路径只会让
-「产物为什么被杀软拦了」变成一个没人能复现的问题。
+**Do not** add `--pack` to the default flow, the CI `dist-size` job, or any `[profile.*]`:
+it trades size against startup time and is not the same class of technique as "smaller code"; mixing it into the default path only turns
+"why was the artifact blocked by antivirus" into a problem nobody can reproduce.
 
-一个实现细节：UPX **就地覆盖** `target/<target>/<profile>/<pkg>` 下的产物，
-所以同一个 target 里再跑一次不带 `--pack` 的构建不会把它「解压」回来
-（cargo 认为产物是最新的）；需要干净产物就改一行代码触发重新链接，或直接删掉文件。
+One implementation detail: UPX **overwrites in place** the artifact under `target/<target>/<profile>/<pkg>`,
+so running another build without `--pack` in the same target does not "decompress" it back
+(cargo considers the artifact up to date); for a clean artifact, change a line of code to trigger relinking, or delete the file.
 
-## 13. 2D 物理几何内核
+## 13. 2D physics geometry kernel
 
-`prism-physics2d` 提供不依赖 ECS、渲染或刚体后端的确定性 2D 碰撞几何，
-`prism-engine::physics2d` 与 `prism-game-api::physics2d` re-export 同一实现。
-这让静态 Player 与编辑器动态项目模块可以共用游戏移动代码，不需要跨 ABI 发送房间几何，
-也不会让插件链接第二份 `prism-engine`。
+`prism-physics2d` provides deterministic 2D collision geometry that does not depend on ECS, rendering, or a rigid-body backend;
+`prism-engine::physics2d` and `prism-game-api::physics2d` re-export the same implementation.
+This lets the static Player and editor dynamic project modules share game movement code, without sending room geometry across the ABI,
+and without making plugins link a second copy of `prism-engine`.
 
-`prism-scene::Collider2D` 是场景组件层的 AABB 碰撞体，支持局部偏移、触发器和 layer mask；
-其世界边界与 `SpriteRenderer::world_bounds` 共用 XY 变换规则，包含局部缩放、旋转和 pivot。
-`GameWorld::colliders2d`、`overlap2d` 与 `move_and_slide2d` 在静态 Player 和项目模块中使用
-同一套接口。碰撞查询按当前 `Parent` 链即时合成局部变换，确保同一玩法步内刚修改的父子位置
-也会参与碰撞；无局部变换的运行时实体回退到 `LocalToWorld`。因此父级平移、旋转、缩放下的
-精灵、粒子、门和触发器与碰撞保持一致。
+`prism-scene::Collider2D` is the AABB collider at the scene-component layer, supporting local offsets, triggers, and layer masks;
+its world bounds share the XY transform rules with `SpriteRenderer::world_bounds`, including local scale, rotation, and pivot.
+`GameWorld::colliders2d`, `overlap2d`, and `move_and_slide2d` use the same interface in the static Player and project modules.
+Collision queries compose local transforms on the fly along the current `Parent` chain, ensuring parent/child positions modified earlier in the same gameplay step
+also participate in collision; runtime entities without a local transform fall back to `LocalToWorld`. Thus sprites, particles, doors, and triggers remain consistent with collision
+under parent translation, rotation, and scale.
 
-引擎把玩法更新分成每帧 `Schedule` 和固定步 `fixed_schedule`。`App::add_fixed_game_system`
-注册固定步玩法；引擎在 `begin_frame` 缓存这一帧输入，固定步只消费一次按键按下/释放边沿，
-各子步都能读取当前按住状态。项目模块通过 ABI 可选的 `fixed_update` 回调加入相同固定步，
-普通 `tick` 仍每个渲染帧执行一次；`InputSnapshot::interpolation_alpha` 提供固定步余量供渲染插值。
+The engine splits gameplay updates into a per-frame `Schedule` and a fixed-step `fixed_schedule`. `App::add_fixed_game_system`
+registers fixed-step gameplay; the engine caches this frame's input at `begin_frame`, and the fixed step consumes press/release edges only once,
+while each substep can read the current held state. Project modules join the same fixed step through the ABI's optional `fixed_update` callback,
+while the normal `tick` still runs once per render frame; `InputSnapshot::interpolation_alpha` provides the fixed-step remainder for render interpolation.
 
-固定步驱动的 2D 实体可挂运行时组件 `TransformInterpolation2D`。引擎在固定步前保存其局部
-XY 位置，精灵提取与 `VirtualCamera2D` 目标读取按 `interpolation_alpha` 插值；模拟和碰撞始终
-读取当前 `LocalTransform`，渲染位置不会回写物理状态。项目通过 `GameWorld::enable_transform_interpolation2d`
-启用，并在重生、传送或切房落点后调用 `snap_transform_interpolation2d`，避免跨位置插值。
-组件属于派生运行时状态，不写入 `.scene.json` / RSCN。
+Fixed-step-driven 2D entities can carry the runtime component `TransformInterpolation2D`. The engine saves their local
+XY position before the fixed step, and sprite extraction and `VirtualCamera2D` target reads interpolate by `interpolation_alpha`; simulation and collision always
+read the current `LocalTransform`, and the render position never writes back into physics state. Projects enable it through
+`GameWorld::enable_transform_interpolation2d` and call `snap_transform_interpolation2d` after respawn, teleport, or room-entry landing points
+to avoid interpolating across positions. The component is derived runtime state and is not written to `.scene.json` / RSCN.
 
-坐标使用 XY 平面，+X 向右、+Y 向上；Z 不参与 2D 几何。单位由调用方决定，
-因此 EchoWell 可以直接使用像素，而场景物理仍可使用米。`Aabb2` 的 `min` / `max`
-是世界空间边界；边界接触不算重叠。2D 射线距离和移动增量都使用同一世界单位。
+Coordinates use the XY plane, +X right and +Y up; Z does not participate in 2D geometry. Units are decided by the caller,
+so EchoWell can use pixels directly while scene physics can still use meters. `Aabb2`'s `min` / `max`
+are world-space bounds; boundary contact does not count as overlap. 2D ray distances and movement deltas use the same world units.
 
-首个切片提供 AABB 重叠、AABB 射线检测和静态 AABB 障碍上的连续 `move_and_slide`：
-移动扫掠直接求接触时间，不靠逐像素子步；结果包含修正后的位置、实际位移、接触法线、
-墙面/地面/天花板标记。普通移动只把障碍作为不动几何输入，触发器由调用方从 solid 列表排除。
-圆形/多边形碰撞体、动态刚体与碰撞事件和 Rapier2D runtime
-仍未实现。GitHub issue #1160 提出的 2D 虚拟相机（阻尼、死区、边界限制、像素吸附）
-已由 `VirtualCamera2D` 场景组件和引擎系统提供；纯 2D 模式的渲染 pass 裁剪仍未实现，
-也不由当前 AABB 几何内核覆盖。
-
----
+The first slice provides AABB overlap, AABB ray casts, and continuous `move_and_slide` on static AABB obstacles:
+the movement sweep solves for contact time directly, not via per-pixel substeps; the result includes the corrected position, actual displacement, contact normal,
+and wall/ground/ceiling flags. Normal movement treats obstacles as immovable geometry input, and triggers are excluded from the solid list by the caller.
+Circle/polygon colliders, dynamic rigid bodies, collision events, and the Rapier2D runtime
+are still unimplemented. The 2D virtual camera proposed in GitHub issue #1160 (damping, dead zone, bounds clamping, pixel snapping)
+is already provided by the `VirtualCamera2D` scene component and engine system; render-pass pruning for pure 2D mode is still unimplemented,
+and is not covered by the current AABB geometry kernel.
 
 ## Embedded SPIR-V Crate Split (`prism-render-shaders`, #1225)
 

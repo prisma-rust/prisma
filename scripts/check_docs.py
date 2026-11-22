@@ -9,7 +9,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "docs"
-EXEMPT_EXISTING = {"README.md", "DESIGN.md", "REFLECT.md", "integrations.md", "versioning.md"}
+EXEMPT_EXISTING = {
+    "README.md",
+    "DESIGN.md",
+    "DESIGN.zh-CN.md",
+    "REFLECT.md",
+    "integrations.md",
+    "versioning.md",
+}
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)+\.md$")
 
 

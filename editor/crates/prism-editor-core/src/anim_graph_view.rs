@@ -1,13 +1,14 @@
-//! 动画图 / 状态机资产的只读视图（#560 编辑器面板）。
+//! Read-only view of animation graph / state machine assets (#560 editor panel).
 //!
-//! 这里不复制 cooker 的严格校验，只把作者 JSON 里适合展示的字段摊平成 UI 好用的
-//! 结构：参数、节点类型、剪辑、连线、输出，以及状态机的状态 / 转移 / 条件。
-//! 错误信息保留到第一个坏字段，面板可以直接显示。
+//! This does not copy the cooker's strict validation; it only flattens the fields suitable for
+//! display from the authoring JSON into a UI-friendly structure: parameters, node types, clips,
+//! connections, outputs, and state machine states / transitions / conditions.
+//! Error info is retained up to the first bad field, so panels can display it directly.
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// 动画图中的一个参数。
+/// A parameter in an animation graph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimParameterView {
     pub name: String,
@@ -15,29 +16,29 @@ pub struct AnimParameterView {
     pub default: f32,
 }
 
-/// 动画图里的一条连线。
+/// A connection in an animation graph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimInputView {
     pub node: String,
     pub weight: f32,
-    /// 只影响这些关节（空 = 整条姿态）。
+    /// Only affects these joints (empty = whole pose).
     pub bone_mask: Vec<String>,
 }
 
-/// 动画图中的一个节点。
+/// A node in an animation graph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimNodeView {
     pub name: String,
     pub kind: String,
     pub clips: Vec<String>,
-    /// 混合空间的样本坐标；一维节点的 y 恒为 0。
+    /// Blend space sample coordinates; y is always 0 for 1D nodes.
     pub positions: Vec<[f32; 2]>,
-    /// 混合空间每个样本的播放速度；空 = 全部按 1.0。
+    /// Playback speed per sample in the blend space; empty = all 1.0.
     pub speeds: Vec<f32>,
     pub inputs: Vec<AnimInputView>,
     pub state_machine: String,
     pub parameter: String,
-    /// 二维混合空间的第二个参数名；其它节点为空。
+    /// Second parameter name of a 2D blend space; empty for other nodes.
     pub parameter_y: String,
     pub speed: f32,
     pub weight: f32,
@@ -50,7 +51,7 @@ impl AnimNodeView {
     }
 }
 
-/// 整个动画图的只读摘要。
+/// Read-only summary of an entire animation graph.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AnimGraphView {
     pub parameters: Vec<AnimParameterView>,
@@ -58,7 +59,7 @@ pub struct AnimGraphView {
     pub output: Option<String>,
 }
 
-/// 状态机里的一个状态。
+/// A state in a state machine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimStateView {
     pub name: String,
@@ -67,23 +68,23 @@ pub struct AnimStateView {
     pub looped: bool,
 }
 
-/// 一条转移条件，`summary` 已经是可显示的形式。
+/// A transition condition; `summary` is already in display-ready form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimConditionView {
-    /// `float_greater` / `float_less` / `bool_is` / `trigger`。
+    /// `float_greater` / `float_less` / `bool_is` / `trigger`.
     pub kind: String,
     pub name: String,
-    /// 只对 float 条件有意义。
+    /// Only meaningful for float conditions.
     pub threshold: f32,
-    /// 只对 `bool_is` 有意义。
+    /// Only meaningful for `bool_is`.
     pub value: bool,
     pub summary: String,
 }
 
-/// 状态机里的一条转移。
+/// A transition in a state machine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimTransitionView {
-    /// `None` 表示任意状态（`*` / `any` / 空串）。
+    /// `None` means any state (`*` / `any` / empty string).
     pub from: Option<String>,
     pub to: String,
     pub duration: f32,
@@ -91,14 +92,14 @@ pub struct AnimTransitionView {
     pub conditions: Vec<AnimConditionView>,
 }
 
-/// 整个状态机的只读摘要。
+/// Read-only summary of an entire state machine.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AnimStateMachineView {
     pub states: Vec<AnimStateView>,
     pub transitions: Vec<AnimTransitionView>,
 }
 
-/// 解析 `*.animgraph.json`。
+/// Parse `*.animgraph.json`.
 pub fn parse_anim_graph_view(document: &Value) -> Result<AnimGraphView, String> {
     let parameters = document
         .get("parameters")
@@ -285,7 +286,7 @@ fn parse_input(value: &Value) -> Option<AnimInputView> {
     }
 }
 
-/// 解析 `*.statemachine.json`。
+/// Parse `*.statemachine.json`.
 pub fn parse_state_machine_view(document: &Value) -> Result<AnimStateMachineView, String> {
     let states_json = document
         .get("states")
@@ -412,7 +413,10 @@ mod tests {
         assert_eq!(doc["nodes"][2]["name"], "walk_copy");
         assert_eq!(doc["nodes"][2]["clip"], "walk.ranim");
         assert_eq!(doc["nodes"][2]["speed"].as_f64(), Some(1.5));
-        assert_eq!(doc["nodes"][1]["input"], "walk", "原引用不受影响");
+        assert_eq!(
+            doc["nodes"][1]["input"], "walk",
+            "original reference not affected"
+        );
 
         let second = duplicate_graph_node(&mut doc, "walk").expect("copies again");
         assert_eq!(second, "walk_copy2");
@@ -430,7 +434,11 @@ mod tests {
         });
         assert!(duplicate_graph_node(&mut doc, "out").is_err());
         assert!(duplicate_graph_node(&mut doc, "missing").is_err());
-        assert_eq!(doc["nodes"].as_array().unwrap().len(), 2, "失败不改文档");
+        assert_eq!(
+            doc["nodes"].as_array().unwrap().len(),
+            2,
+            "failure does not modify document"
+        );
     }
 
     #[test]
@@ -478,7 +486,10 @@ mod tests {
         assert_eq!(doc["states"][2]["clip"], "run.ranim");
         assert_eq!(doc["states"][2]["speed"].as_f64(), Some(1.5));
         assert_eq!(doc["states"][2]["looped"], false);
-        assert_eq!(doc["transitions"][0]["to"], "Run", "转移表不变");
+        assert_eq!(
+            doc["transitions"][0]["to"], "Run",
+            "transition table unchanged"
+        );
         assert_eq!(
             duplicate_state(&mut doc, "Run").expect("again"),
             "Run_copy2"
@@ -516,17 +527,18 @@ mod tests {
     }
 }
 
-/// 动画图节点的画布位置（`<graph>.layout.json`）。
+/// Canvas position of an animation graph node (`<graph>.layout.json`).
 ///
-/// 与图本身分开存：改布局不会改动画数据，也不会让 cook 缓存失效。坐标是面板内的
-/// 逻辑像素，原点在画布左上角。
+/// Stored separately from the graph: changing the layout does not change animation data nor
+/// invalidate the cook cache. Coordinates are logical pixels within the panel, origin at the
+/// top-left of the canvas.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AnimGraphLayout {
     pub positions: BTreeMap<String, [f32; 2]>,
 }
 
 impl AnimGraphLayout {
-    /// 布局文件路径：紧挨着图资产，例如 `graphs/hero.animgraph.json.layout.json`。
+    /// Layout file path: right next to the graph asset, e.g. `graphs/hero.animgraph.json.layout.json`.
     pub fn path_for(graph_path: &str) -> String {
         format!("{graph_path}.layout.json")
     }
@@ -550,7 +562,7 @@ impl AnimGraphLayout {
         json!({ "version": 1, "nodes": nodes })
     }
 
-    /// 解析布局；缺文件 / 空对象得到空布局，坏 JSON 返回错误。
+    /// Parse the layout; missing file / empty object yields an empty layout, bad JSON returns an error.
     pub fn from_json(document: &Value) -> Result<Self, String> {
         let Some(nodes) = document.get("nodes") else {
             return Ok(Self::default());
@@ -632,11 +644,12 @@ fn input_name(value: &Value) -> Option<&str> {
     }
 }
 
-/// 重命名图节点，并同步改写所有引用它的地方。
+/// Rename a graph node, and rewrite all references to it accordingly.
 ///
-/// 会改：节点自身的 `name`、其它节点的 `inputs` / `input` 连线、顶层 `output`
-/// （如果它指向这个节点）。图布局在 `<graph>.layout.json` 里，单独存，不跟着改名
-/// —— 重命名后节点会回到画布的默认网格位置，重新拖动即可。
+/// Changes: the node's own `name`, other nodes' `inputs` / `input` connections, and the top-level
+/// `output` (if it points to this node). The graph layout in `<graph>.layout.json` is stored
+/// separately and does not follow the rename — after renaming the node returns to the canvas's
+/// default grid position, just drag it again.
 pub fn rename_graph_node(document: &mut Value, old: &str, new: &str) -> Result<(), String> {
     let new = new.trim();
     if new.is_empty() {
@@ -696,10 +709,10 @@ pub fn rename_graph_node(document: &mut Value, old: &str, new: &str) -> Result<(
     Ok(())
 }
 
-/// 给图节点追加一条连线（写回作者的 `inputs` 数组）。
+/// Append a connection to a graph node (writing back to the author's `inputs` array).
 ///
-/// 链式节点（用单数 `input` 的 `slot` / `cached_pose` / `output`）不混用数组：
-/// 对它们返回错误，避免生成 cooker 不认识的形状。
+/// Chained nodes (using singular `input` of `slot` / `cached_pose` / `output`) do not mix arrays:
+/// return an error for them to avoid generating a shape the cooker doesn't recognize.
 pub fn add_graph_input(document: &mut Value, target: &str, source: &str) -> Result<(), String> {
     if target == source {
         return Err("a node cannot connect to itself".to_string());
@@ -741,10 +754,11 @@ pub fn add_graph_input(document: &mut Value, target: &str, source: &str) -> Resu
     Ok(())
 }
 
-/// 设置一条连线的权重（0..=1）。
+/// Set a connection's weight (0..=1).
 ///
-/// 作者写字符串 `"aim"` 时自动升级成 `{ "node": "aim", "weight": w }`；已经是对象
-/// 的连线只改 `weight`，保留 `bone_mask` 等其它字段。
+/// When the author writes a string `"aim"`, it is automatically upgraded to
+/// `{ "node": "aim", "weight": w }`; an existing connection only changes `weight`,
+/// keeping other fields such as `bone_mask`.
 pub fn set_graph_input_weight(
     document: &mut Value,
     target: &str,
@@ -777,7 +791,7 @@ pub fn set_graph_input_weight(
     }
 }
 
-/// 删除图节点 `inputs` 数组里的第 `index` 条连线。
+/// Remove the `index`-th connection from a graph node's `inputs` array.
 pub fn remove_graph_input(document: &mut Value, target: &str, index: usize) -> Result<(), String> {
     let Some(node) = find_node_mut(document, target) else {
         return Err(format!("unknown target node '{target}'"));
@@ -792,10 +806,11 @@ pub fn remove_graph_input(document: &mut Value, target: &str, index: usize) -> R
     Ok(())
 }
 
-/// 设置一条连线的骨骼掩码；空列表表示恢复「整条姿态」。
+/// Set a connection's bone mask; empty list restores "whole pose".
 ///
-/// 字符串连线在需要掩码时升级成对象（权重保持 1），已有对象只替换 `bone_mask`，
-/// 保留 `weight` 等字段。关节名去空白、去重、保序；上限与 cooker 一致（1024）。
+/// String connections are upgraded to objects when a mask is needed (weight stays 1);
+/// existing objects only replace `bone_mask`, keeping `weight` etc. Joint names are trimmed,
+/// deduplicated, order-preserved; limit matches the cooker (1024).
 pub fn set_graph_input_bone_mask(
     document: &mut Value,
     target: &str,
@@ -843,10 +858,10 @@ pub fn set_graph_input_bone_mask(
     }
 }
 
-/// 改一个剪辑节点（`clip_player`）的剪辑路径：写单数 `clip`，并删掉 `clips` 数组。
+/// Change a clip node (`clip_player`) clip path: write singular `clip` and remove the `clips` array.
 ///
-/// cooker 会把 `clip` 和 `clips` 拼在一起，两者同时存在就变成「多于一个剪辑」，
-/// 剪辑节点会被拒绝，所以设置单个剪辑时必须清掉数组。
+/// The cooker concatenates `clip` and `clips`; having both means "more than one clip",
+/// and the clip node is rejected, so when setting a single clip the array must be cleared.
 pub fn set_graph_node_clip(document: &mut Value, name: &str, clip: &str) -> Result<(), String> {
     let clip = clip.trim();
     if clip.is_empty() {
@@ -865,7 +880,7 @@ pub fn set_graph_node_clip(document: &mut Value, name: &str, clip: &str) -> Resu
     Ok(())
 }
 
-/// 节点是几维混合空间：`Some(1)` / `Some(2)`，其它节点返回 `None`。
+/// How many dimensions a blend space has: `Some(1)` / `Some(2)`, other nodes return `None`.
 fn blend_space_dims(node: &Value) -> Option<usize> {
     match node
         .get("type")
@@ -890,7 +905,7 @@ fn normalize_parameter_kind(kind: &str) -> Result<&'static str, String> {
     }
 }
 
-/// bool / trigger 的默认值只有 0 / 1 两种，其他数字按非零归一。
+/// bool / trigger defaults are only 0 / 1; other numbers are normalized by non-zero.
 fn parameter_default_for(kind: &str, default: f32) -> f32 {
     if kind == "float" {
         default
@@ -901,7 +916,7 @@ fn parameter_default_for(kind: &str, default: f32) -> f32 {
     }
 }
 
-/// 新加一个参数。
+/// Add a parameter.
 pub fn add_parameter(
     document: &mut Value,
     name: &str,
@@ -937,7 +952,8 @@ pub fn add_parameter(
     Ok(())
 }
 
-/// 删除一个参数；被节点引用的参数不允许删（会静默改变混合空间的行为）。
+/// Remove a parameter; a parameter referenced by nodes cannot be deleted (it would silently
+/// change the blend space's behavior).
 pub fn remove_parameter(document: &mut Value, name: &str) -> Result<(), String> {
     if let Some(nodes) = document.get("nodes").and_then(Value::as_array) {
         for (index, node) in nodes.iter().enumerate() {
@@ -968,7 +984,7 @@ pub fn remove_parameter(document: &mut Value, name: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// 改一个参数的默认值；bool / trigger 归一成 0 / 1。
+/// Change a parameter's default value; bool / trigger are normalized to 0 / 1.
 pub fn set_parameter_default(document: &mut Value, name: &str, default: f32) -> Result<(), String> {
     if !default.is_finite() {
         return Err("a parameter default must be finite".to_string());
@@ -991,10 +1007,12 @@ pub fn set_parameter_default(document: &mut Value, name: &str, default: f32) -> 
     Ok(())
 }
 
-/// 样本点围成的多边形面积（鞋带公式，绝对值）；少于 3 个点或坐标非有限时返回 0。
+/// Polygon area enclosed by sample points (shoelace formula, absolute value); returns 0 with
+/// fewer than 3 points or non-finite coordinates.
 ///
-/// 面板用它判断二维混合空间是否**退化**：所有样本共线时运行时三角化会失败、
-/// 悄悄退回一维 / 单剪辑，作者很难从数字上看出来。
+/// The panel uses this to judge whether a 2D blend space is **degenerate**: when all samples
+/// are collinear, runtime triangulation fails and silently falls back to 1D / single clip,
+/// which is hard for the author to tell from the numbers.
 pub fn blend_space_2d_area(positions: &[[f32; 2]]) -> f32 {
     if positions.len() < 3 {
         return 0.0;
@@ -1013,10 +1031,10 @@ pub fn blend_space_2d_area(positions: &[[f32; 2]]) -> f32 {
     (twice * 0.5).abs() as f32
 }
 
-/// 二维样本是否退化（面积相对包围盒接近 0）。
+/// Whether 2D samples are degenerate (area close to 0 relative to bounding box).
 ///
-/// 阈值按包围盒面积缩放：`area <= 1e-5 * max(1, width * height)`，所以速度轴
-/// 0..10 和 0..1 两套坐标都能用同一套判断。
+/// Threshold scales with bounding box area: `area <= 1e-5 * max(1, width * height)`, so the
+/// 0..10 and 0..1 velocity axis coordinate sets can use the same judgment.
 pub fn blend_space_2d_degenerate(positions: &[[f32; 2]]) -> bool {
     if positions.len() < 3 {
         return false;
@@ -1037,7 +1055,7 @@ pub fn blend_space_2d_degenerate(positions: &[[f32; 2]]) -> bool {
     area <= 1e-5 * extent
 }
 
-/// 改混合空间的参数名：一维只写 `parameter`，二维同时写 `parameter_y`。
+/// Change a blend space's parameter name: 1D writes only `parameter`, 2D writes `parameter_y` too.
 pub fn set_blend_space_parameter(
     document: &mut Value,
     name: &str,
@@ -1072,11 +1090,12 @@ pub fn set_blend_space_parameter(
     Ok(())
 }
 
-/// 重命名一个参数，并改写图内对它的引用
-/// （混合空间节点的 `parameter` / `parameter_x` / `parameter_y`）。
+/// Rename a parameter, and rewrite its references within the graph
+/// (blend space nodes' `parameter` / `parameter_x` / `parameter_y`).
 ///
-/// 只改图本身；图引用的 `.statemachine.json` 里的条件名需要用
-/// [`rename_condition_parameter`]，跨文件版本见 `Workspace::rename_anim_graph_parameter`。
+/// Only the graph itself; condition names in the `.statemachine.json` referenced by the graph
+/// need [`rename_condition_parameter`]; cross-file version see
+/// `Workspace::rename_anim_graph_parameter`.
 pub fn rename_parameter(document: &mut Value, old: &str, new: &str) -> Result<(), String> {
     let old = old.trim();
     let new = new.trim();
@@ -1114,9 +1133,10 @@ pub fn rename_parameter(document: &mut Value, old: &str, new: &str) -> Result<()
     Ok(())
 }
 
-/// 把状态机里所有引用 `old` 的条件改名成 `new`；返回是否有改动。
+/// Rename all conditions referencing `old` to `new` in the state machine; returns whether anything changed.
 ///
-/// 只改条件名，不动条件类型 / 阈值；状态机里不存在的参数名不会被造出来。
+/// Only the condition name is changed, not condition type / threshold; nonexistent parameter
+/// names in the state machine are not created.
 pub fn rename_condition_parameter(
     document: &mut Value,
     old: &str,
@@ -1151,7 +1171,7 @@ pub fn rename_condition_parameter(
     Ok(changed)
 }
 
-/// 改一个混合空间样本的坐标；一维节点只写 x（`positions` 里是数字）。
+/// Change a blend space sample's coordinates; 1D nodes only write x (`positions` holds numbers).
 pub fn set_blend_space_position(
     document: &mut Value,
     name: &str,
@@ -1184,11 +1204,11 @@ pub fn set_blend_space_position(
     Ok(())
 }
 
-/// 给混合空间追加一个样本（`clips` / `positions` 同步增长）。
+/// Append a sample to a blend space (`clips` / `positions` grow together).
 ///
-/// 节点带每样本 `speeds`（v2）时也补一个 `1.0`，否则 cooker 会因为
-/// 「剪辑数与速度数不一致」拒绝整张图。`clip` 与 `clips` 同时存在的节点先报错，
-/// 因为样例顺序会变得有歧义。
+/// If the node has per-sample `speeds` (v2), a `1.0` is also added, otherwise the cooker
+/// rejects the whole graph for "clip count and speed count mismatch". A node with both `clip`
+/// and `clips` errors first, because sample order would become ambiguous.
 pub fn add_blend_space_sample(
     document: &mut Value,
     name: &str,
@@ -1263,7 +1283,8 @@ pub fn add_blend_space_sample(
     Ok(())
 }
 
-/// 删除混合空间的一个样本；一维至少留 2 个、二维至少留 3 个，否则 cooker 拒绝。
+/// Remove one sample from a blend space; 1D needs at least 2 left, 2D at least 3, otherwise
+/// the cooker rejects.
 pub fn remove_blend_space_sample(
     document: &mut Value,
     name: &str,
@@ -1304,7 +1325,7 @@ pub fn remove_blend_space_sample(
     Ok(())
 }
 
-/// 改一个混合空间样本的剪辑路径（`clips[index]`）。
+/// Change a blend space sample's clip path (`clips[index]`).
 pub fn set_blend_space_sample_clip(
     document: &mut Value,
     name: &str,
@@ -1334,10 +1355,11 @@ pub fn set_blend_space_sample_clip(
     Ok(())
 }
 
-/// 改一个混合空间样本的播放速度（`speeds[index]`）。
+/// Change a blend space sample's playback speed (`speeds[index]`).
 ///
-/// 节点还没有 `speeds` 时按剪辑数量补一列 `1.0` 再改；已有数组长度必须与
-/// `clips` 一致（cooker 会拒绝错位），否则让作者先修好数量。
+/// If the node has no `speeds` yet, a `1.0` column is filled by clip count first; an existing
+/// array length must match `clips` (the cooker rejects misalignment), otherwise the author is
+/// asked to fix the count first.
 pub fn set_blend_space_sample_speed(
     document: &mut Value,
     name: &str,
@@ -1380,7 +1402,7 @@ pub fn set_blend_space_sample_speed(
     Ok(())
 }
 
-/// 改节点的播放速度（`0` = 冻结，必须有限且非负）。
+/// Change a node's playback speed (`0` = frozen, must be finite and non-negative).
 pub fn set_graph_node_speed(document: &mut Value, name: &str, speed: f32) -> Result<(), String> {
     if !speed.is_finite() || speed < 0.0 {
         return Err("node speed must be finite and >= 0".to_string());
@@ -1388,7 +1410,7 @@ pub fn set_graph_node_speed(document: &mut Value, name: &str, speed: f32) -> Res
     set_node_field(document, name, "speed", json!(speed))
 }
 
-/// 改节点自身权重（0..=1；cooker 也会夹在这个范围）。
+/// Change a node's own weight (0..=1; the cooker also clamps to this range).
 pub fn set_graph_node_weight(document: &mut Value, name: &str, weight: f32) -> Result<(), String> {
     if !weight.is_finite() || !(0.0..=1.0).contains(&weight) {
         return Err("node weight must be finite and between 0 and 1".to_string());
@@ -1396,7 +1418,7 @@ pub fn set_graph_node_weight(document: &mut Value, name: &str, weight: f32) -> R
     set_node_field(document, name, "weight", json!(weight))
 }
 
-/// 改节点是否循环播放。
+/// Change whether a node loops playback.
 pub fn set_graph_node_looped(document: &mut Value, name: &str, looped: bool) -> Result<(), String> {
     set_node_field(document, name, "looped", json!(looped))
 }
@@ -1417,12 +1439,13 @@ fn set_node_field(
     Ok(())
 }
 
-/// 追加一个剪辑节点（`clip_player`，单剪辑）。
+/// Append a clip node (`clip_player`, single clip).
 ///
-/// 只创建**当帧就能通过 cooker 校验**的形状：剪辑节点的必需字段只有剪辑路径，
-/// 连线可以后补。`blend_space_*` / `state_machine` / `blend_stack` 需要剪辑、
-/// 坐标、机器路径或至少一条输入才算合法，凭空创建会写出 cook 不了的文档，
-/// 所以这些类型仍然手写 JSON。
+/// Only creates a shape that **passes cooker validation in the current frame**: a clip node's
+/// required field is only the clip path, connections can be added later. `blend_space_*`
+/// / `state_machine` / `blend_stack` need clips, coordinates, machine path, or at least one
+/// input to be valid; creating them out of thin air would write a document the cook can't
+/// handle, so these types are still hand-written JSON.
 pub fn add_clip_node(document: &mut Value, name: &str, clip: &str) -> Result<(), String> {
     let name = name.trim();
     let clip = clip.trim();
@@ -1445,15 +1468,16 @@ pub fn add_clip_node(document: &mut Value, name: &str, clip: &str) -> Result<(),
     Ok(())
 }
 
-/// 追加一个动画图节点。
+/// Append an animation graph node.
 ///
-/// 只接受能当场通过 cooker 校验的节点：`clip_player` / `blend_stack` / `slot` /
-/// `layered_blend` / `cached_pose` / `state_machine`。blend space 需要 >=2/3 个剪辑
-/// 与坐标，仍由作者手写或复制现有节点。`source`：
-/// - `clip_player`：剪辑路径；
-/// - `state_machine`：状态机路径；
-/// - 其它：单个上游节点名（cooker 要求 slot / cached pose 恰好一条输入，
-///   blend stack / layered blend 至少一条）。
+/// Only accepts node types that pass cooker validation on the spot: `clip_player` /
+/// `blend_stack` / `slot` / `layered_blend` / `cached_pose` / `state_machine`. Blend spaces
+/// need >=2/3 clips and coordinates, still hand-written or copied from an existing node by the
+/// author. `source`:
+/// - `clip_player`: clip path;
+/// - `state_machine`: state machine path;
+/// - others: a single upstream node name (the cooker requires slot / cached pose to have exactly
+///   one input, blend stack / layered blend at least one).
 pub fn add_graph_node(
     document: &mut Value,
     name: &str,
@@ -1516,11 +1540,12 @@ pub fn add_graph_node(
     Ok(())
 }
 
-/// 复制一个节点，返回新名字。
+/// Duplicate a node, return the new name.
 ///
-/// 新名字在原名后加 `_copy` / `_copy2`…；其它字段（剪辑、坐标、inputs、bone mask）
-/// 原样保留，所以复制出来的节点自己就是合法的，接线仍然指向原来的上游。
-/// 输出节点不能复制（图里只能有一个 output）。
+/// The new name appends `_copy` / `_copy2`… after the original; other fields (clip, coordinates,
+/// inputs, bone mask) are kept as-is, so the duplicated node is itself valid, with wiring still
+/// pointing to the original upstreams. Output nodes cannot be duplicated (a graph has exactly
+/// one output).
 pub fn duplicate_graph_node(document: &mut Value, name: &str) -> Result<String, String> {
     let nodes = document
         .get("nodes")
@@ -1564,10 +1589,11 @@ pub fn duplicate_graph_node(document: &mut Value, name: &str) -> Result<String, 
     Ok(candidate)
 }
 
-/// 删除一个节点；输出节点、最后一个节点和被引用的节点不能直接删。
+/// Remove a node; the output node, the last node, and referenced nodes cannot be removed directly.
 ///
-/// 被引用时返回错误并点名引用者，而不是顺手断开连线：先由作者决定那条线接
-/// 到哪里，面板再写回，半截图不会落盘。
+/// When referenced, return an error naming the referrer instead of silently disconnecting: the
+/// author decides where the line goes, the panel writes it back, and half a graph is never
+/// persisted.
 pub fn remove_graph_node(document: &mut Value, name: &str) -> Result<(), String> {
     let nodes = document
         .get("nodes")
@@ -1668,7 +1694,10 @@ mod parameter_tests {
         add_parameter(&mut doc, "grounded", "bool", 0.0).expect("adds");
         let error = rename_parameter(&mut doc, "speed", "grounded").expect_err("duplicate");
         assert!(error.contains("grounded"), "{error}");
-        assert_eq!(doc["parameters"][0]["name"], "speed", "失败时不能改名");
+        assert_eq!(
+            doc["parameters"][0]["name"], "speed",
+            "can't rename on failure"
+        );
     }
 
     #[test]
@@ -1759,7 +1788,7 @@ mod blend_space_area_tests {
         ]));
         assert!(
             !blend_space_2d_degenerate(&[[0.0, 0.0], [1.0, 1.0]]),
-            "两点还不够判断退化"
+            "two points are not enough to judge degeneracy"
         );
     }
 }
@@ -2036,7 +2065,7 @@ mod node_prop_tests {
         assert_eq!(doc["nodes"][0]["clip"], "b.ranim");
         assert!(
             doc["nodes"][0].get("clips").is_none(),
-            "单个剪辑不能同时留 clips 数组：{:?}",
+            "a single clip can't also keep a clips array: {:?}",
             doc["nodes"][0]
         );
     }
@@ -2135,7 +2164,11 @@ mod node_tests {
         assert!(add_graph_node(&mut doc, "x", "layered_blend", "").is_err());
         assert!(add_graph_node(&mut doc, "x", "cached_pose", "").is_err());
         assert!(add_graph_node(&mut json!({}), "x", "slot", "a").is_err());
-        assert_eq!(doc["nodes"].as_array().unwrap().len(), 4, "失败不改文档");
+        assert_eq!(
+            doc["nodes"].as_array().unwrap().len(),
+            4,
+            "failure does not modify document"
+        );
     }
 
     #[test]
@@ -2197,10 +2230,10 @@ mod link_tests {
     }
 }
 
-/// 给状态机追加一条转移（写回作者的 `transitions` 数组）。
+/// Append a transition to a state machine (writing back to the author's `transitions` array).
 ///
-/// `from = None` 表示任意状态。状态名必须存在，不能自连，同一 `(from, to)`
-/// 不能重复；新转移默认 `duration = 0`、无条件的硬切。
+/// `from = None` means any state. State names must exist, no self-loops, and the same
+/// `(from, to)` cannot repeat; new transitions default to `duration = 0`, an unconditional hard cut.
 pub fn add_state_transition(
     document: &mut Value,
     from: Option<&str>,
@@ -2252,10 +2285,11 @@ pub fn add_state_transition(
     Ok(())
 }
 
-/// 改一条转移的起点 / 终点状态；`from = None` 表示任意状态。
+/// Change a transition's source / target state; `from = None` means any state.
 ///
-/// 状态名必须存在、不能自连，也不能改出一条与现有转移完全相同的 `(from, to)`
-/// （重复转移在运行时只会永远命中第一条，没有意义）。其它字段原样保留。
+/// State names must exist, no self-loops, and you can't produce a `(from, to)` identical to an
+/// existing transition (duplicate transitions at runtime always hit the first one, meaningless).
+/// Other fields are kept as-is.
 pub fn set_transition_states(
     document: &mut Value,
     index: usize,
@@ -2311,11 +2345,12 @@ pub fn set_transition_states(
     Ok(())
 }
 
-/// 在 `transitions` 数组里前后移动一条转移，返回移动后的下标。
+/// Move a transition back and forth in the `transitions` array, return the index after the move.
 ///
-/// 运行时按数组顺序取**第一条**条件命中且起点状态匹配的转移（`state_machine.rs`
-/// 的 `next_transition`），所以顺序就是优先级。越界移动返回错误而不是静默夹到端点，
-/// 面板据此禁用端点上的箭头。
+/// At runtime the **first** transition whose conditions match and whose source state matches is
+/// taken (`next_transition` in `state_machine.rs`), so order is priority. Out-of-bounds moves
+/// return an error instead of silently clamping to an endpoint; the panel uses this to disable
+/// arrows at the ends.
 pub fn move_state_transition(
     document: &mut Value,
     index: usize,
@@ -2340,10 +2375,11 @@ pub fn move_state_transition(
     Ok(target as usize)
 }
 
-/// 复制一条转移并插入到原转移之后，返回新下标。
+/// Duplicate a transition and insert it after the original, return the new index.
 ///
-/// 允许复制出完全相同的 `(from, to)`：作者通常会紧接着改起点 / 终点或条件。
-/// 运行时按数组顺序取第一条命中的转移，所以改之前重复项不会改变行为。
+/// Producing an identical `(from, to)` is allowed: the author usually changes the source /
+/// target or condition right after. At runtime the first matching transition is taken, so
+/// duplicates before editing don't change behavior.
 pub fn duplicate_state_transition(document: &mut Value, index: usize) -> Result<usize, String> {
     let transitions = document
         .get_mut("transitions")
@@ -2361,7 +2397,7 @@ pub fn duplicate_state_transition(document: &mut Value, index: usize) -> Result<
     Ok(target)
 }
 
-/// 删除状态机 `transitions` 数组里的第 `index` 条转移。
+/// Remove the `index`-th transition from a state machine's `transitions` array.
 pub fn remove_state_transition(document: &mut Value, index: usize) -> Result<(), String> {
     let Some(transitions) = document
         .get_mut("transitions")
@@ -2389,7 +2425,7 @@ fn find_state_mut(document: &mut Value, index: usize) -> Result<&mut Value, Stri
     Ok(state)
 }
 
-/// 改一个状态的剪辑路径（去空白后必须非空）。
+/// Change a state's clip path (must be non-empty after trimming).
 pub fn set_state_clip(document: &mut Value, index: usize, clip: &str) -> Result<(), String> {
     let clip = clip.trim();
     if clip.is_empty() {
@@ -2399,7 +2435,7 @@ pub fn set_state_clip(document: &mut Value, index: usize, clip: &str) -> Result<
     Ok(())
 }
 
-/// 改一个状态的播放速度倍率（`0` = 冻结，必须有限且非负）。
+/// Change a state's playback speed multiplier (`0` = frozen, must be finite and non-negative).
 pub fn set_state_speed(document: &mut Value, index: usize, speed: f32) -> Result<(), String> {
     if !speed.is_finite() || speed < 0.0 {
         return Err("state speed must be finite and >= 0".to_string());
@@ -2408,16 +2444,17 @@ pub fn set_state_speed(document: &mut Value, index: usize, speed: f32) -> Result
     Ok(())
 }
 
-/// 改一个状态是否循环。
+/// Change whether a state loops.
 pub fn set_state_looped(document: &mut Value, index: usize, looped: bool) -> Result<(), String> {
     find_state_mut(document, index)?["looped"] = json!(looped);
     Ok(())
 }
 
-/// 复制一个状态，返回新名字。
+/// Duplicate a state, return the new name.
 ///
-/// 新名字自动加 `_copy` / `_copy2`；转移表原样保留（复制出来的状态暂时没有
-/// 任何转移，作者再连线）。名字唯一性跟其它状态一致。
+/// The new name automatically gets `_copy` / `_copy2`; the transition table is kept as-is (the
+/// duplicated state temporarily has no transitions, the author connects them). Name uniqueness
+/// is consistent with other states.
 pub fn duplicate_state(document: &mut Value, name: &str) -> Result<String, String> {
     let states = document
         .get("states")
@@ -2452,11 +2489,13 @@ pub fn duplicate_state(document: &mut Value, name: &str) -> Result<String, Strin
     Ok(candidate)
 }
 
-/// 在 `states` 数组里前后移动一个状态，返回移动后的下标。
+/// Move a state back and forth in the `states` array, return the index after the move.
 ///
-/// 运行时把**第一个状态**当作初始状态（`Animator.state` 为空时落到下标 0），
-/// 所以这个顺序同时决定初始状态。转移按状态名引用，重排不会改转移。
-/// 越界移动返回错误而不是静默夹到端点，面板据此禁用端点上的箭头。
+/// The runtime treats the **first state** as the initial state (falls to index 0 when
+/// `Animator.state` is empty), so this order also decides the initial state. Transitions
+/// reference states by name, so reordering doesn't change transitions. Out-of-bounds moves
+/// return an error instead of silently clamping to an endpoint; the panel uses this to disable
+/// arrows at the ends.
 pub fn move_state(document: &mut Value, index: usize, offset: isize) -> Result<usize, String> {
     let states = document
         .get_mut("states")
@@ -2477,10 +2516,11 @@ pub fn move_state(document: &mut Value, index: usize, offset: isize) -> Result<u
     Ok(target as usize)
 }
 
-/// 追加一个状态。
+/// Append a state.
 ///
-/// 名字与剪辑路径都去空白后必须非空（cooker 会拒绝空剪辑）；名字不能与现有
-/// 状态重复。新状态默认 `speed = 1.0`、`looped = true`，由 cooker 的缺省值补齐。
+/// Name and clip path must both be non-empty after trimming (the cooker rejects empty clips);
+/// name must not duplicate an existing state. New state defaults to `speed = 1.0`, `looped = true`,
+/// filled in by the cooker's defaults.
 pub fn add_state(document: &mut Value, name: &str, clip: &str) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
@@ -2515,10 +2555,12 @@ pub fn add_state(document: &mut Value, name: &str, clip: &str) -> Result<(), Str
     Ok(())
 }
 
-/// 删除一个状态，并移除所有引用它的转移，返回被一并删除的转移数量。
+/// Remove a state, and remove all transitions referencing it; return the number of transitions
+/// removed along with it.
 ///
-/// 状态机至少要保留一个状态（cooker 与运行时都按「第一个状态是初始状态」处理）；
-/// 删除第一个状态后，下一个状态成为初始状态。任意状态（`*` / `any`）的转移不受影响。
+/// A state machine must keep at least one state (cooker and runtime both treat "the first state
+/// is the initial state"); after removing the first state, the next state becomes initial.
+/// Transitions to any state (`*` / `any`) are not affected.
 pub fn remove_state(document: &mut Value, name: &str) -> Result<usize, String> {
     let name = name.trim();
     let state_index = {
@@ -2565,11 +2607,11 @@ pub fn remove_state(document: &mut Value, name: &str) -> Result<usize, String> {
     Ok(before - transitions.len())
 }
 
-/// 重命名一个状态，并同步改写转移里的 `from` / `to`。
+/// Rename a state, and synchronously rewrite `from` / `to` in transitions.
 ///
-/// 只改状态机文档：运行时 `Animator.state` 和条件里的参数名不在这里，面板会提示
-/// 作者自己确认 `.scene.json` 有没有按旧名字写死。名字去空白后必须非空、不能与
-/// 其它状态重名。
+/// Only the state machine document is changed: the runtime `Animator.state` and parameter names
+/// in conditions are not here; the panel prompts the author to check whether `.scene.json`
+/// hardcodes the old name. Name must be non-empty after trimming and not duplicate another state.
 pub fn rename_state(document: &mut Value, index: usize, new_name: &str) -> Result<(), String> {
     let new_name = new_name.trim();
     if new_name.is_empty() {
@@ -2643,10 +2685,10 @@ fn find_condition_mut<'a>(
     Ok(entry)
 }
 
-/// 设置转移的混合时长与最小状态占比。
+/// Set a transition's blend duration and minimum state fraction.
 ///
-/// 两个值都与运行时的含义一致：`duration` 是淡入秒数（0 = 硬切），
-/// `min_state_fraction` 是允许离开源状态前至少播过的比例（0..=1）。
+/// Both match the runtime meaning: `duration` is fade-in seconds (0 = hard cut),
+/// `min_state_fraction` is the minimum fraction played before leaving the source state (0..=1).
 pub fn set_transition_timing(
     document: &mut Value,
     index: usize,
@@ -2665,10 +2707,11 @@ pub fn set_transition_timing(
     Ok(())
 }
 
-/// 给第 `index` 条转移追加一条条件。
+/// Append a condition to the `index`-th transition.
 ///
-/// `kind` 只接受运行时认识的四种；`threshold` 只用于 float 条件，`value` 只用于
-/// `bool_is`。同一个 `(type, name)` 不重复添加 —— 两个相同条件只是白写一遍 AND。
+/// `kind` only accepts the four types the runtime knows; `threshold` is only used for float
+/// conditions, `value` only for `bool_is`. The same `(type, name)` is not added twice — two
+/// identical conditions just redundantly write AND.
 pub fn add_state_condition(
     document: &mut Value,
     index: usize,
@@ -2724,7 +2767,7 @@ pub fn add_state_condition(
     Ok(())
 }
 
-/// 删除第 `index` 条转移里的第 `condition` 条条件。
+/// Remove the `condition`-th condition from the `index`-th transition.
 pub fn remove_state_condition(
     document: &mut Value,
     index: usize,
@@ -2746,7 +2789,7 @@ pub fn remove_state_condition(
     Ok(())
 }
 
-/// 改一条 float 条件的阈值；`bool_is` / `trigger` 没有阈值，返回错误。
+/// Change a float condition's threshold; `bool_is` / `trigger` have no threshold, return an error.
 pub fn set_condition_threshold(
     document: &mut Value,
     index: usize,
@@ -2769,7 +2812,7 @@ pub fn set_condition_threshold(
     Ok(())
 }
 
-/// 改一条 `bool_is` 条件的期望值；其它条件类型返回错误。
+/// Change a `bool_is` condition's expected value; other condition types return an error.
 pub fn set_condition_value(
     document: &mut Value,
     index: usize,
@@ -2786,12 +2829,13 @@ pub fn set_condition_value(
     Ok(())
 }
 
-/// 切换一条条件的类型，并补齐 / 删除该类型需要的载荷。
+/// Switch a condition's type, and fill in / remove the payload that type requires.
 ///
-/// 保留参数名；`float_greater` / `float_less` 保留已有阈值（没有就补 `0.0`），
-/// `bool_is` 保留已有布尔值（没有就补 `false`），`trigger` 删除 `threshold` /
-/// `value`。切换后如果与同一转移里的另一条 `(type, name)` 重复则拒绝，避免
-/// 写出一条运行时永远走不到的冗余条件。
+/// The parameter name is kept; `float_greater` / `float_less` keep the existing threshold
+/// (fill `0.0` if absent); `bool_is` keeps the existing boolean (fill `false` if absent);
+/// `trigger` removes `threshold` / `value`. If switching would duplicate another `(type, name)`
+/// in the same transition, reject it, to avoid writing a redundant condition the runtime can
+/// never reach.
 pub fn set_condition_kind(
     document: &mut Value,
     index: usize,
@@ -2871,10 +2915,10 @@ pub fn set_condition_kind(
     Ok(())
 }
 
-/// 改一条条件的参数名，保留类型与载荷。
+/// Change a condition's parameter name, keeping its type and payload.
 ///
-/// 同一转移里 `(type, name)` 不能重复；`float_greater speed` 与
-/// `float_less speed` 是两条不同条件，允许共存。
+/// `(type, name)` cannot repeat within the same transition; `float_greater speed` and
+/// `float_less speed` are two different conditions, allowed to coexist.
 pub fn set_condition_name(
     document: &mut Value,
     index: usize,
@@ -2970,7 +3014,10 @@ mod state_tests {
         assert_eq!(doc["states"][0]["name"], "Jump");
         assert_eq!(doc["states"][1]["name"], "Idle");
         assert_eq!(doc["states"][2]["name"], "Run");
-        assert_eq!(doc["transitions"][0]["to"], "Run", "转移按名字引用");
+        assert_eq!(
+            doc["transitions"][0]["to"], "Run",
+            "transitions reference by name"
+        );
         assert_eq!(doc["transitions"][1]["from"], "*");
 
         let moved = move_state(&mut doc, 0, 1).expect("moves back");
@@ -2982,12 +3029,16 @@ mod state_tests {
     #[test]
     fn moving_states_rejects_out_of_range_indices() {
         let mut doc = document();
-        assert!(move_state(&mut doc, 0, -1).is_err(), "已在最前");
-        assert!(move_state(&mut doc, 1, 1).is_err(), "已在最后");
+        assert!(move_state(&mut doc, 0, -1).is_err(), "already at the front");
+        assert!(move_state(&mut doc, 1, 1).is_err(), "already at the last");
         assert!(move_state(&mut doc, 9, -1).is_err());
         assert!(move_state(&mut json!({}), 0, 1).is_err());
         assert!(move_state(&mut json!({ "states": ["bad"] }), 0, 1).is_err());
-        assert_eq!(doc["states"].as_array().unwrap().len(), 2, "失败不改文档");
+        assert_eq!(
+            doc["states"].as_array().unwrap().len(),
+            2,
+            "failure does not modify document"
+        );
     }
 
     #[test]
@@ -3001,7 +3052,7 @@ mod state_tests {
         assert_eq!(
             doc["transitions"].as_array().unwrap().len(),
             2,
-            "转移表不变"
+            "transition table unchanged"
         );
     }
 
@@ -3013,7 +3064,11 @@ mod state_tests {
         assert!(add_state(&mut doc, "Idle", "idle.ranim").is_err());
         assert!(add_state(&mut json!({}), "Jump", "jump.ranim").is_err());
         assert!(add_state(&mut json!({ "states": ["bad"] }), "Jump", "jump.ranim").is_err());
-        assert_eq!(doc["states"].as_array().unwrap().len(), 2, "失败不改文档");
+        assert_eq!(
+            doc["states"].as_array().unwrap().len(),
+            2,
+            "failure does not modify document"
+        );
     }
 
     #[test]
@@ -3027,7 +3082,7 @@ mod state_tests {
         assert_eq!(
             doc["transitions"],
             json!([{ "from": "*", "to": "Idle", "duration": 0.0 }]),
-            "只保留与 Run 无关的任意状态转移"
+            "only keep any-state transitions unrelated to Run"
         );
     }
 
@@ -3036,7 +3091,10 @@ mod state_tests {
         let mut doc = document();
         assert!(remove_state(&mut doc, "Missing").is_err());
         remove_state(&mut doc, "Run").expect("removes");
-        assert!(remove_state(&mut doc, "Idle").is_err(), "不能删到零个状态");
+        assert!(
+            remove_state(&mut doc, "Idle").is_err(),
+            "can't delete down to zero states"
+        );
         assert_eq!(doc["states"].as_array().unwrap().len(), 1);
 
         let mut doc = json!({
@@ -3047,7 +3105,11 @@ mod state_tests {
             "transitions": "bad"
         });
         assert!(remove_state(&mut doc, "Run").is_err());
-        assert_eq!(doc["states"].as_array().unwrap().len(), 2, "失败不改状态表");
+        assert_eq!(
+            doc["states"].as_array().unwrap().len(),
+            2,
+            "failure does not modify state table"
+        );
     }
 
     #[test]
@@ -3056,7 +3118,7 @@ mod state_tests {
         rename_state(&mut doc, 1, " Sprint ").expect("renames");
         assert_eq!(doc["states"][1]["name"], "Sprint");
         assert_eq!(doc["transitions"][0]["to"], "Sprint");
-        // 任意状态（`*`）不受影响，也不误伤其它状态。
+        // Any state (`*`) is not affected, nor does it mistakenly hurt other states.
         assert_eq!(doc["transitions"][1]["from"], "*");
         assert_eq!(doc["transitions"][1]["to"], "Idle");
     }
@@ -3206,11 +3268,11 @@ mod condition_tests {
         add_state_condition(&mut doc, 0, "bool_is", "speed", 0.0, false).expect("adds bool");
         assert!(
             set_condition_kind(&mut doc, 0, 0, "bool_is").is_err(),
-            "切换后与已有条件重复"
+            "switching duplicates existing condition"
         );
         assert_eq!(
             doc["transitions"][0]["conditions"][0]["type"], "float_greater",
-            "失败不改文档"
+            "failure does not modify document"
         );
 
         assert!(set_condition_kind(&mut doc, 0, 0, "nope").is_err());
@@ -3246,7 +3308,7 @@ mod condition_tests {
         add_state_condition(&mut doc, 0, "float_greater", "speed2", 0.0, false).expect("adds");
         assert!(
             set_condition_name(&mut doc, 0, 0, "speed2").is_err(),
-            "同一类型下重名"
+            "duplicate name within same type"
         );
         assert_eq!(doc["transitions"][0]["conditions"][0]["name"], "speed");
 
@@ -3307,7 +3369,10 @@ mod transition_tests {
         assert_eq!(new_index, 1);
         assert_eq!(doc["transitions"].as_array().unwrap().len(), 3);
         assert_eq!(doc["transitions"][0], doc["transitions"][1]);
-        assert_eq!(doc["transitions"][2]["to"], "Jump", "原第二条后移");
+        assert_eq!(
+            doc["transitions"][2]["to"], "Jump",
+            "original second one moved back"
+        );
     }
 
     #[test]
@@ -3319,7 +3384,7 @@ mod transition_tests {
         assert_eq!(
             doc["transitions"].as_array().unwrap().len(),
             1,
-            "失败不改文档"
+            "failure does not modify document"
         );
     }
 
@@ -3357,8 +3422,14 @@ mod transition_tests {
         let moved = move_state_transition(&mut doc, 0, 1).expect("moves down");
         assert_eq!(moved, 1);
         assert_eq!(doc["transitions"][1]["to"], "Jump");
-        assert!(move_state_transition(&mut doc, 0, -1).is_err(), "已在最前");
-        assert!(move_state_transition(&mut doc, 1, 1).is_err(), "已在最后");
+        assert!(
+            move_state_transition(&mut doc, 0, -1).is_err(),
+            "already at the front"
+        );
+        assert!(
+            move_state_transition(&mut doc, 1, 1).is_err(),
+            "already at the last"
+        );
         assert!(move_state_transition(&mut doc, 9, -1).is_err());
     }
 
@@ -3451,7 +3522,7 @@ mod weight_tests {
         set_graph_input_bone_mask(&mut doc, "stack", 1, &[]).expect("clears");
         assert!(doc["nodes"][2]["inputs"][1].get("bone_mask").is_none());
         assert_eq!(doc["nodes"][2]["inputs"][1]["weight"], 0.5);
-        // 字符串连线本来就没有掩码，清空是无操作。
+        // String connections never had a mask, clearing is a no-op.
         set_graph_input_bone_mask(&mut doc, "stack", 0, &[]).expect("no-op");
         assert_eq!(doc["nodes"][2]["inputs"][0], json!("a"));
     }

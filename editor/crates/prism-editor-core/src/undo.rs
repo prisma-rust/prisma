@@ -1,10 +1,10 @@
-//! 撤销 / 重做栈。
+//! Undo / redo stack.
 //!
-//! 两类命令：
-//! - `SetField`：检查器里的一次字段写入。同一个实体 + 组件 + 路径在
-//!   `coalesce_ms` 内连续改动会合并成一步（拖动滑杆只产生一次撤销）。
-//! - `Snapshot`：结构性编辑（增删实体 / 重排父子 / 预制体实例化 / 粘贴组件）。
-//!   文档很小，整文档快照比逐操作求逆更不容易出错。
+//! Two command types:
+//! - `SetField`: A single field write in the inspector. The same entity + component + path changes within
+//!   `coalesce_ms` coalesce into one step (dragging a slider only produces one undo).
+//! - `Snapshot`: Structural edits (add/remove entities / reorder parents / prefab instantiation / paste components).
+//!   The document is small; whole-document snapshots are less error-prone than per-operation inverse computation.
 
 use crate::doc::{SceneDoc, TransformJson};
 use crate::schema::set_at_path;
@@ -22,13 +22,13 @@ pub enum Command {
         before: Value,
         after: Value,
     },
-    /// Transform 是作者 JSON 的结构字段（不在 `components` 里），单独一类命令。
+    /// Transform is the structural field of author JSON (not in `components`), a separate command type.
     Transform {
         entity_id: u32,
         before: TransformJson,
         after: TransformJson,
     },
-    /// 多选 gizmo 拖动：同一帧只产生一个撤销步，拖动中按 key 合并。
+    /// Multi-select gizmo drag: only one undo step per frame; merge by key during drag.
     TransformBatch {
         changes: Vec<(u32, TransformJson, TransformJson)>,
     },
@@ -41,10 +41,10 @@ pub enum Command {
 impl Command {
     pub fn label(&self) -> &'static str {
         match self {
-            Command::SetField { .. } => "修改字段",
-            Command::Transform { .. } => "修改 Transform",
-            Command::TransformBatch { .. } => "修改 Transform",
-            Command::Snapshot { .. } => "编辑场景",
+            Command::SetField { .. } => "Edit field",
+            Command::Transform { .. } => "Edit Transform",
+            Command::TransformBatch { .. } => "Edit Transform",
+            Command::Snapshot { .. } => "Edit scene",
         }
     }
 }
@@ -65,17 +65,17 @@ fn apply_field(
     set_at_path(root, path, value.clone())
 }
 
-/// 一步结构性编辑前后的选中实体（按 `EntityJson.id`，不是数组下标）。
+/// Selected entities before and after one structural edit (by `EntityJson.id`, not array index).
 ///
-/// 撤销 / 重做会连选择一起还原，见 #513：删掉 → 撤销后原实体重新被选中，
-/// 复制 → 撤销后回到复制前的选择。
+/// Undo / redo restores the selection too, see #513: delete → undo re-selects the original entity,
+/// copy → undo returns to the pre-copy selection.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SelectionSnapshot {
     pub before: Vec<u32>,
     pub after: Vec<u32>,
 }
 
-/// [`UndoStack::undo`] / [`UndoStack::redo`] 的结果：标签 + 要还原的选择（如果有）。
+/// [`UndoStack::undo`] / [`UndoStack::redo`] result: label + selection to restore (if any).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UndoOutcome {
     pub label: String,
@@ -91,12 +91,13 @@ pub struct Entry {
     pub label: String,
     coalesce: Option<String>,
     at_ms: u64,
-    /// 结构性编辑的选中快照；字段 / Transform 命令为 `None`（实体集合没变）。
+    /// Selection snapshot for structural edits; `None` for field / Transform commands (entity set unchanged).
     selection: Option<SelectionSnapshot>,
-    /// 执行这一步 / 撤销这一步之后所处的文档状态编号。
+    /// Document state number after executing / undoing this step.
     ///
-    /// 编号单调递增且全局唯一，所以「撤销回保存时的位置」和「撤销后又在同一深度
-    /// 做了别的编辑」可以区分开 —— 只比较撤销栈深度会把后一种误判成未修改（#992）。
+    /// Numbers are monotonically increasing and globally unique, so "undo back to the saved point"
+    /// and "undo then do a different edit at the same depth" can be distinguished — comparing only
+    /// the undo-stack depth would misjudge the latter as unmodified (#992).
     before_state: u64,
     after_state: u64,
 }
@@ -116,14 +117,14 @@ pub struct UndoStack {
     redo: Vec<Entry>,
     limit: usize,
     coalesce_ms: u64,
-    /// 交互进行中（拖动 gizmo / 拖拽输入框）：忽略合并时间窗口，
-    /// 整段交互始终压成一步。
+    /// Interactive in progress (dragging gizmo / dragging input field): ignore the coalesce time window,
+    /// the entire interaction always compresses into one step.
     sticky: bool,
-    /// 下一个可用状态编号。
+    /// Next available state number.
     next_state: u64,
-    /// 文档当前所处的状态编号。
+    /// Document state number.
     current_state: u64,
-    /// 最后一次保存时的状态编号；`None` = 当前状态不可达（保存点已被丢弃）。
+    /// State number at last `mark_saved`; `None` = current state not reachable (save point discarded).
     saved_state: Option<u64>,
 }
 
@@ -147,26 +148,27 @@ impl UndoStack {
         state
     }
 
-    /// 文档当前是否和最后一次 `mark_saved` 的状态不同。
+    /// Whether the current document state differs from the last `mark_saved` baseline.
     ///
-    /// 只看撤销栈的游标 / 深度是不够的：撤销回到保存点后，`undo` 与 `redo`
-    /// 的长度会回到保存时的样子；但如果之后在同深度做了别的编辑，深度同样
-    /// 对得上，内容却变了。状态编号能同时覆盖这两种情况。
+    /// Looking only at the undo cursor / depth is not enough: undoing back to the save point makes
+    /// `undo` and `redo` lengths match the save time; but if a different edit is then made at the
+    /// same depth, depth matches yet content differs. The state number covers both cases.
     pub fn is_dirty(&self) -> bool {
         self.saved_state != Some(self.current_state)
     }
 
-    /// 把当前状态记为「已保存」的基线。
+    /// Mark the current state as the "saved" baseline.
     pub fn mark_saved(&mut self) {
         self.saved_state = Some(self.current_state);
     }
 
-    /// 开始一次交互：此后的改动不再受 `coalesce_ms` 时间窗口限制。
+    /// Begin an interaction: subsequent changes are not subject to the `coalesce_ms` time window,
+    /// the whole interaction compresses into one step.
     pub fn begin_interaction(&mut self) {
         self.sticky = true;
     }
 
-    /// 结束一次交互：清掉最后一步的合并标记，让下一次修改必然开新步。
+    /// End an interaction: clear the merge mark on the last step, so the next modification must open a new step.
     pub fn commit(&mut self) {
         self.sticky = false;
         if let Some(last) = self.undo.last_mut() {
@@ -174,7 +176,7 @@ impl UndoStack {
         }
     }
 
-    /// 当前是否处于交互中（供测试 / 调试）。
+    /// Whether an interaction is in progress (for testing / debugging).
     pub fn interaction_active(&self) -> bool {
         self.sticky
     }
@@ -203,7 +205,7 @@ impl UndoStack {
         self.redo.last().map(|entry| entry.label.as_str())
     }
 
-    /// 最近到最早的操作标签（「历史」面板）。
+    /// Operation labels from newest to oldest ("history" panel).
     pub fn history(&self) -> Vec<&str> {
         self.undo
             .iter()
@@ -212,18 +214,19 @@ impl UndoStack {
             .collect()
     }
 
-    /// 完整历史（最早 → 最新），已撤销的步骤附在末尾并标记 `undone`。
+    /// Full history (earliest → latest), including the redo stack: steps undone remain listed,
+    /// marked `undone`.
     ///
-    /// 和 `history()` 不同，这里包含 redo 栈：引擎的撤销历史窗口会把撤销过的
-    /// 步骤继续列出来，点回去就是 redo，而不是让它们凭空消失。
+    /// Unlike `history()`, this includes the redo stack: the engine's undo-history window keeps
+    /// listing undone steps, clicking back is redo, rather than letting them vanish into thin air.
     pub fn history_entries(&self) -> Vec<(String, bool)> {
         let mut out: Vec<(String, bool)> = self
             .undo
             .iter()
             .map(|entry| (entry.label.clone(), false))
             .collect();
-        // redo 栈的最后一个元素是下一次 redo 要执行的步骤，所以整体反转后
-        // 才是「按时间顺序」接在 undo 之后的步骤。
+        // The last element of the redo stack is the next step to redo, so reversing the whole
+        // thing places it right after the undo steps in chronological order.
         out.extend(
             self.redo
                 .iter()
@@ -233,7 +236,7 @@ impl UndoStack {
         out
     }
 
-    /// 当前状态在 `history_entries()` 中的位置（= 已执行步骤数）。
+    /// Current position in `history_entries()` (= number of executed steps).
     pub fn history_cursor(&self) -> usize {
         self.undo.len()
     }
@@ -243,8 +246,8 @@ impl UndoStack {
         self.undo.clear();
         self.redo.clear();
         self.current_state = self.allocate_state();
-        // 清空历史不应顺手清掉脏标记：干净的文档继续保持干净，脏的文档也
-        // 不会因为「历史没了」而看起来像没改过。
+        // Clearing history must not silently wash the dirty flag: a clean document stays clean
+        // after clearing history, but a dirty document stays dirty just because the history is gone.
         self.saved_state = if was_dirty {
             None
         } else {
@@ -252,8 +255,8 @@ impl UndoStack {
         };
     }
 
-    /// 一次字段写入。`entity_id + component + path` 相同且在合并窗口内时，
-    /// 直接把上一步的 `after` 更新成新值（保留最初的 `before`）。
+    /// A single field write. `entity_id + component + path` coalesces within the time window:
+    /// the new `after` updates the previous step's `after` (keeping the original `before`).
     #[allow(clippy::too_many_arguments)]
     pub fn push_field(
         &mut self,
@@ -311,7 +314,7 @@ impl UndoStack {
         self.trim();
     }
 
-    /// Transform 的一次拖动：同一实体的连续改动合并成一步。
+    /// A single Transform drag: consecutive edits of the same entity compress into one step.
     pub fn push_transform(
         &mut self,
         doc: &mut SceneDoc,
@@ -345,7 +348,7 @@ impl UndoStack {
         }
         apply_transform(doc, entity_id, &after);
         self.undo.push(Entry {
-            label: "修改 Transform".to_string(),
+            label: "Edit Transform".to_string(),
             command: Command::Transform {
                 entity_id,
                 before,
@@ -362,8 +365,8 @@ impl UndoStack {
         self.trim();
     }
 
-    /// 多选 Transform 的一次拖动：`changes` 是 (实体 id, before, after)，
-    /// 同一 `coalesce` key 的连续拖动合并成一步（整组一起撤销）。
+    /// Multi-select Transform drag: `changes` is `(entity_id, before, after)`,
+    /// consecutive drags with the same `coalesce` key compress into one step (whole group undo together).
     pub fn push_transform_batch(
         &mut self,
         doc: &mut SceneDoc,
@@ -409,7 +412,7 @@ impl UndoStack {
             apply_transform(doc, *entity_id, after);
         }
         self.undo.push(Entry {
-            label: "修改 Transform".to_string(),
+            label: "Edit Transform".to_string(),
             command: Command::TransformBatch { changes },
             coalesce: Some(coalesce),
             at_ms: now_ms,
@@ -422,17 +425,18 @@ impl UndoStack {
         self.trim();
     }
 
-    /// 结构性编辑：把 `before` 快照与编辑后的文档整体记成一步。
+    /// Structural edit: record `before` snapshot and edited document as one step.
     ///
-    /// 不带选择快照 —— 撤销 / 重做时选择集保持现状（调用方自己校正）。
+    /// No selection snapshot — undo / redo leaves the selection as-is (caller corrects itself).
     pub fn push_snapshot(&mut self, label: impl Into<String>, before: SceneDoc, after: &SceneDoc) {
         self.push_snapshot_with_selection(label, before, None, after);
     }
 
-    /// 结构性编辑 + 选中实体快照（#513）。
+    /// Structural edit + entity selection snapshot (#513).
     ///
-    /// `selection` 里的 id 在撤销 / 重做后按 `EntityJson.id` 映射回下标，找不到的
-    /// 直接丢弃，所以「删掉再撤销」能准确回到原来的实体，而不是某个碰巧同下标的对象。
+    /// `selection` ids mapped back to indices on undo / redo by `EntityJson.id`; not found ids
+    /// are simply dropped, so "delete then undo" accurately re-selects the original entity rather
+    /// than whichever object happens to have the same index.
     pub fn push_snapshot_with_selection(
         &mut self,
         label: impl Into<String>,
@@ -610,10 +614,10 @@ mod tests {
             json!(70.0),
             100,
         );
-        assert_eq!(stack.history().len(), 1, "同一字段连续输入合并成一步");
+        assert_eq!(stack.history().len(), 1, "continuous input on same field coalesces into one step");
         assert_eq!(stack.history()[0], "Camera · fov_y_degrees");
 
-        // 撤销回到最初的 60。
+        // Undo back to the initial 60.
         stack.undo(&mut doc);
         let camera = doc.entities[0]
             .components
@@ -663,7 +667,7 @@ mod tests {
             json!(80.0),
             10_000,
         );
-        assert_eq!(stack.history().len(), 3, "超出合并窗口算新一步");
+        assert_eq!(stack.history().len(), 3, "exceeding the coalesce window counts as a new step");
     }
 
     #[test]
@@ -690,7 +694,7 @@ mod tests {
             json!(0.3),
             5_000,
         );
-        assert!(!stack.can_redo(), "新编辑应清空 redo");
+        assert!(!stack.can_redo(), "new edit clears redo");
     }
 
     #[test]
@@ -699,7 +703,7 @@ mod tests {
         let before = doc.clone();
         doc.add_named_child(None, "Cube");
         let mut stack = UndoStack::new();
-        stack.push_snapshot("新建实体", before.clone(), &doc);
+        stack.push_snapshot("new entity", before.clone(), &doc);
         assert_eq!(doc.entities.len(), 2);
 
         stack.undo(&mut doc);
@@ -712,7 +716,7 @@ mod tests {
     fn equal_snapshots_are_ignored() {
         let (doc, _) = doc_with_camera();
         let mut stack = UndoStack::new();
-        stack.push_snapshot("无变化", doc.clone(), &doc);
+        stack.push_snapshot("no change", doc.clone(), &doc);
         assert!(!stack.can_undo());
     }
 
@@ -748,7 +752,7 @@ mod tests {
         let mut second = after;
         second.position[0] = 7.0;
         stack.push_transform(&mut doc, id, after, second, 100);
-        assert_eq!(stack.history().len(), 1, "同一实体的拖动合并");
+        assert_eq!(stack.history().len(), 1, "drag on same entity coalesces");
         assert_eq!(doc.entities[0].transform.position[0], 7.0);
 
         stack.undo(&mut doc);
@@ -763,7 +767,7 @@ mod tests {
         let before = doc.entities[0].transform;
         let mut stack = UndoStack::new();
 
-        // 交互中：超过 800ms 的停顿仍然并成一步。
+        // During interaction: an 800ms+ pause still coalesces into one step.
         stack.begin_interaction();
         let mut step = before;
         step.position[0] = 1.0;
@@ -771,16 +775,16 @@ mod tests {
         let mut step2 = step;
         step2.position[0] = 2.0;
         stack.push_transform(&mut doc, id, step, step2, 5_000);
-        assert_eq!(stack.history().len(), 1, "一次拖动 = 一步");
+        assert_eq!(stack.history().len(), 1, "one drag = one step");
         assert!(stack.interaction_active());
 
-        // 松手后立刻再拖：必须开新步，即使间隔远小于 800ms。
+        // Release then drag again immediately: must open a new step even though interval < 800ms.
         stack.commit();
         assert!(!stack.interaction_active());
         let mut step3 = step2;
         step3.position[0] = 3.0;
         stack.push_transform(&mut doc, id, step2, step3, 5_010);
-        assert_eq!(stack.history().len(), 2, "两次拖动 = 两步");
+        assert_eq!(stack.history().len(), 2, "two drags = two steps");
 
         stack.undo(&mut doc);
         assert_eq!(doc.entities[0].transform.position[0], 2.0);
@@ -801,7 +805,7 @@ mod tests {
     fn undo_back_to_the_saved_state_clears_dirty() {
         let (mut doc, id) = doc_with_camera();
         let mut stack = UndoStack::new();
-        assert!(!stack.is_dirty(), "新文档是干净的");
+        assert!(!stack.is_dirty(), "new document is clean");
 
         stack.push_field(
             &mut doc,
@@ -815,10 +819,10 @@ mod tests {
         assert!(stack.is_dirty());
 
         stack.undo(&mut doc);
-        assert!(!stack.is_dirty(), "撤销回保存点后应该是干净的");
+        assert!(!stack.is_dirty(), "undoing back to saved point should be clean");
 
         stack.redo(&mut doc);
-        assert!(stack.is_dirty(), "重做后又离开保存点");
+        assert!(stack.is_dirty(), "redoing back away from saved point becomes dirty again");
     }
 
     #[test]
@@ -837,7 +841,8 @@ mod tests {
         stack.undo(&mut doc);
         assert!(!stack.is_dirty());
 
-        // 撤销后在同一深度做别的编辑：栈长度会重新变成 1，但内容不是保存点。
+        // Undoing then making a *different* edit at the same depth: stack length is 1 again,
+        // but content differs from save point.
         stack.push_field(
             &mut doc,
             id,
@@ -847,7 +852,7 @@ mod tests {
             json!(0.3),
             10_000,
         );
-        assert!(stack.is_dirty(), "同深度但内容不同仍是未保存");
+        assert!(stack.is_dirty(), "same depth but different content is still unsaved");
     }
 
     #[test]
@@ -864,12 +869,12 @@ mod tests {
             0,
         );
         stack.mark_saved();
-        assert!(!stack.is_dirty(), "保存后基线跟着前移");
+        assert!(!stack.is_dirty(), "after saving baseline follows forward");
 
         stack.undo(&mut doc);
-        assert!(stack.is_dirty(), "保存后再撤销同样算未保存");
+        assert!(stack.is_dirty(), "undoing after saving is still unsaved");
         stack.redo(&mut doc);
-        assert!(!stack.is_dirty(), "重做回保存点又干净了");
+        assert!(!stack.is_dirty(), "redoing back to saved point is clean again");
     }
 
     #[test]
@@ -877,7 +882,7 @@ mod tests {
         let (mut doc, id) = doc_with_camera();
         let mut stack = UndoStack::new();
         stack.clear();
-        assert!(!stack.is_dirty(), "干净文档清历史后还是干净");
+        assert!(!stack.is_dirty(), "clean document clearing history stays clean");
 
         stack.push_field(
             &mut doc,
@@ -889,6 +894,6 @@ mod tests {
             0,
         );
         stack.clear();
-        assert!(stack.is_dirty(), "清历史不能把未保存改动洗白");
+        assert!(stack.is_dirty(), "clearing history cannot wash unsaved edits");
     }
 }

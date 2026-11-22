@@ -1,22 +1,22 @@
 # Editor MCP server
 
-`crates/prism-editor-mcp` 把编辑器数据层（`prism-editor-api`）暴露成 MCP 工具，
-让 agent 直接改场景、跑游戏、抓图，不用手改 JSON 再重新 cook。
+`crates/prism-editor-mcp` exposes editor data layer (`prism-editor-api`) as MCP tools,
+letting agents modify scenes, run games, capture screenshots, without manually editing JSON then re-cooking.
 
-它**不链接** engine / render，也不开 Vulkan：读写走 `prism-editor-api` 的反射
-校验，需要画面时用 `screenshot` 起一个子进程。
+It **does not link** engine / render, nor open Vullan: reads/writes go through `prism-editor-api` reflection
+validation; when visuals are needed, `screenshot` starts a subprocess.
 
-## 启动
+## Startup
 
 ```bash
 cargo run -p prism-editor-mcp -- --project projects/fishing
 ```
 
-项目根也可以用 `PRISMA_PROJECT` 指定；都没给时从 cwd 向上找 `assets/`。
-传输是 stdio，一行一条 JSON-RPC 消息；握手、协议版本协商和 notifications 由
-[`rmcp`](https://docs.rs/rmcp) 负责，这个 crate 只提供工具表与调用分发。
+Project root can also be specified via `PRISMA_PROJECT`; if neither given, walks up from cwd looking for `assets/`.
+Transport is stdio, one JSON-RPC message per line; handshake, protocol version negotiation, and notifications are handled by
+[`rmcp`](https://docs.rs/rmcp); this crate only provides tool table and call dispatch.
 
-在 `.mcp.json` 里挂上去（示例）：
+Add in `.mcp.json` (example):
 
 ```json
 {
@@ -32,112 +32,112 @@ cargo run -p prism-editor-mcp -- --project projects/fishing
 }
 ```
 
-## 工具
+## Tools
 
-下面两张表合起来是**完整**的工具清单：本表是文档 / 资源 / 游戏进程工具，egui 编辑器的
-工具在「[egui 编辑器](#egui-编辑器editor)」一节。参数带 `?` 的是可选，其余必填。
+The two tables below together form the **complete** tool list: this table is document / resource / game process tools,
+egui editor tools are in the "[egui editor](#egui-editor-editor)" section. Parameters with `?` are optional, others required.
 
-| 工具 | 参数 | 作用 |
-|---|---|---|
-| `documents_list` | `kind?`（`scene` / `prefab` / `all`） | 列出场景 / 预制体（项目相对路径） |
-| `document_read` | `path` | 读完整文档（已迁移到当前格式，实体带稳定 `id`） |
-| `document_write` | `path` `doc` | 校验后整体写回；`doc` 是 `{ version, entities }` |
-| `schema_list` | `component?` | 所有组件 + 嵌套结构体的字段、枚举变体、只读标记 |
-| `entity_get` | `path` `entity` | 按 `id` 或名字取实体 |
-| `field_set` | `path` `entity` `component` `field` `value` | **反射写入**一个字段（`a.b` / `list[0].x` 都支持） |
-| `component_add` | `path` `entity` `component` | 挂组件（默认值来自 schema） |
-| `component_remove` | `path` `entity` `component` | 摘组件 |
-| `asset_inspect` | `path` | 检查已 cook 的资源（`RSKL`/`RSKN`/`RANI`/`RMES`/`RTEX`/`RMAT`）：计数、摘要、校验问题 |
-| `asset_validate` | `path` `skeleton?` | 只跑校验（权重和、joint 越界、索引/子网格区间、关键帧时间与顺序），`ok=true` 表示通过 |
-| `game_run` | `command?` `env?` | 起游戏（默认 `cargo run --release`），日志进缓冲区 |
-| `game_stop` | — | 结束由 `game_run` / `screenshot` 启动的进程 |
-| `game_logs` | `lines?` | 读日志尾部（stdout + stderr，默认 200 行） |
-| `screenshot` | `path` `size?` `scale?` `frame?` `timeout_ms?` `command?` `env?` | 起游戏 → 抓图 → 结束，返回 PNG 路径 |
+| Tool | Parameters | Purpose |
+|------|-----------|---------|
+| `documents_list` | `kind?` (`scene` / `prefab` / `all`) | List scenes / prefabs (project-relative paths) |
+| `document_read` | `path` | Read full document (migrated to current format, entities carry stable `id`) |
+| `document_write` | `path` `doc` | Validate and write back in whole; `doc` is `{ version, entities }` |
+| `schema_list` | `component?` | All components + nested struct fields, enum variants, read-only marks |
+| `entity_get` | `path` `entity` | Get entity by `id` or name |
+| `field_set` | `path` `entity` `component` `field` `value` | **Reflection write** of a field (`a.b` / `list[0].x` both supported) |
+| `component_add` | `path` `entity` `component` | Add component (default values from schema) |
+| `component_remove` | `path` `entity` `component` | Remove component |
+| `asset_inspect` | `path` | Inspect cooked assets (`RSKL`/`RSKN`/`RANI`/`RMES`/`RTEX`/`RMAT`): count, summary, check problems |
+| `asset_validate` | `path` `skeleton?` | Run validation only (weight sums, joint bounds, index / submesh interval, keyframe time and order), `ok=true` means passed |
+| `game_run` | `command?` `env?` | Start game (default `cargo run --release`), logs go to buffer |
+| `game_stop` | — | End process started by `game_run` / `screenshot` |
+| `game_logs` | `lines?` | Read log tail (stdout + stderr, default 200 lines) |
+| `screenshot` | `path` `size?` `scale?` `frame?` `timeout_ms?` `command?` `env?` | Start game → capture screenshot → end, return PNG path |
 
-### `field_set` 为什么安全
+### Why `field_set` is safe
 
-写入走 `prism_editor_api::reflect_edit::set_component_field`：
-`from_object` 还原组件 → `Reflect::set_field` 写字段（`#[reflect(read_only)]`
-被拒、类型经反射校验）→ `object_to_json` 还原作者 JSON。所以非法类型、未知
-枚举变体、只读字段都不会落到磁盘上。
+Writes go through `prism_editor_api::reflect_edit::set_component_field`:
+`from_object` restores component → `Reflect::set_field` writes field (`#[reflect(read_only)]`
+rejected, type validated via reflection) → `object_to_json` restores authoring JSON. So illegal types, unknown
+enum variants, read-only fields never hit disk.
 
 ### `screenshot`
 
-参数：`path`（必填）、`size`（`1920x1080`）、`scale`（窗口倍数）、`frame`
-（默认 120）、`timeout_ms`、`command`、`env`。
+Parameters: `path` (required), `size` (`1920x1080`), `scale` (window multiplier), `frame`
+(default 120), `timeout_ms`, `command`, `env`.
 
-它复用引擎的内置截图（`PRISMA_SCREENSHOT*`，见 `AGENTS.md`），所以抓的是
-**屏幕上那一帧**；缩放是最近邻，像素画放大不糊。
+It reuses engine's built-in screenshot (`PRISMA_SCREENSHOT*`, see `AGENTS.md`), so it captures
+**the frame on screen**; scaling is nearest-neighbor, pixel art scaling doesn't blur.
 
-`command` 默认 `cargo run --release`，在项目根目录执行。想跳过 cargo 的启动
-开销就直接给二进制路径，例如
-`"command": "./target/release/fishing"`。
+`command` defaults to `cargo run --release`, executed in project root. To skip cargo startup overhead,
+pass binary path directly, e.g.
+`"command": "./target/release/fishing"`.
 
-## 边界
+## Boundaries
 
-- 只做数据 + 进程，不做渲染。想改渲染器行为要回引擎 crate。
-- 不实现 resource / prompt / sampling；`tools/list` 之外只有 `ping`。
-- 没有并发保护：同一个文档别同时开两个 agent 写（`document_write` 是整文件覆盖）。
+- Only data + process, no rendering. To change renderer behavior, go back to engine crate.
+- Does not implement resource / prompt / sampling; besides `tools/list` only `ping`.
+- No concurrency protection: don't open two agents writing the same document simultaneously (`document_write` is whole-file overwrite).
 
-## egui 编辑器（`editor/`）
+## egui editor (`editor/`)
 
-egui 编辑器是**独立进程**（Rust + egui-ash），窗口截图和视口零拷贝图像都只能
-在它自己的进程里取，所以它开了一个本地控制通道，MCP 通过它下命令：
+egui editor is an **independent process** (Rust + egui-ash); window screenshot and viewport zero-copy image can only be taken
+in its own process, so it opens a local control channel, MCP issues commands through it:
 
 ```text
-editor 启动 → 监听 127.0.0.1:<随机端口> → 写 <项目根>/target/editor-egui/control.port
-MCP 工具        → 读端口文件 → TCP 一行 JSON 请求 / 一行 JSON 回执
+editor starts → listens on 127.0.0.1:<random port> → writes <project root>/target/editor-egui/control.port
+MCP tool       → reads port file → TCP one-line JSON request / one-line JSON response
 ```
 
-- 只监听回环；端口文件在编辑器退出时删除（`PRISMA_EDITOR_CONTROL` 可覆盖成端口号）。
-- 请求在 UI 线程处理，所以截图和界面状态是**同一帧**的。
-- 失败走 MCP 的 `isError`，文本是控制通道的原始 JSON 回执，带 `kind`
-  （`bad_request` / `not_ready` / `denied` / `internal`）与 `message`：
-  `not_ready` 等一会再试，`bad_request` 改参数，`denied` 不要重试。
-- 编辑器用 `--no-control` 启动（或在 Preferences 里关掉通道）时不会生成端口文件，
-  所有 `editor_*` 工具都会报「读不到控制端口」。
+- Only listens on loopback; port file deleted when editor exits (`PRISMA_EDITOR_CONTROL` can override to port number).
+- Requests handled on UI thread, so screenshot and UI state are **same frame**.
+- Failures go through MCP `isError`, text is control channel's raw JSON response, carrying `kind`
+  (`bad_request` / `not_ready` / `denied` / `internal`) and `message`:
+  `not_ready` wait and retry, `bad_request` fix parameters, `denied` do not retry.
+- Editor started with `--no-control` (or turn off channel in Preferences) won't generate port file,
+  all `editor_*` tools report "cannot read control port".
 
-| 工具 | 参数 | 作用 |
-|---|---|---|
-| `editor_launch` | `command?` `wait_ms?` | 起 `editor/target/{release,debug}/prism-editor-egui`（没构建过退回 `cargo run`），等控制通道就绪 |
-| `editor_status` | — | 帧数、当前场景、选中实体、Play / 暂停、未保存标记、项目根 |
-| `editor_capture` | `target`(`window`/`scene`/`game`) `path?` `size?` | 抓整窗（UI + 视口）或某个视口的引擎离屏图，返回 PNG 路径 |
-| `editor_ui` | `action`(`snapshot`/`click`/`move`/`wheel`/`drag`/`set`) `node?` `offset?` `tab?` `x?` `y?` `delta?` `from?` `to?` `steps?` `mode?` `ctrl?` `value?` | UI 节点树：快照 / 按节点点击 / 视口指针移动、滚轮、拖动 / 按节点设值 |
-| `editor_play` | `action`(`play`/`stop`/`pause`) | 控制 Play（Play 会触发工程模块编译 + 加载） |
-| `editor_logs` | `since?` `limit?` | 读 Console 缓冲：引擎日志 + 工程模块 `project:` 日志 + panic 调用栈 |
-| `editor_input` | `key?` `mouse?` `state?` `click?` | 给 Play 注入输入（每帧一个事件），`click=true` 点一下左键 |
-| `editor_quit` | — | 走正常退出路径（会写 `state.json`） |
+| Tool | Parameters | Purpose |
+|------|-----------|---------|
+| `editor_launch` | `command?` `wait_ms?` | Start `editor/target/{release,debug}/prism-editor-egui` (falls back to `cargo run` if not built), wait for control channel ready |
+| `editor_status` | — | FPS, current scene, selected entity, Play / pause, unsaved mark, project root |
+| `editor_capture` | `target`(`window`/`scene`/`game`) `path?` `size?` | Capture whole window (UI + viewport) or a viewport engine offscreen image, return PNG path |
+| `editor_ui` | `action`(`snapshot`/`click`/`move`/`wheel`/`drag`/`set`) `node?` `offset?` `tab?` `x?` `y?` `delta?` `from?` `to?` `steps?` `mode?` `ctrl?` `value?` | UI node tree: snapshot / click node / viewport pointer move, scroll, drag / set node value |
+| `editor_play` | `action`(`play`/`stop`/`pause`) | Control Play (Play triggers project module compile + load) |
+| `editor_logs` | `since?` `limit?` | Read Console buffer: engine logs + project module `project:` logs + panic call stack |
+| `editor_input` | `key?` `mouse?` `state?` `click?` | Inject input into Play (one event per frame), `click=true` left-click once |
+| `editor_quit` | — | Normal exit path (writes `state.json`) |
 
-`editor_status` 里的 `project_module` 汇报 Game View 的用户项目模块：
-`available` / `loaded` / `building` / `auto_refresh` / `state`（`ready` / `pending` /
-`compiling` / `failed` / `unavailable`）/ `dirty` / `problems` / `manifest` / `error`。
-模块的编译和重载由编辑器自己完成（见 `docs/editor-egui.md` §3.2）。
+`editor_status`'s `project_module` reports Game View's user project module:
+`available` / `loaded` / `building` / `auto_refresh` / `state` (`ready` / `pending` /
+`compiling` / `failed` / `unavailable`) / `dirty` / `problems` / `manifest` / `error`.
+Module compilation and reload are done by editor itself (see `docs/editor-egui.md` §3.2).
 
-### UI 节点树（`editor_ui`）
+### UI node tree (`editor_ui`)
 
-egui 没有 DOM，也拿不到可以外部点击的控件句柄，所以节点树来自**数据模型** +
-每帧记录的 dock 面板矩形，`click` / `set` 走和界面完全相同的代码路径（`Command` /
-`Workspace::select` / `Workspace::set_field`），不注入合成鼠标事件。
+egui has no DOM, nor externally clickable control handles, so node tree comes from **data model** +
+dock panel rectangles recorded each frame, `click` / `set` walk the **exact same code path as UI** (`Command` /
+`Workspace::select` / `Workspace::set_field`), no synthetic mouse events injected.
 
-`snapshot` 返回：`dock`（每个 tab 一个节点，激活的那个展开子节点，带
-`bounds`）、`documents`、`assets`、`commands`，以及激活面板的子节点
-（`hierarchy` → 实体、`inspector` → 组件字段、`log` → 最近 50 行）。
+`snapshot` returns: `dock` (one node per tab, active one expands child nodes, with
+`bounds`), `documents`, `assets`, `commands`, and active panel's child nodes
+(`hierarchy` → entities, `inspector` → component fields, `log` → recent 50 lines).
 
-| 节点 id | 例子 | `click` | `set` |
-|---|---|---|---|
+| Node id | Example | `click` | `set` |
+|---------|---------|---------|-------|
 | `command:<Name>` | `command:Save` | ✅ | — |
-| `panel:<tab>` | `panel:hierarchy` | ✅（已开则切 tab，未开则打开） | — |
+| `panel:<tab>` | `panel:hierarchy` | ✅ (switch tab if open, open if not) | — |
 | `doc:<index>` | `doc:0` | ✅ | — |
-| `entity:<id>` | `entity:3` | ✅（选中） | — |
+| `entity:<id>` | `entity:3` | ✅ (select) | — |
 | `asset:<path>` | `asset:assets/prefabs/a.prefab.json` | ✅ | — |
 | `field:<entity>:<component>:<path>` | `field:3:Transform:position[1]` | — | ✅ |
 
-`field` 的 `path` 就是组件 JSON 的路径：对象用点号（`position.x`），数组既给出整体
-（`position` = `[x,y,z]`）也给出下标（`position[1]`）。路径不存在时 `ui.set` 会
-**报错并列出可用路径**（`Workspace::set_field` 自己找不到字段是静默返回的）。
-写回走 `Workspace::set_field`，所以是一次可撤销的字段修改。
+`field`'s `path` is component JSON path: objects use dot notation (`position.x`), arrays give both whole
+(`position` = `[x,y,z]`) and index (`position[1]`). When path doesn't exist, `ui.set` will
+**error and list available paths** (`Workspace::set_field` silently returns if it can't find field).
+Write-back goes through `Workspace::set_field`, so it's a single undoable field modification.
 
-`target=window` 走 Windows `PrintWindow`（`PW_RENDERFULLCONTENT`）：DWM 合成
-之后取样，所以 Vulkan 交换链内容和 UI 一起抓到，窗口部分在屏幕外也行；其它平台
-只支持 `scene` / `game`（引擎离屏图，不需要窗口）。编辑器菜单
-「Window → Capture Window」是同一套实现的本地快捷键。
+`target=window` uses Windows `PrintWindow` (`PW_RENDERFULLCONTENT`): samples after DWM composition,
+so Vulkan swapchain content and UI are captured together, window works even offscreen; other platforms
+only support `scene` / `game` (engine offscreen image, no window needed). Editor menu
+"Window → Capture Window" is the same implementation's local shortcut.

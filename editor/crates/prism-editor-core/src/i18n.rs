@@ -1,8 +1,9 @@
-//! 界面文案（`editor/src/i18n.ts` + `locales/*` 的 Rust 移植）。
+//! UI strings (Rust port of `editor/src/i18n.ts` + `locales/*`).
 //!
-//! 两份字典直接取自 Web 编辑器的 locale 源文件（JSON 由 TS 对象机械转换，
-//! 键路径与文案保持一致），所以同一个 key 在两边显示同一句话。缺失的 key
-//! 会回退到英文，再回退到 key 本身 —— 与前端 `t()` 的语义一致。
+//! Both dictionaries come directly from the web editor's locale source files (JSON
+//! mechanically converted from TS objects, keeping key paths and copy consistent), so the
+//! same key shows the same sentence on both sides. Missing keys fall back to English, then
+//! to the key itself — matching the frontend `t()` semantics.
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -27,7 +28,7 @@ impl Locale {
 
     pub fn label(self) -> &'static str {
         match self {
-            Locale::ZhCn => "简体中文",
+            Locale::ZhCn => "Simplified Chinese",
             Locale::EnUs => "English",
         }
     }
@@ -40,7 +41,7 @@ impl Locale {
         }
     }
 
-    /// 与前端一致：系统语言以 `en` 开头就用英文。
+    /// Consistent with the frontend: use English if the system language starts with `en`.
     pub fn detect(system_language: Option<&str>) -> Locale {
         match system_language {
             Some(language) if language.starts_with("en") => Locale::EnUs,
@@ -91,7 +92,7 @@ impl I18n {
             .map(String::as_str)
     }
 
-    /// `t("inspector.selectedCount", &[("count", "3")])`。
+    /// `t("inspector.selectedCount", &[("count", "3")])`.
     pub fn t(&self, path: &str, params: &[(&str, &str)]) -> String {
         let template = self
             .get(path)
@@ -108,7 +109,7 @@ impl I18n {
         self.t(path, &[])
     }
 
-    /// 字典里所有 key（调试 / 完整性测试用）。
+    /// All keys in the dictionary (for debugging / integrity tests).
     pub fn keys(&self) -> Vec<&str> {
         let mut keys: Vec<&str> = self
             .dictionary(self.locale)
@@ -119,7 +120,7 @@ impl I18n {
         keys
     }
 
-    /// 两种语言的 key 集合必须一致，缺一条就说明移植漏了。
+    /// The key sets of the two languages must match; a missing key means the port is incomplete.
     pub fn missing_keys(&self) -> Vec<String> {
         let zh = self.dictionary(Locale::ZhCn);
         let en = self.dictionary(Locale::EnUs);
@@ -178,10 +179,14 @@ mod tests {
         let i18n = I18n::default();
         assert!(
             i18n.missing_keys().is_empty(),
-            "locale 键不一致: {:?}",
+            "locale keys inconsistent: {:?}",
             i18n.missing_keys()
         );
-        assert!(i18n.keys().len() > 300, "字典条数 {}", i18n.keys().len());
+        assert!(
+            i18n.keys().len() > 300,
+            "dictionary entry count {}",
+            i18n.keys().len()
+        );
     }
 
     #[test]

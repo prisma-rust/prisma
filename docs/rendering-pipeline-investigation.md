@@ -1,47 +1,47 @@
-# 渲染管线调查与二分诊断方法论
+# Rendering Pipeline Investigation and Binary Diagnosis Methodology
 
-本文档系统总结在 Prisma 图形管线（光栅化、硬件光线追踪/路径追踪、RTXGI/SHARC 辐射度缓存）遇到画面异常、黑屏或未收敛时的标准排查方法与诊断流程。
+This document systematically summarizes standard troubleshooting procedures and diagnostic workflows for screen anomalies, black screens, or non-convergence encountered in Prisma's graphics pipeline (rasterization, hardware ray tracing / path tracing, RTXGI/SHARC radiance cache).
 
-核心原则：**环境解耦消假象、离线切片二分管线、字节码级审查状态机、量化差分可证伪**。
+Core principles: **environment decoupling eliminates illusions, offline slicing bisects pipeline, bytecode-level state machine review, quantitative falsifiable differentiation**.
 
 ---
 
-## 一、排查总览与思维模型
+## I. Troubleshooting Overview and Mental Model
 
 ```mermaid
 flowchart TD
-    A["画面全黑 / 效果异常 / 未知噪声"] --> B["1. 消除假象 (De-masking)"]
-    B --> B1["关闭 HDRI 天空盒与环境光强"]
-    B --> B2["解除 ECS/流式加载异步竞态"]
-    B1 & B2 --> C["2. 离线原子 Pass 二分切片"]
-    C --> C1["Step 1: Wireframe (顶点与拓扑)"]
-    C1 --> C2["Step 2: Depth & Normals (变换与法线)"]
-    C2 --> C3["Step 3: Forward Raster (UV与材质)"]
-    C3 --> C4["Step 4: Path Tracing Direct (光追与阴影)"]
-    C4 --> C5["Step 5: GI Cache / SHARC (间接光注入)"]
-    C --> D["3. 字节码与状态机审查"]
-    D --> D1["SPIR-V 反汇编核验矩阵布局"]
-    D --> D2["帧间累加脏标记 (pt_accum_dirty) 审查"]
-    C5 --> E["4. 量化与差分验证"]
-    E --> E1["像素覆盖率指标 (Coverage %)"]
-    E --> E2["15x 放大假彩色热力差分图"]
-    E --> E3["光栅化 vs 光追几何对齐差分"]
+    A["Screen all black / effect anomaly / unknown noise"] --> B["1. De-masking"]
+    B --> B1["Disable HDRI skybox and environment light intensity"]
+    B --> B2["Resolve ECS / streaming async race"]
+    B1 & B2 --> C["2. Offline atomic Pass bisection slicing"]
+    C --> C1["Step 1: Wireframe (vertices & topology)"]
+    C1 --> C2["Step 2: Depth & Normals (transform & normals)"]
+    C2 --> C3["Step 3: Forward Raster (UV & materials)"]
+    C3 --> C4["Step 4: Path Tracing Direct (ray tracing & shadows)"]
+    C4 --> C5["Step 5: GI Cache / SHARC (indirect light injection)"]
+    C --> D["3. Bytecode & state machine review"]
+    D --> D1["SPIR-V disassembly validates matrix layout"]
+    D --> D2["Inter-frame accumulation dirty mark (pt_accum_dirty) review"]
+    C5 --> E["4. Quantitative & differential validation"]
+    E --> E1["Pixel coverage metric (Coverage %)"]
+    E --> E2["15x amplified false-color heat diff"]
+    E --> E3["Rasterization vs ray tracing geometry alignment diff"]
 ```
 
 ---
 
-## 二、四个核心排查维度
+## II. Four Core Troubleshooting Dimensions
 
-### 1. 环境解耦与消除假象（De-masking）
+### 1. Environment Decoupling and Illusion Removal (De-masking)
 
-> **“在复杂的渲染管线中，最危险的 bug 往往被绚丽的背景或上层后处理所掩盖。”**
+> **"In complex rendering pipelines, the most dangerous bugs are often masked by gorgeous backgrounds or upper-level post-processing."**
 
-- **关闭全局天光 / HDRI Skybox**：
-  - 全景贴图或自发光天空球会把整个视口填满，产生“管线正常运行、有环境反射”的直觉误导，从而掩盖场景几何丢失、相机穿模或裁剪异常。
-  - **规则**：在排查几何与基础光照阶段，必须强制将天空盒设为 `enabled: false, intensity: 0.0`，保留纯黑背景，确保视口中出现的每一颗像素都来自于真实的场景网格。
-- **解耦流式异步加载与截屏时序**：
-  - 复杂 3D 资产（如 103 个子网格的 Crytek Sponza）在启动阶段依赖异步 IO 与反序列化。如果测试截屏仅依帧计数（如第 90 帧）无条件触发，截屏时模型可能尚未挂载至渲染列表。
-  - **规则**：截屏守卫必须校验数据就绪状态：
+- **Disable global skylight / HDRI Skybox**:
+  - Panorama texture or emissive sky sphere fills the entire viewport, creating an intuitive misconception that "the pipeline is running normally, with environment reflections," thereby masking geometry loss, camera clipping, or culling anomalies.
+  - **Rule**: During geometry and basic lighting troubleshooting, must force skybox to `enabled: false, intensity: 0.0`, retain pure black background, ensuring every pixel appearing in the viewport comes from real scene meshes.
+- **Decouple streaming async loading and screenshot timing**:
+  - Complex 3D assets (e.g. Crytek Sponza with 103 submeshes) depend on async IO and deserialization at startup. If screenshot is triggered unconditionally based only on frame count (e.g. frame 90), the model may not yet be mounted to the render list when screenshotting.
+  - **Rule**: Screenshot guard must verify data readiness:
     ```rust
     let frame_plan = screenshot.as_ref().filter(|plan| {
         !screenshot_done
@@ -49,71 +49,71 @@ flowchart TD
             && (!packet.draw_items.is_empty() || frame_count >= 300)
     });
     ```
-- **编写独立无头离线测试 Harness**：
-  - 遇到黑屏疑难杂症时，优先编写 `GraphRenderer::offscreen_new(w, h, None)` 离线测试，直接同步导入 glTF 并注册，消除窗口系统（Winit/X11/Wayland）、UI 悬浮窗和主循环事件泵的干扰。
+- **Write independent headless offline test harness**:
+  - When encountering black screen anomalies, prioritize writing `GraphRenderer::offscreen_new(w, h, None)` offline test, directly synchronously import glTF and register, eliminating window system (Winit / X11 / Wayland), UI floating window, and main loop event pump interference.
 
 ---
 
-### 2. 管线二分切片定位（Pipeline Binary Slicing）
+### 2. Pipeline Binary Slicing
 
-将渲染管线从输入到输出分解为不可再分的单 Pass，输出单步落盘截图：
+Decompose the rendering pipeline from input to output into indivisible single Passes, outputting single-step disk screenshots:
 
-| 诊断 Pass | 检查目标 | 异常表象 | 根因范围 |
-|---|---|---|---|
-| **Step 1: Wireframe** | 顶点与索引缓冲区拓扑 | 画面全黑，或线条错乱炸裂成尖刺 | 子网格未导入、IndexBuffer 越界、顶点步长 (Stride) 错位 |
-| **Step 2: Depth Buffer** | 透视投影与 Z 轴连续性 | 全白/全黑，或近处被切断 | 近远裁剪面参数颠倒、Projection 矩阵缺失、Reverse-Z 深度测试函数配错 (`GREATER` vs `LESS`) |
-| **Step 3: View Normals** | 顶点法线与面剔除 | 弧形柱面法线缺失平滑、背面穿透 | `cull_mode` 剔除错误、法线未归一化、Slang 矩阵转置导致逆转 |
-| **Step 4: Forward Raster** | 材质纹理与直接光照 | 纹理贴图纯黑或全白 | 描述符集绑定漂移、采样器未配置、光照着色器常数越界 |
-| **Step 5: Path Tracing Direct** | BVH 与射线击中着色 | 画面纯噪声散粒，无几何阴影 | TLAS/BLAS 加速结构未包含该网格、时间累积缓冲被每帧清零 |
-| **Step 6: GI Cache (SHARC)** | 辐射度空间哈希与反弹 | 间接光完全无变化 | 显存初始填充未完成、计算管线同步屏障缺失、哈希键 64 位原子操作未开启 |
+| Diagnostic Pass | Check Target | Anomaly | Root Cause Range |
+|-----------------|-------------|---------|------------------|
+| **Step 1: Wireframe** | Vertex & index buffer topology | All black, or lines messed up into spikes | Submesh not imported, IndexBuffer out of bounds, vertex stride misaligned |
+| **Step 2: Depth Buffer** | Perspective projection & Z continuity | All white / all black, or near clipped | Near/far clip plane params reversed, Projection matrix missing, Reverse-Z depth test function misconfigured (`GREATER` vs `LESS`) |
+| **Step 3: View Normals** | Vertex normals & face culling | Curved cylinder normals missing smoothing, backface penetration | `cull_mode` culling error, normal not normalized, Slang matrix transpose causing inversion |
+| **Step 4: Forward Raster** | Material texture & direct lighting | Texture map pure black or pure white | Descriptor set binding drift, sampler not configured, lighting shader constants out of bounds |
+| **Step 5: Path Tracing Direct** | BVH & ray hit shading | Pure noise speckles, no geometric shadows | TLAS / BLAS acceleration structure doesn't include the mesh, temporal accumulation buffer cleared every frame |
+| **Step 6: GI Cache (SHARC)** | Radiance spatial hash & bounce | Indirect light completely unchanged | VRAM initial fill not completed, compute pipeline sync barrier missing, hash key 64-bit atomic op not enabled |
 
 ---
 
-### 3. 字节码与底层状态机审查
+### 3. Bytecode and Underlying State Machine Review
 
-> **“高级 API 与语言绑定层往往隐藏了未收敛的状态陷阱或编译器语义偏差，切勿盲信现有 API。”**
+> **"High-level API and language binding layers often hide unconverged state traps or compiler semantic deviations; do not blindly trust existing APIs."**
 
-1. **Shader 字节码反汇编（`spirv-dis`）核验**：
-   - 现代着色器编译器（如 Slang）在编译为 Vulkan SPIR-V 时，矩阵属性默认为 `RowMajor`，在乘法处生成 `OpVectorTimesMatrix %vec %mat`。
-   - 这种排布在底层数学上与 Rust 传入的列主序数组自然等价为列向量乘法。若在 Host 侧盲目添加 `mat_transpose`，反而造成双重转置（Double Transpose），导致几何被拍平或投影翻转。遇到矩阵问题，以反汇编字节码推导为准。
-2. **累加缓冲与脏标记（Temporal State）审查**：
-   - 路径追踪依赖每帧将新采样加权混合到累加纹理中：
+1. **Shader bytecode disassembly (`spirv-dis`) verification**:
+   - Modern shader compilers (e.g. Slang) when compiling to Vulkan SPIR-V, matrix attributes default to `RowMajor`, generating `OpVectorTimesMatrix %vec %mat` at multiplication.
+   - This layout is naturally equivalent to column-vector multiplication at the underlying math level with column-major arrays passed from Rust. If blindly adding `mat_transpose` on the host side, it instead causes double transpose, leading to geometry being flattened or projection flipped. When encountering matrix issues, derive from disassembled bytecode.
+2. **Accumulation buffer and dirty mark (Temporal State) review**:
+   - Path tracing relies on weighting new samples into accumulation texture each frame:
      $$\text{Accum}_{N} = \frac{\text{Accum}_{N-1} \times (N-1) + \text{Color}_{\text{new}}}{N}$$
-   - 若 Host 层便利包装函数硬编码 `pt_accum_dirty: true`，每一帧都会强行重置采样计数并清空累加纹理，使画面永远停留在 $N=1$ 的高频散粒状态。
+   - If the host convenience wrapper hardcodes `pt_accum_dirty: true`, every frame forcibly resets sample count and clears accumulation texture, leaving the screen permanently at $N=1$ high-frequency speckle state.
 
 ---
 
-### 4. 量化指标与放大差分验证（Quantitative Falsification）
+### 4. Quantitative Metrics and Amplified Differential Validation
 
-1. **有效像素覆盖率（Pixel Coverage Metric）**：
-   - 统计有效像素占全图的百分比：
+1. **Effective pixel coverage metric**:
+   - Statistic percentage of valid pixels over full image:
      $$\text{Coverage} = \frac{\sum_{(x,y)} [\text{Pixel}(x,y) \neq \text{Background}]}{W \times H}$$
-   - 示例实测数据：
-     - Forward 光栅化：$518,400 / 518,400 = 100.0\%$
-     - Wireframe 线框：$449,604 / 518,400 = 86.7\%$
-     - Depth 透视深度：$347,159 / 518,400 = 67.0\%$
-   - **价值**：瞬间判断是否有子网格漏挂或相机未对准几何体，摆脱肉眼主观臆测。
-2. **15x 放大假彩色热力差分图（Amplified False-Color Diff）**：
-   - 间接光（GI）的反弹能量通常远低于直接光，人眼极难通过并排对比肉眼辨别其贡献。
-   - **算法**：
+   - Example measured data:
+     - Forward rasterization: $518,400 / 518,400 = 100.0\%$
+     - Wireframe: $449,604 / 518,400 = 86.7\%$
+     - Depth perspective: $347,159 / 518,400 = 67.0\%$
+   - **Value**: Instantly judge whether any submesh is missing or camera not aligned to geometry.
+2. **15x amplified false-color heat diff**:
+   - Indirect light (GI) bounce energy is usually far lower than direct light, human eye extremely hard to discern its contribution via side-by-side comparison.
+   - **Algorithm**:
      $$\text{Diff}(x, y) = \min(255, |\text{Image}_{\text{on}}(x, y) - \text{Image}_{\text{off}}(x, y)| \times 15)$$
-   - **判定准则**：
-     - 若变动像素为 0，说明 GI 缓存根本未生效（可能为空操作或管线未接通）。
-     - 若变动像素集中在走廊背光凹角、拱顶立柱交接处，且呈现连续渐变（如 Sponza 实测 44,159 像素受光，覆盖率 8.52%），则物理证明间接光真实注入。
-3. **跨管线几何结构对齐差分（Cross-Pipeline Structural Diff）**：
-   - 将光栅化结果与光线追踪结果相减：$|\text{Raster} - \text{PathTrace}|$。
-   - 轮廓边缘必须严丝合缝（0 像素边缘位移），差分纯粹来自于直接光模型与全局光照积分的亮度差异。
+   - **Judgment criteria**:
+     - If changed pixels = 0, GI cache is not taking effect at all (possibly no-op or pipeline not connected).
+     - If changed pixels concentrated at corridor backlight concave corners, dome column junctions, and present continuous gradient (e.g. Sponza measured 44,159 pixels lit, coverage 8.52%), then physically proves indirect light truly injected.
+3. **Cross-pipeline geometry structural diff**:
+   - Subtract raster result from ray tracing result: $|\text{Raster} - \text{PathTrace}|$.
+   - Contour edges must be seamlessly aligned (0 pixel edge displacement), diff purely comes from brightness difference between direct light model and global illumination integration.
 
 ---
 
-## 三、标准自检清单
+## III. Standard Self-Check Checklist
 
-在提交任何渲染相关改动前，请依序确认：
+Before submitting any rendering-related change, confirm in order:
 
-- [ ] 已在关闭天空盒的环境下观察几何形态。
-- [ ] 离线测试可在无窗口环境下通过 `cargo test --test debug_pipeline_*` 独立稳定复现。
-- [ ] Wireframe 拓扑清晰，无退化三角形，无大面积穿透穿模。
-- [ ] 深度缓冲与法线缓冲各向渐变平滑，剔除模式符合前后顺逆时针约定。
-- [ ] 路径追踪在固定相机下多帧运行，噪点明显随采样累加收敛，无每帧闪烁。
-- [ ] 间接光（RTXGI/SHARC）产出 15x 放大差分热力图，受光像素物理分布合理。
-- [ ] 运行 `python scripts/pr_ready.py --base origin/dev --quick` 全项呈现绿色 `✅`。
+- [ ] Observed geometry form with skybox disabled.
+- [ ] Offline test can independently and stably reproduce via `cargo test --test debug_pipeline_*` in windowless environment.
+- [ ] Wireframe topology clear, no degenerate triangles, no large-area penetration.
+- [ ] Depth buffer and normal buffer gradient smooth, culling mode consistent with front/back clockwise convention.
+- [ ] Path tracing runs multiple frames under fixed camera, noise obviously converges with sample accumulation, no per-frame flicker.
+- [ ] Indirect light (RTXGI / SHARC) produces 15x amplified diff heatmap, lit pixel physical distribution reasonable.
+- [ ] Run `python scripts/pr_ready.py --base origin/dev --quick` all green `✅`.

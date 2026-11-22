@@ -737,22 +737,22 @@ pub(super) fn now_ms() -> u64 {
 
 pub(super) fn default_panels() -> Vec<PanelInfo> {
     let mut panels: Vec<PanelInfo> = [
-        ("sceneView", "场景视图"),
-        ("gameView", "游戏视图"),
-        ("docs", "文档"),
-        ("hierarchy", "层级"),
-        ("assets", "资产"),
-        ("inspector", "检查器"),
-        ("log", "日志"),
-        ("renderGraph", "渲染图"),
-        ("projectSettings", "项目设置"),
-        ("preferences", "首选项"),
-        ("theme", "界面主题"),
-        ("build", "构建项目"),
-        ("tools", "离线工具"),
-        ("history", "撤销历史"),
-        ("shortcuts", "键盘快捷键"),
-        ("about", "关于 Prisma Editor"),
+        ("sceneView", "Scene View"),
+        ("gameView", "Game View"),
+        ("docs", "Documents"),
+        ("hierarchy", "Hierarchy"),
+        ("assets", "Assets"),
+        ("inspector", "Inspector"),
+        ("log", "Log"),
+        ("renderGraph", "RenderGraph"),
+        ("projectSettings", "Project Settings"),
+        ("preferences", "Preferences"),
+        ("theme", "Theme"),
+        ("build", "Build Project"),
+        ("tools", "Offline Tools"),
+        ("history", "Undo History"),
+        ("shortcuts", "Keyboard Shortcuts"),
+        ("about", "About Prisma Editor"),
     ]
     .iter()
     .map(|(id, title)| PanelInfo::new(id, title))
@@ -886,7 +886,7 @@ impl Workspace {
             LogSource::Editor,
             LogLevel::Info,
             format!(
-                "已载入 fixture：{} 个文档 / {} 个资产",
+                "loaded fixture: {} documents / {} assets",
                 workspace.docs.len(),
                 workspace.assets.len()
             ),
@@ -967,7 +967,7 @@ impl Workspace {
                     self.log(
                         LogSource::Editor,
                         LogLevel::Info,
-                        format!("已打开模板 {path}"),
+                        format!("opened template {path}"),
                     );
                 }
             }
@@ -996,7 +996,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("新建{}", kind.folder()),
+            format!("new {}", kind.folder()),
         );
     }
 
@@ -1030,7 +1030,7 @@ impl Workspace {
             document.mark_saved();
             document.title()
         };
-        self.log(LogSource::Editor, LogLevel::Info, format!("已保存 {title}"));
+        self.log(LogSource::Editor, LogLevel::Info, format!("saved {title}"));
     }
 
     pub fn edit<T>(
@@ -1150,7 +1150,7 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Info,
-                format!("撤销 {undone} 步"),
+                format!("undid {undone} step(s)"),
             );
         }
         undone
@@ -1158,7 +1158,7 @@ impl Workspace {
 
     pub fn clear_history(&mut self) {
         self.document_mut().undo.clear();
-        self.log(LogSource::Editor, LogLevel::Info, "已清空撤销历史");
+        self.log(LogSource::Editor, LogLevel::Info, "cleared undo history");
     }
 
     pub fn history_entries(&self) -> Vec<(String, bool)> {
@@ -1401,7 +1401,7 @@ impl Workspace {
         self.playing = true;
         self.paused = false;
         self.play_time_s = 0.0;
-        self.log(LogSource::Editor, LogLevel::Info, "进入 Play 模式");
+        self.log(LogSource::Editor, LogLevel::Info, "entered Play mode");
     }
 
     pub fn stop(&mut self) {
@@ -1418,10 +1418,10 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Info,
-                "停止 Play：已丢弃播放期间的编辑，恢复进入前的文档",
+                "stopped Play: edits during playback discarded, restored document from before entering Play",
             );
         } else {
-            self.log(LogSource::Editor, LogLevel::Info, "停止 Play");
+            self.log(LogSource::Editor, LogLevel::Info, "stopped Play");
         }
     }
 
@@ -1485,11 +1485,11 @@ impl Workspace {
 
     pub fn play_state_label(&self) -> &'static str {
         if !self.playing {
-            "编辑"
+            "Edit"
         } else if self.paused {
-            "暂停"
+            "Pause"
         } else {
-            "运行"
+            "Run"
         }
     }
 
@@ -1499,11 +1499,11 @@ impl Workspace {
             Command::NewPrefab => self.new_document(DocKind::Prefab, None),
             Command::OpenDocument => self.toggle_panel("docs"),
             Command::Save => match self.save_active() {
-                Ok(path) => self.status = format!("已保存 {path}"),
+                Ok(path) => self.status = format!("saved {path}"),
                 Err(error) => self.log(
                     LogSource::Editor,
                     LogLevel::Error,
-                    format!("保存失败：{error}"),
+                    format!("save failed: {error}"),
                 ),
             },
             Command::ReloadDocument => {
@@ -1511,7 +1511,7 @@ impl Workspace {
                     self.log(
                         LogSource::Editor,
                         LogLevel::Error,
-                        format!("重新读取失败：{error}"),
+                        format!("reload failed: {error}"),
                     );
                 }
             }
@@ -1519,7 +1519,7 @@ impl Workspace {
                 self.log(
                     LogSource::Editor,
                     LogLevel::Warn,
-                    "重命名 / 删除请在资产面板或文件系统里做（编辑器暂不提供破坏性操作）",
+                    "rename / delete in the asset panel or file system (editor does not yet provide destructive operations)",
                 );
             }
             Command::Undo => self.undo(),
@@ -1533,7 +1533,7 @@ impl Workspace {
             Command::PasteComponent => self.paste_component(),
             Command::ClearComponentClipboard => {
                 self.clipboard = None;
-                self.status = "已清空组件剪贴板".to_string();
+                self.status = "component clipboard cleared".to_string();
             }
             Command::ResetLayout => self.set_layout_preset("default"),
             Command::CopyEntity => {

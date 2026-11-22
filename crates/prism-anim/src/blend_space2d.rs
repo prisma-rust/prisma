@@ -1,20 +1,23 @@
-//! 二维混合空间（速度 × 方向，`#560 P1`）。
+//! 2D blend space (velocity × direction, `#560 P1`).
 //!
-//! 作者给一组样本 `(x, y) → clip`，运行时用参数平面上的一个点求姿态。
-//! 与一维混合空间一样，这一层只做数学，不依赖 engine / render / ECS。
+//! The author provides a set of samples `(x, y) → clip`; at runtime a point on the parameter
+//! plane is used to compute the pose. Like the 1D blend space, this layer only does math and
+//! does not depend on engine / render / ECS.
 //!
-//! 求值分两步：
+//! Evaluation is two steps:
 //!
-//! 1. 把样本点三角化（Delaunay）。三角化在 [`BlendSpace2D::new`] 里算一次，
-//!    每帧只做「找三角形 + 重心插值」；
-//! 2. 重心坐标落在凸包外时把负权重夹到 0 再归一化 —— 效果是投到最近的凸包
-//!    边界上，而不是把角色弹回某个样本姿态。
+//! 1. Triangulate the sample points (Delaunay). Triangulation is computed once in
+//!    [`BlendSpace2D::new`]; each frame only does "find triangle + barycentric interpolation";
+//! 2. When barycentric coordinates fall outside the convex hull, negative weights are clamped
+//!    to 0 and renormalized — the effect is projection onto the nearest convex hull boundary,
+//!    rather than snapping the character back to some sample pose.
 //!
-//! 样本少于 3 个、全部共线、或者位置非有限时没有可用三角形，`evaluate_into`
-//! 返回 `false`，调用方退回一维 / 单剪辑。
+//! Fewer than 3 samples, all collinear, or non-finite positions mean no usable triangle;
+//! `evaluate_into` returns `false` and the caller falls back to 1D / single clip.
 //!
-//! 坐标约定：`x` 通常对应速度（走 / 跑），`y` 对应方向（前 / 后 / 左 / 右）；
-//! 单位由作者决定，这里只比较相对位置。
+//! Coordinate convention: `x` usually corresponds to speed (walk / run), `y` to direction
+//! (front / back / left / right); units are decided by the author, only relative positions
+//! are compared here.
 
 use std::sync::Arc;
 
@@ -23,36 +26,37 @@ use crate::clip::Clip;
 use crate::pose::Pose;
 use crate::sync::SyncGroup;
 
-/// 二维混合空间的一个采样点：`position` 是参数平面上的坐标，`clip` 是对应剪辑。
+/// One sample point of the 2D blend space: `position` is the coordinate on the parameter plane, `clip` is the corresponding clip.
 #[derive(Debug, Clone)]
 pub struct BlendSample2D {
     pub position: [f32; 2],
     pub clip: Arc<Clip>,
 }
 
-/// 二维混合空间。
+/// 2D blend space.
 ///
-/// 与 [`BlendSpace1D`](crate::blend::BlendSpace1D) 一样，每个剪辑采样前先把姿态
-/// 重置成 `reference`：剪辑只覆盖部分轨道时，没覆盖的关节保持 reference，不会
-/// 塌成单位变换。
+/// Like [`BlendSpace1D`](crate::blend::BlendSpace1D), each clip's pose is reset to `reference`
+/// before sampling: when a clip only covers some tracks, uncovered joints keep reference and
+/// do not collapse to identity.
 #[derive(Debug, Clone, Default)]
 pub struct BlendSpace2D {
     samples: Vec<BlendSample2D>,
-    /// 三角化结果，元素是 `samples` 的下标，三角形按逆时针排列。
+    /// Triangulation result; elements are indices into `samples`, triangles arranged counter-clockwise.
     triangles: Vec<[usize; 3]>,
     reference: Pose,
-    /// 所有样本都有同步标记时，用第一个样本做领跑剪辑映射相位。
+    /// When all samples have sync markers, use the first sample as the leading clip for phase mapping.
     sync: Option<SyncGroup>,
-    /// 三个样本姿态 + 一个累加缓冲；每帧复用，避免求值时分配。
+    /// Three sample poses + one accumulation buffer; reused each frame to avoid allocation during evaluation.
     scratch: [Pose; 4],
 }
 
 impl BlendSpace2D {
-    /// 建一个二维混合空间。
+    /// Build a 2D blend space.
     ///
-    /// - 丢掉位置非有限（NaN / ∞）的样本；
-    /// - 同一坐标只保留第一个样本（重复点会让三角化退化），保持作者顺序；
-    /// - 少于 3 个不共线的点时不产生三角形。
+    /// - Drop samples with non-finite positions (NaN / ∞);
+    /// - Keep only the first sample at the same coordinate (duplicate points would degenerate
+    ///   triangulation), preserving the author's order;
+    /// - No triangles are produced when fewer than 3 non-collinear points.
     pub fn new(samples: Vec<BlendSample2D>, reference: Pose) -> Self {
         let mut unique: Vec<BlendSample2D> = Vec::with_capacity(samples.len());
         for sample in samples {
@@ -84,8 +88,8 @@ impl BlendSpace2D {
         }
     }
 
-    /// 样本 `index` 实际使用的归一化相位（同 [`BlendSpace1D`](crate::blend::BlendSpace1D)）。
-    /// `leader` 是当前权重最大的样本。
+    /// The normalized phase actually used for sample `index` (same as [`BlendSpace1D`](crate::blend::BlendSpace1D)).
+    /// `leader` is the sample with the highest current weight.
     fn phase_for(&self, leader: usize, index: usize, phase: f32) -> f32 {
         self.sync
             .as_ref()
@@ -101,14 +105,14 @@ impl BlendSpace2D {
         &self.samples
     }
 
-    /// 三角化结果（`samples` 的下标，逆时针）。编辑器可以拿它画样本网格。
+    /// Triangulation result (indices into `samples`, counter-clockwise). Editors can use it to draw the sample grid.
     pub fn triangles(&self) -> &[[usize; 3]] {
         &self.triangles
     }
 
-    /// 当前参数下权重最大的样本下标（Notify 的 Dominant 策略用）。
+    /// Index of the highest-weight sample at the current parameter (used by Notify's Dominant strategy).
     ///
-    /// 权重相同取三角形里更靠前的顶点；没有可用三角形时返回 `None`。
+    /// When weights are equal, take the earlier vertex in the triangle; returns `None` when no triangle is available.
     pub fn dominant_sample(&self, at: [f32; 2]) -> Option<usize> {
         let (vertices, weights) = self.weights_at(at)?;
         let (slot, _) = weights
@@ -122,16 +126,16 @@ impl BlendSpace2D {
         self.samples.is_empty() || self.triangles.is_empty()
     }
 
-    /// 在参数平面的 `at` 处求值到 `out`。
+    /// Evaluate at `at` on the parameter plane into `out`.
     ///
-    /// 返回 `false` 时**不动** `out`（没有可用三角形 / 采样失败），调用方可以
-    /// 保留上一帧的姿态。
+    /// Returns `false` while **not touching** `out` (no available triangle / sampling failure),
+    /// so the caller can keep the previous frame's pose.
     pub fn evaluate_into(&mut self, at: [f32; 2], phase: f32, out: &mut Pose) -> bool {
         let Some((vertices, weights)) = self.weights_at(at) else {
             return false;
         };
 
-        // 先把三个样本姿态都采样到 scratch，再按权重合成。
+        // Sample all three sample poses into scratch, then blend by weight.
         let leader_slot = weights
             .iter()
             .enumerate()
@@ -151,10 +155,10 @@ impl BlendSpace2D {
         true
     }
 
-    /// 每个样本用**自己的相位**求值（独立播放头）。
+    /// Evaluate each sample with **its own phase** (independent playhead).
     ///
-    /// `phases[i]` 是 `samples[i]` 的归一化相位；缺失的样本按 0 采样。不做
-    /// SyncGroup 相位映射——调用方已经为每个样本算好了自己的时间。
+    /// `phases[i]` is the normalized phase of `samples[i]`; missing samples are sampled at 0. No
+    /// SyncGroup phase mapping is done — the caller has already computed its own time for each sample.
     pub fn evaluate_into_with_phases(
         &mut self,
         at: [f32; 2],
@@ -175,11 +179,12 @@ impl BlendSpace2D {
         blend_weighted_into(out, &mut self.scratch, &weights);
         true
     }
-    /// 查询点对应的三角形与三个重心权重。
+    /// The triangle and three barycentric weights corresponding to the query point.
     ///
-    /// 点落在某个三角形内时直接用它的重心坐标；所有三角形都不包含时，取**离
-    /// 查询点最近的三角形边界**上的点（边或顶点）作为结果，权重一定非负且和为 1。
-    /// 没有可用三角形时返回 `None`。
+    /// When the point is inside a triangle, its barycentric coordinates are used directly; when no
+    /// triangle contains it, the point on the **nearest triangle boundary** to the query point (edge
+    /// or vertex) is taken as the result, with weights guaranteed non-negative and summing to 1.
+    /// Returns `None` when no triangle is available.
     fn weights_at(&self, at: [f32; 2]) -> Option<([usize; 3], [f32; 3])> {
         if !at[0].is_finite() || !at[1].is_finite() || self.triangles.is_empty() {
             return None;
@@ -225,9 +230,11 @@ impl BlendSpace2D {
     }
 }
 
-/// 查询点到三角形边界的最近点，返回该点关于三个顶点的权重。
+/// The nearest point on the triangle boundary to the query point, returning that point's weights
+/// with respect to the three vertices.
 ///
-/// 三条边各投影一次取距离最小；顶点由线段的 `t = 0 / 1` 端点覆盖。
+/// Each edge is projected once and the smallest distance taken; vertices are covered by the segment
+/// `t = 0 / 1` endpoints.
 fn closest_on_triangle(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> ([f64; 3], f64) {
     let mut best = ([0.0; 3], f64::INFINITY);
     for (weights, distance_sq) in [
@@ -242,9 +249,10 @@ fn closest_on_triangle(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> ([
     best
 }
 
-/// 查询点到线段 `from → to` 的最近点，返回 `(a, b, c)` 顺序的权重与距离平方。
+/// The nearest point on the segment `from → to` to the query point, returning the weights in `(a, b, c)`
+/// order and the squared distance.
 ///
-/// `from_slot` / `to_slot` 是线段两个端点在三角形里的下标。
+/// `from_slot` / `to_slot` are the indices of the segment's two endpoints within the triangle.
 fn closest_on_edge(
     p: [f64; 2],
     from: [f64; 2],
@@ -272,14 +280,14 @@ fn to_f64(point: [f32; 2]) -> [f64; 2] {
     [point[0] as f64, point[1] as f64]
 }
 
-/// 三个样本姿态按权重合成到 `out`。
+/// Blend three sample poses by weight into `out`.
 ///
-/// 从权重最大的样本开始，逐个用 `blend_into` 累加（旋转走 slerp，与一维混合
-/// 空间一致）。`scratch[3]` 用来保存累加结果，因为 `blend_into` 不能把同一个
-/// 姿态同时当输入和输出。
+/// Starting from the highest-weight sample, accumulate one by one with `blend_into` (rotation uses
+/// slerp, consistent with the 1D blend space). `scratch[3]` is used to hold the accumulation result
+/// because `blend_into` cannot use the same pose as both input and output.
 fn blend_weighted_into(out: &mut Pose, scratch: &mut [Pose; 4], weights: &[f32; 3]) {
     let mut order = [0usize, 1, 2];
-    // 权重降序：先放最大的，避免 `t = w / total` 从 0 开始。
+    // Weights in descending order: put the largest first, so `t = w / total` does not start from 0.
     order.sort_by(|a, b| weights[*b].total_cmp(&weights[*a]));
     let first = order[0];
     out.copy_from(&scratch[first]);
@@ -296,9 +304,10 @@ fn blend_weighted_into(out: &mut Pose, scratch: &mut [Pose; 4], weights: &[f32; 
     }
 }
 
-/// 三角形内一点的三个重心权重（与顶点顺序对应），顶点须逆时针。
+/// The three barycentric weights of a point inside the triangle (corresponding to vertex order);
+/// vertices must be counter-clockwise.
 ///
-/// 退化三角形返回全 0，让调用方把它当成「不包含查询点」。
+/// Degenerate triangles return all zeros, so the caller treats them as "does not contain the query point".
 fn barycentric(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> [f64; 3] {
     let area = cross(sub(b, a), sub(c, a));
     if area.abs() <= 1e-12 {
@@ -318,9 +327,10 @@ fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 
-/// Bowyer–Watson 增量三角化。返回 `points` 的下标三元组（逆时针）。
+/// Bowyer–Watson incremental triangulation. Returns index triples of `points` (counter-clockwise).
 ///
-/// 点数很少（作者手填的混合空间样本），所以这里直接 O(n²) 实现；不做空间索引。
+/// Few points (blend space samples hand-filled by the author), so a direct O(n²) implementation
+/// is used here; no spatial index.
 fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
     if points.len() < 3 {
         return Vec::new();
@@ -334,10 +344,10 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
     }
     let span = (max[0] - min[0]).max(max[1] - min[1]).max(1.0);
     let mid = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
-    // 超级三角形：把整个包围盒包住，最后再删掉引用它的三角形。
+    // Super triangle: cover the entire bounding box, then delete triangles referencing it later.
     let super_start = points.len();
     let mut all = points.to_vec();
-    // 逆时针顺序：外接圆判定依赖三角形方向。
+    // Counter-clockwise order: the circumcircle test depends on triangle orientation.
     all.push([mid[0] - 32.0 * span, mid[1] - span]);
     all.push([mid[0] + 32.0 * span, mid[1] - span]);
     all.push([mid[0], mid[1] + 32.0 * span]);
@@ -358,8 +368,8 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
                     (triangle[1], triangle[2]),
                     (triangle[2], triangle[0]),
                 ] {
-                    // 共享边会在相邻三角形里以相反方向出现，抵消掉；剩下的就是
-                    // 新三角形的边界。
+                    // Shared edges appear in the opposite direction in adjacent triangles and cancel out;
+                    // the remainder is the boundary of the new triangle.
                     if let Some(position) = edges
                         .iter()
                         .position(|candidate| *candidate == (edge.1, edge.0))
@@ -382,7 +392,7 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
         }
         triangles = kept;
     }
-    // 删掉超级三角形的顶点，并保持确定性顺序（按最小下标 + 其余两个排序）。
+    // Delete the super triangle's vertices and keep a deterministic order (sort by smallest index + the other two).
     let mut result: Vec<[usize; 3]> = triangles
         .into_iter()
         .filter(|triangle| triangle.iter().all(|index| *index < super_start))
@@ -401,15 +411,16 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
     result
 }
 
-/// 点是否严格落在三角形的外接圆内（三角形须逆时针）。
+/// Whether the point is strictly inside the triangle's circumcircle (triangle must be counter-clockwise).
 fn in_circumcircle(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
-    // 平移到 p，避免大坐标相减丢精度。
+    // Translate to p to avoid loss of precision from subtracting large coordinates.
     let (ax, ay) = (a[0] - p[0], a[1] - p[1]);
     let (bx, by) = (b[0] - p[0], b[1] - p[1]);
     let (cx, cy) = (c[0] - p[0], c[1] - p[1]);
     let det = (ax * ax + ay * ay) * (bx * cy - by * cx) - (bx * bx + by * by) * (ax * cy - ay * cx)
         + (cx * cx + cy * cy) * (ax * by - ay * bx);
-    // 逆时针三角形的行列式为正表示在外接圆内；共圆（≈0）不算，避免无穷递归。
+    // For counter-clockwise triangles, a positive determinant means inside the circumcircle;
+    // co-circular (≈0) doesn't count, to avoid infinite recursion.
     det > 1e-12
 }
 

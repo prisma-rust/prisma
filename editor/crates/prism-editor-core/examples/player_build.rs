@@ -1,14 +1,14 @@
-//! 无头复刻编辑器的「构建项目」：`cargo build` → `build-scenes` → 拷产物。
+//! Headless recreation of the editor's "build project": `cargo build` → `build-scenes` → copy artifacts.
 //!
-//! 用法（项目根是含 `assets/settings.ini` 的目录）：
+//! Usage (project root is the directory containing `assets/settings.ini`):
 //!
 //! ```text
 //! cargo run -p prism-editor-core --example player_build -- projects/fishing
 //! ```
 //!
-//! 存在的意义：#989 这类「产物清单漏文件」的问题只有真的跑一遍发布布局才能发现，
-//! 而在 UI 里点按钮没法进 CI。这个 example 走的是**编辑器同一份** [`plan_build`] /
-//! [`copy_artifacts`]，所以它可以当作发布冒烟脚本。
+//! Reason for existence: #989-style "artifact manifest missing files" problems are only discovered by actually running a full release layout,
+//! and clicking buttons in the UI can't get into CI. This example walks the **editor's same** [`plan_build`] /
+//! [`copy_artifacts`], so it can serve as a release smoke script.
 
 use prism_editor_core::{build, settings::SettingsCache};
 use std::path::PathBuf;
@@ -64,7 +64,7 @@ fn main() -> ExitCode {
         }
     }
 
-    // `required` 是**发布目录里的**可执行文件，拷完才有。
+    // `required` is the **executable in the release directory**, only present after copy.
     for required in &plan.required {
         if !required.is_file() {
             eprintln!("missing build output: {}", required.display());

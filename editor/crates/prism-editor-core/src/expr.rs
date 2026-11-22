@@ -1,10 +1,10 @@
-//! 数值输入框里的表达式求值（Unity 的 `EditorGUI.NumberFieldValue` 等价物）。
+//! Expression evaluation in numeric input boxes (equivalent to Unity's `EditorGUI.NumberFieldValue`).
 //!
-//! 检查器里的数字曾经只能点进去敲一个字面量：想填 90° 的一半得自己算 45。Unity 的
-//! 数字框接受算式（`90/2`、`2*3`、`sin(30)`），这里实现同一件事。
+//! Numbers in the inspector could only be typed as literals: to fill half of 90° you had to compute 45 yourself. Unity's
+//! number box accepts expressions (`90/2`, `2*3`, `sin(30)`), this implements the same thing.
 //!
-//! 只做纯算术，不引入脚本引擎：数字、`+ - * / %`、`^`（幂，右结合）、括号、
-//! 一元正负，外加几个常量与函数。**三角函数用角度**，与检查器里显示的 `°` 一致。
+//! Pure arithmetic only, no script engine: numbers, `+ - * / %`, `^` (power, right-associative), parentheses,
+//! unary plus/minus, plus some constants and functions. **Trigonometric functions use degrees**, consistent with `°` shown in inspector.
 //!
 //! ```text
 //! evaluate("90/2")            => Some(45.0)
@@ -14,24 +14,24 @@
 //! evaluate("90/")             => None
 //! ```
 //!
-//! 返回值必须是有限数：`1/0`、`sqrt(-1)` 一律 `None`，让调用方保留原值。
+//! Return value must be finite: `1/0`, `sqrt(-1)` all `None`, letting caller retain original value.
 
-/// 求值失败时的统一返回。
+/// Unified return type when evaluation fails.
 pub type EvalResult = Option<f64>;
 
-/// 解析并求值一个表达式；语法错误、未知函数/常量、非有限结果都返回 `None`。
+/// Parse and evaluate an expression; syntax errors, unknown functions/constants, and non-finite results all return `None`.
 pub fn evaluate(input: &str) -> EvalResult {
     let tokens = tokenize(input)?;
     let mut parser = Parser { tokens, pos: 0 };
     let value = parser.expression()?;
     if parser.pos != parser.tokens.len() {
-        // 尾部还有没吃掉的 token（`1 2`、`(1+2` 的多余片段）。
+        // Trailing unconsumed tokens (`1 2`, extra fragment of `(1+2`).
         return None;
     }
     value.is_finite().then_some(value)
 }
 
-/// 输入框里只有数字（最常见的情况）时走捷径，省掉分词的分配。
+/// Fast path when the input box contains only a number (the most common case), skipping tokenization allocation.
 pub fn parse_number_or_expression(input: &str) -> EvalResult {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -44,7 +44,7 @@ pub fn parse_number_or_expression(input: &str) -> EvalResult {
 }
 
 // ---------------------------------------------------------------------------
-// 词法
+// Lexer
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,7 +105,7 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
                 }
                 let text: String = chars[start..index].iter().collect();
                 tokens.push(Token::Number(text.parse().ok()?));
-                // 数字自己已经走到结尾了，别再被末尾的 `index += 1` 吃掉一个字符。
+                // The number already advanced to the end; don't let the trailing `index += 1` consume another character.
                 continue;
             }
             _ if ch.is_alphabetic() || ch == '_' => {
@@ -126,10 +126,10 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
 }
 
 // ---------------------------------------------------------------------------
-// 语法：expr := term (('+'|'-') term)*
+// Grammar: expr := term (('+'|'-') term)*
 //       term := unary (('*'|'/'|'%') unary)*
 //       unary := ('+'|'-') unary | power
-//       power := primary ('^' unary)?      （右结合：2^3^2 = 2^9）
+//       power := primary ('^' unary)?      (right-associative: 2^3^2 = 2^9)
 //       primary := number | ident | ident '(' args ')' | '(' expr ')'
 // ---------------------------------------------------------------------------
 
@@ -267,7 +267,7 @@ fn constant(name: &str) -> EvalResult {
     }
 }
 
-/// 函数表。三角函数吃/吐**角度**，与检查器里 `°` 的显示一致。
+/// Function table. Trigonometric functions take/return **degrees**, consistent with `°` shown in the inspector.
 fn function(name: &str, args: &[f64]) -> EvalResult {
     let unary = |expected: usize| (args.len() == expected).then_some(());
     match name {
@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(value("(2+3)*4"), 20.0);
         assert_eq!(value("90/2"), 45.0);
         assert_eq!(value("7%4"), 3.0);
-        assert_eq!(value("2^3^2"), 512.0, "幂是右结合的");
+        assert_eq!(value("2^3^2"), 512.0, "powers are right-associative");
         assert_eq!(value("-(2+3)"), -5.0);
     }
 
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(parse_number_or_expression(" 90/2 "), Some(45.0));
         assert_eq!(parse_number_or_expression(""), None);
         assert_eq!(parse_number_or_expression("abc"), None);
-        // 结果必须有限：溢出到 inf 的式子也拒绝。
+        // Result must be finite: expressions overflowing to inf are also rejected.
         assert_eq!(evaluate("1e308*10"), None);
     }
 }

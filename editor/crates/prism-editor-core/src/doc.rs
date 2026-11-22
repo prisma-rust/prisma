@@ -1,8 +1,8 @@
-//! 场景/预制体文档模型（`.scene.json` 的 Rust 镜像）。
+//! Scene / prefab document model (Rust mirror of `.scene.json`).
 //!
-//! 与 `editor/src/types.ts` 的 `SceneDoc` / `EntityJson` 一一对应，字段名保持
-//! camelCase；`parent` 指向实体的稳定 `id`（v3 起不再用数组下标），因此层级
-//! 重排、删除、预制体实例化都不会让父子关系漂移。
+//! One-to-one with `editor/src/types.ts`'s `SceneDoc` / `EntityJson`, field names kept in
+//! camelCase; `parent` points to the entity's stable `id` (no longer array index since v3), so
+//! hierarchy reordering, deletion, and prefab instantiation don't let parent-child links drift.
 
 use crate::components::ComponentMap;
 use crate::schema::Schema;
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// 预制体实例链接组件名（编辑器元数据，引擎运行时不查询）。
+/// Prefab instance link component name (editor metadata, not queried by the engine runtime).
 pub const PREFAB_LINK_COMPONENT: &str = "prism_engine::scene::PrefabInstance";
 
 ///
@@ -47,7 +47,8 @@ impl Default for TransformJson {
 }
 
 impl TransformJson {
-    /// 平移增量（欧拉角不作为真理源；编辑器只写 position/rotation/scale）。
+    /// Translation delta (Euler angles are not the source of truth; the editor only writes
+    /// position / rotation / scale).
     pub fn translated(mut self, delta: [f32; 3]) -> Self {
         for (axis, value) in delta.iter().enumerate() {
             self.position[axis] += value;
@@ -62,16 +63,16 @@ pub struct EntityJson {
     pub id: Option<u32>,
     #[serde(default)]
     pub name: Option<String>,
-    /// 父实体的 `id`（不是数组下标）。
+    /// Parent entity's `id` (not an array index).
     #[serde(default)]
     pub parent: Option<u32>,
     #[serde(default)]
     pub transform: TransformJson,
-    /// 组件表，顺序 = 检查器里的显示顺序 = 作者添加 / 排布的顺序（#512）。
+    /// Component table; order = inspector display order = author's add / arrange order (#512).
     #[serde(default)]
     pub components: ComponentMap,
-    /// 编辑器不认识的实体级键（`_note`、工具元数据等）。保存时原样写回，
-    /// 不能因为一次 Save 就静默丢数据（#615）。
+    /// Entity-level keys the editor doesn't recognize (`_note`, tool metadata, etc.). Written
+    /// back as-is on save, so data must not be silently dropped by a single Save (#615).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -129,7 +130,8 @@ pub struct SceneDoc {
     pub version: u32,
     #[serde(default)]
     pub entities: Vec<EntityJson>,
-    /// 文档级未知键（`_comment`、`x_meta` 等）。原样保留并在 Save 时写回（#615）。
+    /// Document-level unknown keys (`_comment`, `x_meta`, etc.). Kept as-is and written back
+    /// on Save (#615).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -157,14 +159,15 @@ impl SceneDoc {
         serde_json::to_string_pretty(self).unwrap_or_default()
     }
 
-    /// 写盘前去掉 schema 默认值与只读派生字段（#636）。
+    /// Remove schema defaults and read-only derived fields before writing to disk (#636).
     ///
-    /// 编辑器内存里的组件经过 hydration 后会带齐所有默认值；直接序列化会把
-    /// 它们全部写进作者文档，并连带写出 `Camera.aspect` 这种 `read_only`
-    /// 字段。这里按 schema 做「默认值省略」，读取端仍靠 serde/反射默认值补回。
+    /// Components in editor memory, after hydration, carry all default values; serializing
+    /// directly would write them all into the authoring document, including `read_only` fields
+    /// like `Camera.aspect`. Here we do "default omission" per schema; the reading side still
+    /// fills them back via serde / reflection defaults.
     ///
-    /// 只处理组件顶层字段：嵌套 struct 里部分改动的对象整体保留，避免破坏
-    /// 没有 `serde(default)` 的嵌套类型。
+    /// Only top-level component fields are handled: partially modified objects in nested structs
+    /// are kept whole, to avoid breaking nested types without `serde(default)`.
     pub fn prune_defaults(&mut self, schema: &Schema) {
         for entity in &mut self.entities {
             for (name, value) in entity.components.iter_mut() {
@@ -191,11 +194,11 @@ impl SceneDoc {
         }
     }
 
-    /// 给缺失 id 的实体按数组顺序补 id，并把 `parent`（旧文档里可能是下标）
-    /// 迁移成 id。与 `prism_scene::migrate_scene_doc` 的意图一致。
+    /// Fill in missing ids in array order, and migrate `parent` (possibly an index in old docs)
+    /// to ids. Consistent with `prism_scene::migrate_scene_doc`'s intent.
     pub fn normalize(&mut self) {
         if self.version < DOC_VERSION {
-            // v1/v2：parent 是下标。
+            // v1/v2: parent is an index.
             let index_to_id: Vec<u32> = (0..self.entities.len()).map(|i| i as u32 + 1).collect();
             for (index, entity) in self.entities.iter_mut().enumerate() {
                 if entity.id.is_none() {
@@ -222,7 +225,7 @@ impl SceneDoc {
             }
         }
 
-        // 丢掉指向不存在 id 的 parent（防环在 reparent 时单独检查）。
+        // Drop parents pointing to nonexistent ids (cycle check is done separately at reparent).
         let ids: HashSet<u32> = self.entities.iter().filter_map(|e| e.id).collect();
         for entity in &mut self.entities {
             if let Some(parent) = entity.parent {
@@ -261,7 +264,7 @@ impl SceneDoc {
             .collect()
     }
 
-    /// 直接子实体（数组顺序）。
+    /// Direct child entities (array order).
     pub fn children(&self, index: usize) -> Vec<usize> {
         let Some(id) = self.id_of_index(index) else {
             return Vec::new();
@@ -274,7 +277,7 @@ impl SceneDoc {
             .collect()
     }
 
-    /// 深度优先的可见行（`expanded` 决定是否展开某个实体的子级）。
+    /// Depth-first visible rows (`expanded` decides whether an entity's children are shown).
     pub fn visible_rows(&self, expanded: &HashSet<u32>) -> Vec<(usize, u32)> {
         fn walk(
             doc: &SceneDoc,
@@ -301,7 +304,7 @@ impl SceneDoc {
         !self.children(index).is_empty()
     }
 
-    /// 面包屑路径（根 → 实体）。
+    /// Breadcrumb path (root → entity).
     pub fn path_of(&self, index: usize) -> Vec<usize> {
         let mut path = Vec::new();
         let mut current = Some(index);
@@ -362,7 +365,7 @@ impl SceneDoc {
             .collect();
         let removed_set: HashSet<usize> = removed.iter().copied().collect();
 
-        // 孤儿子级变根。
+        // Orphaned children become roots.
         for entity in &mut self.entities {
             if let Some(parent) = entity.parent {
                 if removed_ids.contains(&parent) {
@@ -387,8 +390,8 @@ impl SceneDoc {
         }
     }
 
-    /// 把 `index` 挂到 `new_parent` 下（`None` = 根），并插到 `position`。
-    /// 拒绝自父与成环。
+    /// Attach `index` under `new_parent` (`None` = root), and insert at `position`.
+    /// Rejects self-parenting and cycles.
     pub fn reparent(
         &mut self,
         index: usize,
@@ -396,19 +399,21 @@ impl SceneDoc {
         position: Option<usize>,
     ) -> Result<(), &'static str> {
         if self.entities.get(index).is_none() {
-            return Err("实体不存在");
+            return Err("entity does not exist");
         }
         if let Some(parent) = new_parent {
             if parent == index {
-                return Err("不能把实体挂到自己下面");
+                return Err("cannot parent an entity under itself");
             }
             if self.descendants(index).contains(&parent) {
-                return Err("不能把实体挂到自己的子级下面");
+                return Err("cannot parent an entity under its own child");
             }
         }
 
         let parent_id = match new_parent {
-            Some(parent) => self.id_of_index(parent).ok_or("父实体不存在")?,
+            Some(parent) => self
+                .id_of_index(parent)
+                .ok_or("parent entity does not exist")?,
             None => {
                 self.entities[index].parent = None;
                 if let Some(position) = position {
@@ -424,8 +429,9 @@ impl SceneDoc {
         Ok(())
     }
 
-    /// 移动数组位置（层级树的拖拽排序）；父子关系已由调用方设置。
-    /// 多选拖拽改父级：只改 parent，不调整兄弟顺序；拒绝挂到选中项自身或其后代下。
+    /// Move array position (hierarchy tree drag sorting); parent-child relation is already set by
+    /// the caller. Multi-select drag reparenting: only changes parent, doesn't adjust sibling
+    /// order; rejects parenting onto the selected items themselves or their descendants.
     pub fn reparent_many(
         &mut self,
         roots: &[usize],
@@ -440,17 +446,20 @@ impl SceneDoc {
         let parent_id = match new_parent {
             Some(parent) => {
                 if roots.contains(&parent) {
-                    return Err("不能把实体挂到自己下面");
+                    return Err("cannot parent an entity under itself");
                 }
                 for root in &roots {
                     if self.entities.get(*root).is_none() {
                         continue;
                     }
                     if self.descendants(*root).contains(&parent) {
-                        return Err("不能把实体挂到自己的子级下面");
+                        return Err("cannot parent an entity under its own child");
                     }
                 }
-                Some(self.id_of_index(parent).ok_or("父实体不存在")?)
+                Some(
+                    self.id_of_index(parent)
+                        .ok_or("parent entity does not exist")?,
+                )
             }
             None => None,
         };
@@ -464,11 +473,13 @@ impl SceneDoc {
         Ok(moved)
     }
 
-    /// 把一组实体（含各自的子树）插到 `target` 的前/后，保持组内相对顺序（#525）。
+    /// Insert a group of entities (with their subtrees) before / after `target`, preserving
+    /// relative order within the group (#525).
     ///
-    /// 与 [`SceneDoc::reparent_many`] 的区别：那个只改父级、不改兄弟顺序；层级拖拽的
-    /// 「插入到上一行 / 下一行」需要真正的顺序变化。组内每个根改挂到目标的父级，
-    /// 子树内部的父子关系不变。
+    /// Differs from [`SceneDoc::reparent_many`]: that only changes parent, not sibling order;
+    /// hierarchy drag's "insert above / below row" needs real order changes. Each root in the
+    /// group is reparented under the target's parent; parent-child relations within subtrees
+    /// are unchanged.
     pub fn reparent_many_at(
         &mut self,
         roots: &[usize],
@@ -483,18 +494,18 @@ impl SceneDoc {
             return Ok(0);
         }
         if target >= self.entities.len() {
-            return Err("目标实体不存在");
+            return Err("target entity does not exist");
         }
         if roots.contains(&target) {
-            return Err("不能把实体拖到它自己身上");
+            return Err("cannot drag an entity onto itself");
         }
         for root in &roots {
             if self.descendants(*root).contains(&target) {
-                return Err("不能把实体拖到自己的子级里");
+                return Err("cannot drag an entity into its own subtree");
             }
         }
 
-        // 搬的是整棵子树：根 + 后代，保持数组顺序（父级先于子级）。
+        // Moving a whole subtree: root + descendants, keep array order (parent before child).
         let mut moving: Vec<usize> = Vec::new();
         for root in &roots {
             moving.push(*root);
@@ -504,7 +515,7 @@ impl SceneDoc {
         moving.dedup();
         let is_root: Vec<bool> = moving.iter().map(|index| roots.contains(index)).collect();
 
-        // 目标被搬走后会前移的格数 = 它前面有多少个被搬走的实体。
+        // Slots the target shifts forward after removal = number of moved entities before it.
         let shift = moving.iter().filter(|index| **index < target).count();
         let mut insert_at = target - shift;
         if !before {
@@ -533,7 +544,7 @@ impl SceneDoc {
 
     pub fn move_entity(&mut self, from: usize, to: usize) -> Result<usize, &'static str> {
         if from >= self.entities.len() {
-            return Err("实体不存在");
+            return Err("entity does not exist");
         }
         let to = to.min(self.entities.len() - 1);
         if from == to {
@@ -544,10 +555,10 @@ impl SceneDoc {
         Ok(to)
     }
 
-    /// 复制整棵子树（引擎的 Ctrl+D）：内部 parent 重映射到新 id，根保持原父级。
+    /// Duplicate a whole subtree (engine's Ctrl+D): internal parent remapped to new ids, root keeps its parent.
     pub fn duplicate_subtree(&mut self, index: usize) -> Option<usize> {
         self.entities.get(index)?;
-        // 收集子树（根 + 后代），保持数组顺序，保证父级先于子级。
+        // Collect subtree (root + descendants), keep array order, guarantee parent before child.
         let mut selected = vec![index];
         selected.extend(self.descendants(index));
         selected.sort_unstable();
@@ -639,14 +650,14 @@ impl SceneDoc {
             .unwrap_or_default()
     }
 
-    /// 提取选中实体子树为独立文档（「存为预制体」）。
-    /// 根上的预制体实例链接会被剥掉，避免预制体引用自己。
+    /// Extract the selected entities' subtree into a standalone document ("save as prefab").
+    /// The prefab instance link on the root is stripped so the prefab doesn't reference itself.
     pub fn extract_subtree(&self, roots: &[usize]) -> SceneDoc {
         self.extract_subtree_inner(roots, true)
     }
 
-    /// 复制 / 剪切用：与 `extract_subtree` 相同，但保留根上的预制体链接，
-    /// 这样粘贴出来的仍是同源实例（引擎的复制预制体实例行为）。
+    /// For copy / cut: same as `extract_subtree`, but keeps the prefab link on the root, so
+    /// what gets pasted is still the same source instance (engine's copy prefab instance behavior).
     pub fn extract_subtree_preserving_links(&self, roots: &[usize]) -> SceneDoc {
         self.extract_subtree_inner(roots, false)
     }
@@ -683,7 +694,7 @@ impl SceneDoc {
                 .parent
                 .and_then(|parent| id_map.get(&parent).copied())
                 .filter(|_parent| {
-                    // 根实体不能保留指向外部父级的 parent。
+                    // Root entities can't keep a parent pointing to an external parent.
                     old_id.map(|id| !root_set.contains(&id)).unwrap_or(false)
                 });
             let is_root = old_id.map(|id| root_set.contains(&id)).unwrap_or(false);
@@ -696,7 +707,8 @@ impl SceneDoc {
         doc
     }
 
-    /// 预制体实例化：追加到场景末尾、内部父 id 平移、根挂到 `parent`、名字去重。
+    /// Prefab instantiation: append to end of scene, remap internal parent ids, attach root to
+    /// `parent`, deduplicate the name.
     pub fn instantiate_prefab(
         &mut self,
         prefab: &SceneDoc,
@@ -738,8 +750,8 @@ impl SceneDoc {
         result
     }
 
-    /// 引擎的 `GetUniqueNameForSibling`：剥掉末尾的 ` (数字)` 得到基名，
-    /// 再在同级里找最小的未占用序号（第一个同名实体不加后缀）。
+    /// Engine's `GetUniqueNameForSibling`: strip the trailing ` (number)` to get the base name,
+    /// then find the smallest unused index among siblings (the first same-named entity gets no suffix).
     pub fn unique_name(&self, base: &str, parent: Option<u32>) -> String {
         let base = strip_name_suffix(base);
         let taken: HashSet<String> = self
@@ -761,16 +773,17 @@ impl SceneDoc {
         }
     }
 
-    /// 资产重命名 / 移动时改写本文档里的引用（#465）。
+    /// Rewrite references in this document when an asset is renamed / moved (#465).
     ///
-    /// 与旧的「任何字符串精确相等就改」不同，这里只碰**资产路径字段**（
-    /// [`crate::assets::is_asset_path_field`]：`*_path` 后缀 + `env_map` /
-    /// `volume` / `prefab`，外加 `materials` / `textures` 这类路径数组），
-    /// 所以实体名、`Text::content` 里恰好写着同一段路径的字符串保持原样。
+    /// Unlike the old "change any string exactly equal" approach, this only touches **asset
+    /// path fields** ([`crate::assets::is_asset_path_field`]: `*_path` suffix + `env_map` /
+    /// `volume` / `prefab`, plus path arrays like `materials` / `textures`), so entity names
+    /// and `Text::content` strings that happen to read the same path are left untouched.
     ///
-    /// `doc_dir` 是**本文档所在的目录**（`assets/scenes` 这种），用来解析
-    /// `../textures/wood.png` 这种相对写法；改写后仍按作者原来的风格写回，
-    /// 不会把相对的 `../` 变成绝对的 `assets/...`。
+    /// `doc_dir` is **this document's own directory** (e.g. `assets/scenes`), used to resolve
+    /// relative forms like `../textures/wood.png`; after rewriting, values are written back in
+    /// the author's original style — relative `../` stays relative, not turned into absolute
+    /// `assets/...`.
     pub fn rewrite_asset_references(
         &mut self,
         doc_dir: &str,
@@ -823,12 +836,13 @@ impl SceneDoc {
             .collect()
     }
 
-    /// 供资产管理器/引用检索用：扫描所有字符串字段里引用了 `path` 的位置。
-    /// 所有「资产路径字段」的取值：`(实体下标, "组件.字段", 值)`。
+    /// For the asset manager / reference lookup: scan all string fields referencing `path`.
+    /// All "asset path field" values: `(entity index, "component.field", value)`.
     ///
-    /// 与 [`Self::field_references`] 相反：那个是「给定路径找引用」，这个是
-    /// 「把文档里所有引用列出来」，用来验证它们是否还指向存在的文件（#467）。
-    /// 字段白名单与重命名改写共用 [`is_reference_path`]，不会一边改一边漏。
+    /// The opposite of [`Self::field_references`]: that one is "find references by path", this
+    /// one is "list all references in the document", to verify they still point to existing files
+    /// (#467). The field allowlist and the rename rewrite share [`is_reference_path`], so one
+    /// side doesn't change while the other misses.
     pub fn reference_values(&self) -> Vec<(usize, String, String)> {
         let mut out = Vec::new();
         for (index, entity) in self.entities.iter().enumerate() {
@@ -890,20 +904,23 @@ impl SceneDoc {
     }
 }
 
-/// 资产重命名 / 移动时改写了多少处引用，以及哪些写法解析不出来。
+/// How many references were rewritten on asset rename / move, and which forms couldn't be parsed.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ReferenceRewrite {
-    /// 被改写的引用数量。
+    /// Number of references rewritten.
     pub rewritten: usize,
-    /// 文件名与旧路径相同、但解析不出完整路径的写法（绝对路径、URL 等）。
+    /// Forms whose file name matches the old path but can't be resolved to a full path
+    /// (absolute paths, URLs, etc.).
     ///
-    /// 这些引用会**留着旧的路径**，所以要报出来，而不是假装一切正常。
+    /// These references **keep the old path**, so they should be reported rather than pretending
+    /// everything is fine.
     pub ambiguous: Vec<String>,
 }
 
-/// 这个字段是不是「资产路径」。
+/// Is this field an "asset path"?
 ///
-/// 取路径的第一段（去掉数组下标）判断，`materials[0]` / `materials[1]` 都算。
+/// Judged by the first path segment (array index stripped), so `materials[0]` / `materials[1]`
+/// both count.
 fn is_reference_path(component: &str, path: &str) -> bool {
     let leaf = path.split('.').next().unwrap_or(path);
     let leaf = leaf.split('[').next().unwrap_or(leaf);
@@ -1042,12 +1059,12 @@ enum RewriteOutcome {
     Ambiguous,
 }
 
-/// 把一个引用字符串按「它自己那种写法」改到 `to`。
+/// Rewrite a reference string "in its own style" to `to`.
 fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> RewriteOutcome {
     if text.trim().is_empty() {
         return RewriteOutcome::Unchanged;
     }
-    // 纯文件名：和旧文件的文件名比对，改完仍是纯文件名。
+    // Bare file name: compare against the old file's name, and stay a bare file name after rewrite.
     if !text.contains('/') {
         return if text == file_name(from) {
             RewriteOutcome::Rewritten(file_name(to).to_string())
@@ -1056,7 +1073,7 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
         };
     }
     let Some(resolved) = resolve_asset_reference(text, doc_dir) else {
-        // 解析不出来：只有「看起来就是这个文件」才值得提醒。
+        // Can't resolve: only worth flagging if "looks like this very file".
         return if file_name(text) == file_name(from) {
             RewriteOutcome::Ambiguous
         } else {
@@ -1066,7 +1083,7 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
     if resolved != from {
         return RewriteOutcome::Unchanged;
     }
-    // 按作者原来的风格写回：`assets/...` 保持绝对写法，`../` 保持相对写法。
+    // Write back in the author's original style: `assets/...` stays absolute, `../` stays relative.
     if text.starts_with("assets/") {
         return RewriteOutcome::Rewritten(to.to_string());
     }
@@ -1079,10 +1096,10 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
     }
 }
 
-/// 把引用解析成「相对项目根」的路径（`assets/...`）。
+/// Resolve a reference to a "relative to project root" path (`assets/...`).
 ///
-/// 纯文件名（不含 `/`）与绝对路径返回 `None` —— 前者由调用方按文件名处理，
-/// 后者没法安全改写。
+/// Bare file names (no `/`) and absolute paths return `None` — the former is handled by the
+/// caller via file name, the latter can't be safely rewritten.
 fn resolve_asset_reference(text: &str, doc_dir: &str) -> Option<String> {
     if text.contains(':') || text.starts_with('/') {
         return None;
@@ -1096,7 +1113,7 @@ fn resolve_asset_reference(text: &str, doc_dir: &str) -> Option<String> {
     None
 }
 
-/// 消解 `.` / `..`；越过项目根（`..` 多于已有的段）返回 `None`。
+/// Resolve `.` / `..`; return `None` if `..` goes past the project root.
 fn normalize_relative(path: &str) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
@@ -1115,9 +1132,9 @@ fn normalize_relative(path: &str) -> Option<String> {
     }
 }
 
-/// `doc_dir` 里的文档该怎样写 `target`（相对写法，如 `../../textures/a.png`）。
+/// How a document in `doc_dir` should write `target` (relative form, e.g. `../../textures/a.png`).
 ///
-/// 两者没有公共前缀（不同根 / 不同盘）时返回 `None`。
+/// Returns `None` when there's no common prefix (different roots / drives).
 fn relative_from(doc_dir: &str, target: &str) -> Option<String> {
     let from: Vec<&str> = doc_dir.split('/').filter(|part| !part.is_empty()).collect();
     let to: Vec<&str> = target.split('/').filter(|part| !part.is_empty()).collect();
@@ -1142,7 +1159,7 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// 收集一条组件值里所有「资产路径字段」的字符串。
+/// Collect all "asset path field" strings in a component value.
 fn collect_reference_values(
     value: &Value,
     path: &str,
@@ -1277,7 +1294,7 @@ fn select_subtree(doc: &SceneDoc, index: usize, out: &mut Vec<usize>) {
     }
 }
 
-/// 剥掉 既有的 ` (数字)` 后缀：`Cube (3)` → `Cube`。
+/// Strip an existing ` (number)` suffix: `Cube (3)` → `Cube`.
 fn strip_name_suffix(name: &str) -> &str {
     let trimmed = name.trim_end();
     if !trimmed.ends_with(')') {
@@ -1320,7 +1337,7 @@ mod tests {
         assert_eq!(doc.version, DOC_VERSION);
         assert_eq!(doc.entities[0].id, Some(1));
         assert_eq!(doc.entities[1].id, Some(2));
-        assert_eq!(doc.entities[1].parent, Some(1), "下标 0 迁移为 id 1");
+        assert_eq!(doc.entities[1].parent, Some(1), "index 0 migrated to id 1");
     }
 
     #[test]
@@ -1387,7 +1404,7 @@ mod tests {
         let value = &doc.entities[0].components["test::Comp"];
         assert_eq!(value, &serde_json::json!({ "keep": 3 }));
 
-        // 非默认值必须保留。
+        // Non-defaults must be retained.
         doc.entities[0].components.insert(
             "test::Comp".to_string(),
             serde_json::json!({ "a": 5.0, "b": 2.0 }),
@@ -1404,20 +1421,23 @@ mod tests {
         let doc = doc_with_tree();
         let mut expanded = HashSet::new();
         let rows = doc.visible_rows(&expanded);
-        assert_eq!(rows.len(), 2, "默认只显示两个根");
+        assert_eq!(rows.len(), 2, "default shows only two roots");
 
         let root_id = doc.entities[0].id.unwrap();
         expanded.insert(root_id);
         let rows = doc.visible_rows(&expanded);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[1].1, 1, "子级缩进一层");
+        assert_eq!(rows[1].1, 1, "child indented one level");
     }
 
     #[test]
     fn reparent_rejects_self_and_cycles() {
         let mut doc = doc_with_tree();
         assert!(doc.reparent(0, Some(0), None).is_err());
-        assert!(doc.reparent(0, Some(1), None).is_err(), "不能挂到子级");
+        assert!(
+            doc.reparent(0, Some(1), None).is_err(),
+            "can't attach under child"
+        );
         assert!(doc.reparent(0, Some(3), None).is_ok());
         assert_eq!(doc.entities[0].parent, doc.entities[3].id);
     }
@@ -1427,13 +1447,13 @@ mod tests {
         let mut doc = doc_with_tree();
         let child_id = doc.entities[1].id.unwrap();
         doc.remove_entities(&[1]);
-        // Grand 是 Child 的子级，应一起删除。
+        // Grand is Child's child, should be deleted together.
         assert_eq!(doc.entities.len(), 2);
         assert!(!doc.entities.iter().any(|e| e.id == Some(child_id)));
 
         let mut doc = doc_with_tree();
         doc.remove_entities(&[0]);
-        // Root 的子级 Child/Grand 一起删除，只剩 Sibling。
+        // Root's children Child/Grand deleted together, only Sibling remains.
         assert_eq!(doc.entities.len(), 1);
         assert_eq!(doc.entities[0].display_name(), "Sibling");
     }
@@ -1452,7 +1472,11 @@ mod tests {
     fn duplicate_subtree_remaps_children_and_keeps_root_parent() {
         let mut doc = doc_with_tree();
         let duplicated = doc.duplicate_subtree(0).expect("duplicate");
-        assert_eq!(doc.entities.len(), 7, "3 个原实体 + 3 个复制 + sibling");
+        assert_eq!(
+            doc.entities.len(),
+            7,
+            "3 original entities + 3 copies + sibling"
+        );
         assert_eq!(doc.entities[duplicated].display_name(), "Root (1)");
         assert!(doc.entities[duplicated].parent.is_none());
         let root_id = doc.entities[duplicated].id.unwrap();
@@ -1461,14 +1485,14 @@ mod tests {
             .iter()
             .filter(|entity| entity.parent == Some(root_id))
             .collect();
-        assert_eq!(children.len(), 1, "直接子级指向新根");
+        assert_eq!(children.len(), 1, "direct children point to new root");
         assert_eq!(children[0].display_name(), "Child");
         let child_id = children[0].id.unwrap();
         assert!(doc
             .entities
             .iter()
             .any(|entity| entity.parent == Some(child_id)));
-        // id 全局唯一。
+        // ids are globally unique.
         let ids: HashSet<u32> = doc.entities.iter().filter_map(|e| e.id).collect();
         assert_eq!(ids.len(), doc.entities.len());
     }
@@ -1540,7 +1564,7 @@ mod tests {
         let root = &scene.entities[inserted[0]];
         assert_eq!(root.display_name(), "Root (1)");
         assert_eq!(root.prefab_link(), Some("assets/prefabs/root.prefab.json"));
-        // 新的 id 不与旧的重叠。
+        // New ids must not overlap old ones.
         let ids: HashSet<u32> = scene.entities.iter().filter_map(|e| e.id).collect();
         assert_eq!(ids.len(), scene.entities.len());
     }
@@ -1552,11 +1576,11 @@ mod tests {
         assert_eq!(doc.unique_name("Cube", None), "Cube (1)");
         doc.add_named_child(None, "Cube (1)");
         assert_eq!(doc.unique_name("Cube (1)", None), "Cube (2)");
-        // 同级范围：子级可以复用根级的名字。
+        // Sibling scope: children can reuse root-level names.
         assert_eq!(doc.unique_name("Cube", doc.id_of_index(root)), "Cube");
-        // 剥后缀后再找空位。
+        // Strip the suffix first, then find a free slot.
         assert_eq!(doc.unique_name("Cube (9)", None), "Cube (2)");
-        // 非数字后缀属于名字本身。
+        // Non-numeric suffixes are part of the name itself.
         assert_eq!(doc.unique_name("Cube (left)", None), "Cube (left)");
     }
 
@@ -1668,7 +1692,10 @@ mod tests {
             "assets/meshes/a.rmes",
             "assets/meshes/b.rmes",
         );
-        assert_eq!(rewrite.rewritten, 1, "只替换精确匹配，不做子串替换");
+        assert_eq!(
+            rewrite.rewritten, 1,
+            "only replace exact matches, no substring replacement"
+        );
         assert!(rewrite.ambiguous.is_empty());
         assert_eq!(
             doc.entities[0].components["prism_engine::scene::MeshRenderer"]["mesh_path"],
@@ -1684,7 +1711,7 @@ mod tests {
 
     #[test]
     fn renaming_only_touches_asset_path_fields() {
-        // #465：实体名和 UI 文本里恰好写着同一段路径时不能跟着改。
+        // #465: entity names and UI text that happen to read the same path must not be changed along.
         let mut doc = SceneDoc::default();
         let mesh = doc.add_named_child(None, "assets/textures/wood.png");
         doc.add_component(
@@ -1708,12 +1735,12 @@ mod tests {
         assert_eq!(
             doc.entities[mesh].name.as_deref(),
             Some("assets/textures/wood.png"),
-            "实体名不是资产引用"
+            "entity name is not an asset reference"
         );
         assert_eq!(
             doc.entities[mesh].components["prism_engine::ui::Text"]["content"],
             serde_json::json!("assets/textures/wood.png"),
-            "UI 文本不是资产引用"
+            "UI text is not an asset reference"
         );
         assert_eq!(
             doc.entities[mesh].components["prism_engine::scene::SpriteRenderer"]["sprite_path"],
@@ -1742,7 +1769,7 @@ mod tests {
 
         assert_eq!(rewrite.rewritten, 3);
         let component = &doc.entities[deep].components["prism_engine::scene::MeshRenderer"];
-        // 相对写法按**本文档目录**算回去，仍是相对的。
+        // Relative form resolved against **this document's directory**, stays relative.
         assert_eq!(
             component["mesh_path"],
             serde_json::json!("../../../textures/oak.png")
@@ -1781,7 +1808,7 @@ mod tests {
         assert_eq!(
             doc.entities[entity].components["prism_engine::scene::SpriteRenderer"]["sprite_path"],
             serde_json::json!("C:/art/textures/wood.png"),
-            "改写不了就不要动它"
+            "don't touch what can't be rewritten"
         );
     }
 

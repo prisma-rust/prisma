@@ -1,21 +1,21 @@
 /// @file sharc_common.slangi
-/// @brief SHARC 世界空间 radiance cache 核心算法（移植自 NVIDIA RTXGI SHARC `SharcCommon.h`，v1.6）。
+/// @brief Core algorithm of SHARC world-space radiance cache (ported from NVIDIA RTXGI SHARC `SharcCommon.h`, v1.6).
 ///
-/// Slang 适配要点：
-/// - 强制 `SHARC_ENABLE_64_BIT_ATOMICS = 1`，hash slot 抢占走 64-bit atomic，不使用 lock buffer。
-/// - `SHARC_UPDATE = 1`：让 Update/Resolve/Query 函数体在同一条 raygen pipeline 中全部编译可用；
-///   具体执行哪段由运行时 `sharc_phase` / `sharc_mode` 决定（truvis 用 push-constant phase 取代上游的
-///   编译期 pass 宏）。
-/// - voxel 元素类型 `SharcAccumulationData` / `SharcPackedData` 与 buffer 绑定定义在
-///   `api/pass/realtime_rt.slangi`（buffer ABI 归属处）；本文件只承载算法。
+/// Slang adaptation notes:
+/// - Force `SHARC_ENABLE_64_BIT_ATOMICS = 1`, hash slot contention uses 64-bit atomic, no lock buffer.
+/// - `SHARC_UPDATE = 1`: Update/Resolve/Query function bodies all compiled in one raygen pipeline;
+///   which segment executes is decided at runtime by `sharc_phase` / `sharc_mode` (truvis uses push-constant
+///   phase instead of upstream compile-time pass macros).
+/// - Voxel element types `SharcAccumulationData` / `SharcPackedData` and buffer bindings defined in
+///   `api/pass/realtime_rt.slangi` (buffer ABI location); this file only carries the algorithm.
 ///
-/// 契约不变量：
-/// - 所有 buffer 初始清 0；hash key 0 表示空槽。
-/// - radiance 在 accumulation buffer 中按 `radianceScale` 量化为 u32 原子累加，resolve 时还原并合并到 fp16 resolved buffer。
-/// - Update pass 每条 path 段独立：throughput 每跳重置为 1，`SharcSetThroughput` 反向回填历史顶点权重。
+/// Contract invariants:
+/// - All buffers initially cleared to 0; hash key 0 means empty slot.
+/// - Radiance quantized to u32 atomic accumulation in accumulation buffer by `radianceScale`, restored and merged into fp16 resolved buffer at resolve.
+/// - Update pass independent per path segment: throughput reset to 1 per hop, `SharcSetThroughput` backfills historical vertex weights.
 #pragma once
 
-// ===== 控制宏（truvis 固定配置）=====
+// ===== Control macros (truvis fixed config) =====
 #define SHARC_ENABLE_64_BIT_ATOMICS             1
 #define HASH_GRID_ENABLE_64_BIT_ATOMICS         1
 #ifndef SHARC_UPDATE
@@ -35,7 +35,7 @@
 #define SHARC_STALE_FRAME_NUM_BIT_MASK          ((1 << SHARC_STALE_FRAME_NUM_BIT_NUM) - 1)
 #define SHARC_SAMPLE_NUM_BIT_NUM                18
 #define SHARC_GRID_LOGARITHM_BASE               2.0f
-#define SHARC_BLEND_ADJACENT_LEVELS             1       // 相机移动时合并相邻 level 数据
+#define SHARC_BLEND_ADJACENT_LEVELS             1       // merge adjacent level data when camera moves
 #define SHARC_NORMALIZED_SAMPLE_NUM             (1u << (SHARC_SAMPLE_NUM_BIT_NUM - 1))
 #define SHARC_ACCUMULATED_FRAME_NUM_MIN         1
 #define SHARC_ACCUMULATED_FRAME_NUM_MAX         1024
@@ -110,7 +110,7 @@ struct SharcParameters
 {
     HashGridParameters gridParameters;
     HashMapData hashMapData;
-    float radianceScale;            // radiance 原子累积的量化系数（u32/通道）。默认 1e3f；radiance 过大时调小防溢出
+    float radianceScale;            // quantization coefficient for radiance atomic accumulation (u32/channel). Default 1e3f; reduce when radiance too large to prevent overflow
     bool enableAntiFireflyFilter;
 
     RWStructuredBuffer<SharcAccumulationData> accumulationBuffer;
@@ -130,7 +130,7 @@ struct SharcState
 struct SharcHitData
 {
     float3 positionWorld;
-    float3 normalWorld;             // 世界空间几何法线
+    float3 normalWorld;             // world-space geometric normal
 #if SHARC_MATERIAL_DEMODULATION
     float3 materialDemodulation;
 #endif // SHARC_MATERIAL_DEMODULATION

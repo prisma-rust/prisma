@@ -1,43 +1,48 @@
-//! 多层姿态栈（#560 P1 的 BlendStack 基础层）。
+//! Multi-layer pose stack (the BlendStack foundation layer of #560 P1).
 //!
-//! 一个 [`BlendStack`] 从基础姿态开始，按**添加顺序**把若干 [`BlendLayer`]
-//! 叠上去。每层可以：
+//! A [`BlendStack`] starts from a base pose and stacks several [`BlendLayer`] on top in
+//! **addition order**. Each layer can:
 //!
-//! - 是普通层（把当前结果朝该层姿态混合）或 additive 层（把相对 reference
-//!   姿态的增量打上去，复用 [`crate::blend::additive_joint`]）；
-//! - 带 per-bone 遮罩（0 = 不动这根骨骼，1 = 完全应用），用于「只让上半身
-//!   呼吸」「只让右手瞄准」这类分层；
-//! - 延迟 `activation_delay` 秒后才开始、再用 `blend_in_time` 秒淡入；
-//! - 被 `max_active_blends` 限制同时生效的层数（超出的层不参与求值）。
+//! - be a normal layer (blending the current result toward the layer's pose) or an additive
+//!   layer (applying the increment relative to the reference pose, reusing
+//!   [`crate::blend::additive_joint`]);
+//! - carry a per-bone mask (0 = don't move this bone, 1 = fully apply), for layered cases such
+//!   as "only the upper body breathes" and "only the right hand aims";
+//! - start only after an `activation_delay` of seconds, then fade in over `blend_in_time` seconds;
+//! - limit the number of simultaneously active layers via `max_active_blends` (extra layers
+//!   don't participate in evaluation).
 //!
-//! 这一层只做数学，不依赖 ECS / 渲染 / 资产格式；动画图求值器、编辑器预览和
-//! 离线工具可以共用。权重语义与 UE 的 layered blend 一致：后添加的层在**当前
-//! 结果**上继续混合，`weight = 1` 会完全覆盖前一层在受影响骨骼上的结果。
+//! This layer only does math and does not depend on ECS / rendering / asset formats; the
+//! animation graph evaluator, editor preview, and offline tools can all share it. Weight
+//! semantics match UE's layered blend: later-added layers continue blending **on top of the
+//! current result**, and `weight = 1` fully overrides the previous layer's result on affected
+//! bones.
 //!
-//! 约定与 `prism-anim` 其余部分一致：四元数 `xyzw`、右手 +Y up、姿态是每根
-//! 骨骼的局部 TRS。
+//! Convention consistent with the rest of `prism-anim`: quaternion `xyzw`, right-handed +Y up,
+//! pose is per-bone local TRS.
 
 use crate::blend::{additive_joint, blend_joint};
 use crate::pose::Pose;
 use crate::skeleton::{JointTransform, Skeleton};
 
-/// 每根骨骼的混合权重，`0` = 完全不动，`1` = 完全应用。
+/// Blend weight per bone, `0` = completely still, `1` = fully applied.
 ///
-/// 空遮罩表示「所有骨骼都是 1」，这是默认值，不需要为整身层分配一个全 1 的
-/// `Vec`。非空时，超出遮罩长度的骨骼按 `0` 处理：骨架版本不一致时宁可不动
-/// 未知骨骼，也不要把它们误当成全身权重。
+/// An empty mask means "all bones are 1", which is the default value; no all-`1` `Vec` needs
+/// to be allocated for full-body layers. When non-empty, bones beyond the mask length are treated
+/// as `0`: when skeleton versions mismatch, prefer not moving unknown bones rather than mistakenly
+/// treating them as full-body weight.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoneMask {
     weights: Vec<f32>,
 }
 
 impl BoneMask {
-    /// 全身遮罩（等价于没有遮罩）。
+    /// Full-body mask (equivalent to no mask).
     pub fn all() -> Self {
         Self::default()
     }
 
-    /// 从逐骨骼权重构造；NaN 按 `0`，其余夹到 `[0, 1]`。
+    /// Construct from per-bone weights; NaN is treated as `0`, the rest are clamped to `[0, 1]`.
     pub fn from_weights(weights: Vec<f32>) -> Self {
         Self {
             weights: weights
@@ -53,9 +58,9 @@ impl BoneMask {
         }
     }
 
-    /// 按骨骼名构造：列出的骨骼为 1，其余为 0；找不到的名字忽略。
+    /// Construct from bone names: listed bones are 1, the rest are 0; names not found are ignored.
     ///
-    /// 结果长度等于骨架关节数，所以索引顺序与姿态一致。
+    /// The result length equals the skeleton's joint count, so index order matches the pose.
     pub fn from_names(skeleton: &Skeleton, names: &[&str]) -> Self {
         let mut weights = vec![0.0; skeleton.joint_count()];
         for name in names {
@@ -66,12 +71,12 @@ impl BoneMask {
         Self { weights }
     }
 
-    /// 是否作用到所有骨骼。
+    /// Whether it applies to all bones.
     pub fn is_all(&self) -> bool {
         self.weights.is_empty()
     }
 
-    /// 某根骨骼的权重。空遮罩 = 1；超出范围 = 0。
+    /// Weight of a given bone. Empty mask = 1; out of range = 0.
     pub fn weight(&self, joint: usize) -> f32 {
         if self.weights.is_empty() {
             1.0
@@ -80,33 +85,33 @@ impl BoneMask {
         }
     }
 
-    /// 逐骨骼权重（空 = 全身）。
+    /// Per-bone weights (empty = full body).
     pub fn weights(&self) -> &[f32] {
         &self.weights
     }
 }
 
-/// 叠加到 [`BlendStack`] 上的一层。
+/// A layer stacked on top of [`BlendStack`].
 #[derive(Clone, Debug)]
 pub struct BlendLayer {
-    /// 该层本帧的姿态（调用方从剪辑 / 混合空间采样后写进来）。
+    /// The pose of this layer for the current frame (written in by the caller after sampling from a clip / blend space).
     pose: Pose,
-    /// 基础权重，`0..=1`；NaN / 负数按 0 处理。
+    /// Base weight, `0..=1`; NaN / negative treated as 0.
     weight: f32,
-    /// per-bone 遮罩。
+    /// Per-bone mask.
     mask: BoneMask,
-    /// `true` = 相对 reference 姿态的增量层。
+    /// `true` = incremental layer relative to the reference pose.
     additive: bool,
-    /// 压入后至少等这么多秒才开始生效。
+    /// Wait at least this many seconds after pushing before taking effect.
     activation_delay: f32,
-    /// 生效后再用这么多秒从 0 淡到 `weight`；`0` = 立即到满权重。
+    /// After taking effect, fade from 0 to `weight` over this many seconds; `0` = immediately full weight.
     blend_in_time: f32,
-    /// 压入后经过的时间（由 [`BlendStack::advance`] 推进）。
+    /// Elapsed time since pushing (advanced by [`BlendStack::advance`]).
     elapsed: f32,
 }
 
 impl BlendLayer {
-    /// 普通层，默认全身、权重 1、无延迟、立即生效。
+    /// Normal layer, default full body, weight 1, no delay, takes effect immediately.
     pub fn new(pose: Pose) -> Self {
         Self {
             pose,
@@ -134,7 +139,7 @@ impl BlendLayer {
         self
     }
 
-    /// 设置延迟与淡入时长（负数按 0）。
+    /// Set delay and fade-in duration (negative values treated as 0).
     pub fn with_timing(mut self, activation_delay: f32, blend_in_time: f32) -> Self {
         self.activation_delay = sanitize_seconds(activation_delay);
         self.blend_in_time = sanitize_seconds(blend_in_time);
@@ -169,12 +174,12 @@ impl BlendLayer {
         self.elapsed
     }
 
-    /// 从头开始计时（例如层被重新激活时）。
+    /// Reset timing from scratch (e.g. when a layer is reactivated).
     pub fn reset_elapsed(&mut self) {
         self.elapsed = 0.0;
     }
 
-    /// 当前有效权重：基础权重 × 延迟/淡入系数 × 遮罩（在求值时再乘）。
+    /// Current effective weight: base weight × delay/fade-in factor × mask (multiplied at evaluation time).
     fn effective_weight(&self) -> f32 {
         let weight = sanitize_weight(self.weight);
         if weight <= 0.0 || self.elapsed < self.activation_delay {
@@ -188,19 +193,20 @@ impl BlendLayer {
     }
 }
 
-/// 多层姿态栈。
+/// Multi-layer pose stack.
 #[derive(Clone, Debug)]
 pub struct BlendStack {
     base: Pose,
-    /// additive 层使用的参考（bind）姿态。
+    /// Reference (bind) pose used by additive layers.
     reference: Pose,
     layers: Vec<BlendLayer>,
-    /// 同时参与求值的普通 + additive 层上限；`0` = 不限制。
+    /// Upper limit of normal + additive layers participating in evaluation at the same time;
+    /// `0` = unlimited.
     max_active_blends: usize,
 }
 
 impl BlendStack {
-    /// 用基础姿态和 additive 参考姿态建栈。
+    /// Build a stack with a base pose and an additive reference pose.
     pub fn new(base: Pose, reference: Pose) -> Self {
         Self {
             base,
@@ -234,14 +240,14 @@ impl BlendStack {
         &mut self.layers
     }
 
-    /// 压入一层，返回它的下标。
+    /// Push a layer, returning its index.
     pub fn push(&mut self, layer: BlendLayer) -> usize {
         let index = self.layers.len();
         self.layers.push(layer);
         index
     }
 
-    /// 移除一层；越界返回 `None`。
+    /// Remove a layer; returns `None` if out of bounds.
     pub fn remove(&mut self, index: usize) -> Option<BlendLayer> {
         (index < self.layers.len()).then(|| self.layers.remove(index))
     }
@@ -254,7 +260,8 @@ impl BlendStack {
         self.layers.is_empty()
     }
 
-    /// 限制同时生效的层数；`0` 表示不限制。超出的层按**添加顺序**不参与。
+    /// Limit the number of simultaneously active layers; `0` means unlimited. Extra layers
+    /// do not participate in **addition order**.
     pub fn set_max_active_blends(&mut self, max_active: usize) {
         self.max_active_blends = max_active;
     }
@@ -263,7 +270,7 @@ impl BlendStack {
         self.max_active_blends
     }
 
-    /// 推进每层的计时（`dt` 非有限或为负时按 0）。
+    /// Advance each layer's timing (`dt` non-finite or negative treated as 0).
     pub fn advance(&mut self, dt: f32) {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         for layer in &mut self.layers {
@@ -271,10 +278,10 @@ impl BlendStack {
         }
     }
 
-    /// 求值到 `out`：以 base 为起点，按顺序叠加所有生效层。
+    /// Evaluate into `out`: starting from base, stack all active layers in order.
     ///
-    /// 失败（base 为空）时不动 `out`。调用方可以每帧复用同一个 `out`，避免
-    /// 为每个角色分配新姿态。
+    /// On failure (base is empty) `out` is left untouched. The caller can reuse the same `out`
+    /// every frame to avoid allocating a new pose per character.
     pub fn evaluate_into(&self, out: &mut Pose) {
         if self.base.is_empty() {
             return;

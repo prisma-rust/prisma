@@ -1,8 +1,8 @@
-//! 项目文件层：定位 `assets/`、扫描场景/预制体、读写 `.scene.json`。
+//! Project file layer: locates `assets/`, scans scenes/prefabs, reads/writes `.scene.json`.
 //!
-//! 这里只是**文件系统**，不依赖 `prism-engine` / `prism-render`。资产根的查找规则与
-//! `prisma_engine::asset_paths` 保持同一语义：从起点向上找，只有确实存在 `assets/`
-//! 子目录的候选才算命中（见 AGENTS.md「Asset root resolution」）。
+//! This is just **file system**, does not depend on `prism-engine` / `prism-render`. Asset root
+//! lookup rule follows `prisma_engine::asset_paths` semantics: walk up from start, only candidates
+//! with existing `assets/` subdirectory count (see AGENTS.md "Asset root resolution").
 
 use crate::doc::SceneDoc;
 use crate::workspace::DocKind;
@@ -10,16 +10,16 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// 一个磁盘上的文档。
+/// A document on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectFile {
-    /// 相对项目根，例如 `assets/scenes/default.scene.json`。
+    /// Relative to project root, e.g. `assets/scenes/default.scene.json`.
     pub path: String,
     pub name: String,
     pub kind: DocKind,
 }
 
-/// 从 `start` 开始向上找包含 `assets/` 的目录。
+/// From `start` walk up looking for directory containing `assets/`.
 pub fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut current = Some(start);
     while let Some(dir) = current {
@@ -31,7 +31,7 @@ pub fn find_project_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
-/// 扫描 `assets/scenes` 与 `assets/prefabs`（递归，最多 4 层）。
+/// Scan `assets/scenes` and `assets/prefabs` (recursive, max 4 layers).
 pub fn scan_documents(root: &Path) -> Vec<ProjectFile> {
     let mut files = Vec::new();
     collect(root, "assets/scenes", DocKind::Scene, 0, &mut files);
@@ -40,8 +40,8 @@ pub fn scan_documents(root: &Path) -> Vec<ProjectFile> {
     files
 }
 
-/// 扫描整个 `assets/`（资产面板 / 检查器资产选择器用），最多 12 层。
-/// 路径统一带 `assets/` 前缀，与 `.scene.json` 里的引用形状一致。
+/// Scan entire `assets/` (for asset panel / inspector asset selector), max 12 layers.
+/// Paths uniformly carry `assets/` prefix, consistent with `.scene.json` reference shape.
 pub fn scan_assets(root: &Path) -> Vec<crate::assets::AssetInfo> {
     let mut files = Vec::new();
     collect_assets(root, "assets", 0, &mut files);
@@ -49,8 +49,9 @@ pub fn scan_assets(root: &Path) -> Vec<crate::assets::AssetInfo> {
     files
 }
 
-/// 构建产物 / 导入设置这类**派生文件**不生成 sidecar：它们随构建出现和消失，
-/// 给它们 GUID 只会让 `git status` 变吵，也没有引用需要稳定身份。
+/// Build products / import settings type **derived files** do not generate sidecar: they appear
+/// and disappear with build, giving them GUID only makes `git status` noisy, and no reference
+/// needs stable identity.
 fn is_derived_asset(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     if lower.ends_with(".import.json") {
@@ -77,11 +78,12 @@ fn is_derived_asset(path: &str) -> bool {
     )
 }
 
-/// 给 `assets/` 下所有还缺 sidecar 的资产生成 `<path>.rmeta`，返回新写入的数量。
+/// For all assets under `assets/` still missing sidecar, generate `<path>.rmeta`,
+/// return number newly written.
 ///
-/// 已有且有效的 sidecar 不动（GUID 跨重命名稳定）；损坏的按缺失处理并重写。
-/// 由编辑器在打开项目 / 刷新资产时调用，是**显式**操作，不在只读的
-/// [`scan_assets`] 里偷偷写盘。
+/// Existing valid sidecar untouched (GUID stable across rename); corrupted treated as missing
+/// and rewritten. Called by editor on project open / asset refresh; this is an **explicit**
+/// operation, not silently writing disk inside read-only [`scan_assets`].
 pub fn ensure_asset_metas(root: &Path) -> usize {
     let assets = scan_assets(root);
     let mut written = 0;
@@ -120,8 +122,8 @@ fn collect_assets(
         if name.starts_with('.') || name == "target" || name == "node_modules" {
             continue;
         }
-        // `.rmeta` 是资产的 sidecar，不是可导入资产：不要出现在资产浏览器里，
-        // 也不要再给它生成一层 `<...>.rmeta.rmeta`。
+        // `.rmeta` is asset's sidecar, not importable asset: don't show in asset browser,
+        // and don't generate another `<...>.rmeta.rmeta` layer for it.
         if name.ends_with(crate::asset_meta::META_SUFFIX) {
             continue;
         }
@@ -143,7 +145,7 @@ fn collect_assets(
     }
 }
 
-/// 按扩展名归类（与 `prism-editor-api` 的资产分类保持近似）。
+/// Classify by extension (approximating `prism-editor-api`'s asset classification).
 pub fn asset_kind(path: &str) -> crate::assets::AssetKind {
     use crate::assets::AssetKind;
     let lower = path.to_ascii_lowercase();
@@ -153,8 +155,8 @@ pub fn asset_kind(path: &str) -> crate::assets::AssetKind {
     if lower.ends_with(".prefab.json") {
         return AssetKind::Prefab;
     }
-    // `.mat.json` 是材质作者数据（`MaterialDef` / cooker 的 `.mat.json` schema），
-    // 不能落到下面的 `json` 分支变成「数据」（#488）。
+    // `.mat.json` is material authoring data (`MaterialDef` / cooker's `.mat.json` schema),
+    // must not fall into `json` branch below to become "data" (#488).
     if lower.ends_with(".mat.json") {
         return AssetKind::Material;
     }
@@ -174,7 +176,7 @@ pub fn asset_kind(path: &str) -> crate::assets::AssetKind {
     }
 }
 
-/// 扫描 `assets/` 下所有目录（含空目录），路径带 `assets/` 前缀。
+/// Scan all directories under `assets/` (including empty dirs), paths carry `assets/` prefix.
 pub fn scan_asset_dirs(root: &Path) -> Vec<String> {
     fn walk(dir: &Path, relative: &str, depth: usize, out: &mut Vec<String>) {
         if depth > 12 {
@@ -246,7 +248,7 @@ fn collect(root: &Path, relative: &str, kind: DocKind, depth: usize, out: &mut V
     }
 }
 
-/// 读取一个文档；路径是相对项目根的 `assets/...`。
+/// Read a document; path is relative to project root `assets/...`.
 pub fn read_document(root: &Path, relative: &str) -> io::Result<SceneDoc> {
     let text = fs::read_to_string(root.join(relative))?;
     let mut doc: SceneDoc = serde_json::from_str(&text)
@@ -255,39 +257,39 @@ pub fn read_document(root: &Path, relative: &str) -> io::Result<SceneDoc> {
     Ok(doc)
 }
 
-/// 文件的修改时间；不存在 / 不可读时返回 `None`。
+/// File modification time; returns `None` if missing / unreadable.
 ///
-/// 编辑器用它做「保存前是否被外部改过」的检查（#452）。mtime 的粒度取决于
-/// 文件系统（NTFS 100ns，FAT 2s），同一 tick 内的改动检测不到——这是可接受的
-/// 折中：真正的并发写仍然由原子 rename 保证不会撕裂文件。
+/// Editor uses this for "was modified externally before save" check (#452). mtime granularity
+/// depends on filesystem (NTFS 100ns, FAT 2s), changes within same tick not detected -- acceptable
+/// trade-off: real concurrent writes still won't tear file due to atomic rename.
 pub fn file_mtime(root: &Path, relative: &str) -> Option<std::time::SystemTime> {
     fs::metadata(root.join(relative)).ok()?.modified().ok()
 }
 
-/// 一个文件的「版本戳」：mtime + 长度（#495 ⑤），文档还可以带内容摘要。
+/// A file's "version stamp": mtime + length (#495 item 5), document can also carry content digest.
 ///
-/// 只看 mtime 在粗粒度文件系统（某些 Android / FUSE / 网络盘）上会漏掉同一秒内的
-/// 覆盖写；加上长度能覆盖绝大多数真实编辑。文档冲突检测再额外算一个内容摘要
-/// （`file_content_stamp*`），因为「长度和 mtime 都没变」的覆盖写确实会发生
-/// （#864，测试里循环 80 次可复现约 9 次）。
+/// Only checking mtime misses same-second overwrites on coarse-grained filesystems (some Android
+/// / FUSE / network drives); adding length covers most real edits. Document conflict detection
+/// additionally computes content digest (`file_content_stamp*`), because "length and mtime unchanged"
+/// overwrites do happen (#864, test loop 80 times reproduces ~9 times).
 ///
-/// 松散资产轮询（`loose_assets`）仍然用不带摘要的 `file_stamp*`：每次轮询都读
-/// 一遍大纹理 / 模型不值得，mtime + 长度对它已经够用。
+/// Loose asset polling (`loose_assets`) still uses `file_stamp*` without digest: reading large
+/// textures/models every poll isn't worth it, mtime + length suffices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileStamp {
-    /// 文件系统不提供 mtime 时为 `None`，此时只靠长度比较。
+    /// If filesystem doesn't provide mtime, `None`, compare only by length.
     pub modified: Option<std::time::SystemTime>,
     pub len: u64,
-    /// 仅 `file_content_stamp*` 填充；`None` 表示没有读取内容。
+    /// Only populated by `file_content_stamp*`; `None` means no content read.
     pub digest: Option<u64>,
 }
 
-/// 相对项目根的文件版本戳；文件不存在返回 `None`。不读取内容。
+/// Relative project root file version stamp; returns `None` if missing. Doesn't read content.
 pub fn file_stamp(root: &Path, relative: &str) -> Option<FileStamp> {
     file_stamp_at(&root.join(relative))
 }
 
-/// 绝对路径的文件版本戳；文件不存在 / 无法 stat 返回 `None`。不读取内容。
+/// Absolute path file version stamp; returns `None` if missing / can't stat. Doesn't read content.
 pub fn file_stamp_at(path: &Path) -> Option<FileStamp> {
     let meta = fs::metadata(path).ok()?;
     Some(FileStamp {
@@ -297,14 +299,14 @@ pub fn file_stamp_at(path: &Path) -> Option<FileStamp> {
     })
 }
 
-/// 相对项目根的文档版本戳：在 mtime + 长度之外再算内容摘要（#864）。
+/// Relative project root document version stamp: content digest in addition to mtime + length (#864).
 pub fn file_content_stamp(root: &Path, relative: &str) -> Option<FileStamp> {
     file_content_stamp_at(&root.join(relative))
 }
 
-/// 绝对路径的文档版本戳；文件不存在 / 无法读取返回 `None`。
+/// Absolute path document version stamp; returns `None` if missing / unreadable.
 ///
-/// 只给场景 / prefab 这类小文档用，不要拿它轮询整个资产目录。
+/// For small docs like scene / prefab only, not for polling whole asset directory.
 pub fn file_content_stamp_at(path: &Path) -> Option<FileStamp> {
     let meta = fs::metadata(path).ok()?;
     let bytes = fs::read(path).ok()?;
@@ -315,7 +317,7 @@ pub fn file_content_stamp_at(path: &Path) -> Option<FileStamp> {
     })
 }
 
-/// FNV-1a 64 位——只用于「文件内容变没变」，不用于安全场景。
+/// FNV-1a 64-bit -- only for "file content changed or not", not for security scenarios.
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in bytes {
@@ -325,22 +327,22 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// 资产是否是「按 JSON 手改」的类型（材质 `.mat.json` / `.asset.json`）。
+/// Whether asset is "hand-edited JSON" type (material `.mat.json` / `.asset.json`).
 ///
-/// 这两类没有专门的文档模型，编辑器把文件当普通 JSON 值编辑（#488）。
+/// These two have no dedicated document model; editor edits files as ordinary JSON values (#488).
 pub fn is_json_editable_asset(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".mat.json") || lower.ends_with(".asset.json")
 }
 
-/// 读一个 JSON 资产（不解析成任何具体结构，保留未知字段）。
+/// Read a JSON asset (not parsed into any specific structure, retains unknown fields).
 pub fn read_json_asset(root: &Path, relative: &str) -> io::Result<serde_json::Value> {
     let text = fs::read_to_string(root.join(relative))?;
     serde_json::from_str(&text)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
-/// 原子写入一个 JSON 资产（2 空格缩进 + 末尾换行，和场景文件一致）。
+/// Atomically write a JSON asset (2-space indent + trailing newline, same as scene file).
 pub fn write_json_asset(root: &Path, relative: &str, value: &serde_json::Value) -> io::Result<()> {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -349,7 +351,7 @@ pub fn write_json_asset(root: &Path, relative: &str, value: &serde_json::Value) 
     let mut text = serde_json::to_string_pretty(value)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     text.push('\n');
-    // 材质的校验器是「任意合法 JSON」，不是 `SceneDoc`（#488）。
+    // Material validator is "any valid JSON", not `SceneDoc` (#488).
     atomic_write_verified(&path, &text, |text| {
         serde_json::from_str::<serde_json::Value>(text)
             .map(|_| ())
@@ -357,11 +359,11 @@ pub fn write_json_asset(root: &Path, relative: &str, value: &serde_json::Value) 
     })
 }
 
-/// 写回一个文档（自动创建父目录，2 空格缩进，与作者格式一致）。
+/// Write back a document (auto-create parent dir, 2-space indent, consistent with authoring format).
 ///
-/// 保存必须是**原子**的：先写 `<path>.tmp`、`sync_all`，把旧文件滚成 `<path>.bak`，
-/// 再 `rename` 到正式路径，最后回读解析一次。任何一步失败都恢复 `.bak`，
-/// 避免断电 / 磁盘写满时留下一个截断的 JSON。
+/// Save must be **atomic**: first write `<path>.tmp`, `sync_all`, roll old file to `<path>.bak`,
+/// then `rename` to official path, finally read-back and parse once. Any step failure restores `.bak`,
+/// avoiding truncated JSON from power loss / disk full.
 pub fn write_document(root: &Path, relative: &str, doc: &SceneDoc) -> io::Result<()> {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
@@ -373,7 +375,7 @@ pub fn write_document(root: &Path, relative: &str, doc: &SceneDoc) -> io::Result
     atomic_write(&path, &text)
 }
 
-/// 与 `path` 同目录的兄弟文件（追加后缀，保留原扩展名）。
+/// Sibling file in same directory as `path` (append suffix, keep original extension).
 fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
@@ -381,7 +383,7 @@ fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
-    // 场景文档的写入要能被原样读回（截断 / 写坏时回滚）。
+    // Scene document write must be readable back as-is (rollback on truncation / bad write).
     atomic_write_verified(path, text, |text| {
         serde_json::from_str::<SceneDoc>(text)
             .map(|_| ())
@@ -389,7 +391,7 @@ fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
     })
 }
 
-/// [`atomic_write`] 的通用版本：`verify` 决定「写进去的内容是否可接受」。
+/// Generic version of [`atomic_write`]: `verify` decides "whether written content is acceptable".
 fn atomic_write_verified(
     path: &Path,
     text: &str,
@@ -414,7 +416,7 @@ fn atomic_write_verified(
         }
     }
 
-    // Windows 上 rename 不能覆盖已存在的目标，所以上一步先把原文件移走。
+    // Windows rename can't overwrite existing target, so previous step moved original file away.
     if let Err(error) = fs::rename(&tmp, path) {
         if had_original {
             let _ = fs::rename(&bak, path);
@@ -423,7 +425,7 @@ fn atomic_write_verified(
         return Err(error);
     }
 
-    // 回读校验：写进去的东西必须能解析回 `SceneDoc`，否则回滚。
+    // Read-back validation: what was written must parse back into `SceneDoc`, otherwise rollback.
     let verified = fs::read_to_string(path)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         .and_then(|text| {
@@ -443,29 +445,32 @@ fn atomic_write_verified(
     Ok(())
 }
 
-/// 资产重命名 / 移动（只允许 `assets/` 内），目标存在时失败。
+/// Asset rename / move (only within `assets/`), fails if target exists.
 pub fn rename_path(root: &Path, from: &str, to: &str) -> io::Result<()> {
     if !from.starts_with("assets/") || !to.starts_with("assets/") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "只允许移动 assets/ 内的文件",
+            "only files within assets/ may be moved",
         ));
     }
     if from == to {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "源与目标相同"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source and target same",
+        ));
     }
     let source = root.join(from);
     let target = root.join(to);
     if !source.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("{from} 不存在"),
+            format!("{from} does not exist"),
         ));
     }
     if target.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("{to} 已存在"),
+            format!("{to} already exists"),
         ));
     }
     if let Some(parent) = target.parent() {
@@ -474,8 +479,8 @@ pub fn rename_path(root: &Path, from: &str, to: &str) -> io::Result<()> {
     let is_file = source.is_file();
     fs::rename(source, target)?;
     if is_file {
-        // #466: 资产身份在 `<path>.rmeta` 里，重命名时 sidecar 必须跟着走，
-        // 否则 GUID 会指向一个不存在的旧文件，零改写引用就解析不到了。
+        // #466: Asset identity is in `<path>.rmeta`, sidecar must move along on rename,
+        // otherwise GUID points to nonexistent old file, zero-rewrite references fail to resolve.
         let source_meta = asset_sidecar_path(&root.join(from));
         if source_meta.is_file() {
             let target_meta = asset_sidecar_path(&root.join(to));
@@ -498,23 +503,23 @@ fn asset_sidecar_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name(name)
 }
 
-/// 新建资产目录（只允许 `assets/` 内）。
+/// Create new asset directory (only within `assets/`).
 pub fn create_folder(root: &Path, relative: &str) -> io::Result<()> {
     if !relative.starts_with("assets/") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "只允许在 assets/ 内新建目录",
+            "only directories within assets/ may be created",
         ));
     }
     fs::create_dir_all(root.join(relative))
 }
 
-/// 复制资产文件（只允许 `assets/` 内），目标已存在时失败。
+/// Copy asset file (only within `assets/`), fails if target exists.
 pub fn copy_file(root: &Path, from: &str, to: &str) -> io::Result<()> {
     if !from.starts_with("assets/") || !to.starts_with("assets/") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "只允许复制 assets/ 内的文件",
+            "only files within assets/ may be copied",
         ));
     }
     let source = root.join(from);
@@ -522,13 +527,13 @@ pub fn copy_file(root: &Path, from: &str, to: &str) -> io::Result<()> {
     if !source.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("{from} 不存在"),
+            format!("{from} does not exist"),
         ));
     }
     if target.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("{to} 已存在"),
+            format!("{to} already exists"),
         ));
     }
     if let Some(parent) = target.parent() {
@@ -537,7 +542,7 @@ pub fn copy_file(root: &Path, from: &str, to: &str) -> io::Result<()> {
     fs::copy(source, target).map(|_| ())
 }
 
-/// 未保存文档的默认落盘路径；重名时追加 `-2`、`-3`。
+/// Default save path for unsaved document; appends `-2`, `-3` on duplicate names.
 pub fn sanitize_stem(input: &str) -> String {
     let cleaned: String = input
         .trim()
@@ -559,10 +564,11 @@ pub fn default_save_path(root: &Path, kind: DocKind, title: &str) -> String {
     unique_save_path(root, kind, title, &[])
 }
 
-/// 同 [`default_save_path`]，但额外避开 `taken` 里已经占用的路径。
+/// Same as [`default_save_path`], additionally avoiding paths already occupied in `taken`.
 ///
-/// 磁盘检查只覆盖「上一次会话留下的文件」；同一个会话里连开两个模板文档时，
-/// 前一个还没落盘，只看磁盘会给出同一个名字（#449）。
+/// Disk check only covers "files left from previous session"; opening two template documents
+/// consecutively in same session, previous one not yet saved to disk, checking disk only gives
+/// same name (#449).
 pub fn unique_save_path(root: &Path, kind: DocKind, title: &str, taken: &[String]) -> String {
     let stem = title
         .trim_end_matches(kind.suffix())
@@ -579,42 +585,44 @@ pub fn unique_save_path(root: &Path, kind: DocKind, title: &str, taken: &[String
     candidate
 }
 
-/// 规范化用户输入的保存路径（允许只写名字、允许反斜杠）。
-/// 相对路径（相对项目根，`assets/...` 形式）是否合法？
+/// Normalize user-input save path (allows bare filename, allows backslashes).
+/// Is relative path (relative to project root, `assets/...` form) valid?
 ///
-/// 只做字符串前缀检查是不够的：`assets/scenes/../evil.scene.json` 能通过
-/// `starts_with("assets/")`，`root.join()` 之后却写到了 `assets/` 外面；
-/// `../../x` 更是直接跑出项目根。这里按 `Path::components` 判定。
+/// Pure string prefix check isn't enough: `assets/scenes/../evil.scene.json` passes
+/// `starts_with("assets/")`, but after `root.join()` it writes outside `assets/`;
+/// `../../x` directly escapes project root. Uses `Path::components` here.
 pub fn asset_path_problem(path: &str) -> Option<&'static str> {
     use std::path::Component;
     if path.is_empty() {
-        return Some("路径为空");
+        return Some("path is empty");
     }
-    // Windows 上 `assets/C:/x` 的 `C:` 只是一个普通组件，单独挡一下。
+    // On Windows `assets/C:/x` `C:` is just a regular component, block separately.
     if path.contains(':') {
-        return Some("路径不能包含 `:`");
+        return Some("path cannot contain `:`");
     }
     for component in std::path::Path::new(path).components() {
         match component {
             Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir => return Some("路径不能包含 `..`"),
-            Component::RootDir | Component::Prefix(_) => return Some("路径不能是绝对路径"),
+            Component::ParentDir => return Some("path cannot contain `..`"),
+            Component::RootDir | Component::Prefix(_) => {
+                return Some("path cannot be absolute path")
+            }
         }
     }
     None
 }
 
-/// 把文件名归一到 `kind.suffix()`。
+/// Normalize filename to `kind.suffix()`.
 ///
-/// `level2` / `level2.scene` / `level2.json` / `level2.scene.json` 都得到
-/// `level2.scene.json`。`Save As` 对话框的默认值也走这里，于是存不出一个
-/// 没有后缀、文档面板和 Build Settings 都不认的文件（#459）。
+/// `level2` / `level2.scene` / `level2.json` / `level2.scene.json` all get
+/// `level2.scene.json`. `Save As` dialog default also goes here, so can't save a file
+/// without suffix that Document panel and Build Settings don't recognize (#459).
 pub fn ensure_document_suffix(kind: DocKind, name: &str) -> String {
     let suffix = kind.suffix();
     if name.ends_with(suffix) {
         return name.to_string();
     }
-    // 半截写法：去掉尾部的 `.json` 和 `.scene` / `.prefab` 再补全。
+    // Half-written form: strip trailing `.json` and `.scene` / `.prefab`, then complete.
     let short = suffix.trim_end_matches(".json");
     let mut stem = name.strip_suffix(".json").unwrap_or(name);
     stem = stem.strip_suffix(short).unwrap_or(stem);
@@ -647,7 +655,7 @@ mod tests {
 
     #[test]
     fn file_stamp_tracks_length_even_when_mtime_is_coarse() {
-        // #495 ⑤：版本戳包含长度，同一秒内的覆盖写也能检测到。
+        // #495 item 5: version stamp includes length, same-second overwrites can still be detected.
         let dir = std::env::temp_dir().join(format!("prism-stamp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
@@ -655,24 +663,24 @@ mod tests {
 
         let first = file_stamp_at(&path).expect("stamp");
         assert_eq!(first.len, 3);
-        assert_eq!(first.digest, None, "轮询路径不读内容");
+        assert_eq!(first.digest, None, "poll path doesn't read content");
         std::fs::write(&path, b"longer").unwrap();
         let second = file_stamp_at(&path).expect("stamp");
         assert_eq!(second.len, 6);
-        assert_ne!(first, second, "长度变化必须被检测到");
+        assert_ne!(first, second, "length change must be detected");
 
         assert!(file_stamp_at(&dir.join("missing.txt")).is_none());
         assert_eq!(
             file_stamp(&dir, "a.txt").map(|stamp| stamp.len),
             Some(6),
-            "相对路径版本与绝对路径一致"
+            "relative path version matches absolute path"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn file_content_stamp_detects_same_length_rewrites() {
-        // #864：mtime 精度不足时，同长度覆盖写也必须靠摘要发现。
+        // #864: when mtime precision insufficient, same-length overwrites must still be detected via digest.
         let dir = std::env::temp_dir().join(format!("prism-content-stamp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
@@ -684,7 +692,7 @@ mod tests {
         assert_eq!(first.len, second.len);
         assert!(first.digest.is_some());
         assert_ne!(first.digest, second.digest);
-        assert_ne!(first, second, "同长度覆盖写必须被检测到");
+        assert_ne!(first, second, "same-length overwrite must be detected");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -731,7 +739,7 @@ mod tests {
         write_json_asset(&temp.root, "assets/materials/wood.mat.json", &value).unwrap();
         let read = read_json_asset(&temp.root, "assets/materials/wood.mat.json").unwrap();
         assert_eq!(read["metallic"], serde_json::json!(0.25));
-        // 未知字段必须原样保留（手改过的材质不能被编辑器吃掉）。
+        // Unknown fields must be preserved as-is (hand-edited materials must not be swallowed by editor).
         assert_eq!(read["type"], serde_json::json!("material"));
     }
 
@@ -746,7 +754,7 @@ mod tests {
         );
 
         let lonely = std::env::temp_dir().join("no-assets-here");
-        // 只断言「不会误报当前目录」为根（临时目录本身没有 assets/）。
+        // Only assert "current directory not mistakenly flagged as root" (temp dir itself has no assets/).
         if find_project_root(&lonely).is_none() {
             assert!(true);
         }
@@ -839,7 +847,7 @@ mod tests {
         )
         .is_err());
         assert!(rename_path(&project.root, "assets/none.json", "assets/scenes/x.json").is_err());
-        // 目标已存在
+        // target already exists
         fs::write(project.root.join("assets/scenes/c.scene.json"), "{}").unwrap();
         assert!(rename_path(
             &project.root,
@@ -847,7 +855,7 @@ mod tests {
             "assets/scenes/c.scene.json"
         )
         .is_err());
-        // 允许移动到新目录（自动创建）。
+        // allowed to move to new directory (auto-create).
         assert!(rename_path(
             &project.root,
             "assets/scenes/b.scene.json",
@@ -859,7 +867,7 @@ mod tests {
     #[test]
     fn creates_folders_and_copies_assets() {
         let project = TempProject::new();
-        create_folder(&project.root, "assets/textures/ui").unwrap(); // 允许嵌套
+        create_folder(&project.root, "assets/textures/ui").unwrap(); // nested allowed
         assert!(project.root.join("assets/textures/ui").is_dir());
         assert!(create_folder(&project.root, "outside").is_err());
 
@@ -898,14 +906,14 @@ mod tests {
         doc.add_named_child(None, "first");
         write_document(&project.root, relative, &doc).unwrap();
         assert!(path.exists());
-        assert!(!tmp.exists(), "临时文件必须被 rename 掉");
-        assert!(!bak.exists(), "首次保存没有旧文件可备份");
+        assert!(!tmp.exists(), "temp file must be renamed away");
+        assert!(!bak.exists(), "first save has no old file to back up");
 
         let mut doc = SceneDoc::default();
         doc.add_named_child(None, "second");
         write_document(&project.root, relative, &doc).unwrap();
 
-        assert!(bak.exists(), "覆盖保存应留下上一份 .bak");
+        assert!(bak.exists(), "overwrite save should leave previous .bak");
         let backup: SceneDoc = serde_json::from_str(&fs::read_to_string(&bak).unwrap()).unwrap();
         assert_eq!(backup.entities[0].display_name(), "first");
         let current: SceneDoc = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -928,7 +936,7 @@ mod tests {
             "assets/prefabs/x.prefab.json"
         );
         assert_eq!(normalize_save_path(DocKind::Scene, "   "), "");
-        // #459：没写后缀（或只写半截）也要补全。
+        // #459: missing suffix (or partial) must still be completed.
         assert_eq!(
             normalize_save_path(DocKind::Scene, "level2"),
             "assets/scenes/level2.scene.json"
@@ -949,7 +957,7 @@ mod tests {
             normalize_save_path(DocKind::Prefab, "box"),
             "assets/prefabs/box.prefab.json"
         );
-        // 路径穿越与绝对路径一律拒绝。
+        // Path traversal and absolute paths all rejected.
         assert_eq!(normalize_save_path(DocKind::Scene, "../evil"), "");
         assert_eq!(normalize_save_path(DocKind::Scene, "../../evil"), "");
         assert_eq!(normalize_save_path(DocKind::Scene, "assets/../evil"), "");
@@ -966,7 +974,7 @@ mod tests {
         std::fs::create_dir_all(project.root.join("assets/textures")).unwrap();
         std::fs::write(project.root.join("assets/textures/wood.png"), b"png").unwrap();
 
-        // 派生文件不生成 sidecar。
+        // Derived files don't generate sidecar.
         std::fs::write(project.root.join("assets/scenes.pak"), b"pak").unwrap();
         std::fs::write(
             project.root.join("assets/textures/wood.png.import.json"),
@@ -983,16 +991,16 @@ mod tests {
         let assets = scan_assets(&project.root);
         assert!(
             !assets.iter().any(|asset| asset.path.ends_with(".rmeta")),
-            "sidecar 不能出现在资产浏览器里"
+            "sidecar must not appear in asset browser"
         );
         let wood = assets
             .iter()
             .find(|asset| asset.path == "assets/textures/wood.png")
             .expect("texture asset");
-        let guid = wood.guid.clone().expect("扫描时读出 sidecar guid");
+        let guid = wood.guid.clone().expect("read sidecar guid on scan");
         assert_eq!(guid.len(), 32);
 
-        // 第二次不重写，GUID 稳定。
+        // second time no rewrite, GUID stable.
         assert_eq!(ensure_asset_metas(&project.root), 0);
         let again = scan_assets(&project.root)
             .into_iter()

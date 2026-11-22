@@ -5,7 +5,7 @@
 ## 1. Five Hard Rules
 
 1. **One task = one branch = one PR** into `master` (keep diff < ~500 lines; split larger work into independently reviewable PRs). `dev` allows direct atomic commits and `git pull --rebase origin dev` pushes.
-2. **Gate before merge**: `dev` 上每次提交只跑内环 `python scripts/pr_ready.py --quick`；完整的 `python scripts/pr_ready.py` 只在 `master` 提交或开 `dev → master` PR 前跑（Termux/ARM64 用 `--static-only`）。PR body 里贴完整 Markdown 块（含 `HEAD: <sha>` 与 `**Result:`）。
+2. **Gate before merge**: each `dev` commit runs only the inner loop `python scripts/pr_ready.py --quick`; the full `python scripts/pr_ready.py` runs only before `master` commit or opening `dev → master` PR (Termux/ARM64 uses `--static-only`). Paste the full Markdown block into the PR body (containing `HEAD: <sha>` and `**Result:**`).
 3. **Identify AI output**: every PR body, issue body, comment, and commit with AI participation must carry the standard declaration (see §4). Never impersonate a human.
 4. **Never guess**: stop and ask before changing public APIs, save formats (`RSCN` / `RTTIBin` / `.pak` / `.scene.json`), coordinate/matrix conventions, workspace layering, or adding dependencies.
 5. **Zero compatibility burden before 1.0 (currently 0.1)**: replace and delete old designs directly; never add shims, deprecated aliases, or version fallback branches.
@@ -15,7 +15,7 @@
 1. **Claim first (for existing issues)**: check there is no `agent/working`, add `agent/working`, and comment `🤖 Agent: claiming (<model> / <tool>)` before reading code or logs.
 2. **Locate & plan**: read the relevant `area/*` entry doc (see [`integrations.md`](integrations.md) §10) and keep any temporary plan in-session or ephemeral.
 3. **Implement**: small atomic edits in `.worktrees/<YYYYMMDD>-<branch>`; never touch unrelated files.
-4. **Verify**: `dev` 提交跑 `--quick`；合并前跑完整门禁。失败按根因修，等待 CI 用 `python3 scripts/ci_watch.py <pr>`（禁止 sleep/定时器轮询）。
+4. **Verify**: `dev` commits run `--quick`; run the full gate before merge. Fix by root cause on failure, wait for CI using `python3 scripts/ci_watch.py <pr>` (no sleep/timer polling).
 5. **Sync & push**: `git fetch origin && git rebase origin/master`, re-run `pr_ready.py`, then push (`--force-with-lease` on your own branch only).
 6. **Close out**: cross-link PR URL on the issue (`🤖 Agent: ...`), remove `agent/working`, update docs if behavior changed, and delete merged branches/worktrees.
 

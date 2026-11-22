@@ -1,32 +1,33 @@
-//! 作者侧剪辑同步标记表（`*.skinning/sync_markers.json`）的视图与编辑（#560）。
+//! Author-side sync marker table (`*.skinning/sync_markers.json`) view and editing (#560).
 //!
-//! 文件形状与 cooker 的 `authored_sync_markers` 一致：
+//! File shape matches the cooker's `authored_sync_markers`:
 //!
 //! ```json
 //! { "clips": { "walk": [0.0, 0.5], "run": [0.05, 0.55] } }
 //! ```
 //!
-//! 键是 glTF 里的动画**原名**，值是归一化相位。写入时把相位归一化到 `[0, 1)`，
-//! 重复相位（误差 `1e-6`）直接拒绝；数组顺序保持作者写入顺序，cook 时再排序去重。
-//! 「对上不对得上某个动画」仍由 cook 时 warn。
+//! Keys are the animation **original names** from glTF; values are normalized phases. On write,
+//! phases are normalized into `[0, 1)`; duplicate phases (within `1e-6` error) are rejected;
+//! array order keeps author write order, sorted and deduped at cook time.
+//! "Animation doesn't line up" warnings are still emitted at cook time.
 
 use serde_json::{json, Value};
 
-/// 一个剪辑的同步标记。
+/// A sync marker clip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncMarkerClipView {
     pub clip: String,
     pub phases: Vec<f32>,
 }
 
-/// 整个同步标记表，按剪辑名排序。
+/// The whole sync marker table, sorted by clip name.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SyncMarkersView {
     pub clips: Vec<SyncMarkerClipView>,
 }
 
 impl SyncMarkersView {
-    /// 所有标记总数（面板标题用）。
+    /// Total number of markers (used for panel title).
     pub fn len(&self) -> usize {
         self.clips.iter().map(|clip| clip.phases.len()).sum()
     }
@@ -36,7 +37,7 @@ impl SyncMarkersView {
     }
 }
 
-/// 解析同步标记表；缺 `clips` 当作空表。
+/// Parse sync marker table; missing `clips` treated as empty table.
 pub fn parse_sync_markers_view(document: &Value) -> Result<SyncMarkersView, String> {
     let Some(clips) = document.get("clips") else {
         return Ok(SyncMarkersView::default());
@@ -84,10 +85,10 @@ fn has_phase(entries: &[Value], phase: f32, skip: Option<usize>) -> bool {
         .any(|(index, entry)| Some(index) != skip && (phase_of(entry) - phase).abs() <= 1e-6)
 }
 
-/// 给某个剪辑追加一个同步标记；剪辑键不存在时自动创建。
+/// Append a sync marker to a clip; create the clip key automatically if missing.
 ///
-/// 相位先归一化到 `[0, 1)`；同一剪辑里已有相同相位（误差 `1e-6`）时拒绝，
-/// 避免「加了一条但 cook 后消失」。
+/// Phase is first normalized into `[0, 1)`; reject if the same phase already exists in the clip
+/// (within `1e-6` error), avoiding "added one but it disappears after cook".
 pub fn add_sync_marker(document: &mut Value, clip: &str, phase: f32) -> Result<(), String> {
     let clip = clip.trim();
     if clip.is_empty() {
@@ -113,7 +114,7 @@ pub fn add_sync_marker(document: &mut Value, clip: &str, phase: f32) -> Result<(
     Ok(())
 }
 
-/// 删除某个剪辑的第 `index` 个同步标记。
+/// Remove the marker at `index` of a clip.
 pub fn remove_sync_marker(document: &mut Value, clip: &str, index: usize) -> Result<(), String> {
     let Some(entries) = find_clip_mut(document, clip)? else {
         return Err(format!("sync marker file has no clip '{clip}'"));
@@ -125,7 +126,7 @@ pub fn remove_sync_marker(document: &mut Value, clip: &str, index: usize) -> Res
     Ok(())
 }
 
-/// 改某个剪辑第 `index` 个同步标记的相位。
+/// Change the phase of the marker at `index` of a clip.
 pub fn set_sync_marker(
     document: &mut Value,
     clip: &str,
@@ -167,9 +168,10 @@ fn find_clip_mut<'a>(
     Ok(Some(entries))
 }
 
-/// 时间轴上的 x 坐标映射成 `[0, 1)` 相位，量化到 0.001。
+/// Map timeline x coordinate to a `[0, 1)` phase, quantized to 0.001.
 ///
-/// 面板拖拽和单元测试共用这一份换算，避免 UI 与测试各写一套夹取逻辑。
+/// Panel dragging and unit tests share this one conversion, avoiding UI and tests each writing
+/// their own clamp logic.
 pub fn sync_marker_phase_at(x: f32, left: f32, width: f32) -> f32 {
     if !x.is_finite() || !left.is_finite() || !width.is_finite() || width <= 0.0 {
         return 0.0;
@@ -179,7 +181,7 @@ pub fn sync_marker_phase_at(x: f32, left: f32, width: f32) -> f32 {
     phase.rem_euclid(1.0)
 }
 
-/// 时间轴命中：返回离 `x` 最近、且像素距离不超过 `radius` 的标记下标。
+/// Timeline hit test: return the index of the marker nearest to `x`, within `radius` pixels.
 pub fn nearest_sync_marker_index(
     phases: &[f32],
     x: f32,
@@ -243,7 +245,10 @@ mod tests {
         assert_eq!(doc["clips"]["walk"], json!([0.0, 0.5, 0.25]));
         add_sync_marker(&mut doc, "idle", -0.25).expect("creates clip");
         assert_eq!(doc["clips"]["idle"], json!([0.75]));
-        assert!(add_sync_marker(&mut doc, "walk", 0.5).is_err(), "重复相位");
+        assert!(
+            add_sync_marker(&mut doc, "walk", 0.5).is_err(),
+            "duplicate phase"
+        );
     }
 
     #[test]
@@ -257,7 +262,7 @@ mod tests {
         assert_eq!(doc["clips"]["run"], json!([0.3f32 as f64, 0.55]));
         assert!(
             set_sync_marker(&mut doc, "run", 0, 0.55).is_err(),
-            "不能移动到已有相位"
+            "cannot move to existing phase"
         );
     }
 
@@ -275,7 +280,7 @@ mod tests {
         assert!(set_sync_marker(&mut doc, "missing", 0, 0.5).is_err());
         assert!(
             set_sync_marker(&mut doc, "walk", 0, 0.5).is_err(),
-            "重复相位"
+            "duplicate phase"
         );
     }
 
@@ -292,7 +297,7 @@ mod tests {
     #[test]
     fn timeline_hit_testing_picks_the_nearest_marker_within_the_radius() {
         let phases = [0.25, 0.75];
-        // 0..200px → 0.25 在 50px、0.75 在 150px。
+        // 0..200px -> 0.25 at 50px, 0.75 at 150px.
         assert_eq!(
             nearest_sync_marker_index(&phases, 52.0, 0.0, 200.0, 8.0),
             Some(0)

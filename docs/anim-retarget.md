@@ -1,46 +1,44 @@
-# 姿态重定向（Retargeting，#560 P5）
+# Pose retargeting (Retargeting, #560 P5)
 
-把一条在**源骨架**上求值出来的姿态搬到**目标骨架**上播放。当前只做 FK 这一半：
-没有 IK goal / pole vector、没有 `IKRig` / `RetargeterDef` 资产、没有链类型映射
-（Interpolated / OneToOne / Reversed / None）—— 那些要先有 `prism-asset` 的新资产类型。
+Move a pose evaluated on the **source skeleton** to the **target skeleton** for playback. Currently only does the FK half:
+no IK goal / pole vector, no `IKRig` / `RetargeterDef` asset, no chain type mapping
+(Interpolated / OneToOne / Reversed / None) — those need a new asset type in `prism-asset` first.
 
-数学在 `crates/prism-anim-retarget`，不碰 ECS / 渲染 / 资产，和 `prism-anim-ik`、
-`prism-motion-matching` 一样是纯值层。
+Math lives in `crates/prism-anim-retarget`, doesn't touch ECS / render / assets, just like `prism-anim-ik` and
+`prism-motion-matching`, it's a pure value layer.
 
-## 映射
+## Mapping
 
 ```rust
-let map = RetargetMap::by_name(&source, &target);       // 同名关节
-let map = RetargetMap::new(vec![JointPair::new(3, 7)]); // 显式配对
+let map = RetargetMap::by_name(&source, &target);       // same-named joints
+let map = RetargetMap::new(vec![JointPair::new(3, 7)]); // explicit pairing
 let pose = retarget(&source, &source_pose, &target, &map, &options)?;
 ```
 
-- `by_name` 覆盖「同一套 rig 重新导出成不同比例」这种常见情形。
-- 同一个目标关节被映射两次时保留第一条，后面的忽略（不静默改覆盖顺序）。
-- **没被映射的目标关节保持 rest pose**：只映射 FK 链也能产出可播放的姿态。
+- `by_name` covers the common case of "same rig re-exported at different proportions".
+- When the same target joint is mapped twice, keep the first, ignore the rest (do not silently change override order).
+- **Unmapped target joints stay at rest pose**: mapping only the FK chain can still produce a playable pose.
 
-## 传输规则
+## Transfer rules
 
-对每一对关节：
+For each joint pair:
 
-| 量 | 规则 |
-|---|---|
-| 旋转 | 默认相对两个 rest pose：`rest_target · rest_source⁻¹ · anim_source`；`relative_to_rest = false` 时直接拷贝局部旋转（适用于专门为这对骨架做过的 retarget pose） |
-| 位移 | 默认按「本帧长度 / 源 rest 长度」的比例缩放目标 rest 位移，即**保留目标骨架自己的骨长**；`scale_translation = false` 直接用 rest |
-| 根关节 | 默认**不**传根位移（角色移动交给 gameplay / root motion）；`transfer_root = true` 时才带上 |
-| 缩放通道 | 直接拷贝源关节的 scale |
-| 全局缩放 | `global_scale` 乘在位移上（角色身高差），默认 `1.0` 保持目标比例 |
+| Quantity | Rule |
+|----------|------|
+| Rotation | Default relative to both rest poses: `rest_target · rest_source⁻¹ · anim_source`; when `relative_to_rest = false`, directly copy local rotation (suitable for retarget poses made specifically for this pair) |
+| Translation | Default scales target rest displacement by "this frame length / source rest length" ratio, i.e. **keep target skeleton's own bone lengths**; `scale_translation = false` uses rest directly |
+| Root joint | Default does **not** transfer root displacement (character movement left to gameplay / root motion); `transfer_root = true` brings it along |
+| Scale channel | Directly copy source joint's scale |
+| Global scale | `global_scale` multiplied onto translation (character height difference), defaults to `1.0` keeping target proportions |
 
-为什么不直接拷位移：矮角色播高角色的走路会把腿拉长、脚离地；按 rest 长度比例缩放后，
-弯曲角度保留、骨长仍是目标自己的。
+Why not directly copy translation: short character playing tall character's walk would stretch legs, feet off ground; scaling by rest length ratio preserves bending angles, bone lengths remain target's own.
 
-## 失败即返回 `None`
+## Returns `None` on failure
 
-映射越界，或姿态长度不等于源骨架关节数 → `None`。半截姿态会被当成动画 bug，
-而不是调用方参数错误。
+Mapping out of bounds, or pose length not equal to source skeleton joint count → `None`. A truncated pose is treated as an animation bug, not caller parameter error.
 
-## 还没做
+## Not yet done
 
-- IK goals / pole vector / PBIK、非 retarget 骨骼的 IK 收敛。
-- 链类型映射与 retarget pose 资产（`RetargeterDef`）。
-- 编辑器里双骨架并排预览、误差阈值校验（脚 / 手不穿插）。
+- IK goals / pole vector / PBIK, IK convergence for non-retarget skeletons.
+- Chain type mapping and retarget pose asset (`RetargeterDef`).
+- Editor dual-skeleton side-by-side preview, error threshold validation (feet / hands not penetrating).

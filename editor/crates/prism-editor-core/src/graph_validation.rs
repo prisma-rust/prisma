@@ -1,8 +1,9 @@
-//! 动画图作者 JSON 的快速形状检查（#560 节点检查器）。
+//! Quick shape check for animation graph authoring JSON (#560 node inspector).
 //!
-//! 这里只复刻 cooker 在 cook 前会拒绝的**形状**问题（节点类型、剪辑数量、
-//! 连线目标、输出数量、环、参数类型），让面板在保存前就能指出问题；资产是否存在、
-//! 剪辑能不能解码仍以 cooker 为准。检查是只读的，不修改文档。
+//! This only replicates the **shape** problems the cooker rejects before cooking (node type,
+//! clip count, connection targets, output count, cycles, parameter types), so the panel can
+//! flag them before saving; whether assets exist or clips can be decoded is still up to the
+//! cooker. The check is read-only and does not modify the document.
 
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -53,7 +54,7 @@ fn string_list(node: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 节点的剪辑列表：`clip`（单数）在前，`clips` 依次追加，和 cooker 一致。
+/// The node's clip list: `clip` (singular) first, then `clips` appended in order, matching the cooker.
 fn node_clips(node: &Value) -> Vec<String> {
     let mut clips = Vec::new();
     if let Some(clip) = node
@@ -68,7 +69,7 @@ fn node_clips(node: &Value) -> Vec<String> {
     clips
 }
 
-/// 节点的连线目标：`input`（单数）+ `inputs`（字符串或 `{ node }`）。
+/// The node's connection targets: `input` (singular) plus `inputs` (strings or `{ node }` objects).
 fn node_inputs(node: &Value) -> Vec<String> {
     let mut inputs = Vec::new();
     if let Some(input) = node
@@ -94,7 +95,7 @@ fn node_inputs(node: &Value) -> Vec<String> {
     inputs
 }
 
-/// 检查整份图；返回人类可读的问题列表（空 = 没发现形状问题）。
+/// Validate the whole graph; returns a human-readable list of issues (empty = no shape problems found).
 pub fn validate_anim_graph(document: &Value) -> Vec<String> {
     let mut issues = Vec::new();
     validate_parameters(document, &mut issues);
@@ -286,7 +287,7 @@ fn validate_parameters(document: &Value, issues: &mut Vec<String>) {
     }
 }
 
-/// 按名字建图做 DFS；只报告「有没有环」，不展开每个节点。
+/// Build graph by name for DFS; only reports "is there a cycle", doesn't expand each node.
 fn has_cycle(nodes: &[Value]) -> bool {
     let mut edges: HashMap<String, Vec<String>> = HashMap::new();
     for node in nodes {

@@ -1,65 +1,62 @@
-# 代码注释与文档注释规范
+# Code comment and doc comment specification
 
-适用于 `prisma` 仓库里的**代码注释**：`.rs` 的 `//` / `///` / `//!` / `/* */`，
-以及 `Cargo.toml`、CI YAML、shell / Python / PowerShell、`.slang` 里的注释。
+Applies to **code comments** in `prisma` repository: `.rs` `//` / `///` / `//!` / `/* */`, and comments in `Cargo.toml`, CI YAML, shell / Python / PowerShell, `.slang`.
 
-**目标只有两条：注释用英文；删掉不提供信息的注释。**
-（本文档本身、`docs/**/*.md`、`README.md`、`AGENTS.md` 继续用中文，不在此规范内。）
+**Two goals only: comments in English; delete comments that provide no information.**
+(This document itself, `docs/**/*.md`, `README.md`, `AGENTS.md` continue using Chinese, not within this specification.)
 
-## 1. 语言边界
+## 1. Language boundary
 
-| 内容 | 语言 |
-|---|---|
-| Rust 代码注释、rustdoc | 英文 |
-| `Cargo.toml` / CI / 构建脚本 / shader 注释 | 英文 |
-| `docs/**/*.md`、`README.md`、`AGENTS.md`、`CONTRIBUTING.md` | 中文 |
-| UI 文案、日志、错误提示、测试断言的用户可见文本 | 保持原文（通常是中文） |
-| 标识符、类型名、命令、路径、Vulkan 枚举、格式名 | 不翻译 |
+| Content | Language |
+|-------|----------|
+| Rust code comments, rustdoc | English |
+| `Cargo.toml` / CI / build scripts / shader comments | English |
+| `docs/**/*.md`, `README.md`, `AGENTS.md`, `CONTRIBUTING.md` | Chinese |
+| UI copy, logs, error messages, user-visible text in test assertions | Keep original (usually Chinese) |
+| Identifiers, type names, commands, paths, Vulkan enums, format names | Do not translate |
 
-技术术语沿用仓库既有写法：`swapchain`、`bindless`、`render graph`、`bind group`、
-`descriptor set`、`push constant`、`RSCN`、`RTTIBin` 等，不要另造中文译名。
+Technical terms follow existing repository writing: `swapchain`, `bindless`, `render graph`, `bind group`, `descriptor set`, `push constant`, `RSCN`, `RTTIBin`, etc. Do not invent Chinese translations.
 
-### 为什么强调这一条
+### Why emphasize this
 
-历史上有一个提交（`803c0068`）用脚本把英文注释**逐词替换**成中文，留下了大量病句：
+Historically one commit (`803c0068`) used a script to **word-by-word replace** English comments into Chinese, leaving many broken sentences:
 
 ```rust
-/// Raw 索引 into the 实体 allocator. 稳定 for the entity's 生命周期
-/// Monotonically increasing version; bumped each 时间 the 槽 is recycled.
+/// Raw index into the entity allocator. Stable for the entity's lifetime.
+/// Monotonically increasing version; bumped each time the slot is recycled.
 ```
 
-这种文本比英文原文更难读，也更难维护。恢复时优先查该提交之前的 git 历史，
-再按当前代码重写；**不要再用替换脚本生成最终注释**。
+This text is harder to read than the English original, and harder to maintain. When restoring, prefer querying git history before that commit, then rewrite per current code; **do not use replacement scripts to generate final comments**.
 
-## 2. 保留什么
+## 2. What to keep
 
-只保留“读代码看不出来”的信息：
+Only keep information "not obvious from reading code":
 
-- 模块级 `//!`：这个模块负责什么、边界在哪、和谁共享约定。
-- 公开 item 的 `///`：语义、单位、不变量、何时 panic / 返回错误、调用方必须满足的条件。
-- 非显然的算法、数学、坐标约定（尤其 `AGENTS.md` 的矩阵与坐标系约定）。
-- Vulkan 规范约束、VUID、驱动 workaround、布局转换、同步与生命周期不变量。
-- 二进制格式布局（magic / version / 字段顺序）；注意 1.0 前不维护旧版本二进制兼容，直接升级格式并移除旧逻辑。
-- 线程模型、所有权、锁顺序、channel 语义。
-- 性能取舍、feature 取舍的原因（例如“为什么这个依赖必须是 optional”）。
-- 真正不显然的 `unsafe` 前置条件，用 `// SAFETY:` 说明。
+- Module-level `//!`: what this module is responsible for, where boundaries are, shared conventions with whom.
+- Public item `///`: semantics, units, invariants, when panic / error occurs, conditions callers must satisfy.
+- Non-obvious algorithms, math, coordinate conventions (especially matrix and coordinate system conventions in `AGENTS.md`).
+- Vulkan spec constraints, VUID, driver workarounds, layout transitions, sync and lifecycle invariants.
+- Binary format layout (magic / version / field order); note 1.0 does not maintain old binary compatibility, directly upgrade format and remove old logic.
+- Thread model, ownership, lock order, channel semantics.
+- Performance tradeoffs, feature tradeoff reasons (e.g. "why this dependency must be optional").
+- Truly non-obvious `unsafe` preconditions, explained with `// SAFETY:`.
 
-## 3. 删除什么
+## 3. What to delete
 
-- 复述代码的注释（`// increment i`、`// return the value`）。
-- 装饰性分隔线（`// ----------`、`// ==========`、`// Entity` 这类纯标题）。
-- 被注释掉的旧代码。
-- 1.0 版本发布前（当前 0.1）为了兼容旧版本而保留的死代码、兼容门面、旧分支回退与垫片（旧版本兼容被明确视为冗余垃圾代码）。
-- 过期状态 / 里程碑 / “目前”“暂时”“以后再说”而没有 issue 链接的说明。
-- 同一事实在模块文档、类型文档、字段文档里重复多遍的内容。
-- 没有 issue 或明确原因的 `TODO` / `FIXME` / `XXX` / `HACK`。
-- 只对作者有意义的缩写、代号、内部梗。
+- Comments restating code (`// increment i`, `// return the value`).
+- Decorative separators (`// ----------`, `// ==========`, `// Entity` pure titles).
+- Commented-out old code.
+- Before 1.0 release (current 0.1), dead code, compatibility facades, old branch fallbacks, and shims retained for old version compatibility (old version compatibility explicitly regarded as redundant garbage code).
+- Expired status / milestone / "currently" / "temporarily" / "later" explanations without issue links.
+- Content repeated multiple times in module doc, type doc, field doc for the same fact.
+- `TODO` / `FIXME` / `XXX` / `HACK` without issue or clear reason.
+- Abbreviations, code names, internal jokes only meaningful to the author.
 
-长文件需要“章节感”时，优先拆模块或拆函数，而不是加分隔线。
+When long files need "section sense", prefer splitting modules or functions, not adding separators.
 
-## 4. rustdoc 写法
+## 4. rustdoc writing
 
-公开 item 使用 `///`，第一行是摘要，空一行再写细节：
+Public items use `///`, first line is summary, blank line then details:
 
 ```rust
 /// Returns the entity's generation.
@@ -69,7 +66,7 @@
 pub fn generation(self) -> u32 {
 ```
 
-按需使用标准段落：
+Use standard paragraphs as needed:
 
 ```rust
 /// Decodes an RSCN scene from `bytes`.
@@ -84,17 +81,17 @@ pub fn generation(self) -> u32 {
 /// Panics when `bytes` is shorter than the fixed header.
 ```
 
-- 第一行用完整句子，句末加句号。
-- 标识符、路径、命令用反引号；Rust item 用 rustdoc 链接（`` [`World`] ``）。
-- 不写日期、作者、变更历史；这些属于 git / CHANGELOG。
-- 单行不超过 100 字符，与 rustfmt 行宽一致。
-- 文档里的代码块必须能编译（doctest）或明确标成 `text`。
+- First line uses complete sentence, ends with period.
+- Identifiers, paths, commands in backticks; Rust items use rustdoc links (`` [`World`] ``).
+- Do not write dates, authors, change history; those belong to git / CHANGELOG.
+- Single line not over 100 characters, consistent with rustfmt line width.
+- Code blocks in docs must be compilable (doctest) or explicitly marked `text`.
 
-## 5. `SAFETY`、`TODO` 与格式
+## 5. `SAFETY`, `TODO` and formatting
 
 ### `SAFETY`
 
-`unsafe` 块只在前置条件不显然时写 `SAFETY`，并紧贴代码：
+`unsafe` blocks only write `SAFETY` when preconditions are not obvious, close to code:
 
 ```rust
 // SAFETY: `image` was created from `device` and is still alive; the caller
@@ -102,46 +99,41 @@ pub fn generation(self) -> u32 {
 unsafe { device.destroy_image(image, None) };
 ```
 
-不要给每个 `unsafe` 机械补一句“调用方保证安全”；写清楚**具体**不变量。
+Do not mechanically add "caller guarantees safety" for every `unsafe`; write clearly the **specific** invariant.
 
 ### `TODO` / `FIXME`
 
-必须带 issue 或链接：
+Must carry issue or link:
 
 ```rust
 // TODO(#123): replace the linear scan once the asset index lands.
 ```
 
-没有 issue 就删掉；不要把待办留在注释里当隐形需求。
+Without issue, delete it; do not leave to-dos in comments as hidden requirements.
 
-### `#[allow(...)]` 与 `#[expect(...)]`
+### `#[allow(...)]` and `#[expect(...)]`
 
-`#[allow(...)]` / `#![allow(...)]` 在本仓库**一律禁止**，没有例外：`dead_code` 不是理由，
-`clippy::too_many_arguments` 不是理由，生成代码也不是理由。Lint 报错时，删掉它指向的代码，
-或者改设计直到 lint 不再报——需要长期压制的 lint，本身就说明设计有问题。
+`#[allow(...)]` / `#![allow(...)]` are **banned in this repository, no exceptions**: `dead_code` is not a reason, `clippy::too_many_arguments` is not a reason, generated code is not a reason. When a lint fires, delete the code it points at, or change the design until the lint stops firing — needing long-term suppression itself proves the design is wrong.
 
-唯一的逃生口是 `#[expect(<lint>, reason = "<原因>")]`：它把"这里故意如此"写进代码，并且在
-lint 不再触发时**直接编译失败**，所以不会烂成死重。只在 lint 判断错误、代码本身正确时使用
-（FFI 签名、Vulkan 句柄），不能用来压 `dead_code`。
+The only escape hatch is `#[expect(<lint>, reason = "<reason>")]`: it documents "here deliberately so", and **fails the build once the lint stops firing**, so it cannot rot into dead weight. Only use where the lint is wrong about correct code (FFI signatures, Vulkan handles); never to silence `dead_code`.
 
 ```rust
-// 允许：超长参数列表来自 C ABI 的固定形状。
+// Allowed: long parameter list comes from fixed C ABI shape.
 #[expect(clippy::too_many_arguments, reason = "mirrors the C ABI signature")]
 pub unsafe extern "C" fn create(...) {}
 
-// 禁止：lint 指出这段代码没人用，那就删掉它。
+// Prohibited: lint says this code is unused, delete it.
 #[allow(dead_code)]
 fn legacy_path() {}
 ```
 
-### 警告即错误
+### Warnings are errors
 
-整个 workspace 必须通过 `cargo clippy --all-targets -- -D warnings`，**不是**只通过本次改动的
-crate。没被改到的 crate 里的警告同样是缺陷：修掉它，或者删掉那段代码。
+The entire workspace must pass `cargo clippy --all-targets -- -D warnings`, **not** only crates touched by this commit. A warning in an untouched crate is still a defect: fix it or delete the code.
 
-### 分隔线
+### Separators
 
-不要使用：
+Do not use:
 
 ```rust
 // ---------------------------------------------------------------------------
@@ -149,11 +141,11 @@ crate。没被改到的 crate 里的警告同样是缺陷：修掉它，或者�
 // ---------------------------------------------------------------------------
 ```
 
-直接用模块 / 函数 / 类型组织代码；确实需要导航时，用 `//!` 模块文档里的列表。
+Organize code directly with modules / functions / types; if navigation needed, use `//!` module doc lists.
 
-## 6. 示例
+## 6. Examples
 
-保留（解释了为什么）：
+Keep (explains why):
 
 ```rust
 // The framebuffers must be destroyed before the swapchain is recreated,
@@ -161,89 +153,81 @@ crate。没被改到的 crate 里的警告同样是缺陷：修掉它，或者�
 // can be lost on some drivers.
 ```
 
-删除（只是复述代码）：
+Delete (just restates code):
 
 ```rust
 // Set the width.
 self.width = width;
 ```
 
-删除（过期里程碑）：
+Delete (expired milestone):
 
 ```rust
 // This is a skeleton for milestone 1; later milestones can slot in RenderSystem.
 ```
 
-需要保留时改写成英文：
+When keeping, rewrite into English:
 
 ```rust
 // Before
-/// Raw 索引 into the 实体 allocator. 稳定 for the entity's 生命周期
+/// Raw index into the entity allocator. Stable for the entity's lifetime.
 
 // After
 /// Raw index into the entity allocator. Stable for the entity's lifetime.
 ```
 
-## 7. 只改注释的 PR
+## 7. Comment-only PR
 
-日常改动适用「触碰即清理」（见 [`AGENTS.md`](../AGENTS.md) §8）：改文件时，把**改动区域及周边**的过时注释、
-复述代码的注释、被注释掉的旧代码、装饰性分隔线一并删掉，中文注释改写成英文。这是同一个提交的一部分，
-不要留到以后统一扫。
+Daily changes apply "touch it, clean it" (see [`AGENTS.md`](../AGENTS.md) §8): when modifying a file, delete outdated comments, restating-code comments, commented-out old code, decorative separators in **the modified area and surroundings**, rewrite Chinese comments into English. This is part of the same commit, do not leave for a later sweep.
 
-**全仓**注释清扫仍然是独立的注释 PR，与逻辑改动分开。每个注释 PR 跑：
+**Repository-wide** comment sweep is still a separate comment PR, separated from logic changes. Each comment PR runs:
 
 ```bash
 python scripts/check_comment_only.py --base origin/master
 ```
 
-它用同一套 Rust 词法扫描去掉注释和空白，比较剩下的代码 token。任何代码改动都会失败；
-纯注释修改（包括删除注释）通过。全仓扫描时不要顺手改代码、重排 import 或跑全仓 rustfmt；
-触碰即清理不受这条限制，因为它本身就是那次逻辑改动的一部分。
+It uses the same Rust lexical scan to strip comments and blanks, compares remaining code tokens. Any code change fails; pure comment modification (including deleting comments) passes. During full repository scan, do not incidentally change code, reorder imports, or run full rustfmt; "touch it, clean it" is not subject to this because it is itself part of that logic change.
 
-如果注释修复必须伴随代码改动（例如坏链接指向的 item 已经不存在），把代码改动拆到
-另一个 PR，或在 PR 里明确说明并请 reviewer 重点看那一处。
+If comment fix must accompany code change (e.g. bad link points to item that no longer exists), split code change into another PR, or clearly explain in PR and ask reviewer to focus there.
 
-## 8. 工具
+## 8. Tools
 
 ```bash
-# 全仓检查（迁移期会输出存量，用于统计）
+# Full repository check (migration period outputs existing, for statistics)
 python scripts/check_comments.py --all
 
-# 只检查相对 base 的改动
+# Only check changes relative to base
 python scripts/check_comments.py --changed --base origin/master
 
-# 只检查暂存区；输出可直接贴 PR 的 Markdown 行
+# Only check staged area; output Markdown rows ready to paste into PR
 python scripts/check_comments.py --staged --markdown
 
-# 某个文件 / 目录
+# A specific file / directory
 python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 ```
 
-`check_comments.py` 会标记：
+`check_comments.py` flags:
 
-- 注释中的 CJK 字符；
-- 装饰性分隔线；
-- 没有 issue 的 `TODO` / `FIXME` / `XXX` / `HACK`；
-- 任何 `#[allow(...)]` / `#![allow(...)]`（一律禁止，改为 `#[expect(..., reason = "...")]`）；
-- 未附带 `reason = "..."` 的 `#[expect(...)]`。
+- CJK characters in comments;
+- Decorative separators;
+- `TODO` / `FIXME` / `XXX` / `HACK` without issue;
+- Any `#[allow(...)]` / `#![allow(...)]` (all prohibited, change to `#[expect(..., reason = "...")]`);
+- `#[expect(...)]` without `reason = "..."`.
 
-字符串里的中文（UI 文案、错误信息）不会被标记；生成文件
-（`crates/prism-render/src/shader_bindings/`、`launcher/src-tauri/gen/`、
-`.local/tools/slang/`）会被跳过。
+Chinese in strings (UI copy, error messages) is not flagged; generated files (`crates/prism-render/src/shader_bindings/`, `launcher/src-tauri/gen/`, `.local/tools/slang/`) are skipped.
 
-## 9. 迁移与门禁
+## 9. Migration and gate
 
-- 存量中文注释与冗余解释性注释按 crate / 模块分批清理，或在触碰文件时顺手清理。
-- `pr_ready.py` 通过 `check_comments.py --changed --added-lines` 只检查**新增或修改的行**，对违规新增直接阻断合并。
-- 每个注释 PR 额外跑 `RUSTDOCFLAGS="-D warnings" cargo doc -p <crate> --no-deps`，
-  确保 rustdoc 链接和代码块没有坏掉。
-- 生成的文档注释不要手改：`shader_bindings/`、Tauri `gen/` 等以生成器为准。
+- Existing Chinese comments and redundant explanatory comments cleaned up batch by batch by crate / module, or cleaned incidentally when touching files.
+- `pr_ready.py` passes `check_comments.py --changed --added-lines` to only check **newly added or modified lines**, blocking merge on new violations.
+- Each comment PR additionally runs `RUSTDOCFLAGS="-D warnings" cargo doc -p <crate> --no-deps` to ensure rustdoc links and code blocks are not broken.
+- Generated doc comments should not be hand-edited: `shader_bindings/`, Tauri `gen/`, etc. follow the generator.
 
 ## 10. Review checklist
 
-- [ ] 注释是英文，标识符 / 路径保持原样。
-- [ ] 没有复述代码、装饰线、被注释掉的旧代码、过期里程碑。
-- [ ] 非显然的不变量、单位、panic / error / safety 条件仍然保留。
-- [ ] `TODO` 带 issue；没有 issue 的已删除；`#[allow(...)]` 带 `reason`。
-- [ ] 注释-only PR 通过 `check_comment_only.py`。
-- [ ] `cargo doc -D warnings` 对改动的 crate 通过。
+- [ ] Comments are English, identifiers / paths unchanged.
+- [ ] No restating code, decorative lines, commented-out old code, expired milestones.
+- [ ] Non-obvious invariants, units, panic / error / safety conditions retained.
+- [ ] `TODO` carries issue; without issue deleted; `#[allow(...)]` carries `reason`.
+- [ ] Comment-only PR passes `check_comment_only.py`.
+- [ ] `cargo doc -D warnings` passes for modified crates.

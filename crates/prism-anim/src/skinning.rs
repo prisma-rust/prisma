@@ -1,13 +1,15 @@
-//! CPU 蒙皮参考实现。
+//! CPU skinning reference implementation.
 //!
-//! GPU 路径（P0-3）会做同样的事，只是矩阵与顶点都在显存里；这里的实现是
-//! **golden 基准**：同一份 palette / joints / weights 喂进去，两者结果必须一致。
+//! The GPU path (P0-3) does the same thing, except matrices and vertices live in device memory;
+//! this implementation is the **golden baseline**: feeding the same palette / joints / weights
+//! into both must yield identical results.
 
 use glam::{Mat4, Vec3};
 
-/// 一个顶点的混合矩阵：`sum(w[i] * palette[joints[i]])`（权重和归一化到 1）。
+/// A vertex's blend matrix: `sum(w[i] * palette[joints[i]])` (weights normalized to sum to 1).
 ///
-/// 权重和为 0 的顶点退化成单位矩阵（保持静止，而不是塌到原点）。
+/// Vertices with weight sum 0 degenerate to the identity matrix (stay put instead of collapsing
+/// to the origin).
 pub fn skin_matrix(palette: &[Mat4], joints: &[u16; 4], weights: &[f32; 4]) -> Mat4 {
     let mut matrix = Mat4::ZERO;
     let mut total = 0.0f32;
@@ -31,7 +33,7 @@ pub fn skin_matrix(palette: &[Mat4], joints: &[u16; 4], weights: &[f32; 4]) -> M
     matrix
 }
 
-/// 批量算每个顶点的混合矩阵（P0-3 可以把这份直接对比 GPU 的 palette 采样）。
+/// Batch-compute each vertex's blend matrix (P0-3 can compare this directly against GPU palette sampling).
 pub fn skin_matrices(palette: &[Mat4], joints: &[[u16; 4]], weights: &[[f32; 4]]) -> Vec<Mat4> {
     let count = joints.len().min(weights.len());
     (0..count)
@@ -39,9 +41,9 @@ pub fn skin_matrices(palette: &[Mat4], joints: &[[u16; 4]], weights: &[[f32; 4]]
         .collect()
 }
 
-/// 蒙皮位置：`w * matrix * vec4(position, 1)`。
+/// Skinned position: `w * matrix * vec4(position, 1)`.
 ///
-/// `joints` / `weights` 比 `positions` 短时，多出来的顶点保持原样。
+/// When `joints` / `weights` are shorter than `positions`, the extra vertices are kept as-is.
 pub fn skin_positions(
     palette: &[Mat4],
     joints: &[[u16; 4]],
@@ -62,7 +64,7 @@ pub fn skin_positions(
     out
 }
 
-/// 蒙皮法线：只用混合矩阵的 3×3（去掉平移），再归一化。
+/// Skinned normal: only the 3×3 of the blend matrix (translation removed), then normalized.
 pub fn skin_normals(
     palette: &[Mat4],
     joints: &[[u16; 4]],
@@ -88,7 +90,7 @@ pub fn skin_normals(
     out
 }
 
-/// palette 的裸数组形式（上传 GPU 用）。
+/// Raw array form of the palette (for uploading to GPU).
 pub fn palette_to_arrays(palette: &[Mat4]) -> Vec<[[f32; 4]; 4]> {
     palette
         .iter()

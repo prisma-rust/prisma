@@ -27,10 +27,13 @@ fn generated_guids_are_32_hex_digits_and_unique() {
     let second = new_guid("assets/a.png");
     assert!(valid_guid(&first), "{first}");
     assert!(valid_guid(&second), "{second}");
-    assert_ne!(first, second, "同一路径连续生成也要不同");
-    assert!(!valid_guid(""), "空串不合法");
-    assert!(!valid_guid("xyz"), "非十六进制不合法");
-    assert!(!valid_guid(&"a".repeat(31)), "长度不够不合法");
+    assert_ne!(
+        first, second,
+        "consecutive generation on same path should also differ"
+    );
+    assert!(!valid_guid(""), "empty string not valid");
+    assert!(!valid_guid("xyz"), "non-hex not valid");
+    assert!(!valid_guid(&"a".repeat(31)), "length not enough not valid");
 }
 
 #[test]
@@ -41,14 +44,14 @@ fn ensure_creates_a_sidecar_and_keeps_it_stable() {
     assert!(first.guid.len() == 32);
     assert_eq!(first.importer, "TextureImporter");
 
-    // 第二次即使换了 importer 也不重写已有 GUID。
+    // Second time, even with a different importer, does not rewrite the existing GUID.
     let second = AssetMeta::ensure(&root, asset, "OtherImporter").unwrap();
     assert_eq!(first.guid, second.guid);
     assert_eq!(second.importer, "TextureImporter");
     assert_eq!(
         AssetMeta::read(&root, asset),
         Some(first),
-        "读回来的内容与第一次一致"
+        "read back content consistent with first time"
     );
     std::fs::remove_dir_all(root).ok();
 }
@@ -65,7 +68,7 @@ fn a_corrupt_sidecar_is_regenerated() {
     assert!(valid_guid(&meta.guid));
     assert_eq!(AssetMeta::read(&root, asset), Some(meta));
 
-    // 形状不对的 GUID 同样视为损坏。
+    // A GUID with wrong shape is also treated as corrupt.
     std::fs::write(&path, r#"{"guid":"nope","importer":""}"#).unwrap();
     assert_eq!(AssetMeta::read(&root, asset), None);
     std::fs::remove_dir_all(root).ok();

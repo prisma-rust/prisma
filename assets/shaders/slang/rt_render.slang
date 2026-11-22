@@ -1,19 +1,19 @@
-// rt_render.slang — 输出到 RenderTexture 的离屏着色器（引擎式 RenderTexture 演示）。
+// rt_render.slang — offscreen shader outputting to RenderTexture (engine-style RenderTexture demo).
 //
-// 渲染目标与着色器解耦：本 shader 只是往 color attachment 0 输出颜色，
-// 它不知道最终目标是一张 RenderTexture 还是 swapchain —— 目标由
-// RenderToTexturePass 决定（绑定 RT 的 image view 作为 framebuffer attachment）。
+// Render target and shader decoupled: this shader only writes color to color attachment 0;
+// it doesn't know whether the final target is a RenderTexture or swapchain — the target is decided
+// by RenderToTexturePass (binding the RT's image view as framebuffer attachment).
 //
-// 内容：把 16 位模式按 4x4 方格逐位展开（bitmap pattern）。
-//   - UV ∈ [0,1] 分成 4x4 个方格，cell = int(uv * 4)
-//   - bit index = row * 4 + col（bit0 = 左上角）
-//   - bit = 1 → 白，bit = 0 → 黑
-// 16 位数字由 CPU 端每帧随机生成（RenderToTexturePass 内 xorshift），
-// 经 push constant 传入。
+// Content: expands a 16-bit pattern bit by bit into a 4x4 grid (bitmap pattern).
+//   - UV ∈ [0,1] split into 4x4 cells, cell = int(uv * 4)
+//   - bit index = row * 4 + col (bit0 = top-left)
+//   - bit = 1 → white, bit = 0 → black
+// 16-bit number randomly generated per frame on CPU side (inside RenderToTexturePass via xorshift),
+// passed in via push constant.
 
 struct RtRenderPush
 {
-    uint pattern; // 低 16 位有效：4x4 位图（bit i = 行 i/4、列 i%4 的方格）
+    uint pattern; // low 16 bits valid: 4x4 bitmap (bit i = cell at row i/4, col i%4)
 };
 [[vk::push_constant]] RtRenderPush pc;
 
@@ -23,7 +23,7 @@ struct VsOut
     float2 uv : TEXCOORD0;
 };
 
-// 全屏三角形（3 顶点，无顶点缓冲），UV 从 (0,0) 到 (2,2) 覆盖视口。
+// Fullscreen triangle (3 vertices, no vertex buffer), UV from (0,0) to (2,2) covering the viewport.
 [shader("vertex")]
 VsOut vertexMain(uint vid : SV_VertexID)
 {
