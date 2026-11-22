@@ -44,6 +44,7 @@ fn switching_the_preset_changes_the_drawn_colors() {
 #[test]
 fn the_theme_menu_marks_the_active_preset() {
     let mut state = EditorUiState::default();
+    state.i18n.locale = Locale::EnUs;
     let viewport = Vec2::new(1280.0, 720.0);
     state.build_and_step(viewport, &UiInput::default(), 0.016);
 

@@ -154,9 +154,10 @@ impl From<[f32; 4]> for MaterialValue {
 /// shader: the kernel forwards the name untouched, so a project can expose its
 /// own surface shaders to editor chrome without the UI kernel learning any of
 /// its details.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ShaderRef {
     /// Flat fill plus an optional textured surface, the default.
+    #[default]
     Standard,
     /// Frosted glass: filter the backdrop, then tint it.
     FrostedGlass,
@@ -177,12 +178,6 @@ impl ShaderRef {
     /// Whether the host has to publish a backdrop for this shader to sample.
     pub fn samples_backdrop(&self) -> bool {
         matches!(self, Self::FrostedGlass)
-    }
-}
-
-impl Default for ShaderRef {
-    fn default() -> Self {
-        Self::Standard
     }
 }
 

@@ -140,8 +140,8 @@ fn parse_svg_primitives(svg: &str) -> Vec<SvgPrimitive> {
                 if let Some(pts) = attr(tag_trimmed, "points") {
                     let nums = parse_numbers(pts);
                     let mut points = Vec::with_capacity(nums.len() / 2);
-                    for pair in nums.chunks_exact(2) {
-                        points.push(Vec2::new(pair[0], pair[1]));
+                    for &[x, y] in nums.as_chunks::<2>().0 {
+                        points.push(Vec2::new(x, y));
                     }
                     for w in points.windows(2) {
                         out.push(SvgPrimitive::Segment(w[0], w[1]));
@@ -491,13 +491,18 @@ mod tests {
             r#"<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>"#;
         let px = rasterize_lucide_svg(x_svg, 32);
         assert_eq!(px.len(), 32 * 32 * 4);
-        let lit = px.chunks_exact(4).filter(|p| p[3] > 200).count();
+        let lit = px.as_chunks::<4>().0.iter().filter(|p| p[3] > 200).count();
         assert!(lit > 40, "expected lit pixels for X icon, got {lit}");
         assert_eq!(px[3], 0, "corner pixel should remain transparent");
 
         let undo_svg = r#"<svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>"#;
         let undo_px = rasterize_lucide_svg(undo_svg, 32);
-        let undo_lit = undo_px.chunks_exact(4).filter(|p| p[3] > 200).count();
+        let undo_lit = undo_px
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[3] > 200)
+            .count();
         assert!(
             undo_lit > 40,
             "expected lit pixels for Undo icon, got {undo_lit}"

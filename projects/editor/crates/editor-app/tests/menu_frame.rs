@@ -21,6 +21,7 @@ fn draw_texts(state: &mut EditorUiState, viewport: Vec2) -> Vec<String> {
 #[test]
 fn the_frame_draws_the_menu_bar_and_the_panels() {
     let mut state = EditorUiState::default();
+    state.i18n.locale = Locale::EnUs;
     let texts = draw_texts(&mut state, Vec2::new(1280.0, 720.0));
 
     for expected in ["File", "Edit", "View", "Scene", "Help"] {
@@ -74,9 +75,8 @@ fn opening_a_menu_draws_its_items_on_top() {
     let texts = draw_texts(&mut state, viewport);
 
     assert_eq!(state.menu.open(), Some("file"), "File menu must open");
-    // "New" is a submenu row, so it draws with its chevron; the flat entries sit
-    // beside it.
-    for expected in ["New", ">", "Save", "Exit"] {
+    // "New" and "Open Recent" are submenu rows; flat entries sit beside them.
+    for expected in ["New", "Open Recent", "Save", "Exit"] {
         assert!(
             texts.iter().any(|t| t == expected),
             "open File menu must draw '{expected}'; drew: {texts:?}"

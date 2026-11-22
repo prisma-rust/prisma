@@ -946,7 +946,7 @@ impl WindowLayout {
                                 let is_active = idx == area.active_tab;
                                 let meta = self.windows.get(win_id);
                                 let title = meta.map_or(win_id.as_str(), |m| m.title.as_str());
-                                let closable = meta.map_or(true, |m| m.closable);
+                                let closable = meta.is_none_or(|m| m.closable);
                                 let tab_w = (title.len() as f32 * 7.5
                                     + if closable { 30.0 } else { 18.0 })
                                 .max(64.0);

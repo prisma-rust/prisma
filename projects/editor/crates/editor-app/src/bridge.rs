@@ -180,8 +180,8 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
     let mut engine_list = world
         .remove_resource::<prism_engine::ui::UiDrawList>()
         .unwrap_or_default();
-    let mut order = 0u32;
-    for cmd in packet.order {
+    for (idx, cmd) in packet.order.into_iter().enumerate() {
+        let order = idx as u32;
         match cmd {
             prism_ui_draw::UiOverlayDraw::Quad(index) => {
                 if let Some(quad) = packet.quads.get(index as usize) {
@@ -226,7 +226,6 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
                 }
             }
         }
-        order += 1;
     }
     world.insert_resource(engine_list);
 }

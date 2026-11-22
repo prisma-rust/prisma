@@ -1,4 +1,4 @@
-//! Schema-driven Inspector & diff-based Undo/Redo built on `prism-editor-api` + `prism-ui`.
+//! Schema-driven Inspector & field edit payload built on `prism-editor-api` + `prism-ui`.
 
 use std::collections::BTreeMap;
 
@@ -18,42 +18,6 @@ pub struct FieldEdit {
     pub new_value: Value,
 }
 
-#[derive(Default)]
-pub struct UndoStack {
-    undo: Vec<FieldEdit>,
-    redo: Vec<FieldEdit>,
-}
-
-impl UndoStack {
-    pub fn push(&mut self, edit: FieldEdit) {
-        if edit.old_value == edit.new_value {
-            return;
-        }
-        self.undo.push(edit);
-        self.redo.clear();
-    }
-
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
-    }
-
-    pub fn pop_undo(&mut self) -> Option<FieldEdit> {
-        let cmd = self.undo.pop()?;
-        self.redo.push(cmd.clone());
-        Some(cmd)
-    }
-
-    pub fn pop_redo(&mut self) -> Option<FieldEdit> {
-        let cmd = self.redo.pop()?;
-        self.undo.push(cmd.clone());
-        Some(cmd)
-    }
-}
-
 /// Build a stable `NodeKey` for an inspector field (also usable by `prism-editor-mcp`).
 pub fn field_node_key(
     entity_id: u32,
@@ -68,6 +32,8 @@ pub fn field_node_key(
     (&tag).into_node_key()
 }
 
+use crate::widgets::collapsible_section;
+
 /// Render all reflected components of an entity from `prism_editor_api::schema::Schema`.
 pub fn build_inspector_ui(
     schema: &Schema,
@@ -80,19 +46,13 @@ pub fn build_inspector_ui(
             continue;
         };
         let short_name = comp_name.rsplit("::").next().unwrap_or(comp_name);
-        let mut section = col()
-            .pad(8.0)
-            .gap(6.0)
-            .bg(UiPalette::SURFACE_2)
-            .border(1.0, UiPalette::BORDER)
-            .radius(4.0)
-            .child(label(short_name));
-
+        let mut children = Vec::with_capacity(type_schema.fields.len());
         for field in &type_schema.fields {
             let val = comp_json.get(&field.name).cloned().unwrap_or(Value::Null);
-            section = section.child(render_field_row(entity_id, comp_name, field, &val));
+            children.push(render_field_row(entity_id, comp_name, field, &val));
         }
-        root = root.child(section);
+        let sec_key = format!("section:{entity_id}:{comp_name}");
+        root = root.child(collapsible_section(&sec_key, short_name, true, children));
     }
     root
 }
