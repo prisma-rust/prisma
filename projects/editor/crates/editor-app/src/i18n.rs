@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn loads_embedded_json_locales() {
         let mut i18n = EditorI18n::default();
-        assert_eq!(i18n.t("menu.window"), "Window");
+        assert_eq!(i18n.t("menu.window"), "窗口");
         i18n.locale = Locale::EnUs;
         assert_eq!(i18n.t("menu.window"), "Window");
         assert_eq!(i18n.t("missing.key"), "missing.key");
