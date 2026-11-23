@@ -128,8 +128,8 @@ fn touch_events_accumulate_and_clear() {
     assert!(s.touches().is_empty());
 }
 
-/// 宿主每帧把平台窗口的锁定状态抄进来：状态没变时不碰瞬时输入，
-/// 变了才重置（否则「锁定」期间每帧都会清掉鼠标增量）。
+/// Host copies platform window lock state each frame: when unchanged, do not touch transient input,
+/// only reset when changed (otherwise "locked" would clear mouse delta every frame).
 #[test]
 fn sync_pointer_lock_only_reacts_to_changes() {
     let mut s = InputManager::new();
@@ -140,14 +140,18 @@ fn sync_pointer_lock_only_reacts_to_changes() {
     assert!(s.pointer_locked);
     s.handle_mouse_move([4.0, 0.0]);
     s.sync_pointer_lock(true);
-    assert_eq!(s.mouse_delta(), [4.0, 0.0], "状态没变时不该清掉增量");
+    assert_eq!(
+        s.mouse_delta(),
+        [4.0, 0.0],
+        "Should not clear delta when state unchanged"
+    );
 
     s.sync_pointer_lock(false);
     assert!(!s.pointer_locked);
     assert_eq!(
         s.mouse_delta(),
         [0.0, 0.0],
-        "解锁要重置增量，避免视角跳一下"
+        "Unlocking should reset delta to avoid view jump"
     );
 }
 
@@ -166,27 +170,27 @@ fn begin_frame_clears_all_transient() {
     assert_eq!(s.scroll_delta(), 0.0);
 }
 
-/// #589：静态 Player 读的是 `InputSnapshot` 资源，映射必须把按键、边沿、
-/// 鼠标位置与滚轮都带上（以前 host 后端只回 `InputSnapshot::default()`）。
-/// #986：放不进位图的键码必须被丢弃，且**不能**留下任何别的键的位。
+/// #589: static Player reads `InputSnapshot` resource, map must carry key presses, edges,
+/// mouse position and wheel (previously host backend only returned `InputSnapshot::default()`).
+/// #986: key codes not fitting bit graph must be dropped, and **must not** leave below any other key bit.
 #[test]
 fn snapshot_drops_key_codes_that_do_not_fit_the_bitmap() {
     let mut input = InputManager::new();
-    // 452 以前会被折叠到 30 + 452 % 226 = 30，看起来像另一个键被按住。
-    // 位图基址现在是 43（`KeyT` + `F1..=F12` 占掉 30..=42）。
+    // 452 previously would fold to 30 + 452 % 226 = 30, looking like another key held.
+    // Bit graph base now is 43 (`KeyT` + `F1..=F12` occupy 30..=42).
     input.handle_keyboard(KeyCode::Other(452), ElementState::Pressed);
-    // 一个正常的、放得下的键码同时按下，用来确认其它键不受影响。
+    // A normal, fitting key code also mapped below to confirm other keys unaffected.
     input.handle_keyboard(KeyCode::Other(10), ElementState::Pressed);
 
     let snapshot = input_snapshot(&input, [640.0, 360.0]);
-    assert!(snapshot.key(43 + 10), "vk 10 应该正常上报");
-    assert!(!snapshot.key(43), "vk 452 不能被折叠到基址上");
+    assert!(snapshot.key(43 + 10), "vk 10 should report normally");
+    assert!(!snapshot.key(43), "vk 452 must not fold onto base");
     let set_bits: usize = snapshot
         .keys
         .iter()
         .map(|word| word.count_ones() as usize)
         .sum();
-    assert_eq!(set_bits, 1, "只该有 vk 10 一个键位被点亮");
+    assert_eq!(set_bits, 1, "Only vk 10 one key bit should be lit");
 }
 
 #[test]
@@ -208,7 +212,7 @@ fn snapshot_carries_cursor_keys_edges_and_scroll() {
     assert!(snapshot.key(keys::SPACE));
     assert!(snapshot.key_pressed(keys::SPACE));
 
-    // 下一帧：边沿清掉，按住仍在。
+    // Next frame: edges cleared, held keys remain.
     input.begin_frame();
     let next = input_snapshot(&input, [640.0, 360.0]);
     assert!(next.key(keys::SPACE));

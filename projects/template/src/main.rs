@@ -1,18 +1,18 @@
-//! Prisma 用户游戏项目入口。
+//! Prisma user game project entry point.
 //!
-//! 引擎初始化、事件循环、渲染全部由 [`prism_app::app`] 包办；本项目的
-//! 代码通过完全 ECS 的方式接入：
-//! - `register_scene`：注册启动场景的 ECS 实体与资源；
-//! - `add_scene_system`：注册场景的 ECS system；
-//! - `run()`：启动事件循环，引擎自动按 `PRISMA_LAUNCH_CONFIG` 调度场景。
+//! Engine initialization, event loop, rendering entirely handled by [`prism_app::app`]; this project
+//! integrates via pure ECS:
+//! - `register_scene`: register startup scene ECS entities and resources;
+//! - `add_scene_system`: register scene ECS systems;
+//! - `run()`: start event loop, engine automatically drives scene per `PRISMA_LAUNCH_CONFIG`.
 //!
-//! 桌面端由 launcher/ 以 `template` 二进制 spawn（hub 模式）；可读
-//! `PRISMA_LAUNCH_CONFIG` env 覆盖启动配置（见 `LaunchConfig`）。
-//! Android 入口在 `lib.rs`（cdylib `libtemplate_core.so`）。
+//! Desktop side spawned by launcher/ as `template` binary (hub mode); settable
+//! `PRISMA_LAUNCH_CONFIG` env overrides launch config (see `LaunchConfig`).
+//! Android entry in `lib.rs` (cdylib `libtemplate_core.so`).
 
 #![deny(warnings)]
 
 fn main() {
-    // 构造应用（完成引擎初始化），注册 intro 场景后启动。
+    // Build app (complete engine init), register intro scene then launch.
     template_core::build_app().run();
 }

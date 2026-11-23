@@ -1,7 +1,7 @@
 //! Scene render system — collects [`DrawItem`]s from ECS entities.
 //!
 //! Iterates entities that carry [`LocalToWorld`] and [`MeshRef`] and are
-//! 激活 The 结果 is fed to [`prism_render`]'s [`GraphRenderer`] each 帧
+//! The resulting active set is fed to [`prism_render`]'s [`GraphRenderer`] each frame
 
 use prism_ecs::World;
 use prism_render::culling::{Aabb, Frustum};
@@ -9,10 +9,10 @@ use prism_render::{DrawItem, DrawState};
 
 use crate::scene::components::*;
 
-/// 从 `MeshRenderer` 的渲染状态字段构造绘制状态（材质/渲染器状态）。
+/// Construct draw state from `MeshRenderer`'s render state fields (material / renderer state).
 ///
-/// 没有该组件的运行时实体按 [`DrawState::default`]（不透明、队列 2000、
-/// 背面剔除、写深度）处理。
+/// Runtime entities without that component use [`DrawState::default`] (opaque, queue 2000,
+/// back-face cull, depth write).
 pub(crate) fn draw_state(renderer: Option<&MeshRenderer>) -> DrawState {
     match renderer {
         Some(renderer) => DrawState {
@@ -55,11 +55,11 @@ pub fn scene_render_system_into(world: &World, out: &mut Vec<DrawItem>) {
     scene_render_system_into_with_frustum(world, None, out);
 }
 
-/// 网格局部包围盒表（`MeshHandle → 局部 AABB`），由资产解析写回。
+/// Mesh local bounding box table (`MeshHandle → local AABB`), written back by asset parsing.
 ///
-/// 放在 World 资源里而不是每个 [`MeshRef`] 上：同一个网格被多个实体复用时只存一份，
-/// 热重载换句柄时也只更新一条记录。没有记录的网格**不参与剔除**（数据未知时保持
-/// 旧行为），所以程序化网格（标定球、gizmo）仍然照旧绘制。
+/// Stored in a `World` resource rather than on each [`MeshRef`]: when one mesh is reused by multiple entities only one copy is stored,
+/// and hot reload swapping handles updates only one record. Meshes with no record **do not participate in culling** (keep
+/// old behavior when data unknown), so procedural meshes (calibration spheres, gizmos) still draw as before.
 #[derive(Debug, Default)]
 pub struct MeshBounds {
     bounds:
@@ -93,12 +93,12 @@ impl MeshBounds {
 
 /// [`scene_render_system_into`] with an optional camera frustum (#491).
 ///
-/// `frustum == None` 时与旧行为完全一致（不剔除）。有视锥时，把网格的局部
-/// 包围盒按实体模型矩阵变换到世界空间再做保守相交测试；**没有包围盒或变换非
-/// 有限**的实体照旧提交（见 [`MeshBounds`]）。
+/// When `frustum == None` fully consistent with old behavior (no culling). With frustum, mesh's local
+/// bounding box transformed to world space by entity model matrix then conservative intersection test; **entities without bounding box or with non-
+/// finite transform** submitted as before (see [`MeshBounds`]).
 ///
-/// 多相机（#461）请用 [`scene_render_system_into_with_frustums`]：只按主相机
-/// 剔除会漏掉只在第二台相机里可见的物体。
+/// For multiple cameras (#461) use [`scene_render_system_into_with_frustums`]: culling only by main camera
+/// would miss objects visible only in second camera.
 pub fn scene_render_system_into_with_frustum(
     world: &World,
     frustum: Option<&Frustum>,
@@ -114,12 +114,12 @@ pub fn scene_render_system_into_with_frustum(
 
 /// [`scene_render_system_into_with_frustum`] for a **set** of camera frustums.
 ///
-/// 多相机合成（#461）下，一个实体只要落在**任意一台**启用相机的视锥里就必须
-/// 提交：每层相机共用同一份绘制列表，主相机看不到但第二台相机看得到的东西
-/// 不能提前剔掉。空切片表示不剔除。
+/// Under multi-camera composition (#461), an entity must be submitted if inside **any** enabled camera's frustum:
+/// cameras at each layer share same draw list; things main camera cannot see but second camera can
+/// must not be culled early. Empty slice means no culling.
 ///
-/// 没有世界包围盒的实体（程序化网格 / 句柄还没解析）保持提交——和单相机路径
-/// 一样，数据未知时不冒险让物体消失。
+/// Entities without world bounding box (procedural mesh / handle not yet parsed) stay submitted — same as single-camera path,
+/// do not risk making objects disappear when data unknown.
 pub fn scene_render_system_into_with_frustums(
     world: &World,
     frustums: &[Frustum],
@@ -128,8 +128,8 @@ pub fn scene_render_system_into_with_frustums(
     out.clear();
     let bounds = world.get_resource::<MeshBounds>();
     for (entity, wt, mr) in world.query2::<LocalToWorld, MeshRef>() {
-        // 蒙皮实体走 `skinned_draw::append_skinned_draw_items`（#560 P0-3b）：
-        // 同一个实体同时挂两个渲染组件时也只画一次。
+        // Skinned entities go through `skinned_draw::append_skinned_draw_items` (#560 P0-3b):
+        // same entity with two render components at once still drawn once.
         if world
             .get::<crate::scene::components::SkinnedMeshRenderer>(entity)
             .is_some()
@@ -152,9 +152,9 @@ pub fn scene_render_system_into_with_frustums(
             continue;
         }
 
-        // `MeshRenderer.shadow_casting_mode` / `cull_mode`（
-        // `shadowCastingMode` / `CullMode`）。没有该组件的运行时实体按
-        // 默认值处理（`On` / `Back`）。
+        // `MeshRenderer.shadow_casting_mode` / `cull_mode` (
+        // `shadowCastingMode` / `CullMode`). Runtime entities without that component use
+        // defaults (`On` / `Back`).
         let state = draw_state(renderer);
         let material_ref = world.get::<MaterialRef>(entity);
         let material_slots = world.get::<MaterialSlots>(entity);
@@ -183,8 +183,8 @@ pub fn scene_render_system_into_with_frustums(
             0.0
         };
 
-        // 有 submesh 表时按区间拆成多个 DrawItem（#520）；否则保持旧行为：
-        // 一个实体一次绘制，覆盖整个索引缓冲。
+        // With submesh table split into multiple DrawItems by range (#520); otherwise keep old behavior:
+        // one entity one draw, covering entire index buffer.
         let has_submeshes = submeshes.is_some_and(|submeshes| !submeshes.submeshes.is_empty());
         if has_submeshes {
             for (index, submesh) in submeshes.unwrap().submeshes.iter().enumerate() {
@@ -204,7 +204,7 @@ pub fn scene_render_system_into_with_frustums(
                     world_bounds,
                     index_start: submesh.index_start,
                     index_count: Some(submesh.index_count),
-                    // 蒙皮绘制项由专用的 `SkinnedMeshRenderer` 分支生成（P0-3b）。
+                    // Skinned draw items generated by dedicated `SkinnedMeshRenderer` branch (P0-3b).
                     bone_offset: None,
                     splat_slots,
                     splat_tiling,
@@ -228,7 +228,7 @@ pub fn scene_render_system_into_with_frustums(
                 world_bounds,
                 index_start: 0,
                 index_count: None,
-                // 蒙皮绘制项由专用的 `SkinnedMeshRenderer` 分支生成（P0-3b）。
+                // Skinned draw items generated by dedicated `SkinnedMeshRenderer` branch (P0-3b).
                 bone_offset: None,
                 splat_slots,
                 splat_tiling,
@@ -238,9 +238,9 @@ pub fn scene_render_system_into_with_frustums(
     }
 }
 
-/// 一个世界包围盒是否落在**至少一个**相机视锥里（#491）。
+/// Whether one world bounding box is inside **at least one** camera frustum (#491).
 ///
-/// 空视锥集合 = 不剔除；`bounds == None` 也保持提交（数据未知）。
+/// Empty frustum set = no culling; `bounds == None` also stays submitted (data unknown).
 pub(crate) fn visible_in_frustums(frustums: &[Frustum], bounds: Option<&Aabb>) -> bool {
     if frustums.is_empty() {
         return true;
@@ -253,18 +253,18 @@ pub(crate) fn visible_in_frustums(frustums: &[Frustum], bounds: Option<&Aabb>) -
     }
 }
 
-/// 按**光源视锥**剔除阴影投射者（#526）。
+/// Cull shadow casters by **light source frustum** (#526).
 ///
-/// `light_view_proj` 是本帧方向光阴影盒子的光空间矩阵；阴影通道只需要覆盖这个
-/// 盒子。没有世界 AABB 的实体（程序化网格 / 句柄还没解析）保持 `cast_shadow`
-/// 不变——和主相机剔除一样，数据未知时不冒险让影子消失。
+/// `light_view_proj` is this frame's directional light shadow box light-space matrix; shadow pass only needs to cover this
+/// box. Entities without world AABB (procedural mesh / handle not yet parsed) keep `cast_shadow`
+/// unchanged — same as main camera culling, do not risk making shadows disappear when data unknown.
 pub fn cull_shadow_casters(items: &mut [DrawItem], light_view_proj: &[[f32; 4]; 4]) {
     cull_shadow_casters_multi(items, std::slice::from_ref(light_view_proj));
 }
 
-/// 多级联版本：投射者只要落在**任意一个**级联盒里就保留（#526 CSM）。
+/// Multi-cascade version: caster kept if inside **any one** cascade box (#526 CSM).
 ///
-/// 退化矩阵会被跳过；如果所有矩阵都退化，则保守地不剔除任何东西。
+/// Degenerate matrices are skipped; if all matrices degenerate, conservatively cull nothing.
 pub fn cull_shadow_casters_multi(items: &mut [DrawItem], light_view_projs: &[[[f32; 4]; 4]]) {
     let frustums: Vec<_> = light_view_projs
         .iter()
@@ -289,27 +289,27 @@ pub fn cull_shadow_casters_multi(items: &mut [DrawItem], light_view_projs: &[[[f
     }
 }
 
-/// 2D 绘制项的排序键：`(sorting_layer, order_in_layer, z, entity_id)`。
+/// Sort key for 2D draw items: `(sorting_layer, order_in_layer, z, entity_id)`.
 pub(crate) type SortKey = (i32, i32, f32, u32);
 
-/// 纯色绘制标记：`SpriteDrawItem.texture` 取此值时着色器不采样贴图。
+/// Solid-color draw flag: when `SpriteDrawItem.texture` takes this value shader does not sample texture.
 pub const SOLID_TEXTURE: u32 = u32::MAX;
 
-/// 主线相机的世界 → 渲染像素比例，用来把亚像素折线加宽到 1 个像素（#978）。
+/// Main-line camera world → render pixels ratio, used to widen sub-pixel lines to 1 pixel (#978).
 ///
-/// 折线在 CPU 侧三角化成世界空间四边形；宽度不足 1 个像素时，像素中心会
-/// 落在三角形之外，屏幕上就断成一串点。这里按主相机换算「1 像素 = 多少
-/// 世界单位」，让 `LineRenderer::width` 有一个屏幕空间下限。
+/// Lines are triangulated on CPU into world-space quads; when width less than 1 pixel, pixel centers will
+/// fall outside triangles and appear as dotted points on screen. Here convert "1 pixel = how many
+/// world units" by main camera, giving `LineRenderer::width` a screen-space lower bound.
 #[derive(Clone, Copy, Debug)]
 pub struct LineScreenScale {
-    /// 主相机 `view_proj`（`surface_rotation * projection * view`）。
+    /// Main camera `view_proj` (`surface_rotation * projection * view`).
     pub view_proj: glam::Mat4,
-    /// 场景实际渲染的像素高度（`internal_resolution` 生效时是内部高度）。
+    /// Scene actual render pixel height (internal height when `internal_resolution` active).
     pub render_height: f32,
 }
 
 impl LineScreenScale {
-    /// 只有像素高度确实为正时才返回比例；否则调用方保持旧行为（不加宽）。
+    /// Only return ratio when pixel height is truly positive; otherwise caller keeps old behavior (no widening).
     pub fn new(view_proj: glam::Mat4, render_height: f32) -> Option<Self> {
         (render_height.is_finite() && render_height > 0.0 && view_proj.is_finite()).then_some(
             Self {
@@ -319,10 +319,10 @@ impl LineScreenScale {
         )
     }
 
-    /// `point` 附近 1 个渲染像素对应的世界长度（沿世界 +Y 量）。
+    /// World length corresponding to 1 render pixel near `point` (measured along world +Y).
     ///
-    /// 正交相机下与位置无关；透视相机按该点的深度换算。点落在相机平面
-    /// （`w == 0`）或换算退化时返回 `None`。
+    /// Independent of orthographic camera and position; for perspective camera converted by depth at that point. Point on camera plane
+    /// (`w == 0`) or degenerate conversion returns `None`.
     pub fn world_per_pixel(&self, point: glam::Vec3) -> Option<f32> {
         let clip_a = self.view_proj * point.extend(1.0);
         let clip_b = self.view_proj * (point + glam::Vec3::Y).extend(1.0);
@@ -370,10 +370,10 @@ pub fn scene_2d_system_into(world: &World, out: &mut Vec<prism_render::SpriteDra
     scene_2d_system_into_with_frustum(world, None, out);
 }
 
-/// [`scene_2d_system_into`] 加主相机视锥：瓦片地图逐格裁剪（#529）。
+/// [`scene_2d_system_into`] plus main camera frustum: tilemap clipped per cell (#529).
 ///
-/// 精灵 / 折线 / 粒子不参与剔除（它们本来就只是少量实例）；瓦片格子可能上千，
-/// 裁掉屏幕外的行列能显著减少实例缓冲的写入。
+/// sprite / polyline / particles do not participate in culling (they are small instance counts anyway); tile cells can be thousands,
+/// clipping off-screen rows and columns significantly reduces instance buffer writes.
 pub fn scene_2d_system_into_with_frustum(
     world: &World,
     frustum: Option<&prism_render::culling::Frustum>,
@@ -382,10 +382,10 @@ pub fn scene_2d_system_into_with_frustum(
     scene_2d_system_into_with_frustum_and_line_scale(world, frustum, None, out);
 }
 
-/// [`scene_2d_system_into_with_frustum`] 加主线相机的像素比例（#978）。
+/// [`scene_2d_system_into_with_frustum`] plus main-line camera pixel ratio (#978).
 ///
-/// `line_scale` 为 `Some` 时，宽度不足 1 个渲染像素的折线会被加宽到 1 像素，
-/// 否则细线在屏幕上断成一串点。`None` 保持旧行为（纯世界空间几何）。
+/// When `line_scale` is `Some`, lines narrower than 1 render pixel widened to 1 pixel,
+/// otherwise thin lines appear dotted on screen. `None` keeps old behavior (pure world-space geometry).
 pub fn scene_2d_system_into_with_frustum_and_line_scale(
     world: &World,
     frustum: Option<&prism_render::culling::Frustum>,
@@ -394,9 +394,9 @@ pub fn scene_2d_system_into_with_frustum_and_line_scale(
 ) {
     let mut entries = sprite_entries(world);
     entries.extend(line_entries(world, line_scale));
-    // 2D 粒子是纯色四边形，和精灵共用同一条通道与排序（#594）。
+    // 2D particles are solid-color quads, share same channel and sort as sprites (#594).
     entries.extend(super::particles2d::particle_entries_2d(world));
-    // 瓦片地图：一个实体一整张网格（#529）。
+    // tilemap: one entity one whole mesh (#529).
     entries.extend(super::tilemap::tilemap_entries(world, frustum));
     sort_draw_items_into(entries, out);
 }
@@ -424,14 +424,14 @@ fn sort_draw_items_into(
     out.extend(entries.into_iter().map(|(_, item)| item));
 }
 
-/// 收集场景里的 [`Light2D`]（#611），按贡献从强到弱，最多
-/// [`prism_render::SPRITE_LIGHT_MAX`] 盏。
+/// Collect [`Light2D`] in scene (#611), by contribution strongest to weakest, at most
+/// [`prism_render::SPRITE_LIGHT_MAX`].
 ///
-/// 只有 `SpriteRenderer.receive_lights` 为真的精灵才会用到这些数据，所以
-/// 没有灯光时返回空列表即可——着色器看到 `light_count == 0` 会保持 unlit。
+/// Only sprites with `SpriteRenderer.receive_lights == true` use this data, so
+/// when no lights return empty list — shader sees `light_count == 0` and stays unlit.
 ///
-/// 3D 光源（`PointLight` / `DirectionalLight` / `SpotLight`）不会照亮 2D 精灵；
-/// 只放了 3D 光源时这里 warn 一次，避免「组件合法但完全没效果」被静默吞掉。
+/// 3D lights (`PointLight` / `DirectionalLight` / `SpotLight`) will not illuminate 2D sprites;
+/// when only 3D lights present warn once here, avoid "component legal but totally ineffective" being silently swallowed.
 pub fn sprite_light_entries(world: &World) -> Vec<prism_render::SpriteLight> {
     use std::sync::Once;
     static WARNED: Once = Once::new();
@@ -562,9 +562,9 @@ fn line_entries(
         } else {
             0.1
         };
-        // 亚像素线加宽到 1 个渲染像素（#978）：像素中心落在三角形外时，
-        // 屏幕上看到的是等距的点而不是线。比例按折线首个点在主相机下的
-        // 深度换算（正交相机与位置无关）。
+        // Sub-pixel lines widened to 1 render pixel (#978): when pixel center outside triangle,
+        // screen shows evenly spaced dots rather than a line. Ratio converted by depth of line's first point under main camera
+        // (independent of orthographic camera and position).
         let width = match line_scale
             .and_then(|scale| scale.world_per_pixel(glam::Vec3::from_array(line.points[0])))
         {
@@ -575,8 +575,8 @@ fn line_entries(
             .get::<LocalToWorld>(entity)
             .map(|t| t.0.w_axis.z)
             .unwrap_or(0.0);
-        // 同一条折线的所有三角形共用排序键：`sort_by` 是稳定排序，三角形按
-        // 生成顺序绘制，而它们互不重叠，所以内部顺序不影响结果（#604）。
+        // All triangles of same polyline share sort key: `sort_by` is stable, triangles drawn in
+        // generation order, and they don't overlap, so internal order doesn't affect result (#604).
         let key: SortKey = (line.sorting_layer, line.order_in_layer, z, entity.id());
         let model = glam::Mat4::IDENTITY.to_cols_array_2d();
 
@@ -590,7 +590,7 @@ fn line_entries(
                     uv_rect: [0.0, 0.0, 1.0, 1.0],
                     color: line.color,
                     texture: SOLID_TEXTURE,
-                    // 折线没有作者态混合字段：保持标准 alpha 混合。
+                    // Polyline has no authored blend field: keep standard alpha blend.
                     src_blend: prism_scene::render_enums::BlendMode::SrcAlpha,
                     dst_blend: prism_scene::render_enums::BlendMode::OneMinusSrcAlpha,
                     blend_op: prism_scene::render_enums::BlendOp::Add,
@@ -603,19 +603,19 @@ fn line_entries(
     out
 }
 
-/// 把一条世界空间折线三角化成**互不重叠**的笔触（#604）。
+/// Triangulate a world-space polyline into **non-overlapping** stroke (#604).
 ///
-/// 每段是一个四边形（两个三角形）。拐点处：
+/// Each segment is a quad (two triangles). At joints:
 ///
-/// - 内侧两段共用同一个顶点（两条内侧偏移线的交点），所以内侧既没有缺口
-///   也不会叠加；
-/// - `Miter` 外侧也共用斜接点；超过 `miter_limit`（相对半宽）时退化成
-///   `Bevel`，外侧各段停在自己的偏移点，再用一个三角形补角。
+/// - Inner two segments share same vertex (intersection of two inner offset lines), so inner side has neither gap
+///   nor overlap;
+/// - `Miter` outer side also shares miter point; when exceeding `miter_limit` (relative half width) degenerates to
+///   `Bevel`, outer segments stop at own offset points, then fill corner with one triangle.
 ///
-/// 这样半透明折线的每一块像素只被混合一次。`cap` 只影响两个端点：
-/// `Butt` / `Square` / `Round`（8 段扇形）。
+/// So each pixel of semi-transparent polyline is blended once. `cap` only affects two endpoints:
+/// `Butt` / `Square` / `Round` (8-segment fan).
 ///
-/// 输入里的连续重复点会先被去掉——零长度段没有方向，也画不出面积。
+/// Consecutive duplicate points in input are removed first — zero-length segments have no direction and no area.
 pub(crate) fn tessellate_line(
     points: &[[f32; 3]],
     width: f32,
@@ -650,18 +650,18 @@ pub(crate) fn tessellate_line(
         .windows(2)
         .map(|pair| (pair[1].0 - pair[0].0).normalize())
         .collect();
-    // 左法线，长度 = 半个线宽。
+    // left normal, length = half line width.
     let normals: Vec<Vec2> = dirs
         .iter()
         .map(|dir| Vec2::new(-dir.y, dir.x) * half)
         .collect();
 
-    // `start[i]` = 第 i 段起点两侧的 (左, 右)；`end[i]` = 第 i 段终点两侧。
+    // `start[i]` = (left, right) on both sides of segment i start; `end[i]` = both sides of segment i end.
     let mut start: Vec<(Vec2, Vec2)> = vec![(Vec2::ZERO, Vec2::ZERO); n];
     let mut end: Vec<(Vec2, Vec2)> = vec![(Vec2::ZERO, Vec2::ZERO); n];
     let mut bevels: Vec<(Vec2, Vec2, Vec2)> = Vec::new();
 
-    // 端点：方头沿线段方向外扩半个线宽，圆头由后面的扇形补上。
+    // Endpoints: square cap extends half line width outward along segment direction, round cap filled by later fan.
     let shift = |dir: Vec2| match cap {
         LineCap::Square => dir * half,
         _ => Vec2::ZERO,
@@ -679,10 +679,10 @@ pub(crate) fn tessellate_line(
         let point = pts[i].0;
         let (n0, n1) = (normals[i - 1], normals[i]);
         let cross = dirs[i - 1].perp_dot(dirs[i]);
-        // `n` 是左法线：右转（cross < 0）时外侧在左边。
+        // `n` is left normal: right turn (cross < 0) puts outer side on left edge.
         let outer_sign = if cross < 0.0 { 1.0 } else { -1.0 };
         let sum = n0.normalize_or_zero() + n1.normalize_or_zero();
-        // 折返接近 180° 时两条偏移线几乎平行，斜接点跑到无穷远。
+        // When turn approaches 180° two offset lines nearly parallel, miter point runs to infinity.
         let cos_half = (sum * 0.5).length();
         let bisector = sum.normalize_or_zero();
         let miter = if cos_half > 1e-3 && bisector != Vec2::ZERO {
@@ -698,7 +698,7 @@ pub(crate) fn tessellate_line(
             continue;
         }
 
-        // 斜切：内侧共用斜接点，外侧各段停在自己的偏移点。
+        // Bevel: inner side shares miter point, outer segments stop at own offset points.
         let inner = point - bisector * miter * outer_sign;
         let outer_prev = point + n0 * outer_sign;
         let outer_next = point + n1 * outer_sign;
@@ -739,7 +739,7 @@ pub(crate) fn tessellate_line(
             let (sin, cos) = angle.sin_cos();
             Vec2::new(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
         };
-        // 起点向 -dir 扫、终点向 +dir 扫：+90° 从 n 转到 -dir，-90° 转到 +dir。
+        // Start sweeps toward -dir, end toward +dir: +90° turns from n to -dir, -90° to +dir.
         for (index, sign) in [(0usize, 1.0f32), (n - 1, -1.0)] {
             let point = pts[index].0;
             let z = z_at(index);

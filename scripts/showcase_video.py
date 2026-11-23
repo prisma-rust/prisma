@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Prisma 引擎展示视频制作脚本
+Prisma engine showcase video production script
 
-使用 moviepy 生成一个展示 Prisma 引擎特性的视频：
-- 标题序列
-- 引擎截图轮播（从预渲染的关键帧）
-- 特性标注叠加
-- 背景音乐（程序生成的 ambient 音乐）
+Uses moviepy to generate a video showcasing Prisma engine features:
+- Title sequence
+- Engine screenshot slideshow (from pre-rendered keyframes)
+- Feature annotation overlays
+- Background music (procedurally generated ambient music)
 """
 
 import os
@@ -37,14 +37,14 @@ except ImportError:
     )
     import numpy as np
 
-# 视频配置
+# Video config
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
 FPS = 30
-TOTAL_DURATION = 120  # 2 分钟
+TOTAL_DURATION = 120  # 2 minutes
 
-# 颜色方案（参考 Prisma 的工程属性：Vulkan 蓝 + 琥珀强调）
-BG_COLOR = (5, 7, 12)  # 深空蓝
+# Color scheme (referencing Prisma engineering property: Vulkan blue + amber accent)
+BG_COLOR = (5, 7, 12)  # Deep space blue
 SURFACE_1 = (10, 13, 18)
 SURFACE_2 = (15, 19, 28)
 ACCENT_CYAN = (56, 189, 248)
@@ -54,8 +54,8 @@ TEXT_SECONDARY = (160, 170, 180)
 
 
 class VideoScene:
-    """视频场景定义"""
-    def __init__(self, duration: float, title: str, subtitle: str, 
+    """Video scene definitions"""
+    def __init__(self, duration: float, title: str, subtitle: str,
                  features: List[str], screenshot_path: str = None):
         self.duration = duration
         self.title = title
@@ -65,43 +65,43 @@ class VideoScene:
 
 
 def generate_ambient_audio(duration: float, output_path: str):
-    """生成环境音乐（使用 numpy 生成简单的 ambient drone）"""
+    """Generate ambient audio (simple ambient drone with numpy)"""
     print(f"Generating ambient audio ({duration}s)...")
-    
+
     sample_rate = 44100
     t = np.linspace(0, duration, int(sample_rate * duration))
-    
-    # 多层次 sine wave 混合（模拟 ambient pad）
-    frequencies = [55, 110, 165, 220, 330]  # A 和弦的泛音
+
+    # Multi-layer sine wave blending (simulating ambient pad)
+    frequencies = [55, 110, 165, 220, 330]  # A chord overtones
     audio = np.zeros_like(t)
-    
+
     for i, freq in enumerate(frequencies):
-        # 每个频率有不同的包络和相位
+        # Each frequency has different envelope and phase
         envelope = 0.3 * (1 + 0.3 * np.sin(2 * np.pi * 0.1 * (i + 1) * t))
         phase = 2 * np.pi * freq * t + 0.5 * np.sin(2 * np.pi * 0.05 * t)
         audio += envelope * np.sin(phase) / len(frequencies)
-    
-    # 添加低频 rumble
+
+    # Add low-frequency rumble
     rumble = 0.15 * np.sin(2 * np.pi * 27.5 * t)
     audio += rumble
-    
-    # 标准化
+
+    # Normalize
     audio = audio / np.max(np.abs(audio)) * 0.7
-    
-    # 淡入淡出
+
+    # Fade in/out
     fade_samples = int(sample_rate * 2)
     audio[:fade_samples] *= np.linspace(0, 1, fade_samples)
     audio[-fade_samples:] *= np.linspace(1, 0, fade_samples)
-    
-    # 转换为 16-bit PCM
+
+    # Convert to 16-bit PCM
     audio_int16 = (audio * 32767).astype(np.int16)
-    
-    # 保存为 WAV（使用 scipy 或直接写 WAV 格式）
+
+    # Save as WAV (using scipy or directly write WAV format)
     try:
         from scipy.io import wavfile
         wavfile.write(output_path, sample_rate, audio_int16)
     except ImportError:
-        # 手动写 WAV header
+        # Manually write WAV header
         import struct
         with open(output_path, 'wb') as f:
             # RIFF header
@@ -121,40 +121,40 @@ def generate_ambient_audio(duration: float, output_path: str):
             f.write(b'data')
             f.write(struct.pack('<I', len(audio_int16) * 2))
             f.write(audio_int16.tobytes())
-    
+
     print(f"Audio saved to {output_path}")
 
 
 def capture_engine_screenshots(scenes: List[str], output_dir: Path) -> List[Path]:
-    """捕获引擎场景截图"""
+    """Capture engine scene screenshots"""
     output_dir.mkdir(parents=True, exist_ok=True)
     screenshot_paths = []
-    
+
     print("Capturing engine screenshots...")
-    
-    # 检查项目二进制
+
+    # Check project binary
     project_root = Path(__file__).parent.parent
     exe_path = project_root / "projects" / "template" / "target" / "release" / "template.exe"
-    
+
     if not exe_path.exists():
         exe_path = project_root / "projects" / "template" / "target" / "debug" / "template.exe"
-    
+
     if not exe_path.exists():
         print(f"Warning: Engine executable not found at {exe_path}")
         print("Please build the project first: cd projects/template && cargo build --release")
         return []
-    
-    # 为每个场景捕获多个角度的截图
+
+    # Capture multiple angles for each scene
     for i, scene in enumerate(scenes):
         for frame in [30, 60, 90, 120, 150]:
             screenshot_path = output_dir / f"scene_{i}_frame_{frame}.png"
-            
+
             env = os.environ.copy()
             env['PRISMA_SCREENSHOT'] = str(screenshot_path)
             env['PRISMA_SCREENSHOT_FRAME'] = str(frame)
             env['PRISMA_SCREENSHOT_SIZE'] = f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}"
             env['RUST_LOG'] = 'warn'
-            
+
             try:
                 print(f"  Capturing {scene} at frame {frame}...")
                 result = subprocess.run(
@@ -167,39 +167,39 @@ def capture_engine_screenshots(scenes: List[str], output_dir: Path) -> List[Path
                     encoding="utf-8",
                     errors="replace",
                 )
-                
+
                 if screenshot_path.exists():
                     screenshot_paths.append(screenshot_path)
                     print(f"    [OK] Saved {screenshot_path.name}")
                 else:
                     print(f"    [FAIL] Failed to capture {screenshot_path.name}")
-            
+
             except subprocess.TimeoutExpired:
                 print(f"    [TIMEOUT] {scene}")
             except Exception as e:
                 print(f"    [ERROR] {e}")
-    
+
     return screenshot_paths
 
 
 def create_title_card(text: str, subtitle: str, duration: float) -> VideoClip:
-    """创建标题卡片"""
-    
+    """Create title card"""
+
     def make_frame(t):
-        # 创建渐变背景
+        # Create gradient background
         frame = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
-        
-        # 垂直渐变（深蓝到更深蓝）
+
+        # Vertical gradient (deep blue to deeper blue)
         for y in range(VIDEO_HEIGHT):
             ratio = y / VIDEO_HEIGHT
             color = tuple(int(BG_COLOR[i] * (1 + 0.3 * ratio)) for i in range(3))
             frame[y, :] = color
-        
+
         return frame
-    
+
     bg_clip = VideoClip(make_frame, duration=duration)
-    
-    # 标题文本（带淡入效果）
+
+    # Title text (with fade in)
     title_clip = TextClip(
         text,
         fontsize=80,
@@ -208,8 +208,8 @@ def create_title_card(text: str, subtitle: str, duration: float) -> VideoClip:
         size=(VIDEO_WIDTH - 200, None),
         method='caption'
     ).set_position('center').set_duration(duration)
-    
-    # 副标题
+
+    # Subtitle
     subtitle_clip = TextClip(
         subtitle,
         fontsize=36,
@@ -218,29 +218,29 @@ def create_title_card(text: str, subtitle: str, duration: float) -> VideoClip:
         size=(VIDEO_WIDTH - 200, None),
         method='caption'
     ).set_position(('center', VIDEO_HEIGHT * 0.6)).set_duration(duration)
-    
-    # 淡入效果
+
+    # Fade in effect
     title_clip = title_clip.crossfadein(0.5)
     subtitle_clip = subtitle_clip.crossfadein(1.0)
-    
+
     return CompositeVideoClip([bg_clip, title_clip, subtitle_clip])
 
 
 def create_feature_clip(scene: VideoScene, screenshot_paths: List[Path]) -> VideoClip:
-    """创建特性展示片段"""
+    """Create feature showcase clip"""
     clips = []
-    
-    # 如果有截图，使用截图；否则使用纯色背景
+
+    # If screenshots available use them; otherwise use solid color background
     if screenshot_paths:
-        # 轮播截图（每个停留 2-3 秒）
+        # Slideshow screenshots (each holds 2-3 seconds)
         screenshot_duration = scene.duration / max(1, len(screenshot_paths))
         for path in screenshot_paths:
             if path.exists():
                 img_clip = ImageClip(str(path)).set_duration(screenshot_duration)
                 img_clip = img_clip.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
                 clips.append(img_clip)
-    
-    # 如果没有截图，创建代码背景
+
+    # If no screenshots, create code background
     if not clips:
         def make_code_bg(t):
             frame = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
@@ -249,17 +249,17 @@ def create_feature_clip(scene: VideoScene, screenshot_paths: List[Path]) -> Vide
                 color = tuple(int(SURFACE_1[i] * (1 + 0.2 * ratio)) for i in range(3))
                 frame[y, :] = color
             return frame
-        
+
         bg_clip = VideoClip(make_code_bg, duration=scene.duration)
         clips.append(bg_clip)
-    
-    # 拼接所有背景
+
+    # Concatenate all backgrounds
     if len(clips) > 1:
         base_clip = concatenate_videoclips(clips)
     else:
         base_clip = clips[0]
-    
-    # 添加标题叠加层
+
+    # Add title overlay layer
     title_clip = TextClip(
         scene.title,
         fontsize=56,
@@ -268,8 +268,8 @@ def create_feature_clip(scene: VideoScene, screenshot_paths: List[Path]) -> Vide
         stroke_color=tuple(BG_COLOR),
         stroke_width=2
     ).set_position(('center', 80)).set_duration(scene.duration).crossfadein(0.3)
-    
-    # 添加副标题
+
+    # Add subtitle
     subtitle_clip = TextClip(
         scene.subtitle,
         fontsize=32,
@@ -278,8 +278,8 @@ def create_feature_clip(scene: VideoScene, screenshot_paths: List[Path]) -> Vide
         stroke_color=tuple(BG_COLOR),
         stroke_width=1
     ).set_position(('center', 160)).set_duration(scene.duration).crossfadein(0.5)
-    
-    # 添加特性列表（左下角）
+
+    # Add feature list (bottom left)
     if scene.features:
         feature_text = "\n".join(f"• {f}" for f in scene.features)
         features_clip = TextClip(
@@ -291,22 +291,22 @@ def create_feature_clip(scene: VideoScene, screenshot_paths: List[Path]) -> Vide
             size=(VIDEO_WIDTH - 100, None),
             method='caption'
         ).set_position((50, VIDEO_HEIGHT - 250)).set_duration(scene.duration).crossfadein(1.0)
-        
+
         return CompositeVideoClip([base_clip, title_clip, subtitle_clip, features_clip])
-    
+
     return CompositeVideoClip([base_clip, title_clip, subtitle_clip])
 
 
 def create_end_card(duration: float) -> VideoClip:
-    """创建结尾卡片"""
+    """Create ending card"""
     def make_frame(t):
         frame = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
         frame[:, :] = BG_COLOR
         return frame
-    
+
     bg_clip = VideoClip(make_frame, duration=duration)
-    
-    # GitHub 链接
+
+    # GitHub link
     github_text = "github.com/yourusername/Prisma"
     github_clip = TextClip(
         github_text,
@@ -314,8 +314,8 @@ def create_end_card(duration: float) -> VideoClip:
         color=tuple(ACCENT_CYAN),
         font='Arial-Bold'
     ).set_position('center').set_duration(duration).crossfadein(0.5)
-    
-    # 标语
+
+    # Tagline
     tagline = "Modern · Mobile-First · Modular"
     tagline_clip = TextClip(
         tagline,
@@ -323,41 +323,41 @@ def create_end_card(duration: float) -> VideoClip:
         color=tuple(TEXT_SECONDARY),
         font='Arial'
     ).set_position(('center', VIDEO_HEIGHT * 0.65)).set_duration(duration).crossfadein(1.0)
-    
+
     return CompositeVideoClip([bg_clip, github_clip, tagline_clip])
 
 
 def main():
     output_dir = Path(__file__).parent.parent / "target" / "showcase"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     screenshots_dir = output_dir / "screenshots"
     audio_path = output_dir / "ambient.wav"
     video_path = output_dir / "prisma_showcase.mp4"
-    
+
     print("=" * 60)
     print("Prisma Showcase Video Generator")
     print("=" * 60)
-    
-    # 1. 捕获截图
+
+    # 1. Capture screenshots
     print("\n[1/4] Capturing engine screenshots...")
     available_scenes = ["default", "intro"]
     screenshot_paths = capture_engine_screenshots(available_scenes, screenshots_dir)
-    
+
     if not screenshot_paths:
         print("Warning: No screenshots captured. Using placeholder backgrounds.")
     else:
         print(f"Captured {len(screenshot_paths)} screenshots")
-    
-    # 2. 生成音频
+
+    # 2. Generate audio
     print("\n[2/4] Generating ambient audio...")
     generate_ambient_audio(TOTAL_DURATION, str(audio_path))
-    
-    # 3. 定义视频场景
+
+    # 3. Define video scenes
     print("\n[3/4] Composing video scenes...")
-    
+
     scenes = [
-        # 开场标题
+        # Opening title
         VideoScene(
             duration=4.0,
             title="Prisma",
@@ -365,8 +365,8 @@ def main():
             features=[],
             screenshot_path=None
         ),
-        
-        # 核心特性
+
+        # Core features
         VideoScene(
             duration=12.0,
             title="Mobile-First Architecture",
@@ -378,7 +378,7 @@ def main():
                 "Android + Desktop unified pipeline"
             ]
         ),
-        
+
         VideoScene(
             duration=12.0,
             title="Modular Render Graph",
@@ -390,7 +390,7 @@ def main():
                 "Runtime capability detection"
             ]
         ),
-        
+
         VideoScene(
             duration=12.0,
             title="Advanced Lighting",
@@ -402,7 +402,7 @@ def main():
                 "Baked probe-volume GI"
             ]
         ),
-        
+
         VideoScene(
             duration=12.0,
             title="Data-Oriented ECS",
@@ -414,7 +414,7 @@ def main():
                 "Cross-platform scenes (RSCN v4)"
             ]
         ),
-        
+
         VideoScene(
             duration=12.0,
             title="Asset Pipeline",
@@ -426,7 +426,7 @@ def main():
                 "Hot-reload ready"
             ]
         ),
-        
+
         VideoScene(
             duration=12.0,
             title="Web-Based Editor",
@@ -438,7 +438,7 @@ def main():
                 "Undo/redo with field merging"
             ]
         ),
-        
+
         VideoScene(
             duration=10.0,
             title="Bindless Everything",
@@ -450,7 +450,7 @@ def main():
                 "Fallback to legacy descriptors"
             ]
         ),
-        
+
         VideoScene(
             duration=10.0,
             title="Slang Shaders",
@@ -462,7 +462,7 @@ def main():
                 "SPIR-V output"
             ]
         ),
-        
+
         VideoScene(
             duration=10.0,
             title="Screenshot & Automation",
@@ -474,7 +474,7 @@ def main():
                 "CDP-driven UI testing"
             ]
         ),
-        
+
         VideoScene(
             duration=8.0,
             title="Open Source",
@@ -487,42 +487,42 @@ def main():
             ]
         ),
     ]
-    
-    # 创建标题卡
+
+    # Create title card
     title_card = create_title_card(
         "Prisma",
         "A Modern Mobile-First Game Engine",
         4.0
     )
-    
-    # 创建所有特性片段
+
+    # Create all feature clips
     video_clips = [title_card]
-    
-    # 为每个场景分配截图
+
+    # Assign screenshots to each scene
     screenshots_per_scene = max(1, len(screenshot_paths) // len(scenes))
     for i, scene in enumerate(scenes):
         start_idx = i * screenshots_per_scene
         end_idx = start_idx + screenshots_per_scene
         scene_screenshots = screenshot_paths[start_idx:end_idx]
-        
+
         clip = create_feature_clip(scene, scene_screenshots)
         video_clips.append(clip)
-    
-    # 结尾卡
+
+    # Ending card
     end_card = create_end_card(6.0)
     video_clips.append(end_card)
-    
-    # 4. 拼接并输出
+
+    # 4. Concatenate and output
     print("\n[4/4] Rendering final video...")
-    
+
     final_video = concatenate_videoclips(video_clips, method="compose")
-    
-    # 添加音频
+
+    # Add audio
     if audio_path.exists():
         audio = AudioFileClip(str(audio_path))
         final_video = final_video.set_audio(audio)
-    
-    # 输出
+
+    # output
     print(f"\nWriting video to {video_path}...")
     final_video.write_videofile(
         str(video_path),
@@ -532,7 +532,7 @@ def main():
         preset='medium',
         bitrate='8000k'
     )
-    
+
     print("\n" + "=" * 60)
     print(f"[SUCCESS] Showcase video created: {video_path}")
     print(f"  Duration: {final_video.duration:.1f}s")

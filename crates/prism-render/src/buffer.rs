@@ -394,8 +394,8 @@ pub unsafe fn create_and_upload_image(
     }
 
     // Only level 0 exists: generate the lower levels by blitting each one
-    // from the previous level. 算法 mirrors ibl.rs but uses the
-    // synchronization2 屏障 API to 匹配 the rest of this 函数 Levels
+    // from the previous level. Algorithm mirrors ibl.rs but uses the
+    // synchronization2 barrier API to match the rest of this function Levels
     // 1..mip_levels are still UNDEFINED (transitioned to TRANSFER_DST above).
     //
     // Blitting is a format feature, not a given: BC7/ASTC/ETC2 often lack

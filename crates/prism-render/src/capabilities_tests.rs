@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn collect_extension_names_extracts_names() {
-    // extension_name is [c_char] (= i8 on Windows 构建 the byte arrays
-    // and cast so the 复制 is type-correct on both 有符号 and 无符号
+    // extension_name is [c_char] (= i8 on Windows). Build the byte arrays
+    // and cast so the copy is type-correct on both signed and unsigned
     // c_char platforms.
     fn make_name(bytes: &[u8]) -> [std::os::raw::c_char; 256] {
         let mut arr = [0; 256];
@@ -52,7 +52,7 @@ fn transfer_commands_require_both_extensions() {
 
 #[test]
 fn caps_any_ray_tracing_requires_accel_struct() {
-    // RT 管线 alone (without accel 结构体 is not usable.
+    // RT pipeline alone (without acceleration structure is not usable.
     let mut caps = RayTracingCaps {
         ray_tracing_pipeline: true,
         ..Default::default()
@@ -60,7 +60,7 @@ fn caps_any_ray_tracing_requires_accel_struct() {
     assert!(!caps.any_ray_tracing());
     assert!(!caps.has_rt_pipeline());
 
-    // With accel 结构体 it becomes usable.
+    // With acceleration structure it becomes usable.
     caps.acceleration_structure = true;
     assert!(caps.any_ray_tracing());
     assert!(caps.has_rt_pipeline());

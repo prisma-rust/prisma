@@ -114,25 +114,25 @@ fn a_valid_clip_reports_its_tracks() {
 #[test]
 fn a_clip_track_past_the_skeleton_is_reported() {
     let bytes = encode_ranim(&clip()).expect("encode");
-    // 只声明 1 根骨骼，轨道却指向 joint 1。
+    // Only 1 bone declared, but track points to joint 1.
     let (_, _, problems) = inspect_clip_with_skeleton(&bytes, Some(1));
     assert_eq!(problems.len(), 1);
     assert!(
         problems[0].contains("track targets joint 1"),
         "{problems:?}"
     );
-    // 骨骼够多时没有问题。
+    // No issue when enough bones.
     assert!(inspect_clip_with_skeleton(&bytes, Some(2)).2.is_empty());
 }
 
 #[test]
 fn a_short_mesh_with_broken_weights_is_flagged() {
-    // 权重和 0.8：cooker 会归一化，但手工构造的坏文件必须被检查出来。
+    // Weights 0.2 and 0.8: cooker will normalize, but hand-built bad file must be detected.
     let mut mesh = skinned_mesh();
     mesh.weights = vec![[0.4, 0.4, 0.0, 0.0]; 3];
-    // 直接绕过 encoder 的归一化：先编码合法的，再把权重流改坏。
+    // Bypass encoder normalization directly: first encode valid, then corrupt weight stream.
     let mut bytes = encode_rskin(&skinned_mesh()).expect("encode");
-    // 权重流从 joint 流之后开始：header(25) + positions(3*12) + joints(3*8)。
+    // Weight stream begins after joint stream: header(25) + positions(3*12) + joints(3*8).
     let weight_start = 25 + 3 * 12 + 3 * 8;
     for vertex in 0..3 {
         let offset = weight_start + vertex * 16;
@@ -147,7 +147,7 @@ fn a_short_mesh_with_broken_weights_is_flagged() {
             .any(|problem| problem.contains("do not sum to 1")),
         "{problems:?}"
     );
-    let _ = mesh; // 只用于说明原值
+    let _ = mesh; // only to illustrate original value
 }
 
 #[test]
@@ -171,9 +171,9 @@ fn unknown_magic_is_reported_not_panicking() {
     let (kind, _, problems) = inspect_bytes(b"nope");
     assert_eq!(kind, "unknown");
     assert_eq!(problems.len(), 1);
-    // 空文件同样安全。
+    // Empty file is also safe.
     assert_eq!(inspect_bytes(b"").0, "unknown");
-    // 只有 magic、没有内容的文件也不 panic。
+    // File with only magic, no content, also does not panic.
     let (kind, _, problems) = inspect_bytes(b"RSKN");
     assert_eq!(kind, "rskin");
     assert!(!problems.is_empty());

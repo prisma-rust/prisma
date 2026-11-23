@@ -41,7 +41,10 @@ fn a_hierarchy_needs_its_parents_first() {
             inverse_bind: Mat4::IDENTITY,
         },
     ]);
-    assert!(child_first.is_none(), "must reject when parent is after child");
+    assert!(
+        child_first.is_none(),
+        "must reject when parent is after child"
+    );
 
     let empty = Skeleton::new(Vec::new());
     assert!(empty.is_none());

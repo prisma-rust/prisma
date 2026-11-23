@@ -1,18 +1,18 @@
-//! 程序化基础网格（`GameObject → 3D Object` 的等价物）。
+//! Procedural primitive meshes (equivalent of `GameObject → 3D Object`).
 //!
-//! 编辑器预设用 `mesh_path = "__builtin/<name>"` 引用这些网格，
-//! `prism-engine` 的资产解析器遇到该前缀时直接在这里生成 `MeshUploadInput`，
-//! 不读 `.pak`、也不需要 cook —— 与引擎的内置 Cube/Sphere/Capsule 一致。
+//! Editor presets reference these via `mesh_path = "__builtin/<name>"`;
+//! `prism-engine` asset resolver generates `MeshUploadInput` directly when it sees this prefix,
+//! no `.pak` read, no cook needed — consistent with engine built-in Cube/Sphere/Capsule.
 //!
-//! 单位约定（与引擎坐标一致：右手系、+Y 上）：
-//! - 盒子 / 球 / 圆柱 / 胶囊：外接尺寸 ≈ 1（半径 0.5、高 1），居中于原点；
-//! - 平面 / 四边形：1×1，位于 `y = 0` 的 XZ 平面，法线 +Y。
+//! Identity convention (consistent with engine coordinates: right-handed, +Y up):
+//! - box / sphere / cylinder / capsule: outer size ≈ 1 (radius 0.5, height 1), centered at origin;
+//! - plane / quad: 1×1, on XZ plane at `y = 0`, normal +Y.
 //!
-//! 所有网格都带位置 / 法线 / UV / 切线 / 索引，颜色留空（渲染器回落到白色）。
+//! All meshes have position / normal / UV / tangent / index, color left empty (renderer falls back to white).
 
 use crate::managers::MeshUploadInput;
 
-/// 注册名 → 网格。`path` 可以是 `__builtin/cube` 或裸 `cube`。
+/// Registry name → mesh. `path` can be `__builtin/cube` or bare `cube`.
 pub fn builtin(path: &str) -> Option<MeshUploadInput> {
     let name = path.strip_prefix("__builtin/").unwrap_or(path);
     Some(match name {
@@ -25,12 +25,12 @@ pub fn builtin(path: &str) -> Option<MeshUploadInput> {
     })
 }
 
-/// 这一路径是不是内置网格（资产解析器用它短路 `.pak` 查找）。
+/// This path is not a built-in mesh (asset resolver uses it to short-circuit `.pak` lookup).
 pub fn is_builtin(path: &str) -> bool {
     path.starts_with("__builtin/")
 }
 
-/// 所有内置名字（文档 / 菜单用）。
+/// All built-in names (for docs / menus).
 pub const BUILTIN_NAMES: &[&str] = &["box", "sphere", "cylinder", "capsule", "quad"];
 
 fn push_vertex(
@@ -59,13 +59,13 @@ fn empty_mesh() -> MeshUploadInput {
     }
 }
 
-/// 立方体一个面：(法线, 切线, 面内 u 轴, 面内 v 轴)。
+/// One face of cube: (normal, tangent, in-face u axis, in-face v axis).
 type BoxFace = ([f32; 3], [f32; 3], [f32; 3], [f32; 3]);
 
-/// 单位立方体（6 个面各自独立顶点，法线/UV 是面法线方向）。
+/// Identity cube (6 faces each with independent vertices, normal / UV matching face direction).
 pub fn box_mesh() -> MeshUploadInput {
     let mut mesh = empty_mesh();
-    // (法线, 切线, 面内 u 轴, 面内 v 轴)
+    // (normal, tangent, in-face u axis, in-face v axis)
     let faces: [BoxFace; 6] = [
         (
             [0.0, 1.0, 0.0],
@@ -123,7 +123,7 @@ pub fn box_mesh() -> MeshUploadInput {
     mesh
 }
 
-/// UV 球（经线 × 纬线），极点用扇形三角形。
+/// UV sphere (longitude × latitude), poles use fan triangles.
 pub fn sphere_mesh(radius: f32, rings: usize, segments: usize) -> MeshUploadInput {
     let mut mesh = empty_mesh();
     let rings = rings.max(2);
@@ -149,7 +149,7 @@ pub fn sphere_mesh(radius: f32, rings: usize, segments: usize) -> MeshUploadInpu
             let b = a + stride as u32;
             let c = b + 1;
             let d = a + 1;
-            // 跳过退化三角形（极点）。
+            // Skip degenerate triangles (poles).
             if ring != 0 {
                 mesh.indices.extend_from_slice(&[a, d, b]);
             }
@@ -161,7 +161,7 @@ pub fn sphere_mesh(radius: f32, rings: usize, segments: usize) -> MeshUploadInpu
     mesh
 }
 
-/// 圆柱（侧面 + 上下两个圆面），高 `height`、半径 `radius`，居中于原点。
+/// Cylinder (side + top and bottom caps), height `height`, radius `radius`, centered at origin.
 pub fn cylinder_mesh(radius: f32, height: f32, segments: usize) -> MeshUploadInput {
     let mut mesh = empty_mesh();
     let segments = segments.max(3);
@@ -196,7 +196,7 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: usize) -> MeshUploadInp
         mesh.indices.extend_from_slice(&[a, c, b, b, c, d]);
     }
 
-    // 顶面 / 底面（中心点 + 扇形），法线 ±Y。
+    // Top / bottom caps (center point + fan), normals ±Y.
     for (y, ny, flip) in [(half, 1.0_f32, false), (-half, -1.0_f32, true)] {
         let center = push_vertex(
             &mut mesh,
@@ -231,7 +231,7 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: usize) -> MeshUploadInp
     mesh
 }
 
-/// 胶囊：中间圆柱（高 `height`）+ 上下半球（半径 `radius`），居中于原点。
+/// Capsule: intermediate cylinder (height `height`) + top and bottom hemispheres (radius `radius`), centered at origin.
 pub fn capsule_mesh(
     radius: f32,
     height: f32,
@@ -243,7 +243,7 @@ pub fn capsule_mesh(
     let cap_rings = cap_rings.max(2);
     let half = height * 0.5;
 
-    // 上半球（phi: 0 → π/2，从 +Y 极点向下到赤道）。
+    // Top hemisphere (phi: 0 → π/2, from +Y pole down to equator).
     for ring in 0..=cap_rings {
         let v = ring as f32 / cap_rings as f32;
         let phi = v * std::f32::consts::FRAC_PI_2;
@@ -266,7 +266,7 @@ pub fn capsule_mesh(
             );
         }
     }
-    // 下半球（phi: π/2 → π）。
+    // Bottom hemisphere (phi: π/2 → π).
     for ring in 0..=cap_rings {
         let v = ring as f32 / cap_rings as f32;
         let phi = std::f32::consts::FRAC_PI_2 + v * std::f32::consts::FRAC_PI_2;
@@ -290,8 +290,8 @@ pub fn capsule_mesh(
         }
     }
 
-    // 上半球 + 下半球各自和自己连（中间赤道两圈顶点位置重合，接缝处法线不同，
-    // 与球体一样分成两段扇形三角形即可）。
+    // Top + bottom hemispheres each connect to themselves (equatorial ring vertices coincide, normals differ,
+    // same as sphere, just split into two fan triangle segments).
     let stride = segments + 1;
     let top_rings = cap_rings;
     let total_rings = top_rings + cap_rings + 1;
@@ -309,7 +309,7 @@ pub fn capsule_mesh(
     mesh
 }
 
-/// 1×1 XZ 平面（法线 +Y），Quad / Plane 共用。
+/// 1×1 XZ plane (normal +Y), Quad / Plane shared.
 pub fn quad_mesh() -> MeshUploadInput {
     let mut mesh = empty_mesh();
     let corners = [
@@ -354,7 +354,7 @@ mod tests {
         }
         for position in &mesh.positions {
             assert!(position.iter().all(|value| value.is_finite()));
-            // 胶囊 = 圆柱 1 + 两个半径 0.5 的半球 → 总高 2（与引擎默认一致）。
+            // Capsule = cylinder 1 + two radius 0.5 hemispheres → total height 2 (consistent with engine default).
             assert!(
                 position.iter().all(|value| value.abs() <= 1.05),
                 "primitive should be unit sized: {position:?}"
@@ -368,7 +368,7 @@ mod tests {
             let mesh = builtin(&format!("__builtin/{name}")).expect(name);
             check(&mesh);
         }
-        // 别名：cube → box，plane → quad。
+        // Aliases: cube → box, plane → quad.
         assert!(builtin("__builtin/cube").is_some());
         assert!(builtin("__builtin/plane").is_some());
         assert!(builtin("sphere").is_some());

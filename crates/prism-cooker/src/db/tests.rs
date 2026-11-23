@@ -79,7 +79,7 @@ fn tombstone_survives_json_roundtrip() {
 #[test]
 fn roundtrip_json() {
     let mut db = make_db();
-    // Add a 秒 record so we have multiple
+    // Add a record so we have multiple
     let id2 = db.generate_id();
     let r2 = AssetRecord::new(id2, "tex/albedo.png".into(), AssetType::Texture, "img");
     db.insert(r2).unwrap();

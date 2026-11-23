@@ -137,10 +137,10 @@ fn checksum_mismatch_detected() {
     );
 }
 
-/// #89：校验和必须覆盖 `version` 字段。
+/// #89: Checksum must cover `version` field.
 ///
-/// header 解析器本身也会拒绝未知版本，所以这里直接测 `verify_checksum`，
-/// 证明「同版本号范围内的篡改」不会再被漏掉。
+/// header parser itself rejects unknown version, so here directly test `verify_checksum`,
+/// prove "tampering within same version number range" won't be missed.
 #[test]
 fn checksum_covers_version_field() {
     let id = sample_asset_id(6);
@@ -160,14 +160,14 @@ fn checksum_covers_version_field() {
     let err = verify_checksum(&tampered, &tampered_header).unwrap_err();
     assert!(
         matches!(&err, PackageError::ChecksumMismatch { .. }),
-        "version 必须在校验和覆盖范围内，got {err}"
+        "version must be within checksum coverage, got {err}"
     );
 }
 
-/// #89：`asset_count` 被篡改时必须在**解析 registry 之前**失败。
+/// #89: `asset_count` tampering must fail **before parsing registry**.
 ///
-/// 以前校验和跳过这个字段，把 `asset_count` 改成 0 会让解析器按「0 个资产」
-/// 继续跑，而不是报错。
+/// Previously checksum skipped this field, setting `asset_count` to 0 made parser proceed as "0 assets"
+/// continue running, instead of erroring.
 #[test]
 fn checksum_covers_asset_count() {
     let id = sample_asset_id(7);
@@ -180,10 +180,10 @@ fn checksum_covers_asset_count() {
     let err = PackageReader::from_bytes(&tampered).unwrap_err();
     assert!(
         matches!(&err, PackageError::ChecksumMismatch { .. }),
-        "asset_count = 0 应触发校验和失败，got {err}"
+        "asset_count = 0 should trigger checksum failure, got {err}"
     );
 
-    // 连 registry_size 一起改成自洽的 2 个资产，也逃不掉。
+    // Change asset_count + registry_size together to self-consistent 2 assets, still can't escape.
     let mut tampered = pak.clone();
     tampered[8..12].copy_from_slice(&2u32.to_le_bytes());
     let with_two = (RuntimeAssetRecord::SERIALIZED_SIZE * 2).to_le_bytes();
@@ -191,7 +191,7 @@ fn checksum_covers_asset_count() {
     let err = PackageReader::from_bytes(&tampered).unwrap_err();
     assert!(
         matches!(&err, PackageError::ChecksumMismatch { .. }),
-        "asset_count + registry_size 一起改仍应触发校验和失败，got {err}"
+        "asset_count + registry_size changed together still triggers checksum failure, got {err}"
     );
 }
 
@@ -390,8 +390,8 @@ fn invalid_magic_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// 畸形 header（回归 #60）：这些输入以前会在 debug 下整数溢出 panic、
-// release 下回绕成巨大偏移再切片 panic，永远走不到校验和检查。
+// Malformed header (regression #60): these inputs previously caused integer overflow panic in debug,
+// release wraps around to huge offset then slice panic, never reaches checksum check.
 // ---------------------------------------------------------------------------
 
 fn malformed_pak(
@@ -412,7 +412,7 @@ fn malformed_pak(
     buf.extend_from_slice(&data_size.to_le_bytes());
     buf.extend_from_slice(&0u64.to_le_bytes()); // checksum, filled in below
     buf.extend_from_slice(payload);
-    // 结构校验用例必须带**合法**的校验和，否则会先撞上 ChecksumMismatch（#89）。
+    // Structural checksum test cases must have **valid** checksum, otherwise will hit ChecksumMismatch first (#89).
     let tail = buf[PackageHeader::SERIALIZED_SIZE as usize..].to_vec();
     let checksum = PackageHeader::compute_checksum(&buf[4..44], &[], &[], &tail);
     buf[44..52].copy_from_slice(&checksum.to_le_bytes());
@@ -430,7 +430,7 @@ fn expect_truncated(bytes: &[u8]) -> PackageError {
 
 #[test]
 fn data_offset_before_registry_end_is_rejected() {
-    // 复现 issue 里的 100 字节构造：registry 覆盖 52..100，但 data_offset 仍是 52。
+    // Reproduce issue with 100-byte construction: registry covers 52..100, but data_offset is still 52.
     let bytes = malformed_pak(
         1,
         PackageHeader::SERIALIZED_SIZE,
@@ -490,7 +490,7 @@ fn truncated_header_is_rejected() {
 
 #[test]
 fn record_data_outside_the_chunk_is_rejected() {
-    // 合法形状的 100 字节包，但 record 声称数据在 offset 0（data chunk 从 100 开始）。
+    // Legal-shaped 100-byte package, but record claims data at offset 0 (data chunk starts at 100).
     let bytes = malformed_pak(
         1,
         PackageHeader::SERIALIZED_SIZE,
@@ -505,7 +505,7 @@ fn record_data_outside_the_chunk_is_rejected() {
 #[test]
 fn record_dependencies_outside_the_array_are_rejected() {
     let mut record = vec![0u8; RuntimeAssetRecord::SERIALIZED_SIZE as usize];
-    // dependency_start = 1, dependency_count = 1, 但依赖数组为空。
+    // dependency_start = 1, dependency_count = 1, but dependency array is empty.
     record[40..44].copy_from_slice(&1u32.to_le_bytes());
     record[44..48].copy_from_slice(&1u32.to_le_bytes());
     let bytes = malformed_pak(

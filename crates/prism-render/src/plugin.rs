@@ -21,7 +21,7 @@ pub trait RenderPlugin: Send {
     fn shutdown(&mut self) {}
 }
 
-/// 空白 Plugin 注册表（薄封装）
+/// Empty Plugin registry (thin wrapper)
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn RenderPlugin>>,
 }

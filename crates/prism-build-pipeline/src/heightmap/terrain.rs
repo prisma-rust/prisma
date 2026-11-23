@@ -1,7 +1,7 @@
-//! 初始地形生成：seed 化值噪声 + FBM。
+//! Initial terrain generation: seeded value noise + FBM.
 //!
-//! 产生 [0, 1] 相对高度场，调用方可用 [`Heightmap::denormalize`]
-//! 映射到真实高程范围（如 −11 000 m ~ +8 850 m）。
+//! Generate [0, 1] relative height field, caller available [`Heightmap::denormalize`]
+//! map to true real height range (like −11,000 m ~ +8,850 m).
 
 use super::Heightmap;
 
@@ -18,10 +18,10 @@ fn mix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// 2D 值噪声哈希，seed 混入整数混合。返回 [0, 1)。
+/// 2D value noise hash, seed mixed into integer blend. Returns [0, 1).
 ///
-/// 不能再用 `f64::sin`：libm 的实现因平台而异，同一个 seed 在
-/// Windows / Linux / Android 上会得到不同地形；大坐标还会丢精度。
+/// Cannot again use `f64::sin`: libm implementation varies by platform, same seed in
+/// Windows / Linux / Android will get different terrain; large coordinates will lose precision.
 #[inline]
 fn hash2(p: [f64; 2], seed: u64) -> f64 {
     let ix = p[0].floor() as i64 as u64;
@@ -31,12 +31,12 @@ fn hash2(p: [f64; 2], seed: u64) -> f64 {
     (h >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)
 }
 
-/// 2D 值噪声，返回 [−1, 1]。
+/// 2D value noise, returns [−1, 1].
 #[inline]
 fn noise_2d(p: [f64; 2], seed: u64) -> f64 {
     let i = [p[0].floor(), p[1].floor()];
     let w = [p[0] - i[0], p[1] - i[1]];
-    // 平滑插值（3次 Hermite）。
+    // Smooth interpolation (3rd-order Hermite).
     let u = [
         w[0] * w[0] * (3.0 - 2.0 * w[0]),
         w[1] * w[1] * (3.0 - 2.0 * w[1]),
@@ -50,9 +50,9 @@ fn noise_2d(p: [f64; 2], seed: u64) -> f64 {
     -1.0 + 2.0 * (a + (b - a) * u[0] + (c - a) * u[1] + (a - b - c + d) * u[0] * u[1])
 }
 
-/// 分形布朗运动：多倍频叠加，返回约 [−1, 1]。
+/// Fractional Brownian motion: many octaves superimposed, returns approximately [−1, 1].
 ///
-/// `gain` — 每倍频振幅衰减（典型 0.5）；`lacunarity` — 频率倍率（典型 2.0）。
+/// `gain` — amplitude decay per octave (typical 0.5); `lacunarity` — frequency multiplier (typical 2.0).
 fn fbm(p: [f64; 2], octaves: u32, gain: f64, lacunarity: f64, seed: u64) -> f64 {
     let mut p = p;
     let mut amplitude = 1.0;
@@ -68,24 +68,24 @@ fn fbm(p: [f64; 2], octaves: u32, gain: f64, lacunarity: f64, seed: u64) -> f64 
 }
 
 // ---------------------------------------------------------------------------
-// 地形合成
+// Terrain synthesis
 // ---------------------------------------------------------------------------
 
-/// 生成 [0, 1] 相对高度的初始地形。
+/// Generate [0, 1] relative height initial terrain.
 ///
-/// 频率按**物理地块尺度**标定：`scale_m` 是地块宽度（米）。
-/// 512 m 地块基准（`freq_scale = 1.0`）：
-/// - 低频骨架 `base`（~1.5 周期）：大尺度起伏约 340 m
-/// - 山脊层 `ridge` = 1 − |fbm|（~2.5 周期）：山脊间隔约 200 m
-/// - 细节层 `detail`（~10 周期）：谷地纹理约 50 m
-/// - 强域扭曲让山脊自然蜿蜒
+/// Frequency calibrated by **physical tile size**: `scale_m` is tile width (meters).
+/// 512 m tile baseline (`freq_scale = 1.0`):
+/// - Low frequency skeleton `base` (~1.5 period): large-scale undulation about 340 m
+/// - Ridge layer `ridge` = 1 − |fbm| (~2.5 period): ridge interval about 200 m
+/// - Detail layer `detail` (~10 period): valley texture about 50 m
+/// - Strong domain distortion makes ridges naturally meander
 ///
-/// 地块越大频率越低，保持相同的物理特征周期。
+/// Larger tile means lower frequency, maintaining same physical feature period.
 pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) -> Heightmap {
-    // 频率标度：512 m 地块 → 1.0；1024 m → 0.5（相同物理周期）。
+    // Frequency scale: 512 m tile → 1.0; 1024 m → 0.5 (same physical period).
     let freq = 512.0 / scale_m.max(1.0);
 
-    // 每层用不同 seed 相位，避免各倍频对齐产生网格感。
+    // Each layer uses different seed bitwise, avoid all octaves aligning to produce mesh feel.
     let seed_a = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let seed_b = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     let seed_c = seed.wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -95,12 +95,12 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) ->
         let ny = y as f64 / height as f64;
         for x in 0..width {
             let nx = x as f64 / width as f64;
-            // 域扭曲：低频噪声偏移采样坐标，山脊走向随之蜿蜒。
+            // Domain distortion: low frequency noise offsets sample coordinates, ridge direction meanders with it.
             let warp = 0.5 * fbm([nx * 2.0, ny * 2.0], 4, 0.5, 2.0, seed_a);
             let q = [nx + warp, ny + warp];
 
             let base = fbm([q[0] * 1.5 * freq, q[1] * 1.5 * freq], 5, 0.5, 2.0, seed_a);
-            // 山脊噪声：|fbm| 取反 → f=0 处为脊线（1.0），两侧滑落（0.0）。
+            // Ridge noise: |fbm| absolute → f=0 is ridge line (1.0), both sides fall off (0.0).
             let ridge =
                 1.0 - fbm([q[0] * 2.5 * freq, q[1] * 2.5 * freq], 5, 0.5, 2.0, seed_b).abs();
             let detail = fbm(
@@ -111,14 +111,14 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) ->
                 seed_c,
             );
 
-            // base ∈ [−1,1]；ridge ∈ [0,1] → 平移/缩放回 [−1,1]；detail ∈ [−1,1]
+            // base ∈ [−1,1]; ridge ∈ [0,1] → translate/scale back to [−1,1]; detail ∈ [−1,1]
             let e = 0.40 * base + 0.45 * (2.0 * ridge - 1.0) + 0.15 * detail;
             data.push(e);
         }
     }
 
     let mut hm = Heightmap::new(width, height, data);
-    // 归一化到 [0, 1]，保证不同 seed 输出范围一致。
+    // Normalize to [0, 1], ensure output range consistent for different seeds.
     hm.normalize();
     hm
 }

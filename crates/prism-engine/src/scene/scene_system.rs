@@ -1,22 +1,22 @@
-//! 场景系统——负责场景加载、切换与「当前场景」状态。
+//! Scene system — owns scene loading, switching and "current scene" state.
 //!
-//! # 职责
+//! # Responsibilities
 //!
-//! [`SceneManager`] 是引擎的场景子系统：它拥有「当前场景名」，并统一负责
-//! 从 `assets/scenes.json` manifest 加载场景到 ECS 世界。场景**内容**只按
-//! [`prism_asset::core::AssetId`] 从资源包（`.pak`）加载：`scenes.json` 的
-//! `path` 只是路径清单（`.pak.meta.json`）中的查找键，先解析为 `AssetId`，
-//! 再由 [`ResourceManager`] 读取 RSCN 字节——不做任何磁盘文件回退。
-//! 早期版本由 `Engine` 直接扫描 manifest 加载场景，现收拢到本系统
-//! （`Engine::init_scene` 只做转发）——这是 计划「场景加载应该由场景系统
-//! 负责」的落地。
+//! [`SceneManager`] is engine's scene subsystem: owns "current scene name", uniformly responsible for
+//! loading scenes from `assets/scenes.json` manifest into ECS world. Scene **content** only loaded by
+//! [`prism_asset::core::AssetId`] from asset packages (`.pak`): `scenes.json`'s
+//! `path` only lookup key in path manifest (`.pak.meta.json`), first parsed as `AssetId`,
+//! then RSCN bytes read by [`ResourceManager`] — no disk file fallback.
+//! Earlier versions had `Engine` directly scan manifest to load scenes, now consolidated here
+//! (`Engine::init_scene` only forwards) — this implements plan "scene load should be
+//! handled by scene system".
 //!
-//! # 存档
+//! # Save files
 //!
-//! 存档（存/读档）**不是**引擎/场景系统的职责——`Engine` 不再在初始化时
-//! 自动读取 `scene_state.json`，只通过 `Engine::save_scene_state` /
-//! `Engine::load_scene_state` 暴露 [`crate::scene_state`] 原语，由用户项目
-//! 决定何时调用。
+//! Save / load is **not** engine / scene system's responsibility — `Engine` no longer
+//! auto-reads `scene_state.json` at init, only exposes [`crate::scene_state`] primitives via
+//! `Engine::save_scene_state` / `Engine::load_scene_state`, user project decides
+//! when to call.
 
 use std::path::PathBuf;
 
@@ -27,28 +27,28 @@ use prism_ecs::{Entity, World};
 use super::component_registry::ComponentRegistry;
 use super::loader::{SceneInstance, SceneLoader, SceneSource};
 
-/// 场景系统：拥有当前场景状态并负责场景加载。
+/// Scene system: owns current scene state and handles scene loading.
 pub struct SceneManager {
-    /// 当前已加载场景名（manifest 中 `scenes[].name`）。
+    /// Currently loaded scene name (`scenes[].name` in manifest).
     current_scene_name: Option<String>,
-    /// 当前场景在资源包内的路径（例如 `scenes/default.rscn`），
-    /// 用于把作者相对路径解析成包内路径。
+    /// Current scene's path inside asset package (e.g. `scenes/default.rscn`),
+    /// used to resolve author-relative paths into package-internal paths.
     current_scene_path: Option<String>,
     environment_bytes: Option<Vec<u8>>,
-    /// 场景代数：每次成功切换 / 卸载都递增。项目模块靠它判断缓存的实体句柄
-    /// 是否已经失效（`prism-project-api` 的 `scene_generation`）。
+    /// Scene generation: incremented on every successful switch / unload. Project module uses it to tell whether cached entity handles
+    /// are invalidated (`prism-project-api`'s `scene_generation`).
     generation: u64,
-    /// 启动时 manifest 一个可解析场景都没给出（`.pak` 没打、或清单里没有）。
-    /// 只由 manifest 加载路径置位；显式 `unload` / 编辑器载入 JSON 不算。
+    /// At startup manifest gave no loadable scene (`.pak` not packed, or none in manifest).
+    /// Only set by manifest load path; explicit `unload` / editor JSON load doesn't count.
     missing_scene: bool,
 }
 
-/// 当前场景环境资源的中性读取接口。
+/// Read-only interface for current scene's environment textures.
 pub trait EnvironmentProvider {
     fn load_environment(&mut self, asset_path: &str) -> Option<Vec<u8>>;
 }
 
-/// 渲染/资源阶段使用的只读 ECS 场景视图。
+/// Read-only ECS scene view for render / asset phase.
 pub struct SceneReadView<'a> {
     world: &'a World,
 }
@@ -58,12 +58,12 @@ impl<'a> SceneReadView<'a> {
         Self { world }
     }
 
-    /// 借出底层 ECS World 只读引用。
+    /// Lend underlying ECS World read-only reference.
     pub fn world(&self) -> &'a World {
         self.world
     }
 
-    /// 提取启用的相机实体输出（包含矩阵与曝光参数）。
+    /// Extract enabled camera entity output (contains matrices and exposure params).
     pub fn active_camera_output(
         &self,
         surface_rotation: &glam::Mat4,
@@ -71,7 +71,7 @@ impl<'a> SceneReadView<'a> {
         super::systems::camera::compute_camera_output(self.world, surface_rotation)
     }
 
-    /// 提取所有参与合成的相机层（已按 Camera.depth 升序排序）。
+    /// Extract all camera layers participating in composition (already sorted ascending by Camera.depth).
     pub fn cameras(
         &self,
         surface_rotation: &glam::Mat4,
@@ -120,12 +120,12 @@ impl<'a> SceneReadView<'a> {
         list
     }
 
-    /// 提取场景中收集的光源样本。
+    /// Extract light samples collected in scene.
     pub fn light_samples(&self) -> Vec<super::systems::lights::LightSample> {
         super::systems::lights::collect_light_samples(self.world)
     }
 
-    /// 采集光源样本到调用方缓冲。
+    /// Collect light samples into caller buffer.
     pub fn light_samples_into(&self, out: &mut Vec<super::systems::lights::LightSample>) {
         super::systems::lights::collect_light_samples_into(self.world, out);
     }
@@ -196,8 +196,8 @@ impl<'a> SceneReadView<'a> {
         );
     }
 
-    /// 提取 2D 绘制列表（精灵 + 折线，已按 `sorting_layer` →
-    /// `order_in_layer` → 世界 `z` → 实体 id 排序，先画远、后画近）。
+    /// Extract 2D draw list (sprite + polyline, already sorted by `sorting_layer` →
+    /// `order_in_layer` → world `z` → entity id, far drawn first, near drawn later).
     pub fn sprite_items(&self) -> Vec<prism_render::SpriteDrawItem> {
         super::systems::render::scene_2d_system(self.world)
     }
@@ -207,7 +207,7 @@ impl<'a> SceneReadView<'a> {
         super::systems::render::scene_2d_system_into(self.world, out)
     }
 
-    /// [`Self::sprite_items_into`] 加主相机视锥（瓦片地图逐格裁剪，#529）。
+    /// [`Self::sprite_items_into`] plus main camera frustum (tilemap clipped per cell, #529).
     pub fn sprite_items_with_frustum_into(
         &self,
         frustum: Option<&prism_render::culling::Frustum>,
@@ -216,8 +216,8 @@ impl<'a> SceneReadView<'a> {
         self.sprite_items_with_frustum_and_line_scale_into(frustum, None, out)
     }
 
-    /// [`Self::sprite_items_with_frustum_into`] 加主线相机像素比例（#978）：
-    /// 亚像素宽的折线按 1 个渲染像素绘制，避免断成一串点。
+    /// [`Self::sprite_items_with_frustum_into`] plus main-line camera pixel ratio (#978):
+    /// sub-pixel-wide polylines drawn at 1 render pixel, avoid breaking into dots.
     pub fn sprite_items_with_frustum_and_line_scale_into(
         &self,
         frustum: Option<&prism_render::culling::Frustum>,
@@ -229,13 +229,13 @@ impl<'a> SceneReadView<'a> {
         )
     }
 
-    /// 提取 `Light2D`（#611），已按贡献修剪到 `SPRITE_LIGHT_MAX`。
+    /// Extract `Light2D` (#611), already pruned to `SPRITE_LIGHT_MAX` by contribution.
     pub fn sprite_lights_into(&self, out: &mut Vec<prism_render::SpriteLight>) {
         out.clear();
         out.extend(super::systems::render::sprite_light_entries(self.world));
     }
 
-    /// 提取 3D 粒子 billboard（已按到 `eye` 的距离**远到近**排序）。
+    /// Extract 3D particle billboards (already sorted **far to near** by distance to `eye`).
     pub fn particle_items_into(
         &self,
         eye: glam::Vec3,
@@ -244,10 +244,10 @@ impl<'a> SceneReadView<'a> {
         super::systems::particles::scene_particles_into(self.world, eye, out)
     }
 
-    /// 提取渲染所需的扁平绘制列表，不暴露可变 ECS 访问。
+    /// Extract flat draw list needed for render, no mutable ECS access exposed.
     ///
-    /// 委托给 [`crate::scene::systems::render::scene_render_system`]：这里曾经是
-    /// 一份复制粘贴的实现，两处查询条件（尤其 `MaterialRef` 是否必需）会各自漂移。
+    /// Delegates to [`crate::scene::systems::render::scene_render_system`]: this used to be
+    /// a copy-pasted implementation, two query conditions (especially whether `MaterialRef` required) would drift.
     pub fn draw_items(&self) -> Vec<prism_render::DrawItem> {
         crate::scene::systems::render::scene_render_system(self.world)
     }
@@ -259,7 +259,7 @@ impl<'a> SceneReadView<'a> {
 
     /// [`Self::draw_items_into`] with camera frustum culling (#491).
     ///
-    /// `frustum == None` 时等同于 [`Self::draw_items_into`]。
+    /// `frustum == None` equivalent to [`Self::draw_items_into`].
     pub fn draw_items_with_frustum_into(
         &self,
         frustum: Option<&prism_render::culling::Frustum>,
@@ -271,7 +271,7 @@ impl<'a> SceneReadView<'a> {
     }
 
     /// [`Self::draw_items_with_frustum_into`] for **all** composited cameras
-    /// (#461 / #491). 空切片 = 不剔除。
+    /// (#461 / #491). Empty slice = no cull.
     pub fn draw_items_with_frustums_into(
         &self,
         frustums: &[prism_render::culling::Frustum],
@@ -283,10 +283,10 @@ impl<'a> SceneReadView<'a> {
     }
 }
 
-/// 把场景里的相对资源路径解析成资源包内路径。
+/// Resolve relative asset paths in scene into package-internal paths.
 ///
-/// 例：场景 `scenes/default.rscn` + `../valley.hdr` -> `valley.hdr`；
-/// `assets/valley.hdr` -> `valley.hdr`。
+/// Example: scene `scenes/default.rscn` + `../valley.hdr` -> `valley.hdr`;
+/// `assets/valley.hdr` -> `valley.hdr`.
 fn normalize_scene_asset_path(scene_path: Option<&str>, asset_path: &str) -> String {
     let asset_path = asset_path.replace('\\', "/");
     if let Some(rest) = asset_path.strip_prefix("assets/") {
@@ -319,7 +319,7 @@ impl Default for SceneManager {
 }
 
 impl SceneManager {
-    /// 创建一个空的场景系统（尚无当前场景）。
+    /// Create an empty scene system (no current scene yet).
     pub fn new() -> Self {
         Self {
             current_scene_name: None,
@@ -330,39 +330,39 @@ impl SceneManager {
         }
     }
 
-    /// 启动时没有任何可解析场景（通常是 `assets/*.pak` 没打）。
+    /// At startup no loadable scene (usually `assets/*.pak` not packed).
     ///
-    /// 渲染侧用它决定是否画「无场景」占位画面；clear color 语义不受影响。
+    /// Render side uses it to decide whether to draw "no scene" placeholder image; clear color semantics unaffected.
     pub fn is_missing_scene(&self) -> bool {
         self.missing_scene
     }
 
-    /// 当前场景名；尚未从 manifest 加载任何场景时为 `None`。
+    /// Current scene name; `None` when no scene loaded from manifest yet.
     pub fn current_scene_name(&self) -> Option<&str> {
         self.current_scene_name.as_deref()
     }
 
-    /// 场景代数（从 0 开始，每次切换 / 卸载 +1）。
+    /// Scene generation (from 0, +1 on each switch / unload).
     ///
-    /// 宿主（编辑器 / 玩家）把它传给项目模块，模块据此丢弃缓存的实体句柄：
-    /// 换场景之后旧句柄指向的实体已经不存在了。
+    /// Host (editor / player) passes it to project module, module discards cached entity handles:
+    /// after scene switch entities pointed by old handles no longer exist.
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// 递增代数并返回新值。
+    /// Increment generation and return new value.
     pub fn bump_generation(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1).max(1);
         self.generation
     }
 
-    /// 接管刚刚 spawn 完的**作者格式**场景（`Engine::load_scene_json_file`）。
+    /// Adopt just-spawned **author-format** scene (`Engine::load_scene_json_file`).
     ///
-    /// `additive = false`（`LoadSceneMode::Single`）：卸载旧场景实体、清空
-    /// current_scene / 环境缓存并递增代数 —— 再加载一次不会让实体翻倍。
-    /// `additive = true`：只加载不卸载，`Persistent` 与旧场景都留着。
+    /// `additive = false` (`LoadSceneMode::Single`): unload old scene entities, clear
+    /// current_scene / env cache and increment generation — loading again won't double entities.
+    /// `additive = true`: only load without unload, `Persistent` and old scene both stay.
     ///
-    /// 必须在新场景 spawn **成功之后**调用：失败时保持旧场景不动。
+    /// Must call **after new scene spawned successfully**: on failure keep old scene unchanged.
     pub fn adopt_author_scene(
         &mut self,
         world: &mut World,
@@ -377,8 +377,8 @@ impl SceneManager {
             return 0;
         }
         let unloaded = unload_scene_members(world, Some(inst.scene_id));
-        // 作者格式没有 manifest 名字：清掉上一次 manifest 场景的身份，
-        // 否则 `current_scene_name()` 会指向一个已经被卸掉的场景。
+        // Author format has no manifest name: clear last manifest scene identity,
+        // otherwise `current_scene_name()` points to an already unloaded scene.
         self.current_scene_name = None;
         self.current_scene_path = None;
         self.environment_bytes = None;
@@ -386,11 +386,11 @@ impl SceneManager {
         unloaded
     }
 
-    /// 卸载当前场景（`Persistent` 子树除外），返回被卸载的实体数。
+    /// Unload current scene (except `Persistent` subtree), return number of entities unloaded.
     ///
-    /// 与 [`Self::adopt_scene`] 的区别：这里不加载任何新场景，用于
-    /// 「回主菜单」「重开一局」这类只需要清场的场合。引擎自有实体
-    /// （没有 `SceneMember`，例如 `runtime_initialize` 的回退相机）不会被删。
+    /// Difference from [`Self::adopt_scene`]: here no new scene loaded, for
+    /// "return to main menu" / "restart a round" cases that only need cleanup. Engine-owned entities
+    /// (without `SceneMember`, e.g. `runtime_initialize`'s fallback camera) not deleted.
     pub fn unload_scene(&mut self, world: &mut World) -> usize {
         let unloaded = unload_scene_members(world, None);
         let had_scene = self.current_scene_name.is_some();
@@ -407,17 +407,17 @@ impl SceneManager {
         unloaded
     }
 
-    /// 注入当前场景的环境贴图字节。字节由运行时资源服务提供，场景系统
-    /// 不负责文件读取或格式解码。
+    /// Inject environment texture bytes for current scene's declarative lighting. Bytes provided by runtime asset service, scene system
+    /// not responsible for file reads or format decode.
     pub fn set_environment_bytes(&mut self, bytes: Option<Vec<u8>>) {
         self.environment_bytes = bytes;
     }
 
-    /// 从 `assets/scenes.json` manifest 加载**第一个**已注册进资源包的场景到世界。
+    /// Load **first** scene already registered in asset package from `assets/scenes.json` manifest.
     ///
-    /// 引擎初始化（`Engine::init_scene`）会委托本方法：场景一律按 `AssetId`
-    /// 从 [`ResourceManager`] 加载（`scenes.json` 的 `path` → 路径清单 → `AssetId`）。
-    /// 返回加载成功的场景名并记为当前场景；无 manifest / 无可用场景时返回 `None`。
+    /// Engine init (`Engine::init_scene`) delegates here: scenes always loaded by `AssetId`
+    /// from [`ResourceManager`] (`scenes.json` `path` → path manifest → `AssetId`).
+    /// Returns successfully loaded scene name and records as current; returns `None` when no manifest / no available scene.
     pub fn load_first_from_manifest(
         &mut self,
         rm: &mut ResourceManager,
@@ -427,9 +427,9 @@ impl SceneManager {
         self.load_from_manifest(rm, world, registry, None)
     }
 
-    /// 从 `assets/scenes.json` 按名字加载指定场景。
+    /// Load specified scene by name from `assets/scenes.json`.
     ///
-    /// 清单中找不到该名字或加载失败时，保持「当前场景」不变并返回 `None`。
+    /// When name not found in manifest or load fails, keep "current scene" unchanged and return `None`.
     pub fn load_named_from_manifest(
         &mut self,
         rm: &mut ResourceManager,
@@ -440,10 +440,10 @@ impl SceneManager {
         self.load_from_manifest(rm, world, registry, Some(name))
     }
 
-    /// 从调用方提供的内存 manifest 加载场景。
+    /// Load scene from caller-provided in-memory manifest.
     ///
-    /// 运行时宿主可以从 `.pak`、Android asset 或网络资源注入清单，避免
-    /// 场景系统依赖当前工作目录。文件入口仅作为兼容层保留。
+    /// Runtime host can inject manifest from `.pak`, Android assets or network resources, avoiding
+    /// scene system depending on current working directory. File entry kept only as compatibility layer.
     pub fn load_from_manifest_text(
         &mut self,
         rm: &mut ResourceManager,
@@ -463,14 +463,14 @@ impl SceneManager {
         self.load_entries(rm, world, registry, &manifest, scene_name)
     }
 
-    /// 解析「当前场景」声明式光照所需的环境贴图字节。
+    /// Resolve environment texture bytes needed for "current scene" declarative lighting.
     ///
-    /// 取代旧的 [`load_env_bytes_from_manifest`]，后者扫描 manifest 所有 `.rscn`，
-    /// 导致 UI 开屏也加载 3D 环境贴图。新逻辑按 `current_scene_name` 定位场景：
-    /// - `.rscn`：复用 `read_env_path_from_rscn` 自动派生（向后兼容，default/sponza
-    ///   的 IBL 无需改场景即保留）。
-    /// - `.scene.json`：从已加载的 ECS 世界查询 `EnvironmentLighting` 组件；
-    ///   无该组件或 `env_map = None` → 返回 `None`（开屏等无光照场景不构建 IBL）。
+    /// Replaces old [`load_env_bytes_from_manifest`], which scanned all `.rscn` in manifest,
+    /// causing UI startup screens to also load 3D environment textures. New logic determines scene by `current_scene_name`:
+    /// - `.rscn`: reuse `read_env_path_from_rscn` auto-derivation (backward compatible, default / sponza
+    ///   IBL preserved without scene changes).
+    /// - `.scene.json`: query `EnvironmentLighting` component from already-loaded ECS world;
+    ///   no such component or `env_map = None` → return `None` (startup screens without lighting don't build IBL).
     #[cfg(feature = "legacy-disk-scenes")]
     #[deprecated(
         note = "use current_scene_env_bytes_with_provider; this fallback reads scene files"
@@ -523,18 +523,18 @@ impl SceneManager {
                         }
                         Err(e) => {
                             log::warn!("env map {} not readable: {e}", hdr_path.display())
-                            // 组件声明了 env_map 但文件缺失：视为无 IBL。
+                            // Component declares env_map but file missing: treat as no IBL.
                         }
                     }
                 }
-                // 找到 EnvironmentLighting 组件但无 env_map（或文件缺失）→ 不构建 IBL。
+                // Found EnvironmentLighting component but no env_map (or file missing) → don't build IBL.
                 return None;
             }
         }
         None
     }
 
-    /// 使用调用方提供的资源读取器解析环境贴图，不访问文件系统。
+    /// Resolve environment textures using caller-provided asset reader, no filesystem access.
     pub fn current_scene_env_bytes_with_provider<P: EnvironmentProvider>(
         &self,
         view: SceneReadView<'_>,
@@ -551,10 +551,10 @@ impl SceneManager {
     }
 
     // -----------------------------------------------------------------------
-    // 内部：manifest 驱动加载
+    // internal: manifest-driven loading
     // -----------------------------------------------------------------------
 
-    /// 按 manifest 逐个解析场景并加载；`scene_name = None` 表示首个可加载场景。
+    /// Resolve and load scenes one by one from manifest; `scene_name = None` means first loadable scene.
     fn load_from_manifest(
         &mut self,
         rm: &mut ResourceManager,
@@ -622,9 +622,9 @@ impl SceneManager {
                     continue;
                 }
             }
-            // 场景内容一律按 AssetId 从资源包加载：scenes.json 的 `path` 只是
-            // 路径清单（.pak.meta.json）中的查找键，先解析为 AssetId，再由
-            // ResourceManager 读取 RSCN 字节——不做磁盘文件回退。
+            // Scene content always loaded by AssetId from asset package: scenes.json `path` only
+            // lookup key in path manifest (.pak.meta.json), first parsed as AssetId, then
+            // ResourceManager reads RSCN bytes — no disk file fallback.
             let Some(id) = rm.id_by_path(&entry.path) else {
                 log::warn!(
                     "scene '{}' -> '{}' not registered in resource package; skipping",
@@ -635,8 +635,8 @@ impl SceneManager {
             };
             match load_scene_by_id(rm, world, id, registry) {
                 Ok(inst) => {
-                    // 只有新场景已经 spawn 成功才卸载旧场景：失败时保持当前
-                    // 场景原样（见 `load_named_from_manifest` 的约定）。
+                    // Only unload old scene after new scene spawned successfully: on failure keep current
+                    // scene unchanged (see `load_named_from_manifest` convention).
                     let unloaded = self.adopt_scene(world, &entry.name, &entry.path, &inst);
                     log::info!(
                         "scene '{}' loaded: {} entities ({} roots), unloaded {unloaded} entity(ies) from the previous scene",
@@ -667,12 +667,12 @@ impl SceneManager {
         None
     }
 
-    /// 接管刚刚 spawn 成功的新场景：卸载旧场景实体、清空环境贴图缓存，
-    /// 并把「当前场景」切到新场景。
+    /// Adopt just-successfully-spawned new scene: unload old scene entities, clear environment texture cache,
+    /// and switch "current scene" to new scene.
     ///
-    /// 返回被卸载的旧场景实体数。不属于任何场景的实体（例如
-    /// `Engine::runtime_initialize` 生成的回退相机）保留——它们由引擎而不是
-    /// 场景拥有。
+    /// Returns number of old scene entities unloaded. Entities not belonging to any scene (e.g.
+    /// fallback camera generated by `Engine::runtime_initialize`) kept — owned by engine not
+    /// scene.
     fn adopt_scene(
         &mut self,
         world: &mut World,
@@ -684,18 +684,18 @@ impl SceneManager {
         self.current_scene_name = Some(name.to_owned());
         self.missing_scene = false;
         self.current_scene_path = Some(path.to_owned());
-        // IBL 按场景解析：切换后不能继续复用上一个场景注入的字节，
-        // 否则旧 HDR 会盖住新场景的天空盒。
+        // IBL resolved per scene: after switching can't keep reusing previous scene's injected bytes,
+        // otherwise old HDR covers new scene's skybox.
         self.environment_bytes = None;
         self.bump_generation();
         unloaded
     }
 }
 
-/// 加载 environment 映射表字节 from the **第一个** scene in `scenes.json`.
+/// Load environment map table bytes from **first** scene in `scenes.json`.
 ///
-/// Legacy 手动入口——已被 [`SceneManager::current_scene_env_bytes`] 取代
-/// （后者只解析**当前**场景，避免 UI 开屏也加载 3D 环境贴图）。
+/// Legacy manual entry — already replaced by [`SceneManager::current_scene_env_bytes`]
+/// (latter only resolves **current** scene, avoids UI startup screens loading 3D environment textures).
 #[cfg(feature = "legacy-disk-scenes")]
 #[deprecated(note = "load environment data through EnvironmentProvider")]
 pub fn load_env_bytes_from_manifest() -> Option<Vec<u8>> {
@@ -730,7 +730,7 @@ pub fn load_env_bytes_from_manifest() -> Option<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// Manifest helpers（由旧 engine.rs 迁入）——场景系统的内部实现
+// Manifest helpers (migrated from old engine.rs) — scene system internal implementation
 // ---------------------------------------------------------------------------
 
 pub use prism_scene::{SceneManifest, SceneManifestEntry};
@@ -762,14 +762,14 @@ fn manifest_style_path(current: &str, resolved: &str) -> String {
     }
 }
 
-/// 不依赖当前工作目录地定位场景清单：
-/// 按 [`crate::asset_paths::search_roots`] 的顺序（`PRISMA_ASSET_ROOT`、
-/// 当前目录及其父目录、可执行文件目录及其父目录），先找
-/// `assets/scenes.json`，再回退旧项目的 `assets/scenes.toml`。
+/// Locate scene manifest without depending on current working directory:
+/// in order of [`crate::asset_paths::search_roots`] (`PRISMA_ASSET_ROOT`,
+/// current dir and parents, executable dir and parents), first find
+/// `assets/scenes.json`, then fall back to old project's `assets/scenes.toml`.
 ///
-/// 这样无论从仓库根还是 `projects/template/` 子目录启动，
-/// 都能正确找到资源清单——之前从用户项目目录启动时，导致
-/// 清单找不到、回退到空场景而黑屏。
+/// So whether starting from repo root or `projects/template/` subdirectory,
+/// can reliably find asset manifest — previously starting from user project directory caused
+/// manifest not found, fallback to empty scene and black screen.
 fn find_manifest_path() -> Option<PathBuf> {
     const NAMES: [&str; 2] = ["scenes.json", "scenes.toml"];
     const DIRS: [&str; 2] = ["assets", "crates/prism-engine/assets"];
@@ -820,17 +820,17 @@ fn load_scene_by_id(
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-/// 卸载所有不属于 `keep` 的场景实体，返回被移除的实体数。
+/// Unload all scene entities not belonging to `keep`, return number removed.
 ///
-/// 归属由 [`SceneMember`](super::components::SceneMember) 判定：没有该组件的
-/// 实体（引擎自有实体、用户运行时 spawn 的对象）一律保留。
-/// 卸载所有属于「非 `keep` 场景」的实体，返回卸载数量。
+/// Ownership determined by [`SceneMember`](super::components::SceneMember): entities without that
+/// component (engine-owned entities, user runtime-spawned objects) all kept.
+/// Unload all entities belonging to "non-`keep` scenes", return unload count.
 ///
-/// `keep = None` 表示卸载**全部**场景实体（`Engine::unload_scene`）。
-/// 以下两类实体永远保留：
-/// - 没有 `SceneMember` 的实体（引擎自有：回退相机、宿主注入的对象）；
-/// - 带 [`super::components::Persistent`] 的实体及其整棵子树（Unity 的
-///   `DontDestroyOnLoad`）。
+/// `keep = None` means unload **all** scene entities (`Engine::unload_scene`).
+/// Following two classes of entities always kept:
+/// - entities without `SceneMember` (engine-owned: fallback camera, host-injected objects);
+/// - entities with [`super::components::Persistent`] and whole subtree (Unity's
+///   `DontDestroyOnLoad`).
 fn unload_scene_members(world: &mut World, keep: Option<super::components::SceneAssetId>) -> usize {
     let candidates: Vec<Entity> = world
         .query::<super::components::SceneMember>()
@@ -856,7 +856,7 @@ fn unload_scene_members(world: &mut World, keep: Option<super::components::Scene
     unloaded
 }
 
-/// 带 `Persistent` 标记的实体及其全部后代（保留清单）。
+/// Entities with `Persistent` flag and all descendants (retention list).
 fn persistent_subtrees(world: &World) -> std::collections::HashSet<Entity> {
     let mut keep = std::collections::HashSet::new();
     let roots: Vec<Entity> = world
@@ -878,11 +878,11 @@ fn persistent_subtrees(world: &World) -> std::collections::HashSet<Entity> {
     keep
 }
 
-/// 卸载后检查断掉的父子关系并提示一次。
+/// Check broken parent-child relationships after unload and warn once.
 ///
-/// 典型情况：父级属于旧场景被删掉，而子级带 `Persistent` 留了下来 ——
-/// 层级上它已经没有父节点了，继续按「有父级」处理会算错世界矩阵。
-/// 这里只警告，不替用户改结构。
+/// Typical case: parent belonged to old scene deleted, child with `Persistent` stayed —
+/// layer level already has no parent node, treating as "has parent" would compute wrong world matrix.
+/// Here only warn, don't change structure for user.
 fn warn_dangling_parents(world: &World) {
     let dangling: Vec<Entity> = world
         .query::<super::components::Parent>()

@@ -1,7 +1,7 @@
-//! 离线 pass-dump 跑批器：不创建窗口、不推进模拟，按固定帧数跑离屏渲染，
-//! 并让渲染图在指定帧把各个 pass 的附件写成 PNG。
+//! Offline pass-dump batcher: no window created, no simulation advanced, run offscreen render for fixed frames,
+//! and let render graph at specified frame write each pass attachment to PNG.
 //!
-//! 用法：
+//! Usage:
 //! ```bash
 //! cd projects/sponza
 //! PRISMA_PASS_DUMP=target/diag/passes \
@@ -11,13 +11,13 @@
 //!     --example pass_dump -- assets/scenes/sponza.scene.json 220
 //! ```
 //!
-//! 参数：`<scene.json> [frames]`，`frames` 默认取 `PRISMA_PASS_DUMP_FRAME`
-//! 之后再多几帧（保证 dump 帧一定被跑到）。
+//! Args: `<scene.json> [frames]`, `frames` defaults to `PRISMA_PASS_DUMP_FRAME`
+//! then a few more frames (ensure dump frame is run).
 //!
-//! 与 `PRISMA_SCREENSHOT` 的区别：那条路径只能在有 swapchain 的窗口化运行里
-//! 工作（headless 下会报 `screenshot: no swapchain`），而且只拿最终后处理结果。
-//! 这里 dump 的是渲染图的中间附件，正是定位「相机是否看到几何体」「PT 有没有
-//! 出图」这类问题需要的证据。
+//! Difference from `PRISMA_SCREENSHOT`: that path only works in windowed run with swapchain,
+//! works (headless reports `screenshot: no swapchain`), and only takes final post-process result.
+//! Here dump is render graph intermediate attachments, exactly evidence needed to locate "camera sees geometry", "PT has
+//! produced image" type issues.
 
 use std::path::Path;
 use std::time::Duration;
@@ -87,8 +87,8 @@ fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("load scene '{scene}': {error}"))?;
     app.start_hosted(width, height);
 
-    // `host_tick(false)` 跳过 fixed_update / update / late_update，只跑层级传播
-    // 和帧提取：相机、光照、变换都停在作者写入的值上，帧与帧之间没有模拟漂移。
+    // `host_tick(false)` skips fixed_update / update / late_update, only runs hierarchy propagation
+    // and frame extraction: camera, lights, transforms all stay at authored values, no simulation drift between frames.
     let mut last_report = 0u32;
     for index in 0..frames.max(1) {
         app.host_tick(false);

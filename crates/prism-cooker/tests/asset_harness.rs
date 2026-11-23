@@ -239,9 +239,10 @@ fn missing_source_and_truncated_texture_report_actionable_errors() {
         missing.contains("import meshes/missing.obj"),
         "error must name the source: {missing}"
     );
-    // 只认 `os error <n>` 这一段：它由 Rust 的 `io::Error` 固定拼出来，而前半句是
-    // **系统本地化**的（中文 Windows 上缺目录是 `os error 3`，不是 2）。断言具体
-    // 英文/错误码会让同一个代码路径在不同语言 / 平台的机器上假红。
+    // Only trust "os error <n>" part: it's hardcoded in Rust's `io::Error`, while the preceding part
+    // is **system-localized** (on Chinese Windows, missing directory is `os error 3`, not 2).
+    // Asserting exact English text/error code would cause the same code path to false-positive on
+    // different language/platform machines.
     assert!(
         missing.contains("os error"),
         "error must name the OS failure: {missing}"

@@ -7,12 +7,12 @@ use crate::capabilities::RayTracingCaps;
 /// Render mode selector — full rasterized PBR vs real-time path tracing vs pure 2D sprites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum RenderMode {
-    /// 标准 rasterized PBR 管线 (ForwardPass + ShadowMap + GTAO + Post).
+    /// Standard rasterized PBR pipeline (ForwardPass + ShadowMap + GTAO + Post).
     #[default]
     Raster,
     /// Real-time path tracing (PathTracePass compute + Post).
     PathTrace,
-    /// 纯 2D 精灵管线 (ForwardPass / SpritePass + Post, 裁剪 3D ShadowMap / GTAO 等).
+    /// Pure 2D sprite pipeline (ForwardPass / SpritePass + Post, clips 3D ShadowMap / GTAO etc).
     Sprites2D,
 }
 
@@ -279,15 +279,15 @@ pub struct RenderSettings {
     /// shadow map. See [`ShadowMode`].
     pub shadow_mode: ShadowMode,
 
-    /// 阴影贴图边长（texel，#526）。
+    /// Shadow map edge length (texels, #526).
     ///
-    /// 这是**渲染图资源**大小，在创建 / 重建 shadow pass 时生效；运行中修改
-    /// 需要重建渲染图（当前 `GraphRenderer` 只在构造时读取）。会被
-    /// [`crate::MIN_SHADOW_MAP_SIZE`] / [`crate::MAX_SHADOW_MAP_SIZE`] 钳制。
+    /// This is **render graph resource** size, active at create / rebuild shadow pass; modifying at
+    /// runtime needs render graph rebuild (current `GraphRenderer` only reads at construction). Clamped by
+    /// [`crate::MIN_SHADOW_MAP_SIZE`] / [`crate::MAX_SHADOW_MAP_SIZE`].
     pub shadow_map_size: u32,
 
-    /// 方向光级联数（#526）：`1` = 单张方形阴影图，`2` = 2×1 atlas。
-    /// 与 `shadow_map_size` 一样在构造渲染图时生效。
+    /// Directional light cascade count (#526): `1` = single square shadow map, `2` = 2×1 atlas.
+    /// Like `shadow_map_size`, active when render graph is constructed.
     pub shadow_cascade_count: u32,
 
     /// Render mode: Raster (PBR) or PathTrace (real-time PT).
@@ -313,13 +313,13 @@ pub struct RenderSettings {
     /// Off keeps the pre-metering image: `AutoExposurePass` writes a zero
     /// adapted luminance, which the tonemapper reads as a no-op gain of 1.0.
     pub auto_exposure: bool,
-    /// 内部渲染分辨率 `[宽度, 高度]`（#613）；`[0, 0]` = 关闭。
+    /// Internal render resolution `[width, height]` (#613); `[0, 0]` = disabled.
     ///
-    /// 开启后场景（网格 / 2D 精灵 / 瓦片 / 粒子 / PT）按这个尺寸渲染，
-    /// `PostPass` 再放大到窗口。UI 仍在窗口分辨率上绘制。
+    /// After enabling, scene (mesh / 2D sprite / tile / particle / PT) renders at this size,
+    /// then `PostPass` upscales to window. UI still drawn at window resolution.
     pub internal_resolution: [u32; 2],
 
-    /// 内部图像放大到窗口的方式（见 [`InternalScaleMode`]）。
+    /// How internal image is upscaled to window (see [`InternalScaleMode`]).
     pub internal_scale_mode: InternalScaleMode,
 
     /// Qualcomm Adreno Neural Fusion Super Resolution (#1161).
@@ -426,21 +426,21 @@ impl RenderSettings {
 }
 
 // ---------------------------------------------------------------------------
-// 内部渲染分辨率（#613）
+// Internal render resolution (#613)
 // ---------------------------------------------------------------------------
 
-/// 内部渲染分辨率放大到窗口的方式。
+/// How internal render resolution is upscaled to window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InternalScaleMode {
-    /// 铺满整个窗口：允许非整数倍，用线性采样放大。
+    /// Fill whole window: allow non-integer multiple, use linear sampling to upscale.
     #[default]
     Stretch,
-    /// 整数倍放大并居中，四周留黑边；用最近邻采样，像素方块等宽（像素画）。
+    /// Integer multiple upscale centered, black bars around; nearest-neighbor sampling, pixel blocks equal width (pixel art).
     Integer,
 }
 
 impl InternalScaleMode {
-    /// 作者可写的名字（`settings.ini` 用）。
+    /// Writable name (used in the engine settings file).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Stretch => "stretch",
@@ -448,7 +448,7 @@ impl InternalScaleMode {
         }
     }
 
-    /// 解析 `"stretch"` / `"integer"`（大小写不敏感）；未知值返回 `None`。
+    /// Parse `"stretch"` / `"integer"` (case-insensitive); unknown value returns `None`.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "stretch" | "fill" => Some(Self::Stretch),
@@ -458,10 +458,10 @@ impl InternalScaleMode {
     }
 }
 
-/// 窗口 extent → 内部渲染 extent；`resolution == [0, 0]` 返回 `None`（关闭）。
+/// Window extent → internal render extent; `resolution == [0, 0]` returns `None` (disabled).
 ///
-/// 只有一个维度为 0 时按窗口宽高比推导另一个，避免作者写半边尺寸时得到
-/// 0 像素的目标。
+/// When only one dimension is 0, derive the other from window aspect, to avoid author writing half size
+/// and getting a 0-pixel target.
 pub fn internal_extent(swapchain: vk::Extent2D, resolution: [u32; 2]) -> Option<vk::Extent2D> {
     let (mut width, mut height) = (resolution[0], resolution[1]);
     if width == 0 && height == 0 {
@@ -489,10 +489,10 @@ pub fn internal_extent(swapchain: vk::Extent2D, resolution: [u32; 2]) -> Option<
     })
 }
 
-/// `PostPass` 把内部图像放到窗口里的目标矩形。
+/// Target rectangle where `PostPass` places internal image onto window.
 ///
-/// `Stretch` 铺满整个窗口；`Integer` 取 `floor(min(倍率))`（至少 1）并居中，
-/// 剩下的边由 render pass 的清屏色填成黑边。内部尺寸比窗口还大时按比例缩小。
+/// `Stretch` fills whole window; `Integer` takes `floor(min(scale))` (at least 1) centered,
+/// remaining edges filled black by render pass clear color. When internal size larger than window, scales down.
 pub fn post_destination(
     swapchain: vk::Extent2D,
     internal: vk::Extent2D,
@@ -530,10 +530,10 @@ pub fn post_destination(
     }
 }
 
-/// [`post_destination`] 的纯数据版本：`(offset, extent)`，不依赖 `ash`。
+/// Pure data version of [`post_destination`]: `(offset, extent)`, no `ash` dependency.
 ///
-/// 宿主（`prism-app`）用它推导「窗口像素 → UI 布局空间」的映射（#988），
-/// 保证叠在画面上的 HUD 与 PostPass 放大后的矩形完全重合。
+/// Host (`prism-app`) uses it to derive "window pixels → UI layout space" mapping (#988),
+/// ensuring HUD overlaid on screen fully overlaps rectangle after PostPass upscale.
 pub fn post_destination_px(
     swapchain: [u32; 2],
     internal: [u32; 2],

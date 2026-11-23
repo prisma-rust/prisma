@@ -226,7 +226,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Debug,
-            format!("gizmo 坐标空间：{}", self.gizmo_space.label()),
+            format!("gizmo coordinate space: {}", self.gizmo_space.label()),
         );
     }
 
@@ -610,7 +610,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已把 {count} 个实体贴到地面"),
+            format!("snapped {count} entities to ground"),
         );
         count
     }

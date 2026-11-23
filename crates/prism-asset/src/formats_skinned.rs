@@ -1,24 +1,24 @@
-//! 骨骼 / 蒙皮 / 动画剪辑的 cooked 格式解码（#560 P0）。
+//! Skeleton / skinned mesh / animation clip cooked format decoder (#560 P0).
 //!
-//! 三种格式都是「magic + version + 定长记录 + 变长块」，所有长度都由计数推算，
-//! 不存指针；解码端每个长度都做 checked 运算，坏文件返回 `None`。
+//! All three formats are "magic + version + fixed records + variable blocks", all lengths derived from counters,
+//! no pointers; decoder does checked math on every length, bad file returns `None`.
 //!
-//! 编码端在 `prism-cooker`（`cooker/skinned.rs`），运行时只解码 —— 与 RMES 的分层一致。
+//! Encoder side in `prism-cooker` (`cooker/skinned.rs`), runtime only decodes --- same layering as RMES.
 //!
-//! ## RSKL v1（skeleton）
+//! ## RSKL v1 (skeleton)
 //!
 //! ```text
 //! [magic:4 "RSKL"][version:1][joint_count:4][name_bytes:4]
 //! joints: joint_count × {
-//!     parent: i32            // -1 = 根
+//!     parent: i32            // -1 = root
 //!     flags: u8, pad: [u8;3]
 //!     reference_local: 10×f32   // translation(3) + rotation xyzw(4) + scale(3)
-//!     inverse_bind: 16×f32      // 列主序
+//!     inverse_bind: 16×f32      // column-major
 //! }
 //! names: joint_count × { len: u16, utf8[len] }
 //! ```
 //!
-//! ## RSKN v1（skinned mesh）
+//! ## RSKN v1 (skinned mesh)
 //!
 //! ```text
 //! [magic:4 "RSKN"][version:1][vertex_count:4][index_count:4][joint_count:4]
@@ -34,7 +34,7 @@
 //! bind_pose: 10×f32
 //! ```
 //!
-//! ## RANI v5（animation clip + notifies + sync markers + montage ranges）
+//! ## RANI v5 (animation clip + notifies + sync markers + montage ranges)
 //!
 //! ```text
 //! [magic:4 "RANI"][version:1][name_len:u16][name][duration:f32][fps:f32][flags:u16][track_count:4]
@@ -54,65 +54,65 @@
 //! }
 //! ```
 //!
-//! v2 在 v1 末尾追加事件表；v3 再追加同步标记表（`marker_count` = 0 时就是一个
-//! u32 的零）；v4 再追加 Montage 段表；v5 再追加 Montage warp window 表。头与轨道
-//! 布局不变，v1–v4 剪辑仍然可读，缺的表解出来为空。
+//! v2 appends event table at v1 end; v3 appends sync marker table (`marker_count` = 0 means an
+//! u32 of zero); v4 appends Montage segment table; v5 appends Montage warp window table. Header and track
+//! layout unchanged, v1-v4 clips still readable, missing tables decode to empty.
 
-/// RSKL magic。
+/// RSKL magic.
 pub const RSKL_MAGIC: &[u8; 4] = b"RSKL";
-/// RSKN magic。
+/// RSKN magic.
 pub const RSKN_MAGIC: &[u8; 4] = b"RSKN";
-/// RANI magic。
+/// RANI magic.
 pub const RANI_MAGIC: &[u8; 4] = b"RANI";
 
-/// RSKL / RSKN 的版本号。
+/// RSKL / RSKN version number.
 pub const SKINNED_FORMAT_VERSION: u8 = 1;
 
-/// RANI 的版本号（#560 P1 Notify）：v2 在 v1 末尾追加事件表。
+/// RANI version number (#560 P1 Notify): v2 appends event table at v1 end.
 ///
-/// 与 [`SKINNED_FORMAT_VERSION`] 分开，是因为骨架 / 蒙皮网格没有需要加字段的理由，
-/// 而剪辑需要；混在一起会让 RSKL/RSKN 也跟着无谓地跳版本。
+/// Separate from [`SKINNED_FORMAT_VERSION`] because skeleton / skinned mesh have no reason to add fields,
+/// but clips do; mixing them would force RSKL/RSKN to unnecessarily bump versions.
 pub const RANI_VERSION: u8 = 5;
 
-/// 首次带 Notify 事件表的 RANI 版本。
+/// First RANI version with Notify event table.
 pub const RANI_NOTIFY_VERSION: u8 = 2;
 
-/// 首次带同步标记表的 RANI 版本。
+/// First RANI version with sync marker table.
 pub const RANI_SYNC_MARKER_VERSION: u8 = 3;
 
-/// 首次带 Montage 段表的 RANI 版本。
+/// First RANI version with Montage segment table.
 pub const RANI_SECTION_VERSION: u8 = 4;
 
-/// 首次带 Montage warp window 表的 RANI 版本。
+/// First RANI version with Montage warp window table.
 pub const RANI_WARP_WINDOW_VERSION: u8 = 5;
 
-/// 每根骨骼的 cooked 记录大小：parent(4) + flags(1) + pad(3) + local(40) + inverse_bind(64)。
+/// Per-bone cooked record size: parent(4) + flags(1) + pad(3) + local(40) + inverse_bind(64).
 pub const RSKL_JOINT_RECORD_SIZE: usize = 4 + 1 + 3 + 40 + 64;
-/// RSKL 固定头大小。
+/// RSKL fixed header size.
 pub const RSKL_HEADER_SIZE: usize = 4 + 1 + 4 + 4;
-/// RSKN 固定头大小：magic(4) + version(1) + 5×u32。
+/// RSKN fixed header size: magic(4) + version(1) + 5×u32.
 pub const RSKN_HEADER_SIZE: usize = 4 + 1 + 4 * 5;
-/// RSKN 里 bind pose 的字节数（10 × f32）。
+/// RSKN bind pose byte count (10 × f32).
 pub const RSKN_BIND_POSE_SIZE: usize = 40;
 
-/// RSKN 标志：带法线流。
+/// RSKN flag: has normal stream.
 pub const RSKN_HAS_NORMALS: u32 = 1 << 0;
-/// RSKN 标志：带 uv0 流。
+/// RSKN flag: has uv0 stream.
 pub const RSKN_HAS_UV0: u32 = 1 << 1;
-/// RSKN 标志：带切线流。
+/// RSKN flag: has tangent stream.
 pub const RSKN_HAS_TANGENTS: u32 = 1 << 2;
 
-/// RANI 标志：循环播放。
+/// RANI flag: loop playback.
 pub const RANI_LOOPED: u16 = 1 << 0;
-/// RANI 标志：additive 剪辑。
+/// RANI flag: additive clip.
 pub const RANI_ADDITIVE: u16 = 1 << 1;
 
 // ---------------------------------------------------------------------------
-// 读取器
+// Reader
 // ---------------------------------------------------------------------------
 
-/// 只前进的字节读取器：每次读都做边界检查，越界返回 `None`。
-/// 定长/变长记录的读取器（`formats_state_machine` 也用它）。
+/// Forward-only byte reader: every read does bounds check, out-of-bounds returns `None`.
+/// Fixed/variable-length record reader (also used by `formats_state_machine`).
 pub(crate) struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -198,16 +198,16 @@ impl<'a> Reader<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// 骨骼
+// Skeleton
 // ---------------------------------------------------------------------------
 
-/// 骨骼的局部 TRS（translation / rotation 四元数 xyzw / scale）。
+/// Bone local TRS (translation / rotation quaternion xyzw / scale).
 ///
-/// 用独立 struct 而不是 `glam` 类型：`prism-asset` 不依赖数学库。
+/// Separate struct instead of `glam` type: `prism-asset` does not depend on math library.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JointTransform {
     pub translation: [f32; 3],
-    /// 四元数，`xyzw` 布局。
+    /// Quaternion, `xyzw` layout.
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
 }
@@ -223,7 +223,7 @@ impl Default for JointTransform {
 }
 
 impl JointTransform {
-    /// 打包成 10 个 f32（与 `.rskel` / `.rskin` 的布局一致）。
+    /// Packed into 10 f32 (same layout as `.rskel` / `.rskin`).
     pub fn to_array(self) -> [f32; 10] {
         [
             self.translation[0],
@@ -239,7 +239,7 @@ impl JointTransform {
         ]
     }
 
-    /// 从 10 个 f32 读回。
+    /// Read back from 10 f32.
     pub fn from_array(values: [f32; 10]) -> Self {
         Self {
             translation: [values[0], values[1], values[2]],
@@ -249,7 +249,7 @@ impl JointTransform {
     }
 }
 
-/// 一根骨骼：父索引（`None` = 根）、reference pose 的局部变换、inverse bind（列主序）。
+/// One bone: parent index (`None` = root), reference pose local transform, inverse bind (column-major).
 #[derive(Debug, Clone, PartialEq)]
 pub struct JointInfo {
     pub name: String,
@@ -258,7 +258,7 @@ pub struct JointInfo {
     pub inverse_bind: [f32; 16],
 }
 
-/// 解码后的 `.rskel`。
+/// Decoded `.rskel`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkeletonInfo {
     pub joints: Vec<JointInfo>,
@@ -269,12 +269,12 @@ impl SkeletonInfo {
         self.joints.len()
     }
 
-    /// 按名字找骨骼索引（动画绑定 / 编辑器骨骼树用）。
+    /// Find bone index by name (for animation binding / editor skeleton tree).
     pub fn joint_index(&self, name: &str) -> Option<usize> {
         self.joints.iter().position(|joint| joint.name == name)
     }
 
-    /// 父索引必须严格小于自身下标（拓扑序）。解码与 cooker 都拿它挡成环的 skeleton。
+    /// Parent index must be strictly less than self index (topological order). Decode and cooker both use it to reject cyclic skeleton.
     pub fn is_topologically_sorted(&self) -> bool {
         self.joints
             .iter()
@@ -283,7 +283,7 @@ impl SkeletonInfo {
     }
 }
 
-/// 解码 `.rskel`。
+/// Decode `.rskel`.
 pub fn decode_rskel(data: &[u8]) -> Option<SkeletonInfo> {
     if data.len() < RSKL_HEADER_SIZE || &data[..4] != RSKL_MAGIC {
         return None;
@@ -342,10 +342,10 @@ pub fn decode_rskel(data: &[u8]) -> Option<SkeletonInfo> {
 }
 
 // ---------------------------------------------------------------------------
-// 蒙皮网格
+// Skinned mesh
 // ---------------------------------------------------------------------------
 
-/// 一个 submesh：材质槽 + 索引区间。
+/// One submesh: material slot + index range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubmeshInfo {
     pub material_index: u32,
@@ -353,26 +353,26 @@ pub struct SubmeshInfo {
     pub index_count: u32,
 }
 
-/// 解码后的 `.rskin`：每顶点 4 骨影响 + 索引 + submesh + bind pose。
+/// Decoded `.rskin`: per-vertex 4 bone influences + indices + submesh + bind pose.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkinnedMeshInfo {
     pub vertex_count: u32,
     pub index_count: u32,
-    /// 权重索引指向的 skeleton 的骨骼数量（越界校验用）。
+    /// Weight index targets skeleton bone count (for bounds check).
     pub joint_count: u32,
     pub flags: u32,
     pub positions: Vec<[f32; 3]>,
-    /// 无法线流时为空。
+    /// Empty when no normal stream.
     pub normals: Vec<[f32; 3]>,
-    /// 无 uv0 流时为空。
+    /// Empty when no uv0 stream.
     pub uv0: Vec<[f32; 2]>,
-    /// 无切线流时为空。
+    /// Empty when no tangent stream.
     pub tangents: Vec<[f32; 4]>,
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub submeshes: Vec<SubmeshInfo>,
-    /// 网格自己的 bind pose（与 skeleton 的 reference pose 同布局）。
+    /// Mesh own bind pose (same layout as skeleton reference pose).
     pub bind_pose: JointTransform,
 }
 
@@ -389,23 +389,23 @@ impl SkinnedMeshInfo {
         self.flags & RSKN_HAS_TANGENTS != 0
     }
 
-    /// 每个顶点 4 个权重是否都归一化（对 `sum ≈ 1` 的检查，容差 1e-3）。
+    /// Whether every vertex's 4 weights are normalized (check sum ≈ 1, tolerance 1e-3).
     pub fn weights_are_normalized(&self) -> bool {
         self.weights
             .iter()
             .all(|weights| (weights.iter().sum::<f32>() - 1.0).abs() <= 1e-3)
     }
 
-    /// 所有 joint 索引是否都在 `joint_count` 范围内。
+    /// All joint indices are within `joint_count` range.
     pub fn joint_indices_are_in_range(&self) -> bool {
         self.joints.iter().flatten().all(|joint| {
-            // 权重为 0 的槽允许任意索引（cooker 会把未用槽写成 0）。
+            // Zero-weight slots allow any index (cooker writes unused slots as 0).
             (*joint as u32) < self.joint_count
         })
     }
 }
 
-/// 解码 `.rskin`。
+/// Decode `.rskin`.
 pub fn decode_rskin(data: &[u8]) -> Option<SkinnedMeshInfo> {
     if data.len() < RSKN_HEADER_SIZE + RSKN_BIND_POSE_SIZE || &data[..4] != RSKN_MAGIC {
         return None;
@@ -525,24 +525,24 @@ pub fn decode_rskin(data: &[u8]) -> Option<SkinnedMeshInfo> {
 }
 
 // ---------------------------------------------------------------------------
-// 动画剪辑
+// Animation clip
 // ---------------------------------------------------------------------------
 
-/// 一个 vec3 关键帧。
+/// One vec3 keyframe.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vec3KeyInfo {
     pub time: f32,
     pub value: [f32; 3],
 }
 
-/// 一个旋转关键帧（四元数 xyzw，解码时归一化并统一到 `w >= 0` 半球）。
+/// One rotation keyframe (quaternion xyzw, normalized and unified to `w >= 0` hemisphere at decode).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuatKeyInfo {
     pub time: f32,
     pub value: [f32; 4],
 }
 
-/// 单条骨骼轨道。
+/// Single bone track.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimTrackInfo {
     pub joint: u32,
@@ -551,19 +551,19 @@ pub struct AnimTrackInfo {
     pub scales: Vec<Vec3KeyInfo>,
 }
 
-/// 剪辑里的一个关键帧事件（#560 P1 Notify）。
+/// One keyframe event in clip (#560 P1 Notify).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimNotifyInfo {
-    /// 触发时间（秒，剪辑本地时间）。
+    /// Trigger time (seconds, clip-local time).
     pub time: f32,
-    /// 事件名（`Footstep.L` / `Traversal.Window` 之类，由项目解释）。
+    /// Event name (`Footstep.L` / `Traversal.Window` etc., interpreted by project).
     pub name: String,
 }
 
-/// 一段 Montage 区间（#560 P4）：按名字跳转 / 调试时显示。
+/// One Montage segment (#560 P4): jump by name / show in debug.
 ///
-/// `start` / `end` 都是剪辑本地时间（秒），`end` 可以等于 `start`（零长度段，
-/// 用于只标记一个时间点）。编码器按 `start` 排序，运行时按同样顺序查找。
+/// `start` / `end` are both clip-local time (seconds), `end` can equal `start` (zero-length segment,
+/// used to mark a single time point). Encoder sorts by `start`, runtime looks up in same order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimClipSectionInfo {
     pub name: String,
@@ -571,8 +571,8 @@ pub struct AnimClipSectionInfo {
     pub end: f32,
 }
 
-/// 一段 MotionWarping 窗口（#560 P4）：root motion 只在这个时间区间内允许被
-/// 目标点 / 朝向扭曲。`start` / `end` 是剪辑本地时间（秒）。
+/// One MotionWarping window (#560 P4): root motion only allowed within this time window,
+/// target point / orientation warping. `start` / `end` are clip-local time (seconds).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimClipWarpWindowInfo {
     pub name: String,
@@ -580,7 +580,7 @@ pub struct AnimClipWarpWindowInfo {
     pub end: f32,
 }
 
-/// 解码后的 `.ranim`。
+/// Decoded `.ranim`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimClipInfo {
     pub name: String,
@@ -589,18 +589,18 @@ pub struct AnimClipInfo {
     pub looped: bool,
     pub additive: bool,
     pub tracks: Vec<AnimTrackInfo>,
-    /// 关键帧事件（v1 剪辑恒为空）。
+    /// Keyframe events (v1 clips always empty).
     pub notifies: Vec<AnimNotifyInfo>,
-    /// 同步标记的归一化相位（升序、去重；v1 / v2 剪辑为空）。
+    /// Sync marker normalized phases (sorted, deduplicated; v1/v2 clips empty).
     pub sync_markers: Vec<f32>,
-    /// Montage 段（按 `start` 升序；v1–v3 剪辑为空）。
+    /// Montage segments (sorted by `start`; v1-v3 clips empty).
     pub sections: Vec<AnimClipSectionInfo>,
-    /// MotionWarping 窗口（按 `start` 升序；v1–v4 剪辑为空）。
+    /// MotionWarping windows (sorted by `start`; v1-v4 clips empty).
     pub warp_windows: Vec<AnimClipWarpWindowInfo>,
 }
 
 impl AnimClipInfo {
-    /// 所有轨道里最晚的关键帧时间（忽略非有限时间）。
+    /// Latest keyframe time across all tracks (ignoring non-finite times).
     pub fn max_key_time(&self) -> f32 {
         let mut max = 0.0f32;
         for track in &self.tracks {
@@ -623,7 +623,7 @@ impl AnimClipInfo {
         max
     }
 
-    /// 实际时长：`duration` 为正就用它，否则取最晚关键帧。
+    /// Actual duration: use `duration` if positive, otherwise take latest keyframe.
     pub fn clip_duration(&self) -> f32 {
         if self.duration > 0.0 {
             self.duration
@@ -633,7 +633,7 @@ impl AnimClipInfo {
     }
 }
 
-/// 解码 `.ranim`。
+/// Decode `.ranim`.
 pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
     if data.len() < 27 || &data[..4] != RANI_MAGIC {
         return None;
@@ -709,8 +709,8 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         });
     }
 
-    // v1 没有事件表：版本号就是「无事件」的声明。v2 之后每个剪辑都带表（可能为空），
-    // 这样将来再加字段只需要继续往后追加。
+    // v1 has no event table: version number itself declares "no events". v2+ every clip has table (may be empty),
+    // so future fields can just keep appending.
     let mut notifies = Vec::new();
     if version >= RANI_NOTIFY_VERSION {
         let notify_count = reader.u32()? as usize;
@@ -726,7 +726,7 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         }
     }
 
-    // v3 追加同步标记表；v1 / v2 没有。
+    // v3 appends sync marker table; v1/v2 don't have.
     let mut sync_markers = Vec::new();
     if version >= RANI_SYNC_MARKER_VERSION {
         let marker_count = reader.u32()? as usize;
@@ -743,7 +743,7 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         }
     }
 
-    // v4 追加 Montage 段表；v1–v3 没有。
+    // v4 appends Montage segment table; v1-v3 don't have.
     let mut sections = Vec::new();
     if version >= RANI_SECTION_VERSION {
         let section_count = reader.u32()? as usize;
@@ -773,7 +773,7 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         });
     }
 
-    // v5 追加 MotionWarping 窗口表；v1–v4 没有。
+    // v5 appends MotionWarping window table; v1-v4 don't have.
     let mut warp_windows = Vec::new();
     if version >= RANI_WARP_WINDOW_VERSION {
         let window_count = reader.u32()? as usize;

@@ -5,7 +5,7 @@ fn push_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
 }
 
-/// 两个节点：ClipPlayer → Output。
+/// Two nodes: ClipPlayer -> Output.
 fn minimal_graph() -> Vec<u8> {
     minimal_graph_version(RAGP_VERSION, true)
 }
@@ -98,7 +98,7 @@ fn trailing_bytes_and_bad_indices_are_rejected() {
     bad_output[output_offset..].copy_from_slice(&99u32.to_le_bytes());
     assert!(decode_rag(&bad_output).is_none());
 
-    // node 0 的 kind 字节：header(9) + name_len(2) + name(4)。
+    // node 0 kind byte: header(9) + name_len(2) + name(4).
     let mut bad_kind = minimal_graph();
     bad_kind[15] = 0xFF;
     assert!(decode_rag(&bad_kind).is_none());
@@ -107,6 +107,6 @@ fn trailing_bytes_and_bad_indices_are_rejected() {
 #[test]
 fn unknown_flag_bits_are_rejected() {
     let mut flags = minimal_graph();
-    flags[16] = 0b1000_0000; // ClipPlayer flags（kind 后一字节）
+    flags[16] = 0b1000_0000; // ClipPlayer flags (byte after kind)
     assert!(decode_rag(&flags).is_none());
 }

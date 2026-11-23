@@ -120,7 +120,7 @@ fn a_vignette_darkens_the_corners_but_not_the_center() {
     let graded_center = pixel(&graded, SIZE / 2, SIZE / 2);
     let graded_corner = pixel(&graded, 0, 0);
 
-    // 中心几乎不动（`smoothstep` 从 0.35 才开始），四角明显变暗。
+    // Center barely moves (smoothstep starts at 0.35), corners darken noticeably.
     assert!(
         graded_center[0].abs_diff(plain_center[0]) <= 4,
         "center changed too much: {plain_center:?} -> {graded_center:?}"
@@ -192,7 +192,7 @@ fn film_grain_is_off_by_default_and_varies_pixels_at_full_strength() {
     );
 }
 
-/// #502：白平衡在默认值上是逐位 no-op；正值偏暖、负值偏冷、tint 控制品红/绿。
+/// #502: White balance defaults to no-op at default values; positive values warm, negative values cool, tint controls magenta/green.
 #[test]
 fn white_balance_tints_a_neutral_frame_and_zero_is_a_no_op() {
     let Some(mut renderer) = try_create_headless() else {

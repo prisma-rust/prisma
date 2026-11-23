@@ -1,11 +1,11 @@
-//! 一次性音效（#987）：把 `GameWorld::play_sound` 排队的请求接到混音器上。
+//! One-shot sound (#987): connect `GameWorld::play_sound` queued requests to mixer.
 //!
-//! 分层和场景音频一致：项目代码只**排队**（`prism_engine::sound::SoundCommands`），
-//! 本模块在 `App` 的 tick 结束后真正解码 + 播放。这样 `GameWorld` 的 host 后端
-//! 不需要碰音频设备，插件（编辑器 Play）则走 ABI 回调，两条路互不影响。
+//! Layered and scene audio consistent: project code only **queues** (`prism_engine::sound::SoundCommands`),
+//! this module really decodes + plays after `App` tick ends, so `GameWorld` host backend
+//! does not need to touch audio device; plugin (editor Play) walks ABI callback, two paths independent.
 //!
-//! 代价是解码发生在请求的那一帧（同步读文件）。短音效（水花 / 上钩提示）没问题；
-//! 长音乐请用 `AudioSource` 组件，那条路是异步解码 + 按路径缓存的。
+//! Cost is decode happens on request frame (sync file read). Short sounds (splash / hook hint) fine;
+//! long music use `AudioSource` component, that path is async decode + path cached.
 
 use std::collections::HashMap;
 
@@ -14,10 +14,10 @@ use prism_audio::{AudioData, AudioEngine, PlaybackHandle};
 use prism_engine::ecs::World;
 use prism_engine::sound::{SoundCommand, SoundCommands};
 
-/// 正在播放的一次性音效。
+/// One-shot sound currently playing.
 pub struct OneShotSound {
     handle: PlaybackHandle,
-    /// 保留片段用于 `repeat`（`AudioEngine` 没有循环标志，播完重放）。
+    /// Retain clip for `repeat` (`AudioEngine` has no loop flag, replay after finish).
     clip: AudioData,
     volume: f32,
     repeat: bool,
@@ -29,10 +29,10 @@ impl OneShotSound {
     }
 }
 
-/// 解析音效路径：优先 `assets/` 下的松散文件，其次 `.pak` 里的同名资源。
+/// Parse sound path: prefer loose files under `assets/`, then same-named resource in `.pak`.
 ///
-/// 发布包只有 `.pak`，所以 pak 这条分支不是可选项：`build-scenes` 会把
-/// `assets/audio/**` 整个目录打进包里（和 `sprites/` 一样，因为运行时按路径取）。
+/// Release package only has `.pak`, so pak branch is not optional: `build-scenes` will put
+/// entire `assets/audio/**` directory into package (like `sprites/`, since runtime reads by path).
 fn load_clip(relative: &str, pack: &mut ResourceManager) -> Option<AudioData> {
     if let Some(path) = prism_engine::asset_paths::asset_path(relative) {
         if path.is_file() {
@@ -56,9 +56,9 @@ fn load_clip(relative: &str, pack: &mut ResourceManager) -> Option<AudioData> {
     }
 }
 
-/// 取走并执行本帧排队的一次性音效请求。
+/// Take and execute this frame queued one-shot sound requests.
 ///
-/// `audio` 为 `None`（没声卡 / 没开 `audio` feature）时请求会被丢弃，只 warn 一次。
+/// When `audio` is `None` (no sound card / `audio` feature not on) requests are dropped, warn once.
 pub fn drain(
     world: &mut World,
     audio: Option<&mut AudioEngine>,
@@ -101,7 +101,7 @@ pub fn drain(
                     continue;
                 }
                 audio.set_volume(&handle, volume);
-                // 同一个 id 重播时先停掉旧的，避免句柄泄漏。
+                // Same id replay first stops old one, avoid handle leak.
                 if let Some(old) = sounds.remove(&id) {
                     audio.stop(&old.handle);
                 }
@@ -127,7 +127,7 @@ pub fn drain(
         }
     }
 
-    // 循环音效：混音器没有循环标志，播完就重放。
+    // Looping sound: mixer has no loop flag, replay after finish.
     for sound in sounds.values_mut() {
         if !sound.repeat || audio.is_playing(&sound.handle) {
             continue;
@@ -151,7 +151,7 @@ mod tests {
         let id = commands.play("audio/does-not-exist.ogg", 1.0, false);
         world.insert_resource(commands);
         let mut sounds = HashMap::new();
-        // 没有混音器：请求被丢弃，队列必须被清空（否则每帧重试）。
+        // No mixer: request dropped, queue must be cleared (otherwise retry every frame).
         let mut pack = ResourceManager::new();
         drain(&mut world, None, &mut sounds, &mut pack);
         assert!(sounds.is_empty());

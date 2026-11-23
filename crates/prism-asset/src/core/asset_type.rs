@@ -1,17 +1,17 @@
-//! 资源类型分类。
+//! Asset type classification.
 
 use serde::{Deserialize, Serialize};
 
-/// 资源数据格式的高级分类。
+/// High-level classification of resource data format.
 ///
-/// 判别值以 `u32` 形式存储在二进制 .pak 格式中，
-/// 因此运行时无需借助字符串表即可分派到正确的加载器。
+/// Discriminant stored as `u32` in binary `.pak` format,
+/// therefore at runtime no need for string table to dispatch to correct loader.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetType {
-    /// 原始二进制数据块——运行时将其加载为 `Vec<u8>`。
+    /// Raw binary data block---runtime loads as `Vec<u8>`.
     Binary = 0,
-    /// GPU 纹理/图像
+    /// GPU texture/image
     Texture = 1,
     /// Geometric mesh (vertex + index data).
     Mesh = 2,
@@ -25,23 +25,23 @@ pub enum AssetType {
     Scene = 6,
     /// Audio clip (PCM, Ogg, etc.).
     Audio = 7,
-    /// 字体文件（ttf / otf / ttc），原样进包，运行时交给 UI 文本光栅器（#583）。
+    /// Font files (ttf / otf / ttc), packed as-is, handed to UI text rasterizer at runtime (#583).
     Font = 8,
-    /// 骨骼层级 + reference pose + inverse bind（`.rskel`，#560）。
+    /// Skeleton hierarchy + reference pose + inverse bind (`.rskel`, #560).
     Skeleton = 9,
-    /// 带 4 骨权重与 submesh 的蒙皮网格（`.rskin`，#560）。
+    /// Skinned mesh with 4 bone weights + submesh (`.rskin`, #560).
     SkinnedMesh = 10,
-    /// 骨骼动画剪辑（`.ranim`，#560）。
+    /// Skeletal animation clip (`.ranim`, #560).
     AnimClip = 11,
-    /// 动画状态机（`.rasm`，#560 P1）。
+    /// Animation state machine (`.rasm`, #560 P1).
     StateMachine = 12,
-    /// 动画图（`.rag`，#560 P1）。
+    /// Animation graph (`.rag`, #560 P1).
     AnimGraph = 13,
-    /// 2D 精灵图集元数据（`.ratlas`，#1158）。
+    /// 2D sprite atlas metadata (`.ratlas`, #1158).
     Atlas = 14,
-    /// 2D 骨骼/逐帧动画元数据（`.ranim2d` / Aseprite，#1159）。
+    /// 2D skeleton/frame animation metadata (`.ranim2d` / Aseprite, #1159).
     Anim2D = 15,
-    /// 2D 瓦片地图关卡数据（`.rtilemap` / Tiled，#1159）。
+    /// 2D tilemap level data (`.rtilemap` / Tiled, #1159).
     Tilemap = 16,
     /// Fallback for unrecognised formats.
     Unknown = 0xFF,
@@ -111,7 +111,7 @@ impl AssetType {
         match ext.to_lowercase().as_str() {
             // Binary
             "bin" | "bytes" => AssetType::Binary,
-            // 已 cook 的运行时格式
+            // Already cooked runtime format
             "rscn" => AssetType::Scene,
             "rtex" => AssetType::Texture,
             "rmes" => AssetType::Mesh,
@@ -140,7 +140,7 @@ impl AssetType {
             "scene" => AssetType::Scene,
             // Audio
             "wav" | "mp3" | "ogg" | "flac" | "aac" | "m4a" => AssetType::Audio,
-            // 字体（UI 文本用；原样进包，不需要 cook）
+            // Font (for UI text; packed as-is, no cook needed)
             "ttf" | "otf" | "ttc" => AssetType::Font,
             _ => AssetType::Unknown,
         }

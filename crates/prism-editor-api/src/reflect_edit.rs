@@ -1,21 +1,21 @@
-//! **基于反射的字段值修改**。
+//! **Reflection-based field value modification**.
 //!
-//! 编辑器不直接往 `.scene.json` 里写值，而是把「组件名 + 改前 JSON + 字段路径 +
-//! 改后 JSON」交给这里：先用 serde 把改后 JSON 还原成合法组件（因此枚举字符串、
-//! 单字段 newtype 等作者形状都能正确解析），再把该字段的**反射值**写进改前对象。
+//! Editor does not write values directly into `.scene.json`; instead it hands here "component name + original JSON + field path +
+//! modified JSON": first uses serde to restore modified JSON into valid component (so enum strings,
+//! single-field newtypes and other author shapes parse correctly), then writes that field **reflected value** into original object.
 //!
-//! 这样字段级写入走的是 `Reflect::set_field`：
-//! - `#[reflect(read_only)]` 字段会被拒绝（例如 `Camera.aspect`）；
-//! - 值必须是该字段声明的反射类型（`from_object` 已校验）；
-//! - 最后用注册表的 `object_to_json` 把对象还原成作者 JSON。
+//! Field-level writes thus go through `Reflect::set_field`:
+//! - `#[reflect(read_only)]` fields are rejected (e.g. `Camera.aspect`);
+//! - value must be that field declared reflection type (`from_object` already validates);
+//! - finally uses registry `object_to_json` to restore object into author JSON.
 //!
-//! 字段路径语法（与前端 `FieldEditor` 的 path 一致）：
-//! `fov_y_degrees`、`anchors.min_x`、`background[0]`、`nested.list[2].x`。
+//! Field path syntax (consistent with frontend `FieldEditor` path):
+//! `fov_y_degrees`, `anchors.min_x`, `background[0]`, `nested.list[2].x`.
 
 use crate::builtin_registry;
 use prism_reflect::{Object, Value};
 
-/// 字段路径中的一段。
+/// One segment in a field path.
 #[derive(Debug, Clone, PartialEq)]
 enum Segment {
     Key(String),
@@ -47,7 +47,7 @@ fn parse_path(path: &str) -> Result<Vec<Segment>, String> {
                 }
                 let index = digits
                     .parse::<usize>()
-                    .map_err(|_| format!("非法数组下标 '{digits}'"))?;
+                    .map_err(|_| format!("Invalid array index '{digits}'"))?;
                 segments.push(Segment::Index(index));
             }
             _ => current.push(c),
@@ -57,15 +57,15 @@ fn parse_path(path: &str) -> Result<Vec<Segment>, String> {
         segments.push(Segment::Key(current));
     }
     if segments.is_empty() {
-        return Err("字段路径为空".into());
+        return Err("Field path is empty".into());
     }
     if !matches!(segments[0], Segment::Key(_)) {
-        return Err("字段路径必须以字段名开头".into());
+        return Err("Field path must start with a field name".into());
     }
     Ok(segments)
 }
 
-/// 取出 `segments` 描述的值的**克隆**（用于「改后」对象）。
+/// Get **clone** of value described by `segments` (for "modified" object).
 fn read_at(value: &Value, segments: &[Segment]) -> Result<Value, String> {
     let mut current = value.clone();
     for segment in segments {
@@ -73,19 +73,19 @@ fn read_at(value: &Value, segments: &[Segment]) -> Result<Value, String> {
             (Segment::Key(key), Value::Object(object)) => object
                 .get(key)
                 .cloned()
-                .ok_or_else(|| format!("字段 '{key}' 不存在"))?,
+                .ok_or_else(|| format!("Field '{key}' does not exist"))?,
             (Segment::Index(index), Value::List(items)) => items
                 .get(*index)
                 .cloned()
-                .ok_or_else(|| format!("下标 [{index}] 越界"))?,
-            (Segment::Key(key), _) => return Err(format!("'{key}' 不是对象字段")),
-            (Segment::Index(index), _) => return Err(format!("[{index}] 不是数组元素")),
+                .ok_or_else(|| format!("Index [{index}] out of bounds"))?,
+            (Segment::Key(key), _) => return Err(format!("'{key}' is not an object field")),
+            (Segment::Index(index), _) => return Err(format!("[{index}] is not an array element")),
         };
     }
     Ok(current)
 }
 
-/// 把 `new_value` 写进 `target` 的 `segments` 位置（就地）。
+/// Write `new_value` into `target` at `segments` position (in place).
 fn write_at(target: &mut Value, segments: &[Segment], new_value: Value) -> Result<(), String> {
     match segments {
         [] => {
@@ -94,30 +94,30 @@ fn write_at(target: &mut Value, segments: &[Segment], new_value: Value) -> Resul
         }
         [Segment::Key(key), rest @ ..] => {
             let Value::Object(object) = target else {
-                return Err(format!("'{key}' 的容器不是对象"));
+                return Err(format!("'{key}' container is not an object"));
             };
             let slot = object
                 .fields
                 .get_mut(key)
-                .ok_or_else(|| format!("字段 '{key}' 不存在"))?;
+                .ok_or_else(|| format!("Field '{key}' does not exist"))?;
             write_at(slot, rest, new_value)
         }
         [Segment::Index(index), rest @ ..] => {
             let Value::List(items) = target else {
-                return Err("数组下标的容器不是列表".into());
+                return Err("Array index container is not a list".into());
             };
             let slot = items
                 .get_mut(*index)
-                .ok_or_else(|| format!("下标 [{index}] 越界"))?;
+                .ok_or_else(|| format!("Index [{index}] out of bounds"))?;
             write_at(slot, rest, new_value)
         }
     }
 }
 
-/// 在组件 JSON 上按反射语义写入一个字段，返回新的作者 JSON。
+/// Write one field on component JSON with reflection semantics, return new author JSON.
 ///
-/// `before` 是该组件当前的值，`after` 是前端改完以后的整体值（两者形状相同）。
-/// `path` 为空表示整体替换（仍会经过一次 `from_object` 校验与规范化）。
+/// `before` is current value of component, `after` is frontend modified whole value (both same shape).
+/// Empty `path` means whole replace (still goes through one `from_object` validation and normalization).
 pub fn set_component_field(
     component: &str,
     before: &serde_json::Value,
@@ -128,10 +128,10 @@ pub fn set_component_field(
 
     let before_object = registry
         .object_from_json(component, before)
-        .ok_or_else(|| format!("'{component}' 不是已注册的可反射组件"))?;
-    let after_object = registry
-        .object_from_json(component, after)
-        .ok_or_else(|| format!("'{component}' 的新值无法还原（类型或形状不合法）"))?;
+        .ok_or_else(|| format!("'{component}' is not a registered reflectable component"))?;
+    let after_object = registry.object_from_json(component, after).ok_or_else(|| {
+        format!("'{component}' new value cannot be restored (invalid type or shape)")
+    })?;
 
     let segments = if path.trim().is_empty() {
         Vec::new()
@@ -139,37 +139,37 @@ pub fn set_component_field(
         parse_path(path)?
     };
 
-    // 整体替换：只做一次规范化校验。
+    // Whole replace: single normalization validation.
     if segments.is_empty() {
         return registry
             .object_to_json(component, &after_object)
-            .ok_or_else(|| format!("'{component}' 缺少 object_to_json 转换器"));
+            .ok_or_else(|| format!("'{component}' missing object_to_json converter"));
     }
 
-    // 从「改后」对象里取出目标值（已是反射类型，枚举/单字段都正确）。
+    // Get target value from "modified" object (already reflection type, enum / single-field correct).
     let new_value = read_at(&Value::Object(after_object), &segments)?;
 
-    // 顶层字段名 + 其下的下标/子字段；顶层写入走 set_field（只读字段在此被拒）。
+    // Top-level field name + index / sub-field below it; top-level write goes through set_field (read-only rejected).
     let Segment::Key(field) = &segments[0] else {
-        unreachable!("parse_path 已保证以 Key 开头");
+        unreachable!("parse_path guarantees starts with Key");
     };
     let mut root = before_object
         .get(field)
         .cloned()
-        .ok_or_else(|| format!("字段 '{field}' 不存在"))?;
+        .ok_or_else(|| format!("Field '{field}' does not exist"))?;
     write_at(&mut root, &segments[1..], new_value)?;
 
     let mut patched = before_object;
     registry
         .set_object_field(&mut patched, field, root)
-        .map_err(|e| format!("字段 '{field}' 写入被拒绝: {e}"))?;
+        .map_err(|e| format!("Field '{field}' write rejected: {e}"))?;
 
     registry
         .object_to_json(component, &patched)
-        .ok_or_else(|| format!("'{component}' 缺少 object_to_json 转换器"))
+        .ok_or_else(|| format!("'{component}' missing object_to_json converter"))
 }
 
-/// 把组件 JSON 规范化（`from_object` 校验 + `object_to_json` 还原）。
+/// Normalize component JSON (`from_object` validation + `object_to_json` restore).
 pub fn normalize_component(
     component: &str,
     value: &serde_json::Value,
@@ -177,10 +177,10 @@ pub fn normalize_component(
     let registry = builtin_registry();
     let object: Object = registry
         .object_from_json(component, value)
-        .ok_or_else(|| format!("'{component}' 的值无法还原"))?;
+        .ok_or_else(|| format!("'{component}' value cannot be restored"))?;
     registry
         .object_to_json(component, &object)
-        .ok_or_else(|| format!("'{component}' 缺少 object_to_json 转换器"))
+        .ok_or_else(|| format!("'{component}' missing object_to_json converter"))
 }
 
 #[cfg(test)]
@@ -220,7 +220,7 @@ mod tests {
         let updated = set_component_field(CAMERA, &before, "fov_y_degrees", &after).unwrap();
         assert_eq!(updated["fov_y_degrees"], json!(72.0));
 
-        // 嵌套结构体字段。
+        // Nested struct field.
         let before = component_default(STYLE);
         let mut after = before.clone();
         after["anchors"]["min_x"] = json!(0.25);
@@ -253,20 +253,20 @@ mod tests {
         let mut after = before.clone();
         after["fov_y_degrees"] = json!("not a number");
 
-        // 改后整体值无法还原成组件 → 拒绝。
+        // Modified whole value cannot be restored into component → reject.
         assert!(set_component_field(CAMERA, &before, "fov_y_degrees", &after).is_err());
     }
 
     #[test]
     fn handles_serde_shaped_enums_and_newtypes() {
-        // 枚举按 serde 字符串形状写。
+        // Enum written as serde string shape.
         let before = component_default(TEXT);
         let mut after = before.clone();
         after["alignment"] = json!("Left");
         let updated = set_component_field(TEXT, &before, "alignment", &after).unwrap();
         assert_eq!(updated["alignment"], json!("Left"));
 
-        // newtype 组件是裸字符串。
+        // Newtype component is bare string.
         let before = json!("old");
         let after = json!("new");
         let updated = set_component_field(NAME, &before, "", &after).unwrap();
@@ -290,8 +290,8 @@ mod tests {
 
     #[test]
     fn field_writes_reuse_one_registry_across_threads() {
-        // 拖动字段时写入可能落在不同线程池线程上；共享注册表必须只构建一次、
-        // 且能被并发读取（`ComponentRegistry` 的回调是 `Send + Sync`）。
+        // Dragging field may write from a different thread pool thread; shared registry must be built once,
+        // and readable concurrently (`ComponentRegistry` callbacks are `Send + Sync`).
         assert!(std::ptr::eq(builtin_registry(), builtin_registry()));
 
         let before = camera_default();
@@ -312,7 +312,7 @@ mod tests {
             })
             .collect();
         for handle in handles {
-            handle.join().expect("写入线程不应 panic");
+            handle.join().expect("Write thread should not panic");
         }
     }
 }

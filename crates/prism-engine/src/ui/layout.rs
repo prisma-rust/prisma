@@ -1,25 +1,25 @@
-//! UI Layout System —— 锚点布局计算
+//! UI Layout System — anchor-based layout computation
 //!
-//! 每帧查询所有 `Node + Style` 的实体，按需补上 `ComputedLayout` 输出组件，
-//! 再根据锚点、固定尺寸、边距和父容器尺寸计算出最终屏幕空间矩形。
+//! Each frame queries all `Node + Style` entities, adds `ComputedLayout` output component as needed,
+//! then computes final screen-space rect from anchors, fixed size, margins and parent container size.
 //!
-//! # 布局规则
-//! - 根元素（无 Parent）的父容器 = 屏幕尺寸（由 `ScreenSize` resource 提供）
-//! - 子元素的父容器 = 父元素的 `ComputedLayout`
-//! - 锚点定义子边相对于父边的映射
-//! - 固定尺寸覆盖锚点拉伸
+//! # layout rule
+//! - Root element (no Parent) parent container = screen size (from `ScreenSize` resource)
+//! - Child element parent container = parent's `ComputedLayout`
+//! - Anchors define mapping of child edges relative to parent edges
+//! - Fixed size overrides anchor stretching
 //!
-//! # Canvas 缩放（#463）
-//! 带 [`Canvas`](crate::ui::components::Canvas) 的节点会给整棵子树定一个缩放
-//! 系数：布局在「虚拟分辨率」里算（`ScreenSize / scale`），写回
-//! `ComputedLayout.rect` 时再乘回 `scale`。这样作者按设计稿像素写
-//! `Style.width` / `margin` / 锚点，1080p 和 720p 得到同一套构图。
-//! `ComputedLayout.scale` 留给渲染系统换算字号和圆角。
+//! # Canvas scale (#463)
+//! Node with [`Canvas`](crate::ui::components::Canvas) defines a scale factor for whole subtree:
+//! layout computed in "virtual resolution" (`ScreenSize / scale`), then multiplied back by `scale` when
+//! writing `ComputedLayout.rect`. So author writes `Style.width` / `margin` / anchors in design pixels,
+//! 1080p and 720p get same composition.
+//! `ComputedLayout.scale` left for render system to convert font size and corner radius.
 
 use crate::ui::components::*;
 use prism_ecs::World;
 
-/// 屏幕尺寸 resource —— 每帧由 engine 更新。
+/// Screen size resource — updated each frame by engine.
 #[derive(Clone, Copy, Debug)]
 pub struct ScreenSize {
     pub width: f32,
@@ -35,16 +35,16 @@ impl ScreenSize {
     }
 }
 
-/// 窗口像素 ↔ UI 布局空间的映射（#988）。
+/// Mapping between window pixels ↔ UI layout space (#988).
 ///
-/// UI 现在和场景一起画在 PostPass 的目标矩形里（`internal_resolution` + 整数倍
-/// 缩放时矩形比窗口小）。布局仍然按窗口像素算，所以指针要先换算回布局空间，
-/// 命中测试才和画出来的位置对得上。
+/// UI is now drawn together with scene into PostPass target rect (`internal_resolution` + integer scale
+/// makes rect smaller than window). Layout still computed in window pixels, so pointer must first convert back to layout space,
+/// hit test then matches drawn position.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiScreenMapping {
-    /// 布局空间 → 窗口的缩放（目标矩形宽度 / 窗口宽度）。
+    /// Layout space → window scale (target rect width / window width).
     pub scale: f32,
-    /// 目标矩形左上角在窗口里的像素偏移。
+    /// Pixel offset of target rect top-left corner in window.
     pub offset: [f32; 2],
 }
 
@@ -58,7 +58,7 @@ impl Default for UiScreenMapping {
 }
 
 impl UiScreenMapping {
-    /// 窗口像素 → 布局空间。`scale` 非有限或非正时退化成恒等映射。
+    /// Window pixels → layout space. Degenerates to identity map when `scale` non-finite or non-positive.
     pub fn window_to_layout(&self, point: [f32; 2]) -> [f32; 2] {
         if !(self.scale.is_finite() && self.scale > 0.0) {
             return point;
@@ -70,7 +70,7 @@ impl UiScreenMapping {
     }
 }
 
-/// Layout System —— 每帧运行，计算所有 UI 元素的屏幕空间矩形。
+/// Layout System — runs each frame, computes screen-space rects for all UI elements.
 pub fn ui_layout_system(world: &mut World) {
     let screen = world
         .get_resource::<ScreenSize>()
@@ -80,12 +80,12 @@ pub fn ui_layout_system(world: &mut World) {
             height: 1080.0,
         });
 
-    // 先收集所有 `Node + Style` 实体及 Parent。
-    // 层级只认场景的 `Parent`（`HierarchyHelper` 维护的那一份），不再有第二份
-    // `UiParent` 状态。`ComputedLayout` 是本系统的**输出**：作者不写它，
-    // 缺失时在这里补默认值，否则布局 / 命中测试 / 绘制（都以它为查询条件）
-    // 会静默跳过该实体。
-    // 分两遍：第一遍处理无 Parent 的根节点，第二遍处理子节点
+    // First collect all `Node + Style` entities and Parent.
+    // Layer level only recognizes scene's `Parent` (the one maintained by `HierarchyHelper`), no second
+    // `UiParent` state. `ComputedLayout` is this system's **output**: author does not write it,
+    // missing ones get defaults filled here, otherwise layout / hit test / draw (all query on it)
+    // would silently skip the entity.
+    // Two passes: first root nodes with no Parent, then child nodes
     let layout_queue: Vec<(prism_ecs::Entity, Option<prism_ecs::Entity>)> = world
         .query2::<Node, Style>()
         .map(|(entity, _node, _style)| {
@@ -100,8 +100,8 @@ pub fn ui_layout_system(world: &mut World) {
         }
     }
 
-    // 每个节点所在 Canvas 的缩放（#463）。最近的 Canvas 祖先说了算；
-    // 没有 Canvas 时是 1.0，行为与引入 Canvas 之前一致。
+    // Scale of Canvas each node is in (#463). Nearest Canvas ancestor decides;
+    // without Canvas it is 1.0, behavior same as before Canvas introduced.
     let canvases: std::collections::HashMap<prism_ecs::Entity, Canvas> = world
         .query::<Canvas>()
         .map(|(entity, canvas)| (entity, *canvas))
@@ -117,9 +117,9 @@ pub fn ui_layout_system(world: &mut World) {
         scales.insert(*entity, scale);
     }
 
-    // 布局组的父子关系（#527）。兄弟顺序必须和绘制顺序一致：按场景 `id`
-    // （运行时 `spawn` 的实体排在后面），这样「先加的在左/上」符合直觉，
-    // 也和 `assign_draw_order` 完全同源。
+    // Parent-child relationship of layout group (#527). Sibling order must match draw order: by scene `id`
+    // (runtime `spawn`ed entities come after), so "first added on left/top" is intuitive,
+    // and fully same source as `assign_draw_order`.
     let layout_entities: std::collections::HashSet<prism_ecs::Entity> =
         layout_queue.iter().map(|(entity, _)| *entity).collect();
     let mut children: std::collections::HashMap<prism_ecs::Entity, Vec<prism_ecs::Entity>> =
@@ -136,7 +136,7 @@ pub fn ui_layout_system(world: &mut World) {
     }
     roots.sort_by_key(|entity| sibling_key(world, *entity));
 
-    // 父先子后的遍历顺序。`seen` 同时防住 Parent 成环。
+    // Parent-first child-after traversal order. `seen` also guards against Parent cycles.
     let mut order: Vec<prism_ecs::Entity> = Vec::new();
     let mut seen: std::collections::HashSet<prism_ecs::Entity> = std::collections::HashSet::new();
     let mut stack: Vec<prism_ecs::Entity> = roots.iter().rev().copied().collect();
@@ -161,15 +161,15 @@ pub fn ui_layout_system(world: &mut World) {
         })
         .collect();
 
-    // 第一遍 measure：子先父后。布局组用子元素的尺寸量出自己的内容尺寸，
-    // `fit_content` 时据此收缩（#527）。
+    // First pass measure: children first, parents after. Layout group measures own content size from children's sizes,
+    // shrink accordingly when `fit_content` (#527).
     let measured = measure_sizes(&order, &children, &styles);
 
-    // 第二遍 arrange：父先子后。布局组的子元素按排列顺序定位，其余节点继续
-    // 走「锚点 × 父矩形」的原有算法。
+    // Second pass arrange: parents first, children after. Layout group children positioned by arrangement order, other nodes continue
+    // with original "anchor × parent rect" algorithm.
     let mut resolved: std::collections::HashMap<prism_ecs::Entity, [f32; 4]> =
         std::collections::HashMap::new();
-    // 每个布局组的主轴游标（虚拟坐标，相对内容区起点）。
+    // Main-axis cursor of each layout group (virtual coords, relative to content area start).
     let mut cursors: std::collections::HashMap<prism_ecs::Entity, f32> =
         std::collections::HashMap::new();
 
@@ -183,7 +183,7 @@ pub fn ui_layout_system(world: &mut World) {
 
         let parent = parents.get(entity).copied();
         let rect = match parent {
-            // 父级不是 UI 实体（没有 Node + Style）：沿用它已有的输出矩形。
+            // Parent is not a UI entity (no Node + Style): reuse its existing output rect.
             Some(parent) if !layout_entities.contains(&parent) => {
                 let parent_rect = world
                     .get::<ComputedLayout>(parent)
@@ -241,9 +241,9 @@ pub fn ui_layout_system(world: &mut World) {
     assign_draw_order(world);
 }
 
-/// 实体所在 Canvas 的缩放（#463）：最近的 Canvas 祖先决定，没有则 1.0。
+/// Scale of Canvas entity is in (#463): nearest Canvas ancestor decides, otherwise 1.0.
 ///
-/// 递归 + 记忆化；`depth` 上限防止坏层级（A 的父是 B、B 的父是 A）无限递归。
+/// Recursive + memoized; `depth` limit stops bad hierarchy (A's parent is B, B's parent is A) infinite recursion.
 fn node_scale(
     entity: prism_ecs::Entity,
     parents: &std::collections::HashMap<prism_ecs::Entity, prism_ecs::Entity>,
@@ -269,15 +269,15 @@ fn node_scale(
     scale
 }
 
-/// 给每个 UI 实体算 `ComputedLayout::order`（绘制顺序）。
+/// Compute `ComputedLayout::order` for each UI entity (draw order).
 ///
-/// 语义对齐 UGUI：**同一父级下按兄弟顺序深度优先遍历**，父先于子，一个节点的
-/// 整棵子树都排在它的下一个兄弟之前。这样「后加的全屏遮罩」才能盖住前面的标题
-/// 文字（#462），而不是永远按 0/1 两个 layer 分批画。
+/// Semantics aligned with UGUI: **depth-first traversal by sibling order within same parent**, parent before children, whole subtree of a node
+/// comes before its next sibling. So "later added full-screen mask" can cover earlier title
+/// text (#462), instead of always drawing in two batches by layer 0/1.
 ///
-/// 兄弟顺序取 `.scene.json` 的 `id`（`SceneEntityId`）；运行时 `spawn` 出来的
-/// 实体没有它，排在所有场景实体之后（按实体分配下标），和 UGUI 里新
-/// `Instantiate` 的兄弟默认追加到末尾一致。
+/// Sibling order from `.scene.json` `id` (`SceneEntityId`); runtime `spawn`ed
+/// entities lack it, sorted after all scene entities (by entity allocation order), consistent with UGUI where new
+/// `Instantiate` siblings default append to end.
 pub fn assign_draw_order(world: &mut World) {
     use std::collections::HashMap;
 
@@ -307,8 +307,8 @@ pub fn assign_draw_order(world: &mut World) {
         list.sort_by_key(|entity| sibling_key(world, *entity));
     }
 
-    // 深度优先前序；`depth` 只是防御 Parent 成环（环里的节点会在自己的子树里
-    // 再次出现，但不至于无限递归）。
+    // Depth-first pre-order; `depth` only guards Parent cycles (nodes in cycle appear again within own subtree
+    // but no infinite recursion).
     let mut order: u32 = 0;
     let mut stack: Vec<(prism_ecs::Entity, u32)> =
         roots.into_iter().rev().map(|entity| (entity, 0)).collect();
@@ -332,7 +332,7 @@ pub fn assign_draw_order(world: &mut World) {
     }
 }
 
-/// 兄弟排序键：场景 `id` 优先，运行时实体按分配下标。
+/// Sibling sort key: scene `id` first, runtime entities by allocation order.
 fn sibling_key(world: &World, entity: prism_ecs::Entity) -> (u32, u32) {
     let scene_id = world
         .get::<crate::scene::components::SceneEntityId>(entity)
@@ -341,7 +341,7 @@ fn sibling_key(world: &World, entity: prism_ecs::Entity) -> (u32, u32) {
     (scene_id, entity.id())
 }
 
-/// 方向相关的 `(主轴, 交叉轴)` 尺寸。
+/// Size of `(main axis, cross axis)` according to direction.
 fn main_cross(direction: LayoutDirection, size: [f32; 2]) -> (f32, f32) {
     match direction {
         LayoutDirection::Row => (size[0], size[1]),
@@ -350,16 +350,16 @@ fn main_cross(direction: LayoutDirection, size: [f32; 2]) -> (f32, f32) {
     }
 }
 
-/// measure 遍：每个节点的「内容尺寸」。
+/// Measure pass: "content size" of each node.
 ///
-/// 非布局组节点就是显式宽/高（没写算 0）；布局组在 `fit_content` 时把自己
-/// 收缩到「子元素主轴之和 + spacing + padding」与「交叉轴最大值 + padding」。
+/// Non-layout-group node is explicit width/height (0 if not written); layout group in `fit_content` shrinks itself
+/// to "sum of children main axis + spacing + padding" and "cross axis max + padding".
 fn measure_sizes(
     order: &[prism_ecs::Entity],
     children: &std::collections::HashMap<prism_ecs::Entity, Vec<prism_ecs::Entity>>,
     styles: &std::collections::HashMap<prism_ecs::Entity, Style>,
 ) -> std::collections::HashMap<prism_ecs::Entity, [f32; 2]> {
-    /// 有限且非负；坏值按 0。
+    /// Finite and non-negative; bad values as 0.
     fn extent(value: f32) -> f32 {
         if value.is_finite() && value > 0.0 {
             value
@@ -429,7 +429,7 @@ fn measure_sizes(
     measured
 }
 
-/// 把一个子元素放进父级的布局组：主轴按游标累加，交叉轴按 `child_align`。
+/// Place one child into parent's layout group: main axis accumulates by cursor, cross axis by `child_align`.
 fn place_in_layout(
     parent: prism_ecs::Entity,
     layout: Layout,
@@ -476,8 +476,8 @@ fn place_in_layout(
     rect
 }
 
-/// 锚点路径：`fit_content` 的布局组没有显式宽/高时，用 measure 出的内容尺寸
-/// 覆盖，再按 anchor/pivot 重新定位。
+/// Anchor rect override: layout group with `fit_content` and no explicit width/height uses measured content size,
+/// then repositions by anchor/pivot.
 fn anchored_rect(style: &Style, parent: [f32; 4], measured: Option<[f32; 2]>) -> [f32; 4] {
     if style.layout.direction != LayoutDirection::None && style.layout.fit_content {
         let measured = measured.unwrap_or([0.0, 0.0]);
@@ -490,21 +490,21 @@ fn anchored_rect(style: &Style, parent: [f32; 4], measured: Option<[f32; 2]>) ->
     compute_rect(style, parent)
 }
 
-/// 根据 Style 和父容器矩形计算屏幕空间矩形。
+/// Compute screen-space rect from Style and parent container rect.
 ///
-/// 语义对齐引擎的 `anchorMin` / `anchorMax` + `pivot`：
-/// - **拉伸轴**（`min != max`）：位置由锚点与边距决定，`pivot` **不参与**
-///   （否则全屏根元素会得到负的原点）；
-/// - **点锚点轴**（`min == max`）：尺寸取 `width`/`height`，位置按 `pivot` 对齐。
+/// Semantics aligned with engine's `anchorMin` / `anchorMax` + `pivot`:
+/// - **Stretch axis** (`min != max`): position from anchors and margins, `pivot` **not involved**
+///   (otherwise full-screen root element would get negative origin);
+/// - **point anchor axis** (`min == max`): size from `width`/`height`, position aligned by `pivot`.
 fn compute_rect(style: &Style, parent: [f32; 4]) -> [f32; 4] {
     compute_rect_sized(style, parent, None)
 }
 
-/// [`compute_rect`] 的可选尺寸覆盖（布局组 `fit_content` 用）。
+/// Optional size override for [`compute_rect`] (used by layout group `fit_content`).
 fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -> [f32; 4] {
     let (px, py, pw, ph) = (parent[0], parent[1], parent[2], parent[3]);
 
-    // 锚点 → 矩形四边
+    // Anchors → four rect edges
     let anchor_left = px + style.anchors.min_x * pw;
     let anchor_right = px + style.anchors.max_x * pw;
     let anchor_top = py + style.anchors.min_y * ph;
@@ -515,7 +515,7 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     let stretched_x = style.anchors.min_x != style.anchors.max_x;
     let stretched_y = style.anchors.min_y != style.anchors.max_y;
 
-    // 固定尺寸 vs 锚点拉伸；布局组的 `fit_content` 用调用方给的内容尺寸。
+    // Fixed size vs anchor stretching; layout group `fit_content` uses caller-provided content size.
     let w = size
         .map(|size| size[0])
         .or(style.width)
@@ -527,9 +527,9 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     let w = w.max(0.0);
     let h = h.max(0.0);
 
-    // 拉伸轴：锚点+边距决定原点；点锚点轴：pivot 参与定位。
-    // 点锚点必须同时应用对面的 margin（right/bottom），否则贴右下角的元素
-    // 会紧贴屏幕边缘（#593）。
+    // Stretch axis: anchors + margins decide origin; point anchor axis: pivot participates.
+    // Point anchors must apply right/bottom margin only when aligned accordingly, otherwise element pinned to bottom-right corner
+    // would hug screen edge (#593).
     let left = if stretched_x {
         anchor_left + margin.left
     } else {
@@ -544,7 +544,7 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     [left, top, w, h]
 }
 
-/// 如果锚点 min == max（点锚点），用此 + 固定尺寸定位。
+/// If anchor min == max (point anchor), use this + fixed size for positioning.
 fn _anchor_point_rect(style: &Style, parent: [f32; 4]) -> [f32; 4] {
     let (px, py, pw, ph) = (parent[0], parent[1], parent[2], parent[3]);
 

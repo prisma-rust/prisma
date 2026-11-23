@@ -206,7 +206,7 @@ fn shaded_wireframe_keeps_the_fill_and_adds_dark_edges() {
         shaded_dark > plain_dark + 50,
         "expected the fill to stay and dark wire edges to be added: plain={plain_dark}, shaded={shaded_dark}"
     );
-    // 填充仍然在：线框不是唯一内容。
+    // Fill still present: wireframe is not the only content.
     assert!(
         shaded_dark < 256 * 256,
         "shaded wireframe must not replace the filled image"

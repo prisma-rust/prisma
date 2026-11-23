@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Prisma 依赖守护：玩家依赖预算 + 全仓 crate 分层边界矩阵。
+"""Prisma dependency guard: player dependency budget + whole-repo crate layering boundary matrix.
 
-    python scripts/check_deps.py            # 完整检查（玩家预算 + 层级矩阵）
-    python scripts/check_deps.py --layers   # 仅检查全仓 crate 分层边界
-    python scripts/check_deps.py --list     # 打印整棵玩家依赖树
+    python scripts/check_deps.py            # full check (player budget + layer matrix)
+    python scripts/check_deps.py --layers   # only check whole-repo crate layering
+    python scripts/check_deps.py --list     # print whole player dependency tree
 
-规则（改动本文件时同步更新 `docs/DESIGN.md` §11）：
-  1. 玩家树（`prism-app`）不得出现 `BANNED` 中的构建期/可选能力 crate；
-  2. 玩家树 crate 总数不得超过 `MAX_PLAYER_CRATES`；
-  3. 根 workspace 所有 `prism-*` crate 必须保持 UI-free（禁止引入 egui 等 UI 框架）；
-  4. 各层级 crate 禁止逆向或跨边界依赖（见 `LAYER_RULES`）。
+Rules (update `docs/DESIGN.md` §11 when changing this file):
+  1. Player tree (`prism-app`) must not contain build-time / optional capability crates in `BANNED`;
+  2. Total crate count in player tree must not exceed `MAX_PLAYER_CRATES`;
+  3. All root workspace `prism-*` crates must stay UI-free (no egui etc UI frameworks);
+  4. Each layer crate must not reverse or cross-boundary depend (see `LAYER_RULES`).
 
-stdout 是给 PR 贴的 Markdown 行，进度/诊断走 stderr。
+stdout is Markdown lines for PR paste, progress / diagnostics go to stderr.
 """
 
 from __future__ import annotations
@@ -29,26 +29,26 @@ from lib.console import force_utf8_streams  # noqa: E402
 
 PLAYER_CRATE = "prism-app"
 
-# 允许的玩家树上限。留一点余量，但**不要**为了过 CI 无脑调高：
-# 要么把新依赖做成 feature，要么在 PR 里说明为什么它必须随玩家发布。
+# Allowed player-tree upper limit. Leave some margin, but **do not** mindlessly raise to pass CI:
+# either make new dependency a feature, or describe in PR why it must ship with player.
 MAX_PLAYER_CRATES = 155
 
-# 构建期 / 编辑器 / 可选能力：出现即失败。
+# Build-time / editor / optional capabilities: appearing is a failure.
 BANNED: dict[str, str] = {
-    "gltf": "资产导入只在 prism-cooker（构建期）",
-    "gltf-json": "资产导入只在 prism-cooker（构建期）",
-    "clap": "CLI 参数解析只在构建工具",
-    "rayon": "构建期并行，运行时不该有",
-    "exr": "EXR 解码只在 cooker 导入",
-    "jpeg-decoder": "JPEG 解码只在 cooker 导入",
-    "tiff": "TIFF 解码只在 cooker 导入",
-    "tokio": "异步 IO 是 prism-asset 的 `async-io` feature，默认关闭",
-    "rapier3d": "物理是 prism-app 的 `physics` feature，默认关闭",
-    "parry3d": "物理是 prism-app 的 `physics` feature，默认关闭",
-    "cpal": "音频后端是 prism-app 的 `audio` feature，默认关闭",
-    "firewheel": "音频后端是 prism-app 的 `audio` feature，默认关闭",
-    "symphonia": "音频解码是 prism-app 的 `audio` feature，默认关闭",
-    "symphonium": "音频解码是 prism-app 的 `audio` feature，默认关闭",
+    "gltf": "Asset import only in prism-cooker (build time)",
+    "gltf-json": "Asset import only in prism-cooker (build time)",
+    "clap": "CLI arg parsing only in build tools",
+    "rayon": "Build-time parallelism, should not be at runtime",
+    "exr": "EXR decode only in cooker import",
+    "jpeg-decoder": "JPEG decode only in cooker import",
+    "tiff": "TIFF decode only in cooker import",
+    "tokio": "Async IO is prism-asset `async-io` feature, default off",
+    "rapier3d": "Physics is prism-app `physics` feature, default off",
+    "parry3d": "Physics is prism-app `physics` feature, default off",
+    "cpal": "Audio backend is prism-app `audio` feature, default off",
+    "firewheel": "Audio backend is prism-app `audio` feature, default off",
+    "symphonia": "Audio decode is prism-app `audio` feature, default off",
+    "symphonium": "Audio decode is prism-app `audio` feature, default off",
 }
 
 UI_CRATES = {"egui", "egui-ash", "egui_extras", "eframe"}
@@ -95,7 +95,7 @@ force_utf8_streams()
 
 
 def player_tree() -> list[str]:
-    """解析 `cargo tree -p prism-app`，返回唯一的 crate 名列表。"""
+    """Parse `cargo tree -p prism-app`, return unique crate name list."""
     proc = subprocess.run(
         ["cargo", "tree", "-p", PLAYER_CRATE, "-e", "normal", "--prefix", "none"],
         cwd=ROOT,
@@ -106,7 +106,7 @@ def player_tree() -> list[str]:
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
-        raise SystemExit("check_deps: `cargo tree` 失败")
+        raise SystemExit("check_deps: `cargo tree` failed")
 
     names: set[str] = set()
     for line in proc.stdout.splitlines():
@@ -126,14 +126,14 @@ def check_player_budget() -> tuple[list[str], int]:
 
     problems: list[str] = []
     for name, reason in banned_hits:
-        problems.append(f"`{name}` 不该出现在玩家树：{reason}")
+        problems.append(f"`{name}` should not appear in player tree: {reason}")
     if total > MAX_PLAYER_CRATES:
-        problems.append(f"玩家依赖 {total} 个 crate，超过预算 {MAX_PLAYER_CRATES}")
+        problems.append(f"Player depends on {total} crates, over budget {MAX_PLAYER_CRATES}")
     return problems, total
 
 
 def check_layers() -> tuple[list[str], int]:
-    """通过 `cargo metadata` 检查全仓 crate 分层边界与 UI-free 约束。"""
+    """Check whole-repo crate layering and UI-free via `cargo metadata`."""
     proc = subprocess.run(
         ["cargo", "metadata", "--format-version", "1"],
         cwd=ROOT,
@@ -144,7 +144,7 @@ def check_layers() -> tuple[list[str], int]:
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
-        raise SystemExit("check_deps: `cargo metadata` 失败")
+        raise SystemExit("check_deps: `cargo metadata` failed")
 
     meta = json.loads(proc.stdout)
     pkgs = {p["id"]: p for p in meta["packages"]}
@@ -188,18 +188,18 @@ def check_layers() -> tuple[list[str], int]:
 
         ui_hits = sorted(UI_CRATES & transitive)
         if ui_hits:
-            problems.append(f"`{name}` 违反 UI-free 约束：不得引入 {ui_hits}")
+            problems.append(f"`{name}` violates UI-free: must not pull in {ui_hits}")
 
         if name in FOUNDATION_CRATES:
             allowed = {"prism-reflect-derive"} if name == "prism-reflect" else set()
             bad = [d for d in direct_prism if d not in allowed]
             if bad:
-                problems.append(f"基础层 `{name}` 不得依赖其他 prism crate：{bad}")
+                problems.append(f"Base layer `{name}` must not depend on other prism crates: {bad}")
 
         if name in DATA_SCHEMA_CRATES:
             bad = [d for d in direct_prism if d in UPPER_CRATES]
             if bad:
-                problems.append(f"纯数据/schema 层 `{name}` 不得依赖上层 crate：{bad}")
+                problems.append(f"Pure data/schema layer `{name}` must not depend on upper layers: {bad}")
 
         if name == "prism-render":
             forbidden = {
@@ -216,7 +216,7 @@ def check_layers() -> tuple[list[str], int]:
             }
             bad = [d for d in direct_prism if d in forbidden]
             if bad:
-                problems.append(f"`prism-render` 必须保持 ECS/Engine-free：不得依赖 {bad}")
+                problems.append(f"`prism-render` must stay ECS/Engine-free: must not depend on {bad}")
 
         if name == "prism-runtime-host":
             forbidden = {
@@ -230,7 +230,7 @@ def check_layers() -> tuple[list[str], int]:
             }
             bad = [d for d in direct_prism if d in forbidden]
             if bad:
-                problems.append(f"`prism-runtime-host` 不得依赖引擎或渲染层：{bad}")
+                problems.append(f"`prism-runtime-host` must not depend on engine or render layers: {bad}")
 
         if name in {"prism-engine", "prism-game-api"}:
             forbidden = {
@@ -242,26 +242,26 @@ def check_layers() -> tuple[list[str], int]:
             }
             bad = [d for d in direct_prism if d in forbidden]
             if bad:
-                problems.append(f"`{name}` 不得依赖应用层或编辑器/构建工具：{bad}")
+                problems.append(f"`{name}` must not depend on app or editor/build tools: {bad}")
 
         if name == "prism-app":
             forbidden = {"prism-cooker", "prism-build-pipeline", "prism-editor-api", "prism-editor-mcp"}
             bad = [d for d in direct_prism if d in forbidden]
             if bad:
-                problems.append(f"`prism-app` 不得依赖构建期或编辑器 crate：{bad}")
+                problems.append(f"`prism-app` must not depend on build-time or editor crates: {bad}")
 
         if name in VULKAN_FREE_CRATES:
             bad = sorted(VULKAN_DEPS & transitive)
             if bad:
-                problems.append(f"`{name}` 必须保持 Vulkan/Engine-free：不得引入 {bad}")
+                problems.append(f"`{name}` must stay Vulkan/Engine-free: must not pull in {bad}")
 
     return problems, checked
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prisma dependency & layer guard")
-    parser.add_argument("--list", action="store_true", help="打印玩家依赖树")
-    parser.add_argument("--layers", action="store_true", help="仅检查全仓 crate 分层边界")
+    parser.add_argument("--list", action="store_true", help="Print player dependency tree")
+    parser.add_argument("--layers", action="store_true", help="Only check whole-repo crate layering")
     args = parser.parse_args()
 
     if args.list:
@@ -280,19 +280,19 @@ def main() -> int:
     layer_problems, checked = check_layers()
     all_problems.extend(layer_problems)
     if not layer_problems:
-        notes.append(f"{checked} workspace crates 分层合规")
+        notes.append(f"{checked} workspace crates layer-compliant")
 
     if all_problems:
         for problem in all_problems:
             sys.stderr.write(f"check_deps: {problem}\n")
         sys.stderr.write(
-            "check_deps: 修复方式见 scripts/check_deps.py 顶部说明"
-            "（拆 feature / 移至上层或构建期 / 保持分层单向）\n"
+            "check_deps: see scripts/check_deps.py header for fixes"
+            "(split feature / move up or to build time / keep layering one-way)\n"
         )
-        print("| 依赖预算 | ❌ | " + "；".join(all_problems) + " |")
+        print("| Dependency budget | ❌ | " + "; ".join(all_problems) + " |")
         return 1
 
-    print(f"| 依赖预算 | ✅ | {'，'.join(notes)}，UI-free |")
+    print(f"| Dependency budget | ✅ | {', '.join(notes)}, UI-free |")
     return 0
 
 

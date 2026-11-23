@@ -53,7 +53,7 @@ impl Workspace {
             .cloned();
         let schema = self.schema.clone();
         let parent = self.primary_selection();
-        self.edit("新建实体", |document| {
+        self.edit("create entity", |document| {
             let entity = build_entity(&schema, preset.as_ref(), parent, &document.doc);
             document.doc.add_entity(entity);
         });
@@ -64,7 +64,7 @@ impl Workspace {
             return;
         }
         let indices = self.selection.clone();
-        self.edit("删除实体", |document| {
+        self.edit("delete entity", |document| {
             document.doc.remove_entities(&indices);
         });
         self.clear_selection();
@@ -88,7 +88,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Debug,
-            format!("已复制 {count} 个实体"),
+            format!("copied {count} entities"),
         );
         count
     }
@@ -112,7 +112,7 @@ impl Workspace {
             return Vec::new();
         }
         let parent_valid = parent.filter(|index| *index < self.document().doc.entities.len());
-        let roots = self.edit("粘贴实体", |document| {
+        let roots = self.edit("paste entity", |document| {
             let mut roots = Vec::new();
             for tree in &clipboard.trees {
                 let inserted = document.doc.instantiate_prefab(tree, parent_valid, "");
@@ -135,7 +135,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已粘贴 {} 个实体", roots.len()),
+            format!("pasted {} entities", roots.len()),
         );
         roots
     }
@@ -145,7 +145,7 @@ impl Workspace {
             return;
         }
         let roots = self.selection_roots();
-        let mut inserted = self.edit("复制实体", |document| {
+        let mut inserted = self.edit("duplicate entity", |document| {
             let mut inserted = Vec::new();
 
             for index in roots.iter().rev() {
@@ -169,14 +169,14 @@ impl Workspace {
     }
 
     pub fn reparent(&mut self, index: usize, new_parent: Option<usize>, position: Option<usize>) {
-        let result = self.edit("调整层级", |document| {
+        let result = self.edit("reparent hierarchy", |document| {
             document.doc.reparent(index, new_parent, position).is_ok()
         });
         if !result {
             self.log(
                 LogSource::Editor,
                 LogLevel::Warn,
-                "层级调整被拒绝（自父 / 成环）",
+                "hierarchy adjustment rejected (self-parenting or cycle)",
             );
         }
     }
@@ -186,7 +186,7 @@ impl Workspace {
         if roots.is_empty() {
             return 0;
         }
-        let result = self.edit("调整层级", |document| {
+        let result = self.edit("reparent hierarchy", |document| {
             document.doc.reparent_many(&roots, new_parent)
         });
         match result {
@@ -203,7 +203,7 @@ impl Workspace {
         if roots.is_empty() {
             return 0;
         }
-        let result = self.edit("调整层级", |document| {
+        let result = self.edit("reparent hierarchy", |document| {
             document.doc.reparent_many_at(&roots, target, before)
         });
         match result {
@@ -218,9 +218,9 @@ impl Workspace {
     pub fn set_active_entity(&mut self, index: usize, active: bool) {
         self.edit(
             if active {
-                "启用实体"
+                "enable entity"
             } else {
-                "禁用实体"
+                "disable entity"
             },
             |document| {
                 document.doc.set_active(index, active);
@@ -244,7 +244,7 @@ impl Workspace {
             return;
         }
         let document = self.document_mut();
-        document.undo.push_snapshot("重命名实体", base, &after);
+        document.undo.push_snapshot("rename entity", base, &after);
         document.dirty = was_dirty;
         document.mark_dirty();
     }
@@ -257,7 +257,7 @@ impl Workspace {
     }
 
     pub fn rename_entity(&mut self, index: usize, name: &str) {
-        self.edit("重命名实体", |document| {
+        self.edit("rename entity", |document| {
             document.doc.rename(index, name);
         });
     }

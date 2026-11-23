@@ -1,30 +1,30 @@
-//! 桌面端拉起游戏二进制：定位 + 防重复启动。
+//! Desktop-side game binary spawning: locate + prevent duplicate launch.
 //!
-//! 旧实现用 `Command::new("template")` 交给 `PATH` 解析，结果取决于机器上装了
-//! 什么：可能命中别处的同名程序，也可能在已经有一个游戏在跑时再起一个。
-//! 这里改成按确定的布局找二进制，并用子进程句柄挡住重复启动。
+//! Old impl used `Command::new("template")` relying on `PATH`, result depended on what was installed:
+//! could hit a same-named program elsewhere, or launch a second game while one already running.
+//! Here we locate binary by deterministic layout and use child process handle to block duplicate launch.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
-/// 直接指定游戏二进制的环境变量；设置后必须指向真实存在的文件。
+/// Env var directly specifying game binary; when set must point to a real existing file.
 pub const GAME_BIN_ENV: &str = "PRISMA_GAME_BIN";
 
-/// 游戏 crate 相对仓库根的位置。
+/// Game crate location relative to repo root.
 const GAME_CRATE_DIR: &str = "projects/template";
 
-/// 游戏二进制的文件名（带平台后缀）。
+/// Game binary filename (with platform suffix).
 fn binary_name() -> String {
     format!("template{}", std::env::consts::EXE_SUFFIX)
 }
 
-/// 候选二进制路径，按优先级排列：
+/// Candidate binary paths, in priority order:
 ///
-/// 1. 打包布局——与 launcher 可执行文件同目录；
-/// 2. 开发布局——仓库根下的 `projects/template/target/<profile>/template[.exe]`，
-///    仓库根由 `exe_dir` 逐级向上找 `projects/template/Cargo.toml` 得到。
+/// 1. Packaged layout — same directory as launcher executable;
+/// 2. Dev layout — `projects/template/target/<profile>/template[.exe]` under repo root,
+///    repo root found by walking up from `exe_dir` looking for `projects/template/Cargo.toml`.
 pub fn candidates(exe_dir: &Path, profile: &str) -> Vec<PathBuf> {
     let mut out = vec![exe_dir.join(binary_name())];
     if let Some(root) = repo_root_from(exe_dir) {
@@ -45,11 +45,11 @@ pub(crate) fn repo_root_from(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// 解析要启动的游戏二进制。
+/// Resolve game binary to launch.
 ///
-/// `env_override` 有值时以它为准——这是用户显式指定，指向不存在的文件属于错误，
-/// 不再回退（否则又会静默跑到别的 `template` 上）。没有覆盖值时才走
-/// [`candidates`] 的顺序。
+/// When `env_override` present it takes precedence — explicit user choice, pointing to missing file is an error,
+/// no further fallback (otherwise silently runs another `template`). Only without override walks
+/// [`candidates`] order.
 pub fn resolve(
     exe_dir: &Path,
     profile: &str,
@@ -61,7 +61,7 @@ pub fn resolve(
             return Ok(path);
         }
         return Err(format!(
-            "{GAME_BIN_ENV} 指向的文件不存在：{}",
+            "{GAME_BIN_ENV} points to a nonexistent file: {}",
             path.display()
         ));
     }
@@ -78,30 +78,30 @@ pub fn resolve(
                 .collect::<Vec<_>>()
                 .join("\n");
             format!(
-                "找不到游戏二进制 `{}`，已尝试：\n{list}\n\
-                 开发时先在 projects/template 里 `cargo build`；\
-                 也可以用 {GAME_BIN_ENV} 指定完整路径。",
+                "Cannot find game binary `{}`, tried:\n{list}\n\
+                                  During development run `cargo build` in projects/template;\
+                                  or use {GAME_BIN_ENV} to specify full path.",
                 binary_name()
             )
         })
 }
 
-/// 已启动的游戏子进程；只用来挡住重复启动。
+/// Already launched game child process; only used to block duplicate launch.
 #[derive(Default)]
 pub struct RunningGame(Mutex<Option<Child>>);
 
 impl RunningGame {
-    /// 启动游戏。已有存活子进程时返回错误；已退出的子进程会被顺手回收。
+    /// Launch game. Returns error when a live child process exists; already-exited child reaped.
     pub fn launch(&self, config: Option<String>) -> Result<(), String> {
         let mut slot = self
             .0
             .lock()
-            .map_err(|_| "游戏进程状态已损坏".to_string())?;
+            .map_err(|_| "Game process state poisoned".to_string())?;
         if let Some(child) = slot.as_mut() {
             match child.try_wait() {
-                // 还活着：不再起第二个。
-                Ok(None) => return Err("游戏已经在运行".to_string()),
-                // 已退出或查询失败：清掉句柄，允许重新启动。
+                // Still alive: do not launch second one.
+                Ok(None) => return Err("Game is already running".to_string()),
+                // Already exited or query failed: clear handle, allow relaunch.
                 _ => *slot = None,
             }
         }
@@ -121,11 +121,11 @@ impl RunningGame {
         if let Some(config) = config {
             cmd.env("PRISMA_LAUNCH_CONFIG", config);
         }
-        // 不吞游戏的输出：只把 stdin 接到 null，stdout/stderr 照常继承启动器的控制台。
+        // Do not swallow game output: only connect stdin to null, stdout/stderr inherit launcher console.
         cmd.stdin(Stdio::null());
         let child = cmd
             .spawn()
-            .map_err(|err| format!("启动 {} 失败：{err}", binary.display()))?;
+            .map_err(|err| format!("Failed to launch {}: {err}", binary.display()))?;
         *slot = Some(child);
         Ok(())
     }
@@ -135,20 +135,20 @@ impl RunningGame {
 mod tests {
     use super::*;
 
-    /// 每个测试用独立的临时目录，测试结束不清理也无妨（位于系统临时目录下）。
+    /// Each test uses independent temp dir, not cleaning after test fine (under system temp dir).
     fn scratch(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("prisma-launcher-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        std::fs::create_dir_all(&dir).expect("Create temp dir");
         dir
     }
 
     fn touch(path: &Path) {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("创建父目录");
+            std::fs::create_dir_all(parent).expect("Create parent dir");
         }
-        std::fs::write(path, b"fake").expect("写文件");
+        std::fs::write(path, b"fake").expect("Write file");
     }
 
     #[test]
@@ -157,14 +157,14 @@ mod tests {
         let exe_dir = root.join("dist");
         touch(&exe_dir.join(binary_name()));
 
-        let resolved = resolve(&exe_dir, "debug", None).expect("应命中同目录二进制");
+        let resolved = resolve(&exe_dir, "debug", None).expect("Should hit same-dir binary");
         assert_eq!(resolved, exe_dir.join(binary_name()));
     }
 
     #[test]
     fn dev_layout_finds_the_game_crate_target() {
         let root = scratch("dev");
-        // 仓库：<root>/repo/{Cargo.toml, projects/template/Cargo.toml}
+        // Repo: <root>/repo/{Cargo.toml, projects/template/Cargo.toml}
         let repo = root.join("repo");
         touch(&repo.join("Cargo.toml"));
         touch(&repo.join(GAME_CRATE_DIR).join("Cargo.toml"));
@@ -180,9 +180,10 @@ mod tests {
             .join("src-tauri")
             .join("target")
             .join("debug");
-        std::fs::create_dir_all(&exe_dir).expect("创建 exe 目录");
+        std::fs::create_dir_all(&exe_dir).expect("Create exe dir");
 
-        let resolved = resolve(&exe_dir, "debug", None).expect("应命中 projects/template/target");
+        let resolved =
+            resolve(&exe_dir, "debug", None).expect("Should hit projects/template/target");
         assert_eq!(resolved, game);
     }
 
@@ -194,12 +195,13 @@ mod tests {
         let custom = root.join("custom").join("my-game");
         touch(&custom);
 
-        let resolved = resolve(&exe_dir, "debug", Some(custom.as_os_str())).expect("覆盖值应优先");
+        let resolved = resolve(&exe_dir, "debug", Some(custom.as_os_str()))
+            .expect("Override value should win");
         assert_eq!(resolved, custom);
 
         let missing = root.join("custom").join("nope");
         let err = resolve(&exe_dir, "debug", Some(missing.as_os_str()))
-            .expect_err("覆盖值不存在应报错而不是回退");
+            .expect_err("Missing override should error not fall back");
         assert!(err.contains(GAME_BIN_ENV), "{err}");
     }
 
@@ -207,9 +209,9 @@ mod tests {
     fn missing_binary_lists_every_candidate() {
         let root = scratch("missing");
         let exe_dir = root.join("dist");
-        std::fs::create_dir_all(&exe_dir).expect("创建 exe 目录");
+        std::fs::create_dir_all(&exe_dir).expect("Create exe dir");
 
-        let err = resolve(&exe_dir, "release", None).expect_err("找不到二进制应报错");
+        let err = resolve(&exe_dir, "release", None).expect_err("Missing binary should error");
         assert!(err.contains(&exe_dir.join(binary_name()).display().to_string()));
         assert!(err.contains("projects/template"), "{err}");
     }

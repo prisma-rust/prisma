@@ -223,7 +223,7 @@ mod docs_tests {
 
         assert_eq!(
             documented, registered,
-            "docs/editor-mcp.md 的工具表与注册表不一致（左 = 文档，右 = 代码）"
+            "docs/editor-mcp.md tool table and registry inconsistent (left = docs, right = code)"
         );
 
         for def in &definitions {
@@ -237,7 +237,7 @@ mod docs_tests {
             for arg in required {
                 assert!(
                     DOCS.contains(&format!("`{arg}`")),
-                    "工具 `{}` 的必填参数 `{arg}` 没有写进 docs/editor-mcp.md",
+                    "Tool `{}` required parameter `{arg}` not documented in docs/editor-mcp.md",
                     def.name
                 );
             }

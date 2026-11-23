@@ -33,10 +33,10 @@ fn emission_rate_accumulates_across_frames() {
         },
     );
 
-    // 10/s，每帧 0.05s → 0.5 个/帧，两帧才凑够一个。
+    // 10/s, each frame 0.05s → 0.5 per frame, two frames to make one.
     assert_eq!(particle_emitter_2d_system(&mut world, 0.05), 0);
     assert_eq!(particle_emitter_2d_system(&mut world, 0.05), 1);
-    // 单步上限 `MAX_STEP = 0.1s`（卡顿保护），所以 0.5s 只推进 0.1s。
+    // Single step limit `MAX_STEP = 0.1s` (stutter protection), so 0.5s only advances 0.1s.
     assert_eq!(particle_emitter_2d_system(&mut world, 0.5), 2);
     assert_eq!(particle_emitter_2d_system(&mut world, 0.1), 3);
     assert_eq!(state_of(&world, entity).particles.len(), 3);
@@ -56,7 +56,7 @@ fn the_particle_cap_is_respected() {
     );
 
     let alive = particle_emitter_2d_system(&mut world, 0.5);
-    assert_eq!(alive, 4, "超过上限就停止发射");
+    assert_eq!(alive, 4, "Stop emitting when over limit");
 }
 
 #[test]
@@ -83,9 +83,12 @@ fn gravity_pulls_particles_down_the_y_axis() {
 
     assert!(
         after.y < before.y,
-        "重力必须把粒子往下拉：{before:?} → {after:?}"
+        "Gravity must pull particles down: {before:?} → {after:?}"
     );
-    assert!((after.x - before.x).abs() < 1e-4, "没有水平风时 x 不应漂移");
+    assert!(
+        (after.x - before.x).abs() < 1e-4,
+        "x should not drift with no horizontal wind"
+    );
 }
 
 #[test]
@@ -101,24 +104,24 @@ fn particles_expire_after_their_lifetime() {
         },
     );
 
-    // 出生发生在积分之后，所以第一帧结束时 age 仍是 0。
+    // Spawn happens after integration, so at first frame end age is still 0.
     particle_emitter_2d_system(&mut world, 0.1);
     assert_eq!(
         state_of(&world, entity).particles.len(),
         2,
-        "burst 先发两个"
+        "burst emits two first"
     );
     particle_emitter_2d_system(&mut world, 0.1);
     assert_eq!(
         state_of(&world, entity).particles.len(),
         2,
-        "age 0.1 还没到 0.2 的寿命"
+        "age 0.1 not yet at 0.2 lifetime"
     );
     particle_emitter_2d_system(&mut world, 0.1);
     assert_eq!(
         state_of(&world, entity).particles.len(),
         0,
-        "寿命到点后回收"
+        "Recycle when lifetime reached"
     );
 }
 
@@ -141,7 +144,7 @@ fn pausing_freezes_existing_particles_and_stops_emission() {
     world.get_mut::<ParticleEmitter2D>(entity).unwrap().playing = false;
     particle_emitter_2d_system(&mut world, 0.1);
     let after = state_of(&world, entity).particles.clone();
-    assert_eq!(before, after, "暂停时既不发射也不推进");
+    assert_eq!(before, after, "Paused neither emits nor advances");
 }
 
 #[test]
@@ -162,12 +165,12 @@ fn a_non_looping_duration_stops_emitting() {
     let emitted = state_of(&world, entity).particles.len();
     assert_eq!(emitted, 10, "0.1s × 100/s");
 
-    // 窗口结束后不再发射，已有粒子继续存活。
+    // After window end no more emission, existing particles keep alive.
     particle_emitter_2d_system(&mut world, 0.5);
     assert_eq!(
         state_of(&world, entity).particles.len(),
         emitted,
-        "一次性发射器到点后停止"
+        "One-shot emitter stops when time reached"
     );
 }
 
@@ -182,7 +185,7 @@ fn removing_the_component_drops_the_runtime_state() {
     particle_emitter_2d_system(&mut world, 0.1);
     assert!(
         world.get::<ParticleEmitter2DState>(entity).is_none(),
-        "作者删掉组件后不该留下孤儿粒子"
+        "Removing component should not leave orphan particles"
     );
 }
 
@@ -216,7 +219,7 @@ fn spread_zero_uses_the_authored_direction() {
 #[test]
 fn emitters_are_transformed_into_world_space() {
     let mut world = World::new();
-    // 30° 绕 Z 旋转 + (1, 2, 0) 平移的发射器。
+    // Emitter rotated 30° around Z + (1, 2, 0) translation.
     let entity = world.spawn();
     world.insert(
         entity,
@@ -243,7 +246,7 @@ fn emitters_are_transformed_into_world_space() {
     let particle = state_of(&world, entity).particles[0];
     assert!(
         (particle.position - glam::vec2(1.0, 2.0)).length() < 1e-4,
-        "Point 形状从发射器原点出生：{:?}",
+        "Point shape spawns at emitter origin: {:?}",
         particle.position
     );
 }
@@ -267,21 +270,25 @@ fn particle_quads_reach_the_2d_draw_list_with_sorting_and_fade() {
             ..ParticleEmitter2D::default()
         },
     );
-    // 第一帧只发射（age 0），第二帧才推进到 0.1s。
+    // First frame only emits (age 0), second frame advances to 0.1s.
     particle_emitter_2d_system(&mut world, 0.1);
     particle_emitter_2d_system(&mut world, 0.1);
 
     let items = crate::scene::systems::render::scene_2d_system(&world);
-    assert_eq!(items.len(), 1, "无精灵 / 折线时只剩这一个粒子");
+    assert_eq!(
+        items.len(),
+        1,
+        "With no sprite / polyline only this one particle left"
+    );
 
     let item = &items[0];
-    // 四边形尺寸 = start_size，中心 = 发射器的世界位置。
-    // `to_cols_array_2d`：model[0] / model[3] 分别是 X 轴与平移列。
+    // Quad size = start_size, center = emitter world position.
+    // `to_cols_array_2d`: model[0] / model[3] are X axis and translation column.
     assert!((item.model[0][0] - 0.5).abs() < 1e-6, "{:?}", item.model);
     assert!((item.model[3][0] - 3.0).abs() < 1e-6);
     assert!((item.model[3][1] - 5.0).abs() < 1e-6);
     assert_eq!(item.texture, crate::scene::systems::render::SOLID_TEXTURE);
-    // 存活 0.1 / 1.0 → alpha 0.9。
+    // Alive 0.1 / 1.0 → alpha 0.9.
     assert!((item.color[3] - 0.9).abs() < 1e-4, "{:?}", item.color);
     let _ = entity;
 }
@@ -289,7 +296,7 @@ fn particle_quads_reach_the_2d_draw_list_with_sorting_and_fade() {
 #[test]
 fn particles_sort_against_sprites_by_layer() {
     let mut world = World::new();
-    // 精灵层 10，粒子层 20 → 粒子画在后面（更靠上层）。
+    // Sprite layer 10, particle layer 20 → particle drawn after (higher layer).
     let sprite = world.spawn();
     world.insert(sprite, crate::scene::components::SpriteRenderer::default());
     world.insert(
@@ -325,7 +332,7 @@ fn particles_sort_against_sprites_by_layer() {
 
     let items = crate::scene::systems::render::scene_2d_system(&world);
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0].texture, 1, "精灵（层 10）先画");
+    assert_eq!(items[0].texture, 1, "Sprite (layer 10) drawn first");
     assert_eq!(
         items[1].texture,
         crate::scene::systems::render::SOLID_TEXTURE
@@ -334,8 +341,8 @@ fn particles_sort_against_sprites_by_layer() {
 
 #[test]
 fn an_authored_component_json_reaches_the_particle_system() {
-    // 与 `SceneLoader` 同一条路：registry.apply 就是 `.scene.json` / RSCN
-    // 把组件写进 World 的入口。
+    // Same path as `SceneLoader`: registry.apply is entry that writes
+    // components into World from `.scene.json` / RSCN.
     let mut registry = prism_scene::registry::ComponentRegistry::new();
     prism_scene::registry::register_builtin_components(&mut registry);
     let authored = serde_json::json!({
@@ -369,7 +376,7 @@ fn an_authored_component_json_reaches_the_particle_system() {
 
     particle_emitter_2d_system(&mut world, 0.1);
     let items = crate::scene::systems::render::scene_2d_system(&world);
-    // burst 1 + 0.1s × 50/s = 6 个。
+    // burst 1 + 0.1s × 50/s = 6 particles.
     assert_eq!(items.len(), 6);
     assert!((items[0].model[0][0] - 0.25).abs() < 1e-6);
 }

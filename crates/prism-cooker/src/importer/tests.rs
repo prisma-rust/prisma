@@ -59,7 +59,7 @@ fn texture_importer_imports_with_metadata() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_tex.png");
 
-    // 写入 a real 2×2 PNG via the 图像 crate.
+    // Write a real 2×2 PNG via the image crate.
     let img = image::RgbaImage::from_raw(
         2,
         2,
@@ -156,13 +156,13 @@ fn import_pipeline_skips_cached_files() {
     let mut db = AssetDatabase::new();
     let mut cache = ImportCache::new();
 
-    // 第一个 导入
+    // first  import
     let r1 = pipeline
         .import_file(&path, &mut db, &mut cache, None)
         .unwrap();
     assert!(r1.was_imported);
 
-    // 秒 导入 (cached).
+    // seconds  import  (cached).
     let r2 = pipeline
         .import_file(&path, &mut db, &mut cache, None)
         .unwrap();
@@ -211,7 +211,7 @@ fn import_pipeline_updates_database() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_db.png");
 
-    // 写入 a real 1×1 red PNG.
+    // Write a real 1×1 red PNG.
     let img = image::RgbaImage::from_raw(1, 1, vec![255, 0, 0, 255]).unwrap();
     img.save(&path).unwrap();
 
@@ -266,14 +266,14 @@ fn explicit_relative_key_reuses_scanned_record() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// ── Real glTF / GLB 导入 test ──────────────────────────────────
+// ── Real glTF / GLB import  test ──────────────────────────────────
 
 /// Build a minimal valid GLB file in memory.
 ///
-/// 包含 one triangle 网格 (3 顶点 3 unsigned-short indices),
-/// no 材质 no textures.
+/// Contains one triangle mesh (3 vertices, 3 unsigned-short indices),
+/// no material  no textures.
 fn create_minimal_glb_bytes() -> Vec<u8> {
-    // Positions: 右 triangle in XY 平面 Z=0.
+    // Positions: right triangle in XY plane at Z=0.
     let positions: &[f32] = &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let indices: &[u16] = &[0, 1, 2];
 
@@ -371,7 +371,7 @@ fn gltf_importer_imports_real_glb() {
         "intermediate should have data"
     );
 
-    // Validate RMXI header in 输出
+    // Validate RMXI header in output
     assert_eq!(&result.output_data[..4], b"RMXI");
     let verts = u32::from_le_bytes(result.output_data[5..9].try_into().unwrap());
     let idxs = u32::from_le_bytes(result.output_data[9..13].try_into().unwrap());
@@ -388,10 +388,10 @@ fn gltf_importer_imports_real_glb() {
 }
 
 // -------------------------------------------------------------------
-// glTF 场景图（#520）
+// glTF scene graph (#520)
 // -------------------------------------------------------------------
 
-/// 把任意 JSON + 二进制块打成 GLB（chunk 按 4 字节对齐）。
+/// Pack any JSON + binary chunk into GLB (chunk padded to 4 bytes).
 fn pack_glb(json: serde_json::Value, bin: &[u8]) -> Vec<u8> {
     let json_bytes = serde_json::to_string(&json).unwrap();
     let json_padding = (4 - (json_bytes.len() % 4)) % 4;
@@ -435,7 +435,7 @@ fn import_bytes(name: &str, glb: Vec<u8>) -> ImportResult {
     result
 }
 
-/// 读 RMXI 的头部与顶点/索引数量。
+/// Read RMXI header and vertex / index counts.
 fn rmxi_counts(data: &[u8]) -> (usize, usize) {
     assert_eq!(&data[..4], b"RMXI");
     let verts = u32::from_le_bytes(data[5..9].try_into().unwrap()) as usize;
@@ -443,7 +443,7 @@ fn rmxi_counts(data: &[u8]) -> (usize, usize) {
     (verts, idxs)
 }
 
-/// 读 RMXI 的第 `index` 个顶点位置（顶点区紧跟 17 字节头部）。
+/// Read RMXI vertex `index` position (vertex region tightly follows 17-byte header).
 fn rmxi_position(data: &[u8], index: usize) -> [f32; 3] {
     let base = 17 + index * 12;
     [
@@ -453,7 +453,7 @@ fn rmxi_position(data: &[u8], index: usize) -> [f32; 3] {
     ]
 }
 
-/// 一个三角形的位置 + 索引（u16），返回 (bin 片段, bufferView/accessor 的偏移信息)。
+/// One triangle position + index (u16), return (bin fragment, bufferView/accessor offset info).
 fn triangle_bytes(scale: f32) -> (Vec<u8>, Vec<u8>) {
     let positions: &[f32] = &[0.0, 0.0, 0.0, scale, 0.0, 0.0, 0.0, scale, 0.0];
     let indices: &[u16] = &[0, 1, 2];
@@ -480,7 +480,7 @@ fn accessor(
         "count": count,
         "type": kind,
     });
-    // glTF 要求 POSITION 访问器带 min/max。
+    // glTF requires POSITION accessor to have min/max.
     if kind == "VEC3" && component_type == 5126 {
         value["min"] = serde_json::json!([-1000.0, -1000.0, -1000.0]);
         value["max"] = serde_json::json!([1000.0, 1000.0, 1000.0]);
@@ -490,8 +490,8 @@ fn accessor(
 
 #[test]
 fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
-    // 一个网格含两个 primitive，被两个带平移的节点引用 —— 旧实现只会留下
-    // 「第一个网格的第一个 primitive」在原点（#520）。
+    // One mesh with two primitives referenced by two translated nodes — old implementation only kept below
+    // "first mesh first primitive" at origin (#520).
     let (pos_a, idx_a) = triangle_bytes(1.0);
     let (pos_b, idx_b) = triangle_bytes(2.0);
     let mut bin = Vec::new();
@@ -553,17 +553,17 @@ fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
 
     let result = import_bytes("test_multi_primitive.glb", pack_glb(json, &bin));
     let (verts, idxs) = rmxi_counts(&result.output_data);
-    assert_eq!(verts, 12, "两个节点 × 两个 primitive × 3 顶点");
+    assert_eq!(verts, 12, "Two nodes × two primitives × 3 vertices");
     assert_eq!(idxs, 12);
     assert_eq!(
         result.output_data[4], 2,
-        "多 primitive 网格必须写 RMXI v2 submesh 表"
+        "Multi-primitive mesh must write RMXI v2 submesh table"
     );
 
     let meta = result.metadata.unwrap();
     assert_eq!(meta["primitive_count"], 4);
     assert_eq!(meta["node_count"], 2);
-    // 每个 primitive 的 index range + 材质都要留下（#520）。
+    // Each primitive index range + material must be kept below (#520).
     assert_eq!(meta["submesh_count"], 4);
     assert_eq!(meta["submeshes"][0]["index_start"], 0);
     assert_eq!(meta["submeshes"][0]["index_count"], 3);
@@ -581,10 +581,10 @@ fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
     assert_eq!(meta["materials"][1]["double_sided"], true);
     assert_eq!(meta["materials"][1]["alpha_mode"], "Opaque");
 
-    // 第一个节点的顶点被平移了 +5，第二个节点在 z=7。
+    // First node vertices translated +5, second node at z=7.
     let first = rmxi_position(&result.output_data, 0);
     assert!((first[0] - 5.0).abs() < 1e-5, "got {first:?}");
-    // 第 7..9 个顶点属于第二个节点（每个节点的网格有 6 个顶点）。
+    // Vertices 7..9 belong to second node (each node mesh has 6 vertices).
     let second_node = rmxi_position(&result.output_data, 6);
     assert!((second_node[0]).abs() < 1e-5, "got {second_node:?}");
     assert!((second_node[2] - 7.0).abs() < 1e-5, "got {second_node:?}");
@@ -786,13 +786,16 @@ fn gltf_import_synthesises_indices_for_non_indexed_primitives() {
     let result = import_bytes("test_non_indexed.glb", pack_glb(json, &positions));
     let (verts, idxs) = rmxi_counts(&result.output_data);
     assert_eq!(verts, 3);
-    assert_eq!(idxs, 3, "非索引网格要补一条顺序索引，而不是报错");
+    assert_eq!(
+        idxs, 3,
+        "Non-indexed mesh must get an ordered index, not an error"
+    );
 }
 
 #[test]
 fn gltf_import_transforms_normals_with_the_inverse_transpose() {
-    // 节点绕 X 轴转 90°、X 方向再放大 4 倍：法线 (0,0,1) 应该变成 (0,-1,0)，
-    // 而且不能因为缩放被拉长或反向。
+    // Node rotates 90° around X, X scaled 4×: normal (0,0,1) should become (0,-1,0),
+    // and must not be stretched or flipped by scale.
     let (positions, indices) = triangle_bytes(1.0);
     let normals: Vec<u8> = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
         .iter()
@@ -838,7 +841,7 @@ fn gltf_import_transforms_normals_with_the_inverse_transpose() {
     assert_eq!((verts, idxs), (3, 3));
     assert!(result.metadata.unwrap()["has_normals"].as_bool().unwrap());
 
-    // 头部 17 字节 + 顶点区（3 * 12）+ UV（0 通道没有，所以跳过）= 法线区。
+    // Header 17 bytes + vertex region (3 * 12) + UV (0 channel skipped) = normal region.
     let normal_base = 17 + 3 * 12;
     let read = |offset: usize| {
         f32::from_le_bytes(result.output_data[offset..offset + 4].try_into().unwrap())
@@ -900,12 +903,12 @@ fn gltf_import_drops_normals_when_any_primitive_lacks_them() {
     let meta = result.metadata.unwrap();
     assert_eq!(
         meta["has_normals"], false,
-        "有一个 primitive 缺法线时整份网格不带法线（不拿零值冒充）"
+        "If one primitive lacks normals the entire mesh has no normals (no zero-value faking)"
     );
 }
 
 // -------------------------------------------------------------------
-// 材质 Importer
+// material  Importer
 // -------------------------------------------------------------------
 
 #[test]
@@ -925,8 +928,8 @@ fn material_importer_roundtrip_with_textures() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_material.mat.json");
 
-    // Register two 纹理 资源 records in the DB so the importer can
-    // 解析 their paths to AssetId dependencies.
+    // Register two texture asset records in the DB so the importer can
+    // parse  their paths to AssetId dependencies.
     let mut db = AssetDatabase::new();
     let albedo_id = db.generate_id();
     let occ_id = db.generate_id();
@@ -970,7 +973,7 @@ fn material_importer_roundtrip_with_textures() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // Two 纹理 deps resolved.
+    // Two texture  deps resolved.
     assert_eq!(result.dependencies.len(), 2);
     assert_eq!(result.dependencies[0], albedo_id);
     assert_eq!(result.dependencies[1], occ_id);
@@ -980,7 +983,7 @@ fn material_importer_roundtrip_with_textures() {
     // Version 2 adds the alpha-mode byte + cutoff after the scalar block.
     assert_eq!(result.output_data[5], 2);
 
-    // Metadata carries the 槽 presence flags.
+    // Metadata carries the slot presence flags.
     let meta = result.metadata.unwrap();
     let slots = meta["texture_slots"].as_array().unwrap();
     assert_eq!(slots.len(), 5);
@@ -993,8 +996,8 @@ fn material_importer_roundtrip_with_textures() {
 
 #[test]
 fn material_importer_handles_unresolved_texture() {
-    // A 纹理 path not present in the DB should be dropped (warn), not
-    // abort the 导入 The 材质 still imports with that 槽 空
+    // A texture  path not present in the DB should be dropped (warn), not
+    // Abort import; the material still imports with that slot empty
     let imp = MaterialImporter;
     let dir = std::env::temp_dir();
     let path = dir.join("test_material_missing_tex.mat.json");
@@ -1013,7 +1016,7 @@ fn material_importer_handles_unresolved_texture() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // Unresolved -> 0 deps, 材质 still imports.
+    // Unresolved -> 0 deps, material  still imports.
     assert!(result.dependencies.is_empty());
 
     std::fs::remove_file(&path).ok();
@@ -1025,7 +1028,7 @@ fn material_importer_uses_defaults_for_missing_scalars() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_material_defaults.mat.json");
 
-    // 空 对象 -> all defaults.
+    // Empty texture -> all defaults.
     std::fs::write(&path, "{}").unwrap();
 
     let ctx = ImportContext {
@@ -1036,14 +1039,14 @@ fn material_importer_uses_defaults_for_missing_scalars() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // 78 字节 最小 (5 magic + 1 version + 72 scalars), no textures.
+    // 78 byte  min  (5 magic + 1 version + 72 scalars), no textures.
     assert!(result.output_data.len() >= 78);
 
     std::fs::remove_file(&path).ok();
 }
 
 // -------------------------------------------------------------------
-// 着色器 Importer
+// shader  Importer
 // -------------------------------------------------------------------
 
 #[test]
@@ -1126,7 +1129,7 @@ fn shader_importer_respects_settings_overrides() {
 }
 
 // -------------------------------------------------------------------
-// OBJ 导入器（#520）
+// OBJ importer (#520)
 // -------------------------------------------------------------------
 
 fn import_obj(name: &str, source: &str) -> Result<ImportResult, ImportError> {
@@ -1216,7 +1219,7 @@ f 1//1 3//1 4//1
     .unwrap();
 
     let (verts, idxs) = rmxi_counts(&result.output_data);
-    // 四个位置各出现一次；两个三角形共享 1 和 3。
+    // Four positions each appear once; two triangles share 1 and 3.
     assert_eq!((verts, idxs), (4, 6));
 }
 
@@ -1257,11 +1260,11 @@ fn default_registry_routes_obj_to_the_obj_importer() {
     assert!(!ObjImporter.can_import(Path::new("model.gltf")));
 }
 
-/// 造一个带骨架 + 蒙皮 + 一段动画的最小 GLB（#560）。
+/// Build a minimal GLB with skeleton + skin + one animation (#560).
 ///
-/// 节点树：`0`（根）→ `1`（关节）→ `2`（关节），`3` 是挂网格的节点（skin 0）。
-/// `skin.joints` 故意写成 `[2, 1]`（子在前），用来验证导入器会重排成拓扑序
-/// 并把顶点的 JOINTS_0 一起重映射。
+/// Node tree: `0` (root) → `1` (joint) → `2` (joint), `3` is node carrying mesh (skin 0).
+/// `skin.joints` deliberately `[2, 1]` (child before parent) to verify importer sorts to topological order
+/// and remaps vertex JOINTS_0 accordingly.
 fn skinned_glb() -> Vec<u8> {
     let positions: Vec<u8> = [
         0.0f32, 0.0, 0.0, //
@@ -1275,7 +1278,7 @@ fn skinned_glb() -> Vec<u8> {
         .iter()
         .flat_map(|value| value.to_le_bytes())
         .collect();
-    // JOINTS_0：顶点 0/1 挂 node1（本地索引 1），顶点 2 挂 node2（本地索引 0）。
+    // JOINTS_0: vertices 0/1 attached to node1 (local index 1), vertex 2 attached to node2 (local index 0).
     let joints: Vec<u8> = [1u16, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
         .iter()
         .flat_map(|value| value.to_le_bytes())
@@ -1288,11 +1291,11 @@ fn skinned_glb() -> Vec<u8> {
     .iter()
     .flat_map(|value| value.to_le_bytes())
     .collect();
-    // inverse bind 按 `skin.joints` 的顺序给出，即 [node2(knee), node1(hip)]：
-    // knee 在 (0, 1, 0)，所以它的 inverse bind 平移列是 (0, -1, 0)。
+    // Inverse bind given in `skin.joints` order, i.e. [node2(knee), node1(hip)]:
+    // knee at (0, 1, 0), so its inverse bind translation column is (0, -1, 0).
     let inverse_binds: Vec<u8> = [
         1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0,
-        // hip 在原点：单位矩阵。
+        // hip at origin: identity matrix.
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
     .iter()
@@ -1368,8 +1371,8 @@ fn skinned_glb() -> Vec<u8> {
 
 #[test]
 fn rig_paths_predict_exactly_what_side_assets_cook() {
-    // 打包器用 `rig_paths`（只读 glTF）把组件填进场景，用 `side_assets` 真正
-    // 编码并落盘 —— 两边路径必须逐字节一致，否则场景会指向不存在的资产（#560 P0-4）。
+    // Packer uses `rig_paths` (read-only glTF) to fill components into scene, `side_assets` truly
+    // encodes and writes to disk — both paths must be byte-identical, otherwise scene points to missing asset (#560 P0-4).
     let glb = skinned_glb();
     let path = std::env::temp_dir().join("prisma_rig_paths.glb");
     std::fs::write(&path, &glb).unwrap();
@@ -1408,7 +1411,7 @@ fn rig_paths_predict_exactly_what_side_assets_cook() {
 fn gltf_side_assets_cook_rskel_rskin_and_ranim() {
     use prism_asset::formats_skinned::{decode_ranim, decode_rskel, decode_rskin};
 
-    // 合成骨架：子关节在前、顶点挂到各自的关节上、一段平移动画（#560）。
+    // Synthesized skeleton: child before parent, vertices attached to respective joints, one linear animation (#560).
     let glb = skinned_glb();
     let path = std::env::temp_dir().join("prisma_skinned_import.glb");
     std::fs::write(&path, &glb).unwrap();
@@ -1438,16 +1441,16 @@ fn gltf_side_assets_cook_rskel_rskin_and_ranim() {
     let knee = skeleton.joint_index("knee").expect("knee joint");
     assert_eq!(skeleton.joints[hip].parent, None);
     assert_eq!(skeleton.joints[knee].parent, Some(hip as u16));
-    // 参考姿态来自 inverse bind：knee 相对 hip 是 +1m。
+    // Reference pose from inverse bind: knee relative to hip is +1m.
     let reference = skeleton.joints[knee].reference_local.translation;
     assert!((reference[1] - 1.0).abs() < 1e-4, "got {reference:?}");
 
     let mesh = decode_rskin(&find(&mesh_path)).expect(".rskin decodes");
     assert_eq!(mesh.vertex_count, 3);
     assert_eq!(mesh.joint_count, 2);
-    // JOINTS_0 里的本地索引已经被重映射到拓扑序后的全局下标：
-    // 顶点 0/1 的第一个影响是 node1(hip) → 全局 0，顶点 2 是 node2(knee) → 全局 1。
-    // 权重为 0 的备用槽也会一起重映射（保持在范围内，着色时不起作用）。
+    // Local indices in JOINTS_0 already remapped to global indices after topological sort:
+    // vertices 0/1 first influence node1(hip) → global 0, vertex 2 is node2(knee) → global 1.
+    // Spare slots with weight 0 also remapped (kept in range, no effect during shading).
     assert_eq!(mesh.joints[0][0], 0);
     assert_eq!(mesh.weights[0], [1.0, 0.0, 0.0, 0.0]);
     assert_eq!(mesh.joints[2][0], 1);
@@ -1509,7 +1512,7 @@ fn an_authored_notify_file_is_merged_into_the_matching_clip() {
     std::fs::create_dir_all(dir.join("hero.glb.skinning")).unwrap();
     let path = dir.join("hero.glb");
     std::fs::write(&path, &glb).unwrap();
-    // 文件名里的剪辑名与 glTF 的动画名一致（`walk`）。
+    // Clip name in file matches glTF animation name (`walk`).
     std::fs::write(
         dir.join("hero.glb.skinning/notifies.json"),
         br#"{"clips": {"walk": [
@@ -1537,7 +1540,7 @@ fn an_authored_notify_file_is_merged_into_the_matching_clip() {
         .iter()
         .map(|notify| notify.name.as_str())
         .collect();
-    // 负时间被丢掉，剩下的按时间排序。
+    // Negative times dropped, remaining sorted by time.
     assert_eq!(names, vec!["Footstep.L", "Footstep.R"]);
     assert!((clip.notifies[0].time - 0.25).abs() < 1e-6);
 }
@@ -1556,7 +1559,7 @@ fn a_broken_notify_file_fails_instead_of_silently_dropping_events() {
     let message = format!("{error}");
     assert!(
         message.contains("invalid notify file"),
-        "错误要点名事件表: {message}"
+        "Error must name event table: {message}"
     );
 }
 
@@ -1588,12 +1591,12 @@ fn a_notify_file_that_names_no_clip_changes_nothing() {
         .clone();
     assert!(
         decode_ranim(&bytes).expect("decode").notifies.is_empty(),
-        "对不上的剪辑名不该把事件塞进别的剪辑"
+        "Mismatched clip name must not stuff events into another clip"
     );
 }
 
 // -------------------------------------------------------------------
-// 动画图 Importer
+// Animation graph importer
 // -------------------------------------------------------------------
 
 #[test]
@@ -1756,7 +1759,11 @@ fn an_authored_montage_file_is_merged_into_the_matching_clip() {
         .iter()
         .map(|section| section.name.as_str())
         .collect();
-    assert_eq!(names, vec!["Start", "Land"], "编码时按 start 排序");
+    assert_eq!(
+        names,
+        vec!["Start", "Land"],
+        "Sorted by start at encode time"
+    );
     assert!((clip.sections[0].end - 0.3).abs() < 1e-6);
     let windows: Vec<&str> = clip
         .warp_windows
@@ -1778,7 +1785,7 @@ fn a_broken_or_out_of_range_montage_file_fails() {
     let error = GltfImporter::side_assets(&path, "models/hero.glb").unwrap_err();
     assert!(
         format!("{error}").contains("invalid montage file"),
-        "错误要点名 Montage 表: {error}"
+        "Error must name Montage table: {error}"
     );
 
     std::fs::write(
@@ -1789,7 +1796,7 @@ fn a_broken_or_out_of_range_montage_file_fails() {
     let error = GltfImporter::side_assets(&path, "models/hero.glb").unwrap_err();
     assert!(
         format!("{error}").contains("beyond"),
-        "超出剪辑长度的段要报错: {error}"
+        "Segment beyond clip length must error: {error}"
     );
 
     std::fs::write(
@@ -1800,7 +1807,7 @@ fn a_broken_or_out_of_range_montage_file_fails() {
     let error = GltfImporter::side_assets(&path, "models/hero.glb").unwrap_err();
     assert!(
         format!("{error}").contains("0 <= start <= end"),
-        "倒序时间要报错: {error}"
+        "Reverse-order time must error: {error}"
     );
 
     std::fs::write(
@@ -1811,7 +1818,7 @@ fn a_broken_or_out_of_range_montage_file_fails() {
     let error = GltfImporter::side_assets(&path, "models/hero.glb").unwrap_err();
     assert!(
         format!("{error}").contains("beyond"),
-        "超出剪辑长度的 warp window 要报错: {error}"
+        "Warp window beyond clip length must error: {error}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -1835,7 +1842,7 @@ fn a_broken_sync_marker_file_fails_instead_of_silently_dropping_markers() {
     let message = format!("{error}");
     assert!(
         message.contains("invalid sync marker file"),
-        "错误要点名同步标记表: {message}"
+        "Error must name sync marker table: {message}"
     );
 }
 

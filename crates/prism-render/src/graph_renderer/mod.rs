@@ -1,9 +1,9 @@
-//! 基于 RenderGraph 的渲染器驱动程序。
+//! RenderGraph-based render driver.
 //!
-//! [`GraphRenderer`] 取代了旧版渲染器。它拥有 Vulkan 上下文、
-//! 交换链、命令池 + 每帧命令缓冲区、帧 UBO、IBL 资源以及三个场景管理器
-//!（网格、纹理、材质）。它构建包含 [`ShadowMapPass`] 和 [`ForwardPass`]
-//! 的 [`RenderGraph`]，每帧执行并呈现到交换链。
+//! [`GraphRenderer`] replaces old version renderer. It holds Vulkan below files,
+//! swap chain, command pool + per-frame command buffer, frame UBO, IBL resources and three scene managers
+//! (mesh, texture, material). It builds [`ShadowMapPass`] and [`ForwardPass`]
+//! [`RenderGraph`], executes every frame and presents to swap chain.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::managers::{MeshHandle, RenderMaterialManager, RenderMeshManager, Rend
 use crate::offscreen::OffscreenTarget;
 #[cfg(feature = "pathtrace")]
 use crate::pt_pass::PathTracePass;
-/// `ShadowMapPass::setup` 是 trait 方法，只有注册阴影 pass 时才需要导入。
+/// `ShadowMapPass::setup` is trait method, only needs import when registering shadow pass.
 #[cfg(feature = "shadows")]
 use crate::render_graph::RenderPassNode;
 use crate::render_graph::{
@@ -84,9 +84,9 @@ pub struct FrameInput<'a> {
     pub shadow_cascade_count: u32,
     pub inv_projection: [[f32; 4]; 4],
     pub debug_flags: u32,
-    /// 前向管线线框模式（#431）；设备不支持 `fillModeNonSolid` 时被忽略。
+    /// Before switching to wireframe mode (#431); ignored when device does not support `fillModeNonSolid`.
     pub wireframe: bool,
-    /// 正常填充 + 线框叠加（#431）。`wireframe` 为 true 时被纯线框覆盖。
+    /// Positive fill + wireframe overlay (#431). When `wireframe` is true, overridden by pure wireframe.
     pub shaded_wireframe: bool,
     pub tonemap_mode: u32,
     /// Post-process anti-aliasing mode (0 = off, 1 = FXAA). Runs inside
@@ -130,8 +130,8 @@ pub struct FrameInput<'a> {
     /// (issue #10); the rasterizer already gets this from the projection
     /// matrix alone.
     pub camera_orthographic: bool,
-    /// 主方向光是否投阴影（`Light.shadows != None`）。`false` 时整帧
-    /// 跳过阴影贴图渲染（`ShadowMode::None`），着色器侧也会得到 `shadowStrength = 0`。
+    /// Main directional light whether casts shadow (`Light.shadows != None`). `false` skips entire frame
+    /// skips shadow texture render (`ShadowMode::None`), shader side will also get `shadowStrength = 0`.
     pub shadows_enabled: bool,
     /// Clear color for the scene color attachment. Applied when the render pass
     /// begins; shows through where no skybox or geometry is drawn. Default gray
@@ -141,16 +141,16 @@ pub struct FrameInput<'a> {
     /// UI overlay draw commands (filled by engine's ui_render_system).
     /// `None` in headless mode.
     pub ui_overlay: Option<&'a crate::ui_overlay::UiOverlayInput>,
-    /// 是否在场景渲染中绘制地面参考网格。
+    /// Whether to draw ground reference mesh in scene render.
     pub show_grid: bool,
-    /// 统一脏分派计划（DESIGN §9 / #1157）。
+    /// Unified dirty dispatch schedule (DESIGN §9 / #1157).
     pub dispatch_plan: Option<&'a crate::dirty_dispatch::DirtyDispatchPlan>,
 }
 
 /// GPU session that owns the long-lived Vulkan runtime objects (device,
 pub use crate::render_runtime::RenderRuntime;
 
-/// 遮挡剔除粗深度的屏幕块边长（像素）。4×4 在 1080p 下是 480×270 个深度值。
+/// Occlusion cull coarse depth screen block edge length (pixels). 4×4 in 1080p below is 480×270 depth values.
 const OCCLUSION_TILE_SIZE: u32 = 4;
 
 mod assets;
@@ -174,7 +174,7 @@ pub struct GraphRenderer {
     texture_manager: RenderTextureManager,
     material_manager: RenderMaterialManager,
     // Owned for RAII; IBL cubemap + descriptor set are consumed via the
-    // 描述符 集合 handle stored in `forward_pass`. Explicitly destroyed
+    // Descriptor set handle stored in `forward_pass`. Explicitly destroyed
     // in `destroy()` so the device handle is valid during cleanup.
     ibl: IblResources,
     /// Fingerprint of the active environment payload (`Some(None)` = empty IBL),
@@ -190,11 +190,11 @@ pub struct GraphRenderer {
     /// Scene-level GI probe volume resources (set 5). Survives swapchain
     /// recreation; only rebuilt on scene/level change.
     scene_scope: SceneScope,
-    /// 固定 bindless 槽位，持有当前 IBL 的 BRDF LUT 视图。`set_environment`
-    /// 重建 IBL 时用 `register_with_handle` 覆盖同一槽，避免 bindless 表增长。
+    /// Fixed bindless slot bit, holds current IBL BRDF LUT view. `set_environment`
+    /// When heavy rebuilding IBL, uses `register_with_handle` to overwrite same slot, avoiding bindless table growth.
     brdf_bindless_slot: u32,
     graph: RenderGraph,
-    /// All 渲染 passes (ShadowMapPass + ForwardPass + GtaoPass + PostPass)
+    /// All render  passes (ShadowMapPass + ForwardPass + GtaoPass + PostPass)
     /// are owned by the graph and executed in registration order. The
     /// `GraphRenderer` no longer pokes individual passes; it drives them via
     /// `graph.execute` and reaches into them only for lifecycle ops
@@ -205,14 +205,14 @@ pub struct GraphRenderer {
     /// Path of the `.cube` LUT currently bound to `PostPass` (#502). `None`
     /// means the pass still holds its startup identity LUT.
     applied_lut: Option<PathBuf>,
-    /// 当前需要画选中描边的 ECS 实体 id（#487）。编辑器每帧通过
-    /// [`Self::set_outline_entities`] 更新；空 = 不画。
+    /// Current need to draw outline ECS entity id (#487). Editor updates every frame via
+    /// [`Self::set_outline_entities`] update; empty = not draw.
     outline_entities: Vec<u32>,
     shadow_sampler: vk::Sampler,
-    /// `ForwardPass` 在可选 pass 关闭/未就绪时的 1×1 占位纹理集合。
+    /// `ForwardPass` optional pass disabled/not ready when 1×1 placeholder texture set.
     placeholders: crate::placeholder::ForwardPlaceholders,
     color_format: vk::Format,
-    /// ECS UI 叠加（窗口/离屏）与外部宿主 UI 叠加层宿主（#583, #597）。
+    /// ECS UI overlay (window / offscreen) and outside host UI overlay layer host (#583, #597).
     ui_host: UiOverlayHost,
     /// Optional NVIDIA NRD runtime instance (`NRD.dll` / `libNRD.so`).
     #[cfg(feature = "nrd")]
@@ -257,15 +257,15 @@ pub struct GraphRenderer {
     offscreen: Option<OffscreenTarget>,
     /// Fence used to synchronize command buffer reuse in headless / offscreen mode.
     headless_fence: vk::Fence,
-    /// GPU 时间戳剖析与截图状态机（#518）。
+    /// GPU timestamp profiling and screenshot state machine (#518).
     telemetry: RenderTelemetry,
-    /// 上一帧深度的粗粒度回读（#1007）。关闭时不分配缓冲、不回读。
+    /// Per-frame coarse depth readback (#1007). Disabled: no buffer allocated, no readback.
     occlusion: OcclusionState,
-    /// 暂存的资产上传请求队列（#1157），在 `prepare` 阶段统一刷新。
+    /// Staged asset upload request queue (#1157), uniformly flushed in `prepare` phase.
     staged_asset_requests: Vec<crate::asset_bridge::AssetResolveRequest>,
-    /// 暂存的资产释放请求队列（#1157），在 `prepare` 阶段统一刷新。
+    /// Staged asset release request queue (#1157), uniformly flushed in `prepare` phase.
     staged_asset_releases: Vec<crate::asset_bridge::AssetRelease>,
-    /// 显存子分配器（#1030）。
+    /// VRAM sub-allocator (#1030).
     suballocator: crate::suballocator::MemorySuballocator,
 
     // ── last field ──────────────────────────────────────────────────
@@ -287,7 +287,7 @@ pub struct FrameCtx {
     pub image_index: u32,
     pub frame_index: u32,
     pub extent: vk::Extent2D,
-    /// 场景实际渲染的 extent（内部渲染分辨率，#613）；未开启时等于 `extent`。
+    /// Scene actual render extent (internal render resolution, #613); not equal to `extent` when not opened at start.
     pub render_extent: vk::Extent2D,
     fence: vk::Fence,
     image_available: vk::Semaphore,
@@ -299,8 +299,8 @@ impl GraphRenderer {
         window_extensions: Vec<&str>,
         window: &dyn raw_window_handle::HasDisplayHandle,
         window_handle: &dyn raw_window_handle::HasWindowHandle,
-        // 窗口模式：IBL 由场景 `EnvironmentLighting` 在加载时经 `set_environment`
-        // 驱动；此处忽略启动期 env_bytes（保持引擎「场景声明式光照」）。
+        // Window mode: IBL driven by scene `EnvironmentLighting` at load via `set_environment`
+        // driven; here ignores startup env_bytes (keeping engine "scene declarative lighting").
         _env_bytes: Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
         Self::new_with_vsync(window_extensions, window, window_handle, _env_bytes, true)
@@ -348,9 +348,9 @@ impl GraphRenderer {
         // recreation; the runtime is independent of scene-level resources.
         let runtime = RenderRuntime::new(context.clone(), swapchain.views.len() as u32)?;
 
-        // IBL：开屏/无光照场景以廉价「中性空 IBL」启动（不做 CPU 预卷积，≈0ms）。
-        // 真正的 IBL 预卷积由 `set_environment` 在加载带光照的 3D 场景时按需重建。
-        // 描述符 集合 布局 共享创建一次，确保场景切换重建 IBL 时管线 布局 稳定。
+        // IBL: open screen/no lighting scene starts with cheap "in-screen empty IBL" (no CPU pre-convolution, ≈0ms).
+        // True positive IBL pre-convolution heavy built on demand when `set_environment` loads 3D scene with lighting.
+        // Descriptor set layout created once, ensuring pipeline layout stable when scene switches heavy IBL rebuild.
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout")?;
         let ibl = IblResources::new_empty(
@@ -405,10 +405,10 @@ impl GraphRenderer {
         // Build graph with ShadowMapPass. Call setup() on the pass before
         // adding it so it registers its shadow-map resource, then allocate the
         // graph's Vulkan resources (the shadow map depth image) and fetch its
-        // 图像 视图 for the ForwardPass to 样本
+        // Graph texture view for ForwardPass to sample
         //
-        // `shadows` feature 关闭时整块不编译：图直接从空开始，ForwardPass 的
-        // set 3 改绑一张 1×1 远深度 dummy（descriptor 布局不变，仍能过验证层）。
+        // `shadows` feature disabled: whole block not compiled; graph starts from empty open, ForwardPass's
+        // set 3 re-binds one 1×1 far depth dummy (descriptor layout unchanged, still able to pass validation layer).
         #[cfg(feature = "shadows")]
         let (mut graph, shadow_view) = {
             let mut shadow_pass = crate::shadow_map_pass::ShadowMapPass::new();
@@ -433,13 +433,13 @@ impl GraphRenderer {
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (shadows off)")?;
             log::warn!(
-                "`shadows` feature 关闭：实时阴影不可用（set 3 绑定 1x1 远深度图）；\
-                 需要阴影请在项目里启用 prism-render/shadows"
+                "`shadows` feature disabled: real-time shadows unavailable (set 3 binds 1x1 far depth map);\
+                 need shadows please enable prism-render/shadows in project"
             );
             (graph, placeholders.shadow_view())
         };
 
-        // 创建 forward_pass and wire its resources: IBL 集合 shadow 映射表 视图 +
+        // Create forward_pass and wire its resources: IBL set + shadow map table view +
         // comparison sampler, bindless texture table, material SSBO, and the
         // per-frame UBO buffers (one set0 descriptor set per frame-in-flight).
         // ForwardPass is executed directly by GraphRenderer (it targets the
@@ -464,7 +464,7 @@ impl GraphRenderer {
         );
 
         let mut forward_pass = ForwardPass::new(color_format);
-        // Scene-level 全局光照 probe 音量 (SceneScope). Created before ForwardPass
+        // Scene-level global illumination probe volume (SceneScope). Created before ForwardPass
         // wiring so its descriptor set + layout can be borrowed (set 5).
         let scene_scope = SceneScope::new(context.clone()).context("SceneScope::new")?;
         forward_pass
@@ -505,17 +505,17 @@ impl GraphRenderer {
             Some(pass)
         } else {
             log::warn!(
-                "`restir_gi` 已编译但设备不支持 VK_KHR_ray_query：\
-                 gi_mode = Restir 退回 baked probe volume"
+                "`restir_gi` compiled but device does not support VK_KHR_ray_query:\
+                 gi_mode = Restir falls back to baked probe volume"
             );
             None
         };
 
-        // GTAO pass half-resolution screen-space 环境光遮蔽 Runs after ForwardPass
+        // GTAO pass half-resolution screen-space ambient occlusion Runs after ForwardPass
         // every frame and produces a double-buffered R8 AO texture the scene
         // samples (1-frame latency) to attenuate IBL diffuse + specular.
         //
-        // `gtao` feature 关闭时整块不编译：set 4 改绑 1×1 白色（无遮蔽）dummy。
+        // `gtao` feature disabled: whole block not compiled; set 4 re-binds 1x1 white (no occlusion) dummy.
         #[cfg(feature = "gtao")]
         let swapchain_extent = swapchain.extent;
         #[cfg(feature = "gtao")]
@@ -524,8 +524,8 @@ impl GraphRenderer {
                 .context("GtaoPass::new")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
-            "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
-             需要 AO 请在项目里启用 prism-render/gtao"
+            "`gtao` feature disabled: screen-space ambient occlusion unavailable (set 4 binds 1x1 white image);\
+             need AO please enable prism-render/gtao in project"
         );
 
         // TAA resolve (#883). Always registered; `execute` is a no-op when
@@ -581,16 +581,16 @@ impl GraphRenderer {
             None
         };
 
-        // CRT 调度器：统一渲染所有注册的 RenderTexture（引擎式）。
+        // CRT debugger: uniformly render registered RenderTexture (engine-style).
         let rt_scheduler = crate::rt_scheduler::RenderTextureScheduler::new(&context);
 
         // Register all passes into the graph in execution order.
         // Shadow -> Scene -> GTAO -> RenderTextures -> PathTrace -> Resolve -> Post.
         graph.add_pass(Box::new(forward_pass));
-        // 启动路径：同步 per-swapchain-image 槽位数。`ForwardPass::execute` 的
-        // `ensure_target` 按 `image_count` 建 framebuffer，`recreate_swapchain`
-        // 只覆盖下一步扩展重建——首次创建必须在这里初始化，否则 `set_target` 里
-        // `idx >= image_count` 的守卫会静默跳过，永远建不出 framebuffer。
+        // Startup path: sync per-swapchain-image slot bit count. `ForwardPass::execute`'s
+        // `ensure_target` builds framebuffer by `image_count`, `recreate_swapchain`
+        // only covers below one step extend heavy build --- first create must initialize inside here, otherwise `set_target` inside
+        // `idx >= image_count` guard will silently skip, forever cannot build framebuffer.
         if let Some(forward_pass) = graph.pass_mut::<ForwardPass>() {
             forward_pass.set_image_count(swapchain.views.len());
         }
@@ -650,7 +650,7 @@ impl GraphRenderer {
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
 
-        // per-pass GPU 计时（#518）：设备不支持时间戳时是 `None`（面板回退到 CPU 墙钟）。
+        // Per-pass GPU timing (#518): when device does not support timestamp is `None` (headless falls back to CPU wall clock).
         let telemetry = RenderTelemetry::new(&context, runtime.command_buffers.len())?;
 
         Ok(Self {
@@ -745,10 +745,10 @@ impl GraphRenderer {
         self.streamline.as_deref()
     }
 
-    /// 场景 pass 要采样的「上一帧环境光遮蔽」视图。
+    /// Scene pass samples "per-frame ambient occlusion" view.
     ///
-    /// `gtao` 开启时取 GTAO pass 的双缓冲 `(frame+1)%2`；关闭时返回 1×1 白色
-    /// dummy（可见性 1 = 无遮蔽），descriptor 布局与绑定次数完全一致。
+    /// `gtao` enabled at startup takes GTAO pass double buffering `(frame+1)%2`; disabled returns 1x1 white
+    /// dummy (visible 1 = no occlusion), descriptor layout and bind count exactly consistent.
     #[cfg(feature = "gtao")]
     fn ao_view(&mut self, frame: u32) -> vk::ImageView {
         self.graph
@@ -762,11 +762,11 @@ impl GraphRenderer {
         self.placeholders.ao_view()
     }
 
-    /// 场景 pass 要采样的「上一帧 ReSTIR GI 间接漫反射」视图。
+    /// Scene pass samples "per-frame ReSTIR GI indirect incorrect radiance" view.
     ///
-    /// 与 AO 同构：`RestirGiPass` 双缓冲，本帧写 A、下一帧采样 A，所以取
-    /// `gi_view()` 返回的「最近一次已写完」的视图。pass 未注册或本帧未分派
-    /// 时返回 null，前向 pass 会退回 baked probe volume。
+    /// Same structure as AO: `RestirGiPass` double buffering, this frame writes A, next frame samples A, so take
+    /// `gi_view()` returns "most recently written" view. Pass not registered or this frame not dispatched
+    /// returns null, before toward pass will fall back to baked probe volume.
     #[cfg(feature = "restir_gi")]
     fn gi_view(&mut self) -> vk::ImageView {
         self.graph
@@ -793,28 +793,28 @@ impl GraphRenderer {
         vk::DescriptorSet::null()
     }
 
-    /// 离屏渲染目标的尺寸（无窗口宿主模式）；有交换链时返回 `None`。
+    /// Offscreen render target size (no window host mode); returns `None` when swap chain exists.
     pub fn offscreen_extent(&self) -> Option<ash::vk::Extent2D> {
         self.offscreen.as_ref().map(|target| target.extent())
     }
 
-    /// 离屏颜色图像视图（`R8G8B8A8_UNORM`）。帧结束后先调用
-    /// [`Self::offscreen_present_for_sampling`]，再把它注册成 UI 纹理。
+    /// Offscreen color graph image view (`R8G8B8A8_UNORM`). After first call at frame end
+    /// [`Self::offscreen_present_for_sampling`], then register it as UI texture.
     pub fn offscreen_image_view(&self) -> Option<ash::vk::ImageView> {
         self.offscreen.as_ref().map(|target| target.image_view())
     }
 
-    /// 离屏颜色图像的格式。
+    /// Offscreen color graph image format.
     pub fn offscreen_image_format(&self) -> Option<ash::vk::Format> {
         self.offscreen.as_ref().map(|target| target.format())
     }
 
-    /// 把帧结束后的离屏图像转到 `SHADER_READ_ONLY_OPTIMAL` 并等待 GPU
-    /// 完成，供 UI 框架直接采样（零拷贝视口）。
+    /// Convert offscreen graph image after frame end to `SHADER_READ_ONLY_OPTIMAL` and wait for GPU
+    /// complete, for UI framework direct sampling (zero-copy viewport).
     ///
-    /// 帧结束后离屏图像停在 `COLOR_ATTACHMENT_OPTIMAL`（headless 上下文没有
-    /// `VK_KHR_swapchain`，不能用 `PRESENT_SRC_KHR`）；下一次帧的 PostPass 用
-    /// `initial_layout = UNDEFINED`（load op clear），因此从任何布局回来都合法。
+    /// After frame end offscreen graph image stays in `COLOR_ATTACHMENT_OPTIMAL` (headless below file doesn't have
+    /// `VK_KHR_swapchain`, cannot use `PRESENT_SRC_KHR`); next frame's PostPass uses
+    /// `initial_layout = UNDEFINED` (load op clear), therefore coming from any layout is legal.
     pub fn offscreen_present_for_sampling(&mut self) -> anyhow::Result<()> {
         let context = self.runtime.context.clone();
         let target = self
@@ -834,13 +834,13 @@ impl GraphRenderer {
         Self::offscreen_new(256, 256, env_bytes)
     }
 
-    /// 创建 a 无窗口 `GraphRenderer` rendering into an offscreen 图像 of
-    /// `width × height` (编辑器 host 模式 / 离屏预览).
+    /// Create a no-window `GraphRenderer` rendering into offscreen graph image of
+    /// `width × height` (editor host mode / offscreen preview).
     ///
-    /// 与 [`Self::headless_new`] 同一条渲染路径：完整图（Shadow → Scene →
-    /// GTAO → Post）跑完后，PostPass 把 **tonemap 后的结果** 写进离屏图像，
-    /// 随后 [`Self::copy_offscreen_to_readback`] + [`Self::readback_pixels`]
-    /// 把那一帧读回 CPU。
+    /// Same render path as [`Self::headless_new`]: complete graph (Shadow → Scene →
+    /// GTAO → Post) after complete, PostPass writes **post-tonemap result** into offscreen graph image,
+    /// Then [`Self::copy_offscreen_to_readback`] + [`Self::readback_pixels`]
+    /// reads that frame back to CPU.
     pub fn offscreen_new(
         width: u32,
         height: u32,
@@ -1001,8 +1001,8 @@ impl GraphRenderer {
                 .allocate_resources(&context.device, &context.physical_device_memory_properties)
                 .context("allocate graph resources (headless, shadows off)")?;
             log::warn!(
-                "`shadows` feature 关闭：实时阴影不可用（set 3 绑定 1x1 远深度图）；\
-                 需要阴影请在项目里启用 prism-render/shadows"
+                "`shadows` feature disabled: real-time shadows unavailable (set 3 binds 1x1 far depth map);\
+                 need shadows please enable prism-render/shadows in project"
             );
             (graph, placeholders.shadow_view())
         };
@@ -1079,15 +1079,15 @@ impl GraphRenderer {
             .context("AutoExposurePass::new (headless)")?;
         post_pass.set_adapted_luminance(&context.device, auto_exposure.luminance_buffer());
 
-        // `gtao` feature 关闭时 set 4 退化为 1×1 白色（无遮蔽）。
+        // `gtao` feature disabled: set 4 degrades to 1x1 white (no occlusion).
         #[cfg(feature = "gtao")]
         let gtao_pass =
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, offscreen.extent())
                 .context("GtaoPass::new (headless)")?;
         #[cfg(not(feature = "gtao"))]
         log::warn!(
-            "`gtao` feature 关闭：屏幕空间环境光遮蔽不可用（set 4 绑定 1x1 白色图）；\
-             需要 AO 请在项目里启用 prism-render/gtao"
+            "`gtao` feature disabled: screen-space ambient occlusion unavailable (set 4 binds 1x1 white image);\
+             need AO please enable prism-render/gtao in project"
         );
 
         let taa_pass = crate::taa::TaaPass::new(&context, offscreen.extent())
@@ -1096,7 +1096,7 @@ impl GraphRenderer {
         let anf_pass = crate::anf::AnfPass::new(&context, offscreen.extent(), offscreen.extent())
             .context("AnfPass::new (headless)")?;
 
-        // CRT 调度器（headless 下同样接入图，支持无窗口离屏 RT 调度）。
+        // CRT debugger (headless below similarly connects to graph, supports no-window offscreen RT debugging).
         let rt_scheduler = crate::rt_scheduler::RenderTextureScheduler::new(&context);
 
         #[cfg(feature = "pathtrace")]
@@ -1248,7 +1248,7 @@ impl GraphRenderer {
 
     /// Read back pixel data from the offscreen target.
     /// Returns RGBA bytes, 256 × 256 = 262144 bytes.
-    /// Only 有效 after [`clear_offscreen`](Self::clear_offscreen) or
+    /// Only takes effect after [`clear_offscreen`](Self::clear_offscreen) or
     /// [`copy_offscreen_to_readback`](Self::copy_offscreen_to_readback).
     pub fn readback_pixels(&self) -> anyhow::Result<Vec<u8>> {
         let target = self
@@ -1258,7 +1258,7 @@ impl GraphRenderer {
         target.readback(&self.runtime.context)
     }
 
-    /// 轮询异步离屏读回；GPU 未完成时返回 `None`。
+    /// Poll async offscreen readback; returns `None` when GPU not complete.
     pub fn poll_offscreen_readback(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
         self.offscreen
             .as_mut()
@@ -1280,7 +1280,7 @@ impl GraphRenderer {
         )
     }
 
-    /// 异步提交离屏图像读回；已有读回未完成时跳过本次提交。
+    /// Async submit offscreen graph image readback; skips this submission when readback not complete yet.
     pub fn copy_offscreen_to_readback_async(&mut self) -> anyhow::Result<bool> {
         self.offscreen
             .as_mut()
@@ -1336,16 +1336,16 @@ impl GraphRenderer {
         &mut self.settings
     }
 
-    /// 设置本帧要画选中描边的 ECS 实体 id（#487）。
+    /// Setting ECS entity id to draw outline this frame (#487).
     ///
-    /// 编辑器把 `workspace.selection` 映射成 `prism_ecs::Entity::id()` 后调用；
-    /// 空切片关闭描边。等待绘制期间列表会被复制，调用方不需要保持借用。
+    /// Editor maps `workspace.selection` to `prism_ecs::Entity::id()` after calling;
+    /// Empty slice disables outline. Waiting draw during list will be copied; caller does not need to keep borrow.
     pub fn set_outline_entities(&mut self, entities: &[u32]) {
         self.outline_entities.clear();
         self.outline_entities.extend_from_slice(entities);
     }
 
-    /// 当前选中描边实体列表（测试 / 调试用）。
+    /// Current selected outline entity list (test / debug use).
     pub fn outline_entities(&self) -> &[u32] {
         &self.outline_entities
     }
@@ -1385,8 +1385,8 @@ impl GraphRenderer {
     /// doesn't keep counting after the shader stops accumulating.
     /// Returns `None` if the path-trace pass is not in the graph.
     pub fn pt_frame_count(&self) -> Option<u32> {
-        // 不用 `return`：关掉 `pathtrace` 时函数体只剩这一句，`return None;`
-        // 会让 clippy 的 `needless_return` 直接报错（-D warnings 下编译失败）。
+        // Do not use `return`: when closing `pathtrace` function body only has this line, `return None;`
+        // will make clippy's `needless_return` directly report wrong (-D warnings below compile failure).
         #[cfg(not(feature = "pathtrace"))]
         {
             None
@@ -1403,14 +1403,14 @@ impl GraphRenderer {
         })
     }
 
-    /// 注入外部叠加层（宿主 UI 等）。主线程在启动渲染线程前调用；
-    /// overlay 的 GPU 资源由实现方在 `record` 时懒创建。
+    /// Inject outside overlay layer (host UI etc). Main thread calls before starting render thread;
+    /// Overlay GPU resources lazily created by implementation at `record` time.
     pub fn set_external_overlay(&mut self, overlay: Box<dyn SwapchainOverlay>) {
         self.ui_host.set_external_overlay(overlay);
     }
 
-    /// 把一条类型擦除的消息（如"新的宿主 UI 帧"）投递给外部叠加层。
-    /// 渲染线程从 shared 通路取出消息后调用；无叠加层时静默丢弃。
+    /// Deliver one type-erased message (like "new host UI frame") to outside overlay layer.
+    /// Render thread takes message from shared channel after calling; silently drops when no overlay layer.
     pub fn apply_overlay_message(&mut self, msg: OverlayMessage) {
         self.ui_host.apply_overlay_message(msg);
     }
@@ -1473,7 +1473,7 @@ impl GraphRenderer {
         self.settings.internal_scale_mode = mode;
     }
 
-    /// 场景实际渲染 extent（内部渲染分辨率生效时小于 [`Self::extent`]）。
+    /// Scene actual render extent (internal render resolution when effective smaller than [`Self::extent`]).
     pub fn render_extent(&self) -> vk::Extent2D {
         let swapchain = self.extent();
         crate::render_graph::internal_extent(swapchain, self.settings.internal_resolution)
@@ -1579,8 +1579,8 @@ impl GraphRenderer {
         }
         let swapchain =
             Swapchain::new_with_vsync(&self.runtime.context, window, window_handle, self.vsync)?;
-        // 恢复路径与启动路径同样需要同步 ForwardPass 的 per-image 槽位数
-        // （见 `GraphRenderer::new` 里的注释）。
+        // Resume path same as startup path needs to sync ForwardPass per-image slot bit count
+        // (see comments inside `GraphRenderer::new`).
         let image_count = swapchain.views.len();
         self.swapchain = Some(swapchain);
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
@@ -1618,7 +1618,7 @@ impl GraphRenderer {
         unsafe { self.runtime.context.device.device_wait_idle() }
             .context("recreate_swapchain: device_wait_idle")?;
 
-        // 放置 the ForwardPass 帧缓冲 + 深度 图像 BEFORE the 交换链 is
+        // Place ForwardPass frame buffer + depth graph image BEFORE swap chain is
         // recreated: the framebuffer wraps a swapchain image view, and
         // `Swapchain::recreate` destroys the old views. Destroying the views
         // while the framebuffer still references them triggers a validation
@@ -1644,10 +1644,10 @@ impl GraphRenderer {
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.drop_target(&self.runtime.context.device);
         }
-        // ECS UI 叠加按 image view 缓存 framebuffer；必须在 `sw.recreate()`
-        // 销毁旧 image view **之前**释放，否则 framebuffer 会引用已销毁的
-        // view（VUID-vkDestroyImageView-imageView-01026），可导致验证错误/
-        // device lost。此处 device 已 idle。
+        // ECS UI overlay caches framebuffer per image view; must in `sw.recreate()`
+        // Destroy old image view **before** release, otherwise framebuffer will reference already destroyed
+        // view (VUID -vkDestroyImageView-imageView-01026), can cause validate error /
+        // device lost. Device already idle here.
         self.ui_host.on_swapchain_pre_recreate();
 
         if let Some(sw) = self.swapchain.as_mut() {
@@ -1657,17 +1657,17 @@ impl GraphRenderer {
             }
         }
 
-        // 通知外部叠加层：per-swapchain framebuffers 已按新 views 重建。
+        // Notify outside overlay layer: per-swapchain framebuffers already heavy built with new views.
         if let Some(sw) = self.swapchain.as_ref() {
             self.ui_host
                 .on_swapchain_post_recreate(&sw.views, sw.extent);
         }
 
-        // 依赖交换链尺寸/图像数的 pass 必须在 `sw.recreate()` **之后**按新值
-        // resize：recreate 之前 `sw.extent` 与 `sw.views.len()` 还是旧交换链的，
-        // `GtaoPass::recreate_target` 拿旧的半分辨率做早退（old/2 == 旧 extent），
-        // 而 `set_image_count` 会让 `ForwardPass::ensure_target` 缺少新图像对应的
-        // 槽位（`image_index >= image_count` 直接 return）。
+        // Passes depending on swap chain size / image count must be in `sw.recreate()` **after** applying new value
+        // resize: before recreate, `sw.extent` and `sw.views.len()` still from old swap chain,
+        // `GtaoPass::recreate_target` takes old half resolution for early exit (old/2 == old extent),
+        // while `set_image_count` will make `ForwardPass::ensure_target` lack few new graph images correct for
+        // slot bits (`image_index >= image_count` directly returns).
         if let Some((extent, image_count)) = self
             .swapchain
             .as_ref()
@@ -1676,7 +1676,7 @@ impl GraphRenderer {
             if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
                 forward_pass.set_image_count(image_count);
             }
-            // GTAO 拥有自己的 AO 图像（不来自交换链），但尺寸是交换链的一半。
+            // GTAO owns its own AO graph image (not from swap chain), but size is half of swap chain.
             #[cfg(feature = "gtao")]
             if let Some(gtao) = self.graph.pass_mut::<crate::gtao::GtaoPass>() {
                 if let Err(e) =
@@ -1718,7 +1718,7 @@ impl GraphRenderer {
                     }
                 }
             }
-            // CRT 调度器的 RenderTextures 跟随 swapchain 尺寸（演示 RT 全屏）。
+            // CRT debugger RenderTextures follow swap chain size (demo RT full screen).
             if let Some(sched) = self
                 .graph
                 .pass_mut::<crate::rt_scheduler::RenderTextureScheduler>()
@@ -1743,11 +1743,11 @@ impl GraphRenderer {
         Ok(())
     }
 
-    /// 调整**离屏**渲染目标尺寸（编辑器视口面板改大小时走这里）。
+    /// Adjust **offscreen** render target size (taken when editor viewport panel resizes).
     ///
-    /// 顺序与 [`Self::recreate_swapchain`] 一致：先 `device_wait_idle`，再拆掉
-    /// 引用旧视图的 framebuffer，然后换目标、按新尺寸重建依赖 pass，最后清掉
-    /// 图缓存里的 layout（新图像从 UNDEFINED 重新过渡）。
+    /// Order consistent with [`Self::recreate_swapchain`]: first `device_wait_idle`, then tear down
+    /// framebuffer referencing old view, then change target, heavy build dependent passes by new size, then clear most
+    /// graph cache inside layout (new graph image transitions from UNDEFINED heavy).
     pub fn resize_offscreen(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
         let width = width.max(1);
         let height = height.max(1);
@@ -1775,7 +1775,7 @@ impl GraphRenderer {
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.drop_target(&self.runtime.context.device);
         }
-        // UI 叠加按 image view 缓存 framebuffer，必须先于旧视图销毁释放。
+        // UI overlay caches framebuffer per image view, must first destroy old view then release.
         self.ui_host.on_offscreen_pre_recreate();
 
         let context = self.runtime.context.clone();
@@ -1907,7 +1907,7 @@ impl GraphRenderer {
             let render_extent =
                 crate::render_graph::internal_extent(extent, self.settings.internal_resolution)
                     .unwrap_or(extent);
-            // 上一帧的深度拷贝已经随 headless fence 完成，可以安全读回。
+            // Per-frame depth copy already complete with headless fence, can safely readback.
             self.collect_occlusion_depth(0, render_extent);
             return Ok(Some(FrameCtx {
                 device,
@@ -1963,9 +1963,9 @@ impl GraphRenderer {
             crate::render_graph::internal_extent(extent, self.settings.internal_resolution)
                 .unwrap_or(extent);
 
-        // 上一帧（同一帧槽位）的时间戳结果现在一定写好了（acquire 已等过栅栏）。
+        // Per-frame (same frame slot bit) timestamp results definitely written (acquire already waited for fence).
         self.telemetry.begin_frame_timings(&device, frame as u32);
-        // 同一张图像的深度回读缓冲也已经写完，可以映射。
+        // Depth readback buffer of same graph image also already written, can map.
         self.collect_occlusion_depth(image_index, render_extent);
 
         // --- Reset & begin command buffer ---
@@ -1989,27 +1989,27 @@ impl GraphRenderer {
         }))
     }
 
-    /// 最近一帧的 per-pass GPU 时间。
+    /// Per-pass GPU time of most recent frame.
     ///
-    /// `supported = false`（或 `passes` 为空）表示设备不支持时间戳，调用方应回退到
-    /// CPU 墙钟（`frame_time_ms`）。结果比当前帧**晚一帧**：Vulkan 的时间戳只在
-    /// 提交完成后才可读，延迟读回才不会 stall 管线。
+    /// `supported = false` (or `passes` empty) means device does not support timestamp, caller should fall back to
+    /// CPU wall clock (`frame_time_ms`). Result **one frame behind** current frame: Vulkan timestamp only in
+    /// readable after submission complete; delayed readback avoids stalling pipeline.
     pub fn gpu_timings(&self) -> &crate::gpu_timer::GpuTimings {
         self.telemetry.gpu_timings()
     }
 
-    /// 最近 N 帧的 GPU 总时间（旧 → 新，#518 Phase 2 历史曲线）。
+    /// GPU total time of most recent N frames (old → new, #518 Phase 2 history curve).
     pub fn gpu_history(&self) -> &crate::gpu_timer::GpuHistory {
         self.telemetry.gpu_history()
     }
 
-    /// 本帧的 draw call 记录（#518 Phase 2 的数据层，不含回放）。
+    /// Draw call record of this frame (#518 Phase 2 data layer, not including replay).
     ///
-    /// 网格按 `draw_items` 顺序逐条记录（即使被剔除也记下来，`visible=false`
-    /// 让面板能解释“为什么没画”）；精灵与粒子按实际批次合并（与 `SpritePass`
-    /// 的连续相同混合状态分批一致）。超过 [`MAX_REPORTED_DRAW_CALLS`] 的部分
-    /// 直接丢弃，避免大场景把报告撑到无法阅读。
-    /// 一条 draw call 的管线状态摘要（#518 Frame Debugger）。
+    /// Mesh records one by one by `draw_items` order (even if culled, still recorded, `visible=false`
+    /// lets frontend explain "why not drawn"); sprite and particles merged by actual batch (consistent with `SpritePass`
+    /// consistent batching by same blend state). Parts exceeding [`MAX_REPORTED_DRAW_CALLS`]
+    /// directly discarded, avoiding large scene bloating report beyond readability.
+    /// Pipeline state summary of one draw call (#518 Frame Debugger).
     fn draw_state_summary(state: &crate::render_graph::DrawState) -> String {
         format!(
             "queue {} · cull {:?} · z-write {} · {:?}/{:?} {:?}",
@@ -2042,8 +2042,8 @@ impl GraphRenderer {
                     (indices as u64 / 3).max(1)
                 })
                 .unwrap_or(0);
-            // 与 `ForwardPass::pipeline_for` 的缓存键一致：混合 / 不写深度是
-            // 独立的 pipeline 变体，回放时能看出为什么换了管线。
+            // Consistent with `ForwardPass::pipeline_for` cache key: blend / no depth write is
+            // independent pipeline variant, replay can see why pipeline changed.
             let pipeline = if item.state.blends() {
                 "forward/transparent"
             } else if item.state.z_write {
@@ -2120,7 +2120,7 @@ impl GraphRenderer {
         calls
     }
 
-    /// 纹理 / 网格 / 材质与显存子分配的实时驻留统计（#518 Phase 2, #1030）。
+    /// Texture / mesh / material and VRAM sub-allocator residency statistics (#518 Phase 2, #1030).
     pub fn render_stats(&self) -> crate::render_graph_report::ReportStats {
         let (textures, texture_bytes) = self.texture_manager.stats();
         let (meshes, mesh_bytes) = self.mesh_manager.stats();
@@ -2140,28 +2140,28 @@ impl GraphRenderer {
         }
     }
 
-    /// 获取显存子分配器引用（#1030）。
+    /// Get VRAM sub-allocator reference (#1030).
     pub fn suballocator(&self) -> &crate::suballocator::MemorySuballocator {
         &self.suballocator
     }
 
-    /// 获取显存子分配器可变引用（#1030）。
+    /// Get mutable VRAM sub-allocator reference (#1030).
     pub fn suballocator_mut(&mut self) -> &mut crate::suballocator::MemorySuballocator {
         &mut self.suballocator
     }
 
-    /// 获取显存子分配器状态统计（#1030）。
+    /// Get VRAM sub-allocator state statistics (#1030).
     pub fn suballocator_stats(&self) -> crate::suballocator::SuballocatorStats {
         self.suballocator.stats()
     }
 
-    /// 准备阶段：在命令录制前批量同步 CPU 场景状态和 GPU 资源（DESIGN §9 / #1157）。
-    /// 统一消费 `DirtyDispatchPlan` 并收敛执行暂存的批量上传与释放。
+    /// Prepare phase: before command recording, batch sync CPU scene state and GPU resources (DESIGN §9 / #1157).
+    /// Uniformly consume `DirtyDispatchPlan` and converge execute staged batch uploads and releases.
     pub fn prepare(&mut self, _ctx: &FrameCtx, input: &FrameInput<'_>) -> anyhow::Result<()> {
-        // #502：LUT 文件只在路径变化时重新读取/上传，避免每帧 I/O。
+        // #502: LUT file only heavy re-reads / uploads when path changes, avoiding per-frame I/O.
         self.ensure_lut(input.lut_path)?;
 
-        // #1157 消费统一 DirtyDispatchPlan 并记录分派
+        // #1157: Consume unified DirtyDispatchPlan and record dispatch
         if let Some(plan) = input.dispatch_plan {
             if plan.pt_accum_dirty {
                 log::trace!("prepare: pt accum dirty (from dispatch plan)");
@@ -2184,7 +2184,7 @@ impl GraphRenderer {
             log::trace!("prepare: no draw_items and no camera — frame will clear only");
         }
 
-        // 统一在 prepare 阶段收敛并批量执行暂存的 GPU 资产操作
+        // Uniformly converge and batch execute staged GPU asset operations in prepare phase
         self.flush_staged_assets()?;
 
         if input.render_mode == crate::render_graph::RenderMode::Raster && !self.ibl_has_pbr {
@@ -2523,7 +2523,7 @@ impl GraphRenderer {
     /// Phase 2/3: record all render commands into the frame's command buffer.
     ///
     /// Updates the per-frame UBO, builds the [`GraphFrame`], executes the
-    /// 渲染 图 (ShadowMap → Scene → GTAO → Post), records the external
+    /// render  graph  (ShadowMap → Scene → GTAO → Post), records the external
     /// overlay if present (or inserts the swapchain-layout barrier), and ends
     /// the command buffer.
     ///
@@ -2636,7 +2636,7 @@ impl GraphRenderer {
         // `wait_for_fences` would hang forever.
         let mut record: anyhow::Result<()> = Ok(());
 
-        // --- 更新 帧 UBO (#461: one aligned slot per composited camera) ---
+        // --- update  frame  UBO (#461: one aligned slot per composited camera) ---
         if record.is_ok() {
             let ubo = &self.runtime.frame_ubos[frame];
             if cameras.is_empty() {
@@ -2666,9 +2666,9 @@ impl GraphRenderer {
 
         // --- Execute render graph (Shadow -> Scene -> GTAO -> Post) ---
         if record.is_ok() {
-            // #1007：本帧结束时把主通道深度拷到回读缓冲。多相机层用同一份
-            // 深度图合成，粗深度只能对应其中一台，先关闭保证不误剔。
-            // 放在借用 `swapchain` / `forward` 之前，避免和它们的借用冲突。
+            // #1007: At frame end, copy main channel depth to readback buffer. Many camera layers share one
+            // depth graph composite; coarse depth can only correctly apply to one camera, first disable ensures no false culling.
+            // Place before borrowing `swapchain` / `forward`, avoiding borrow conflict with them.
             let capture = if self.occlusion.enabled && cameras.is_empty() {
                 self.ensure_occlusion_target(image_index, render_extent)
             } else {
@@ -2678,8 +2678,8 @@ impl GraphRenderer {
                 forward.set_depth_readback(capture);
             }
             let ao_view = self.ao_view(frame as u32);
-            // 上一帧 ReSTIR GI 输出（1 帧延迟）。pass 未注册 / 未分派时为 null，
-            // 前向 pass 的 `gi_mode` push constant 随之为 0，退回 probe volume。
+            // Per-frame ReSTIR GI output (1 frame delay). Pass not registered / not dispatched returns null,
+            // Before toward pass `gi_mode` push constant becomes 0, falls back to probe volume.
             let gi_view = self.gi_view();
             let prt_gi_descriptor_set = self.prt_gi_descriptor_set(ctx.frame_index);
             let offscreen_views = self.offscreen.as_ref().map(|o| [o.image_view()]);
@@ -2728,7 +2728,7 @@ impl GraphRenderer {
                 light_view_proj1,
                 shadow_split,
                 shadow_cascade_count,
-                // 场景里没有投阴影的方向光时整帧跳过阴影 pass。
+                // If scene has no directional light casting shadow, entire frame skips shadow pass.
                 shadow_mode: if *shadows_enabled {
                     self.settings.shadow_mode
                 } else {
@@ -2918,16 +2918,16 @@ impl GraphRenderer {
                     self.settings.sharc_enable_clear = false;
                 }
             }
-            // 设了 `gi_mode = Sharc` 却没编 `sharc`：退化为纯路径追踪，但必须说清楚
-            // 缺哪个 feature（DESIGN §12.3 规则 3：关掉要可诊断，不要静默降级）。
-            // 这个分支每帧都会走到，所以只报一次。
+            // Set `gi_mode = Sharc` but didn't compile `sharc`: degrades to pure path tracing, but must clearly
+            // Missing which feature (DESIGN §12.3 rule 3: closing must be diagnosable, not silent degradation).
+            // This branch is hit every frame, so report only once.
             #[cfg(all(feature = "pathtrace", not(feature = "sharc")))]
             if crate::render_graph::PtGiMode::Sharc == self.settings.pt_gi {
                 static SHARC_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
                 SHARC_MISSING_WARNED.call_once(|| {
                     log::warn!(
-                        "gi_mode = Sharc 需要 prism-render/sharc，本次构建没有编译 SHaRC；\
-                         已退化为纯路径追踪"
+                        "gi_mode = Sharc requires prism-render/sharc, this build did not compile SHaRC;\
+                         degraded to pure path tracing"
                     );
                 });
                 if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
@@ -3105,7 +3105,7 @@ impl GraphRenderer {
                 .graph
                 .execute_with_timer(&render_ctx, self.telemetry.gpu_timer_mut())
                 .context("graph execute");
-            // 深度拷贝确实记进命令缓冲区后，才把矩阵留给下一帧配对。
+            // Depth copy definitely recorded in command buffer after, before leaving matrix for next frame to configure correctly.
             if record.is_ok() && capture.is_some() {
                 let captured = self
                     .graph
@@ -3123,17 +3123,17 @@ impl GraphRenderer {
             }
         }
 
-        // --- ECS UI 叠加 (quads + fontdue glyph text) ---
+        // --- ECS UI overlay (quads + fontdue glyph text) ---
         //
-        // Recorded between the 渲染 图 output and the external overlay
-        // (or the explicit PRESENT 屏障). For the swapchain path its render
+        // Recorded between the render  graph  output and the external overlay
+        // (or the explicit PRESENT barrier). For swapchain path its render
         // pass owns COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR; for the
         // offscreen path it stays in COLOR_ATTACHMENT_OPTIMAL so the host can
         // sample the image after `offscreen_present_for_sampling` (#597).
         //
-        // 图 末尾 pass（RtPreview）final = PRESENT_SRC_KHR，所以 swapchain
-        // image 在 graph 后已是展示布局；UI/overlay render pass 期望
-        // COLOR_ATTACHMENT_OPTIMAL 初始布局 → 各自 record 前都要显式转回。
+        // Graph final pass (RtPreview) = PRESENT_SRC_KHR, so swapchain
+        // image in graph after already is present layout; UI/overlay render pass expects
+        // COLOR_ATTACHMENT_OPTIMAL initial layout → each record before must explicitly convert back.
         /// Log a slow UI-overlay record, which is where lazy glyph-atlas and pipeline
         /// creation land on the first frame.
         #[cfg(feature = "ui")]
@@ -3185,7 +3185,7 @@ impl GraphRenderer {
                         )
                     })
                 {
-                    // 离屏目标没有交换链缩放，UI 铺满整张图。
+                    // Offscreen target has no swap chain scale; UI fills entire graph image.
                     let dest = vk::Rect2D {
                         offset: vk::Offset2D { x: 0, y: 0 },
                         extent: target_extent,
@@ -3263,10 +3263,10 @@ impl GraphRenderer {
             }
         }
 
-        // --- 截图：交换链图像 → host-visible 缓冲区 ---
+        // --- Screenshot: swap chain graph image → host-visible buffer ---
         //
-        // 必须放在图像回到 PRESENT_SRC_KHR 之后、`end_command_buffer` 之前：
-        // 拷贝本身需要 TRANSFER_SRC_OPTIMAL，记录完再转回展示布局。
+        // Must place graph image back to PRESENT_SRC_KHR after, before `end_command_buffer`:
+        // Copy itself needs TRANSFER_SRC_OPTIMAL, after recording convert back to present layout.
         if record.is_ok() {
             let target = if let Some(ref sw) = self.swapchain {
                 sw.images
@@ -3367,7 +3367,7 @@ impl GraphRenderer {
         Ok(out_of_date)
     }
 
-    /// 帧结束阶段：推进帧级状态并执行延迟回收。
+    /// Frame end phase: advance frame-level state and execute deferred recycling.
     pub fn end_frame(&mut self, _ctx: &FrameCtx, _presented: bool) -> anyhow::Result<()> {
         // `PRISMA_PASS_DUMP`: the previous `present` waited on the frame
         // fence, so the readback buffers are safe to map and encode here.
@@ -3474,11 +3474,11 @@ impl GraphRenderer {
     }
 
     /// Release all GPU resources.
-    /// 预约一次截图：下一帧 `execute` 把交换链图像拷贝到读回缓冲区，
-    /// `finish_screenshot` 再写成 PNG。
+    /// Schedule one screenshot: next frame `execute` copies swap chain graph image to readback buffer,
+    /// `finish_screenshot` then writes PNG.
     ///
-    /// `size` 为 `None` 时与窗口分辨率一致；给了尺寸就最近邻缩放
-    /// （像素画放大不会糊）。
+    /// When `size` is `None`, consistent with window resolution; when given size, nearest-neighbor scale
+    /// (pixels enlarged won't be blurry).
     pub fn request_screenshot(
         &mut self,
         path: impl Into<std::path::PathBuf>,
@@ -3514,9 +3514,9 @@ impl GraphRenderer {
         self.graph.set_debug_control(control);
     }
 
-    /// 帧提交之后调用：等待本次提交的围栏、读回像素、写 PNG。
+    /// Called after frame submission: waits for submission fence, reads back pixels, writes PNG.
     ///
-    /// 没有进行中的截图时返回 `Ok(None)`。
+    /// Returns `Ok(None)` when no screenshot in progress.
     pub fn finish_screenshot(
         &mut self,
         ctx: &FrameCtx,
@@ -3566,7 +3566,7 @@ impl GraphRenderer {
         self.mesh_manager.destroy(device);
         self.suballocator.destroy(device);
 
-        // 销毁 ForwardPass (framebuffers, 深度 images, 渲染 pass
+        // Destroy ForwardPass (framebuffers, depth images, render pass
         // pipeline, shadow descriptor set). Without this, vkDestroyDevice
         // reports leaked VkImage/VkDeviceMemory/VkImageView/VkRenderPass.
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
@@ -3574,7 +3574,7 @@ impl GraphRenderer {
         }
 
         // Destroy scene-level GI probe volume (SceneScope). Must happen AFTER
-        // ForwardPass::destroy (ForwardPass borrows the 描述符 集合
+        // ForwardPass::destroy (ForwardPass borrows the descriptor set
         self.ddgi_pass = None;
         self.scene_scope.destroy();
 
@@ -3633,7 +3633,7 @@ impl GraphRenderer {
             shadow.destroy(device);
         }
 
-        // 销毁外部叠加层（render pass/framebuffers/渲染器）。
+        // Destroy outside overlay layer (render pass/framebuffers/renderer).
         self.ui_host.destroy();
 
         // Destroy shadow sampler.
@@ -3662,8 +3662,8 @@ impl GraphRenderer {
     }
 }
 
-// 安全性 UI 状态已移出渲染线程（主线程持有），
-// 渲染线程上剩余字段只持有 ash/Vulkan handles
+// Thread-safe UI state already moved out of render thread (main thread holds),
+// render thread remaining fields only hold ash/Vulkan handles
 // (vk::*, ash::Device → u64 wrappers Send+Sync), Arc<VulkanContext> (Send+Sync
 // because all inner fields are vulkan handles), or container types whose
 // elements are Send.  These fields are accessed exclusively from the render

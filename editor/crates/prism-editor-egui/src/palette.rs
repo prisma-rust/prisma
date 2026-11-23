@@ -1,8 +1,8 @@
-//! 全局搜索弹窗（`Ctrl+K`）。
+//! Global search popup (`Ctrl+K`).
 //!
-//! 数据层在 [`prism_editor_core::palette`]（条目收集 + 排序，纯函数）；
-//! 这里只负责：一个居中的输入框、结果列表、↑↓/Enter/Esc，以及把选中的
-//! [`PaletteAction`] 交回给 `App` 执行。
+//! Data layer in [`prism_editor_core::palette`] (entry collection + sort, pure function);
+//! here only responsible for: centered input box, result list, ↑↓/Enter/Esc, and passing selected
+//! [`PaletteAction`] back to `App` to execute.
 
 use egui::Key;
 use prism_editor_core::palette::{self, PaletteAction, PaletteEntry};
@@ -13,7 +13,7 @@ pub struct Palette {
     query: String,
     selected: usize,
     entries: Vec<PaletteEntry>,
-    /// `entries` 的下标，按当前查询排好序。
+    /// Index into `entries`, sorted by current query.
     order: Vec<usize>,
     focus_pending: bool,
 }
@@ -40,10 +40,10 @@ impl Palette {
         self.open
     }
 
-    /// 打开并按当前工作区重建条目表（实体 / 资产 / 文档会变）。
+    /// Open and rebuild entry table based on current workspace (entities / assets / documents change).
     pub fn open(&mut self, workspace: &Workspace) {
         self.entries = palette::entries(workspace);
-        // 每次打开都从空查询开始：上次搜的词通常没用了。
+        // Starts from empty query each open: previous search term usually useless.
         self.query.clear();
         self.order = palette::search("", &self.entries);
         self.selected = 0;
@@ -65,7 +65,7 @@ impl Palette {
         }
     }
 
-    /// 画一帧；用户确认某条结果时返回它的动作（弹窗随即关闭）。
+    /// Draw one frame; returns the action of confirmed result (popup closes immediately).
     pub fn show(&mut self, ctx: &egui::Context, workspace: &Workspace) -> Option<PaletteAction> {
         if !self.open {
             return None;

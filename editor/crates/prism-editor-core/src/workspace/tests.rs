@@ -92,7 +92,11 @@ mod tests {
         assert_eq!(style["margin"]["right"], json!(200.0));
         assert_eq!(style["margin"]["top"], json!(100.0));
         assert_eq!(style["margin"]["bottom"], json!(100.0));
-        assert_eq!(style["width"], json!(100.0), "显式宽度不被锚点覆盖");
+        assert_eq!(
+            style["width"],
+            json!(100.0),
+            "explicit width not overridden by anchor"
+        );
     }
 
     #[test]
@@ -160,7 +164,7 @@ mod tests {
         assert_eq!(
             workspace.paste_component_values(&[1], "test::Rig"),
             1,
-            "同类型组件才覆盖"
+            "only same-type components override"
         );
         assert_eq!(
             workspace.document().doc.entities[1].components["test::Rig"]["speed"],
@@ -184,7 +188,7 @@ mod tests {
         workspace.stop();
         assert!(
             workspace.maximized_tab.is_none(),
-            "进入 Play 前没有最大化任何面板，Stop 后也必须回到都没有最大化"
+            "no panel maximized before entering Play, Stop must return to none maximized"
         );
 
         workspace.maximized_tab = Some("sceneView".to_string());
@@ -214,13 +218,16 @@ mod tests {
         assert!((camera.fov_y_degrees - 170.0).abs() < 1e-6);
         let before = camera.fov_y_degrees;
         camera.set_fov_degrees(f32::NAN);
-        assert_eq!(camera.fov_y_degrees, before, "非有限值忽略");
+        assert_eq!(camera.fov_y_degrees, before, "non-finite value ignored");
 
         camera.set_clip_planes(0.0, 100.0);
-        assert!((camera.near - 0.1).abs() < 1e-6, "非法 near 不动");
+        assert!((camera.near - 0.1).abs() < 1e-6, "illegal near unchanged");
         camera.set_clip_planes(1.0, 0.5);
         assert!((camera.near - 1.0).abs() < 1e-6);
-        assert!((camera.far - 1.01).abs() < 1e-6, "far 至少比 near 大 1cm");
+        assert!(
+            (camera.far - 1.01).abs() < 1e-6,
+            "far at least 1cm larger than near"
+        );
         camera.set_clip_planes(2.0, 500.0);
         assert!((camera.near - 2.0).abs() < 1e-6);
         assert!((camera.far - 500.0).abs() < 1e-6);
@@ -236,7 +243,7 @@ mod tests {
         narrow.focus([0.0, 0.0, 0.0], 1.0);
         assert!(
             narrow.distance > wide.distance,
-            "30° {} 应该比 90° {} 更远",
+            "30° {} should be farther than 90° {}",
             narrow.distance,
             wide.distance
         );
@@ -267,7 +274,7 @@ mod tests {
             let expected = camera.distance;
             assert!(
                 (length - expected).abs() < 1e-3,
-                "axis {axis} sign {sign}: eye 距离 {} != {}",
+                "axis {axis} sign {sign}: eye distance {} != {}",
                 length,
                 expected
             );
@@ -344,7 +351,11 @@ mod tests {
 
         camera.orbit(50.0, 50.0);
         camera.look_in_place(50.0, 50.0);
-        assert_eq!((camera.yaw, camera.pitch), (0.0, 0.0), "2D 视图不该被旋转");
+        assert_eq!(
+            (camera.yaw, camera.pitch),
+            (0.0, 0.0),
+            "2D view should not be rotated"
+        );
 
         let eye = camera.eye();
         assert!((eye[2] - camera.distance).abs() < 1e-5);
@@ -354,7 +365,7 @@ mod tests {
         assert!(!camera.orthographic);
         assert!(camera.ortho_half_height().is_none());
         camera.orbit(50.0, 0.0);
-        assert!(camera.yaw.abs() > 1e-6, "退出 2D 后轨道恢复");
+        assert!(camera.yaw.abs() > 1e-6, "orbit restored after exiting 2D");
     }
 
     fn anchor_point(camera: &OrbitCamera, x: f32, y: f32, width: f32, height: f32) -> [f32; 3] {
@@ -545,10 +556,10 @@ mod tests {
                 }
             ]},
             "presets": [
-                { "id": "camera", "label": "相机", "name": "Camera",
+                { "id": "camera", "label": "camera", "name": "Camera",
                   "components": ["prism_engine::scene::Camera"],
                   "overrides": {}, "position": [0.0, 0.0, 10.0], "rotation": [0.0, 0.0, 0.0, 1.0] },
-                { "id": "empty", "label": "空实体", "name": "entity",
+                { "id": "empty", "label": "empty entity", "name": "entity",
                   "overrides": {}, "position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0] }
             ],
             "assetInfos": [
@@ -574,9 +585,9 @@ mod tests {
                       "components": {} }
                 ]}}
             },
-            "templatesByKind": { "prefab": [ { "id": "camera", "label": "相机" } ] },
+            "templatesByKind": { "prefab": [ { "id": "camera", "label": "camera" } ] },
             "windows": [
-                { "id": "sceneView", "title": "场景视图", "menuPath": "窗口/场景视图", "shortcut": null }
+                { "id": "sceneView", "title": "Scene View", "menuPath": "Window/Scene View", "shortcut": null }
             ]
         })
     }
@@ -604,7 +615,7 @@ mod tests {
         assert_eq!(workspace.presets.len(), 2);
         assert_eq!(workspace.assets.len(), 1);
         assert!(workspace.panel("sceneView").is_some());
-        assert_eq!(workspace.panel_title("sceneView"), "场景视图");
+        assert_eq!(workspace.panel_title("sceneView"), "Scene View");
     }
 
     #[test]
@@ -616,7 +627,7 @@ mod tests {
         assert_eq!(doc.entities.len(), 3);
         let added = doc.entities.last().unwrap();
         assert_eq!(added.display_name(), "Camera");
-        assert_eq!(added.parent, Some(1), "挂在选中的相机下面");
+        assert_eq!(added.parent, Some(1), "attached under selected camera");
         assert!(added.has_component("prism_engine::scene::Camera"));
         assert!(workspace.can_undo());
     }
@@ -706,7 +717,7 @@ mod tests {
         assert_eq!(
             workspace.document().doc.entities[0].transform.scale[0],
             0.01,
-            "负数被夹到最小值"
+            "negative clamped to min"
         );
 
         let history = workspace.document().undo.history().len();
@@ -725,7 +736,7 @@ mod tests {
             .entities
             .iter()
             .position(|entity| entity.display_name() == "Cube")
-            .expect("sample 里有 Cube");
+            .expect("Cube in sample");
         let id = workspace.document().doc.entities[index].id.unwrap();
         let base_rotation = quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
 
@@ -737,7 +748,7 @@ mod tests {
         let world_x = basis_from_quat(world_rotation(&workspace.document().doc, index))[0];
         assert!(
             (world_x[1] - 1.0).abs() < 1e-3,
-            "世界轴绕 X 旋后 X 轴应指向 +Y，实际 {world_x:?}"
+            "world axis after X rotation X should point +Y, actual {world_x:?}"
         );
 
         workspace.document_mut().doc.entities[index]
@@ -748,7 +759,7 @@ mod tests {
         let local_x = basis_from_quat(world_rotation(&workspace.document().doc, index))[0];
         assert!(
             (local_x[2] + 1.0).abs() < 1e-3,
-            "局部轴绕 X 旋后 X 轴应指向 −Z，实际 {local_x:?}"
+            "local axis after X rotation X should point −Z, actual {local_x:?}"
         );
     }
 
@@ -761,14 +772,14 @@ mod tests {
             .entities
             .iter()
             .position(|entity| entity.display_name() == "Cube")
-            .expect("sample 里有 Cube");
+            .expect("Cube in sample");
         let detail = workspace
             .document()
             .doc
             .entities
             .iter()
             .position(|entity| entity.display_name() == "Detail")
-            .expect("sample 里有 Detail");
+            .expect("Detail in sample");
         workspace.document_mut().doc.entities[cube]
             .transform
             .rotation = crate::viewport_math::quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
@@ -777,13 +788,13 @@ mod tests {
         assert_eq!(
             workspace.gizmo_basis(),
             crate::viewport_math::IDENTITY_BASIS,
-            "默认是世界空间"
+            "default is world space"
         );
         workspace.toggle_gizmo_space();
         let basis = workspace.gizmo_basis();
         assert!(
             (basis[0][2] + 1.0).abs() < 1e-3,
-            "父级绕 Y 90° 后子级局部 X 指向 −Z，实际 {:?}",
+            "parent rotated Y 90°, child local X points −Z, actual {:?}",
             basis[0]
         );
     }
@@ -813,14 +824,14 @@ mod tests {
             .entities
             .iter()
             .position(|entity| entity.display_name() == "Cube")
-            .expect("sample 里有 Cube");
+            .expect("Cube in sample");
         let detail = workspace
             .document()
             .doc
             .entities
             .iter()
             .position(|entity| entity.display_name() == "Detail")
-            .expect("sample 里有 Detail");
+            .expect("Detail in sample");
         workspace.document_mut().doc.entities[cube]
             .transform
             .rotation = crate::viewport_math::quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
@@ -835,7 +846,7 @@ mod tests {
         for axis in 0..3 {
             assert!(
                 (world_offset[axis] - delta[axis]).abs() < 1e-3,
-                "世界位移应等于 {delta:?}，实际 {world_offset:?}"
+                "world displacement should equal {delta:?}, actual {world_offset:?}"
             );
         }
         assert!(workspace.can_undo());
@@ -882,12 +893,12 @@ mod tests {
         let moved = child_after[0] - child_before[0];
         assert!(
             (moved - 1.0).abs() < 1e-4,
-            "子级应只跟随父级移动 1 个单位，实际 {moved}"
+            "child should only follow parent moving 1 unit, actual {moved}"
         );
         assert_eq!(
             workspace.document().doc.entities[child].transform.position,
             [0.0, 0.0, 0.0],
-            "子级的局部位置不该被单独改动"
+            "child local position should not be changed separately"
         );
     }
 
@@ -912,7 +923,7 @@ mod tests {
         assert!((parent_after - parent_start * 2.0).abs() < 1e-4);
         assert!(
             (child_after - child_start).abs() < 1e-4,
-            "子级自己的缩放不该再乘一次，实际 {child_after}，起始 {child_start}"
+            "child own scale should not be multiplied again, actual {child_after}, start {child_start}"
         );
     }
 
@@ -980,7 +991,7 @@ mod tests {
             for axis in 0..3 {
                 assert!(
                     (actual[axis] - expected[axis]).abs() < 1e-4,
-                    "Pivot 模式不应移动实体: {actual:?} != {expected:?}"
+                    "Pivot mode should not move entity: {actual:?} != {expected:?}"
                 );
             }
         }
@@ -1008,7 +1019,7 @@ mod tests {
         assert_eq!(
             workspace.document().undo.history().len(),
             3,
-            "两次 set + 一次群组缩放"
+            "two set + one group scale"
         );
 
         workspace.undo();
@@ -1181,7 +1192,7 @@ mod tests {
         assert_eq!(
             entries.iter().filter(|(_, undone)| *undone).count(),
             2,
-            "撤销过的步骤不能从历史里消失"
+            "undone steps must not disappear from history"
         );
 
         assert_eq!(workspace.jump_history(3), 2);
@@ -1195,7 +1206,7 @@ mod tests {
         assert_eq!(workspace.jump_history(0), 3);
         assert_eq!(workspace.history_cursor(), 0);
         assert_eq!(workspace.document().doc.entities.len(), initial);
-        assert_eq!(workspace.jump_history(0), 0, "原地跳转是空操作");
+        assert_eq!(workspace.jump_history(0), 0, "no-op jump in place");
     }
 
     #[test]
@@ -1208,17 +1219,17 @@ mod tests {
         assert_eq!(workspace.undo_history().len(), 3);
         assert_eq!(
             workspace.undo_history().first().map(String::as_str),
-            Some("新建实体")
+            Some("create entity")
         );
 
-        assert_eq!(workspace.undo_to(1), 2, "回退第 2 条之前的操作");
+        assert_eq!(workspace.undo_to(1), 2, "undo back before step 2");
         assert_eq!(workspace.undo_history().len(), 1);
         assert_eq!(workspace.document().doc.entities.len(), initial + 1);
 
         assert_eq!(workspace.undo_to(0), 1);
         assert!(workspace.undo_history().is_empty());
         assert!(!workspace.can_undo());
-        assert_eq!(workspace.undo_to(3), 0, "没有历史时是空操作");
+        assert_eq!(workspace.undo_to(3), 0, "no-op when no history");
 
         workspace.add_entity("camera");
         assert!(workspace.can_undo());
@@ -1276,7 +1287,7 @@ mod tests {
             workspace.document().doc.entities[0].display_name(),
             "Camera2"
         );
-        assert!(!workspace.can_undo(), "预览阶段不产生撤销步");
+        assert!(!workspace.can_undo(), "preview stage produces no undo step");
 
         workspace.finish_rename(base, false);
         assert_eq!(workspace.document().undo.history().len(), 1);
@@ -1296,8 +1307,11 @@ mod tests {
 
         workspace.preview_rename(0, "F");
         workspace.preview_rename(0, "Floor");
-        assert!(workspace.document().is_dirty(), "预览阶段就要有未保存标记");
-        assert!(!workspace.can_undo(), "预览阶段不产生撤销步");
+        assert!(
+            workspace.document().is_dirty(),
+            "dirty mark during preview stage"
+        );
+        assert!(!workspace.can_undo(), "preview stage produces no undo step");
 
         workspace.finish_rename(base, was_dirty);
         assert_eq!(workspace.document().undo.history().len(), 1);
@@ -1366,9 +1380,13 @@ mod tests {
     fn selection_range_and_toggle_follow_anchor() {
         let mut workspace = fixture_workspace();
         workspace.select_range(1, 0);
-        assert_eq!(workspace.selection, vec![0, 1], "反向区间也规范化");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "reverse interval also normalized"
+        );
         workspace.select(0, true);
-        assert_eq!(workspace.selection, vec![1], "已有项被切换掉");
+        assert_eq!(workspace.selection, vec![1], "existing item toggled off");
         workspace.select(0, true);
         assert_eq!(workspace.selection, vec![0, 1]);
     }
@@ -1383,7 +1401,11 @@ mod tests {
         assert_eq!(workspace.selection_active, Some(3));
 
         workspace.select_visible_range(&ordered, 3, 0);
-        assert_eq!(workspace.selection, vec![0, 2, 3], "反向选择同样规范化");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 2, 3],
+            "reverse selection also normalized"
+        );
 
         workspace.select_visible_range(&ordered, 1, 2);
         assert_eq!(workspace.selection, vec![2]);
@@ -1394,9 +1416,17 @@ mod tests {
     fn select_many_overwrites_or_extends() {
         let mut workspace = fixture_workspace();
         workspace.select_many(&[1, 0], false);
-        assert_eq!(workspace.selection, vec![0, 1], "排序且覆盖旧选择");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "sorted and covers old selection"
+        );
         workspace.select_many(&[1, 2], true);
-        assert_eq!(workspace.selection, vec![0, 1, 2], "附加选择去重");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1, 2],
+            "additive selection deduplicated"
+        );
         workspace.select_many(&[], false);
         assert!(workspace.selection.is_empty());
     }
@@ -1407,18 +1437,22 @@ mod tests {
         workspace.select_with(0, SelectMode::Replace);
         workspace.select_with(2, SelectMode::Add);
         workspace.select_with(1, SelectMode::Add);
-        assert_eq!(workspace.selection, vec![0, 1, 2], "集合仍按文档顺序");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1, 2],
+            "set still in document order"
+        );
         assert_eq!(
             workspace.primary_selection(),
             Some(1),
-            "活动对象是最后点击的实体"
+            "active object is last clicked entity"
         );
 
         workspace.select_with(1, SelectMode::Remove);
         assert_eq!(
             workspace.primary_selection(),
             Some(2),
-            "移除活动对象后回退到选择集末尾"
+            "fall back to selection end after removing active object"
         );
     }
 
@@ -1437,22 +1471,41 @@ mod tests {
         let mut workspace = fixture_workspace();
         workspace.select_with(0, SelectMode::Replace);
         workspace.select_with(1, SelectMode::Add);
-        assert_eq!(workspace.selection, vec![0, 1], "Shift 并入且保留原选择");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "Shift additive keeps original selection"
+        );
         workspace.select_with(1, SelectMode::Add);
-        assert_eq!(workspace.selection, vec![0, 1], "重复并入不切换掉已有项");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "repeat additive does not switch off existing item"
+        );
         workspace.select_with(0, SelectMode::Remove);
-        assert_eq!(workspace.selection, vec![1], "Ctrl 只移除，不影响其它项");
+        assert_eq!(
+            workspace.selection,
+            vec![1],
+            "Ctrl only removes, does not affect other items"
+        );
         workspace.select_with(0, SelectMode::Remove);
-        assert_eq!(workspace.selection, vec![1], "移除未选中项是空操作");
+        assert_eq!(
+            workspace.selection,
+            vec![1],
+            "removing unselected item is no-op"
+        );
         workspace.select_with(2, SelectMode::Replace);
-        assert_eq!(workspace.selection, vec![2], "普通点击替换");
+        assert_eq!(workspace.selection, vec![2], "plain click replaces");
     }
 
     #[test]
     fn right_clicking_an_unselected_entity_selects_only_it() {
         let mut workspace = fixture_workspace();
         workspace.select_with(0, SelectMode::Replace);
-        assert!(workspace.select_for_context(1), "未选中 → 换选择");
+        assert!(
+            workspace.select_for_context(1),
+            "not selected -> switch selection"
+        );
         assert_eq!(workspace.selection, vec![1]);
         assert_eq!(workspace.primary_selection(), Some(1));
     }
@@ -1461,7 +1514,10 @@ mod tests {
     fn right_clicking_a_selected_entity_keeps_the_whole_selection() {
         let mut workspace = fixture_workspace();
         workspace.select_many(&[0, 1, 2], false);
-        assert!(!workspace.select_for_context(1), "已选中 → 不动选择");
+        assert!(
+            !workspace.select_for_context(1),
+            "already selected -> do not change selection"
+        );
         assert_eq!(workspace.selection, vec![0, 1, 2]);
     }
 
@@ -1478,11 +1534,19 @@ mod tests {
         let mut workspace = fixture_workspace();
         workspace.select_many(&[0, 1], false);
         workspace.clear_selection_in(SelectMode::Add);
-        assert_eq!(workspace.selection, vec![0, 1], "Shift+点空白保留选择");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "Shift+click blank keeps selection"
+        );
         workspace.clear_selection_in(SelectMode::Remove);
-        assert_eq!(workspace.selection, vec![0, 1], "Ctrl+点空白保留选择");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1],
+            "Ctrl+click blank keeps selection"
+        );
         workspace.clear_selection_in(SelectMode::Replace);
-        assert!(workspace.selection.is_empty(), "普通点空白才清空");
+        assert!(workspace.selection.is_empty(), "plain click blank clears");
     }
 
     #[test]
@@ -1490,15 +1554,30 @@ mod tests {
         let mut workspace = fixture_workspace();
         workspace.select_many_with(&[0], SelectMode::Replace);
         workspace.select_many_with(&[1, 2], SelectMode::Add);
-        assert_eq!(workspace.selection, vec![0, 1, 2], "Shift 框选并入");
+        assert_eq!(
+            workspace.selection,
+            vec![0, 1, 2],
+            "Shift box-select additive"
+        );
         workspace.select_many_with(&[0, 2], SelectMode::Remove);
-        assert_eq!(workspace.selection, vec![1], "Ctrl 框选只减去命中项");
+        assert_eq!(
+            workspace.selection,
+            vec![1],
+            "Ctrl box-select only subtracts hit items"
+        );
         workspace.select_many_with(&[2], SelectMode::Replace);
-        assert_eq!(workspace.selection, vec![2], "普通框选覆盖");
+        assert_eq!(workspace.selection, vec![2], "plain box-select overrides");
         workspace.select_many_with(&[], SelectMode::Add);
-        assert_eq!(workspace.selection, vec![2], "空框 + Shift 不清空");
+        assert_eq!(
+            workspace.selection,
+            vec![2],
+            "empty box + Shift does not clear"
+        );
         workspace.select_many_with(&[], SelectMode::Replace);
-        assert!(workspace.selection.is_empty(), "空框 + 普通点击清空");
+        assert!(
+            workspace.selection.is_empty(),
+            "empty box + plain click clears"
+        );
     }
 
     #[test]
@@ -1548,7 +1627,7 @@ mod tests {
         );
         assert!(
             !workspace.document().is_dirty(),
-            "撤销回保存点后文档应该恢复干净"
+            "document should be clean after undo back to save point"
         );
     }
 
@@ -1565,11 +1644,14 @@ mod tests {
         assert!(!workspace.document().is_dirty());
 
         workspace.undo();
-        assert!(workspace.document().is_dirty(), "保存后再撤销同样算未保存");
+        assert!(
+            workspace.document().is_dirty(),
+            "undo after save still counts as unsaved"
+        );
         workspace.redo();
         assert!(
             !workspace.document().is_dirty(),
-            "重做回保存点后应该恢复干净"
+            "redo back to save point should be clean"
         );
     }
 
@@ -1606,17 +1688,17 @@ mod tests {
 
         let added = workspace.add_component_multi(&[0, 1], path);
 
-        assert_eq!(added, 1, "已经有该组件的实体被跳过");
+        assert_eq!(added, 1, "entities already having component skipped");
         assert!(workspace.document().doc.entities[1].has_component(path));
         assert_eq!(
             workspace.undo_history().len(),
             undo_before + 1,
-            "批量添加只产生一个撤销步"
+            "batch add produces only one undo step"
         );
         workspace.undo();
         assert!(
             !workspace.document().doc.entities[1].has_component(path),
-            "一次撤销就回退整批"
+            "one undo rolls back whole batch"
         );
     }
 
@@ -1629,7 +1711,7 @@ mod tests {
             serde_json::json!({ "mesh_path": "../../models/cube.mesh" }),
         );
 
-        let details = workspace.asset_details(path).expect("资产在索引里");
+        let details = workspace.asset_details(path).expect("asset in index");
         assert_eq!(details.asset.path, path);
         assert_eq!(details.asset.kind, crate::assets::AssetKind::Scene);
         assert_eq!(details.asset.size_bytes, 10);
@@ -1652,13 +1734,13 @@ mod tests {
         let target = 1;
         let id = workspace.document().doc.entities[target]
             .id
-            .expect("fixture 有 id");
+            .expect("fixture has id");
         workspace.selection = vec![target];
 
         workspace.delete_selection();
         assert!(
             workspace.document().doc.index_of_id(id).is_none(),
-            "删除后实体不在了"
+            "entity gone after deletion"
         );
         assert!(workspace.selection.is_empty());
 
@@ -1667,7 +1749,7 @@ mod tests {
             .document()
             .doc
             .index_of_id(id)
-            .expect("撤销后实体回来");
+            .expect("entity back after undo");
         assert_eq!(workspace.selection, vec![restored]);
         assert_eq!(workspace.selection_ids(), vec![id]);
     }
@@ -1692,14 +1774,14 @@ mod tests {
         let original = 1;
         let id = workspace.document().doc.entities[original]
             .id
-            .expect("fixture 有 id");
+            .expect("fixture has id");
         workspace.selection = vec![original];
 
         workspace.duplicate_selection();
         assert!(workspace.selection.len() >= 1);
         assert!(
             workspace.selection.iter().any(|index| *index != original),
-            "复制后选中新实体"
+            "new entity selected after copy"
         );
 
         workspace.undo();
@@ -1753,8 +1835,11 @@ mod tests {
         let position = before
             .iter()
             .position(|name| name == camera)
-            .expect("fixture 的 0 号实体带 Camera");
-        assert!(position + 1 < before.len(), "需要下面还有组件才谈得上上移");
+            .expect("fixture 0th entity carries Camera");
+        assert!(
+            position + 1 < before.len(),
+            "need components below to talk about move-up"
+        );
 
         let undo_before = workspace.undo_history().len();
         assert!(workspace.move_component_at(entity, camera, 1));
@@ -1764,11 +1849,15 @@ mod tests {
         assert_eq!(
             workspace.undo_history().len(),
             undo_before + 1,
-            "移动组件只产生一个撤销步"
+            "move component produces only one undo step"
         );
 
         workspace.undo();
-        assert_eq!(workspace.component_order(entity), before, "撤销恢复原顺序");
+        assert_eq!(
+            workspace.component_order(entity),
+            before,
+            "undo restores original order"
+        );
     }
 
     #[test]
@@ -1777,8 +1866,8 @@ mod tests {
         with_extra_components(&mut workspace);
         let entity = 0;
         let order = workspace.component_order(entity);
-        let first = order.first().cloned().expect("至少一个组件");
-        let last = order.last().cloned().expect("至少一个组件");
+        let first = order.first().cloned().expect("at least one component");
+        let last = order.last().cloned().expect("at least one component");
         let undo_before = workspace.undo_history().len();
 
         assert!(!workspace.move_component_at(entity, &first, -1));
@@ -1790,7 +1879,7 @@ mod tests {
         assert_eq!(
             workspace.undo_history().len(),
             undo_before,
-            "没有移动就不该产生撤销步"
+            "no move should not produce undo step"
         );
     }
 
@@ -1800,7 +1889,7 @@ mod tests {
         with_extra_components(&mut workspace);
         let entity = 0;
         let order = workspace.component_order(entity);
-        let last = order.last().cloned().expect("至少一个组件");
+        let last = order.last().cloned().expect("at least one component");
         assert!(workspace.move_component_at(entity, &last, -1));
 
         let saved = serde_json::to_string(&workspace.document().doc).unwrap();
@@ -1814,20 +1903,20 @@ mod tests {
         let mut workspace = fixture_workspace();
         let path = "prism_engine::scene::Camera";
         let added = workspace.add_component_multi(&[1, 1, 1], path);
-        assert_eq!(added, 1, "重复下标只算一次");
+        assert_eq!(added, 1, "duplicate index counted once");
 
         let undo_before = workspace.undo_history().len();
         assert_eq!(workspace.add_component_multi(&[1], path), 0);
         assert_eq!(
             workspace.undo_history().len(),
             undo_before,
-            "全都已有组件时不产生撤销步"
+            "no undo step when all already have component"
         );
         assert_eq!(workspace.add_component_multi(&[], path), 0);
         assert_eq!(
             workspace.add_component_multi(&[999], path),
             0,
-            "越界下标跳过"
+            "out-of-bounds index skipped"
         );
     }
 
@@ -1846,7 +1935,7 @@ mod tests {
         assert!(names(&workspace, &[1]).contains(&path.to_string()));
         assert!(
             names(&workspace, &[0, 1]).contains(&path.to_string()),
-            "至少一个选中项缺该组件时仍然列出",
+            "still listed when at least one selected item lacks component",
         );
         assert!(names(&workspace, &[]).is_empty());
     }
@@ -2006,7 +2095,7 @@ mod tests {
     #[test]
     fn skybox_toggle_flips_flag_and_defaults_on() {
         let mut workspace = Workspace::sample();
-        assert!(workspace.show_skybox, "Scene view 默认画天空盒");
+        assert!(workspace.show_skybox, "Scene view draws skybox by default");
         workspace.toggle_skybox();
         assert!(!workspace.show_skybox);
         workspace.toggle_skybox();
@@ -2038,7 +2127,7 @@ mod tests {
         workspace.selection = vec![index];
         let id = workspace.document().doc.entities[index]
             .id
-            .expect("fixture 实体都有稳定 id");
+            .expect("fixture entities all have stable ids");
         let before = workspace.document().doc.entities[index].transform;
         let entities_before = workspace.document().doc.entities.len();
         let selection_before = workspace.selection.clone();
@@ -2059,11 +2148,17 @@ mod tests {
         let restored = &workspace.document().doc.entities[index];
         assert_eq!(
             restored.transform, before,
-            "Transform 要回到进入 Play 前的值"
+            "Transform should return to pre-Play value"
         );
-        assert!(!workspace.document().is_dirty(), "运行期编辑不能把文档标脏");
+        assert!(
+            !workspace.document().is_dirty(),
+            "runtime editing must not dirty document"
+        );
         assert_eq!(workspace.selection, selection_before);
-        assert!(!workspace.can_undo(), "撤销栈不能混进运行期的步骤");
+        assert!(
+            !workspace.can_undo(),
+            "undo stack must not mix runtime steps"
+        );
     }
 
     #[test]
@@ -2088,7 +2183,7 @@ mod tests {
         assert_eq!(
             workspace.active_index(),
             playing_index,
-            "Stop 要回到被播放的文档"
+            "Stop should return to played document"
         );
         assert_eq!(
             workspace.docs[1].doc.entities.len(),
@@ -2198,7 +2293,8 @@ mod tests {
                 .log
                 .visible_lines()
                 .iter()
-                .any(|line| line.level == LogLevel::Error && line.text.contains("全部加载失败")),
+                .any(|line| line.level == LogLevel::Error
+                    && line.text.contains("all failed to load")),
             "loading failures have to show up as an error"
         );
     }
@@ -2312,7 +2408,7 @@ mod tests {
                 .rename_anim_graph_parameter("assets/anim/hero.animgraph.json", "velocity", "speed")
                 .unwrap(),
             vec!["assets/anim/hero.statemachine.json".to_string()],
-            "改回原名也走同一条路径"
+            "renaming back to original also takes same path"
         );
         let undone = workspace.undo_asset_edit().unwrap().expect("one step");
         assert_eq!(
@@ -2411,7 +2507,7 @@ mod tests {
             .iter()
             .find(|document| document.path.as_deref() == Some("assets/scenes/main.scene.json"))
             .expect("scene is open");
-        assert!(scene.is_dirty(), "打开着的场景要标脏");
+        assert!(scene.is_dirty(), "opened scene should be dirty");
         let hero = scene
             .doc
             .entities
@@ -2430,7 +2526,7 @@ mod tests {
             .expect("Other entity");
         assert_eq!(
             other.components["prism_engine::scene::Animator"]["state"], "Idle",
-            "其它状态机的引用不受影响"
+            "references to other state machines unaffected"
         );
 
         let prefab: Value = serde_json::from_str(
@@ -2439,7 +2535,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             prefab["entities"][0]["components"]["prism_engine::scene::Animator"]["state"], "Stand",
-            "没打开的预制体直接写回磁盘"
+            "unopened prefab written directly to disk"
         );
 
         let machine: Value = serde_json::from_str(
@@ -2499,13 +2595,13 @@ mod tests {
             workspace
                 .rename_state_machine_state("assets/anim/hero.statemachine.json", 0, "Run")
                 .is_err(),
-            "重名"
+            "duplicate name"
         );
         assert!(
             workspace
                 .rename_state_machine_state("assets/anim/hero.statemachine.json", 0, "  ")
                 .is_err(),
-            "空名"
+            "empty name"
         );
 
         let scene = workspace
@@ -2759,7 +2855,7 @@ mod tests {
             .and_then(|component| component.get("mesh_path"))
             .and_then(|value| value.as_str());
         assert_eq!(value, Some("assets/moved/cube.fbx"));
-        assert!(document.is_dirty(), "文档被改写了就该是 dirty");
+        assert!(document.is_dirty(), "document should be dirty if rewritten");
     }
 
     #[test]
@@ -2823,7 +2919,7 @@ mod tests {
         workspace.load_project(project.root.clone()).unwrap();
 
         let error = workspace.delete_folder("assets/full").unwrap_err();
-        assert!(error.to_string().contains("非空"), "{error}");
+        assert!(error.to_string().contains("non-empty"), "{error}");
 
         workspace.delete_folder("assets/empty").unwrap();
         assert!(!project.root.join("assets/empty").exists());
@@ -2846,7 +2942,7 @@ mod tests {
         let position = workspace.document().doc.entities[cube].transform.position;
         assert!(
             (position[1] - 1.0).abs() < 1e-3,
-            "半高 1 → y=1，实际 {position:?}"
+            "half-height 1 -> y=1, actual {position:?}"
         );
         assert!(workspace.can_undo());
 
@@ -2855,7 +2951,7 @@ mod tests {
         let position = workspace.document().doc.entities[cube].transform.position;
         assert!(
             (position[0] - 9.0).abs() < 1e-3,
-            "应平移到轨道中心: {position:?}"
+            "should translate to orbit center: {position:?}"
         );
 
         assert!(workspace.align_view_to_selection());
@@ -2885,7 +2981,10 @@ mod tests {
         workspace.set_scene_enabled(0, false);
         let reloaded = SceneManifest::read(&project.root).unwrap();
         assert!(!reloaded.scenes[0].enabled);
-        assert!(reloaded.active().is_none(), "level 本来就没启用");
+        assert!(
+            reloaded.active().is_none(),
+            "level was not enabled originally"
+        );
 
         workspace.set_scene_enabled(1, true);
         let reloaded = SceneManifest::read(&project.root).unwrap();
@@ -2912,7 +3011,7 @@ mod tests {
         );
         let index = workspace
             .add_scene_document("assets/scenes/b.scene.json")
-            .expect("b 应能加入");
+            .expect("b should join");
         assert_eq!(index, 1);
         assert!(workspace.available_scene_documents().is_empty());
         assert!(workspace
@@ -3089,7 +3188,7 @@ mod tests {
             std::fs::read_to_string(project.root.join("assets/scenes/a.scene.json")).unwrap();
         assert!(
             !saved.contains("fov_y_degrees"),
-            "默认值不应写进作者文档: {saved}"
+            "default value should not be written to authoring document: {saved}"
         );
 
         workspace.reload_active().unwrap();
@@ -3097,7 +3196,7 @@ mod tests {
             workspace.document().doc.entities[0].components["prism_engine::scene::Camera"]
                 ["fov_y_degrees"],
             json!(60.0),
-            "读取时默认值必须补回来"
+            "default value must be filled back on read"
         );
     }
 
@@ -3203,7 +3302,7 @@ mod tests {
         let doc = &workspace.document().doc;
         assert_eq!(doc.entities.len(), 3);
         let instance = &doc.entities[1];
-        assert_eq!(instance.parent, Some(1), "挂到选中实体下");
+        assert_eq!(instance.parent, Some(1), "attached under selected entity");
         assert_eq!(
             instance.prefab_link(),
             Some("assets/prefabs/box.prefab.json")
@@ -3250,8 +3349,8 @@ mod tests {
         let path = workspace.save_selection_as_prefab("My Prefab").unwrap();
         assert_eq!(path, "assets/prefabs/My Prefab.prefab.json");
         let written = project::read_document(&project.root, &path).unwrap();
-        assert_eq!(written.entities.len(), 2, "包含子树");
-        assert!(written.entities[0].parent.is_none(), "根无父级");
+        assert_eq!(written.entities.len(), 2, "includes subtree");
+        assert!(written.entities[0].parent.is_none(), "root has no parent");
 
         let second = workspace.save_selection_as_prefab("My Prefab").unwrap();
         assert_eq!(second, "assets/prefabs/My Prefab-2.prefab.json");
@@ -3262,7 +3361,7 @@ mod tests {
 
         assert!(
             workspace.save_selection_as_prefab("   ").is_ok(),
-            "空名字回退 Untitled"
+            "empty name falls back to Untitled"
         );
         assert!(project
             .root
@@ -3336,7 +3435,10 @@ mod tests {
                 .len(),
             1
         );
-        assert!(workspace.document().is_dirty(), "引用改写后应标记未保存");
+        assert!(
+            workspace.document().is_dirty(),
+            "should be marked unsaved after reference rewrite"
+        );
 
         assert!(workspace
             .rename_asset(
@@ -3385,7 +3487,10 @@ mod tests {
         );
         assert_eq!(references, 0);
         assert!(affected.is_empty());
-        assert!(!workspace.document().is_dirty(), "文档不应被改写");
+        assert!(
+            !workspace.document().is_dirty(),
+            "document should not be rewritten"
+        );
         assert_eq!(std::fs::read_to_string(&scene_path).unwrap(), scene);
         assert!(project.root.join("assets/textures/b.png.rmeta").is_file());
         assert!(!project.root.join("assets/textures/a.png.rmeta").exists());
@@ -3466,7 +3571,7 @@ mod tests {
         assert_eq!(values, vec!["assets/textures/gone.png"]);
         assert!(
             missing[0].0.contains("materials"),
-            "字段路径要能认出是哪一格: {:?}",
+            "field path should identify which cell: {:?}",
             missing[0]
         );
         assert!(workspace.missing_references(1).is_empty());
@@ -3499,7 +3604,7 @@ mod tests {
             .docs
             .iter()
             .position(|doc| doc.path.as_deref() == Some("assets/scenes/b.scene.json"))
-            .expect("b 应该被 load_project 打开");
+            .expect("b should be opened by load_project");
         workspace.close_document(index);
         assert!(!workspace
             .docs
@@ -3522,12 +3627,15 @@ mod tests {
             .docs
             .iter()
             .find(|doc| doc.path.as_deref() == Some("assets/scenes/a.scene.json"))
-            .expect("a 仍然开着");
+            .expect("a still open");
         assert_eq!(
             open.doc.field_references("assets/textures/oak.png").len(),
             1
         );
-        assert!(open.is_dirty(), "内存里的引用改完要标脏");
+        assert!(
+            open.is_dirty(),
+            "dirty mark after in-memory reference edits"
+        );
     }
 
     fn prefab_project(name: &str) -> (TempProject, Workspace) {
@@ -3564,7 +3672,7 @@ mod tests {
         let root = workspace.selection[0];
         assert!(
             workspace.prefab_overrides(root).unwrap().is_empty(),
-            "刚实例化时应该没有 override"
+            "no override right after instantiation"
         );
 
         workspace.document_mut().doc.entities[root]
@@ -3627,8 +3735,8 @@ mod tests {
         workspace.undo();
         assert_eq!(
             workspace.undo_history().first().map(|entry| entry.as_str()),
-            Some("实例化预制体"),
-            "回滚是一个独立的撤销步（撤销一次就回到实例化那一步之前）"
+            Some("instantiate prefab"),
+            "rollback is a separate undo step (one undo returns to before instantiation)"
         );
         assert_eq!(
             workspace.document().doc.entities[root].transform.position,
@@ -3651,7 +3759,7 @@ mod tests {
         assert_eq!(prefab.entities[0].transform.position, [1.0, 2.0, 3.0]);
         assert!(
             workspace.prefab_overrides(root).unwrap().is_empty(),
-            "写回之后实例和源一致"
+            "instance and source consistent after write-back"
         );
     }
 
@@ -3746,7 +3854,9 @@ mod tests {
             workspace.document().path.as_deref(),
             Some("assets/scenes/level.scene.json")
         );
-        let selected = workspace.primary_selection().expect("返回后选中原来的实例");
+        let selected = workspace
+            .primary_selection()
+            .expect("original instance selected after return");
         let entity = &workspace.document().doc.entities[selected];
         assert_eq!(
             entity.prefab_link(),
@@ -3755,7 +3865,7 @@ mod tests {
         assert_eq!(
             entity.transform.position,
             [5.0, 1.0, 0.0],
-            "干净预制体返回时应把内容同步回实例"
+            "clean prefab return should sync content back to instance"
         );
 
         assert_ne!(entity.id, Some(7));
@@ -3777,9 +3887,15 @@ mod tests {
             workspace.document().path.as_deref(),
             Some("assets/scenes/level.scene.json")
         );
-        let selected = workspace.primary_selection().expect("仍然选中实例");
+        let selected = workspace
+            .primary_selection()
+            .expect("still selects instance");
         let entity = &workspace.document().doc.entities[selected];
-        assert_eq!(entity.id, Some(7), "脏预制体不重新实例化，实体 id 不变");
+        assert_eq!(
+            entity.id,
+            Some(7),
+            "dirty prefab not re-instantiated, entity id unchanged"
+        );
         assert_ne!(entity.transform.position, [9.0, 0.0, 0.0]);
     }
 
@@ -3826,22 +3942,22 @@ mod tests {
 
         workspace.revert_prefab_instance(2).unwrap();
         let doc = &workspace.document().doc;
-        assert_eq!(doc.entities.len(), 3, "实例根 + 预制体子级");
+        assert_eq!(doc.entities.len(), 3, "instance root + prefab children");
         let root = doc
             .entities
             .iter()
             .find(|entity| entity.name.as_deref() == Some("My Box"))
-            .expect("保留实例名字");
-        assert_eq!(root.parent, Some(1), "保留父级");
+            .expect("instance name kept");
+        assert_eq!(root.parent, Some(1), "parent kept");
         assert_eq!(
             root.transform.position,
             [5.0, 0.0, 0.0],
-            "使用预制体当前内容"
+            "use prefab current content"
         );
         assert_eq!(
             root.prefab_link(),
             Some("assets/prefabs/box.prefab.json"),
-            "链接保留"
+            "link kept"
         );
         assert!(doc
             .entities
@@ -3894,14 +4010,14 @@ mod tests {
             .iter()
             .find(|entity| entity.display_name() == "My Box")
             .and_then(|entity| entity.id)
-            .expect("实例根");
+            .expect("instance root");
         {
             let doc = &mut workspace.document_mut().doc;
             let child = doc
                 .entities
                 .iter_mut()
                 .find(|entity| entity.display_name() == "Child")
-                .expect("实例子级");
+                .expect("instance child");
             child.transform.position = [7.0, 0.0, 0.0];
             child.name = Some("Renamed Child".to_string());
         }
@@ -3915,15 +4031,18 @@ mod tests {
                 .entities
                 .iter()
                 .all(|entity| entity.prefab_link().is_none()),
-            "预制体根不应带实例链接"
+            "prefab root should not carry instance link"
         );
         let child = prefab
             .entities
             .iter()
             .find(|entity| entity.display_name() == "Renamed Child")
-            .expect("修改写回预制体");
+            .expect("modification written back to prefab");
         assert_eq!(child.transform.position, [7.0, 0.0, 0.0]);
-        assert!(workspace.apply_prefab_instance(1).is_err(), "非实例应报错");
+        assert!(
+            workspace.apply_prefab_instance(1).is_err(),
+            "non-instance should error"
+        );
     }
 
     #[test]
@@ -3945,7 +4064,7 @@ mod tests {
             .entities
             .iter()
             .find(|entity| entity.name.as_deref() == Some("Cube"))
-            .expect("实例根");
+            .expect("instance root");
         assert_eq!(
             instance.prefab_link(),
             Some("assets/prefabs/camera.prefab.json")
@@ -3997,7 +4116,7 @@ mod tests {
         );
         assert!(workspace.unlink_prefab(1));
         assert!(!workspace.document().doc.entities[1].has_component(PREFAB_LINK_COMPONENT));
-        assert!(!workspace.unlink_prefab(1), "没有链接时返回 false");
+        assert!(!workspace.unlink_prefab(1), "returns false when no link");
     }
 
     #[test]
@@ -4056,7 +4175,7 @@ mod tests {
     #[test]
     fn theme_and_locale_switch() {
         let mut workspace = fixture_workspace();
-        assert_eq!(workspace.t("common.save"), "保存");
+        assert_eq!(workspace.t("common.save"), "Save");
         workspace.set_locale(Locale::EnUs);
         assert_eq!(workspace.t("common.save"), "Save");
         workspace.set_theme_preset("paper");
@@ -4098,7 +4217,7 @@ mod tests {
 
         assert!(
             sprite_distance > unit_distance * 10.0,
-            "64 单位宽的精灵要退到比单位立方体远得多（{unit_distance} → {sprite_distance}）"
+            "64-unit-wide sprite must frame much farther than unit cube ({unit_distance} -> {sprite_distance})"
         );
     }
 
@@ -4132,7 +4251,7 @@ mod tests {
         workspace.frame_selection();
         assert!(
             (workspace.camera.target[0] - 100.0).abs() < 1e-4,
-            "子物体应在世界 x=100 取景，实际 {:?}",
+            "child should frame at world x=100, actual {:?}",
             workspace.camera.target
         );
     }
@@ -4148,7 +4267,7 @@ mod tests {
         workspace.frame_selection();
         assert!(
             workspace.camera.distance > 100.0,
-            "大物体要退到能框住它，实际 {}",
+            "large object must frame back to contain it, actual {}",
             workspace.camera.distance
         );
     }
@@ -4164,7 +4283,7 @@ mod tests {
         workspace.frame_selection();
         assert!(
             (0.4..2.0).contains(&workspace.camera.distance),
-            "小物体不该离得太远，实际 {}",
+            "small object should not be too far, actual {}",
             workspace.camera.distance
         );
     }
@@ -4182,7 +4301,7 @@ mod tests {
         workspace.frame_all();
         assert!(
             (workspace.camera.target[0] - 125.0).abs() < 1e-3,
-            "world bounds 中心应为 125，实际 {:?}",
+            "world bounds center should be 125, actual {:?}",
             workspace.camera.target
         );
     }
@@ -4395,7 +4514,7 @@ mod tests {
             "cube={moved_cube} light={moved_light} anchor={moved_anchor} order={:?}",
             names(&workspace)
         );
-        assert!(moved_cube < moved_light, "组内顺序必须保留");
+        assert!(moved_cube < moved_light, "group order must be preserved");
 
         let detail = index_named(&workspace, "Detail");
         let cube_id = workspace.document().doc.entities[moved_cube].id;
@@ -4403,11 +4522,11 @@ mod tests {
         assert_eq!(
             workspace.document().undo.history().len(),
             steps + 1,
-            "一次拖拽 = 一步撤销"
+            "one drag = one undo step"
         );
 
         workspace.undo();
-        assert_eq!(names(&workspace), before, "撤销要还原顺序与父级");
+        assert_eq!(names(&workspace), before, "undo restores order and parent");
     }
 
     #[test]
@@ -4538,7 +4657,10 @@ mod tests {
     #[test]
     fn snap_settings_round_to_the_configured_steps() {
         let snap = SnapSettings::default();
-        assert!(!snap.enabled, "吸附默认关，靠工具栏或 Ctrl 临时开");
+        assert!(
+            !snap.enabled,
+            "snap default off, enabled via toolbar or Ctrl"
+        );
         assert_eq!(snap.snapped_translate(0.31), 0.25);
         assert_eq!(snap.snapped_translate(0.38), 0.5);
         assert_eq!(snap.snapped_translate(-0.38), -0.5);
@@ -4555,12 +4677,16 @@ mod tests {
             scale: 0.0,
             ..SnapSettings::default()
         };
-        assert_eq!(snap.snapped_scale(0.3), 0.3, "步长为 0 时原样返回");
+        assert_eq!(snap.snapped_scale(0.3), 0.3, "step 0 returns as-is");
         let coarse = SnapSettings {
             scale: 10.0,
             ..SnapSettings::default()
         };
-        assert_eq!(coarse.snapped_scale(0.2), 0.01, "吸附到 0 时夹到 0.01");
+        assert_eq!(
+            coarse.snapped_scale(0.2),
+            0.01,
+            "snapped to 0 clamped to 0.01"
+        );
     }
 
     #[test]
@@ -4574,11 +4700,11 @@ mod tests {
         assert_ne!(
             workspace.document().doc.entities[1].transform.position,
             [1.0, 2.0, 3.0],
-            "一次撤销就要回到拖动前"
+            "one undo returns to before drag"
         );
         assert!(
             !workspace.can_undo(),
-            "整行拖动只能留一个撤销步，实际 {:?}",
+            "whole-row drag leaves only one undo step, actual {:?}",
             workspace.undo_history()
         );
     }
@@ -4591,7 +4717,10 @@ mod tests {
         workspace.set_transform_rotation(entity, [0.0, 0.0, 3.0, 3.0]);
         let after = workspace.document().doc.entities[0].transform.rotation;
         let length = (after.iter().map(|v| v * v).sum::<f32>()).sqrt();
-        assert!((length - 1.0).abs() < 1e-5, "写入前归一化: {after:?}");
+        assert!(
+            (length - 1.0).abs() < 1e-5,
+            "normalized before write: {after:?}"
+        );
         workspace.undo();
         assert_eq!(
             workspace.document().doc.entities[0].transform.rotation,
@@ -4609,7 +4738,10 @@ mod tests {
             workspace.document().doc.entities[0].transform.rotation,
             before
         );
-        assert!(!workspace.can_undo(), "非法输入不该产生撤销步");
+        assert!(
+            !workspace.can_undo(),
+            "illegal input should not produce undo step"
+        );
     }
 
     #[test]
@@ -4630,7 +4762,7 @@ mod tests {
         let restored = workspace.document().doc.entities[0].transform.rotation;
         assert!(
             (restored[3] - 1.0).abs() < 1e-5,
-            "一次 undo 回到两个实体都未改的状态"
+            "one undo returns to state where neither entity changed"
         );
     }
 
@@ -4664,8 +4796,8 @@ mod tests {
             .docs
             .iter()
             .find(|document| document.path.as_deref() == Some("assets/scenes/recovery.scene.json"))
-            .expect("恢复出来的文档要出现在工作区");
-        assert!(recovered.is_dirty(), "恢复的文档必须保持 dirty");
+            .expect("recovered document must appear in workspace");
+        assert!(recovered.is_dirty(), "recovered document must stay dirty");
         assert_eq!(recovered.doc, expected);
     }
 
@@ -4691,7 +4823,7 @@ mod tests {
         assert_eq!(
             fresh.docs.len(),
             tabs,
-            "同路径文档应就地替换，不能多开一个 tab"
+            "same-path document replaced in place, must not open another tab"
         );
         assert!(fresh.document().is_dirty());
         assert!(fresh
@@ -4776,11 +4908,17 @@ mod visibility_tests {
         assert!(workspace.is_entity_hidden(1));
         assert!(workspace.is_entity_hidden(3));
         assert!(!workspace.is_entity_hidden(0));
-        assert!(!workspace.document().is_dirty(), "可见性不是作者数据");
+        assert!(
+            !workspace.document().is_dirty(),
+            "visibility is not authoring data"
+        );
 
         workspace.set_entity_hidden(3, false);
         assert!(workspace.is_entity_hidden(1));
-        assert!(!workspace.is_entity_hidden(3), "子级可以单独重新显示");
+        assert!(
+            !workspace.is_entity_hidden(3),
+            "child can be shown separately"
+        );
     }
 
     #[test]
@@ -4790,7 +4928,10 @@ mod visibility_tests {
         workspace.set_isolate(true);
 
         assert!(!workspace.is_entity_hidden(1));
-        assert!(!workspace.is_entity_hidden(3), "选中父级时子树一起保留");
+        assert!(
+            !workspace.is_entity_hidden(3),
+            "subtree kept together when parent selected"
+        );
         assert!(workspace.is_entity_hidden(0));
         assert!(workspace.is_entity_hidden(2));
 
@@ -4803,7 +4944,10 @@ mod visibility_tests {
     fn isolate_requires_a_selection_and_resets_when_switching_documents() {
         let mut workspace = Workspace::sample();
         workspace.set_isolate(true);
-        assert!(!workspace.isolate, "空选择不能把整场隔离成黑色");
+        assert!(
+            !workspace.isolate,
+            "empty selection must not isolate whole scene to black"
+        );
 
         workspace.select(1, false);
         workspace.set_isolate(true);
@@ -4814,6 +4958,6 @@ mod visibility_tests {
             SceneDoc::default(),
         ));
         workspace.set_active(1);
-        assert!(!workspace.isolate, "切文档自动退出 Isolate");
+        assert!(!workspace.isolate, "switching document auto-exits Isolate");
     }
 }

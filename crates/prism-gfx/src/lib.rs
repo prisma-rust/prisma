@@ -103,8 +103,9 @@ impl ReflectType for CameraClearFlags {
 
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
-        let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("CameraClearFlags 数值越界: {raw}")))?;
+        let raw = u32::try_from(raw).map_err(|_| {
+            ReflectError::BadData(format!("CameraClearFlags value out of range: {raw}"))
+        })?;
         Self::from_ordinal_value(raw).ok_or_else(|| {
             ReflectError::BadData(format!("invalid CameraClearFlags discriminant {raw}"))
         })
@@ -204,7 +205,7 @@ impl ReflectType for LightType {
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
         let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("LightType 数值越界: {raw}")))?;
+            .map_err(|_| ReflectError::BadData(format!("LightType value out of range: {raw}")))?;
         Self::from_ordinal_value(raw)
             .ok_or_else(|| ReflectError::BadData(format!("invalid LightType discriminant {raw}")))
     }
@@ -263,8 +264,9 @@ impl ReflectType for LightShadows {
 
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
-        let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("LightShadows 数值越界: {raw}")))?;
+        let raw = u32::try_from(raw).map_err(|_| {
+            ReflectError::BadData(format!("LightShadows value out of range: {raw}"))
+        })?;
         Self::from_ordinal_value(raw).ok_or_else(|| {
             ReflectError::BadData(format!("invalid LightShadows discriminant {raw}"))
         })
@@ -319,8 +321,9 @@ impl ReflectType for LightRenderMode {
 
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
-        let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("LightRenderMode 数值越界: {raw}")))?;
+        let raw = u32::try_from(raw).map_err(|_| {
+            ReflectError::BadData(format!("LightRenderMode value out of range: {raw}"))
+        })?;
         Self::from_ordinal_value(raw).ok_or_else(|| {
             ReflectError::BadData(format!("invalid LightRenderMode discriminant {raw}"))
         })
@@ -411,8 +414,9 @@ impl ReflectType for ShadowCastingMode {
 
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
-        let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("ShadowCastingMode 数值越界: {raw}")))?;
+        let raw = u32::try_from(raw).map_err(|_| {
+            ReflectError::BadData(format!("ShadowCastingMode value out of range: {raw}"))
+        })?;
         Self::from_ordinal_value(raw).ok_or_else(|| {
             ReflectError::BadData(format!("invalid ShadowCastingMode discriminant {raw}"))
         })
@@ -477,7 +481,7 @@ impl ReflectType for CullMode {
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
         let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("CullMode 数值越界: {raw}")))?;
+            .map_err(|_| ReflectError::BadData(format!("CullMode value out of range: {raw}")))?;
         Self::from_ordinal_value(raw)
             .ok_or_else(|| ReflectError::BadData(format!("invalid CullMode discriminant {raw}")))
     }
@@ -576,8 +580,9 @@ impl ReflectType for CompareFunction {
 
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
-        let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("CompareFunction 数值越界: {raw}")))?;
+        let raw = u32::try_from(raw).map_err(|_| {
+            ReflectError::BadData(format!("CompareFunction value out of range: {raw}"))
+        })?;
         Self::from_ordinal_value(raw).ok_or_else(|| {
             ReflectError::BadData(format!("invalid CompareFunction discriminant {raw}"))
         })
@@ -680,7 +685,7 @@ impl ReflectType for BlendMode {
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
         let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("BlendMode 数值越界: {raw}")))?;
+            .map_err(|_| ReflectError::BadData(format!("BlendMode value out of range: {raw}")))?;
         Self::from_ordinal_value(raw)
             .ok_or_else(|| ReflectError::BadData(format!("invalid BlendMode discriminant {raw}")))
     }
@@ -746,7 +751,7 @@ impl ReflectType for BlendOp {
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_u64()?;
         let raw = u32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("BlendOp 数值越界: {raw}")))?;
+            .map_err(|_| ReflectError::BadData(format!("BlendOp value out of range: {raw}")))?;
         Self::from_ordinal_value(raw)
             .ok_or_else(|| ReflectError::BadData(format!("invalid BlendOp discriminant {raw}")))
     }
@@ -818,7 +823,7 @@ impl ReflectType for RenderQueue {
     fn from_value(value: Value) -> Result<Self, ReflectError> {
         let raw = value.as_i64()?;
         let raw = i32::try_from(raw)
-            .map_err(|_| ReflectError::BadData(format!("RenderQueue 数值越界: {raw}")))?;
+            .map_err(|_| ReflectError::BadData(format!("RenderQueue value out of range: {raw}")))?;
         Ok(Self(raw))
     }
 }
@@ -1086,14 +1091,17 @@ mod tests {
     fn color_temperature_goes_warm_to_cool() {
         // Low temperatures are warm/red, high temperatures cool/blue; 6500 K is near neutral white.
         let warm = correlated_color_temperature_to_rgb(2000.0);
-        assert!(warm.x > warm.z, "2000K 应偏暖: {warm:?}");
+        assert!(warm.x > warm.z, "2000K should be warm: {warm:?}");
 
         let cool = correlated_color_temperature_to_rgb(15000.0);
-        assert!(cool.z > cool.x, "15000K 应偏冷: {cool:?}");
+        assert!(cool.z > cool.x, "15000K should be cool: {cool:?}");
 
         let daylight = correlated_color_temperature_to_rgb(6500.0);
         for c in [daylight.x, daylight.y, daylight.z] {
-            assert!((0.9..=1.1).contains(&c), "6500K 应接近白色: {daylight:?}");
+            assert!(
+                (0.9..=1.1).contains(&c),
+                "6500K should be near white: {daylight:?}"
+            );
         }
     }
 

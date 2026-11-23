@@ -1,73 +1,73 @@
-# 环境配置指南
+# Environment configuration guide
 
-本项目已用 **Tauri 2 + Vue 3 + Vite + TypeScript + pnpm** 脚手架生成完毕,前端依赖已安装并能正常 `pnpm build`。
+This project has been scaffolded with **Tauri 2 + Vue 3 + Vite + TypeScript + pnpm**; frontend dependencies are installed and `pnpm build` succeeds.
 
-但要在 **Android** 上运行/打包,还差以下工具链(本机尚未安装)。请按顺序完成。
+To run / package on **Android**, the following toolchains are still missing (not installed on this machine). Complete them in order.
 
 ---
 
-## 当前已就绪 ✅
+## Already ready ✅
 
-| 项 | 状态 |
+| Item | Status |
 |---|---|
 | Node.js + npm | ✅ |
-| pnpm 11.11.0 | ✅ 已全局安装 |
+| pnpm 11.11.0 | ✅ Installed globally |
 | Android SDK | ✅ `C:\Users\jasonngu\AppData\Local\Android\Sdk` |
 | Android Platforms | ✅ android-36.1 |
 | Android Build-tools | ✅ 36.1.0, 37.0.0 |
-| `ANDROID_HOME` / `ANDROID_SDK_ROOT` 环境变量 | ✅ 已配置(用户级) |
-| 前端依赖 + 前端构建 | ✅ `pnpm build` 通过 |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` env vars | ✅ Configured (user level) |
+| Frontend deps + frontend build | ✅ `pnpm build` passes |
 
-## 待安装 ❌
+## To install ❌
 
-| 项 | 用途 |
+| Item | Purpose |
 |---|---|
-| Rust toolchain | 编译 Rust 后端(必需) |
-| JDK 17 | Gradle / Android 构建(必需) |
-| Android NDK | Rust 交叉编译到 Android(必需) |
-| Android cmdline-tools | 安装 NDK 的命令行工具(必需) |
-| Rust Android targets | `aarch64-linux-android` 等(必需) |
+| Rust toolchain | Compile Rust backend (required) |
+| JDK 17 | Gradle / Android build (required) |
+| Android NDK | Rust cross-compile to Android (required) |
+| Android cmdline-tools | CLI tools to install NDK (required) |
+| Rust Android targets | `aarch64-linux-android` etc. (required) |
 
 ---
 
-## 步骤 1:安装 Rust
+## step  1:install  Rust
 
-打开 https://rustup.rs/ 下载 `rustup-init.exe` 并运行,或用 winget:
+Open https://rustup.rs/ to download `rustup-init.exe` and run it, or use winget:
 
 ```powershell
 winget install Rustlang.Rustup
 ```
 
-安装完成后**新开一个终端**(让 PATH 生效),验证:
+After installation **open a new terminal** (so PATH takes effect), then verify:
 
 ```powershell
 rustc --version
 cargo --version
 ```
 
-## 步骤 2:安装 Tauri CLI
+## step  2:install  Tauri CLI
 
 ```powershell
-# 方式 A:用 cargo 安装(推荐,与 Rust 版本匹配)
+# Method A: via cargo install (recommended, matches Rust version)
 cargo install tauri-cli --version "^2.0"
 
-# 方式 B:项目已自带 @tauri-apps/cli,可直接用 pnpm tauri,无需单独装
+# Method B: project already ships @tauri-apps/cli, can use pnpm tauri directly, no separate install needed
 ```
 
-本项目已通过 `devDependencies` 里的 `@tauri-apps/cli@^2` 提供 `pnpm tauri` 命令,通常无需单独安装 cargo 版本。
+This project provides the `pnpm tauri` command via `@tauri-apps/cli@^2` in `devDependencies`; usually no separate cargo install needed.
 
-## 步骤 3:安装 JDK 17
+## step  3:install  JDK 17
 
-推荐 Microsoft OpenJDK 17 或 Eclipse Temurin 17:
+Microsoft OpenJDK 17 or Eclipse Temurin 17 recommended:
 
 ```powershell
 winget install Microsoft.OpenJDK.17
 ```
 
-安装后**设置环境变量**(假设装在默认路径,实际路径以安装结果为准):
+After install **set environment variables** (assuming default paths; actual path depends on install):
 
 ```powershell
-# 以管理员 PowerShell 运行,路径换成你实际的 JDK 安装目录
+# Run in administrator PowerShell, replace path with your actual JDK install directory
 [Environment]::SetEnvironmentVariable("JAVA_HOME", "C:\Program Files\Microsoft\jdk-17.0.x.x-hotspot", "User")
 $p = [Environment]::GetEnvironmentVariable("PATH", "User")
 if ($p -notlike "*%JAVA_HOME%\bin*") {
@@ -75,142 +75,142 @@ if ($p -notlike "*%JAVA_HOME%\bin*") {
 }
 ```
 
-验证(**新终端**):
+Verify (**new terminal**):
 
 ```powershell
 java -version
-# 应显示 openjdk version "17.x.x"
+# Should display openjdk version "17.x.x"
 ```
 
-## 步骤 4:安装 Android cmdline-tools + NDK
+## step  4:install  Android cmdline-tools + NDK
 
-### 4.1 装 cmdline-tools
+### 4.1 Install cmdline-tools
 
-你的 SDK 目前**没有** `cmdline-tools` 目录,需要先装。
+Your SDK currently has **no** `cmdline-tools` directory; need to install it first.
 
-打开 Android Studio → Settings → Languages & Frameworks → Android SDK → SDK Tools 勾选:
+Open Android Studio → Settings → Languages & Frameworks → Android SDK → SDK Tools and check:
 - ✅ Android SDK Command-line Tools (latest)
 
-或者用已下载的 commandlinetools:https://developer.android.com/studio#command-line-tools-only
+Or use the already downloaded commandlinetools: https://developer.android.com/studio#command-line-tools-only
 
-解压到 `C:\Users\jasonngu\AppData\Local\Android\Sdk\cmdline-tools\latest\`(注意目录名必须是 `latest`)。
+Extract to `C:\Users\jasonngu\AppData\Local\Android\Sdk\cmdline-tools\latest\` (directory name must be `latest`).
 
-### 4.2 装 NDK
+### 4.2 Install NDK
 
-Tauri 2 推荐 **NDK 27**(与最新 Rust android targets 兼容性最好)。
+Tauri 2 recommends **NDK 27** (best compatibility with latest Rust android targets).
 
-用 sdkmanager(装好 cmdline-tools 后):
+Use sdkmanager (after cmdline-tools installed):
 
 ```powershell
-# 接受许可
+# accept permitted
 sdkmanager --licenses
 
-# 安装 NDK 27
+# install  NDK 27
 sdkmanager "ndk;27.2.12479018"
 ```
 
-或 Android Studio → SDK Tools → 勾选 "Show Package Details" → NDK (Side by side) → 勾选 `27.2.12479018`。
+Or Android Studio → SDK Tools → check "Show Package Details" → NDK (Side by side) → check `27.2.12479018`.
 
-### 4.3 设置 NDK_HOME 环境变量
+### 4.3 Set NDK_HOME environment variable
 
 ```powershell
-# 管理员 PowerShell,版本号换成你实际装的
+# Administrator PowerShell, replace version with the one you actually installed
 [Environment]::SetEnvironmentVariable("NDK_HOME", "C:\Users\jasonngu\AppData\Local\Android\Sdk\ndk\27.2.12479018", "User")
 ```
 
-验证(**新终端**):
+Verify (**new terminal**):
 
 ```powershell
 echo $env:NDK_HOME
-# 应指向 ndk\<版本> 目录
+# Should point to ndk\<version> directory
 ```
 
 ---
 
-## 步骤 5:添加 Rust Android targets
+## step  5:add  Rust Android targets
 
 ```powershell
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 ```
 
-- `aarch64-linux-android`:64 位 ARM(绝大多数现代手机,必装)
-- `armv7-linux-androideabi`:32 位 ARM(老设备)
-- `i686-linux-android` / `x86_64-linux-android`:模拟器用
+- `aarch64-linux-android`: 64-bit ARM (most modern phones, required)
+- `armv7-linux-androideabi`: 32-bit ARM (old devices)
+- `i686-linux-android` / `x86_64-linux-android`: emulator
 
-## 步骤 6:确认 Android 工程(不要重新生成)
+## Step 6: Confirm Android project (do NOT regenerate)
 
-`src-tauri/gen/android/` **已随仓库提交**,并且带着本项目自己的定制:
+`src-tauri/gen/android/` **is committed to the repo**, carrying this project's own customizations:
 
-- `minSdk 31`、只打 `arm64-v8a`;
-- `signingConfigs`、`packaging` excludes;
-- `games-activity` 依赖与第二个 Activity(`com.prisma.MainActivity`,跑游戏)。
+- `minSdk 31`, only `arm64-v8a`;
+- `signingConfigs`, `packaging` excludes;
+- `games-activity` dependency and a second Activity (`com.prisma.MainActivity`, runs the game).
 
-**不要**跑 `pnpm tauri android init`:它会用模板覆盖 `settings.gradle` /
-`app/build.gradle.kts`,把上面这些静默丢掉(`AGENTS.md` 的「Android packaging chain」
-同样禁止)。
+**Do NOT** run `pnpm tauri android init`: it overwrites `settings.gradle` /
+`app/build.gradle.kts` with templates, silently dropping the above (also forbidden by
+the "Android packaging chain" rule in `AGENTS.md`).
 
-只有下面两个是 gitignore 的、由 Tauri CLI 生成的文件:
+Only the following two files are gitignored and generated by Tauri CLI:
 
 - `src-tauri/gen/android/tauri.settings.gradle`
 - `src-tauri/gen/android/app/tauri.build.gradle.kts`
 
-Gradle 报它们不存在时,在仓库里跑一次 `pnpm tauri android build`(或 `dev`),CLI 会自动补出来。
+If Gradle reports them missing, run `pnpm tauri android build` (or `dev`) once in the repo; CLI regenerates them.
 
-命令都在仓库根目录执行(Windows PowerShell):
+Run all commands at repo root (Windows PowerShell):
 
 ```powershell
 cd launcher
 ```
 
-如果报错,常见原因:
-- `NDK_HOME` 未设或路径不对
-- `JAVA_HOME` 未设或不是 JDK 17
-- Rust targets 未装
+If errors occur, common causes:
+- `NDK_HOME` unset or wrong path
+- `JAVA_HOME` unset or not JDK 17
+- Rust targets not installed
 
-## 步骤 7:运行 🚀
+## step  7:run  🚀
 
-### 连接设备/模拟器
+### Connect device / emulator
 
 ```powershell
 adb devices
-# 确认有设备或模拟器在线
+# Confirm a device or emulator is online
 ```
 
-### Android 开发模式
+### Android development mode
 
 ```powershell
 pnpm tauri android dev
 ```
 
-首次会编译 Rust 到 Android target,耗时较长(10-30 分钟)。
+First run compiles Rust to the Android target, takes a while (10-30 minutes).
 
-### Android 打包
+### Android packaging
 
 ```powershell
 # Debug APK
 pnpm tauri android build --debug
 
-# Release AAB(上传 Google Play)
+# Release AAB (for Google Play upload)
 pnpm tauri android build
 ```
 
-产物在 `src-tauri/gen/android/app/build/outputs/apk/` 或 `bundle/`。
+Artifacts in `src-tauri/gen/android/app/build/outputs/apk/` or `bundle/`.
 
 ---
 
-## 常用命令速查
+## Common commands quick reference
 
-| 命令 | 作用 |
+| Command | Purpose |
 |---|---|
-| `pnpm dev` | 仅启动前端(Vite dev server, http://localhost:1420) |
-| `pnpm build` | 前端生产构建(已验证可跑) |
-| `pnpm tauri dev` | 桌面端开发(需 Rust) |
-| `pnpm tauri android dev` | Android 开发(需完整工具链) |
-| `pnpm tauri android build` | Android 打包 |
-| `pnpm tauri android init` | ⚠️ 只给全新项目用;本仓库**不要**跑(会覆盖已提交的 Android 定制,见步骤 6) |
+| `pnpm dev` | Frontend only (Vite dev server, http://localhost:1420) |
+| `pnpm build` | Frontend production build (verified working) |
+| `pnpm tauri dev` | Desktop development (requires Rust) |
+| `pnpm tauri android dev` | Android development (full toolchain) |
+| `pnpm tauri android build` | Android packaging |
+| `pnpm tauri android init` | ⚠️ Only for brand-new projects; do NOT run in this repo (overwrites committed Android customizations, see step 6) |
 
-## 参考文档
+## Reference documentation
 
-- Tauri Android 前置条件:https://tauri.app/start/prerequisites/
-- Tauri Android 开发:https://tauri.app/start/run-android/
-- Tauri 配置参考:https://tauri.app/reference/config/
+- Tauri Android prerequisites: https://tauri.app/start/prerequisites/
+- Tauri Android development: https://tauri.app/start/run-android/
+- Tauri config reference: https://tauri.app/reference/config/

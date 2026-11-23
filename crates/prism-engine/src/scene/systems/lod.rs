@@ -1,28 +1,28 @@
-//! 距离分级 LOD（#491）。
+//! Distance-based LOD (#491).
 //!
-//! 父实体挂 [`LodGroup`] 时，它的 [`Child`] 列表按顺序表示 LOD0、LOD1……
-//! 每一帧按 `LodGroup` 的配置选一级：`screen_ratios` 非空时用相机投影算屏幕
-//! 高度占比，否则按父实体到**最近启用相机**的距离。选中后给每个子实体写
-//! 运行时 [`LodHidden`]：
+//! When parent entity has [`LodGroup`], its [`Child`] list ordered represents LOD0, LOD1...
+//! Each frame selects one level per `LodGroup` config: when `screen_ratios` non-empty, use camera projection to compute screen
+//! height ratio, otherwise distance from parent entity to **nearest enabled camera**. After selection writes to each child entity
+//! runtime [`LodHidden`]:
 //!
-//! - 当前级 `LodHidden(false)`；
-//! - 其它级 `LodHidden(true)`。
+//! - current level `LodHidden(false)`;
+//! - other levels `LodHidden(true)`.
 //!
-//! 隐藏只影响渲染类系统（`is_active_in_hierarchy` 会跳过它），**不改写**
-//! 作者的 `Active`，也不碰编辑器的 `Hidden`。没有相机或距离非有限时显示
-//! LOD0，保证不会因为数据缺失把整组物体藏掉。
+//! Hiding only affects render-class systems (`is_active_in_hierarchy` skips it), **does not rewrite**
+//! author `Active`, nor touch editor `Hidden`. With no camera or non-limited distance, display
+//! LOD0, ensuring missing data will not hide whole group.
 //!
-//! 系统在 `Engine::update` 的 `hierarchy_system` / `active_hierarchy_system`
-//! 之后运行，所以同一帧的提取看到的是当前世界矩阵算出的距离。
+//! System runs after `hierarchy_system` / `active_hierarchy_system` in `Engine::update`,
+//! so same-frame extraction sees distance computed from current world matrix.
 
 use prism_ecs::{Entity, World};
 
 use crate::scene::components::{Camera, Child, LocalToWorld, LodGroup, LodHidden};
 
-/// 按距离给每个 `LodGroup` 的子实体写 `LodHidden`。
+/// Write `LodHidden` for each `LodGroup` child entity by distance.
 pub fn lod_system(world: &mut World) {
-    // 先把上一帧的标记全部清掉：`LodGroup` 被删、子实体被移出 `Child`、
-    // 或者相机被删时，残留的 `true` 不能让物体永远消失。
+    // First clear all previous-frame flags: when `LodGroup` deleted, child moved out of `Child`,
+    // or camera deleted, leftover `true` must not make object disappear forever.
     let marked: Vec<Entity> = world
         .query::<LodHidden>()
         .map(|(entity, _)| entity)
@@ -33,7 +33,7 @@ pub fn lod_system(world: &mut World) {
         }
     }
 
-    // 屏幕占比模式需要每台相机的投影 y 缩放；正交相机不随距离缩小。
+    // Screen-ratio mode needs each camera projection y scale; correct camera does not shrink with distance.
     let cameras: Vec<(glam::Vec3, f32, bool)> = world
         .query2::<Camera, LocalToWorld>()
         .filter(|(_, camera, _)| camera.enabled)
@@ -56,8 +56,8 @@ pub fn lod_system(world: &mut World) {
         if children.is_empty() {
             continue;
         }
-        // 距离模式用最近的一台相机；屏幕占比模式用占比最大的一台，语义都是
-        // 「任意相机看到最近级就显示最近级」。
+        // Distance mode uses nearest camera; screen-ratio mode uses max-ratio one, both semantics are
+        // "any camera seeing nearest level displays nearest level".
         let distance = cameras
             .iter()
             .map(|(eye, _, _)| (*eye - position).length())

@@ -178,7 +178,7 @@
             0.769,
             1.0
           ],
-          "content": "Vulkan 实时渲染引擎",
+          "content": "Vulkan real-time rendering engine",
           "font_size": 18
         }
       }
@@ -234,7 +234,7 @@
             0.769,
             1.0
           ],
-          "content": "按任意键或点击继续",
+          "content": "Press any key or click to continue",
           "font_size": 14
         },
         "prism_engine::ui::Node": {}

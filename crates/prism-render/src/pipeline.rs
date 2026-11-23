@@ -1,19 +1,19 @@
-//! 图形管线创建。
+//! Graphics pipeline creation.
 //!
-//! 为标准 Prisma 前向渲染路径构建 [`GraphicsPipeline`]：
-//! 顶点输入（位置+法线+颜色）、模型变换的推送常量、
-//! 帧 UBO 的单个描述符集、深度测试+背面剔除、
-//! 无多重采样、一个带 Alpha 混合的颜色附件。
+//! Build [`GraphicsPipeline`] for standard Prisma forward render path:
+//! vertex input (position + normal + color), model transform push constants,
+//! single descriptor set for frame UBO, depth test + back-face cull,
+//! no multisampling, one color attachment with alpha blend.
 //!
-//! 视口和裁剪矩形是动态的，因此窗口调整大小时无需重建管线。
+//! Viewport and clip rect are dynamic, so window resize does not need pipeline rebuild.
 
 use anyhow::Context as _;
 use ash::vk;
 use prism_gfx::{BlendMode, BlendOp, CullMode};
 
-/// 把共享的 [`CullMode`]（`prism-gfx`，Vulkan-free）翻译成 Vulkan 剔除位。
+/// Translate shared [`CullMode`] (`prism-gfx`, Vulkan-free) to Vulkan cull bits.
 ///
-/// 映射留在渲染器这一层，所以 `prism-gfx` 不需要知道 ash。
+/// Mapping stays in render layer, so `prism-gfx` need not know ash.
 pub(crate) fn cull_flags(mode: CullMode) -> vk::CullModeFlags {
     match mode {
         CullMode::Off => vk::CullModeFlags::NONE,
@@ -22,10 +22,10 @@ pub(crate) fn cull_flags(mode: CullMode) -> vk::CullModeFlags {
     }
 }
 
-/// [`BlendMode`] → Vulkan 混合因子。
+/// [`BlendMode`] → Vulkan blend factors.
 ///
-/// **两边的数值顺序不同**（把 `DstColor` 放在 `SrcColor` 前面），所以必须
-/// 显式映射，不能按 `as i32` 转换。
+/// **Value order differs on both sides** (`DstColor` before `SrcColor`), so must
+/// map explicitly, cannot convert by `as i32`.
 pub(crate) fn blend_factor(mode: BlendMode) -> vk::BlendFactor {
     match mode {
         BlendMode::Zero => vk::BlendFactor::ZERO,
@@ -42,7 +42,7 @@ pub(crate) fn blend_factor(mode: BlendMode) -> vk::BlendFactor {
     }
 }
 
-/// [`BlendOp`] → Vulkan 混合运算。
+/// [`BlendOp`] → Vulkan blend operations.
 pub(crate) fn blend_operation(op: BlendOp) -> vk::BlendOp {
     match op {
         BlendOp::Add => vk::BlendOp::ADD,
@@ -53,10 +53,10 @@ pub(crate) fn blend_operation(op: BlendOp) -> vk::BlendOp {
     }
 }
 
-/// 创建 [`GraphicsPipeline`] 的参数。
+/// Parameters for creating [`GraphicsPipeline`].
 ///
-/// 将之前过多的独立参数组合为单个结构体，
-/// 使调用者无需传递 8 个位置参数。
+/// Groups previously independent parameters into a single struct,
+/// so callers need not pass 8 positional parameters.
 ///
 /// The optional raster/depth fields (`cull_mode`, `depth_bias_*`,
 /// `depth_write_enable`, `color_attachment_count`) default to the legacy
@@ -83,8 +83,8 @@ pub struct PipelineDesc<'a> {
     pub depth_bias_slope_factor: Option<f32>,
     /// Override depth write enable (default `true`).
     pub depth_write_enable: Option<bool>,
-    /// 覆盖 深度 测试 enable 默认 `true`）。2D 精灵管线关闭深度测试，
-    /// 由 CPU 排序保证绘制顺序。
+    /// Override depth test enable (default `true`). 2D sprite pipeline disables depth test,
+    /// draw order guaranteed by CPU sort.
     pub depth_test_enable: Option<bool>,
     /// Number of color attachments the render pass subpass uses (default 1).
     /// Set to `Some(0)` for a depth-only pipeline (e.g. shadow map): the
@@ -94,16 +94,16 @@ pub struct PipelineDesc<'a> {
     /// this overrides `color_attachment_count` (the count is taken from the
     /// slice length). Pass one entry per color attachment the subpass writes;
     /// the i-th entry configures `SV_Target{i}`. Use this for MRT pipelines
-    /// (e.g. ForwardPass writes 颜色 + view-normal) where each 目标 needs a
+    /// (e.g. ForwardPass writes color + view-normal) where each target needs a
     /// different blend config (color = alpha blend, normal = no blend).
     pub color_blend_attachments: Option<&'a [vk::PipelineColorBlendAttachmentState]>,
-    /// 覆盖正面绕序（默认 [`vk::FrontFace::COUNTER_CLOCKWISE`]）。
-    /// 阴影管线使用无 Y 翻转的正交光照投影，因此需要 [`vk::FrontFace::CLOCKWISE`]。
+    /// Override front face winding (default [`vk::FrontFace::COUNTER_CLOCKWISE`]).
+    /// Shadow pipeline uses orthographic light projection without Y flip, so needs [`vk::FrontFace::CLOCKWISE`].
     pub front_face: Option<vk::FrontFace>,
-    /// 光栅化模式（默认 [`vk::PolygonMode::FILL`]）。
+    /// Rasterization mode (default [`vk::PolygonMode::FILL`]).
     ///
-    /// Wireframe 用 `LINE`；需要设备开启 `fillModeNonSolid`
-    /// （`VulkanContext::wireframe_supported`）。
+    /// Wireframe uses `LINE`; requires device feature `fillModeNonSolid`
+    /// (`VulkanContext::wireframe_supported`).
     pub polygon_mode: Option<vk::PolygonMode>,
 }
 
@@ -268,13 +268,13 @@ mod tests {
 
     #[test]
     fn cull_mode_maps_to_vulkan_and_defaults_to_back() {
-        // 默认与 Prisma 既有管线一致（背面剔除）。
+        // Default consistent with existing Prisma pipeline (back-face cull).
         assert_eq!(CullMode::default(), CullMode::Back);
         assert_eq!(cull_flags(CullMode::Off), vk::CullModeFlags::NONE);
         assert_eq!(cull_flags(CullMode::Front), vk::CullModeFlags::FRONT);
         assert_eq!(cull_flags(CullMode::Back), vk::CullModeFlags::BACK);
 
-        // 管线缓存以 `CullMode` 做键，三种取值必须互不相等。
+        // Pipeline cache keyed by `CullMode`, three values must be distinct.
         let mut modes = [CullMode::Off, CullMode::Front, CullMode::Back];
         modes.sort_by_key(|m| cull_flags(*m).as_raw());
         let mut uniq = modes.to_vec();
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn blend_factors_follow_semantics_not_numeric_order() {
-        // 引擎的数值顺序与 Vulkan 不同：Zero/One 都是 0/1，但引擎的
-        // DstColor=2 对应 Vulkan 的 DST_COLOR，SrcColor=3 对应 SRC_COLOR。
+        // Engine value order differs from Vulkan: Zero/One both 0/1, but engine
+        // DstColor=2 corresponds to Vulkan DST_COLOR, SrcColor=3 to SRC_COLOR.
         assert_eq!(blend_factor(BlendMode::Zero), vk::BlendFactor::ZERO);
         assert_eq!(blend_factor(BlendMode::One), vk::BlendFactor::ONE);
         assert_eq!(

@@ -1,14 +1,14 @@
-//! 中性"外部叠加层"接口——渲染线程可在 ECS UI 之上再画一层任意叠加
-//! （调试 HUD、宿主 UI 等）。
+//! Neutral "external overlay layer" interface — render thread can draw another layer on top of ECS UI
+//! (debug HUD, host UI, etc.).
 //!
-//! 设计：`GraphRenderer` 不认识具体叠加实现，只持有
-//! [`SwapchainOverlay`] 的 trait 对象；实现方在 record 时懒创建自己的
-//! GPU 资源。CPU 帧数据经
-//! `GraphRenderer::apply_overlay_message` 以类型擦除的闭包喂入。
+//! Design: `GraphRenderer` does not know concrete overlay impls, only holds
+//! [`SwapchainOverlay`] trait objects; impls lazily create their own
+//! GPU resources during record. CPU frame data fed in via
+//! `GraphRenderer::apply_overlay_message` with type-erased closures.
 //!
-//! 布局契约：本层在 ECS UI 之后 record（两者 final layout 都是
-//! PRESENT_SRC_KHR），record 前由 `GraphRenderer` 负责插入
-//! PRESENT_SRC_KHR → COLOR_ATTACHMENT_OPTIMAL 屏障。
+//! Layout contract: this layer records after ECS UI (both final layout is
+//! PRESENT_SRC_KHR), and `GraphRenderer` is responsible for inserting
+//! PRESENT_SRC_KHR → COLOR_ATTACHMENT_OPTIMAL barrier before record.
 
 use ash::vk;
 use std::any::Any;
@@ -16,7 +16,7 @@ use std::fmt::Debug;
 
 use crate::context::VulkanContext;
 
-/// record 一次叠加所需的所有渲染上下文（Vulkan 句柄 + swapchain 目标）。
+/// All render context needed to record one overlay (Vulkan handle + swapchain target).
 pub struct OverlayRecordCtx<'a> {
     pub device: &'a ash::Device,
     pub context: &'a VulkanContext,
@@ -26,7 +26,7 @@ pub struct OverlayRecordCtx<'a> {
     pub swapchain_views: &'a [vk::ImageView],
     pub image_index: u32,
     pub extent: vk::Extent2D,
-    /// swapchain 颜色格式（懒创建叠加层自己的 render pass 用）。
+    /// Swapchain color format (for lazily creating overlay own render pass).
     pub color_format: vk::Format,
 }
 
@@ -39,18 +39,18 @@ impl Debug for OverlayRecordCtx<'_> {
     }
 }
 
-/// 一条投递给叠加层的类型擦除消息（如"这是新的宿主 UI 帧"）。
+/// One type-erased message delivered to overlay layer (like "this is new host UI frame").
 ///
-/// 宿主构造闭包捕获自己的 CPU 帧数据；
-/// 渲染线程取出后应用到叠加层引用（闭包内可经
-/// [`AsAny::as_any_mut`] 下行转换到具体实现）。
+/// Host builds closure capturing its own CPU frame data;
+/// render thread extracts and applies it to overlay reference (inside closure can
+/// downcast via [`AsAny::as_any_mut`] to concrete impl).
 pub type OverlayMessage = Box<dyn FnOnce(&mut dyn SwapchainOverlay) + Send>;
 
-/// 类型擦除叠加层引用的下行转换能力。
+/// Downcast capability for type-erased overlay references.
 ///
-/// 宿主投递叠加层消息时，消息闭包收到 `&mut dyn SwapchainOverlay`；
-/// 通过 `as_any_mut().downcast_mut::<T>()` 可以取回具体实现
-/// （如调试 HUD 的叠加实现）。
+/// When host delivers overlay message, closure receives `&mut dyn SwapchainOverlay`;
+/// via `as_any_mut().downcast_mut::<T>()` can recover concrete impl
+/// (like debug HUD overlay impl).
 pub trait AsAny: Send {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -61,23 +61,23 @@ impl<T: Send + 'static> AsAny for T {
     }
 }
 
-/// 一个可记录到 swapchain 之上的叠加层（跨线程：主线程构造，
-/// 渲染线程 record）。
+/// One overlay layer recordable onto swapchain (cross-thread: main thread constructs,
+/// render thread records).
 pub trait SwapchainOverlay: AsAny {
-    /// 是否有内容需要绘制（false 时 `GraphRenderer` 跳过本层，
-    /// image 保持 PRESENT_SRC_KHR 直接展示）。
+    /// Whether has content to draw (false → `GraphRenderer` skips this layer,
+    /// image stays PRESENT_SRC_KHR and presented directly).
     fn has_content(&self) -> bool;
 
-    /// 把叠加绘制命令记录进 `ctx.cmd`。
+    /// Record overlay draw commands into `ctx.cmd`.
     ///
-    /// GPU 资源可在此懒创建（ctx 携带 VulkanContext/command_pool）。
-    /// 调用时 image 已处于 COLOR_ATTACHMENT_OPTIMAL，本层负责自己
-    /// 的 render pass（final 应为 PRESENT_SRC_KHR）。
+    /// GPU resources can be lazily created here (ctx carries VulkanContext/command_pool).
+    /// On call image already in COLOR_ATTACHMENT_OPTIMAL, this layer responsible for own
+    /// render pass (final should be PRESENT_SRC_KHR).
     fn record(&mut self, ctx: &OverlayRecordCtx<'_>) -> anyhow::Result<()>;
 
-    /// swapchain 重建后调用：丢弃按旧 image views 建的帧缓冲等。
+    /// Called after swapchain rebuild: discard framebuffers built on old image views etc.
     fn on_swapchain_views_changed(&mut self, views: &[vk::ImageView], extent: vk::Extent2D);
 
-    /// 释放所有 GPU 资源（渲染线程退出时）。
+    /// Release all GPU resources (when render thread exits).
     fn destroy(&mut self);
 }

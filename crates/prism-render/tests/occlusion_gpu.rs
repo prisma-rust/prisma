@@ -1,7 +1,7 @@
-//! 遮挡剔除的 GPU 端到端验证（#1007）。
+//! GPU end-to-end validation of occlusion culling (#1007).
 //!
-//! 用上一帧深度把完全被挡住的盒子剔出主通道，同时保持画面不变。
-//! 没有 Vulkan 设备时按现有 GPU 测试的约定跳过。
+//! Uses previous-frame depth to cull fully occluded boxes from main pass, while keeping rendered image unchanged.
+//! Skipped when no Vulkan device, following existing GPU test convention.
 
 use prism_render::culling::Aabb;
 use prism_render::render_graph::{DrawItem, DrawState, PostGrade, RenderMode};
@@ -30,7 +30,7 @@ fn try_create() -> Option<GraphRenderer> {
     }
 }
 
-/// 相机在原点、看向 −Z 的 Vulkan 透视矩阵（near 0.1 / far 100）。
+/// Vulkan perspective matrix at origin looking down −Z (near 0.1 / far 100).
 fn perspective() -> [[f32; 4]; 4] {
     let fov = 45f32.to_radians();
     let (near, far) = (0.1f32, 100.0f32);
@@ -58,7 +58,7 @@ fn draw_item(
     model: [[f32; 4]; 4],
     entity_id: u32,
 ) -> DrawItem {
-    // 盒子网格是单位立方体，模型矩阵只做平移 + 均匀缩放。
+    // Box mesh is identity cube, model matrix only translation + uniform scale.
     let scale = model[0][0].abs() * 0.5;
     let x = model[3][0];
     let y = model[3][1];
@@ -106,7 +106,7 @@ fn frame_data(view_proj: [[f32; 4]; 4]) -> FrameUBOData {
     }
 }
 
-/// 渲染一帧并返回中心像素；`cull` 为真时在 `begin_frame` 之后应用遮挡剔除。
+/// Render one frame and return center pixel; when `cull` true, apply occlusion cull after `begin_frame`.
 fn render(renderer: &mut GraphRenderer, items: &mut Vec<DrawItem>, cull: bool) -> ([u8; 4], usize) {
     let view_proj = perspective();
     let ctx = renderer.begin_frame().expect("begin_frame").expect("frame");
@@ -188,17 +188,17 @@ fn a_fully_covered_box_is_culled_without_changing_the_image() {
         .register_mesh(&prism_render::primitives::builtin("box").expect("builtin box"))
         .expect("register box");
 
-    // 4 单位大的盒子在 z = −5，几乎盖满画面；另一个盒子在 z = −30 完全躲在后面。
+    // 4 identity large boxes at z = −5, nearly covering the screen; another box at z = −30 fully hidden behind.
     let mut items = vec![
         draw_item(box_mesh, translation_scale(0.0, 0.0, -5.0, 4.0), 1),
         draw_item(box_mesh, translation_scale(0.0, 0.0, -30.0, 1.0), 2),
     ];
 
-    // 第一帧没有上一帧深度：不剔任何东西。
+    // First frame has no previous-frame depth: nothing culled.
     let (first, culled) = render(&mut renderer, &mut items, true);
     assert_eq!(culled, 0, "the first frame has no depth to test against");
 
-    // 第二帧：近处盒子写下的深度完全覆盖远处盒子。
+    // Second frame: near boxes write depth that fully covers far box.
     let (second, culled) = render(&mut renderer, &mut items, true);
     assert_eq!(culled, 1, "the hidden box must be culled");
     assert_eq!(first, second, "culling must not change the visible image");

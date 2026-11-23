@@ -39,8 +39,8 @@ pub struct PlatformWindow {
 }
 
 enum Backend {
-    /// winit 没有「光标是否被抓住」的查询接口，所以这里自己记一份（抓 / 放只发生在
-    /// `grab_pointer` / `release_pointer`，写窗口后原子更新）。
+    /// winit has no query interface for "is the cursor grabbed", so this keeps a copy internally (grab / release only happen in
+    /// `grab_pointer` / `release_pointer`, updated atomically after writing window).
     #[cfg(feature = "winit-backend")]
     Winit {
         window: winit::window::Window,
@@ -200,11 +200,11 @@ impl PlatformWindow {
                         .set_cursor_grab(winit::window::CursorGrabMode::None)
                         .map_err(|e| anyhow::anyhow!("{e}"));
                 }
-                // FPS 指针锁定要的是 `Locked`（光标钉在原地，只靠原始增量移动）。
-                // `Confined` 只是把光标夹在窗口矩形里，在 macOS / X11 上仍能自由
-                // 滑动，鼠标看向就会跟着窗口边缘走。系统不支持 `Locked` 时退回
-                // `Confined`（Windows 的 Confined + 隐藏光标也会被夹到 1px），
-                // 两个都失败才算没锁上。
+                // FPS pointer lock requires `Locked` (cursor pinned in place, only original delta moves).
+                // `Confined` only clamps cursor within window rectangle; on macOS / X11 can still freely
+                // slide, mouse look follows window edge. System not supporting `Locked` falls back to
+                // `Confined` (Windows Confined + hide cursor also gets clamped to 1px),
+                // both failing counts as not locked.
                 match window.set_cursor_grab(winit::window::CursorGrabMode::Locked) {
                     Ok(()) => Ok(()),
                     Err(locked_err) => window
@@ -219,11 +219,11 @@ impl PlatformWindow {
         }
     }
 
-    /// 光标是否正被抓住（= 指针锁定的**平台侧**真值）。
+    /// Whether the cursor is positively grabbed (= platform-side true value of pointer lock).
     ///
-    /// `prism-app` 另有一份 `InputManager::pointer_locked`，但帧钩子（宿主 UI）拿不到
-    /// `InputManager`；查窗口比让钩子自己再存一份状态更可靠——Esc、失去焦点、点回
-    /// 窗口这些路径都会经过 `grab_pointer` / `release_pointer`。
+    /// `prism-app` also keeps a copy of `InputManager::pointer_locked`, but frame hook (host UI) cannot
+    /// access `InputManager`; querying window is more reliable than hook storing its own state — Esc, focus loss,
+    /// return to window these paths all go through `grab_pointer` / `release_pointer`.
     pub fn is_pointer_locked(&self) -> bool {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
@@ -235,14 +235,14 @@ impl PlatformWindow {
         }
     }
 
-    /// 记录锁定状态（只在 `grab_pointer` / `release_pointer` 里调用）。
+    /// Record lock state (only called inside `grab_pointer` / `release_pointer`).
     fn set_pointer_locked(&self, locked: bool) {
         match &self.backend {
             #[cfg(feature = "winit-backend")]
             Backend::Winit { pointer_locked, .. } => {
                 pointer_locked.store(locked, std::sync::atomic::Ordering::Relaxed);
             }
-            // Win32 后端在 `set_pointer_confined` 里同步维护 `state.grab`，无需再记。
+            // Win32 backend in `set_pointer_confined` sync maintains `state.grab`, no need to record again.
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(_) => {}
         }

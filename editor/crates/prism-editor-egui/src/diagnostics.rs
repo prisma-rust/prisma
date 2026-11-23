@@ -1,17 +1,17 @@
-//! `cargo --message-format=json` 的解析结果。
+//! Parse result of `cargo --message-format=json`.
 //!
-//! 项目模块（Game View 的 Play）和玩家构建（`cargo build`）都走这条路：
-//! 编辑器只关心 error / warning + `file:line:col`，Problems 面板点一行就能跳转。
-//! note / help / build-script 事件不是“要修的东西”，直接丢掉。
+//! Project module (Game View Play) and player build (`cargo build`) both take this path:
+//! Editor only cares about error / warning + `file:line:col`, Problems panel click jumps.
+//! note / help / build-script events are not "things to fix", drop directly.
 
 use std::path::{Path, PathBuf};
 
 use prism_editor_core::LogLevel;
 
-/// 一次最多保留多少条诊断，避免一个坏文件把面板刷爆。
+/// Max diagnostics retained, avoid one bad file flooding panel.
 pub const MAX_DIAGNOSTICS: usize = 100;
 
-/// 一条编译器诊断。只保留 error / warning，位置是 `file:line:col`。
+/// One compiler diagnostic. Keeps only error / warning, position is `file:line:col`.
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub level: LogLevel,
@@ -34,7 +34,7 @@ impl Diagnostic {
         Some(text)
     }
 
-    /// Console 的一行摘要（Console 不做富文本，位置放在消息前面更醒目）。
+    /// Console one-line summary (Console no rich text, position before message more eye-catching).
     pub fn console_line(&self) -> String {
         let level = match self.level {
             LogLevel::Error => "error",
@@ -47,7 +47,7 @@ impl Diagnostic {
     }
 }
 
-/// 解析整段 stdout（一次性构建用）。
+/// Parse whole stdout (for one-shot build).
 pub fn diagnostics_from_cargo(stdout: &str, root: &Path) -> Vec<Diagnostic> {
     stdout
         .lines()
@@ -56,7 +56,7 @@ pub fn diagnostics_from_cargo(stdout: &str, root: &Path) -> Vec<Diagnostic> {
         .collect()
 }
 
-/// 解析一行 cargo JSON（流式构建逐行调用）。不是编译诊断返回 `None`。
+/// Parse one cargo JSON line (streaming build per line). Returns `None` if not compile diagnostic.
 pub fn parse_cargo_line(line: &str, root: &Path) -> Option<Diagnostic> {
     let value = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
     if value.get("reason").and_then(|reason| reason.as_str()) != Some("compiler-message") {
@@ -121,7 +121,7 @@ pub fn parse_cargo_line(line: &str, root: &Path) -> Option<Diagnostic> {
 mod tests {
     use super::*;
 
-    /// cargo 的 JSON 诊断 → Problems 面板要的 file:line:col。
+    /// cargo JSON diagnostics -> Problems panel wants file:line:col.
     #[test]
     fn cargo_diagnostics_carry_a_source_location() {
         let stdout = concat!(
@@ -153,7 +153,7 @@ mod tests {
         );
     }
 
-    /// 编译成功时 warning 也要留下来：面板不能只有失败才有内容。
+    /// Keep warning even on successful compile: panel must not have content only on failure.
     #[test]
     fn warnings_survive_a_successful_build() {
         let stdout = r#"{"reason":"compiler-message","message":{"level":"warning","message":"unused variable: `state`","code":null,"spans":[{"file_name":"/abs/src/lib.rs","line_start":7,"column_start":13,"is_primary":true}]}}"#;
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(diagnostics[0].message, "unused variable: `state`");
     }
 
-    /// 流式解析必须能处理半行噪声（cargo 偶尔夹带非 JSON 行）。
+    /// Streaming parse must handle half-line noise (cargo occasionally mixes non-JSON lines).
     #[test]
     fn streaming_parser_ignores_noise() {
         assert!(parse_cargo_line("", Path::new("/project")).is_none());

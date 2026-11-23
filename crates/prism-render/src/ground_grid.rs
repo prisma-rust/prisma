@@ -1,7 +1,7 @@
-//! 视口地面参考网格 (Ground Grid) 渲染器。
+//! Viewport ground reference mesh (Ground Grid) renderer.
 //!
-//! 在 Y = 0 平面上渲染 1 米与 10 米间隔的正交直角坐标网格线及 X/Z 主轴线。
-//! 开启深度测试（depth write off），使场景中的几何体能够正确遮挡其背后的地面网格。
+//! Renders 1m and 10m interval orthogonal grid lines and X/Z main axes on Y = 0 plane.
+//! Enables depth test (depth write off), so geometry in scene can correctly occlude grid behind it.
 
 use std::ffi::CString;
 use std::mem::size_of;
@@ -47,7 +47,7 @@ impl GridVertex {
     }
 }
 
-/// 网格所在的平面。2D 视图看 XY，3D 视图看 XZ（#602）。
+/// Plane where mesh lies. 2D view sees XY, 3D view sees XZ (#602).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GridPlane {
     Xz,
@@ -87,7 +87,7 @@ pub struct GroundGrid {
     vertex_buffer: vk::Buffer,
     vertex_memory: vk::DeviceMemory,
     vertex_count: u32,
-    /// 2D 视图用的 XY 网格（#602）。
+    /// XY mesh for 2D view (#602).
     xy_vertex_buffer: vk::Buffer,
     xy_vertex_memory: vk::DeviceMemory,
     xy_vertex_count: u32,
@@ -161,7 +161,7 @@ impl GroundGrid {
             .sample_shading_enable(false)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-        // 深度测试开启，不写入深度；使场景内的实体能自然遮挡网格
+        // Depth test enabled, no depth write; lets scene entities naturally occlude mesh.
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(false)
@@ -172,17 +172,17 @@ impl GroundGrid {
             .blend_enable(false);
         let blend_attachments = [
             color_blend_attachment,
-            // 附件 1 = view-space 法线 MRT：空写入遮罩，保留 ForwardPass 清好的值。
+            // Attachment 1 = view-space normal MRT: empty write mask, keep values ForwardPass cleared.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // 附件 2 = 运动矢量（#883）：同样只写 0 号附件，否则
-            // `pColorBlendState->attachmentCount` 与渲染 pass 的颜色附件数
-            // 不一致（#973，VUID-...-renderPass-07609）。
+            // Attachment 2 = motion vectors (#883): likewise only write slot 0, otherwise
+            // `pColorBlendState->attachmentCount` inconsistent with render pass color attachment count
+            // (#973, VUID-...-renderPass-07609).
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // 附件 3 = albedo + 粗糙度（ReSTIR GI 的 G-buffer）：gizmo 不写。
+            // Attachment 3 = albedo + roughness (ReSTIR GI G-buffer): gizmo does not write.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
@@ -228,7 +228,7 @@ impl GroundGrid {
         })
     }
 
-    /// `xy` 为真时画 XY 平面（2D 视图），否则画原有的 XZ 地面网格。
+    /// When `xy` true, draws XY plane (2D view), otherwise draws original XZ ground mesh.
     pub fn draw(&self, cmd: vk::CommandBuffer, view_proj: &[[f32; 4]; 4], xy: bool) {
         let device = &self.device;
         let (buffer, count) = if xy {
@@ -286,7 +286,7 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
     let major_color = [0.35, 0.38, 0.44];
     let pos_x_color = [0.85, 0.25, 0.25];
     let neg_x_color = [0.45, 0.18, 0.18];
-    // 3D 的第二根轴是 Z（蓝），2D 的是 Y（绿）。
+    // 3D second axis is Z (blue), 2D is Y (green).
     let (pos_b_color, neg_b_color) = match plane {
         GridPlane::Xz => ([0.25, 0.50, 0.90], [0.18, 0.25, 0.45]),
         GridPlane::Xy => ([0.30, 0.85, 0.35], [0.16, 0.42, 0.18]),
@@ -298,11 +298,11 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
 
     let steps = (extent / step) as i32;
 
-    // 1. 平行于 X 轴的网格线（XZ 的 Z / XY 的 Y 变化）
+    // 1. Mesh lines parallel to X axis (Z for XZ / Y for XY varies)
     for i in -steps..=steps {
         let b = i as f32 * step;
         if i == 0 {
-            // X 轴（红）分正负半轴
+            // X axis (red) split into positive and negative halves
             v.push(GridVertex {
                 pos: point(-extent, 0.0),
                 color: neg_x_color,
@@ -333,11 +333,11 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
         }
     }
 
-    // 2. 平行于第二根轴的网格线（X 变化）
+    // 2. Mesh lines parallel to second axis (X varies)
     for i in -steps..=steps {
         let x = i as f32 * step;
         if i == 0 {
-            // 第二根轴分正负半轴
+            // Second axis split into positive and negative halves
             v.push(GridVertex {
                 pos: point(0.0, -extent),
                 color: neg_b_color,
@@ -379,21 +379,21 @@ mod tests {
     fn grid_vertices_contain_axes_and_subdivisions() {
         let verts = generate_grid_vertices(GridPlane::Xz);
         assert!(!verts.is_empty());
-        assert_eq!(verts.len() % 2, 0, "Line list 顶点数必须为偶数");
-        // 80 步，-40 到 +40: 81 根 X 线 + 81 根 Z 线，中心轴各拆为 2 段
+        assert_eq!(verts.len() % 2, 0, "Line list vertex count must be even");
+        // 80 steps, -40 to +40: 81 X lines + 81 Z lines, center axes each split into 2 segments
         // (80 + 2) * 2 + (80 + 2) * 2 = 164 + 164 = 328
         assert_eq!(verts.len(), 328);
 
-        // 验证原点处的轴线颜色
+        // Validate axis line colors at origin
         let has_pos_x = verts.iter().any(|v| v.color == [0.85, 0.25, 0.25]);
         let has_pos_z = verts.iter().any(|v| v.color == [0.25, 0.50, 0.90]);
-        assert!(has_pos_x, "网格应包含 +X 红色轴线");
-        assert!(has_pos_z, "网格应包含 +Z 蓝色轴线");
+        assert!(has_pos_x, "Grid should include +X red axis line");
+        assert!(has_pos_z, "Grid should include +Z blue axis line");
     }
 
     #[test]
     fn the_2d_grid_lies_in_xy_with_a_green_y_axis() {
-        // #602：2D 视图相机看 −Z，网格必须在 Z = 0 的 XY 平面上。
+        // #602: 2D view camera looks −Z, mesh must lie on XY plane at Z = 0.
         let verts = generate_grid_vertices(GridPlane::Xy);
         assert_eq!(verts.len(), 328);
         assert!(verts.iter().all(|v| v.pos[2] == 0.0));

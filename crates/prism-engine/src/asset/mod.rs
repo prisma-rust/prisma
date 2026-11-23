@@ -1,18 +1,18 @@
-//! # 编辑器/作者工具的本地资源句柄
+//! # Local asset handles for editor/authoring tools
 //!
-//! 提供基于代际索引的 [`Handle<T>`] 及其拥有者
-//! [`AssetManager<T>`]，用于类型化的 CPU 端资源数据（网格、材质、
-//! 纹理等）。运行时资源读取统一由 `prism_asset::runtime::ResourceManager`
-//! 负责，本模块仅保留作者工具和旧场景组件使用的轻量句柄类型。
+//! Provides generation-index based [`Handle<T>`] and its owner
+//! [`AssetManager<T>`], for typed CPU-side asset data (mesh, material,
+//! texture, etc). Runtime asset reading is uniformly handled by `prism_asset::runtime::ResourceManager`,
+//! this module only keeps lightweight handle types used by authoring tools and old scene components.
 //!
-//! ## 架构
+//! ## Architecture
 //!
 //! ```text
-//! Handle<T> ─── 代际索引 (u64) — 复制成本低
+//! Handle<T> ─── generation index (u64) — low copy cost
 //!       │
-//!   AssetManager<T> ─── Vec<Slot<T>> — O(1) 获取/插入/移除
+//!   AssetManager<T> ─── Vec<Slot<T>> — O(1) get/insert/remove
 //!       │
-//! AssetManager ─── 作者工具/场景编辑句柄
+//! AssetManager ─── authoring tools / scene editing handle
 //! ```
 
 pub mod procedural;
@@ -82,8 +82,8 @@ impl<T> Default for Handle<T> {
 // Slot
 // ===========================================================================
 
-/// One 槽 in an [`AssetManager`]. A free 槽 carries no value but keeps the
-/// next generation to hand out; an occupied 槽 carries the 资源 value and its
+/// One slot in an [`AssetManager`]. A free slot carries no value but keeps the
+/// next generation to hand out; an occupied slot carries the asset value and its
 /// current generation.
 enum Slot<T> {
     Free { next_free: u32, generation: u32 },

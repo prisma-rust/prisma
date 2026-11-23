@@ -7,7 +7,7 @@ description = "Scene schema, ECS scene components, and RSCN v4 codec for Prisma"
 
 [features]
 # Component groups (building blocks): disabling a group skips registration and serde/reflection code.
-# 核心组（Active / Name / Transform / Camera / PrefabInstance）永远编译。
+# Core groups (Active / Name / Transform / Camera / PrefabInstance) always compiled.
 default = ["group-3d", "group-2d", "group-ui"]
 group-3d = []
 group-2d = []

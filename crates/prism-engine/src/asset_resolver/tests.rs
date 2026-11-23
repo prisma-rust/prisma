@@ -6,7 +6,7 @@ use prism_render::asset_bridge::AssetResolveResult;
 use prism_render::managers::MeshHandle;
 use prism_render::managers::TextureFormat;
 
-/// 造一个只含指定 `(path, type, bytes)` 的 `.pak` + 路径清单（#583 测试用）。
+/// Build a `.pak` + path manifest containing only the given `(path, type, bytes)` (for #583 tests).
 fn tiny_pak(entries: &[(&str, prism_asset::core::AssetType, &[u8])]) -> (Vec<u8>, String) {
     use prism_asset::core::id::AssetIdGenerator;
     use prism_asset::package::PackageBuilder;
@@ -29,7 +29,7 @@ fn tiny_pak(entries: &[(&str, prism_asset::core::AssetType, &[u8])]) -> (Vec<u8>
 
 #[test]
 fn project_fonts_are_loaded_once_by_path() {
-    // #583：`Text.font` 指向的字体从 `.pak` 读出字节，交给渲染器注册。
+    // #583: fonts referenced by `Text.font` are read from `.pak` and handed to renderer for registration.
     let (pak, manifest) = tiny_pak(&[(
         "fonts/hud.ttf",
         prism_asset::core::AssetType::Font,
@@ -56,7 +56,7 @@ fn project_fonts_are_loaded_once_by_path() {
     assert_eq!(fonts[0].0, "fonts/hud.ttf");
     assert_eq!(fonts[0].1, b"not-a-real-ttf");
 
-    // 同一个路径不再重复读；没有 font 的文本不产生请求。
+    // Same path not re-read repeatedly; text without a font produces no request.
     assert!(resolver.prepare_ui_fonts(&world).is_empty());
     world
         .get_mut::<crate::ui::components::Text>(entity)
@@ -64,13 +64,13 @@ fn project_fonts_are_loaded_once_by_path() {
         .font = "fonts/nope.ttf".into();
     assert!(
         resolver.prepare_ui_fonts(&world).is_empty(),
-        "缺失的字体只报一次，不返回字节"
+        "Missing font reported once, no bytes returned"
     );
     assert!(resolver.prepare_ui_fonts(&world).is_empty());
 }
 
-/// #509：可选包是延迟挂载的——挂载前解析失败的实体必须能在挂载后重试，
-/// 否则「同一个坏路径只报一次」的失败缓存会把它们永久挡住。
+/// #509: optional packages are mounted lazily — an entity parsed before a mount failure must be able to retry after
+/// mount, otherwise the "report same bad path only once" failure cache would block them forever.
 #[test]
 fn failed_entities_retry_after_an_optional_package_is_mounted() {
     let mut resolver = GpuAssetResolver::new();
@@ -84,7 +84,7 @@ fn failed_entities_retry_after_an_optional_package_is_mounted() {
         },
     );
 
-    // 模拟延迟包挂载前的那次失败。
+    // Simulate the failure before lazy package is mounted.
     resolver.record_failure(entity, AssetSlot::Sprite, "textures/late.png");
     assert_eq!(
         resolver.retry_failed_after_package_change(&mut world),
@@ -109,7 +109,7 @@ fn failed_entities_retry_after_an_optional_package_is_mounted() {
     );
 }
 
-/// #495：句柄记账 / 释放。返回一个已经「上传完成」的精灵实体。
+/// #495: handle accounting / release. Returns a sprite entity already "uploaded via callback".
 fn resolved_sprite(world: &mut World, resolver: &mut GpuAssetResolver, slot: u32) -> Entity {
     let entity = world.spawn();
     world.insert(
@@ -146,7 +146,7 @@ fn a_good_upload_does_not_queue_a_release() {
 
 #[test]
 fn re_uploading_to_a_new_slot_releases_the_previous_one() {
-    // 路径被改写 → 新上传拿到新槽位，旧槽位必须还回去，否则每次换图漏一张。
+    // Path rewritten → new upload gets new slot, old slot must be returned, otherwise each graph switch leaks a texture.
     let mut world = World::new();
     let mut resolver = GpuAssetResolver::new();
     let entity = resolved_sprite(&mut world, &mut resolver, 9);
@@ -167,7 +167,7 @@ fn re_uploading_to_a_new_slot_releases_the_previous_one() {
     let releases = resolver.take_releases();
     assert_eq!(releases.len(), 1);
     assert_eq!(releases[0].texture_slot, Some(9));
-    // 同一个槽位重复回传（结果重放）不算失效。
+    // Same slot uploaded again (result reused) does not count as invalidation.
     resolver.apply_results(
         &mut world,
         &[(
@@ -192,19 +192,19 @@ fn despawning_the_entity_releases_its_gpu_handles() {
     let entity = resolved_sprite(&mut world, &mut resolver, 5);
     world.despawn(entity);
 
-    // `prepare_requests` 开头会回收失效资源。
+    // `prepare_requests` opens with recycling of invalidated resources.
     resolver.prepare_requests(&world);
     let releases = resolver.take_releases();
     assert_eq!(releases.len(), 1, "{releases:?}");
     assert_eq!(releases[0].texture_slot, Some(5));
-    // 只释放一次。
+    // Release only once.
     resolver.prepare_requests(&world);
     assert!(resolver.take_releases().is_empty());
 }
 
 #[test]
 fn hot_reload_invalidation_releases_every_handle() {
-    // 热重载会把 generation 清零；旧图像 / 网格必须这一帧就还回去。
+    // Hot reload clears generation; old graph images / meshes must be returned this frame.
     let mut world = World::new();
     let mut resolver = GpuAssetResolver::new();
     let sprite = resolved_sprite(&mut world, &mut resolver, 7);
@@ -239,7 +239,7 @@ fn hot_reload_invalidation_releases_every_handle() {
     assert!(releases.iter().any(|r| r.texture_slot == Some(7)));
     assert!(releases.iter().any(|r| r.material_slot == Some(4)));
     assert!(releases.iter().any(|r| r.mesh_handle == Some(mesh_handle)));
-    // 精灵实体本身还在，重新上传时会重新记账。
+    // sprite entity itself remains, next upload will re-account it.
     assert!(world.get::<SpriteRef>(sprite).is_some());
 }
 
@@ -265,7 +265,7 @@ fn spawn_renderer(world: &mut World, mesh_path: &str, material_path: &str) -> En
     entity
 }
 
-/// 运行时材质句柄：`generation == 0` 表示材质还没解析。
+/// Runtime material handle: `generation == 0` means material not yet parsed.
 fn insert_material_ref(world: &mut World, entity: Entity) {
     world.insert(
         entity,
@@ -277,7 +277,7 @@ fn insert_material_ref(world: &mut World, entity: Entity) {
     );
 }
 
-/// 精灵只需要 `SpriteRenderer`：`SpriteRef` 由解析结果补上，项目不碰引擎内部状态。
+/// sprite only needs `SpriteRenderer`: `SpriteRef` filled by parse result, project does not touch engine internal state.
 #[test]
 fn sprite_without_ref_is_resolved_and_ref_is_created() {
     let mut world = World::new();
@@ -292,8 +292,12 @@ fn sprite_without_ref_is_resolved_and_ref_is_created() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    // 资源包为空，所以贴图加载会失败；关键是「没有 `SpriteRef` 也会入队」。
-    assert_eq!(first.len(), 1, "没有 SpriteRef 的精灵也要解析一次");
+    // Resource package empty, so texture load will fail; key is "no `SpriteRef` still enqueues".
+    assert_eq!(
+        first.len(),
+        1,
+        "Sprites without SpriteRef must still be parsed once"
+    );
 
     resolver.apply_results(
         &mut world,
@@ -311,11 +315,11 @@ fn sprite_without_ref_is_resolved_and_ref_is_created() {
     );
     let sprite = world
         .get::<SpriteRef>(entity)
-        .expect("解析后应补上 SpriteRef");
+        .expect("SpriteRef should be filled after parsing");
     assert_eq!(sprite.texture_slot, 7);
     assert_eq!(sprite.generation, 1);
 
-    // 已解析且路径没变：不再重复投递。
+    // Already parsed and path unchanged: not re-submitted.
     assert!(resolver.prepare_requests(&world).is_empty());
 }
 
@@ -358,7 +362,7 @@ fn sprite_atlas_subslice_resolves_uv_and_size() {
 
     let sprite = world
         .get::<SpriteRef>(entity)
-        .expect("解析后应补上 SpriteRef");
+        .expect("SpriteRef should be filled after parsing");
     assert_eq!(sprite.texture_slot, 5);
     assert_eq!(sprite.generation, 1);
     assert_eq!(sprite.uv_rect, [0.1, 0.2, 0.3, 0.4]);
@@ -369,7 +373,7 @@ fn sprite_atlas_subslice_resolves_uv_and_size() {
 
 #[test]
 fn tilemap_tileset_is_staged_once_and_written_back() {
-    // #529：瓦片地图走和精灵同一条贴图解析路径，但句柄写进 `TilemapRef`。
+    // #529: tilemap goes through same texture parse path as sprite, but handle written into `TilemapRef`.
     use crate::scene::components::Tilemap;
     use crate::scene::runtime_components::TilemapRef;
 
@@ -386,8 +390,8 @@ fn tilemap_tileset_is_staged_once_and_written_back() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    assert_eq!(first.len(), 1, "没有 TilemapRef 也要解析一次");
-    // 资源包为空 → 失败缓存，不会每帧重试。
+    assert_eq!(first.len(), 1, "Parsed once even without TilemapRef");
+    // Resource package empty → failure cache, not retried every frame.
     assert!(resolver.prepare_requests(&world).is_empty());
 
     resolver.apply_results(
@@ -406,13 +410,13 @@ fn tilemap_tileset_is_staged_once_and_written_back() {
     );
     let tileset = world
         .get::<TilemapRef>(entity)
-        .expect("解析结果应写进 TilemapRef");
+        .expect("Parse result should be written into TilemapRef");
     assert_eq!(tileset.texture_slot, 3);
     assert_eq!(tileset.size, [64, 64]);
     assert_eq!(tileset.generation, 1);
 }
 
-/// #591：`Style::image` 和精灵一样走贴图解析，结果写进 `UiImageRef`。
+/// #591: `Style::image` goes through texture parse like sprite, result written into `UiImageRef`.
 #[test]
 fn ui_background_images_are_staged_and_written_back() {
     let mut world = World::new();
@@ -428,8 +432,8 @@ fn ui_background_images_are_staged_and_written_back() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    assert_eq!(first.len(), 1, "没有 UiImageRef 也要解析一次");
-    // 包是空的 → 记失败缓存，不会每帧重试。
+    assert_eq!(first.len(), 1, "Parsed once even without UiImageRef");
+    // Empty package → failure cache, not retried every frame.
     assert!(resolver.prepare_requests(&world).is_empty());
 
     resolver.apply_results(
@@ -448,13 +452,13 @@ fn ui_background_images_are_staged_and_written_back() {
     );
     let image = world
         .get::<UiImageRef>(entity)
-        .expect("解析结果应写进 UiImageRef");
+        .expect("Parse result should be written into UiImageRef");
     assert_eq!(image.texture_slot, 5);
     assert_eq!(image.size, [32, 32]);
     assert_eq!(image.generation, 1);
 }
 
-/// 改 `sprite_path` 就够：不再需要手动把 `generation` 清零。
+/// Changing `sprite_path` is enough: no need to manually zero `generation`.
 #[test]
 fn sprite_path_change_re_resolves_without_touching_generation() {
     let mut world = World::new();
@@ -487,16 +491,16 @@ fn sprite_path_change_re_resolves_without_touching_generation() {
     world.get_mut::<SpriteRenderer>(entity).unwrap().sprite_path =
         "sprites/bg@night.png".to_string();
     let requests = resolver.prepare_requests(&world);
-    assert_eq!(requests.len(), 1, "路径变化必须重新解析");
+    assert_eq!(requests.len(), 1, "Path change must re-parse");
     assert_eq!(
         world.get::<SpriteRef>(entity).unwrap().generation,
         1,
-        "宿主不需要（也不应该）手动清零 generation"
+        "Host need not (and should not) manually zero generation"
     );
 }
 
-/// 无材质网格：材质路径为空时没有东西可解析，不能每帧重复投递
-/// （否则每次都会重新上传网格）。
+/// Mesh without material: empty material path has nothing to parse, must not re-submit every frame
+/// (otherwise mesh would be uploaded anew each time).
 #[test]
 fn mesh_only_renderer_is_enqueued_once() {
     let mut world = World::new();
@@ -504,13 +508,13 @@ fn mesh_only_renderer_is_enqueued_once() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    assert_eq!(first.len(), 1, "网格路径仍需解析一次");
+    assert_eq!(first.len(), 1, "Mesh path still needs one parse");
     assert!(
         first[0].1.materials.is_empty(),
-        "空材质路径不应产生材质解析请求"
+        "Empty material path should not produce material parse request"
     );
 
-    // 模拟渲染线程回传：网格句柄已解析，材质结果为空。
+    // Simulate render thread callback: mesh handle parsed, material result empty.
     world.get_mut::<MeshRef>(entity).unwrap().generation = 1;
     resolver.apply_results(
         &mut world,
@@ -529,11 +533,11 @@ fn mesh_only_renderer_is_enqueued_once() {
 
     assert!(
         resolver.prepare_requests(&world).is_empty(),
-        "解析完成后不应再投递"
+        "No re-submission after parse completes"
     );
 }
 
-/// 运行时组件缺失时结果无处写回，投递出去只会每帧重复 enqueue。
+/// When runtime component missing there is nowhere to write result, submission would only re-enqueue each frame.
 #[test]
 fn renderer_without_runtime_refs_is_not_enqueued() {
     let mut world = World::new();
@@ -552,8 +556,8 @@ fn renderer_without_runtime_refs_is_not_enqueued() {
     assert!(resolver.prepare_requests(&world).is_empty());
 }
 
-/// 半解析：网格上传成功、材质路径坏掉时，不能因为材质还在 `generation == 0`
-/// 就把已经解析好的网格每帧重新上传（显存 / bindless 槽泄漏）。
+/// Partial parse: mesh upload succeeds, material path bad — must not re-upload already-parsed mesh every frame
+/// just because material still in `generation == 0` (VRAM / bindless slot leak).
 #[test]
 fn failed_material_is_latched_and_the_resolved_mesh_is_not_reuploaded() {
     let mut world = World::new();
@@ -562,9 +566,13 @@ fn failed_material_is_latched_and_the_resolved_mesh_is_not_reuploaded() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    assert_eq!(first.len(), 1, "两个槽位都还没解析，需要投递一次");
+    assert_eq!(
+        first.len(),
+        1,
+        "Both slots not yet parsed, need one submission"
+    );
 
-    // 渲染线程回传：网格上传成功，材质没有句柄。
+    // Render thread callback: mesh upload success, material no handle.
     resolver.apply_results(
         &mut world,
         &[(
@@ -583,16 +591,16 @@ fn failed_material_is_latched_and_the_resolved_mesh_is_not_reuploaded() {
 
     assert!(
         resolver.prepare_requests(&world).is_empty(),
-        "失败的材质路径已被缓存，已解析的网格也不应重新投递"
+        "Failed material path cached, parsed mesh must not be re-submitted"
     );
     assert!(
         resolver.prepare_requests(&world).is_empty(),
-        "缓存必须跨帧生效（旧实现每帧都会重新请求）"
+        "Cache must persist across frames (old implementation re-requested every frame)"
     );
 }
 
-/// 失败缓存以路径为值：作者换掉坏路径（或热重载换包）后必须重新尝试，
-/// 且只重试那半边。
+/// Failure cache keyed by path: after author replaces bad path (or hot reload swaps package) must retry,
+/// and only retry that side.
 #[test]
 fn changing_a_failed_path_retries_only_that_half() {
     let mut world = World::new();
@@ -619,14 +627,14 @@ fn changing_a_failed_path_retries_only_that_half() {
     world.get_mut::<MeshRenderer>(entity).unwrap().material_path =
         "materials/fixed.mat".to_string();
     let retry = resolver.prepare_requests(&world);
-    assert_eq!(retry.len(), 1, "路径变化后应重新尝试");
+    assert_eq!(retry.len(), 1, "Should retry after path change");
     assert!(
         retry[0].1.mesh.is_none(),
-        "网格已解析，重试时不应再次加载/上传它"
+        "Mesh already parsed, retry must not load/upload it again"
     );
 }
 
-/// 按 RMXI / RMES 的真实布局构造顶点区：分段，不是交错。
+/// Build vertex area per real RMXI / RMES layout: segmented, not interleaved.
 fn planar_mesh(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
@@ -664,7 +672,7 @@ fn planar_mesh(
 
 #[test]
 fn planar_rmes_splits_into_channels_instead_of_rows() {
-    // 两个顶点的数值互不相同：任何「把分段当交错」的读法都会串道。
+    // Two vertex counts differ: any "read segments as interleaved" would mix channels.
     let info = planar_mesh(
         &[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
         &[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
@@ -684,7 +692,7 @@ fn planar_rmes_splits_into_channels_instead_of_rows() {
 
 #[test]
 fn planar_rmes_without_normals_keeps_positions_and_uvs() {
-    // 无 normals 时 stride 是 3 + 2 个 float，uv 段紧跟 positions 段。
+    // Without normals stride is 3 + 2 floats, uv segment tightly follows positions segment.
     let info = planar_mesh(
         &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         &[],
@@ -716,7 +724,7 @@ fn planar_rmes_positions_only_falls_back_to_a_fixed_normal() {
 
 #[test]
 fn rmes_v2_submeshes_reach_the_runtime_component() {
-    // 手写一个 RMES v2：3 个顶点、6 个索引、两个 submesh。
+    // Hand-write an RMES v2: 3 vertices, 6 indices, two submeshes.
     let mut blob = Vec::new();
     blob.extend_from_slice(b"RMES");
     blob.push(2);
@@ -791,7 +799,7 @@ fn rtex_compressed_formats_keep_linear_semantics() {
 
 #[test]
 fn bc1_and_bc3_follow_the_slot_colour_space() {
-    // 颜色贴图要 sRGB 采样，法线 / MR 这类要保持线性（#519）。
+    // Color texture needs sRGB sampling, normal / MR stay linear (#519).
     assert_eq!(
         texture_format_for(RTEX_FORMAT_BC1, true),
         Some(TextureFormat::Bc1Srgb)
@@ -976,7 +984,7 @@ mod mesh_bounds_tests {
 
     #[test]
     fn the_mesh_bounds_land_in_the_registry_with_the_handle() {
-        // 内置立方体不需要 `.pak`，但走的是同一条 prepare → upload → 写回路径。
+        // built-in cube needs no `.pak`, but goes through same prepare → upload → writeback path.
         let mut world = World::new();
         let entity = world.spawn();
         world.insert(
@@ -1020,11 +1028,11 @@ mod mesh_bounds_tests {
             .get_resource::<MeshBounds>()
             .expect("bounds registry must be created on the first upload");
         let bounds = registry.get(handle).expect("box bounds must be registered");
-        // 单位立方体（边长 1，居中在原点）。
+        // Unit cube (edge 1, centered at origin).
         assert!((bounds.min[0] + 0.5).abs() < 1e-5);
         assert!((bounds.max[1] - 0.5).abs() < 1e-5);
 
-        // 再投递一次不会重复：句柄已写回（`generation = 1`）。
+        // Another submission will not re-upload: handle already written back (`generation = 1`).
         assert!(resolver.prepare_requests(&world).is_empty());
     }
 }
@@ -1097,8 +1105,8 @@ mod hot_reload_tests {
 
     #[test]
     fn invalidation_clears_the_failure_cache() {
-        // 一个不存在于任何包里的路径：第一次 prepare 会失败并进失败缓存，
-        // 之后不再重试。热重载必须能让它再试一次（新包里可能刚加上它）。
+        // A path not in any package: first prepare fails and enters failure cache,
+        // then not retried. Hot reload must allow one retry (new package may have added it).
         let mut world = World::new();
         let entity = spawn_mesh(&mut world, "assets/new_mesh.rmes", 0);
 
@@ -1106,7 +1114,7 @@ mod hot_reload_tests {
         let first = resolver.prepare_requests(&world);
         assert_eq!(first.len(), 1);
         assert!(first[0].1.mesh.is_none(), "the path is not in any package");
-        // 上传失败也是「有结果」：清掉排队标记，于是只剩失败缓存挡着重试。
+        // Upload failure also counts as "having a result": clear queued flag, only failure cache blocks retry.
         resolver.apply_results(
             &mut world,
             &[(
@@ -1150,7 +1158,7 @@ mod hot_reload_tests {
                 ..MeshRenderer::default()
             },
         );
-        // 网格已解析（这帧只补材质），submesh 表来自运行时缓存。
+        // mesh already parsed (this frame only fills material), submesh table from runtime cache.
         world.insert(
             entity,
             MeshRef {
@@ -1190,14 +1198,14 @@ mod hot_reload_tests {
             },
         );
 
-        // 两个路径都不在包里，但请求仍然按唯一路径展开（上传阶段会失败）。
+        // Both paths not in package, but requests still expanded by unique path (upload phase will fail).
         let mut resolver = GpuAssetResolver::new();
         let requests = resolver.prepare_requests(&world);
         assert_eq!(requests.len(), 1);
         assert_eq!(
             requests[0].1.materials.len(),
             2,
-            "a/b 两个唯一材质只请求两次，第三个 submesh 用默认材质"
+            "a/b two unique materials only requested twice, third submesh uses default material"
         );
 
         resolver.apply_results(
@@ -1217,7 +1225,7 @@ mod hot_reload_tests {
         assert_eq!(
             world.get::<MaterialRef>(entity).unwrap().material_slot,
             11,
-            "第一个材质仍写回旧字段，兼容只读它的代码"
+            "First material still written to legacy field, for code that only reads it"
         );
         assert_eq!(world.get::<MaterialRef>(entity).unwrap().generation, 1);
     }

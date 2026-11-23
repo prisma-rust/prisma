@@ -1,4 +1,4 @@
-/// 抽象按键码（平台无关）。
+/// Abstract key code (platform independent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     KeyW,
@@ -7,8 +7,8 @@ pub enum KeyCode {
     KeyD,
     KeyQ,
     KeyE,
-    /// `T`：没有移动语义，但宿主/项目的快捷键需要它有独立身份
-    /// （以前退化成 `Other(0x54)`，和 Win32 `VK_T` 字面量混在一起）。
+    /// `T`: no move semantics, but host / project shortcuts need it to have independent identity
+    /// (previously degraded to `Other(0x54)`, mixed with Win32 `VK_T` char).
     KeyT,
     Space,
     ShiftLeft,
@@ -34,7 +34,7 @@ pub enum KeyCode {
     Digit7,
     Digit8,
     Digit9,
-    /// 功能键。宿主调试层 / 编辑器用；项目可以用也可以不用。
+    /// Function key. Host debug layer / editor use; project may or may not use.
     F1,
     F2,
     F3,
@@ -51,11 +51,11 @@ pub enum KeyCode {
 }
 
 impl KeyCode {
-    /// 稳定的按键位编号，用于宿主下发给项目模块的 `InputSnapshot` 位图。
+    /// Stable key bit index for `InputSnapshot` bit graph host sends to project module.
     ///
-    /// 这是**跨模块 ABI 的一部分**：数字一旦发布就不能重排，否则已编译的
-    /// 项目模块会把按键认错。新增按键请追加到末尾。
-    /// `None` = 这个键码放不进 `InputSnapshot` 的位图（见 [`Self::Other`] 分支）。
+    /// This is **part of cross-module ABI**: once published numbers cannot be reordered, otherwise already compiled
+    /// project modules will recognize wrong keys. New keys append to end.
+    /// `None` = this key code not placed into `InputSnapshot` bit graph (see [`Self::Other`] branch).
     pub fn bit_index(self) -> Option<usize> {
         Some(match self {
             Self::KeyW => 0,
@@ -101,10 +101,10 @@ impl KeyCode {
             Self::F10 => 40,
             Self::F11 => 41,
             Self::F12 => 42,
-            // 位图 43..=255 一共 213 个槽位，只放得下 vk <= 212 的原始键码。
+            // Bit graph 43..=255 has 213 slots, only fits raw key codes vk <= 212.
             //
-            // 超出的键码必须**丢弃**，不能取模：取模会让 vk 226 和 vk 452 落在
-            // 同一个位上，玩家按一个冷门键却看到另一个键被按住，比丢键难查得多。
+            // Out-of-range key codes must be **discarded**, not modulo: modulo would make vk 226 and vk 452 land on
+            // same bit, player presses an obscure key but sees another held, harder to debug than dropping key.
             Self::Other(code) if code <= 212 => 43 + code as usize,
             Self::Other(_) => return None,
         })
@@ -207,15 +207,15 @@ impl InputManager {
         self.keys_just_pressed.contains(&key)
     }
 
-    /// 本帧新按下的所有按键（去重，已按下又按不会重复出现）。
+    /// All keys newly pressed this frame (deduplicated, already-held-and-pressed will not repeat).
     pub fn pressed_keys(&self) -> &[KeyCode] {
         &self.keys_just_pressed
     }
 
-    /// 当前按住的所有按键（包含本帧刚按下的）。
+    /// All currently held keys (including just pressed this frame).
     ///
-    /// 宿主下发给项目模块的 `InputSnapshot` 用按住语义：gameplay 代码的
-    /// `input.key(...)` 检测的是持续按住，而不是只在按下那一帧为真。
+    /// `InputSnapshot` host sends to project module uses held semantics: gameplay code
+    /// `input.key(...)` checks continuous held, not only true on press frame.
     pub fn held_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
         self.keys_held.iter().copied()
     }
@@ -223,7 +223,7 @@ impl InputManager {
         self.keys_just_released.contains(&key)
     }
 
-    /// 本帧松开的所有按键（宿主填 `InputSnapshot::key_edges` 用）。
+    /// All keys released this frame (host fills `InputSnapshot::key_edges`).
     pub fn released_keys(&self) -> &[KeyCode] {
         &self.keys_just_released
     }
@@ -234,7 +234,7 @@ impl InputManager {
         self.mouse_just_pressed.contains(&button)
     }
 
-    /// 鼠标键本帧刚释放（`Input.GetMouseButtonUp`）。
+    /// Mouse button just released this frame (`Input.GetMouseButtonUp`).
     pub fn mouse_just_released(&self, button: MouseButton) -> bool {
         self.mouse_just_released.contains(&button)
     }
@@ -242,12 +242,12 @@ impl InputManager {
     pub fn mouse_delta(&self) -> [f64; 2] {
         self.mouse_delta
     }
-    /// 本帧累计的垂直滚动量，**单位是「滚轮行」**（一格传统滚轮 = 1.0，
-    /// 触控板的小数行会平滑累积）。
+    /// Accumulated vertical scroll this frame, **unit is "scroll line"** (one traditional wheel notch = 1.0,
+    /// trackpad fractional lines accumulate smoothly).
     ///
-    /// 平台层已经把 winit 的像素级增量折算成行（见
-    /// `prism_platform::PIXELS_PER_SCROLL_LINE`），所以缩放/滚动曲线可以按
-    /// 「1.0 ≈ 一格」写，不必再区分设备。
+    /// Platform layer already converted winit pixel delta to lines (see
+    /// `prism_platform::PIXELS_PER_SCROLL_LINE`), so scale / scroll curve can follow
+    /// "1.0 ≈ one notch" without distinguishing devices.
     pub fn scroll_delta(&self) -> f64 {
         self.scroll_delta
     }
@@ -302,7 +302,7 @@ impl InputManager {
     }
 
     /// Handle a scroll event. `delta_y` is positive for scroll up (zoom in),
-    /// 负 for 滚动 下。单位是滚轮行（一格 = 1.0）。
+    /// Negative for scrolling down. Unit is scroll line (one notch = 1.0).
     pub fn handle_scroll(&mut self, delta_y: f64) {
         self.scroll_delta += delta_y;
     }
@@ -328,11 +328,11 @@ impl InputManager {
 
     /// Mirror the platform pointer-lock truth into the input state.
     ///
-    /// 锁定状态只有**一个**真值：平台窗口（`grab_pointer` / `release_pointer` 的
-    /// 结果）。宿主每帧把它抄进来，引擎（相机）和项目钩子（面板）读的就是同一个
-    /// 布尔值，不会出现「光标已解锁、相机还在吃 WASD」这种两份状态打架的情况。
+    /// Lock state has only **one** true value: platform window (result of `grab_pointer` / `release_pointer`).
+    /// Host copies it each frame, engine (camera) and project hooks (panels) read same
+    /// boolean value, no conflicting "cursor already unlocked but camera still eating WASD" case.
     ///
-    /// 与 [`Self::set_locked`] 的区别：状态没变时不动瞬时输入，所以可以每帧调用。
+    /// Difference from [`Self::set_locked`]: does not touch transient input when state unchanged, so can call every frame.
     pub fn sync_pointer_lock(&mut self, locked: bool) {
         if self.pointer_locked == locked {
             return;
@@ -346,13 +346,13 @@ impl InputManager {
 mod tests;
 
 // ---------------------------------------------------------------------------
-// 跨 ABI 的输入快照（#589）
+// Cross-ABI input snapshot (#589)
 // ---------------------------------------------------------------------------
 
-/// 把引擎的 [`InputManager`] 折成一份 [`InputSnapshot`]。
+/// Fold engine [`InputManager`] into one [`InputSnapshot`].
 ///
-/// `screen` 是绘图区尺寸（像素，与 `cursor` 同一坐标系）。静态 Player 的
-/// `GameWorld::input()` 和编辑器插件形态共用这一份映射，避免两边字段语义漂移。
+/// `screen` is drawing area size (pixels, same coordinate system as `cursor`). Static Player
+/// `GameWorld::input()` and editor plugin form share this mapping, avoiding field semantic drift.
 pub fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> prism_project_api::InputSnapshot {
     use prism_project_api::{InputSnapshot, TouchSnapshot};
 
@@ -371,7 +371,7 @@ pub fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> prism_project_a
     snapshot.scroll = input.scroll_delta() as f32;
     snapshot.pointer_locked = input.pointer_locked;
 
-    // 放不进位图的键码要丢得干净：宁可少一个键，也不能让它冒充别的键。
+    // Key codes not fitting bit graph must be dropped cleanly: rather miss a key than let it masquerade as another.
     let mut dropped: Option<u32> = None;
     for key in input.held_keys() {
         match key.bit_index() {
@@ -413,11 +413,11 @@ pub fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> prism_project_a
             _reserved: 0,
         };
     }
-    // `keys` 位图与 `KeyCode::bit_index` 是同一套编号（见上面的 ABI 注释）。
+    // `keys` bit graph and `KeyCode::bit_index` use same numbering (see ABI comment above).
     snapshot
 }
 
-/// 引擎触点阶段 → ABI 常量。
+/// Engine touch phase → ABI constant.
 fn touch_phase_code(phase: TouchPhase) -> u32 {
     use prism_project_api::{
         TOUCH_PHASE_CANCELLED, TOUCH_PHASE_ENDED, TOUCH_PHASE_MOVED, TOUCH_PHASE_STARTED,
@@ -478,11 +478,11 @@ mod abi_key_tests {
         for code in 0u32..=212 {
             let index = KeyCode::Other(code)
                 .bit_index()
-                .expect("code <= 212 必须放得进位图");
-            assert!(index < 256, "code {code} → {index} 越界");
+                .expect("code <= 212 must fit in bit graph");
+            assert!(index < 256, "code {code} → {index} out of bounds");
             assert!(
                 seen[index].is_none(),
-                "code {code} 与 {:?} 抢同一个位 {index}",
+                "code {code} and {:?} compete for same bit {index}",
                 seen[index]
             );
             seen[index] = Some(code);
@@ -497,7 +497,7 @@ mod abi_key_tests {
             assert_eq!(
                 KeyCode::Other(code).bit_index(),
                 None,
-                "code {code} 不该被折叠成别的键"
+                "code {code} should not be folded into another key"
             );
         }
     }
@@ -511,7 +511,7 @@ mod abi_key_tests {
         assert_eq!(
             snapshot.keys[3] >> 63,
             1,
-            "第 255 位应在最后一个 word 的最高位"
+            "Bit 255 should be highest bit of last word"
         );
     }
 }

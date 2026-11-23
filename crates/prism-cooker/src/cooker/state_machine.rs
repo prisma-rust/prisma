@@ -1,12 +1,12 @@
-//! 状态机的 cooked 格式**编码器**（#560 P1）。
+//! State machine cooked format **encoder** (#560 P1).
 //!
-//! 解码端在 `prism_asset::formats_state_machine`（运行时只解码，字节布局写在那里）。
-//! cooker 这一侧多做三件事：
+//! Decode side in `prism_asset::formats_state_machine` (runtime only decodes, byte layout written there).
+//! Cooker side does three things:
 //!
-//! - 解析作者的 `*.statemachine.json`（[`parse_state_machine_json`]）；
-//! - 把转移里的**状态名字**解析成下标（`u32::MAX` = 任意状态），顺带拒绝指向不存在
-//!   状态的转移 —— 运行时不查名字，坏下标只会让状态机卡住；
-//! - 丢掉非有限的时间/阈值（作者写错时安静降级，而不是整份资产失败）。
+//! - Parse author's `*.statemachine.json` ([`parse_state_machine_json`]);
+//! - Parse **state name** in transitions into index (`u32::MAX` = any state), while rejecting transitions pointing to non-existent
+//!   state transitions — at runtime names not looked up, bad index will only jam state machine;
+//! - Drop non-limited time/threshold (author writes wrong, silently degrades, not entire asset failure).
 
 use prism_asset::formats_state_machine::{
     AnimStateInfo, AnimTransitionInfo, StateMachineInfo, TransitionConditionInfo,
@@ -15,7 +15,7 @@ use prism_asset::formats_state_machine::{
 };
 use serde_json::Value;
 
-/// 编码 `.rasm`。任何一个状态/转移不合法都返回 `None`（整份资产失败）。
+/// Encode `.rasm`. Any illegal state/transition returns `None` (entire asset failure).
 pub fn encode_rasm(machine: &StateMachineInfo) -> Option<Vec<u8>> {
     if machine.states.is_empty() || machine.states.len() > u16::MAX as usize {
         return None;
@@ -76,7 +76,7 @@ pub fn encode_rasm(machine: &StateMachineInfo) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 解析作者的 `*.statemachine.json`。
+/// Parse author's `*.statemachine.json`.
 ///
 /// ```json
 /// {
@@ -91,12 +91,12 @@ pub fn encode_rasm(machine: &StateMachineInfo) -> Option<Vec<u8>> {
 /// }
 /// ```
 ///
-/// 缺省值：`speed = 1.0`、`looped = true`、`from = "*"`（任意状态）、
-/// `duration = 0`（硬切）、`min_state_fraction = 0`。`from` / `to` 用**状态名字**，
-/// 也接受 `"*"` / `"any"` / 空串表示任意状态；写错名字是硬错误（返回 `Err`）。
+/// Default value: `speed = 1.0`, `looped = true`, `from = "*"` (any state),
+/// `duration = 0` (hard cut), `min_state_fraction = 0`. `from` / `to` use **state name**,
+/// Also accept `"*"` / `"any"` / empty string meaning any state; wrong name is hard error (return `Err`).
 ///
-/// 条件种类：`float_greater` / `float_less`（`threshold`）、`bool_is`（`value`）、
-/// `trigger`（无载荷）。
+/// Condition class: `float_greater` / `float_less` (`threshold`), `bool_is` (`value`),
+/// `trigger` (no payload).
 pub fn parse_state_machine_json(document: &Value) -> Result<StateMachineInfo, String> {
     let states_json = document
         .get("states")
@@ -254,7 +254,7 @@ pub fn parse_state_machine_json(document: &Value) -> Result<StateMachineInfo, St
     })
 }
 
-/// 写一个 `u16` 长度前缀的 UTF-8 字符串。
+/// Write UTF-8 string prefixed with `u16` length.
 fn write_string(out: &mut Vec<u8>, value: &str) -> Option<()> {
     let bytes = value.as_bytes();
     if bytes.len() > u16::MAX as usize {
@@ -265,10 +265,10 @@ fn write_string(out: &mut Vec<u8>, value: &str) -> Option<()> {
     Some(())
 }
 
-/// 写一条转移条件（种类 + 名字 + 负载）。
+/// Write one transition condition (class + name + negative payload).
 ///
-/// 名字为空或者浮点负载非有限时返回 `None`：前者永远匹配不上，后者在比较里恒为
-/// false，两种都只会让作者困惑。
+/// Return `None` when name empty or floating payload not limited: before one never matches on, after one in comparison always
+/// false, both only confuse author.
 fn write_condition(out: &mut Vec<u8>, condition: &TransitionConditionInfo) -> Option<()> {
     let name = condition.parameter_name();
     if name.is_empty() {

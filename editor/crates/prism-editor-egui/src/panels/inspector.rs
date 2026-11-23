@@ -185,7 +185,7 @@ mod asset_inspector_tests {
         assert!(workspace.selection.is_empty());
         assert!(
             workspace.undo_history().is_empty(),
-            "只读的资产检查器不该产生撤销步"
+            "Read-only asset inspector should not produce undo steps"
         );
         assert!(!workspace.document().is_dirty());
     }
@@ -2555,14 +2555,18 @@ mod keyframe_editor_tests {
     #[test]
     fn key_ticks_drop_out_of_range_and_broken_values() {
         let offsets = key_tick_offsets(&[-0.5, 1.0, 3.0, f32::NAN], 2.0, 100.0);
-        assert_eq!(offsets, vec![50.0], "只留 0..=duration 的有限值");
+        assert_eq!(
+            offsets,
+            vec![50.0],
+            "Only finite values in 0..=duration kept"
+        );
         assert!(
             key_tick_offsets(&[0.5], 0.0, 100.0).is_empty(),
-            "未知时长不画刻度"
+            "Unknown duration draws no ticks"
         );
         assert!(
             key_tick_offsets(&[0.5], 2.0, 0.0).is_empty(),
-            "零宽度不画刻度"
+            "Zero width draws no ticks"
         );
         assert!(key_tick_offsets(&[0.5], f32::NAN, 100.0).is_empty());
     }
@@ -2598,7 +2602,10 @@ mod keyframe_editor_tests {
         let animator = workspace.document().doc.entities[1]
             .components
             .get("prism_engine::scene::Animator");
-        assert!(animator.is_none(), "只是画控件不该凭空写出一个组件");
+        assert!(
+            animator.is_none(),
+            "Just drawing the widget should not create a component"
+        );
     }
 
     #[test]
@@ -3024,10 +3031,9 @@ pub(super) fn apply_to_prefab(
     index: usize,
     prefab: &str,
 ) -> std::io::Result<usize> {
-    let root = workspace
-        .project_root
-        .clone()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "没有绑定项目根"))?;
+    let root = workspace.project_root.clone().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "No project root bound")
+    })?;
     let doc = workspace.document().doc.extract_subtree(&[index]);
     let count = doc.entities.len();
     prism_editor_core::project::write_document(&root, prefab, &doc)?;

@@ -87,19 +87,19 @@ fn display_and_debug_dont_panic() {
 
 #[test]
 fn path_ids_are_stable_and_order_independent() {
-    // #530：打包器按路径派生 ID，材质里烘的贴图 ID 才不会因为多一个文件而错位。
+    // #530: packer derives ID from path, texture IDs baked in material won't misalign due to an extra file.
     let a = AssetId::from_path("textures/marble.png");
     assert_eq!(a, AssetId::from_path("textures/marble.png"));
     assert_ne!(a, AssetId::from_path("textures/brick.png"));
-    // Windows 风格的输入归一化成同一 ID。
+    // Windows-style input normalized to same ID.
     assert_eq!(a, AssetId::from_path("textures\\marble.png"));
-    assert_eq!(a.generation(), 1, "构建期 ID 用 generation 1");
-    assert_ne!(a.serial(), 0, "serial 0 保留给「未分配」");
+    assert_eq!(a.generation(), 1, "build-time ID uses generation 1");
+    assert_ne!(a.serial(), 0, "serial 0 reserved for unallocated");
 }
 
 #[test]
 fn path_ids_do_not_collide_for_the_common_extensions() {
-    // 同一张图的不同 cook 形态是不同路径，必须拿到不同 ID。
+    // Different cook forms of same image are different paths, must get different IDs.
     let paths = [
         "textures/a.png",
         "textures/a.rtex",
@@ -115,5 +115,9 @@ fn path_ids_do_not_collide_for_the_common_extensions() {
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), paths.len(), "不同路径不应撞 ID");
+    assert_eq!(
+        ids.len(),
+        paths.len(),
+        "different paths must not collide on ID"
+    );
 }

@@ -1,16 +1,16 @@
-//! # AssetData——ScriptableObject 风格的类型标记资源 trait
+//! # AssetData---ScriptableObject-style type-marker resource trait
 //!
-//! ## 设计
+//! ## Design
 //!
-//! `AssetData` 是**可编辑资源定义**的运行时面貌。它有意保持最小化：
-//! 仅包括序列化契约和显示名称。所有编辑器特定内容（检查器绘制、验证、
-//! 依赖追踪）都位于编辑器 crate 中，通过外部注册表连接——绝不通过此 trait。
+//! `AssetData` is runtime face of **editable resource definition**. Intentionally kept minimal:
+//! only includes serialization contract and display name. All editor-specific content (inspector drawing, validation,
+//! dependency tracking) located in editor crate, connected via external registry---never through this trait.
 //!
-//! ## 注册
+//! ## Registration
 //!
-//! 每个具体的 `impl AssetData for T` 必须使用 `#[typetag::serde(name = "type_name")]`
-//! 进行注解。这让编辑器无需在编译时知道类型即可打开*任何*资源文件——
-//! `serde_json` 只需
+//! Each concrete `impl AssetData for T` must be annotated with `#[typetag::serde(name = "type_name")]`
+//! performing annotation. This lets editor open *any* resource file without knowing type at compile time---
+//! `serde_json` only needs
 //! reads the `"type"` field and dispatches to the right `DeserializeOwned`.
 //!
 //! ## Usage
@@ -42,7 +42,7 @@ use crate::core::guid::AssetGuid;
 ///
 /// Types implementing this trait are:
 /// - Serializable / deserializable with polymorphic type dispatch
-/// - Identified by a 稳定 [`AssetGuid`](crate::core::guid::AssetGuid) (via a companion `.meta` file)
+/// - Identified by a stable [`AssetGuid`](crate::core::guid::AssetGuid) (via companion `.meta` file)
 /// - Editable in the editor without touching runtime code
 ///
 /// The trait is intentionally thin. Editor functionality (property panels,
@@ -176,7 +176,7 @@ impl<T: AssetData + ?Sized> AssetHandle<T> {
         self.resolved.is_some()
     }
 
-    /// 访问 the resolved data, or `None` if 待加载完成.
+    /// Access resolved data, or `None` if load pending completion.
     pub fn resolved(&self) -> Option<&Arc<T>> {
         self.resolved.as_ref()
     }

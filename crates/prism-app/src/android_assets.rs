@@ -128,7 +128,7 @@ fn force_refresh(path: &str) -> bool {
     path.ends_with(".pak") || path.ends_with(".pak.meta.json") || is_settings_file(path)
 }
 
-/// `settings.ini`（新格式）与 `settings.toml`（旧项目回退）都要每次覆盖。
+/// `settings.ini` (new format) and `settings.toml` (old project fallback) both overwritten each time.
 fn is_settings_file(path: &str) -> bool {
     ["settings.ini", "settings.toml"].iter().any(|name| {
         path == *name || path.ends_with(&format!("/{name}")) || path.ends_with(&format!("\\{name}"))
@@ -150,7 +150,7 @@ mod tests {
         assert!(force_refresh("game/settings.ini"));
         assert!(force_refresh("game/nested/settings.ini"));
         assert!(force_refresh("game\\settings.ini"));
-        // 旧项目的 settings.toml 仍随包分发，同样每次覆盖。
+        // Old project settings.toml still distributed with package, overwritten each time too.
         assert!(force_refresh("settings.toml"));
         assert!(force_refresh("game/settings.toml"));
         assert!(force_refresh("scenes.pak"));

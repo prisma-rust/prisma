@@ -467,7 +467,7 @@ impl ViewportState {
             return;
         }
         if let Err(error) = self.host.write_render_graph_report(&path, self.frames) {
-            self.error = Some(format!("渲染图报告写入失败: {error:#}"));
+            self.error = Some(format!("render graph report write failed: {error:#}"));
         }
     }
 
@@ -698,7 +698,7 @@ impl ViewportState {
             let text = self
                 .error
                 .clone()
-                .unwrap_or_else(|| "渲染器未就绪".to_string());
+                .unwrap_or_else(|| "renderer not ready".to_string());
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -1170,15 +1170,15 @@ mod drop_hint_tests {
     fn the_drop_label_names_the_action() {
         assert_eq!(
             super::drop_hint(&Workspace::sample(), "assets/prefabs/crate.prefab.json"),
-            "在标记处实例化"
+            "instantiate at marker"
         );
         assert_eq!(
             super::drop_hint(&Workspace::sample(), "assets/scenes/level.scene.json"),
-            "打开场景"
+            "open scene"
         );
         assert_eq!(
             super::drop_hint(&Workspace::sample(), "assets/materials/red.mat.json"),
-            "可放置"
+            "placeable"
         );
     }
 }
@@ -1196,7 +1196,11 @@ mod tests {
         workspace.set_entity_hidden(1, true); // Cube + Cube/Detail
 
         let after = proxies(&workspace, None).len();
-        assert_eq!(after, before - 2, "隐藏的父级和子树都不参与点选");
+        assert_eq!(
+            after,
+            before - 2,
+            "hidden parent and subtree do not participate in picking"
+        );
     }
 
     #[test]
@@ -1256,7 +1260,7 @@ mod tests {
         let (first, cycle) = next_pick(None, (100.0, 50.0), candidates.clone()).unwrap();
         assert_eq!(first, 3);
         let (second, cycle) = next_pick(Some(&cycle), (101.0, 51.0), candidates.clone()).unwrap();
-        assert_eq!(second, 7, "4px 内视为同一次点选");
+        assert_eq!(second, 7, "within 4px treated as same pick");
         let (third, cycle) = next_pick(Some(&cycle), (100.0, 50.0), candidates.clone()).unwrap();
         assert_eq!(third, 9);
 
@@ -1277,24 +1281,24 @@ mod tests {
         assert_eq!(
             light_budget_label(&workspace, 0, 0),
             None,
-            "没有局部光时不占位置"
+            "no local light does not occupy position"
         );
         assert_eq!(
             light_budget_label(&workspace, 3, 3),
-            Some("光源 3".to_string())
+            Some("light 3".to_string())
         );
         assert_eq!(
             light_budget_label(&workspace, 8, 12),
-            Some("光源 8/12（丢弃 4）".to_string())
+            Some("light 8/12 (drop 4)".to_string())
         );
     }
 
     #[test]
     fn ctrl_inverts_the_snap_toggle() {
-        assert!(!snap_active(false, false), "关着时自由拖动");
-        assert!(snap_active(true, false), "开着时吸附");
-        assert!(snap_active(false, true), "按住 Ctrl 临时打开");
-        assert!(!snap_active(true, true), "按住 Ctrl 临时关掉");
+        assert!(!snap_active(false, false), "free drag when off");
+        assert!(snap_active(true, false), "snap when on");
+        assert!(snap_active(false, true), "hold Ctrl temporarily open");
+        assert!(!snap_active(true, true), "hold Ctrl temporarily close");
     }
 
     #[test]
@@ -1307,7 +1311,7 @@ mod tests {
             accum += 0.02;
             applied += drag_translate_step(snap, true, 0.0, accum, applied);
         }
-        assert_eq!(applied, 0.0, "没到半个步长之前不能动");
+        assert_eq!(applied, 0.0, "cannot move before half step");
 
         accum += 0.02;
         applied += drag_translate_step(snap, true, 0.0, accum, applied);
@@ -1484,7 +1488,7 @@ mod tests {
         assert_eq!(right_edge[0], extent.0 as f32);
         assert!(
             right_edge[0] <= extent.0 as f32,
-            "光标不该超过 InputSnapshot::screen（{} > {}）",
+            "cursor must not exceed InputSnapshot::screen ({} > {})",
             right_edge[0],
             extent.0
         );

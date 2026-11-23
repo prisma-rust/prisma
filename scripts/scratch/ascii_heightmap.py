@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把高度图渲染成 ASCII 灰度轮廓（大尺度，看山脉形态）。"""
+"""Render heightmap as ASCII grayscale contour (large scale, to see mountain shapes)."""
 import struct
 import sys
 
@@ -11,14 +11,14 @@ vals = load_raw(sys.argv[1])
 n = len(vals)
 w = h = int(n ** 0.5)
 
-# 降采样到 64x64
+# Downsample to 64x64
 step = w // 64
 chars = ' .:-=+*#%@'
 for y in range(0, h, step):
     line = ''
     for x in range(0, w, step):
         v = vals[y * w + x]
-        # 海平面以下用 '~' 系，以上用地形字符
+                # Below sea level use '~' series, above use terrain chars
         if v < 0:
             t = max(0.0, min(1.0, -v / 11000.0))
             idx = min(3, int(t * 3))

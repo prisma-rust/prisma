@@ -1085,7 +1085,7 @@ impl EditorApp {
     ) -> Result<serde_json::Value, String> {
         let (id, action) = crate::ui_tree::parse_dialog_node(node)
             .ok_or_else(|| format!("bad dialog node '{node}'"))?;
-        let action = action.ok_or_else(|| format!("'{node}' 是对话框，不是按钮"))?;
+        let action = action.ok_or_else(|| format!("'{node}' is a dialog, not a button"))?;
         let label = match (id, action) {
             ("delete-entities", "delete") => {
                 panels::apply_pending_entity_delete(&mut self.workspace, &mut self.state);
@@ -1238,7 +1238,7 @@ impl EditorApp {
         if let Some(("prompt", None)) = crate::ui_tree::parse_dialog_node(node) {
             let text = value
                 .as_str()
-                .ok_or_else(|| "dialog:prompt 需要字符串 value".to_string())?;
+                .ok_or_else(|| "dialog:prompt needs string value".to_string())?;
             let Some(prompt) = self.state.prompt.as_mut() else {
                 return Err("no prompt is open".into());
             };
@@ -1275,7 +1275,7 @@ impl EditorApp {
                     entity.components.get(&component).cloned()
                 }
             })
-            .ok_or_else(|| format!("entity {entity} 没有组件 '{component}'"))?;
+            .ok_or_else(|| format!("entity {entity} has no component '{component}'"))?;
         if prism_editor_core::schema::get_at(&current, &path).is_none() {
             let mut available = Vec::new();
             crate::ui_tree::flatten_paths(&current, "", &mut |path, _| {
@@ -1283,13 +1283,13 @@ impl EditorApp {
             });
             available.truncate(24);
             return Err(format!(
-                "'{component}' 里没有字段 '{path}'；可用：{}",
+                "'{component}' has no field '{path}' ; available: {}",
                 available.join(", ")
             ));
         }
         if component == "Transform" {
             let (field, axis) = split_axis(&path).ok_or_else(|| {
-                format!("Transform 只支持 position/rotation/scale 的 [轴] 写法，收到 '{path}'")
+                format!("Transform only supports position/rotation/scale [axis] syntax, received '{path}'")
             })?;
             let axes: Vec<(usize, f64)> = match value.as_array() {
                 Some(items) => items
@@ -1300,7 +1300,7 @@ impl EditorApp {
                 None => {
                     let scalar = value
                         .as_f64()
-                        .ok_or_else(|| format!("Transform.{field}[{axis}] 需要数字"))?;
+                        .ok_or_else(|| format!("Transform.{field}[{axis}] needs number"))?;
                     vec![(axis, scalar)]
                 }
             };

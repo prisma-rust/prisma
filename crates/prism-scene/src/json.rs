@@ -12,12 +12,12 @@ use std::collections::HashMap;
 
 /// Root of a `.scene.json` file.
 ///
-/// 读取时请用 [`SceneJson::parse`]（它会先把老文件迁移到
-/// [`crate::migrate::SCENE_DOC_VERSION`]）；直接 `serde_json::from_str` 只应
-/// 用于已经是当前版本的输入。
+/// When reading use [`SceneJson::parse`] (it first migrates old files to
+/// [`crate::migrate::SCENE_DOC_VERSION`]); direct `serde_json::from_str` should only
+/// be used for input already at current version.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SceneJson {
-    /// 作者格式版本。缺失视为 1（历史文件没有该字段）。
+    /// Author format version. Missing treated as 1 (historical files lack this field).
     #[serde(default)]
     pub version: u32,
     pub entities: Vec<EntityJson>,
@@ -26,15 +26,15 @@ pub struct SceneJson {
 /// One authoring entity.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntityJson {
-    /// 稳定实体 id：文档内唯一、删除后不复用。`parent` 引用它。
+    /// Stable entity id: unique within document, not reused after deletion. `parent` references it.
     ///
-    /// 没有 `serde` 默认值 —— 缺 `id` 的输入必须经过
-    /// [`crate::migrate::migrate_scene_doc`]（v2→v3 按数组顺序补齐），
-    /// 直接反序列化 v2 文档应当报错，而不是静默拿到一堆 `id = 0`。
+    /// No `serde` default — input missing `id` must go through
+    /// [`crate::migrate::migrate_scene_doc`] (v2→v3 filled by array order),
+    /// directly deserializing v2 doc should error, not silently get a heap of `id = 0`.
     pub id: u32,
     #[serde(default)]
     pub name: Option<String>,
-    /// 父实体的 `id`（**不是**数组下标）。
+    /// Parent entity `id` (**not** array index).
     #[serde(default)]
     pub parent: Option<u32>,
     #[serde(default)]
@@ -45,18 +45,18 @@ pub struct EntityJson {
     pub components: HashMap<String, serde_json::Value>,
 }
 
-/// 由**结构字段或运行时系统派生**、因此不允许出现在 [`EntityJson::components`]
-/// 里的组件。
+/// Component that is **struct field or runtime-system derived**, therefore not allowed in
+/// [`EntityJson::components`].
 ///
-/// - `LocalTransform`：loader / cooker 从 [`EntityJson::transform`] bake 出来。
-///   作者侧只有这一个“不可移除的 Transform”（对齐引擎的作者态），
-///   `LocalTransform` 本身只属于运行时。允许两条路同时写会制造静默错位：
-///   两个 loader 都是「先插 `LocalTransform` + 按它算出 `LocalToWorld`，
-///   再 apply `components`」，于是组件载荷会覆盖 `LocalTransform`
-///   而把按旧值算出的 `LocalToWorld` 留在原地。
-/// - `ComputedLayout`：UI 布局系统的**输出**（`rect` 每帧被覆盖）。
-///   标记 UI 元素只用 `Node` / `Style`；写进文档只会让检查器出现一个
-///   永远被覆盖的假字段，并且让“漏写就不渲染”的隐式契约继续存在。
+/// - `LocalTransform`: baked by loader / cooker from [`EntityJson::transform`].
+///   Author side only has this one "non-removable Transform" (matching engine author state),
+///   `LocalTransform` itself belongs to runtime only. Allowing both paths at once creates silent bug:
+///   Both loaders "insert `LocalTransform` first + compute `LocalToWorld`,
+///   then apply `components`", so component payload overwrites `LocalTransform`
+///   while leaving `LocalToWorld` computed from old value in place.
+/// - `ComputedLayout`: UI layout system **output** (`rect` overwritten each frame).
+///   Flag UI elements use only `Node` / `Style`; writing into document only creates a
+///   false field always overwritten in checker, and keeps implicit contract "missing = not rendered".
 pub const DERIVED_COMPONENTS: &[&str] = &[
     "prism_engine::scene::LocalTransform",
     "prism_engine::scene::TransformInterpolation2D",
@@ -65,10 +65,10 @@ pub const DERIVED_COMPONENTS: &[&str] = &[
     "prism_engine::ui::ComputedLayout",
 ];
 
-/// 作者格式的局部变换。
+/// Author-format local transform.
 ///
-/// 字段名对齐 数据导向 `LocalTransform`（`Position` / `Rotation` / `Scale`），
-/// 但它是**结构字段**而不是组件——见 [`DERIVED_COMPONENTS`]。
+/// Field names match data-oriented `LocalTransform` (`Position` / `Rotation` / `Scale`),
+/// but it is **struct field**, not component — see [`DERIVED_COMPONENTS`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransformJson {
     #[serde(default)]
@@ -98,17 +98,17 @@ fn one_vec3() -> [f32; 3] {
 }
 
 impl SceneJson {
-    /// 解析 `.scene.json` 文本，**先迁移**到当前版本再反序列化。
+    /// Parse `.scene.json` text, **first migrate** to current version then deserialize.
     ///
-    /// 所有读取 `.scene.json` / `.prefab.json` 的路径都应经过这里，
-    /// 以保证旧文件（缺 `version`、用 `transform.translation`）能透明升级。
+    /// All paths reading `.scene.json` / `.prefab.json` should go through here,
+    /// to transparently upgrade old files (missing `version`, using `transform.translation`).
     pub fn parse(text: &str) -> Result<Self, String> {
         let value: serde_json::Value =
             serde_json::from_str(text).map_err(|e| format!("invalid scene JSON: {e}"))?;
         Self::from_value(value)
     }
 
-    /// 与 [`Self::parse`] 相同，但输入已经是 [`serde_json::Value`]。
+    /// Same as [`Self::parse`], but input already a [`serde_json::Value`].
     pub fn from_value(mut value: serde_json::Value) -> Result<Self, String> {
         crate::migrate::migrate_scene_doc(&mut value)?;
         let scene: Self =
@@ -117,7 +117,7 @@ impl SceneJson {
         Ok(scene)
     }
 
-    /// 拒绝作者直写派生组件（见 [`DERIVED_COMPONENTS`]）。
+    /// Reject author writing derived components directly (see [`DERIVED_COMPONENTS`]).
     fn validate_authorship(&self) -> Result<(), String> {
         for (index, entity) in self.entities.iter().enumerate() {
             for name in DERIVED_COMPONENTS {
@@ -132,9 +132,9 @@ impl SceneJson {
         Ok(())
     }
 
-    /// 下一个可用的实体 id（`max(id) + 1`；空文档为 0）。
+    /// Next available entity id (`max(id) + 1`; empty document 0).
     ///
-    /// id 单调递增且**不复用**：删除留下的空洞保留，避免旧引用"复活"到新实体。
+    /// id monotonic and **not reused**: holes left by deletion stay, avoiding old reference "resurrecting" onto new entity.
     pub fn next_id(&self) -> u32 {
         self.entities
             .iter()
@@ -143,7 +143,7 @@ impl SceneJson {
             .map_or(0, |max| max.saturating_add(1))
     }
 
-    /// 实体 id → 数组下标（解析 `parent` 引用用）。
+    /// Entity id → array index (for parsing `parent` references).
     pub fn index_of_id(&self) -> HashMap<u32, usize> {
         self.entities
             .iter()

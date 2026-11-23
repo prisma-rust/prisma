@@ -1,11 +1,11 @@
-//! `ui_overlay` 的 GPU 部分（字体图集 + 管线 + 绘制）。
+//! GPU part of `ui_overlay` (font atlas + pipelines + draw).
 //!
-//! `ui` feature 打开时才编译：关闭后 `ui_overlay` 模块只保留输入数据结构
-//! （[`crate::ui_overlay::UiOverlayInput`] 等），引擎照常填充、
-//! 渲染侧直接忽略，**fontdue / ttf-parser 不再进二进制**。
+//! Compiled only when `ui` feature enabled: after disabling, `ui_overlay` module keeps only input data structures
+//! ([`crate::ui_overlay::UiOverlayInput`] etc.), engine fills as usual,
+//! render side ignores entirely, **fontdue / ttf-parser no longer in binary**.
 //!
-//! 字形位图由 `text` 里的光栅后端提供（`ui-fontdue` / `ui-directwrite`），
-//! 这里只负责图集打包、四边形展开与 Vulkan 绘制——与后端无关。
+//! Glyph bitmaps provided by rasterizer backend in `text` (`ui-fontdue` / `ui-directwrite`),
+//! here only handles atlas packing, quad expansion and Vulkan draw — independent of backend.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct UiVertex {
@@ -47,7 +47,7 @@ const VERTEX_SIZE: vk::DeviceSize = size_of::<UiVertex>() as vk::DeviceSize;
 const BACKDROP_TEX_BINDING: u32 = 1;
 
 // ---------------------------------------------------------------------------
-// 字形图集
+// Glyph atlas
 // ---------------------------------------------------------------------------
 
 /// Atlas side length (px). R8 = 4 MB VRAM, enough for thousands of CJK + Latin SDF glyphs.
@@ -70,7 +70,7 @@ enum GlyphKind {
 /// A cached glyph packed into the atlas (either direct bitmap or SDF).
 #[derive(Clone, Copy)]
 struct CachedGlyph {
-    /// 图集内 rect。空白字形（w/h = 0）不占图集空间。
+    /// Rect inside atlas. Empty white glyph (w/h = 0) occupies no atlas space.
     rect: Option<[u32; 4]>,
     advance: f32,
     xmin: f32,
@@ -87,34 +87,34 @@ struct ScaledGlyph {
     height: f32,
 }
 
-/// 字形光栅 + 行打包的 R8 字形图集（host-visible，LINEAR tiling）。
+/// R8 glyph atlas with glyph rasterization and line packing (host-visible, LINEAR tiling).
 ///
-/// 图集像素 (0,0) 保留为白色——plain quad 的 uv=(0,0) 采样到 alpha 1。
-/// 布局保持 GENERAL：host 直接写入新字形；record 在 dirty 帧插入
-/// HOST_WRITE → FRAGMENT_SHADER 屏障。
+/// Atlas pixel (0,0) reserved as white — plain quad's uv=(0,0) samples alpha 1.
+/// Layout kept GENERAL: host directly writes new glyphs; insert
+/// HOST_WRITE → FRAGMENT_SHADER barrier in dirty frame.
 ///
-/// `rasterizer` 是**编译期选定**的文本后端（见 [`super::text`]）；
-/// `None` = 这个构建没有文本后端或系统里找不到字体，文字命令被跳过。
+/// `rasterizer` is **compile-time selected** text backend (see [`super::text`]);
+/// `None` = this build has no text backend or no font found on system, text commands skipped.
 struct GlyphAtlas {
     image: vk::Image,
     memory: vk::DeviceMemory,
     view: vk::ImageView,
     sampler: vk::Sampler,
     rasterizer: Option<Box<dyn TextRasterizer>>,
-    /// 工程字体路径 → 字体 id（0 保留给系统默认字体，#583）。
+    /// Project font path → font id (0 reserved for system default font, #583).
     font_ids: HashMap<String, u32>,
-    /// id → 字体路径；`None` = 系统默认字体。
+    /// id → font path; `None` = system default font.
     font_names: Vec<Option<String>>,
     /// `(font_id, char, kind)` -> cached glyph
     glyphs: HashMap<(u32, char, GlyphKind), CachedGlyph>,
-    /// 行打包游标
+    /// Line packing cursor
     x: u32,
     y: u32,
     row_h: u32,
-    /// 本帧有新的字形写入 → 需要 HOST→SHADER 屏障
+    /// This frame has new glyph writes → need HOST→SHADER barrier
     dirty: bool,
-    /// Linear tiling 的实际行跨度（字节）。驱动可能把它对齐到 `ATLAS_SIZE`
-    /// 之外；写入必须按这个 stride，不能假设 `width == pitch`（#590）。
+    /// Actual row pitch of Linear tiling (bytes). Driver may align it to larger than `ATLAS_SIZE`;
+    /// writes must use this stride, cannot falsely assume `width == pitch` (#590).
     row_pitch: usize,
     device: ash::Device,
 }
@@ -135,7 +135,7 @@ impl GlyphAtlas {
         let view = Self::create_view(&device, image)?;
         let sampler = Self::create_sampler(&device)?;
 
-        // LINEAR tiling 的 rowPitch 由驱动决定，可能大于 ATLAS_SIZE。
+        // rowPitch of LINEAR tiling decided by driver, may exceed ATLAS_SIZE.
         let subresource = vk::ImageSubresource {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: 0,
@@ -144,7 +144,7 @@ impl GlyphAtlas {
         let row_pitch =
             unsafe { device.get_image_subresource_layout(image, subresource) }.row_pitch as usize;
 
-        // UNDEFINED → GENERAL：host 侧直接 map 写（LINEAR tiling）。
+        // UNDEFINED → GENERAL: host side directly maps and writes (LINEAR tiling).
         let cmd = allocate_temp_command_buffer(&device, command_pool)
             .context("GlyphAtlas: allocate command buffer")?;
         unsafe {
@@ -204,7 +204,7 @@ impl GlyphAtlas {
         if let Some(backend) = rasterizer.as_deref() {
             if let Some(m) = backend.line_metrics(None, 16.0) {
                 log::debug!(
-                    "ui overlay: 文本度量 @16px —— ascent {:.1} / descent {:.1} / line height {:.1}",
+                    "ui overlay: text metrics @16px — ascent {:.1} / descent {:.1} / line height {:.1}",
                     m.ascent,
                     m.descent,
                     m.line_height
@@ -230,8 +230,8 @@ impl GlyphAtlas {
         })
     }
 
-    /// 单行文本的基线相对矩形顶边的偏移（来自后端的行度量）。
-    /// 行高（px）：后端给出度量时用 `line_height`，否则退回 `1.2 × 字号`。
+    /// Single-line text baseline offset relative to rect top (from backend line metrics).
+    /// Line height (px): use `line_height` when backend provides metrics, otherwise fall back to `1.2 × font size`.
     fn line_height(&self, font: Option<&str>, font_size: f32) -> f32 {
         self.rasterizer
             .as_deref()
@@ -249,10 +249,10 @@ impl GlyphAtlas {
         baseline_offset(metrics, font_size)
     }
 
-    /// 字体路径 → 稳定 id（未注册过的路径也会分到 id，光栅器再回落到默认字体）。
+    /// Font path → stable id (unregistered paths also get id, rasterizer falls back to default font).
     ///
-    /// id 而不是 `String` 作图集键：`emit_text` 每个字形都要查缓存，不能每帧为
-    /// 每个字符分配一条路径字符串。
+    /// Use id rather than `String` as atlas key: `emit_text` looks up cache per glyph, cannot each frame allocate a path string
+    /// for every char.
     fn font_id(&mut self, font: Option<&str>) -> u32 {
         let Some(name) = font else {
             return 0;
@@ -266,7 +266,7 @@ impl GlyphAtlas {
         id
     }
 
-    /// 注册工程自带字体；同一路径重复注册会覆盖并丢掉该字体的旧字形（#583）。
+    /// Register project-bundled font; re-registering same path overwrites and drops old glyphs for that font (#583).
     fn register_font(&mut self, name: &str, bytes: Vec<u8>) -> bool {
         let Some(backend) = self.rasterizer.as_mut() else {
             return false;
@@ -424,10 +424,10 @@ impl GlyphAtlas {
         })
     }
 
-    /// 行打包：把 bitmap 拷贝进图集，返回图集 rect。
+    /// Line packing: copy bitmap into atlas, return atlas rect.
     ///
-    /// shelf 打包在 `ATLAS_SIZE` 内够用（字形丢弃会打 warn）；真出现丢弃再换
-    /// `etagere` 之类的 2D 矩形打包器，现在没必要为它加依赖。
+    /// Shelf packing within `ATLAS_SIZE` is enough (dropped glyphs log warn); a true 2D rect packer like
+    /// `etagere` can replace it if dropping ever becomes a problem, no need to add dependency now.
     fn pack(&mut self, bitmap: &[u8], w: usize, h: usize) -> Option<[u32; 4]> {
         let w = w as u32;
         let h = h as u32;
@@ -441,7 +441,7 @@ impl GlyphAtlas {
             return None;
         }
         let rect = [self.x, self.y, w, h];
-        // 拷贝到 host-visible 内存。
+        // Copy to host-visible memory.
         let ptr = unsafe {
             self.device
                 .map_memory(self.memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
@@ -456,7 +456,7 @@ impl GlyphAtlas {
             }
             self.device.unmap_memory(self.memory);
         }
-        self.x += w + 1; // 1px 间距防相邻字形渗色
+        self.x += w + 1; // 1px gap prevents adjacent glyph bleeding
         self.row_h = self.row_h.max(h);
         self.dirty = true;
         Some(rect)
@@ -497,14 +497,14 @@ pub struct UiOverlay {
     /// `final_layout`. `None` when `final_layout` is already
     /// `COLOR_ATTACHMENT_OPTIMAL`.
     intermediate_render_pass: Option<vk::RenderPass>,
-    /// 创建 `render_pass` 时使用的颜色格式；swapchain 格式变化时用来判断
-    /// 是否需要重建（见 [`UiOverlay::set_color_format`]）。
+    /// Color format used when creating `render_pass`; used to decide whether
+    /// rebuild needed when swapchain format changes (see [`UiOverlay::set_color_format`]).
     color_format: vk::Format,
-    /// render pass 结束时的图像布局：交换链是 `PRESENT_SRC_KHR`，离屏目标
-    /// 没有呈现引擎，必须留在 `COLOR_ATTACHMENT_OPTIMAL`（#597）。
+    /// Image layout at render pass end: swapchain is `PRESENT_SRC_KHR`, offscreen target
+    /// has no presentation engine, must stay in `COLOR_ATTACHMENT_OPTIMAL` (#597).
     final_layout: vk::ImageLayout,
-    /// 场景共享的 bindless 纹理表布局（set 1，UI 背景图用，#591）。
-    /// 由 [`GraphRenderer`](crate::GraphRenderer) 拥有，这里只借用句柄。
+    /// Scene-shared bindless texture table layout (set 1, for UI background images, #591).
+    /// Owned by [`GraphRenderer`](crate::GraphRenderer), here only borrow handle.
     bindless_layout: vk::DescriptorSetLayout,
     atlas: GlyphAtlas,
     device: ash::Device,
@@ -531,12 +531,12 @@ struct CachedFramebuffer {
 }
 
 impl UiOverlay {
-    /// 用默认的 `B8G8R8A8_SRGB` 颜色格式构造。
+    /// Construct with default `B8G8R8A8_SRGB` color format.
     ///
-    /// 知道 swapchain 实际格式的调用方（如 [`GraphRenderer`](crate::GraphRenderer)）
-    /// 应改用 [`UiOverlay::with_color_format`]：surface 在首选格式不可用时会
-    /// 回退到 `available[0]`（Android 常见 `R8G8B8A8_*`），render pass 与
-    /// image view 的格式必须一致（VUID-VkFramebufferCreateInfo-renderPass-02711）。
+    /// Callers knowing actual swapchain format (like [`GraphRenderer`](crate::GraphRenderer))
+    /// should use [`UiOverlay::with_color_format`]: when preferred surface format unavailable will
+    /// fall back to `available[0]` (commonly `R8G8B8A8_*` on Android), render pass and
+    /// image view formats must match (VUID -VkFramebufferCreateInfo-renderPass-02711).
     pub fn new(
         context: &VulkanContext,
         command_pool: vk::CommandPool,
@@ -550,7 +550,7 @@ impl UiOverlay {
         )
     }
 
-    /// 用 swapchain 的实际颜色格式构造叠加层。
+    /// Construct overlay layer with actual swapchain color format.
     pub fn with_color_format(
         context: &VulkanContext,
         command_pool: vk::CommandPool,
@@ -566,11 +566,11 @@ impl UiOverlay {
         )
     }
 
-    /// 用显式的最终布局构造叠加层。
+    /// Construct overlay layer with explicit final layout.
     ///
-    /// 交换链用 [`vk::ImageLayout::PRESENT_SRC_KHR`]；离屏目标（编辑器视口）
-    /// 没有呈现引擎，必须用 [`vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL`]，
-    /// 否则 render pass 会留下非法布局（#597）。
+    /// Swapchain uses [`vk::ImageLayout::PRESENT_SRC_KHR`]; offscreen target (editor viewport)
+    /// has no presentation engine, must use [`vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL`],
+    /// otherwise render pass leaves illegal layout (#597).
     pub fn with_color_format_and_final_layout(
         context: &VulkanContext,
         command_pool: vk::CommandPool,
@@ -692,17 +692,17 @@ impl UiOverlay {
         }
     }
 
-    /// 让 render pass 跟随 swapchain 的实际颜色格式。
+    /// Make render pass follow swapchain's actual color format.
     ///
-    /// swapchain 重建后格式可能变化（首选格式不可用时回退到 `available[0]`，
-    /// Android 上常见 `R8G8B8A8_*`）。格式变化时按新格式重建 render pass，
-    /// 并销毁依赖旧 render pass 的 pipeline 与 framebuffer；pipeline 会在
-    /// 下一次 [`UiOverlay::record`] 时按新 pass 懒重建。
+    /// Format may change after swapchain rebuild (fallback to `available[0]` when preferred unavailable,
+    /// commonly `R8G8B8A8_*` on Android). On format change rebuild render pass with new format,
+    /// and destroy pipelines and framebuffers depending on old pass; pipelines will be
+    /// lazily rebuilt on next [`UiOverlay::record`] with new pass.
     pub fn set_color_format(&mut self, color_format: vk::Format) -> Result<()> {
         if self.color_format == color_format {
             return Ok(());
         }
-        // 先建新的再拆旧的，创建失败时旧 pass 仍然有效。
+        // Build new first then tear down old, so on create failure old pass still valid.
         let render_pass = Self::create_render_pass(&self.device, color_format, self.final_layout)?;
         let intermediate_render_pass =
             if self.final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
@@ -714,8 +714,8 @@ impl UiOverlay {
                     vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 )?)
             };
-        // 管线在下一次 record 时按新 render pass 重建；这里只换 pass。上一次提交的
-        // 命令缓冲可能还在引用这个 render pass / pipeline，交给回收队列延后销毁。
+        // Pipelines rebuilt on next record with new render pass; here only swap pass. Previously submitted
+        // command buffers may still reference this render pass / pipeline, left to recycle queue for delayed destruction.
         {
             if let Some(pipeline) = self.pipeline.take() {
                 self.retire.retire(
@@ -753,7 +753,7 @@ impl UiOverlay {
         Ok(())
     }
 
-    /// set 0 binding 0 = 字形图集 combined image sampler。
+    /// set 0 binding 0 = glyph atlas combined image sampler.
     fn create_descriptors(
         device: &ash::Device,
         atlas_view: vk::ImageView,
@@ -909,7 +909,7 @@ impl UiOverlay {
             ),
         ];
 
-        // set 0 binding 0 — glyph atlas（见 GlyphAtlas::create_descriptors）。
+        // set 0 binding 0 — glyph atlas (see GlyphAtlas::create_descriptors).
         let bindings_desc = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(GLYPH_ATLAS_BINDING)
@@ -925,7 +925,7 @@ impl UiOverlay {
         let set_layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&set_layout_info, None) }
             .context("UiOverlay: pipeline set layout")?;
-        // set 1 = 场景共享的 bindless 纹理表（UI 背景图，#591）。
+        // set 1 = scene-shared bindless texture table (UI background images, #591).
         let set_layouts = [set_layout, bindless_layout];
         let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts);
         let layout = unsafe { device.create_pipeline_layout(&layout_info, None) }
@@ -1108,12 +1108,12 @@ impl UiOverlay {
         context: &VulkanContext,
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
-        // 目标矩形（#988）：`internal_resolution` 生效时 UI 只画在这一块里，
-        // 与 PostPass 等比放大后的画面重合，不压到黑边上。
+        // Target rect (#988): when `internal_resolution` active UI only draws inside this block,
+        // composited with PostPass-upscaled image, not pressed onto letterbox.
         dest: vk::Rect2D,
         target_view: vk::ImageView,
         input: &UiOverlayInput,
-        // 场景 bindless 纹理表（set 1）；UI 背景图按 `UiQuad::texture` 取样。
+        // Scene bindless texture table (set 1); UI background images sampled by `UiQuad::texture`.
         bindless_set: vk::DescriptorSet,
         frame_index: u32,
     ) -> Result<()> {
@@ -1165,13 +1165,13 @@ impl UiOverlay {
         // or missing font skips entirely), so the real count is usually lower.
         let estimated_vertices = self.estimate_vertex_count(input);
 
-        // Build 顶点 (quads + 逐字形展开的 texts)。
+        // Build vertices (quads + per-glyph expanded texts).
         let mut vertices: Vec<UiVertex> = Vec::with_capacity(estimated_vertices as usize);
         let w = dest.extent.width as f32;
         let h = dest.extent.height as f32;
 
-        // 按引擎算好的层级顺序交错画矩形和文本（旧路径没有顺序时退化成
-        // 「先全部矩形、再全部文本」）。
+        // Interleave rects and text by engine-computed layer / order (old path without order degrades to
+        // "all rects first, then all text").
         let push_quad = |vertices: &mut Vec<UiVertex>, quad: &crate::ui_overlay::UiQuad| {
             let [x0, y0, x1, y1] = quad.rect;
             let [r, g, b, a] = quad.color;
@@ -1183,7 +1183,7 @@ impl UiOverlay {
             let half = [width_px * 0.5, height_px * 0.5];
             let radius = (quad.border_radius * width_px.max(height_px) * 0.5)
                 .clamp(0.0, half[0].min(half[1]));
-            // 有背景图时 uv 铺满 0..1；纯色 quad 采样图集 1×1 的白点。
+            // With background image uv covers 0..1; solid quad samples atlas 1×1 white pixel.
             let (uv0, uv1) = if quad.texture.is_some() {
                 ([0.0, 0.0], [1.0, 1.0])
             } else {
@@ -1233,8 +1233,8 @@ impl UiOverlay {
         }
         let segments = tracker.finish(vertices.len());
 
-        // 上传与 draw 都使用实际顶点数：估算值可能高于 `vertices.len()`，
-        // 按它复制会读到 Vec 之外未初始化内存（UB，GPU 上是杂散三角形）。
+        // Upload and draw both use actual vertex count: estimate may exceed `vertices.len()`,
+        // copying that much would read uninitialized memory past Vec (UB, stray triangles on GPU).
         let vert_count =
             u32::try_from(vertices.len()).context("UiOverlay: vertex count exceeds u32")?;
         if vert_count == 0 {
@@ -1264,7 +1264,7 @@ impl UiOverlay {
             context.device.unmap_memory(self.vertex_memory);
         }
 
-        // 图集有新字形 → HOST_WRITE → FRAGMENT_SHADER 屏障（GENERAL 布局不变）。
+        // Atlas has new glyphs → HOST_WRITE → FRAGMENT_SHADER barrier (GENERAL layout unchanged).
         if self.atlas.dirty {
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::GENERAL)
@@ -1419,16 +1419,16 @@ impl UiOverlay {
         }
     }
 
-    /// 注册一个工程自带字体（`assets/fonts/*.ttf|otf` 的原始字节，#583）。
+    /// Register a project-bundled font (raw bytes of `assets/fonts/*.ttf|otf`, #583).
     ///
-    /// 名字就是 `Text.font` 里写的资产路径；解析失败返回 `false`，文本会回落到
-    /// 系统默认字体。可以随时调用（图集是 host-visible 的，新字形下次绘制时才
-    /// 打包）。
+    /// Name is exactly the asset path written in `Text.font`; parse failure returns `false`, text falls back to
+    /// system default font. Callable anytime (atlas is host-visible, new glyphs packed only on
+    /// next draw).
     pub fn register_font(&mut self, name: &str, bytes: Vec<u8>) -> bool {
         self.atlas.register_font(name, bytes)
     }
 
-    /// 把一个文本命令展开成逐字形四边形（像素 → NDC，字形带图集 uv）。
+    /// Expand one text command into per-glyph quads (pixels → NDC, glyphs carry atlas uv).
     fn emit_text(&mut self, vertices: &mut Vec<UiVertex>, t: &UiTextInput, w: f32, h: f32) {
         let [left, top, rect_w, rect_h] = t.rect;
         if t.font_size <= 0.0 || rect_w <= 0.0 || rect_h <= 0.0 {
@@ -1441,8 +1441,8 @@ impl UiOverlay {
         let font = t.font.as_deref();
         let use_sdf = (t.outline_width > 0.0 && t.outline_color[3] > 0.0) || t.font_size > 24.0;
 
-        // 1. 断行（#527）：`\n` 总是换行；`wrap` 时再按矩形宽度贪心断行。
-        //    没有 `wrap` 也没有 `\n` 时就是原来的一行，行为不变。
+        // 1. Line breaking (#527): `\n` always breaks; with `wrap` also greedy break by rect width.
+        //    Without `wrap` nor `\n` it's original single line, behavior unchanged.
         let lines = if t.wrap {
             let mut advance = |ch: char| self.advance_of(font, t.font_size, ch, use_sdf);
             wrap_text(&t.content, rect_w, &mut advance)
@@ -1458,12 +1458,12 @@ impl UiOverlay {
 
         for (index, line) in lines.iter().enumerate() {
             let line_top = top + index as f32 * line_height;
-            // 超出矩形底边的行不再画（不做半个字形的裁剪）。
+            // Lines beyond rect bottom not drawn (no half-glyph clipping).
             if line_top > top + rect_h {
                 break;
             }
 
-            // 2. 测量这一行的宽度（advance 求和）。
+            // 2. Measure this line's width (sum of advances).
             let mut total = 0.0f32;
             for ch in line.chars() {
                 total += self.advance_of(font, t.font_size, ch, use_sdf);
@@ -1472,7 +1472,7 @@ impl UiOverlay {
                 continue;
             }
 
-            // 3. 对齐决定起始 x（逐行对齐，不是整段）。
+            // 3. Alignment decides starting x (per-line alignment, not whole paragraph).
             let start_x = match t.alignment {
                 UiTextAlign::Left => left,
                 UiTextAlign::Center => left + (rect_w - total) * 0.5,
@@ -1537,7 +1537,7 @@ impl UiOverlay {
         }
     }
 
-    /// 单个字符的推进量（px）；字体里没有该字形时按 0 处理。
+    /// Advance of single char (px); 0 if font lacks glyph.
     fn advance_of(&mut self, font: Option<&str>, font_size: f32, ch: char, use_sdf: bool) -> f32 {
         self.atlas
             .glyph(font, ch, font_size, use_sdf)
@@ -1547,19 +1547,19 @@ impl UiOverlay {
     }
 }
 
-/// `wrap` 时最多断多少行（防御超大字符串）。
+/// Max lines when `wrap` (guard against huge strings).
 const MAX_WRAP_LINES: usize = 4096;
 
-/// 按宽度贪心断行（#527）。
+/// Greedy line breaking by width (#527).
 ///
-/// - `\n` 总是产生新行（保留空行，让作者能控制段落间距）；
-/// - 断点来自 UAX #14（`unicode-linebreak`）：空格、连字符、CJK 字间都能断，
-///   `，` / `。` 这类收尾标点不会被推到行首；
-/// - 单个词比整行还宽时按字符断；
-/// - 断行后行尾空格会被去掉，行首空格同理。
+/// - `\n` always produces new line (empty lines preserved, letting author control paragraph spacing);
+/// - Break points from UAX #14 (`unicode-linebreak`): spaces, hyphens and between CJK chars can break,
+///   CJK trailing punctuation such as comma / full stop won't be pushed to line start;
+/// - Single word wider than whole line broken by char;
+/// - Trailing spaces removed after break, leading spaces likewise.
 ///
-/// 宽度用的是字体推进量（像素），所以这里没有用 `textwrap`：它按
-/// `unicode-width` 的列宽排布，和实际字体的像素宽度对不上。
+/// Width uses font advance (pixels), so `textwrap` not used: it lays out by
+/// `unicode-width` column widths, which don't match actual font pixel widths.
 fn wrap_text(content: &str, max_width: f32, advance: &mut impl FnMut(char) -> f32) -> Vec<String> {
     let max_width = if max_width.is_finite() && max_width > 0.0 {
         max_width
@@ -1588,8 +1588,8 @@ fn wrap_paragraph(
         return;
     }
 
-    // 字节偏移 -> 字符下标，以及按字符累计的推进量：任意 `[from, to)` 的行宽
-    // 都是 O(1)，不用为每个候选断点重新测量。
+    // Byte offset → char index, and cumulative advance per char: line width for any `[from, to)` is
+    // O(1), no need to re-measure for every candidate break point.
     let mut char_offsets: Vec<usize> = paragraph.char_indices().map(|(offset, _)| offset).collect();
     char_offsets.push(paragraph.len());
     let mut prefix = Vec::with_capacity(char_offsets.len());
@@ -1610,7 +1610,7 @@ fn wrap_paragraph(
             pos += 1;
         }
 
-        // 从 `pos` 起最远的、整行宽度仍然放得下的断点。
+        // Farthest break point from `pos` such that whole line width still fits.
         let mut last_fit: Option<usize> = None;
         for &brk in &breaks[breaks.partition_point(|&brk| brk <= pos)..] {
             if width(pos, brk) > max_width {
@@ -1626,7 +1626,7 @@ fn wrap_paragraph(
                 return;
             }
         } else {
-            // 没有断点放得下：至少吃掉一个字符，按字符截断。
+            // No break point fits: consume at least one char, truncate by char.
             let mut end = pos;
             for ch in paragraph[pos..].chars() {
                 let next = end + ch.len_utf8();
@@ -1760,7 +1760,7 @@ impl Drop for UiOverlay {
 }
 
 // ---------------------------------------------------------------------------
-// 一次性 command buffer / 内存类型 辅助（与 ibl.rs 同模式）
+// One-off command buffer / memory type helpers (same mode as ibl.rs)
 // ---------------------------------------------------------------------------
 
 fn allocate_temp_command_buffer(
@@ -1826,8 +1826,8 @@ fn find_memory_type(
     panic!("no suitable memory type found");
 }
 
-/// sRGB 分量 → 线性。UI 的 `[1, 0.502, 0.125]` 应当出图就是 `#FF8020`，
-/// 而不是被交换链再编码一次变成更亮的颜色（#592）。
+/// sRGB component → linear. UI's `[1, 0.502, 0.125]` should appear as `#FF8020` right out of image,
+/// not re-encoded by swapchain into a brighter color (#592).
 fn srgb_channel_to_linear(value: f32) -> f32 {
     let value = value.clamp(0.0, 1.0);
     if value <= 0.04045 {
@@ -1846,11 +1846,11 @@ fn srgb_rgba_to_linear(color: [f32; 4]) -> [f32; 4] {
     ]
 }
 
-/// 像素 y（左上角原点、向下增长）→ Vulkan NDC y（`-1` = 屏幕顶，`+1` = 屏幕底）。
+/// Pixel y (origin top-left, growing downward) → Vulkan NDC y (`-1` = screen top, `+1` = bottom).
 ///
-/// 相机投影里的 `p[1][1] = -inv_tan` 就是按这个约定翻的，所以 UI 这里**不能再翻**：
-/// 早先写成 `(h - py) / h * 2 - 1`（OpenGL 的 Y-up 直觉）把整个 UI 层画成了上下镜像
-/// —— intro 的标题倒着显示、锚在底部的 prompt 跑到屏幕顶部。
+/// Camera projection's `p[1][1] = -inv_tan` is flipped for this convention, so UI here **must not flip again**:
+/// earlier writing `(h - py) / h * 2 - 1` (OpenGL Y-up intuition) drew whole UI layer upside-down mirror
+/// — intro title displayed inverted, bottom-anchored prompt moved to screen top.
 /// Convert an 8-bit antialiased glyph bitmap (`w × h`) into a padded Signed
 /// Distance Field (`(w + 2*pad) × (h + 2*pad)`), where `128` (`0.5`) marks the
 /// contour and `spread` pixels map across `[0.0, 1.0]`.
@@ -2079,7 +2079,7 @@ mod tests {
         bitmap_to_sdf, pixel_y_to_ndc, srgb_rgba_to_linear, wrap_text, BackdropSegmentTracker,
     };
 
-    /// 等宽 10px 的度量，测试断行只关心宽度，不依赖真实字体。
+    /// Monospace 10px metrics, line-break tests only care about width, not real font.
     fn ten_px(_ch: char) -> f32 {
         10.0
     }
@@ -2137,13 +2137,16 @@ mod tests {
 
     #[test]
     fn srgb_ui_colors_are_decoded_to_linear() {
-        // #592：#FF8020 的 sRGB 分量是 1.0 / 0.502 / 0.125。
+        // #592: #FF8020 sRGB components are 1.0 / 0.502 / 0.125.
         let linear = srgb_rgba_to_linear([1.0, 0.501_960_8, 0.125, 1.0]);
         assert!((linear[0] - 1.0).abs() < 1e-6);
         assert!((linear[1] - 0.215_860_6).abs() < 1e-4);
         assert!((linear[2] - 0.014_349_9).abs() < 1e-5);
-        assert_eq!(linear[3], 1.0, "alpha 不参与 gamma 转换");
-        // 黑色 / 白色是固定点。
+        assert_eq!(
+            linear[3], 1.0,
+            "Alpha does not participate in gamma conversion"
+        );
+        // Black / white are fixed points.
         assert_eq!(
             srgb_rgba_to_linear([0.0, 0.0, 0.0, 0.5]),
             [0.0, 0.0, 0.0, 0.5]
@@ -2247,7 +2250,7 @@ mod tests {
 
     #[test]
     fn pixel_y_maps_screen_top_to_negative_one() {
-        // Vulkan NDC y 朝下：像素顶端是 -1，像素底端是 +1，屏幕中线是 0。
+        // Vulkan NDC y downward: pixel top is -1, pixel bottom is +1, center is 0.
         assert_eq!(pixel_y_to_ndc(0.0, 720.0), -1.0);
         assert_eq!(pixel_y_to_ndc(720.0, 720.0), 1.0);
         assert_eq!(pixel_y_to_ndc(360.0, 720.0), 0.0);
@@ -2255,13 +2258,16 @@ mod tests {
 
     #[test]
     fn pixel_y_keeps_vertical_order() {
-        // 单调递增：像素 y 更大的点必须落在更下方（NDC y 更大）。
-        // 这正是旧实现（`h - py`）违反的性质。
+        // Monotonically increasing: larger pixel y must land lower (larger NDC y).
+        // This is the property old implementation (`h - py`) violated.
         let ys: Vec<f32> = (0..=10)
             .map(|i| pixel_y_to_ndc(i as f32 * 72.0, 720.0))
             .collect();
         for pair in ys.windows(2) {
-            assert!(pair[1] > pair[0], "NDC y 必须随像素 y 单调递增");
+            assert!(
+                pair[1] > pair[0],
+                "NDC y must increase monotonically with pixel y"
+            );
         }
     }
 }

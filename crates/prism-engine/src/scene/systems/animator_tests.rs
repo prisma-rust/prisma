@@ -31,7 +31,7 @@ fn two_bone_skeleton() -> Skeleton {
     .expect("two bones")
 }
 
-/// 子骨骼绕 Z 从 0 转到 90°，时长 1s。
+/// Child bone rotates 0 → 90° about Z over 1s.
 fn bend_clip() -> Clip {
     Clip {
         name: "bend".into(),
@@ -96,7 +96,7 @@ fn add_camera(world: &mut World, position: Vec3) -> Entity {
     entity
 }
 
-/// 根骨骼沿 +X 从 0 走到 2 的剪辑（1s），用来验证根运动消费。
+/// Root bone moves +X from 0 to 2 over 1s, used to validate root-motion consumption.
 fn forward_clip() -> Clip {
     Clip {
         name: "forward".into(),
@@ -155,11 +155,11 @@ fn root_motion_consumption_moves_the_entity_and_zeroes_the_bone_offset() {
     let position = world.get::<LocalTransform>(entity).unwrap().position;
     assert!(
         (position.x - 1.0).abs() < 1e-4,
-        "实体走了半程，position {position:?}"
+        "Entity moved partway, position {position:?}"
     );
     assert!(
         root_translation(&world, entity).length() < 1e-4,
-        "骨骼根平移被扣掉，避免双倍位移"
+        "Bone root translation deducted to avoid double movement"
     );
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
     assert!((head.root_motion.translation.x - 1.0).abs() < 1e-4);
@@ -177,7 +177,11 @@ fn root_motion_is_not_consumed_by_default() {
     animator_system(&mut world, 0.5);
 
     let position = world.get::<LocalTransform>(entity).unwrap().position;
-    assert_eq!(position, Vec3::ZERO, "默认只记录，不动 Transform");
+    assert_eq!(
+        position,
+        Vec3::ZERO,
+        "Default only records, doesn't move Transform"
+    );
     assert!((root_translation(&world, entity).x - 1.0).abs() < 1e-4);
 }
 
@@ -193,15 +197,18 @@ fn distant_root_only_lod_keeps_bones_frozen_while_time_advances() {
 
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 2.0).abs() < 1e-4, "首帧完整求值 {tip:?}");
+    assert!(
+        (tip.x - 2.0).abs() < 1e-4,
+        "Full evaluation on first frame {tip:?}"
+    );
 
     animator_system(&mut world, 0.5);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!((head.time - 0.5).abs() < 1e-5, "时间照常推进");
+    assert!((head.time - 0.5).abs() < 1e-5, "Time advances as usual");
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - 2.0).abs() < 1e-4 && (tip.y - 1.0).abs() < 1e-4,
-        "只采样根骨，子骨骼保持上一帧 {tip:?}"
+        "Only root bone sampled, child keeps previous frame {tip:?}"
     );
 }
 
@@ -217,15 +224,18 @@ fn distant_bone_subset_lod_updates_only_the_listed_bones() {
 
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 2.0).abs() < 1e-4, "首帧完整求值 {tip:?}");
+    assert!(
+        (tip.x - 2.0).abs() < 1e-4,
+        "Full evaluation on first frame {tip:?}"
+    );
 
     animator_system(&mut world, 0.5);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!((head.time - 0.5).abs() < 1e-5, "时间照常推进");
+    assert!((head.time - 0.5).abs() < 1e-5, "Time advances as usual");
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
-        "child 在名单里，转到 45°；{tip:?}"
+        "Child in list, rotated to 45°; {tip:?}"
     );
 }
 
@@ -250,7 +260,7 @@ fn root_only_lod_still_consumes_root_motion() {
     let position = world.get::<LocalTransform>(entity).unwrap().position;
     assert!(
         (position.x - 1.0).abs() < 1e-4,
-        "仅根骨档仍然消费根位移，position {position:?}"
+        "Root-only tier still consumes root motion, position {position:?}"
     );
     assert!(root_translation(&world, entity).length() < 1e-4);
 }
@@ -264,19 +274,22 @@ fn far_animators_freeze_and_resume_when_the_camera_comes_back() {
     animator_system(&mut world, 0.2);
     assert!(
         world.get::<BonePalette>(entity).is_none(),
-        "冻结的实体不算姿态"
+        "Frozen entity doesn't count as pose"
     );
     assert!(
         world.get::<AnimatorPlayhead>(entity).is_none(),
-        "冻结的实体不推进时间"
+        "Frozen entity doesn't advance time"
     );
 
     world.get_mut::<LocalTransform>(camera).unwrap().position = Vec3::new(0.0, 0.0, 5.0);
     animator_system(&mut world, 0.25);
     let head = world
         .get::<AnimatorPlayhead>(entity)
-        .expect("回到范围后继续");
-    assert!((head.time - 0.25).abs() < 1e-5, "冻结期间不补时间");
+        .expect("Resumes after returning to range");
+    assert!(
+        (head.time - 0.25).abs() < 1e-5,
+        "No time backfill while frozen"
+    );
     assert!(world.get::<BonePalette>(entity).is_some());
 }
 
@@ -285,7 +298,9 @@ fn lod_is_off_by_default_and_bad_distances_fall_back_to_fifty_metres() {
     let (mut world, entity) = world_with_animator("");
     add_camera(&mut world, Vec3::new(0.0, 0.0, 400.0));
     animator_system(&mut world, 0.25);
-    let head = world.get::<AnimatorPlayhead>(entity).expect("默认不做 LOD");
+    let head = world
+        .get::<AnimatorPlayhead>(entity)
+        .expect("No default LOD");
     assert!((head.time - 0.25).abs() < 1e-5);
 
     {
@@ -294,8 +309,13 @@ fn lod_is_off_by_default_and_bad_distances_fall_back_to_fifty_metres() {
         animator.lod_far = -1.0;
     }
     animator_system(&mut world, 0.5);
-    let head = world.get::<AnimatorPlayhead>(entity).expect("已算出姿态");
-    assert!((head.time - 0.25).abs() < 1e-5, "坏距离按 50m，400m 外冻结");
+    let head = world
+        .get::<AnimatorPlayhead>(entity)
+        .expect("Pose computed");
+    assert!(
+        (head.time - 0.25).abs() < 1e-5,
+        "Bad distance treated as 50m, frozen beyond 400m"
+    );
 }
 
 #[test]
@@ -318,19 +338,28 @@ fn near_animators_update_every_other_frame_with_double_dt() {
 
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.2).abs() < 1e-5, "更新帧按 2*dt 推进，time {time}");
+    assert!(
+        (time - 0.2).abs() < 1e-5,
+        "Update frame advances 2*dt, time {time}"
+    );
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.2).abs() < 1e-5, "下一帧跳过，time {time}");
+    assert!((time - 0.2).abs() < 1e-5, "Next frame skipped, time {time}");
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.4).abs() < 1e-5, "再下一帧继续，time {time}");
+    assert!(
+        (time - 0.4).abs() < 1e-5,
+        "Frame after continues, time {time}"
+    );
 
-    // 回到近处：下一帧立刻恢复正常 dt，不残留跳过标记。
+    // Back near: next frame immediately resumes normal dt, no leftover skip flag.
     world.get_mut::<LocalTransform>(camera).unwrap().position = Vec3::new(0.0, 0.0, 30.0);
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.5).abs() < 1e-5, "近处每帧 dt，time {time}");
+    assert!(
+        (time - 0.5).abs() < 1e-5,
+        "Near uses per-frame dt, time {time}"
+    );
 }
 
 #[test]
@@ -352,13 +381,16 @@ fn a_near_threshold_past_the_far_threshold_disables_the_middle_tier() {
     add_camera(&mut world, Vec3::ZERO);
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.1).abs() < 1e-5, "没有降频档，time {time}");
+    assert!((time - 0.1).abs() < 1e-5, "No downgrade tier, time {time}");
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
-    assert!((time - 0.2).abs() < 1e-5, "每帧都更新，time {time}");
+    assert!(
+        (time - 0.2).abs() < 1e-5,
+        "Updated every frame, time {time}"
+    );
 }
 
-/// 根关节在 1s 内平移 +2m、绕 Y 转 90° 的剪辑。
+/// Clip where root joint translates +2m and rotates 90° about Y over 1s.
 fn root_motion_clip() -> Clip {
     Clip {
         name: "root_motion".into(),
@@ -404,7 +436,11 @@ fn root_motion_records_the_root_joint_delta_per_frame() {
 
     animator_system(&mut world, 0.0);
     let delta = world.get::<AnimatorPlayhead>(entity).unwrap().root_motion;
-    assert_eq!(delta, RootMotionDelta::default(), "首帧没有上一帧可比");
+    assert_eq!(
+        delta,
+        RootMotionDelta::default(),
+        "First frame has no previous to compare"
+    );
 
     animator_system(&mut world, 0.25);
     let delta = world.get::<AnimatorPlayhead>(entity).unwrap().root_motion;
@@ -445,12 +481,16 @@ fn switching_clips_resets_the_recorded_root_delta() {
     world.get_mut::<Animator>(entity).unwrap().clip_path = "bend.ranim".into();
     animator_system(&mut world, 0.1);
     let delta = world.get::<AnimatorPlayhead>(entity).unwrap().root_motion;
-    assert_eq!(delta, RootMotionDelta::default(), "换剪辑首帧清零");
+    assert_eq!(
+        delta,
+        RootMotionDelta::default(),
+        "First frame after clip switch clears"
+    );
 }
 
-/// 把 bind 姿态下一个**离关节有距离**的顶点（局部 `(2, 1, 0)`）变换到世界。
+/// Transform a bind-pose vertex with distance **from joint** (local `(2, 1, 0)`) to world.
 ///
-/// 关节原点本身在旋转下是不动的，所以必须取一个偏置点才看得出动画。
+/// Joint origin itself doesn't move under rotation, so need offset vertex to see animation.
 fn child_tip(world: &World, entity: Entity) -> Vec3 {
     let palette = world.get::<BonePalette>(entity).expect("palette");
     let matrix = Mat4::from_cols_array_2d(&palette.matrices[1]);
@@ -463,17 +503,17 @@ fn the_animator_produces_a_palette_and_advances_time() {
     assert_eq!(
         animator_system(&mut world, 0.0),
         1,
-        "第一帧就算出 static pose"
+        "Static pose computed on first frame"
     );
 
     let palette = world.get::<BonePalette>(entity).unwrap();
     assert_eq!(palette.len(), 2);
 
-    // 0.5s 处子骨骼转了 45°：端点应该离开 +X 轴。
+    // At 0.5s child rotated 45°: endpoint should leave +X axis.
     animator_system(&mut world, 0.5);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
     assert!((head.time - 0.5).abs() < 1e-5);
-    // (2,1,0) 绕关节转 45°：x = 2 - sin45, y = cos45。
+    // (2,1,0) rotated 45° about joint: x = 2 - sin45, y = cos45.
     let tip = child_tip(&world, entity);
     let half_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;
     assert!((tip.x - (2.0 - half_sqrt2)).abs() < 1e-4, "tip {tip:?}");
@@ -487,7 +527,7 @@ fn a_paused_animator_keeps_its_pose() {
     world.get_mut::<Animator>(entity).unwrap().playing = false;
     animator_system(&mut world, 5.0);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert_eq!(head.time, 0.0, "暂停时不推进时间");
+    assert_eq!(head.time, 0.0, "Time doesn't advance when paused");
     assert!(world.get::<BonePalette>(entity).is_some());
 }
 
@@ -497,9 +537,12 @@ fn a_once_clip_stops_at_the_end_and_flags_finished() {
     world.get_mut::<Animator>(entity).unwrap().looped = false;
     animator_system(&mut world, 10.0);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!((head.time - 1.0).abs() < 1e-5, "单次播放夹在 duration");
+    assert!(
+        (head.time - 1.0).abs() < 1e-5,
+        "One-shot clamped at duration"
+    );
     assert!(head.finished);
-    // 末端姿态：子骨骼转了 90°，(2,1,0) 绕关节转到 (1,0,0)。
+    // Final pose: child rotated 90°, (2,1,0) about joint becomes (1,0,0).
     let tip = child_tip(&world, entity);
     assert!((tip.x - 1.0).abs() < 1e-4, "tip {tip:?}");
     assert!(tip.y.abs() < 1e-4, "tip {tip:?}");
@@ -512,8 +555,8 @@ fn a_looping_clip_wraps_the_playhead() {
     world.get_mut::<Animator>(entity).unwrap().speed = 1.0;
     animator_system(&mut world, 2.25);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!(!head.finished, "循环剪辑永远不会 finished");
-    // 2.25s / 1.0s 循环 → 采样 0.25s 处（约 22.5°）。
+    assert!(!head.finished, "Looping clip never finishes");
+    // 2.25s / 1.0s loop → samples 0.25s (about 22.5°).
     let angle = 0.25 * std::f32::consts::FRAC_PI_2;
     let tip = child_tip(&world, entity);
     assert!((tip.x - (2.0 - angle.sin())).abs() < 1e-3, "tip {tip:?}");
@@ -558,10 +601,13 @@ fn changing_the_clip_restarts_from_the_authored_time() {
 
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
     assert_eq!(head.clip_path, "other.ranim");
-    assert!((head.time - 0.25).abs() < 1e-5, "换剪辑按作者时间重来");
+    assert!(
+        (head.time - 0.25).abs() < 1e-5,
+        "Clip switch restarts at authored time"
+    );
 }
 
-/// 子骨骼恒等于 +90°（绕 Z）的剪辑：与 [`bend_clip`] 的起始姿态（0°）明确不同。
+/// Clip with child bone constantly +90° (about Z): clearly different from `bend_clip` start pose (0°).
 fn bent_90_clip(name: &str) -> Clip {
     Clip {
         name: name.into(),
@@ -582,7 +628,7 @@ fn bent_90_clip(name: &str) -> Clip {
     }
 }
 
-/// 把实体切到 `path`，并把 `blend_duration` / `playing` 设好（不跑系统）。
+/// Switch entity to `path`, set `blend_duration` / `playing` (without running system).
 fn switch_clip(world: &mut World, entity: Entity, path: &str, blend_duration: f32) {
     let animator = world.get_mut::<Animator>(entity).unwrap();
     animator.clip_path = path.into();
@@ -598,37 +644,43 @@ fn switching_clips_crossfades_instead_of_popping() {
         .get_resource_mut::<SkeletonLibrary>()
         .unwrap()
         .insert_clip("bent90.ranim", bent_90_clip("bent90"));
-    // 起点：bend 的 0s（子骨骼 0°）。
+    // Start: bend at 0s (child 0°).
     animator_system(&mut world, 0.0);
     let start = child_tip(&world, entity);
     assert!((start.y - 1.0).abs() < 1e-4, "start tip {start:?}");
 
     switch_clip(&mut world, entity, "bent90.ranim", 1.0);
-    // 第一帧：权重仍接近 0 → 还是旧姿态（这就是"不硬切"）。
+    // First frame: weight still near 0 → still old pose (this is "no hard cut").
     animator_system(&mut world, 0.0);
     let faded_in = child_tip(&world, entity);
     assert!(
         (faded_in.y - 1.0).abs() < 1e-4,
-        "过渡开头该是旧姿态，得到 {faded_in:?}"
+        "Transition start should be old pose, got {faded_in:?}"
     );
 
-    // 半程：权重 0.5 → 约 45°。
+    // Halfway: weight 0.5 → about 45°.
     animator_system(&mut world, 0.5);
     let half = child_tip(&world, entity);
     let angle = std::f32::consts::FRAC_PI_4;
     assert!(
         (half.x - (2.0 - angle.sin())).abs() < 1e-3,
-        "半程该在 45°，得到 {half:?}"
+        "Halfway should be 45°, got {half:?}"
     );
     assert!((half.y - angle.cos()).abs() < 1e-3, "half {half:?}");
 
-    // 走完：权重 1 → 完整的新剪辑（90°），来源被清掉。
+    // Done: weight 1 → full new clip (90°), source cleared.
     animator_system(&mut world, 0.5);
     let done = child_tip(&world, entity);
-    assert!((done.x - 1.0).abs() < 1e-3, "结束该是 90°，得到 {done:?}");
-    assert!(done.y.abs() < 1e-3, "结束该是 90°，得到 {done:?}");
+    assert!(
+        (done.x - 1.0).abs() < 1e-3,
+        "End should be 90°, got {done:?}"
+    );
+    assert!(done.y.abs() < 1e-3, "End should be 90°, got {done:?}");
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!(head.previous_pose.is_none(), "过渡结束后不该继续持有来源");
+    assert!(
+        head.previous_pose.is_none(),
+        "Should not hold source after transition"
+    );
 }
 
 #[test]
@@ -644,7 +696,10 @@ fn a_zero_blend_duration_switches_immediately() {
     animator_system(&mut world, 0.0);
 
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "0 时长 = 直接切，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "0 duration = direct switch, got {tip:?}"
+    );
     assert!(world
         .get::<AnimatorPlayhead>(entity)
         .unwrap()
@@ -667,19 +722,25 @@ fn a_paused_animator_does_not_advance_the_crossfade() {
     animator_system(&mut world, 0.4);
 
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert_eq!(head.blend_elapsed, 0.0, "暂停时过渡也不该走");
-    assert!(head.previous_pose.is_some(), "暂停时快照仍然保留");
+    assert_eq!(
+        head.blend_elapsed, 0.0,
+        "Transition shouldn't advance while paused"
+    );
+    assert!(
+        head.previous_pose.is_some(),
+        "Snapshot still held while paused"
+    );
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "仍然显示旧姿态（0° 的 tip 在 y=1），得到 {tip:?}"
+        "Still shows old pose (0° tip at y=1), got {tip:?}"
     );
 }
 
 #[test]
 fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
-    // 过渡源是**姿态快照**，所以旧剪辑从库里消失（删资产 / 热重载）也不影响淡出：
-    // 以前这里会直接硬切，现在必须照常走完过渡。
+    // Transition source is **pose snapshot**, so removing old clip from library (asset delete / hot reload) doesn't affect fade-out:
+    // previously this hard-cut, now must still finish transition.
     let (mut world, entity) = world_with_animator("");
     world
         .get_resource_mut::<SkeletonLibrary>()
@@ -688,7 +749,7 @@ fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
     animator_system(&mut world, 0.0);
 
     switch_clip(&mut world, entity, "bent90.ranim", 1.0);
-    // 过渡开始的同一帧就把旧剪辑从库里拿掉。
+    // Remove old clip from library on same frame transition starts.
     {
         let library = world.get_resource_mut::<SkeletonLibrary>().unwrap();
         library.clear();
@@ -698,17 +759,23 @@ fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
     animator_system(&mut world, 0.0);
 
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!(head.previous_pose.is_some(), "快照还在，过渡不该被放弃");
+    assert!(
+        head.previous_pose.is_some(),
+        "Snapshot held, transition shouldn't be abandoned"
+    );
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "过渡开头仍然是旧姿态，得到 {tip:?}"
+        "Transition start still old pose, got {tip:?}"
     );
 
-    // 走完：纯新剪辑，快照丢掉。
+    // Done: pure new clip, snapshot dropped.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "过渡完该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "After transition should be 90°, got {tip:?}"
+    );
     assert!(world
         .get::<AnimatorPlayhead>(entity)
         .unwrap()
@@ -734,10 +801,10 @@ fn blend_weights_are_clamped_and_need_both_a_source_and_a_duration() {
     head.blend_elapsed = 0.5;
     assert_eq!(head.blend_weight(1.0), Some(0.5));
     head.blend_elapsed = 99.0;
-    assert_eq!(head.blend_weight(1.0), Some(1.0), "权重夹到 1");
-    assert_eq!(head.blend_weight(0.0), None, "0 时长 = 无过渡");
+    assert_eq!(head.blend_weight(1.0), Some(1.0), "Weight clamped to 1");
+    assert_eq!(head.blend_weight(0.0), None, "0 duration = no transition");
     head.previous_pose = None;
-    assert_eq!(head.blend_weight(1.0), None, "没有来源就没有权重");
+    assert_eq!(head.blend_weight(1.0), None, "No source means no weight");
 }
 
 #[test]
@@ -756,7 +823,7 @@ fn install_bent90(world: &mut World) {
         .insert_clip("bent90.ranim", bent_90_clip("bent90"));
 }
 
-/// 把实体切成「bend ↔ bent90」的一维混合空间，`parameter` 是轴上的位置。
+/// Switch entity to 1D blend space between "bend ↔ bent90", `parameter` is position on axis.
 fn use_blend_space(world: &mut World, entity: Entity, parameter: f32) {
     let animator = world.get_mut::<Animator>(entity).unwrap();
     animator.blend_clip_paths = vec!["bend.ranim".into(), "bent90.ranim".into()];
@@ -780,7 +847,7 @@ fn blend_parameter_smoothing_eases_towards_the_target() {
             .unwrap()
             .smoothed_blend,
         Some([0.0, 0.0]),
-        "首帧直接落在目标上"
+        "First frame lands directly on target"
     );
 
     world.get_mut::<Animator>(entity).unwrap().blend_parameter = 1.0;
@@ -792,10 +859,10 @@ fn blend_parameter_smoothing_eases_towards_the_target() {
         .expect("smoothing on");
     assert!(
         smoothed[0] > 0.0 && smoothed[0] < 1.0,
-        "一帧只走一部分，smoothed {smoothed:?}"
+        "One frame only partial, smoothed {smoothed:?}"
     );
     let tip = child_tip(&world, entity);
-    assert!(tip.x > 1.5, "还没到 90°，tip {tip:?}");
+    assert!(tip.x > 1.5, "Not yet 90°, tip {tip:?}");
 
     for _ in 0..120 {
         animator_system(&mut world, 0.1);
@@ -805,9 +872,12 @@ fn blend_parameter_smoothing_eases_towards_the_target() {
         .unwrap()
         .smoothed_blend
         .expect("smoothing on");
-    assert!((smoothed[0] - 1.0).abs() < 0.01, "逼近目标，{smoothed:?}");
+    assert!(
+        (smoothed[0] - 1.0).abs() < 0.01,
+        "Approaching target, {smoothed:?}"
+    );
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 0.05, "最终到 90°，tip {tip:?}");
+    assert!((tip.x - 1.0).abs() < 0.05, "Finally 90°, tip {tip:?}");
 }
 
 #[test]
@@ -822,10 +892,13 @@ fn smoothing_zero_uses_the_written_parameter_immediately() {
             .unwrap()
             .smoothed_blend,
         None,
-        "0 = 不平滑"
+        "0 = no smoothing"
     );
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "参数直接生效，tip {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "Parameter applies directly, tip {tip:?}"
+    );
 }
 
 #[test]
@@ -833,31 +906,37 @@ fn a_one_dimensional_blend_space_is_sampled_from_the_parameter() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // 参数 0 → 纯 bend.ranim（0s 处是 0°）。
+    // parameter 0 → pure bend.ranim (0° at 0s).
     use_blend_space(&mut world, entity, 0.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.y - 1.0).abs() < 1e-4, "参数 0 该是 0°，得到 {tip:?}");
+    assert!(
+        (tip.y - 1.0).abs() < 1e-4,
+        "Parameter 0 should be 0°, got {tip:?}"
+    );
     assert_eq!(
         world.get::<AnimatorPlayhead>(entity).unwrap().clip_path,
         BLEND_SPACE_KEY,
-        "混合空间用自己的播放键"
+        "Blend space uses its own playback key"
     );
 
-    // 参数 1 → 纯 bent90（90°）。
+    // parameter 1 → pure bent90 (90°).
     use_blend_space(&mut world, entity, 1.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "参数 1 该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "Parameter 1 should be 90°, got {tip:?}"
+    );
 
-    // 参数 0.5 → 45°。
+    // parameter 0.5 → 45°.
     use_blend_space(&mut world, entity, 0.5);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     let angle = std::f32::consts::FRAC_PI_4;
     assert!(
         (tip.x - (2.0 - angle.sin())).abs() < 1e-3,
-        "参数 0.5 该在 45°，得到 {tip:?}"
+        "Parameter 0.5 should be 45°, got {tip:?}"
     );
 }
 
@@ -866,7 +945,7 @@ fn a_blend_space_needs_two_loaded_clips_and_falls_back_to_the_single_one() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // 两个路径，但其中一条不在库里 → 只剩一个样本，退回单剪辑。
+    // Two paths but one not in library → only one sample, falls back to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths = vec!["bend.ranim".into(), "missing.ranim".into()];
@@ -875,9 +954,12 @@ fn a_blend_space_needs_two_loaded_clips_and_falls_back_to_the_single_one() {
     }
     animator_system(&mut world, 0.0);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert_eq!(head.clip_path, "bend.ranim", "缺一个样本时退回单剪辑");
+    assert_eq!(
+        head.clip_path, "bend.ranim",
+        "Falls back to single clip when missing a sample"
+    );
 
-    // 只有一条路径 + 一条位置：不算混合空间。
+    // Only one path + one position: not a blend space.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths = vec!["bend.ranim".into()];
@@ -899,9 +981,15 @@ fn a_blend_space_clamps_out_of_range_parameters() {
         animator_system(&mut world, 0.0);
         let tip = child_tip(&world, entity);
         if expect_90 {
-            assert!((tip.x - 1.0).abs() < 1e-3, "参数 50 夹到 1，得到 {tip:?}");
+            assert!(
+                (tip.x - 1.0).abs() < 1e-3,
+                "Parameter 50 clamped to 1, got {tip:?}"
+            );
         } else {
-            assert!((tip.y - 1.0).abs() < 1e-4, "参数 -5 夹到 0，得到 {tip:?}");
+            assert!(
+                (tip.y - 1.0).abs() < 1e-4,
+                "Parameter -5 clamped to 0, got {tip:?}"
+            );
         }
     }
 }
@@ -910,27 +998,30 @@ fn a_blend_space_clamps_out_of_range_parameters() {
 fn entering_a_blend_space_crossfades_from_the_single_clip() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
-    // 先按单剪辑跑一帧，把播放头建立在 bend.ranim 上。
+    // First run single clip one frame, establishing playhead on bend.ranim.
     animator_system(&mut world, 0.0);
 
     use_blend_space(&mut world, entity, 1.0);
     world.get_mut::<Animator>(entity).unwrap().playing = true;
     world.get_mut::<Animator>(entity).unwrap().blend_duration = 1.0;
-    // 过渡开始：权重 0 → 还是 bend 的姿态。
+    // Transition start: weight 0 → still bend pose.
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "进来第一帧还是旧姿态，得到 {tip:?}"
+        "First frame still old pose, got {tip:?}"
     );
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
-    assert!(head.previous_pose.is_some(), "进来时冻住了旧姿态");
+    assert!(head.previous_pose.is_some(), "Old pose frozen on entry");
     assert_eq!(head.clip_path, BLEND_SPACE_KEY);
 
-    // 走完过渡：纯混合空间姿态（90°），来源清空。
+    // Transition done: pure blend-space pose (90°), source cleared.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "过渡完该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "After transition should be 90°, got {tip:?}"
+    );
     assert!(world
         .get::<AnimatorPlayhead>(entity)
         .unwrap()
@@ -951,7 +1042,7 @@ fn the_library_reports_what_it_holds() {
     assert!(library.insert_skeleton("a", two_bone_skeleton()));
     assert!(
         !library.insert_skeleton("a", two_bone_skeleton()),
-        "重复插入"
+        "Duplicate insert"
     );
     assert!(library.insert_clip("c", bend_clip()));
     assert!(library.has_skeleton("a"));
@@ -1041,15 +1132,15 @@ fn a_notify_fires_once_when_the_playhead_crosses_it() {
         .unwrap()
         .insert_clip("bend.ranim", clip_with_notify(0.5, "Footstep.L"));
 
-    // 第一帧只建立播放头：不该把整段剪辑的事件一次性播出来。
+    // First frame only establishes playhead: shouldn't fire whole clip events at once.
     animator_system(&mut world, 0.0);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0 → 0.4：还没到。
+    // 0 → 0.4: not yet.
     animator_system(&mut world, 0.4);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0.4 → 0.8：跨过 0.5，触发一次。
+    // 0.4 → 0.8: crosses 0.5, fires once.
     animator_system(&mut world, 0.4);
     let events = world.get_resource::<AnimEvents>().unwrap();
     assert_eq!(events.len(), 1);
@@ -1061,7 +1152,7 @@ fn a_notify_fires_once_when_the_playhead_crosses_it() {
         vec!["Footstep.L"]
     );
 
-    // 再走一帧（没跨过任何时间点）：事件表被重建为空，不会重复播。
+    // One more frame (no time point crossed): event table rebuilt empty, won't refire.
     animator_system(&mut world, 0.1);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 }
@@ -1075,10 +1166,10 @@ fn a_notify_at_the_wrap_point_fires_on_the_next_loop() {
         .insert_clip("bend.ranim", clip_with_notify(0.95, "Footstep.R"));
 
     animator_system(&mut world, 0.0);
-    animator_system(&mut world, 0.9); // 到 0.9
+    animator_system(&mut world, 0.9); // advance to 0.9
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0.9 → 1.0 → 回绕到 0.0：这一段跨过 0.95。
+    // 0.9 → 1.0 → wrap to 0.0: this segment crosses 0.95.
     animator_system(&mut world, 0.1);
     let names: Vec<String> = world
         .get_resource::<AnimEvents>()
@@ -1104,7 +1195,7 @@ fn a_paused_animator_does_not_fire_notifies() {
     animator_system(&mut world, 0.4);
     assert!(
         world.get_resource::<AnimEvents>().unwrap().is_empty(),
-        "暂停时时间不推进，也就不该有事件"
+        "Time doesn't advance when paused, so no events either"
     );
 }
 
@@ -1119,15 +1210,15 @@ fn a_reversed_animator_does_not_fire_notifies() {
     animator_system(&mut world, 0.9);
 
     world.get_mut::<Animator>(entity).unwrap().speed = -1.0;
-    // 0.9 → 0.5 倒着跨过 0.5：倒放不触发（宁可少一次，也不倒着播）。
+    // 0.9 → 0.5 crossing 0.5 backwards: reverse playback doesn't fire (prefer missing one over replaying backwards).
     animator_system(&mut world, 0.4);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 }
 
 #[test]
 fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
-    // 以前「混合空间 → 单剪辑」是硬切（来源是占位键，库里没有可采样的剪辑）。
-    // 现在过渡源是**姿态快照**，所以这里必须真的淡出。
+    // Previously "blend space → single clip" was hard cut (source is placeholder key, no sample in library).
+    // Now transition source is **pose snapshot**, so here must truly fade out.
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
     use_blend_space(&mut world, entity, 0.5);
@@ -1136,10 +1227,10 @@ fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
     let mixed = child_tip(&world, entity);
     assert!(
         (mixed.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
-        "混合空间该是 45°，得到 {mixed:?}"
+        "Blend space should be 45°, got {mixed:?}"
     );
 
-    // 切到单剪辑（90°），1 秒过渡。
+    // Switch to single clip (90°), 1 second transition.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths.clear();
@@ -1153,16 +1244,19 @@ fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
-        "过渡开头仍是 45° 的旧姿态，得到 {tip:?}"
+        "Transition start still old 45° pose, got {tip:?}"
     );
 
-    // 走完：纯 90°。
+    // Done: pure 90°.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "过渡完该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "After transition should be 90°, got {tip:?}"
+    );
 }
 
-/// 叠加层测试用：基础剪辑停在 0°，叠加剪辑在 0° 上再转 90°。
+/// Additive layer test: base clip stays 0°, additive clip rotates another 90° on top of 0°.
 fn additive_setup() -> (World, Entity) {
     let (mut world, entity) = world_with_animator("");
     world
@@ -1184,10 +1278,10 @@ fn an_additive_layer_rotates_on_top_of_the_base_clip() {
     let (mut world, entity) = additive_setup();
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    // 基础剪辑 0° + 叠加增量 90° = 90°。
+    // Base 0° + additive 90° = 90°.
     assert!(
         (tip.x - 1.0).abs() < 1e-3 && tip.y.abs() < 1e-3,
-        "叠加层该把子骨转到 90°，得到 {tip:?}"
+        "Additive layer should rotate child to 90°, got {tip:?}"
     );
 }
 
@@ -1199,13 +1293,13 @@ fn the_additive_weight_scales_the_delta() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
-        "半个增量 = 45°，得到 {tip:?}"
+        "Half delta = 45°, got {tip:?}"
     );
 }
 
 #[test]
 fn a_missing_or_disabled_additive_layer_leaves_the_base_pose_alone() {
-    // 路径写错（剪辑不在库里）。
+    // Bad path (clip not in library).
     let (mut world, entity) = additive_setup();
     world
         .get_mut::<Animator>(entity)
@@ -1215,10 +1309,10 @@ fn a_missing_or_disabled_additive_layer_leaves_the_base_pose_alone() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "没有叠加层时保持 0°，得到 {tip:?}"
+        "Without additive layer stays 0°, got {tip:?}"
     );
 
-    // 权重 0 / NaN。
+    // Weight 0 / NaN.
     let (mut world, entity) = additive_setup();
     world.get_mut::<Animator>(entity).unwrap().additive_weight = 0.0;
     animator_system(&mut world, 0.0);
@@ -1255,7 +1349,7 @@ fn the_library_reports_clip_notifies_for_the_timeline() {
     assert!(library.clip_notifies("char/missing.ranim").is_empty());
 }
 
-/// 一个「idle → run」的两状态机：`speed > 0.5` 时转移。
+/// Two-state machine for "idle → run": transition when `speed > 0.5`.
 fn speed_machine(duration: f32, min_state_fraction: f32) -> StateMachine {
     StateMachine {
         states: vec![
@@ -1302,24 +1396,24 @@ fn a_state_machine_drives_the_clip_and_writes_the_state_back() {
         animator.playing = false;
     }
 
-    // 参数为 0：停在 idle（bend.ranim 的 0°）。
+    // Parameter 0: stay in idle (bend.ranim 0°).
     animator_system(&mut world, 0.0);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
     let tip = child_tip(&world, entity);
-    assert!((tip.y - 1.0).abs() < 1e-4, "idle 该是 0°，得到 {tip:?}");
+    assert!((tip.y - 1.0).abs() < 1e-4, "Idle should be 0°, got {tip:?}");
 
-    // 参数过阈值：下一帧转到 run（bent90.ranim 的 90°）。
+    // Parameter past threshold: next frame switch to run (bent90.ranim 90°).
     let mut params = prism_anim::AnimParameters::default();
     params.set_float("speed", 1.0);
     world.insert_resource(params);
     animator_system(&mut world, 0.0);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "run");
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "run 该是 90°，得到 {tip:?}");
-    // 换了状态就从 0 重新播，而不是接着 idle 的时间。
+    assert!((tip.x - 1.0).abs() < 1e-3, "Run should be 90°, got {tip:?}");
+    // State change restarts from 0, doesn't continue idle's time.
     assert!(
         world.get::<AnimatorPlayhead>(entity).unwrap().time.abs() < 1e-6,
-        "换状态后时间该归零"
+        "Time should reset after state change"
     );
 }
 
@@ -1327,7 +1421,7 @@ fn a_state_machine_drives_the_clip_and_writes_the_state_back() {
 fn a_transition_duration_overrides_the_component_blend_duration() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
-    // 转移自己带 2 秒时长；组件设成 0（硬切），必须以转移为准。
+    // Transition carries own 2s duration; component set to 0 (hard cut) must defer to transition.
     install_machine(&mut world, speed_machine(2.0, 0.0));
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
@@ -1340,19 +1434,22 @@ fn a_transition_duration_overrides_the_component_blend_duration() {
     params.set_float("speed", 1.0);
     world.insert_resource(params);
 
-    // 转移的第一帧：权重 0 → 还是 idle 的 0° 姿态。
+    // First frame of transition: weight 0 → still idle 0° pose.
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "过渡开头仍是旧姿态，得到 {tip:?}"
+        "Transition start still old pose, got {tip:?}"
     );
 
-    // 走完 2 秒：90°。
+    // After 2 seconds: 90°.
     world.get_mut::<Animator>(entity).unwrap().playing = true;
     animator_system(&mut world, 2.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "过渡完该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "After transition should be 90°, got {tip:?}"
+    );
 }
 
 #[test]
@@ -1369,12 +1466,12 @@ fn min_state_fraction_holds_the_transition_until_the_state_has_played() {
     params.set_float("speed", 1.0);
     world.insert_resource(params);
 
-    // 才播了 0.2s（< 50%）：条件成立也不转移。
+    // Only 0.2s played (<50%): condition true still doesn't transition.
     animator_system(&mut world, 0.2);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
 
-    // 判据用的是**上一帧**的播放时间（那一帧确实播到了那里），所以跨过 50% 的
-    // 那一帧还拦着，下一帧才放行。
+    // Criterion uses **previous frame** playback time (that frame actually reached there), so frame crossing 50% is
+    // still blocked, next frame allows it.
     animator_system(&mut world, 0.5);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
 
@@ -1389,12 +1486,19 @@ fn a_missing_state_machine_falls_back_to_the_component_clip() {
         .get_mut::<Animator>(entity)
         .unwrap()
         .state_machine_path = "missing.rasm".into();
-    assert_eq!(animator_system(&mut world, 0.0), 1, "坏路径不该让实体消失");
+    assert_eq!(
+        animator_system(&mut world, 0.0),
+        1,
+        "Bad path shouldn't make entity disappear"
+    );
     let tip = child_tip(&world, entity);
-    assert!((tip.y - 1.0).abs() < 1e-4, "回落到 clip_path，得到 {tip:?}");
+    assert!(
+        (tip.y - 1.0).abs() < 1e-4,
+        "Falls back to clip_path, got {tip:?}"
+    );
 }
 
-/// 把实体切成二维混合空间：`(0,0)` = bend（0°）、`(1,0)` / `(0,1)` = bent90（90°）。
+/// Switch entity to 2D blend space: `(0,0)` = bend (0°), `(1,0)` / `(0,1)` = bent90 (90°).
 fn use_blend_space_2d(world: &mut World, entity: Entity, x: f32, y: f32) {
     let animator = world.get_mut::<Animator>(entity).unwrap();
     animator.blend_2d_clip_paths = vec![
@@ -1414,32 +1518,38 @@ fn a_two_dimensional_blend_space_interpolates_on_the_parameter_plane() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // 原点样本 = bend 的 0s（0°）。
+    // Origin sample = bend at 0s (0°).
     use_blend_space_2d(&mut world, entity, 0.0, 0.0);
     animator_system(&mut world, 0.0);
     assert_eq!(
         world.get::<AnimatorPlayhead>(entity).unwrap().clip_path,
         BLEND_SPACE_2D_KEY,
-        "二维混合空间用自己的播放键"
+        "2D blend space uses its own playback key"
     );
     let tip = child_tip(&world, entity);
-    assert!((tip.y - 1.0).abs() < 1e-4, "样本原点该是 0°，得到 {tip:?}");
+    assert!(
+        (tip.y - 1.0).abs() < 1e-4,
+        "Sample origin should be 0°, got {tip:?}"
+    );
 
-    // 沿 x 轴中点：0° 与 90° 各一半 → 45°。
+    // Midpoint along x axis: 0° and 90° half each → 45°.
     use_blend_space_2d(&mut world, entity, 0.5, 0.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     let angle = std::f32::consts::FRAC_PI_4;
     assert!(
         (tip.x - (2.0 - angle.sin())).abs() < 1e-3,
-        "x 轴中点该在 45°，得到 {tip:?}"
+        "X-axis midpoint should be 45°, got {tip:?}"
     );
 
-    // 两个 90° 样本的边上：仍然是 90°。
+    // Edge between two 90° samples: still 90°.
     use_blend_space_2d(&mut world, entity, 0.5, 0.5);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    assert!((tip.x - 1.0).abs() < 1e-3, "对边该是 90°，得到 {tip:?}");
+    assert!(
+        (tip.x - 1.0).abs() < 1e-3,
+        "Opposite edge should be 90°, got {tip:?}"
+    );
 }
 
 #[test]
@@ -1447,7 +1557,7 @@ fn a_two_dimensional_blend_space_needs_an_area_and_falls_back() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // 只有两个样本：没有三角形，退回单剪辑。
+    // Only two samples: no triangle, falls back to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_2d_clip_paths = vec!["bend.ranim".into(), "bent90.ranim".into()];
@@ -1460,7 +1570,7 @@ fn a_two_dimensional_blend_space_needs_an_area_and_falls_back() {
         "bend.ranim"
     );
 
-    // 三个共线样本：三角化失败，同样退回单剪辑。
+    // Three collinear samples: triangulation fails, same fallback to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_2d_clip_paths = vec![
@@ -1477,7 +1587,7 @@ fn a_two_dimensional_blend_space_needs_an_area_and_falls_back() {
     );
 }
 
-/// 动画图层测试用：基础剪辑停在 0°，图层是 90° 的 bent90。
+/// Animation graph layer test: base clip stays 0°, graph layer is bent90 at 90°.
 fn layered_setup() -> (World, Entity) {
     let (mut world, entity) = world_with_animator("");
     world
@@ -1516,16 +1626,16 @@ fn an_animation_layer_blends_over_the_base_pose() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - 1.0).abs() < 1e-3 && tip.y.abs() < 1e-3,
-        "整层 90° 应覆盖 0° 基础姿态，得到 {tip:?}"
+        "Full layer 90° should override 0° base pose, got {tip:?}"
     );
 
-    // 权重 0.5：只转 45°。
+    // Weight 0.5: only rotate 45°.
     world.get_mut::<Animator>(entity).unwrap().layers[0].weight = 0.5;
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
-        "半权重该是 45°，得到 {tip:?}"
+        "Half weight should be 45°, got {tip:?}"
     );
 }
 
@@ -1546,7 +1656,7 @@ fn a_layer_bone_mask_limits_which_joints_move() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4 && (tip.x - 2.0).abs() < 1e-4,
-        "遮罩只含 root，child 不该转，得到 {tip:?}"
+        "Mask only root, child shouldn't rotate, got {tip:?}"
     );
 }
 
@@ -1567,7 +1677,7 @@ fn an_additive_layer_uses_the_reference_delta() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - 1.0).abs() < 1e-3 && tip.y.abs() < 1e-3,
-        "additive 90° 应加到 0° 基础姿态，得到 {tip:?}"
+        "Additive 90° should add to 0° base pose, got {tip:?}"
     );
 }
 
@@ -1596,11 +1706,11 @@ fn a_missing_or_zero_weight_layer_is_ignored() {
     let tip = child_tip(&world, entity);
     assert!(
         (tip.y - 1.0).abs() < 1e-4,
-        "无效图层不该改变基础姿态，得到 {tip:?}"
+        "Invalid layer shouldn't change base pose, got {tip:?}"
     );
 }
 
-/// 单剪辑动画图：ClipPlayer -> Output。
+/// Single-clip animation graph: ClipPlayer -> Output.
 fn single_clip_graph(path: &str) -> AnimGraphInfo {
     let clip = GraphNodeInfo {
         name: "clip".into(),
@@ -1667,7 +1777,7 @@ fn an_animator_uses_its_graph_instead_of_the_clip_path() {
         "tip {tip:?}"
     );
 
-    // 求值器按实体持久化，第二个半秒继续推进到 90°。
+    // Evaluator persists per entity, second half-second continues to 90°.
     animator_system(&mut world, 0.5);
     let tip = child_tip(&world, entity);
     assert!((tip.x - 1.0).abs() < 1e-3, "tip {tip:?}");
@@ -1686,13 +1796,13 @@ fn graph_debug_snapshots_are_opt_in_and_track_node_time() {
     animator_system(&mut world, 0.25);
     assert!(
         world.get_resource::<AnimGraphDebug>().is_none(),
-        "默认不维护快照"
+        "No snapshot by default"
     );
 
     world.insert_resource(AnimGraphDebug::default());
     animator_system(&mut world, 0.25);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
-    let states = debug.states(entity).expect("图实体有快照");
+    let states = debug.states(entity).expect("Graph entity has snapshot");
     assert_eq!(states.len(), 2);
     assert_eq!(states[0].name, "clip");
     assert_eq!(states[0].kind, GraphNodeKind::ClipPlayer);
@@ -1702,7 +1812,10 @@ fn graph_debug_snapshots_are_opt_in_and_track_node_time() {
         states[0].time
     );
     assert_eq!(states[1].kind, GraphNodeKind::Output);
-    assert!(states[0].state_name.is_empty(), "非状态机节点没有状态名");
+    assert!(
+        states[0].state_name.is_empty(),
+        "Non-state-machine node has no state name"
+    );
 }
 
 #[test]
@@ -1723,14 +1836,16 @@ fn a_frozen_graph_animator_keeps_its_evaluator_and_resumes() {
     animator_system(&mut world, 0.25);
     assert!(
         world.get::<BonePalette>(entity).is_none(),
-        "图实体在远处也不求值"
+        "Graph entity not evaluated even when far away"
     );
 
     world.get_mut::<LocalTransform>(camera).unwrap().position = Vec3::new(0.0, 0.0, 5.0);
     animator_system(&mut world, 0.5);
-    let head = world.get::<AnimatorPlayhead>(entity).expect("恢复求值");
+    let head = world
+        .get::<AnimatorPlayhead>(entity)
+        .expect("Evaluation resumed");
     assert_eq!(head.clip_path, ANIM_GRAPH_KEY);
-    // 冻结期间的 0.25s 不补：恢复后只推进这一帧的 0.5s。
+    // 0.25s during freeze not backfilled: after resume only advances this frame's 0.5s.
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
@@ -1762,14 +1877,14 @@ fn a_throttled_graph_animator_keeps_its_playback_speed() {
     }
     add_camera(&mut world, Vec3::ZERO);
 
-    // 两帧 0.1s：第一帧 0.2s，第二帧跳过，累计仍应是 0.2s。
+    // Two frames of 0.1s: first frame 0.2s, second skipped, total still 0.2s.
     animator_system(&mut world, 0.1);
     animator_system(&mut world, 0.1);
     let tip = child_tip(&world, entity);
     let angle = 0.2 * std::f32::consts::FRAC_PI_2;
     assert!(
         (tip.x - (2.0 - angle.sin())).abs() < 1e-3,
-        "tip {tip:?} 应对应 0.2s"
+        "tip {tip:?} should correspond to 0.2s"
     );
 }
 
@@ -1857,7 +1972,7 @@ fn many_graph_entities_evaluate_independently() {
     assert_eq!(
         animator_system(&mut world, 0.5),
         entities.len(),
-        "每个实体都要更新"
+        "Every entity should be updated"
     );
     let tips: Vec<Vec3> = entities.iter().map(|e| child_tip(&world, *e)).collect();
     for (entity, tip) in entities.iter().zip(&tips) {
@@ -1865,12 +1980,12 @@ fn many_graph_entities_evaluate_independently() {
         assert_eq!(head.clip_path, ANIM_GRAPH_KEY);
         assert!(
             (tip.x - tips[0].x).abs() < 1e-4 && (tip.y - tips[0].y).abs() < 1e-4,
-            "{entity:?} 的姿态与其它实体不一致：{tip:?} vs {:?}",
+            "{entity:?} pose inconsistent with other entities: {tip:?} vs {:?}",
             tips[0]
         );
     }
 
-    // 求值器跨帧保留：第二帧继续推进到 90°，并行取放没有把状态丢掉。
+    // Evaluator persists across frames: second frame continues to 90°, parallel get/put didn't lose state.
     assert_eq!(animator_system(&mut world, 0.5), entities.len());
     for entity in &entities {
         let tip = child_tip(&world, *entity);
@@ -1923,7 +2038,7 @@ fn graph_and_clip_entities_update_in_the_same_tick() {
     );
 }
 
-/// Slot 图：ClipPlayer(base) -> Slot -> Output。
+/// Slot graph: ClipPlayer(base) -> Slot -> Output.
 fn slot_graph(base: &str) -> AnimGraphInfo {
     let base_node = GraphNodeInfo {
         name: "base".into(),
@@ -2022,7 +2137,7 @@ fn graph_debug_lists_montage_slots() {
 
     animator_system(&mut world, 0.2);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
-    let montages = debug.montages(entity).expect("图实体");
+    let montages = debug.montages(entity).expect("Graph entity");
     assert_eq!(montages.len(), 1);
     assert_eq!(montages[0].slot, "slot");
     assert_eq!(montages[0].clip.as_deref(), Some("montage"));
@@ -2059,7 +2174,7 @@ fn a_pause_request_freezes_the_montage_until_resumed() {
     animator_system(&mut world, 0.5);
     assert!(
         world.get_resource::<AnimEvents>().unwrap().is_empty(),
-        "暂停期间不推进、不发 Notify"
+        "No advance or Notify while paused"
     );
 
     world
@@ -2074,7 +2189,7 @@ fn a_pause_request_freezes_the_montage_until_resumed() {
             .names_for(entity)
             .collect::<Vec<_>>(),
         ["MontageStep"],
-        "恢复后继续推进到 Notify"
+        "Advances to Notify after resume"
     );
 }
 
@@ -2100,7 +2215,7 @@ fn a_montage_request_carries_blend_in_and_blend_out() {
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
     assert!((debug.montages(entity).unwrap()[0].weight - 0.5).abs() < 1e-5);
 
-    // 0.1 → 0.8：淡入已满，剩余 0.2s / blend_out 0.4s → 0.5 权重。
+    // 0.1 → 0.8: fade-in already full, remaining 0.2s / blend_out 0.4s → 0.5 weight.
     animator_system(&mut world, 0.7);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
     assert!((debug.montages(entity).unwrap()[0].weight - 0.5).abs() < 1e-5);
@@ -2127,7 +2242,7 @@ fn montage_debug_reports_the_active_warp_window() {
 
     animator_system(&mut world, 0.5);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
-    let montage = &debug.montages(entity).expect("图实体")[0];
+    let montage = &debug.montages(entity).expect("Graph entity")[0];
     assert_eq!(montage.warp_window.as_deref(), Some("VaultWarp"));
     assert!((montage.warp_window_progress.unwrap() - 0.4).abs() < 1e-5);
 }
@@ -2160,7 +2275,7 @@ fn a_montage_request_can_start_at_a_named_section() {
 
     animator_system(&mut world, 0.1);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
-    let montage = &debug.montages(entity).expect("图实体")[0];
+    let montage = &debug.montages(entity).expect("Graph entity")[0];
     assert!((montage.time.unwrap() - 0.7).abs() < 1e-5);
     assert_eq!(montage.section.as_deref(), Some("Impact"));
 }

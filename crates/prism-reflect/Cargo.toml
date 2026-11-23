@@ -3,7 +3,7 @@ name = "prism-reflect"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "运行时反射（TypeDesc/Value/Registry）与自描述二进制 RTTIBin"
+description = "Runtime reflection (TypeDesc/Value/Registry) and self-describing RTTIBin"
 
 [dependencies]
 prism-reflect-derive = { path = "../prism-reflect-derive", optional = true }

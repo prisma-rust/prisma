@@ -1,44 +1,44 @@
-//! 统一脏分派计划（`DirtyDispatchPlan`，DESIGN §9 / PR-S2）。
+//! Unified dirty dispatch plan (`DirtyDispatchPlan`, DESIGN §9 / PR-S2).
 //!
-//! 在 `prepare` 阶段一次性消费场景与资产脏标记，按拓扑序批处理：
-//! 1. 纹理上传 / 释放（`RenderTextureManager`）
-//! 2. 网格上传 / BLAS 重建（`RenderMeshManager`）
-//! 3. 材质缓冲区更新（`RenderMaterialManager`）
-//! 4. 光源缓冲区更新（`RenderAnalyticLightManager`）
-//! 5. 实例/绘制项变化（`RenderInstanceManager`）
-//! 6. 天空与发光表级联更新（`RenderSkyManager` / `RenderEmissiveLightTable`）
+//! In `prepare` phase, consume scene and asset dirty flags once, batch in topological order:
+//! 1. Texture upload / release (`RenderTextureManager`)
+//! 2. Mesh upload / BLAS rebuild (`RenderMeshManager`)
+//! 3. Material buffer update (`RenderMaterialManager`)
+//! 4. Light source buffer update (`RenderAnalyticLightManager`)
+//! 5. Instance / draw item changes (`RenderInstanceManager`)
+//! 6. Skybox and emissive table cascade update (`RenderSkyManager` / `RenderEmissiveLightTable`)
 
-/// 场景与资源变更的统一调度计划。
+/// Unified dispatch plan for scene and resource changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DirtyDispatchPlan {
-    /// 待上传/更新的纹理数量
+    /// Number of textures pending upload / update
     pub texture_uploads: usize,
-    /// 待释放的纹理槽数量
+    /// Number of texture slots pending release
     pub texture_releases: usize,
-    /// 待上传/重建的网格数量
+    /// Number of meshes pending upload / rebuild
     pub mesh_uploads: usize,
-    /// 待释放的网格句柄数量
+    /// Number of mesh handles pending release
     pub mesh_releases: usize,
-    /// 待上传/更新的材质数量
+    /// Number of materials pending upload / update
     pub material_updates: usize,
-    /// 待释放的材质槽数量
+    /// Number of material slots pending release
     pub material_releases: usize,
-    /// 相机是否发生变化（VP/Eye/Projection）
+    /// Whether camera changed (VP/Eye/Projection)
     pub camera_dirty: bool,
-    /// 方向光或局部光源是否发生变化
+    /// Whether directional or local light sources changed
     pub lights_dirty: bool,
-    /// 天空盒/IBL 是否发生变化
+    /// Whether skybox / IBL changed
     pub sky_dirty: bool,
-    /// 实例/绘制列表内容是否发生变化
+    /// Whether instance / draw list content changed
     pub instances_dirty: bool,
-    /// 级联发光网格表是否需要重建（由 mesh/material/instances 脏级联触发）
+    /// Whether cascade emissive mesh table needs rebuild (triggered by mesh/material/instances dirty cascade)
     pub emissive_table_dirty: bool,
-    /// 路径追踪累积是否需要重置
+    /// Whether path tracing accumulation needs reset
     pub pt_accum_dirty: bool,
 }
 
 impl DirtyDispatchPlan {
-    /// 检查是否有任何资源上传或状态更新需要分派。
+    /// Check whether any resource upload or state update needs dispatch.
     pub fn has_work(&self) -> bool {
         self.texture_uploads > 0
             || self.texture_releases > 0

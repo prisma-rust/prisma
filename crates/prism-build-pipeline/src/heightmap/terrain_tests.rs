@@ -44,7 +44,7 @@ fn terrain_seed_variation() {
         .zip(b.data.iter())
         .filter(|(x, y)| (**x - **y).abs() < 1e-6)
         .count();
-    // 不同 seed 必须产生明显不同的地形（容差：至少 90% 像元不同）。
+    // Different seeds must produce clearly different terrain (tolerance: at least 90% pixels different).
     assert!(
         same < a.data.len() / 10,
         "seeds produced nearly identical terrain"

@@ -1,12 +1,12 @@
-//! 与 egui-ash 共享的 Vulkan 设备。
+//! Vulkan device shared with egui-ash.
 //!
-//! egui-ash 要求宿主自己创建 instance / device 并返回 [`AshRenderState`]；
-//! 这正好给了我们引擎式的模型：**编辑器和引擎共用同一个 `VkDevice` /
-//! 队列**，所以 Scene/Game 视口只需要把引擎离屏图像的 `VkImageView` 注册成
-//! egui 纹理（`ImageRegistry::register_user_texture`），没有任何 GPU↔CPU 拷贝。
+//! egui-ash requires host to create instance / device and return [`AshRenderState`];
+//! This gives us engine-style model: **editor and engine share same `VkDevice` /
+//! queue**, so Scene/Game viewport only needs to register engine offscreen image `VkImageView` as
+//! egui texture (`ImageRegistry::register_user_texture`), no GPU<->CPU copy.
 //!
-//! 设备由 [`VulkanContext::from_host`] 创建，因此 `prism-render` 需要的特性
-//! （bindless / 时间线信号量 / synchronization2 / 设备地址）与窗口模式一致。
+//! Device created by [`VulkanContext::from_host`], so features `prism-render` needs
+//! (bindless / timeline semaphore / synchronization2 / device address) consistent with window mode.
 
 use std::sync::{Arc, Mutex};
 
@@ -20,7 +20,7 @@ use prism_render::context::{
 use prism_render::VulkanContext;
 use raw_window_handle::{HasDisplayHandle as _, HasWindowHandle as _};
 
-/// egui-ash 需要的 Vulkan 句柄 + 引擎共享的上下文。
+/// Vulkan handles needed by egui-ash + engine-shared context.
 pub struct SharedVulkan {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
@@ -28,18 +28,18 @@ pub struct SharedVulkan {
     pub queue_family: u32,
     pub context: Arc<VulkanContext>,
     pub allocator: Arc<Mutex<Allocator>>,
-    /// egui-ash 的每帧命令缓冲区从这里分配。
+    /// egui-ash per-frame command buffer allocated from here.
     pub command_pool: vk::CommandPool,
     pub surface_loader: ash::khr::surface::Instance,
     pub swapchain_loader: ash::khr::swapchain::Device,
-    /// 只用于命名/销毁时机；instance 的生命周期由进程（而不是上下文）决定。
+    /// Only for naming/destroy timing; instance lifecycle decided by process (not context).
     #[allow(dead_code)]
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
 impl SharedVulkan {
-    /// 按 egui-ash 的要求创建 instance / 物理设备 / 设备，并包成
-    /// `prism-render` 的上下文。
+    /// Create instance / physical device / device per egui-ash requirement, wrap into
+    /// `prism-render` context.
     pub fn create(cc: &CreationContext<'_>) -> anyhow::Result<Self> {
         let entry = unsafe { ash::Entry::load() }.context("failed to load Vulkan loader")?;
 
@@ -52,8 +52,8 @@ impl SharedVulkan {
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
-        // 临时 surface：只用于「物理设备 / 队列族能否呈现」。egui-ash 会为每个
-        // 视口窗口自己建 surface + swapchain，这里用完即销毁。
+        // Temporary surface: only for "physical device / queue family can present". egui-ash builds
+        // surface + swapchain per viewport window itself; used then destroyed here.
         let window = cc.main_window;
         let window_handle = window
             .window_handle()
@@ -75,7 +75,7 @@ impl SharedVulkan {
         let physical_device = match pick_host_physical_device(&instance, &surface_loader, surface) {
             Ok(device) => device,
             Err(error) => {
-                // 先把临时 surface 回收，避免泄漏后再返回错误。
+                // reclaim temporary surface first to avoid leak then return error.
                 unsafe { surface_loader.destroy_surface(surface, None) };
                 return Err(error);
             }
@@ -98,7 +98,7 @@ impl SharedVulkan {
             &device_extensions,
         )?);
 
-        // 句柄已经拿到，临时 surface 不再需要。
+        // handle already obtained, temporary surface no longer needed.
         unsafe { surface_loader.destroy_surface(surface, None) };
 
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -106,8 +106,8 @@ impl SharedVulkan {
             device: context.device.clone(),
             physical_device,
             debug_settings: Default::default(),
-            // 与 `VulkanContext::from_host` 启用的特性保持一致：设备地址只
-            // 在实际启用时才声明，否则 gpu-allocator 会请求未启用的特性。
+            // Consistent with features enabled by `VulkanContext::from_host`: device address only
+            // declared when actually enabled, otherwise gpu-allocator requests unenabled feature.
             buffer_device_address: context.rt_caps.buffer_device_address,
             allocation_sizes: Default::default(),
         })
@@ -139,8 +139,8 @@ impl SharedVulkan {
         })
     }
 
-    /// 交给 egui-ash 的渲染状态。句柄都是 `Copy` 的 Vulkan 对象，egui-ash
-    /// 只使用、不销毁。
+    /// Render state handed to egui-ash. Handles are `Copy` Vulkan objects, egui-ash
+    /// only uses, does not destroy.
     pub fn render_state(&self) -> AshRenderState<Arc<Mutex<Allocator>>> {
         AshRenderState {
             entry: self.entry.clone(),
@@ -156,11 +156,11 @@ impl SharedVulkan {
         }
     }
 
-    /// 销毁调试 messenger（设备/实例本身留给进程退出回收：egui-ash 的
-    /// integration 持有它们的副本，先销毁会造成悬空句柄）。
+    /// Destroy debug messenger (device / instance itself left to process exit recycle: egui-ash's
+    /// integration holds their copies, destroying first causes dangling handles).
     ///
-    /// 当前编辑器在进程退出时直接结束，所以没有调用点；保留给将来的
-    /// 「关闭项目但继续运行编辑器」路径。
+    /// Current editor exits directly at process exit, so no call site; kept for future
+    /// "close project but keep editor running" path.
     #[allow(dead_code)]
     pub fn shutdown(&mut self) {
         let Some(messenger) = self.debug_messenger.take() else {

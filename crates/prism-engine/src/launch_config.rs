@@ -1,27 +1,27 @@
-//! 启动配置（hub → 游戏传参）。
+//! Launch config (hub → game param passing).
 //!
-//! hub（Tauri launcher / Android hub）在拉起游戏前选择启动参数，经统一
-//! 的 JSON 通道传递，引擎侧 [`LaunchConfig::from_env`] 自动读取：
+//! Hub (Tauri launcher / Android hub) selects launch parameters before spawning game,
+//! passed via unified JSON channel, engine side [`LaunchConfig::from_env`] auto-reads:
 //!
-//! - **桌面**：launcher 以 `PRISMA_LAUNCH_CONFIG` env 传入；
-//! - **Android**：hub 把同一份 JSON 写到 app files 目录的
-//!   `launch_config.json`（见 Kotlin `NativePlugin.launch_game`），
-//!   `android_main` 读入后注入 env，与桌面路径统一。
+//! - **Desktop**: launcher passes via `PRISMA_LAUNCH_CONFIG` env;
+//! - **Android**: hub writes same JSON to app files dir
+//!   `launch_config.json` (see Kotlin `NativePlugin.launch_game`),
+//!   `android_main` reads then injects into env, unifying with desktop path.
 //!
-//! 解析失败或缺省一律回退 [`Default`]，绝不阻止引擎启动。
+//! Parse failure or missing falls back to [`Default`], never blocks engine launch.
 
 use serde::{Deserialize, Serialize};
 
-/// 应用层使用的环境变量键。
+/// Env var key used by application layer.
 pub const ENV_KEY: &str = "PRISMA_LAUNCH_CONFIG";
 
-/// 启动配置。
+/// Launch config.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LaunchConfig {
-    /// 启动场景名（`assets/scenes.json` 的 `scenes[].name`）。
+    /// Launch scene name (`scenes[].name` in `assets/scenes.json`).
     ///
-    /// `None` = 加载 manifest 中第一个可解析场景（历史默认行为）。
-    /// 编辑器 / 启动器可据此直接预览指定场景。
+    /// `None` = load first parseable scene in manifest (historical default).
+    /// Editor / launcher can directly preview a specified scene.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene: Option<String>,
     /// This process loads **no startup scene at all** (editor / tool host).
@@ -35,13 +35,13 @@ pub struct LaunchConfig {
     /// means **no scene was ever wanted**.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_scene: bool,
-    /// 日志级别覆盖（如 `"debug"` / `"warn"`）；`None` = 平台默认。
+    /// Log level override (e.g. `"debug"` / `"warn"`); `None` = platform default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_level: Option<String>,
 }
 
 impl LaunchConfig {
-    /// 当前进程的启动配置（读 [`ENV_KEY`]；缺失/非法回退默认）。
+    /// Launch config of current process (read [`ENV_KEY`]; missing/invalid falls back to default).
     pub fn from_env() -> Self {
         match std::env::var(ENV_KEY) {
             Ok(json) => Self::from_json(&json),
@@ -49,7 +49,7 @@ impl LaunchConfig {
         }
     }
 
-    /// 从调用方提供的 JSON 解析；不访问环境变量或文件系统。
+    /// Parse from caller-provided JSON; does not access env vars or file system.
     pub fn from_json(json: &str) -> Self {
         serde_json::from_str(json).unwrap_or_else(|error| {
             log::warn!("invalid launch config ({error}); using defaults");
@@ -57,15 +57,15 @@ impl LaunchConfig {
         })
     }
 
-    /// 序列化为传给 hub 的 JSON（launcher 侧构造传参用）。
+    /// Serialize to JSON passed to hub (launcher side constructs params).
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("LaunchConfig serializes")
     }
 
-    /// 把 [`Self::log_level`] 解析为 `log` 过滤器。
+    /// Parse [`Self::log_level`] into a `log` filter.
     ///
-    /// 只接受单个级别名（`off` / `error` / `warn` / `info` / `debug` / `trace`，
-    /// 大小写不敏感）；复杂的 `RUST_LOG` 指令请继续用环境变量。
+    /// Only accepts single-level aliases (`off` / `error` / `warn` / `info` / `debug` / `trace`,
+    /// case-insensitive); complex `RUST_LOG` directives continue to use env var.
     pub fn log_level_filter(&self) -> Option<log::LevelFilter> {
         self.log_level
             .as_deref()

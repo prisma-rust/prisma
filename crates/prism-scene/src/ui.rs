@@ -1,61 +1,61 @@
-//! UI ECS 组件 —— 数据驱动 UI 的组件定义
+//! UI ECS components — component definitions for data-driven UI.
 //!
-//! # 理念
-//! UI 元素 = Entity + [`Node`] + [`Style`] + [`ComputedLayout`] + (可选 [`Text`])
-//! Layout System 读取 Style → 写入 ComputedLayout
-//! Render System 读取 ComputedLayout + Text → 生成绘制命令
+//! # Philosophy
+//! UI element = Entity + [`Node`] + [`Style`] + [`ComputedLayout`] + (optional [`Text`])
+//! Layout System read  Style → write  ComputedLayout
+//! Render System reads ComputedLayout + Text → generates draw commands
 
 use prism_reflect::{FieldType, Reflect, ReflectError, ReflectType, Value};
 use serde::{Deserialize, Serialize};
 
-// ── 标记组件 ─────────────────────────────────────────────────
+// ── flag component  ─────────────────────────────────────────────────
 
-/// **标记**：此 Entity 是 UI 元素。Layout System 只查询有此组件的实体。
+/// **Flag**: this Entity is a UI element. Layout System only queries entities with this component.
 ///
-/// 定义为空花括号结构体（而非单元结构体），以便场景 JSON 用 `{}` 反序列化。
+/// Defined as empty-brace struct (not unit struct) so scene JSON can deserialize with `{}`.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Node")]
 pub struct Node {}
 
-// ── 锚点系统 ─────────────────────────────────────────────────
+// ── anchor system ─────────────────────────────────────────────────
 
-/// 锚点角 —— 定义子元素边相对于父边的位置（0..=1 归一化）。
+/// Anchor corners — define child edge position relative to parent edges (0..=1 normalized).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Anchors")]
 pub struct Anchors {
-    /// 水平起始角（0 = 父左，1 = 父右）
+    /// Horizontal start corner (0 = parent left, 1 = parent right)
     pub min_x: f32,
-    /// 垂直起始角（0 = 父顶，1 = 父底）
+    /// Vertical start corner (0 = parent top, 1 = parent bottom)
     pub min_y: f32,
-    /// 水平结束角（0 = 父左，1 = 父右）
+    /// Horizontal end corner (0 = parent left, 1 = parent right)
     pub max_x: f32,
-    /// 垂直结束角（0 = 父顶，1 = 父底）
+    /// Vertical end corner (0 = parent top, 1 = parent bottom)
     pub max_y: f32,
 }
 
 impl Anchors {
-    /// 填满父容器
+    /// Fill parent container
     pub const STRETCH: Self = Self {
         min_x: 0.0,
         min_y: 0.0,
         max_x: 1.0,
         max_y: 1.0,
     };
-    /// 左上角
+    /// Top-left corner
     pub const TOP_LEFT: Self = Self {
         min_x: 0.0,
         min_y: 0.0,
         max_x: 0.0,
         max_y: 0.0,
     };
-    /// 居中
+    /// Center
     pub const CENTER: Self = Self {
         min_x: 0.5,
         min_y: 0.5,
         max_x: 0.5,
         max_y: 0.5,
     };
-    /// 底部居中
+    /// Bottom center
     pub const BOTTOM_CENTER: Self = Self {
         min_x: 0.5,
         min_y: 1.0,
@@ -70,11 +70,11 @@ impl Default for Anchors {
     }
 }
 
-/// Pivot —— 旋转/缩放/定位的中心点（归一化 0..=1）。
+/// Pivot — center point for rotation / scale / positioning (normalized 0..=1).
 ///
-/// 只有**点锚点**（`Anchors` 该轴 `min == max`）才用 pivot 对齐尺寸；
-/// 拉伸轴（`min != max`）的矩形由锚点与边距决定，pivot 不参与
-/// （与引擎的 `anchorMin/anchorMax` + `pivot` 语义一致）。
+/// Only **point anchors** (`Anchors` axis with `min == max`) use pivot to align size;
+/// stretch axis (`min != max`) rect determined by anchors and margins, pivot not involved
+/// (consistent with engine `anchorMin/anchorMax` + `pivot` semantics).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Pivot")]
 pub struct Pivot {
@@ -93,7 +93,7 @@ impl Default for Pivot {
     }
 }
 
-/// 边距（像素）。
+/// Margins (pixels).
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Margin")]
 #[serde(default)]
@@ -104,19 +104,19 @@ pub struct Margin {
     pub bottom: f32,
 }
 
-// ── 布局组（#527）─────────────────────────────────────────────
+// ── layout group (#527) ──────────────────────────────────────────────
 
-/// 布局组的排列方向。
+/// Arrangement direction of layout group.
 ///
-/// `None` = 不是布局组：子元素继续按各自的锚点定位（历史行为）。
+/// `None` = not a layout group: children continue positioned by own anchors (legacy behavior).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LayoutDirection {
-    /// 不排布子元素，按锚点定位（默认）。
+    /// Don't arrange children, position by anchors (default).
     #[default]
     None,
-    /// 横向依次排列（左 → 右）。
+    /// Arrange horizontally (left → right).
     Row,
-    /// 纵向依次排列（上 → 下）。
+    /// Arrange vertically (top → bottom).
     Column,
 }
 
@@ -149,20 +149,20 @@ impl ReflectType for LayoutDirection {
     }
 }
 
-/// 布局组里子元素在**交叉轴**上的对齐方式。
+/// Alignment of children on **cross axis** inside layout group.
 ///
-/// 主轴（`Row` 的水平方向 / `Column` 的垂直方向）由排列顺序 + `spacing` 决定，
-/// 子元素从内容区起点开始占位；交叉轴才对这里的值生效。
+/// Main axis (`Row` horizontal / `Column` vertical) determined by arrangement order + `spacing`,
+/// children occupy space from content-area start; cross axis uses value here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChildAlign {
-    /// 贴内容区起点（默认）。
+    /// Stick to content-area start (default).
     #[default]
     Start,
-    /// 居中。
+    /// Center.
     Center,
-    /// 贴内容区终点。
+    /// Stick to content-area end.
     End,
-    /// 拉满交叉轴。
+    /// Stretch across cross axis.
     Stretch,
 }
 
@@ -197,84 +197,84 @@ impl ReflectType for ChildAlign {
     }
 }
 
-/// 布局组：把子元素按方向依次排布（#527）。
+/// Layout group: arrange children sequentially by direction (#527).
 ///
-/// 对齐 Unity 的 `HorizontalLayoutGroup` / `VerticalLayoutGroup` 的基本形态：
-/// 只有 `direction`、`spacing`、`padding`、`childAlign` 与 `ContentSizeFitter`
-/// 式的 `fit_content`，不做 grow / shrink / 权重。
+/// Corresponds to basic shape of Unity `HorizontalLayoutGroup` / `VerticalLayoutGroup`:
+/// only `direction`, `spacing`, `padding`, `childAlign` and ContentSizeFitter-style
+/// `fit_content`, no grow / shrink / weights.
 ///
-/// 语义：
-/// - 子元素在主轴上的尺寸取它自己的 `width`（`Row`）或 `height`（`Column`），
-///   没写时取它作为 `fit_content` 容器量出来的内容尺寸，再没有就是 0；
-/// - 交叉轴尺寸默认取子元素自己的宽/高（或内容尺寸），`child_align = Stretch`
-///   时拉满内容区；
-/// - `padding` 从容器矩形内缩出内容区，子元素定位相对内容区；
-/// - `fit_content` 让容器在**没有显式宽/高**的轴上收缩到内容尺寸
-///   （+ 对应两侧 padding）。
+/// Semantics:
+/// - Child size on main axis from its own `width` (`Row`) or `height` (`Column`),
+///   when absent use content size measured as `fit_content` container, else 0;
+/// - Cross-axis size defaults to child's own width / height (or content size), `child_align = Stretch`
+///   stretches to content area;
+/// - `padding` shrinks content area from container rect, children positioned relative to content area;
+/// - `fit_content` shrinks container on axes with **no explicit width / height** to content size
+///   (+ corresponding padding on both sides).
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Layout")]
 #[serde(default)]
 pub struct Layout {
-    /// 排列方向；`None` = 不是布局组。
+    /// Arrangement direction; `None` = not a layout group.
     pub direction: LayoutDirection,
-    /// 相邻子元素间距（px）。
+    /// Spacing between adjacent children (px).
     pub spacing: f32,
-    /// 内容区内边距（px）。
+    /// Content-area inner padding (px).
     pub padding: Margin,
-    /// 交叉轴对齐。
+    /// Cross-axis alignment.
     pub child_align: ChildAlign,
-    /// 没有显式尺寸的轴收缩到内容尺寸。
+    /// Shrink axes with no explicit size to content size.
     pub fit_content: bool,
 }
 
 // ── Style ─────────────────────────────────────────────────────
 
-/// UI 元素的视觉和布局属性。
+/// Visual and layout properties of a UI element.
 #[derive(Clone, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Style")]
 pub struct Style {
-    /// 固定宽度（px）。`None` = 由锚点决定。
+    /// Fixed width (px). `None` = determined by anchors.
     #[serde(default)]
     pub width: Option<f32>,
-    /// 固定高度（px）。`None` = 由锚点决定。
+    /// Fixed height (px). `None` = determined by anchors.
     #[serde(default)]
     pub height: Option<f32>,
-    /// 锚点。
+    /// Anchors.
     #[serde(default)]
     pub anchors: Anchors,
-    /// 枢轴（归一化，0..=1）。
+    /// Pivot (normalized, 0..=1).
     #[serde(default)]
     pub pivot: Pivot,
-    /// 边距偏移（px）。
+    /// Margin offsets (px).
     #[serde(default)]
     pub margin: Margin,
-    /// 背景色（RGBA，0..=1）。`[0;4]` = 透明。
+    /// Background color (RGBA, 0..=1). `[0;4]` = transparent.
     ///
-    /// 配了 `image` 时这一项当**着色**（tint）用：`alpha == 0` 视为不透明白色，
-    /// 直接显示图片原色（#591）。
+    /// With `image` configured this acts as **tint**: `alpha == 0` treated as opaque white,
+    /// displaying texture original colors (#591).
     #[serde(default)]
     pub background: [f32; 4],
-    /// 背景图（相对 `assets/` 的路径；空 = 无，只画 `background` 纯色）。
+    /// Background image (path relative to `assets/`; empty = none, only draw `background` solid color).
     ///
-    /// 贴图按整张铺满元素矩形，用最近邻采样（与像素画一致）；`Button` 的
-    /// 交互色同样作为 tint 乘在图片上，所以图标能跟着按钮变亮/变暗（#591）。
+    /// Texture fills element rect with nearest sampling (consistent with pixel art); `Button`'s
+    /// interaction color likewise multiplied as tint, so image can brighten / darken with button (#591).
     #[serde(default)]
     pub image: String,
-    /// 边框圆角（px）。
+    /// Border corner radius (px).
     #[serde(default)]
     pub border_radius: f32,
-    /// 可见性。
+    /// Visibility.
     #[serde(default = "default_visible")]
     pub visible: bool,
-    /// 布局组（#527）。默认 `direction = None`，子元素按锚点定位，行为不变。
+    /// Layout group (#527). Default `direction = None`, children positioned by anchors, behavior unchanged.
     #[serde(default)]
     pub layout: Layout,
 }
 
-/// `Style::visible` 的 serde 默认值。
+/// serde default of `Style::visible`.
 ///
-/// 必须与 [`Style::default`] 保持一致：作者 JSON 省略 `visible` 时元素是可见的，
-/// 不能落到 `bool::default()`（`false`）。
+/// Must stay consistent with [`Style::default`]: when author JSON omits `visible` element is visible,
+/// must not fall to `bool::default()` (`false`).
 fn default_visible() -> bool {
     true
 }
@@ -297,12 +297,12 @@ impl Default for Style {
 }
 
 impl Style {
-    /// 创建全屏填充的透明 UI 元素。
+    /// Create a fullscreen-filling transparent UI element.
     pub fn fullscreen() -> Self {
         Self::default()
     }
 
-    /// 创建一个固定大小的 UI 元素（锚点居中）。
+    /// Create a fixed-size UI element (anchors centered).
     pub fn fixed(w: f32, h: f32) -> Self {
         Self {
             width: Some(w),
@@ -316,35 +316,35 @@ impl Style {
 
 // ── ComputedLayout ────────────────────────────────────────────
 
-/// **Layout System 输出**：最终屏幕空间矩形（像素）。
+/// **Layout System output**: final screen-space rect (pixels).
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::ComputedLayout")]
 pub struct ComputedLayout {
-    /// 屏幕空间边界 `[left, top, width, height]`
+    /// screen space boundary  `[left, top, width, height]`
     #[serde(default)]
     pub rect: [f32; 4],
-    /// 层级绘制顺序（深度优先前序：父在前，子在后，兄弟按文档顺序）。
+    /// Layer-level draw order (depth-first pre-order: parent before, child after, siblings by document order).
     ///
-    /// 由布局系统每帧重算，和 `rect` 一样是**派生值**——作者不写它，`.scene.json`
-    /// 里也没有这个字段。同一实体的背景和文本共用同一个 `order`（靠
-    /// [`crate::ui`] 的绘制列表再按「先矩形后文本」区分），所以兄弟节点的 z 序
-    /// 就是层级面板里看到的顺序（见 #462）。
+    /// Recomputed every frame by layout system, a **derived value** like `rect` — author doesn't write it, `.scene.json`
+    /// has no such field. Background and text of same entity share same `order` (draw list in [`crate::ui`]
+    /// distinguishes "rect first then text"), so sibling z order is what layer-level panel shows
+    /// in the layer-level panel (see #462).
     #[serde(default)]
     pub order: u32,
-    /// 这个节点所在 Canvas 的缩放系数（#463）。`rect` 已经是**屏幕像素**，
-    /// 这个值只用来把字号 / 圆角这类「设计像素」量换算到屏幕像素。
-    /// `1.0` = 没有 Canvas（旧行为）。
+    /// Scale factor of Canvas this node is in (#463). `rect` is already **screen pixels**,
+    /// this value only converts "design pixel" quantities like font size / corner radius to screen pixels.
+    /// `1.0` = no Canvas (legacy behavior).
     #[serde(default = "identity_scale")]
     pub scale: f32,
 }
 
-/// `ComputedLayout::scale` 的 serde 默认：`1.0`（无缩放）。
+/// serde default of `ComputedLayout::scale`: `1.0` (no scaling).
 pub(crate) fn identity_scale() -> f32 {
     1.0
 }
 
 impl ComputedLayout {
-    /// 只带矩形的布局（顺序留 0，缩放 1，由布局系统随后填充）。
+    /// Layout with rect only (order left 0, scale 1, filled later by layout system).
     pub fn from_rect(rect: [f32; 4]) -> Self {
         Self {
             rect,
@@ -369,10 +369,10 @@ impl ComputedLayout {
 
 // ── Text ──────────────────────────────────────────────────────
 
-/// 文本内容。
+/// Text content.
 ///
-/// `#[serde(default)]`：旧文档或手工编辑的 JSON 可能只写 `content`，
-/// 缺失字段回落到 [`Text::default`]，而不是让整个组件反序列化失败。
+/// `#[serde(default)]`: legacy documents or hand-edited JSON can write only `content`,
+/// missing fields fall back to [`Text::default`], not fail whole component deserialization.
 #[derive(Clone, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Text")]
 #[serde(default)]
@@ -381,14 +381,14 @@ pub struct Text {
     pub font_size: f32,
     pub color: [f32; 4],
     pub alignment: TextAlign,
-    /// 工程自带字体（`assets/fonts/*.ttf|otf|ttc` 的相对路径，空 = 系统默认字体，#583）。
+    /// Project-bundled font (path relative to `assets/fonts/*.ttf|otf|ttc`, empty = system default font, #583).
     ///
-    /// 字体文件是普通资产：cooker 识别为 `AssetType::Font` 原样进 `.pak`，
-    /// 运行时经 `ResourceManager` 读出字节交给 UI 光栅器。
+    /// Font file is normal asset: cooker recognizes `AssetType::Font` and packs as-is into `.pak`,
+    /// at runtime read bytes via `ResourceManager` and hand to UI rasterizer.
     pub font: String,
-    /// 按文本矩形宽度自动换行（#527）；`false` = 单行（历史行为）。
+    /// Auto wrap by text rect width (#527); `false` = single line (legacy behavior).
     ///
-    /// 换行按空格断词，单个词超过宽度时按字符断；`\n` 始终换行。
+    /// Wrap breaks at spaces, by char when a single word exceeds width; `\n` always breaks.
     #[serde(default)]
     pub wrap: bool,
 }
@@ -443,18 +443,18 @@ impl ReflectType for TextAlign {
     }
 }
 
-// ── Canvas / 缩放 ─────────────────────────────────────────────
+// ── Canvas / scale  ─────────────────────────────────────────────
 
-/// Canvas 缩放模式（对齐 Unity `CanvasScaler` 的三种 Screen Match Mode）。
+/// Canvas scale mode (corresponds to Unity `CanvasScaler` three Screen Match Modes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CanvasScaleMode {
-    /// 1 屏幕像素 = 1 设计像素（默认 = 没有 Canvas 的旧行为）。
+    /// 1 screen pixel = 1 design pixel (default = legacy behavior with no Canvas).
     #[default]
     ConstantPixelSize,
-    /// 按参考分辨率等比缩放：宽、高各自算一个比例，再按
-    /// [`Canvas::match_width_or_height`] 在对数空间插值。
+    /// Scale by reference resolution: width and height each compute a ratio, then interpolate by
+    /// [`Canvas::match_width_or_height`] in between.
     ScaleWithScreenSize,
-    /// 只用宽或高之一：`match_width_or_height` < 0.5 取宽度，否则取高度。
+    /// Use only width or height: `match_width_or_height < 0.5` takes width, otherwise height.
     MatchWidthOrHeight,
 }
 
@@ -491,24 +491,24 @@ impl ReflectType for CanvasScaleMode {
     }
 }
 
-/// UI 画布：把「设计分辨率」映射到实际屏幕，整棵子树等比缩放（#463）。
+/// UI canvas: maps "design resolution" to actual screen, scales whole subtree (#463).
 ///
-/// 挂在某个根节点上时，它的子节点都按 [`Canvas::scale_factor`] 换算：
-/// 布局在**虚拟分辨率**里算，写回 `ComputedLayout.rect` 时乘回缩放系数，
-/// 所以 `Style.width` / `margin` / 锚点都按设计稿数值写，1080p 和 720p
-/// 看到的是同一套布局。字号和圆角这类绝对量由渲染系统按
-/// `ComputedLayout.scale` 一起放大。
+/// Attached to a root node, its child nodes convert by [`Canvas::scale_factor`]:
+/// layout computed in **virtual resolution**, multiplied back by scale when writing `ComputedLayout.rect`,
+/// so `Style.width` / `margin` / anchors written in design numbers, 1080p and 720p
+/// see same layout. Absolute quantities like font size and corner radius scaled by
+/// render system via `ComputedLayout.scale`.
 ///
-/// 嵌套 Canvas 不做多个虚拟坐标系：子节点只继承最近的 Canvas（与 Unity
-/// 的 nesting 行为不同，会在文档里说明）。
+/// Nested Canvas doesn't establish multiple virtual coordinate systems: child inherits nearest Canvas only
+/// (different from Unity nesting behavior, documented in document).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Canvas")]
 #[serde(default)]
 pub struct Canvas {
-    /// 设计稿分辨率（如 1920×1080）。
+    /// Design resolution (e.g. 1920×1080).
     pub reference_resolution: [f32; 2],
     pub scale_mode: CanvasScaleMode,
-    /// `0` = 完全贴合宽度，`1` = 完全贴合高度。
+    /// `0` = fully match width, `1` = fully match height.
     pub match_width_or_height: f32,
 }
 
@@ -523,9 +523,9 @@ impl Default for Canvas {
 }
 
 impl Canvas {
-    /// 屏幕像素 / 设计像素 的缩放系数。
+    /// Scale factor screen pixels / design pixels.
     ///
-    /// 退化输入（0 或非有限值）按 1 处理，避免整棵 UI 变成 NaN。
+    /// Degenerate input (0 or non-finite) treated as 1, avoid whole UI becoming NaN.
     pub fn scale_factor(&self, screen: (f32, f32)) -> f32 {
         let width = finite_positive(screen.0, 1.0);
         let height = finite_positive(screen.1, 1.0);
@@ -564,34 +564,34 @@ fn finite_positive(value: f32, fallback: f32) -> f32 {
 
 // ── Interaction ───────────────────────────────────────────────
 
-/// 交互状态（由 Input System 每帧更新）。
+/// Interaction state (updated each frame by Input System).
 ///
-/// 从 #528 起也可以挂在场景里：状态每帧被重写，但组件本身可以序列化，
-/// 因此场景 / 预制体 / 模板能保存「这个元素可交互」这件事，游戏代码
-/// 也不用自己插入运行时组件。
+/// Since #528 can also attach in scene: state rewritten each frame but component serializable,
+/// so scene / prefab / template can save "this element is interactive", game code
+/// need not insert runtime component itself.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Interaction")]
 #[serde(default)]
 pub struct Interaction {
     pub hovered: bool,
-    /// 指针在**按下目标**上按住（拖出元素后松开就不算按下）。
+    /// Pointer **pressed on target** (dragging out of element releases, no longer counted as pressed).
     pub pressed: bool,
-    /// 一帧有效：在元素内按下、并在元素内松开（或键盘激活）时置位。
+    /// One-frame valid: set when pressed inside element and released inside (or keyboard activated).
     pub clicked: bool,
 }
 
 // ── Button ───────────────────────────────────────────────────
 
-/// 可点击按钮的**外观**状态色（#528）。
+/// Clickable button's **appearance** state colors (#528).
 ///
-/// 只是数据：`ui_render_system` 按 [`Interaction`] 挑选颜色，`ui_input_system`
-/// 负责 hover / pressed / clicked 语义。没有 `Button` 的 UI 元素继续用
-/// [`Style::background`]，两者可以共存（`Button` 优先）。
+/// Pure data: `ui_render_system` picks color by [`Interaction`], `ui_input_system`
+/// handles hover / pressed / clicked semantics. UI elements without `Button` keep using
+/// [`Style::background`], both can coexist (`Button` takes priority).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Button")]
 #[serde(default)]
 pub struct Button {
-    /// `false` = 显示 [`Button::disabled`] 颜色，且不再响应点击。
+    /// `false` = display [`Button::disabled`] color, no longer respond to clicks.
     pub interactable: bool,
     pub normal: [f32; 4],
     pub hover: [f32; 4],
@@ -612,7 +612,7 @@ impl Default for Button {
 }
 
 impl Button {
-    /// 当前应画的背景色；`interaction` 缺失时按未交互处理。
+    /// Background color to draw now; when `interaction` missing treated as non-interactive.
     pub fn color(&self, interaction: Option<&Interaction>) -> [f32; 4] {
         if !self.interactable {
             return self.disabled;
@@ -651,7 +651,7 @@ mod tests {
                 ..Default::default()
             })),
             button.pressed,
-            "按下比 hover 优先"
+            "Pressed takes priority over hover"
         );
         let disabled = Button {
             interactable: false,
@@ -671,7 +671,11 @@ mod tests {
     fn button_and_interaction_round_trip_through_json() {
         let button: Button = serde_json::from_str(r#"{"interactable":false}"#).unwrap();
         assert!(!button.interactable);
-        assert_eq!(button.normal, Button::default().normal, "其余字段走默认");
+        assert_eq!(
+            button.normal,
+            Button::default().normal,
+            "Other fields use defaults"
+        );
         let json = serde_json::to_string(&button).unwrap();
         let back: Button = serde_json::from_str(&json).unwrap();
         assert!(!back.interactable);
@@ -680,7 +684,7 @@ mod tests {
             serde_json::from_str(r#"{"hovered":true,"pressed":false,"clicked":true}"#).unwrap();
         assert!(interaction.hovered && interaction.clicked && !interaction.pressed);
         let legacy: Interaction = serde_json::from_str("{}").unwrap();
-        assert!(!legacy.hovered, "空对象 = 未交互");
+        assert!(!legacy.hovered, "Empty object = not interacted");
     }
 
     #[test]
@@ -695,7 +699,7 @@ mod tests {
 
     #[test]
     fn text_font_defaults_to_the_system_font_and_round_trips() {
-        // #583：旧文档没有 `font` → 空字符串 = 系统默认字体。
+        // #583: legacy document without `font` → empty string = system default font.
         let text: Text = serde_json::from_str(r#"{"content":"hi","font_size":20}"#).unwrap();
         assert!(text.font.is_empty());
 
@@ -711,18 +715,18 @@ mod tests {
 
     #[test]
     fn canvas_scales_the_reference_resolution_to_the_screen() {
-        // #463：1920×1080 设计稿在 960×540 上应该是 0.5。
+        // #463: 1920×1080 design at 960×540 should be 0.5.
         let canvas = Canvas::default();
         assert_eq!(canvas.scale_mode, CanvasScaleMode::ScaleWithScreenSize);
         assert!((canvas.scale_factor((960.0, 540.0)) - 0.5).abs() < 1e-5);
         assert!((canvas.scale_factor((1920.0, 1080.0)) - 1.0).abs() < 1e-5);
         assert!((canvas.scale_factor((3840.0, 2160.0)) - 2.0).abs() < 1e-5);
 
-        // 宽高比不同时，match 在 log 空间插值：960×1080 的宽比 0.5、高比 1.0。
+        // When aspect differs, match interpolates in log space: 960×1080 width ratio 0.5, height ratio 1.0.
         let skewed = canvas.scale_factor((960.0, 1080.0));
         assert!((skewed - 0.5f32.sqrt()).abs() < 1e-4, "{skewed}");
 
-        // 只贴合一边时直接取该边。
+        // When matching one side only, take that side directly.
         let width_only = Canvas {
             scale_mode: CanvasScaleMode::MatchWidthOrHeight,
             match_width_or_height: 0.0,
@@ -736,7 +740,7 @@ mod tests {
         };
         assert!((height_only.scale_factor((960.0, 1080.0)) - 1.0).abs() < 1e-5);
 
-        // ConstantPixelSize = 1，退化输入也回到 1 而不是 NaN/0。
+        // ConstantPixelSize = 1, degenerate input also returns 1 not NaN/0.
         let pixels = Canvas {
             scale_mode: CanvasScaleMode::ConstantPixelSize,
             ..Canvas::default()
@@ -757,7 +761,7 @@ mod tests {
         assert_eq!(back.reference_resolution, [1280.0, 720.0]);
         assert_eq!(back.scale_mode, CanvasScaleMode::MatchWidthOrHeight);
 
-        // 旧 `.scene.json` 里没有 `scale` 字段：按 1 处理，字号不被缩小。
+        // Old `.scene.json` has no `scale` field: treat as 1, font size not shrunk.
         let layout: ComputedLayout =
             serde_json::from_str(r#"{"rect":[0,0,100,50],"order":3}"#).unwrap();
         assert_eq!(layout.scale, 1.0);
@@ -794,7 +798,7 @@ mod tests {
 
     #[test]
     fn layout_defaults_to_no_grouping_and_round_trips() {
-        // #527：旧文档没有 `layout` → direction = None，子元素继续按锚点定位。
+        // #527: legacy document without `layout` → direction = None, children positioned by anchors.
         let legacy: Style = serde_json::from_str(r#"{"width":100}"#).unwrap();
         assert_eq!(legacy.layout.direction, LayoutDirection::None);
         assert!(!legacy.layout.fit_content);
@@ -840,7 +844,7 @@ mod tests {
 
     #[test]
     fn text_wrap_defaults_to_off_and_round_trips() {
-        // #527：不写 `wrap` 时保持单行；写了才换行。
+        // #527: when `wrap` not written keep single line; only wrap when written.
         let text: Text = serde_json::from_str(r#"{"content":"a b"}"#).unwrap();
         assert!(!text.wrap);
         let authored: Text = serde_json::from_str(r#"{"content":"a b","wrap":true}"#).unwrap();

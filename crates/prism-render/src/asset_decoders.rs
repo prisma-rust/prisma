@@ -89,7 +89,7 @@ fn read_f32_vectors<const N: usize>(
         .collect())
 }
 
-/// 解析 RTEX 字节 → TextureUploadInput。
+/// Parse RTEX bytes → TextureUploadInput.
 ///
 /// Only the base mip level is returned: `TextureUploadInput` carries one tightly
 /// packed buffer, and pre-baked mip chains are not uploaded yet (tracked by
@@ -172,8 +172,8 @@ fn rtex_texture_format(code: u8) -> Result<TextureFormat> {
         RTEX_FORMAT_RGBA8 => Ok(TextureFormat::Rgba8Srgb),
         RTEX_FORMAT_BC5 => Ok(TextureFormat::Bc5Unorm),
         RTEX_FORMAT_BC6H => Ok(TextureFormat::Bc6HUfloat),
-        // BC1 / BC3 不带颜色空间信息；与 RGBA8 一致按 sRGB 处理（albedo / emissive 是
-        // 主要用途。需要线性时上层用 `texture_format_for`，它知道槽位语义）（#519）。
+        // BC1 / BC3 without color space info; treated as sRGB same as RGBA8 (albedo / emissive is
+        // primary use. When linear needed, use `texture_format_for` on the layer, it knows slot bit semantics) (#519).
         RTEX_FORMAT_BC1 => Ok(TextureFormat::Bc1Srgb),
         RTEX_FORMAT_BC3 => Ok(TextureFormat::Bc3Srgb),
         RTEX_FORMAT_BC7 => Ok(TextureFormat::Bc7Srgb),
@@ -186,7 +186,7 @@ fn rtex_texture_format(code: u8) -> Result<TextureFormat> {
     }
 }
 
-/// 解析 RMES 字节 → MeshUploadInput。
+/// Parse RMES bytes → MeshUploadInput.
 ///
 /// `uv_channels > 1` is accepted, but only the first uv channel is uploaded
 /// (`MeshUploadInput` has a single uv set); tangents/colors stay empty because

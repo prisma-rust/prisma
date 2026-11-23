@@ -7,7 +7,7 @@ description = "Vulkan rendering backend for Prisma"
 
 [features]
 # ---- Modular building blocks: project templates select features (see docs/DESIGN.md §12) ----
-# 默认「全量」，库和示例行为不变；项目模板按需挑砖。
+# Default "full amount", library and example behavior unchanged; template project picks bricks as needed.
 default = [
     "pathtrace",
     "sharc",
@@ -21,31 +21,31 @@ default = [
     "shadows",
     # "gtao",
 ]
-# UI 叠加总开关（字形图集 + 管线 + 屏幕空间四边形）。纯 3D/无 UI 项目可关：
-# 关掉后 `ui_overlay` 只保留输入数据结构，渲染侧忽略 UI 命令。
+# UI overlay master switch (glyph atlas + pipeline + screen-space quad). Pure 3D / no-UI projects can disable:
+# after disabling `ui_overlay` only input data structures remain, render side ignores UI commands.
 #
-# 它**不**决定谁光栅化字形——那是下面两个文本后端的事：
-#   `ui-fontdue`     fontdue + ttf-parser（全平台，默认）
-#   `ui-directwrite` Windows 系统 DirectWrite（仅 Windows，省掉 fontdue/ttf-parser）
-# 只开 `ui` 不开后端 = 只画 quad、不画文字（省约 90 KB），启动时 warn 一次。
+# It **does not** decide who rasterizes glyphs — that is the job of the two text backends below:
+#   `ui-fontdue`     fontdue + ttf-parser (all platforms, default)
+#   `ui-directwrite` Windows system DirectWrite (Windows only, drops fontdue/ttf-parser)
+# Enabling only `ui` without a backend = only draws quads, no text (saves ~90 KB), warns once at launch.
 ui = ["dep:unicode-linebreak"]
-# 文本后端 A：fontdue 光栅 + ttf-parser（约 90 KB），全平台。
+# Text backend A: fontdue rasterization + ttf-parser (~90 KB), all platforms.
 ui-fontdue = ["ui", "dep:fontdue"]
-# 文本后端 B：Windows 系统 DirectWrite + GDI interop（`windows` 绑定只在 Windows 目标启用）。
-# 与 `ui-fontdue` **互斥**（同时开会白白把 fontdue/ttf-parser 留在二进制里），
-# 非 Windows 目标开它会直接编译失败（见 ui_overlay.rs 的 compile_error!）。
+# Text backend B: Windows system DirectWrite + GDI interop (`windows` bindings enabled only on Windows target).
+# **Mutually exclusive** with `ui-fontdue` (enabling both keeps fontdue/ttf-parser in binary for nothing),
+# enabling it on non-Windows target directly fails compilation (see compile_error! in ui_overlay.rs).
 ui-directwrite = ["ui", "dep:windows"]
-# 实时路径追踪（pt_pass.rs + acceleration structure 使用）。纯光栅项目可关。
+# Real-time path tracing (pt_pass.rs + acceleration structure). Pure raster projects can disable.
 pathtrace = []
 # ReSTIR GI for the raster path (restir_gi.rs + restir_gi.slang). Traces
 # secondary rays from the GBuffer and reuses reservoirs in space + time, so the
 # raster scene gets real-time indirect diffuse WITHOUT compiling the path tracer.
 # Needs VK_KHR_ray_query at runtime; falls back to Off when unavailable.
 restir_gi = []
-# SHaRC（NVIDIA RTXGI v1.6）: Spatially Hashed Radiance Cache。
-# 不依赖 pathtrace：光栅模式的 ReSTIR GI 也用它当辐射缓存终点（命中点查缓存，
-# 不再往下追）。关掉 = ReSTIR GI 只剩单次弹射 + 天空，PT 也退回纯路径追踪。
-# 见 docs/DESIGN.md §12.2。
+# SHaRC (NVIDIA RTXGI v1.6): Spatially Hashed Radiance Cache.
+# Does not depend on pathtrace: ReSTIR GI in raster mode also uses it as radiance cache endpoint (hit point queries cache,
+# no further tracing). Disabling = ReSTIR GI only single bounce + skybox, PT also falls back to pure path tracing.
+# See docs/DESIGN.md §12.2.
 sharc = []
 # PRT64 + 64-tree streaming GI pass (`prt_pass.rs` + `prt_*.comp.spv`).
 prt = []
@@ -59,16 +59,16 @@ dlfg = ["dlss"]
 nrd = []
 # Qualcomm Adreno Neural Fusion (SR / Frame Gen, mobile Adreno only).
 anf = []
-# 图像光照（IBL）：环境 cubemap 卷积 / irradiance / prefilter / BRDF LUT + HDR 解码。
-# 2D 或纯色场景可关，`IblResources` 退化为 1x1 中性灰（descriptor 布局不变）。
+# Image-based lighting (IBL): environment cubemap convolution / irradiance / prefilter / BRDF LUT + HDR decode.
+# 2D or flat-color scenes can disable, `IblResources` degrades to 1x1 neutral gray (descriptor layout unchanged).
 ibl = []
-# 天空盒 pass（skybox.vert/frag.spv + 管线）。依赖 `ibl`：没有环境 cubemap 就
-# 没有可画的背景。关掉后 `SkyboxPass` 退化成空实现，`ForwardPass` 调用点不变。
+# Skybox pass (skybox.vert/frag.spv + pipeline). Depends on `ibl`: without environment cubemap there is
+# no background to draw. After disabling `SkyboxPass` degrades to empty impl, `ForwardPass` call sites unchanged.
 skybox = ["ibl"]
-# 阴影贴图 pass（shadow_map_pass.rs）。关掉后 set 3 绑定 1x1 远深度 dummy，
-# 场景没有实时阴影（descriptor 布局不变，验证层干净）。
+# Shadow map pass (shadow_map_pass.rs). After disabling set 3 binds 1x1 far-depth dummy,
+# scene has no real-time shadow (descriptor layout unchanged, validation layer clean).
 shadows = []
-# GTAO（半分辨率环境光遮蔽，gtao.rs）。关掉后 set 4 绑定 1x1 白色 dummy。
+# GTAO (half-resolution ambient occlusion, gtao.rs). After disabling set 4 binds 1x1 white dummy.
 gtao = []
 
 [dependencies]
@@ -87,15 +87,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 slotmap = { workspace = true }
 glam = { workspace = true }
-# 只需要 PNG 编码（截图 + 最近邻缩放）。RGBe/HDR 解码是 `hdr.rs::load_rgbe`
-# 自己实现的，不依赖 image 的 `hdr` feature。
+# Only need PNG encode (screenshot + nearest-neighbor scale). RGBe/HDR decode is implemented
+# by `hdr.rs::load_rgbe` itself, does not depend on image `hdr` feature.
 image = { workspace = true, features = ["png"] }
 # UAX #14 break opportunities for `Text.wrap` (pixel advances, not column widths).
 unicode-linebreak = { workspace = true, optional = true }
 fontdue = { version = "0.9", optional = true }
 
-# 文本后端 B（`ui-directwrite`）：只用 Win32 的 DirectWrite + GDI 子集。
-# optional + 只在 windows 目标启用，所以 Linux/Android 的依赖图里不会出现它。
+# Text backend B (`ui-directwrite`): only Win32 DirectWrite + GDI subset.
+# Optional + enabled only on windows target, so Linux/Android dependency graph never includes it.
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, optional = true, features = [
     "Win32_Foundation",

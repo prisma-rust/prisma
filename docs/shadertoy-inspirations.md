@@ -1,426 +1,426 @@
-# Shadertoy 灵感收集
+# Shadertoy inspiration collection
 
-> 渲染效果分析与原理笔记
+> Rendering effect analysis and principle notes
 
 ---
 
-## 1. [MdVXzw] 深海浮块 (Deep Blue Floating Rectangles)
+## 1. [MdVXzw] Deep Blue Floating Rectangles
 
 **URL:** https://www.shadertoy.com/view/MdVXzw
 
-### 效果描述
+### Effect description
 
-深蓝背景上漂浮着大量半透明蓝色小方块，整体氛围静谧、抽象。背景有缓慢流动的云纹/噪波纹理，并有柔和的光晕中心；方块各自独立旋转、漂移，像深海中悬浮的微粒或水面反光碎片。
+Many semi-transparent blue small rectangles float on deep blue background, overall atmosphere quiet, abstract. Background has slowly flowing cloud / noise texture and soft glow center; rectangles rotate and drift independently, like suspended particles in deep sea or reflections on water.
 
-### 渲染原理
+### Rendering principles
 
-| 要素 | 实现方式 |
+| Element | Implementation |
 |------|----------|
-| **背景底色** | `bgColor = vec3(0.01, 0.16, 0.42)` 深海军蓝 |
-| **背景纹理** | 4 层 FBM（Fractal Brownian Motion）叠加，每层用旋转矩阵 `mat2(1.6, 1.2, -1.2, 1.6)` 变换 UV，产生有机云纹 |
-| **噪波类型** | 经典 Value Noise：`random()` 用 `fract(sin(dot))*43758.5453` 哈希，双线性插值平滑 |
-| **涟漪扰动** | FBM 结果作为 UV 偏移量叠加，产生水流般扭曲效果 |
-| **光晕** | `glowPos = vec2(-2., 0.)` 处用点积计算衰减，乘以 FBM 值 |
-| **方块生成** | 60 个方块循环：每个用 `random(vec2(index))` 决定大小、X 位置和旋转速度 |
-| **方块运动** | X 方向 `velX = -iTime/8.` 左漂；Y 方向 `sin(index*rnd*1000 + velY)` 正弦摆动 |
-| **方块渲染** | `rectangle()` 函数用 `smoothstep` 做软边缘（带 blur 参数），颜色乘以 `pos.z/maxSize` 实现大小→亮度映射 |
-| **后处理** | `sqrt(abs(col))` 做近似伽马校正，让颜色更柔和 |
+| **Background color** | `bgColor = vec3(0.01, 0.16, 0.42)` deep navy |
+| **Background texture** | 4 layers FBM (Fractal Brownian Motion) overlay, each transforms UV with rotation matrix `mat2(1.6, 1.2, -1.2, 1.6)`, producing organic cloud patterns |
+| **Noise type** | Classic Value Noise: `random()` uses `fract(sin(dot))*43758.5453` hash, bilinear interpolation smoothing |
+| **Ripple distortion** | FBM result added as UV offset, producing water-like distortion |
+| **Glow** | At `glowPos = vec2(-2., 0.)` compute falloff by dot product, multiplied by FBM value |
+| **Rectangle generation** | Loop 60 rectangles: each uses `random(vec2(index))` to decide size, X position and rotation speed |
+| **Rectangle motion** | X direction `velX = -iTime/8.` drift left; Y direction `sin(index*rnd*1000 + velY)` sine sway |
+| **Rectangle rendering** | `rectangle()` uses `smoothstep` for soft edges (with blur param), color multiplied by `pos.z/maxSize` for size→brightness mapping |
+| **Post-processing** | `sqrt(abs(col))` approximate gamma correction, softer colors |
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **软矩形 SDF 写法**（`smoothstep` 边缘模糊）可用于 UI/粒子
-- **FBM + 旋转矩阵**的噪声合成方式，适合云、水、烟雾效果
-- **批量小物体循环 + 伪随机属性分配**模式，适合粒子系统原型
+- **Soft rectangle SDF technique** (`smoothstep` edge blur) for UI / particles
+- **FBM + rotation matrix** noise composition, suitable for clouds, water, smoke
+- **Batch small-object loop + pseudo-random attribute assignment** pattern, suitable for particle system prototypes
 
 ---
 
-## 2. [XsK3RR] 1D 实时光照 (1D Real-Time Lighting)
+## 2. [XsK3RR] 1D Real-Time Lighting
 
 **URL:** https://www.shadertoy.com/view/XsK3RR
 
-### 效果描述
+### Effect description
 
-2D SDF 场景 + 多光源实时渲染。画面由圆形、环形、矩形等几何图形通过 CSG 组合构成，被 6 个彩色动态光源照亮，带有实时阴影。整体效果类似 2D 光影沙盒。
+2D SDF scene + multi-light real-time rendering. Image composed of circles, rings, rectangles via CSG, lit by 6 colored dynamic lights with real-time shadows. Overall like 2D light-and-shadow sandbox.
 
-### 渲染原理
+### Rendering principles
 
-#### 场景构建 (SDF + CSG)
+#### scene build  (SDF + CSG)
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **基础 SDF** | `sdCircle` / `sdRing` / `sdBox` / `sdRect` / `sdPlane` |
-| **布尔运算** | `opU` = `min`（并集）、`opI` = `max`（交集）、`opS` = `max(-a, b)`（差集） |
-| **域重复** | `Rep1`（1D 周期重复）、`Rep2`（2D 网格重复） |
-| **场景组成** | 屏幕边界作为墙壁 + 小圆点网格 + 细线网格 + 中心镂空方块 + 环形 + 旋转动画矩形切割 |
+| **Base SDF** | `sdCircle` / `sdRing` / `sdBox` / `sdRect` / `sdPlane` |
+| **Boolean ops** | `opU` = `min` (union), `opI` = `max` (intersection), `opS` = `max(-a, b)` (subtraction) |
+| **Domain repetition** | `Rep1` (1D periodic), `Rep2` (2D grid) |
+| **Scene composition** | Screen borders as walls + small dot grid + thin line grid + hollow center box + ring + rotating animated rectangle cut |
 
-#### 1D 阴影映射（核心创新）
+#### 1D shadow map (core innovation)
 
-- 对**每个光源**，预计算一张 **1D 纹理**：角度 θ → 该角度下最近的遮挡物距离
-- `SampleShadow()` 函数：
-  1. 将片段到光源的向量转为极坐标 `(angle, radius)`
-  2. 按角度采样 1D 阴影贴图 `texture(iChannel0, vec2(angle, light_id))` 得到最近距离 `s`
-  3. `1 - smoothstep(s, s+0.02, radius)` 输出阴影值（0 = 阴影内，1 = 照亮）
-- 复杂度：每光源 O(n) per 像素，对 2D 场景非常高效
+- For **each light**, precompute a **1D texture**: angle θ → nearest occluder distance at that angle
+- `SampleShadow()` function:
+  1. Convert fragment-to-light vector to polar `(angle, radius)`
+  2. Sample 1D shadow map by angle `texture(iChannel0, vec2(angle, light_id))` to get nearest distance `s`
+  3. `1 - smoothstep(s, s+0.02, radius)` outputs shadow value (0 = in shadow, 1 = lit)
+- Complexity: O(n) per light per pixel, very efficient for 2D scenes
 
-#### 光照计算
+#### Lighting calculation
 
 ```glsl
-l = 0.01 / pow(length(vec3(uv - o, 0.1)), 2.0);  // 平方反比衰减
-l *= SampleShadow(i, uv - o);                      // 阴影遮挡
-b += LightColor(i) * l;                            // 累加
+l = 0.01 / pow(length(vec3(uv - o, 0.1)), 2.0);  // inverse-square falloff
+l *= SampleShadow(i, uv - o);                      // shadow occlusion
+b += LightColor(i) * l;                            // accumulate
 ```
 
-- `AMBIENT_LIGHT = vec3(0.1)` 环境光基底
-- 6 个光源，位置/颜色存储在 `iChannel0` 纹理缓冲区
-- 衰减公式中的 `z=0.1` 防止奇点（除零）
+- `AMBIENT_LIGHT = vec3(0.1)` ambient base
+- 6 lights, position / color stored in `iChannel0` texture buffer
+- `z=0.1` in falloff prevents singularity (division by zero)
 
-#### 着色
+#### Shading
 
-- `mix(FLOOR_COLOR, WALL_COLOR, smoothstep(psz, 0.0, d))` — 根据 SDF 符号混合地面（内部）和墙壁（边缘）颜色
-- 最终颜色 = 材质色 × 累计光照
+- `mix(FLOOR_COLOR, WALL_COLOR, smoothstep(psz, 0.0, d))` — mix floor (inside) and wall (edge) by SDF sign
+- Final color = material color × accumulated lighting
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **1D 阴影映射**：对于 2D 游戏/UI 场景，比传统 2D 阴影贴图更轻量、无采样走样问题
-- **SDF + CSG 场景描述**：简洁优雅，适合编辑器中的 2D 原型工具
-- **纹理缓冲作为 GPU 数据存储**：用 `iChannel0` 存灯光数组和阴影贴图，类似 SSBO 的轻量替代
-- **平方反比 + 环境光 + 阴影**的完整 2D 光照管线，可直接映射为 `prism-render` 中的 2D 渲染 pass
+- **1D shadow mapping**: for 2D games / UI scenes lighter than traditional 2D shadow maps, no sampling aliasing
+- **SDF + CSG scene description**: concise and elegant, for 2D prototyping tools in editor
+- **Texture buffer as GPU data store**: `iChannel0` stores light array and shadow map, lightweight SSBO alternative
+- **Complete 2D lighting pipeline of inverse-square + ambient + shadow**, directly mappable to 2D render pass in `prism-render`
 
 ---
 
-## 3. [Xs3GWj] CRT 演示集 (CRT Demo Reel)
+## 3. [XsK3RR] CRT Demo Reel
 
-**URL:** https://www.shadertoy.com/view/Xs3GWj  
-**作者:** David A Roberts
+**URL:** https://www.shadertoy.com/view/Xs3GWj
+**Author:** David A Roberts
 
-### 效果描述
+### Effect description
 
-循环播放 5 段纯过程式生成的黑白/彩色图案，叠加复古 CRT 显示器效果（屏幕弯曲、边角暗角、扫描线、像素栅格）。每 10 秒一轮，开头/结尾有像素化过渡动画，模拟老式显示器启动/切换信号的效果。
+Loops 5 purely procedural black-white / color patterns with retro CRT display effect (screen curvature, vignette, scanlines, pixel grid). 10-second cycle, pixelation transition at start / end, simulating old monitor boot / signal switching.
 
-### 总体架构
+### Overall architecture
 
 ```
-每帧 → 4×SSAA 抗锯齿 → CRT 曲面 UV → 图案选择器 → CRT 后处理 → 输出
+Each frame → 4×SSAA → CRT curved UV → pattern selector → CRT post-process → output
          │                              │
-     (AA=4, 手动循环)         每 5 秒切换一个 demo
+     (AA=4, manual loop)         switch one demo every 5 seconds
                               (mod(0.1*iTime, 5))
 ```
 
-### 5 段过程式图案
+### 5 procedural patterns
 
-| # | 名称 | 原理 | 配色 |
+| # | Name | Principle | Palette |
 |---|------|------|------|
-| 1 | **margarita** | 螺旋距离场 `z = length(p) - 3.5·atan(p) + sin x + cos y`，对 `z` 取模生成螺旋条纹 | 红/黑/白 |
-| 2 | **plaid_meltdown** | 两种对角线波形 `cube_root(sin(2.5√2·(x±y)))` + 正弦扭曲 `2·sin(x·sin y + y·sin x)` 与高频噪声比较 | 黑/白 |
-| 3 | **sunlight_revealed** | 多组角度模运算生成彩色射线（蓝/红/黄），加上对数螺旋区域 | 蓝+红+黄+白 |
-| 4 | **threesome** | 三个中心点的 `sin(length)·cos(8·angle)` 乘积构成干涉图案，阈值切割 | 黑/白 |
-| 5 | **digital_bacteria** | 基于 `floor` 的细胞网格 + 三角函数条件判断，产生有机菌落形态 | 黄/褐/红/绿 |
+| 1 | **margarita** | Spiral distance field `z = length(p) - 3.5·atan(p) + sin x + cos y`, modulo `z` generates spiral stripes | Red / black / white |
+| 2 | **plaid_meltdown** | Two diagonal waveforms `cube_root(sin(2.5√2·(x±y)))` + sine warp `2·sin(x·sin y + y·sin x)` compared with high-freq noise | Black / white |
+| 3 | **sunlight_revealed** | Multiple angle modulo ops generate colored rays (blue / red / yellow), plus log-spiral regions | Blue + red + yellow + white |
+| 4 | **threesome** | Product of `sin(length)·cos(8·angle)` at three centers forms interference pattern, threshold cut | Black / white |
+| 5 | **digital_bacteria** | `floor`-based cell grid + trig condition checks, organic colony shapes | Yellow / brown / red / green |
 
-### CRT 模拟层
+### CRT simulation layers
 
-| 效果 | 实现 |
+| Effect | Implementation |
 |------|------|
-| **屏幕曲面** | `CRTCurveUV` — UV 从中心向外二次偏移，模拟显像管球面 |
-| **暗角** | `DrawVignette` — `uv.x·uv.y·(1-uv.x)·(1-uv.y)` 的 0.3 次幂 |
-| **扫描线** | `cos(π·y·240)` 水平扫描线，加轻微时间抖动 |
-| **像素栅格** | `cos(π·x·640)` 垂直方向模拟 CRT 荫罩/栅格 |
-| **像素化过渡** | 每 10 秒首尾 2 秒：`floor(p·scale)/scale` 降低虚拟分辨率，模拟信号切换 |
+| **Screen curvature** | `CRTCurveUV` — UV quadratic offset outward from center, simulates CRT sphere |
+| **Vignette** | `DrawVignette` — 0.3 power of `uv.x·uv.y·(1-uv.x)·(1-uv.y)` |
+| **Scanlines** | `cos(π·y·240)` horizontal scanlines, slight temporal jitter |
+| **Pixel grid** | `cos(π·x·640)` vertical simulates CRT shadow mask / grid |
+| **Pixelation transition** | First / last 2 seconds of every 10s: `floor(p·scale)/scale` lowers virtual resolution, simulates signal switching |
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **纯过程式图案生成**：无需纹理，适合做加载屏、UI 背景、封面图
-- **CRT 后处理链**：可封装为一组全屏 post-process 效果（曲面、暗角、扫描线、栅格）
-- **多 demo 循环调度**：用 `mod` + 时间分段管理不同渲染模式，适合引擎的过场/演示系统
-- **手动 SSAA**：`#define AA 4` + 循环累加平均，在无内置 MSAA 时作为参考实现
+- **Pure procedural pattern generation**: no textures, for loading screens, UI backgrounds, cover art
+- **CRT post-process chain**: can be wrapped as group of fullscreen post-process effects (curvature, vignette, scanlines, grid)
+- **Multi-demo loop scheduling**: `mod` + time segments managing different render modes, for engine cutscene / demo system
+- **Manual SSAA**: `#define AA 4` + loop accumulate average, reference when no built-in MSAA
 
 ---
 
-## 4. [43cBzn] 波动方块场 (Ripple Box Field)
+## 4. [43cBzn] Ripple Box Field
 
-**URL:** https://www.shadertoy.com/view/43cBzn  
-**参考:** tssSDN, Qiita (域重复 + 网格步进优化)
+**URL:** https://www.shadertoy.com/view/43cBzn
+**Reference:** tssSDN, Qiita (domain repetition + grid stepping optimization)
 
-### 效果描述
+### Effect description
 
-3D 场景中一个小红球在网格状方块平面上方飞行，方块受球体距离影响起伏波动——像水面涟漪扩散。每个方块独立上下弹跳，形成有机的波浪传播效果。简单漫反射光照，不同朝向面有颜色区分。
+In 3D scene a small red ball flies above grid of boxes, boxes undulate by distance to ball — like water ripples spreading. Each box independently bounces up / down, organic wave propagation. Simple diffuse lighting, different facing surfaces colored differently.
 
-### 渲染原理
+### Rendering principles
 
-#### 场景结构
+#### scene structure
 
 ```
-场景 = 运动小球 (red) ∪ 无限重复方格阵列 (grid boxes)
+scene = moving ball (red) ∪ infinitely repeated box array (grid boxes)
 ```
 
-#### 域重复 (Domain Repetition)
+#### Domain repetition
 
 ```glsl
-vec2 id = floor(q.xz / rep);            // 格子坐标
-q.xz = mod(q.xz, rep) - rep * 0.5;      // 映射到 [-rep/2, rep/2]
+vec2 id = floor(q.xz / rep);            // cell coords
+q.xz = mod(q.xz, rep) - rep * 0.5;      // map to [-rep/2, rep/2]
 ```
 
-- 只用 **1 个 SDF 盒子** 渲染无限网格
-- `rep = 0.04` — 格子间距
+- Render infinite grid with **1 SDF box**
+- `rep = 0.04` — cell spacing
 
-#### 波动动画
+#### Ripple animation
 
 ```glsl
-float bsDist = length(spo.xz - bcp.xz);                // 球到格子中心的距离
-float s = smoothstep(0., 0.5, bsDist);                 // 平滑衰减
+float bsDist = length(spo.xz - bcp.xz);                // ball-to-cell-center distance
+float s = smoothstep(0., 0.5, bsDist);                 // smooth falloff
 float height = sin(hash * PI2 + t * (2. + bsDist * 0.015)) * 0.05;
-q.y -= 0.125 - height * (1. - pow(s, 0.9));            // 方块高度偏移
+q.y -= 0.125 - height * (1. - pow(s, 0.9));            // box height offset
 ```
 
-- 每个方块的高度由 `hash`（基于格子坐标的伪随机数）决定相位
-- 频率随 `bsDist` 略微变化，产生**涟漪扩散**效果
-- `smoothstep` 让远处方块先静止、近处先波动
+- Each box height phase from `hash` (pseudo-random by cell coords)
+- Frequency varies slightly with `bsDist`, producing **ripple spread**
+- `smoothstep` makes distant boxes settle first, near ones move first
 
-#### 优化步进 (Grid-Aware Raymarching)
+#### Grid-aware raymarching optimization
 
 ```glsl
 accDist += min(
     min(
-        (step(0., rd.x) - mod(p.x, rep)) * rdi.x,   // 到下一个 x 格线的距离
-        (step(0., rd.z) - mod(p.z, rep)) * rdi.z    // 到下一个 z 格线的距离
+        (step(0., rd.x) - mod(p.x, rep)) * rdi.x,   // distance to next x grid line
+        (step(0., rd.z) - mod(p.z, rep)) * rdi.z    // distance to next z grid line
     ) + 0.0001,
-    dist                                            // SDF 距离
+    dist                                            // SDF distance
 );
 ```
 
-- 标准 SDF raymarch 可能跳过薄盒子，因为 SDF 在有重复物体时可能不准确
-- 额外步进到最近的网格边界，确保不会错过薄几何体
+- Standard SDF raymarch may skip thin boxes because SDF can be inaccurate with repeated objects
+- Extra stepping to nearest grid boundary ensures thin geometry isn't missed
 
-#### 光照
+#### Lighting
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **漫反射** | `dot(l, n) * 0.5 + 0.5`（半兰伯特风格） |
-| **球体材质** | mat=0 → 红色 |
-| **盒子材质** | mat=1 → 根据法线方向着色：`n.x>0.5`=红，`n.y>0.5`=白，`n.z>0.5`=深红 |
-| **伽马校正** | `pow(col, vec3(0.4545))` |
+| **Diffuse** | `dot(l, n) * 0.5 + 0.5` (half-Lambert style) |
+| **Ball material** | mat=0 → red |
+| **Box material** | mat=1 → colored by normal: `n.x>0.5`=red, `n.y>0.5`=white, `n.z>0.5`=dark red |
+| **Gamma correction** | `pow(col, vec3(0.4545))` |
 
-#### 相机
+#### camera
 
-- `ro = vec3(1, 1, 1.2)`，注视 `ta = vec3(0, 0.2, 0)`
-- 使用 `getRayDir` + `camera` 矩阵构建射线方向
-- 支持鼠标拖拽旋转（当前被注释掉：`m.x * 0.`）
+- `ro = vec3(1, 1, 1.2)`, looking at `ta = vec3(0, 0.2, 0)`
+- Uses `getRayDir` + `camera` matrix to build ray direction
+- Supports mouse drag rotation (currently commented out: `m.x * 0.`)
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **域重复 + 伪随机属性**：无限网格只需一个 SDF，适合草地、城市、粒子场
-- **距离驱动动画**：以物体到事件源的距离驱动动画参数，自然产生涟漪/波传播效果
-- **网格感知步进 (grid-aware stepping)**：在重复域 raymarch 中防止漏检薄物体，可直接用于 `prism-render` 的 SDF 渲染
-- **`minMat` 模式**：返回 `vec2(dist, materialID)` 统一管理材质，适合 ECS 的 material 系统设计
-
----
-
-## 5. [MdX3Rr] 程序化地形 + 运动模糊 (Procedural Terrain + Motion Blur)
-
-**URL:** https://www.shadertoy.com/view/MdX3Rr  
-**作者:** Inigo Quilez (2016)  
-**参考:** iquilezles.org — derivatives noise, soft shadow, fog, lighting, terrain raymarching
-
-### 效果描述
-
-双 pass 管线：**Pass 1** 渲染程序化生成的山脉地形（带云层、积雪、光照、软阴影、雾），同时编码屏幕空间速度向量到 alpha 通道；**Pass 2** 读取 Pass 1 的输出，对运动像素施加线性运动模糊，叠加暗角与色调映射后输出最终画面。模拟航拍视角下飞越山地的电影感镜头。
+- **Domain repetition + pseudo-random attributes**: infinite grid needs only one SDF, for grass, cities, particle fields
+- **Distance-driven animation**: drive animation params by object-to-event-source distance, naturally produces ripple / wave propagation
+- **Grid-aware stepping**: prevent missing thin objects in repeated-domain raymarch, directly usable in `prism-render` SDF rendering
+- **`minMat` pattern**: return `vec2(dist, materialID)` for unified material management, suits ECS material system design
 
 ---
 
-### Pass 1 — 地形渲染主 Pass
+## 5. [MdX3Rr] Procedural Terrain + Motion Blur
 
-`vec4 render()` 输出 `vec4(color, encoded_velocity)`
+**URL:** https://www.shadertoy.com/view/MdX3Rr
+**Author:** Inigo Quilez (2016)
+**Reference:** iquilezles.org — derivatives noise, soft shadow, fog, lighting, terrain raymarching
 
-#### 地形生成
+### Effect description
 
-使用 **Value Noise 的解析导数**（`noised()` 返回 `vec3(value, dx, dy)`）构建 FBM：
+Two-pass pipeline: **Pass 1** renders procedurally generated mountain terrain (with clouds, snow, lighting, soft shadows, fog), encoding screen-space velocity into alpha channel; **Pass 2** reads Pass 1 output, applies linear motion blur to moving pixels, adds vignette and tonemap. Simulates cinematic aerial flyover of mountains.
+
+---
+
+### Pass 1 — terrain render main pass
+
+`vec4 render()` outputs `vec4(color, encoded_velocity)`
+
+#### Terrain generation
+
+Build FBM using **analytic derivatives of Value Noise** (`noised()` returns `vec3(value, dx, dy)`):
 
 ```glsl
 for (int i = 0; i < 16; i++) {
     vec3 n = noised(p);
-    d += n.yz;                          // 累积导数，用于域扭曲
-    a += b * n.x / (1.0 + dot(d, d));  // 除法产生陡峭特征
+    d += n.yz;                          // accumulate derivatives for domain warp
+    a += b * n.x / (1.0 + dot(d, d));  // division creates steep features
     b *= 0.5;
-    p = m2 * p * 2.0;                   // 旋转缩放
+    p = m2 * p * 2.0;                   // rotate and scale
 }
 ```
 
-| 要素 | 细节 |
+| Element | Details |
 |------|------|
-| **噪声源** | `iChannel0` 256×256 随机纹理，`texelFetch` 读取，`&255` 循环寻址 |
-| **FBM 层数** | 高精度 `terrainH` = 16 层，中等 `terrainM` = 9 层，粗略 `terrainL` = 3 层 |
-| **域扭曲** | 每层累加导数 `d`，用于 `1/(1+d·d)` 除法，产生尖锐山脊 |
-| **缩放** | `SC = 250.0`，地形高度 ≈ `SC × 120 × FBM` |
+| **Noise source** | `iChannel0` 256×256 random texture, `texelFetch`, `&255` wrapping |
+| **FBM layers** | High-precision `terrainH` = 16, medium `terrainM` = 9, coarse `terrainL` = 3 |
+| **Domain warp** | Per-layer accumulate derivative `d` for `1/(1+d·d)` division, sharp ridges |
+| **Scale** | `SC = 250.0`, terrain height ≈ `SC × 120 × FBM` |
 
-三个精度的 terrain 函数分别用于：法线计算（高）、raycast/阴影（中）、相机高度（低）。
+Three precision terrain functions used for: normal calculation (high), raycast / shadow (medium), camera height (low).
 
 #### Raymarching
 
 ```glsl
 t += 0.4 * h;     // h = pos.y - terrainM(pos.xz)
-// 收敛条件: abs(h) < 0.0015 * t
+// convergence condition: abs(h) < 0.0015 * t
 ```
 
-- 标准的「向上/向下」relaxed raymarching
-- 300 步上限，距离自适应收敛容差
+- Standard "up / down" relaxed raymarching
+- 300-step cap, distance-adaptive convergence tolerance
 
-#### 光照系统
+#### Lighting system
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **主光源** | `light1 = normalize(vec3(-0.8, 0.4, -0.3))` 方向光 |
-| **漫反射** | `clamp(dot(light1, nor), 0, 1)` |
-| **环境光** | `0.5 + 0.5 × nor.y`，蓝色调 `vec3(0.4, 0.6, 1.0)` |
-| **背光** | 从光源水平反向 dot 法线 |
-| **软阴影** | IQ 经典 `softShadow`：80 步，`min(16·h/t)` 累加 |
-| **高光** | Blinn-Phong（half-vector），16 次幂 + Fresnel |
+| **Main light** | `light1 = normalize(vec3(-0.8, 0.4, -0.3))` directional |
+| **Diffuse** | `clamp(dot(light1, nor), 0, 1)` |
+| **Ambient** | `0.5 + 0.5 × nor.y`, blue tint `vec3(0.4, 0.6, 1.0)` |
+| **Backlight** | dot normal with horizontal reverse of light |
+| **Soft shadow** | IQ classic `softShadow`: 80 steps, `min(16·h/t)` accumulation |
+| **Specular** | Blinn-Phong (half-vector), power 16 + Fresnel |
 
-#### 材质分层
+#### Material layering
 
 ```
-岩石基底 → 草/土坡 → 雪顶
+rock base → grass / soil slope → snow cap
 ```
 
-- **岩石**：随机纹理波动 + 法线 y 控制混合
-- **草坡**：`smoothstep(0.7, 0.9, nor.y)` 混合绿色调
-- **雪顶**：高度 + FBM 扰动 + 法线坡度控制，`h`、`e`、`o` 三因子乘积混合
+- **Rock**: random texture fluctuation + normal y controlled blend
+- **Grass slope**: `smoothstep(0.7, 0.9, nor.y)` blends green tint
+- **Snow cap**: height + FBM perturbation + normal slope control, product of `h`, `e`, `o` factors
 
-#### 天空
+#### Sky
 
 ```glsl
-col = vec3(0.3, 0.5, 0.85) - rd.y * rd.y * 0.5;      // 渐变天空
-col += 0.25 * vec3(1.0, 0.7, 0.4) * pow(sundot, 5);   // 太阳光晕
-col += 0.25 * vec3(1.0, 0.8, 0.6) * pow(sundot, 64);  // 日冕
+col = vec3(0.3, 0.5, 0.85) - rd.y * rd.y * 0.5;      // gradient sky
+col += 0.25 * vec3(1.0, 0.7, 0.4) * pow(sundot, 5);   // sun glow
+col += 0.25 * vec3(1.0, 0.8, 0.6) * pow(sundot, 64);  // corona
 ```
 
-- 云层：FBM 采样 + 地平线混合
-- 地平线雾：`pow(1 - max(rd.y, 0), 16)` 向蓝色混合
+- Clouds: FBM sampling + horizon blend
+- Horizon fog: `pow(1 - max(rd.y, 0), 16)` blends toward blue
 
-#### 雾（距离雾）
+#### Fog (distance fog)
 
 ```glsl
 float fo = 1.0 - exp(-pow(0.001 * t / SC, 1.5));
 col = mix(col, fco, fo);
 ```
 
-指数幂雾，与距离成亚线性增长。
+Exponential-power fog, sub-linear growth with distance.
 
-#### 速度向量编码
+#### Velocity vector encoding
 
 ```glsl
-// 旧帧相机
+// old frame camera
 float oldTime = time - 0.1 * 1.0/24.0;
-vec3 wpos = ro + rd * t;                                    // 世界空间位置
-vec3 cpos = oldCam * (wpos - oldRo);                         // 旧相机空间
+vec3 wpos = ro + rd * t;                                    // world-space position
+vec3 cpos = oldCam * (wpos - oldRo);                         // old camera space
 vec2 npos = oldFl * cpos.xy / cpos.z;                        // NDC
-vec2 spos = 0.5 + 0.5 * npos * vec2(iResolution.y/iResolution.x, 1.0);  // 屏幕空间
+vec2 spos = 0.5 + 0.5 * npos * vec2(iResolution.y/iResolution.x, 1.0);  // screen space
 
-// 编码为单个 float
+// encode as single float
 vec2 uv = fragCoord / iResolution.xy;
 spos = clamp(0.5 + 0.5 * (spos - uv) / 0.25, 0.0, 1.0);
 vel = floor(spos.x * 1023.0) + floor(spos.y * 1023.0) * 1024.0;
 ```
 
-- 通过当前帧位置在**旧帧相机矩阵**下重投影得到屏幕速度
-- 2×10-bit 编码打包到 1 个 float
-- 天空像素 `vel = -1.0`（无运动模糊）
+- Screen velocity from reprojecting current-frame position under **old-frame camera matrix**
+- 2×10-bit packed into 1 float
+- Sky pixels `vel = -1.0` (no motion blur)
 
 ---
 
-### Pass 2 — Motion Blur 后处理
+### Pass 2 — Motion Blur post-processing
 
-（同前文，略缩为概要）
+(same as above, abbreviated as summary)
 
-#### 数据布局
+#### Data layout
 
 ```
 data.xyz = color (RGB)
-data.w   = encoded_velocity (或 <0 = 静态)
+data.w   = encoded_velocity (or <0 = static)
 ```
 
-#### 流程
+#### Process
 
-1. **速度解码**：`mod(w, 1024)/1023` + `floor(w/1024)/1023` → `[-0.25, 0.25]`
-2. **运动模糊**：32 tap 沿速度方向线性采样平均
-3. **暗角**：`0.5 + 0.5 × pow(16·x·y·(1-x)·(1-y), 0.1)`
-4. **色调映射**：`col*0.6 + 0.4*col²(3-2col) + vec3(0,0,0.04)`（S 曲线 + 冷偏色）
+1. **Velocity decode**: `mod(w, 1024)/1023` + `floor(w/1024)/1023` → `[-0.25, 0.25]`
+2. **Motion blur**: 32 taps linearly sampled and averaged along velocity
+3. **Vignette**: `0.5 + 0.5 × pow(16·x·y·(1-x)·(1-y), 0.1)`
+4. **Tonemap**: `col*0.6 + 0.4*col²(3-2col) + vec3(0,0,0.04)` (S-curve + cool tint)
 
 ---
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **双 pass 管线结构**：Pass1 渲染+编码 → Pass2 消费，与 `prism-render` graph 架构完全契合
-- **Value Noise 解析导数 + 域扭曲地形**：`1/(1+d·d)` 除法生成尖锐山脊，可用于程序化地形系统
-- **软阴影**：IQ 经典 80 步软阴影，可映射为引擎 shadow pass 选项
-- **单 float 编码 2×10-bit 速度向量**：带宽优化技巧，适合 motion vector pass
-- **分层材质混合**：高度/坡度/FBM 驱动的岩石→草→雪混合，可复用为 terrain layer blending 系统
-- **指数雾**：`1 - exp(-pow(d, 1.5))` 比线性雾更自然
-- **自定义色调映射**：线性 + smoothstep + 色罩，可作为内置 tonemap 选项
+- **Two-pass pipeline structure**: Pass1 render + encode → Pass2 consume, fits `prism-render` graph architecture
+- **Value Noise analytic derivatives + domain-warp terrain**: `1/(1+d·d)` creates sharp ridges, for procedural terrain system
+- **Soft shadows**: IQ classic 80-step soft shadow, mappable as engine shadow pass option
+- **Single float encoding 2×10-bit velocity vector**: bandwidth trick, for motion vector pass
+- **Layered material blending**: height / slope / FBM-driven rock→grass→snow, reusable as terrain layer blending system
+- **Exponential fog**: `1 - exp(-pow(d, 1.5))` more natural than linear fog
+- **Custom tonemap**: linear + smoothstep + color mask, as built-in tonemap option
 
 ---
 
-## 6. [4ttSWf] 程序化雨林 (Procedural Rainforest)
+## 6. [4ttSWf] Procedural Rainforest
 
-**URL:** https://www.shadertoy.com/view/4ttSWf  
-**作者:** Inigo Quilez  
-**参考:** iquilezles.org — derivatives noise, soft shadow, fog, lighting, terrain raymarching
+**URL:** https://www.shadertoy.com/view/4ttSWf
+**Author:** Inigo Quilez
+**Reference:** iquilezles.org — derivatives noise, soft shadow, fog, lighting, terrain raymarching
 
-### 效果描述
+### Effect description
 
-全程序化生成的雨林场景：起伏的山脉地形上覆盖着成千上万棵独立的树木，远处有体积云层，整体光照柔和自然。相机缓慢平移，带有时间累积抗锯齿（TAA-like temporal reprojection）和精细的后期调色。无需任何外部纹理，全部由数学函数生成。
+Fully procedural rainforest: undulating mountain terrain covered by thousands of individual trees, volumetric clouds in distance, soft natural lighting. Camera slowly pans, with temporal AA (TAA-like temporal reprojection) and fine post grading. No external textures, all math-generated.
 
-### 渲染架构
+### Render architecture
 
 ```
-每帧 → 抗锯齿抖动 → 光线步进地形/树木 → 体积云 → 后处理（雾 + 调色）→ 时域重投影混合 → 输出
+Each frame → AA jitter → raymarch terrain / trees → volumetric clouds → post-process (fog + grading) → temporal reprojection blend → output
                                                                            │
-                                                          iChannel0 存储上一帧相机矩阵 + 颜色
+                                                          iChannel0 stores previous-frame camera matrix + color
 ```
 
 ---
 
-### 关键基础设施
+### Key infrastructure
 
-#### 三维 Value Noise + 解析导数
+#### 3D Value Noise + analytic derivatives
 
 ```glsl
 vec4 noised(in vec3 x) {
-    // 返回 vec4(value, dx, dy, dz)
-    // 使用三次/五次插值 + 哈希查找
+    // returns vec4(value, dx, dy, dz)
+    // uses cubic / quintic interpolation + hash lookup
 }
 ```
 
-- 3D 版本：`n = p.x + 317*p.y + 157*p.z` 作为哈希种子，8 个角查表
-- 2D 版本：4 个角查表
-- 均返回解析导数，用于 FBM 累积和法线计算
+- 3D version: `n = p.x + 317*p.y + 157*p.z` as hash seed, 8 corners lookup
+- 2D version: 4 corners lookup
+- Both return analytic derivatives for FBM accumulation and normal calc
 
 #### FBM with Derivative Accumulation
 
-| 函数 | 维度 | 层数 | 用途 |
+| Function | Dimension | Layers | Purpose |
 |------|------|------|------|
-| `fbm_4` | 2D/3D | 4 | 树木分布、细节扰动 |
-| `fbmd_7` | 3D | 7 | 地形凹凸贴图 |
-| `fbmd_8` | 3D | 8 | 体积云密度 |
-| `fbmd_9` | 2D | 9 | 地形高度 |
-| `fbm_9` | 2D | 9 | 地形高度（无导数） |
+| `fbm_4` | 2D/3D | 4 | Tree distribution, detail perturbation |
+| `fbmd_7` | 3D | 7 | Terrain bump map |
+| `fbmd_8` | 3D | 8 | Volumetric cloud density |
+| `fbmd_9` | 2D | 9 | Terrain height |
+| `fbm_9` | 2D | 9 | Terrain height (no derivatives) |
 
-- 使用固定旋转矩阵 `m3`/`m2` 及其逆矩阵，旋转各层 UV
-- 支持通过 `ZERO = min(iFrame,0)` 在首帧跳过循环（兼容 Shadertoy）
+- Uses fixed rotation matrices `m3`/`m2` and inverses, rotating each layer's UV
+- Supports skipping loop on first frame via `ZERO = min(iFrame,0)` (Shadertoy compat)
 
 ---
 
-### 地形系统
+### Terrain system
 
 ```
 terrainMap(p) → vec2(height, slope_flag)
-terrainMapD(p) → vec4(height, normal)   // 解析法线
+terrainMapD(p) → vec4(height, normal)   // analytic normal
 ```
 
-- 9 层 FBM 生成基础高度，范围 ≈ 600m
-- `smoothstep(0.12, 0.13, abs(e+0.12))` 标记**高坡度区域**（悬崖）
-- 悬崖增强：`+90 * smoothstep(552, 594, height)`
-- 步进速度自适应：`t += dis * 0.8 * (1 - 0.75 * slope_flag)` — 陡坡区域步长减小提高精度
+- 9-layer FBM base height, range ≈ 600m
+- `smoothstep(0.12, 0.13, abs(e+0.12))` marks **high-slope areas** (cliffs)
+- Cliff boost: `+90 * smoothstep(552, 594, height)`
+- Adaptive step: `t += dis * 0.8 * (1 - 0.75 * slope_flag)` — smaller steps on steep slopes for precision
 
-#### 光线步进
+#### Raymarching
 
 ```glsl
 for (400 steps) {
@@ -430,156 +430,156 @@ for (400 steps) {
 }
 ```
 
-- 线性插值重计算交点（sub-step 精度）
-- 同时追踪树冠包围盒（`tree envelope`），为下一步扩展树木步进提供起点
+- Linear interpolation recomputes intersection (sub-step precision)
+- Simultaneously tracks tree envelope for next-step tree-marching start point
 
 ---
 
-### 树木系统
+### Tree system
 
-#### 分布
+#### Distribution
 
-- 2D 网格域重复：`floor(p.xz / 2.0)` + `fract(p.xz / 2.0)`
-- 4 邻居（2×2）查表，用 `hash2` 决定每棵树的：
-  - 位置偏移 `o = hash2(n+g)`
-  - 高度 `kMaxTreeHeight * (0.4 + 0.8*v.x)`（≈ 1.92 - 5.76）
-  - 宽度 `0.5 + 0.2*v.x + 0.3*v.y`（≈ 0.5 - 1.0）
-- 大尺度 FBM 控制生长密度：`bb < 0` 区域树冠减半，`bb > 0` 区域树干翻倍
+- 2D grid domain repetition: `floor(p.xz / 2.0)` + `fract(p.xz / 2.0)`
+- 4 neighbors (2×2) lookup, `hash2` decides each tree's:
+  - Position offset `o = hash2(n+g)`
+  - Height `kMaxTreeHeight * (0.4 + 0.8*v.x)` (≈ 1.92 - 5.76)
+  - Width `0.5 + 0.2*v.x + 0.3*v.y` (≈ 0.5 - 1.0)
+- Large-scale FBM controls growth density: `bb < 0` canopy halved, `bb > 0` trunk doubled
 
-#### 几何
+#### geometry
 
 ```glsl
 float k = sdEllipsoidY(q, vec2(width, 0.5*height));
 ```
 
-- 每棵树用**单个椭球体** SDF 表示
-- 远处（`rt < 1200`）施加 FBM 扰动使树冠更自然
+- Each tree as **single ellipsoid** SDF
+- Far (`rt < 1200`) apply FBM perturbation for natural canopy
 
-#### 材质
+#### material
 
-- 树干/树冠颜色由 `mid`（材质 ID：`hash` 决定）混合
-- 大尺度 FBM（`brownAreas`）控制棕色树皮区域
-- 距离近时颜色更饱和，远时偏向统一色调
+- Trunk / canopy color from `mid` (material ID: `hash` decides) blend
+- Large-scale FBM (`brownAreas`) controls brown bark regions
+- Near colors more saturated, far toward uniform tone
 
 ---
 
-### 体积云
+### Volumetric clouds
 
-| 要素 | 细节 |
+| Element | Details |
 |------|------|
-| **高度范围** | 600m - 1200m |
-| **密度场** | `fbmd_8` 8 层 FBM，域扭曲（时间动画） |
-| **步进** | 最多 128 步，自适应步长 |
-| **光照** | 漫反射 (`dot(nor, sunDir)`) + 环境光 + 半透射 |
-| **自阴影** | 沿光源方向采样密度场 `cloudsMap` |
-| **合成** | Front-to-back alpha blending |
-| **Fresnel** | `clamp(1+dot(nor,rd))` 边缘光 |
+| **Height range** | 600m - 1200m |
+| **Density field** | `fbmd_8` 8-layer FBM, domain warp (time animation) |
+| **Stepping** | up to 128 steps, adaptive |
+| **Lighting** | diffuse (`dot(nor, sunDir)`) + ambient + half-transmission |
+| **Self-shadow** | sample density field `cloudsMap` along light direction |
+| **Composition** | Front-to-back alpha blending |
+| **Fresnel** | `clamp(1+dot(nor,rd))` rim light |
 
 ---
 
-### 光照模型
+### Lighting model
 
-#### 地形光照
+#### Terrain lighting
 
 ```glsl
-// 法线 = 地形法线 + 凹凸贴图 (fbmd_7 derivative noise)
+// normal = terrain normal + bump map (fbmd_7 derivative noise)
 nor = normalize(tnor + 0.8*(1-abs(tnor.y))*0.8*fbmd_7(...).yzw);
 
-float dif = clamp(dot(nor, sunDir), 0, 1) * sha1 * sha2;  // 漫反射 × 阴影
-float bac = clamp(dot(-sunDir_horiz, nor), 0, 1);          // 背光
-float dom = clamp(0.5 + 0.5*nor.y, 0, 1);                  // 天光
-float foc = clamp((pos.y/2 - 180)/130, 0, 1);              // 高度焦点
+float dif = clamp(dot(nor, sunDir), 0, 1) * sha1 * sha2;  // diffuse × shadow
+float bac = clamp(dot(-sunDir_horiz, nor), 0, 1);          // backlight
+float dom = clamp(0.5 + 0.5*nor.y, 0, 1);                  // skylight
+float foc = clamp((pos.y/2 - 180)/130, 0, 1);              // height focus
 
-vec3 lin = 0.2 * mix(0.1*绿色, 3.0*蓝色, dom) * foc    // 环境
-         + 8.5 * vec3(1,0.9,0.8) * dif                  // 日光
-         + 0.27 * vec3(1.1,1.0,0.9) * bac * foc;        // 背光
+vec3 lin = 0.2 * mix(0.1*green, 3.0*blue, dom) * foc    // ambient
+         + 8.5 * vec3(1,0.9,0.8) * dif                  // sunlight
+         + 0.27 * vec3(1.1,1.0,0.9) * bac * foc;        // backlight
 ```
 
-- `LOWQUALITY` 宏控制阴影质量（32 vs 128 步）
-- 地形和树木分别有各自的阴影步进函数
+- `LOWQUALITY` macro controls shadow quality (32 vs 128 steps)
+- Terrain and trees have separate shadow-stepping functions
 
-#### 树木光照
+#### Tree lighting
 
-- 透射阴影：`sha2` 混合 `a + (1-a)*sha2`，模拟光线穿过树冠的效果
+- Transmission shadow: `sha2` blends `a + (1-a)*sha2`, simulating light through canopy
 
 ---
 
-### 后处理与调色
+### Post-processing and grading
 
 ```glsl
-// 伽马
+// gamma
 col = pow(clamp(col*1.1-0.02, 0, 1), vec3(0.4545));
 
-// 对比度 (smoothstep 曲线)
+// contrast (smoothstep curve)
 col = col*col*(3.0-2.0*col);
 
-// 调色
-col = pow(col, vec3(1.0, 0.92, 1.0));  // 轻微偏绿
-col *= vec3(1.02, 0.99, 0.9);           // 红/黄调
-col.z += 0.1;                            // 蓝色偏移
+// grading
+col = pow(col, vec3(1.0, 0.92, 1.0));  // slight green tint
+col *= vec3(1.02, 0.99, 0.9);           // red / yellow tone
+col.z += 0.1;                            // blue shift
 ```
 
 ---
 
-### 时域重投影 (Temporal Reprojection)
+### Temporal reprojection
 
 ```glsl
-// 存储相机矩阵到纹理前 3 行
+// store camera matrix to texture, first 3 rows
 if (ip.y==0 && ip.x<=2)
     fragColor = vec4(ca[ip.x], -dot(ca[ip.x], ro));
 
-// 下一帧：读取旧相机矩阵，重投影
+// next frame: read old camera matrix, reproject
 mat3x4 oldCam = mat3x4(texelFetch(iChannel0, ivec2(0,0), 0), ...);
 vec4 wpos = vec4(ro + rd*resT, 1.0);
-vec3 cpos = (wpos * oldCam);                          // 旧相机空间
+vec3 cpos = (wpos * oldCam);                          // old camera space
 vec2 npos = 1.5 * cpos.xy / cpos.z;                   // NDC
-vec2 spos = 0.5 + 0.5*npos * aspect;                  // 屏幕空间
+vec2 spos = 0.5 + 0.5*npos * aspect;                  // screen space
 
-// 混合
+// blend
 col = mix(ocol, col, 0.1 + 0.8*isCloud);
 ```
 
-- 每帧第一行像素存储 3×4 相机矩阵到 `iChannel0`
-- 相当于**自定义 TAA**：每帧与上一帧混合（云区域权重更高）
-- 有效降低噪点，尤其对阴影和树木边缘
+- First row of pixels each frame stores 3×4 camera matrix to `iChannel0`
+- Equivalent to **custom TAA**: blend with previous frame (higher weight in cloud regions)
+- Effectively reduces noise, especially on shadows and tree edges
 
 ---
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **程序化森林**：网格域重复 + 椭球体 SDF + 随机属性，可直接用于植被系统
-- **Value Noise 解析导数体系**：`noised` + `fbmd_*` 贯穿全场景，是统一的噪声基础设施
-- **时域重投影 TAA**：用几行像素存储相机矩阵实现，开销极低，适合引擎内置
-- **体积云管线**：自适应步进 + 自阴影 + front-to-back 合成，可提炼为通用体积渲染 pass
-- **凹凸贴图混合**：`terrainNor + fbmd_7.yzw * (1-abs(tnor.y))` 叠加细节法线
-- **LOWQUALITY 分级**：用宏切换阴影/步进精度，适合 desktop vs Android 适配
-- **调色三件套**：smoothstep 对比度 + 通道乘色 + 蓝色偏移，简洁有效的风格化后处理
+- **Procedural forest**: grid domain repetition + ellipsoid SDF + random attributes, directly for vegetation system
+- **Value Noise analytic derivative system**: `noised` + `fbmd_*` throughout, unified noise infrastructure
+- **Temporal reprojection TAA**: implemented with few pixel rows storing camera matrix, very low cost, suitable engine built-in
+- **Volumetric cloud pipeline**: adaptive stepping + self-shadow + front-to-back composition, extractable as general volumetric render pass
+- **Bump-map blending**: `terrainNor + fbmd_7.yzw * (1-abs(tnor.y))` layered detail normals
+- **LOWQUALITY tiering**: macro switch shadow / stepping precision, for desktop vs Android adaptation
+- **Grading trio**: smoothstep contrast + channel multiply + blue shift, concise effective stylized post-process
 
 ---
 
-## 7. [MdBGzG] 峡谷 (Canyon)
+## 7. [MdBGzG] Canyon
 
-**URL:** https://www.shadertoy.com/view/MdBGzG  
-**作者:** Inigo Quilez (2014)  
-**参考:** iquilezles.org — texture filtering, triplanar mapping, Oren-Nayar diffuse
+**URL:** https://www.shadertoy.com/view/MdBGzG
+**Author:** Inigo Quilez (2014)
+**Reference:** iquilezles.org — texture filtering, triplanar mapping, Oren-Nayar diffuse
 
-### 效果描述
+### Effect description
 
-程序化生成的峡谷景观：陡峭的岩壁从谷底升起，纹理细节丰富，阳光从一侧照射形成长阴影。相机沿着峡谷路径缓缓推进，视点从谷底逐渐抬升，展现峡谷全貌。整体色调温暖、干燥，带有墨西哥/美国西部峡谷地貌风格。
+Procedurally generated canyon: steep rock walls rise from valley floor, rich texture detail, sunlight from one side casts long shadows. Camera advances slowly along canyon path, view gradually rises from valley floor, revealing full canyon. Warm dry palette, Mexico / American Southwest canyon style.
 
-### 渲染架构
+### Render architecture
 
 ```
-每帧 → AA 循环 → 相机路径 → 光线步进 (SDF) → 材质查表 (triplanar) → Oren-Nayar 光照 → 软阴影 + 天空 → 雾 → 后处理
+Each frame → AA loop → camera path → raymarch (SDF) → material lookup (triplanar) → Oren-Nayar lighting → soft shadow + sky → fog → post-process
                                                                                                        │
-                                                                                        纹理来自 iChannel0/1/2/3
+                                                                                        textures from iChannel0/1/2/3
 ```
 
 ---
 
-### 噪声与位移
+### Noise and bit shifting
 
-使用**纹理查询实现 Value Noise**（`iChannel2` 存 256×256 随机图）：
+Use **texture lookup to implement Value Noise** (`iChannel2` holds 256×256 random image):
 
 ```glsl
 float noise1(in vec3 x) {
@@ -592,10 +592,10 @@ float noise1(in vec3 x) {
 }
 ```
 
-- 利用 `vec2(37,17)*p.z` 将 z 维度展开到 xy 平面，实现 3D 噪声查询
-- `noise1()` 比纯数学哈希更快（硬件纹理过滤）
+- Use `vec2(37,17)*p.z` to unfold z dimension into xy plane, implementing 3D noise lookup
+- `noise1()` faster than pure math hash (hardware texture filtering)
 
-**Displacement FBM**（3-4 层，旋转矩阵 `m`）：
+**Displacement FBM** (3–4 layers, rotation matrix `m`):
 
 ```glsl
 f = 0.5000*noise1(p); p = m*p*2.02;
@@ -605,33 +605,33 @@ f += 0.1250*noise1(p); p = m*p*2.01;
 
 ---
 
-### 地形系统
+### Terrain system
 
 ```glsl
 vec4 map(in vec3 p) {
-    float h = terrain(p.xz);               // 基础地形高度（纹理查表）
-    float dis = displacement(0.25*p*vec3(1,4,1));  // 位移噪声
+    float h = terrain(p.xz);               // base terrain height (texture lookup)
+    float dis = displacement(0.25*p*vec3(1,4,1));  // displacement noise
     dis *= 3.0;
     return vec4((dis + p.y - h) * 0.25, p.x, h, 0.0);
 }
 ```
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **基础高度** | `terrain()` 用 `iChannel0`（大尺度高度图） + `iChannel1`（细节）两层 smoothstep |
-| **悬崖/坡度** | 由噪声梯度自然形成，无人工悬崖增强 |
-| **位移细节** | 3-4 层 FBM displacement，各向异性缩放 `vec3(1,4,1)`（垂直拉伸） |
-| **LOWDETAIL** | 减少 displacement 层数、步进迭代次数 |
+| **Base height** | `terrain()` uses `iChannel0` (large-scale heightmap) + `iChannel1` (detail) two smoothsteps |
+| **Cliff / slope** | naturally formed by noise gradient, no artificial cliff boost |
+| **Displacement detail** | 3–4 layer FBM displacement, anisotropic scale `vec3(1,4,1)` (vertical stretch) |
+| **LOWDETAIL** | fewer displacement layers, fewer stepping iterations |
 
-#### 光线步进
+#### Raymarching
 
-- 256 步（LOWDETAIL）或 512 步（HIGH_QUALITY）
-- 自适应步长：`t += tmp.x * 0.7`（高品质）或 `t += tmp.x`（普通）
-- 收敛条件：`tmp.x < 0.001 * t`
+- 256 steps (LOWDETAIL) or 512 (HIGH_QUALITY)
+- Adaptive step: `t += tmp.x * 0.7` (high quality) or `t += tmp.x` (normal)
+- Convergence: `tmp.x < 0.001 * t`
 
 ---
 
-### 三平面纹理映射 (Triplanar Mapping)
+### Triplanar mapping
 
 ```glsl
 vec4 texcube(sampler2D sam, vec3 p, vec3 n) {
@@ -642,23 +642,23 @@ vec4 texcube(sampler2D sam, vec3 p, vec3 n) {
 }
 ```
 
-- 从三个方向采样，用法线权重混合——消除 UV 接缝
-- `texcubeGrad` 版本传入 `dpdx/dpdy`，支持各向异性过滤
+- Sample from three directions, blend by normal weights — eliminate UV seams
+- `texcubeGrad` version passes `dpdx/dpdy`, supports anisotropic filtering
 
-**手工纹理过滤** `textureGood()`：
+**Manual texture filtering** `textureGood()`:
 
 ```glsl
 uv = uv*1024.0 - 0.5;
 vec2 iuv = floor(uv);
 vec2 f = fract(uv);
-// 手动 4 点 bilinear fetch
+// manual 4-point bilinear fetch
 ```
 
-- 避免远处地形 mipmap 过渡导致的纹理 bleeding
+- Avoid texture bleeding from distant terrain mipmap transitions
 
 ---
 
-### 相机
+### camera
 
 ```glsl
 vec3 cpath(float t) {
@@ -672,59 +672,59 @@ vec3 cpath(float t) {
 }
 ```
 
-- **路径混搭**：用 `smoothstep` 在两个路径段之间淡入淡出
-- 先直线前进，再逐渐加入弯曲偏移
-- 相机高度 `ro.y = terrain2(ro.xz) - 0.5` 贴地飞行
+- **Path blending**: use `smoothstep` to fade between two path segments
+- First straight, then gradually add curved offset
+- Camera height `ro.y = terrain2(ro.xz) - 0.5` flies near ground
 
 ---
 
-### 材质系统
+### material system
 
-多层混合（全部 triplanar 纹理查表）：
+Multi-layer blend (all triplanar texture lookups):
 
 ```
-岩石基底纹理 → 植被覆盖 (green/brown) → 沙地亮色 → 微观细节
+rock base texture → vegetation cover (green/brown) → bright sand → micro detail
 ```
 
 ```glsl
-// 1. 基础岩石纹理
+// 1. base rock texture
 vec3 te = texcubeGrad(iChannel0, 0.15*pos, nor, ...).xyz;
 mate.xyz = 0.6 * te;
 
-// 2. 植被 (大尺度噪声控制)
+// 2. vegetation (large-scale noise control)
 float th = texcubeGrad(iChannel0, 0.002*pos, nor, ...).x;
 vec3 dcol = mix(vec3(0.2,0.3,0.0), 0.4*vec3(0.65,0.4,0.2), 0.2+0.8*th);
 mate.xyz = mix(mate.xyz, 2.0*dcol, th * smoothstep(0,1,nor.y));
 
-// 3. 沙地亮化
+// 3. sand brightening
 float rr = texcubeGrad(iChannel1, 0.04*pos, nor, ...).y;
 mate.xyz *= mix(vec3(1.0), 1.5*vec3(0.25,0.24,0.22)*1.5, rr);
 ```
 
-**凹凸贴图**：
+**Bump map**:
 
 ```glsl
-// 用 textureGrad 对 iChannel0 做差分求法线扰动
+// use textureGrad with iChannel0 for derivative normal perturbation
 bnor.x = texcubeGrad(..., pos+vec3(be,0,0), ...) - texcubeGrad(..., pos-vec3(be,0,0), ...);
 // ...
 nor = normalize(nor + amo*(bnor - nor*dot(bnor,nor)));
 ```
 
-- Gram-Schmidt 修正：`nor + amo*(bnor - nor*dot(bnor,nor))` 确保扰动后法线仍归一化
+- Gram-Schmidt correction: `nor + amo*(bnor - nor*dot(bnor,nor))` keeps normal normalized after perturbation
 
 ---
 
-### 光照
+### Lighting
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **漫反射** | **Oren-Nayar** 模型（粗糙表面）→ `diffuse()` 函数，粗糙度 `r=1.0` |
-| **天光** | 5 方向半球采样 + Oren-Nayar |
-| **背光** | `blig = normalize(vec3(-klig.x, 0, -klig.z))` 水平反向 |
-| **软阴影** | `softshadow( pos+0.01*nor, klig, 0.005, k=64 )`，50 步，`k` 控制硬度 |
-| **高光** | `mate.w * pow(clamp(dot(reflect, klig),0,1), 2) * clamp(dot(nor,klig),0,1)` |
+| **Diffuse** | **Oren-Nayar** model (rough surface) → `diffuse()` function, roughness `r=1.0` |
+| **Skylight** | 5-direction hemisphere sampling + Oren-Nayar |
+| **Backlight** | `blig = normalize(vec3(-klig.x, 0, -klig.z))` horizontal reverse |
+| **Soft shadow** | `softshadow(pos+0.01*nor, klig, 0.005, k=64)`, 50 steps, `k` controls hardness |
+| **Specular** | `mate.w * pow(clamp(dot(reflect, klig),0,1), 2) * clamp(dot(nor,klig),0,1)` |
 
-#### Oren-Nayar 漫反射
+#### Oren-Nayar diffuse
 
 ```glsl
 float diffuse(in vec3 l, in vec3 n, in vec3 v, float r) {
@@ -738,84 +738,84 @@ float diffuse(in vec3 l, in vec3 n, in vec3 v, float r) {
 }
 ```
 
-- 比 Lambert 更真实地模拟粗糙表面（岩石、沙地）
-- `r=1.0` = 非常粗糙
+- More realistic rough-surface (rock, sand) than Lambert
+- `r=1.0` = very rough
 
-#### 光源 → 阴影颜色映射
+#### light source  → shadow color map
 
 ```glsl
 lin += 7.0*dif*vec3(1.20,0.50,0.25) * vec3(sha, sha*0.5+0.5*sha*sha, sha*sha);
 ```
 
-- 阴影颜色带**暖色调衰减**：阴影区域偏红/暖，模拟光线穿过尘埃的色散
+- Shadow color has **warm tone falloff**: shadows reddish / warm, simulating light scattering through dust
 
-#### 天空
+#### Sky
 
 ```glsl
 vec3 hor = mix(1.2*vec3(0.70,1.0,1.0), vec3(1.5,0.5,0.2), 0.25+0.75*sun);
 vec3 col = mix(vec3(0.2,0.6,.9), hor, exp(-(4+2*(1-sun))*max(0,rd.y-0.1)));
 ```
 
-- 水平线颜色随太阳角度混合（冷蓝 → 暖黄）
-- 太阳光晕：4/32/512 次幂三环
+- Horizon color blends with sun angle (cool blue → warm yellow)
+- Sun glow: power 4 / 32 / 512 triple rings
 
-**云层**：简单纹理查找 `iChannel0` 做单层云
+**Clouds**: simple texture lookup `iChannel0` for single-layer cloud
 
 ---
 
-### 后处理链
+### Post-process chain
 
 ```glsl
-col *= 1.0 - 0.25*pow(1.0-clamp(dot(cam[2],klig),0,1), 3.0);  // 透镜光晕遮罩
+col *= 1.0 - 0.25*pow(1.0-clamp(dot(cam[2],klig),0,1), 3.0);  // lens flare mask
 
-col = pow(max(col,0), vec3(0.45));   // 伽马
-col *= vec3(1.1, 1.0, 1.0);          // 暖调
+col = pow(max(col,0), vec3(0.45));   // gamma
+col *= vec3(1.1, 1.0, 1.0);          // warm tone
 col = clamp(col, 0, 1);
-col = col*col*(3.0-2.0*col);          // 对比度 (smoothstep)
-col = pow(col, vec3(0.9, 1.0, 1.0)); // 红/绿通道提亮
-col = mix(col, vec3(dot(col, vec3(0.333))), 0.4);  // 40% 去饱和度
-col = col*0.5 + 0.5*col*col*(3.0-2.0*col);         // 再次对比度
-tot *= 0.3 + 0.7*pow(16*q.x*q.y*(1-q.x)*(1-q.y), 0.1);  // 暗角
+col = col*col*(3.0-2.0*col);          // contrast (smoothstep)
+col = pow(col, vec3(0.9, 1.0, 1.0)); // brighten red / green channels
+col = mix(col, vec3(dot(col, vec3(0.333))), 0.4);  // 40% desaturation
+col = col*0.5 + 0.5*col*col*(3.0-2.0*col);         // contrast again
+tot *= 0.3 + 0.7*pow(16*q.x*q.y*(1-q.x)*(1-q.y), 0.1);  // vignette
 ```
 
-- 强烈的风格化调色：暖偏色 + 去饱和 + 双重对比度曲线
-- 暗角乘在 AA 累加之后
+- Strong stylized grading: warm tint + desaturation + double contrast curves
+- Vignette multiplied after AA accumulation
 
 ---
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **三平面纹理映射 (Triplanar)**：消除地形 UV 接缝的必备技术，可直接封装为引擎 utility
-- **纹理做噪声**：用预计算随机纹理替代数学哈希，性能更好（尤其移动端）
-- **Oren-Nayar 漫反射**：比 Lambert 更适合岩石/沙地/粗糙材质，可作为 BRDF 选项
-- **手动纹理滤波**：`textureGood()` 避免 mipmap 过渡问题，对远景地形纹理有用
-- **相机路径混合**：用 `smoothstep` + `cos` 组合实现平滑路径过渡，适合引擎过场系统
-- **材质分层**：基础纹理 → 植被 → 沙地 → 微观细节的多层混合模式
-- **Gram-Schmidt 法线扰动**：`nor + amo*(bnor - nor*dot(bnor,nor))` 保持正交
-- **阴影着色映射**：随阴影深度改变颜色（暖衰减），提升光照真实感
-
----
-
-## 8. [MdlGW7] 平原河流 (River Plain)
-
-**URL:** https://www.shadertoy.com/view/MdlGW7  
-**作者:** Inigo Quilez (2013)  
-**参考:** iquilezles.org — volumetric rendering, noise-based trees, god rays
-
-### 效果描述
-
-开阔的平原上流淌着一条河流，两岸覆盖着茂密的树林，天空中有体积云和散射的阳光。相机沿圆形路径环绕飞行，阳光从一侧照射，在云层间形成**上帝光 (god rays)**。树木以体素密度场的方式呈现，而非独立几何体。这是一个包含速度编码的双 pass 管线（与 MdX3Rr 相同）。
-
-### 总体架构
-
-```
-光线步进 → 湖泊/河流 → 地形 → 体积树 → 体积云 + 上帝光 → 速度编码 → Pass2 运动模糊
-                                                                         (同 MdX3Rr post-pass)
-```
+- **Triplanar mapping**: essential technique eliminating terrain UV seams, can be wrapped as engine utility
+- **Texture as noise**: precomputed random texture replaces math hash, better performance (especially mobile)
+- **Oren-Nayar diffuse**: better than Lambert for rock / sand / rough materials, as BRDF option
+- **Manual texture filtering**: `textureGood()` avoids mipmap transition issues, useful for distant terrain textures
+- **Camera path blending**: `smoothstep` + `cos` smooth path transitions, for engine cutscene system
+- **Material layering**: base texture → vegetation → sand → micro detail multi-layer blend pattern
+- **Gram-Schmidt normal perturbation**: `nor + amo*(bnor - nor*dot(bnor,nor))` preserves orthogonality
+- **Shadow color mapping**: color shifts with shadow depth (warm falloff), improves lighting realism
 
 ---
 
-### 地形与河流
+## 8. [MdlGW7] River Plain
+
+**URL:** https://www.shadertoy.com/view/MdlGW7
+**Author:** Inigo Quilez (2013)
+**Reference:** iquilezles.org — volumetric rendering, noise-based trees, god rays
+
+### Effect description
+
+Open plain with a river flowing through, dense forests on both banks, volumetric clouds and scattered sunlight in sky. Camera flies circular orbit, sun from one side forms **god rays** through cloud gaps. Trees rendered as voxel density fields, not individual geometry. Two-pass pipeline with velocity encoding (same as MdX3Rr).
+
+### Overall architecture
+
+```
+Raymarch → lake / river → terrain → volumetric trees → volumetric clouds + god rays → velocity encode → Pass2 motion blur
+                                                                         (same MdX3Rr post-pass)
+```
+
+---
+
+### Terrain and river
 
 ```glsl
 float envelope(vec3 p) {
@@ -824,13 +824,13 @@ float envelope(vec3 p) {
 }
 ```
 
-| 要素 | 细节 |
+| Element | Details |
 |------|------|
-| **地形高度** | `envelope()` = 基底 0.1 + 非湖泊区×0.9×高度纹理 |
-| **河流/湖泊** | `iChannel0` 大尺度纹理的 `smoothstep(0.62, 0.72)` 二值化标记水域 |
-| **水域渲染** | 平面反射（扰动法线）+ 太阳高光 + Fresnel + 云阴影叠加 |
+| **Terrain height** | `envelope()` = base 0.1 + non-lake × 0.9 × height texture |
+| **River / lake** | `iChannel0` large-scale texture `smoothstep(0.62, 0.72)` binarized marks water |
+| **Water rendering** | planar reflection (perturbed normal) + sun specular + Fresnel + cloud shadow overlay |
 
-#### 水面法线
+#### Water-surface normal
 
 ```glsl
 nor.xz = 0.10*(-1+2*texture(iChannel3, 1.5*pos.xz).xz);
@@ -839,266 +839,266 @@ nor.xz += 0.20*(-1+2*texture(iChannel3, 6.0*pos.xz).xz);
 nor = normalize(nor);
 ```
 
-三层纹理叠加扰动，模拟水流波纹。
+Three texture layers overlay perturbation, simulating water ripples.
 
 ---
 
-### 树木：体素密度场（非几何体）
+### Trees: voxel density field (not geometry)
 
-这是此 shader 最独特的技术——**树木不是独立 SDF，而是体素密度场**：
+Most unique technique here — **trees aren't independent SDFs, but voxel density fields**:
 
 ```glsl
 vec4 mapTrees(vec3 pos, vec3 rd) {
-    float r = clamp(h / e, 0, 1);                     // 归一化树高
-    float den = smoothstep(r, 1.0, texture(iChannel0, pos.xz*0.15).x);  // 密度
-    den *= 1.0 - 0.95 * clamp((r-0.75)/(1-0.75), 0, 1);  // 顶部渐变收窄
-    
-    // 光照
+    float r = clamp(h / e, 0, 1);                     // normalized tree height
+    float den = smoothstep(r, 1.0, texture(iChannel0, pos.xz*0.15).x);  // density
+    den *= 1.0 - 0.95 * clamp((r-0.75)/(1-0.75), 0, 1);  // top taper
+
+    // lighting
     vec3 nor = calcNormal(pos);
     vec3 dif = vec3(1.0) * clamp(dot(nor, lig), 0, 1);
     float amb = 0.5 + 0.5*nor.y;
-    
-    // 云阴影投射到树上
+
+    // cloud shadow cast onto trees
     float w = (2.8-pos.y)/lig.y;
     float c = fbm((pos+w*lig)*0.35);
     c = smoothstep(0.38, 0.6, c);
     dif *= pow(vec3(c), vec3(0.8, 1.0, 1.5));
-    
+
     // BRDF
     vec3 brdf = 1.7*vec3(1.5,1.0,0.8)*dif*(0.1+0.9*oc) + 1.3*amb*vec3(0.1,0.15,0.2)*oc;
     vec3 mate = 0.6*vec3(0.5,0.5,0.1) + 0.3*texture(iChannel1, 0.1*pos.xz).zyx;
     col = brdf * mate;
-    
-    den *= 1.0 - isLake;  // 水域无树
+
+    den *= 1.0 - isLake;  // no trees in water
     return vec4(col, den);
 }
 ```
 
-#### 体积树 vs SDF 树对比
+#### Volumetric trees vs SDF trees comparison
 
-| 特性 | MdlGW7 体积树 | 4ttSWf SDF 椭球树 |
+| Feature | MdlGW7 volumetric trees | 4ttSWf SDF ellipsoid trees |
 |------|-------------|-----------------|
-| **每棵树独立** | ❌ 连续的密度场 | ✅ 独立椭球体 |
-| **几何精度** | 低（模糊 canopy） | 中（可分辨树冠形状） |
-| **步进成本** | 512 步 front-to-back | SDF raymarch + 阴影 |
-| **适合距离** | 中远距离 | 中近距离 |
+| **Per-tree independence** | ❌ continuous density field | ✅ independent ellipsoids |
+| **Geometry precision** | low (blurry canopy) | medium (distinguishable canopy shape) |
+| **Stepping cost** | 512 steps front-to-back | SDF raymarch + shadows |
+| **Suitable distance** | mid-far | mid-near |
 
-#### 树木体积步进
+#### Volumetric tree stepping
 
 ```glsl
-for (512步) {
+for (512 steps) {
     vec4 col = mapTrees(pos, rd);
-    col.xyz = mix(col.xyz, bgcol, 1-exp(-0.0018*t*t));  // 雾混合
+    col.xyz = mix(col.xyz, bgcol, 1-exp(-0.0018*t*t));  // fog blend
     col.rgb *= col.a;
     sum = sum + col*(1-sum.a);                           // front-to-back
-    t += 0.0035*t;                                       // 指数步长
+    t += 0.0035*t;                                       // exponential step
 }
 ```
 
 ---
 
-### 体积云
+### Volumetric clouds
 
-- 4 层 FBM 密度场，高度范围 `[2.5, 3.1]`
-- 云自阴影：沿光源方向采样 FBM
-- 64 步 front-to-back alpha blending
-- 太阳光染色：`col.xyz += vec3(1,0.7,0.4)*0.4*pow(sun, 6)*(1-col.w)`
+- 4-layer FBM density field, height range `[2.5, 3.1]`
+- Cloud self-shadow: sample FBM along light direction
+- 64 steps front-to-back alpha blending
+- Sun tint: `col.xyz += vec3(1,0.7,0.4)*0.4*pow(sun, 6)*(1-col.w)`
 
-### 上帝光 (God Rays)
+### God rays
 
 ```glsl
-// 在云步进中累积：
+// accumulate during cloud stepping:
 rays += 0.02 * smoothstep(0.38, 0.6, c) * (1-col.a) * (1-smoothstep(2.75, 2.8, pos.y));
 
-// 最终叠加：
+// final overlay:
 col += (1-0.8*col) * rays*rays*rays * 0.4 * vec3(1.0, 0.8, 0.7);
 ```
 
-- 在云层缝隙（`1-col.a`）且朝向光源（`c` 通过阈值）的区域累积
-- `rays³` 锐化射线形状
-- `(1-0.8*col)` 使亮区更强、暗区受抑制
+- Accumulate in cloud gaps (`1-col.a`) facing light (`c` passes threshold)
+- `rays³` sharpens ray shape
+- `(1-0.8*col)` strengthens bright regions, suppresses dark
 
 ---
 
-### 光照总览
+### Lighting overview
 
-| 要素 | 实现 |
+| Element | Implementation |
 |------|------|
-| **光源** | `lig = normalize(vec3(0.7, 0.4, 0.2))` 暖色方向光 |
-| **天空** | `vec3(0.84,0.95,1.0)*0.77 - rd.y*0.6` 渐变 + 太阳光晕 |
-| **树木光照** | 地形法线漫反射 + 环境光 + 云阴影透射 |
-| **水面** | 反射太阳 + Fresnel + 云阴影 |
-| **雾** | `1-exp(-0.0018*t*t)` 指数平方雾 |
+| **Light** | `lig = normalize(vec3(0.7, 0.4, 0.2))` warm directional |
+| **Sky** | `vec3(0.84,0.95,1.0)*0.77 - rd.y*0.6` gradient + sun glow |
+| **Tree lighting** | terrain-normal diffuse + ambient + cloud shadow transmission |
+| **Water** | reflect sun + Fresnel + cloud shadow |
+| **Fog** | `1-exp(-0.0018*t*t)` exponential-square fog |
 
-### 速度编码
+### Velocity encoding
 
-与 MdX3Rr 完全相同，但精度降为 **2×8-bit**（255）：
+Same as MdX3Rr, but precision reduced to **2×8-bit** (255):
 
 ```glsl
 vel = floor(spos.x*255.0) + floor(spos.y*255.0)*256.0;
 ```
 
-### 后处理
+### post-processing
 
 ```glsl
-col = pow(col, vec3(0.45));                    // 伽马
-col = col*0.1 + 0.9*col*col*(3.0-2.0*col);     // 对比度 (smoothstep 90%)
-col = mix(col, vec3(luminance), 0.2);           // 20% 去饱和
-col *= vec3(1.06, 1.05, 1.0);                   // 暖调
+col = pow(col, vec3(0.45));                    // gamma
+col = col*0.1 + 0.9*col*col*(3.0-2.0*col);     // contrast (smoothstep 90%)
+col = mix(col, vec3(luminance), 0.2);           // 20% desaturation
+col *= vec3(1.06, 1.05, 1.0);                   // warm tone
 ```
 
 ---
 
-### 可借鉴到 Prisma 的点
+### Points to borrow for Prisma
 
-- **体积树渲染**：用 alpha-blended 密度场替代独立 SDF 树，适合中远距离植被——品质/性能可伸缩
-- **上帝光 (God Rays)**：在体积步进中累积射线 + 后叠加，比独立 post-process 更真实
-- **体素密度场 vs SDF 的选择**：同一个场景中可根据距离切换（近处 SDF 细节，远处体积），LOD 思路
-- **水面波纹法线**：多层纹理叠加扰动，简单有效
-- **速度编码精度可调**：8-bit vs 10-bit，品质/带宽权衡
-- **指数步长**：`t += 0.0035*t` 在体积步进中自动平衡近/远采样密度
-
----
-
-# 附录：地形侵蚀与高度场技术总结
-
-> 基于以上 8 个 shader 的分析，从中提炼地形高度生成与侵蚀模拟的技术，为 Prisma 的 heightmap generator 提供参考。
+- **Volumetric tree rendering**: alpha-blended density field replacing independent SDF trees, for mid-far vegetation — scalable quality / performance
+- **God rays**: accumulate rays during volumetric stepping + post overlay, more realistic than standalone post-process
+- **Voxel density field vs SDF choice**: can switch by distance in same scene (near SDF detail, far volumetric), LOD thinking
+- **Water ripple normals**: multi-layer texture overlay perturbation, simple effective
+- **Velocity encoding precision adjustable**: 8-bit vs 10-bit, quality / bandwidth tradeoff
+- **Exponential step**: `t += 0.0035*t` auto-balances near / far sampling density in volumetric stepping
 
 ---
 
-## 一、高度场生成方案对比
+# Appendix: Terrain erosion and heightfield techniques summary
 
-| 方案 | 代表 Shader | 原理 | 优缺点 |
+> Based on analysis of above 8 shaders, extract terrain height generation and erosion simulation techniques as reference for Prisma heightmap generator.
+
+---
+
+## I. Heightfield generation approach comparison
+
+| Approach | Representative shader | Principle | Pros / cons |
 |------|-----------|------|--------|
-| **FBM 纯数学噪声** | MdX3Rr | 多层 Value/Perlin 噪声叠加，旋转矩阵变频 | 完全程序化、无限地形；可加域扭曲生成山脊 |
-| **纹理查表噪声** | MdBGzG, MdlGW7 | `texelFetch` / `textureLod` 读取预计算随机纹理 | 更快（硬件纹理过滤），但精度受纹理尺寸限制 |
-| **混合：纹理基底 + FBM 细节** | MdBGzG | `terrain()`=纹理查表 + `displacement()`=FBM | 兼具大尺度可控性和小尺度随机性 |
-| **SDF 域重复 + 伪随机高度** | 43cBzn | `mod(p, rep)` 生成无限网格，`rand(id)` 决定高度 | 适合人造规则结构（城市、平台），不适合自然地形 |
+| **FBM pure math noise** | MdX3Rr | Multi-layer Value / Perlin noise overlay, rotation matrix frequency change | Fully procedural, infinite terrain; domain warp for ridges |
+| **Texture lookup noise** | MdBGzG, MdlGW7 | `texelFetch` / `textureLod` reading precomputed random texture | Faster (hardware texture filtering), precision limited by texture size |
+| **Hybrid: texture base + FBM detail** | MdBGzG | `terrain()`=texture lookup + `displacement()`=FBM | Both large-scale controllability and small-scale randomness |
+| **SDF domain repetition + pseudo-random height** | 43cBzn | `mod(p, rep)` infinite grid, `rand(id)` height | For artificial regular structures (cities, platforms), not natural terrain |
 
-**推荐引擎方案**：混合模式 — 纹理基底提供可编辑的大尺度形状，FBM/域扭曲提供自然细节。
+**Recommended engine approach**: hybrid — texture base provides editable large-scale shape, FBM / domain warp provides natural detail.
 
 ---
 
-## 二、FBM 参数化对比
+## II. FBM parameterization comparison
 
-| Shader | 函数 | 层数 | 旋转矩阵 | 频率倍增 | 振幅衰减 | 特殊处理 |
+| Shader | Function | Layers | Rotation matrix | Freq multiplier | Amp decay | Special handling |
 |--------|------|------|----------|----------|----------|----------|
-| MdX3Rr | `fbm` / `noised` | 4-16 | `mat2(0.8, -0.6, 0.6, 0.8)` | 2.0 | 0.5 | 域扭曲 `1/(1+d·d)` 生成尖锐山脊 |
-| 4ttSWf | `fbmd_9` | 9 | `m2` / `m2i` | 1.9 | 0.55 | 解析导数累积 → 法线 |
-| MdBGzG | `displacement` | 3-4 | IQ `m` 矩阵 | 2.0 | 0.5 | 各向异性缩放 `vec3(1,4,1)` |
-| MdlGW7 | `fbm` | 4 | IQ `m` 矩阵 | 2.0 | 0.5 | 纯值噪声无导数 |
-| 4ttSWf(cld) | `fbmd_8` | 8 | `m3` / `m3i` | 2.0 | 0.65 | 7 层累积导数，第 8 层仅值 |
+| MdX3Rr | `fbm` / `noised` | 4-16 | `mat2(0.8, -0.6, 0.6, 0.8)` | 2.0 | 0.5 | Domain warp `1/(1+d·d)` sharp ridges |
+| 4ttSWf | `fbmd_9` | 9 | `m2` / `m2i` | 1.9 | 0.55 | Analytic derivative accumulation → normals |
+| MdBGzG | `displacement` | 3-4 | IQ `m` matrix | 2.0 | 0.5 | Anisotropic scale `vec3(1,4,1)` |
+| MdlGW7 | `fbm` | 4 | IQ `m` matrix | 2.0 | 0.5 | Pure value noise no derivatives |
+| 4ttSWf(cld) | `fbmd_8` | 8 | `m3` / `m3i` | 2.0 | 0.65 | 7 layers derivative accumulation, 8th value only |
 
-**关键参数经验值**：
-- 频率倍增 ≈ 1.9~2.0
-- 振幅衰减 ≈ 0.5~0.65（值越小细节越少但越平滑）
-- 层数：3-4（粗糙）/ 7-9（高品质）/ 16（极端细节）
+**Key parameter empirical values**:
+- Frequency multiplier ≈ 1.9~2.0
+- Amp decay ≈ 0.5~0.65 (smaller = less detail but smoother)
+- Layers: 3-4 (rough) / 7-9 (high quality) / 16 (extreme detail)
 
 ---
 
-## 三、侵蚀模拟技术（程序化，非物理模拟）
+## III. Erosion simulation techniques (procedural, not physical simulation)
 
-这些 shader 不包含真实水蚀/热侵蚀粒子模拟，但用以下技巧**伪造了侵蚀外观**：
+These shaders don't contain real water / thermal erosion particle simulation, but **fake erosion appearance** with following tricks:
 
-### 1. 山脊/沟壑：域扭曲 (Domain Warping)
+### 1. Ridges / gullies: domain warping
 
-**MdX3Rr 核心代码**：
+**MdX3Rr core code**:
 ```glsl
 vec2 d = vec2(0);
 for (int i = 0; i < 16; i++) {
     vec3 n = noised(p);
-    d += n.yz;                      // 累积梯度
-    a += b * n.x / (1.0 + dot(d, d)); // 除法产生尖锐谷/脊
+    d += n.yz;                      // accumulate gradient
+    a += b * n.x / (1.0 + dot(d, d)); // division creates sharp valleys / ridges
     b *= 0.5;
     p = m2 * p * 2.0;
 }
 ```
 
-**原理**：当 `d`（累积梯度）大时，`1/(1+d·d)` 急剧减小——在陡坡处压低高度，形成**沟壑**；在梯度方向反转处（山脊线）则压得少，形成**脊线**。这模拟了流水侵蚀最直观的结果：山坡被切出沟壑，山脊保留。
+**Principle**: when `d` (accumulated gradient) large, `1/(1+d·d)` drops sharply — lowers height at steep slopes forming **gullies**; at gradient reversal (ridge line) less lowering forming **ridges**. Simulates most intuitive result of water erosion: slopes cut into gullies, ridges preserved.
 
-### 2. 悬崖带
+### 2. Cliff bands
 
-**MdX3Rr**：
+**MdX3Rr**:
 ```glsl
-e += 90.0 * smoothstep(552.0, 594.0, e);  // 在特定高度区间突然加高
+e += 90.0 * smoothstep(552.0, 594.0, e);  // sudden height boost in specific band
 ```
 
-**4ttSWf**：
+**4ttSWf**:
 ```glsl
-float a = 1.0 - smoothstep(0.12, 0.13, abs(e + 0.12));  // 标记陡坡区域
-// 步进时：
-t += dis * 0.8 * (1.0 - 0.75 * a);  // 陡坡步长减小
+float a = 1.0 - smoothstep(0.12, 0.13, abs(e + 0.12));  // mark steep regions
+// during stepping:
+t += dis * 0.8 * (1.0 - 0.75 * a);  // smaller steps on steep slopes
 ```
 
-**原理**：在特定高度区间施加不连续偏移，模拟地层抬升/断裂形成的悬崖。`smoothstep` 提供平滑过渡避免 aliasing。
+**Principle**: discontinuous offset in specific height band simulates cliffs from stratum uplift / faulting. `smoothstep` smooths transition avoiding aliasing.
 
-### 3. 法线驱动材质混合（视觉侵蚀）
+### 3. Normal-driven material blend (visual erosion)
 
-所有带地形的 shader 都根据**高度 + 坡度 + 噪声**混合材质，从视觉上模拟侵蚀：
+All terrain shaders blend materials by **height + slope + noise**, visually simulating erosion:
 
 ```glsl
-// 4ttSWf: 岩石→草→雪
+// 4ttSWf: rock→grass→snow
 float h = smoothstep(55.0, 80.0, pos.y/SC + 25.0*fbm(0.01*pos.xz/SC));
 float e = smoothstep(1.0-0.5*h, 1.0-0.1*h, nor.y);
 col = mix(col, 0.29*vec3(0.62,0.65,0.7), smoothstep(0.1, 0.9, h*e*o));
-// 陡坡 (nor.y 小) → 岩石裸露
-// 缓坡 (nor.y 大) → 植被/积雪
+// steep slope (nor.y small) → exposed rock
+// gentle slope (nor.y large) → vegetation / snow
 ```
 
-### 4. 位移扰动
+### 4. Anisotropic perturbation
 
-**MdBGzG**：
+**MdBGzG**:
 ```glsl
 float dis = displacement(0.25 * p * vec3(1.0, 4.0, 1.0)) * 3.0;
 return vec4((dis + p.y - h) * 0.25, ...);
 ```
 
-各向异性缩放 `vec3(1, 4, 1)` 让垂直方向扰动更剧烈，模拟垂直节理/裂缝。
+Anisotropic scale `vec3(1, 4, 1)` makes vertical perturbation stronger, simulating vertical joints / cracks.
 
 ---
 
-## 四、推荐 Heightmap Generator 实现路径
+## IV. Recommended Heightmap Generator implementation path
 
-### 核心管线
+### Core pipeline
 
 ```
-输入参数 → 多层噪声合成 → 域扭曲/山脊 → 悬崖增强 → 侵蚀后处理 → 输出 heightmap
+Input params → multi-layer noise composition → domain warp / ridges → cliff boost → erosion post-process → output heightmap
 ```
 
-### 层级设计
+### Layered design
 
-| 层 | 功能 | 推荐技术 |
+| Layer | Function | Recommended technique |
 |----|------|----------|
-| **Layer 0: 基底** | 大陆/岛屿轮廓 | 低频 FBM（2-3 层）或预定义遮罩纹理 |
-| **Layer 1: 山系** | 主要山脉走向 | 域扭曲 FBM（4-6 层），`1/(1+d·d)` 脊线生成 |
-| **Layer 2: 细节** | 岩石/沟壑高频细节 | 各向异性 FBM displacement |
-| **Layer 3: 悬崖** | 陡坡增强 | `smoothstep` 高度区间偏移 |
-| **Post: 侵蚀** | 流水/热侵蚀模拟 | 可选物理模拟或纯视觉伪造 |
+| **Layer 0: base** | Continent / island outline | Low-freq FBM (2–3 layers) or predefined mask texture |
+| **Layer 1: mountain system** | Main mountain direction | Domain-warp FBM (4–6 layers), `1/(1+d·d)` ridge generation |
+| **Layer 2: detail** | Rock / gully high-freq detail | Anisotropic FBM displacement |
+| **Layer 3: cliff** | Steep slope boost | `smoothstep` height-band offset |
+| **Post: erosion** | Water / thermal erosion sim | Optional physical sim or pure visual fake |
 
-### 输出格式
+### Output format
 
 ```
-heightmap (f32/通道) → 可选导出为:
-  ├── .png/.exr 灰度图 (用于引擎 terrain 系统)
-  ├── .obj 网格 (用于预览)
-  └── 内嵌到引擎 terrain asset 格式
+heightmap (f32 / channel) → optionally export as:
+  ├── .png/.exr grayscale (for engine terrain system)
+  ├── .obj mesh (for preview)
+  └── embedded into engine terrain asset format
 ```
 
-### 算法性能分级
+### Algorithm capability tiers
 
-| 等级 | FBM 层数 | 域扭曲 | 步进精度 | 适用平台 |
+| Tier | FBM layers | Domain warp | Stepping precision | Platform |
 |------|----------|--------|----------|----------|
-| Low | 3-4 | ❌ | 粗糙 | Android 移动端 |
-| Medium | 6-8 | ✅ 轻量 | 中等 | 桌面中配 |
-| High | 9-16 | ✅ 完整 | 精细 | 桌面高配/离线烘焙 |
+| Low | 3-4 | ❌ | rough | Android mobile |
+| Medium | 6-8 | ✅ light | medium | mid-range desktop |
+| High | 9-16 | ✅ full | fine | high-end desktop / offline baking |
 
-### 数学实现参考
+### Math implementation reference
 
-- **Noise 函数**：Value Noise（最快）→ Perlin → Simplex（品质递进）
-- **域扭曲**：借鉴 MdX3Rr 的导数累加 + `1/(1+d·d)`
-- **FBM 循环**：使用旋转矩阵（IQ `m2`/`m3`）避免轴向偏置
-- **悬崖**：`height += cliff_amount * smoothstep(cliff_bottom, cliff_top, height)`
-- **脊线噪声**：`1 - abs(noise)` 或域扭曲方案均可
+- **Noise function**: Value Noise (fastest) → Perlin → Simplex (quality progression)
+- **Domain warp**: borrow MdX3Rr derivative accumulation + `1/(1+d·d)`
+- **FBM loop**: rotation matrices (IQ `m2`/`m3`) avoid axis bias
+- **Cliff**: `height += cliff_amount * smoothstep(cliff_bottom, cliff_top, height)`
+- **Ridge noise**: `1 - abs(noise)` or domain-warp approach
 
 ---
 

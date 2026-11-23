@@ -67,7 +67,7 @@ fn load_with_dependencies() {
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // 加载 with deps should 加载 dependency 第一个 then root.
+    // Load with deps should load  dependency first  then root.
     let handle: Handle<Vec<u8>> = rm.load_with_deps(root_id).unwrap();
     let data: Vec<u8> = rm.get(handle).unwrap();
     assert_eq!(data, b"root data");
@@ -180,12 +180,12 @@ fn memory_budget_eviction_lru() {
     rm.set_eviction_policy(EvictionPolicy::Lru);
     std::fs::remove_file(&path).ok();
 
-    // 加载 第一个 (100 字节 should fit.
+    // Load first  (100 byte  should fit.
     let _: Handle<Vec<u8>> = rm.load(id1).unwrap();
     assert_eq!(rm.memory_usage(), 100);
 
-    // 加载 秒 (200 字节 — 总计 would be 300, budget is 250.
-    // With LRU, should evict 第一个 to make room.
+    // Load seconds (200 bytes — total would be 300, budget is 250).
+    // With LRU, should evict first  to make room.
     let _: Handle<Vec<u8>> = rm.load(id2).unwrap();
     assert!(rm.memory_usage() <= 250);
     // id2 should be loaded
@@ -206,7 +206,7 @@ fn memory_budget_out_of_memory_error() {
     rm.set_eviction_policy(EvictionPolicy::None); // no eviction
     std::fs::remove_file(&path).ok();
 
-    // Budget is 100, 资源 is 500, no eviction → out of 内存
+    // Budget is 100, asset is 500, no eviction → out of memory.
     let err: Result<Handle<Vec<u8>>, RuntimeError> = rm.load(id);
     assert!(matches!(err, Err(RuntimeError::OutOfMemory { .. })));
 }
@@ -340,17 +340,17 @@ fn streaming_reads_basic() {
     b.add_asset(id, AssetType::Binary, big_data.clone(), &[]);
     let pak = b.build().unwrap();
 
-    // Simulate: 写入 to temp file and 加载 into ResourceManager.
+    // Simulate: write  to temp file and load  into ResourceManager.
     let path = write_pak(&pak, "test_stream.pak");
 
     let mut rm = ResourceManager::new();
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // Stream without caching 第一个
+    // Stream without caching first
     let chunks: Vec<Vec<u8>> = rm.read_stream(id, 30).unwrap().collect();
     assert!(chunks.len() >= 3);
-    // 验证 all data accounted for.
+    // Verify all data accounted for.
     let total: usize = chunks.iter().map(|c| c.len()).sum();
     assert_eq!(total, 100);
 }
@@ -487,13 +487,13 @@ fn unload_id_by_asset_id() {
 }
 
 // -------------------------------------------------------------------
-// Typed 资源 decoders (TextureAsset / MeshAsset / MaterialAsset /
+// Typed asset decoders (TextureAsset / MeshAsset / MaterialAsset /
 // ShaderAsset / SceneAsset)
 // -------------------------------------------------------------------
 
 #[test]
 fn shader_asset_validates_spirv_magic() {
-    // 构建 a minimal SPIR-V 缓冲区 magic + 填充
+    // Build a minimal SPIR-V buffer with magic + padding.
     let mut spv = Vec::new();
     spv.extend_from_slice(&0x0723_0203u32.to_le_bytes());
     spv.extend_from_slice(&[0u8; 16]);
@@ -546,7 +546,7 @@ fn scene_asset_rejects_bad_magic() {
 
 #[test]
 fn material_asset_decodes_cooked_rmat() {
-    // 构建 an RMAT blob by hand: magic + version + 18 scalars + alpha block
+    // build  an RMAT blob by hand: magic + version + 18 scalars + alpha block
     // + 5 absent slots.
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RMAT");
@@ -644,12 +644,12 @@ fn path_manifest_handles_id_without_0x_prefix() {
 fn path_manifest_rejects_bad_json() {
     let mut rm = ResourceManager::new();
     assert!(rm.load_path_manifest_from_str("not json").is_err());
-    // 缺少 'assets' 调
+    // Missing 'assets' arg.
     assert!(rm.load_path_manifest_from_str(r#"{"foo": 1}"#).is_err());
 }
 
 // ---------------------------------------------------------------------------
-// 热重载（`--features hot-reload`）
+// Hot reload (`--features hot-reload`)
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "hot-reload")]
@@ -669,7 +669,7 @@ fn two_asset_pak(x: &[u8], y: &[u8]) -> Vec<u8> {
     builder.build().unwrap()
 }
 
-/// 热重载要换掉 reader：卸载后重新加载必须读到新文件的字节。
+/// Hot reload must swap reader: unload then reload must read new file bytes.
 #[cfg(feature = "hot-reload")]
 #[test]
 fn hot_reload_replaces_package_reader() {
@@ -687,12 +687,12 @@ fn hot_reload_replaces_package_reader() {
     std::fs::write(&path, two_asset_pak(b"new-x-longer", b"new-y-longer")).unwrap();
     rm.on_pak_changed(&path).unwrap();
 
-    // 内存里的资源被原地刷新，且**旧 handle 依然有效**（generation 不变）——
-    // 热重载不该让调用方手里的 Handle 失效。
+    // In-memory assets refreshed in place, and **old handle still valid** (generation unchanged) —
+    // hot reload should not invalidate handles held by callers.
     assert_eq!(rm.get(handle).unwrap(), b"new-x-longer");
 
-    // 卸载后重新加载只能走管理器持有的 reader：旧实现留着打开时的字节，
-    // 这里会读回 `old-x`。
+    // Unload then reload only goes through reader held by manager: old impl keeps opened bytes,
+    // so this will read back `old-x`.
     rm.unload_all();
     let handle: Handle<Vec<u8>> = rm.load(x_id).unwrap();
     assert_eq!(rm.get(handle).unwrap(), b"new-x-longer");
@@ -700,7 +700,7 @@ fn hot_reload_replaces_package_reader() {
     std::fs::remove_file(&path).ok();
 }
 
-/// 热重载不负责加载：没加载过的资源（或已被淘汰的槽）不该被急切读回内存。
+/// Hot reload does not handle loading: assets never loaded (or evicted slot) should not be eagerly read back.
 #[cfg(feature = "hot-reload")]
 #[test]
 fn hot_reload_leaves_unloaded_assets_alone() {
@@ -718,7 +718,7 @@ fn hot_reload_leaves_unloaded_assets_alone() {
     assert!(loaded.contains(&x_id));
     assert!(
         !loaded.contains(&y_id),
-        "热重载不该把没加载过的资源读进内存"
+        "Hot reload should not read never-loaded assets into memory"
     );
     std::fs::remove_file(&path).ok();
 }

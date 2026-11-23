@@ -80,9 +80,9 @@ fn best_of_n_picks_the_fastest_correct_group_count() {
         assert_eq!(output.len(), COUNT * 4);
         for (index, &expected) in expected.iter().enumerate() {
             let actual = decode_f32(output, index);
-            // 相对容差：内核里是数百量级的累加值，GPU 的 fma/舍入顺序与 CPU 参考
-            // 实现不同，固定 1e-5 的绝对容差在成功值 ~3e2 时只剩 ~3e-8 相对精度，
-            // 换个驱动或 slangc 版本就会误报（#818）。
+            // Relative tolerance: kernel accumulates hundreds-level values, GPU fma/order differs from CPU reference
+            // implementation. Fixed 1e-5 absolute tolerance at success value ~3e2 leaves only ~3e-8 relative precision,
+            // changing driver or slangc version will cause false report (#818).
             let tolerance = 1e-5 * expected.abs().max(1.0);
             assert!(
                 (actual - expected).abs() <= tolerance,

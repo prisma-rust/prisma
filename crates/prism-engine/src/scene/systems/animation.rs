@@ -1,20 +1,20 @@
-//! 关键帧动画：播放头与写回 `Transform`。
+//! Keyframe animation: playhead and writing back `Transform`.
 //!
-//! 数据侧（轨道 / 采样 / 端点保持）在 [`prism_scene::animation`]，组件是
-//! [`KeyframeAnimation`]。本文件只负责「这一帧播放到哪」：
+//! Data side (tracks / sampling / endpoint hold) in [`prism_scene::animation`], component is
+//! [`KeyframeAnimation`]. This file only handles "where playback is this frame":
 //!
-//! - 播放头是运行时组件 [`ClipPlayhead`]，**不进** `.scene.json`：同一份场景
-//!   每次加载都从头播，序列化状态里也不会夹带上一次运行的进度。
-//! - 采样只写**有关键帧**的通道；没关键帧的通道保留作者写进 `transform` 的
-//!   值（只动画 position 不会把旋转 / 缩放清零）。
-//! - 系统跑在 `Engine::update` 的调度里、`hierarchy_system` 之前，所以同一帧
-//!   里 `LocalToWorld` / 渲染提取 / 相机跟随看到的都是动画后的姿势。
-//! - 剪辑事件（#490）：播放头穿过 `AnimationEvent.time` 时写进
-//!   [`AnimationEventQueue`]；队列每帧重写，玩法系统在同一个调度里读取。
-//!   只处理正向播放；循环剪辑每圈各触发一次。
+//! - Playhead is runtime component [`ClipPlayhead`], **not in** `.scene.json`: same scene
+//!   plays from start every load, serialized state never carries over previous run progress.
+//! - Sampling only writes channels **with keyframes**; channels without keyframes preserve author value in `transform`
+//!   (animating only position will not zero out rotation / scale).
+//! - System runs during `Engine::update` scheduling, before `hierarchy_system`, so same frame
+//!   `LocalToWorld` / render extraction / camera follow all see post-animation pose.
+//! - Clip events (#490): when playhead crosses `AnimationEvent.time`, write to
+//!   [`AnimationEventQueue`]; queue rewritten each frame, gameplay systems read in same schedule.
+//!   Only forward playback handled; looping clips fire once per loop.
 //!
-//! 注意：`save_scene_state` 读的是 `LocalToWorld`，播到一半存档会存下**当前
-//! 姿势**而不是作者姿势。这与其他每帧改写 `LocalTransform` 的系统一致。
+//! Note: `save_scene_state` reads `LocalToWorld`, saving mid-play stores **current
+//! pose** not author pose. Consistent with other systems rewriting `LocalTransform` each frame.
 
 use prism_ecs::{Entity, World};
 
@@ -22,25 +22,25 @@ use crate::scene::components::{
     KeyframeAnimation, LocalTransform, SpriteAnimation, SpriteRef, SpriteRenderer,
 };
 
-/// 单个精灵的播放头（秒）。运行时组件，**不写进** `.scene.json`。
+/// Single sprite playhead (seconds). Runtime component, **not written into** `.scene.json`.
 ///
-/// 1. 每个实体有自己的起点，不再用「进程启动以来的全局时间」；
-/// 2. `playing` 从 `false` 变 `true` 时重置为 0，所以一次性动画可以重播；
-/// 3. `was_playing` 只用来检测这次 false→true 的边沿，暂停期间保留当前帧。
+/// 1. Each entity has own start, no longer using "global time since process start";
+/// 2. When `playing` changes false→true resets to 0, so one-shot can replay;
+/// 3. `was_playing` only detects false→true edge, pausing keeps current frame.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct SpriteAnimationState {
-    /// 已播放的时间（不含 `phase`）。
+    /// Time already played (not including `phase`).
     pub time: f32,
-    /// 上一帧的 `SpriteAnimation.playing`，用于检测重播边沿。
+    /// Previous frame `SpriteAnimation.playing`, for detecting replay edge.
     pub was_playing: bool,
-    /// 是否已经初始化过：首次观察到实体时不要误判成「重播」。
+    /// Whether already initialized: on first seeing entity do not misjudge as "replay".
     pub initialized: bool,
 }
 
-/// 每帧推进所有精灵动画。
+/// Advance all sprite animations each frame.
 ///
-/// 帧数优先级：`SpriteAnimation.frames`（>0）→ 本行列数 − `frame_start`
-/// → 1（无法确定时静止在第一帧）。
+/// Frame count priority: `SpriteAnimation.frames` (>0) → row columns − `frame_start`
+/// → 1 (when undetermined stay on first frame).
 pub fn sprite_animation_system(world: &mut World, dt: f32) {
     let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
     let entities: Vec<prism_ecs::Entity> = world
@@ -77,14 +77,14 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
             state.was_playing = animation.playing;
         }
         if animation.playing {
-            // 一次性动画 / 手动暂停后重新播放：从第 0 帧开始。
+            // One-shot / after manual pause replay: start from frame 0.
             if !state.was_playing {
                 state.time = 0.0;
             }
             state.time += dt;
             state.was_playing = true;
         } else {
-            // 暂停时保留播放头；下一次 playing=true 会重置。
+            // Paused keeps playhead; next playing=true will reset.
             state.was_playing = false;
         }
 
@@ -103,7 +103,7 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
 
         world.insert(entity, state);
         if let Some(sprite) = world.get_mut::<SpriteRenderer>(entity) {
-            // 行内绝对帧号；夹在本行最后一列，避免动画越界滚到下一行。
+            // Absolute frame number within row; clamp to last column in row, avoid wrapping to next row.
             sprite.frame_index = animation
                 .frame_start
                 .saturating_add(index)
@@ -112,9 +112,9 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
     }
 }
 
-/// 本次动画播放的帧数（至少 1）。
+/// Number of frames for this animation (at least 1).
 ///
-/// `frames > 0` 时是作者指定长度；否则从 `frame_start` 播到本行末尾（#584）。
+/// When `frames > 0` author-specified length; otherwise from `frame_start` to end of row (#584).
 fn animation_frame_count(
     animation: &SpriteAnimation,
     sprite: &SpriteRenderer,
@@ -130,33 +130,33 @@ fn animation_frame_count(
     available
 }
 
-/// 一个实体的关键帧播放头（秒）。运行时组件，不写进场景。
+/// One entity keyframe playhead (seconds). Runtime component, not written into scene.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct ClipPlayhead {
-    /// 已经播放的时间（不含 [`KeyframeAnimation::phase`]）。
+    /// Time already played (not including [`KeyframeAnimation::phase`]).
     pub time: f32,
-    /// 单次播放（`looped == false`）是否已播到末尾。
+    /// For one-shot (`looped == false`) whether already reached end.
     ///
-    /// 每帧重算，不是粘滞标志：把 `duration` 调长或多播一轮后会自然变回
-    /// `false`，不需要额外的 reset。
+    /// Recomputed each frame, not sticky flag: increasing `duration` or playing another loop naturally returns
+    /// to `false`, no extra reset needed.
     pub finished: bool,
 }
 
-/// 本帧触发的一条动画事件（#490）。
+/// One animation event fired this frame (#490).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FiredAnimationEvent {
-    /// 播放这个剪辑的实体。
+    /// Entity playing this clip.
     pub entity: Entity,
-    /// 作者写的事件名。
+    /// Author-written event name.
     pub name: String,
-    /// 事件在剪辑里的时间（秒）。
+    /// Event time within clip (seconds).
     pub time: f32,
 }
 
-/// 动画事件队列：`keyframe_animation_system` **每帧重写**。
+/// Animation event queue: `keyframe_animation_system` **rewrites each frame**.
 ///
-/// 玩法系统在 `Engine::update` 的调度里读这个资源（它在 `hierarchy_system`
-/// 之前运行）。没有事件 / 没有动画实体时是空的，不会保留上一帧的旧事件。
+/// Gameplay systems read this resource during `Engine::update` scheduling (it runs before `hierarchy_system`).
+/// Empty when no events / no animation entities, never keeps previous frame old events.
 #[derive(Debug, Clone, Default)]
 pub struct AnimationEventQueue {
     pub events: Vec<FiredAnimationEvent>,
@@ -172,7 +172,7 @@ impl AnimationEventQueue {
     }
 }
 
-/// 把原始播放时间折算成 `[0, duration]` 内的剪辑本地时间。
+/// Fold original playback time into clip local time within `[0, duration]`.
 fn local_time_at(raw: f32, duration: f32, looped: bool) -> f32 {
     if duration <= 0.0 || !duration.is_finite() || !raw.is_finite() {
         0.0
@@ -183,7 +183,7 @@ fn local_time_at(raw: f32, duration: f32, looped: bool) -> f32 {
     }
 }
 
-/// 收集 `(from, to]` 内的事件；`include_from` 时把 `from` 本身也算上。
+/// Collect events in `(from, to]`; when `include_from` also counts `from` itself.
 fn collect_events(
     clip: &KeyframeAnimation,
     from: f32,
@@ -209,9 +209,9 @@ fn collect_events(
     }
 }
 
-/// 每帧推进所有 [`KeyframeAnimation`]，把采样结果写进实体的 `LocalTransform`。
+/// Advance all [`KeyframeAnimation`] each frame, write sampling result to entity `LocalTransform`.
 ///
-/// 空剪辑（三条轨道都没关键帧）不挂播放头，避免给纯静态实体留垃圾组件。
+/// Empty clips (no keyframes in all three tracks) get no playhead, avoid garbage component on pure static entity.
 pub fn keyframe_animation_system(world: &mut World, dt: f32) {
     let entities: Vec<Entity> = world
         .query::<KeyframeAnimation>()
@@ -221,7 +221,7 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
     let mut fired: Vec<FiredAnimationEvent> = Vec::new();
 
     for entity in entities {
-        // 采样借用块：算完就把 `&World` 的借用放掉，后面才能写组件。
+        // Sampling borrow block: release `&World` borrow after computing, later can write component.
         let computed = world.get::<KeyframeAnimation>(entity).and_then(|clip| {
             if clip.is_empty() {
                 return None;
@@ -239,8 +239,8 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             };
             if clip.playing && dt.is_finite() {
                 head.time += dt * speed;
-                // 单次播放停在末尾：播放头不再越过 `duration - phase`，
-                // 否则把 `duration` 调长后会从中间莫名其妙地继续。
+                // One-shot stops at end: playhead no longer crosses `duration - phase`,
+                // otherwise increasing `duration` would resume mysteriously from middle.
                 let last = duration - clip.phase;
                 if !clip.looped && last > 0.0 {
                     head.time = head.time.min(last);
@@ -250,7 +250,7 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             head.finished = duration > 0.0 && !clip.looped && raw >= duration;
             let local = local_time_at(raw, duration, clip.looped);
 
-            // #490：正向和反向播放都要发事件；暂停不发射。
+            // #490: fire events for forward and backward playback; paused no emission.
             let mut events = Vec::new();
             if clip.playing && duration > 0.0 && dt.is_finite() {
                 let previous_raw = previous_head.time + clip.phase;
@@ -258,20 +258,20 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
                 if speed >= 0.0 {
                     let cycles = (raw / duration).floor() - (previous_raw / duration).floor();
                     if clip.looped && cycles >= 1.0 {
-                        // 跨过了一次（或多次）循环：先扫到本圈末尾，再从 0 扫到新的播放头。
+                        // Crossed one (or more) loops: first scan to end of loop, then from 0 to new playhead.
                         collect_events(clip, previous_local, duration, false, &mut events);
                         collect_events(clip, 0.0, local, true, &mut events);
                     } else {
-                        // 刚起步时把 0 秒事件也算进来（否则第一个事件永远差一个 dt）。
+                        // Include 0-second event at start (otherwise first event always off by one dt).
                         let include_start =
                             previous_head.time == 0.0 && previous_raw <= 0.0 && clip.phase == 0.0;
                         collect_events(clip, previous_local, local, include_start, &mut events);
                     }
                 } else {
-                    // 反向：播放头从 `previous_local` 降到 `local`，事件按经过的区间收集。
+                    // Backward: playhead drops from `previous_local` to `local`, events collected by traversed interval.
                     let cycles = (previous_raw / duration).floor() - (raw / duration).floor();
                     if clip.looped && cycles >= 1.0 {
-                        // 从上一圈的位置倒回 0，再从末尾倒到新的播放头。
+                        // From current loop position back to 0, then from end back to new playhead.
                         collect_events(clip, 0.0, previous_local, true, &mut events);
                         collect_events(clip, local, duration, false, &mut events);
                     } else {
@@ -294,7 +294,7 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             });
         }
         let Some(transform) = world.get_mut::<LocalTransform>(entity) else {
-            // 没有 `LocalTransform` 的实体（理论上不该存在）不挂播放头。
+            // Entities without `LocalTransform` (theoretically should not exist) get no playhead.
             continue;
         };
         if let Some(position) = sample.position {
@@ -310,7 +310,7 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
         world.insert(entity, head);
     }
 
-    // 每帧重写：没有动画实体时也会清空旧事件。
+    // Rewrite each frame: when no animation entities also clears old events.
     world.insert_resource(AnimationEventQueue { events: fired });
 }
 

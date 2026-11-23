@@ -1,34 +1,34 @@
-//! 2D screen-space particle system —— 雨、雪、火花等 2D 特效的通用模拟器。
+//! 2D screen-space particle system — generic simulator for rain, snow, sparks and other 2D effects.
 //!
-//! > 世界空间的 3D 粒子（billboard、深度测试、`ParticleSystem` 场景组件）不在这里，
-//! > 见 `crate::scene::systems::particles`（#501 Phase 1）。
+//! > World-space 3D particles (billboards, depth test, `ParticleSystem` scene component) are not here,
+//! > see `crate::scene::systems::particles` (#501 Phase 1).
 //!
-//! 粒子在**像素屏幕空间**（原点左上、y 向下，与 `ComputedLayout::rect` 一致）
-//! 中模拟，并以 `UiQuad`（plain colored quad）的形式输出。引擎已有的
-//! `UiOverlay` 叠加 pass 直接绘制这些四边形——**无需新增/修改任何 shader**。
+//! Particles are simulated in **pixel screen space** (origin top-left, y downward, consistent with `ComputedLayout::rect`)
+//! and output as `UiQuad` (plain colored quads). The engine's existing
+//! `UiOverlay` overlay pass draws these quads directly — **no new / modified shader needed**.
 //!
-//! 雨滴本质上就是许多细长、`alpha` 较低的竖向四边形；本模块把它们打包进
-//! `UiDrawList::quads`，由 `convert_ui_draw_list_to_overlay` 在帧提取时自动
-//! 转成 NDC 并被叠加 pass 消耗。叠加 pass 的提交顺序为：先所有 quad（按
-//! `layer` 排序）再所有文本，因此把雨的 `layer` 设为 1，雨就落在黑场
-//! （layer 0）之上、标题文本之下。
+//! Raindrops are essentially many thin, low-`alpha` vertical quads; this module packs them into
+//! `UiDrawList::quads`, which `convert_ui_draw_list_to_overlay` automatically
+//! converts to NDC during frame extraction for the overlay pass. Overlay pass submission order: first all quads (sorted by
+//! `layer`) then all text, so setting rain's `layer` to 1 puts rain above the black backdrop
+//! (layer 0) and below title text.
 //!
-//! 场景里请直接挂 `prism_engine::scene::UiParticleEmitter` 组件：引擎为每个发射器
-//! 实体持有一个 `ParticleSystem2D`，每帧推进并把四边形并入 UI 绘制列表（#1057），
-//! 项目不需要写模拟代码。
+//! In scenes just attach `prism_engine::scene::UiParticleEmitter` component: engine holds one
+//! `ParticleSystem2D` per emitter entity, advances each frame and merges quads into UI draw list (#1057),
+//! project need not write simulation code.
 //!
-//! 下面是宿主自己驱动资源的写法，只在需要完全控制发射参数（例如随动画曲线改
-//! `intensity`）时使用：
+//! Below is how the host drives the resource itself, only needed for full control over emission params (e.g. changing
+//! `intensity` along an animation curve):
 //!
 //! ```ignore
-//! // 构造时插入资源（雨预设，尺寸随后每帧按 ScreenSize 更新）。
+//! // Insert resource at construction (rain preset, size updated each frame from ScreenSize).
 //! app.insert_resource(ParticleSystem2D::rain_preset(1920.0, 1080.0));
 //!
-//! // 每帧：更新模拟并用 intensity 控制整体可见度，再把粒子追加进 UiDrawList。
+//! // Each frame: update simulation and use intensity to control overall opacity, append particles into UiDrawList.
 //! let quads = {
 //!     let rain = world.get_resource_mut::<ParticleSystem2D>().unwrap();
 //!     rain.set_bounds(w, h);
-//!     rain.intensity = title_alpha; // 随标题淡入淡出
+//!     rain.intensity = title_alpha; // fade with title
 //!     rain.update(dt);
 //!     world.get_resource::<ParticleSystem2D>().unwrap().emit_quads()
 //! };
@@ -37,91 +37,91 @@
 
 use crate::scene::components::{UiParticleEmitter, UiParticleKind};
 
-// ── 单个粒子 ───────────────────────────────────────────────────
+// ── single particle ───────────────────────────────────────────────────
 
-/// 一个屏幕空间粒子（像素坐标，y 向下）。
+/// One screen-space particle (pixel coords, y downward).
 #[derive(Clone, Copy, Debug)]
 pub struct Particle2D {
-    /// 当前位置（px）。
+    /// Current position (px).
     pub x: f32,
-    /// 当前位置（px，y 向下，故下落时 vy > 0）。
+    /// Current position (px, y downward, so vy > 0 when falling).
     pub y: f32,
-    /// 水平速度（px/s）。
+    /// Horizontal velocity (px/s).
     pub vx: f32,
-    /// 垂直速度（px/s，下落为正）。
+    /// Vertical velocity (px/s, positive when falling).
     pub vy: f32,
-    /// 已经存活的时间（s）。
+    /// Time already alive (s).
     pub age: f32,
-    /// 寿命（s），超过即回收。
+    /// Lifetime (s), recycled when exceeded.
     pub life: f32,
-    /// 拖尾长度（px）——雨滴为细长条，雪花/火花为 0。
+    /// Trail length (px) — raindrops are thin bars, snow / sparks use 0.
     pub len: f32,
-    /// 粗细（px）。
+    /// Thickness (px).
     pub width: f32,
-    /// 基础不透明度 0..=1（最终 alpha 还会被系统 `intensity` 与淡入淡出调制）。
+    /// Base opacity 0..=1 (final alpha also modulated by system `intensity` and fade).
     pub alpha: f32,
 }
 
-// ── 发射形态 ───────────────────────────────────────────────────
+// ── emission shape ───────────────────────────────────────────────────
 
-/// 粒子发射形态——影响初始速度与拖尾的朝向。
+/// Particle emission shape — affects initial velocity and trail orientation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SpawnKind {
-    /// 雨：快速下落 + 轻微同向斜风，带竖向拖尾。
+    /// Rain: fast downward fall + slight slanted wind, with vertical trail.
     #[default]
     Rain,
-    /// 雪：缓慢飘落 + 正弦摆动，无拖尾。
+    /// Snow: slow drifting fall + sine sway, no trail.
     Snow,
-    /// 火花：随机四散 + 重力，无拖尾。
+    /// Sparks: random scatter + gravity, no trail.
     Spark,
 }
 
-// ── 粒子系统 ───────────────────────────────────────────────────
+// ── particle system ───────────────────────────────────────────────────
 
-/// 一个 2D 屏幕空间粒子系统（作为 ECS 资源存在）。
+/// One 2D screen-space particle system (stored as ECS resource).
 ///
-/// 配置字段全为 `pub`，调用方（如开屏动画）可随时调整 `intensity`、
-/// `color`、`spawn_rate` 等来控制表现。`update` 推进模拟，`emit_quads`
-/// 输出待绘制的 `UiQuad` 列表。
+/// Config fields all `pub`, caller (e.g. opening animation) can adjust `intensity`,
+/// `color`, `spawn_rate` etc. to control appearance. `update` advances simulation, `emit_quads`
+/// outputs the `UiQuad` list to draw.
 #[derive(Debug)]
 pub struct ParticleSystem2D {
-    /// 存活粒子池（无上限但有 `MAX_PARTICLES` 软上限防止失控）。
+    /// Live particle pool (unbounded but `MAX_PARTICLES` soft cap prevents runaway).
     pub particles: Vec<Particle2D>,
-    /// 发射速率（粒子/秒）。实际发射数会再乘以 `intensity`。
+    /// Emission rate (particles/sec). Actual count multiplied by `intensity`.
     pub spawn_rate: f32,
-    /// 重力加速度（px/s²，向下为正）。
+    /// Gravity acceleration (px/s², positive downward).
     pub gravity: f32,
-    /// 水平风偏（px/s²，向右为正），决定雨的倾斜角。
+    /// Horizontal wind offset (px/s², positive rightward), decides rain slant.
     pub wind: f32,
-    /// 初始垂直速度范围（px/s）。
+    /// Initial vertical velocity range (px/s).
     pub speed_min: f32,
     pub speed_max: f32,
-    /// 拖尾长度范围（px）。
+    /// Trail length range (px).
     pub len_min: f32,
     pub len_max: f32,
-    /// 粗细范围（px）。
+    /// Thickness range (px).
     pub width_min: f32,
     pub width_max: f32,
-    /// 颜色（RGB，0..=1）。
+    /// Color (RGB, 0..=1).
     pub color: [f32; 3],
-    /// 基础不透明度范围 0..=1。
+    /// Base opacity range 0..=1.
     pub alpha_min: f32,
     pub alpha_max: f32,
-    /// 出生 y 范围 `[-spawn_top, 0]`（屏幕上方一点，平滑入场）。
+    /// Spawn y range `[-spawn_top, 0]` (a point above screen, smooth entry).
     pub spawn_top: f32,
-    /// 整体强度 0..=1：同时调制发射速率与最终 alpha。设 0 即完全停雨。
+    /// Overall strength 0..=1: modulates emission rate and final alpha. Set 0 to fully stop rain.
     pub intensity: f32,
-    /// 发射形态。
+    /// Emission shape.
     pub kind: SpawnKind,
-    /// 当前屏幕宽（px），每帧由 `set_bounds` 更新。
+    /// Current screen width (px), updated each frame via `set_bounds`.
     pub width: f32,
-    /// 当前屏幕高（px），每帧由 `set_bounds` 更新。
+    /// Current screen height (px), updated each frame via `set_bounds`.
     pub height: f32,
-    /// 软上限：粒子数超过此值则暂停发射（保护顶点缓冲与性能）。
+    /// Soft cap: when particle count exceeds this, pause emission (protect vertex buffer and performance).
     pub max_particles: usize,
-    /// 输出四边形的 UI 层级（`UiQuad::layer`）。
+    /// UI layer level of output quads (`UiQuad::layer`).
     pub layer: i32,
-    /// 雪花的水平摆动幅度（px/s），仅 `Snow` 用。
+    /// Snow's horizontal sway amplitude (px/s), only for `Snow`.
     pub sway: f32,
     rng: u64,
     spawn_accum: f32,
@@ -134,15 +134,15 @@ impl Default for ParticleSystem2D {
 }
 
 impl ParticleSystem2D {
-    /// 构造一个通用粒子系统（默认雨形态）。具体表现由调用方配置。
+    /// Construct a generic particle system (default rain shape). Appearance configured by caller.
     pub fn new() -> Self {
         Self::rain_preset(1920.0, 1080.0)
     }
 
-    /// 雨滴预设——覆盖整屏的中等密度斜雨，冷蓝白色。
+    /// Rain preset — uniformly dense slanted rain covering screen, cool blue-white.
     ///
-    /// `width`/`height` 仅作初始屏幕尺寸，运行时用 `set_bounds` 按
-    /// `ScreenSize` 实时更新即可。
+    /// `width`/`height` are only initial screen size; at runtime call `set_bounds` with
+    /// `ScreenSize` to update in real time.
     pub fn rain_preset(width: f32, height: f32) -> Self {
         let area_scale = (width / 1920.0).clamp(0.5, 2.0);
         Self {
@@ -172,7 +172,7 @@ impl ParticleSystem2D {
         }
     }
 
-    /// 雪花预设——缓慢飘落、左右摆动，无拖尾。
+    /// Snow preset — slow drifting fall, swaying, no trail.
     pub fn snow_preset(width: f32, height: f32) -> Self {
         let area_scale = (width / 1920.0).clamp(0.5, 2.0);
         Self {
@@ -202,7 +202,7 @@ impl ParticleSystem2D {
         }
     }
 
-    /// 更新当前屏幕尺寸（通常每帧从 `ScreenSize` 资源读取后调用）。
+    /// Update current screen size (usually called each frame after reading `ScreenSize` resource).
     pub fn set_bounds(&mut self, width: f32, height: f32) {
         self.width = width;
         self.height = height;
@@ -263,9 +263,9 @@ impl ParticleSystem2D {
         }
     }
 
-    /// 每帧推进模拟 `dt` 秒：按 `intensity` 发射新粒子，积分运动并回收离场粒子。
+    /// Advance simulation `dt` seconds each frame: emit new particles by `intensity`, integrate motion and recycle.
     pub fn update(&mut self, dt: f32) {
-        // 1. 发射（受 intensity 调制；intensity 为 0 则不发射，现有粒子自然消亡）。
+        // 1. Emission (modulated by intensity; 0 means no emission, existing particles die naturally).
         self.spawn_accum += self.spawn_rate * self.intensity * dt;
         let mut to_spawn = self.spawn_accum.floor() as i32;
         self.spawn_accum -= to_spawn as f32;
@@ -274,9 +274,9 @@ impl ParticleSystem2D {
             to_spawn -= 1;
         }
 
-        // 2. 积分运动 + 回收（离场或寿终）。
-        //    先把要用到的标量提到局部变量，避免闭包整体捕获 `self`
-        //    （与 `self.particles` 的可变借用冲突）。
+        // 2. Integrate motion + recycle (off-screen or expired).
+        //    Hoist scalars used below into locals, avoid closure capturing whole `self`
+        //    (which conflicts with mutable borrow of `self.particles`).
         let h = self.height;
         let w = self.width;
         let gravity = self.gravity;
@@ -285,7 +285,7 @@ impl ParticleSystem2D {
         self.particles.retain_mut(|p| {
             p.vy += gravity * dt;
             if kind == SpawnKind::Snow {
-                // 正弦摆动由 sway 幅值 + 相位（用 age 近似）驱动。
+                // Sine sway driven by sway amplitude + phase (using age).
                 p.vx = (p.age * 2.2).sin() * sway;
             }
             p.x += p.vx * dt;
@@ -295,7 +295,7 @@ impl ParticleSystem2D {
         });
     }
 
-    /// 发射一个符合当前形态配置的粒子。
+    /// Emit one particle matching current shape config.
     fn spawn_one(&mut self) {
         let w = self.width;
         let x = Self::rand(&mut self.rng) * w;
@@ -339,9 +339,9 @@ impl ParticleSystem2D {
         let h = self.height;
         let mut quads = Vec::with_capacity(self.particles.len());
         for p in &self.particles {
-            // 出生淡入（前 0.18s）避免凭空出现。
+            // Spawn fade-in (first 0.18s) avoid appearing out of nowhere.
             let fade_in = (p.age / 0.18).min(1.0);
-            // 接近底部时淡出，避免硬切出屏幕。
+            // Fade out near bottom, avoid hard cut off screen.
             let bottom_fade = if p.y > h - 50.0 {
                 ((h + 50.0 - p.y) / 100.0).clamp(0.0, 1.0)
             } else {
@@ -351,7 +351,7 @@ impl ParticleSystem2D {
             if a <= 0.002 {
                 continue;
             }
-            // 拖尾向上延伸（y 向下，故顶端 = y - len）。
+            // Trail extends upward (y downward, so top = y - len).
             let rect = [
                 p.x - p.width * 0.5,
                 p.y - p.len,
@@ -361,7 +361,7 @@ impl ParticleSystem2D {
             quads.push(prism_ui_draw::UiQuad {
                 rect,
                 color: [self.color[0], self.color[1], self.color[2], a],
-                border_radius: p.width * 0.5, // 胶囊状端点
+                border_radius: p.width * 0.5, // capsule-shaped ends
                 texture: None,
                 backdrop_sigma: 0.0,
             });
@@ -371,7 +371,7 @@ impl ParticleSystem2D {
 }
 
 impl ParticleSystem2D {
-    /// xorshift64 PRNG（避免引入 rand 依赖）。返回 64 位无符号整数。
+    /// xorshift64 PRNG (avoid adding rand dependency). Returns unsigned 64-bit integer.
     fn xorshift(state: &mut u64) -> u64 {
         let mut x = *state;
         x ^= x << 13;
@@ -381,13 +381,13 @@ impl ParticleSystem2D {
         x
     }
 
-    /// `[0,1)` 均匀分布伪随机（xorshift64，避免引入 rand 依赖）。
+    /// Uniform pseudo-random in `[0,1)` (xorshift64, avoids rand dependency).
     fn rand(state: &mut u64) -> f32 {
         (Self::xorshift(state) >> 40) as f32 / (1u64 << 24) as f32
     }
 }
 
-/// 线性插值。
+/// Linear interpolation.
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }

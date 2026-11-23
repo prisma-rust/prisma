@@ -1,31 +1,31 @@
-//! 原生致命错误崩溃对话框
+//! Native fatal error crash dialog
 //!
-//! 当渲染器遇到不可恢复的错误（设备丢失、验证失败、
-//! 无法重建交换链等）时，我们想一次性向用户呈现错误信息并停止，
-//! 而不是每帧刷日志。此模块显示一个**原生模态对话框**，提供两个操作：
+//! When renderer encounters unrecoverable error (device lost, validation failed,
+//! unable to recreate swapchain etc), we want to present error info to user once and stop,
+//! instead of logging every frame. This module shows a **native modal dialog**, offering two operations:
 //!
-//! - **复制并退出**（同时将完整错误文本复制到剪贴板，方便用户粘贴到错误报告中）
-//! - **退出**
+//! - **Copy and exit** (simultaneously copy full error text to clipboard, convenient for user to paste into error report)
+//! - **Exit**
 //!
-//! 每个平台使用其原生对话框 API，避免引入笨重的跨平台对话框 crate：
+//! Each platform uses its native dialog API, avoiding introducing heavyweight cross-platform dialog crate:
 //!
-//! | 平台 | 对话框 | 剪贴板 |
+//! | Platform | Dialog | Clipboard |
 //! |----------|--------|-----------|
 //! | Windows | `MessageBoxW` (`MB_YESNO`) | `OpenClipboard` / `SetClipboardData` |
 //! | macOS    | `osascript` (`display dialog`) | `pbcopy` |
 //! | Linux    | `zenity --question` (fallback: text on stderr) | `xclip`/`xsel` |
-//! | Android | `AlertDialog` via JNI (模态轮询等待) | `ClipboardManager` via JNI |
+//! | Android | `AlertDialog` via JNI (modal polling wait) | `ClipboardManager` via JNI |
 //!
 //! The dialog blocks the calling thread (the winit event-loop / main thread)
-//! 直到用户确认，这自然"暂停"了渲染循环。
+//! Until user confirms, this naturally "pauses" render loop.
 //! confirmation the caller tears down the event loop.
 //!
 //! ## Android
 //!
-//! The 错误 text is logged to logcat (tag `Prisma`), an `AlertDialog` is
-//! shown on the UI 线程 via JNI against the `Activity` exposed by
-//! [`android_activity::AndroidApp`], and the calling 线程 waits modally until
-//! the 对话框 is dismissed. The 错误 text is also copied to the Android 系统
+//! The error text is logged to logcat (tag `Prisma`), an `AlertDialog` is
+//! shown on UI thread via JNI against the `Activity` exposed by
+//! [`android_activity::AndroidApp`], and calling thread waits modally until
+//! the dialog is dismissed. The error text is also copied to Android system
 //! clipboard via `ClipboardManager` on dismissal.
 
 /// The user's choice in the crash dialog.
@@ -61,7 +61,7 @@ static ANDROID_APP: std::sync::RwLock<Option<AndroidAppHandles>> = std::sync::Rw
 
 /// Register the `AndroidApp` so the crash dialog can reach the JVM/Activity
 /// for showing an `AlertDialog`. Called from `android_main` before the
-/// 事件 循环 starts. Overwrites any previous registration so re-entering the
+/// Event loop starts. Overwrites any previous registration so re-entering the
 /// Android activity always replaces any stale Activity handle.
 ///
 /// No-op on non-Android platforms (the function simply isn't compiled there).
@@ -142,7 +142,7 @@ fn show_native(title: &str, message: &str) -> CrashChoice {
     platform::show(title, message)
 }
 
-/// 复制 `text` to the 系统 clipboard. Platform-specific.
+/// Copy `text` to system clipboard. Platform-specific.
 fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     platform::copy_to_clipboard(text)
 }

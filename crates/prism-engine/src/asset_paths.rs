@@ -1,34 +1,34 @@
-//! 资源目录定位——不依赖进程当前工作目录。
+//! Asset directory resolution — does not depend on process current working directory.
 //!
-//! 桌面端的启动方式不止一种：仓库根 `cargo run`、在 `projects/template/` 里运行、
-//! 双击 `target/release/template.exe`、launcher 用绝对路径 spawn、快捷方式改过
-//! 「起始位置」……而 `.pak` / `settings.ini` / `scenes.json` / 环境贴图此前
-//! 都按 `assets/...` 直接相对 cwd 打开。cwd 不含 `assets/` 时它们全部静默失败，
-//! 表现为黑屏或「没有任何场景」。
+//! Desktop startup methods are more than one: `cargo run` at repo root, running in `projects/template/`,
+//! double-clicking `target/release/template.exe`, launcher spawning with absolute path, shortcut with modified
+//! "start position" ... while `.pak` / `settings.ini` / `scenes.json` / environment textures were all
+//! opened relative to `assets/...` directly from cwd. When cwd lacks `assets/` they all fail silently,
+//! appearing as black screen or "no scenes".
 //!
-//! 本模块定义**唯一**的资源根解析规则（[`asset_root`]），运行时各处共用：
+//! This module defines the **only** asset root resolution rule ([`asset_root`]), shared at runtime:
 //!
-//! 1. `PRISMA_ASSET_ROOT`（指向包含 `assets/` 的目录）——显式覆盖，便于测试/绿色版；
-//! 2. 当前工作目录及其所有父目录；
-//! 3. 可执行文件所在目录及其所有父目录（覆盖「从别处用绝对路径启动」）。
+//! 1. `PRISMA_ASSET_ROOT` (points to directory containing `assets/`) — explicit override, for tests / portable builds;
+//! 2. current working directory and all its parents;
+//! 3. executable's directory and all its parents (covers "started from elsewhere with absolute path").
 //!
-//! 取第一个**确实存在 `assets/` 子目录**的候选，因此不会因为某个上级目录里
-//! 恰好有个同名文件而误判。Android 不走这条链：`run_on_android` 会把 APK 资源
-//! 解到 `<filesDir>/assets` 并 `set_current_dir`，第一个候选（cwd）即命中，
-//! 行为与之前完全一致。
+//! Take first candidate that **actually contains `assets/` subdirectory**, so it will not misjudge because some parent
+//! happens to have a same-named file. Android does not use this chain: `run_on_android` unpacks APK assets
+//! to `<filesDir>/assets` and `set_current_dir`, first candidate (cwd) hits,
+//! behavior fully consistent with before.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// 显式指定资源根目录（**包含 `assets/` 的目录**）的环境变量。
+/// Environment variable explicitly specifying asset root directory (**directory containing `assets/`**).
 pub const ASSET_ROOT_ENV: &str = "PRISMA_ASSET_ROOT";
 
-/// 环境变量开关：设为 `1`/`true`/`yes`/`on` 时，即使已挂载 `.pak`，环境贴图等
-/// 支持热替换的资产也会优先读取 `assets/` 下的松散文件（便于打包后快速迭代）。
+/// Environment switch: when set to `1`/`true`/`yes`/`on`, even if `.pak` already mounted, assets supporting hot
+/// replacement such as environment textures will prefer loose files under `assets/` (for fast iteration after packaging).
 pub const LOOSE_ASSETS_ENV: &str = "PRISMA_LOOSE_ASSETS";
 
-/// 检查是否启用了松散资产优先覆盖开关（`PRISMA_LOOSE_ASSETS`）。
+/// Check whether loose-asset-preference override enabled (`PRISMA_LOOSE_ASSETS`).
 pub fn loose_assets_enabled() -> bool {
     let Ok(val) = std::env::var(LOOSE_ASSETS_ENV) else {
         return false;
@@ -39,21 +39,21 @@ pub fn loose_assets_enabled() -> bool {
     )
 }
 
-/// 资源子目录名，所有 `assets/...` 相对路径都挂在它下面。
+/// Asset subdirectory name, all `assets/...` relative paths are mounted under it.
 const ASSET_DIR_NAME: &str = "assets";
 
-/// 分包构建（#509）写出的可选包目录：`assets/optional/optional_*.pak`。
+/// Directory for optional packages written by split build (#509): `assets/optional/optional_*.pak`.
 ///
-/// 自动挂载只扫描 `assets/` 顶层，因此这个目录里的包**不会**在启动时常驻；
-/// 需要时显式调用 `GpuAssetResolver::load_optional_packages`。
+/// Auto-mount only scans top level of `assets/`, so packages in this directory **will not** be persistent at startup;
+/// call `GpuAssetResolver::load_optional_packages` explicitly when needed.
 pub const OPTIONAL_PAK_DIR_NAME: &str = "optional";
 
 static WARNED_MISSING_ROOT: AtomicBool = AtomicBool::new(false);
 
-/// 候选根目录，按优先级排序（见模块文档）。
+/// Candidate root directories, sorted by priority (see module docs).
 ///
-/// 需要自行尝试多个相对路径的调用方（例如场景清单还要兼容旧格式
-/// `crates/prism-engine/assets/`）可以直接遍历它。
+/// Callers needing to try multiple relative paths themselves (e.g. scene manifest also needs to support old format
+/// `crates/prism-engine/assets/`) can iterate it directly.
 #[expect(
     clippy::disallowed_methods,
     reason = "single source of truth for runtime asset root resolution"
@@ -67,15 +67,15 @@ pub fn search_roots() -> Vec<PathBuf> {
     collect_search_roots(env_root.as_deref(), cwd.as_deref(), exe_dir.as_deref())
 }
 
-/// 定位包含 `assets/` 的目录（解析顺序见模块文档）。
+/// Resolve directory containing `assets/` (order in module docs).
 ///
-/// 找不到时返回 `None`，并且**每个进程只警告一次**——调用点通常有两三个，
-/// 重复警告只会让启动日志更吵。
+/// Returns `None` when not found, and **warns only once per process** — call sites usually have two or three,
+/// repeated warnings would only make startup log noisier.
 pub fn asset_root() -> Option<PathBuf> {
     let root = find_asset_root(&search_roots());
     match &root {
-        // 每次资产查询都会走到这里（一次会话几十次），所以常驻日志只留在
-        // `trace`；启动时 `prism-app` 会单独打一行 `asset root:`。
+        // Every asset query will come here (tens of calls in one session), so resident log stays at
+        // `trace`; at startup `prism-app` prints a separate `asset root:` line.
         Some(root) => log::trace!("asset root: {}", root.display()),
         None => {
             if !WARNED_MISSING_ROOT.swap(true, Ordering::Relaxed) {
@@ -90,24 +90,24 @@ pub fn asset_root() -> Option<PathBuf> {
     root
 }
 
-/// `<root>/assets`——所有资源相对路径的基目录。
+/// `<root>/assets` — base directory for all asset relative paths.
 pub fn asset_dir() -> Option<PathBuf> {
     asset_root().map(|root| root.join(ASSET_DIR_NAME))
 }
 
-/// 解析 `assets/` 下的相对路径，例如 `asset_path("scenes.pak")`
-/// → `<root>/assets/scenes.pak`。
+/// Resolve a relative path under `assets/`, e.g. `asset_path("scenes.pak")`
+/// → `<root>/assets/scenes.pak`.
 pub fn asset_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
     asset_dir().map(|dir| dir.join(relative.as_ref()))
 }
 
-/// 复制即可执行的两步 `build-scenes` 命令：先 cd 到项目目录，再带完整参数跑
-/// `prism-build-pipeline`。只写 "run build-scenes" 的话，读的人还得猜
-/// `cargo run build-scenes` 之类的错误写法。
+/// Copy-pasteable two-step `build-scenes` commands: first cd to project directory, then run
+/// `prism-build-pipeline` with full arguments. Just writing "run build-scenes" leaves reader guessing
+/// error forms like `cargo run build-scenes`.
 ///
-/// `assets_dir` 是项目里那个 `assets/` 目录：工程有自己的 `Cargo.toml` 时用
-/// `Cargo.toml`，`projects/<name>/` 下的工程用 `../../Cargo.toml`（仓库根 workspace）。
-/// 找不到仓库根时退回不带 `--manifest-path` 的形式。
+/// `assets_dir` is the project's `assets/` directory: use `Cargo.toml` when project has its own; projects under
+/// `projects/<name>/` use `../../Cargo.toml` (repo root workspace).
+/// When repo root not found fall back to form without `--manifest-path`.
 pub fn build_scenes_steps(assets_dir: &Path) -> [String; 2] {
     let project = assets_dir.parent().unwrap_or(assets_dir);
     let project = project
@@ -140,7 +140,7 @@ pub fn build_scenes_steps(assets_dir: &Path) -> [String; 2] {
     }
 }
 
-/// [`build_scenes_steps`] 的日志形式（一行，`&&` 连接）。
+/// Log form of [`build_scenes_steps`] (one line, joined with `&&`).
 pub fn build_scenes_command(assets_dir: &Path) -> String {
     build_scenes_steps(assets_dir).join(" && ")
 }
@@ -161,7 +161,7 @@ fn repo_root_for(project: &Path) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Internals (纯函数，便于单测)
+// Internals (pure functions, easy to unit test)
 // ---------------------------------------------------------------------------
 
 fn collect_search_roots(
@@ -175,8 +175,8 @@ fn collect_search_roots(
         push_unique(&mut roots, root.to_path_buf());
     }
 
-    // cwd 在前、exe 目录在后：开发时（cargo run / 编辑器）cwd 更贴合用户意图，
-    // 部署后 cwd 往往只是「双击时的起始位置」，exe 目录才是可靠的那个。
+    // cwd first, exe directory second: in development (cargo run / editor) cwd better matches user intent,
+    // after deployment cwd is often just "start position when double-clicked", exe directory is the reliable one.
     for start in [cwd, exe_dir].into_iter().flatten() {
         let mut current = Some(start);
         while let Some(dir) = current {
@@ -201,10 +201,10 @@ fn find_asset_root(roots: &[PathBuf]) -> Option<PathBuf> {
         .cloned()
 }
 
-/// `dir` 下所有 `.pak` 文件，按文件名排序（#530 多包挂载）。
+/// All `.pak` files under `dir`, sorted by filename (#530 multi-package mounting).
 ///
-/// 打包器按内容分组写出多个包（场景包、资源包……），运行时不能再写死
-/// `scenes.pak`。排序只为让启动日志与解析顺序稳定。
+/// Packager writes multiple packages by content group (scene package, asset package...), runtime cannot hardcode
+/// `scenes.pak` again. Sorting only keeps startup log and parse order stable.
 pub fn pak_files_in(dir: &Path) -> Vec<PathBuf> {
     let mut paks: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
@@ -223,33 +223,33 @@ pub fn pak_files_in(dir: &Path) -> Vec<PathBuf> {
     paks
 }
 
-/// `assets/` 下的所有 `.pak`（[`pak_files_in`] 的定位版本）。
+/// All `.pak` under `assets/` (resolved version of [`pak_files_in`]).
 pub fn pak_files() -> Vec<PathBuf> {
     asset_dir()
         .map(|dir| pak_files_in(&dir))
         .unwrap_or_default()
 }
 
-/// `assets/optional/`——分包构建（#509）的可选包目录。
+/// `assets/optional/` — optional package directory of split build (#509).
 pub fn optional_pak_dir() -> Option<PathBuf> {
     asset_dir().map(|dir| dir.join(OPTIONAL_PAK_DIR_NAME))
 }
 
-/// `assets/optional/` 下的所有 `.pak`，按文件名排序。
+/// All `.pak` under `assets/optional/`, sorted by filename.
 ///
-/// 这些包不在启动时自动挂载；需要它们的一方调用
-/// `GpuAssetResolver::load_optional_packages` 显式登记。
+/// These packages are not auto-mounted at startup; whoever needs them calls
+/// `GpuAssetResolver::load_optional_packages` to register explicitly.
 pub fn optional_pak_files() -> Vec<PathBuf> {
     optional_pak_dir()
         .map(|dir| pak_files_in(&dir))
         .unwrap_or_default()
 }
 
-/// 松散资产（`.pak` 之外）是否存在。编辑器预览与用户项目的关卡 JSON、
-/// 按时段回落的贴图都走这里，不要再自己拼 `assets/` 相对路径。
+/// Whether a loose asset (outside `.pak`) exists. Editor preview and user project key-card JSON,
+/// time-of-day fallback textures all go through here, no need to assemble `assets/` relative paths again.
 ///
-/// 松散文件优先；找不到时再查 `assets/*.pak` 的路径清单（#1049），所以
-/// Android / 发布版里打进包的关卡数据同样可见。
+/// loose file preferred; when not found look again in `assets/*.pak` path manifest (#1049), so
+/// key-card data packed into package on Android / release is equally visible.
 pub fn asset_exists(relative: impl AsRef<Path>) -> bool {
     let relative = relative.as_ref();
     if asset_path(relative).is_some_and(|path| path.is_file()) {
@@ -258,7 +258,7 @@ pub fn asset_exists(relative: impl AsRef<Path>) -> bool {
     packaged_asset_exists(&package_key(relative))
 }
 
-/// 读取松散资产原始字节；松散文件不存在时回退到 `.pak`（#1049）。
+/// Read loose asset raw bytes; fall back to `.pak` when loose file missing (#1049).
 pub fn read_asset_file(relative: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     let relative = relative.as_ref();
     if let Some(path) = asset_path(relative) {
@@ -278,7 +278,7 @@ pub fn read_asset_file(relative: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     ))
 }
 
-/// 读取松散文本资产（关卡配置、清单等）；`read_asset_file` 的 UTF-8 版本。
+/// Read loose text asset (key-card config, manifest, etc.); UTF-8 version of `read_asset_file`.
 pub fn read_asset_text(relative: impl AsRef<Path>) -> std::io::Result<String> {
     let bytes = read_asset_file(relative)?;
     String::from_utf8(bytes)
@@ -286,14 +286,14 @@ pub fn read_asset_text(relative: impl AsRef<Path>) -> std::io::Result<String> {
 }
 
 // ---------------------------------------------------------------------------
-// 打包资产回退（#1049）
+// Packaged asset fallback (#1049)
 // ---------------------------------------------------------------------------
 
-/// 已打开的 `.pak` 读取器缓存条目。
+/// Cache entry for already-open `.pak` reader.
 ///
-/// `PackageReader::open` 会校验整包 checksum，所以不能每次查询都重开；
-/// 用 `(mtime, len)` 判断包是否被重建（与热重载同一套判据，Android 的
-/// FUSE 时间戳粒度是 1 秒，单看 mtime 会漏）。
+/// `PackageReader::open` validates whole-package checksum, cannot reopen on every query;
+/// use `(mtime, len)` to judge whether package was rebuilt (same criteria as hot reload; Android
+/// FUSE timestamp granularity is 1 second, mtime alone would miss).
 struct CachedPak {
     path: PathBuf,
     stamp: (u64, u64),
@@ -303,7 +303,7 @@ struct CachedPak {
 static PAK_CACHE: std::sync::OnceLock<std::sync::Mutex<Vec<CachedPak>>> =
     std::sync::OnceLock::new();
 
-/// `.pak` 里的路径键：正斜杠、去掉开头的 `./`（`AssetId::from_path` 的输入）。
+/// Path key inside `.pak`: forward slashes, leading `./` removed (input to `AssetId::from_path`).
 fn package_key(relative: &Path) -> String {
     relative
         .to_string_lossy()
@@ -323,8 +323,8 @@ fn pak_stamp(path: &Path) -> Option<(u64, u64)> {
     Some((modified, metadata.len()))
 }
 
-/// 用 `assets/` 下当前的 `.pak` 列表刷新缓存：保留未变化的读取器，重开
-/// 刚被重建的包，丢掉已删除的包。
+/// Refresh cache with current `.pak` list under `assets/`: keep unchanged readers, reopen
+/// newly rebuilt packages, drop deleted ones.
 fn refresh_pak_cache(cache: &mut Vec<CachedPak>) {
     let mut previous = std::mem::take(cache);
     let mut next = Vec::with_capacity(previous.len());
@@ -345,7 +345,7 @@ fn refresh_pak_cache(cache: &mut Vec<CachedPak>) {
                 stamp,
                 reader: std::sync::Arc::new(reader),
             }),
-            // 包里正在热重载时可能恰好在写；下一次查询会重试。
+            // Package may be mid-write during hot reload; next query will retry.
             Err(error) => log::debug!(
                 "cannot open {} for packaged-asset lookup: {error}",
                 path.display()

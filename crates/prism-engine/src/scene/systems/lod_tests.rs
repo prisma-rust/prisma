@@ -48,7 +48,7 @@ fn spawn_group_with(
         .map(|index| {
             let child = world.spawn();
             world.insert(child, Parent(parent));
-            // 子实体的位置不影响选级：距离从父实体算。
+            // Child entity position does not affect level selection: distance measured from parent entity.
             world.insert(
                 child,
                 LocalTransform {
@@ -76,7 +76,7 @@ fn the_nearest_camera_distance_selects_the_level() {
     let camera = spawn_camera(&mut world, glam::Vec3::ZERO);
     let (_parent, children) = spawn_group(&mut world, vec![10.0, 50.0], 3);
 
-    // 距离 0 -> LOD0
+    // distance  0 -> LOD0
     lod_system(&mut world);
     assert!(!hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));
@@ -84,7 +84,7 @@ fn the_nearest_camera_distance_selects_the_level() {
     assert!(is_active_in_hierarchy(&world, children[0]));
     assert!(!is_active_in_hierarchy(&world, children[1]));
 
-    // 距离 20 -> LOD1
+    // distance  20 -> LOD1
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(
@@ -96,7 +96,7 @@ fn the_nearest_camera_distance_selects_the_level() {
     assert!(!hidden(&world, children[1]));
     assert!(hidden(&world, children[2]));
 
-    // 距离 100 -> 超过所有阈值 -> 最后一级
+    // Distance 100 -> beyond all thresholds -> last level.
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(
@@ -129,7 +129,7 @@ fn a_disabled_camera_is_ignored() {
     let (_, children) = spawn_group(&mut world, vec![10.0, 50.0], 2);
 
     lod_system(&mut world);
-    // 没有启用相机 -> 保守显示 LOD0。
+    // No enabled camera -> conservatively display LOD0.
     assert!(!hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));
 }
@@ -162,11 +162,11 @@ fn level_for_distance_handles_degenerate_input() {
     assert_eq!(group.level_for_distance(10.1, 3), Some(1));
     assert_eq!(group.level_for_distance(50.0, 3), Some(1));
     assert_eq!(group.level_for_distance(50.1, 3), Some(2));
-    // 非有限距离 / 负距离都按 0 处理，不会跳到最低级。
+    // Non-limited / negative distance treated as 0, not jumping to last level.
     assert_eq!(group.level_for_distance(f32::NAN, 3), Some(0));
     assert_eq!(group.level_for_distance(f32::INFINITY, 3), Some(0));
     assert_eq!(group.level_for_distance(-5.0, 3), Some(0));
-    // 没有阈值时始终 LOD0。
+    // No thresholds -> always LOD0.
     assert_eq!(
         LodGroup {
             distances: Vec::new(),
@@ -188,9 +188,9 @@ fn level_for_screen_ratio_uses_descending_thresholds() {
     assert_eq!(group.level_for_screen_ratio(0.49, 3), Some(1));
     assert_eq!(group.level_for_screen_ratio(0.1, 3), Some(1));
     assert_eq!(group.level_for_screen_ratio(0.09, 3), Some(2));
-    // 非有限占比按 0 处理，不会跳到最低级。
+    // Non-limited ratio treated as 0, not jumping to last level.
     assert_eq!(group.level_for_screen_ratio(f32::NAN, 3), Some(2));
-    // 没有子实体 / 没有有效阈值时返回 None，调用方回落到距离模式。
+    // No child entities / no valid threshold returns None, caller falls back to distance mode.
     assert_eq!(group.level_for_screen_ratio(1.0, 0), None);
     assert_eq!(
         LodGroup {
@@ -209,7 +209,7 @@ fn screen_ratio_mode_selects_by_projected_height() {
     let (_, children) = spawn_group_with(
         &mut world,
         LodGroup {
-            // 距离 10 米本来会选 LOD2，但屏幕占比只到 LOD1。
+            // Distance 10m would select LOD2, but screen ratio only reaches LOD1.
             distances: vec![1.0, 2.0],
             screen_ratios: vec![0.5, 0.1],
             bounds_radius: 1.0,
@@ -217,13 +217,13 @@ fn screen_ratio_mode_selects_by_projected_height() {
         3,
     );
 
-    // 默认 60° FOV：1 / tan(30°) ≈ 1.732；占比 = 1 * 1.732 / 10 ≈ 0.173。
+    // Default 60° FOV: 1 / tan(30°) ≈ 1.732; ratio = 1 * 1.732 / 10 ≈ 0.173.
     lod_system(&mut world);
     assert!(hidden(&world, children[0]));
     assert!(!hidden(&world, children[1]));
     assert!(hidden(&world, children[2]));
 
-    // 距离 2 米 -> 占比 ≈ 0.866，回到 LOD0。
+    // Distance 2m -> ratio ≈ 0.866, back to LOD0.
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0))),
@@ -248,7 +248,7 @@ fn an_invalid_screen_radius_falls_back_to_distance() {
         3,
     );
 
-    // 半径非法时不能按屏幕占比把整组藏掉，应回落到距离：100 米 -> LOD2。
+    // When radius illegal cannot hide whole group by screen ratio, should fall back to distance: 100m -> LOD2.
     lod_system(&mut world);
     assert!(hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));

@@ -20,7 +20,10 @@ fn round_trips_through_the_file() {
         store.set("caught", "3");
         store.set("coins", "120");
         assert!(store.is_dirty());
-        assert!(store.flush().unwrap(), "第一次写盘应真的落盘");
+        assert!(
+            store.flush().unwrap(),
+            "First flush should actually write to disk"
+        );
         assert!(!store.is_dirty());
     }
 
@@ -35,7 +38,7 @@ fn a_missing_file_is_an_empty_save_not_an_error() {
     let path = temp_path("missing").join("nested").join(FILE_NAME);
     let mut store = UserStore::open(&path);
     assert!(store.get("anything").is_none());
-    // 空存档也允许写：父目录会被创建出来。
+    // Empty save also allowed to write: parent directory will be created.
     store.set("caught", "1");
     assert!(store.flush().unwrap());
     assert!(path.is_file());
@@ -51,9 +54,12 @@ fn a_newer_save_file_is_never_overwritten() {
     std::fs::write(&path, &newer).unwrap();
 
     let mut store = UserStore::open(&path);
-    // 新版存档的键读不到（解析失败），但**文件必须原样保留**。
+    // New-version save key unreadable (parse failure), but **file must be preserved as-is**.
     store.set("caught", "0");
-    assert!(!store.flush().unwrap(), "只读存档不该写盘");
+    assert!(
+        !store.flush().unwrap(),
+        "Read-only save should not write to disk"
+    );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
 }
 
@@ -76,7 +82,10 @@ fn flush_without_changes_does_not_touch_the_disk() {
     let before = std::fs::metadata(&path).unwrap().modified().unwrap();
 
     let mut reopened = UserStore::open(&path);
-    assert!(!reopened.flush().unwrap(), "没有改动不该写盘");
+    assert!(
+        !reopened.flush().unwrap(),
+        "No changes should not write to disk"
+    );
     assert_eq!(
         std::fs::metadata(&path).unwrap().modified().unwrap(),
         before
@@ -94,7 +103,7 @@ fn in_memory_stores_never_touch_the_disk() {
 
 #[test]
 fn save_paths_follow_the_platform_and_the_override() {
-    // 覆盖变量优先级最高，其他分支不参与（测试不能依赖本机 APPDATA）。
+    // Override variable with highest priority, other branches not involved (test cannot depend on local APPDATA).
     let previous = std::env::var_os(ENV_OVERRIDE);
     std::env::set_var(ENV_OVERRIDE, "D:/tmp/prism-user-data-test");
     let path = save_path("my game/v2");

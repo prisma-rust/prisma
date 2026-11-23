@@ -28,15 +28,19 @@ pub fn resolve_root() -> Result<PathBuf, String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--project" {
-            let value = args.next().ok_or("--project 需要一个路径")?;
+            let value = args.next().ok_or("--project requires a path")?;
             return std::fs::canonicalize(&value)
-                .map_err(|err| format!("项目根 '{value}' 不存在: {err}"));
+                .map_err(|err| format!("Project root '{value}' does not exist: {err}"));
         }
     }
     if let Some(value) = std::env::var_os("PRISMA_PROJECT") {
         let value = PathBuf::from(value);
-        return std::fs::canonicalize(&value)
-            .map_err(|err| format!("PRISMA_PROJECT 指向的 '{}' 不存在: {err}", value.display()));
+        return std::fs::canonicalize(&value).map_err(|err| {
+            format!(
+                "PRISMA_PROJECT points to '{}' which does not exist: {err}",
+                value.display()
+            )
+        });
     }
     prism_editor_api::scene::find_project_root()
 }

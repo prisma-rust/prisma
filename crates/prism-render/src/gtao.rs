@@ -1,28 +1,28 @@
-//! GTAO（真实环境光遮蔽）通道
+//! GTAO (true ambient occlusion) pass
 //!
-//! 半分辨率屏幕空间环境光遮蔽通道，在 `ForwardPass` 之后运行（ForwardPass 写入
-//! D32_SFLOAT 深度和 R16G16B16A16 视图空间法线 MRT）。此通道读取深度
-//!（+ 可选法线）并写入单通道 R8_UNORM 环境光遮蔽纹理。
-//! `ForwardPass` 采样**上一帧的**环境光遮蔽输出（1 帧延迟）以衰减 IBL 漫反射+镜面反射项。
-//! #883 Phase 3 起，GTAO 还会用上一帧 AO + `FORWARD_VELOCITY_H` 做时域重投影降噪；
-//! 透明 reactive 像素（`normal.w = 1`）和 resize 后第一帧保持原始输出。
+//! Half-resolution screen-space ambient occlusion pass, runs after `ForwardPass` (which writes
+//! D32_SFLOAT depth and R16G16B16A16 view-space normal MRT). This pass reads depth
+//! (+ optional normal) and writes single-channel R8_UNORM ambient occlusion texture.
+//! `ForwardPass` samples **previous frame** AO output (1 frame delay) to attenuate IBL diffuse + specular terms.
+//! Since #883 Phase 3 GTAO also uses previous-frame AO + `FORWARD_VELOCITY_H` for temporal reprojection denoising;
+//! transparent / reactive pixels (`normal.w = 1`) and first frame after resize keep original output.
 //!
-//! ## 资源
-//! - 两个 R8_UNORM 环境光遮蔽图像（通过处理中帧索引双缓冲，因此场景可以读取
-//!   `ao[(frame+1)%2]`（上一帧的输出），而 GTAO 通道写入 `ao[frame]`（当前帧的输出），
-//!   无处理中风险）。
-//! - 四个描述符集：按帧索引，集 0 = 深度+采样器，集 1 = 法线+采样器（匹配 Slang 着色器的双集布局）。
-//! - 拥有自己的渲染通道+管线（1 个颜色附件，无深度）。
+//! ## Resources
+//! - Two R8_UNORM AO images (double-buffered by processed frame index, so scene can read
+//!   `ao[(frame+1)%2]` (previous frame output), while GTAO pass writes `ao[frame]` (current output),
+//!   no processing-in-risk).
+//! - Four descriptor sets: by frame index, set 0 = depth + sampler, set 1 = normal + sampler (matching Slang shader dual-set layout).
+//! - Own render pass + pipeline (1 color attachment, no depth).
 //!
-//! ## `execute` 中记录的布局转换
-//! 1. 屏障：深度 `DEPTH_STENCIL_ATTACHMENT_OPTIMAL → DEPTH_STENCIL_READ_ONLY_OPTIMAL`
-//! 2. 屏障：法线 `COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL`
-//! 3. 开始渲染通道（写入 `ao[frame]`）
+//! ## Layout transitions recorded in `execute`
+//! 1. Barrier: depth `DEPTH_STENCIL_ATTACHMENT_OPTIMAL → DEPTH_STENCIL_READ_ONLY_OPTIMAL`
+//! 2. Barrier: normal `COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL`
+//! 3. Begin render pass (writing `ao[frame]`)
 //! 4. end render pass
 //! 5. barrier `ao[frame]` `COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL`
 //!
 //! The depth + normal images return to their attachment layouts at the start of
-//! the 下一个 frame's ForwardPass (its 渲染 pass `initial_layout = UNDEFINED`
+//! the next  frame's ForwardPass (its render  pass `initial_layout = UNDEFINED`
 //! tolerates any incoming layout via `load_op = CLEAR`). The AO image stays in
 //! SHADER_READ_ONLY_OPTIMAL until the GTAO pass writes it again two frames
 //! later (its render pass also uses `initial_layout = UNDEFINED`).
@@ -525,7 +525,7 @@ impl GtaoPass {
                 std::slice::from_ref(&self.descriptor_sets[i][1]),
                 &[],
             );
-            // 集合 2: previous AO + velocity + temporal sampler.
+            // set  2: previous AO + velocity + temporal sampler.
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -556,7 +556,7 @@ impl GtaoPass {
                 }],
             );
 
-            // 推送 constants: shader_bindings::gtao::GtaoPush (88 字节 片元
+            // Push constants: shader_bindings::gtao::GtaoPush (88 bytes, fragment only)
             device.cmd_push_constants(
                 cmd,
                 pipeline.layout,
@@ -572,9 +572,9 @@ impl GtaoPass {
         unsafe { device.cmd_end_render_pass(cmd) };
 
         // ---- Barrier ao[i] -> SHADER_READ_ONLY_OPTIMAL ----
-        // GRAPH-EDGE 异常 this is a cross-frame delayed edge. `ForwardPass`
+        // GRAPH-EDGE exception  this is a cross-frame delayed edge. `ForwardPass`
         // reads this AO image *next frame* (1-frame latency, wired via
-        // `GraphFrame.ao_view` -> `ForwardPass::set_ao`, NOT via a 图
+        // `GraphFrame.ao_view` -> `ForwardPass::set_ao`, NOT via a graph
         // `read_usage` edge), so the render graph cannot express or schedule
         // this barrier. It stays manual. SHADER_READ_ONLY_OPTIMAL stays valid
         // until the GTAO pass writes this slot again (2 frames later), whose
@@ -651,7 +651,7 @@ impl GtaoPass {
         // Sets 0/1 share the depth/normal layout; set 2 is temporal.
         let set_layouts = [self.ds_layout, self.ds_layout, self.temporal_layout];
 
-        // 推送 constants: shader_bindings::gtao::GtaoPush (88 字节 片元 only).
+        // Push constants: shader_bindings::gtao::GtaoPush (88 bytes fragment only).
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -837,7 +837,7 @@ fn create_render_pass(device: &ash::Device) -> anyhow::Result<vk::RenderPass> {
 /// GRAPH-EDGE EXCEPTION: this is a one-shot resource-creation transition, not
 /// a per-frame graph edge. The render graph only tracks layouts for graph-flow
 /// handles (shadow / scene depth / normal / HDR color); the AO images are
-/// `GtaoPass`-private and fed 后 to `ForwardPass` via a side-channel
+/// `GtaoPass`-private and fed after  to `ForwardPass` via a side-channel
 /// (`GraphFrame.ao_view`), so the graph never sees them.
 fn transition_ao_images_to_shader_read(
     context: &VulkanContext,
@@ -1002,10 +1002,10 @@ impl RenderPassNode for GtaoPass {
             );
         }
         // The images themselves are needed only for the layout barriers; reuse
-        // the view's 图像 handle via the ForwardPass-published 视图 (vkImageView
+        // The view's image handle via the ForwardPass-published view (vkImageView
         // carries the image). We pass the same handle for image + view; the
         // barrier only needs a valid image, and `vk::Image` from a view is not
-        // directly available here, so we use the ForwardPass-published 图像 via
+        // directly available here, so we use the ForwardPass-published image via
         // the resource table's image (if present) else fall back to the view.
         let depth_image = resources
             .published_image(FORWARD_DEPTH_H)
@@ -1064,9 +1064,9 @@ impl RenderPassNode for GtaoPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Gtao,
-            // 深度 + 法线 come from ForwardPass via the well-known handles.
+            // Depth + normal come from ForwardPass via the well-known handles.
             inputs: vec![FORWARD_DEPTH_H, FORWARD_NORMAL_H, FORWARD_VELOCITY_H],
-            // 环境光遮蔽 is consumed by ForwardPass via `set_ao` (1-frame 延迟 not a
+            // AO is consumed by ForwardPass via `set_ao` (1-frame delay is intentional)
             // graph edge - surfaced as a note by the viz instead.
             outputs: vec![GTAO_AO_H],
         }
@@ -1080,11 +1080,11 @@ impl RenderPassNode for GtaoPass {
     }
 }
 
-/// AO 目标是交换链尺寸的一半（且至少 1×1）。
+/// AO target is half swapchain size (and at least 1×1).
 ///
-/// 抽成纯函数是因为 `recreate_target` 用「新尺寸 == 当前尺寸」做早退：只要调用方
-/// 在 `Swapchain::recreate` **之前**采样交换链 extent，算出来的半分辨率就
-/// 与当前值相同，整个 resize 会被静默跳过。
+/// Extracted into pure function because `recreate_target` uses "new size == current size" early exit: as long as caller
+/// samples swapchain extent **before** `Swapchain::recreate`, computed half-res would
+/// equal current value, and whole resize silently skipped.
 pub(crate) fn half_extent(full: vk::Extent2D) -> vk::Extent2D {
     vk::Extent2D {
         width: (full.width / 2).max(1),
@@ -1124,8 +1124,8 @@ mod tests {
         );
     }
 
-    /// 回归守卫：喂给 `recreate_target` 的必须是**新**交换链的 extent。
-    /// 用旧 extent 算出的半分辨率等于当前值，早退会把 resize 吞掉。
+    /// Regression guard: what fed to `recreate_target` must be **new** swapchain extent.
+    /// Half-res computed from old extent equals current value, early exit would swallow resize.
     #[test]
     fn stale_swapchain_extent_would_early_return() {
         let current = half_extent(vk::Extent2D {
@@ -1140,7 +1140,7 @@ mod tests {
             width: 1600,
             height: 900,
         });
-        assert_eq!(stale, current, "旧 extent 会命中「尺寸未变」早退");
-        assert_ne!(fresh, current, "新 extent 必须真正触发重建");
+        assert_eq!(stale, current, "Old extent hits size-unchanged early exit");
+        assert_ne!(fresh, current, "New extent must genuinely trigger rebuild");
     }
 }

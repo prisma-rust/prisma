@@ -1,10 +1,10 @@
-//! `SceneManager` 的场景切换语义：成功时卸载旧场景、清空环境缓存；
-//! 失败时保持当前场景不动。
+//! `SceneManager` scene-switch semantics: on success unload old scene, clear environment cache;
+//! on failure keep current scene unchanged.
 
 use super::*;
 use crate::scene::components::{SceneAssetId, SceneMember};
 
-/// spawn 一个属于 `scene` 的实体（最小复刻 loader 写入的归属标记）。
+/// Spawn an entity belonging to `scene` (minimal replica of loader ownership flag).
 fn spawn_scene_entity(world: &mut World, scene: SceneAssetId) -> Entity {
     let entity = world.spawn();
     world.insert(entity, SceneMember(scene));
@@ -29,8 +29,8 @@ fn switching_scenes_unloads_the_previous_scene() {
     let previous_entities: Vec<Entity> = (0..3)
         .map(|_| spawn_scene_entity(&mut world, previous))
         .collect();
-    // 引擎自有实体（例如 `runtime_initialize` 的回退相机）没有 `SceneMember`，
-    // 切场景时不能被误删。
+    // Engine-owned entities (e.g. `runtime_initialize` fallback camera) have no `SceneMember`,
+    // must not be mistakenly deleted on scene switch.
     let engine_owned = world.spawn();
     let current_entities: Vec<Entity> = (0..2)
         .map(|_| spawn_scene_entity(&mut world, current))
@@ -91,7 +91,7 @@ fn a_missing_scene_keeps_the_current_scene_loaded() {
     manager.set_environment_bytes(Some(vec![7]));
     let intro_entity = spawn_scene_entity(&mut world, SceneAssetId::generate());
 
-    // manifest 里有这个场景，但资源包里没有注册对应路径 → 加载失败。
+    // Manifest has this scene, but asset pack has no registered corresponding path → load failure.
     let manifest = "\
 [[scenes]]
 name = \"missing\"
@@ -123,7 +123,7 @@ fn unloading_an_empty_world_is_a_no_op() {
 }
 
 // ---------------------------------------------------------------------------
-// 清单解析：scenes.json 优先，旧 scenes.toml 回退
+// Manifest parsing: scenes.json priority, legacy scenes.toml fallback
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -187,7 +187,10 @@ fn falls_back_to_the_legacy_toml_manifest() {
     .expect("legacy manifest");
     assert_eq!(manifest.scenes.len(), 2);
     assert_eq!(manifest.scenes[0].name, "intro");
-    assert!(manifest.scenes[0].enabled, "缺省 enabled 视为启用");
+    assert!(
+        manifest.scenes[0].enabled,
+        "Missing enabled treated as enabled"
+    );
     assert!(!manifest.scenes[1].enabled);
 }
 
@@ -198,10 +201,10 @@ fn garbage_manifest_is_reported_instead_of_silently_empty() {
 }
 
 // ---------------------------------------------------------------------------
-// 场景卸载（#482）
+// Scene unload (#482)
 // ---------------------------------------------------------------------------
 
-/// `Persistent` 实体 + 它的整棵子树都活过一次换场。
+/// `Persistent` entity and its entire child tree survive one scene switch.
 #[test]
 fn unloading_a_scene_keeps_persistent_subtrees() {
     use crate::scene::components::{Child, Persistent};
@@ -219,21 +222,24 @@ fn unloading_a_scene_keeps_persistent_subtrees() {
     HierarchyHelper::reparent(&mut world, child, Some(persistent_root));
     HierarchyHelper::reparent(&mut world, grandchild, Some(child));
 
-    // 场景里一个普通的中间节点，用来确认树结构没被整体保留。
+    // A normal intermediate node in scene, to confirm tree structure not wholly preserved.
     assert!(world.get::<Child>(persistent_root).is_some());
 
     let unloaded = manager.unload_scene(&mut world);
 
-    assert_eq!(unloaded, 1, "只有不在 Persistent 子树里的那个实体被删");
+    assert_eq!(unloaded, 1, "Only entity not in Persistent subtree deleted");
     assert!(!world.is_alive(level_entity));
     assert!(world.is_alive(persistent_root));
-    assert!(world.is_alive(child), "Persistent 的后代跟着一起留下");
+    assert!(world.is_alive(child), "Persistent descendant kept too");
     assert!(world.is_alive(grandchild));
     assert_eq!(manager.current_scene_name(), None);
-    assert!(manager.generation() >= 1, "卸载必须递增场景代数");
+    assert!(
+        manager.generation() >= 1,
+        "Unload must increment scene generation"
+    );
 }
 
-/// 卸载之后场景代数要变：项目模块靠它丢弃陈旧句柄。
+/// Scene generation must change after unload: project module uses it to discard stale handles.
 #[test]
 fn every_scene_switch_bumps_the_generation() {
     let mut world = World::new();
@@ -266,7 +272,7 @@ fn every_scene_switch_bumps_the_generation() {
     assert_eq!(manager.generation(), after_first + 1);
 }
 
-/// 作者格式（`.scene.json`）的 `Single` 接管：旧场景被卸载而不是叠加。
+/// Author format (`.scene.json`) `Single` takeover: old scene unloaded, not overlaid.
 #[test]
 fn adopting_an_author_scene_switches_instead_of_stacking() {
     let mut world = World::new();
@@ -290,12 +296,12 @@ fn adopting_an_author_scene_switches_instead_of_stacking() {
     assert_eq!(
         manager.current_scene_name(),
         None,
-        "作者格式没有 manifest 名字，不能留着上一个场景的名字"
+        "Author format has no manifest name, must not keep previous scene name"
     );
     assert_eq!(manager.generation(), 1);
 }
 
-/// `Additive`：两边都留着，代数不变（旧句柄仍然有效）。
+/// `Additive`: both kept, generation unchanged (old handle still valid).
 #[test]
 fn additive_loads_keep_both_scenes() {
     let mut world = World::new();
@@ -318,7 +324,7 @@ fn additive_loads_keep_both_scenes() {
     assert_eq!(manager.generation(), 0);
 }
 
-/// 父级属于旧场景被删、子级是 `Persistent`：子级留下，父级断链（只警告）。
+/// Parent belonging to old scene deleted, child `Persistent`: child stays, parent link broken (warn only).
 #[test]
 fn a_persistent_child_survives_a_dead_parent() {
     use crate::scene::components::Persistent;

@@ -1,11 +1,11 @@
-//! 场景清单（`assets/scenes.json`）的读写。
+//! Scene manifest (`assets/scenes.json`) read/write.
 //!
-//! 形状：`{"scenes": [{"name": "...", "path": "...", "enabled": true, "guid": "..."}]}`
-//! （`guid` 可选，见 #466）——与引擎 `prism_engine::scene::SceneManifest` 的
-//! serde 形状一致，顺序即构建 / 启动顺序。
+//! Shape: `{"scenes": [{"name": "...", "path": "...", "enabled": true, "guid": "..."}]}`
+//! (`guid` optional, see #466) — consistent with engine `prism_engine::scene::SceneManifest`
+//! serde shape, order is build / launch order.
 //!
-//! 旧项目的 `assets/scenes.toml`（`[[scenes]]` 数组表）仍可读，但**写端只产出
-//! `scenes.json`**；一次性迁移由 `prism-build-pipeline build-scenes` 完成。
+//! Legacy projects `assets/scenes.toml` (`[[scenes]]` array table) still readable, but **write side only produces
+//! `scenes.json`**; one-time migration completed by `prism-build-pipeline build-scenes`.
 
 use std::path::{Path, PathBuf};
 
@@ -13,22 +13,22 @@ use prism_asset::GuidIndex;
 use prism_scene::references::{path_to_asset_relative, SyncMode};
 use serde::{Deserialize, Serialize};
 
-/// 清单路径（相对项目根）。
+/// Manifest path (relative to project root).
 pub const MANIFEST_FILE: &str = "assets/scenes.json";
 
 fn default_enabled() -> bool {
     true
 }
 
-/// 清单里的一条可运行场景。
+/// One runnable scene entry in manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneListEntry {
     pub name: String,
-    /// 作者路径（`.scene.json` / `.rscn` / 外部场景）。
+    /// Author path (`.scene.json` / `.rscn` / external scene).
     pub path: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// 场景源文档的稳定 GUID（#466）；旧清单缺省时按路径工作。
+    /// Stable GUID of scene source document (#466); legacy manifest without it works by path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guid: Option<String>,
 }
@@ -39,12 +39,12 @@ struct SceneManifestFile {
     scenes: Vec<SceneListEntry>,
 }
 
-/// 写回目标：`<root>/assets/scenes.json`。
+/// Write target: `<root>/assets/scenes.json`.
 pub fn manifest_path(root: &Path) -> PathBuf {
     root.join(MANIFEST_FILE)
 }
 
-/// 实际存在的清单文件：检查 `<root>/assets/scenes.json`。
+/// Actually existing manifest file: checks `<root>/assets/scenes.json`.
 pub fn existing_manifest(root: &Path) -> Option<PathBuf> {
     let path = manifest_path(root);
     if path.is_file() {
@@ -54,35 +54,36 @@ pub fn existing_manifest(root: &Path) -> Option<PathBuf> {
     }
 }
 
-/// 解析清单文本（JSON 格式）。
+/// Parse manifest text (JSON format).
 pub fn parse(text: &str) -> Result<Vec<SceneListEntry>, String> {
     serde_json::from_str::<SceneManifestFile>(text)
         .map(|file| file.scenes)
-        .map_err(|error| format!("解析 scenes.json 失败: {error}"))
+        .map_err(|error| format!("Failed to parse scenes.json: {error}"))
 }
 
-/// 读取清单条目；两个文件都不存在时返回空列表。
+/// Read manifest entries; returns empty list when neither file exists.
 pub fn read(root: &Path) -> Result<Vec<SceneListEntry>, String> {
     let Some(path) = existing_manifest(root) else {
         return Ok(Vec::new());
     };
     let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
     let mut scenes =
-        parse(&text).map_err(|error| format!("解析 {} 失败: {error}", path.display()))?;
+        parse(&text).map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
     sync_guids(root, &mut scenes, SyncMode::Load);
     Ok(scenes)
 }
 
-/// 序列化为 `scenes.json` 文本（带缩进，便于人工 review / diff）。
+/// Serialize to `scenes.json` text (indented, for manual review / diff).
 pub fn render(scenes: &[SceneListEntry]) -> Result<String, String> {
     let file = SceneManifestFile {
         scenes: scenes.to_vec(),
     };
-    serde_json::to_string_pretty(&file).map_err(|error| format!("序列化场景列表失败: {error}"))
+    serde_json::to_string_pretty(&file)
+        .map_err(|error| format!("Failed to serialize scene list: {error}"))
 }
 
-/// 校验并写回 `assets/scenes.json`（顺序与 enabled 直接决定 build-scenes 的行为）。
+/// Validate and write back `assets/scenes.json` (order and enabled directly determine build-scenes behavior).
 pub fn write(root: &Path, scenes: &[SceneListEntry]) -> Result<(), String> {
     let mut scenes = scenes.to_vec();
     sync_guids(root, &mut scenes, SyncMode::Save);
@@ -91,10 +92,10 @@ pub fn write(root: &Path, scenes: &[SceneListEntry]) -> Result<(), String> {
     let text = render(&scenes)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("无法创建 {}: {error}", parent.display()))?;
+            .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
     }
     std::fs::write(&path, format!("{text}\n"))
-        .map_err(|error| format!("无法写入 {}: {error}", path.display()))
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))
 }
 
 /// Resolve / fill GUIDs for manifest entries.
@@ -148,18 +149,18 @@ fn manifest_style_path(current: &str, resolved: &str) -> String {
     }
 }
 
-/// 场景名非空 / 路径非空 / 名字不重复。
+/// Scene name non-empty / path non-empty / name not duplicate.
 pub fn validate(scenes: &[SceneListEntry]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for entry in scenes {
         if entry.name.trim().is_empty() {
-            return Err("场景名不能为空".into());
+            return Err("Scene name cannot be empty".into());
         }
         if entry.path.trim().is_empty() {
-            return Err(format!("场景 '{}' 的路径不能为空", entry.name));
+            return Err(format!("Path for scene '{}' cannot be empty", entry.name));
         }
         if !seen.insert(entry.name.trim()) {
-            return Err(format!("场景名重复：{}", entry.name));
+            return Err(format!("Duplicate scene name: {}", entry.name));
         }
     }
     Ok(())
@@ -180,7 +181,10 @@ mod tests {
     fn missing_manifest_is_empty() {
         let root = temp_root("missing");
         assert!(read(&root).unwrap().is_empty());
-        assert!(!manifest_path(&root).exists(), "读不创建文件");
+        assert!(
+            !manifest_path(&root).exists(),
+            "Reading must not create file"
+        );
     }
 
     #[test]
@@ -297,6 +301,9 @@ mod tests {
             },
         ];
         assert!(write(&root, &duplicate).is_err());
-        assert!(!manifest_path(&root).exists(), "校验失败不落盘");
+        assert!(
+            !manifest_path(&root).exists(),
+            "Validation failure must not write to disk"
+        );
     }
 }

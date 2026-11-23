@@ -1,49 +1,49 @@
-# Emergence（涌现）：v3.0 终极全景标签体系 — 围绕 Prisma 引擎的开发计划
+# Emergence: v3.0 ultimate panoramic tag system — Prisma engine development plan
 
-> 项目目录：`projects/emergence/`（独立 workspace，与 `projects/template`、`projects/echowell`、`projects/fishing` 同级）。  
-> 架构基准：严格遵循仓库 `AGENTS.md` / `GEMINI.md`、`docs/DESIGN.md`、`docs/REFLECT.md` 与 `docs/project-module-architecture.md` 的分层红线与 1.0 前零兼容原则。
-
----
-
-## 1. 项目定位与引擎 / 项目分层硬边界
-
-`Emergence` 是一个面向硬核涌现交互的物理与危化沙盒工程。本开发计划以 **Prisma 引擎底座能力演进** 为核心主线，将 v3.0 五大标签体系（基础环境状态枚举、固有材质位、瞬态危化位、空间拓扑位、外部刺激与动态时钟）拆解为可复用的通用引擎基础设施与可热替换的项目规则表。
-
-### 1.1 硬边界契约（Hard Boundary Contract）
-
-判定标准：**换一个化学/生态/工业模拟沙盒，该能力能否原样复用？** 能 → 进引擎 `crates/prism-*`；不能 → 留 `projects/emergence/`。
-
-| 层次 | 所在 Crate | 允许承载的职责 | 严禁越界的职责 |
-|---|---|---|---|
-| **核心调度与并发层** | `prism-ecs` | 活跃集 / 休眠跳过（`DORMANT` 零开销迭代）、Chunk 并行作业（`jobs::scoped_parallel_chunks`）、多频固定步调度器 | 出现热传导、酸蚀、辐射、生物活性等具体物理公式 |
-| **反射与场景协议层** | `prism-reflect` / `prism-scene` | `Bitflags` 字段元数据描述、紧凑二进制/RSCN v4 组件编解码、稳定 `TypeId`、RTTIBin 跨边界传输 | 写死 15 种材质或 18 种瞬态的具体位语义 |
-| **空间几何与拓扑核** | `prism-physics2d` / `rapier3d`（`prism-app/physics`） | 确定性 AABB 碰撞（`Aabb2`、`raycast_aabb`）、网格邻接查询、连通域/结构支撑 Flood-Fill、复合刚体与动态体素岛 | 写入真空沸腾、高压液化或生物寄生蔓延逻辑 |
-| **引擎运行时服务层** | `prism-engine` / `prism-app` | 资产根路径（`asset_paths`）、`DirtyRouter` 帧间脏数据路由、热重载、音频驱动与时间分频驱动 | 出现任何 ROM 物质配表或具体玩法状态机 |
-| **渲染与视觉反馈层** | `prism-render` / Slang | `SpritePass` 2D 切片合批（`SpriteInstance::flags`）、**Compute DDA 三级体素光线步进**、光源与粒子、调试叠加层 | 按硬编码材质名写死渲染分支 |
-| **编辑器与自动化层** | `prism-editor-api` / `prism-editor-mcp` | 位标志折叠检查器 UI Schema 投影、无头刺激注入与属性断言工具 | 链接 `prism-render` / Vulkan |
-| **用户项目层** | `projects/emergence/` | `PhysicalCell` 16 字节内核、v3.0 5 维跃迁规则矩阵、ROM 物质配置表、实验室场景与交互探针 | 直接使用 `ash::vk`、绕过 `GameWorld` / `HostApi` 访问渲染线程或引入 egui 依赖 |
+> Project directory: `projects/emergence/` (independent workspace, same level as `projects/template`, `projects/echowell`, `projects/fishing`).
+> Architecture baseline: strictly follows repo `AGENTS.md` / `GEMINI.md`, `docs/DESIGN.md`, `docs/REFLECT.md` and `docs/project-module-architecture.md` layering red lines and zero-compatibility-before-1.0 principle.
 
 ---
 
-## 2. 底层紧凑内存模型与 3D 三级体素拓扑
+## 1. Project positioning and engine / project layering hard boundary
 
-为支撑海量网格与 3D 精细破坏在 60 Hz 下的零分配推演，v3.0 全景标签体系不采用分散的堆分配组件或字符串标签，而是统一压入 **16 字节 `#[repr(C)]` `PhysicalCell`**（实现在 [`projects/emergence/src/tags.rs`](src/tags.rs)）：单条 64 字节 CPU 缓存行可连续容纳 **4 个完整物理单元**。
+`Emergence` is a physics and hazardous-chemical sandbox for hardcore emergent interaction. This development plan centers on **evolution of Prisma engine base capabilities**, breaking v3.0 five major tag systems (base environment state enums, intrinsic material bits, transient hazard bits, spatial topology bits, external stimuli and dynamic clock) into reusable general engine infrastructure and hot-swappable project rule tables.
 
-在空间组织上，**16 字节 `PhysicalCell` 作为交互与物理模拟的最小原子单元（L2）**，与上下两级构成 **L1 (1 m) → L2 (0.25 m) → L3 (0.0625 m)** 三级体素分工（并由 Region 负责世界大块流式）：
+### 1.1 Hard Boundary Contract
 
-### 2.0 3D 三级体素分级定义（1 m / 0.25 m / 0.0625 m）
+Criterion: **if switching to another chemistry / ecology / industrial simulation sandbox, can this capability be reused as-is?** Yes → engine `crates/prism-*`; no → stay in `projects/emergence/`.
 
-| 层级 | 空间尺度 | 数据形态 | 核心职责 |
+| Layer | Crate | Allowed responsibilities | Forbidden responsibilities |
 |---|---|---|---|
-| **L1：世界与地形基础（1 m）** | `1 m` 立方单元<br>（含 `4×4×4` 个 L2） | 宏观索引 / `u64` 活跃与气密位掩码 + **写时分裂（COW）** | 角色基础碰撞、房间气密连通域与流式单位。未受破坏的整块地形仅存材质 ID，不分配 L2；遭受挖掘/爆破/酸蚀时按需分裂为 L2 Brick |
-| **L2：交互实体最小核（0.25 m）** | 覆盖 `4×4×4 = 64` 格 / L1<br>（含 `4×4×4` 个 L3） | **`64 × 16 B = 1 KB` `PhysicalCell` 砖块** | **v3.0 61 维标签模拟的唯一最小单元**：承载 `CONDUIT` / `VALVE` / `CONVEYOR` / `RIGID_WELD` 交互、相变、电热酸蚀、生物演化与结构承重连通性 |
-| **L3：装饰、连接与粒子层（0.0625 m）** | `1/16 m` 微体素 | 轻量视觉占位与色板索引（**不跑 16B 标签物理**） | 纯建造微雕、管道拐角连接、破坏毛边与飞溅粒子：可自由放置/破坏，**直接省去 64 倍逻辑算力** |
+| **Core scheduling and concurrency layer** | `prism-ecs` | Active set / dormant skip (`DORMANT` zero-cost iteration), Chunk parallel jobs (`jobs::scoped_parallel_chunks`), multi-rate fixed-step scheduler | Concrete physics formulas like heat conduction, acid corrosion, radiation, bioactivity |
+| **Reflection and scene protocol layer** | `prism-reflect` / `prism-scene` | `Bitflags` field metadata descriptions, compact binary / RSCN v4 component codec, stable `TypeId`, RTTIBin cross-boundary transfer | Hardcoding bit semantics of 15 materials or 18 transient states |
+| **Spatial geometry and topology core** | `prism-physics2d` / `rapier3d` (`prism-app/physics`) | Deterministic AABB collision (`Aabb2`, `raycast_aabb`), grid adjacency queries, connected-domain / structural-support Flood-Fill, compound rigid bodies and dynamic voxel islands | Writing vacuum boiling, high-pressure liquefaction or bio-parasite spread logic |
+| **Engine runtime service layer** | `prism-engine` / `prism-app` | Asset root paths (`asset_paths`), `DirtyRouter` inter-frame dirty-data routing, hot reload, audio driver and time-division driver | Any ROM substance tables or concrete gameplay state machines |
+| **Render and visual feedback layer** | `prism-render` / Slang | `SpritePass` 2D sprite batching (`SpriteInstance::flags`), **Compute DDA three-level voxel raymarching**, lights and particles, debug overlay | Hardcoded render branches by material name |
+| **Editor and automation layer** | `prism-editor-api` / `prism-editor-mcp` | Bitflag fold inspector UI Schema projection, headless stimulus injection and property assertion tools | Linking `prism-render` / Vulkan |
+| **User project layer** | `projects/emergence/` | `PhysicalCell` 16-byte core, v3.0 5-dimension transition rule matrix, ROM substance config tables, lab scenes and interaction probes | Direct `ash::vk`, bypassing `GameWorld` / `HostApi` to access render thread, or introducing egui dependency |
 
-> **跨层两条铁律**：
-> 1. **防幽灵墙回写**：当某个 L2 格内的全部 L3 被敲碎挖空（`l3_occupied_mask == 0`）时，必须同步清空该 L2 格的实体占位与 `AIRTIGHT` 标志；
-> 2. **瞬态着色继承**：L3 不重复存储状态位，渲染时直接读取父级 L2 的 `TransientFlags`（如 `BURNING`、`FROZEN`、`CORRODED`、`WARNING`）叠加视觉效果。
+---
 
-### 2.1 内存布局总览（Exact 16 Bytes）
+## 2. Underlying compact memory model and 3D three-level voxel topology
+
+To support zero-allocation simulation of massive grids and 3D fine destruction at 60 Hz, v3.0 panoramic tag system doesn't use scattered heap-allocated components or string tags, but uniformly packs into **16-byte `#[repr(C)]` `PhysicalCell`** (implemented in [`projects/emergence/src/tags.rs`](src/tags.rs)): a single 64-byte CPU cache line holds **4 complete physical cells** contiguously.
+
+Spatially, the **16-byte `PhysicalCell` serves as the minimal atomic unit (L2) for interaction and physical simulation**, forming a **L1 (1 m) → L2 (0.25 m) → L3 (0.0625 m)** three-level voxel division with upper and lower levels (Region handles world-scale streaming):
+
+### 2.0 3D three-level voxel hierarchy definition (1 m / 0.25 m / 0.0625 m)
+
+| Level | Spatial scale | Data form | Core responsibility |
+|---|---|---|---|
+| **L1: World and terrain base (1 m)** | `1 m` cube<br>(contains `4×4×4` L2) | Macro index / `u64` active and airtight bitmask + **copy-on-write split (COW)** | Character base collision, room airtight connected domains and streaming units. Undamaged terrain blocks store only material ID, no L2 allocated; on excavation / blasting / acid corrosion split into L2 bricks on demand |
+| **L2: Minimal interaction entity core (0.25 m)** | covers `4×4×4 = 64` cells / L1<br>(contains `4×4×4` L3) | **`64 × 16 B = 1 KB` `PhysicalCell` brick** | **Only minimal unit of v3.0 61-dimension tag simulation**: carries `CONDUIT` / `VALVE` / `CONVEYOR` / `RIGID_WELD` interactions, phase changes, electrothermal acid corrosion, bio evolution and structural load-bearing connectivity |
+| **L3: Decoration, connection and particle layer (0.0625 m)** | `1/16 m` micro-voxel | Lightweight visual placeholder and palette index (**doesn't run 16B tag physics**) | Pure building micro-carving, pipe corner connections, destruction rough edges and splash particles: freely place / destroy, **saving 64× logic compute directly** |
+
+> **Two cross-layer iron rules**:
+> 1. **Prevent ghost wall writeback**: when all L3 in an L2 cell are broken away (`l3_occupied_mask == 0`), must synchronously clear that L2 cell's entity occupancy and `AIRTIGHT` flag;
+> 2. **Transient shading inheritance**: L3 doesn't duplicate state bits, at render time directly reads parent L2's `TransientFlags` (e.g. `BURNING`, `FROZEN`, `CORRODED`, `WARNING`) for visual overlay effects.
+
+### 2.1 Memory layout overview (Exact 16 Bytes)
 
 ```text
 Offset   Size  Field              Packed Content
@@ -59,182 +59,182 @@ Offset   Size  Field              Packed Content
 Total = 16 bytes (const assert size_of::<PhysicalCell>() == 16)
 ```
 
-### 2.2 五大维度比特级映射
+### 2.2 Five-dimension bit-level mapping
 
-1. **核心状态与环境枚举（`EnvPacked(u16)` — 精确占满 16 bits）**：
-   - `MatterState`（bits `0..2`）：`SOLID (0)` / `LIQUID (1)` / `GAS (2)` / `PLASMA (3)`
-   - `Temperature`（bits `2..5`）：`ULTRA_CRYO (0)` / `CRYO (1)` / `AMBIENT (2)` / `HOT (3)` / `PLASMA_HEAT (4)`
-   - `Pressure`（bits `5..8`）：`HARD_VACUUM (0)` / `VACUUM (1)` / `NORMAL (2)` / `PRESSURIZED (3)` / `GIGA_PRESSURE (4)`
-   - `Density`（bits `8..11`）：3-bit 离散阶梯 `0..=7`
-   - `BioActivity`（bits `11..13`）：`INERT (0)` / `CRYPTOSIS (1)` / `VITAL (2)` / `HYPER_NEO (3)`
-   - `FlowDir`（bits `13..16`）：`NONE (0)` / `N (1)` / `S (2)` / `E (3)` / `W (4)` / `IN (5)` / `OUT (6)` / `BI_DIR (7)`
-2. **固有材质位（`MaterialFlags(u16)` — 15 bits）**：
-   `METALLIC`, `ORGANIC`, `GLASS`, `CONDUCTIVE`, `INSULATED`, `FLAMMABLE`, `AIRTIGHT`, `PRESSURE_RATED`, `HOT_RESISTANT`, `RAD_SHIELDED`, `PIEZOELECTRIC`, `SUPERCONDUCTIVE`, `ELASTIC`, `ABSORBENT`, `OXIDIZER`。
-3. **瞬态危化位（`TransientFlags(u32)` — 18 bits）**：
-   `WET`, `BURNING`, `FROZEN`, `CHARGED`, `MAGNETIZED`, `BRITTLE`, `CORRODED`, `BROKEN`, `VOLATILE`, `TOXIC`, `CORROSIVE`, `RADIOACTIVE`, `INFECTED`, `STASIS`, `WARNING`, `DORMANT`, `SHARP`, `VISCOUS`。
-4. **空间拓扑位（`TopologyFlags(u16)` — 10 bits）**：
-   `RIGID_WELD`, `BIO_NEST`, `FROZEN_LOCKED`, `PUNCTURED`, `EDIBLE`, `EQUIPPABLE`, `SEALED`, `CONVEYOR`, `CONDUIT`, `VALVE`。
-5. **外部刺激与动态时钟（`StimulusFlags(u8)` + `SignalClockState(u32)`）**：
-   - 8 种基础刺激：`HEAT`, `COLD`, `SHOCK`, `ACID`, `BIO`, `KINETIC`, `RADIATION`, `LIGHT`。
-   - 4 个寄存器：`HALF_LIFE`（0..=32767，15 bits）、`SWITCH_HEAT`（0..=255，8 bits）、`INTENSITY`（0..=15，4 bits）、`TICK_HZ`（0..=20，5 bits）。
-
----
-
-## 3. 核心物理不变量与涌现跃迁机制设计
-
-### 3.1 物态强制绑定密度阶梯与温压相图
-
-- **宏观密度压制铁律**：`EnvPacked::new` / `set_matter` / `set_density_hint` 在写入瞬间强制钳位：
-  - `GAS` / `PLASMA` 锁定在 `0..=1`（最轻档，同档内由材质微调如氢 vs 六氟化硫）；
-  - `LIQUID` 锁定在 `2..=4`（中等档）；
-  - `SOLID` 锁定在 `5..=7`（最重档）。
-  从而在底层数据结构上杜绝“气态比固态重”导致的浮力反转与排序穿帮，自然驱动浮力分层、无泵热对流及 4~5 Hz 离心分离。
-- **温压耦合相变**：
-  - 真空沸腾：`LIQUID` 在 `VACUUM | HARD_VACUUM` 且温标 `>= AMBIENT` 时强制气化为 `GAS`；
-  - 高压液化：`GAS` 在 `GIGA_PRESSURE` 且温标 `<= AMBIENT` 时强制压缩为 `LIQUID`；
-  - 低温冻结：`COLD` 将温标推至 `CRYO | ULTRA_CRYO` 时，液体固化为 `SOLID` + `FROZEN`；非 `ELASTIC` 材质同步附加 `BRITTLE`（受 `KINETIC` 撞击直接碎裂为 `BROKEN`）。
-
-### 3.2 生物活性四阶状态机（`BioActivity`）
-
-- `INERT`：死物或非有机体基线，不触发代谢与感染蔓延；
-- `CRYPTOSIS`：隐生休眠态——`ORGANIC` + `VITAL` 进入 `CRYO/ULTRA_CRYO` 或 `FROZEN` 后自动转入 `CRYPTOSIS`，同时冻结 `HALF_LIFE` 腐败时钟；回到 `AMBIENT` + `WET` 时复苏回 `VITAL`；
-- `VITAL`：活体态——持续推进 `HALF_LIFE` 代谢时钟；若同时遭遇 `AMBIENT` + `WET` + `BIO` 刺激且无 `SEALED` 保护，触发 `INFECTED`（菌丝寄生），条件成熟转化为 `BIO_NEST` 产出树脂；
-- `HYPER_NEO`：狂暴异变态——`VITAL` 受到未屏蔽 `RAD_SHIELDED` 的 `RADIATION` 刺激后发生畸变，无视常规代谢节流并对外释放 `BIO` / `TOXIC` 刺激。
-
-### 3.3 危化预警与零开销休眠机制
-
-- **`WARNING` 抢险窗口**：当高压容器即将超越 `PRESSURE_RATED` 上限、超导线圈即将失超（温标越过 `CRYO`）或反应堆进入临界前，强制留出 **3~5 秒**的 `WARNING` 状态，同步点亮 Shader 高频闪烁警报与音频通道警报声。
-- **`STASIS` 静滞力场**：只要 `TransientFlags::STASIS` 置位，所有相变、化学反应、刺激消费及 `HALF_LIFE` 递减全部冻结。
-- **`DORMANT` 休眠剪枝**：单元在无 `pending_stimuli`、无活跃 `HALF_LIFE` / `SWITCH_HEAT` 计时器、无 `BURNING` / `WARNING` / `INFECTED` 持续危害时自动置位 `DORMANT` 并移出活跃推演列表；仅当外部 `apply_stimulus` 注入信号或邻接网格写入脏位时即时唤醒。
-- **`SWITCH_HEAT` 振荡熔断**：非 `SUPERCONDUCTIVE` 导体在低电平到高电平（`!CHARGED -> CHARGED`）跳变时递增 `switch_heat`，达到 `SWITCH_HEAT_MELTDOWN_THRESHOLD` 即刻烧毁为 `BROKEN` 并清空 `CHARGED`，从物理机制上封堵高频红石振荡导致的 CPU 死循环。
-
-### 3.4 空间拓扑与输运管网
-
-- **表面履带（`CONVEYOR`）**：沿 `FlowDir` 以 `TICK_HZ (0..=20)` 离散步进搬运固态实体；超频（接近 `20 Hz`）时在出口端赋予抛射速度矢量（投石机玩法）。
-- **封闭管道（`CONDUIT` + `VALVE`）**：输运流体与气体，受连通域压差与同温密度差（无泵热对流）驱动；`VALVE` 受 `CHARGED` 状态控制通断；管道内液体触发 `FROZEN` 或陷入 `VISCOUS` 阻塞时导致上游压力跃升并触发 `WARNING` → `PUNCTURED` / 炸膛。
-- **复合刚体、结构坍塌与容器拓扑（`RIGID_WELD` / `Teardown 式破坏` / `FROZEN_LOCKED` / `PUNCTURED` / `SEALED` / `EDIBLE` / `EQUIPPABLE`）**：
-  - **结构连通性断裂（Teardown-Style Destruction）**：L2 体素被 `KINETIC` 爆破、`ACID` 蚀穿（`CORRODED`）、`COLD` 冷脆敲碎（`BRITTLE`）或高温熔断后，一旦某块结构与世界锚点（地基/承重墙）失去连通，即从静态 L0–L2 树剥离为**带有局部 L1/L2 子树的自由体素刚体岛（Dynamic Voxel Island）**；
-  - 脱离后的刚体岛受 `RIGID_WELD` 约束整体旋转、下坠、撞击，并在接触瞬间按动量向世界网格反向注入 `KINETIC` 刺激（砸穿楼板、引爆 `VOLATILE` 储罐或压碎 `GLASS` 管道）；
-  - 世界物体、背包存储格与生物器官网格共用同一套标签穿透与损伤规则。
+1. **Core state and environment enums (`EnvPacked(u16)` — exactly fills 16 bits)**:
+   - `MatterState` (bits `0..2`): `SOLID (0)` / `LIQUID (1)` / `GAS (2)` / `PLASMA (3)`
+   - `Temperature` (bits `2..5`): `ULTRA_CRYO (0)` / `CRYO (1)` / `AMBIENT (2)` / `HOT (3)` / `PLASMA_HEAT (4)`
+   - `Pressure` (bits `5..8`): `HARD_VACUUM (0)` / `VACUUM (1)` / `NORMAL (2)` / `PRESSURIZED (3)` / `GIGA_PRESSURE (4)`
+   - `Density` (bits `8..11`): 3-bit discrete steps `0..=7`
+   - `BioActivity` (bits `11..13`): `INERT (0)` / `CRYPTOSIS (1)` / `VITAL (2)` / `HYPER_NEO (3)`
+   - `FlowDir` (bits `13..16`): `NONE (0)` / `N (1)` / `S (2)` / `E (3)` / `W (4)` / `IN (5)` / `OUT (6)` / `BI_DIR (7)`
+2. **Intrinsic material bits (`MaterialFlags(u16)` — 15 bits)**:
+   `METALLIC`, `ORGANIC`, `GLASS`, `CONDUCTIVE`, `INSULATED`, `FLAMMABLE`, `AIRTIGHT`, `PRESSURE_RATED`, `HOT_RESISTANT`, `RAD_SHIELDED`, `PIEZOELECTRIC`, `SUPERCONDUCTIVE`, `ELASTIC`, `ABSORBENT`, `OXIDIZER`.
+3. **Transient hazard bits (`TransientFlags(u32)` — 18 bits)**:
+   `WET`, `BURNING`, `FROZEN`, `CHARGED`, `MAGNETIZED`, `BRITTLE`, `CORRODED`, `BROKEN`, `VOLATILE`, `TOXIC`, `CORROSIVE`, `RADIOACTIVE`, `INFECTED`, `STASIS`, `WARNING`, `DORMANT`, `SHARP`, `VISCOUS`.
+4. **Spatial topology bits (`TopologyFlags(u16)` — 10 bits)**:
+   `RIGID_WELD`, `BIO_NEST`, `FROZEN_LOCKED`, `PUNCTURED`, `EDIBLE`, `EQUIPPABLE`, `SEALED`, `CONVEYOR`, `CONDUIT`, `VALVE`.
+5. **External stimuli and dynamic clock (`StimulusFlags(u8)` + `SignalClockState(u32)`)**:
+   - 8 base stimuli: `HEAT`, `COLD`, `SHOCK`, `ACID`, `BIO`, `KINETIC`, `RADIATION`, `LIGHT`.
+   - 4 registers: `HALF_LIFE` (0..=32767, 15 bits), `SWITCH_HEAT` (0..=255, 8 bits), `INTENSITY` (0..=15, 4 bits), `TICK_HZ` (0..=20, 5 bits).
 
 ---
 
-## 4. 围绕 Prisma 引擎的子系统改造与扩展设计
+## 3. Core physical invariants and emergent transition mechanism design
 
-以下各节逐一定义为了将 v3.0 沙盒机制完整落地，需要在 `crates/prism-*` 中增量演进的通用引擎能力（所有通用能力均不得包含特定玩法词汇）。
+### 3.1 Matter-state forced density ladder and temperature-pressure phase diagram
 
-### 4.1 `prism-ecs`：休眠活跃集、多频分频与双缓冲并行 Chunk
+- **Macro density suppression iron rule**: `EnvPacked::new` / `set_matter` / `set_density_hint` force clamping at write time:
+  - `GAS` / `PLASMA` locked at `0..=1` (lightest tier, material fine-tuning within tier like hydrogen vs sulfur hexafluoride);
+  - `LIQUID` locked at `2..=4` (medium tier);
+  - `SOLID` locked at `5..=7` (heaviest tier).
+  This eliminates "gas heavier than solid" buoyancy inversion and sorting artifacts at the data-structure level, naturally driving buoyancy layering, pump-free thermal convection and 4–5 Hz centrifugal separation.
+- **Temperature-pressure coupled phase transitions**:
+  - Vacuum boiling: `LIQUID` under `VACUUM | HARD_VACUUM` with temperature `>= AMBIENT` forced to vaporize into `GAS`;
+  - High-pressure liquefaction: `GAS` under `GIGA_PRESSURE` with temperature `<= AMBIENT` forced to compress into `LIQUID`;
+  - Low-temperature freezing: `COLD` pushes temperature to `CRYO | ULTRA_CRYO`, liquid solidifies into `SOLID` + `FROZEN`; non-`ELASTIC` materials also get `BRITTLE` (shatter into `BROKEN` on `KINETIC` impact).
 
-现状：`prism-ecs`（[`crates/prism-ecs/src/lib.rs`](../../crates/prism-ecs/src/lib.rs)）已提供稀疏组件池 `World`、实体代次句柄 `Entity`、`World::set_active` 活跃过滤以及复用线程池 [`jobs::scoped_parallel_chunks`](../../crates/prism-ecs/src/jobs.rs)（上限 8 线程）。
+### 3.2 Bioactivity four-stage state machine (`BioActivity`)
 
-引擎扩展需求：
-1. **Chunk / Brick 级活跃位图与唤醒队列（Dirty Brick Registry）**：
-   - 新增通用 `ChunkedGridStorage<T>` / `VoxelTreeStorage`（L1 `u64` 活跃位图 + L2 `4×4×4` 1 KB Brick）：当整个 L1/L2 处于 `DORMANT` 或全真空时，`popcnt == 0` 直接跳过，实现真正的 **0 CPU 占用**。
-2. **四级确定性分频调度（Multi-Rate Fixed Scheduler）**：
-   - 在固定步 `60 Hz` 基础上提供通用分频节拍令牌 `StepPhase`：
-     - **60 Hz Base Step**：`KINETIC` 碰撞响应、动态体素岛刚体步进与输入采样；
-     - **0~20 Hz Discrete Pulse Bus**：按实体/网格 `TICK_HZ` 相位累加器分发机械、传送带与电路脉冲；
-     - **4~5 Hz Convection / Centrifuge Step**：跨格浮力交换、无泵热对流与离心分离（3D 流体宏观压差均化在 L1 节点执行，破口处下沉至 L2）；
-     - **1 Hz Clock Decay Step**：`HALF_LIFE` 衰变/腐败递减、`SWITCH_HEAT` 自然散热与 `WARNING` 倒计时。
-3. **多色棋盘格并行步进（2D 4 色 / 3D 8 色 Checkerboard）**：
-   - 利用 `jobs::scoped_parallel_chunks` 将空间块按 `(cx % 2, cy % 2)`（2D 4 批）或 `(cx % 2, cy % 2, cz % 2)`（3D `2×2×2` 8 批）并发执行，确保跨 Brick 边界读写邻接单元时不产生数据竞争且完全确定可回放。
+- `INERT`: baseline for dead matter or non-organisms, no metabolism or infection spread;
+- `CRYPTOSIS`: cryptobiotic dormant state — `ORGANIC` + `VITAL` entering `CRYO/ULTRA_CRYO` or `FROZEN` auto-transitions to `CRYPTOSIS`, freezing `HALF_LIFE` decay clock; revives to `VITAL` on return to `AMBIENT` + `WET`;
+- `VITAL`: living state — continuously advances `HALF_LIFE` metabolism clock; if simultaneously exposed to `AMBIENT` + `WET` + `BIO` stimulus without `SEALED` protection, triggers `INFECTED` (hyphal parasitism), transforming into `BIO_NEST` producing resin when conditions ripen;
+- `HYPER_NEO`: frenzied mutated state — `VITAL` exposed to unshielded `RAD_SHIELDED` `RADIATION` stimulus mutates, ignoring normal metabolism throttling and emitting `BIO` / `TOXIC` stimuli outward.
 
-### 4.2 `prism-reflect` & `prism-scene`：位标志反射与 RTTIBin 零兼容穿越
+### 3.3 Hazard warning and zero-cost dormancy mechanism
 
-现状：`ComponentRegistry`（[`crates/prism-scene/src/registry.rs`](../../crates/prism-scene/src/registry.rs)）通过 `TypeRegistry` 和 `#[derive(Reflect)]` 将组件投影给编辑器、RSCN v4 与 `preview-module` C ABI（[`crates/prism-game-api/src/lib.rs`](../../crates/prism-game-api/src/lib.rs)）。
+- **`WARNING` rescue window**: when high-pressure vessel approaches `PRESSURE_RATED` limit, superconducting coil about to quench (temperature crossing `CRYO`) or reactor approaching criticality, force a **3–5 second** `WARNING` state, lighting shader high-frequency flashing alarm and audio channel alarm.
+- **`STASIS` stasis field**: while `TransientFlags::STASIS` set, all phase changes, chemical reactions, stimulus consumption and `HALF_LIFE` decrement frozen.
+- **`DORMANT` dormant pruning**: cell auto-sets `DORMANT` and is removed from active simulation list when no `pending_stimuli`, no active `HALF_LIFE` / `SWITCH_HEAT` timers, and no `BURNING` / `WARNING` / `INFECTED` persistent hazards; wakes immediately on external `apply_stimulus` injection or neighbor dirty-bit write.
+- **`SWITCH_HEAT` oscillation fuse**: non-`SUPERCONDUCTIVE` conductor on low→high transition (`!CHARGED -> CHARGED`) increments `switch_heat`, upon reaching `SWITCH_HEAT_MELTDOWN_THRESHOLD` immediately burns into `BROKEN` and clears `CHARGED`, physically blocking CPU infinite loops from high-frequency redstone oscillation.
 
-引擎扩展需求：
-1. **Bitflags 反射描述符扩展**：
-   - 在 `prism-reflect` 中为带位标志语义的封装整型新增字段属性描述（`#[reflect(bitflags = "...")]` 或位名表映射），使编辑器检查器与 `prism-editor-api` 能直接渲染复选框组而不是裸十进制整数。
-2. **Chunk / Cell 批量二进制组件与 RTTIBin 通道**：
-   - 在 `prism-scene` 新增通用的 `CellGridChunk` 组件（固定尺寸字节切片 + 脏区版本 `u64`），确保 RSCN v4 场景打包与 `preview-module` 跨 C ABI 传输时仅同步变化 Chunk，避免逐格拆成上万个独立 `Entity`。
-3. **静态物质 ROM 数据加载契约**：
-   - 项目侧物质 ROM 表以纯 JSON 数据驱动放在 `assets/data/materials.json`，由 `GameWorld::asset_exists` / 热重载机制加载，不写死进引擎。
+### 3.4 Spatial topology and transport pipe network
 
-### 4.3 `prism-physics2d` / `rapier3d` & `prism-engine`：空间拓扑核、Teardown 断裂与动态体素岛
-
-现状：`prism-physics2d`（[`crates/prism-physics2d/src/lib.rs`](../../crates/prism-physics2d/src/lib.rs)）已具备无 ECS 依赖的确定性 `Aabb2` 与 `raycast_aabb`；3D 刚体侧已有可选 feature `prism-app/physics`（`rapier3d`）。
-
-引擎扩展需求：
-1. **连通域与结构支撑拓扑求解器（Cavity & Structural Integrity Solver）**：
-   - 提供增量 Flood-Fill 求解器：一方面输入 `AIRTIGHT` / `VALVE` 掩码划分气密舱室与管道网络 ID；另一方面在受破坏区域执行**局部 BFS/Flood-Fill 检测与世界锚点的连通性**，一旦失去支撑即返回脱离体素集合，触发 Teardown 式结构坍塌。
-2. **动态体素刚体岛与复合碰撞桥接（Dynamic Voxel Islands + `RIGID_WELD`）**：
-   - 脱离静态 L0–L2 树的体素块封装为带局部 L1/L2 子树的**动态体素刚体**，按体素质量分布计算质心与惯性张量，由复合 AABB/Convex 代理接入 `rapier3d`（或 2D 切片中的 `prism-physics2d`）参与自由旋转、滚落与碰撞；
-   - 碰撞解算返回法向冲量 `impulse: f32` 与接触点坐标，供上层按阈值分发 `KINETIC` 刺激（驱动自身与目标网格的 `BRITTLE` 碎裂、`PIEZOELECTRIC` 放电、`SHARP` 穿刺或 `VOLATILE` 殉爆，实现砸穿楼板与二次解体）。
-3. **帧间脏追踪集成**：
-   - 接入 `prism-engine::dirty_router::DirtyRouter`（[`crates/prism-engine/src/dirty_router.rs`](../../crates/prism-engine/src/dirty_router.rs)），当某网格区域或体素岛视觉/光照状态未发生变更时跳过渲染实例与 GPU Brick 缓冲重传。
-
-### 4.4 `prism-render` & Slang 着色器：瞬态视觉编码与 3D Compute DDA 体素渲染
-
-现状：`SpritePass`（[`crates/prism-render/src/sprite_pass.rs`](../../crates/prism-render/src/sprite_pass.rs)）将所有 2D 实例合并为单次 draw call（`SpriteInstance::flags` 当前使用 `bit 0`）；同时仓库已有 64 叉树与 Compute 管线演进基础（见 [`docs/prt-gi-64tree-design.md`](../../docs/prt-gi-64tree-design.md)）。
-
-引擎扩展需求：
-1. **2D 切片快速路径（`SpriteInstance::flags` 多状态着色器通道）**：
-   - 保留 `bit 0` 为 `receive_lights`，将高比特位开放为通用视觉效果调制位，在 `assets/shaders/slang/sprites.slang` 中以零分支位运算渲染瞬态表现：
-     - 表面高光/湿润压暗（`WET`）、结晶冰霜边框（`FROZEN` / `FROZEN_LOCKED`）、自发光与警报频闪（`BURNING` / `CHARGED` / `WARNING`）、酸蚀/菌丝叠加（`CORRODED` / `INFECTED`）、静滞定格轮廓（`STASIS`）。
-   - 若修改 `sprites.slang`，同步运行 `bash assets/shaders/compile.sh` 与 `xtask shader_bindgen`（严格对齐 `shader_bindings::sprites`）。
-2. **3D 三级体素 GPU Compute DDA / Raymarching 通道（免三角网格重建）**：
-   - 新增 `VoxelDdaPass` Compute 着色器：直接步进 L0 Region → L1 `u64` 位掩码（`firstbithigh` 硬件跳过空格）→ L2 `4×4×4` 1 KB Brick 缓冲，**彻底避免 Teardown 式高频破坏下反复重建 Greedy Mesh 的 CPU/GPU 卡顿**；
-   - 支持动态体素刚体岛（`RIGID_WELD`）的局部逆变换光线求交，原生处理 `GLASS` 折射、体素缺口实时阴影、火光/电弧自发光与烟尘体积光照。
-3. **光照、粒子与热力调试叠加层**：
-   - 复用 `Light2D` / 3D 光源、`ParticleEmitter2D`（飞溅碎片、沸腾蒸汽、酸雾、电弧火花）与 `LineRenderer`（激光/电弧/`FlowDir` 矢量）；
-   - 扩展引擎调试图热键：温标热力图、气压等压线、`DORMANT` 休眠块线框、结构支撑连通域着色与 `INTENSITY (0..15)` 梯度。
-
-### 4.5 `prism-audio`：危化声光报警与脉冲节流
-
-现状：`prism-app` 通过 `Subsystem::Audio` 与 `GameWorld::play_sound` 驱动 2D 空间化音效与混音通道。
-
-引擎扩展需求：
-1. **高频脉冲音效节流阀（Audio Voice Coalescing）**：
-   - 当 `20 Hz` 传送带或上百个 `PIEZOELECTRIC` 单元同时触发 `KINETIC` 时，同一音色在单帧或 50 ms 窗口内按空间距离合并为最大并发数上限（如每类 ≤ 4 路），防止混音爆音。
-2. **`WARNING` 临界预警总控**：
-   - 维护持续循环的预警声道引用计数：任意连通域进入 `WARNING`（3~5 秒抢险窗口）即拉起空间定位报警声，故障解除或进入 `BROKEN` 后立即切换为泄压/爆裂音效。
-
-### 4.6 `prism-editor-api` & `prism-editor-mcp`：位掩码检查器与因果链自动化回归
-
-现状：`prism-editor-mcp` 暴露了文档读写、组件增删、游戏运行与截图工具。
-
-引擎扩展需求：
-1. **Inspector 位标志分组渲染**：
-   - `prism-editor-api` 识别 `Reflect` 的位标志元数据后，在 egui Inspector 中按「材质 / 瞬态 / 拓扑」三组可折叠标签勾选。
-2. **MCP 无头物理因果链探针（Headless Causal Assertion）**：
-   - 为验证复杂涌现链条，后续在工程或 MCP 测试接口暴露确定性场景加载 + 指定坐标注入 `StimulusFlags` + N 帧步进后读取 `PhysicalCell` 断言，配合 `PRISMA_SCREENSHOT` 验证渲染表现。
+- **Surface conveyor (`CONVEYOR`)**: moves solid entities along `FlowDir` at `TICK_HZ (0..=20)` discrete steps; when overclocked (near `20 Hz`) assigns projectile velocity vector at exit (catapult gameplay).
+- **Sealed pipe (`CONDUIT` + `VALVE`)**: transports fluids and gases, driven by connected-domain pressure differences and same-temperature density differences (pump-free thermal convection); `VALVE` controlled by `CHARGED` state; liquid inside pipe triggering `FROZEN` or getting stuck in `VISCOUS` blockage causes upstream pressure spike and `WARNING` → `PUNCTURED` / rupture.
+- **Compound rigid bodies, structural collapse and container topology (`RIGID_WELD` / `Teardown-style destruction` / `FROZEN_LOCKED` / `PUNCTURED` / `SEALED` / `EDIBLE` / `EQUIPPABLE`)**:
+  - **Structural connectivity break (Teardown-Style Destruction)**: when L2 voxel is blasted by `KINETIC`, corroded through by `ACID` (`CORRODED`), shattered by `COLD` embrittlement (`BRITTLE`) or melted by high heat, once a structure loses connectivity to world anchor (foundation / load-bearing wall) it detaches from static L0–L2 tree into **free voxel rigid island with local L1/L2 subtree (Dynamic Voxel Island)**;
+  - Detached rigid island rotates, falls and collides as whole under `RIGID_WELD` constraint, injecting `KINETIC` stimulus back into world grid by momentum on contact (smashing through floors, detonating `VOLATILE` tanks or crushing `GLASS` pipes);
+  - World objects, backpack storage slots and biological organ grids share same tag penetration and damage rules.
 
 ---
 
-## 5. 引擎需求映射与验收标准总表
+## 4. Prisma engine subsystem modifications and extension design
 
-| 引擎模块 | 由哪类 v3.0 机制驱动 | 核心改造内容 | 可量化验收标准 |
+Following sections define general engine capabilities that need incremental evolution in `crates/prism-*` to fully implement v3.0 sandbox mechanics (all general capabilities must not contain gameplay-specific vocabulary).
+
+### 4.1 `prism-ecs`: dormant active set, multi-rate division and double-buffered parallel Chunk
+
+Current: `prism-ecs` ([`crates/prism-ecs/src/lib.rs`](../../crates/prism-ecs/src/lib.rs)) provides sparse component pool `World`, generational entity handle `Entity`, `World::set_active` active filtering and reusable thread pool [`jobs::scoped_parallel_chunks`](../../crates/prism-ecs/src/jobs.rs) (up to 8 threads).
+
+Engine extension needs:
+1. **Chunk / Brick-level active bitmap and wake queue (Dirty Brick Registry)**:
+   - Add general `ChunkedGridStorage<T>` / `VoxelTreeStorage` (L1 `u64` active bitmap + L2 `4×4×4` 1 KB brick): when whole L1/L2 is `DORMANT` or full vacuum, `popcnt == 0` skips directly, achieving true **0 CPU usage**.
+2. **Four-level deterministic multi-rate scheduler (Multi-Rate Fixed Scheduler)**:
+   - On fixed step `60 Hz` provide general division tick token `StepPhase`:
+     - **60 Hz Base Step**: `KINETIC` collision response, dynamic voxel island rigid stepping and input sampling;
+     - **0–20 Hz Discrete Pulse Bus**: dispatch mechanical, conveyor and circuit pulses by entity / grid `TICK_HZ` phase accumulator;
+     - **4–5 Hz Convection / Centrifuge Step**: cross-cell buoyancy exchange, pump-free thermal convection and centrifugal separation (3D fluid macro pressure equalization at L1 nodes, descending to L2 at breaches);
+     - **1 Hz Clock Decay Step**: `HALF_LIFE` decay / corruption decrement, `SWITCH_HEAT` natural cooling and `WARNING` countdown.
+3. **Multi-color checkerboard parallel stepping (2D 4-color / 3D 8-color Checkerboard)**:
+   - Use `jobs::scoped_parallel_chunks` to execute spatial blocks concurrently by `(cx % 2, cy % 2)` (2D 4 batches) or `(cx % 2, cy % 2, cz % 2)` (3D `2×2×2` 8 batches), ensuring no data races across Brick boundary reads / writes and fully deterministic replay.
+
+### 4.2 `prism-reflect` & `prism-scene`: bitflag reflection and RTTIBin zero-compat traversal
+
+Current: `ComponentRegistry` ([`crates/prism-scene/src/registry.rs`](../../crates/prism-scene/src/registry.rs)) projects components to editor, RSCN v4 and `preview-module` C ABI ([`crates/prism-game-api/src/lib.rs`](../../crates/prism-game-api/src/lib.rs)) through `TypeRegistry` and `#[derive(Reflect)]`.
+
+Engine extension needs:
+1. **Bitflags reflection descriptor extension**:
+   - In `prism-reflect` add field attribute descriptions for wrapped integers with bitflag semantics (`#[reflect(bitflags = "...")]` or bit-name table mapping), letting editor inspector and `prism-editor-api` render checkbox groups instead of raw decimal integers.
+2. **Chunk / Cell batch binary component and RTTIBin channel**:
+   - In `prism-scene` add general `CellGridChunk` component (fixed-size byte slice + dirty-region version `u64`), ensuring RSCN v4 scene packing and `preview-module` cross-C-ABI transfer only sync changed Chunks, avoiding splitting each cell into tens of thousands of independent `Entity`s.
+3. **Static substance ROM data loading contract**:
+   - Project-side substance ROM tables driven by pure JSON data in `assets/data/materials.json`, loaded via `GameWorld::asset_exists` / hot reload, not hardcoded into engine.
+
+### 4.3 `prism-physics2d` / `rapier3d` & `prism-engine`: spatial topology core, Teardown break and dynamic voxel islands
+
+Current: `prism-physics2d` ([`crates/prism-physics2d/src/lib.rs`](../../crates/prism-physics2d/src/lib.rs)) has ECS-independent deterministic `Aabb2` and `raycast_aabb`; 3D rigid side has optional feature `prism-app/physics` (`rapier3d`).
+
+Engine extension needs:
+1. **Connected-domain and structural-support topology solver (Cavity & Structural Integrity Solver)**:
+   - Provide incremental Flood-Fill solver: on one hand input `AIRTIGHT` / `VALVE` masks to partition airtight compartments and pipe network IDs; on other hand execute **local BFS / Flood-Fill connectivity detection with world anchors** in damaged regions, returning detached voxel set on support loss, triggering Teardown-style structural collapse.
+2. **Dynamic voxel rigid islands and compound collision bridging (Dynamic Voxel Islands + `RIGID_WELD`)**:
+   - Wrap voxel blocks detached from static L0–L2 tree into **dynamic voxel rigid bodies with local L1/L2 subtrees**, compute center of mass and inertia tensor from voxel mass distribution, bridge into `rapier3d` (or `prism-physics2d` in 2D slices) via compound AABB / Convex proxies for free rotation, rolling and collision;
+   - Collision solver returns normal impulse `impulse: f32` and contact coordinates, for upper layer to dispatch `KINETIC` stimulus by threshold (driving `BRITTLE` shattering, `PIEZOELECTRIC` discharge, `SHARP` puncture or `VOLATILE` chain detonation on self and target grid, enabling floor smashing and secondary disintegration).
+3. **Inter-frame dirty tracking integration**:
+   - Integrate `prism-engine::dirty_router::DirtyRouter` ([`crates/prism-engine/src/dirty_router.rs`](../../crates/prism-engine/src/dirty_router.rs)), skipping render instance and GPU brick buffer re-upload when grid region / voxel island visual / lighting state unchanged.
+
+### 4.4 `prism-render` & Slang shaders: transient visual encoding and 3D Compute DDA voxel render
+
+Current: `SpritePass` ([`crates/prism-render/src/sprite_pass.rs`](../../crates/prism-render/src/sprite_pass.rs)) merges all 2D instances into single draw call (`SpriteInstance::flags` currently uses `bit 0`); repo also has 64-tree and Compute pipeline foundation (see [`docs/prt-gi-64tree-design.md`](../../docs/prt-gi-64tree-design.md)).
+
+Engine extension needs:
+1. **2D slice fast path (`SpriteInstance::flags` multi-state shader channel)**:
+   - Keep `bit 0` as `receive_lights`, open high bits as general visual effect modulation bits, render transient appearances with branchless bit operations in `assets/shaders/slang/sprites.slang`:
+     - Surface specular / wet darkening (`WET`), crystalline frost border (`FROZEN` / `FROZEN_LOCKED`), emissive and alarm flashing (`BURNING` / `CHARGED` / `WARNING`), acid corrosion / hypha overlay (`CORRODED` / `INFECTED`), stasis freeze outline (`STASIS`).
+   - If modifying `sprites.slang`, synchronously run `bash assets/shaders/compile.sh` and `xtask shader_bindgen` (strictly align `shader_bindings::sprites`).
+2. **3D three-level voxel GPU Compute DDA / Raymarching channel (no triangle mesh rebuild)**:
+   - Add `VoxelDdaPass` Compute shader: directly step L0 Region → L1 `u64` bitmask (`firstbithigh` hardware skip empty cells) → L2 `4×4×4` 1 KB brick buffer, **completely avoiding CPU/GPU stutter from repeated Greedy Mesh rebuilds under high-frequency Teardown destruction**;
+   - Support local inverse-transform ray intersection for dynamic voxel rigid islands (`RIGID_WELD`), natively handling `GLASS` refraction, voxel-gap real-time shadows, fire / arc emissive and smoke volume lighting.
+3. **Lighting, particle and thermal debug overlay**:
+   - Reuse `Light2D` / 3D lights, `ParticleEmitter2D` (splash debris, boiling steam, acid mist, arc sparks) and `LineRenderer` (laser / arc / `FlowDir` vectors);
+   - Extend engine debug view hotkeys: temperature heatmap, pressure isobars, `DORMANT` block wireframes, structural support connected-domain coloring and `INTENSITY (0..15)` gradient.
+
+### 4.5 `prism-audio`: hazard audio-visual alarms and pulse throttling
+
+Current: `prism-app` drives 2D spatialized sound effects and mixing channels through `Subsystem::Audio` and `GameWorld::play_sound`.
+
+Engine extension needs:
+1. **High-frequency pulse audio coalescing (Audio Voice Coalescing)**:
+   - When `20 Hz` conveyors or hundreds of `PIEZOELECTRIC` cells trigger `KINETIC` simultaneously, merge same timbre by spatial distance within one frame or 50 ms window into max concurrency cap (e.g. ≤ 4 per class), preventing mixer clipping.
+2. **`WARNING` critical alarm master control**:
+   - Maintain refcount of continuously looping alarm voice channels: any connected domain entering `WARNING` (3–5 s rescue window) raises spatialized alarm sound, immediately switching to depressurization / rupture effect when fault clears or enters `BROKEN`.
+
+### 4.6 `prism-editor-api` & `prism-editor-mcp`: bitmask inspector and causal-chain automated regression
+
+Current: `prism-editor-mcp` exposes document read/write, component add/remove, game run and screenshot tools.
+
+Engine extension needs:
+1. **Inspector bitflag grouped rendering**:
+   - `prism-editor-api` recognizes `Reflect` bitflag metadata, renders checkbox groups in egui Inspector by three collapsible groups: "material / transient / topology".
+2. **MCP headless physical causal-chain probe (Headless Causal Assertion)**:
+   - To verify complex emergent chains, later expose deterministic scene load + inject `StimulusFlags` at given coords + step N frames then read `PhysicalCell` assertion in project or MCP test interface, combined with `PRISMA_SCREENSHOT` for render verification.
+
+---
+
+## 5. Engine requirement mapping and acceptance criteria summary table
+
+| Engine module | Driven by which v3.0 mechanism | Core modification | Quantifiable acceptance criteria |
 |---|---|---|---|
-| `prism-ecs` | `DORMANT`、`TICK_HZ (0..20)`、`HALF_LIFE`、离心 `4~5 Hz` | 分块/Brick 休眠位图、四级固定分频、4 色/8 色棋盘格并行 | 10,000 静止体素 CPU 耗时 < 0.05 ms；并行结果与单线程逐位一致 |
-| `prism-reflect` / `prism-scene` | 15 材质 / 18 瞬态 / 10 拓扑位、C ABI 预览模式 | Bitflags 描述投影、`CellGridChunk` / `VoxelBrick` RTTIBin 编码 | `preview-module` 动态加载热重载无 schema mismatch，位面板可勾选编辑 |
-| `prism-physics2d` / `rapier3d` | `AIRTIGHT`、`CONDUIT`、`RIGID_WELD`、Teardown 坍塌 | 气密连通域与结构支撑 Flood-Fill、动态体素刚体岛、冲量回调 | 承重柱切断 1 帧内剥离悬空岛并自由砸落；破孔 `PUNCTURED` 即时失压 |
-| `prism-render` / Slang | 3D 破坏渲染、`WET`/`BURNING`/`FROZEN`/`WARNING`/`STASIS` | 2D `SpriteInstance::flags` + 3D `VoxelDdaPass` Compute 步进 | 高频破坏零三角网格重建卡顿；单帧可见体素缺口与瞬态着色；`xtask shader-budget` 绿灯 |
-| `prism-audio` | `WARNING`（3~5 s 窗口）、高频 `KINETIC`/`SHOCK` | 空间音频并发节流与预警声道生命周期 | 同屏 100 次撞击无爆音，临界前 3 秒稳定触发声光预警 |
-| `prism-editor-mcp` | 全套因果链回归与截屏门禁 | 刺激注入指令 + `PhysicalCell` 状态读回 | 自动化脚本可独立复现「冷脆→撞击碎裂→漏液导电→开关熔断」全链路 |
+| `prism-ecs` | `DORMANT`, `TICK_HZ (0..20)`, `HALF_LIFE`, centrifugal `4~5 Hz` | Chunk / brick dormant bitmap, four-level fixed division, 4-color / 8-color checkerboard parallel | 10,000 static voxels CPU time < 0.05 ms; parallel results bit-identical to single-thread |
+| `prism-reflect` / `prism-scene` | 15 material / 18 transient / 10 topology bits, C ABI preview mode | Bitflags description projection, `CellGridChunk` / `VoxelBrick` RTTIBin encoding | `preview-module` dynamic load hot reload no schema mismatch, bit panel checkbox-editable |
+| `prism-physics2d` / `rapier3d` | `AIRTIGHT`, `CONDUIT`, `RIGID_WELD`, Teardown collapse | Airtight connected domain and structural-support Flood-Fill, dynamic voxel rigid islands, impulse callback | Load-bearing column cut detaches floating island within 1 frame and free-falls; breach `PUNCTURED` immediate depressurization |
+| `prism-render` / Slang | 3D destruction render, `WET`/`BURNING`/`FROZEN`/`WARNING`/`STASIS` | 2D `SpriteInstance::flags` + 3D `VoxelDdaPass` Compute stepping | High-frequency destruction zero triangle-mesh rebuild stutter; single-frame visible voxel gaps and transient shading; `xtask shader-budget` green |
+| `prism-audio` | `WARNING` (3~5 s window), high-frequency `KINETIC`/`SHOCK` | Spatial audio concurrency throttling and alarm voice lifecycle | 100 impacts on screen no clipping, stable audio-visual alarm 3 s before critical |
+| `prism-editor-mcp` | Full causal-chain regression and screenshot gate | Stimulus injection command + `PhysicalCell` state readback | Automated script independently reproduces full chain "cold embrittle → impact shatter → leak conduction → switch meltdown" |
 
 ---
 
-## 6. 里程碑规划（M0–M5）与风险控制
+## 6. Milestone plan (M0–M5) and risk control
 
-### 6.1 里程碑切分
+### 6.1 Milestone breakdown
 
-| 里程碑 | 交付内容 | 硬性出口门禁（Exit Gate） |
+| Milestone | Deliverable | Hard Exit Gate |
 |---|---|---|
-| **M0：骨架与内存内核**（当前已完成脚手架） | 建立 `projects/emergence/` 独立 workspace；落地 16 字节 `PhysicalCell` 与 5 维枚举/位标志全集及单元测试；完成引擎驱动规划文档 | `cargo check` / `cargo test`（`preview-module`）与 `scripts/check_comments.py` 全绿；`size_of::<PhysicalCell>() == 16` 编译期断言通过 |
-| **M1：分块休眠核与基础物态相变** | `prism-ecs` 接入 Chunk 休眠位图与棋盘格并行；实现温压相图（真空沸腾、高压液化、密度强制阶梯）及基础 ROM 物质表 | 单元测试覆盖「密闭容器升温→`WARNING`→破孔失压→水真空沸腾」；全静默网格实现 `DORMANT` 零开销 |
-| **M2：电/磁/热/腐蚀/压电闭环** | 实现 `INTENSITY (0..15)` 阻抗衰减、`SWITCH_HEAT` 过载熔断、`WET` 短路导电、`PIEZOELECTRIC` 敲击发电、`GLASS` 抗酸脆裂 | 构建可交互的“湿电熔断实验室”垂直切片：水漫绝缘地板引发导线短路升温熔断并触发音频与火花粒子 |
-| **M3：流体管网、气密拓扑与 3D 三级体素** | 上线 L0/L1(`u64`)/L2(`1 KB Brick`) 三级存储与 Compute DDA 渲染；打通 `CONDUIT` + `VALVE` 压差与热对流、`FROZEN` 堵管炸膛、`CONVEYOR` 超频投石机 | 能够搭建闭环热交换管路与 20 Hz 投石发射台；3D 场景实时挖掘/炸孔零三角网格重建卡顿 |
-| **M4：Teardown 式结构坍塌与生物核素演化** | 接入承重连通性 Flood-Fill 与 `RIGID_WELD` 动态体素刚体岛（砸穿楼板二次引爆）；实现 `BioActivity` 四阶、`BIO_NEST`、`HALF_LIFE` 与 `STASIS` | 炸断承重柱触发整片建筑倾倒砸碎下层储罐；完成「孢子复苏→寄生→辐射异变→静滞锁定」全链路 |
-| **M5：着色彩蛋、调试视图与自动化门禁** | 完善 `sprites.slang` 与 `VoxelDdaPass` 瞬态着色、多通道热力/支撑调试图、接入 `PRISMA_SCREENSHOT` 与 MCP 因果链测试套件 | 支持桌面独立二进制 + 编辑器 `preview-module` 双形态 60 FPS 稳态运行；CI `user-projects` 构建全绿 |
+| **M0: Skeleton and memory core** (scaffolding done) | Establish `projects/emergence/` independent workspace; land 16-byte `PhysicalCell` and 5-dimension enum / bitflag full set with unit tests; complete engine-driven planning doc | `cargo check` / `cargo test` (`preview-module`) and `scripts/check_comments.py` all green; `size_of::<PhysicalCell>() == 16` compile-time assertion passes |
+| **M1: Chunked dormancy core and base matter phase transitions** | `prism-ecs` integrates Chunk dormant bitmap and checkerboard parallel; implement temperature-pressure phase diagram (vacuum boiling, high-pressure liquefaction, forced density ladder) and base ROM substance table | Unit tests cover "sealed vessel heating → `WARNING` → breach depressurization → water vacuum boiling"; fully silent grid achieves `DORMANT` zero cost |
+| **M2: Electrical / magnetic / thermal / corrosion / piezoelectric closed loop** | Implement `INTENSITY (0..15)` impedance decay, `SWITCH_HEAT` overload meltdown, `WET` short-circuit conduction, `PIEZOELECTRIC` strike generation, `GLASS` acid embrittlement | Build interactive "wet-electric meltdown lab" vertical slice: water flooding insulated floor causes wire short-circuit heating meltdown triggering audio and spark particles |
+| **M3: Fluid pipe network, airtight topology and 3D three-level voxels** | Launch L0/L1(`u64`)/L2(`1 KB Brick`) three-level storage and Compute DDA render; connect `CONDUIT` + `VALVE` pressure difference and thermal convection, `FROZEN` pipe blockage rupture, `CONVEYOR` overclocked catapult | Can build closed-loop heat-exchange pipes and 20 Hz catapult launch platform; 3D scene real-time excavation / blast holes zero triangle-mesh rebuild stutter |
+| **M4: Teardown structural collapse and bio-nucleus evolution** | Integrate load-bearing connectivity Flood-Fill and `RIGID_WELD` dynamic voxel rigid islands (floor smash secondary detonation); implement `BioActivity` four stages, `BIO_NEST`, `HALF_LIFE` and `STASIS` | Blasting load-bearing column triggers whole building toppling crushing lower tanks; complete "spore revival → parasitism → radiation mutation → stasis lock" full chain |
+| **M5: Colored easter eggs, debug views and automated gate** | Complete `sprites.slang` and `VoxelDdaPass` transient shading, multi-channel thermal / support debug views, integrate `PRISMA_SCREENSHOT` and MCP causal-chain test suite | Support desktop standalone binary + editor `preview-module` dual form 60 FPS steady; CI `user-projects` build all green |
 
-### 6.2 关键技术风险与规避对策
+### 6.2 Key technical risks and mitigation strategies
 
-| 风险点 | 触发诱因 | 规避策略 |
+| Risk | Trigger | Mitigation |
 |---|---|---|
-| **高频振荡导致卡顿或锁死** | 红石门电路 / 阀门在单秒内无限次翻转触发全图重算 | 硬件级嵌入 `SWITCH_HEAT` 熔断器与 `TICK_HZ <= 20` 上限；触发阈值直接写入 `BROKEN` 物理断路 |
-| **气密与承重 Flood-Fill 帧率抖动** | 每次状态微调或破坏都全图扫一遍 BFS | 仅当 `AIRTIGHT`/`PUNCTURED`/`VALVE` 或支撑体素发生销毁时才在局部包围盒增量重算连通性；其余帧 O(1) 查表 |
-| **动态体素刚体岛数量爆炸** | 大规模连环爆破瞬间剥离上百个碎块刚体 | 小于阈值体积（如 `< 8` 格）的孤立碎块直接转为粒子/瞬态碎片 (`SHARP`) 销毁，只有大块结构才升级为 `rapier3d` 动态体素岛 |
-| **编辑器 `preview-module` C ABI 数据撕裂** | 将上万格拆为独立 ECS `Entity` 导致每帧 RTTIBin 序列化超时 | 严格以 `CellGridChunk`（连续块字节流）作为跨边界同步粒度，结合脏版本号增量传输 |
-| **渲染通道与业务耦合污染引擎** | 在 `prism-render` 中写死“毒气绿色”“酸液冒泡”等玩法分支 | 着色器只读取泛化的视觉物理位（高光湿度、晶化边缘、脉冲自发光、抖动频闪），具体配色由项目侧 ROM 调色板传入 |
-| **多平台编译锁与注释门禁失败** | 忽视 `Cargo.lock` 同步或 Rust 源码中出现中文注释 | 所有项目代码与引擎扩展严格使用英文注释，提交前强制走 `check_comments.py` + `cargo clippy -- -D warnings` |
+| **High-frequency oscillation causing stutter or lockup** | Redstone gate circuits / valves flipping indefinitely within a second triggering full-grid recompute | Hardware-level `SWITCH_HEAT` fuse and `TICK_HZ <= 20` cap embedded; threshold directly writes `BROKEN` physical open circuit |
+| **Airtight and load-bearing Flood-Fill frame-rate jitter** | Full-grid BFS on every state tweak or destruction | Only incrementally recompute connectivity in local bounding box when `AIRTIGHT`/`PUNCTURED`/`VALVE` or support voxels destroyed; other frames O(1) table lookup |
+| **Dynamic voxel rigid island count explosion** | Large chain blasts instantly detach hundreds of debris rigid bodies | Isolated debris below threshold size (e.g. `< 8` cells) directly converted to particles / transient debris (`SHARP`) and destroyed, only large structures promoted to `rapier3d` dynamic voxel islands |
+| **Editor `preview-module` C ABI data tearing** | Splitting tens of thousands of cells into independent ECS `Entity` causing per-frame RTTIBin serialization timeout | Strictly use `CellGridChunk` (contiguous block byte stream) as cross-boundary sync granularity, with dirty version incremental transfer |
+| **Render channel and business coupling polluting engine** | Hardcoding gameplay branches like "poison gas green" / "acid bubbling" in `prism-render` | Shaders only read generalized visual-physics bits (specular wetness, crystalline edges, pulse emissive, jitter flash), concrete colors passed from project-side ROM palette |
+| **Multi-platform compile lock and comment gate failure** | Ignoring `Cargo.lock` sync or Chinese comments in Rust source | All project code and engine extensions strictly use English comments, force `check_comments.py` + `cargo clippy -- -D warnings` before commit |

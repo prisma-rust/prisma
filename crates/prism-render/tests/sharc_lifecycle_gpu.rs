@@ -1,16 +1,16 @@
 #![cfg(feature = "sharc")]
-//! SHaRC 世界缓存的生命周期规则（修复规格 §8）。
+//! SHaRC world cache lifecycle rules (fix spec §8).
 //!
-//! 缓存有两种寿命：屏幕历史（累积、运动向量）跟随相机与 extent 变化；世界缓存
-//! 按世界位置存辐射，只有辐射场本身改变时才失效。这个测试用
-//! [`GraphRenderer::sharc_clear_count`] 观察清空是否真的发生：
+//! Cache has two lifetimes: screen history (accumulation, motion vector) follows camera and extent changes; world cache
+//! stores radiance by world position, invalidated only when radiance field itself changes. This test uses
+//! [`GraphRenderer::sharc_clear_count`] to observe whether clear truly happens:
 //!
-//! - resize 只丢屏幕历史，世界缓存保留；
-//! - 灯光变化、几何/场景切换、天空变化各自让缓存失效；
-//! - 缓存空闲（光栅模式）时记录的失效原因跨帧保留，等缓存再次被使用才消费；
-//! - `instances_dirty` 不算失效：绘制列表每帧重建，相机一动签名就变。
+//! - resize only drops screen history, world cache kept;
+//! - light change, geometry / scene switch, skybox change each invalidate cache;
+//! - when cache idle (raster mode), recorded invalidate reason kept across frames, consumed when cache used again;
+//! - `instances_dirty` does not count as invalidate: draw list rebuilt each frame, signature changes when camera moves.
 //!
-//! 没有 Vulkan 设备或没有 ray query 时按现有 GPU 测试的约定跳过。
+//! Skipped when no Vulkan device or no ray query, following existing GPU test convention.
 
 use prism_render::render_graph::{DrawItem, DrawState, PostGrade, PtGiMode, RenderMode};
 use prism_render::{DirtyDispatchPlan, FrameInput, FrameUBOData, GraphRenderer};
@@ -24,7 +24,7 @@ fn try_create() -> Option<GraphRenderer> {
                 eprintln!("[SKIP] no VK_KHR_ray_query support");
                 return None;
             }
-            // 小容量 + 默认场景尺度：缓存够跑，显存占用可控。
+            // Small capacity + default scene scale: cache fits, VRAM use controlled.
             renderer.settings_mut().pt_gi = PtGiMode::Sharc;
             renderer.settings_mut().sharc_capacity = 1 << 14;
             renderer.settings_mut().sharc_scene_scale = 50.0;
@@ -47,7 +47,7 @@ fn try_create() -> Option<GraphRenderer> {
     }
 }
 
-/// 相机在原点、看向 −Z 的 Vulkan 透视矩阵（near 0.1 / far 100）。
+/// Vulkan perspective matrix at origin looking −Z (near 0.1 / far 100).
 fn perspective() -> [[f32; 4]; 4] {
     let fov = 45f32.to_radians();
     let (near, far) = (0.1f32, 100.0f32);
@@ -115,7 +115,7 @@ fn frame_data(view_proj: [[f32; 4]; 4], extent: (usize, usize)) -> FrameUBOData 
     }
 }
 
-/// 走完五阶段并回读一帧。`plan` 为空时等同于「本帧没有任何脏数据」。
+/// Run through five phases and read back one frame. Empty `plan` means "no dirty data this frame".
 fn render_frame(
     renderer: &mut GraphRenderer,
     items: &[DrawItem],
@@ -194,7 +194,7 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
     };
     let items = box_items(&mut renderer);
 
-    // 第一帧创建缓存并清空一次（初始分配）。
+    // First frame creates cache and clears once (initial allocation).
     render_frame(
         &mut renderer,
         &items,
@@ -205,7 +205,7 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
     let after_init = renderer.sharc_clear_count();
     assert_eq!(after_init, 1, "cache allocation clears exactly once");
 
-    // 静止的相机：世界缓存没有理由失效。
+    // Static camera: world cache has no reason to invalidate.
     render_frame(
         &mut renderer,
         &items,
@@ -219,8 +219,8 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
         "a steady frame must not touch the world cache"
     );
 
-    // resize 只让屏幕历史（运动向量 / 累积）失效；世界缓存按世界位置存辐射，
-    // 换分辨率只需要重投影。
+    // Resize only invalidates screen history (motion vector / accumulation); world cache stores radiance by world position,
+    // resolution change only needs reprojection.
     renderer
         .resize_offscreen(192, 160)
         .expect("resize_offscreen");
@@ -253,8 +253,8 @@ fn light_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // 绘制列表每帧重建，签名随相机/剔除变化；它不能算作几何失效，否则相机动
-    // 一下就会清空世界缓存。
+    // Draw list rebuilt each frame, signature changes with camera / cull; it cannot count as geometry invalidate, otherwise camera
+    // moving slightly would clear world cache.
     let instances_only = DirtyDispatchPlan {
         instances_dirty: true,
         emissive_table_dirty: true,
@@ -273,7 +273,7 @@ fn light_change_clears_the_cache() {
         "instances_dirty alone must not clear the world cache"
     );
 
-    // 灯光变了：旧体素里的辐射来自已经不存在的入射光，按 §8 硬清空。
+    // Light changed: radiance in old voxels came from no-longer-present incident light, hard clear per §8.
     let lights = DirtyDispatchPlan {
         lights_dirty: true,
         pt_accum_dirty: true,
@@ -292,7 +292,7 @@ fn light_change_clears_the_cache() {
         "a lighting change must clear the world cache"
     );
 
-    // 失效原因是一次性的：下一帧不再清。
+    // Invalidate reason is one-shot: not cleared again next frame.
     render_frame(
         &mut renderer,
         &items,
@@ -319,7 +319,7 @@ fn sky_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // 换环境 = 换训练时的入射光；旧体素里的辐射不再属于这个场景。
+    // Changing environment = changing training incident light; radiance in old voxels no longer belongs to this scene.
     renderer.set_environment(None).expect("set_environment");
     assert!(
         renderer.sharc_invalidation_pending(),
@@ -354,7 +354,7 @@ fn invalidation_stays_pending_while_the_cache_is_idle() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // 场景卸载发生在光栅帧里：此时没有 SHaRC 可清，原因必须跨帧留住。
+    // Scene unload happens in raster frame: no SHaRC to clear, reason must persist across frames.
     renderer.invalidate_pt_geometry();
     assert!(renderer.sharc_invalidation_pending());
     render_frame(
@@ -374,7 +374,7 @@ fn invalidation_stays_pending_while_the_cache_is_idle() {
         "the reason must survive an idle frame"
     );
 
-    // 回到 SHaRC 的第一帧才消费它 —— 也正是旧体素会变可见的那一帧。
+    // First frame back to SHaRC consumes it — also the frame old voxels become visible.
     render_frame(
         &mut renderer,
         &items,
@@ -401,7 +401,7 @@ fn voxel_scale_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // 同一尺度再跑一帧：没有格式变化，缓存保留。
+    // Run one more frame with same scale: no format change, cache kept.
     render_frame(
         &mut renderer,
         &items,
@@ -411,8 +411,8 @@ fn voxel_scale_change_clears_the_cache() {
     );
     assert_eq!(renderer.sharc_clear_count(), after_init);
 
-    // 改 voxel 尺度等于改 hash 键：旧条目还留在原地，但它们现在描述的是别的
-    // 体素（§8「cache 格式变化清空」）。
+    // Changing voxel scale equals changing hash key: old entries stay but now describe other
+    // voxels (§8 "cache format change clears").
     renderer.settings_mut().sharc_scene_scale = 25.0;
     render_frame(
         &mut renderer,
@@ -427,7 +427,7 @@ fn voxel_scale_change_clears_the_cache() {
         "a voxel-format change must clear the cache"
     );
 
-    // 一次性：同一尺度继续跑不再清。
+    // One-shot: continuing with same scale does not clear again.
     render_frame(
         &mut renderer,
         &items,

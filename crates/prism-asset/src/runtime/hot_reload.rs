@@ -4,9 +4,9 @@
 //! works on all platforms including Android/Termux without requiring inotify
 //! or any OS-specific file-watch API.
 //!
-//! 运行时总是编译：轮询器只依赖 `std`，不需要任何 OS 专用文件监视 API。
-//! （以前它藏在 `hot-reload` feature 后面，打开该 feature 的只有构建期 crate，
-//! 导致运行期拿不到 watcher —— 见 #495。）
+//! Runtime always compiles: poller only depends on `std`, no OS-specific file watch API needed.
+//! (previously it hid behind `hot-reload` feature, only build-time crate opened that feature,
+//! causing runtime to not get watcher -- see #495.)
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -61,10 +61,10 @@ pub enum HotReloadEvent {
 ///     }
 /// }
 /// ```
-/// 一次文件快照：修改时间 + 长度。
+/// One file snapshot: modification time + length.
 ///
-/// 只比 mtime 会漏掉「同一秒内重建、长度变了」的包（Android / Termux 的
-/// FUSE 时间戳粒度是 1 秒），所以长度也参与判断（#495 ⑤）。
+/// Only comparing mtime misses "rebuild within same second, length changed" packages (Android / Termux FUSE
+/// FUSE timestamp granularity is 1 second), so length also participates in judgment (#495 item 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     modified: SystemTime,
@@ -79,10 +79,10 @@ fn stamp_of(path: &Path) -> Option<Stamp> {
     })
 }
 
-/// 新快照是否算「变了」：mtime 前进超过 100ms，或长度不同。
+/// Whether new snapshot counts as "changed": mtime advanced more than 100ms, or length differs.
 ///
-/// 100ms 的阈值避免把一次写入过程里的中间状态当多次事件；长度变化则说明内容
-/// 真的换了（同秒重建）。
+/// 100ms threshold avoids treating intermediate states during one write as multiple events; length change means content
+/// really changed (rebuild within same second).
 fn stamp_changed(old: Stamp, new: Stamp) -> bool {
     let newer = new
         .modified

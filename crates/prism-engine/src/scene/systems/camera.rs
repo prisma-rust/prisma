@@ -1,18 +1,18 @@
-//! 相机系统
+//! camera system
 //!
-//! 将旧的 `crate::camera::Camera` 枚举（混入了编辑器字段和运行时状态）
-//! 拆分为纯数据组件（`Camera` + [`FlyCameraController`]）和
-//! 每帧从中派生运行时视图/投影矩阵的自由函数。
+//! Split the old `crate::camera::Camera` enum (which mixed editor fields and runtime state)
+//! into pure data components (`Camera` + [`FlyCameraController`]) and
+//! free functions that derive runtime view / projection matrices from them each frame.
 //!
-//! - [`camera_controller_system`] 将输入应用于 `FlyCameraController` +
-//!   同级 `LocalTransform`（写入偏航/俯仰/平移，并把朝向同步进
-//!   `LocalTransform.rotation`，让子节点与 `LocalToWorld` 跟随视角）。
+//! - [`camera_controller_system`] applies input to `FlyCameraController` +
+//!   same-level `LocalTransform` (writes yaw/pitch/translation, and syncs orientation into
+//!   `LocalTransform.rotation` so child nodes and `LocalToWorld` follow the view).
 //! - [`compute_camera_output`] reads `Camera` + `FlyCameraController` +
 //!   `LocalToWorld` and derives the matrices the renderer needs.
 //!
-//! 坐标系约定：右手系，+Y 向上，相机看向 −Z 方向。
-//! Vulkan y-flip 投影，深度范围 [0,1]。
-//! 参见 `README.md` §Coordinate Conventions 和 `DESIGN.md`。
+//! Coordinate convention: right-handed, +Y up, camera looks down −Z.
+//! Vulkan y-flip projection, depth range [0,1].
+//! See `README.md` §Coordinate Conventions and `DESIGN.md`.
 
 use glam::{Mat4, Vec3};
 
@@ -32,38 +32,38 @@ pub fn collect_camera(world: &World) -> Option<Camera> {
     world.query::<Camera>().next().map(|(_, c)| c.clone())
 }
 
-/// 所有**启用**相机，按 `Camera.depth` 升序（数值大的后绘制）= `Camera.allCameras`。
+/// All **enabled** cameras, sorted ascending by `Camera.depth` (higher value drawn later) = `Camera.allCameras`.
 pub fn all_cameras(world: &World) -> Vec<prism_ecs::Entity> {
     let mut cameras: Vec<(f32, prism_ecs::Entity)> = world
         .query::<Camera>()
         .filter(|(_, cam)| cam.enabled)
         .map(|(entity, cam)| (cam.depth, entity))
         .collect();
-    // `total_cmp` 让 NaN 也有全序，避免 `partial_cmp` 的 unwrap 风险。
+    // `total_cmp` gives NaN a total order, avoiding unwrap risk from `partial_cmp`.
     cameras.sort_by(|a, b| a.0.total_cmp(&b.0));
     cameras.into_iter().map(|(_, entity)| entity).collect()
 }
 
-/// 主相机 = `depth` 最大的启用相机 = `Camera.main`。
+/// Main camera = enabled camera with max `depth` = `Camera.main`.
 pub fn main_camera(world: &World) -> Option<prism_ecs::Entity> {
     all_cameras(world).pop()
 }
 
-/// 主相机之外的启用相机（诊断用）。
+/// Enabled cameras other than main (diagnostic use).
 ///
-/// #461 之后所有启用相机都会参与合成：forward pass 按 `Camera.depth` 升序各画
-/// 一遍，`clear_flags` 决定每层清颜色 / 深度。这个函数保留给需要「非主相机」
-/// 列表的工具（统计、调试 UI），不再表示「被忽略」。
+/// Since #461 all enabled cameras participate in composition: forward pass draws once per camera in
+/// ascending `Camera.depth`, `clear_flags` decides per-layer color / depth clear. This function kept for
+/// tools needing "non-main camera" list (stats, debug UI), no longer means "ignored".
 pub fn ignored_cameras(world: &World) -> Vec<prism_ecs::Entity> {
     let mut cameras = all_cameras(world);
-    cameras.pop(); // 主相机（`depth` 最大）会画出来
+    cameras.pop(); // Main camera (max `depth`) will be drawn
     cameras
 }
 
-/// 真正会被渲染的相机 = `depth` 最大的启用相机里，第一台**有 `LocalToWorld`** 的。
+/// True renderable camera = among enabled cameras with max `depth`, first one **with `LocalToWorld`**.
 ///
-/// 取景、清屏、宽高比写回、飞行输入都走这一处：只要大家用同一个选择函数，
-/// 就不会出现「写完 A 的 aspect 却渲染 B」「输入驱动 A 但画面是 B」这类分叉。
+/// Framing, clearing, aspect writeback, fly input all go through this one place: as long as everyone uses same
+/// selection function, there will be no "wrote A's aspect but rendered B" / "input drives A but screen is B" fork.
 pub fn active_camera(world: &World) -> Option<prism_ecs::Entity> {
     all_cameras(world)
         .into_iter()
@@ -71,14 +71,14 @@ pub fn active_camera(world: &World) -> Option<prism_ecs::Entity> {
         .find(|entity| world.get::<LocalToWorld>(*entity).is_some())
 }
 
-/// 无相机时使用的清屏色（中性灰：与纯黑/纯白区分，便于看出"什么都没画"）。
+/// Clear color when no camera (neutral gray: distinguishable from pure black / white, helps spot "nothing drawn").
 pub const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
-/// 指定相机的清屏色 = `Camera.backgroundColor`。
+/// Clear color for specified camera = `Camera.backgroundColor`.
 ///
-/// **取景与清屏必须同源**：调用方传入 [`CameraOutput::entity`]（真正产生 view 的
-/// 那台相机），这里不再自己挑相机，所以两处不会因为选择规则不同而分叉。
-/// 实体不存在或没有 `Camera` 时用 [`DEFAULT_CLEAR_COLOR`]。
+/// **Framing and clearing must use same source**: caller passes [`CameraOutput::entity`] (the camera that
+/// actually produced the view); here no re-selecting camera, so two places cannot fork on differing rules.
+/// When entity does not exist or has no `Camera`, use [`DEFAULT_CLEAR_COLOR`].
 pub fn clear_color(world: &World, camera: prism_ecs::Entity) -> [f32; 4] {
     world
         .get::<Camera>(camera)
@@ -86,10 +86,10 @@ pub fn clear_color(world: &World, camera: prism_ecs::Entity) -> [f32; 4] {
         .unwrap_or(DEFAULT_CLEAR_COLOR)
 }
 
-/// 指定相机的清屏方式 = `Camera.clearFlags`。
+/// Clear mode for specified camera = `Camera.clearFlags`.
 ///
-/// 与 [`clear_color`] 同源：调用方传 [`CameraOutput::entity`]，缺省回退到
-/// [`CameraClearFlags::Skybox`]（新建相机的默认值，也是引擎既有行为）。
+/// Same source as [`clear_color`]: caller passes [`CameraOutput::entity`], fallback to
+/// [`CameraClearFlags::Skybox`] (default for new cameras, also existing engine behavior).
 pub fn clear_flags(world: &World, camera: prism_ecs::Entity) -> CameraClearFlags {
     world
         .get::<Camera>(camera)
@@ -117,7 +117,7 @@ pub struct CameraOutput {
 
 /// Return a fallback `CameraOutput` when no usable Camera entity exists in the
 /// ECS world. This avoids a fatal error — the engine renders a gray background
-/// and the runtime HUD shows a "No 相机 hint.
+/// and the runtime HUD shows a "No camera  hint.
 ///
 /// The fallback places the viewer at `(0, 0, 5)` looking toward the origin with
 /// a 75° FOV, 16:9 aspect, and exposure 1.0.
@@ -155,14 +155,14 @@ pub fn fallback_camera_output(surface_rotation: &Mat4, aspect: f32) -> CameraOut
     }
 }
 
-/// 查找 [`active_camera`]（`depth` 最大的可渲染启用相机），derive its view/projection.
+/// Find [`active_camera`] (renderable enabled camera with max `depth`), derive its view/projection.
 ///
-/// 取景必须与清屏同源：调用方拿 [`CameraOutput::entity`] 去
-/// [`clear_color`]，两边就不会各自挑一次相机。
+/// Framing must use same source as clearing: caller takes [`CameraOutput::entity`] to
+/// [`clear_color`], neither side selects a camera separately.
 ///
-/// 没有 `FlyCameraController` 时回退到实体自身的朝向（`LocalToWorld` 的逆），
-/// 也就是 里"相机由 Transform 驱动"的形状 —— 这样场景里只放一个
-/// `Camera` + 变换就能出画面，不必强迫作者再加飞行控制器。
+/// When no `FlyCameraController` fall back to entity's own orientation (inverse of `LocalToWorld`),
+/// i.e. the "camera driven by Transform" shape — so a scene with just a
+/// `Camera` + transform can produce an image, no need to force authors to add a fly controller.
 ///
 /// `surface_rotation` is the device-orientation matrix applied on top of the
 /// view-projection (mirrors the old `mat_mul(&surface_rotation, &vp)` step in
@@ -192,7 +192,7 @@ pub fn compute_camera_output_for(
 
     let view = match world.get::<FlyCameraController>(entity) {
         Some(ctrl) => fly_view(eye, ctrl.yaw, ctrl.pitch),
-        // 单位变换 → 相机看向 −Z（项目约定）；任何旋转都由 LocalToWorld 携带。
+        // Identity transform → camera looks down −Z (project convention); any rotation carried by LocalToWorld.
         None => world_tf.0.inverse(),
     };
     let proj = perspective(cam);
@@ -226,16 +226,16 @@ pub fn camera_controller_system(
 ) -> Option<prism_ecs::Entity> {
     use crate::input::KeyCode;
 
-    // 输入必须驱动**正在渲染**的那台相机，否则多相机场景里 WASD/鼠标会移动另一台。
-    // 先拿到实体 id，让 &self 借用在这里结束，后面才能取 &mut 分量。
+    // Input must drive the camera **actually being rendered**, else in multi-camera scenes WASD/mouse will move another one.
+    // First get entity id so &self borrow ends here, then can take &mut components.
     let cam_entity = active_camera(world)?;
 
     let ctrl = world.get_mut::<FlyCameraController>(cam_entity)?;
     let move_speed;
     {
         // Scope the &mut borrow of ctrl so we can later borrow LocalTransform.
-        // 锁定状态是相机输入的唯一开关：解锁时键盘和鼠标都归项目 UI，相机
-        // 既不转也不走（以前右键还能拖动视角，等于同一个布尔值只管了一半）。
+        // Pointer lock state is the only switch for camera input: when unlocked keyboard and mouse belong to project UI, camera
+        // neither rotates nor moves (previously right-drag could still rotate view, i.e. one boolean governed only half).
         if look_active {
             let d = input.mouse_delta();
             ctrl.yaw -= d[0] as f32 * ctrl.look_sensitivity;
@@ -246,8 +246,8 @@ pub fn camera_controller_system(
             let lim = std::f32::consts::FRAC_PI_2 - 0.02;
             ctrl.pitch = ctrl.pitch.clamp(-lim, lim);
 
-            // Mouse wheel adjusts base move speed. 解锁态滚轮属于项目 UI，
-            // 不能让菜单滚动顺手改掉相机速度。
+            // Mouse wheel adjusts base move speed. In unlocked state wheel belongs to project UI,
+            // so scrolling the menu does not accidentally change camera speed.
             let scroll = input.scroll_delta() as f32;
             if scroll.abs() > 0.0 {
                 ctrl.move_speed *= 1.0 - scroll * 0.1;
@@ -259,7 +259,7 @@ pub fn camera_controller_system(
 
     // Translation: WASD/QE/Space/Ctrl relative to the yaw/pitch basis. Position
     // lives on the sibling LocalTransform (roots) - nested cameras use the
-    // LocalToWorld derived by the hierarchy 系统 and shouldn't be moved by
+    // LocalToWorld derived by the hierarchy system  and shouldn't be moved by
     // input directly, so we only write to LocalTransform.
     let boost = if input.key_held(KeyCode::ShiftLeft) || input.key_held(KeyCode::ShiftRight) {
         4.0
@@ -276,8 +276,8 @@ pub fn camera_controller_system(
     let r = right(yaw);
     let up = Vec3::Y;
     let mut movev = Vec3::ZERO;
-    // 走位键只在指针锁定时归相机：解锁态键盘属于项目的 UI（菜单常用 WASD
-    // 导航），同一次按键绝不能同时翻菜单和移动相机。
+    // Movement keys only go to camera in pointer lock state: unlocked keyboard belongs to project UI (menus often use WASD
+    // navigation), one keypress must never flip menu and move camera at same time.
     if look_active && input.key_held(KeyCode::KeyW) {
         movev += f;
     }
@@ -297,13 +297,13 @@ pub fn camera_controller_system(
         movev -= up;
     }
 
-    // 朝向也要写回：`hierarchy_system` 只从 `LocalTransform.rotation` 推导
-    // 子节点（billboard / 武器 / 聚光灯）的 `LocalToWorld`，只写 yaw/pitch
-    // 会让它们停在旧朝向上。
+    // Orientation must also be written back: `hierarchy_system` derives child node
+    // (billboard / weapon / spot light) `LocalToWorld` only from `LocalTransform.rotation`, writing only yaw/pitch
+    // would leave them stuck at old orientation.
     //
-    // `yaw`/`pitch`（以及 WASD 基向量）是**世界**空间的，而 `LocalTransform`
-    // 是相对父级的：挂在旋转父级下时先减去父级的世界旋转，否则子节点朝向
-    // 会被父级二次旋转、WASD 也会把世界轴直接加到局部坐标上。
+    // `yaw`/`pitch` (and WASD basis vectors) are in **world** space, while `LocalTransform` is relative to parent:
+    // under a rotated parent must first subtract parent's world rotation, otherwise child orientation
+    // gets rotated twice by parent, and WASD would add world axes directly to local coordinates.
     let world_rot = fly_rotation(yaw, pitch);
     let parent_rot = parent_world_rotation(world, cam_entity);
     let local_rot = match parent_rot {
@@ -334,9 +334,9 @@ pub fn camera_controller_system(
 
 /// Unit forward vector from yaw/pitch.
 ///
-/// 向前 = `[-sin(yaw)·cos(pitch), sin(pitch), -cos(yaw)·cos(pitch)]`。
-/// `yaw = 0` 看向 **−Z**（与 `.scene.json` 里 identity 变换、以及
-/// `README.md` 的坐标约定一致）；`yaw` 增大向左转。
+/// Forward = `[-sin(yaw)·cos(pitch), sin(pitch), -cos(yaw)·cos(pitch)]`.
+/// `yaw = 0` looks down **−Z** (consistent with identity transform in `.scene.json` and
+/// `README.md` coordinate convention); increasing `yaw` turns left.
 fn forward(yaw: f32, pitch: f32) -> Vec3 {
     let (s_y, c_y) = yaw.sin_cos();
     let (s_p, c_p) = pitch.sin_cos();
@@ -345,18 +345,18 @@ fn forward(yaw: f32, pitch: f32) -> Vec3 {
 
 /// Unit right vector, derived from yaw only (not forward × worldUp).
 ///
-/// 右 = `[cos(yaw), 0, -sin(yaw)]`；`yaw = 0` 时是 **+X**。用 yaw 单独构造，
-/// 所以任意 音高 下都有定义（包括 音高 = ±π/2，此时 向前 × worldUp 会退化）。
+/// Right = `[cos(yaw), 0, -sin(yaw)]`; at `yaw = 0` it is **+X**. Constructed from yaw alone,
+/// so any pitch is well-defined (including pitch = ±π/2, where forward × worldUp degenerates).
 fn right(yaw: f32) -> Vec3 {
     let (s_y, c_y) = yaw.sin_cos();
     Vec3::new(c_y, 0.0, -s_y)
 }
 
-/// `yaw`/`pitch` 对应的相机世界旋转（相机看向自身 −Z）。
+/// Camera world rotation corresponding to `yaw`/`pitch` (camera looks down its own −Z).
 ///
-/// 与 [`fly_view`] 用同一组基向量（列 = 右 / 上 / −前），所以写回
-/// `LocalTransform.rotation` 后，相机子节点和 `LocalToWorld` 得到的朝向
-/// 与画面里看到的完全一致。`yaw = 0, pitch = 0` → 单位四元数。
+/// Uses same basis vectors as [`fly_view`] (columns = right / up / −forward), so after writing back
+/// `LocalTransform.rotation`, camera child nodes and `LocalToWorld` get orientation
+/// fully consistent with rendered image. `yaw = 0, pitch = 0` → identity quaternion.
 fn fly_rotation(yaw: f32, pitch: f32) -> glam::Quat {
     let f = forward(yaw, pitch).normalize();
     let r = right(yaw);
@@ -364,10 +364,10 @@ fn fly_rotation(yaw: f32, pitch: f32) -> glam::Quat {
     glam::Quat::from_mat3(&glam::Mat3::from_cols(r, u, -f)).normalize()
 }
 
-/// 父级的世界旋转（没有父级 / 父级还没算 `LocalToWorld` 时 `None`）。
+/// Parent's world rotation (`None` when no parent / parent hasn't computed `LocalToWorld` yet).
 ///
-/// `hierarchy_system` 把父级的 scale 也乘进了 `LocalToWorld`，这里只要旋转，
-/// 所以取 T×R×S 分解里的正交部分（并归一化，避免非均匀 scale 把四元数拉歪）。
+/// `hierarchy_system` also multiplies parent scale into `LocalToWorld`; here only rotation needed,
+/// so take orthogonal part of T×R×S decomposition (and normalize, avoid non-uniform scale skewing quaternion).
 fn parent_world_rotation(world: &World, entity: prism_ecs::Entity) -> Option<glam::Quat> {
     let parent = world.get::<Parent>(entity)?.0;
     let parent_world = world.get::<LocalToWorld>(parent)?.0;
@@ -390,8 +390,8 @@ fn fly_view(eye: Vec3, yaw: f32, pitch: f32) -> Mat4 {
 
 /// Column-major projection matrix (Vulkan y-flip, depth range [0,1]).
 ///
-/// 透视 / 正交的选择在 [`Camera::projection_matrix`] 里（`prism-scene` 的
-/// `components_tests.rs` 覆盖了 y-flip 与 `near → 0` / `far → 1` 的映射）。
+/// Perspective / orthographic choice in [`Camera::projection_matrix`] (`prism-scene`'s
+/// `components_tests.rs` covers y-flip and `near → 0` / `far → 1` mapping).
 fn perspective(cam: &Camera) -> Mat4 {
     cam.projection_matrix(cam.aspect)
 }

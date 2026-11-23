@@ -1,13 +1,13 @@
-//! 主线程定时器服务 —— 创建 / 暂停 / 恢复 / 销毁
+//! Main-thread timer service — create / pause / resume / destroy.
 //!
-//! 存储使用 SlotMap（Vec<Option<T>> + free list），u32 slot 索引为 ID，无哈希。
+//! Storage uses SlotMap (Vec<Option<T>> + free list), u32 slot index as ID, no hash.
 //!
-//! # 用法
+//! # Usage
 //! ```ignore
 //! let mut timer = TimerService::new();
 //! let h = timer.client.create_timer(TimerParams { .. });
 //! timer.pause(h); timer.resume(h); timer.destroy(h);
-//! timer.tick(); // 主循环每帧
+//! timer.tick(); // Main loop every frame
 //! ```
 
 use std::{
@@ -64,7 +64,7 @@ impl<T> SlotMap<T> {
     }
 }
 
-// ── 类型 ─────────────────────────────────────────────────────────────────
+// ── type  ─────────────────────────────────────────────────────────────────
 
 type Callback = Box<dyn FnMut() + Send + 'static>;
 
@@ -97,9 +97,9 @@ enum ServiceMsg {
 
 const SLEEP_CHUNK: Duration = Duration::from_millis(50);
 
-// ── 公开类型 ─────────────────────────────────────────────────────────────
+// ── Public types ─────────────────────────────────────────────────────────────
 
-/// 定时器创建参数。
+/// Timer creation parameters.
 pub struct TimerParams {
     pub delay: Duration,
     pub interval: Option<Duration>,
@@ -108,10 +108,10 @@ pub struct TimerParams {
     pub callback: Callback,
 }
 
-/// u32 slot 索引，即 timer id。
+/// u32 slot index, i.e. the timer id.
 pub type TimerId = u32;
 
-/// 定时器客户端 —— 可 Clone，面板直接持有。
+/// Timer client — Cloneable, UI layer holds it directly.
 #[derive(Clone)]
 pub struct TimerClient {
     cmd_tx: Sender<WorkerCmd>,
@@ -189,7 +189,7 @@ impl TimerClient {
     }
 }
 
-/// 主线程定时器服务。
+/// Main-thread timer service.
 pub struct TimerService {
     pub client: TimerClient,
     fire_rx: Receiver<FireEvent>,
@@ -222,9 +222,9 @@ impl TimerService {
         }
     }
 
-    /// 每帧在主线程调用，派发到期回调。
+    /// Called every frame on the main thread, dispatches expired callbacks.
     pub fn tick(&mut self) {
-        // 1. 处理注册/销毁消息（同一个 mpsc，按发送顺序消费）。
+        // 1. Handle register / destroy messages (same mpsc, consumed in send order).
         while let Ok(msg) = self.reg_rx.try_recv() {
             match msg {
                 ServiceMsg::Register(msg) => {
@@ -256,7 +256,7 @@ impl TimerService {
             }
         }
 
-        // 2. 收集到期事件
+        // 2. Collect expired events
         let mut fired = Vec::new();
         while let Ok(ev) = self.fire_rx.try_recv() {
             let alive = self
@@ -274,7 +274,7 @@ impl TimerService {
             }
         }
 
-        // 3. 派发回调 & 重新调度 interval
+        // 3. Dispatch callbacks & reschedule new interval
         for id in fired {
             let ok = self
                 .client
@@ -311,7 +311,7 @@ impl Default for TimerService {
     }
 }
 
-// ── 后台 worker ──────────────────────────────────────────────────────────
+// ── Background worker ──────────────────────────────────────────────────────────
 
 fn worker_loop(
     cmd_rx: Receiver<WorkerCmd>,
@@ -364,10 +364,10 @@ fn worker_loop(
 
 // ── TimerSet ─────────────────────────────────────────────────────────────
 
-/// TimerClient + 自动 id 缓存 + Drop 时自动批量销毁。
+/// TimerClient + auto id cache + Drop auto batch destroy.
 ///
-/// 面板基类持有此类型，通过 `create_timer` 创建时会自动记录 id，
-/// 析构时全部清理。
+/// UI base class holds this type; creating via `create_timer` auto-records id,
+/// Drop fully cleans up.
 pub struct TimerSet {
     client: TimerClient,
     ids: Vec<u32>,

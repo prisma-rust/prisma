@@ -23,11 +23,11 @@ xxhash-rust = { version = "0.8", features = ["xxh3"], optional = true }
 default = ["runtime", "types", "streaming"]
 asset-data = ["dep:typetag"]
 core = []
-# tokio 只为 `*_async` 变体存在（运行时默认走同步 IO），默认不进玩家二进制。
+# tokio only for `*_async` variants (runtime defaults to sync IO), default not into player binary.
 async-io = ["dep:tokio"]
 runtime = ["dep:tracing", "core", "package"]
 package = ["core", "dep:zstd", "dep:xxhash-rust"]
-# 兼容别名：热重载轮询器现在总是随 `runtime` 编译，打开这个 feature 不再有副作用。
+# Compat alias: hot-reload poller now always compiles with `runtime`, opening this feature no longer has side effects.
 hot-reload = ["runtime"]
 streaming = ["runtime"]
 types = ["core", "asset-data"]

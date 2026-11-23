@@ -395,7 +395,7 @@ fn main() -> Result<()> {
         } => {
             let t0 = std::time::Instant::now();
 
-            // 1. 生成初始地形：频率按物理地块尺度标定
+            // 1. Generate initial terrain: frequency scaled to physical tile size
             let scale_m = width as f64 * terrain_scale;
             let terrain = prism_build_pipeline::generate_terrain(width, height, seed, scale_m);
             log::info!(
@@ -406,7 +406,7 @@ fn main() -> Result<()> {
                 terrain.max_height
             );
 
-            // 2. 水力 + 热力侵蚀（--no-erode 时跳过）
+            // 2. Water + thermal erosion (skipped with --no-erode)
             let mut params = prism_build_pipeline::ErosionParams {
                 iterations,
                 particle_count: particles,
@@ -428,12 +428,12 @@ fn main() -> Result<()> {
                 if no_erode { " (erosion skipped)" } else { "" }
             );
 
-            // 3. 映射到真实高程范围（如 −11 km ~ +8.85 km）
-            //    侵蚀后相对高度并非 [0,1] 且分布偏斜（水力削平谷底），
-            //    先归一化，再用「分位数」定位海平面——对归一化数据排序，
-            //    取第 sea_frac 百分位的值作为海平面，保证海底/陆地比例
-            //    严格等于 sea_level 设定（0 m 恰为海平面）。
-            //    陆地段加 gamma 拉伸（<1 压低矮处展开）避免 99% 陆地挤在低处。
+            // 3. Map to real elevation range (e.g. −11 km ~ +8.85 km)
+            //    After erosion relative height is not [0,1] and distribution is skewed (water erodes valley floor),
+            //    first normalize, then use percentile to position sea level—sort normalized data,
+            //    take the sea_frac percentile value as sea level, ensuring seabed/land ratio
+            //    strictly equal to sea_level setting (0 m is exactly sea level).
+            //    Land segment with gamma stretch (<1 raises low areas) avoids 99% land bunched at low end.
             let sea_frac = sea_level.clamp(0.001, 0.999);
             const LAND_GAMMA: f64 = 0.5;
             let mut abs = hm;
@@ -451,7 +451,7 @@ fn main() -> Result<()> {
             }
             abs.min_height = min_elevation;
             abs.max_height = max_elevation;
-            abs.sea_level = 0.0; // 绝对高程下海平面 = 0 m
+            abs.sea_level = 0.0; // Sea level = 0 m under absolute elevation
             log::info!(
                 "absolute elevation: min={:.1} m, max={:.1} m, sea_level={:.1} m (sea fraction {:.0}%)",
                 abs.min_height,
@@ -460,7 +460,7 @@ fn main() -> Result<()> {
                 sea_frac * 100.0
             );
 
-            // 4. 写出 f32 LE raw
+            // 4. Write f32 LE raw
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent)?;
             }

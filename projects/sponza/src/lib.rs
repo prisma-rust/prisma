@@ -1,4 +1,4 @@
-//! Sponza 用户项目：使用引擎公开接口启动实时路径追踪并集成 SHaRC 调参面板。
+//! Sponza user project: uses engine public interface to start real-time path tracing and integrate SHaRC tuning panel.
 
 #[cfg(feature = "player")]
 pub mod tuning_ui;
@@ -6,7 +6,7 @@ pub mod tuning_ui;
 pub use tuning_ui::SponzaTuningHook;
 
 // ===========================================================================
-// 玩家形态 (Standalone Player)
+// Player form (Standalone Player)
 // ===========================================================================
 
 #[cfg(feature = "player")]
@@ -14,8 +14,8 @@ pub fn build_app() -> prism_app::App {
     use prism_engine::render_settings::{PtGiMode, RasterGiMode, RenderMode, RenderSettings};
 
     prism_app::app()
-        // 以前**不注册任何子系统**，`App` 认为渲染关着 → 直接走 headless 分支：
-        // 不建窗口、不启渲染线程，键盘事件根本没人处理（所有快捷键失效）。
+        // Previously no child systems registered, `App` thinks rendering is off → takes headless branch:
+        // No window created, no render thread started, keyboard events unhandled (all shortcuts invalidated).
         .with_subsystem(prism_app::Subsystem::Render)
         .with_render_settings(|settings: &mut RenderSettings| {
             let mut auto_exposure = true;
@@ -65,7 +65,7 @@ pub fn build_app() -> prism_app::App {
 }
 
 // ===========================================================================
-// 编辑器预览模块 (Editor Play Dynamic Module)
+// Editor preview module (Editor Play Dynamic Module)
 // ===========================================================================
 
 #[cfg(feature = "preview-module")]
@@ -89,7 +89,7 @@ mod preview {
 }
 
 // ===========================================================================
-// Android JNI 入口
+// Android JNI entry point
 // ===========================================================================
 
 #[cfg(all(target_os = "android", feature = "player"))]

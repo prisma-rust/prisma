@@ -48,7 +48,7 @@ fn saved_transform_keeps_the_full_quaternion() {
 
     let parsed = parse_transform_array(&format!("[{saved}]"));
     assert_eq!(parsed.len(), 1, "{saved}");
-    // 四元数 q 与 -q 表示同一旋转，比较绝对值点积即可。
+    // Quaternion q and -q represent same rotation, compare absolute dot product.
     assert_eq!(parsed[0].id, Some(7), "id must survive the round trip");
     assert!(
         parsed[0].transform.rotation.dot(rotation).abs() > 0.999_999,
@@ -59,7 +59,7 @@ fn saved_transform_keeps_the_full_quaternion() {
 
 #[test]
 fn legacy_three_component_rotation_loads_as_identity() {
-    // 旧文件（v1-v3）只写了 x,y,z；读入时回退到单位四元数，不 panic。
+    // Old file (v1-v3) only wrote x,y,z; on read falls back to identity quaternion, no panic.
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(entity, LocalTransform::default());
@@ -183,12 +183,12 @@ fn saved_point_light_does_not_create_an_entity() {
 }
 
 // ---------------------------------------------------------------------------
-// #45 — 保存/恢复必须用「被渲染的那台相机」，而不是插入顺序第一台
+// #45 — save / restore must use "camera being rendered", not first camera in insert order
 // ---------------------------------------------------------------------------
 
-/// 生成一台完整相机（`Camera` + `FlyCameraController` + `LocalTransform`）。
-/// `with_world_matrix` 决定是否再补上层级系统算出的 `LocalToWorld`
-/// （`active_camera` 要求它存在，加载早期则可能还没有）。
+/// Generate a complete camera (`Camera` + `FlyCameraController` + `LocalTransform`).
+/// `with_world_matrix` decides whether to additionally add layer-level system computed `LocalToWorld`
+/// (`active_camera` requires it present; early load may not yet have it).
 fn spawn_camera(
     world: &mut World,
     depth: f32,
@@ -229,7 +229,7 @@ fn saved_camera_state_uses_the_rendered_camera() {
     let snapshot = snapshot_camera_state(&world).expect("world has cameras");
     assert_eq!(snapshot.position, Vec3::new(2.0, 3.0, 4.0));
 
-    // 保存走同一选择器：最高 `depth` 的**启用**相机，而不是插入顺序第一台。
+    // Save uses same selector: highest `depth` **enabled** camera, not first in insert order.
     assert_eq!(state_camera(&world), Some(rendered));
     assert_ne!(state_camera(&world), Some(behind));
     assert_ne!(state_camera(&world), Some(disabled));
@@ -267,7 +267,7 @@ fn restored_camera_state_writes_the_rendered_camera_only() {
         1.0_f32.to_degrees()
     );
 
-    // 较低 `depth` 的相机保持原样。
+    // Lower `depth` camera stays unchanged.
     let behind_transform = world.get::<LocalTransform>(behind).unwrap();
     assert_eq!(behind_transform.position, Vec3::new(1.0, 1.0, 1.0));
     assert_eq!(world.get::<FlyCameraController>(behind).unwrap().yaw, 0.0);
@@ -275,8 +275,8 @@ fn restored_camera_state_writes_the_rendered_camera_only() {
 
 #[test]
 fn camera_choice_falls_back_to_main_camera_before_hierarchy_runs() {
-    // 加载场景状态时层级传播可能还没跑过：没有 `LocalToWorld` 时
-    // `active_camera` 返回 `None`，只能按 `main_camera`（最高 depth 的启用相机）兜底。
+    // When loading scene state, layer-level propagation may not have run: without `LocalToWorld`,
+    // `active_camera` returns `None`, falls back to `main_camera` (highest depth enabled camera).
     let mut world = World::new();
     let _first = spawn_camera(&mut world, 0.0, [1.0, 0.0, 0.0], true, false);
     let main = spawn_camera(&mut world, 2.0, [2.0, 0.0, 0.0], true, false);
@@ -287,10 +287,10 @@ fn camera_choice_falls_back_to_main_camera_before_hierarchy_runs() {
     assert_eq!(snapshot.position, Vec3::new(2.0, 0.0, 0.0));
 }
 
-/// #118：恢复按 `.scene.json` 稳定 id 配对，而不是按 ECS 池顺序 zip。
+/// #118: restore matches by `.scene.json` stable id, not by zipping ECS pool order.
 ///
-/// 存档里的顺序与池顺序故意相反：老实现会把位姿互换，这正是「场景里插入一个
-/// 实体后所有存档位姿错位」的根因。
+/// Order in save deliberately differs from pool order: old impl would swap poses, this is the root cause of "inserting
+/// an entity after all saved poses misaligning every pose" bug.
 #[test]
 fn v4_restores_transforms_by_entity_id_not_by_pool_order() {
     let mut world = World::new();
@@ -322,16 +322,16 @@ fn v4_restores_transforms_by_entity_id_not_by_pool_order() {
     assert_eq!(
         world.get::<LocalTransform>(first).unwrap().position,
         Vec3::new(10.0, 0.0, 0.0),
-        "id 1 必须拿回自己的位姿"
+        "id 1 must get back its own pose"
     );
     assert_eq!(
         world.get::<LocalTransform>(second).unwrap().position,
         Vec3::new(20.0, 0.0, 0.0),
-        "id 2 必须拿回自己的位姿"
+        "id 2 must get back its own pose"
     );
 }
 
-/// #118：存档里多出来的 id（场景已删掉的实体）不会占用别的实体的位姿。
+/// #118: extra ids in save (entities already deleted from scene) must not take another entity pose.
 #[test]
 fn v4_ignores_saved_transforms_for_missing_entities() {
     let mut world = World::new();
@@ -354,11 +354,11 @@ fn v4_ignores_saved_transforms_for_missing_entities() {
     assert_eq!(
         world.get::<LocalTransform>(kept).unwrap().position,
         Vec3::new(50.0, 0.0, 0.0),
-        "已删除实体的记录不能把位姿挤给别的实体（老实现会按顺序错位）"
+                "Record of deleted entity must not push pose onto another entity (old impl misaligned by order)"
     );
 }
 
-/// #484：存档文件名 / 目录由宿主决定。
+/// #484: save filename / directory decided by host.
 #[test]
 fn the_save_path_follows_the_host_directory_and_slot() {
     let base = std::path::Path::new("C:/games/save");
@@ -370,12 +370,12 @@ fn the_save_path_follows_the_host_directory_and_slot() {
         scene_state_path_in(Some(base), Some(3)),
         std::path::PathBuf::from("C:/games/save/scene_state-3.json")
     );
-    // 没有任何目录时退化成当前目录（不再 panic）。
+    // With no directory at all, fall back to current directory (no panic).
     let bare = scene_state_path_in(None, None);
     assert!(bare.to_string_lossy().ends_with("scene_state.json"));
 }
 
-/// #484：`SaveDirectory` resource 覆盖默认目录，槽位互不覆盖。
+/// #484: `SaveDirectory` resource overrides default directory, slot bits do not overwrite each other.
 #[test]
 fn slots_round_trip_through_the_save_directory() {
     let dir = std::env::temp_dir().join(format!("prism-scene-state-{}", std::process::id()));
@@ -406,13 +406,13 @@ fn slots_round_trip_through_the_save_directory() {
         Vec3::new(1.0, 2.0, 3.0)
     );
 
-    // 不存在的槽位 = 没有存档，不能悄悄成功。
+    // Missing slot bit = no save, must not silently succeed.
     assert!(!load_scene_state_slot(&mut world, 7));
 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// #484：显式路径原语（「另存存档」/ 测试用）。
+/// #484: explicit path primitive ("save as" / for tests).
 #[test]
 fn explicit_paths_work_without_a_save_directory_resource() {
     let dir = std::env::temp_dir().join(format!("prism-scene-state-x-{}", std::process::id()));
@@ -431,7 +431,7 @@ fn explicit_paths_work_without_a_save_directory_resource() {
     world.insert(entity, SceneEntityId(3));
 
     save_scene_state_to(&world, &path);
-    assert!(path.is_file(), "父目录要自动创建");
+    assert!(path.is_file(), "Parent directory must be auto-created");
 
     world.get_mut::<LocalTransform>(entity).unwrap().position = Vec3::ZERO;
     assert!(load_scene_state_from(&mut world, &path));

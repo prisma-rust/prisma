@@ -1,16 +1,16 @@
-//! 渲染图报告（JSON）——把运行时 `RenderGraphSnapshot` 导出成**纯数据**，
-//! 供编辑器 / 外部工具可视化成 DAG。
+//! Render graph report (JSON) — export runtime `RenderGraphSnapshot` into **pure data**,
+//! for editor / external tools to visualize as DAG.
 //!
 //! ```text
-//! 渲染线程 GraphRenderer ──snapshot()──► RenderGraphReport ──JSON──► 编辑器面板
+//! Render thread GraphRenderer ──snapshot()──► RenderGraphReport ──JSON──► editor panel
 //! ```
 //!
-//! 这里只有 DTO 和序列化：**不出现** `vk::*` 句柄、不依赖 ECS / 引擎设置类型。
-//! 引擎的 `RenderSettings` 到 [`ReportSettings`] 的映射放在 `prism-engine`
-//! （`RenderSettings::to_report_settings`），所以本模块对 `prism-app` 和
-//! `editor` 都是同一个实现。
+//! Here only DTO and serialization: **no** `vk::*` handles, no dependency on ECS / engine settings types.
+//! Engine's `RenderSettings` → [`ReportSettings`] mapping lives in `prism-engine`
+//! (`RenderSettings::to_report_settings`), so this module lets `prism-app` and
+//! `editor` share one implementation.
 //!
-//! 写文件采用「临时文件 + rename」，避免读者读到半截 JSON。
+//! Writing file uses "temp file + rename", avoid readers seeing half-written JSON.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,17 +19,17 @@ use serde::Serialize;
 
 use crate::render_graph::{PassInfo, PassKind, RenderGraphSnapshot, RenderMode, ResourceHandle};
 
-/// 游戏进程写报告的输出路径环境变量键（编辑器自己写本地文件，不看它）。
+/// Env var key for game process report output path (editor writes local file itself, ignores it).
 pub const ENV_KEY: &str = "PRISMA_RENDER_GRAPH_REPORT";
 
-/// 每多少帧刷新一次报告（≈1 秒 @60fps；图结构变化不频繁）。
+/// Refresh report every few frames (≈1 second @60fps; graph structure doesn't change frequently).
 pub const REFRESH_INTERVAL_FRAMES: u64 = 60;
 
-/// 管理器侧的实时资源统计（#518 Phase 2）。
+/// Manager-side real-time resource stats (#518 Phase 2).
 ///
-/// 与 `resources` 不同：那是渲染图自己分配的目标；这里数的是纹理 / 网格 / 材质的
-/// **驻留量**（整个渲染器生命周期内累积，热重载后会回落）。字节数是估算值：
-/// 纹理只算 base mip（未乘 mip 链），网格按标准顶点布局 + 4 字节索引。
+/// Different from `resources`: those are targets allocated by render graph itself; here counts
+/// **resident amount** of textures / meshes / materials (accumulated over renderer lifetime, drops after hot reload). Byte count is estimate:
+/// texture counts base mip only (not multiplied by mip chain), mesh uses standard vertex layout + 4-byte index.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportStats {
@@ -39,12 +39,12 @@ pub struct ReportStats {
     pub mesh_bytes: u64,
     pub materials: usize,
     pub material_bytes: u64,
-    /// 遮挡剔除参与测试 / 被剔除的绘制数（#1007）；关闭时为 0。
+    /// Occlusion culling tested / culled draw counts (#1007); 0 when disabled.
     #[serde(default)]
     pub occlusion_tested: usize,
     #[serde(default)]
     pub occlusion_culled: usize,
-    /// 显存子分配统计（#1030）：总保留显存字节数与活跃已使用字节数。
+    /// VRAM suballocation stats (#1030): total reserved VRAM bytes and active used bytes.
     #[serde(default)]
     pub suballoc_reserved_bytes: u64,
     #[serde(default)]
@@ -52,77 +52,77 @@ pub struct ReportStats {
 }
 
 impl ReportStats {
-    /// 三类资源合计的估算字节数。
+    /// Estimated byte count of all three resource classes combined.
     pub fn total_bytes(&self) -> u64 {
         self.texture_bytes + self.mesh_bytes + self.material_bytes
     }
 }
 
-/// 一帧里的一次 draw call 记录（#518 Phase 2 Frame Debugger 的数据层）。
+/// One draw call record within a frame (#518 Phase 2 Frame Debugger data layer).
 ///
-/// 只记录 CPU 侧就能确定的信息（pass / 批量标签 / 实例数 / 三角形数 / 是否在主
-/// 通道可见），不包含 pipeline 句柄或 descriptor set —— 回放留给后续。
+/// Only records info determinable on CPU side (pass / batch tag / instance count / triangle count / whether visible in main
+/// channel), no pipeline handle or descriptor set — replay left for later.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportDrawCall {
-    /// `forward` / `sprite` / `particle`。
+    /// `forward` / `sprite` / `particle`.
     pub pass: String,
-    /// 人类可读标签（网格序号 + 材质槽 / 混合状态 / 粒子组）。
+    /// Human-readable tag (mesh index + material slot / blend state / particle group).
     pub label: String,
-    /// 实例数（网格通常是 1，精灵 / 粒子是同一批次的实例数）。
+    /// Instance count (mesh usually 1, sprite / particle is instance count of same batch).
     pub instances: usize,
-    /// 三角形数（实例已乘进去）。
+    /// Triangle count (instances already multiplied in).
     pub triangles: u64,
-    /// 是否在相机主通道绘制（阴影专用 / 被剔除的网格为 `false`）。
+    /// Whether drawn in camera main channel (shadow-only / culled mesh is `false`).
     pub visible: bool,
-    /// 管线状态摘要（队列 / 剔除 / 深度写 / 混合）；旧报告没有该字段。
+    /// Pipeline state summary (queue / cull / depth write / blend); absent in old reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
-    /// 管线类别（`forward/opaque`、`forward/transparent`、`sprite/batch` …）；
-    /// 旧报告没有该字段（#518 Phase 2）。
+    /// Pipeline class (`forward/opaque`, `forward/transparent`, `sprite/batch`...);
+    /// absent in old reports (#518 Phase 2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
-    /// 这条 call 绑定的 descriptor set 名称（按 set 序号）；旧报告省略。
+    /// Names of descriptor sets bound by this call (by set index); omitted in old reports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub descriptor_sets: Vec<String>,
-    /// 顶点数（网格是上传时的顶点数；精灵/粒子是实例数 × 4）；旧报告省略。
+    /// Vertex count (mesh is vertex count at upload; sprite / particle is instance count × 4); omitted in old reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vertices: Option<u64>,
 }
 
-/// 报告里最多保留多少条 draw call（防止大场景把 JSON 撑爆）。
+/// Max draw calls kept in report (prevent huge scenes from blowing up JSON).
 pub const MAX_REPORTED_DRAW_CALLS: usize = 256;
 
-/// `RenderGraphSnapshot` 的 JSON 形状。
+/// JSON shape of `RenderGraphSnapshot`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderGraphReport {
-    /// Unix 毫秒时间戳。
+    /// Unix millisecond timestamp.
     pub generated_at_ms: u64,
-    /// 采样时的帧序号。
+    /// Frame number at sampling.
     pub frame: u64,
-    /// 采样时的渲染设置。
+    /// Render settings at sampling.
     pub settings: ReportSettings,
-    /// 按执行顺序排列的 pass。
+    /// Passes in execution order.
     pub passes: Vec<ReportPass>,
-    /// 图管理的资源。
+    /// Graph-managed resources.
     pub resources: Vec<ReportResource>,
-    /// 上一帧的总 GPU 时间（ms，#518）。设备不支持时间戳时为 `None`。
+    /// Total GPU time of previous frame (ms, #518). `None` when device lacks timestamp support.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_total_ms: Option<f32>,
-    /// 纹理 / 网格 / 材质的实时驻留统计（#518 Phase 2）；旧报告没有该字段。
+    /// Real-time resident stats of textures / meshes / materials (#518 Phase 2); absent in old reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stats: Option<ReportStats>,
-    /// 本帧的 draw call 列表（#518 Phase 2）；空 / 旧报告时省略。
+    /// Draw call list of this frame (#518 Phase 2); omitted when empty / old report.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub draw_calls: Vec<ReportDrawCall>,
-    /// 最近若干帧的 GPU 总时间（ms，旧 → 新，#518 Phase 2 历史曲线）；
-    /// 设备不支持时间戳 / 旧报告时省略。
+    /// Total GPU time of recent frames (ms, old → new, #518 Phase 2 history chart);
+    /// omitted when device lacks timestamps / old report.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gpu_history_ms: Vec<f32>,
 }
 
-/// 报告里的渲染设置子集（与编辑器 `RenderSettingsData` 对齐）。
+/// Subset of render settings shown in report (aligned with editor `RenderSettingsData`).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportSettings {
@@ -136,7 +136,7 @@ pub struct ReportSettings {
 }
 
 impl ReportSettings {
-    /// 从原始字段构造（`prism-engine` 的 `RenderSettings` 用它填表）。
+    /// Construct from original fields (`prism-engine`'s `RenderSettings` uses this to fill table).
     pub fn new(
         render_mode: RenderMode,
         debug_flags: u32,
@@ -168,31 +168,31 @@ impl Default for ReportSettings {
     }
 }
 
-/// 一个 pass 的节点数据。
+/// Node data of one pass.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportPass {
     pub index: usize,
     pub name: String,
-    /// `shadow` / `forward` / `gtao` / `post` / `pt` / `rt` / `unknown`。
+    /// `shadow` / `forward` / `gtao` / `post` / `pt` / `rt` / `unknown`.
     pub kind: &'static str,
     pub inputs: Vec<ReportHandle>,
     pub outputs: Vec<ReportHandle>,
-    /// 该 pass 上一帧的 GPU 时间（ms，#518）；没有计时数据时为 `None`。
+    /// GPU time of this pass on previous frame (ms, #518); `None` when no timing data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpu_ms: Option<f32>,
 }
 
-/// 一个资源的节点数据。
+/// Node data of one resource.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportResource {
     pub handle: u32,
-    /// 可读名字（well-known handle 有名字；其余为 `resource#N`）。
+    /// Readable name (well-known handles have names; others `resource#N`).
     pub name: String,
-    /// `color` / `depth` / `storage_image` / `storage_buffer` / `other`。
+    /// `color` / `depth` / `storage_image` / `storage_buffer` / `other`.
     pub kind: &'static str,
-    /// 例如 `R16G16B16A16_SFLOAT`，可空。
+    /// Like `R16G16B16A16_SFLOAT`, may be empty.
     pub format: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -201,14 +201,14 @@ pub struct ReportResource {
     pub allocated: bool,
 }
 
-/// 边引用：handle 本身（前端用 handle 连接 pass）。
+/// Edge reference: the handle itself (frontend connects passes by handle).
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(transparent)]
 pub struct ReportHandle(pub u32);
 
 impl RenderGraphReport {
-    /// 从快照构建报告。`settings` 是每帧实际生效的渲染设置，
-    /// `frame` 为调用方帧计数。
+    /// Build report from snapshot. `settings` is render settings actually in effect this frame,
+    /// `frame` is caller's frame counter.
     pub fn from_snapshot(
         snapshot: &RenderGraphSnapshot,
         settings: ReportSettings,
@@ -217,7 +217,7 @@ impl RenderGraphReport {
         Self::from_snapshot_with_timings(snapshot, settings, frame, None)
     }
 
-    /// 同 [`Self::from_snapshot`]，但带上 per-pass GPU 时间（#518）。
+    /// Same as [`Self::from_snapshot`], but with per-pass GPU times (#518).
     pub fn from_snapshot_with_timings(
         snapshot: &RenderGraphSnapshot,
         settings: ReportSettings,
@@ -312,9 +312,9 @@ impl RenderGraphReport {
         }
     }
 
-    /// 附带最近 N 帧的 GPU 总时间（#518 Phase 2 历史曲线）。
+    /// Attach total GPU times of recent N frames (#518 Phase 2 history chart).
     ///
-    /// 非有限 / 负样本被丢弃；最多保留 240 个点，避免异常调用方把 JSON 撑大。
+    /// Non-finite / negative samples discarded; at most 240 points kept, avoid exceptional caller bloating JSON.
     pub fn with_gpu_history(mut self, samples: impl IntoIterator<Item = f32>) -> Self {
         self.gpu_history_ms = samples
             .into_iter()
@@ -324,19 +324,19 @@ impl RenderGraphReport {
         self
     }
 
-    /// 附带管理器侧的资源统计（#518 Phase 2）。
+    /// Attach manager-side resource stats (#518 Phase 2).
     pub fn with_stats(mut self, stats: ReportStats) -> Self {
         self.stats = Some(stats);
         self
     }
 
-    /// 附带本帧的 draw call 列表（#518 Phase 2 Frame Debugger）。
+    /// Attach draw call list of this frame (#518 Phase 2 Frame Debugger).
     pub fn with_draw_calls(mut self, calls: Vec<ReportDrawCall>) -> Self {
         self.draw_calls = calls;
         self
     }
 
-    /// 原子写入 JSON（临时文件 + rename）。
+    /// Atomically write JSON (temp file + rename).
     pub fn write_json(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -347,16 +347,16 @@ impl RenderGraphReport {
     }
 }
 
-/// 报告节流：仅当环境变量存在且到达刷新间隔时写文件。
+/// Report section: only writes file when env var exists and refresh interval reached.
 ///
-/// 游戏进程用 `from_env()`；编辑器自己决定输出路径（面板要读本地文件）。
+/// Game process uses `from_env()`; editor decides output path itself (panel wants local file).
 pub struct ReportWriter {
     path: Option<std::path::PathBuf>,
     last_frame: Option<u64>,
 }
 
 impl ReportWriter {
-    /// 读取环境变量；未设置时返回一个永远不写的 writer。
+    /// Read env var; when unset returns a writer that never writes.
     pub fn from_env() -> Self {
         Self {
             path: std::env::var_os(ENV_KEY).map(std::path::PathBuf::from),
@@ -364,7 +364,7 @@ impl ReportWriter {
         }
     }
 
-    /// 直接指定输出路径（编辑器用）。
+    /// Specify output path directly (for editor).
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             path: Some(path.into()),
@@ -372,7 +372,7 @@ impl ReportWriter {
         }
     }
 
-    /// 关掉写入（编辑器还没有工程根时）。
+    /// Disable writing (when editor has no project root yet).
     pub fn disabled() -> Self {
         Self {
             path: None,
@@ -384,7 +384,7 @@ impl ReportWriter {
         self.path.is_some()
     }
 
-    /// 首帧 + 每 [`REFRESH_INTERVAL_FRAMES`] 帧写一次。
+    /// First frame + once every [`REFRESH_INTERVAL_FRAMES`] frames.
     pub fn maybe_write(
         &mut self,
         snapshot: &RenderGraphSnapshot,
@@ -402,7 +402,7 @@ impl ReportWriter {
         );
     }
 
-    /// 同 [`Self::maybe_write`]，附带 per-pass GPU 时间（#518）。
+    /// Same as [`Self::maybe_write`], with per-pass GPU times (#518).
     #[expect(
         clippy::too_many_arguments,
         reason = "timing report pulls scene, frame and pass data in one call"
@@ -468,11 +468,11 @@ fn pass_kind(pass: &PassInfo) -> &'static str {
     }
 }
 
-/// 报告里展示的 pass 输入。
+/// Pass inputs shown in report.
 ///
-/// `PostPass` 的 `graph_info` 只声明光栅化输入（`FORWARD_COLOR_H`），但
-/// 路径追踪模式下实际读取的是 `PT_COLOR_H`。图结构本身由 pass 声明，
-/// 这里按当前渲染模式修正可视化边。
+/// `PostPass`'s `graph_info` only declares rasterization input (`FORWARD_COLOR_H`), but
+/// in path-tracing mode actually reads `PT_COLOR_H`. Graph structure declared by passes,
+/// here correct visual edges according to current render mode.
 fn visible_inputs(pass: &PassInfo, settings: &ReportSettings) -> Vec<ResourceHandle> {
     if pass.kind == PassKind::Post && settings.render_mode == "path_trace" {
         vec![crate::render_graph::PT_COLOR_H]
@@ -552,7 +552,7 @@ mod tests {
         let json = serde_json::to_value(&plain).unwrap();
         assert!(
             json.get("drawCalls").is_none(),
-            "旧报告不该凭空多出 drawCalls"
+            "Old report should not gain drawCalls out of nowhere"
         );
 
         let calls = vec![
@@ -589,7 +589,7 @@ mod tests {
             .contains("cull Back"));
         assert!(
             json["drawCalls"][1].get("state").is_none(),
-            "state 为 None 时省略字段"
+            "Omit field when state is None"
         );
         assert_eq!(json["drawCalls"][1]["instances"], 4);
         assert_eq!(json["drawCalls"][1]["triangles"], 8);
@@ -601,11 +601,11 @@ mod tests {
         assert_eq!(json["drawCalls"][0]["vertices"], 24);
         assert!(
             json["drawCalls"][1].get("pipeline").is_none(),
-            "pipeline 为 None 时省略字段"
+            "Omit field when pipeline is None"
         );
         assert!(
             json["drawCalls"][1].get("descriptorSets").is_none(),
-            "空 descriptorSets 省略字段"
+            "Omit field when descriptorSets empty"
         );
     }
 
@@ -614,7 +614,10 @@ mod tests {
         let plain = RenderGraphReport::from_snapshot(&snapshot(), ReportSettings::default(), 1);
         assert!(plain.stats.is_none());
         let json = serde_json::to_value(&plain).unwrap();
-        assert!(json.get("stats").is_none(), "旧报告不该凭空多出 stats");
+        assert!(
+            json.get("stats").is_none(),
+            "Old report should not gain stats out of nowhere"
+        );
 
         let stats = ReportStats {
             textures: 3,

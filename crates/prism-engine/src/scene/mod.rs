@@ -1,7 +1,7 @@
 //! Modern scene system — ECS components, loading, hierarchy, and systems.
 //!
-//! 场景加载（manifest → world）由场景系统 [`SceneManager`] 统一负责；
-//! `Engine::init_scene` 委托给 [`SceneManager::load_first_from_manifest`]。
+//! Scene load (manifest → world) unifiedly responsible by scene system [`SceneManager`];
+//! `Engine::init_scene` delegates to [`SceneManager::load_first_from_manifest`].
 //!
 //! See `docs/DESIGN.md` (scene/asset layering) and the root `AGENTS.md`
 //! ("Scene / asset layering rules").
@@ -35,10 +35,10 @@ pub use scene_system::{
     EnvironmentProvider, SceneManager, SceneManifest, SceneManifestEntry, SceneReadView,
 };
 
-/// Scene hierarchy 适配器 for the 编辑器 检查器。
+/// Scene hierarchy adapter for the editor checker.
 ///
 /// Roots: entities with [`LocalTransform`] or [`Name`] but no [`Parent`].
-/// Child: via [`Child`] 分量。
+/// Child: via [`Child`] component.
 ///
-/// 外部工具 / 编辑器可为同一结构提供只读视图——引擎本身不依赖编辑器。
+/// External tools / editors can provide read-only view for same structure — engine itself does not depend on editor.
 pub struct SceneHierarchy;

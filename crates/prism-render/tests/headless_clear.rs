@@ -161,10 +161,10 @@ fn headless_render_real_frame_and_readback() {
     );
 }
 
-/// #431：设备支持 `fillModeNonSolid` 时，线框管线能正常创建并出帧。
+/// #431: When device supports `fillModeNonSolid`, wireframe pipeline can create and present normally.
 ///
-/// 空 draw list 也会走到 `ForwardPass::ensure_pipelines`，所以这条覆盖的是
-/// `POLYGON_MODE_LINE` 的 pipeline 创建，而不只是设置字段。
+/// Empty draw list also goes through `ForwardPass::ensure_pipelines`, so this covers
+/// `POLYGON_MODE_LINE` pipeline creation, not just setting the field.
 #[test]
 fn headless_wireframe_pipeline_builds_and_renders() {
     let mut renderer = match try_create_headless() {

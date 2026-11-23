@@ -1,34 +1,34 @@
-//! 场景包的构建戳（#976）。
+//! Scene pack build stamp (#976).
 //!
-//! `assets/scenes.pak` 里除了场景和贴图，还会写一条 [`COOK_STAMP_NAME`] 记录
-//! 打包时的组件 schema 指纹与工程文档的最新修改时间。运行时挂包时拿它和当前
-//! 引擎 / 磁盘上的文档对一下，就能在「包过期」时给出明确提示，而不是安静地
-//! 画出一张错的画面。
+//! `assets/scenes.pak` contains, besides scenes and textures, a [`COOK_STAMP_NAME`] record
+//! with component schema fingerprint and newest source document mtime at cook time. At runtime mounting, it is compared with
+//! current engine / on-disk documents to give a clear hint when "pack is stale", rather than quietly
+//! rendering a wrong image.
 //!
-//! 为什么需要它：`.pak` 的头部只有 `version = 1`，两个都用 v1 写出来的包
-//! （一个用旧管线、一个用新管线）在运行时分不出来；旧包里的
-//! `scenes/lake.rscn` 照样能被解出来，只是内容早就对不上作者文档了。
+//! Why needed: `.pak` header only has `version = 1`, two packs both written with v1
+//! (one with old pipeline, one with new) are indistinguishable at runtime; old pack inside
+//! `scenes/lake.rscn` still decodes, just content long out of sync with author document.
 //!
-//! 旧包没有这条记录，解析会返回 [`StampCheck::Missing`] —— 仍然能跑，
-//! 但会建议重新打包。
+//! Old packs without this record, parse returns [`StampCheck::Missing`] — still runnable,
+//! but suggests re-cooking.
 
 use serde::{Deserialize, Serialize};
 
-/// 戳在包内的路径（相对包根）。
+/// Stamp path inside pack (relative to pack root).
 pub const COOK_STAMP_NAME: &str = "__cook_stamp.json";
 
-/// 当前构建戳格式版本。
+/// Current build stamp format version.
 pub const COOK_STAMP_VERSION: u32 = 1;
 
-/// 打包时写进 `.pak` 的一条元数据。
+/// One metadata written into `.pak` at cook time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CookStamp {
-    /// 格式版本（本文件字段变化时 +1）。
+    /// Format version (+1 when this file fields change).
     pub version: u32,
-    /// [`crate::registry::ComponentRegistry::schema_fingerprint`]。
+    /// [`crate::registry::ComponentRegistry::schema_fingerprint`].
     pub schema: u64,
-    /// 参与 cook 的工程文档（`scenes.json` / `settings.ini` / `*.scene.json` /
-    /// `*.prefab.json`）里最新的 mtime，Unix 秒。
+    /// Newest mtime among author documents participating in cook (`scenes.json` / settings file / `*.scene.json` /
+    /// `*.prefab.json`), Unix seconds.
     pub sources_mtime: u64,
 }
 
@@ -51,14 +51,14 @@ impl CookStamp {
         }
     }
 
-    /// 序列化成写进包里的文本（带换行，方便 diff）。
+    /// Serialize to text written into pack (with newlines, for diff).
     pub fn to_json(&self) -> String {
         let mut text = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string());
         text.push('\n');
         text
     }
 
-    /// 解析包里的戳；字段缺失或版本不认识时返回 `None`。
+    /// Parse stamp inside pack; returns `None` when fields missing or version unknown.
     pub fn parse(text: &str) -> Option<Self> {
         let value: serde_json::Value = serde_json::from_str(text).ok()?;
         let version = value.get("version")?.as_u64()? as u32;
@@ -73,33 +73,33 @@ impl CookStamp {
     }
 }
 
-/// 一次校验的结论；调用方（引擎）负责把它翻译成日志。
+/// Conclusion of one check; caller (engine) responsible for translating into logs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StampCheck {
-    /// 包是当前引擎 + 当前文档打出来的。
+    /// Pack built by current engine + current documents.
     Fresh,
-    /// 包内没有戳：由更旧的管线构建，无法判断新鲜度。
+    /// Pack has no stamp: built by older pipeline, freshness cannot be determined.
     Missing,
-    /// 组件 schema 变了（引擎升级 / 组件字段变动），需要重新打包。
+    /// Component schema changed (engine upgrade / component field change), need re-cook.
     SchemaChanged { cooked: u64, current: u64 },
-    /// 场景文档比包新（改了场景但忘了重新打包）。
+    /// Scene document newer than pack (scene changed but forgot to re-cook).
     SourcesNewer { cooked: u64, newest: u64 },
 }
 
 impl StampCheck {
-    /// 是否应该让用户重新打包。
+    /// Whether user should be told to re-cook.
     pub fn needs_rebuild(&self) -> bool {
         !matches!(self, StampCheck::Fresh)
     }
 }
 
-/// 比较戳与当前状态。
+/// Compare stamp with current state.
 ///
-/// `current_schema` 传当前引擎的 schema 指纹；`newest_source` 传磁盘上工程
-/// 文档的最新 mtime（发布版没有文档，传 0 = 跳过新鲜度检查）。
+/// `current_schema` is current engine schema fingerprint; `newest_source` is newest mtime of project
+/// documents on disk (release has no documents, pass 0 = skip freshness check).
 ///
-/// mtime 允许 2 秒误差：Windows 的 FAT/网络盘的秒级粒度足以让「刚打包完」
-/// 被误判成过期。
+/// mtime allows 2 seconds tolerance: Windows FAT / network drive second-level granularity could make
+/// "just cooked" misjudged as stale.
 pub fn check(stamp: Option<CookStamp>, current_schema: u64, newest_source: u64) -> StampCheck {
     let Some(stamp) = stamp else {
         return StampCheck::Missing;
@@ -119,11 +119,11 @@ pub fn check(stamp: Option<CookStamp>, current_schema: u64, newest_source: u64) 
     StampCheck::Fresh
 }
 
-/// 扫出「会被 cook 进场景包的作者文档」的最新 mtime（Unix 秒）。
+/// Scan newest mtime (Unix seconds) of "author documents that will be cooked into scene pack".
 ///
-/// 只认 `*.scene.json` / `*.prefab.json` / `scenes.json` / `settings.ini`：
-/// 散装贴图由 `.pak` 自己的清单兜底，把它们算进来会让每次改图都提示过期。
-/// 发布版没有这些文件，返回 0（= 跳过新鲜度检查）。
+/// Only recognizes `*.scene.json` / `*.prefab.json` / `scenes.json` / the settings file:
+/// loose textures backstopped by `.pak` own manifest, counting them would hint stale on every texture edit.
+/// Release has none of these files, returns 0 (= skip freshness check).
 pub fn newest_source_mtime(asset_root: &std::path::Path) -> u64 {
     fn visit(dir: &std::path::Path, newest: &mut u64) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -176,7 +176,7 @@ mod tests {
     fn unknown_or_broken_stamps_parse_to_none() {
         assert!(CookStamp::parse("").is_none());
         assert!(CookStamp::parse("{").is_none());
-        // 未来版本的戳：不猜它的语义，交给「没有戳」那条分支。
+        // Future-version stamp: do not guess semantics, leave to "no stamp" branch.
         assert!(CookStamp::parse(r#"{"version": 99, "schema": 1, "sources_mtime": 2}"#).is_none());
         assert!(CookStamp::parse(r#"{"version": 1}"#).is_none());
     }
@@ -210,7 +210,7 @@ mod tests {
                 newest: 200
             }
         );
-        // mtime 的秒级粒度 / 网络盘回拨：2 秒以内不算过期。
+        // mtime second-level granularity / network drive clock rollback: within 2 seconds not stale.
         assert_eq!(check(Some(stamp), 7, 102), StampCheck::Fresh);
     }
 
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn shipped_builds_skip_the_source_check() {
-        // 发布包里没有 `.scene.json`，扫出来是 0，只比 schema。
+        // Release pack has no `.scene.json`, scan returns 0, only schema compared.
         let stamp = CookStamp::new(7, 1_700_000_000);
         assert_eq!(check(Some(stamp), 7, 0), StampCheck::Fresh);
     }
@@ -241,9 +241,9 @@ mod tests {
         std::fs::write(dir.join("scenes.pak"), b"pak").unwrap();
 
         let newest = newest_source_mtime(&dir);
-        assert!(newest > 0, "文档应被扫到");
+        assert!(newest > 0, "Document should be scanned");
 
-        // 删掉文档后只剩 pak，返回 0（发布版形态）。
+        // After deleting documents only pak remains, returns 0 (release form).
         std::fs::remove_dir_all(dir.join("scenes")).unwrap();
         std::fs::remove_file(dir.join("settings.ini")).unwrap();
         assert_eq!(newest_source_mtime(&dir), 0);

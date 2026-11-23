@@ -1,12 +1,12 @@
 //! # prism-cooker::db
 //!
-//! 编辑器端资源数据库，追踪项目中所有导入的资源。
+//! Editor-side asset database, tracks imported assets in project.
 //!
-//! 数据库位于 `Project/Library/AssetDatabase.json`，将 `Assets/` 下的每个文件
-//! 映射到其稳定的 [`AssetId`]、[`AssetType`]、导入器配置和依赖图。
+//! Data stored in `Project/Library/AssetDatabase.json`, maps each file under `Assets/`
+//! to its stable [`AssetId`], [`AssetType`], importer config and dependency graph.
 //!
-//! 数据库位于 `Project/Library/AssetDatabase.json`，将 `Assets/` 下的每个文件
-//! 映射到导入的 AssetId 和元数据。
+//! Data stored in `Project/Library/AssetDatabase.json`, maps each file under `Assets/`
+//! to imported AssetId and metadata.
 
 use prism_asset::core::{AssetId, AssetType};
 use std::collections::HashMap;
@@ -184,7 +184,7 @@ impl AssetDatabase {
             .filter(|r| r.state != AssetState::Deleted)
     }
 
-    /// Get a live record by ID 线性 scan — databases are small in the 编辑器
+    /// Get a live record by ID via linear scan — databases are small in the editor
     pub fn get(&self, id: AssetId) -> Option<&AssetRecord> {
         self.records
             .iter()
@@ -242,7 +242,7 @@ impl AssetDatabase {
         Ok(id)
     }
 
-    /// 移除 a record: keep it in the database as a persisted tombstone.
+    /// Remove a record: keep it in the database as a persisted tombstone.
     ///
     /// The record stays serialized with [`AssetState::Deleted`] so a later
     /// `load` can distinguish "deleted" from "never imported"; accessors such

@@ -19,7 +19,7 @@ pub fn definitions() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "documents_list",
-            description: "列出项目里的场景与预制体文档（assets/scenes/*.scene.json、assets/prefabs/*.prefab.json）。",
+            description: "List scene and prefab documents in the project (assets/scenes/*.scene.json, assets/prefabs/*.prefab.json).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -29,16 +29,16 @@ pub fn definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "document_read",
-            description: "读取一个文档的完整 JSON（已迁移到当前格式，实体带稳定 id）。",
+            description: "Read the full JSON of a document (migrated to current format, entities carry stable ids).",
             input_schema: json!({
                 "type": "object",
-                "properties": { "path": { "type": "string", "description": "相对项目根的路径" } },
+                "properties": { "path": { "type": "string", "description": "Path relative to project root" } },
                 "required": ["path"]
             }),
         },
         ToolDef {
             name: "document_write",
-            description: "校验并写回整个文档。字段级修改请优先用 field_set（它带反射校验）。",
+            description: "Validate and write back entire document. For field-level edits prefer field_set (it does reflection validation).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -50,44 +50,44 @@ pub fn definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "schema_list",
-            description: "列出所有已注册组件与嵌套结构体，以及每个字段的 kind / 枚举变体 / 只读标记。",
+            description: "List all registered components and nested structs, with each field's kind / enum variants / read-only flag.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "component": { "type": "string", "description": "只看这一个组件时填" }
+                    "component": { "type": "string", "description": "Fill to look at only this component" }
                 }
             }),
         },
         ToolDef {
             name: "entity_get",
-            description: "按 id 或名字取一个实体（含 transform 与全部组件）。",
+            description: "Get an entity by id or name (with transform and all components).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "entity": { "type": "string", "description": "实体 id（数字）或名字" }
+                    "entity": { "type": "string", "description": "Entity id (number) or name" }
                 },
                 "required": ["path", "entity"]
             }),
         },
         ToolDef {
             name: "field_set",
-            description: "用反射写入一个组件字段。field 支持 a.b 与 list[0].x；value 按作者 JSON 形状给（枚举用字符串）。",
+            description: "Write a component field via reflection. field supports a.b and list[0].x; value given in author JSON shape (enum as string).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
                     "entity": { "type": "string" },
-                    "component": { "type": "string", "description": "如 prism_engine::scene::SpriteRenderer" },
-                    "field": { "type": "string", "description": "字段路径，如 color 或 points[0]" },
-                    "value": { "description": "新值" }
+                    "component": { "type": "string", "description": "e.g. prism_engine::scene::SpriteRenderer" },
+                    "field": { "type": "string", "description": "Field path, e.g. color or points[0]" },
+                    "value": { "description": "New value" }
                 },
                 "required": ["path", "entity", "component", "field", "value"]
             }),
         },
         ToolDef {
             name: "component_add",
-            description: "给实体加一个组件（用 schema 的默认值）。",
+            description: "Add a component to entity (using schema default value).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -100,30 +100,30 @@ pub fn definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "asset_inspect",
-            description: "检查一个已 cook 的资源（RSKL/RSKN/RANI/RMES/RTEX/RMAT）：计数、摘要与校验问题。路径相对项目根，如 assets/cooked/hero.rskin。",
+            description: "Inspect a cooked asset (RSKL/RSKN/RANI/RMES/RTEX/RMAT): counts, summary and validation issues. Path relative to project root, e.g. assets/cooked/hero.rskin.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "相对项目根的路径" }
+                    "path": { "type": "string", "description": "Path relative to project root" }
                 },
                 "required": ["path"]
             }),
         },
         ToolDef {
             name: "asset_validate",
-            description: "只对已 cook 的资源跑校验（权重和、joint 越界、索引/子网格区间、关键帧时间与顺序）：ok=true 表示没有问题。",
+            description: "Run validation only on cooked assets (weight sums, joint out-of-range, index/submesh ranges, keyframe time and order): ok=true means no issues.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string" },
-                    "skeleton": { "type": "string", "description": "可选：.ranim 的骨骼文件，用于检查轨道索引" }
+                    "skeleton": { "type": "string", "description": "Optional: skeleton file for .ranim, used to check track indices" }
                 },
                 "required": ["path"]
             }),
         },
         ToolDef {
             name: "component_remove",
-            description: "移除实体的一个组件。",
+            description: "Remove a component from entity.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -150,7 +150,7 @@ pub fn call(root: &Path, name: &str, args: &Value) -> Result<String, String> {
         "asset_inspect" => asset_inspect(root, args),
         "asset_validate" => asset_validate(root, args),
         "component_remove" => component_remove(root, args),
-        other => Err(format!("未知工具 '{other}'")),
+        other => Err(format!("Unknown tool '{other}'")),
     }
 }
 
@@ -176,7 +176,7 @@ fn str_arg(args: &Value, key: &str) -> Result<String, String> {
     args.get(key)
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| format!("缺少字符串参数 '{key}'"))
+        .ok_or_else(|| format!("Missing string parameter '{key}'"))
 }
 
 fn doc_path(root: &Path, raw: &str) -> PathBuf {
@@ -228,10 +228,10 @@ fn document_write(root: &Path, args: &Value) -> Result<String, String> {
     let path = doc_path(root, &str_arg(args, "path")?);
     let doc = args
         .get("doc")
-        .ok_or_else(|| "缺少 'doc' 参数".to_string())?;
+        .ok_or_else(|| "Missing 'doc' parameter".to_string())?;
     scene::validate_doc(doc)?;
     scene::write_doc_in_project(root, &path, doc)?;
-    Ok(format!("写入 {}", path.display()))
+    Ok(format!("Wrote {}", path.display()))
 }
 
 fn schema_list(args: &Value) -> Result<String, String> {
@@ -244,8 +244,8 @@ fn schema_list(args: &Value) -> Result<String, String> {
         .collect();
     if types.is_empty() {
         return Err(match only {
-            Some(name) => format!("没有名为 '{name}' 的类型"),
-            None => "schema 为空".to_string(),
+            Some(name) => format!("No type named '{name}'"),
+            None => "Schema is empty".to_string(),
         });
     }
     serde_json::to_string_pretty(&types).map_err(|err| err.to_string())
@@ -257,7 +257,7 @@ fn locate<'a>(doc: &'a mut Value, key: &str) -> Result<&'a mut Map<String, Value
     let entities = doc
         .get_mut("entities")
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| "文档没有 entities 数组".to_string())?;
+        .ok_or_else(|| "Document has no entities array".to_string())?;
     let by_id = key.parse::<u64>().ok();
     let found = entities.iter_mut().find(|entity| match by_id {
         Some(id) => entity.get("id").and_then(Value::as_u64) == Some(id),
@@ -265,7 +265,7 @@ fn locate<'a>(doc: &'a mut Value, key: &str) -> Result<&'a mut Map<String, Value
     });
     found
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| format!("找不到实体 '{key}'"))
+        .ok_or_else(|| format!("Entity not found '{key}'"))
 }
 
 fn entity_get(root: &Path, args: &Value) -> Result<String, String> {
@@ -282,7 +282,7 @@ fn field_set(root: &Path, args: &Value) -> Result<String, String> {
     let field = str_arg(args, "field")?;
     let value = args
         .get("value")
-        .ok_or_else(|| "缺少 'value' 参数".to_string())?
+        .ok_or_else(|| "Missing 'value' parameter".to_string())?
         .clone();
 
     let mut doc = scene::read_doc_in_project(root, &path)?;
@@ -290,11 +290,11 @@ fn field_set(root: &Path, args: &Value) -> Result<String, String> {
     let components = entity
         .get_mut("components")
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| format!("实体 '{entity_key}' 没有 components"))?;
+        .ok_or_else(|| format!("Entity '{entity_key}' has no components"))?;
     let before = components
         .get(&component)
         .cloned()
-        .ok_or_else(|| format!("实体 '{entity_key}' 上没有组件 '{component}'"))?;
+        .ok_or_else(|| format!("Entity '{entity_key}' has no component '{component}'"))?;
 
     // `set_component_field` reads the new value from the "after" object, so
     // patch the path first; an invalid type is rejected inside its
@@ -316,23 +316,25 @@ fn component_add(root: &Path, args: &Value) -> Result<String, String> {
     let schema: Schema = build_schema();
     let ty = schema
         .type_by_name(&component)
-        .ok_or_else(|| format!("'{component}' 不是已注册类型"))?;
+        .ok_or_else(|| format!("'{component}' is not a registered type"))?;
     if !ty.is_component {
-        return Err(format!("'{component}' 是嵌套结构体，不能挂到实体上"));
+        return Err(format!(
+            "'{component}' is a nested struct and cannot be attached to entity"
+        ));
     }
     let default = ty
         .default_json
         .clone()
-        .ok_or_else(|| format!("'{component}' 没有默认值"))?;
+        .ok_or_else(|| format!("'{component}' has no default value"))?;
 
     let mut doc = scene::read_doc_in_project(root, &path)?;
     let entity = locate(&mut doc, &entity_key)?;
     let components = entity
         .get_mut("components")
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| format!("实体 '{entity_key}' 没有 components"))?;
+        .ok_or_else(|| format!("Entity '{entity_key}' has no components"))?;
     if components.contains_key(&component) {
-        return Err(format!("实体 '{entity_key}' 已经有 '{component}'"));
+        return Err(format!("Entity '{entity_key}' already has '{component}'"));
     }
     components.insert(component.clone(), default.clone());
 
@@ -351,14 +353,14 @@ fn component_remove(root: &Path, args: &Value) -> Result<String, String> {
     let components = entity
         .get_mut("components")
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| format!("实体 '{entity_key}' 没有 components"))?;
+        .ok_or_else(|| format!("Entity '{entity_key}' has no components"))?;
     if components.remove(&component).is_none() {
-        return Err(format!("实体 '{entity_key}' 上没有 '{component}'"));
+        return Err(format!("Entity '{entity_key}' has no '{component}'"));
     }
 
     scene::validate_doc(&doc)?;
     scene::write_doc_in_project(root, &path, &doc)?;
-    Ok(format!("已移除 {component}"))
+    Ok(format!("Removed {component}"))
 }
 
 /// Writes a value into JSON by path such as `a.b[2].c`; only used to build the
@@ -370,19 +372,19 @@ fn patch_path(target: &mut Value, path: &str, value: Value) -> Result<(), String
             Segment::Key(key) => {
                 let map = cursor
                     .as_object_mut()
-                    .ok_or_else(|| format!("'{key}' 的容器不是对象"))?;
+                    .ok_or_else(|| format!("'{key}' container is not an object"))?;
                 cursor = map
                     .get_mut(&key)
-                    .ok_or_else(|| format!("字段 '{key}' 不存在"))?;
+                    .ok_or_else(|| format!("Field '{key}' does not exist"))?;
             }
             Segment::Index(index) => {
                 let list = cursor
                     .as_array_mut()
-                    .ok_or_else(|| format!("[{index}] 的容器不是列表"))?;
+                    .ok_or_else(|| format!("[{index}] container is not a list"))?;
                 let len = list.len();
                 cursor = list
                     .get_mut(index)
-                    .ok_or_else(|| format!("下标 [{index}] 越界（长度 {len}）"))?;
+                    .ok_or_else(|| format!("Index [{index}] out of bounds (length {len})"))?;
             }
         }
     }
@@ -399,7 +401,7 @@ fn parse_path(path: &str) -> Result<Vec<Segment>, String> {
     let mut segments = Vec::new();
     for part in path.split('.') {
         if part.is_empty() {
-            return Err(format!("字段路径 '{path}' 有空段"));
+            return Err(format!("Field path '{path}' has an empty segment"));
         }
         let (name, indices) = match part.find('[') {
             Some(at) => (&part[..at], &part[at..]),
@@ -412,10 +414,10 @@ fn parse_path(path: &str) -> Result<Vec<Segment>, String> {
         while let Some(stripped) = rest.strip_prefix('[') {
             let end = stripped
                 .find(']')
-                .ok_or_else(|| format!("字段路径 '{path}' 缺少 ']'"))?;
+                .ok_or_else(|| format!("Field path '{path}' missing ']'"))?;
             let index = stripped[..end]
                 .parse::<usize>()
-                .map_err(|_| format!("字段路径 '{path}' 的下标不是数字"))?;
+                .map_err(|_| format!("Field path '{path}' index is not a number"))?;
             segments.push(Segment::Index(index));
             rest = &stripped[end + 1..];
         }

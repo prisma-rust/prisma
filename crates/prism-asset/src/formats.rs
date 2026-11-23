@@ -1,5 +1,5 @@
-//! 运行时二进制格式定义与解码器。
-//! 此模块只依赖 core，供 runtime 与 cooker 共享，避免运行时反向依赖烘焙器。
+//! Runtime binary format definition and decoder.
+//! This module depends only on core, shared by runtime and cooker, to avoid runtime reverse dependency on cooker.
 
 use crate::core::AssetId;
 
@@ -92,20 +92,20 @@ pub struct RmesInfo {
     pub stride_bytes: u32,
     pub vertex_data: Vec<u8>,
     pub index_data: Vec<u8>,
-    /// RMES v2 submesh table（v1 为空）。
+    /// RMES v2 submesh table (v1 empty).
     pub submeshes: Vec<RmesSubmesh>,
 }
 
-/// RMES v2 的一个 submesh：索引区间 + 源文件材质索引。
+/// One RMES v2 submesh: index range + source file material index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RmesSubmesh {
     pub index_start: u32,
     pub index_count: u32,
-    /// glTF `material.index()`；`None` 表示源文件没有材质。
+    /// glTF `material.index()`; `None` means source file has no material.
     pub material_index: Option<u32>,
 }
 
-/// RMES 当前写出的版本（v1 仍可读；v2 在 index block 后追加 submesh 表）。
+/// RMES version currently written (v1 still readable; v2 appends submesh table after index block).
 pub const RMES_VERSION: u8 = 2;
 
 /// Parse the trailing RMES v2 submesh table.

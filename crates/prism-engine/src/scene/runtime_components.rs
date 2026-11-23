@@ -40,29 +40,29 @@ pub struct ShaderRef {
     pub generation: u32,
 }
 
-/// 一个网格里的 submesh 索引区间（#520）。
+/// Submesh index range within one mesh (#520).
 ///
-/// 由 `.pak` 里的 RMES v2 submesh 表还原。运行时由渲染提取系统按这些区间
-/// 把一个实体拆成多个 [`DrawItem`](prism_render::DrawItem)。
+/// Restored from RMES v2 submesh table in `.pak`. At runtime render extraction system uses these ranges
+/// to split one entity into multiple [`DrawItem`](prism_render::DrawItem)s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeshSubmesh {
     pub index_start: u32,
     pub index_count: u32,
-    /// 源文件（glTF）的材质索引；只用于把 `material_paths` 映射到 submesh。
+    /// Source file (glTF) material index; only used to map `material_paths` to submeshes.
     pub material_index: Option<u32>,
 }
 
-/// 运行时：网格的 submesh 表。作者组件 `MeshRenderer` 不保存它，
-/// 因为区间属于被 cook 的网格资产，而不是场景里的某个实例。
+/// Runtime: mesh submesh table. Author component `MeshRenderer` does not save it,
+/// because ranges belong to cooked mesh asset, not an instance in scene.
 #[derive(Debug, Clone, Default)]
 pub struct MeshSubmeshes {
     pub submeshes: Vec<MeshSubmesh>,
 }
 
-/// 运行时：每个 submesh 解析后的材质 SSBO 槽（`None` = 默认材质）。
+/// Runtime: material SSBO slot after parsing each submesh (`None` = default material).
 ///
-/// `MaterialRef::material_slot` 仍然保存第一个材质，兼容只读这个字段的旧代码；
-/// 多材质绘制读取这里的逐 submesh 槽位。
+/// `MaterialRef::material_slot` still saves first material for legacy code reading only that field;
+/// multi-material draw reads per-submesh slots here.
 #[derive(Debug, Clone, Default)]
 pub struct MaterialSlots {
     pub slots: Vec<Option<u32>>,
@@ -151,30 +151,30 @@ pub struct UiImageRef {
     pub generation: u32,
 }
 
-/// `.scene.json` v3+ 里每个实体的稳定 id。
+/// Stable id of each entity in `.scene.json` v3+.
 ///
-/// ECS [`Entity`](prism_ecs::Entity) 句柄每次加载都会重新分配，跨会话（存档恢复、
-/// 编辑器同步）匹配同一实体只能靠作者文档里的 id。加载器在 spawn 时写入这个标记；
-/// 它不参与渲染，也不进 `.scene.json`（作者文档里已经有 `id` 了）。
+/// ECS [`Entity`](prism_ecs::Entity) handle reallocated every load; cross-session (save restore,
+/// editor sync) matching same entity only possible via author document id. Loader writes this flag at spawn;
+/// it does not participate in rendering, nor enter `.scene.json` (author document already has `id`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SceneEntityId(pub u32);
 
-/// 距离 LOD 的运行时隐藏标记（#491）。
+/// Runtime hidden flag for distance LOD (#491).
 ///
-/// 写出它的是 `lod_system`：父实体挂 [`LodGroup`](prism_scene::components::LodGroup)
-/// 时，只有当前距离级对应的子实体 `LodHidden(false)`，其余为 `true`。
-/// `is_active_in_hierarchy` 会跳过 `true` 的实体，但**不会**改写作者的
-/// `Active`，也不影响编辑器的 [`Hidden`]。它不参与序列化。
+/// Written by `lod_system`: when parent entity has [`LodGroup`](prism_scene::components::LodGroup)
+/// only child entities matching current distance level get `LodHidden(false)`, others `true`.
+/// `is_active_in_hierarchy` skips `true` entities, but **does not rewrite** author
+/// `Active`, nor affect editor [`Hidden`]. Not serialized.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LodHidden(pub bool);
 
-/// 编辑会话级隐藏标记（Unity `SceneVisibilityManager`）。
+/// Editor session-level hidden flag (Unity `SceneVisibilityManager`).
 ///
-/// `Active` 是作者数据（会进 `.scene.json`，停用后不再模拟）；这个标记只在
-/// 当前编辑器进程里由 Scene 视图写入，渲染系统据此跳过实体，但物理、脚本和
-/// 文档内容都不受影响。它**不是**可挂载组件，也不参与序列化。
+/// `Active` is author data (goes into `.scene.json`, no more simulation when disabled); this flag only in
+/// current editor process set by Scene view, render systems skip entity accordingly, but physics, scripts and
+/// document content unaffected. It **is not** an attachable component, nor serialized.
 ///
-/// 由编辑器标记为隐藏的祖先及其子树都会被标记，这样渲染过滤不需要在热路径
-/// 上再走父链。
+/// Hidden-flagged ancestor and its child tree all get flagged, so render filter need not walk parent chain
+/// again in hot path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hidden(pub bool);

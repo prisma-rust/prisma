@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""子系统体积账本：按 feature 组合构建玩家二进制，量出每块「砖」值多少字节。
+"""Subsystem size ledger: build player binary per feature combo, measure how many bytes each "brick" costs.
 
-    python scripts/size_report.py            # 跑默认组合表（增量构建，已构建过则秒出）
+    python scripts/size_report.py            # run default combo table (incremental build, fast if already built)
     python scripts/size_report.py --release=false
 
-做法：临时改写 `projects/template/Cargo.toml` 的 feature 列表 → `cargo build -p template`
-→ 记录二进制大小 → 还原文件。用**同一个**工程和 profile，保证差值只来自 feature。
+Method: temporarily rewrite `projects/template/Cargo.toml` feature list → `cargo build -p template`
+→ record binary size → restore file. Use the **same** project and profile, so differences come only from features.
 
-⚠️ 这是**未 strip** 的 release 二进制。strip 后比例不同（符号表被去掉），
-所以只在同一张表内比较，不要跨表比数字。
+⚠️ This is **unstripped** release binary. Ratios differ after strip (symbol tables removed),
+so only compare within the same table, do not compare numbers across tables.
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ PROJECT = ROOT / "projects" / "template"
 APP_DEP = 'prism-app = { path = "../../crates/prism-app", optional = true }'
 ENGINE_DEP = 'prism-engine = { path = "../../crates/prism-engine", optional = true }'
 
-# (标签, 启用的 prism-app features)。基线为「全关」。
+# (tag, enabled prism-app features). Baseline is "all off".
 COMBOS: list[tuple[str, list[str]]] = [
-    ("base（全关）", []),
+    ("base (all off)", []),
     ("pathtrace", ["pathtrace"]),
     ("audio", ["audio"]),
     ("physics", ["physics"]),
     ("audio + pathtrace", ["audio", "pathtrace"]),
-    ("all（audio+pathtrace+physics）", ["audio", "pathtrace", "physics"]),
+    ("all (audio+pathtrace+physics)", ["audio", "pathtrace", "physics"]),
 ]
 
 
@@ -50,7 +50,7 @@ def build(features: list[str]) -> int:
             'default-features = false }',
         )
         if patched == original:
-            raise SystemExit("size_report: 找不到 template 的 prism-app/prism-engine 依赖行")
+            raise SystemExit("size_report: cannot find template prism-app/prism-engine dependency line")
         (PROJECT / "Cargo.toml").write_text(patched, encoding="utf-8")
 
         proc = subprocess.run(
@@ -63,7 +63,7 @@ def build(features: list[str]) -> int:
         )
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr[-3000:])
-            raise SystemExit("size_report: 构建失败")
+            raise SystemExit("size_report: build failed")
         return (PROJECT / "target" / "release" / "template").stat().st_size
     finally:
         (PROJECT / "Cargo.toml").write_text(original, encoding="utf-8")
@@ -71,7 +71,7 @@ def build(features: list[str]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prisma subsystem binary-size ledger")
-    parser.add_argument("--json", action="store_true", help="只输出 JSON")
+    parser.add_argument("--json", action="store_true", help="output JSON only")
     args = parser.parse_args()
 
     sizes = {label: build(feats) for label, feats in COMBOS}
@@ -81,7 +81,7 @@ def main() -> int:
         print(json.dumps(sizes, ensure_ascii=False, indent=2))
         return 0
 
-    print("| 组合 | 二进制 | 相对 base |")
+    print("| Combo | Binary | vs base |")
     print("|---|---|---|")
     for label, size in sizes.items():
         delta = size - base

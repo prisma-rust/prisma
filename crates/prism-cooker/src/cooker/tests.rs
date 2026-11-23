@@ -124,7 +124,7 @@ fn full_cook_pipeline() {
     assert!(!pak.is_empty());
 }
 
-/// #509：profile 打开 streaming 后，只有达到阈值的 cooked 资源带 streamed 标记。
+/// #509: Profile opens streaming after, only cooked resources reaching threshold get streamed flag.
 #[test]
 fn cook_pipeline_marks_only_large_assets_as_streamed() {
     let mut db = AssetDatabase::new();
@@ -188,7 +188,7 @@ fn cook_pipeline_skips_missing_data() {
     let pipeline = CookPipeline::new(reg);
     let settings = profile::CookSettings::default();
 
-    // No data for the 资源
+    // No data for the resource
     let asset_data = HashMap::new();
     let mut builder = PackageBuilder::new();
     let summary = pipeline
@@ -198,7 +198,7 @@ fn cook_pipeline_skips_missing_data() {
     assert_eq!(summary.skipped, 1);
 }
 
-// ── 纹理 Cooker new tests ─────────────────────────────────────
+// ── texture  Cooker new tests ─────────────────────────────────────
 
 fn make_texture_intermediate(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(14 + rgba.len());
@@ -213,7 +213,7 @@ fn make_texture_intermediate(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
 
 #[test]
 fn texture_cooker_generates_mips() {
-    // 4×4 RGBA red 图像
+    // 4×4 RGBA red graph pixel
     let pixels = std::iter::repeat_n([255u8, 0, 0, 255], 4 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -231,7 +231,7 @@ fn texture_cooker_generates_mips() {
     };
     let result = cooker.cook(&ctx).unwrap();
 
-    // 验证 RTEX magic.
+    // Verify RTEX magic.
     assert_eq!(&result.cooked_data[..4], b"RTEX");
     assert_eq!(result.cooked_data[4], 1); // version
 
@@ -245,10 +245,10 @@ fn texture_cooker_generates_mips() {
     let levels = u32::from_le_bytes(result.cooked_data[13..17].try_into().unwrap());
     assert_eq!(levels, 3);
 
-    // 格式
+    // Format
     assert_eq!(result.cooked_data[17], RTEX_FORMAT_RGBA8); // RGBA8
 
-    // Offsets 表 (levels * 4 字节 after header).
+    // Offsets table (levels * 4 bytes after header).
     let off_pos = 18usize;
     let mip0_off = u32::from_le_bytes(result.cooked_data[off_pos..off_pos + 4].try_into().unwrap());
     let mip1_off = u32::from_le_bytes(
@@ -262,20 +262,20 @@ fn texture_cooker_generates_mips() {
             .unwrap(),
     );
 
-    // Mip0: 4*4*4 = 64 字节 starting at header (18 + 12 = 30)
+    // Mip0: 4*4*4 = 64 byte  starting at header (18 + 12 = 30)
     assert_eq!(mip0_off, 30);
     assert_eq!(mip1_off, 30 + 64);
-    // Mip1: 2*2*4 = 16 字节
+    // Mip1: 2*2*4 = 16 byte
     assert_eq!(mip2_off, 30 + 64 + 16);
 
-    // RGBA8 mip 链仍然值得交给 pak 的 zstd（#519）。
+    // RGBA8 mip chain still worth handing to pak zstd (#519).
     assert!(result.compress);
 }
 
 #[test]
 fn rgba8_textures_are_marked_for_pak_compression() {
-    // 未压缩的像素很好压（zstd 一般省 30~50%）；只有块压缩的那些才应该跳过
-    // 外层压缩。以前一律 `compress: false` 是 #519 记的那条问题。
+    // Uncompressed pixels compress well (zstd generally saves 30~50%); only block-compressed ones should skip
+    // outer layer compression. Previously always `compress: false` due to #519 issue.
     let pixels = std::iter::repeat_n([16u8, 128, 240, 255], 4 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -299,7 +299,7 @@ fn rgba8_textures_are_marked_for_pak_compression() {
 
 #[test]
 fn bc_profiles_are_encoded_instead_of_falling_back_to_rgba8() {
-    // 桌面 profile 的 BC1 / BC3 / BC5 / BC7 都走真实编码器；4×4 恰好一个块。
+    // Desktop profile BC1/BC3/BC5/BC7 all use real encoder; 4×4 fits exactly one block.
     let pixels = std::iter::repeat_n([200u8, 40, 90, 255], 4 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -343,7 +343,7 @@ fn bc_profiles_are_encoded_instead_of_falling_back_to_rgba8() {
 
 #[test]
 fn bc1_mip_chain_keeps_one_block_per_level() {
-    // 8×8 → 4×4 → 2×2 → 1×1；BC1 每级都是 4×4 块（8 字节），边缘补齐。
+    // 8×8 → 4×4 → 2×2 → 1×1; BC1 each level is 4×4 block (8 bytes), edge padded.
     let pixels = std::iter::repeat_n([10u8, 20, 30, 255], 8 * 8)
         .flatten()
         .collect::<Vec<_>>();
@@ -369,8 +369,8 @@ fn bc1_mip_chain_keeps_one_block_per_level() {
 
 #[test]
 fn mobile_profiles_are_encoded_instead_of_falling_back_to_rgba8() {
-    // ASTC 的 4×4 / 6×6 / 8×8 / 12×12 与 ETC2 RGBA 都走真实编码器；
-    // 4×4 输入对任何块尺寸都至少产生一个 16 字节块（#519）。
+    // ASTC 4×4/6×6/8×8/12×12 and ETC2 RGBA all use real encoder;
+    // 4×4 input correct any block size produces at least one 16-byte block (#519).
     let pixels = std::iter::repeat_n([200u8, 40, 90, 255], 4 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -415,8 +415,8 @@ fn mobile_profiles_are_encoded_instead_of_falling_back_to_rgba8() {
 
 #[test]
 fn astc_and_etc2_mip_chains_pad_partial_edge_blocks() {
-    // 8×8 → 4×4 → 2×2 → 1×1；6×6 / 4×4 块在边缘补齐，
-    // 每级都是 ceil(w/block) * ceil(h/block) * 16。
+    // 8×8 → 4×4 → 2×2 → 1×1; 6×6/4×4 block edges padded,
+    // Each level is ceil(w/block) * ceil(h/block) * 16.
     let pixels = std::iter::repeat_n([10u8, 20, 30, 255], 8 * 8)
         .flatten()
         .collect::<Vec<_>>();
@@ -471,7 +471,7 @@ fn rtex_header(data: &[u8]) -> (u32, u32, u32) {
 
 #[test]
 fn texture_cooker_honours_max_size_and_keeps_the_aspect_ratio() {
-    // 8×4 红图，最长边压到 4 → 4×2；mip 链 4×2 → 2×1 → 1×1 = 3 级。
+    // 8×4 red graph, longest edge squashed to 4 → 4×2; mip chain 4×2 → 2×1 → 1×1 = 3 levels.
     let pixels = std::iter::repeat_n([255u8, 0, 0, 255], 8 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -493,7 +493,7 @@ fn texture_cooker_honours_max_size_and_keeps_the_aspect_ratio() {
     let result = TextureCooker.cook(&ctx).unwrap();
     assert_eq!(rtex_header(&result.cooked_data), (4, 2, 3));
 
-    // 小图不会被放大。
+    // Small graph will not be upscaled.
     let intermediate = make_texture_intermediate(2, 2, &pixels[..16]);
     let ctx = CookContext {
         record: &record,
@@ -559,7 +559,7 @@ fn texture_cooker_rejects_zero_dimensions() {
     assert!(cooker.cook(&ctx).is_err());
 }
 
-// ── 网格 Cooker new tests ────────────────────────────────────────
+// ── mesh  Cooker new tests ────────────────────────────────────────
 
 fn make_mesh_intermediate(verts: u32, idxs: u32, uv_channels: u32) -> Vec<u8> {
     let stride = (3 + 3 + uv_channels * 2) as usize;
@@ -572,7 +572,7 @@ fn make_mesh_intermediate(verts: u32, idxs: u32, uv_channels: u32) -> Vec<u8> {
     buf.extend_from_slice(&verts.to_le_bytes());
     buf.extend_from_slice(&idxs.to_le_bytes());
     buf.extend_from_slice(&uv_channels.to_le_bytes());
-    // Fill 顶点 data (positions + normals + uv
+    // Fill vertex data (positions + normals + uv
     for _ in 0..verts {
         for _ in 0..stride {
             buf.extend_from_slice(&0.0f32.to_le_bytes());
@@ -600,7 +600,7 @@ fn mesh_cooker_writes_rmes() {
     };
     let result = cooker.cook(&ctx).unwrap();
 
-    // 验证 RMES magic.
+    // Verify RMES magic.
     assert_eq!(&result.cooked_data[..4], b"RMES");
     assert_eq!(result.cooked_data[4], 2); // version (v2 = submesh table)
 
@@ -674,7 +674,7 @@ fn texture_cooker_registry_integration() {
     assert_eq!(found.unwrap().name(), "texture-cooker");
 }
 
-// ── Round-trip: 烹饪 → 解码 → assert ───────────────────────────
+// ── Round-trip: cook → decode → assert ───────────────────────────
 
 #[test]
 fn binary_cooker_roundtrip() {
@@ -689,13 +689,13 @@ fn binary_cooker_roundtrip() {
         settings: &settings,
     };
     let result = cooker.cook(&ctx).unwrap();
-    // 二进制 cooker is pass-through; cooked data must be 相同
+    // Binary cooker is pass-through; cooked data must be same
     assert_eq!(result.cooked_data, input);
 }
 
 #[test]
 fn texture_cooker_roundtrip() {
-    // 构建 a small 8×6 gradient RGBA8 图像
+    // Build a small 8×6 gradient RGBA8 graph pixel
     let w = 8u32;
     let h = 6u32;
     let mut pixels = Vec::with_capacity((w * h * 4) as usize);
@@ -721,21 +721,21 @@ fn texture_cooker_roundtrip() {
     };
     let result = cooker.cook(&ctx).unwrap();
 
-    // 解码 RTEX 后
+    // decode  RTEX after
     let rtex = decode_rtex(&result.cooked_data).expect("should decode RTEX");
     assert_eq!(rtex.width, w);
     assert_eq!(rtex.height, h);
     assert_eq!(rtex.format, RTEX_FORMAT_RGBA8); // RGBA8
     assert!(rtex.mip_levels >= 1);
 
-    // Mip0 must be byte-identical to the 输入 pixels (cooker copies mip0 verbatim).
+    // Mip0 must be byte-identical to the input  pixels (cooker copies mip0 verbatim).
     assert_eq!(
         rtex.mip_data[0], pixels,
         "mip0 must match input pixels exactly"
     );
 
-    // Mip 链 must be non-empty and each successive level must be
-    // smaller (or 等于 at 1×1).
+    // Mip chain must be non-empty and each successive level must be
+    // smaller (or equal to  at 1×1).
     for i in 1..rtex.mip_levels as usize {
         assert!(
             rtex.mip_data[i].len() < rtex.mip_data[i - 1].len(),
@@ -760,7 +760,7 @@ fn texture_decoder_rejects_bad_data() {
 
 #[test]
 fn mesh_cooker_roundtrip() {
-    // 构建 an RMXI intermediate with 3 顶点 (a triangle).
+    // Build RMXI intermediate with 3 vertices (a triangle).
     let verts = 3u32;
     let idxs = 3u32;
     let uv_channels = 1u32;
@@ -775,7 +775,7 @@ fn mesh_cooker_roundtrip() {
 
     // Positions: a simple triangle
     let pos: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-    // Normals: all pointing 上
+    // Normals: all pointing on
     let nrm = [0.0f32, 0.0, 1.0];
     // UVs
     let uv: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
@@ -799,7 +799,7 @@ fn mesh_cooker_roundtrip() {
     let expected_vert_size = verts as usize * stride_floats * 4;
     let expected_idx_size = idxs as usize * 4;
 
-    // 烹饪
+    // Cook
     let cooker = MeshCooker;
     let settings = profile::CookSettings::default();
     let id = AssetId::from_raw((1u64 << 32) | 200);
@@ -812,20 +812,20 @@ fn mesh_cooker_roundtrip() {
     };
     let result = cooker.cook(&ctx).unwrap();
 
-    // 解码 RMES.
+    // decode  RMES.
     let rmes = decode_rmes(&result.cooked_data).expect("should decode RMES");
     assert_eq!(rmes.vert_count, verts);
     assert_eq!(rmes.idx_count, idxs);
     assert_eq!(rmes.uv_channels, uv_channels);
 
-    // 顶点 data must 匹配 the intermediate (after its 17-byte header).
+    // Vertex data must match intermediate (after its 17-byte header).
     let expected_vert = &intermediate[17..17 + expected_vert_size];
     assert_eq!(
         rmes.vertex_data, expected_vert,
         "RMES vertex data must match RMXI vertex data"
     );
 
-    // 索引 data must 匹配
+    // Index data must match
     let expected_idx =
         &intermediate[17 + expected_vert_size..17 + expected_vert_size + expected_idx_size];
     assert_eq!(
@@ -836,12 +836,12 @@ fn mesh_cooker_roundtrip() {
 
 #[test]
 fn mesh_cooker_preserves_the_rmxi_v2_submesh_table() {
-    // 6 个顶点、两个三角形、没有 normals：两个 submesh 各用 3 个索引。
+    // 6 vertices, two triangles, no normals: two submeshes each using 3 indices.
     let verts = 6u32;
     let idxs = 6u32;
     let mut intermediate = Vec::new();
     intermediate.extend_from_slice(b"RMXI");
-    intermediate.push(2); // v2: 末尾带 submesh 表
+    intermediate.push(2); // v2: submesh table at end
     intermediate.extend_from_slice(&verts.to_le_bytes());
     intermediate.extend_from_slice(&idxs.to_le_bytes());
     intermediate.extend_from_slice(&0u32.to_le_bytes()); // uv channels
@@ -962,7 +962,7 @@ fn mesh_decoder_rejects_bad_data() {
 
 #[test]
 fn decode_rtex_handles_known_asset() {
-    // Use the same 模式 as texture_cooker_generates_mips test.
+    // Use the same mode  as texture_cooker_generates_mips test.
     let pixels = std::iter::repeat_n([255u8, 0, 0, 255], 4 * 4)
         .flatten()
         .collect::<Vec<_>>();
@@ -985,11 +985,11 @@ fn decode_rtex_handles_known_asset() {
     assert_eq!(rtex.mip_levels, 3);
     assert_eq!(rtex.format, RTEX_FORMAT_RGBA8);
     assert_eq!(rtex.mip_data.len(), 3);
-    // mip0 = 4*4*4 = 64 字节
+    // mip0 = 4*4*4 = 64 byte
     assert_eq!(rtex.mip_data[0].len(), 64);
-    // mip1 = 2*2*4 = 16 字节
+    // mip1 = 2*2*4 = 16 byte
     assert_eq!(rtex.mip_data[1].len(), 16);
-    // mip2 = 1*1*4 = 4 字节
+    // mip2 = 1*1*4 = 4 byte
     assert_eq!(rtex.mip_data[2].len(), 4);
 }
 
@@ -999,7 +999,7 @@ fn parse_rtexi_pixels_roundtrip() {
     for i in 0..16 {
         pixels.push(i as u8);
     }
-    // 4 channels, so 2×2 图像 with 4 字节 per 像素 = 16 字节
+    // 4 channels, so 2×2 graph pixel with 4 bytes per pixel = 16 bytes
     let intermediate = make_texture_intermediate(2, 2, &pixels);
 
     let (w, h, parsed) = parse_rtexi_pixels(&intermediate).unwrap();
@@ -1010,7 +1010,7 @@ fn parse_rtexi_pixels_roundtrip() {
 
 #[test]
 fn texture_cooker_rgba8_still_default() {
-    // 默认 配置 压缩 (Rgba8) must produce RGBA8 输出
+    // default  config  compress  (Rgba8) must produce RGBA 8 output
     let pixels = vec![255u8; 4 * 4 * 4];
     let intermediate = make_texture_intermediate(4, 4, &pixels);
     let cooker = TextureCooker;
@@ -1026,16 +1026,16 @@ fn texture_cooker_rgba8_still_default() {
     };
     let result = cooker.cook(&ctx).unwrap();
 
-    // Must be RGBA8 格式
+    // Must be RGBA8 format
     assert_eq!(&result.cooked_data[..4], b"RTEX");
     assert_eq!(result.cooked_data[17], RTEX_FORMAT_RGBA8);
 }
 
 // -------------------------------------------------------------------
-// 材质 cooker round-trip
+// material  cooker round-trip
 // -------------------------------------------------------------------
 
-/// 构建 an RMATI intermediate blob by hand (mirrors the importer 输出
+/// build  an RMATI intermediate blob by hand (mirrors the importer output
 fn make_rmati(scalars: &[f32; MATERIAL_SCALAR_COUNT], tex_paths: &[Option<String>; 5]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RMATI");
@@ -1088,7 +1088,7 @@ fn material_cooker_roundtrip_no_textures() {
     let result = cooker.cook(&ctx).unwrap();
     assert!(result.compress);
 
-    // 解码 and 验证
+    // decode  and validate
     let info = decode_rmat(&result.cooked_data).expect("decode_rmat");
     assert_eq!(info.scalars, scalars);
     for slot in &info.texture_ids {
@@ -1106,7 +1106,7 @@ fn material_cooker_roundtrip_with_textures() {
         0.0, 1.45, 0.0, 0.0, // transmission, ior, translucency, anisotropy
         1.0, 0.1, // clearcoat, clearcoat_roughness
     ];
-    // Only albedo + 遮挡 textures present.
+    // Only albedo + occlusion textures present.
     let tex_paths: [Option<String>; 5] = [
         Some("textures/albedo.png".into()),
         None,
@@ -1117,7 +1117,7 @@ fn material_cooker_roundtrip_with_textures() {
     let intermediate = make_rmati(&scalars, &tex_paths);
 
     // The importer would have resolved these two paths to two AssetId deps
-    // stored on the record, in 槽 order (albedo 第一个 遮挡 秒
+    // stored on the record, in slot order (albedo first, occlusion seconds
     let tex_id_albedo = AssetId::from_raw((1u64 << 32) | 100);
     let tex_id_occlusion = AssetId::from_raw((1u64 << 32) | 101);
     let id = AssetId::from_raw((1u64 << 32) | 7);
@@ -1160,10 +1160,10 @@ fn decode_rmat_rejects_bad_magic() {
 }
 
 // -------------------------------------------------------------------
-// 着色器 cooker (intermediate parsing only; 编译 needs slangc)
+// shader  cooker (intermediate parsing only; compile  needs slangc)
 // -------------------------------------------------------------------
 
-/// 构建 an RSLI intermediate blob by hand (mirrors the importer 输出
+/// build  an RSLI intermediate blob by hand (mirrors the importer output
 fn make_rsli(entry: &str, stage: &str, profile: &str, source: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RSLI");
@@ -1207,7 +1207,7 @@ fn shader_cooker_rejects_bad_magic() {
 
 #[test]
 fn shader_cooker_rejects_bad_intermediate() {
-    // Truncated RSLI: magic + version + 部分 header.
+    // Truncated RSLI: magic + version + partial header.
     let settings = profile::CookSettings::default();
     let id = AssetId::from_raw((1u64 << 32) | 9);
     let record = make_record(id, vec![], "test.slang");

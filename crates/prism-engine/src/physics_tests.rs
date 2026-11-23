@@ -50,7 +50,7 @@ fn a_ray_that_misses_returns_nothing() {
     let mut world = World::new();
     entity_with(&mut world, boxed(1.0), glam::Vec3::ZERO, 1.0);
     assert!(raycast(&world, [0.0, 5.0, -5.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).is_none());
-    // 方向太短 / 距离为 0 也不该命中。
+    // Direction too short / distance is 0 also should not hit.
     assert!(raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 0.0], 100.0, u32::MAX).is_none());
     assert!(raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 1.0], 0.0, u32::MAX).is_none());
 }
@@ -91,7 +91,7 @@ fn entity_scale_grows_the_collider() {
     let hit = raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).unwrap();
     assert!(
         (hit.distance - 3.0).abs() < 1e-4,
-        "看起来是 2 倍大的盒子：{}",
+        "Looks like a box 2x larger: {}",
         hit.distance
     );
 }
@@ -108,14 +108,14 @@ fn a_rotated_box_is_hit_on_its_face() {
             glam::Vec3::ZERO,
         )),
     );
-    // 绕 X 轴转 45°：盒子沿 z 方向的半宽变成 1·cos45 + 1·sin45 = √2。
+    // Rotate 45° around X axis: box half width along z becomes 1·cos45 + 1·sin45 = √2.
     let hit = raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).unwrap();
     assert!(
         (hit.distance - (5.0 - 2f32.sqrt())).abs() < 1e-3,
         "got {}",
         hit.distance
     );
-    // 命中面的法线是倾斜的：长度 1，且朝向射线来的方向。
+    // Hit face normal is tilted: length 1, and pointing toward raycast direction.
     let normal = glam::Vec3::from_array(hit.normal);
     assert!((normal.length() - 1.0).abs() < 1e-3, "got {normal:?}");
     assert!(normal.z < 0.0, "normal faces the ray: {normal:?}");
@@ -134,7 +134,7 @@ fn a_sphere_uses_its_radius_and_reports_a_radial_normal() {
     let hit = raycast(&world, [0.0, 0.0, -10.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).unwrap();
     assert!((hit.distance - 9.0).abs() < 1e-4, "got {}", hit.distance);
     assert!((hit.normal[2] + 1.0).abs() < 1e-4, "got {:?}", hit.normal);
-    // 擦边的射线打不中。
+    // Grazing raycast does not hit.
     assert!(raycast(&world, [2.5, 0.0, -10.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).is_none());
 }
 
@@ -161,7 +161,7 @@ fn a_capsule_covers_its_radius_and_half_height() {
         ..Default::default()
     };
     entity_with(&mut world, collider, glam::Vec3::ZERO, 1.0);
-    // 从上方垂直打下来：命中高度 = half_height + radius。
+    // Shoot vertically from above: hit height = half_height + radius.
     let hit = raycast(&world, [0.0, 10.0, 0.0], [0.0, -1.0, 0.0], 100.0, u32::MAX).unwrap();
     assert!((hit.distance - 8.5).abs() < 1e-3, "got {}", hit.distance);
 }

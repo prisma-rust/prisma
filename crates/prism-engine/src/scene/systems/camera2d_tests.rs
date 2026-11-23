@@ -1,4 +1,4 @@
-//! 2D 虚拟相机单元测试（#1160）。
+//! 2D virtual camera unit test (#1160).
 
 use prism_ecs::World;
 use prism_scene::components::{Camera, Camera2D, LocalTransform};
@@ -73,13 +73,13 @@ fn test_camera_2d_deadzone() {
         },
     );
 
-    // 目标在死区内 (1.0 <= 2.0)，相机保持不动
+    // Target inside deadzone (1.0 <= 2.0), camera stays still
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
     assert_eq!(cam_tf.position.x, 0.0);
     assert_eq!(cam_tf.position.y, 0.0);
 
-    // 目标移出死区 (5.0 > 2.0)，相机跟随移动 5.0 - 2.0 = 3.0
+    // Target moved out of deadzone (5.0 > 2.0), camera follows move 5.0 - 2.0 = 3.0
     world.get_mut::<LocalTransform>(target).unwrap().position = glam::vec3(5.0, 0.0, 0.0);
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
@@ -127,8 +127,8 @@ fn test_camera_2d_confiner() {
         },
     );
 
-    // 视口半宽 = 5.0 * 2.0 = 10.0，半高 = 5.0
-    // 边界限制：X 范围 [-20 + 10, 20 - 10] = [-10, 10]，Y 范围 [-10 + 5, 10 - 5] = [-5, 5]
+    // Viewport half width = 5.0 * 2.0 = 10.0, half height = 5.0
+    // Boundary limit: X range [-20 + 10, 20 - 10] = [-10, 10], Y range [-10 + 5, 10 - 5] = [-5, 5]
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
     assert!((cam_tf.position.x - 10.0).abs() < 1e-4);

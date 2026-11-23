@@ -1,17 +1,17 @@
-//! 3D 粒子 billboard 通道。
+//! 3D particle billboard pass.
 //!
-//! [`ParticlePass`] 把引擎 CPU 模拟出来的粒子（[`ParticleDrawItem`]）作为
-//! **实例化四边形**画进 ForwardPass 的 HDR 颜色附件。和
-//! [`crate::sprite_pass::SpritePass`] 的差别只有三点：
+//! [`ParticlePass`] draws CPU-simulated particles ([`ParticleDrawItem`]) as
+//! **instanced quads** into ForwardPass HDR color attachment. Difference from
+//! [`crate::sprite_pass::SpritePass`] only three points:
 //!
-//! - **保留深度测试**（写关闭）：粒子在世界空间，前面的几何必须遮挡它们；
-//! - **面向相机的展开**：顶点阶段用 `GraphFrame::inv_view_rot` 的 right / up
-//!   列展开四边形，CPU 只提交中心点 + 尺寸；
-//! - **不采样贴图**：alpha 由四边形 UV 的径向衰减算出（软边圆点），所以
-//!   粒子不需要资产、也不需要 bindless 表。
+//! - **Keep depth test** (write disabled): particles in world space, foreground geometry must occlude them;
+//! - **Camera-facing expansion**: vertex stage uses `GraphFrame::inv_view_rot` right / up
+//!   columns to expand quad, CPU only submits center + size;
+//! - **No texture sampling**: alpha from quad UV radial falloff (soft round point), so
+//!   particles need no asset, nor bindless table.
 //!
-//! 排序（远到近）由引擎在提交前完成，`ForwardPass` 只按列表顺序绘制；
-//! 混合是直通 alpha（`SRC_ALPHA` / `ONE_MINUS_SRC_ALPHA`）。
+//! Sorting (far to near) done by engine before submit, `ForwardPass` just draws in list order;
+//! blend is straight alpha (`SRC_ALPHA` / `ONE_MINUS_SRC_ALPHA`).
 
 use std::mem::size_of;
 
@@ -30,16 +30,16 @@ const _: () = assert!(size_of::<bindings::ParticlePush>() as u32 == bindings::PU
 const PARTICLE_VERT_SPV: &[u8] = prism_render_shaders::PARTICLES_VERT_SPV;
 const PARTICLE_FRAG_SPV: &[u8] = prism_render_shaders::PARTICLES_FRAG_SPV;
 
-/// 初始实例容量（按需增长）。
+/// Initial instance capacity (grows on demand).
 const INITIAL_CAPACITY: u32 = 256;
 
-/// 单实例顶点数据 —— 必须与 `particles.slang` 的 `ParticleVertexIn` 一致。
+/// Single instance vertex data — must match `particles.slang` `ParticleVertexIn`.
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct ParticleInstance {
-    /// xyz = 世界空间中心，w = 世界单位半径。
+    /// xyz = world-space center, w = radius in world units.
     center_size: [f32; 4],
-    /// 线性 RGBA（已按粒子年龄插值过）。
+    /// Linear RGBA (already interpolated by particle age).
     color: [f32; 4],
 }
 
@@ -63,10 +63,10 @@ impl ParticleInstance {
     }
 }
 
-/// 3D 粒子实例化绘制通道。
+/// 3D particle instanced draw pass.
 pub struct ParticlePass {
     pipeline: Option<GraphicsPipeline>,
-    /// 管线编译时使用的 render pass（ForwardPass 重建后需要重编）。
+    /// Render pass used at pipeline compile (needs recompile when ForwardPass rebuilds).
     built_for_render_pass: Option<vk::RenderPass>,
     instance_buffer: vk::Buffer,
     instance_memory: vk::DeviceMemory,
@@ -79,8 +79,8 @@ pub struct ParticlePass {
 }
 
 impl ParticlePass {
-    /// 创建空通道；实例缓冲在首次 [`ParticlePass::draw`] 时惰性分配
-    /// （ForwardPass 构造时没有 `VulkanContext`）。
+    /// Create empty pass; instance buffer lazily allocated at first [`ParticlePass::draw`]
+    /// (no `VulkanContext` at ForwardPass construction).
     pub fn new() -> Self {
         Self {
             pipeline: None,
@@ -94,11 +94,11 @@ impl ParticlePass {
         }
     }
 
-    /// 在已开启的 render pass 内绘制 `items`（按给定顺序，先画先被覆盖）。
+    /// Draw `items` inside already-open render pass (in given order, first drawn gets covered).
     ///
-    /// `inv_view_rot` 是「视图旋转的转置」（`GraphFrame::inv_view_rot`），
-    /// 它的第 0 / 1 列就是相机的世界空间 right / up，用来把四边形展开成
-    /// billboard。
+    /// `inv_view_rot` is "transpose of view rotation" (`GraphFrame::inv_view_rot`),
+    /// its column 0 / 1 are camera world-space right / up, used to expand quad into
+    /// billboard.
     #[expect(
         clippy::too_many_arguments,
         reason = "arity mirrors the float-parameter packing that the callers already flatten"
@@ -125,7 +125,7 @@ impl ParticlePass {
 
         let pipeline = self.pipeline.as_ref().expect("pipeline built above");
 
-        // 相机基向量：`inv_view_rot` 的第 0 / 1 列（w = 0）。
+        // Camera basis vectors: columns 0 / 1 of `inv_view_rot` (w = 0).
         let camera_right = [
             inv_view_rot[0][0],
             inv_view_rot[0][1],
@@ -194,8 +194,8 @@ impl ParticlePass {
             .offset(0)
             .size(bindings::PUSH_CONSTANT_SIZE)];
 
-        // ForwardPass' render pass 有两个颜色附件（HDR 颜色 + 视图空间法线）。
-        // 粒子只混到 SV_Target0，法线目标写掩码留空。
+        // ForwardPass' render pass has two color attachments (HDR color + view space normal).
+        // Particles only blend to SV_Target0, normal target write mask empty.
         let blend_attachments = [
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -231,7 +231,7 @@ impl ParticlePass {
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
-            // 粒子是半透明的世界空间面片：测深度（被几何遮挡），不写深度。
+            // Particle is semi-transparent world-space face patch: test depth (occluded by geometry), no depth write.
             depth_write_enable: Some(false),
             depth_test_enable: Some(true),
             color_attachment_count: None,
@@ -310,7 +310,7 @@ impl ParticlePass {
         Ok(())
     }
 
-    /// 交换链重建 / 销毁前释放 GPU 资源。
+    /// Release GPU resources before swapchain rebuild / destroy.
     pub fn destroy(&mut self, device: &ash::Device) {
         self.pipeline = None;
         self.built_for_render_pass = None;
@@ -357,8 +357,8 @@ impl Drop for ParticlePass {
 mod tests {
     use super::*;
 
-    /// 着色器里的 push constant 块是 `viewProj`(64) + `camRight`(16) +
-    /// `camUp`(16)；Rust 侧必须一个字节都不差，否则相机基向量会错位。
+    /// Push constant block in shader is `viewProj`(64) + `camRight`(16) +
+    /// `camUp`(16); Rust side must not differ by a single byte, otherwise camera basis wrong.
     #[test]
     fn push_constant_layout_matches_the_shader() {
         assert_eq!(size_of::<bindings::ParticlePush>(), 96);
@@ -378,7 +378,7 @@ mod tests {
         );
     }
 
-    /// 单个实例记录 = center(12) + size(4) + color(16)。
+    /// Single instance record = center(12) + size(4) + color(16).
     #[test]
     fn the_instance_record_is_thirty_two_bytes() {
         assert_eq!(size_of::<ParticleInstance>(), 32);

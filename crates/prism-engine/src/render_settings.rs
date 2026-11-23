@@ -47,7 +47,7 @@ pub fn pbr_flag_label(flags: u32) -> &'static str {
         .unwrap_or("(custom flags)")
 }
 
-/// 默认阴影覆盖距离（米）：2048² 阴影贴图下单 texel ≈ 2.9 cm（#526）。
+/// Default shadow coverage distance (meters): 2048² shadow map per texel ≈ 2.9 cm (#526).
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 60.0;
 
 /// Aggregate of all per-frame render knobs.
@@ -64,32 +64,32 @@ pub struct RenderSettings {
     /// bits 0-14 isolates that one component as a grayscale visualization;
     /// bit 15 (`1 << 15`) = skin-weight heatmap (#560).
     pub debug_flags: u32,
-    /// 色调映射 operator: 0 = Reinhard, 1 = ACES (Narkowicz),
-    /// 2 = passthrough (2D 像素画：保留原始调色板，只做 saturate).
+    /// hue map  operator: 0 = Reinhard, 1 = ACES (Narkowicz),
+    /// 2 = passthrough (2D pixel art: preserve original palette, only saturate).
     pub tonemap_mode: u32,
-    /// 后处理抗锯齿: 0 = 关, 1 = FXAA（在 `PostPass` 色调映射之后执行）。
+    /// Post-processing antialiasing: 0 = off, 1 = FXAA (executed after tonemap in `PostPass`).
     ///
-    /// 不依赖 MSAA / resolve 目标，交换链与编辑器离屏视口共用同一条路径；
-    /// 调试图（`debug_rt != 0`）会自动忽略它。
+    /// Does not depend on MSAA / resolve target, swapchain and editor offscreen viewport share same path;
+    /// Debug graph (`debug_rt != 0`) automatically ignores it.
     pub aa_mode: u32,
     /// PostPass debug render-target viewer (Tab cycles). 0 = normal tonemapped
     /// HDR, 1 = linearized depth, 2 = view-space normal.
     pub debug_rt: u32,
-    /// 直方图自动曝光测光（默认关）。
+    /// Histogram auto-exposure metering (off by default).
     ///
-    /// 关闭时 `AutoExposurePass` 写入零亮度，色调映射读到 0 就是增益 1.0，
-    /// 画面与引入自动曝光之前完全一致；打开后按屏幕实际亮度收敛到
-    /// `AUTO_EXPOSURE_KEY`（0.18 中灰）。
+    /// When off `AutoExposurePass` writes zero luminance, tonemap reads 0 = gain 1.0,
+    /// image fully identical to before auto-exposure; when on converges to actual screen luminance
+    /// `AUTO_EXPOSURE_KEY` (0.18 mid gray).
     pub auto_exposure: bool,
-    /// 遮挡剔除（#1007）：用上一帧的粗深度剔掉被完全挡住的绘制项。
+    /// Occlusion culling (#1007): use previous-frame coarse depth to cull fully occluded draw items.
     ///
-    /// 默认关。开启后画面应保持一致（保守测试 + 一帧延迟），只是少提交
-    /// draw；阴影通道不受影响，被挡住的物体仍然会投影。
+    /// Off by default. When on image should stay consistent (conservative test + one-frame delay), only fewer
+    /// draws; shadow pass unaffected, occluded objects still cast shadows.
     pub occlusion_culling: bool,
-    /// 前向管线用 `POLYGON_MODE_LINE` 画网格（#431）。设备不支持时为 no-op。
+    /// Forward pipeline draws mesh with `POLYGON_MODE_LINE` (#431). No-op when device unsupported.
     pub wireframe: bool,
-    /// 正常填充渲染 + 线框叠加（#431）。设备不支持 `fillModeNonSolid` 时为 no-op；
-    /// `wireframe == true` 时它被纯线框覆盖。
+    /// Normal fill render + wireframe overlay (#431). No-op when device lacks `fillModeNonSolid`;
+    /// overridden by pure wireframe when `wireframe == true`.
     pub shaded_wireframe: bool,
     /// Current render mode: Raster (PBR) or PathTrace (real-time PT).
     pub render_mode: RenderMode,
@@ -151,62 +151,62 @@ pub struct RenderSettings {
     pub dlfg_frames: u32,
     /// Enable DLSS Ray Reconstruction (DLSS-RR) when supported.
     pub dlss_rr_enabled: bool,
-    /// 是否在场景视图中渲染地面基准网格 (Y = 0)。
+    /// Whether to render ground reference mesh in scene view (Y = 0).
     pub show_grid: bool,
-    /// 显示空间对比度（围绕中灰 `0.5` 缩放，`1.0` = 不变）。色调映射之后应用。
+    /// Display space exposure (`1.0` = unchanged, scaled around mid gray `0.5`). Applied after tonemap.
     ///
-    /// 这三个字段是 #502 的后处理调色参数：和 `tonemap_mode` / `aa_mode` 一样
-    /// 在 `PostPass` 里生效，交换链与编辑器离屏视口共用同一条路径。
+    /// These three fields are #502 post-processing color-grading parameters: like `tonemap_mode` / `aa_mode`
+    /// they take effect in `PostPass`, swapchain and editor offscreen viewport share same path.
     pub contrast: f32,
-    /// 显示空间饱和度（`1.0` = 不变，`0.0` = 灰度）。Rec.709 luma 插值。
+    /// Display space saturation (`1.0` = unchanged, `0.0` = grayscale). Rec.709 luma interpolation.
     pub saturation: f32,
-    /// 暗角强度（`0.0` = 关闭，`1.0` = 四角全黑）。
+    /// Vignette strength (`0.0` = disabled, `1.0` = corners fully black).
     pub vignette: f32,
-    /// HDR bloom 开关（#502）。关闭时 `bloom_intensity` 不参与渲染。
+    /// HDR bloom switch (#502). When disabled `bloom_intensity` not used in render.
     pub bloom: bool,
-    /// bloom 加性强度（`0.0` = 关闭，`1.0` = 最强）。
+    /// Bloom additive strength (`0.0` = disabled, `1.0` = strongest).
     pub bloom_intensity: f32,
-    /// bloom 亮度阈值；高于该 HDR 亮度的像素才会发光。
+    /// Bloom brightness threshold; only pixels above this HDR luminance will glow.
     pub bloom_threshold: f32,
-    /// 镜头色差强度（#502 Phase 2）：`0.0` = 关闭，`1.0` = 最强。
+    /// Lens chromatic aberration strength (#502 Phase 2): `0.0` = disabled, `1.0` = strongest.
     ///
-    /// 在 HDR 采样阶段按到画面中心的距离把红/蓝通道向相反方向偏移，
-    /// 绿色保持不动；默认 0 与旧画面逐位一致。
+    /// In HDR sampling phase offset red / blue channels radially from image center by distance,
+    /// green unchanged; default 0 byte-identical to old image.
     pub chromatic_aberration: f32,
-    /// 胶片颗粒强度（#502 Phase 2）：`0.0` = 关闭，`1.0` = 最强。
+    /// Film grain strength (#502 Phase 2): `0.0` = disabled, `1.0` = strongest.
     ///
-    /// 在色调映射、调色与暗角之后叠加显示空间单色噪声；默认 0 与旧画面
-    /// 逐位一致。
+    /// Adds monochrome display-space noise after tonemap, grading and vignette; default 0 byte-identical
+    /// to old image.
     pub film_grain: f32,
-    /// 白平衡色温（#502 Phase 1）：`-1.0` = 冷，`0.0` = 中性，`1.0` = 暖。
+    /// White balance color temperature (#502 Phase 1): `-1.0` = cool, `0.0` = neutral, `1.0` = warm.
     ///
-    /// 在调色阶段按 RGB 增益移动白点；`0.0` 时增益精确为 `(1, 1, 1)`，
-    /// 默认路径与旧画面逐位一致。
+    /// In grading phase shift white point via RGB gains; at `0.0` gains exactly `(1, 1, 1)`,
+    /// default path byte-identical to old image.
     pub temperature: f32,
-    /// 白平衡色调（#502 Phase 1）：`-1.0` = 偏绿，`0.0` = 中性，`1.0` = 偏品红。
+    /// White balance hue (#502 Phase 1): `-1.0` = greenish, `0.0` = neutral, `1.0` = magenta.
     pub tint: f32,
-    /// 景深对焦距离（米，#502 Phase 2）。
+    /// Depth of field focus distance (meters, #502 Phase 2).
     ///
-    /// `dof_aperture > 0` 时，深度与这个距离差得越远越模糊；默认 1 米。
+    /// When `dof_aperture > 0`, greater distance from this focus means more blur; default 1 meter.
     pub dof_focus_distance: f32,
-    /// 景深强度（`0.0` = 关闭，`1.0` = 最强，#502 Phase 2）。
+    /// Depth of field strength (`0.0` = disabled, `1.0` = strongest, #502 Phase 2).
     ///
-    /// 关闭时后处理完全跳过深度采样，默认路径逐位不变。
+    /// When off post-processing fully skips depth sampling, default path byte-identical.
     pub dof_aperture: f32,
-    /// 景深最大模糊半径（像素，0–32）。
+    /// Depth of field max blur radius (pixels, 0–32).
     pub dof_max_blur: f32,
-    /// 3D 调色 LUT 的资产相对路径（`assets/` 下的 `.cube`，#502）。
+    /// 3D color grading LUT asset relative path (`.cube` under `assets/`, #502).
     ///
-    /// 空字符串 = 不使用 LUT。文件由渲染器在路径变化时惰性加载；加载失败
-    /// 只记录警告并保留上一张 LUT，不会中断渲染。
+    /// Empty string = no LUT. File lazily loaded by renderer when path changes; on load failure
+    /// only logs warning and keeps previous LUT, will not interrupt render.
     pub lut: String,
-    /// LUT 混合强度（`0.0` = 关闭，`1.0` = 完全使用 LUT）。
+    /// LUT blend strength (`0.0` = disabled, `1.0` = fully use LUT).
     pub lut_strength: f32,
-    /// 相机运动模糊强度（`0.0` = 关闭，`1.0` = 最强，#502 Phase 2）。
+    /// Camera motion blur strength (`0.0` = disabled, `1.0` = strongest, #502 Phase 2).
     ///
-    /// 关闭时后处理完全跳过上一帧矩阵与深度重建，默认路径逐位不变。
+    /// When off post-processing fully skips previous-frame matrix and depth rebuild, default path byte-identical.
     pub motion_blur: f32,
-    /// 运动模糊最大拖影长度（像素，0–64）。
+    /// Motion blur max trail length (pixels, 0–64).
     pub motion_blur_max_pixels: f32,
     /// Temporal anti-aliasing (#883). Default off; when on the renderer jitters
     /// the camera and resolves against the previous frame.
@@ -223,23 +223,23 @@ pub struct RenderSettings {
     pub mobile_upscaler: MobileUpscaler,
     /// Sharpening strength for `mobile_upscaler`, clamped to `0.0..=1.0`.
     pub upscaler_sharpness: f32,
-    /// 内部渲染分辨率 `[宽, 高]`（#613）；`[0, 0]` = 关闭。
+    /// Internal render resolution `[width, height]` (#613); `[0, 0]` = disabled.
     ///
-    /// 开启后场景按这个尺寸渲染，`PostPass` 再放大到窗口；相机的宽高比也跟着
-    /// 变成 `宽 / 高`，所以窗口尺寸变化不再改变取景。
+    /// When on scene rendered at this size, `PostPass` upscales to window; camera aspect also becomes
+    /// `width / height`, so window size changes no longer alter framing.
     pub internal_resolution: [u32; 2],
-    /// 内部图像放大到窗口的方式（拉伸 / 整数倍 + 黑边）。
+    /// How to upscale internal image to window (stretch / integer scale + letterbox).
     pub internal_scale_mode: InternalScaleMode,
-    /// 主方向光的阴影覆盖距离（世界单位，米）。
+    /// Main directional light shadow coverage distance (world units, meters).
     ///
-    /// 阴影正交盒子以**相机前方 `distance * 0.5` 处**为中心、边长 `distance`；
-    /// 这个值越大覆盖越远、每 texel 越粗（2048² 时 60 米 ≈ 2.9 cm/texel）。
-    /// 没有级联（见 #526），所以它同时是「阴影能投多远」和「精度」的取舍旋钮。
+    /// Shadow orthographic box centered at **`distance * 0.5` in front of camera**, edge length `distance`;
+    /// larger value covers farther, each texel coarser (2048² at 60 m ≈ 2.9 cm/texel).
+    /// No cascades (see #526), so it is both "how far shadows can cast" and "quality" knob.
     pub shadow_distance: f32,
-    /// 阴影贴图边长（texel，#526）；构造渲染器时生效，运行中改需要重建渲染图。
+    /// Shadow map edge length (texels, #526); takes effect when renderer constructed, changing at runtime requires rebuilding render graph.
     pub shadow_map_size: u32,
-    /// 方向光级联数（#526 CSM）：`1` = 单张阴影图（默认），`2` = 2×1 atlas
-    /// 的近/远两级联。构造渲染器时生效。
+    /// Directional light cascade count (#526 CSM): `1` = single shadow map (default), `2` = 2×1 atlas
+    /// near / far two cascades. Takes effect when renderer constructed.
     pub shadow_cascade_count: u32,
 }
 
@@ -269,10 +269,10 @@ impl RenderSettings {
         }
     }
 
-    /// 导出成渲染图报告用的纯数据（`prism_render::render_graph_report`）。
+    /// Export as pure data for render graph report (`prism_render::render_graph_report`).
     ///
-    /// 报告 DTO 在 `prism-render` 里（不依赖引擎），映射留在这里，编辑器与
-    /// 玩家进程共用同一份，避免两处各写一遍字段表。
+    /// Report DTO lives in `prism-render` (no engine dependency), mapping stays here, editor and
+    /// player process share one copy, avoid writing field table twice.
     pub fn to_report_settings(&self) -> prism_render::render_graph_report::ReportSettings {
         prism_render::render_graph_report::ReportSettings::new(
             self.render_mode,
@@ -361,10 +361,10 @@ impl Default for RenderSettings {
 }
 
 impl RenderSettings {
-    /// 内部渲染分辨率生效时的相机宽高比；否则沿用窗口宽高比（#613）。
+    /// Camera aspect when internal resolution active; otherwise window aspect (#613).
     ///
-    /// 只有一个维度非零时另一边按窗口比例推导，宽高比与窗口一致，直接返回
-    /// `window_aspect`。
+    /// When only one dimension non-zero the other derived from window ratio, aspect same as window, return directly
+    /// `window_aspect`.
     pub fn render_aspect(&self, window_aspect: f32) -> f32 {
         let [width, height] = self.internal_resolution;
         if width > 0 && height > 0 {
@@ -376,11 +376,11 @@ impl RenderSettings {
         }
     }
 
-    /// 场景实际渲染的像素高度（#978）。
+    /// Scene actual render pixel height (#978).
     ///
-    /// `internal_resolution` 生效时是内部高度；只给了一个维度时按窗口比例
-    /// 推导（与 `prism_render::render_graph::internal_extent` 一致）。都没给
-    /// 时就是窗口高度。
+    /// When `internal_resolution` active it is internal height; when only one dimension given derive by window ratio
+    /// (consistent with `prism_render::render_graph::internal_extent`). When neither given
+    /// it is window height.
     pub fn render_height(&self, window_width: u32, window_height: u32) -> f32 {
         let window_height = window_height.max(1);
         let [width, height] = self.internal_resolution;
@@ -406,7 +406,7 @@ mod tests {
             let label = pbr_flag_label(1u32 << bit);
             assert_ne!(label, "(custom flags)", "bit {bit} has no name");
         }
-        // 第 16 位是蒙皮权重热图（#560），不是 PBR 分量；组合值仍然算自定义。
+        // Bit 16 is skinning weight stream (#560), not a PBR component; combined value still counts as custom.
         assert_eq!(pbr_flag_label(1 << 15), "SkinWeights");
         assert_eq!(pbr_flag_label((1 << 0) | (1 << 15)), "(custom flags)");
         assert_eq!(pbr_flag_label(0), "(normal render)");
@@ -416,20 +416,24 @@ mod tests {
     #[test]
     fn render_height_follows_the_internal_resolution() {
         let mut settings = RenderSettings::default();
-        assert_eq!(settings.render_height(1920, 1080), 1080.0, "内部分辨率关闭");
+        assert_eq!(
+            settings.render_height(1920, 1080),
+            1080.0,
+            "Internal resolution disabled"
+        );
 
         settings.internal_resolution = [640, 360];
         assert_eq!(settings.render_height(1920, 1080), 360.0);
 
-        // 只给宽度：按窗口比例推导高度（与 internal_extent 一致）。
+        // Only width given: derive height by window ratio (consistent with internal_extent).
         settings.internal_resolution = [640, 0];
         assert_eq!(settings.render_height(1920, 1080), 360.0);
 
-        // 只给高度：直接用。
+        // Only height given: use directly.
         settings.internal_resolution = [0, 240];
         assert_eq!(settings.render_height(1920, 1080), 240.0);
 
-        // 退化输入不产生 0 / NaN。
+        // Degenerate input does not produce 0 / NaN.
         settings.internal_resolution = [0, 0];
         assert_eq!(settings.render_height(0, 0), 1.0);
     }
@@ -472,21 +476,21 @@ mod tests {
 
     #[test]
     fn render_aspect_prefers_the_internal_resolution() {
-        // #613：内部分辨率生效时相机必须按内部比例投影，而不是窗口比例。
+        // #613: when internal resolution active camera must project by internal ratio, not window ratio.
         let mut settings = RenderSettings::default();
         assert_eq!(settings.internal_resolution, [0, 0]);
         assert_eq!(settings.internal_scale_mode, InternalScaleMode::Stretch);
-        // 没有内部分辨率时沿用窗口比例。
+        // Without internal resolution use window ratio.
         assert!((settings.render_aspect(21.0 / 9.0) - 21.0 / 9.0).abs() < 1e-6);
 
         settings.internal_resolution = [640, 360];
         assert!((settings.render_aspect(21.0 / 9.0) - 16.0 / 9.0).abs() < 1e-6);
 
-        // 只有一个维度时宽高比与窗口一致，回落到窗口比例。
+        // When only one dimension given aspect same as window, fall back to window ratio.
         settings.internal_resolution = [640, 0];
         assert!((settings.render_aspect(4.0 / 3.0) - 4.0 / 3.0).abs() < 1e-6);
 
-        // 坏窗口比例也有确定的结果，不会把 NaN 传给投影矩阵。
+        // Bad window ratio also has deterministic result, won't pass NaN to projection matrix.
         settings.internal_resolution = [0, 0];
         assert_eq!(settings.render_aspect(f32::NAN), 16.0 / 9.0);
         assert_eq!(settings.render_aspect(0.0), 16.0 / 9.0);

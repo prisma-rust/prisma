@@ -1,14 +1,14 @@
-//! 本地控制通道：让 MCP（`crates/prism-editor-mcp`）驱动**正在运行的**编辑器。
+//! Local control channel: MCP (`crates/prism-editor-mcp`) drives **running** editor.
 //!
-//! 为什么不是环境变量 / 子进程：窗口截图必须发生在编辑器进程里（`PrintWindow`
-//! 要有 HWND，引擎离屏图像要有 `GraphRenderer`），而 egui 是单线程事件循环，
-//! 所以外部只能通过一个通道把请求排进 UI 线程。
+//! Why not env var / subprocess: window screenshot must happen inside editor process (`PrintWindow`
+//! needs HWND, engine offscreen image needs `GraphRenderer`), egui is single-threaded event loop,
+//! so external can only push requests to UI thread via one channel.
 //!
-//! 形态：
+//! Shape:
 //!
-//! - 启动时在 `127.0.0.1:0`（内核分配端口）上 `TcpListener`，把端口写进
-//!   `<state 目录>/control.port`，退出时删掉；只监听回环，不接受远程连接。
-//! - 每行一条 JSON，一问一答：
+//! - At startup `TcpListener` on `127.0.0.1:0` (kernel-assigned port), write port to
+//!   `<state dir>/control.port`, delete on exit; listens only on loopback, no remote connections.
+//! - One JSON per line, Q&A:
 //!
 //! ```text
 //! → {"cmd":"ping"}
@@ -17,11 +17,11 @@
 //! ← {"ok":true,"path":"...","width":1440,"height":900}
 //! ```
 //!
-//! 支持的 `cmd`：`ping` / `status` / `capture` / `quit` / `quit.confirm` /
-//! `quit.cancel`（后两者走「未保存改动」三选一，不强制退出）。
+//! Supported `cmd`: `ping` / `status` / `capture` / `quit` / `quit.confirm` /
+//! `quit.cancel` (last two go through "unsaved changes" triage, not forced exit).
 //!
-//! 请求从 socket 线程 push 进 `mpsc`，UI 线程每帧开头 `drain()` 一次并在
-//! 同一帧内完成截图（窗口截图取的是上一帧呈现结果），结果用回执 channel 送回。
+//! Requests pushed from socket thread into `mpsc`, UI thread `drain()` once at frame start and
+//! completes screenshot within same frame (window screenshot takes previous frame presented result), result sent back via reply channel.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -32,28 +32,28 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-/// `--no-control`：进程级关闭通道。界面上的开关在 `Preferences::control_channel`。
+/// `--no-control`: process-level channel close. UI toggle in `Preferences::control_channel`.
 static CLI_DISABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn set_cli_disabled(disabled: bool) {
     CLI_DISABLED.store(disabled, Ordering::Relaxed);
 }
 
-/// 命令行是否要求关闭控制通道（`--no-control`）。
+/// Whether command line requests closing control channel (`--no-control`).
 pub fn cli_disabled() -> bool {
     CLI_DISABLED.load(Ordering::Relaxed)
 }
 
-/// 失败类别：调用方据此决定「改参数重试 / 等一下 / 不要重试」。
+/// Failure category: caller decides "retry with new params / wait / do not retry" based on this.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// 参数错了：改参数再来。
+    /// Wrong params: retry with new params.
     BadRequest,
-    /// 编辑器还没准备好（仍在加载、视图还没布局、Play 没在跑）：等一下再试。
+    /// Editor not ready yet (still loading, view not laid out, Play not running): wait and retry.
     NotReady,
-    /// 明确拒绝（平台不支持、通道被关掉）：不要重试。
+    /// Explicitly rejected (platform unsupported, channel closed): do not retry.
     Denied,
-    /// 编辑器内部错误：重试通常没用，去读日志。
+    /// Editor internal error: retry usually useless, read logs.
     Internal,
 }
 
@@ -68,8 +68,8 @@ impl Kind {
     }
 }
 
-/// 失败回执：`kind` 是新增的机器可读类别，`error` 保留给旧调用方
-/// （与 `message` 内容相同）。
+/// Failure reply: `kind` is new machine-readable category, `error` kept for old callers
+/// (same as `message` content).
 pub fn failed(kind: Kind, message: impl Into<String>) -> Value {
     let message = message.into();
     json!({
@@ -80,8 +80,8 @@ pub fn failed(kind: Kind, message: impl Into<String>) -> Value {
     })
 }
 
-/// 带类别的失败。`From<String>` / `From<&str>` 默认 `bad_request`，这样
-/// 已有 `?` 链上的参数校验不用逐条改。
+/// Failure with category. `From<String>` / `From<&str>` default `bad_request`, so
+/// existing `?` chain param validation does not need per-item change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ControlError {
     pub kind: Kind,
@@ -117,14 +117,14 @@ impl From<&str> for ControlError {
     }
 }
 
-/// 一条待处理请求 + 回执通道。
+/// One pending request + reply channel.
 pub struct ControlRequest {
     pub command: String,
     pub args: Value,
     pub reply: Sender<Value>,
 }
 
-/// 运行中的控制通道。`Drop` 时停掉监听并删掉端口文件。
+/// Running control channel. `Drop` stops listening and deletes port file.
 pub struct ControlServer {
     port_file: PathBuf,
     address: SocketAddr,
@@ -133,7 +133,7 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    /// `enabled` 为假时不建 listener、不写端口文件，返回 `None`。
+    /// When `enabled` false, no listener, no port file, returns `None`.
     pub fn start_if(enabled: bool, state_dir: &Path) -> anyhow::Result<Option<Self>> {
         if enabled {
             Self::start(state_dir).map(Some)
@@ -142,7 +142,7 @@ impl ControlServer {
         }
     }
 
-    /// 在 `state_dir` 下开通道并写 `control.port`。
+    /// Open channel under `state_dir` and write `control.port`.
     pub fn start(state_dir: &Path) -> anyhow::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| anyhow::anyhow!("control: bind loopback failed: {error}"))?;
@@ -159,7 +159,7 @@ impl ControlServer {
             .name("editor-control".to_owned())
             .spawn(move || {
                 for stream in listener.incoming() {
-                    // `Drop` 会先置 flag 再连一次本端口，用来唤醒这里阻塞的 accept。
+                    // `Drop` sets flag then connects to this port, to wake up blocked accept here.
                     if thread_stop.load(Ordering::Relaxed) {
                         break;
                     }
@@ -184,7 +184,7 @@ impl ControlServer {
         })
     }
 
-    /// UI 线程每帧调用一次：取走这一帧要处理的请求（非阻塞）。
+    /// UI thread calls once per frame: take this frame's requests to process (non-blocking).
     pub fn drain(&self) -> Vec<ControlRequest> {
         self.requests.try_iter().collect()
     }
@@ -193,14 +193,14 @@ impl ControlServer {
 impl Drop for ControlServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // 唤醒 accept 线程，让 listener 真正关闭（只删端口文件的话端口仍然
-        // 绑定着，再开启时旧连接会排进一个没人处理的队列）。
+        // Wake up accept thread so listener truly closes (only deleting port file leaves port bound,
+        // bound, reopening old connections queue into unprocessed queue).
         let _ = TcpStream::connect(self.address);
         std::fs::remove_file(&self.port_file).ok();
     }
 }
 
-/// 单连接：读一行 JSON → 排队 → 回一行 JSON。
+/// Single connection: read one JSON line -> queue -> reply one JSON line.
 fn serve(stream: TcpStream, tx: &Sender<ControlRequest>) {
     let peer_ok = stream
         .peer_addr()
@@ -254,7 +254,7 @@ fn serve(stream: TcpStream, tx: &Sender<ControlRequest>) {
         if tx.send(request).is_err() {
             return;
         }
-        // UI 线程最多 5s 内回执；超时说明编辑器卡住 / 没在跑 UI 循环。
+        // UI thread replies within 5s max; timeout means editor stuck / not running UI loop.
         let response = reply_rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap_or_else(|_| failed(Kind::NotReady, "editor did not answer in 5s"));
@@ -385,7 +385,7 @@ mod tests {
         let server = ControlServer::start(&dir).unwrap();
         let address = server.address;
         drop(server);
-        // accept 线程收到唤醒连接后才退出；给它一小段时间。
+        // accept thread exits only after receiving wake connection; give it a short time.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             if TcpStream::connect(address).is_err() {

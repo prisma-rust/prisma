@@ -18,24 +18,24 @@ fn sampler_type_indices_are_sequential() {
     assert_eq!(SamplerType::Shadow as u32, 3);
 }
 
-/// Verifies the "register_with_handle bumps 下一个 invariant. The
-/// 精确 behavior is that registering 槽 0 followed by a 法线
-/// `register` must yield 槽 1, not 槽 0. We can't construct a
-/// 完整 `BindlessTextureTable` without a 设备 so this is a
-/// shape-only test of the slot-allocation 契约
+/// Verifies the "register_with_handle bumps next  invariant. The
+/// Exact behavior is that registering slot 0 followed by a normal
+/// `register` must yield slot 1, not slot 0. We can't construct a
+/// complete `BindlessTextureTable` without a device so this is a
+/// shape-only test of the slot-allocation contract.
 #[test]
 fn register_with_handle_advances_next_pointer() {
-    // Mimic the relevant fields to exercise the bookkeeping 逻辑
+    // Mimic the relevant fields to exercise the bookkeeping logic.
     // without touching Vulkan
-    struct 实现 {
+    struct Impl {
         next: u32,
     }
-    // 等价 of the 公开 方法 writes a 槽 and bumps 下一个
+    // Equivalent of the public method writes a slot and bumps next.
     // past it.
-    let mut s = 实现 { next: 0 };
-    // Place 槽 0 (the 回退
+    let mut s = Impl { next: 0 };
+    // Place slot 0 (the fallback).
     s.next = 1;
-    // The 下一个 `register` 调用 must use 槽 1, not 0.
+    // The next `register` call must use slot 1, not 0.
     let next_slot = s.next;
     assert_eq!(next_slot, 1, "register_with_handle must advance next");
 }

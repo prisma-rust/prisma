@@ -166,7 +166,7 @@ impl Workspace {
                     self.log(
                         LogSource::Editor,
                         LogLevel::Error,
-                        format!("读取 {} 失败: {error}", file.path),
+                        format!("read {} failed: {error}", file.path),
                     );
                 }
             }
@@ -177,7 +177,7 @@ impl Workspace {
                 LogSource::Editor,
                 LogLevel::Error,
                 format!(
-                    "工程里的 {} 个文档全部加载失败；已留空工程场景，不显示编辑器示例文档",
+                    "all {} documents in project failed to load; kept empty project scene, not showing editor example documents",
                     failed.len()
                 ),
             );
@@ -192,7 +192,7 @@ impl Workspace {
                 self.log(
                     LogSource::Editor,
                     LogLevel::Info,
-                    format!("已为 {generated} 个资产生成 .rmeta"),
+                    format!("generated .rmeta for {generated} assets"),
                 );
             }
             self.assets = project::scan_assets(&root);
@@ -201,13 +201,16 @@ impl Workspace {
                 self.tree.insert_dir(&folder);
             }
         }
-        match SceneManifest::read(self.project_root.as_deref().expect("project_root 刚刚赋值"))
-        {
+        match SceneManifest::read(
+            self.project_root
+                .as_deref()
+                .expect("project_root just assigned"),
+        ) {
             Ok(manifest) => self.scene_manifest = manifest,
             Err(error) => self.log(
                 LogSource::Editor,
                 LogLevel::Warn,
-                format!("读取 assets/scenes.json 失败: {error}"),
+                format!("read assets/scenes.json failed: {error}"),
             ),
         }
         if !opened.is_empty() {
@@ -236,7 +239,7 @@ impl Workspace {
             LogSource::System,
             LogLevel::Info,
             format!(
-                "项目：{} 个文档 / {} 个文件",
+                "project: {} documents / {} files",
                 count,
                 self.project_files.len()
             ),
@@ -246,51 +249,57 @@ impl Workspace {
 
     pub fn delete_asset(&mut self, path: &str) -> io::Result<()> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法删除资产")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot delete asset",
+            )
         })?;
         if !path.starts_with("assets/") {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "只允许删除 assets/ 内的文件",
+                "only files within assets/ may be deleted",
             ));
         }
         if path.ends_with(".scene.json") || path.ends_with(".prefab.json") {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "场景 / 预制体请用文档面板",
+                "scene / prefab please use document panel",
             ));
         }
         let full = root.join(path);
         if !full.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{path} 不存在"),
+                format!("{path} does not exist"),
             ));
         }
         std::fs::remove_file(&full)?;
         remove_asset_sidecar(&full);
         self.refresh_project_files();
-        self.log(LogSource::Editor, LogLevel::Info, format!("已删除 {path}"));
+        self.log(LogSource::Editor, LogLevel::Info, format!("deleted {path}"));
         Ok(())
     }
 
     pub fn delete_document(&mut self, path: &str) -> io::Result<()> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法删除文档")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot delete document",
+            )
         })?;
         if !path.starts_with("assets/")
             || !(path.ends_with(".scene.json") || path.ends_with(".prefab.json"))
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "只允许删除 assets/ 下的 .scene.json / .prefab.json",
+                "only .scene.json / .prefab.json under assets/ may be deleted",
             ));
         }
         let full = root.join(path);
         if !full.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{path} 不存在"),
+                format!("{path} does not exist"),
             ));
         }
         std::fs::remove_file(&full)?;
@@ -322,18 +331,21 @@ impl Workspace {
             self.persist_scene_manifest();
         }
         self.project_files.retain(|file| file.path != path);
-        self.log(LogSource::Editor, LogLevel::Info, format!("已删除 {path}"));
+        self.log(LogSource::Editor, LogLevel::Info, format!("deleted {path}"));
         Ok(())
     }
 
     pub fn rename_asset(&mut self, from: &str, to: &str) -> io::Result<(usize, Vec<String>)> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法重命名资产")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot rename asset",
+            )
         })?;
         if from.ends_with(".scene.json") || from.ends_with(".prefab.json") {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "场景 / 预制体请用另存为或文档面板",
+                "scene / prefab please use Save As or document panel",
             ));
         }
         project::rename_path(&root, from, to)?;
@@ -427,7 +439,7 @@ impl Workspace {
                 LogSource::Editor,
                 LogLevel::Warn,
                 format!(
-                    "{} 处引用无法自动改写（不是 `assets/` 或相对路径）：{}",
+                    "reference at {} cannot be auto-rewritten (not `assets/` or relative path): {}",
                     ambiguous.len(),
                     ambiguous.join(", ")
                 ),
@@ -488,7 +500,7 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root bound"))?;
         project::read_json_asset(&root, path)
     }
 
@@ -496,7 +508,7 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root bound"))?;
         std::fs::read(root.join(path))
     }
 
@@ -522,7 +534,7 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root bound"))?;
         project::write_json_asset(
             &root,
             &AnimGraphLayout::path_for(graph_path),
@@ -534,13 +546,13 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root bound"))?;
         project::write_json_asset(&root, path, value)?;
         self.refresh_assets();
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已保存材质 {path}"),
+            format!("saved material {path}"),
         );
         Ok(())
     }
@@ -752,7 +764,7 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Info,
-                format!("已为 {generated} 个资产生成 .rmeta"),
+                format!("generated .rmeta for {generated} assets"),
             );
         }
         self.assets = project::scan_assets(&root);
@@ -770,25 +782,28 @@ impl Workspace {
 
     pub fn create_asset_folder(&mut self, relative: &str) -> io::Result<String> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法新建目录")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot create directory",
+            )
         })?;
         let relative = relative.trim_end_matches('/');
         if let Some(problem) = project::asset_path_problem(relative) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("目录路径不合法：{problem}"),
+                format!("directory path invalid: {problem}"),
             ));
         }
         if !relative.starts_with("assets/") || relative == "assets" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "目录必须位于 assets/ 内",
+                "directory must be within assets/",
             ));
         }
         if root.join(relative).exists() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("{relative} 已存在"),
+                format!("{relative} already exists"),
             ));
         }
         project::create_folder(&root, relative)?;
@@ -799,39 +814,42 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已新建目录 {relative}"),
+            format!("created directory {relative}"),
         );
         Ok(relative.to_string())
     }
 
     pub fn rename_folder(&mut self, from: &str, to: &str) -> io::Result<(usize, Vec<String>)> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法重命名目录")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot rename directory",
+            )
         })?;
         let from = from.trim_end_matches('/');
         let to = to.trim_end_matches('/');
         if let Some(problem) = project::asset_path_problem(to) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("目录路径不合法：{problem}"),
+                format!("directory path invalid: {problem}"),
             ));
         }
         if !from.starts_with("assets/") || !to.starts_with("assets/") || to == "assets" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "目录必须位于 assets/ 内",
+                "directory must be within assets/",
             ));
         }
         if !root.join(from).is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{from} 不是目录"),
+                format!("{from} is not a directory"),
             ));
         }
         if to == from || to.starts_with(&format!("{from}/")) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "目标不能是目录自身或它的子目录",
+                "target cannot be directory itself or its subdirectory",
             ));
         }
 
@@ -878,7 +896,7 @@ impl Workspace {
             LogSource::Editor,
             LogLevel::Info,
             format!(
-                "已重命名目录 {from} → {to}（改写 {references} 处引用，{} 个文档）",
+                "renamed directory {from} -> {to} (rewrote {references} references, {} documents)",
                 affected.len()
             ),
         );
@@ -887,27 +905,30 @@ impl Workspace {
 
     pub fn delete_folder(&mut self, path: &str) -> io::Result<()> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法删除目录")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot delete directory",
+            )
         })?;
         let path = path.trim_end_matches('/');
         if !path.starts_with("assets/") || path == "assets" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "只允许删除 assets/ 内的子目录",
+                "only subdirectories within assets/ may be deleted",
             ));
         }
         let full = root.join(path);
         if !full.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{path} 不是目录"),
+                format!("{path} is not a directory"),
             ));
         }
         let count = std::fs::read_dir(&full)?.count();
         if count > 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("目录非空（{count} 项），请先清空"),
+                format!("directory non-empty ({count} items), empty it first"),
             ));
         }
         std::fs::remove_dir(&full)?;
@@ -916,14 +937,17 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已删除目录 {path}"),
+            format!("deleted directory {path}"),
         );
         Ok(())
     }
 
     pub fn duplicate_asset(&mut self, path: &str) -> io::Result<String> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法复制资产")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot copy asset",
+            )
         })?;
         let target = crate::assets::unique_asset_path(&self.assets, path);
         project::copy_file(&root, path, &target)?;
@@ -932,7 +956,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已复制 {path} → {target}"),
+            format!("copied {path} -> {target}"),
         );
         Ok(target)
     }
@@ -947,7 +971,7 @@ impl Workspace {
         if from.ends_with(".scene.json") || from.ends_with(".prefab.json") {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "场景 / 预制体请用另存为移动",
+                "scene / prefab please use Save As to move",
             ));
         }
         self.rename_asset(from, &to)?;
@@ -978,7 +1002,7 @@ impl Workspace {
                         .entities
                         .get(entity)
                         .map(|entity| entity.display_name())
-                        .unwrap_or_else(|| "(已删除)".to_string()),
+                        .unwrap_or_else(|| "(deleted)".to_string()),
                     field,
                 });
             }
@@ -1039,7 +1063,7 @@ impl Workspace {
         let Some(root) = self.project_root.clone() else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                "没有绑定项目根（纯 fixture 模式）",
+                "no project root bound (fixture-only mode)",
             ));
         };
         let doc = project::read_document(&root, relative)?;
@@ -1058,7 +1082,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已打开 {relative}"),
+            format!("opened {relative}"),
         );
         Ok(())
     }
@@ -1111,7 +1135,7 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Warn,
-                format!("{changed} 个文档在磁盘上被修改过（保存前会提示）"),
+                format!("{changed} documents modified on disk (prompt before save)"),
             );
         }
         changed
@@ -1121,12 +1145,12 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root bound"))?;
         let path = self
             .docs
             .get(index)
             .and_then(|document| document.path.clone())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "文档还没有路径"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document has no path yet"))?;
         let doc = project::read_document(&root, &path)?;
         {
             let document = self.docs.get_mut(index).expect("checked above");
@@ -1140,7 +1164,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已按磁盘内容重新载入 {path}"),
+            format!("reloaded {path} from disk content"),
         );
         Ok(())
     }
@@ -1150,7 +1174,7 @@ impl Workspace {
             self.pending_save_conflict = Some(index);
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("{path} 在磁盘上已被修改"),
+                format!("{path} modified on disk"),
             ));
         }
         self.write_document_now(index)
@@ -1166,16 +1190,17 @@ impl Workspace {
     }
 
     pub(super) fn write_document_now(&mut self, index: usize) -> io::Result<String> {
-        let root = self
-            .project_root
-            .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法保存"))?;
+        let root = self.project_root.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot save",
+            )
+        })?;
 
         let (path, doc) = {
-            let document = self
-                .docs
-                .get(index)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "文档不存在"))?;
+            let document = self.docs.get(index).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "document does not exist")
+            })?;
             let path = match &document.path {
                 Some(path) => path.clone(),
                 None => project::default_save_path(&root, document.kind, &document.title()),
@@ -1191,7 +1216,7 @@ impl Workspace {
             document.note_disk_state(Some(&root));
         }
         self.refresh_project_files();
-        self.log(LogSource::Editor, LogLevel::Info, format!("已保存 {path}"));
+        self.log(LogSource::Editor, LogLevel::Info, format!("saved {path}"));
         Ok(path)
     }
 
@@ -1266,7 +1291,7 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Warn,
-                format!("已恢复 {count} 个上次退出时未保存的文档（仍未保存）"),
+                format!("recovered {count} documents unsaved at last exit (still unsaved)"),
             );
         }
         Ok(count)
@@ -1280,28 +1305,30 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            "已丢弃退出时的未保存快照",
+            "discarded unsaved snapshot at exit",
         );
         Ok(())
     }
 
     pub fn save_active_as(&mut self, input: &str) -> io::Result<String> {
-        let root = self
-            .project_root
-            .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法保存"))?;
+        let root = self.project_root.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot save",
+            )
+        })?;
         let kind = self.document().kind;
         let path = project::normalize_save_path(kind, input);
         if path.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "路径不合法（不能为空、不能包含 .. 或绝对路径）",
+                "path invalid (cannot be empty, contain .., or absolute path)",
             ));
         }
         if !path.starts_with("assets/") {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "只允许写到 assets/ 下",
+                "only write within assets/",
             ));
         }
         let doc = self.document().doc.clone();
@@ -1316,20 +1343,22 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已另存为 {path}"),
+            format!("saved as {path}"),
         );
         Ok(path)
     }
 
     pub fn reload_active(&mut self) -> io::Result<()> {
         let Some(root) = self.project_root.clone() else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound",
+            ));
         };
-        let path = self
-            .document()
-            .path
-            .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "文档尚未保存"))?;
+        let path =
+            self.document().path.clone().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "document not saved yet")
+            })?;
         let doc = project::read_document(&root, &path)?;
         {
             let document = self.document_mut();
@@ -1341,11 +1370,7 @@ impl Workspace {
         self.hydrate_documents();
 
         self.clamp_selection();
-        self.log(
-            LogSource::Editor,
-            LogLevel::Info,
-            format!("已重新读取 {path}"),
-        );
+        self.log(LogSource::Editor, LogLevel::Info, format!("re-read {path}"));
         Ok(())
     }
 
@@ -1372,14 +1397,17 @@ impl Workspace {
             self.log(
                 LogSource::Editor,
                 LogLevel::Error,
-                format!("写入 assets/scenes.json 失败: {error}"),
+                format!("write assets/scenes.json failed: {error}"),
             );
         }
     }
 
     pub fn reload_scene_manifest(&mut self) -> io::Result<()> {
         let Some(root) = self.project_root.clone() else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound",
+            ));
         };
         self.scene_manifest = SceneManifest::read(&root)?;
         Ok(())

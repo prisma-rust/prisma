@@ -1,17 +1,17 @@
 //! Analytic micro-scenes for the shared-transport reference variant.
 //!
-//! Spec §7.2 要求先用「答案可以闭式写出」的微场景验证输送本身，再用它去评判
-//! 缓存：否则参考与消费者共享同一个错误，两者会互相认证。这里的每个场景都
-//! 读 `PT_COLOR_H`（R32G32B32A32_SFLOAT，tonemap 之前的线性辐射），而不是
-//! `readback_pixels`：后者是 8-bit、已被 tonemap，白炉里 0.25 与 0.5 会被压到
-//! 0.19 与 0.31，能量断言就失去意义了。
+//! Spec §7.2 requires first validating the pipeline with "micro-scenes whose answers can be written in closed form", then using it to judge
+//! cache: otherwise reference and consumer share same error and authenticate each other. Each scene here
+//! reads `PT_COLOR_H` (R32G32B32A32_SFLOAT, linear radiance before tonemap), not
+//! `readback_pixels`: latter is 8-bit, already tonemapped, white furnace 0.25 and 0.5 compressed to
+//! 0.19 and 0.31, making quantitative assertions meaningless.
 //!
-//! 场景刻意做小。`pt_max_bounces = 1` 直接删掉间接段，于是单次弹射的错误无处
-//! 藏身；两段 throughput 的测试只加一段间接弹射，并且落在凸的漫反射盒子上 ——
-//! 凸体表面朝外的余弦采样永远不可能重新击中自己，路径长度被物理地钉死在一段。
+//! Scenes deliberately small. `pt_max_bounces = 1` removes indirect segment, so single-bounce error has nowhere
+//! to hide; two-segment throughput test adds one indirect bounce and lands on convex diffuse box surface —
+//! cosine sampling on convex outward surface can never hit itself, path length physically pinned to one segment.
 //!
-//! 所有场景都用 `PtVariant::Reference`：无缓存、无 ReSTIR、无 firefly clamp、
-//! 均匀灯采样。消费者变体的偏置项正是要被这套测试量出来的东西，不能混进来。
+//! All scenes use `PtVariant::Reference`: no cache, no ReSTIR, no firefly clamp,
+//! uniform light sampling. Bias terms of consumer variants are exactly what these tests must measure, cannot mix in.
 #![cfg(all(feature = "pathtrace", feature = "ibl"))]
 
 use prism_render::managers::{MaterialAlphaMode, MaterialUploadInput, MeshHandle};
@@ -20,27 +20,27 @@ use prism_render::{FrameInput, FrameUBOData, GraphRenderer, HdrReadback, PtVaria
 
 const SIZE: usize = 64;
 
-/// RGBE 的指数字节。`hdr::rgbe_to_float` 的缩放是 `2^(e - 128 - 8)`，取 128
-/// 时缩放正好是 1/256，于是尾数字节 `b` 解出的辐射就是 `b / 256` —— 0.25、
-/// 0.375、0.5 都是 f32 精确值，解码不引入任何舍入。
+/// RGBE exponent byte. `hdr::rgbe_to_float` scale is `2^(e - 128 - 8)`, taking 128
+/// gives scale exactly 1/256, so mantissa byte `b` decodes to radiance `b / 256` — 0.25,
+/// 0.375, 0.5 are all exact f32 values, decode introduces no rounding.
 const RGBE_EXPONENT: u8 = 128;
 
-/// 关掉太阳：`light_dir.w` 是预乘的辐射强度，取 0 时
-/// `sun_radiance = light_color.rgb * light_dir.w` 为零，NEE 的
-/// `dot(L_rad, L_rad) > 1e-10` 检查会直接跳过。
+/// Turn off sun: `light_dir.w` is pre-multiplied radiance intensity, taking 0 makes
+/// `sun_radiance = light_color.rgb * light_dir.w` zero, NEE's
+/// `dot(L_rad, L_rad) > 1e-10` check skips directly.
 const SUN_OFF: [f32; 4] = [0.0, 0.0, 1.0, 0.0];
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
-/// 只沿 +Z 传播的太阳，强度写在 `w`。
+/// Sun propagating only along +Z, intensity written in `w`.
 fn sun(intensity: f32) -> [f32; 4] {
     [0.0, 0.0, 1.0, intensity]
 }
 
-/// 构造一张每个像素都等于 `radiance` 的 Radiance RGBE 图。
+/// Build a Radiance RGBE image where every pixel equals `radiance`.
 ///
-/// `radiance` 必须是 1/256 的整数倍（上面的指数约定），并且换算出的尾数字节
-/// 不能等于 2 —— 扫描线前两个字节是 `0x02 0x02` 时解码器会把它当成 RLE，而我
-/// 们要的正是未压缩字面量扫描线。
+/// `radiance` must be integer multiple of 1/256 (above exponent convention), and converted mantissa byte
+/// cannot equal 2 — when scanner sees two bytes `0x02 0x02` decoder treats as RLE, while we
+/// need an uncompressed literal scanline.
 fn constant_environment(radiance: f32) -> Vec<u8> {
     let mantissa = (radiance * 256.0).round() as u8;
     assert!(
@@ -78,7 +78,7 @@ fn try_create(env: Option<Vec<u8>>) -> Option<GraphRenderer> {
             panic!("failed to create the offscreen renderer: {message}");
         }
     };
-    // 没有 ray query 就没有 `PathTracePass`，整套测试无处落脚。
+    // Without ray query there's no `PathTracePass`, whole test suite has nowhere to land.
     if !renderer.context().rt_caps.has_ray_query() {
         eprintln!("[SKIP] no VK_KHR_ray_query support");
         return None;
@@ -113,8 +113,8 @@ fn draw_item(mesh: MeshHandle, model: [[f32; 4]; 4], material: u32, entity_id: u
     }
 }
 
-/// 注册一个材质并返回它的 SSBO 槽位。SSBO 是整块上传的，所以必须
-/// `flush_materials` 之后路径追踪才读得到它。
+/// Register a material and return its SSBO slot. SSBO uploaded wholesale, so must
+/// `flush_materials` before path tracing can read it.
 fn upload_material(renderer: &mut GraphRenderer, input: MaterialUploadInput) -> u32 {
     let handle = renderer
         .register_material(input)
@@ -124,9 +124,9 @@ fn upload_material(renderer: &mut GraphRenderer, input: MaterialUploadInput) -> 
     slot
 }
 
-/// 相机背后的盒子。主射线永远打不到它，它存在的唯一理由是让
-/// `PathTracePass` 有几何：没有实例时 `pt_scene` 为空，整个 PT dispatch 被
-/// 跳过，`PT_COLOR_H` 根本不会发布。
+/// Box behind camera. Main raycast can never hit it, only reason it exists is to give
+/// `PathTracePass` geometry: with no instances `pt_scene` empty, entire PT dispatch
+/// skipped, `PT_COLOR_H` never published.
 fn behind_camera_box(renderer: &mut GraphRenderer) -> Vec<DrawItem> {
     let mesh = register_box(renderer);
     let slot = upload_material(
@@ -147,9 +147,9 @@ fn behind_camera_box(renderer: &mut GraphRenderer) -> Vec<DrawItem> {
     )]
 }
 
-/// 相机前方 5 米处的漫反射盒子（半边长 1，占画面高度约 48%，中心像素一定能
-/// 命中正面）。`roughness = 1.0` 让 bounce 0 的散射恒走余弦分支：源码里
-/// `prob_diffuse = surf.roughness`，只有这条路径的 throughput 与采样方向无关。
+/// Diffuse box 5 meters in front of camera (half extent 1, ~48% of image height, center pixel
+/// certainly hits front face). `roughness = 1.0` makes bounce 0 scatter always take cosine branch: source has
+/// `prob_diffuse = surf.roughness`, only this path's throughput and sample direction matter.
 fn diffuse_box(renderer: &mut GraphRenderer, albedo: f32) -> Vec<DrawItem> {
     let mesh = register_box(renderer);
     let slot = upload_material(
@@ -170,9 +170,9 @@ fn diffuse_box(renderer: &mut GraphRenderer, albedo: f32) -> Vec<DrawItem> {
     )]
 }
 
-/// 只有自发辐射的盒子。`base_color` 全黑，所以反射项为零，屏幕上不该出现
-/// 任何非辐射来源。注意不调 `set_emissive`：那会把三角形注册进发光三角表，
-/// 从而打开一遍额外的 NEE 采样，而我们测的是材质自身的 emissive 项。
+/// Emissive-only box. `base_color` fully black, so reflection term zero, screen should not show
+/// any non-emissive source. Note not calling `set_emissive`: that would register triangles into glow triangle list,
+/// opening extra NEE pass, while we test material's own emissive term.
 fn emissive_box(renderer: &mut GraphRenderer, emission: f32) -> Vec<DrawItem> {
     let mesh = register_box(renderer);
     let slot = upload_material(
@@ -181,8 +181,8 @@ fn emissive_box(renderer: &mut GraphRenderer, emission: f32) -> Vec<DrawItem> {
             base_color: [0.0, 0.0, 0.0, 1.0],
             metallic: 0.0,
             roughness: 1.0,
-            // `to_gpu` 只把 emissive[0] 送进 SSBO，且着色器里
-            // `s.emissive = ei * es`，所以这个值就是期望的辐射。
+            // `to_gpu` only sends emissive[0] into SSBO, and in shader
+            // `s.emissive = ei * es`, so this value is expected radiance.
             emissive: [emission, 0.0, 0.0],
             emissive_strength: 1.0,
             alpha_mode: MaterialAlphaMode::Opaque,
@@ -197,9 +197,9 @@ fn emissive_box(renderer: &mut GraphRenderer, emission: f32) -> Vec<DrawItem> {
     )]
 }
 
-/// 两个前后错开的漫反射盒子。散射出来的射线有可能打到另一个盒子上，于是
-/// bounce 1+ 真的会命中表面 —— 这是唯一能让 SHaRC 的 hash 查找真正跑起来的
-/// 几何形状（单靠一个凸盒子，间接段永远是 miss）。
+/// Two front-back swapped diffuse boxes. Scattered raycast may hit other box, so
+/// bounce 1+ truly hits surface — the only geometry shape able to make SHaRC hash lookup actually run
+/// (single convex box means indirect segment always misses).
 fn two_box_scene(renderer: &mut GraphRenderer, albedo: f32) -> Vec<DrawItem> {
     let mesh = register_box(renderer);
     let slot = upload_material(
@@ -266,11 +266,11 @@ fn frame_data(
     }
 }
 
-/// 跑一帧路径追踪并把 `PT_COLOR_H` 以线性 f32 读回来。
+/// Run one frame path tracing and read `PT_COLOR_H` back as linear f32.
 ///
-/// `request_hdr_readback` 必须在 `execute` 之前（拷贝是记进那一帧的命令
-/// 缓冲的），`take_hdr_readback` 必须在 `present` 之后（headless 的 present
-/// 会等帧栅栏，之后映射显存才安全）。
+/// `request_hdr_readback` must be before `execute` (copy recorded into that frame's command
+/// buffer), `take_hdr_readback` must be after `present` (headless present
+/// waits frame fence, only then mapping VRAM is safe).
 fn render_pt_frame(
     renderer: &mut GraphRenderer,
     items: &[DrawItem],
@@ -312,15 +312,15 @@ fn render_pt_frame(
         render_mode: RenderMode::PathTrace,
         pt_max_bounces,
         pt_ray_max_distance: 100.0,
-        // 不冻结：每帧一个样本就够 —— 下面每个场景的估计量都是零方差
-        // （常量环境、常量 emissive、单次 NEE），不存在需要收敛的噪声。
+        // Don't freeze: one sample per frame enough — every scene's estimator below is zero variance
+        // (constant environment, constant emissive, single NEE), no convergence noise to store.
         pt_max_iterations: 0,
-        // `result *= push.camera_pos.w`：曝光乘在输出上，解析值只有在
-        // exposure == 1 时才等于辐射本身。
+        // `result *= push.camera_pos.w`: exposure multiplied at output, parsed value only equals radiance itself when
+        // exposure == 1.
         exposure: 1.0,
         pt_lights: &[],
-        // `reset` 为真时从零开始累积，于是「一帧 == 一个蒙特卡洛样本」；为假
-        // 时让累积跨帧收敛，用于需要低方差的能量比较。
+        // `reset = true` accumulates from zero, so "one frame == one Monte Carlo sample"; false
+        // lets accumulation converge across frames, for low-variance quantitative comparisons.
         pt_accum_dirty: reset,
         has_camera: true,
         camera_orthographic: false,
@@ -348,7 +348,7 @@ fn render_pt_frame(
     )
 }
 
-/// 单帧、清零累积、把 PT_COLOR_H 读回来。
+/// Single frame, zero accumulation, read PT_COLOR_H back.
 fn trace_frame(
     renderer: &mut GraphRenderer,
     items: &[DrawItem],
@@ -368,8 +368,8 @@ fn trace_frame(
     .expect("frame published PT_COLOR_H")
 }
 
-/// 累积 `samples` 帧后读回：只有第一帧清零累积，所以读回值就是 `samples` 个样
-/// 本的均值（`PT_COLOR_H` 里存的是 running mean）。
+/// Accumulate `samples` frames then read back: only first frame zeros accumulation, so read-back value is mean of
+/// `samples` samples (`PT_COLOR_H` stores running mean).
 fn accumulate(
     renderer: &mut GraphRenderer,
     items: &[DrawItem],
@@ -394,7 +394,7 @@ fn accumulate(
     hdr.expect("frame published PT_COLOR_H")
 }
 
-/// 整幅图（红色通道）的最小值与最大值。常量场景应该退化成 min == max。
+/// Min and max of entire image (red channel). Constant scene should degrade to min == max.
 fn value_range(hdr: &HdrReadback) -> (f32, f32) {
     let mut lo = f32::INFINITY;
     let mut hi = f32::NEG_INFINITY;
@@ -423,7 +423,7 @@ fn assert_uniform(hdr: &HdrReadback, expected: f32, what: &str) {
 
 #[test]
 fn constant_environment_reads_back_linearly() {
-    // 白炉：常量环境 0.25，场景里没有任何东西挡射线，每个像素都只该看到环境。
+    // White furnace: constant environment 0.25, nothing in scene blocks raycast, every pixel should only see environment.
     let Some(mut renderer) = try_create(Some(constant_environment(0.25))) else {
         return;
     };
@@ -432,16 +432,16 @@ fn constant_environment_reads_back_linearly() {
     let quarter = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert_uniform(&quarter, 0.25, "furnace at 0.25");
 
-    // 同样的场景换成两倍辐射。
+    // Same scene with doubled radiance.
     renderer
         .set_environment(Some(constant_environment(0.5)))
         .expect("set_environment");
     let half = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert_uniform(&half, 0.5, "furnace at 0.5");
 
-    // 线性性：辐射翻倍，回读也必须翻倍。这条断言就是「回读在 tonemap 之前」
-    // 的证明 —— tonemap 后的 8-bit 路径会把 0.25 和 0.5 压成约 0.19 和 0.31，
-    // 比值只有 1.6 倍。
+    // Linearity: doubled radiance, read-back must double. This assertion proves "read back before tonemap" —
+    // post-tonemap 8-bit path compresses 0.25 and 0.5 to about 0.19 and 0.31,
+    // ratio only 1.6x.
     let ratio = half.mean_luminance() / quarter.mean_luminance();
     assert!(
         (ratio - 2.0).abs() < 1e-3,
@@ -451,30 +451,30 @@ fn constant_environment_reads_back_linearly() {
 
 #[test]
 fn two_segment_throughput_matches_the_analytic_value() {
-    // 常量环境 0.375（尾数字节 96）。用和上面不同的辐射值，是为了让 IBL 磁盘
-    // 缓存的哈希不同 —— 两个测试并行跑时不会去抢同一个缓存文件。
+    // Constant environment 0.375 (mantissa byte 96). Use radiance value different from above, so IBL disk
+    // cache hash differs — two tests running in parallel won't fight for same cache file.
     let Some(mut renderer) = try_create(Some(constant_environment(0.375))) else {
         return;
     };
     let albedo = 0.5;
     let items = diffuse_box(&mut renderer, albedo);
 
-    // 两段：主射线 → 盒子表面（一次散射）→ miss → 环境。
+    // Two segments: main raycast → box surface (one scatter) → miss → environment.
     let hdr = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 2);
     assert!(!hdr.has_non_finite(), "two-segment path produced NaN/Inf");
 
-    // 背景：零段散射，得到的就是环境辐射本身（miss 传播）。
+    // Background: zero-segment scatter, result is environment radiance itself (miss propagation).
     let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
     assert!(
         (corner - 0.375).abs() < 1e-4,
         "background {corner} != 0.375"
     );
 
-    // 正面：一段漫反射散射后再 miss。逐段 throughput 是
-    // (brdf·cos) / pdf；roughness = 1 时 pdf 恒为余弦 pdf (cos/π)，于是
-    //   throughput = (albedo/π + specular)·cos / (cos/π) = albedo + π·specular。
-    // 正入射下 D = 1/π、V = 0.25、F = 0.1024，因此 π·specular = 0.1024·0.25
-    // = 0.0256。整条路径的期望值就是 (albedo + 0.0256) · 0.375。
+    // Front face: one diffuse scatter then miss. Per-segment throughput is
+    // (brdf·cos) / pdf; with roughness = 1 pdf always cosine pdf (cos/π), so
+    //   throughput = (albedo/π + specular)·cos / (cos/π) = albedo + π·specular.
+    // With normal incidence D = 1/π, V = 0.25, F = 0.1024, therefore π·specular = 0.1024·0.25
+    // = 0.0256. Expected value of whole path is (albedo + 0.0256) · 0.375.
     let expected = (albedo + 0.0256) * 0.375;
     let face = hdr
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -485,8 +485,8 @@ fn two_segment_throughput_matches_the_analytic_value() {
         "diffuse face read {face}, analytic value {expected} ({relative:.1}% off)"
     );
 
-    // 凸体表面的朝外余弦采样永远不可能重新击中自己，所以提高弹射次数不该
-    // 改变任何像素：多出来的那些段全都是空的。
+    // Convex outward cosine sampling can never hit itself, so raising bounce count shouldn't
+    // change any pixel: extra segments are all empty.
     let deep = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 4);
     let deep_face = deep
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -502,16 +502,16 @@ fn two_segment_throughput_matches_the_analytic_value() {
 
 #[test]
 fn pure_emission_matches_the_material() {
-    // 黑环境（`new_empty` 是 1x1x6 全零立方体），全场唯一的光源是材质自身的
-    // emissive 项。
+    // Black environment (`new_empty` is 1x1x6 all-zero cube), only light source in whole scene is material's own
+    // emissive term.
     let Some(mut renderer) = try_create(None) else {
         return;
     };
     let emission = 0.6f32;
     let items = emissive_box(&mut renderer, emission);
 
-    // pt_max_bounces = 1：bounce 0 只累加 emissive，然后累加 NEE（太阳关掉、
-    // 没有发光三角），循环一次都不进。期望值就是 emissive 本身。
+    // pt_max_bounces = 1: bounce 0 only accumulates emissive, then NEE (sun off,
+    // no glow triangles), loop never entered. Expected value is emissive itself.
     let hdr = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert!(!hdr.has_non_finite(), "emissive scene produced NaN/Inf");
 
@@ -523,9 +523,9 @@ fn pure_emission_matches_the_material() {
         "emissive face read {} instead of {emission}",
         centre[0]
     );
-    // `GpuMaterial` 只把 `emissive[0]` 打包进 SSBO（`metallic_roughness_emissive.z`），
-    // 再乘 `emissive_strength` 后对整个 RGB 生效 —— 所以发光体是灰体，三个通道
-    // 都等于同一个标量。这条断言把「灰体」这个事实钉在接口上。
+    // `GpuMaterial` only packs `emissive[0]` into SSBO (`metallic_roughness_emissive.z`),
+    // then multiplies `emissive_strength` so entire RGB takes effect — glow body is gray body, all three channels
+    // equal same scalar. This assertion pins "gray body" fact onto interface.
     for (channel, value) in [("green", centre[1]), ("blue", centre[2])] {
         assert!(
             (value - emission).abs() < 1e-3,
@@ -533,7 +533,7 @@ fn pure_emission_matches_the_material() {
         );
     }
 
-    // 盒子占画面高度约 48%，角落的射线打到黑环境上，必须是严格 0。
+    // Box ~48% of image height, corner raycast hits black environment, must be strictly 0.
     let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
     assert!(corner.abs() < 1e-6, "background {corner} is not black");
 }
@@ -549,11 +549,11 @@ fn directional_light_is_linear_in_radiance() {
     let one = trace_frame(&mut renderer, &items, sun(1.0), WHITE, 1);
     let two = trace_frame(&mut renderer, &items, sun(2.0), WHITE, 1);
 
-    // 单方向光、pt_max_bounces = 1：唯一的光传输项是 bounce 0 的 NEE。
-    // L_dir 与 +Z 面法线同向（n_dot_l = 1），L_rad = light_color.rgb · 1，
-    // 遮挡射线朝盒子外侧打，必然无遮挡，所以
-    //   L = (albedo/π + F·D·V) · 强度
-    // 其中 F = 0.1024（金属度 0）、D = 1/π、V = 0.25。
+    // Single directional light, pt_max_bounces = 1: only light transport term is bounce 0 NEE.
+    // L_dir same direction as +Z face normal (n_dot_l = 1), L_rad = light_color.rgb · 1,
+    // occlusion raycast cast to outside side of box, necessarily unoccluded, so
+    //   L = (albedo/π + F·D·V) · intensity
+    // where F = 0.1024 (metallic 0), D = 1/π, V = 0.25.
     let brdf = albedo / std::f32::consts::PI + 0.1024 * 0.25 / std::f32::consts::PI;
     let centre = one
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -564,8 +564,8 @@ fn directional_light_is_linear_in_radiance() {
         "single directional light read {centre}, analytic value {brdf} ({relative:.1}% off)"
     );
 
-    // 线性性：强度翻倍，辐射跟着翻倍。这条断言把「NEE 里少了或多了 1/pdf
-    // 因子」这类错误挡住 —— 均匀采样一盏灯的 1/pdf 就是 1。
+    // Linearity: doubled intensity, radiance doubles. This assertion guards "NEE missing or extra 1/pdf
+    // factor" class of errors — uniform sampling one light's 1/pdf is exactly 1.
     let centre_two = two
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
         .expect("centre pixel")[0];
@@ -579,10 +579,10 @@ fn directional_light_is_linear_in_radiance() {
 
 #[test]
 fn a_degenerate_sharc_hash_does_not_poison_the_image() {
-    // §7.2 的最后一项：「NaN/Inf 与空 hash」。hash 容量为 0 时缓存表根本建立
-    // 不起来，但 push 常量里的 query 位依然会被置上，于是着色器真的会去查一
-    // 张退化表。此时图像必须仍然有限、非负 —— 一次越界读或 NaN 传播都会让
-    // PT_COLOR_H 出现脏值，而这正是下游 tonemap 藏不住的东西。
+    // Last item of §7.2: "NaN/Inf and empty hash". When hash capacity 0 cache table can't be
+    // built, but query bit in push constants still gets set, so shader truly queries a
+    // degenerate table. Image must still be finite and non-negative — one out-of-bounds read or NaN propagation would make
+    // PT_COLOR_H dirty, which downstream tonemap can't hide.
     let Some(mut renderer) = try_create(Some(constant_environment(0.25))) else {
         return;
     };
@@ -598,23 +598,23 @@ fn a_degenerate_sharc_hash_does_not_poison_the_image() {
     );
     let (lo, hi) = value_range(&hdr);
     assert!(lo >= 0.0, "degenerate hash produced negative radiance {lo}");
-    // 唯一的光源是常量环境 0.25；漫反射盒子只会让它衰减，所以任何像素都不该
-    // 超过环境本身（外加一点 GGX 高光）。
+    // Only light source is constant environment 0.25; diffuse box only attenuates it, so no pixel should
+    // exceed environment itself (plus one GGX highlight point outside).
     assert!(hi < 0.5, "degenerate hash amplified radiance to {hi}");
 }
 
 #[test]
 fn cache_on_preserves_the_analytic_energy() {
-    // §7.2 剩下的三项在这里一起量：缓存命中时必须抄走 `cached_radiance` 之后
-    // 直接 `break`（`pt_render.slang:771-810`），不能再补一次本地 NEE；训练侧
-    // 判定「这个体素已经足够可信」（`SharcUpdateHit` 返回 false）后结束路径，
-    // 不能让沉积能量翻倍；而主射线 miss 的天空项与缓存完全无关。三者共同的、
-    // 可观测的后果是同一条：同一个场景开缓存与不开缓存，帧能量必须一致。
+    // Remaining three items of §7.2 measured together here: on cache hit must copy `cached_radiance` then
+    // directly `break` (`pt_render.slang:771-810`), cannot add another local NEE; training side
+    // judging "this voxel is credible enough" (`SharcUpdateHit` returns false) ends path,
+    // cannot double deposited measurable amount; while main raycast miss sky term completely unrelated to cache. Three share same,
+    // observable consequence: same scene with cache on/off, frame-level amount must match.
     //
-    // SHaRC 是有偏的（体素分辨率、材质去调制、firefly 抑制），§7.2 因此只要求
-    // 约定的漫反射 ROI 相对平均亮度误差 ≤5%，以及「没有稳定的双倍计能」—— 命中
-    // 时又叠一次 NEE 的典型后果是间接项翻倍，在这套场景里表现为 30% 以上的整
-    // 体偏移，离 5% 的门槛很远。
+    // SHaRC is biased (voxel resolution, material demodulation, firefly suppression), so §7.2 only requires
+    // conventional diffuse ROI relative average luminance error ≤5%, and "no stable double counting" — hit
+    // then adding NEE again typical result is doubled indirect term, in this scene showing >30% overall
+    // offset, far from 5% threshold.
     let Some(mut renderer) = try_create(Some(constant_environment(0.625))) else {
         return;
     };
@@ -626,8 +626,8 @@ fn cache_on_preserves_the_analytic_energy() {
     renderer.settings_mut().pt_gi = PtGiMode::Off;
     let uncached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);
 
-    // 反向对照：关掉 gi_mode 时这两个计数器必须一动不动。没有这一条，下面
-    // 「计数器 > 0」的断言就无法排除「计数器根本恒为 1」这种坏法。
+    // Reverse check: turning off gi_mode these two counters must not move. Without this, below
+    // "counter > 0" assertion can't exclude "counter always 1" bad case.
     #[cfg(feature = "sharc")]
     assert_eq!(
         (
@@ -638,20 +638,20 @@ fn cache_on_preserves_the_analytic_energy() {
         "gi_mode = Off must not train or resolve the SHaRC cache"
     );
 
-    // 体素边长是 `2^level / sharc_scene_scale`，而 `level` 由命中点到相机的距离
-    // 决定（这套场景里 2–6 米 → level 1–2）。sceneScale = 5 时体素是 0.4–0.8 米，
-    // 与两个盒子之间的线段长度同一量级，`valid_hit` 的两条几何门槛才过得去；
-    // 出厂值 50 会得到 4 厘米级的体素，命中稀到只剩个位数像素。
+    // Voxel edge length is `2^level / sharc_scene_scale`, and `level` determined by distance from hit point to camera
+    // (in this scene 2–6 m → level 1–2). With sceneScale = 5 voxels are 0.4–0.8 m,
+    // same order as line segment length between two boxes, so `valid_hit`'s two geometry thresholds pass;
+    // factory value 50 gives 4 cm voxels, hits sparse to only a few pixels.
     renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_capacity = 1 << 14;
     renderer.settings_mut().sharc_scene_scale = 5.0;
     let cached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);
 
-    // 缓存真的跑起来了，否则下面的能量比较是空转。计时器里出现
-    // "SharcTrain" / "SharcResolve" 只说明那两段 GPU 区间被打开过
-    // （`GraphRenderer::execute` 无条件 `begin_pass`），区间里的
-    // `dispatch_training` 仍可能被守卫静默早退；渲染器自己记的真实 dispatch
-    // 次数才是证据。
+    // Cache truly ran, otherwise below quantitative comparison is empty talk. Timers showing
+    // "SharcTrain" / "SharcResolve" only means those two GPU ranges were opened
+    // (`GraphRenderer::execute` unconditional `begin_pass`), inside range
+    // `dispatch_training` may still silently early-return via guard; renderer's own recorded real dispatch
+    // count is evidence.
     #[cfg(feature = "sharc")]
     {
         let trained = renderer.sharc_train_dispatches();
@@ -675,8 +675,8 @@ fn cache_on_preserves_the_analytic_energy() {
         let (lo, _) = value_range(hdr);
         assert!(lo >= 0.0, "{name}: negative radiance {lo}");
 
-        // miss 传播：画面左上角的主射线从两块盒子旁边擦过去，只看见常量天空。
-        // 缓存不得参与这一项 —— 无论它训练了多久。
+        // Miss propagation: main raycast from image top-left corner grazes past two boxes, only sees constant sky.
+        // Cache must not participate here — no matter how long it trained.
         let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
         assert!(
             (corner - 0.625).abs() < 1e-4,
@@ -684,9 +684,9 @@ fn cache_on_preserves_the_analytic_energy() {
         );
     }
 
-    // 训练与解析真的 dispatch 了，也只是必要条件 —— 训练跑起来但没有一个体素
-    // 落进被查询的位置，画面同样不会变。真正的证据是画面：命中缓存会抄走
-    // `cached_radiance` 并直接结束路径，同一像素的估计值必然与纯路径追踪不同。
+    // Training and parsing truly dispatched is only necessary condition — training runs but no voxel
+    // falls into queried position, image still won't change. Real evidence is image: cache hit copies
+    // `cached_radiance` and ends path directly, same pixel's estimate must differ from pure path tracing.
     let mut changed = 0usize;
     for y in 0..SIZE as u32 {
         for x in 0..SIZE as u32 {

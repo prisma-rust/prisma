@@ -23,25 +23,25 @@ use serde_json::{Map, Value};
 pub const ASSET_PATH_FIELDS: &[&str] = &[
     "mesh_path",           // MeshRenderer
     "material_path",       // MeshRenderer
-    "material_paths",      // MeshRenderer（Vec<String>，多 submesh 材质）
+    "material_paths",      // MeshRenderer (Vec<String>, multi-submesh materials)
     "sprite_path",         // SpriteRenderer
     "tileset_path",        // Tilemap
     "hdr_path",            // Skybox
     "sound_path",          // AudioSource
-    "heightmap",           // Terrain（不以 _path 结尾，必须显式登记）
+    "heightmap",           // Terrain (does not end with _path, must be registered explicitly)
     "skeleton_path",       // SkeletonRoot
     "default_clip_path",   // SkeletonRoot
     "skinned_mesh_path",   // SkinnedMeshRenderer
     "clip_path",           // Animator
-    "state_machine_path",  // Animator（.rasm）
-    "blend_clip_paths",    // Animator（Vec<String>，一维混合空间）
-    "blend_2d_clip_paths", // Animator（Vec<String>，二维混合空间）
-    "additive_clip_path",  // Animator（叠加层剪辑）
-    "anim_graph_path",     // Animator（.rag 动画图）
+    "state_machine_path",  // Animator (.rasm)
+    "blend_clip_paths",    // Animator (Vec<String>, 1D blend space)
+    "blend_2d_clip_paths", // Animator (Vec<String>, 2D blend space)
+    "additive_clip_path",  // Animator (additive layer clip)
+    "anim_graph_path",     // Animator (.rag animation graph)
     "env_map",             // EnvironmentLighting
     "volume",              // GiConfig
     "prefab",              // PrefabInstance
-    "font",                // UI Text（工程自带字体，#583）
+    "font",                // UI Text (project-provided font, #583)
 ];
 
 /// Path field → GUID field. Returns `None` for non-reference strings.

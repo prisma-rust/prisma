@@ -1,8 +1,8 @@
-//! 已 cook 资源的检查与校验（MCP `asset_inspect` / `asset_validate` 的后端，#560 P0）。
+//! Inspection and validation of cooked assets (backend for MCP `asset_inspect` / `asset_validate`, #560 P0).
 //!
-//! UI / Vulkan 无关：只读字节、复用 `prism_asset` 的解码器，产出一份可 JSON 化的报告。
-//! 骨骼相关的问题（权重没归一化、joint 越界、轨道指向不存在的骨骼、关键帧乱序）
-//! 必须能在这里被检查出来 —— 否则只能靠「看起来没穿模」判断。
+//! No UI / Vulkan dependency: only reads bytes, reuses `prism_asset` decoders, produces JSON-able report.
+//! Skeleton-related issues (weights not normalized, joint out of range, tracks pointing to missing skeleton,
+//! keyframes out of order) must be detectable here — otherwise only "looks not clipping" judgment available.
 //!
 //! ```text
 //! asset_inspect  → { path, kind, byteSize, summary, problems }
@@ -16,22 +16,22 @@ use prism_asset::formats_skinned::{decode_ranim, decode_rskel, decode_rskin};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// 权重和与 1 的容差（与 cooker 的归一化容差一致）。
+/// Tolerance for weight sum vs 1 (consistent with cooker normalization tolerance).
 const WEIGHT_SUM_TOLERANCE: f32 = 1e-3;
-/// 骨骼数量上限的提示阈值（超过 GPU 侧常见 palette 预算）。
+/// Hint threshold for bone count limit (exceeds common GPU palette budget).
 const JOINT_COUNT_WARN: usize = 512;
 
-/// 一次检查的结果。
+/// Result of one inspection.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetInspection {
     pub path: String,
-    /// `rskel` / `rskin` / `ranim` / `rmes` / `rtex` / `rmat` / `unknown`。
+    /// `rskel` / `rskin` / `ranim` / `rmes` / `rtex` / `rmat` / `unknown`.
     pub kind: String,
     pub byte_size: usize,
-    /// 每种格式的摘要（计数、名字、时长……）。
+    /// Summary per format (counts, names, duration...).
     pub summary: Value,
-    /// 校验问题（空 = 通过）。
+    /// Validation issues (empty = passed).
     pub problems: Vec<String>,
 }
 
@@ -41,7 +41,7 @@ impl AssetInspection {
     }
 }
 
-/// 按 magic 分派，返回 `(kind, summary, problems)`。
+/// Dispatch by magic, return `(kind, summary, problems)`.
 pub fn inspect_bytes(data: &[u8]) -> (&'static str, Value, Vec<String>) {
     match data.get(..4) {
         Some(b"RSKL") => inspect_skeleton(data),
@@ -175,7 +175,7 @@ fn inspect_skinned_mesh(data: &[u8]) -> (&'static str, Value, Vec<String>) {
     ("rskin", summary, problems)
 }
 
-/// `skeleton_joint_count`：给了就用它检查轨道越界（从 `.rskel` 先 inspect 拿）。
+/// `skeleton_joint_count`: if given, use it to check track out-of-range (get from `.rskel` first inspect).
 pub fn inspect_clip_with_skeleton(
     data: &[u8],
     skeleton_joint_count: Option<usize>,
@@ -215,7 +215,7 @@ fn inspect_clip(
                     }
                 }
             }
-            // 关键帧事件（#560 P1 Notify）：时间必须落在剪辑范围内，名字不能为空。
+            // Keyframe events (#560 P1 Notify): time must fall within clip range, name must not be empty.
             for (index, notify) in clip.notifies.iter().enumerate() {
                 if notify.name.trim().is_empty() {
                     problems.push(format!("notify {index} has an empty name"));
@@ -360,7 +360,7 @@ fn inspect_material(data: &[u8]) -> (&'static str, Value, Vec<String>) {
     ("rmat", summary, problems)
 }
 
-/// 检查一个文件（路径只用于报告与错误信息）。
+/// Inspect one file (path only used for report and error info).
 pub fn inspect_file(path: &Path) -> Result<AssetInspection, String> {
     let data = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let (kind, summary, problems) = inspect_bytes(&data);
@@ -373,16 +373,16 @@ pub fn inspect_file(path: &Path) -> Result<AssetInspection, String> {
     })
 }
 
-/// 检查项目里的一个资源（`relative` 相对项目根，例如 `assets/cooked/hero.rskin`）。
+/// Inspect one asset in project (`relative` relative to project root, e.g. `assets/cooked/hero.rskin`).
 pub fn inspect_asset(root: &Path, relative: &str) -> Result<AssetInspection, String> {
     let mut inspection = inspect_file(&root.join(relative))?;
     inspection.path = relative.replace('\\', "/");
     Ok(inspection)
 }
 
-/// 只跑校验，返回问题列表（空 = 通过）。
+/// Only run validation, return issue list (empty = passed).
 ///
-/// `skeleton` 给了的话，`.ranim` 会额外检查轨道索引是否超出骨骼数量。
+/// If `skeleton` given, `.ranim` additionally checks whether track indices exceed bone count.
 pub fn validate_asset(
     root: &Path,
     relative: &str,

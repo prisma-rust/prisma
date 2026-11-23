@@ -1,18 +1,18 @@
-//! Game View 的用户项目模块：编译、重载、每帧 tick。
+//! User project module for Game View: compile, hot-reload, per-frame tick.
 //!
-//! 编辑器本身只链接引擎；用户项目的 gameplay 代码编译成**独立的 cdylib**
-//! （`projects/<p>/Cargo.toml` 的 `preview-module` feature），由
-//! `prism-runtime-host` 通过稳定 C ABI 加载。项目模块不链接引擎，
-//! 所以不会出现第二份 `World` / `renderer`。
+//! Editor itself only links engine; user project gameplay code compiles into **separate cdylib**
+//! (`preview-module` feature in `projects/<p>/Cargo.toml`), loaded by
+//! `prism-runtime-host` via stable C ABI. Project module doesn't link engine,
+//! so no second `World` / `renderer`.
 //!
-//! 编译在后台线程，加载/卸载必须在 UI 线程（`ProjectSession` 的回调指针
-//! 不能跨线程）。节奏按**模块编译**来做（没有脚本层，所以也没有 domain reload）：
+//! Compile on background thread, load / unload must on UI thread (`ProjectSession` callback pointers
+//! cannot cross threads). Pacing follows **module compilation** (no script layer, so no domain reload):
 //!
-//! - 源码改动**落定** 350ms 后才编译，连续保存不会触发多次 cargo；
-//! - Play 期间不自动换模块，避免打断试玩；`Ctrl+R` 显式刷新例外；
-//! - 换模块是**整模块重载**：旧 session 释放、`create` 重跑，项目静态状态归零；
-//! - 编译失败保留上一次成功的模块继续跑，诊断进 Console 与 Problems 面板；
-//! - 构建产物先复制成唯一名字再加载（Windows 上已加载的 dll 不能覆盖）。
+//! - Source changes **settle** 350ms before compiling, consecutive saves won't trigger multiple cargos;
+//! - During Play won't auto-swap module, avoid interrupting playtest; `Ctrl+R` explicitly refreshes instance;
+//! - Swapping module is **whole-module reload**: old session dropped, `create` rerun, project static state zeroed;
+//! - Compile failure keeps previous successful module running, diagnostics go to Console and Problems panel;
+//! - Build artifact first copied to unique name then loaded (Windows can't overwrite already-loaded dll).
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -29,30 +29,30 @@ use prism_runtime_host::{
 };
 use prism_scene::ComponentRegistry;
 
-/// 源码改动后等待多久再编译（引擎式 debounce）。
+/// How long to wait after source change before compiling (engine-style debounce).
 const COMPILE_DEBOUNCE: Duration = Duration::from_millis(350);
-/// 可以直接指向预编译好的模块（测试 / 非 Cargo 项目）。
+/// Can point directly to precompiled module (tests / non-Cargo projects).
 const MODULE_ENV: &str = "PRISMA_PROJECT_MODULE";
 
-/// 一条要写进 Console 的项目模块事件。
+/// One project module event to write into Console.
 #[derive(Clone, Debug)]
 pub struct ProjectEvent {
     pub level: LogLevel,
     pub text: String,
 }
 
-/// 模块编译状态。状态栏、Problems 面板与 MCP `editor_status` 共用。
+/// Module compile state. Shared by status bar, Problems panel and MCP `editor_status`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModuleState {
-    /// 项目没有 `preview-module`（Play 只跑引擎 system）。
+    /// Project has no `preview-module` (Play only runs engine systems).
     Unavailable,
-    /// 已加载，源码没有未编译的改动。
+    /// Loaded, source has no uncompiled changes.
     Ready,
-    /// 源码有改动，还没编（debounce 中，或 Auto Refresh 关掉了）。
+    /// Source has changes, not yet compiled (in debounce, or Auto Refresh off).
     Pending,
-    /// cargo 正在跑。
+    /// Cargo currently running.
     Compiling,
-    /// 上一次编译 / 加载失败（源码没再改就不会自动重试）。
+    /// Last compile / load failed (won't auto-retry until source changes again).
     Failed,
 }
 
@@ -68,7 +68,7 @@ impl ModuleState {
     }
 }
 
-/// 可轮询的状态（状态栏 / Problems / MCP `editor_status` 用）。
+/// Pollable status (status bar / Problems / MCP `editor_status`).
 #[derive(Clone, Debug)]
 pub struct ProjectModuleStatus {
     pub available: bool,
@@ -76,11 +76,11 @@ pub struct ProjectModuleStatus {
     pub building: bool,
     pub auto_refresh: bool,
     pub state: ModuleState,
-    /// 源码时间戳晚于上一次编译尝试：有未编译的改动。
+    /// Source mtime later than last compile attempt: has uncompiled changes.
     pub dirty: bool,
     pub manifest: Option<PathBuf>,
     pub error: Option<String>,
-    /// 最近一次 build 的诊断条数（明细走 `ProjectModuleDriver::diagnostics`）。
+    /// Number of diagnostics from most recent build (details via `ProjectModuleDriver::diagnostics`).
     pub problems: usize,
 }
 
@@ -95,20 +95,20 @@ enum BuildOutcome {
     },
 }
 
-/// 只在没有编译任务时扫源码时间戳；和 350ms 的 debounce 错开，别每帧 stat。
+/// Only scan source mtimes when no compile task; offset 350ms debounce, don't stat every frame.
 const DIRTY_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 
-/// 工程存档（#984）：编辑器 Play 的存档写在工程目录下，不碰真实用户数据。
+/// Project save file (#984): editor Play saves go under project directory, don't touch real user data.
 ///
-/// 玩家侧用 `prism_engine::user_data`（`%APPDATA%/Prisma/<project>` 之类），
-/// 编辑器这里固定 `<project>/target/play-data/player_data.json` —— 删掉
-/// `target/` 就等于清空 Play 存档，不会污染玩家真正的进度。
+/// Player side uses `prism_engine::user_data` (`%APPDATA%/Prisma/<project>` style),
+/// editor here fixes `<project>/target/play-data/player_data.json` — deleting
+/// `target/` equals clearing Play save, won't pollute player's real progress.
 pub struct ProjectSave {
     store: prism_engine::user_data::UserStore,
 }
 
 impl ProjectSave {
-    /// 存档目录建不出来时返回 `None`（能力位不声明）。
+    /// Returns `None` when save directory can't be created (feature not declared).
     fn new(root: &Path) -> Option<Self> {
         let dir = root.join("target").join("play-data");
         if let Err(error) = std::fs::create_dir_all(&dir) {
@@ -144,12 +144,12 @@ impl prism_runtime_host::SaveIo for ProjectSave {
     }
 }
 
-/// 项目模块的宿主侧驱动器。
-/// 工程一次性音效的混音器（#987）。
+/// Host-side driver of project module.
+/// Mixer for one-shot project audio (#987).
 ///
-/// 编辑器 Play 里模块和宿主是**两个**引擎实例，模块拿不到 `App` 的音频设备，
-/// 所以这里给驱动自己一份 `AudioEngine`：模块调 `GameWorld::play_sound` → ABI
-/// 回调 → 这里解码 + 播放。声部 id 由这里分配（从 1 开始，`0` 表示失败）。
+/// In editor Play, module and host are **two** engine instances, module can't get `App`'s audio device,
+/// so here gives driver its own `AudioEngine`: module calls `GameWorld::play_sound` → ABI
+/// callback → here decode + play. Voice ids allocated here (from 1, `0` means failure).
 pub struct ProjectAudio {
     engine: prism_audio::AudioEngine,
     voices: std::collections::HashMap<u32, ProjectVoice>,
@@ -158,14 +158,14 @@ pub struct ProjectAudio {
 
 struct ProjectVoice {
     handle: prism_audio::PlaybackHandle,
-    /// 保留片段用于 `repeat`（`AudioEngine` 没有循环标志，播完重放）。
+    /// Keep segment for `repeat` (`AudioEngine` has no loop flag, replay after finishing).
     clip: prism_audio::AudioData,
     volume: f32,
     repeat: bool,
 }
 
 impl ProjectAudio {
-    /// 没有声卡 / 音频设备初始化失败时返回 `None`（能力位不声明）。
+    /// Returns `None` when no sound card / audio init fails (feature not declared).
     fn new() -> Option<Self> {
         match prism_audio::AudioEngine::new(prism_audio::AudioConfig::default()) {
             Ok(engine) => Some(Self {
@@ -180,7 +180,7 @@ impl ProjectAudio {
         }
     }
 
-    /// 每帧推进混音器并重放循环音效。
+    /// Advance mixer each frame and release loop sounds.
     fn update(&mut self) {
         self.engine.update();
         for voice in self.voices.values_mut() {
@@ -193,7 +193,7 @@ impl ProjectAudio {
                 voice.handle = handle;
             }
         }
-        // 播完且不循环的声部直接释放，避免 id 表无限增长。
+        // Release voices that finished and aren't looping, avoid id table growing unbounded.
         self.voices
             .retain(|_, voice| voice.repeat || self.engine.is_playing(&voice.handle));
     }
@@ -248,46 +248,46 @@ impl prism_runtime_host::AudioIo for ProjectAudio {
     }
 }
 
-// 注意：`ProjectAudio` 必须在**构造**驱动时创建，不能在模块 tick 里创建。
-// 在 tick 里 `AudioEngine::new`（打开 cpal 流）会把编辑器卡死——世界正被模块
-// 借用，音频回调线程起来后 UI 线程再也拿不回控制权。构造时创建一次最安全。
+// Note: `ProjectAudio` must be created when **constructing** driver, cannot create in module tick.
+// `AudioEngine::new` inside tick (opens cpal stream) would freeze editor — world is
+// borrowed by module, once audio callback thread starts UI thread can't get control back. Create once at construction is safest.
 pub struct ProjectModuleDriver {
     manifest: Option<PathBuf>,
     target_dir: Option<PathBuf>,
     components: ComponentRegistry,
     assets: ProjectAssets,
     session: Option<ProjectSession>,
-    /// 当前加载的副本路径（构建产物会被下一次 cargo 覆盖）。
+    /// Current loaded copy path (build artifact will be overwritten by next cargo).
     staged: Option<PathBuf>,
-    /// 源码最近一次编译尝试时的时间戳（成功/失败都记，失败不重试到改动为止）。
+    /// Source mtime at most recent compile attempt (success / failure both recorded, failure won't retry until change).
     compiled_stamp: Option<SystemTime>,
-    /// `compiled_stamp` 之后源码又变过：状态栏显示「有改动未编译」。
+    /// Source changed after `compiled_stamp`: status bar shows "uncompiled changes".
     dirty: bool,
-    /// `dirty` 的扫描节流（`DIRTY_SCAN_INTERVAL`）。
+    /// `dirty` scan interval (`DIRTY_SCAN_INTERVAL`).
     last_scan: Option<Instant>,
-    /// 最近一次 build 的编译器诊断（成功时只有 warning）。
+    /// Compiler diagnostics from most recent build (warnings only on success).
     diagnostics: Vec<Diagnostic>,
-    /// 首次观察到改动的时刻，用于 debounce。
+    /// Moment change first observed, for debounce.
     pending_since: Option<Instant>,
     build: Option<Receiver<BuildOutcome>>,
     building: bool,
-    /// `Ctrl+R`：下一次 `maybe_compile` 强制重编，无视 Auto Refresh / Play。
+    /// `Ctrl+R`: next `maybe_compile` forces rebuild, ignoring Auto Refresh / Play.
     refresh_requested: bool,
     auto_refresh: bool,
-    /// 项目是否提供 `preview-module`（或给了预构建模块）。
+    /// Whether project provides `preview-module` (or prebuilt module given).
     available: bool,
-    /// 上一次 tick 把模块判成故障（panic / 返回错误）：暂停调用，等重新加载。
+    /// Last tick judged module faulty (panic / returned error): pause calls, wait for reload.
     faulted: bool,
-    /// `PRISMA_PROJECT_MODULE` 指定的预构建模块（只尝试加载一次）。
+    /// Prebuilt module specified by `PRISMA_PROJECT_MODULE` (only tried once).
     prebuilt: Option<PathBuf>,
     events: Vec<ProjectEvent>,
-    /// 工程一次性音效（#987）：编辑器 Play 下模块通过 ABI 回调把声音交给它。
+    /// One-shot project audio (#987): editor Play module hands sounds here via ABI callback.
     audio: Option<ProjectAudio>,
     last_error: Option<String>,
     last_tick_error: Option<String>,
-    /// 项目代码在上一 tick 请求的换场（#482），由宿主在 tick 结束后取走执行。
+    /// Scene change requested by project code on one tick (#482), taken by host at tick end.
     pending_scene: Option<SceneRequest>,
-    /// 工程存档（#984）：Play 存档放 `<project>/target/play-data/`。
+    /// Project save file (#984): Play save under `<project>/target/play-data/`.
     save: Option<ProjectSave>,
     /// Key edges captured once per render frame and consumed by the next fixed step.
     pending_fixed_key_edges: [u64; 8],
@@ -380,7 +380,7 @@ impl ProjectModuleDriver {
         }
     }
 
-    /// Problems 面板读这里（不随 `status()` 每帧克隆）。
+    /// Problems panel reads this (not cloned every frame via `status()`).
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -418,8 +418,8 @@ impl ProjectModuleDriver {
         if self.building {
             return ModuleState::Compiling;
         }
-        // 改过源码但还没编（Auto Refresh 关掉时靠这个提示用户按 Ctrl+R）；
-        // 失败后源码没再改才是稳定的 Failed。
+        // Source changed but not compiled (when Auto Refresh off hint user press Ctrl+R);
+        // only stable Failed if source hasn't changed again after failure.
         if self.dirty {
             return ModuleState::Pending;
         }
@@ -452,7 +452,7 @@ impl ProjectModuleDriver {
         );
     }
 
-    /// Ctrl+R：立即重编。请求会保留到下一次 `maybe_compile`（正在构建时也不丢）。
+    /// Ctrl+R: rebuild immediately. Request kept until next `maybe_compile` (not lost even during build).
     pub fn request_refresh(&mut self) {
         self.refresh_requested = true;
         self.pending_since = None;
@@ -462,16 +462,16 @@ impl ProjectModuleDriver {
         std::mem::take(&mut self.events)
     }
 
-    /// 每帧调用（UI 线程）：收编译结果、按需触发编译。
+    /// Called each frame (UI thread): collect compile result, trigger compile as needed.
     ///
-    /// `playing` = Game view 正在模拟；自动编译会等 Play 结束后再做。
+    /// `playing` = Game view currently simulating; auto compile waits until Play ends.
     pub fn poll(&mut self, playing: bool) {
         self.poll_build();
         self.scan_sources();
         self.maybe_compile(playing);
     }
 
-    /// 源码有没有未编译的改动（节流扫描，Auto Refresh 关掉时也要能显示）。
+    /// Whether source has uncompiled changes (throttled scan, must still show when Auto Refresh off).
     fn scan_sources(&mut self) {
         if self.manifest.is_none() || self.prebuilt.is_some() {
             self.dirty = false;
@@ -490,10 +490,10 @@ impl ProjectModuleDriver {
         self.dirty = self.compiled_stamp.is_none_or(|compiled| compiled < stamp);
     }
 
-    /// Game View 的 Play 每帧调用：在引擎 system 之前推进项目代码。
+    /// Called each frame during Game View Play: advance project code before engine systems.
     ///
-    /// 项目提交的 UI 四边形会写进 `ExternalUiQuads`，同帧的 `ui::render`
-    /// 会把它们并进 `UiDrawList`。
+    /// UI quads submitted by project go into `ExternalUiQuads`, same frame's `ui::render`
+    /// merges them into `UiDrawList`.
     pub fn tick(
         &mut self,
         world: &mut prism_engine::ecs::World,
@@ -502,11 +502,11 @@ impl ProjectModuleDriver {
         scene_generation: u64,
         screen: [f32; 2],
     ) {
-        // 上一帧已经把模块判为故障：等它被重新加载，不再往同一个坑里跳。
+        // Module already judged faulty this frame: wait for reload, don't jump into same hole again.
         if self.faulted {
             return;
         }
-        // 字段级借用：session 与 components/assets 互不重叠。
+        // Field-level borrows: session and components/assets don't overlap.
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -515,20 +515,20 @@ impl ProjectModuleDriver {
             .with_assets(&self.assets)
             .with_scene_switch()
             .with_raycast(engine_raycast);
-        // 工程存档（#984）：Play 存档写在 `<project>/target/play-data/`，
-        // 与玩家的真实存档分开；没有可写目录时不声明能力位。
+        // Project save (#984): Play save under `<project>/target/play-data/`,
+        // separate from player's real save; don't declare feature when no writable dir.
         if let Some(save) = self.save.as_mut() {
             commands = commands.with_save(save);
         }
 
-        // 一次性音效（#987）：没有声卡时 `ProjectAudio::new` 返回 `None`，能力位
-        // 不声明，项目代码拿到 `play_sound() == None` 而不是静默成功。
+        // One-shot audio (#987): when no sound card `ProjectAudio::new` returns `None`, feature
+        // not declared, project code gets `play_sound() == None` rather than silent success.
         if let Some(audio) = self.audio.as_mut() {
             audio.update();
             commands = commands.with_audio(audio);
         }
-        // 项目代码可以调 `GameWorld::save_scene_state()`（#484）；引擎在这里，
-        // runtime-host 只持有函数指针。
+        // Project code can call `GameWorld::save_scene_state()` (#484); engine is here,
+        // runtime-host only holds function pointer.
         commands = commands.with_scene_state(
             prism_engine::scene_state::save_scene_state,
             prism_engine::scene_state::load_scene_state,
@@ -539,13 +539,13 @@ impl ProjectModuleDriver {
         let host = commands.api();
         let result = session.tick(&host, dt.max(0.000_5));
         let quads = commands.take_quads();
-        // 换场请求不能在回调里执行（世界正被借用），先存下来交给宿主（#482）。
+        // Scene change request can't execute in callback (world borrowed), first store for host (#482).
         self.pending_scene = commands.take_scene_request();
         queue_project_quads(world, quads);
 
         let error = result.err().map(|error| error.to_string());
-        // 崩过一次就停在这里：工程每帧 panic 会把 stderr 和 GPU 时间都烧掉，
-        // 重新加载模块（保存源码 / Ctrl+R）才会再试。
+        // Stop here after one crash: project panicking each frame would burn stderr and GPU time,
+        // only reloading module (save source / Ctrl+R) makes it try again.
         self.faulted = error.is_some();
         if error != self.last_tick_error {
             match &error {
@@ -615,13 +615,13 @@ impl ProjectModuleDriver {
         }
     }
 
-    /// 取走项目代码请求的换场；宿主在本 tick 的引擎 update 之后执行。
+    /// Take scene change requested by project code; host executes after this tick's engine update.
     pub fn take_scene_request(&mut self) -> Option<SceneRequest> {
         self.pending_scene.take()
     }
 
     // ------------------------------------------------------------------
-    // 编译 + 加载
+    // compile  + load
     // ------------------------------------------------------------------
 
     fn maybe_compile(&mut self, playing: bool) {
@@ -629,7 +629,7 @@ impl ProjectModuleDriver {
             return;
         }
 
-        // 预构建模块优先：只尝试装一次，失败就停在错误状态（Ctrl+R 也不重装）。
+        // Prebuilt module preferred: only try once, on failure stay in error state (Ctrl+R won't reinstall).
         if let Some(path) = self.prebuilt.take() {
             match self.install(&path, Vec::new()) {
                 Ok(()) => self.push(
@@ -648,8 +648,8 @@ impl ProjectModuleDriver {
         if !manual && !self.auto_refresh {
             return;
         }
-        // Play 期间不自动换模块：整模块重载会丢掉项目状态（没有脚本层可迁移）。
-        // 放在扫描源码之前，避免每帧遍历 `src/`。
+        // During Play don't auto-swap module: whole reload would drop project state (no script layer to migrate).
+        // Placed before source scan, avoid traversing `src/` every frame.
         if !manual && playing {
             return;
         }
@@ -676,7 +676,7 @@ impl ProjectModuleDriver {
         }
         self.pending_since = None;
 
-        // 无论成败都记下时间戳：语法错误不该让编辑器每隔 350ms 重跑一次 cargo。
+        // Record timestamp regardless of outcome: syntax error shouldn't make editor rerun cargo every 350ms.
         self.compiled_stamp = Some(stamp);
         self.building = true;
         self.last_error = None;
@@ -755,7 +755,7 @@ impl ProjectModuleDriver {
             }
         };
 
-        // 先换 session 再删旧副本：旧代码指针必须在新模块生效前彻底失效。
+        // First swap session then delete old copy: old code pointers must stay valid until new module takes effect.
         let previous = self.session.replace(session);
         drop(previous);
         if let Some(old) = self.staged.replace(staged) {
@@ -764,7 +764,7 @@ impl ProjectModuleDriver {
         self.last_error = None;
         self.last_tick_error = None;
         self.diagnostics = diagnostics;
-        // 让下一帧立刻重扫：编译期间改过的源码不能因为“刚好编完”被当成已编译。
+        // Make next frame rescan immediately: source changed during compile shouldn't be treated as already compiled.
         self.last_scan = None;
         self.faulted = false;
         Ok(())
@@ -802,20 +802,20 @@ impl ProjectModuleDriver {
 }
 
 // ---------------------------------------------------------------------------
-// 输入 / UI 四边形
+// input / UI quads
 // ---------------------------------------------------------------------------
 
-/// 把宿主输入打包成 ABI 快照。
+/// Pack host input into ABI snapshot.
 ///
-/// 映射本体在 [`prism_engine::input::input_snapshot`]：静态 Player 的
-/// `GameWorld::input()` 读的是同一份实现（#589），两边不会漂移。
+/// Mapping body in [`prism_engine::input::input_snapshot`]: static Player's
+/// `GameWorld::input()` reads same implementation (#589), two sides won't drift.
 fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> InputSnapshot {
     prism_engine::input::input_snapshot(input, screen)
 }
 
-/// 把项目模块的射线查询接到引擎的纯几何实现（#522）。
+/// Connect project module's raycast query to engine's pure geometry implementation (#522).
 ///
-/// runtime-host 不依赖引擎，只收函数指针；编辑器是宿主，所以在这里做适配。
+/// runtime-host doesn't depend on engine, only receives function pointers; editor is host, so adapt here.
 fn engine_raycast(
     world: &prism_engine::ecs::World,
     origin: [f32; 3],
@@ -834,9 +834,9 @@ fn engine_raycast(
     })
 }
 
-/// 项目模块提交的四边形 → 引擎的 `ExternalUiQuads`。
+/// Project module submitted quads → engine's `ExternalUiQuads`.
 ///
-/// 必须在 `engine.update()` 之前写入：同帧的 `ui::render` 会合并并清空它。
+/// Must write before `engine.update()`: same frame's `ui::render` merges and clears them.
 fn queue_project_quads(world: &mut prism_engine::ecs::World, quads: Vec<HostUiQuad>) {
     if quads.is_empty() {
         return;
@@ -850,7 +850,7 @@ fn queue_project_quads(world: &mut prism_engine::ecs::World, quads: Vec<HostUiQu
             rect: quad.rect,
             color: quad.color,
             border_radius: quad.border_radius,
-            // 项目模块提交的四边形只有纯色，没有背景图（#591）。
+            // Quads submitted by project module are solid-color only, no background image (#591).
             texture: None,
             layer: quad.layer,
             order: prism_engine::ui::EXTERNAL_UI_ORDER,
@@ -865,10 +865,10 @@ fn builtin_component_registry() -> ComponentRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// 松散资产
+// Loose assets
 // ---------------------------------------------------------------------------
 
-/// 项目自己的 `assets/`（不是仓库根的引擎资产）。
+/// Project's own `assets/` (not repo-root engine assets).
 struct ProjectAssets {
     root: PathBuf,
 }
@@ -907,7 +907,7 @@ impl AssetIo for ProjectAssets {
 }
 
 // ---------------------------------------------------------------------------
-// 编译
+// compile
 // ---------------------------------------------------------------------------
 
 fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
@@ -919,7 +919,7 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
         .args(["--no-default-features", "--features", "preview-module"])
         .arg("--target-dir")
         .arg(target_dir)
-        // 结构化诊断：Problems 面板要 file:line:col，不是一段彩色 stderr。
+        // Structured diagnostics: Problems panel needs file:line:col, not a colored stderr blob.
         .args(["--message-format", "json"]);
     if let Some(dir) = manifest.parent() {
         command.current_dir(dir);
@@ -944,7 +944,7 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // 第一条 error 就是用户要修的东西；没有编译诊断（链接错误等）才退回 stderr。
+        // First error is what user needs to fix; only fall back to stderr when no compiler diagnostics (link errors etc).
         let summary = diagnostics
             .iter()
             .find(|diagnostic| diagnostic.level == LogLevel::Error)
@@ -978,8 +978,8 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     }
 }
 
-/// 构建产物先复制成唯一名字：下一次 cargo 会覆盖原文件，而 Windows 上
-/// 已加载的 dll 不能被覆盖。旧副本在换 session 之后删除。
+/// Copy build artifact to unique name first: next cargo will overwrite original, and Windows can't
+/// overwrite already-loaded dll. Old copy deleted after session swap.
 fn stage_module(built: &Path) -> Result<PathBuf, String> {
     let parent = built
         .parent()
@@ -995,10 +995,10 @@ fn stage_module(built: &Path) -> Result<PathBuf, String> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("project");
-    // 唯一性放在**目录**上，文件名必须保持原样：dbghelp 是按 PE 里记录的符号
-    // 文件名（`fishing.pdb`）去模块目录找的，不会从 `fishing-<nanos>.dll` 反推。
-    // 改名的 dll 会让工程帧的符号退化成导出名（`prism_project_get_api`），
-    // panic 调用栈就白抓了。
+    // Uniqueness on **directory**, filename must stay: dbghelp finds symbol file by name recorded in PE
+    // (`fishing.pdb`) in module directory, won't infer from `fishing-<nanos>.dll`.
+    // Renamed dll makes project frame symbols degrade to export names (`prism_project_get_api`),
+    // panic call stack would be wasted.
     let unique = staging.join(format!("{stem}-{nanos}"));
     std::fs::create_dir_all(&unique)
         .map_err(|error| format!("create module staging dir failed: {error}"))?;
@@ -1012,7 +1012,7 @@ fn stage_module(built: &Path) -> Result<PathBuf, String> {
     std::fs::copy(built, &staged)
         .map_err(|error| format!("copy project module failed: {error}"))?;
 
-    // 符号文件与 dll 同目录：缺了它工程帧只有地址。
+    // Symbol file in same directory as dll: without it project frames only have addresses.
     let pdb = built.with_extension("pdb");
     if pdb.is_file() {
         if let Some(pdb_name) = pdb.file_name() {
@@ -1029,7 +1029,7 @@ fn stage_module(built: &Path) -> Result<PathBuf, String> {
     Ok(staged)
 }
 
-/// 删掉一次加载的暂存目录（dll + pdb）。模块 dll 必须已经 unload。
+/// Remove staging directory from one load (dll + pdb). Module dll must already be unloaded.
 fn remove_staged_file(staged: &Path) {
     let Some(dir) = staged.parent() else {
         return;
@@ -1060,7 +1060,7 @@ fn tail_lines(text: &str, count: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 清单 / 源码时间戳
+// Manifest / source mtime
 // ---------------------------------------------------------------------------
 
 fn manifest_declares_preview_module(manifest: &Path) -> bool {
@@ -1069,7 +1069,7 @@ fn manifest_declares_preview_module(manifest: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 从 `Cargo.toml` 的 `[package]` 段读包名（构建产物名由它推导）。
+/// Read package name from `Cargo.toml` `[package]` section (build artifact name derived from it).
 fn package_name(manifest: &Path) -> Option<String> {
     let text = std::fs::read_to_string(manifest).ok()?;
     let mut in_package = false;
@@ -1226,8 +1226,8 @@ mod tests {
     fn held_keys_are_reported_even_after_begin_frame() {
         let mut input = InputManager::new();
         input.handle_keyboard(KeyCode::Space, ElementState::Pressed);
-        // `begin_frame` 清掉 just_pressed，但按住状态必须保留：
-        // fishing 用 `input.key(keys::SPACE)` 检测持续收线。
+        // `begin_frame` clears just_pressed, but held state must remain:
+        // fishing uses `input.key(keys::SPACE)` to detect continuous line retrieval.
         input.begin_frame();
         let snapshot = input_snapshot(&input, [1280.0, 720.0]);
         assert!(snapshot.key(KeyCode::Space.bit_index().expect("named key")));
@@ -1248,7 +1248,7 @@ mod tests {
         let mut input = InputManager::new();
         input.handle_mouse_button(MouseButton::Right, ElementState::Pressed);
         let snapshot = input_snapshot(&input, [800.0, 600.0]);
-        assert!(snapshot.right_clicked, "右键边沿必须能看见");
+        assert!(snapshot.right_clicked, "Right-click edge must be visible");
         assert!(snapshot.right_held);
         assert!(!snapshot.middle_held);
 
@@ -1267,16 +1267,16 @@ mod tests {
         let snapshot = input_snapshot(&input, [1.0, 1.0]);
         assert!(
             snapshot.key(KeyCode::Space.bit_index().expect("named key")),
-            "按住位图"
+            "Held bitmap"
         );
         assert!(
             snapshot.key_pressed(KeyCode::Space.bit_index().expect("named key")),
-            "按下边沿"
+            "Pressed edge"
         );
         assert!(!snapshot.key_released(KeyCode::Space.bit_index().expect("named key")));
 
-        // 松开的那一帧：按住位图清掉，释放边沿置位。
-        // 宿主每帧开头会 `begin_frame`，这里照做，否则上一帧的按下边沿还留着。
+        // On frame window opens: held bitmap cleared, release edge set.
+        // Host calls `begin_frame` at start of each frame, do same here, else previous frame's press-below edge remains.
         input.begin_frame();
         input.handle_keyboard(KeyCode::Space, ElementState::Released);
         let snapshot = input_snapshot(&input, [1.0, 1.0]);
@@ -1313,7 +1313,7 @@ mod tests {
         assert_eq!(touches[1].phase, prism_runtime_host::TOUCH_PHASE_MOVED);
         assert!(snapshot.any_touch());
 
-        // 全是「已结束」时不再算有触点按下。
+        // When fully "ended" don't count as having touch point pressed again.
         input.begin_frame();
         input.handle_touch(7, TouchPhase::Ended, [10.0, 20.0]);
         let snapshot = input_snapshot(&input, [100.0, 100.0]);
@@ -1347,10 +1347,10 @@ mod tests {
         assert!(driver.source_stamp().is_some());
     }
 
-    /// 端到端：用真实 `.scene.json` 驱动 `projects/template` 的 preview 模块。
+    /// End-to-end: drive `projects/template` preview module with real `.scene.json`.
     ///
-    /// 需要先构建模块并设置 `PRISMA_TEST_PROJECT_MODULE`；没有设置时跳过，
-    /// 和 `prism-runtime-host` 的同名环境测试一致。
+    /// Need to build module first and set `PRISMA_TEST_PROJECT_MODULE`; skip when unset,
+    /// consistent with `prism-runtime-host` env test of same name.
     #[test]
     fn preview_module_drives_the_intro_scene_when_configured() {
         let Some(module_path) = std::env::var_os("PRISMA_TEST_PROJECT_MODULE") else {
@@ -1377,8 +1377,8 @@ mod tests {
                 .expect("project tick should succeed");
             last_quads = commands.take_quads().len();
         }
-        // intro 的雨滴通过 `GameWorld::draw_quad` 提交；能跨 ABI 回来说明
-        // 组件读写和 UI 四边形通道都通了。
+        // Intro raindrops submitted via `GameWorld::draw_quad`; able to come back across ABI proves
+        // component read/write and UI quad channel both work.
         assert!(last_quads > 0, "intro should submit UI quads");
     }
 
@@ -1431,7 +1431,7 @@ mod tests {
         assert_eq!(driver.status().state, ModuleState::Unavailable);
     }
 
-    /// 状态机：有改动未编 = Pending，出错 = Failed，成功 = Ready。
+    /// State machine: changes-not-compiled = Pending, error = Failed, success = Ready.
     #[test]
     fn module_state_reports_pending_and_failed() {
         let dir = temp_dir("state");
@@ -1447,7 +1447,7 @@ mod tests {
         assert_eq!(driver.status().state, ModuleState::Pending);
         assert!(driver.status().dirty);
 
-        // 失败也会记下编译时间戳：源码没再改就不该每 350 ms 重跑 cargo。
+        // Failure also records compile timestamp: source unchanged shouldn't rerun cargo every 350 ms.
         driver.compiled_stamp = driver.source_stamp();
         driver.last_scan = None;
         driver.scan_sources();
@@ -1455,7 +1455,7 @@ mod tests {
         assert_eq!(driver.status().state, ModuleState::Failed);
         assert!(!driver.status().dirty);
 
-        // 改回源码（或用户手动重编）后，下一个编译周期重新开始。
+        // After changing back source (or manual rebuild), next compile period starts fresh.
         driver.last_error = None;
         assert_eq!(driver.status().state, ModuleState::Ready);
     }

@@ -40,15 +40,15 @@ impl Schedule {
         self.systems.push((label.to_string(), Box::new(f)));
     }
 
-    /// 是否已注册 label 相同的系统。
+    /// whether already registered label same system.
     pub fn contains(&self, label: &str) -> bool {
         self.systems.iter().any(|(l, _)| l == label)
     }
 
-    /// 合并另一个 调度：仅追加 label 尚未存在的系统（幂等）。
+    /// Merge another schedule: only append labels not yet in system (idempotent).
     ///
-    /// `runtime_initialize` 用它把默认系统并入用户已注册的系统之后，
-    /// 而不是整体替换——用户在任何时机注册的 system 都不会被冲掉。
+    /// `runtime_initialize` uses it to merge default systems into user-registered systems after,
+    /// not whole replace — user-registered systems at any time will not be overwritten.
     pub fn merge_if_absent(&mut self, other: Schedule) {
         for (label, f) in other.systems {
             if !self.contains(&label) {

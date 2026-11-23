@@ -1,4 +1,4 @@
-//! 2D 物理系统单元测试（#1160）。
+//! 2D physics system unit tests (#1160).
 
 use prism_ecs::World;
 use prism_scene::components::{LocalTransform, PhysicsCollider2D, RigidBody2D, RigidBody2DType};
@@ -86,7 +86,7 @@ fn test_physics2d_circle_circle_collision() {
 
     let rb1 = world.get::<RigidBody2D>(c1).unwrap();
     let rb2 = world.get::<RigidBody2D>(c2).unwrap();
-    // 碰撞后两球应相互反弹或速度方向反转
+    // After collision the two balls should bounce off each other or reverse direction.
     assert!(rb1.linear_velocity[0] < 2.0);
     assert!(rb2.linear_velocity[0] > -2.0);
 }
@@ -95,7 +95,7 @@ fn test_physics2d_circle_circle_collision() {
 fn test_physics2d_box_box_collision() {
     let mut world = World::new();
 
-    // 静态地板
+    // Static floor.
     let floor = world.spawn();
     world.insert(
         floor,
@@ -113,7 +113,7 @@ fn test_physics2d_box_box_collision() {
         },
     );
 
-    // 下落的动态方块
+    // Falling dynamic box.
     let box_e = world.spawn();
     world.insert(
         box_e,
@@ -136,7 +136,7 @@ fn test_physics2d_box_box_collision() {
     step_2d(&mut world, 0.02, [0.0, 0.0]);
 
     let rb = world.get::<RigidBody2D>(box_e).unwrap();
-    // 撞击静止地面后，下落速度被阻止或反弹
+    // After hitting static ground, falling speed blocked or bounced.
     assert!(rb.linear_velocity[1] >= -0.1);
 }
 
@@ -144,7 +144,7 @@ fn test_physics2d_box_box_collision() {
 fn test_physics2d_sensor_events() {
     let mut world = World::new();
 
-    // 传感器实体
+    // sensor entity
     let sensor = world.spawn();
     world.insert(
         sensor,
@@ -157,7 +157,7 @@ fn test_physics2d_sensor_events() {
     sensor_col.is_sensor = true;
     world.insert(sensor, sensor_col);
 
-    // 穿过传感器的物体
+    // Object passing through sensor.
     let walker = world.spawn();
     world.insert(
         walker,
@@ -176,7 +176,7 @@ fn test_physics2d_sensor_events() {
         },
     );
 
-    // 第 1 步：重叠，触发 Started 事件
+    // Step 1: overlap, triggers Started event.
     step_2d(&mut world, 0.1, [0.0, 0.0]);
     let events = world.get_resource::<Physics2DEvents>().unwrap();
     assert!(events
@@ -184,7 +184,7 @@ fn test_physics2d_sensor_events() {
         .iter()
         .any(|e| e.kind == Physics2DEventKind::Started && e.is_sensor));
 
-    // 第 2 步：移出传感器范围 (x = 1.0 + 10 * 0.5 = 6.0 > 2.5)
+    // Step 2: move out of sensor range (x = 1.0 + 10 * 0.5 = 6.0 > 2.5).
     world.get_mut::<LocalTransform>(walker).unwrap().position = glam::vec3(10.0, 0.0, 0.0);
     step_2d(&mut world, 0.1, [0.0, 0.0]);
     let events2 = world.get_resource::<Physics2DEvents>().unwrap();
@@ -208,7 +208,7 @@ fn test_physics2d_raycast_circle() {
     );
     world.insert(circle, PhysicsCollider2D::new_circle(1.0));
 
-    // 从原点向 +X 发射射线
+    // Cast raycast from origin toward +X.
     let hit =
         raycast_2d(&world, [0.0, 0.0], [1.0, 0.0], 10.0, 0xFFFF_FFFF).expect("should hit circle");
     assert_eq!(hit.entity, circle);
@@ -230,11 +230,11 @@ fn test_physics2d_raycast_box() {
     );
     world.insert(box_e, PhysicsCollider2D::new_box(2.0, 1.0));
 
-    // 从下方往 +Y 发射射线
+    // Cast raycast from below toward +Y.
     let hit = raycast_2d(&world, [0.0, 0.0], [0.0, 1.0], 10.0, 0xFFFF_FFFF)
         .expect("should hit box bottom");
     assert_eq!(hit.entity, box_e);
-    // 盒中心 y=5, 半高=1，底面 y=4
+    // Box center y=5, half height=1, bottom face y=4.
     assert!((hit.distance - 4.0).abs() < 1e-4);
     assert!((hit.normal[1] - (-1.0)).abs() < 1e-4);
 }

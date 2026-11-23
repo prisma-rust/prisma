@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** 拉起游戏（Android 走 Kotlin plugin 启动 GameActivity；桌面走本地二进制）。 */
+/** Launch game (Android via Kotlin plugin starts GameActivity; desktop runs local binary). */
 export const launcher = {
   launchGame: (config: string) => invoke<void>("launch_game", { config }),
 };

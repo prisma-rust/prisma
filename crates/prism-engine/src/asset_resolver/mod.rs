@@ -1,19 +1,19 @@
-//! GPU 资源解析器——从 `.pak` 资源包按需加载+缓存网格/材质/纹理资源。
+//! GPU asset parser---load + cache mesh/material/texture resources from `.pak` package on demand.
 //!
-//! 拥有 [`ResourceManager`]（运行时资源数据库）与三个类型化缓存（确保同一网格/材质/纹理
-//! 不会重复上传），并提供 [`GpuAssetResolver::prepare_requests`] 方法查询 ECS 世界中
-//! 待处理的 [`MeshRenderer`] 实体，生成 GPU 上传请求。
+//! Holds [`ResourceManager`] (runtime resource database) and three type-specific caches (ensuring same mesh/material/texture
+//! not heavily duplicated during transmission), and provides [`GpuAssetResolver::prepare_requests`] method to query ECS world in
+//! pending [`MeshRenderer`] entities, generate GPU upload requests.
 //!
-//! ## 异步模型（与渲染线程解耦）
+//! ## async model (decoupled from render thread)
 //!
-//! 资源解析被拆成两段，因为 `&mut World`（主线程）与 `&mut GraphRenderer`（渲染线程）
-//! 不能同处一线程：
-//! - **CPU 段（主线程）**：[`prepare_requests`] 查询待解析实体、加载 `.pak`、解交织顶点/
-//!   纹理像素，产出纯数据的 [`AssetResolveRequest`]。不触碰渲染器。
-//! - **GPU 段（渲染线程）**：`GraphRenderer::apply_asset_requests` 执行上传并回传句柄。
-//! - 主线程再消费结果，把句柄写回 `MeshRef`/`MaterialRef`。
+//! Resource parsing split into two segments, because `&mut World` (main thread) and `&mut GraphRenderer` (render thread)
+//! cannot be on same thread:
+//! - **CPU segment (main thread)**: [`prepare_requests`] queries pending-parse entities, loads `.pak`, deinterleaves vertex/
+//!   texture pixels, produces pure-data [`AssetResolveRequest`]. Does not touch renderer.
+//! - **GPU segment (render thread)**: `GraphRenderer::apply_asset_requests` executes upload and returns handle.
+//! - Main thread again consumes results, writes handle back to `MeshRef`/`MaterialRef`.
 //!
-//! 这样启动期渲染器在渲染线程异步构建时，主线程仍可处理窗口事件（关闭/移动/缩放）。
+//! This way, when renderer builds asynchronously on render thread at startup, main thread can still handle window events (disable/move/scale).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,50 +40,50 @@ mod tests;
 // GpuAssetResolver
 // ---------------------------------------------------------------------------
 
-/// 资源槽位，用作「失败缓存」的键。
+/// Asset slot bit, used as key for "failure cache".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum AssetSlot {
     Mesh,
     Material,
     Shader,
     Sprite,
-    /// 瓦片地图的 tileset（#529）。
+    /// Tile map graph tileset (#529).
     Tileset,
-    /// UI `Style::image` 背景图（#591）。
+    /// UI `Style::image` background graph (#591).
     UiImage,
 }
 
-/// 一个网格的 CPU 上传数据 + submesh 表（#520）。
+/// A mesh's CPU upload data + submesh table (#520).
 struct LoadedMesh {
     input: MeshUploadInput,
     submeshes: Vec<MeshSubmesh>,
 }
 
-/// 蒙皮网格的 CPU 段产物：顶点数据 + 蒙皮属性一起上传（#560 P0-3b）。
+/// Skinned mesh CPU segment product: vertex data + skin property uploaded together (#560 P0-3b).
 struct LoadedSkinnedMesh {
     input: MeshUploadInput,
     submeshes: Vec<MeshSubmesh>,
     skin: SkinAttributes,
 }
 
-/// 一个实体本帧要解析的资源（只包含仍然缺失的那几半）。
+/// Resources an entity needs to parse this frame (only contains still-missing halves).
 struct PendingRequest {
     entity: Entity,
     mesh_path: Option<String>,
-    /// 作者组件快照：多材质路径要等网格加载后按 submesh 数展开。
+    /// Authoring component fast reference: many material paths need to wait for mesh load then expand by submesh count.
     renderer: MeshRenderer,
-    /// 这一帧是否需要解析材质（`MaterialRef.generation == 0`）。
+    /// Whether this frame needs to parse material (`MaterialRef.generation == 0`).
     wants_material: bool,
     /// Optional custom fragment shader path (`MeshRenderer.shader_path`).
     shader_path: Option<String>,
-    /// 精灵贴图 / 瓦片地图的 tileset / UI 背景图：三者都只需要一张贴图，
-    /// 一个实体同一帧只会投递其中一个。
+    /// Sprite graph / tile map graph tileset / UI background graph: all three only need one graph,
+    /// One entity in same frame will only submit one of them.
     sprite_path: Option<String>,
     tileset: bool,
-    /// `sprite_path` 是 UI `Style::image`（#591）。
+    /// `sprite_path` is UI `Style::image` (#591).
     ui_image: bool,
-    /// 蒙皮网格路径（#560 P0-3b）：`.rskin` 走另一条解码路径，
-    /// 同时产出 `SkinAttributes`。
+    /// Skinned mesh path (#560 P0-3b): `.rskin` takes a different decode path,
+    /// produces `SkinAttributes` when same.
     skinned_path: Option<String>,
 }
 
@@ -97,76 +97,76 @@ struct AtlasSpriteMeta {
 
 /// On-demand asset loader + GPU uploader + cache.
 ///
-/// 每帧调用 [`prepare_requests`] 收集待处理实体并产出上传请求（CPU 段）；
-/// GPU 上传由渲染线程异步完成。
+/// Call [`prepare_requests`] every frame to collect pending entities and produce upload requests (CPU segment);
+/// GPU upload completed asynchronously by render thread.
 pub struct GpuAssetResolver {
-    /// 已成功挂载的 `.pak`（首次 `prepare_requests` 时统一校验构建戳，#976）。
+    /// Already successfully mounted `.pak` (build stamp uniformly verified at first `prepare_requests`, #976).
     mounted_paks: Vec<PathBuf>,
-    /// 构建戳只报一次：`App::build` 阶段 logger 还没装好，日志会被丢掉。
+    /// Build stamp reported only once: `App::build` phase logger not yet installed, logs will be dropped.
     stamps_checked: bool,
     pub resource_manager: ResourceManager,
-    /// 已投递上传请求的实体（去重：避免每帧重复 enqueue，直到结果写回 World）。
+    /// Entities already submitted upload requests (dedup: avoid heavy re-enqueue every frame until result written back to World).
     enqueued: HashSet<Entity>,
-    /// 已尝试且失败的槽位：`(实体, 槽位) -> 失败时的路径`。
+    /// Slot bits already attempted and failed: `(entity, slot bit) -> path at failure time`.
     ///
-    /// 路径不在清单里、解码失败这类错误不会「再试一次就好」，每帧重试只会反复
-    /// 读 `.pak` 并刷日志。缓存以路径为值：路径被改写（换素材、热重载换包）时
-    /// 键不再匹配，会自动重新尝试。
+    /// Path not in manifest, decode failure class error will not "try once and be good", heavy retry every frame only will incorrectly duplicate.
+    /// reads `.pak` and flushes logs. Cache keyed by path: when path is rewritten (change material, hot reload swap package),
+    /// key no longer matches, will automatically heavy retry.
     failed: HashMap<(Entity, AssetSlot), String>,
-    /// 最近一次解析的精灵路径。项目只改 `sprite_path`，这里发现不一致就重新解析，
-    /// 不再要求调用方手动把 `SpriteRef::generation` 清零。
+    /// Most recently parsed sprite path. Project only changes `sprite_path`, if this finds inconsistency then heavy re-parse,
+    /// not again requiring caller to manually clear `SpriteRef::generation` to zero.
     sprite_paths: HashMap<Entity, String>,
-    /// 最近一次解析的 tileset 路径（#529），语义同 [`Self::sprite_paths`]。
+    /// Most recently parsed tileset path (#529), semantics same as [`Self::sprite_paths`].
     tileset_paths: HashMap<Entity, String>,
-    /// 最近一次解析的 UI 背景图路径（`Style::image`，#591）。
+    /// Most recently parsed UI background graph path (`Style::image`, #591).
     ui_image_paths: HashMap<Entity, String>,
     /// Last resolved custom fragment shader path per entity.
     shader_paths: HashMap<Entity, String>,
     /// Staged custom shader paths/ids waiting for upload completion.
     pending_shader_meta: HashMap<Entity, (String, prism_scene::SceneAssetId)>,
-    /// 已经交给渲染器的工程字体路径（#583）。
+    /// Project font paths already handed to renderer (#583).
     ///
-    /// 字体是整份文件注册进 UI 图集，不像贴图那样每实体一份；同一个路径只读一次。
+    /// Font registers entire file into UI atlas, not like graph per entity; same path only read once.
     fonts_loaded: HashSet<String>,
-    /// 读过但失败的字体路径：不再每帧重试（与 [`Self::failed`] 同理）。
+    /// Font path read but failed: not heavy retry every frame (same principle as [`Self::failed`]).
     fonts_failed: HashSet<String>,
-    /// 已经写到组件里的 GPU 槽位 / 句柄，按 `(实体, 槽位)` 记账（#495）。
+    /// GPU slot bit/handle already written into component inside, accounted by `(entity, slot bit)` (#495).
     ///
-    /// 组件被销毁、路径被改写、`generation` 归零（热重载）时据此回收显存；
-    /// 以前这些资源只会被新上传覆盖，旧图像 / 网格永远留在 GPU 上。
+    /// When component destroyed, path rewritten, `generation` zeroed (hot reload), VRAM reclaimed accordingly;
+    /// Before these resources are overwritten by new upload, old graph/image/mesh forever stay in GPU.
     resolved: HashMap<(Entity, AssetSlot), AssetRelease>,
-    /// 本实体的贴图请求属于哪个槽位（`Sprite` / `Tileset` / `UiImage`）。
+    /// Which slot bit this entity's graph request belongs to (`Sprite` / `Tileset` / `UiImage`).
     ///
-    /// 结果回传时只有一个 `texture_slot`，必须知道它对应哪个组件才能记账。
+    /// When result returned, only has one `texture_slot`, must know which component it correctly belongs to in order to account.
     pending_texture_slot: HashMap<Entity, AssetSlot>,
-    /// 待宿主转发给渲染器的释放请求。
+    /// Release requests pending host forwarding to renderer.
     releases: Vec<AssetRelease>,
-    /// 已投递、但句柄还没回写的网格局部包围盒（`entity → AABB`）。
+    /// Mesh local bounding box already submitted but handle not yet written back (`entity → AABB`).
     ///
-    /// CPU 段已经在手里有顶点位置，所以包围盒在上传请求发出前就算好；句柄回来
-    /// （[`Self::apply_results`]）之后连同句柄一起写进 [`MeshBounds`]，渲染提取
-    /// 就能按主相机剔除（#491）。
+    /// CPU segment already has vertex position in hand, so bounding box calculated when upload request sent; handle comes back
+    /// (after [`Self::apply_results`]) together with same handle written into [`MeshBounds`], render extraction
+    /// can cull by main camera (#491).
     pending_bounds: HashMap<Entity, prism_render::culling::Aabb>,
-    /// 已投递、但句柄还没回写的 submesh 表（#520）。
+    /// Submesh table already submitted but handle not yet written back (#520).
     pending_submeshes: HashMap<Entity, Vec<MeshSubmesh>>,
-    /// 每个 submesh 使用本次请求里第几个唯一材质（`None` = 默认材质）。
+    /// Each submesh uses which unique material index in this request (`None` = default material).
     ///
-    /// 相同路径的 submesh 共享一次材质上传，回传的槽位用这张表展开。
+    /// Submeshes with same path share one material upload, returned slot bit expanded using this table.
     pending_material_map: HashMap<Entity, Vec<Option<usize>>>,
     /// Staged atlas sub-sprite metadata waiting for texture upload completion (#1158).
     pending_atlas_sprites: HashMap<Entity, AtlasSpriteMeta>,
-    /// 已经按需挂载的 `optional_*.pak`（#509）。
+    /// `optional_*.pak` already mounted on demand (#509).
     ///
-    /// 重复挂载同一个包只会让 `ResourceManager` 把每个资产 ID 当成重复项 warn
-    /// 一遍，所以按路径记一笔，`load_optional_packages` 可以安全地每关调用。
+    /// Heavy re-mounting same package only makes `ResourceManager` warn each asset ID as heavy duplicate
+    /// once, so record per path, `load_optional_packages` can safely call every close.
     mounted_optional: HashSet<PathBuf>,
 }
 
-/// 引用断裂只报一次（每个路径），并且是 `error` 而不是 `warn`。
+/// Reference breakage reported only once (each path), and is `error` not `warn`.
 ///
-/// 路径不在资源包里意味着文档里的引用已经断了（文件被删 / 改名 / 拼错）。
-/// 后果是物体整个不出现或贴图变白，不该被日志级别悄悄降级；但同一个断引用每个
-/// 实体都要解析一次，每帧都刷一行会把 Console 淹掉，所以按路径去重（#467）。
+/// Path not in resource package means document inside reference already broken (file deleted / renamed / misspelled).
+/// After result object entirely not appear or graph turns white, should not be quietly downgraded by log level; but same broken reference each
+/// entity needs to parse once, every flushes one line will drown Console, so heavy dedup by path (#467).
 fn report_missing_reference(path: &str, kind: &str) {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
@@ -210,14 +210,14 @@ impl GpuAssetResolver {
         }
     }
 
-    /// 收集场景里用到的工程自带字体并读出字节（#583）。
+    /// Collect project bundled fonts used in scene and read bytes (#583).
     ///
-    /// 返回**本次新读出来**的 `(资产路径, 字体字节)`；调用方把它交给
-    /// `GraphRenderer::register_ui_font`。已经交过的路径不会重复返回，读失败
-    /// 的路径也不再每帧重试（与网格 / 贴图的失败缓存同一策略）。
+    /// Return **(newly read this time)** `(asset path, font bytes)`; caller hands it to
+    /// `GraphRenderer::register_ui_font`. Already submitted paths will not be heavy-duplicated, read failure
+    /// paths will not heavy retry every frame (same strategy as mesh/graph failure cache).
     ///
-    /// 字体走 `.pak` 的路径清单（`AssetType::Font`），所以打包产物和编辑器里
-    /// 看到的是同一份文件。
+    /// Fonts go through `.pak` path list (`AssetType::Font`), so packaged product and editor inside
+    /// see the same file.
     pub fn prepare_ui_fonts(&mut self, world: &World) -> Vec<(String, Vec<u8>)> {
         let _span = crate::util::timing::span("asset::prepare_ui_fonts");
         let mut paths: Vec<String> = Vec::new();
@@ -259,10 +259,10 @@ impl GpuAssetResolver {
         out
     }
 
-    /// 记下「这个实体的这个槽位现在用的是哪个 GPU 资源」。
+    /// Record below "which GPU resource this entity's slot bit is currently using".
     ///
-    /// 覆盖旧值时如果资源换了（重新上传到新槽位），旧的那份立即排进释放队列
-    /// —— 组件在同一帧被改写，不会出现「还在采样已释放槽位」的中间帧。
+    /// When overwriting old value if resource changed (heavy re-upload to new slot bit), old one immediately queued for release
+    /// --- component rewritten in same frame will not have "still sampling already released slot bit" inter-frame issue.
     fn record_resolved(&mut self, entity: Entity, slot: AssetSlot, value: AssetRelease) {
         if value.is_empty() {
             return;
@@ -274,10 +274,10 @@ impl GpuAssetResolver {
         }
     }
 
-    /// 这一帧里该实体的这个槽位是否已经不再需要 GPU 资源。
+    /// Whether this frame this entity's slot bit already no longer needs GPU resource.
     ///
-    /// 判定标准只有两条，都是「确定不会再画」：承载它的组件没了，或
-    /// `generation == 0`（`invalidate_*` 刚把它标脏，马上会重新上传）。
+    /// Judgment standard only two conditions, both are "certainly will not draw again": component carrying it is gone, or
+    /// `generation == 0` (`invalidate_*` just marked dirty, immediately will heavy re-upload).
     fn slot_is_stale(&self, world: &World, entity: Entity, slot: AssetSlot) -> bool {
         use crate::scene::runtime_components::{TilemapRef, UiImageRef};
         match slot {
@@ -333,7 +333,7 @@ impl GpuAssetResolver {
         }
     }
 
-    /// 把已经失效的 GPU 资源排进释放队列（由 [`Self::take_releases`] 交给宿主）。
+    /// Queue already invalidated GPU resources for release (handed to host by [`Self::take_releases`]).
     fn release_stale_assets(&mut self, world: &World) {
         let stale: Vec<(Entity, AssetSlot)> = self
             .resolved
@@ -346,7 +346,7 @@ impl GpuAssetResolver {
                 self.releases.push(release);
             }
         }
-        // 实体被销毁后，还没回传的「贴图属于哪个槽位」的登记也没用了。
+        // Entity destroyed after, registration of "graph belongs to which slot bit" not yet returned is useless.
         self.pending_texture_slot.retain(|entity, _| {
             self.resolved.keys().any(|(e, _)| e == entity)
                 || world.get::<SpriteRenderer>(*entity).is_some()
@@ -357,10 +357,10 @@ impl GpuAssetResolver {
             .retain(|entity, _| world.get::<SpriteRenderer>(*entity).is_some());
     }
 
-    /// 换场 / 卸载后立刻丢弃已经不存在的实体的缓存（#482）。
+    /// Scene switch / unload after immediately discard cache of entities no longer present (#482).
     ///
-    /// 等价于 `prepare_requests` 开头的清理，但可以显式调用，让换场当帧就把
-    /// 旧世界的槽位交回渲染器、并清掉 `enqueued` / 失败缓存里对不上的键。
+    /// Equivalent to cleanup at head of `prepare_requests`, but can be explicitly called, so scene switch when frame just puts
+    /// old world slot bits returned to renderer, and clears `enqueued` / failure cache keys incorrectly not on.
     pub fn forget_missing_entities(&mut self, world: &World) {
         self.release_stale_assets(world);
         self.enqueued.retain(|entity| {
@@ -381,23 +381,23 @@ impl GpuAssetResolver {
         });
     }
 
-    /// 取走待释放的 GPU 资源；宿主把它们转给渲染器（`GraphRenderer::release_assets`）。
+    /// Take GPU resources pending release; host forwards them to renderer (`GraphRenderer::release_assets`).
     ///
-    /// 在 `prepare_requests` 之后调用：失效的槽位在这一帧内就被回收，重新上传
-    /// 的请求同时入队，所以热重载不会每次都多占一份显存。
+    /// Called after `prepare_requests`: invalidated slot bits recycled within this frame, heavy re-upload
+    /// requests same time enqueued, so hot reload will not occupy VRAM multiple times each time.
     pub fn take_releases(&mut self) -> Vec<AssetRelease> {
         std::mem::take(&mut self.releases)
     }
 
-    /// 该实体的这个槽位是否已经因同一个路径失败过。
+    /// Whether this entity's slot bit already failed due to same path before.
     fn failed_before(&self, entity: Entity, slot: AssetSlot, path: &str) -> bool {
         self.failed
             .get(&(entity, slot))
             .is_some_and(|failed_path| failed_path == path)
     }
 
-    /// 记住一个加载失败：路径不在清单 / 解码失败都不会因为下一帧再试而变好，
-    /// 缓存后同一个路径只尝试一次（路径被改写时自动重新尝试）。
+    /// Remember a load failure: path not in manifest / decode failure will not become good because below one frame retries,
+    /// cache tries same path only once (automatically heavy retries when path rewritten).
     fn record_failure(&mut self, entity: Entity, slot: AssetSlot, path: &str) {
         log::warn!(
             "asset_resolver: {slot:?} '{path}' failed to load; \
@@ -424,9 +424,9 @@ impl GpuAssetResolver {
             log::warn!("resource package unavailable: no `assets/` directory found");
             return;
         };
-        // #530：挂载 `assets/` 下**所有** `.pak`，而不是写死 `scenes.pak`。
-        // 构建可以按内容分包（场景 / 模型贴图 / 后续的流式包），运行时不需要
-        // 知道分了多少个包。
+        // #530: Mount `assets/` below **all** `.pak`, not hardcoded `scenes.pak`.
+        // Build can split packages by content (scene / model graph / subsequent streaming packages), runtime does not need
+        // to know how many few packages split into.
         let paks = crate::asset_paths::pak_files_in(&asset_dir);
         if paks.is_empty() {
             log::warn!(
@@ -454,12 +454,12 @@ impl GpuAssetResolver {
         );
     }
 
-    /// #509：按需挂载 `assets/optional/` 下的分包（`optional_*.pak`）。
+    /// #509: Mount optional packages under `assets/optional/` on demand (`optional_*.pak`).
     ///
-    /// 自动挂载只扫描 `assets/` 顶层，所以分包里的字节不会在启动时常驻。进入
-    /// 需要这些资源的关卡 / 玩法时显式调用；已经挂过的包会被跳过，重复调用安全。
+    /// Auto-mount only scans `assets/` top layer, so optional package bytes will not reside at startup. Enter
+    /// need these resources' close card / gameplay explicitly call; already mounted packages will be skipped, heavy duplicate calls safe.
     ///
-    /// 返回**本次新挂载**的包数（目录不存在、为空或都已挂载时为 0）。
+    /// Returns **newly mounted this time** package count (directory does not exist, empty, or all already mounted = 0).
     pub fn load_optional_packages(&mut self) -> usize {
         let Some(dir) = crate::asset_paths::optional_pak_dir() else {
             return 0;
@@ -475,7 +475,7 @@ impl GpuAssetResolver {
 
         let loaded = self.mount_packages(&paks);
         let count = loaded.len();
-        // 只把真正加载成功的包记下来；失败的包下次调用还会重新尝试。
+        // Only record true positive load success packages; failure packages will heavy retry on next call.
         self.mounted_optional.extend(loaded);
         log::info!(
             "optional resource packages loaded from {}: {count} package(s), {} assets registered",
@@ -485,11 +485,11 @@ impl GpuAssetResolver {
         count
     }
 
-    /// #509：新挂载可选包后，让之前因为「路径不在包里」失败的实体重试一次。
+    /// #509: After newly mounting optional package, let entities failing because "path not in package inside" heavy retry once.
     ///
-    /// 失败缓存本来是「同一个坏路径只报一次」，但可选包是延迟挂载的：挂载前
-    /// 解析过的实体已经记下了失败。这里只清理**现在能解析到**的路径对应的实体，
-    /// 不动其它失败项。返回重新排队的实体数。
+    /// Failure cache originally "same bad path reported only once", but optional package is late-mounted: before mounting
+    /// parsed entities already recorded failure. This inside only cleans up entities for paths **currently parseable**,
+    /// not touching other failure items. Returns number of entities heavy re-queued.
     pub fn retry_failed_after_package_change(&mut self, world: &mut World) -> usize {
         let retry: Vec<Entity> = self
             .failed
@@ -530,7 +530,7 @@ impl GpuAssetResolver {
                 self.mounted_paks.push(pak_path.clone());
             }
 
-            // 每个包旁边有 `<name>.pak.meta.json`（路径清单）时一并加载。
+            // Each package beside has `<name>.pak.meta.json` (path list) loaded together.
             let manifest_path = pak_path.with_extension("pak.meta.json");
             if manifest_path.is_file() {
                 let mut manifest_span = crate::util::timing::span("asset::load_path_manifest");
@@ -553,14 +553,14 @@ impl GpuAssetResolver {
         loaded
     }
 
-    /// 校验包内构建戳（#976）：包过期时给出明确提示，而不是安静地画错内容。
+    /// Validate build stamp inside package (#976): give clear hint when package expires, not silently draw wrong content.
     ///
-    /// 三种情况：
-    /// - 没有戳 → 包由更旧的管线构建，无法判断新鲜度（warn，不阻断）；
-    /// - schema 指纹不同 → 引擎换了组件布局，旧包可能解出错误数据（error）；
-    /// - 工程文档比包新 → 改了场景忘改打包（error，带重建命令）。
+    /// Three cases:
+    /// - No stamp → package built by older pipeline, cannot judge freshness (warn, not block);
+    /// - Schema fingerprint not same → engine changed component layout, old package can parse error data (error);
+    /// - Project document newer than package → changed scene but forgot to repackage (error, with rebuild command).
     ///
-    /// 首次取资源时统一校验一次已挂载的包（logger 此时已就绪）。
+    /// Uniformly validate already mounted packages once when first accessing resources (logger now ready).
     fn check_cook_stamps_once(&mut self) {
         if self.stamps_checked {
             return;
@@ -574,15 +574,15 @@ impl GpuAssetResolver {
         self.mounted_paks = paks;
     }
 
-    /// Pub 版给热重载用：重新打包后同样要校验一次（#976）。
+    /// Pub version for hot reload: heavy repackage after still needs to validate once (#976).
     ///
-    /// 三种情况：
-    /// - 没有戳 / 戳读不出来 → 包由更旧的管线构建（warn，不阻断）；
-    /// - schema 指纹不同 → 引擎换了组件布局，旧包可能解出错误数据（error）；
-    /// - 工程文档比包新 → 改了场景忘改打包（error，带重建命令）。
+    /// Three cases:
+    /// - No stamp / stamp not readable → package built by older pipeline (warn, not block);
+    /// - Schema fingerprint not same → engine changed component layout, old package can parse error data (error);
+    /// - Project document newer than package → changed scene but forgot to repackage (error, with rebuild command).
     ///
-    /// 注意 `App::build` 阶段也会挂包，但那时 logger 还没装，所以真正的校验
-    /// 推迟到第一次 `prepare_requests`（见 [`Self::check_cook_stamps_once`]）。
+    /// Note `App::build` phase also mounts packages, but logger not yet installed, so true positive validation
+    /// deferred to first `prepare_requests` (see [`Self::check_cook_stamps_once`]).
     pub fn check_cook_stamp(&mut self, pak_path: &Path) {
         use prism_scene::cook_stamp as stamp_mod;
         let stamp = self
@@ -636,7 +636,7 @@ impl GpuAssetResolver {
         }
     }
 
-    /// 从内存资源加载 `.pak` 及其路径 manifest。
+    /// Load `.pak` and its path manifest from memory resources.
     pub fn load_resource_package_bytes(
         &mut self,
         pak_bytes: &[u8],
@@ -651,16 +651,16 @@ impl GpuAssetResolver {
     }
 
     // -----------------------------------------------------------------------
-    // 主线程：CPU 段——收集待解析实体并产出上传请求
+    // Main thread: CPU segment --- collect pending-parse entities and produce upload requests
     // -----------------------------------------------------------------------
 
-    /// 查询 ECS 世界中待处理的 [`MeshRenderer`] 实体，加载 `.pak` + 解交织，
-    /// 产出与 `World` 完全解耦的 [`AssetResolveRequest`]（纯数据，Send）。
+    /// Query ECS world pending [`MeshRenderer`] entities, load `.pak` + deinterleave,
+    /// Produce World-fully-decoupled [`AssetResolveRequest`] (pure data, Send).
     ///
-    /// 不触碰 `GraphRenderer`——GPU 上传由渲染线程的 `apply_asset_requests` 完成。
-    /// 返回的请求由调用方通过 [`prism_app::RenderShared`] 通道交给渲染线程。
+    /// Do not touch `GraphRenderer` --- GPU upload completed by render thread's `apply_asset_requests`.
+    /// Returned requests handed to render thread by caller via [`prism_app::RenderShared`] channel.
     ///
-    /// 返回数量即本帧新投递的实体数。已 enqueue 但尚未写回结果的实体会被去重跳过。
+    /// Returns quantity = number of entities newly submitted this frame. Already enqueued but results not yet written back entities will be heavy-dedup skipped.
     ///
     /// Each entity only carries the halves that are still missing: when the mesh
     /// resolved but the material is pending, the mesh is neither loaded nor
@@ -670,22 +670,22 @@ impl GpuAssetResolver {
     /// path is tried exactly once until someone rewrites it.
     pub fn prepare_requests(&mut self, world: &World) -> Vec<(Entity, AssetResolveRequest)> {
         let mut span = crate::util::timing::span("asset::prepare_requests");
-        // #976：构建戳在**第一次**取资源时才校验。启动时的挂包发生在
-        // `App::build`，那时 `env_logger` 还没初始化，任何 warn/error 都会被丢掉
-        // ——这正是「旧包静默画错」能长期存在的原因之一。
+        // #976: build stamp validated only at **first** resource access. Package mounting at startup occurs in
+        // `App::build`, at that time `env_logger` not initialized, any warn/error will be dropped
+        // --- this positive "old package silently draws wrong" is one reason it can long exist.
         self.check_cook_stamps_once();
-        // 先回收这一帧已经失效的 GPU 资源（#495）：实体没了、组件被删、或
-        // `generation` 归零（热重载）时把槽位交还给渲染器，再重新上传。
+        // First recycle GPU resources already invalidated this frame (#495): entity gone, component deleted, or
+        // `generation` zeroed (hot reload), slot bit returned to renderer, again heavy re-upload.
         self.release_stale_assets(world);
-        // 运行时生成的网格（地形，#517）：路径以 `__proc/` 开头，直接从世界里的
-        // 表取，不经过 `.pak`。
+        // Mesh generated at runtime (terrain, #517): path with `__proc/` prefix, taken directly from world inside
+        // table, not through `.pak`.
         let procedural = world.get_resource::<crate::scene::systems::terrain::ProceduralMeshes>();
-        // 收集待处理实体（首个），避免同时借用世界 & self。
+        // Collect pending entities (first), avoid borrowing world & self at same time.
         let pending: Vec<PendingRequest> = {
-            // 失败缓存只对仍然存在的实体有意义；实体被删除后顺手回收。
+            // Failure cache only meaningful for entities still present; entity deleted afterward cleaned up incidentally.
             self.sprite_paths
                 .retain(|entity, _| world.get::<SpriteRenderer>(*entity).is_some());
-            // 实体在上传途中被删除时，包围盒也不该留在表里。
+            // Entity deleted while upload in progress, bounding box also should not remain in table.
             self.pending_bounds
                 .retain(|entity, _| world.get::<MeshRef>(*entity).is_some());
             self.failed.retain(|(entity, _), _| {
@@ -712,14 +712,14 @@ impl GpuAssetResolver {
 
             let mut out = Vec::new();
             for (entity, mr) in world.query::<MeshRenderer>() {
-                // 只有「有路径」且「句柄还没解析」才算待处理：
-                // - 路径为空 = 作者没给资源，没有东西可加载（例如无材质的网格，
-                //   由渲染器回落到默认材质槽）；
-                // - 运行时组件缺失 = 结果无处写回，投递出去只会每帧重复 enqueue；
-                // - 失败缓存命中 = 同一个坏路径不再重试。
-                // 蒙皮实体（#560 P0-4）的 `MeshRenderer.mesh_path` 只是「源 glTF 路径」
-                // —— 打包器靠它 stage 资源。真正画的是 `.rskin`，所以这里别再上传
-                // 一份静态 RMES（浪费显存，静态绘制也会被 `skinned_draw` 跳过）。
+                // Only counts as pending when "has path" and "handle not yet parsed":
+                // - path empty = author did not provide resource, nothing to load (e.g. mesh with no material,
+                //   renderer falls back to default material slot);
+                // - component missing at runtime = result has nowhere to write back, submitted will heavy re-enqueue every frame;
+                // - failure cache hit = same bad path will not heavy retry again.
+                // Skinned entity (#560 P0-4) `MeshRenderer.mesh_path` is only "source glTF path"
+                // --- packer relies on it to stage resources. True positive draws `.rskin`, so inside do not again upload
+                // a static RMES (wastes VRAM, static draw will also be skipped by `skinned_draw`).
                 let skinned = world
                     .get::<crate::scene::components::SkinnedMeshRenderer>(entity)
                     .is_some();
@@ -729,8 +729,8 @@ impl GpuAssetResolver {
                         .get::<MeshRef>(entity)
                         .is_some_and(|r| r.generation == 0)
                     && !self.failed_before(entity, AssetSlot::Mesh, &mr.mesh_path);
-                // 多材质（#520）：只要还有没失败过的路径就继续尝试。失败缓存按
-                // 路径记，所以某个 submesh 的坏材质不会拖住其它材质。
+                // many materials (#520): as long as there are paths not yet failed, continue trying. Failure cache by
+                // path recorded, so some submesh's bad material will not drag down other materials.
                 let material_unresolved = world
                     .get::<MaterialRef>(entity)
                     .is_some_and(|r| r.generation == 0);
@@ -768,8 +768,8 @@ impl GpuAssetResolver {
                     self.enqueued.insert(entity);
                 }
             }
-            // 1b. 蒙皮网格（#560 P0-3b）：`.rskin` 自带顶点 + 权重，走专用解码；
-            // 材质解析与静态网格共用同一套（`renderer` 是等价的 MeshRenderer）。
+            // 1b. Skinned mesh (#560 P0-3b): `.rskin` comes with vertices + skin weights, takes dedicated decode;
+            // Material parsing shares same set as static mesh (`renderer` equivalent MeshRenderer).
             for (entity, skinned) in world.query::<prism_scene::components::SkinnedMeshRenderer>() {
                 let path = &skinned.skinned_mesh_path;
                 let wants_mesh = !path.is_empty()
@@ -817,7 +817,7 @@ impl GpuAssetResolver {
                     self.enqueued.insert(entity);
                 }
             }
-            // 2D 精灵：只有贴图一条资源，`SpriteRef.generation == 0` 表示待解析。
+            // 2D sprite: only has graph one resource, `SpriteRef.generation == 0` means pending parse.
             for (entity, sprite) in world.query::<SpriteRenderer>() {
                 if !sprite.has_sprite() {
                     continue;
@@ -826,7 +826,7 @@ impl GpuAssetResolver {
                     .get::<SpriteRef>(entity)
                     .map(|r| r.generation == 0)
                     .unwrap_or(true);
-                // 没有 `SpriteRef`（运行期新生成的精灵）或路径被改写都算待解析。
+                // No `SpriteRef` (runtime newly generated sprite) or path rewritten counts as pending parse.
                 let path_changed = self
                     .sprite_paths
                     .get(&entity)
@@ -850,7 +850,7 @@ impl GpuAssetResolver {
                     self.sprite_paths.insert(entity, sprite.sprite_path.clone());
                 }
             }
-            // 瓦片地图：同样只有 tileset 一张贴图（#529）。
+            // Tile map graph: same only has tileset one graph (#529).
             for (entity, tilemap) in world.query::<Tilemap>() {
                 if tilemap.tileset_path.is_empty() {
                     continue;
@@ -883,7 +883,7 @@ impl GpuAssetResolver {
                         .insert(entity, tilemap.tileset_path.clone());
                 }
             }
-            // UI 背景图（#591）：和精灵一样只需要一张贴图，结果写进 `UiImageRef`。
+            // UI background graph (#591): same as sprite only needs one graph, result written to `UiImageRef`.
             for (entity, style) in world.query::<crate::ui::components::Style>() {
                 if style.image.is_empty() {
                     continue;
@@ -940,7 +940,7 @@ impl GpuAssetResolver {
                 }
                 None => None,
             };
-            // 蒙皮网格（#560 P0-3b）：顶点 + 权重一起上传，其余流程与静态网格一致。
+            // Skinned mesh (#560 P0-3b): vertices + skin weights uploaded together, rest of stream same as static mesh.
             let mut skin = None;
             let loaded = match item.skinned_path.as_deref() {
                 Some(path) => {
@@ -960,7 +960,7 @@ impl GpuAssetResolver {
             };
             let (mesh, submeshes) = match loaded {
                 Some(loaded) => (Some(loaded.input), loaded.submeshes),
-                // 网格已经解析过、这帧只补材质：用运行时缓存的 submesh 表。
+                // Mesh already parsed, this frame only supplements material: use submesh table cached at runtime.
                 None => (
                     None,
                     world
@@ -974,8 +974,8 @@ impl GpuAssetResolver {
                     .insert(item.entity, submeshes.clone());
             }
 
-            // 材质按 submesh 展开（#520）：相同路径只上传一次，回传后按
-            // `pending_material_map` 复制到每个 submesh。
+            // Material expanded by submesh (#520): same path uploaded only once, returned after by
+            // `pending_material_map` copied to each submesh.
             let mut materials: Vec<Option<MaterialResolveData>> = Vec::new();
             if item.wants_material {
                 let submesh_count = if submeshes.is_empty() {
@@ -1047,8 +1047,8 @@ impl GpuAssetResolver {
                 };
                 self.pending_texture_slot.insert(item.entity, slot);
             }
-            // 包围盒在请求发出前算好：GPU 上传后句柄才回来，而 CPU 段此刻
-            // 已经解出顶点位置了（#491）。
+            // Bounding box calculated when upload request sent: GPU upload after handle returns, while CPU segment
+            // has already resolved vertex positions (#491).
             if let Some(bounds) = mesh.as_ref().and_then(MeshUploadInput::bounds) {
                 self.pending_bounds.insert(item.entity, bounds);
             }
@@ -1112,9 +1112,9 @@ impl GpuAssetResolver {
         reqs
     }
 
-    /// 结果写回后调用：解除该实体的 enqueue 去重标记，并写入 GPU 句柄。
+    /// Result write-back after call: remove entity's enqueue heavy flag, and write GPU handle.
     ///
-    /// 必须在主线程调用（持有 `&mut World`）。
+    /// Must be called in main thread (holds `&mut World`).
     pub fn apply_results(
         &mut self,
         world: &mut World,
@@ -1196,8 +1196,8 @@ impl GpuAssetResolver {
                         );
                     }
                 }
-                // 没有经过 `prepare_requests` 的旧式结果 / 单材质路径：保持
-                // 旧行为，只写回第一个槽位。
+                // No old-style results / single material path through `prepare_requests`: keep
+                // Old behavior, only writes back first slot bit.
                 None => {
                     if let Some(slot) = result.material_slot {
                         if let Some(mr) = world.get_mut::<MaterialRef>(*entity) {
@@ -1270,7 +1270,7 @@ impl GpuAssetResolver {
                 }
                 world.insert(*entity, sprite);
 
-                // 瓦片地图的 tileset 走同一个上传结果（#529）。
+                // Tile map graph tileset takes same upload result (#529).
                 if world.get::<Tilemap>(*entity).is_some() {
                     let tilemap = world
                         .get::<TilemapRef>(*entity)
@@ -1291,7 +1291,7 @@ impl GpuAssetResolver {
                         },
                     );
                 }
-                // UI 背景图走同一个上传结果（#591）。
+                // UI background graph takes same upload result (#591).
                 if world
                     .get::<crate::ui::components::Style>(*entity)
                     .is_some_and(|style| !style.image.is_empty())
@@ -1321,18 +1321,18 @@ impl GpuAssetResolver {
     }
 
     // -----------------------------------------------------------------------
-    // 热重载：让已解析的资产重新走一遍
+    // Hot reload: let already parsed assets heavy re-run once
     // -----------------------------------------------------------------------
 
-    /// 让**所有** `MeshRenderer` / `SpriteRenderer` 的解析结果失效（`.pak` 重建后调用）。
+    /// Invalidate parse results of **all** `MeshRenderer` / `SpriteRenderer` (`.pak` heavy rebuild after call).
     ///
-    /// 只清实体这一侧的状态（`MeshRef` / `MaterialRef` / `SpriteRef` 的
-    /// `generation`、失败缓存、排队标记），**不动** `ResourceManager`：包里的字节由
-    /// [`ResourceManager::on_pak_changed`] 换掉，新字节在下一帧
-    /// [`Self::prepare_requests`] 里重新读出来，渲染线程给它们新的句柄。
+    /// Only clears state on entity side (`MeshRef` / `MaterialRef` / `SpriteRef`'s
+    /// `generation`, failure cache, queue flag), **does not touch** `ResourceManager`: bytes inside package by
+    /// [`ResourceManager::on_pak_changed`] swapped, new bytes in below one frame
+    /// [`Self::prepare_requests`] inside heavy re-reads them, render thread gives them new handles.
     ///
-    /// 返回**重新排队**的实体数。旧 GPU 句柄暂时留在渲染器里（没有从 ECS 反向释放的接口），
-    /// 频繁热重载会让纹理/材质槽增长 —— 已知遗留，见 #495 的后续条目。
+    /// Returns **heavy re-queued** entity count. Old GPU handles temporarily remain in renderer inside (no interface),
+    /// frequent hot reload will cause texture/material slots to grow --- already known, see #495 follow-up entry.
     pub fn invalidate_assets(&mut self, world: &mut World) -> usize {
         let mut entities: Vec<Entity> = Vec::new();
         for (entity, _) in world.query::<MeshRenderer>() {
@@ -1348,7 +1348,7 @@ impl GpuAssetResolver {
                 entities.push(entity);
             }
         }
-        // UI 背景图（#591）也走同一条贴图上传路径，热重载时必须一起失效。
+        // UI background graph (#591) also takes same graph upload path, hot reload must invalidate together.
         for (entity, _) in world.query::<crate::scene::runtime_components::UiImageRef>() {
             if !entities.contains(&entity) {
                 entities.push(entity);
@@ -1361,10 +1361,10 @@ impl GpuAssetResolver {
         count
     }
 
-    /// 只让引用了 `path` 的实体重新解析（换了一张贴图 / 一个网格）。
+    /// Only lets entities referencing `path` heavy re-parse (changed one graph / one mesh).
     ///
-    /// `path` 与作者文档里的写法一致（`mesh_path` / `material_path` /
-    /// `sprite_path`）。返回引用了该路径的实体数；没有实体引用它时返回 0。
+    /// `path` consistent with authoring document inside writing (`mesh_path` / `material_path` /
+    /// `sprite_path`). Returns number of entities referencing that path; returns 0 if no entity references it.
     pub fn invalidate_path(&mut self, world: &mut World, path: &str) -> usize {
         let mut entities: Vec<Entity> = Vec::new();
         for (entity, renderer) in world.query::<MeshRenderer>() {
@@ -1400,9 +1400,9 @@ impl GpuAssetResolver {
         count
     }
 
-    /// 把实体上已解析的句柄打回 `generation == 0`，并清掉会挡住重新解析的缓存。
+    /// Reset entity's already parsed handle back to `generation == 0`, and clear cache blocking heavy re-parse.
     ///
-    /// 返回 `true` 表示确实做了修改（本来就是 `0` 的实体不算）。
+    /// Returns `true` indicating real modification was made (entities already `0` do not count).
     fn reset_entity_refs(&mut self, world: &mut World, entity: Entity) -> bool {
         let mut changed = false;
         if let Some(mesh) = world.get_mut::<MeshRef>(entity) {
@@ -1435,7 +1435,7 @@ impl GpuAssetResolver {
                 changed = true;
             }
         }
-        // 失败缓存（同一个坏路径不再重试）与排队标记都会挡住重新解析。
+        // Failure cache (same bad path will not heavy retry again) and queue flag will block heavy re-parse.
         self.enqueued.remove(&entity);
         self.pending_bounds.remove(&entity);
         self.pending_submeshes.remove(&entity);
@@ -1447,7 +1447,7 @@ impl GpuAssetResolver {
     }
 
     // -----------------------------------------------------------------------
-    // 骨骼动画资产（#560 P0-2）
+    // Skeletal animation assets (#560 P0-2)
     // -----------------------------------------------------------------------
 
     /// Read the `.rskel` / `.ranim` files a scene references into [`SkeletonLibrary`].
@@ -1459,8 +1459,8 @@ impl GpuAssetResolver {
         let _span = crate::util::timing::span("asset::load_animation_assets");
         use crate::scene::systems::animator::SkeletonLibrary;
 
-        // 蒙皮实体不一定有 `MeshRef` / `MaterialRef`（loader 只为 `MeshRenderer`
-        // 插入），没有它们 `prepare_requests` 就不会给它排上传（#560 P0-3b）。
+        // Skinned entity does not necessarily have `MeshRef` / `MaterialRef` (loader only for `MeshRenderer`
+        // insert), without them `prepare_requests` will not schedule upload (#560 P0-3b).
         let mut missing_refs = Vec::new();
         for (entity, renderer) in world.query::<prism_scene::components::SkinnedMeshRenderer>() {
             if renderer.skinned_mesh_path.trim().is_empty() {
@@ -1509,11 +1509,11 @@ impl GpuAssetResolver {
                 if !clip.trim().is_empty() {
                     requested.push(clip);
                 }
-                // 状态机（#560 P1）：机器自己的状态剪辑在它加载完之后再补请求。
+                // State machine (#560 P1): machine's own clip, after it loads, again supplement request.
                 if !animator.state_machine_path.trim().is_empty() {
                     requested.push(animator.state_machine_path.clone());
                 }
-                // 动画图（#560 P1）：图自己的剪辑 / 状态机在加载完之后再补请求。
+                // Animation graph (#560 P1): graph's own clip / state machine, after it loads, again supplement request.
                 if !animator.anim_graph_path.trim().is_empty() {
                     requested.push(animator.anim_graph_path.clone());
                 }
@@ -1540,8 +1540,8 @@ impl GpuAssetResolver {
         {
             world.insert_resource(crate::scene::systems::animator::AnimGraphLibrary::new());
         }
-        // 参数表（项目侧每帧写 `speed` / `grounded` / trigger）。引擎不猜值，只保证
-        // 资源在：没有它 `animator_system` 会当成空表（所有参数条件恒 false）。
+        // Parameter table (project side writes `speed` / `grounded` / trigger each frame). Engine does not guess value, only guarantees
+        // Resource present: without it `animator_system` will become empty table (all parameter conditions constantly false).
         if world.get_resource::<prism_anim::AnimParameters>().is_none() {
             world.insert_resource(prism_anim::AnimParameters::default());
         }
@@ -1564,7 +1564,7 @@ impl GpuAssetResolver {
                 report_missing_reference(&path, "animation");
                 continue;
             };
-            // 骨架与剪辑类型不同，用扩展名区分（cook 端写出的路径带 `.rskel` / `.ranim`）。
+            // Skeleton and clip types differ, distinguished by extension (paths written by cook end carry `.rskel` / `.ranim`).
             if path.ends_with(".rskel") {
                 let Ok(handle) = self
                     .resource_manager
@@ -1638,7 +1638,7 @@ impl GpuAssetResolver {
             }
         }
 
-        // 第二轮：图引用的状态机。必须先加载机器，第三轮才能把机器状态剪辑一起补全。
+        // Second round: graph reference state machine. Must first load machine, third round can supplement machine state clip together.
         let mut graph_machines: Vec<String> = Vec::new();
         if let Some(library) =
             world.get_resource::<crate::scene::systems::animator::AnimGraphLibrary>()
@@ -1683,7 +1683,7 @@ impl GpuAssetResolver {
             }
         }
 
-        // 第二轮：状态机引用的剪辑。机器刚加载完才知道它们是谁，所以只能在这之后补。
+        // Second round: state machine reference clip. Only after machine just loaded knows who they are, so can only after this supplement.
         let mut state_clips: Vec<String> = Vec::new();
         if let Some(library) =
             world.get_resource::<crate::scene::systems::animator::StateMachineLibrary>()

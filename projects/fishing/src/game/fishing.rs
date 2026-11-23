@@ -1,40 +1,40 @@
-//! 钓鱼状态机（M0 垂直切片）。
+//! Fishing state machine (M0 vertical slice).
 //!
-//! 这是**用户项目**的玩法层：引擎只提供通用的 `LineRenderer` /
-//! `SpriteRenderer` 与输入快照，鱼竿、浮标、咬钩时序全在这里。
+//! This is the **user project** gameplay layer: engine only provides generic `LineRenderer` /
+//! `SpriteRenderer` and input snapshot; rod, bobber, bite timing all here.
 //!
-//! 状态流转：
+//! State transitions:
 //!
 //! ```text
-//! Idle ──点击──> Casting ──落水──> Waiting ──计时──> Biting
+//! Idle ──click──> Casting ──splash──> Waiting ──timer──> Biting
 //!   ^                                                  │
-//!   └────── Caught <──收线成功── Reeling <──点击────────┘
-//!                                                      └──超时──> Waiting
+//!   └────── Caught <──reel success ── Reeling <──click────────┘
+//!                                                      └──timeout ──> Waiting
 //! ```
 //!
-//! 状态与读写都走 [`prism_game_api::GameWorld`]：与 `boat` / `world` 同构，
-//! 静态 Player 与编辑器动态模块共用同一份玩法代码。
+//! State and read / write go through [`prism_game_api::GameWorld`]: same structure as `boat` / `world`,
+//! static Player and editor dynamic module share same gameplay code.
 
 use prism_game_api::{keys, EntityHandle, GameWorld};
 use prism_scene::components::{LineRenderer, LocalTransform, Name, SpriteRenderer, TimeOfDay};
 use prism_scene::ui::Text;
 
-/// 鱼竿尖端相对船锚点的偏移（船体局部像素）。
+/// Rod tip offset relative to boat anchor (boat-local pixels).
 const ROD_OFFSET: [f32; 2] = [44.0, 24.0];
-/// 抛竿落点相对船的水平距离。
+/// Horizontal distance of cast landing point relative to boat.
 const CAST_DISTANCE: f32 = 150.0;
-/// 浮标飞行时间。
+/// Bobber flight time.
 const CAST_SECONDS: f32 = 0.55;
-/// 咬钩提示持续时间（超过就脱钩）。
+/// Bite hint duration (timeout unhooks).
 const BITE_WINDOW: f32 = 1.1;
-/// 收线动画时间。
+/// Reel animation time.
 const REEL_SECONDS: f32 = 0.9;
-/// 水面高度（世界 y）。
+/// Water surface height (world y).
 const WATER_LINE: f32 = 80.0;
-/// 鱼线排序层。
+/// Fishing line sort layer.
 const LINE_LAYER: i32 = 45;
 
-/// 钓鱼阶段。
+/// Fishing phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Idle,
@@ -51,25 +51,25 @@ impl Default for Phase {
     }
 }
 
-/// 钓鱼状态——**项目私有**，由调用方持有（Player 侧放在 ECS resource 里）。
+/// Fishing state — **project-private**, held by caller (Player side in ECS resource).
 #[derive(Default)]
 pub struct FishingState {
     phase: Phase,
-    /// 当前阶段已经过的时间（秒）。
+    /// Time elapsed in current phase (seconds).
     elapsed: f32,
-    /// 本阶段的目标时长；`0` 表示按逻辑自行判定。
+    /// Target duration of this phase; `0` means decided by logic.
     duration: f32,
-    /// 浮标当前世界位置。
+    /// Bobber current world position.
     bobber_pos: [f32; 2],
-    /// 抛竿起点（船锚点）。
+    /// Cast start point (boat anchor).
     cast_origin: [f32; 2],
-    /// 本次等待的咬钩时间（伪随机）。
+    /// Bite time of this waiting (pseudo-random).
     bite_at: f32,
     /// Bobber position when the hook was set; the reel interpolates from here.
     reel_origin: [f32; 2],
-    /// 已钓到的鱼数（M0 只做计数）。
+    /// Fish caught count (M0 only counts).
     caught: u32,
-    /// HUD 顶栏的文本实体（`title`），每帧写入鱼数与时间。
+    /// HUD top-bar text entity (`title`), writes fish count and time each frame.
     hud: Option<EntityHandle>,
     boat: Option<EntityHandle>,
     bobber: Option<EntityHandle>,
@@ -86,18 +86,18 @@ impl FishingState {
     }
 }
 
-/// HUD 顶栏文本实体（场景里叫 `title`，由工程自己的场景摆放）。
+/// HUD top-bar text entity (called `title` in scene, placed by project own scene).
 fn find_hud_label(world: &mut GameWorld<'_>) -> Option<EntityHandle> {
     world.find_by_name("title")
 }
 
-/// 每帧推进钓鱼状态机。
+/// Advance fishing state machine each frame.
 pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32) {
     if state.is_none() {
         let mut fresh = FishingState::default();
         fresh.boat = world.find_by_name("boat");
         fresh.bobber = world.find_by_name("bobber");
-        // #984：进度从玩家存档里恢复（键就是 `caught`，工程自己定的 schema）。
+        // #984: progress restored from player save (key is `caught`, project-defined schema).
         fresh.caught = world
             .load_data("caught")
             .and_then(|value| value.parse::<u32>().ok())
@@ -117,19 +117,19 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         return;
     };
 
-    // --- 输入（宿主每帧下发的输入快照） ---
+    // --- input (input snapshot sent down by host each frame) ---
     let input = world.input();
     let clicked = input.left_clicked;
     // Cast and hook-set are edge-triggered: holding the key counts once, like `left_clicked`.
     let pressed_space = input.key_pressed(keys::SPACE);
-    // `FISHING_AUTOPLAY=1` 让状态机自己推进：用于演示与自动化截图，
-    // 正常游玩时不设这个变量，完全由输入驱动。
+    // `FISHING_AUTOPLAY=1` makes state machine advance itself: for demos and automated screenshots,
+    // normal play does not set this var, fully input-driven.
     let autoplay = std::env::var_os("FISHING_AUTOPLAY").is_some();
     let auto_fire =
         autoplay && matches!(current.phase, Phase::Idle | Phase::Biting) && current.elapsed > 1.0;
     let action = clicked || pressed_space || auto_fire;
 
-    // --- 船锚点 ---
+    // --- boat anchor ---
     let boat_pos = current
         .boat
         .and_then(|boat| world.get::<LocalTransform>(boat))
@@ -152,7 +152,7 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         Phase::Casting => {
             let t = (current.elapsed / CAST_SECONDS).clamp(0.0, 1.0);
             let target = [boat_pos[0] + CAST_DISTANCE, WATER_LINE];
-            // 抛物线：水平线性插值，垂直方向加一个拱形。
+            // Parabola: horizontal linear interpolation, vertical adds an arc.
             let arc = (t * std::f32::consts::PI).sin() * 60.0;
             current.bobber_pos = [
                 current.cast_origin[0] + (target[0] - current.cast_origin[0]) * t,
@@ -177,7 +177,7 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
             }
         }
         Phase::Biting => {
-            // 咬钩时浮标下沉抖动。
+            // Bobber sinks and shakes on bite.
             current.bobber_pos = [
                 boat_pos[0] + CAST_DISTANCE,
                 WATER_LINE - 4.0 + (current.elapsed * 18.0).sin() * 2.5,
@@ -209,12 +209,12 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
                 current.phase = Phase::Caught;
                 current.elapsed = 0.0;
                 log::info!("fishing: landed fish #{}", current.caught);
-                // 上钩的水花声（#987）：玩家和编辑器 Play 都能听到。
+                // Splash sound on hook (#987): both player and editor Play can hear.
                 match world.play_sound("audio/splash.wav", 0.8, false) {
                     Some(id) => log::info!("fishing: splash sound id {id}"),
                     None => log::warn!("fishing: splash sound unavailable"),
                 }
-                // #984：落袋即存档，退出游戏不会丢进度。
+                // #984: save immediately on catch, quitting game will not lose progress.
                 let saved = world.save_data("caught", &current.caught.to_string());
                 log::info!("fishing: landed fish #{} (saved: {saved})", current.caught);
             }
@@ -228,9 +228,9 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- HUD：鱼数 + 当前时刻 -------------------------------------------------
+    // --- HUD: fish count + current time -------------------------------------------------
     //
-    // 时间来自引擎的 `TimeOfDay`（#983），工程不再自己维护计时器。
+    // Time from engine `TimeOfDay` (#983), project no longer maintains own timer.
     if let Some(hud) = current.hud {
         if let Some(mut text) = world.get::<Text>(hud) {
             let clock = world
@@ -247,14 +247,14 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- 写回浮标位置与表现 ---
+    // --- Write back bobber position and appearance ---
     if let Some(bobber) = current.bobber {
         if let Some(mut transform) = world.get::<LocalTransform>(bobber) {
             transform.position = glam::Vec3::new(current.bobber_pos[0], current.bobber_pos[1], 0.0);
             world.set(bobber, transform);
         }
         if let Some(mut sprite) = world.get::<SpriteRenderer>(bobber) {
-            // 咬钩时闪一下暖色，让玩家看清窗口。
+            // Flash warm color on bite so player sees window.
             sprite.color = if current.phase == Phase::Biting {
                 [1.0, 0.55, 0.35, 1.0]
             } else {
@@ -269,7 +269,7 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- 鱼线：竿尖 → 浮标（中间一点下垂） ---
+    // --- Fishing line: rod tip → bobber (sags slightly in middle) ---
     if let Some(line) = current.line {
         if let Some(mut renderer) = world.get::<LineRenderer>(line) {
             let tip = [boat_pos[0] + ROD_OFFSET[0], boat_pos[1] + ROD_OFFSET[1]];
@@ -311,7 +311,7 @@ fn spawn_line(world: &mut GameWorld<'_>) -> Option<EntityHandle> {
     Some(entity)
 }
 
-/// 稳定的伪随机（0..1），避免为一个演示引入 rand 依赖。
+/// Stable pseudo-random (0..1), avoid pulling in rand dependency for a demo.
 fn pseudo_random(seed: u32) -> f32 {
     let mut x = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     x ^= x >> 15;

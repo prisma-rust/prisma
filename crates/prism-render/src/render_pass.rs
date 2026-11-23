@@ -207,7 +207,7 @@ pub fn find_memory_type(
 }
 
 /// A color image + view used as an MRT attachment (e.g. the view-space normal
-/// 目标 written by `ForwardPass` and sampled by the GTAO pass Mirrors
+/// Target written by `ForwardPass` and sampled by the GTAO pass. Mirrors
 /// [`DepthImage`] but for a `COLOR_ATTACHMENT | SAMPLED` image with a
 /// caller-supplied format.
 pub struct NormalImage {
@@ -219,7 +219,7 @@ pub struct NormalImage {
 impl NormalImage {
     /// Create a color image for the given extent + format. Usage is
     /// `COLOR_ATTACHMENT | SAMPLED` so the GTAO pass can read it back as a
-    /// 纹理 after the ForwardPass stores it.
+    /// texture after the ForwardPass stores it.
     pub fn new(
         context: &VulkanContext,
         extent: vk::Extent2D,

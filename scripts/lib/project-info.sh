@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# 工程信息解析（#598）：被 `new-android-game.sh` / `build-android-game.sh` 共用。
+# Project info parsing (#598): shared by `new-android-game.sh` / `build-android-game.sh`.
 #
-# 只读 Cargo.toml 与 assets/settings.ini，不依赖目录名猜库名：
-#   1. `assets/settings.ini` 的 `[build] lib_name`（显式覆盖，优先）
-#   2. `Cargo.toml` 的 `[lib] name`
-#   3. `Cargo.toml` 的 `[package] name`（`-` 换成 `_`，cargo 的默认库名规则）
+# Only reads Cargo.toml and assets/settings.ini, does not guess lib name from directory name:
+#   1. `[build] lib_name` in `assets/settings.ini` (explicit override, highest priority)
+#   2. `[lib] name` in `Cargo.toml`
+#   3. `[package] name` in `Cargo.toml` (`-` replaced with `_`, cargo default lib name rule)
 #
-# 用法（在脚本里 source）：
+# Usage (source from script):
 #   . "$ROOT/scripts/lib/project-info.sh"
 #   PROJECT_DIR=$(prism_project_dir "$ROOT" fishing)
 #   LIB_NAME=$(prism_lib_name "$PROJECT_DIR")
 
-# 读取 INI 里 `[section] key` 的值（行内不解析注释；双引号去掉）。
-# 找不到 / 空值 → 输出空行并返回 1。
+# Read value of `[section] key` in INI (no inline comment parsing; double quotes stripped).
+# If not found / empty value → output empty line and return 1.
 prism_ini_get() {
     local file="$1" section="$2" key="$3"
     [ -f "$file" ] || return 1
@@ -40,7 +40,7 @@ prism_ini_get() {
     ' "$file"
 }
 
-# Cargo.toml 某个 `[section]` 下的 `name = "..."`。
+# `name = "..."` under some `[section]` in Cargo.toml.
 prism_cargo_name() {
     local manifest="$1" section="$2"
     [ -f "$manifest" ] || return 1
@@ -63,7 +63,7 @@ prism_cargo_name() {
     ' "$manifest"
 }
 
-# `projects/<name>` 或绝对/相对路径 → 绝对路径；必须有 Cargo.toml。
+# `projects/<name>` or absolute / relative path → absolute path; must have Cargo.toml.
 prism_project_dir() {
     local root="$1" name="$2"
     local dir
@@ -73,13 +73,13 @@ prism_project_dir() {
         *) dir="$root/projects/$name" ;;
     esac
     [ -f "$dir/Cargo.toml" ] || {
-        echo "找不到工程：$dir/Cargo.toml（用法：<project> 是 projects/ 下的目录名）" >&2
+                echo "Cannot find project: $dir/Cargo.toml (usage: <project> is a directory name under projects/)" >&2
         return 1
     }
     (cd "$dir" && pwd)
 }
 
-# 工程的库名（.so 名字去掉 lib 前缀与 .so 后缀，也是 `android.app.lib_name`）。
+# Project lib name (.so name without lib prefix and .so suffix, also `android.app.lib_name`).
 prism_lib_name() {
     local dir="$1"
     local name
@@ -95,11 +95,11 @@ prism_lib_name() {
         printf '%s\n' "$name" | tr '-' '_'
         return 0
     fi
-    echo "读不出库名：$dir/Cargo.toml 缺 [package] name" >&2
+        echo "Cannot read lib name: $dir/Cargo.toml missing [package] name" >&2
     return 1
 }
 
-# 工程名（目录名，用于默认包名 / 标签）。
+# Project name (directory name, used for default package name / tag).
 prism_project_name() {
     basename "$1"
 }

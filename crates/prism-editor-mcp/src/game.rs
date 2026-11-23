@@ -25,23 +25,23 @@ pub fn definitions() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "game_run",
-            description: "在项目根目录启动游戏（默认 `cargo run --release`），日志进缓冲区。",
+            description: "Launch the game from project root (default `cargo run --release`), logs go to buffer.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "覆盖启动命令，默认 `cargo run --release`" },
-                    "env": { "type": "object", "description": "额外环境变量，值为字符串" }
+                    "command": { "type": "string", "description": "Override launch command, default `cargo run --release`" },
+                    "env": { "type": "object", "description": "Extra env vars, values are strings" }
                 }
             }),
         },
         ToolDef {
             name: "game_stop",
-            description: "结束由 game_run / screenshot 启动的进程。",
+            description: "Terminate process started by game_run / screenshot.",
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         ToolDef {
             name: "game_logs",
-            description: "取最近 N 行游戏日志（stdout + stderr 混合）。",
+            description: "Get the last N lines of game log (stdout + stderr mixed).",
             input_schema: json!({
                 "type": "object",
                 "properties": { "lines": { "type": "integer", "default": 200 } }
@@ -49,16 +49,16 @@ pub fn definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "screenshot",
-            description: "启动游戏、在指定帧抓图、再结束进程，返回 PNG 路径与分辨率。",
+            description: "Launch game, capture at specified frame, then terminate; returns PNG path and resolution.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "输出 PNG（相对项目根或绝对路径）" },
-                    "size": { "type": "string", "description": "如 1920x1080；不给则用窗口分辨率" },
-                    "scale": { "type": "number", "description": "窗口分辨率的倍数（size 优先）" },
-                    "frame": { "type": "integer", "description": "抓第几帧，默认 120" },
-                    "timeout_ms": { "type": "integer", "description": "等待上限，默认 60000" },
-                    "command": { "type": "string", "description": "覆盖启动命令" },
+                    "path": { "type": "string", "description": "Output PNG (relative to project root or absolute path)" },
+                    "size": { "type": "string", "description": "e.g. 1920x1080; if omitted use window resolution" },
+                    "scale": { "type": "number", "description": "Window resolution multiplier (size takes priority)" },
+                    "frame": { "type": "integer", "description": "Which frame to capture, default 120" },
+                    "timeout_ms": { "type": "integer", "description": "Wait limit, default 60000" },
+                    "command": { "type": "string", "description": "Override launch command" },
                     "env": { "type": "object" }
                 },
                 "required": ["path"]
@@ -85,7 +85,7 @@ impl GameHost {
             "game_stop" => self.stop(),
             "game_logs" => self.logs(args),
             "screenshot" => self.screenshot(root, args),
-            other => Err(format!("未知工具 '{other}'")),
+            other => Err(format!("Unknown tool '{other}'")),
         }
     }
 
@@ -95,16 +95,21 @@ impl GameHost {
         args: &Value,
         extra_env: &[(String, String)],
     ) -> Result<(), String> {
-        let mut guard = self.child.lock().map_err(|_| "进程锁被污染".to_string())?;
+        let mut guard = self
+            .child
+            .lock()
+            .map_err(|_| "Process lock poisoned".to_string())?;
         if guard.is_some() {
-            return Err("已经有游戏在跑，先 game_stop".into());
+            return Err("A game is already running, call game_stop first".into());
         }
         let command = args
             .get("command")
             .and_then(Value::as_str)
             .unwrap_or("cargo run --release");
         let mut parts = command.split_whitespace();
-        let program = parts.next().ok_or_else(|| "启动命令为空".to_string())?;
+        let program = parts
+            .next()
+            .ok_or_else(|| "Launch command is empty".to_string())?;
 
         let mut cmd = Command::new(program);
         cmd.args(parts)
@@ -124,7 +129,7 @@ impl GameHost {
 
         let mut child = cmd
             .spawn()
-            .map_err(|err| format!("启动 '{command}' 失败: {err}"))?;
+            .map_err(|err| format!("Failed to launch '{command}': {err}"))?;
         self.pipe_logs(&mut child);
         *guard = Some(child);
         Ok(())
@@ -151,24 +156,30 @@ impl GameHost {
 
     fn run(&self, root: &Path, args: &Value) -> Result<String, String> {
         self.spawn(root, args, &[])?;
-        Ok("已启动（日志用 game_logs 取）".into())
+        Ok("Started (get logs with game_logs)".into())
     }
 
     fn stop(&self) -> Result<String, String> {
-        let mut guard = self.child.lock().map_err(|_| "进程锁被污染".to_string())?;
+        let mut guard = self
+            .child
+            .lock()
+            .map_err(|_| "Process lock poisoned".to_string())?;
         match guard.take() {
             Some(mut child) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                Ok("已结束".into())
+                Ok("Terminated".into())
             }
-            None => Ok("没有在跑的进程".into()),
+            None => Ok("No running process".into()),
         }
     }
 
     fn logs(&self, args: &Value) -> Result<String, String> {
         let lines = args.get("lines").and_then(Value::as_u64).unwrap_or(200) as usize;
-        let logs = self.logs.lock().map_err(|_| "日志锁被污染".to_string())?;
+        let logs = self
+            .logs
+            .lock()
+            .map_err(|_| "Log lock poisoned".to_string())?;
         let skip = logs.len().saturating_sub(lines);
         Ok(logs
             .iter()
@@ -182,7 +193,7 @@ impl GameHost {
         let raw = args
             .get("path")
             .and_then(Value::as_str)
-            .ok_or_else(|| "缺少 'path'".to_string())?;
+            .ok_or_else(|| "Missing 'path'".to_string())?;
         let target = {
             let path = PathBuf::from(raw);
             if path.is_absolute() {
@@ -192,7 +203,8 @@ impl GameHost {
             }
         };
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| format!("建目录失败: {err}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create directory: {err}"))?;
         }
         // A stale file would make the wait-for-file loop return immediately;
         // delete it first.
@@ -243,7 +255,7 @@ impl GameHost {
         if !written {
             let tail = self.logs(&json!({ "lines": 30 })).unwrap_or_default();
             return Err(format!(
-                "等待截图超时（{} ms）\n最近的日志：\n{tail}",
+                "Screenshot wait timed out ({} ms)\nRecent logs:\n{tail}",
                 timeout.as_millis()
             ));
         }

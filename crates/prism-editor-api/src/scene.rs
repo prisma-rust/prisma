@@ -1,9 +1,9 @@
-//! 作者文档（`.scene.json` / `.prefab.json`）的定位、枚举、读写与校验。
+//! Authoring document (`.scene.json` / `.prefab.json`) location, enumeration, read/write and validation.
 //!
-//! 场景与预制体**共用同一种文档形状**（[`prism_scene::SceneJson`]：`{version,
-//! entities}`），因此这里用 [`DocKind`] 区分目录与后缀，其余逻辑（规范化读取、
-//! 结构校验、另存/重命名/删除）完全共享。写回前用同一份 schema 校验，
-//! 避免产生 cooker 无法消费的文档。
+//! Scene and prefab **share the same document shape** ([`prism_scene::SceneJson`]: `{version,
+//! entities}`), so here uses [`DocKind`] to distinguish directory and suffix, remaining logic (normalized reading,
+//! structure validation, save/rename/delete) completely shared. Before write-back validated with same schema,
+//! avoid producing documents cooker cannot consume.
 
 use std::path::{Path, PathBuf};
 
@@ -12,17 +12,17 @@ use prism_scene::references::{sync_document, SyncMode};
 use prism_scene::SceneJson;
 use serde::Serialize;
 
-/// 文档种类。作者 JSON 形状相同，只是所在目录与文件名后缀不同。
+/// Document kind. Authoring JSON shape same, only directory and filename suffix differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocKind {
-    /// 场景：`assets/scenes/*.scene.json`
+    /// Scene: `assets/scenes/*.scene.json`
     Scene,
-    /// 预制体：`assets/prefabs/*.prefab.json`
+    /// Prefab: `assets/prefabs/*.prefab.json`
     Prefab,
 }
 
 impl DocKind {
-    /// 相对项目根的子目录。
+    /// Subdirectory relative to project root.
     pub fn subdir(self) -> &'static str {
         match self {
             Self::Scene => "assets/scenes",
@@ -30,7 +30,7 @@ impl DocKind {
         }
     }
 
-    /// 文件名后缀（不含前导点）。
+    /// File name suffix (without leading dot).
     pub fn ext(self) -> &'static str {
         match self {
             Self::Scene => "scene.json",
@@ -38,24 +38,24 @@ impl DocKind {
         }
     }
 
-    /// 中文标签（错误信息用）。
+    /// Chinese label (for error messages).
     pub fn label(self) -> &'static str {
         match self {
-            Self::Scene => "场景",
-            Self::Prefab => "预制体",
+            Self::Scene => "Scene",
+            Self::Prefab => "Prefab",
         }
     }
 
-    /// 前端传字符串 → 种类。
+    /// Frontend passes string → kind.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "scene" => Ok(Self::Scene),
             "prefab" => Ok(Self::Prefab),
-            other => Err(format!("未知的文档类型 '{other}'")),
+            other => Err(format!("Unknown document type '{other}'")),
         }
     }
 
-    /// 从路径推断种类（rename 只需要路径时用）。
+    /// Infer kind from path (used when rename only needs path).
     pub fn of_path(path: &Path) -> Self {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.ends_with(&format!(".{}", Self::Prefab.ext())) {
@@ -66,44 +66,45 @@ impl DocKind {
     }
 }
 
-/// `assets/` 下的场景子目录（相对项目根）。
+/// Scene subdirectory under `assets/` (relative to project root).
 pub const SCENES_SUBDIR: &str = "assets/scenes";
 
-/// 场景文件扩展名。
+/// Scene file extension.
 pub const SCENE_EXT: &str = "scene.json";
 
-/// 一个可在编辑器中打开的文档文件。
+/// A document file openable in editor.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneEntry {
-    /// 逻辑名（去掉后缀，如 `intro`）。
+    /// Logical name (suffix stripped, e.g. `intro`).
     pub name: String,
-    /// 文件名（含后缀，如 `intro.scene.json`）。
+    /// File name (with suffix, e.g. `intro.scene.json`).
     pub file_name: String,
-    /// 绝对路径（前端原样回传给 read/write）。
+    /// Absolute path (passed back to read/write as-is by frontend).
     pub path: String,
 }
 
-/// 某类文档所在目录。
+/// Directory where a kind of document is located.
 pub fn docs_dir(project_root: &Path, kind: DocKind) -> PathBuf {
     project_root.join(kind.subdir())
 }
 
-/// `assets/scenes` 目录。
+/// `assets/scenes` directory.
 pub fn scenes_dir(project_root: &Path) -> PathBuf {
     docs_dir(project_root, DocKind::Scene)
 }
 
-/// 从当前工作目录向上查找包含 `assets/scenes` 的项目根。
+/// Find project root containing `assets/scenes` by walking up from current working directory.
 ///
-/// 编辑器 / MCP 的 CWD 可能不在仓库根，所以这里逐级上溯；
-/// 找不到时返回错误，前端可提示用户手动指定。
+/// Editor / MCP CWD may not be at repo root, so walk up level by level;
+/// Return error if not found, frontend can prompt user to specify manually.
 #[expect(
     clippy::disallowed_methods,
     reason = "editor/MCP project root discovery walks up from cwd"
 )]
 pub fn find_project_root() -> Result<PathBuf, String> {
-    let mut dir = std::env::current_dir().map_err(|e| format!("无法获取当前目录: {e}"))?;
+    let mut dir =
+        std::env::current_dir().map_err(|e| format!("Cannot get current directory: {e}"))?;
     for _ in 0..12 {
         if scenes_dir(&dir).is_dir() {
             return Ok(dir);
@@ -112,10 +113,10 @@ pub fn find_project_root() -> Result<PathBuf, String> {
             break;
         }
     }
-    Err("找不到包含 assets/scenes 的项目根目录".into())
+    Err("Cannot find project root containing assets/scenes".into())
 }
 
-/// 枚举某类文档，按逻辑名排序。目录不存在时视为空（预制体目录可以还没有）。
+/// Enumerate a kind of document, sorted by logical name. Empty when directory does not exist (prefab directory may not exist yet).
 ///
 /// Prefabs may live anywhere under `assets/` (the hierarchy drag-and-drop
 /// target is an arbitrary asset folder), so prefab discovery is recursive;
@@ -137,7 +138,8 @@ pub fn list_docs(project_root: &Path, kind: DocKind) -> Result<Vec<SceneEntry>, 
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
-    let read = std::fs::read_dir(&dir).map_err(|e| format!("无法读取 {}: {e}", dir.display()))?;
+    let read =
+        std::fs::read_dir(&dir).map_err(|e| format!("Cannot read {}: {e}", dir.display()))?;
 
     let mut docs = Vec::new();
     for entry in read.flatten() {
@@ -167,7 +169,7 @@ fn collect_docs(
     kind: DocKind,
     docs: &mut Vec<SceneEntry>,
 ) -> Result<(), String> {
-    let read = std::fs::read_dir(dir).map_err(|e| format!("无法读取 {}: {e}", dir.display()))?;
+    let read = std::fs::read_dir(dir).map_err(|e| format!("Cannot read {}: {e}", dir.display()))?;
     for entry in read.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -205,26 +207,26 @@ fn collect_docs(
     Ok(())
 }
 
-/// 枚举所有 `.scene.json`。
+/// Enumerate all `.scene.json`.
 pub fn list_scenes(project_root: &Path) -> Result<Vec<SceneEntry>, String> {
     list_docs(project_root, DocKind::Scene)
 }
 
-/// 读取作者文档并**规范化**为完整 JSON。
+/// Read authoring document and **normalize** to complete JSON.
 ///
-/// 经 [`prism_scene::SceneJson`] 往返一次，使缺失的可选字段（`transform` /
-/// `components` 等）落到 serde 默认值，前端拿到的形状始终完整。
+/// Round-trip once via [`prism_scene::SceneJson`] so missing optional fields (`transform` /
+/// `components` etc) fall to serde defaults, shape frontend gets always complete.
 pub fn read_doc(path: &Path) -> Result<serde_json::Value, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
-    // `SceneJson::parse` 会先把老文档迁移到当前 schema（例如 v1 的
-    // `transform.translation` → `position`），再规范化往返。
-    let scene =
-        SceneJson::parse(&text).map_err(|e| format!("{} JSON 解析失败: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+    // `SceneJson::parse` first migrates old document to current schema (e.g. v1's
+    // `transform.translation` → `position`), then normalized round-trip.
+    let scene = SceneJson::parse(&text)
+        .map_err(|e| format!("{} JSON parse failed: {e}", path.display()))?;
     serde_json::to_value(&scene).map_err(|e| e.to_string())
 }
 
-/// [`read_doc`] 的场景别名。
+/// [`read_doc`] scene alias.
 pub fn read_scene_doc(path: &Path) -> Result<serde_json::Value, String> {
     read_doc(path)
 }
@@ -311,45 +313,45 @@ pub fn write_doc_in_project(
     write_doc(path, &synced)
 }
 
-/// 校验作者文档：形状 + 结构不变量（父索引越界 / 自父 / 空文档）。
+/// Validate authoring document: shape + structural invariants (parent index out of bounds / self-parent / empty document).
 pub fn validate_doc(doc: &serde_json::Value) -> Result<(), String> {
-    // 先迁移再校验，使 v1 文档也能通过。
-    let scene =
-        SceneJson::from_value(doc.clone()).map_err(|e| format!("不是合法的作者文档结构: {e}"))?;
+    // Migrate first then validate, so v1 documents can also pass.
+    let scene = SceneJson::from_value(doc.clone())
+        .map_err(|e| format!("Not a valid authoring document structure: {e}"))?;
     scene.validate()
 }
 
-/// [`validate_doc`] 的场景别名。
+/// [`validate_doc`] scene alias.
 pub fn validate_scene_doc(doc: &serde_json::Value) -> Result<(), String> {
     validate_doc(doc)
 }
 
-/// 校验并写回作者文档（2 空格缩进 + 结尾换行）。
+/// Validate and write back authoring document (2-space indent + trailing newline).
 ///
-/// 落盘的是**规范化后**的文档：补齐实体 `id`、升级到
-/// [`prism_scene::SCENE_DOC_VERSION`]、剥掉派生组件，而不是原始输入。
+/// Written to disk is **normalized** document: fill entity `id`, upgrade to
+/// [`prism_scene::SCENE_DOC_VERSION`], strip derived components, not raw input.
 pub fn write_doc(path: &Path, doc: &serde_json::Value) -> Result<(), String> {
     let doc = &prism_scene::normalize_scene_doc(doc)?;
     validate_doc(doc)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("无法创建 {}: {e}", parent.display()))?;
+            .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
     }
     let mut text = serde_json::to_string_pretty(doc).map_err(|e| e.to_string())?;
     text.push('\n');
-    std::fs::write(path, text).map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+    std::fs::write(path, text).map_err(|e| format!("Write {} failed: {e}", path.display()))
 }
 
-/// [`write_doc`] 的场景别名。
+/// [`write_doc`] scene alias.
 pub fn write_scene_doc(path: &Path, doc: &serde_json::Value) -> Result<(), String> {
     write_doc(path, doc)
 }
 
 // ---------------------------------------------------------------------------
-// 文档名 / 路径
+// Document name / path
 // ---------------------------------------------------------------------------
 
-/// 校验逻辑名并拼出某类文档目录下的完整路径。
+/// Validate logical name and construct full path under a kind of document directory.
 pub fn doc_path(root: &Path, kind: DocKind, name: &str) -> Result<PathBuf, String> {
     doc_file_in(&docs_dir(root, kind), kind, name)
 }
@@ -358,11 +360,11 @@ fn doc_file_in(dir: &Path, kind: DocKind, name: &str) -> Result<PathBuf, String>
     let trimmed = name.trim();
     let label = kind.label();
     if trimmed.is_empty() {
-        return Err(format!("{label}名不能为空"));
+        return Err(format!("{label} name cannot be empty"));
     }
     const ILLEGAL: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
     if trimmed.contains("..") || trimmed.contains(ILLEGAL) {
-        return Err(format!("非法的{label}名 '{trimmed}'"));
+        return Err(format!("Illegal {label} name '{trimmed}'"));
     }
     let ext = kind.ext();
     let file = if trimmed.ends_with(&format!(".{ext}")) {
@@ -375,7 +377,7 @@ fn doc_file_in(dir: &Path, kind: DocKind, name: &str) -> Result<PathBuf, String>
     Ok(dir.join(file))
 }
 
-/// [`doc_path`] 的场景别名。
+/// [`doc_path`] scene alias.
 pub fn scene_path(root: &Path, name: &str) -> Result<PathBuf, String> {
     doc_path(root, DocKind::Scene, name)
 }
@@ -389,13 +391,17 @@ pub fn write_doc_in_dir(
 ) -> Result<PathBuf, String> {
     let path = doc_file_in(dir, kind, name)?;
     if path.exists() {
-        return Err(format!("已存在同名{}：{}", kind.label(), path.display()));
+        return Err(format!(
+            "Same-named {} already exists: {}",
+            kind.label(),
+            path.display()
+        ));
     }
     write_doc(&path, doc)?;
     Ok(path)
 }
 
-/// 以新名字另存（不覆盖已存在的同名文件），返回新路径。
+/// Save as with new name (do not overwrite existing same-named file), return new path.
 pub fn write_doc_as(
     root: &Path,
     kind: DocKind,
@@ -405,47 +411,51 @@ pub fn write_doc_as(
     write_doc_in_dir(&docs_dir(root, kind), kind, name, doc)
 }
 
-/// [`write_doc_as`] 的场景别名。
+/// [`write_doc_as`] scene alias.
 pub fn write_scene_as(root: &Path, name: &str, doc: &serde_json::Value) -> Result<PathBuf, String> {
     write_doc_as(root, DocKind::Scene, name, doc)
 }
 
-/// 重命名文档（同目录内），返回新路径。
+/// Rename document (within same directory), return new path.
 pub fn rename_doc(path: &Path, kind: DocKind, new_name: &str) -> Result<PathBuf, String> {
     let dir = path
         .parent()
-        .ok_or_else(|| format!("{}路径没有父目录", kind.label()))?;
+        .ok_or_else(|| format!("{} path has no parent directory", kind.label()))?;
     let target = doc_file_in(dir, kind, new_name)?;
     if target == path {
         return Ok(target);
     }
     if target.exists() {
-        return Err(format!("已存在同名{}：{}", kind.label(), target.display()));
+        return Err(format!(
+            "Same-named {} already exists: {}",
+            kind.label(),
+            target.display()
+        ));
     }
-    std::fs::rename(path, &target).map_err(|e| format!("重命名失败: {e}"))?;
+    std::fs::rename(path, &target).map_err(|e| format!("Rename failed: {e}"))?;
     Ok(target)
 }
 
-/// [`rename_doc`] 的场景别名（种类按路径后缀推断）。
+/// [`rename_doc`] scene alias (kind inferred from path suffix).
 pub fn rename_scene(path: &Path, new_name: &str) -> Result<PathBuf, String> {
     rename_doc(path, DocKind::of_path(path), new_name)
 }
 
-/// 删除文档文件。
+/// Delete document file.
 pub fn delete_doc(path: &Path) -> Result<(), String> {
-    std::fs::remove_file(path).map_err(|e| format!("删除 {} 失败: {e}", path.display()))
+    std::fs::remove_file(path).map_err(|e| format!("Delete {} failed: {e}", path.display()))
 }
 
-/// [`delete_doc`] 的场景别名。
+/// [`delete_doc`] scene alias.
 pub fn delete_scene(path: &Path) -> Result<(), String> {
     delete_doc(path)
 }
 
 // ---------------------------------------------------------------------------
-// 场景模板
+// Scene templates
 // ---------------------------------------------------------------------------
 
-/// 一个内置场景模板。
+/// A built-in scene template.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneTemplate {
@@ -453,13 +463,13 @@ pub struct SceneTemplate {
     pub label: String,
 }
 
-/// 所有内置模板（顺序即 UI 展示顺序）。
+/// All built-in templates (order is UI display order).
 pub fn templates() -> Vec<SceneTemplate> {
     [
-        ("camera", "相机"),
-        ("lit", "相机 + 光照"),
-        ("ui", "UI 叠层"),
-        ("empty", "空实体"),
+        ("camera", "Camera"),
+        ("lit", "Camera + Lighting"),
+        ("ui", "UI Overlay"),
+        ("empty", "Empty Entity"),
     ]
     .into_iter()
     .map(|(id, label)| SceneTemplate {
@@ -469,15 +479,15 @@ pub fn templates() -> Vec<SceneTemplate> {
     .collect()
 }
 
-/// 新建场景的初始文档（`camera` 模板：位于 `[0, 0, 10]` 的相机实体）。
+/// Initial document for new scene (`camera` template: camera entity at `[0, 0, 10]`).
 pub fn empty_scene_doc() -> serde_json::Value {
     template_scene_doc("camera")
 }
 
-/// 按模板 id 生成场景文档；未知 id 回退到 `camera`。
+/// Generate scene document by template id; unknown id falls back to `camera`.
 ///
-/// 组件默认值来自 `prism-scene` 注册表（`default_json`），模板只覆盖差异字段，
-/// 避免与组件定义脱节。
+/// Component defaults from `prism-scene` registry (`default_json`), template only covers difference fields,
+/// avoid drifting from component definitions.
 pub fn template_scene_doc(id: &str) -> serde_json::Value {
     use serde_json::json;
 
@@ -553,7 +563,7 @@ pub fn template_scene_doc(id: &str) -> serde_json::Value {
                 }),
             ),
         ],
-        // "camera" 及未知 id
+        // "camera" and unknown id
         _ => vec![entity(
             "Camera",
             None,
@@ -567,7 +577,7 @@ pub fn template_scene_doc(id: &str) -> serde_json::Value {
     normalize(json!({ "version": prism_scene::SCENE_DOC_VERSION, "entities": entities }))
 }
 
-/// 给模板文档补上实体 `id`（v3 起作者文档必须带 id）。
+/// Fill entity `id` for template document (authoring documents must have id from v3).
 fn normalize(doc: serde_json::Value) -> serde_json::Value {
     prism_scene::normalize_scene_doc(&doc).unwrap_or(doc)
 }
@@ -613,11 +623,11 @@ fn entity(
     })
 }
 
-/// 某类文档的可用模板。
+/// Available templates for a kind of document.
 pub fn templates_for(kind: DocKind) -> Vec<SceneTemplate> {
     match kind {
         DocKind::Scene => templates(),
-        // 预制体模板 = 单实体预设。
+        // Prefab template = single entity preset.
         DocKind::Prefab => crate::presets::entity_presets()
             .into_iter()
             .map(|preset| SceneTemplate {
@@ -628,7 +638,7 @@ pub fn templates_for(kind: DocKind) -> Vec<SceneTemplate> {
     }
 }
 
-/// 按模板生成初始文档。
+/// Generate initial document by template.
 pub fn template_doc(kind: DocKind, template: &str) -> serde_json::Value {
     match kind {
         DocKind::Scene => template_scene_doc(template),
@@ -636,7 +646,7 @@ pub fn template_doc(kind: DocKind, template: &str) -> serde_json::Value {
     }
 }
 
-/// 单实体预制体文档（组件默认值来自注册表，与「快速添加实体」一致）。
+/// Single-entity prefab document (component defaults from registry, consistent with "quick add entity").
 pub fn prefab_template_doc(preset_id: &str) -> serde_json::Value {
     use serde_json::json;
 
@@ -664,23 +674,23 @@ pub fn prefab_template_doc(preset_id: &str) -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// 预制体：从子树提取 / 实例化
+// Prefab: extract from subtree / instantiate
 // ---------------------------------------------------------------------------
 
-/// 预制体实例化的结果。
+/// Prefab instantiation result.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstantiateResult {
-    /// 插入后的场景文档。
+    /// Scene document after insertion.
     pub doc: serde_json::Value,
-    /// 新插入实体在场景里的下标（按预制体中的顺序）。
+    /// Index of newly inserted entity in scene (by prefab order).
     pub inserted: Vec<usize>,
 }
 
 fn entities_of(doc: &serde_json::Value) -> Result<&Vec<serde_json::Value>, String> {
     doc.get("entities")
         .and_then(|value| value.as_array())
-        .ok_or_else(|| "文档缺少 entities 数组".to_string())
+        .ok_or_else(|| "Document missing entities array".to_string())
 }
 
 fn id_of(entity: &serde_json::Value) -> u32 {
@@ -690,7 +700,7 @@ fn id_of(entity: &serde_json::Value) -> u32 {
         .unwrap_or(0) as u32
 }
 
-/// `parent` 存的是父实体的 **id**（v3 起），不是数组下标。
+/// `parent` stores parent entity **id** (from v3), not array index.
 fn parent_of(entity: &serde_json::Value) -> Option<u32> {
     entity
         .get("parent")
@@ -702,7 +712,7 @@ fn index_of_id(entities: &[serde_json::Value], id: u32) -> Option<usize> {
     entities.iter().position(|entity| id_of(entity) == id)
 }
 
-/// 编辑操作统一入口：先迁移到当前 schema（补 id / 升级版本 / 剥派生组件）。
+/// Unified entry for edit operations: first migrate to current schema (fill id / upgrade version / strip derived components).
 fn normalized(doc: &serde_json::Value) -> Result<serde_json::Value, String> {
     prism_scene::normalize_scene_doc(doc)
 }
@@ -715,7 +725,7 @@ fn next_entity_id(entities: &[serde_json::Value]) -> u32 {
         .map_or(0, |max| max.saturating_add(1))
 }
 
-/// 用新的实体数组重建文档（保留 `version`）。
+/// Rebuild document with new entity array (keep `version`).
 fn doc_with_entities(
     doc: &serde_json::Value,
     entities: Vec<serde_json::Value>,
@@ -727,7 +737,7 @@ fn doc_with_entities(
     serde_json::json!({ "version": version, "entities": entities })
 }
 
-/// `node` 是否位于 `ancestor` 的子树中（沿 parent id 上溯）。
+/// Whether `node` is in `ancestor`'s subtree (walk up via parent id).
 fn is_descendant(entities: &[serde_json::Value], node: usize, ancestor: usize) -> bool {
     let ancestor_id = id_of(&entities[ancestor]);
     let mut current = parent_of(&entities[node]);
@@ -738,14 +748,14 @@ fn is_descendant(entities: &[serde_json::Value], node: usize, ancestor: usize) -
         }
         guard += 1;
         if guard > entities.len() {
-            return false; // 数据里存在环，保守放弃
+            return false; // Cycle exists in data, conservatively give up
         }
         current = index_of_id(entities, parent_id).and_then(|index| parent_of(&entities[index]));
     }
     false
 }
 
-/// 层级操作结果：新文档 + 实体在数组中的新下标。
+/// Hierarchy operation result: new document + new index of entity in array.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveResult {
@@ -753,9 +763,9 @@ pub struct MoveResult {
     pub index: usize,
 }
 
-/// 改父级（不移动数组位置）。`parent = None` 表示变成根实体。
+/// Change parent (does not move array position). `parent = None` means become root entity.
 ///
-/// 拒绝自父与「挂到自己的后代下」（会成环）。
+/// Reject self-parent and "attach to own descendant" (would create cycle).
 pub fn reparent_doc(
     doc: &serde_json::Value,
     child: usize,
@@ -765,10 +775,10 @@ pub fn reparent_doc(
     Ok(result.doc)
 }
 
-/// 把 `child` 移到数组的 `insert_at` 位置（旧下标空间，`len` = 末尾），
-/// 同时把它的父级设为 `parent`（旧下标空间）。
+/// Move `child` to array `insert_at` position (old index space, `len` = end),
+/// at the same time set its parent to `parent` (old index space).
 ///
-/// 其余实体的父索引会随数组重排一起重映射，因此返回值是整份新文档。
+/// Other entities' parent indices remapped with array reshuffle, so return value is whole new document.
 pub fn move_entity(
     doc: &serde_json::Value,
     child: usize,
@@ -781,24 +791,24 @@ pub fn move_entity(
     let count = entities.len();
 
     if child >= count {
-        return Err(format!("实体下标 {child} 越界"));
+        return Err(format!("Entity index {child} out of bounds"));
     }
     if insert_at > count {
-        return Err(format!("插入位置 {insert_at} 越界"));
+        return Err(format!("Insert position {insert_at} out of bounds"));
     }
     if let Some(parent) = parent {
         if parent >= count {
-            return Err(format!("父实体下标 {parent} 越界"));
+            return Err(format!("Parent entity index {parent} out of bounds"));
         }
         if parent == child {
-            return Err("不能以自己为父".into());
+            return Err("Cannot parent self".into());
         }
         if is_descendant(entities, parent, child) {
-            return Err("不能挂到自己的后代下（会成环）".into());
+            return Err("Cannot attach to own descendant (would cycle)".into());
         }
     }
 
-    // 先摘出 child，再插到目标位置。
+    // First extract child, then insert at target position.
     let mut order: Vec<usize> = (0..count).collect();
     order.remove(child);
     let target = if insert_at > child {
@@ -808,7 +818,7 @@ pub fn move_entity(
     };
     order.insert(target.min(order.len()), child);
 
-    // 只改被移动实体的 `parent`：id 与数组位置解耦，其余实体完全不动。
+    // Only change moved entity's `parent`: id and array position decoupled, other entities completely untouched.
     let new_parent_id = parent.map(|index| id_of(&entities[index]));
     let new_index = target.min(order.len() - 1);
 
@@ -830,9 +840,9 @@ pub fn move_entity(
     })
 }
 
-/// 批量删除实体，并把被删掉的父级改为根、其余父索引重映射。
+/// Batch delete entities, and make deleted parents roots, remap remaining parent indices.
 ///
-/// 至少要留下一个实体（与校验一致）。
+/// At least one entity must remain (consistent with validation).
 pub fn delete_entities(
     doc: &serde_json::Value,
     indices: &[usize],
@@ -845,13 +855,13 @@ pub fn delete_entities(
     let mut removed = vec![false; count];
     for index in indices {
         if *index >= count {
-            return Err(format!("实体下标 {index} 越界"));
+            return Err(format!("Entity index {index} out of bounds"));
         }
         removed[*index] = true;
     }
     let remaining = removed.iter().filter(|flag| !**flag).count();
     if remaining == 0 {
-        return Err("至少要保留一个实体".into());
+        return Err("Must retain at least one entity".into());
     }
 
     let removed_ids: std::collections::HashSet<u32> = indices
@@ -865,7 +875,7 @@ pub fn delete_entities(
             continue;
         }
         let mut entity = entity.clone();
-        // 被删掉的父 → 变根；其余 parent 是 id，不受数组收缩影响。
+        // Deleted parent → becomes root; remaining parents are ids, unaffected by array shrink.
         let new_parent = parent_of(&entity).filter(|parent| !removed_ids.contains(parent));
         entity["parent"] = match new_parent {
             Some(parent) => serde_json::json!(parent),
@@ -877,13 +887,13 @@ pub fn delete_entities(
     Ok(doc_with_entities(doc, out))
 }
 
-/// 预制体实例链接所处的组件名。
+/// Component name where prefab instance link is stored.
 pub const PREFAB_LINK_COMPONENT: &str = "prism_engine::scene::PrefabInstance";
 
-/// 子树下标（DFS，父先于子，`root` 在首位）。
-/// 原数组下标在删除 `removed` 里的实体之后的新位置。
+/// Subtree index (DFS, parent before child, `root` at first).
+/// New position of original array index after deleting entities in `removed`.
 ///
-/// 只数排在它前面的被删下标；调用方必须保证 `index` 自己不在 `removed` 里。
+/// Only count deleted indices before it; caller must ensure `index` itself is not in `removed`.
 fn index_after_removal(index: usize, removed: &[usize]) -> usize {
     index - removed.iter().filter(|removed| **removed < index).count()
 }
@@ -906,11 +916,11 @@ fn subtree_indices(entities: &[serde_json::Value], root: usize) -> Vec<usize> {
     order
 }
 
-/// 从场景中提取「根实体 + 全部后代」为一个预制体文档。
+/// Extract "root entity + all descendants" from scene as a prefab document.
 ///
-/// 提取出的根实体父级置为 `null`（实例化时再决定挂到哪里），内部父子索引重排到
-/// 预制体自己的下标空间；根上的 [`PREFAB_LINK_COMPONENT`] 会被剥掉
-/// （预制体不该记录「自己是哪个预制体的实例」）。
+/// Extracted root entity parent set to `null` (decide where to attach at instantiation time), internal parent-child indices remapped to
+/// prefab's own index space; [`PREFAB_LINK_COMPONENT`] on root will be stripped
+/// (prefab should not record "self is instance of which prefab").
 pub fn extract_subtree(
     scene: &serde_json::Value,
     root: usize,
@@ -919,11 +929,11 @@ pub fn extract_subtree(
     validate_doc(scene)?;
     let entities = entities_of(scene)?;
     if root >= entities.len() {
-        return Err(format!("实体下标 {root} 越界"));
+        return Err(format!("Entity index {root} out of bounds"));
     }
 
     let order = subtree_indices(entities, root);
-    // 预制体文件自成 id 空间：子树 id 重编号为 0..k，内部父子引用跟着改。
+    // Prefab file has own id space: subtree ids renumbered 0..k, internal parent-child references changed accordingly.
     let mapping: std::collections::HashMap<u32, u32> = order
         .iter()
         .enumerate()
@@ -934,7 +944,7 @@ pub fn extract_subtree(
     for old_index in &order {
         let mut entity = entities[*old_index].clone();
         let parent = parent_of(&entity);
-        // 不在子树内的父（含根实体原本的父）→ null。
+        // Parent not in subtree (including root entity's original parent) → null.
         let new_parent = parent.and_then(|parent| mapping.get(&parent).copied());
         entity["id"] = serde_json::json!(mapping[&id_of(&entity)]);
         entity["parent"] = match new_parent {
@@ -944,7 +954,7 @@ pub fn extract_subtree(
         extracted.push(entity);
     }
 
-    // 剥掉根上的实例链接。
+    // Strip instance link from root.
     if let Some(first) = extracted.first_mut() {
         if let Some(components) = first
             .get_mut("components")
@@ -957,21 +967,21 @@ pub fn extract_subtree(
     Ok(serde_json::json!({ "version": prism_scene::SCENE_DOC_VERSION, "entities": extracted }))
 }
 
-/// 预制体实例链接（编辑器「反向链接」用）。
+/// Prefab instance link (for editor "reverse link").
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrefabLink {
-    /// 场景中实例根实体的下标。
+    /// Index of instance root entity in scene.
     pub index: usize,
-    /// 预制体路径（相对项目根）。
+    /// Prefab path (relative to project root).
     pub prefab: String,
 }
 
-/// 把预制体实例化进场景（追加到末尾），返回新文档与插入下标。
+/// Instantiate prefab into scene (append to end), return new document and insert index.
 ///
-/// 预制体内部的父索引整体平移到新位置；预制体的根实体挂到 `parent`
-/// （`None` = 作为场景根）。名字与场景已有实体去重（追加 `_2`、`_3`…）。
-/// `link` 非空时给每个预制体根打上 [`PrefabLink`] 记录。
+/// Prefab internal parent indices globally shifted to new position; prefab root entity attached to `parent`
+/// (`None` = as scene root). Name deduplicated with existing scene entities (append `_2`, `_3`…).
+/// When `link` non-empty, mark each prefab root with [`PrefabLink`] record.
 pub fn instantiate_prefab(
     scene: &serde_json::Value,
     prefab: &serde_json::Value,
@@ -987,7 +997,7 @@ pub fn instantiate_prefab(
     let prefab_entities = entities_of(prefab)?.clone();
     if let Some(parent) = parent {
         if parent as usize >= scene_entities.len() {
-            return Err(format!("父实体下标 {parent} 越界"));
+            return Err(format!("Parent entity index {parent} out of bounds"));
         }
     }
 
@@ -995,7 +1005,7 @@ pub fn instantiate_prefab(
         .get("version")
         .cloned()
         .unwrap_or(serde_json::json!(prism_scene::SCENE_DOC_VERSION));
-    // 预制体自成 id 空间：整体分配一段新 id，并记住 旧 id → 新 id。
+    // Prefab has own id space: allocate a new id block, remember old id → new id.
     let id_base = next_entity_id(&scene_entities);
     let id_map: std::collections::HashMap<u32, u32> = prefab_entities
         .iter()
@@ -1041,7 +1051,7 @@ pub fn instantiate_prefab(
             None => serde_json::json!(null),
         };
 
-        // 预制体的根实体记录来源（编辑器反向链接用）。
+        // Prefab root entity records source (for editor reverse link).
         if prefab_parent.is_none() {
             if let Some(path) = link {
                 if let Some(components) = entity
@@ -1066,7 +1076,7 @@ pub fn instantiate_prefab(
     })
 }
 
-/// 列出文档里所有预制体实例根（反向链接）。
+/// List all prefab instance roots in document (reverse links).
 pub fn prefab_instances(doc: &serde_json::Value) -> Vec<PrefabLink> {
     let doc = &normalized(doc).unwrap_or_else(|_| doc.clone());
     let Ok(entities) = entities_of(doc) else {
@@ -1089,11 +1099,11 @@ pub fn prefab_instances(doc: &serde_json::Value) -> Vec<PrefabLink> {
         .collect()
 }
 
-/// 把某个实例根**还原**成预制体的当前内容。
+/// Restore a instance root **back to** prefab's current content.
 ///
-/// 删掉该实体的整棵子树，再用 `prefab` 重新实例化到原父级下，并保留原来的名字。
-/// 重建后的子树**插回原来的数组位置**：数组顺序就是层级顺序，追加到末尾会让实例
-/// 在层级树里跳到最后一个兄弟，并让它的下标（以及依赖下标的撤销/选中）失效。
+/// Delete entity's entire subtree, then re-instantiate `prefab` under original parent, keeping original name.
+/// Rebuilt subtree **inserted back to original array position**: array order is hierarchy order, appending to end makes instance
+/// jump to last sibling in hierarchy tree, and invalidate its index (and undo/selection depending on index).
 pub fn revert_prefab_instance(
     scene: &serde_json::Value,
     root: usize,
@@ -1104,7 +1114,7 @@ pub fn revert_prefab_instance(
     validate_doc(scene)?;
     let entities = entities_of(scene)?;
     if root >= entities.len() {
-        return Err(format!("实体下标 {root} 越界"));
+        return Err(format!("Entity index {root} out of bounds"));
     }
 
     let keep_name = entities[root]
@@ -1112,23 +1122,25 @@ pub fn revert_prefab_instance(
         .and_then(|value| value.as_str())
         .map(|name| name.to_string());
     let subtree = subtree_indices(entities, root);
-    // `parent` 是 id，删掉子树不会让它失效（这正是 v3 想要的效果）；
-    // `instantiate_prefab` 的入参是**下标**，而且必须是**裁剪后**文档里的下标：
-    // 数组顺序与层级无关（见 `SceneJson::topological_order`），被删的实体完全可能
-    // 排在父实体前面，删除会让父实体整体前移。直接用原数组下标会挂错父级（或在
-    // 越界检查里报错）。
+    // `parent` is id, deleting subtree does not invalidate it (exactly the effect v3 wants);
+    // `instantiate_prefab` input is **index**, and must be **trimmed document's** index:
+    // array order unrelated to hierarchy (see `SceneJson::topological_order`), deleted entities may completely
+    // be before parent entity, deleting will shift parent entity forward. Using original array index directly will attach wrong parent (or
+    // error in bounds check).
     let parent = parent_of(&entities[root])
         .map(|id| {
-            let index =
-                index_of_id(entities, id).ok_or_else(|| format!("父实体 id {id} 不存在"))?;
+            let index = index_of_id(entities, id)
+                .ok_or_else(|| format!("Parent entity id {id} does not exist"))?;
             if subtree.contains(&index) {
-                // 只有层级成环时才会出现（`validate` 只拒绝自父）。
-                return Err(format!("父实体 id {id} 在待删除的子树内（层级成环）"));
+                // Only happens when hierarchy cycles (`validate` only rejects self-parent).
+                return Err(format!(
+                    "Parent entity id {id} is in pending-deleted subtree (hierarchy cycle)"
+                ));
             }
             Ok(index_after_removal(index, &subtree) as u32)
         })
         .transpose()?;
-    // 根在裁剪后数组里的位置：它前面的实体减去同在本子树里的那些。
+    // Root position in trimmed array: entities before it minus those also in this subtree.
     let insert_at = index_after_removal(root, &subtree);
 
     let trimmed = delete_entities(scene, &subtree)?;
@@ -1136,7 +1148,7 @@ pub fn revert_prefab_instance(
     let first_new = *result
         .inserted
         .first()
-        .ok_or_else(|| "预制体没有实体，无法还原".to_string())?;
+        .ok_or_else(|| "Prefab has no entities, cannot restore".to_string())?;
 
     let mut out = entities_of(&result.doc)?.clone();
     let mut rebuilt = out.split_off(first_new);
@@ -1153,7 +1165,7 @@ pub fn revert_prefab_instance(
     })
 }
 
-/// 解除实例链接（只去掉记录，不动实体内容）。
+/// Break instance link (only remove record, do not touch entity content).
 pub fn unlink_prefab_instance(
     scene: &serde_json::Value,
     root: usize,
@@ -1162,7 +1174,7 @@ pub fn unlink_prefab_instance(
     validate_doc(scene)?;
     let mut entities = entities_of(scene)?.clone();
     if root >= entities.len() {
-        return Err(format!("实体下标 {root} 越界"));
+        return Err(format!("Entity index {root} out of bounds"));
     }
     if let Some(components) = entities[root]
         .get_mut("components")
@@ -1173,9 +1185,9 @@ pub fn unlink_prefab_instance(
     Ok(doc_with_entities(scene, entities))
 }
 
-/// 把文档里所有引用 `prefab_path` 的实例都还原成 `prefab` 的内容。
+/// Restore all instances referencing `prefab_path` in document to `prefab`'s content.
 ///
-/// 从大到小处理实例根：删除只会影响更靠后的下标，因此前面的根仍然有效。
+/// Process instance roots from large to small: deletion only affects later indices, so earlier roots remain valid.
 pub fn sync_prefab_instances(
     scene: &serde_json::Value,
     prefab_path: &str,
@@ -1261,7 +1273,7 @@ mod tests {
         let doc = read_scene_doc(&path).unwrap();
         validate_scene_doc(&doc).unwrap();
 
-        // 写回非法文档必须被拒绝，且不落盘。
+        // Writing back illegal document must be rejected, not persisted to disk.
         let bad = json!({ "version": prism_scene::SCENE_DOC_VERSION, "entities": [] });
         assert!(write_scene_doc(&path, &bad).is_err());
         assert_eq!(read_scene_doc(&path).unwrap(), doc);
@@ -1280,20 +1292,20 @@ mod tests {
             let doc = template_scene_doc(&id);
             validate_scene_doc(&doc).unwrap_or_else(|e| panic!("template '{id}' invalid: {e}"));
 
-            // 每个实体都必须有完整的 transform / components 形状。
+            // Every entity must have complete transform / components shape.
             for entity in doc["entities"].as_array().unwrap() {
                 assert!(entity["transform"].is_object());
                 assert!(entity["components"].is_object());
             }
 
-            // 经 SceneJson 规范化后应保持不变（模板已是规范形状）。
+            // Should remain unchanged after SceneJson normalization (template already in normalized shape).
             let normalized: serde_json::Value =
                 serde_json::to_value(serde_json::from_value::<SceneJson>(doc.clone()).unwrap())
                     .unwrap();
             assert_eq!(normalized, doc, "template '{id}' is not normalized");
         }
 
-        // 未知 id 回退到 camera。
+        // Unknown id falls back to camera.
         assert_eq!(template_scene_doc("nope"), template_scene_doc("camera"));
     }
 
@@ -1320,9 +1332,9 @@ mod tests {
             validate_doc(&doc).unwrap_or_else(|e| panic!("prefab template '{}': {e}", template.id));
             assert_eq!(doc["entities"].as_array().unwrap().len(), 1);
         }
-        // 未知 id 回退到空实体。
+        // Unknown id falls back to empty entity.
         assert!(validate_doc(&template_doc(DocKind::Prefab, "nope")).is_ok());
-        // 预制体有自己的目录。
+        // Prefab has its own directory.
         assert!(docs_dir(Path::new("/x"), DocKind::Prefab).ends_with("assets/prefabs"));
     }
 
@@ -1345,11 +1357,11 @@ mod tests {
         let entities = prefab["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 3);
         assert_eq!(entities[0]["name"], "root");
-        assert_eq!(entities[0]["parent"], serde_json::Value::Null); // 提取出的根断开父级
+        assert_eq!(entities[0]["parent"], serde_json::Value::Null); // Extracted root disconnects parent
         assert_eq!(entities[1]["name"], "child");
-        assert_eq!(entities[1]["parent"], 0); // 父是 root（新下标 0）
+        assert_eq!(entities[1]["parent"], 0); // Parent is root (new index 0)
         assert_eq!(entities[2]["name"], "grandchild");
-        assert_eq!(entities[2]["parent"], 1); // 父是 child（新下标 1）
+        assert_eq!(entities[2]["parent"], 1); // Parent is child (new index 1)
 
         assert!(extract_subtree(&scene, 99).is_err());
     }
@@ -1377,14 +1389,14 @@ mod tests {
 
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 4);
-        // 名字与已有实体去重。
+        // Name deduplicated with existing entities.
         assert_eq!(entities[2]["name"], "Camera_2");
-        // 预制体根挂到指定的父实体。
+        // Prefab root attached to specified parent entity.
         assert_eq!(entities[2]["parent"], 0);
-        // 内部父索引平移。
+        // Internal parent indices shifted.
         assert_eq!(entities[3]["parent"], 2);
 
-        // 越界父实体被拒绝。
+        // Out-of-bounds parent entity rejected.
         assert!(instantiate_prefab(&scene, &prefab, Some(9), None).is_err());
     }
 
@@ -1424,13 +1436,13 @@ mod tests {
             }]
         );
 
-        // 提取子树时剥掉链接（预制体不该记录自己是哪来的）。
+        // Strip link when extracting subtree (prefab should not record where it comes from).
         let extracted = extract_subtree(&result.doc, 1).unwrap();
         assert!(extracted["entities"][0]["components"]
             .get(PREFAB_LINK_COMPONENT)
             .is_none());
 
-        // 解除链接。
+        // Break link.
         let unlinked = unlink_prefab_instance(&result.doc, 1).unwrap();
         assert!(prefab_instances(&unlinked).is_empty());
     }
@@ -1442,7 +1454,7 @@ mod tests {
         let path = "assets/prefabs/door.prefab.json";
 
         let instantiated = instantiate_prefab(&scene, &prefab, Some(0), Some(path)).unwrap();
-        // 改坏实例内容（改名字 + 去掉组件）。
+        // Corrupt instance content (change name + remove component).
         let mut broken = instantiated.doc.clone();
         broken["entities"][1]["name"] = serde_json::json!("Broken");
         broken["entities"][1]["components"] = serde_json::json!({});
@@ -1452,14 +1464,14 @@ mod tests {
 
         let entities = reverted.doc["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 3);
-        // 名字与父级保留，内容来自预制体。
+        // Name and parent retained, content from prefab.
         assert_eq!(entities[reverted.index]["name"], "Broken");
         assert_eq!(entities[reverted.index]["parent"], 0);
         assert_eq!(
             entities[reverted.index]["components"]["prism_engine::scene::Active"],
             serde_json::json!(true)
         );
-        // 链接仍在，且只有这一个实例。
+        // Link still present, and only this one instance.
         assert_eq!(prefab_instances(&reverted.doc).len(), 1);
     }
 
@@ -1487,7 +1499,7 @@ mod tests {
         let reverted = revert_prefab_instance(&scene, 2, &demo_prefab(), Some(path)).unwrap();
         validate_doc(&reverted.doc).unwrap();
 
-        // 重建的子树回到原位（不是追加到末尾），名字沿用实例原来的名字。
+        // Rebuilt subtree returns to original position (not appended to end), name uses instance's original name.
         assert_eq!(reverted.index, 2);
         let names: Vec<&str> = reverted.doc["entities"]
             .as_array()
@@ -1517,7 +1529,7 @@ mod tests {
             "components": {}
         });
         door["components"][PREFAB_LINK_COMPONENT] = serde_json::json!({ "prefab": path });
-        // v3 文档里 `parent` 是 id；这里 id 与下标刻意不同（10/30/40）。
+        // In v3 document `parent` is id; here id and index deliberately different (10/30/40).
         let scene = serde_json::json!({
             "version": prism_scene::SCENE_DOC_VERSION,
             "entities": [
@@ -1533,7 +1545,7 @@ mod tests {
         let entities = reverted.doc["entities"].as_array().unwrap();
         assert_eq!(reverted.index, 1);
         assert_eq!(entities.len(), 3);
-        // 父级仍是 id（10），不是同值下标。
+        // Parent still is id (10), not same-value index.
         assert_eq!(entities[1]["parent"], 10);
         let ids: Vec<u64> = entities
             .iter()
@@ -1553,11 +1565,11 @@ mod tests {
             "components": {}
         });
         door["components"][PREFAB_LINK_COMPONENT] = serde_json::json!({ "prefab": path });
-        // 数组顺序刻意与层级顺序相反：
-        //   idx0 `grandchild`（id 9）排在它的父 `Door` 前面，自己也在 Door 的子树里；
-        //   idx1 `host`（id 0）是 Door 的父，却排在子树之后。
-        // 删掉子树后 host 从下标 1 前移到 0：若沿用原数组下标（1），实例会被挂到
-        // `tail` 上（静默挂错父级）。
+        // Array order deliberately opposite to hierarchy order:
+        //   idx0 `grandchild` (id 9) before its parent `Door`, also in Door's subtree;
+        //   idx1 `host` (id 0) is Door's parent, but sorted after subtree.
+        // After deleting subtree host moves from index 1 to 0: if using original array index (1), instance will be attached
+        // to `tail` (silently attach wrong parent).
         let scene = serde_json::json!({
             "version": prism_scene::SCENE_DOC_VERSION,
             "entities": [
@@ -1577,7 +1589,7 @@ mod tests {
             .map(|entity| entity["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["host", "Door", "Handle", "tail"]);
-        // 实例根挂回 host（id 0 / 裁剪后的下标 0），不是裁剪前的下标 1 所指的 tail。
+        // Instance root re-attached to host (id 0 / trimmed index 0), not pre-trim index 1 pointing to tail.
         assert_eq!(entities[reverted.index]["parent"], 0);
         assert_eq!(reverted.index, 1);
         assert_eq!(prefab_instances(&reverted.doc).len(), 1);
@@ -1586,7 +1598,7 @@ mod tests {
     #[test]
     fn revert_rejects_a_parent_that_is_inside_the_subtree() {
         let path = "assets/prefabs/door.prefab.json";
-        // 层级成环（`validate` 只拒绝自父）：Door(id 1) 的父是它的后代 grandchild(id 9)。
+        // Hierarchy cycle (`validate` only rejects self-parent): Door(id 1)'s parent is its descendant grandchild(id 9).
         let mut door = serde_json::json!({
             "id": 1,
             "name": "Door",
@@ -1606,8 +1618,8 @@ mod tests {
 
         let error = revert_prefab_instance(&scene, 2, &demo_prefab(), Some(path)).unwrap_err();
         assert!(
-            error.contains("在待删除的子树内"),
-            "成环时不能把父 id 换成凭空的裁剪后下标：{error}"
+            error.contains("in pending-deleted subtree"),
+            "Cycle: cannot change parent id to non-existent trimmed index: {error}"
         );
     }
 
@@ -1619,7 +1631,7 @@ mod tests {
         let once = instantiate_prefab(&demo_scene_with_host(), &prefab, None, Some(path)).unwrap();
         let twice = instantiate_prefab(&once.doc, &prefab, None, Some(path)).unwrap();
 
-        // 在两个实例之间插一个普通实体，检查同步后它和两个实例都留在原位。
+        // Insert a normal entity between two instances, check after sync it and both instances stay in place.
         let mut broken = twice.doc.clone();
         broken["entities"].as_array_mut().unwrap().insert(
             3,
@@ -1665,7 +1677,7 @@ mod tests {
         let twice = instantiate_prefab(&once.doc, &prefab, None, Some(path)).unwrap();
         assert_eq!(prefab_instances(&twice.doc).len(), 2);
 
-        // 把两个实例的内容改坏（但保留链接组件）。
+        // Corrupt two instances' content (but keep link component).
         let mut broken = twice.doc.clone();
         for entity in broken["entities"]
             .as_array_mut()
@@ -1696,7 +1708,7 @@ mod tests {
         assert_eq!(prefab_instances(&synced).len(), 2);
     }
 
-    /// a(0) → b(1) → c(2)，另有根 d(3)。
+    /// a(0) → b(1) → c(2), plus root d(3).
     fn hierarchy_doc() -> serde_json::Value {
         serde_json::json!({
             "version": prism_scene::SCENE_DOC_VERSION,
@@ -1713,21 +1725,21 @@ mod tests {
     fn reparent_moves_a_subtree_and_rejects_cycles() {
         let doc = hierarchy_doc();
 
-        // 把 c 挂到 d 下（并保持 c 的子树）。
+        // Attach c under d (keep c's subtree).
         let out = reparent_doc(&doc, 2, Some(3)).unwrap();
         let entities = out["entities"].as_array().unwrap();
         assert_eq!(entities[2]["name"], "c");
         assert_eq!(entities[2]["parent"], 3);
 
-        // 变成根。
+        // Become root.
         let out = reparent_doc(&doc, 1, None).unwrap();
         assert_eq!(out["entities"][1]["parent"], serde_json::Value::Null);
-        // b 的子树保持不变（c 仍指向 b）。
+        // b's subtree unchanged (c still points to b).
         assert_eq!(out["entities"][2]["parent"], 1);
 
-        // 拒绝：自父 / 挂到后代 / 越界。
+        // Reject: self-parent / attach to descendant / out of bounds.
         assert!(reparent_doc(&doc, 1, Some(1)).is_err());
-        assert!(reparent_doc(&doc, 0, Some(2)).is_err()); // c 是 a 的后代
+        assert!(reparent_doc(&doc, 0, Some(2)).is_err()); // c is a's descendant
         assert!(reparent_doc(&doc, 9, Some(0)).is_err());
     }
 
@@ -1736,36 +1748,36 @@ mod tests {
         let doc = hierarchy_doc();
         validate_doc(&doc).unwrap();
 
-        // 把 a(id 0) 移到末尾：顺序 b,c,d,a，但父引用是 id，不受位置影响。
+        // Move a(id 0) to end: order b,c,d,a, but parent refs are ids, unaffected by position.
         let result = move_entity(&doc, 0, 4, None).unwrap();
         validate_doc(&result.doc).unwrap();
         assert_eq!(result.index, 3);
 
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities[0]["name"], "b");
-        assert_eq!(entities[0]["parent"], 0); // 仍指向 a（id 0，位置无关）
+        assert_eq!(entities[0]["parent"], 0); // still points to a (id 0, position-independent)
         assert_eq!(entities[1]["name"], "c");
-        assert_eq!(entities[1]["parent"], 1); // 仍指向 b（id 1）
+        assert_eq!(entities[1]["parent"], 1); // still points to b (id 1)
         assert_eq!(entities[3]["name"], "a");
         assert_eq!(entities[3]["parent"], serde_json::Value::Null);
 
-        // 插到 b 之前，并挂到 d 下。
+        // Insert before b, and attach under d.
         let result = move_entity(&doc, 2, 1, Some(3)).unwrap();
         validate_doc(&result.doc).unwrap();
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities[1]["name"], "c");
         assert_eq!(result.index, 1);
-        // c 的父变成 d 的 id（3），与被移动实体的位置无关。
+        // c's parent becomes d's id (3), independent of moved entity position.
         assert_eq!(entities[1]["parent"], 3);
 
-        assert!(move_entity(&doc, 0, 0, Some(2)).is_err()); // 成环
+        assert!(move_entity(&doc, 0, 0, Some(2)).is_err()); // cycle
     }
 
     #[test]
     fn delete_entities_roots_orphans_without_rewriting_ids() {
         let doc = hierarchy_doc();
 
-        // 删掉 b：c 变根。
+        // Delete b: c becomes root.
         let out = delete_entities(&doc, &[1]).unwrap();
         validate_doc(&out).unwrap();
         let entities = out["entities"].as_array().unwrap();
@@ -1773,14 +1785,14 @@ mod tests {
         assert_eq!(entities[1]["name"], "c");
         assert_eq!(entities[1]["parent"], serde_json::Value::Null);
 
-        // 同时删 a 和 d：b 的父 a 被删 → 变根。
+        // Delete a and d simultaneously: b's parent a deleted → becomes root.
         let out = delete_entities(&doc, &[0, 3]).unwrap();
         validate_doc(&out).unwrap();
         let entities = out["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 2);
         assert_eq!(entities[0]["name"], "b");
         assert_eq!(entities[0]["parent"], serde_json::Value::Null);
-        assert_eq!(entities[1]["parent"], 1); // c 仍指向 b（id 1，不随删除改变）
+        assert_eq!(entities[1]["parent"], 1); // c still points to b (id 1, unchanged by deletion)
 
         assert!(delete_entities(&doc, &[0, 1, 2, 3]).is_err());
         assert!(delete_entities(&doc, &[9]).is_err());
@@ -1792,7 +1804,7 @@ mod tests {
 
         let path = write_scene_as(&root, "alpha", &empty_scene_doc()).unwrap();
         assert!(path.exists());
-        // 同名不覆盖。
+        // Same name does not overwrite.
         assert!(write_scene_as(&root, "alpha", &empty_scene_doc()).is_err());
 
         let renamed = rename_scene(&path, "beta").unwrap();

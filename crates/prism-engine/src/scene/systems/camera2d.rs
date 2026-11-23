@@ -1,10 +1,10 @@
-//! 2D 虚拟相机系统（#1160）。
+//! 2D virtual camera system (#1160).
 //!
-//! 提供针对 2D 横版卷轴/顶视/像素动作游戏的通用虚拟相机功能：
-//! 1. 目标平滑跟随（Damping）
-//! 2. 移动死区矩形（Deadzone）
-//! 3. 关卡世界边界围栏约束（Confiner）
-//! 4. 像素对齐吸附防抖（Pixel Snapping）
+//! Provides general virtual camera features for precise 2D side-scroller / top-down / pixel-action games:
+//! 1. Smooth target follow (Damping)
+//! 2. Movement deadzone rectangle (Deadzone)
+//! 3. Level world boundary constraint (Confiner)
+//! 4. Pixel-alignment snapping anti-jitter (Pixel Snapping)
 
 use glam::Vec2;
 use prism_ecs::{Entity, World};
@@ -13,7 +13,7 @@ use prism_scene::components::{
 };
 use prism_scene::is_active_in_hierarchy;
 
-/// 解析跟随目标的当前世界位置 (x, y)。
+/// Parse follow target current world position (x, y).
 pub fn resolve_target_pos(world: &World, target_id: u64) -> Option<Vec2> {
     if target_id == u64::MAX {
         return None;
@@ -24,7 +24,7 @@ pub fn resolve_target_pos(world: &World, target_id: u64) -> Option<Vec2> {
     let target = if world.is_alive(candidate) {
         Some(candidate)
     } else {
-        // 若生成代为 0 或失配，尝试按实体 ID 查找
+        // If generated id is 0 or mismatched, try finding by entity ID
         world
             .query::<LocalTransform>()
             .find_map(|(e, _)| if e.id() == id { Some(e) } else { None })
@@ -40,9 +40,9 @@ pub fn resolve_target_pos(world: &World, target_id: u64) -> Option<Vec2> {
     }
 }
 
-/// 执行单帧 2D 相机更新逻辑。
+/// Execute single-frame 2D camera update logic.
 ///
-/// 遍历场景中所有附带 [`Camera2D`] 与 [`LocalTransform`] 的实体并应用平滑追踪。
+/// Iterate all entities in scene carrying [`Camera2D`] and [`LocalTransform`] and apply smooth tracking.
 pub fn camera_2d_system(world: &mut World, dt: f32) {
     let mut updates = Vec::new();
 

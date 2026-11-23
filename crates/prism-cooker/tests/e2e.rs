@@ -180,11 +180,11 @@ const SPONZA_TEXTURE: &str = "textures/metal_door_01_BaseColor.png";
 // E2E Test: full pipeline with real Sponza texture
 // ---------------------------------------------------------------------------
 
-/// E2E Test: 完整 管线 with real Sponza 纹理
+/// E2E test: full pipeline with real Sponza texture
 ///
-/// **需要外部数据**：Sponza 场景需按 `assets/scenes.json` 下载，
-/// 且纹理路径指向 [`SPONZA_DIR`]。默认 `#[ignore]`——运行前请先
-/// 下载场景，然后用 `cargo test -p prism-asset --test e2e -- --ignored e2e_full_pipeline` 手动执行。
+/// **Requires external data**: Sponza scene must be loaded per `assets/scenes.json`,
+/// and texture path points to [`SPONZA_DIR`]. Default `#[ignore]` — before run please first
+/// load scene, then run `cargo test -p prism-asset --test e2e -- --ignored e2e_full_pipeline` manually.
 #[test]
 #[ignore = "requires downloaded Sponza scene (see SPONZA_DIR)"]
 fn e2e_full_pipeline() {
@@ -194,7 +194,7 @@ fn e2e_full_pipeline() {
     let (_dir, root) = create_project("sponza-e2e");
 
     let test_out = root.display().to_string();
-    eprintln!("=== Test output / 测试输出: {test_out}");
+    eprintln!("=== Test output: {test_out}");
 
     let assets_dir = root.join("Assets");
     let library_dir = root.join("Library");
@@ -729,7 +729,7 @@ fn e2e_full_pipeline() {
     let asset_list: Vec<_> = rm.assets().collect();
     assert_eq!(asset_list.len(), 3);
 
-    println!("✅ E2E pipeline test passed / 测试通过: all 11 phases complete / 全部 11 阶段完成 (real Sponza texture)");
+    println!("✅ E2E pipeline test passed: all 11 phases complete (real Sponza texture)");
 }
 
 // ---------------------------------------------------------------------------

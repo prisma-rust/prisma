@@ -1,12 +1,12 @@
-//! 渲染线程——从主线程接收 [`FramePacket`] 与叠加层消息，
-//! 并驱动 [`GraphRenderer`]（begin_frame → 执行 → present）。
+//! Render thread---receives [`FramePacket`] and overlay messages from main thread,
+//! and drives [`GraphRenderer`] (begin_frame -> execute -> present).
 //!
-//! 渲染线程由 [`App`](crate::app::App) 在 `resumed` 中**异步**启动：
-//! 主线程只创建窗口（快速），渲染线程在此**内部**构建 [`GraphRenderer`]
-//! （~数百毫秒，但不再阻塞窗口事件）。运行直到主线程将 `running` 标志设为 `false`。
+//! Render thread **asynchronously** started by [`App`](crate::app::App) in `resumed`;
+//! main thread only creates window (fast), render thread internally builds [`GraphRenderer`]
+//! (~hundreds ms, but no longer blocks window events). Runs until main thread sets `running` flag to `false`.
 //!
-//! 资产解析也在此线程完成 GPU 段：主线程 CPU 段产出的 [`AssetResolveRequest`]
-//! 经通道投递，本线程每帧取走并交给 `GraphRenderer::apply_asset_requests`。
+//! Asset parsing also completes GPU side in this thread: main thread CPU side produces [`AssetResolveRequest`]
+//! delivered via channel, this thread takes each frame and hands to `GraphRenderer::apply_asset_requests`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,8 +20,8 @@ use prism_render::asset_bridge::{AssetResolveRequest, AssetResolveResult};
 use prism_render::frame_stats::{FrameStats, FrameStatsSummary};
 use prism_render::SwapchainOverlay;
 use prism_render::{FrameInput, FrameUBOData, GraphRenderer};
-// 直接用 `raw-window-handle` crate（winit 的 `winit::raw_window_handle` 就是它的
-// 重导出）：`win32-native` 构建里不能出现任何 `winit::` 路径。
+// Directly use `raw-window-handle` crate (winit's `winit::raw_window_handle` is its
+// re-export): `win32-native` build must not have any `winit::` path.
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
@@ -29,19 +29,19 @@ use raw_window_handle::{
 
 use crate::render_shared::{FrameImage, RenderShared, RenderStats};
 
-/// 进程级原始窗口句柄的 `Send` 包装。
+/// `Send` wrapper of process-level raw window handle.
 ///
-/// `RawDisplayHandle`/`RawWindowHandle` 自身因含有 `NonNull<c_void>`
-/// （Wayland 变体）被 Rust 静态判定为非 `Send`，无法直接跨线程捕获。但本
-/// 引擎仅在 Windows/Android 运行，其实际变体是进程级的指针值（Win32 的
-/// `HWND` / Android 的 `ANativeWindow` 指针，display 句柄为空结构体），
-/// 在任意线程用于创建 Vulkan 表面都是安全的；且窗口生命周期覆盖整个渲染
-/// 线程，故此处显式标注 `Send` 是成立的。
-/// 把主线程提取的 [`RawDisplayHandle`]/[`RawWindowHandle`] 重新包装成
-/// `HasDisplayHandle`/`HasWindowHandle`，供渲染线程内的 `GraphRenderer::new`
-/// 使用。winit 的 `Window::window_handle()` 在**非创建线程**上会返回错误
-/// （句柄不可用），因此必须在主线程把原始句柄取出来再跨线程传递——
-/// 原始 HWND 是进程级的值，在任意线程用于创建 Vulkan 表面都是安全的。
+/// `RawDisplayHandle`/`RawWindowHandle` itself contains `NonNull<c_void>`
+/// (Wayland variant) statically judged non-`Send` by Rust, cannot directly cross threads. But this
+/// engine only runs on Windows/Android, its actual variant is process-level pointer value (Win32's
+/// `HWND` / Android `ANativeWindow` pointer, display handle is empty struct),
+/// using on any thread to create Vulkan surface is safe; and window lifecycle covers whole render
+/// thread, so explicitly marking `Send` here is valid.
+/// Re-wrap [`RawDisplayHandle`]/[`RawWindowHandle`] extracted by main thread into
+/// `HasDisplayHandle`/`HasWindowHandle`, for `GraphRenderer::new` inside render thread
+/// use. winit's `Window::window_handle()` on **non-creation thread** returns error
+/// (handle unavailable), so must extract raw handle on main thread then pass across threads---
+/// raw HWND is process-level value, safe on any thread to create Vulkan surface.
 struct RawHandleBridge<'a> {
     display: &'a RawDisplayHandle,
     window: &'a RawWindowHandle,
@@ -49,7 +49,7 @@ struct RawHandleBridge<'a> {
 
 impl HasDisplayHandle for RawHandleBridge<'_> {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        // 原始句柄由主线程保证有效；此处仅重新借用。
+        // Raw handle guaranteed valid by main thread; here only re-borrow.
         Ok(unsafe { DisplayHandle::borrow_raw(*self.display) })
     }
 }
@@ -60,15 +60,15 @@ impl HasWindowHandle for RawHandleBridge<'_> {
     }
 }
 
-/// 帧率计数器的平滑因子（值越低越平滑）。
+/// Frame counter smoothing factor (lower value smoother).
 const FPS_ALPHA: f32 = 0.05;
 
-/// 外部叠加层工厂：渲染线程启动前由主线程提供，返回 [`SwapchainOverlay`]。
+/// External overlay factory: provided by main thread before render thread starts, returns [`SwapchainOverlay`].
 pub type OverlayFactory = Box<dyn Fn() -> Box<dyn SwapchainOverlay> + Send>;
 
-/// 渲染线程的呈现目标。
+/// Render thread present target.
 pub enum RenderTarget {
-    /// 真实窗口 + 交换链（游戏 / launcher）。
+    /// Real window + swapchain (game / launcher).
     Surface {
         handles: SendWindowHandles,
         extensions: Vec<String>,
@@ -81,25 +81,25 @@ pub enum RenderTarget {
         extensions: Vec<String>,
         vsync: bool,
     },
-    /// 无窗口离屏图像（编辑器视口）。帧由宿主经 [`RenderShared::request_frame`]
-    /// 请求，渲染线程读回 CPU 后放进 [`RenderShared::frame`]。
+    /// Windowless offscreen image (editor viewport). Frame requested by host via [`RenderShared::request_frame`]
+    /// request, render thread reads back to CPU then puts into [`RenderShared::frame`].
     Offscreen { width: u32, height: u32 },
 }
 
-/// 渲染线程入口点。
+/// Render thread entry point.
 ///
-/// 与旧实现不同，本函数在渲染线程**内部**构建 [`GraphRenderer`]：
-/// - `handles` 是主线程在窗口创建线程上提取的原始句柄（[`SendWindowHandles`]）
-///   ——`Window::window_handle()` 在非创建线程会失败，故必须主线程取出后传递。
-/// - `extensions` 是主线程算好的 Vulkan 实例扩展名（依赖窗口 display handle）。
-/// - `scene_env` 是场景声明式光照的 IBL 数据（None → 廉价空 IBL，不卷积）。
-/// - `warmup` 是否在首帧前预热所有 GPU 管线。
-/// - `vsync` 是否请求垂直同步的 present mode（来自 `WindowConfig.vsync`）。
-/// - `overlay_factory` 若有，构建完成后立即安装外部叠加层。
+/// Unlike old implementation, this function builds [`GraphRenderer`] **inside render thread**:
+/// - `handles` are raw handles extracted by main thread on window creation thread ([`SendWindowHandles`])
+///   -- `Window::window_handle()` fails on non-creation thread, so must extract on main thread then pass.
+/// - `extensions` are Vulkan instance extensions computed by main thread (depend on window display handle).
+/// - `scene_env` is IBL data of scene declarative lighting (None -> cheap empty IBL, no convolution).
+/// - `warmup` whether to warm up all GPU pipelines before first frame.
+/// - `vsync` whether to request vsync present mode (from `WindowConfig.vsync`).
+/// - `overlay_factory` if present, install external overlay immediately after build completes.
 ///
-/// 这样 `resumed()` 能在窗口建好后立即返回，窗口事件（关闭/移动/缩放）
-/// 不再被渲染器初始化阻塞。循环：建渲染器 → 取 packet/asset/overlay 消息
-/// → 构建输入 → begin/execute/present。当 `shared.running` 变为 `false` 时退出。
+/// Thus `resumed()` can return immediately after window built; window events (close / move / resize)
+/// no longer blocked by renderer init. Loop: build renderer -> take packet/asset/overlay messages
+/// -> build input -> begin/execute/present. Exit when `shared.running` becomes `false`.
 pub fn render_thread_main(
     shared: Arc<RenderShared>,
     target: RenderTarget,
@@ -116,9 +116,9 @@ pub fn render_thread_main(
     prism_engine::util::timing::event("render::thread_started", "");
 
     // -------------------------------------------------------------------
-    // 异步构建渲染器（~数百毫秒，但运行在渲染线程，不阻塞窗口事件）
+    // Async build renderer (~hundreds ms, but runs on render thread, does not block window events)
     // -------------------------------------------------------------------
-    // 原始句柄包装成 Has*Handle——raw 句柄是进程级的，跨线程安全。
+    // Raw handle wrapped into Has*Handle---raw handle is process-level, cross-thread safe.
     let create_span = prism_engine::util::timing::span("render::create_renderer");
     let created = match &target {
         RenderTarget::Surface {
@@ -198,8 +198,8 @@ pub fn render_thread_main(
         shared.mark("warmup_done");
     }
 
-    // 按「场景声明式光照」构建 IBL：仅当场景携带 EnvironmentLighting/env_map
-    // （或 `.rscn` 自带环境贴图）时才跑 CPU 预卷积；否则依赖启动期廉价空 IBL。
+    // Build IBL per "scene declarative lighting": only runs CPU pre-convolution when scene carries EnvironmentLighting/env_map
+    // (or `.rscn` carries env texture); otherwise rely on cheap empty IBL at startup.
     if let Some(bytes) = scene_env {
         log::info!("scene lighting: building IBL environment (with convolve)");
         let env_span = prism_engine::util::timing::span("render::set_environment_ibl");
@@ -211,12 +211,12 @@ pub fn render_thread_main(
         log::info!("scene lighting: no IBL environment — cheap empty IBL (no convolve)");
     }
 
-    // 安装外部叠加层（宿主 UI 等），其 GPU 资源在 record 时懒创建。
+    // Install external overlay (host UI etc); GPU resource lazily created at record.
     if let Some(factory) = overlay_factory {
         renderer.set_external_overlay(factory());
     }
 
-    // 帧计时
+    // Frame timing
     let mut smoothed_fps = 0.0f32;
     let mut frame_count: u64 = 0;
     // ~2 minutes at 60 fps; the summary is sorted, so it is refreshed a few
@@ -233,12 +233,12 @@ pub fn render_thread_main(
     let mut bench_report_written = false;
 
     while shared.running.load(std::sync::atomic::Ordering::Relaxed) {
-        // 检查来自主线程的 PT 重置请求
+        // Check PT reset request from main thread
         if shared.take_pt_reset() {
             renderer.request_pt_reset();
         }
 
-        // ---- 资产上传请求（主线程 CPU 段 → 渲染线程 GPU 段） ----
+        // ---- Asset upload request (main thread CPU side -> render thread GPU side) ----
         let requests = shared.take_asset_requests();
         if !requests.is_empty() {
             let (entities, stripped): (Vec<Entity>, Vec<AssetResolveRequest>) =
@@ -250,13 +250,13 @@ pub fn render_thread_main(
         }
 
         let packet = shared.take_packet();
-        // 应用主线程投递的叠加层消息（如"新的宿主 UI 帧"）。
+        // Apply overlay messages delivered by main thread (e.g. "new host UI frame").
         let overlay_messages = shared.take_overlay_messages();
         for msg in overlay_messages {
             renderer.apply_overlay_message(msg);
         }
 
-        // 应用主线程投递的渲染器命令（如 set_environment 重建 IBL）。
+        // Apply renderer commands delivered by main thread (e.g. set_environment rebuild IBL).
         let renderer_messages = shared.take_renderer_messages();
         for msg in renderer_messages {
             msg(&mut renderer);
@@ -444,7 +444,7 @@ pub fn render_thread_main(
             }
         }
 
-        // 渲染图报告（Web 编辑器可视化）：首帧 + 低频刷新。
+        // Render graph report (Web editor visualization): first frame + low-frequency refresh.
         if graph_report.is_enabled() {
             graph_report.maybe_write_with_timings(
                 &renderer.graph().snapshot(),
@@ -466,12 +466,12 @@ pub fn render_thread_main(
             frame_time_ms,
             fps: smoothed_fps,
             pt_frame_count: pt_count,
-            // 不支持时间戳的设备保持 None，HUD 会明确显示「n/a」而不是拿 CPU 墙钟冒充。
+            // Device not supporting timestamps keeps None; HUD explicitly shows "n/a" instead of faking GPU time with CPU wall clock.
             gpu_timings: gpu_timings.supported.then_some(gpu_timings),
             frame_stats: frame_stats_summary.clone(),
         });
 
-        // ---- 宿主（编辑器）帧读回：只读回 PostPass 已 tonemap 的离屏图像 ----
+        // ---- Host (editor) frame readback: only read back PostPass tonemapped offscreen image ----
         if renderer.is_headless() {
             match renderer.offscreen_extent() {
                 Some(extent) => {
@@ -495,7 +495,7 @@ pub fn render_thread_main(
             }
         }
 
-        // 归还数据包：主线程下一帧 clear() + 重填，跳过每帧的 Vec 重分配（#66）。
+        // Return packet: main thread next frame clear() + refill, skip Vec re-allocation each frame (#66).
         shared.recycle_packet(packet);
     }
 
@@ -563,7 +563,7 @@ fn render_one_frame(
     };
     renderer.apply_taa_jitter(&mut frame_data);
 
-    // #502：全局 LUT 强度 + assets/ 下的 .cube 路径（体积调色不覆盖 LUT）。
+    // #502: global LUT intensity + .cube path under assets/ (volume tone mapping does not cover LUT).
     let mut resolved_grade = packet.grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
     let lut_path = if settings.lut.trim().is_empty() {
@@ -571,8 +571,8 @@ fn render_one_frame(
     } else {
         prism_engine::asset_paths::asset_path(settings.lut.trim())
     };
-    // #613：内部分辨率必须在 `begin_frame` 之前生效——begin_frame 用它决定
-    // HDR 中间目标尺寸，execute 再用它做 PostPass 的目标矩形。
+    // #613: internal resolution must take effect before `begin_frame`---`begin_frame` uses it to decide
+    // HDR intermediate target size, `execute` uses it again for PostPass target rect.
     renderer.set_internal_resolution(settings.internal_resolution, settings.internal_scale_mode);
     renderer.set_occlusion_culling(settings.occlusion_culling);
 
@@ -619,7 +619,7 @@ fn render_one_frame(
         None => return Ok(false),
     };
     drop(begin_span);
-    // #1007：上一帧粗深度在 `begin_frame` 里读回，所以过滤放在它之后。
+    // #1007: last frame coarse depth read back in `begin_frame`, so filtering placed after it.
     let mut occlusion_items = Vec::new();
     let main_pass_items: &[prism_render::render_graph::DrawItem] = if settings.occlusion_culling {
         occlusion_items.extend_from_slice(draw_items);

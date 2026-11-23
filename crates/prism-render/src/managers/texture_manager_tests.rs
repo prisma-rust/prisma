@@ -12,10 +12,10 @@ fn valid_input() -> TextureUploadInput {
 
 #[test]
 fn reserve_rejects_wrong_pixel_size() {
-    // We can't actually 调用 `new` without a Vulkan 设备 so we
-    // test the 验证 path directly by constructing the
-    // 管理器 with `unsafe` minimal 状态 Easier: validate via
-    // the bytes_per_pixel math at the 调用 site.
+    // We can't actually call `new` without a Vulkan device so we
+    // test the validate  path directly by constructing the
+    // Manager with `unsafe` minimal state. Easier: validate via
+    // the bytes_per_pixel math at the call site.
     let bad = TextureUploadInput {
         width: 2,
         height: 2,
@@ -72,7 +72,7 @@ fn compressed_formats_tolerate_a_chain_but_not_a_short_buffer() {
     assert!(!accepts_pixel_len(TextureFormat::Bc7Unorm, 3, 63, 8, 8));
 }
 
-// --- Slot reclaim: released 槽 are reused before the bump pointer ---
+// --- Slot reclaim: released slots are reused before the bump pointer ---
 
 #[test]
 fn unregister_reclaims_the_bindless_slot_and_writes_fallback() {
@@ -124,10 +124,10 @@ fn release_slot_rejects_double_release() {
 fn bc1_and_bc3_report_their_block_sizes() {
     use crate::managers::texture_manager::TextureFormat;
 
-    // BC1 是 8 字节 / 4×4 块，BC3 是 16 字节 —— 上传时按这个算缓冲区大小（#519）。
+    // BC1 is 8 bytes / 4×4 block, BC3 is 16 bytes — upload computes buffer size by this (#519).
     assert_eq!(TextureFormat::Bc1Srgb.compressed_byte_len(8, 8), 4 * 8);
     assert_eq!(TextureFormat::Bc3Srgb.compressed_byte_len(8, 8), 4 * 16);
-    // 非 4 的倍数向上取整到整块。
+    // Round non-multiples of 4 up to whole block.
     assert_eq!(TextureFormat::Bc1Unorm.compressed_byte_len(5, 3), 2 * 8);
     assert_eq!(TextureFormat::Bc3Unorm.compressed_byte_len(5, 3), 2 * 16);
     assert!(TextureFormat::Bc1Srgb.is_compressed());

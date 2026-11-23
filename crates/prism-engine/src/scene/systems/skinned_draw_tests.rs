@@ -30,7 +30,7 @@ fn spawn_skinned(world: &mut prism_ecs::World, palette: Option<usize>) -> prism_
             generation: 1,
         },
     );
-    // `MeshBounds` 是 World 资源（#491），不是实体组件。
+    // `MeshBounds` is a World resource (#491), not an entity component.
     if world.get_resource::<MeshBounds>().is_none() {
         let mut bounds = MeshBounds::default();
         bounds.insert(
@@ -56,8 +56,8 @@ fn a_skinned_entity_without_a_palette_draws_in_bind_pose() {
 
     assert_eq!(added, 1);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].bone_offset, None, "没有调色板 = 静态路径");
-    assert!(palette.is_empty(), "bind pose 不需要上传骨骼矩阵");
+    assert_eq!(items[0].bone_offset, None, "No palette = static path");
+    assert!(palette.is_empty(), "Bind pose needs no bone matrix upload");
 }
 
 #[test]
@@ -71,10 +71,10 @@ fn a_palette_is_appended_and_the_offset_points_at_it() {
     let added = append_skinned_draw_items(&world, None, &mut items, &mut palette);
 
     assert_eq!(added, 2);
-    assert_eq!(palette.len(), 5, "两个实体的骨骼矩阵首尾相接");
+    assert_eq!(palette.len(), 5, "Two entities bone matrices concatenated");
     let offsets: Vec<Option<u32>> = items.iter().map(|item| item.bone_offset).collect();
     assert_eq!(offsets, vec![Some(0), Some(2)]);
-    // 第二份调色板真的在 offset 2 之后。
+    // Second palette actually begins after offset 2.
     assert!((palette[2][3][0] - 0.0).abs() < 1e-6);
     assert!((palette[3][3][0] - 1.0).abs() < 1e-6);
     let _ = (first, second);
@@ -92,7 +92,7 @@ fn a_palette_that_does_not_fit_the_bone_budget_falls_back_to_the_bind_pose() {
     assert_eq!(items.len(), 1);
     assert_eq!(
         items[0].bone_offset, None,
-        "超预算时宁可用 bind pose，也不能越界读骨骼缓冲"
+        "When over budget prefer bind pose rather than reading bone buffer out of bounds"
     );
     assert!(palette.is_empty());
 }
@@ -110,7 +110,7 @@ fn the_remaining_budget_shrinks_as_palettes_are_appended() {
     assert_eq!(items[0].bone_offset, Some(0));
     assert_eq!(
         items[1].bone_offset, None,
-        "第二份放不下了：剩 1 个槽，但它需要 2 个"
+        "Second does not fit: 1 slot left but it needs 2"
     );
     assert_eq!(palette.len(), BONE_BUDGET - 1);
 }
@@ -119,7 +119,7 @@ fn the_remaining_budget_shrinks_as_palettes_are_appended() {
 fn a_frustum_culls_the_skinned_draw_item() {
     let mut world = prism_ecs::World::new();
     let entity = spawn_skinned(&mut world, None);
-    // 相机在原点朝 −Z，把物体推到 x=1000（画面外）→ 整个盒在视锥外。
+    // Camera at origin looking −Z, push object to x=1000 (outside screen) → whole box outside frustum.
     world.insert(
         entity,
         LocalToWorld(glam::Mat4::from_translation(glam::vec3(1000.0, 0.0, -5.0))),
@@ -140,7 +140,10 @@ fn a_frustum_culls_the_skinned_draw_item() {
 
     assert_eq!(added, 0);
     assert!(items.is_empty());
-    assert!(palette.is_empty(), "被剔除的实体不该占用骨骼预算");
+    assert!(
+        palette.is_empty(),
+        "Culled entity should not consume bone budget"
+    );
 }
 
 #[test]
@@ -182,7 +185,7 @@ fn submeshes_become_one_draw_item_each() {
     assert_eq!(items[0].index_count, Some(36));
     assert_eq!(items[1].index_start, 36);
     assert_eq!(items[1].index_count, Some(12));
-    // 没有 `MaterialSlots` 时回落到实体级的材质槽。
+    // When no `MaterialSlots`, fall back to entity-level material slot.
     assert_eq!(items[0].material, Some(7));
     assert_eq!(items[1].material, Some(7));
 }

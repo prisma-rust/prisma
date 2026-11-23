@@ -1,16 +1,16 @@
-//! 硬件光线追踪能力检测。
+//! Hardware ray tracing capability detection.
 //!
-//! 在创建逻辑设备之前，我们探测物理设备的光线追踪支持：
-//! 哪些扩展已公告，以及特性链是否实际报告它们受支持。
-//! 结果（[`RayTracingCaps`]）驱动 [`crate::context`] 中的条件性扩展/特性启用。
+//! Before creating the logical device, we probe physical device ray tracing support:
+//! which extensions are already advertised, and whether feature chains actually report support.
+//! Result ([`RayTracingCaps`]) drives conditional extension / feature enable in [`crate::context`].
 //!
-//! 检测是分层的：
+//! Detection is layered:
 //!
 //! ```text
-//! 第 4 层 VK_KHR_ray_query 在任何着色器阶段中的内联光线
-//! 第 3 层 VK_KHR_ray_tracing_pipeline RT 核心管线（完整 SBT）
-//! 第 2 层 VK_KHR_acceleration_structure + deferred_host_operations
-//! 第 1 层 Vulkan 1.2 提升特性（buffer_device_address、descriptor_indexing、timeline_semaphore）
+//! Layer 4 VK_KHR_ray_query for inline rays in any shader stage
+//! Layer 3 VK_KHR_ray_tracing_pipeline RT core pipeline (full SBT)
+//! Layer 2 VK_KHR_acceleration_structure + deferred_host_operations
+//! Layer 1 Vulkan 1.2 promoted features (buffer_device_address, descriptor_indexing, timeline_semaphore)
 //! ```
 //!
 //! An extension is only considered *usable* when **both** the extension is
@@ -164,8 +164,8 @@ impl RayTracingCaps {
         self.acceleration_structure && self.ray_query
     }
 
-    /// 纹理上传路径所需的扩展能力。该能力缺失时，设备创建应失败，
-    /// 以避免在上传阶段才触发无效的 Vulkan 命令。
+    /// Capabilities required by texture upload path. When missing, device creation should fail,
+    /// to avoid triggering invalid Vulkan commands later in upload phase.
     pub fn has_transfer_commands(&self) -> bool {
         self.synchronization2 && self.copy_commands2
     }

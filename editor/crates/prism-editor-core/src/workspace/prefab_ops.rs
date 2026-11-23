@@ -7,7 +7,7 @@ pub(super) fn root_id_of(workspace: &Workspace, index: usize) -> io::Result<u32>
         .document()
         .doc
         .id_of_index(index)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "实体没有 id"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entity has no id"))
 }
 
 pub(super) fn json_vec3(value: &Value) -> Option<[f32; 3]> {
@@ -180,13 +180,16 @@ impl Workspace {
                     .find(|template| template.kind == DocKind::Prefab && template.id == stem)
                     .map(|template| template.doc.clone())
                     .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, format!("找不到预制体 {relative}"))
+                        io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("prefab not found {relative}"),
+                        )
                     })?
             }
         };
 
         let parent = parent.filter(|index| *index < self.document().doc.entities.len());
-        let inserted = self.edit("实例化预制体", |document| {
+        let inserted = self.edit("instantiate prefab", |document| {
             document.doc.instantiate_prefab(&prefab, parent, relative)
         });
         if let Some(root) = inserted.first() {
@@ -199,7 +202,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已实例化 {relative}（{} 个实体）", inserted.len()),
+            format!("instantiated {relative} ({} entities)", inserted.len()),
         );
         Ok(inserted.len())
     }
@@ -214,11 +217,14 @@ impl Workspace {
         name: &str,
     ) -> io::Result<String> {
         let root = self.project_root.clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "没有绑定项目根，无法保存预制体")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no project root bound, cannot save prefab",
+            )
         })?;
         let index = self
             .primary_selection()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "未选择实体"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no entity selected"))?;
         let doc = self.document().doc.extract_subtree(&[index]);
         let doc = self.pruned_doc(doc);
         let stem = project::sanitize_stem(name);
@@ -237,7 +243,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已存为预制体 {path}（{} 个实体）", doc.entities.len()),
+            format!("saved as prefab {path} ({} entities)", doc.entities.len()),
         );
         Ok(path)
     }
@@ -246,14 +252,13 @@ impl Workspace {
         let root = self.project_root.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                "没有绑定项目根，无法应用预制体修改",
+                "no project root bound, cannot apply prefab changes",
             )
         })?;
-        let index = self
-            .document()
-            .doc
-            .index_of_id(entity_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "实例不存在"))?;
+        let index =
+            self.document().doc.index_of_id(entity_id).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "instance does not exist")
+            })?;
         let link = self
             .document()
             .doc
@@ -261,11 +266,11 @@ impl Workspace {
             .get(index)
             .and_then(|entity| entity.prefab_link())
             .map(str::to_string)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "不是预制体实例"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a prefab instance"))?;
         if !link.starts_with("assets/") || !link.ends_with(".prefab.json") {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("非法的预制体路径 {link}"),
+                format!("illegal prefab path {link}"),
             ));
         }
 
@@ -276,7 +281,10 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已应用预制体修改 {link}（{} 个实体）", doc.entities.len()),
+            format!(
+                "applied prefab changes {link} ({} entities)",
+                doc.entities.len()
+            ),
         );
         Ok(link)
     }
@@ -287,12 +295,15 @@ impl Workspace {
         entity_id: u32,
     ) -> io::Result<()> {
         let Some(scene) = self.docs.get(scene_index) else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "文档不存在"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "document does not exist",
+            ));
         };
         if matches!(scene.kind, DocKind::Prefab) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "只能从场景实例打开预制体",
+                "only open prefab from scene instance",
             ));
         }
         let Some(link) = scene
@@ -304,7 +315,7 @@ impl Workspace {
         else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                "这个实体不是预制体实例",
+                "this entity is not a prefab instance",
             ));
         };
         let link = link.to_string();
@@ -318,7 +329,7 @@ impl Workspace {
         else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                "预制体文档没有打开",
+                "prefab document not open",
             ));
         };
         self.docs[prefab_index].prefab_origin = Some(PrefabOrigin {
@@ -354,7 +365,7 @@ impl Workspace {
                 Err(error) => self.log(
                     LogSource::Editor,
                     LogLevel::Warn,
-                    format!("返回场景时同步实例失败: {error}"),
+                    format!("sync instance failed when returning to scene: {error}"),
                 ),
             }
         }
@@ -367,7 +378,10 @@ impl Workspace {
     pub fn revert_prefab_instance(&mut self, entity_id: u32) -> io::Result<u32> {
         let prefab = self.prefab_document_for(entity_id)?;
         let Some(index) = self.document().doc.index_of_id(entity_id) else {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "实例不存在"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "instance does not exist",
+            ));
         };
         let (name, parent_id, link) = {
             let entity = &self.document().doc.entities[index];
@@ -378,7 +392,7 @@ impl Workspace {
             )
         };
 
-        let root = self.edit("还原预制体实例", |document| {
+        let root = self.edit("restore prefab instance", |document| {
             document.doc.remove_entities(&[index]);
             let parent = parent_id.and_then(|id| document.doc.index_of_id(id));
             let inserted = document.doc.instantiate_prefab(&prefab, parent, &link);
@@ -391,7 +405,7 @@ impl Workspace {
             root
         });
         let Some(root) = root else {
-            return Err(io::Error::other("预制体没有生成任何实体"));
+            return Err(io::Error::other("prefab generated no entities"));
         };
         let root_id = self
             .document()
@@ -399,11 +413,11 @@ impl Workspace {
             .entities
             .get(root)
             .and_then(|entity| entity.id)
-            .ok_or_else(|| io::Error::other("新实例没有实体 id"))?;
+            .ok_or_else(|| io::Error::other("new instance has no entity id"))?;
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("已还原预制体实例 {name}"),
+            format!("restored prefab instance {name}"),
         );
         Ok(root_id)
     }
@@ -426,7 +440,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Info,
-            format!("同步 {synced} 个 {prefab_path} 实例"),
+            format!("synced {synced} {prefab_path} instances"),
         );
         Ok(synced)
     }
@@ -439,7 +453,7 @@ impl Workspace {
             .iter()
             .find(|entity| entity.id == Some(entity_id))
             .and_then(|entity| entity.prefab_link())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "不是预制体实例"))?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not a prefab instance"))?
             .to_string();
 
         if let Some(root) = &self.project_root {
@@ -458,7 +472,7 @@ impl Workspace {
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("找不到预制体 {path}（纯 fixture 模式下需要同名模板）"),
+                    format!("prefab not found {path} (fixture-only mode needs same-name template)"),
                 )
             })
     }
@@ -474,7 +488,7 @@ impl Workspace {
         if !linked {
             return false;
         }
-        self.edit("解除预制体链接", |document| {
+        self.edit("unlink prefab", |document| {
             document.doc.remove_component(index, PREFAB_LINK_COMPONENT);
         });
         true
@@ -493,10 +507,10 @@ impl Workspace {
         let root = doc
             .entities
             .get(root_index)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "实体不存在"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "entity does not exist"))?;
         let root_id = root
             .id
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "实例根没有 id"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "instance root has no id"))?;
         let prefab = self.prefab_document_for(root_id)?;
         let Some(prefab_root_id) = prefab.entities.first().and_then(|entity| entity.id) else {
             return Ok(Vec::new());
@@ -521,7 +535,7 @@ impl Workspace {
             return false;
         };
         let mut changed = false;
-        self.edit("回滚预制体重写", |document| {
+        self.edit("rollback prefab rewrite", |document| {
             let Some(index) = document.doc.index_of_id(id) else {
                 return;
             };
@@ -574,7 +588,7 @@ impl Workspace {
                     .find(|e| e.id == Some(id))
             })
             .and_then(|entity| entity.prefab_link())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "不是预制体实例"))?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not a prefab instance"))?
             .to_string();
 
         let prefab = self.prefab_document_for(root_id_of(self, root_index)?)?;
@@ -586,13 +600,16 @@ impl Workspace {
             .document()
             .doc
             .id_of_index(target.entity)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "实体没有 id"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "entity has no id"))?;
         let prefab_id = (instance_id as i64 - base) as u32;
 
         let mut updated = prefab.clone();
-        let index = updated
-            .index_of_id(prefab_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "预制体里找不到对应实体"))?;
+        let index = updated.index_of_id(prefab_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "corresponding entity not found in prefab",
+            )
+        })?;
         let entity = &mut updated.entities[index];
         if target.component == "transform" {
             match target.field.as_str() {
@@ -636,7 +653,7 @@ impl Workspace {
         let root = self
             .project_root
             .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "没有项目根"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no project root"))?;
         let disk = self.pruned_doc(updated);
         project::write_document(&root, &root_id, &disk)?;
         Ok(())
@@ -658,7 +675,7 @@ impl Workspace {
         if linked.is_empty() {
             return 0;
         }
-        self.edit("解包预制体", |document| {
+        self.edit("unpack prefab", |document| {
             for index in &linked {
                 document.doc.remove_component(*index, PREFAB_LINK_COMPONENT);
             }

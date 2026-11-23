@@ -1,18 +1,18 @@
-//! glTF 蒙皮骨骼 + 动画导入（#560 P0-1b）。
+//! glTF skin bones + animation import (#560 P0-1b).
 //!
-//! 这里只做「源文件 → 中间结构」：把 glTF 的 `skins` / `JOINTS_0` / `WEIGHTS_0` /
-//! `animations` 变成 [`prism_asset::formats_skinned`] 里的 `SkeletonInfo` /
-//! `SkinnedMeshInfo` / `AnimClipInfo`，再由 [`GltfSideAssets`] 里的调用方编码成
-//! `.rskel` / `.rskin` / `.ranim`。
+//! This only does "source file → import structure": convert glTF's `skins` / `JOINTS_0` / `WEIGHTS_0` /
+//! `animations` into [`prism_asset::formats_skinned`] `SkeletonInfo` /
+//! `SkinnedMeshInfo` / `AnimClipInfo`, then callers inside [`GltfSideAssets`] encode into
+//! `.rskel` / `.rskin` / `.ranim`.
 //!
-//! 三个约定（都写进了 PR 说明）：
+//! Three conventions (all written in PR description):
 //!
-//! 1. **不转换坐标**：glTF 本身就是右手 +Y up，与引擎一致；UE 导出的 cm / Z-up
-//!    在导出时就要换算，不在导入器里猜。
-//! 2. **骨骼顺序必须是拓扑序**（父在子前）。glTF 的 `skin.joints` 没有这个保证，
-//!    这里统一重排，并把每个 primitive 的 `JOINTS_0` 一起重映射。
-//! 3. **`reference_local` 由 inverse bind 矩阵推出来**：`inverse_bind = inverse(世界绑定姿态)`，
-//!    所以参考姿态不必再遍历节点树，也不会和文件里的 bind pose 不一致。
+//! 1. **Do not convert coordinates**: glTF itself is right-handed +Y up, consistent with engine; UE export cm / Z-up
+//!    must be converted at export time, not guessed in importer.
+//! 2. **Bone order must be topological** (parent before child). glTF's `skin.joints` does not guarantee this,
+//!    Here uniformly topologically sorted, and each primitive's `JOINTS_0` remapped together.
+//! 3. **`reference_local` derived from inverse bind matrix**: `inverse_bind = inverse(world bind pose)`,
+//!    so reference pose need not traverse node tree again, nor be inconsistent with file bind pose.
 use std::collections::{BTreeMap, HashMap};
 
 use prism_asset::formats_skinned::{
@@ -22,19 +22,19 @@ use prism_asset::formats_skinned::{
 
 use glam::{Mat3, Mat4, Quat, Vec3};
 
-/// 一根骨骼在 glTF 里的来源（重映射用）。
+/// Source of one bone in glTF (for remap use).
 #[derive(Debug, Clone)]
 struct JointSource {
     node: usize,
     inverse_bind: Mat4,
 }
 
-/// 解析好的骨骼 + 每个 skin 的「本地索引 → 全局索引」表。
+/// Parsed bones + each skin's "local index → global index" table.
 #[derive(Debug, Clone)]
 pub struct GltfSkinning {
-    /// 全局骨架（已按拓扑序排列）。
+    /// Global skeleton (already topologically sorted).
     pub skeleton: SkeletonInfo,
-    /// `skin 索引` → 该 skin 的 `joints[i]` 在全局骨架里的下标。
+    /// `skin index` → that skin's `joints[i]` index in global skeleton.
     pub remaps: HashMap<usize, Vec<u16>>,
 }
 
@@ -56,23 +56,23 @@ impl GltfSkinning {
         self.skeleton.joint_count()
     }
 
-    /// 某个 skin 的本地 joint 索引 → 全局骨骼下标。
+    /// Some skin's local joint index → global bone index.
     pub fn remap(&self, skin: usize) -> Option<&[u16]> {
         self.remaps.get(&skin).map(Vec::as_slice)
     }
 }
 
-/// 一次导出的蒙皮结果：骨架 + 每个 skin 的重映射 + 所有动画剪辑。
+/// Exported skinning result: skeleton + each skin remap + all animation clips.
 #[derive(Debug, Clone, Default)]
 pub struct GltfSkinResult {
     pub skinning: GltfSkinning,
     pub clips: Vec<AnimClipInfo>,
 }
 
-/// 解析 `document.skins()` + `document.animations()`。
+/// Parse `document.skins()` + `document.animations()`.
 pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> GltfSkinResult {
     let mut joints: Vec<JointSource> = Vec::new();
-    // 节点索引 → 全局骨骼下标（同一个节点被多个 skin 引用时只保留一份）。
+    // Node index → global bone index (same node referenced by multiple skins keeps only one).
     let mut by_node: HashMap<usize, u16> = HashMap::new();
     let mut remaps: HashMap<usize, Vec<u16>> = HashMap::new();
 
@@ -104,7 +104,7 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         return GltfSkinResult::default();
     }
 
-    // 节点索引 → glTF 节点 + 父节点表（gltf 1.4 没有 `Node::parent()`，自己走一遍树）。
+    // Node index → glTF node + parent node table (gltf 1.4 lacks `Node::parent()`, walk tree ourselves).
     let nodes: Vec<gltf::Node<'_>> = document.nodes().collect();
     let position_of_node: HashMap<usize, usize> = nodes
         .iter()
@@ -114,7 +114,7 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
     let parent_of_node = node_parents(document, &nodes);
     let is_joint: HashMap<usize, ()> = joints.iter().map(|joint| (joint.node, ())).collect();
 
-    // 每根骨骼的父骨骼 = 父链上最近的那个 joint 节点。
+    // Each bone's parent bone = nearest joint node in parent chain.
     let mut parents: Vec<Option<usize>> = Vec::with_capacity(joints.len());
     for joint in &joints {
         let mut parent = None;
@@ -129,10 +129,10 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         parents.push(parent);
     }
 
-    // 拓扑序：父必须在子之前。环/断链的骨骼直接落到根上（glTF 里不该出现，但不能挂死）。
+    // Topological order: parent must come before child. Cyclic/broken bones fall to root (should not appear in glTF, but won't hang).
     let order = topological_order(&parents);
 
-    // 重排后：全局下标变化，重映射表也要跟着换。
+    // After remap: global index changes, remap table must change too.
     let mut new_index: Vec<u16> = vec![0; joints.len()];
     for (new_slot, old_index) in order.iter().enumerate() {
         new_index[*old_index] = new_slot as u16;
@@ -150,7 +150,7 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         })
         .collect();
 
-    // 参考姿态：inverse_bind 反过来就是绑定姿态的世界矩阵。
+    // Reference pose: inverse_bind comes in as bind pose world matrix.
     let mut world: Vec<Option<Mat4>> = Vec::with_capacity(order.len());
     for old_index in &order {
         world.push(invert_affine(&joints[*old_index].inverse_bind));
@@ -193,7 +193,7 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
 }
 
 // ---------------------------------------------------------------------------
-// 动画
+// Animation
 // ---------------------------------------------------------------------------
 
 fn read_animations(
@@ -211,7 +211,7 @@ fn read_animations(
 
     let mut clips = Vec::new();
     for (clip_index, animation) in document.animations().enumerate() {
-        // node 索引 → 轨道（同一节点可能有多条 channel，按属性合并进同一条轨道）。
+        // Node index → track (same node can have many channels, merged by property into same track).
         let mut tracks: BTreeMap<u16, AnimTrackInfo> = BTreeMap::new();
         let mut duration = 0.0f32;
         let mut skipped_nodes = 0usize;
@@ -296,13 +296,13 @@ fn read_animations(
         clips.push(AnimClipInfo {
             name,
             duration,
-            // glTF 不带帧率（关键帧是时间戳），这里给 30 当作编辑器默认预览帧率。
+            // glTF does not carry frame rate (key frames are timestamps), here set 30 as editor default preview frame rate.
             fps: 30.0,
             looped: false,
             additive: false,
             tracks,
-            // glTF 动画没有事件通道（#560 P1 Notify）：Notify 由作者在引擎侧补，
-            // 导出的剪辑事件表为空。
+            // glTF animation has no event channel (#560 P1 Notify): Notify supplemented by author on engine side,
+            // exported clip event table is empty.
             notifies: Vec::new(),
             sync_markers: Vec::new(),
             sections: Vec::new(),
@@ -328,10 +328,10 @@ fn collect_quat_keys(times: &[f32], values: impl Iterator<Item = [f32; 4]>) -> V
         .collect()
 }
 
-/// 时间与数值一一配对。
+/// Time and numeric value correspond one-to-one.
 ///
-/// CubicSpline 采样器的输出是「入切线 + 值 + 出切线」三元组，这里取中间那份值
-/// （曲线细节留给将来的重采样，不能直接把三元组按顺序当关键帧）。
+/// CubicSpline sampler output is "in tangent + value + out tangent" triplet, here take intermediate value
+/// (curve details left for future heavy sampling, cannot directly order triplet by key frame).
 fn keys_for<T: Copy>(times: &[f32], values: &[T]) -> Vec<(f32, T)> {
     let stride = if times.is_empty() || values.len() == times.len() {
         1
@@ -357,12 +357,12 @@ fn keys_for<T: Copy>(times: &[f32], values: &[T]) -> Vec<(f32, T)> {
 }
 
 // ---------------------------------------------------------------------------
-// 蒙皮网格
+// Skin mesh
 // ---------------------------------------------------------------------------
 
-/// 把导入器的顶点数据 + 每顶点骨骼影响打包成 `.rskin` 的中间结构。
+/// Pack importer vertex data + per-vertex bone influence into `.rskin` intermediate structure.
 ///
-/// 权重会在这里归一化（glTF 允许不精确），全零的顶点退化成「全部挂在 joint 0」。
+/// Weights normalized here (glTF allows imprecision), full-zero vertices degenerate to "all attached to joint 0".
 pub(super) fn skinned_mesh_info(
     mesh: &super::MeshData,
     joint_count_u32: u32,
@@ -426,18 +426,18 @@ pub(super) fn skinned_mesh_info(
         weights,
         indices: mesh.indices.clone(),
         submeshes,
-        // glTF 的顶点已经在 bind pose 上，网格自己不需要再摆一次。
+        // glTF vertices already in bind pose, mesh itself need not pose again.
         bind_pose: JointTransform::default(),
     })
 }
 
 // ---------------------------------------------------------------------------
-// 小工具
+// Small tools
 // ---------------------------------------------------------------------------
 
 const IDENTITY_4X4: Mat4 = Mat4::IDENTITY;
 
-/// 父在子前的顺序；成环的骨骼会被追加到末尾（不会挂死）。
+/// Parent-before-child order; cyclic bones appended to end (won't hang).
 fn topological_order(parents: &[Option<usize>]) -> Vec<usize> {
     let mut order = Vec::with_capacity(parents.len());
     let mut placed = vec![false; parents.len()];
@@ -467,8 +467,8 @@ fn topological_order(parents: &[Option<usize>]) -> Vec<usize> {
     order
 }
 
-/// 节点索引 → 父节点索引。从每个 scene 的根开始走，没被任何 scene 引用的节点
-/// 当成根（与 `read_gltf` 的遍历口径一致）。
+/// Node index → parent node index. Walk from each scene root, nodes not referenced by any scene
+/// become roots (consistent with `read_gltf` traversal scope).
 fn node_parents(document: &gltf::Document, nodes: &[gltf::Node<'_>]) -> HashMap<usize, usize> {
     fn walk(node: gltf::Node<'_>, parents: &mut HashMap<usize, usize>) {
         for child in node.children() {
@@ -498,12 +498,12 @@ fn node_parents(document: &gltf::Document, nodes: &[gltf::Node<'_>]) -> HashMap<
     parents
 }
 
-/// 列主序 4×4 → 16 个 f32（`.rskel` 里 `inverse_bind` 的布局）。
+/// Column-major 4×4 → 16 f32s (`.rskel` `inverse_bind` layout).
 fn flatten_column_major(m: &Mat4) -> [f32; 16] {
     m.to_cols_array()
 }
 
-/// 仿射 4×4 求逆（列主序）。退化矩阵（行列式接近 0）返回 `None`。
+/// Affine 4×4 inverse (column-major). Degenerate matrix (determinant near 0) returns `None`.
 fn invert_affine(m: &Mat4) -> Option<Mat4> {
     let determinant = Mat3::from_mat4(*m).determinant();
     if !determinant.is_finite() || determinant.abs() < 1e-12 {
@@ -512,7 +512,7 @@ fn invert_affine(m: &Mat4) -> Option<Mat4> {
     Some(m.inverse())
 }
 
-/// 把 4×4 仿射矩阵拆成 T/R/S（`JointTransform` 的表达能力）。
+/// Decompose 4×4 affine matrix into T/R/S (`JointTransform` expressive power).
 fn decompose(m: &Mat4) -> JointTransform {
     let x = m.x_axis.truncate();
     let y = m.y_axis.truncate();
@@ -537,7 +537,7 @@ fn decompose(m: &Mat4) -> JointTransform {
     }
 }
 
-/// 3×3 旋转矩阵 → 四元数（`xyzw`）。
+/// 3×3 rotation matrix → quaternion (`xyzw`).
 fn quat_from_basis(basis: Mat3) -> [f32; 4] {
     let quat = Quat::from_mat3(&basis);
     let length = quat.length();

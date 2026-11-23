@@ -53,7 +53,11 @@ fn a_vertex_with_no_weights_stays_put() {
 fn out_of_range_bones_are_skipped_not_panicking() {
     let palette = vec![Mat4::IDENTITY];
     let matrix = skin_matrix(&palette, &[99, 0, 0, 0], &[1.0, 0.0, 0.0, 0.0]);
-    assert_eq!(matrix, Mat4::IDENTITY, "the only available slot is also out of range → stay still");
+    assert_eq!(
+        matrix,
+        Mat4::IDENTITY,
+        "the only available slot is also out of range → stay still"
+    );
 }
 
 #[test]
@@ -99,7 +103,10 @@ fn missing_attributes_leave_the_tail_untouched() {
         &positions,
     );
     assert!((skinned[0][1] - 1.0).abs() < 1e-5);
-    assert_eq!(skinned[1], positions[1], "vertices without skinning data are kept as-is");
+    assert_eq!(
+        skinned[1], positions[1],
+        "vertices without skinning data are kept as-is"
+    );
 }
 
 #[test]

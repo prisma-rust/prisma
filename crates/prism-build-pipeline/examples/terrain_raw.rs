@@ -1,4 +1,4 @@
-// 输出初始地形（未侵蚀）为 raw f32
+// Output initial terrain (un-eroded) as raw f32
 use std::path::PathBuf;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();

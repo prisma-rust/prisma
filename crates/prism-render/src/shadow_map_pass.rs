@@ -1,11 +1,11 @@
-//! 光栅化阴影映射——方向光的纯深度阴影通道。
+//! Rasterize shadow map — pure depth shadow pass for directional lights.
 //!
-//! [`ShadowMapPass`] 从光源视角将场景深度渲染到深度纹理中（混合自适应
-//! 阴影系统的纯深度后备方案，`docs/DESIGN.md` §2.3），由
-//! [`crate::forward_pass::ForwardPass`] 用比较采样器采样判断遮挡。
-//! 纯深度管线（`color_attachment_count = 0`），默认背面剔除 + 坡度/常量
-//! 深度偏移以减少阴影痤疮与彼得潘现象；`ShadowCastingMode::TwoSided` 的 caster
-//! 走不剔除的第二套管线（统一语义），光源空间矩阵走推送常量。
+//! [`ShadowMapPass`] renders scene depth from light source view into depth texture (blend-adaptive
+//! pure-depth fallback of shadow system, `docs/DESIGN.md` §2.3), sampled with comparison sampler by
+//! [`crate::forward_pass::ForwardPass`] to determine occlusion.
+//! Pure-depth pipeline (`color_attachment_count = 0`), default back-face cull + slope / constant
+//! depth offset to reduce shadow acne and Peter Panning; `ShadowCastingMode::TwoSided` casters
+//! use second no-cull pipeline (unified semantics), light-space matrix via push constants.
 
 use anyhow::Context as _;
 use anyhow::Result;
@@ -117,31 +117,31 @@ fn prepare_shadow_batches_with(
     (out, matrices)
 }
 
-/// 光栅化阴影映射——混合自适应阴影系统的纯深度后备方案（`docs/DESIGN.md` §2.3）。
+/// Rasterize shadow map — pure-depth fallback of blend-adaptive shadow system (`docs/DESIGN.md` §2.3).
 ///
-/// 当 `VK_KHR_ray_query` 不可用（或 RT 被禁用）时，渲染器选择此通道
-/// 而非 [`RayQueryPass`]。它从光源视角将场景深度渲染到深度纹理中，
-/// 光照通道稍后对该纹理进行采样（使用比较采样器来判断被照亮还是被遮挡）。
+/// When `VK_KHR_ray_query` unavailable (or RT disabled), renderer chooses this pass
+/// instead of [`RayQueryPass`]. It renders scene depth from light source view into depth texture,
+/// lighting pass later samples that texture (comparison sampler judges lit vs occluded).
 ///
-/// 该管线为纯深度管线（`color_attachment_count = 0`），
-/// 默认背面剔除（`ShadowCastingMode::TwoSided` 例外，走不剔除的管线），
-/// 叠加坡度/常量深度偏移以减少阴影痤疮和彼得潘现象，
-/// 并通过推送常量（无 UBO）传递光源空间矩阵。
+/// This pipeline is pure-depth (`color_attachment_count = 0`),
+/// default back-face cull (`ShadowCastingMode::TwoSided` exception, uses no-cull pipeline),
+/// plus slope / constant depth offset to reduce shadow acne and Peter Panning,
+/// and light-space matrix passed via push constants (no UBO).
 pub struct ShadowMapPass {
     /// Shadow map depth attachment handle (created in `setup`).
     pub shadow_map: ResourceHandle,
-    /// Square shadow tile 分辨率 (e.g. 2048).
+    /// Square shadow tile resolution (e.g. 2048).
     shadow_size: u32,
     /// Allocated atlas width: `shadow_size * cascade_count` (2048 or 4096).
     shadow_atlas_width: u32,
     /// Depth-only graphics pipeline (lazy-created on first `execute`).
     ///
-    /// 背面剔除版本，供 `ShadowCastingMode::Off` / `On` / `ShadowsOnly` 使用。
+    /// Back-face cull version, for `ShadowCastingMode::Off` / `On` / `ShadowsOnly`.
     pipeline: Option<GraphicsPipeline>,
-    /// 双面（不剔除）depth-only 管线，供 `ShadowCastingMode::TwoSided` 使用。
+    /// Double-sided (no cull) depth-only pipeline, for `ShadowCastingMode::TwoSided`.
     ///
-    /// 引擎的 `ShadowCastingMode.TwoSided` 会在阴影渲染时关闭背面剔除，
-    /// 即使物体材质本身开启了背面剔除。
+    /// Engine's `ShadowCastingMode.TwoSided` disables back-face cull during shadow render,
+    /// even if object's material itself enables back-face cull.
     pipeline_two_sided: Option<GraphicsPipeline>,
     /// Shadow render pass (depth-only).
     render_pass: Option<vk::RenderPass>,
@@ -151,33 +151,33 @@ pub struct ShadowMapPass {
     device: Option<ash::Device>,
     /// Track whether the shadow map image layout has been transitioned from UNDEFINED.
     layout_initialized: bool,
-    /// Skinned depth-only 管线 (#560 P0-3c)：与上面两套同形，但读第二个顶点缓冲
-    /// （关节索引/权重）并用 set 0 binding 3 的骨骼调色板混合顶点。
+    /// Skinned depth-only pipeline (#560 P0-3c): same shape as two above, but reads second vertex buffer
+    /// (joint indices / weights) and blends vertices with bone palette from set 0 binding 3.
     skinned: Option<GraphicsPipeline>,
-    /// 双面版本的蒙皮管线。
+    /// Double-sided version of skinned pipeline.
     skinned_two_sided: Option<GraphicsPipeline>,
-    /// set 0 只含 binding 3 = 骨骼调色板 SSBO；仅蒙皮管线使用。
+    /// set 0 only binding 3 = bone palette SSBO; only skinned pipelines use.
     bone_layout: Option<vk::DescriptorSetLayout>,
     bone_pool: Option<vk::DescriptorPool>,
-    /// 上一帧实际提交的 caster 数：`(静态, 蒙皮)`。只用于诊断与测试 ——
-    /// 证明蒙皮分支确实走到了，而不是被静默跳过（#560 P0-3c）。
+    /// Actual casters submitted this frame: `(static, skinned)`. Only for diagnostics and tests —
+    /// proves skinned branch actually reached, not silently skipped (#560 P0-3c).
     last_casters: (u32, u32),
-    /// 上一帧被光源视锥剔掉的 caster 数（#491）。只统计第一级联，避免
-    /// 多级联时同一实体重复计数；用于诊断与 GPU 回归测试。
+    /// Casters culled by light source frustum this frame (#491). Only first cascade counted, avoid
+    /// double counting same entity in multiple cascades; for diagnostics and GPU regression tests.
     last_culled_casters: u32,
-    /// 每帧在飞的调色板缓冲（host-visible）+ 对应描述符集。
+    /// Per-frame in-flight palette buffers (host-visible) + corresponding descriptor sets.
     bone_buffers: Vec<vk::Buffer>,
     bone_memories: Vec<vk::DeviceMemory>,
     bone_sets: Vec<vk::DescriptorSet>,
-    /// 上一帧实际发出的阴影 draw call 数（#491 实例化后可能小于 caster 数）。
+    /// Actual shadow draw calls issued this frame (#491 can be smaller than caster count after instancing).
     last_shadow_draw_calls: u32,
 }
 
-/// 阴影贴图边长（texel）。与 [`crate::SHADOW_MAP_SIZE`] 是同一个值，这里 re-export
-/// 方便 pass 内部使用；引擎侧请用不带 feature 门限的那个。
+/// Shadow map edge length (texels). Same value as [`crate::SHADOW_MAP_SIZE`], re-exported here
+/// for pass internal use; engine side should use the one without feature gate.
 pub use crate::SHADOW_MAP_SIZE;
-/// CSM 级联数预留（DESIGN 计划）：当前单张正交阴影，下一步扩展扩展为多级联
-pub const SHADOW_CASCADE_COUNT: u32 = 1; // CSM: 扩展为 3-4 级联并按相机视锥切片
+/// CSM cascade count reserved (DESIGN plan): currently single orthographic shadow, next step extend to multi-cascades
+pub const SHADOW_CASCADE_COUNT: u32 = 1; // CSM: expand to 3-4 cascades and slice by camera frustum
 
 impl ShadowMapPass {
     pub fn new() -> Self {
@@ -211,27 +211,27 @@ impl ShadowMapPass {
 
     /// Shadow-atlas extent (`shadow_size * cascade_count` x `shadow_size`).
     /// Exposed for the render-graph visualizer; each cascade tile is square.
-    /// 上一帧提交的 caster 数：`(静态, 蒙皮)`。
+    /// Casters submitted this frame: `(static, skinned)`.
     ///
-    /// 蒙皮 caster 曾经被整个跳过（没有蒙皮深度管线），这里留着计数是为了让
-    /// 回归能被测试抓到，而不是只靠肉眼看阴影。
+    /// Skinned casters were once skipped entirely (no skinned depth pipeline), this count kept so
+    /// regressions can be caught by tests, not just eyeballing shadows.
     pub fn last_casters(&self) -> (u32, u32) {
         self.last_casters
     }
 
-    /// 上一帧被**光源视锥**剔掉的 caster 数（#491）。
+    /// Casters culled by **light source frustum** this frame (#491).
     ///
-    /// 主相机视锥剔除发生在提取阶段；阴影贴图只覆盖相机附近的一小块区域，
-    /// 所以这里的第二道剔除能省掉「主相机看得到、但不在阴影覆盖范围内」的
-    /// 投射者。与 [`Self::last_casters`] 一样，只统计第一级联。
+    /// Main camera frustum culling happens in extraction phase; shadow map only covers small region near camera,
+    /// so this second cull can save "visible to main camera but outside shadow coverage"
+    /// casters. Like [`Self::last_casters`], only first cascade counted.
     pub fn last_culled_casters(&self) -> u32 {
         self.last_culled_casters
     }
 
-    /// 上一帧实际发出的阴影 draw call 数（#491）。
+    /// Actual shadow draw calls issued this frame (#491).
     ///
-    /// 相同 mesh / 剔除模式 / submesh 的静态 caster 会合并成一次实例化 draw，
-    /// 所以这个值可能小于 [`Self::last_casters`] 的逻辑 caster 数。
+    /// Static casters with same mesh / cull mode / submesh merged into one instanced draw,
+    /// so this value can be smaller than logical caster count of [`Self::last_casters`].
     pub fn last_shadow_draw_calls(&self) -> u32 {
         self.last_shadow_draw_calls
     }
@@ -312,9 +312,9 @@ impl ShadowMapPass {
         Ok(handle)
     }
 
-    /// 阴影通道使用的背面剔除模式（`ShadowCastingMode.TwoSided` 关闭剔除）。
+    /// Back-face cull mode used by shadow pass (`ShadowCastingMode.TwoSided` disables cull).
     ///
-    /// 独立成函数便于单测：GPU 侧的管线选择只有这一个判定点。
+    /// Independent function for easy unit test: GPU pipeline selection has only this one decision point.
     fn shadow_cull_mode(two_sided: bool) -> vk::CullModeFlags {
         if two_sided {
             vk::CullModeFlags::NONE
@@ -323,18 +323,18 @@ impl ShadowMapPass {
         }
     }
 
-    /// 阴影通道正面三角形绕序。
+    /// Front-face triangle winding in shadow pass.
     ///
-    /// 正交光照投影矩阵（`light_view_proj`）没有相机透视视锥的 Vulkan Y 翻转，
-    /// 其行列式为正；而透视投影包含负 Y 缩放。因此在光照裁剪空间下，面向光源
-    /// 的正面三角形绕序为 [`vk::FrontFace::CLOCKWISE`]。若使用默认的
-    /// `COUNTER_CLOCKWISE`，背向剔除会将面向光源的正面剔除。
+    /// Orthographic lighting projection matrix (`light_view_proj`) has no camera perspective frustum Vulkan Y flip,
+    /// its determinant is positive; perspective projection contains negative Y scale. Therefore in lighting clip space,
+    /// front-facing triangles winding is [`vk::FrontFace::CLOCKWISE`]. With default
+    /// `COUNTER_CLOCKWISE`, back-face cull would cull front faces toward light source.
     pub(crate) const SHADOW_FRONT_FACE: vk::FrontFace = vk::FrontFace::CLOCKWISE;
 
-    /// 创建一套 depth-only 阴影管线；两套管线只差剔除模式。
+    /// Create a set of depth-only shadow pipelines; two pipelines differ only in cull mode.
     ///
-    /// `warmup` 与 `execute` 各调用两次（背面剔除 / 双面），避免把同样的加载
-    /// 逻辑复制两遍。
+    /// `warmup` and `execute` each call twice (back-face cull / double-sided), avoid copying same load
+    /// logic twice.
     fn create_pipeline(
         device: &ash::Device,
         render_pass: vk::RenderPass,
@@ -374,7 +374,7 @@ impl ShadowMapPass {
             .offset(0)
             .size(bindings::PUSH_CONSTANT_SIZE)];
 
-        // Depth-only 管线 + 深度 bias；剔除模式由调用方决定。
+        // Depth-only pipeline + depth bias; cull mode decided by caller.
         let set_layouts: Vec<vk::DescriptorSetLayout> = bone_layout.into_iter().collect();
         let pipeline = GraphicsPipeline::new(&PipelineDesc {
             device,
@@ -407,12 +407,12 @@ impl ShadowMapPass {
     }
 }
 
-/// 蒙皮 casters 的调色板预算 = 主通道的上限（两份缓冲各自 256 KiB）。
+/// Palette budget for skinned casters = main pass limit (two buffers each 256 KiB).
 pub const SHADOW_BONE_CAPACITY: usize = crate::forward_pass::ForwardPass::BONE_CAPACITY;
 
 impl ShadowMapPass {
-    /// 蒙皮版本的纯深度管线：读第二个顶点缓冲（binding 1 = 关节/权重）并用
-    /// set 0 binding 3 的骨骼调色板混合顶点（#560 P0-3c）。
+    /// Skinned version of pure-depth pipeline: reads second vertex buffer (binding 1 = joint / weight) and
+    /// blends vertices with bone palette from set 0 binding 3 (#560 P0-3c).
     fn create_skinned_pipeline(
         device: &ash::Device,
         render_pass: vk::RenderPass,
@@ -426,8 +426,8 @@ impl ShadowMapPass {
         let frag_module =
             shader::load_shader_module(device, FRAG_SPV).context("load skinned shadow frag")?;
 
-        // 反射 JSON 只带第一个入口点，bindgen 因此没有 skinned 常量；与
-        // `ForwardPass` 的写法保持一致（同样的字面量）。
+        // Reflection JSON only carries first entry point, bindgen therefore has no skinned constant;
+        // keep consistent with `ForwardPass` style (same literal).
         let vert_entry = std::ffi::CString::new("vertexSkinnedMain").unwrap();
         let frag_entry = std::ffi::CString::new(bindings::ENTRY_FRAGMENT_MAIN).unwrap();
         let vert_stage = shader::shader_stage(
@@ -485,7 +485,7 @@ impl ShadowMapPass {
         Ok(pipeline)
     }
 
-    /// 懒创建蒙皮管线 + 每帧在飞的骨骼调色板缓冲/描述符集。幂等。
+    /// Lazily create skinned pipeline + per-frame in-flight bone palette buffers / descriptor sets. Idempotent.
     fn ensure_skinned(
         &mut self,
         context: &VulkanContext,
@@ -626,8 +626,8 @@ impl ShadowMapPass {
         Ok(())
     }
 
-    /// 上传本帧的骨骼调色板（列主序 mat4）。超出 [`SHADOW_BONE_CAPACITY`] 的部分截断，
-    /// 与主通道的 `bone_offset` 分配保持一致。
+    /// Upload this frame's bone palette (column-major mat4). Part exceeding [`SHADOW_BONE_CAPACITY`] truncated,
+    /// consistent with main pass `bone_offset` allocation.
     pub fn update_bones(
         &mut self,
         device: &ash::Device,
@@ -649,7 +649,7 @@ impl ShadowMapPass {
             .context("ShadowMapPass::update_bones: map")?;
         unsafe {
             let dst = ptr as *mut u8;
-            // 清掉尾部：越界读取时拿到零矩阵，而不是上一帧的骨骼。
+            // Clear tail: out-of-bounds read gets zero matrix, not previous frame's bones.
             std::ptr::write_bytes(
                 dst.add(count * matrix_size),
                 0,
@@ -680,8 +680,8 @@ impl RenderPassNode for ShadowMapPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, settings: &RenderSettings) {
-        // #526：大小来自 RenderSettings（构造 GraphRenderer 时写入），并在安全
-        // 范围内钳制；运行中改字段不会重建已经分配好的图像。
+        // #526: size from RenderSettings (written when GraphRenderer constructed), clamped to safe
+        // range; changing field at runtime won't rebuild already allocated image.
         self.shadow_size = settings
             .shadow_map_size
             .clamp(crate::MIN_SHADOW_MAP_SIZE, crate::MAX_SHADOW_MAP_SIZE);
@@ -790,7 +790,7 @@ impl RenderPassNode for ShadowMapPass {
             self.framebuffer = Some(framebuffer);
         } // if self.framebuffer.is_none()
 
-        // 蒙皮 casters 的管线 + 用户缓冲（#560 P0-3c）。
+        // Skinned casters' pipeline + user buffers (#560 P0-3c).
         {
             let render_pass = self.render_pass.unwrap_or_default();
             self.ensure_skinned(ctx.context, render_pass)?;
@@ -852,21 +852,21 @@ impl RenderPassNode for ShadowMapPass {
                 .cmd_begin_render_pass(ctx.cmd, &begin, vk::SubpassContents::INLINE)
         };
 
-        // 统计真正写进阴影贴图的 caster（`ShadowCastingMode::Off` 会被跳过）。
-        // 双级联时同一批 caster 会画两次，这里只按第一遍计数。
+        // Count casters actually written into shadow map (`ShadowCastingMode::Off` skipped).
+        // With two cascades same batch of casters drawn twice, here only count first pass.
         let allocated_cascades = (self.shadow_atlas_width / size).clamp(1, 2);
         let cascade_count = ctx.frame.shadow_cascade_count.clamp(1, allocated_cascades);
         let mut casters = 0usize;
-        // 其中有多少走的是蒙皮管线（#560 P0-3c）。
+        // Among them how many took skinned pipeline (#560 P0-3c).
         let mut skinned_casters = 0u32;
-        // 被光源视锥剔除的 caster 只统计第一级联（#491）。
+        // Casters culled by light source frustum only count first cascade (#491).
         self.last_culled_casters = 0;
         self.last_shadow_draw_calls = 0;
 
         unsafe {
             for cascade in 0..cascade_count {
-                // 每个级联固定占据 atlas 的一个正方形 tile；单级联只用左半边，
-                // 这样 PCF 的 texel 尺寸和旧版 2048² 阴影图完全一致。
+                // Each cascade fixed occupies one square tile of atlas; single cascade uses only left half,
+                // so PCF texel size fully consistent with old 2048² shadow map.
                 let viewport_x = (cascade * size) as f32;
                 let viewport_width = size as f32;
                 let light_view_proj = if cascade == 0 {
@@ -874,9 +874,9 @@ impl RenderPassNode for ShadowMapPass {
                 } else {
                     ctx.frame.light_view_proj1
                 };
-                // 光源视锥（#491）：阴影图只覆盖 main camera 附近的一小块，
-                // 提取阶段按主相机保留的 caster 不一定落在这里。矩阵退化时
-                // `from_view_proj` 返回 `None`，下面保守地全部提交。
+                // Light source frustum (#491): shadow map only covers small area near main camera,
+                // casters kept by main camera in extraction phase not necessarily inside here. Matrix degenerate
+                // `from_view_proj` returns `None`, below conservatively submits all.
                 let light_frustum = Frustum::from_view_proj(&light_view_proj);
                 ctx.device.cmd_set_viewport(
                     ctx.cmd,
@@ -905,7 +905,7 @@ impl RenderPassNode for ShadowMapPass {
                     }],
                 );
 
-                // 按 (是否蒙皮, 是否双面) 选管线，只在切换时重绑。
+                // Select pipeline by (skinned, double-sided), only rebind on switch.
                 let mut bound_pipeline: Option<(bool, bool)> = None;
                 for batch in &batches {
                     // Culling stays per logical caster so the diagnostics stay
@@ -1122,7 +1122,7 @@ impl ShadowMapPass {
         self.pipeline_two_sided = None;
         self.skinned = None;
         self.skinned_two_sided = None;
-        // 描述符集随 pool 一起释放。
+        // Descriptor set released together with pool.
         self.bone_sets.clear();
         if let Some(pool) = self.bone_pool.take() {
             unsafe { device.destroy_descriptor_pool(pool, None) };
@@ -1159,10 +1159,10 @@ impl Drop for ShadowMapPass {
     }
 }
 
-/// 一个 caster 是否还要写进这一级联的阴影贴图（#491）。
+/// Whether one caster still needs writing into this cascade's shadow map (#491).
 ///
-/// 保守优先：没有世界包围盒、或光源矩阵退化（`Frustum::from_view_proj`
-/// 返回 `None`）时都保留。只有「有包围盒 + 有有效视锥 + 完全在外」才剔除。
+/// Conservative priority: no world bounding box, or light matrix degenerate (`Frustum::from_view_proj`
+/// returns `None`) both keep. Only "has bounding box + valid frustum + fully outside" culls.
 fn caster_survives_light_frustum(bounds: Option<&Aabb>, frustum: Option<&Frustum>) -> bool {
     match (bounds, frustum) {
         (Some(bounds), Some(frustum)) => frustum.intersects_aabb(bounds),
@@ -1176,7 +1176,7 @@ mod tests {
 
     #[test]
     fn two_sided_shadow_casting_disables_backface_culling() {
-        // `ShadowCastingMode::TwoSided`：阴影渲染关闭背面剔除。
+        // `ShadowCastingMode::TwoSided`: disable back-face cull in shadow render.
         assert_eq!(
             ShadowMapPass::shadow_cull_mode(false),
             vk::CullModeFlags::BACK
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[test]
     fn shadow_pass_uses_clockwise_front_face() {
-        // 无 Y-flip 的光照正交投影下，正面绕序为 CLOCKWISE
+        // Under no-Y-flip orthographic lighting projection, front face winding is CLOCKWISE
         assert_eq!(ShadowMapPass::SHADOW_FRONT_FACE, vk::FrontFace::CLOCKWISE);
     }
 
@@ -1211,7 +1211,7 @@ mod tests {
         assert!(snapshot.passes[0].inputs.is_empty());
     }
 
-    /// #526：贴图边长由 `RenderSettings::shadow_map_size` 决定，并在安全范围内钳制。
+    /// #526: map edge length decided by `RenderSettings::shadow_map_size`, clamped to safe range.
     #[test]
     fn shadow_pass_honours_the_configured_map_size() {
         for (requested, expected) in [
@@ -1264,10 +1264,10 @@ mod tests {
         }
     }
 
-    /// 列主序矩阵，把世界 `[-1, 1]^3` 映射到 Vulkan 裁剪空间
-    /// `x/y ∈ [-1, 1]`、`z ∈ [0, 1]`（`w = 1`）。
+    /// Column-major matrix, maps world `[-1, 1]^3` to Vulkan clip space
+    /// `x/y ∈ [-1, 1]`, `z ∈ [0, 1]` (`w = 1`).
     ///
-    /// 只用它测试光源视锥，不参与渲染。
+    /// Only used to test light source frustum, not for rendering.
     fn unit_box_ortho() -> [[f32; 4]; 4] {
         [
             [0.5, 0.0, 0.0, 0.0],
@@ -1277,7 +1277,7 @@ mod tests {
         ]
     }
 
-    /// #491：光源视锥之外的 caster 被剔除，覆盖范围内 / 数据缺失时保留。
+    /// #491: casters outside light source frustum culled, kept when inside coverage / data missing.
     #[test]
     fn casters_outside_the_light_frustum_are_skipped() {
         let matrix = unit_box_ortho();
@@ -1292,19 +1292,19 @@ mod tests {
             Some(&outside),
             Some(&frustum)
         ));
-        // 只交叠一部分也要保留（保守剔除，不切物体）。
+        // Partial overlap also kept (conservative cull, don't cut objects).
         assert!(caster_survives_light_frustum(
             Some(&straddling),
             Some(&frustum)
         ));
-        // 没有包围盒 / 没有可用视锥：保持旧行为，不剔除。
+        // No bounding box / no usable frustum: keep old behavior, no cull.
         assert!(caster_survives_light_frustum(None, Some(&frustum)));
         assert!(caster_survives_light_frustum(Some(&outside), None));
     }
 
     #[test]
     fn degenerate_light_matrix_keeps_every_caster() {
-        // 全零矩阵没有可提取的平面；此时任何剔除都只是瞎裁。
+        // All-zero matrix has no extractable planes; any cull would be blind clipping.
         let degenerate = [[0.0f32; 4]; 4];
         assert!(Frustum::from_view_proj(&degenerate).is_none());
         let bounds = Aabb::new([10.0, 10.0, 10.0], [11.0, 11.0, 11.0]);

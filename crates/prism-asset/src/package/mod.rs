@@ -1,25 +1,25 @@
 //! # prism-asset::package
 //!
-//! Prisma 资源管道的 `.pak` 二进制归档格式
+//! Prisma resource pipeline `.pak` binary archive format
 //!
-//! ## 格式概览
+//! ## Format overview
 //!
 //! ```text
 //! ┌─────────────────────────────┐
-//! │ PackageHeader（32 字节）       │
+//! │ PackageHeader (32 bytes)       │
 //! ├─────────────────────────────┤
-//! │ 资源注册表 [n]             │ ← 连续的 `RuntimeAssetRecord` 数组
+//! │ Asset registry [n]             │ ← contiguous `RuntimeAssetRecord` array
 //! ├─────────────────────────────┤
-//! │ 依赖数组 [m]               │ ← AssetId (u64) 的平面数组
+//! │ Dependency array [m]               │ ← flat AssetId (u64) array
 //! ├─────────────────────────────┤
-//! │ 数据块                      │ ← 资源有效载荷，可选 zstd 压缩
+//! │ Data chunks                      │ ← asset payloads, optional zstd compression
 //! └─────────────────────────────┘
 //! ```
 //!
 //! - Magic: `b"RPAK"` (4 bytes)
 //! - All multi-byte values are little-endian.
 //! - The header checksum covers everything from the next byte after the checksum
-//!   field through the 结束 of the file (i.e. header[12..] + registry + deps + data).
+//!   field through the end of the file (i.e. header[12..] + registry + deps + data).
 
 use crate::core::{AssetId, AssetType};
 use std::fs::File;
@@ -103,8 +103,8 @@ pub struct PackageHeader {
     pub data_offset: u64,
     /// Byte size of the data chunk area (uncompressed).
     pub data_size: u64,
-    /// xxh3-64 校验和 of `header[4..44]` (version, asset_count, offsets/sizes)
-    /// + registry + deps + data. `magic` 与 `checksum` 字段自身不参与。
+    /// xxh3-64 checksum of `header[4..44]` (version, asset_count, offsets/sizes)
+    /// + registry + deps + data. `magic` and `checksum` fields themselves do not participate.
     pub checksum: u64,
 }
 
@@ -112,11 +112,11 @@ impl PackageHeader {
     /// Serialized header size in bytes (magic 4 + version 4 + ... + checksum 8 + padding).
     pub const SERIALIZED_SIZE: u64 = 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8; // 52
 
-    /// 校验和覆盖的 header 起点：跳过 `magic`（固定值，改了就不是 pak 了）。
+    /// Checksum-covered header start: skip `magic` (fixed value, if changed it's not a pak).
     const CHECKSUM_HEADER_START: usize = 4;
-    /// 校验和覆盖的 header 终点 = `checksum` 字段起点。`version` / `asset_count`
-    /// 必须在这里面，否则篡改它们不会触发 [`PackageError::ChecksumMismatch`]
-    /// （#89）。
+    /// Checksum-covered header end = `checksum` field start. `version` / `asset_count`
+    /// must be here, otherwise tampering with them won't trigger [`PackageError::ChecksumMismatch`]
+    /// (#89).
     const CHECKSUM_FIELD_OFFSET: usize = 44;
 
     /// Compute the xxh3 checksum over the payload (everything after the checksum field).
@@ -453,8 +453,8 @@ impl PackageBuilder {
             .flat_map(|(d, _, _)| d.clone())
             .collect();
 
-        // 校验和覆盖 header[4..44]（version、asset_count、各偏移/长度）+ registry +
-        // deps + data；`checksum` 字段自身与固定的 `magic` 不参与。
+        // Checksum covers header[4..44] (version, asset_count, offsets/sizes) + registry +
+        // deps + data; `checksum` field itself and fixed `magic` do not participate.
         let hdr = PackageHeader {
             magic: MAGIC,
             version: VERSION,
@@ -526,8 +526,8 @@ impl PackageBuilder {
 
 /// A loaded `.pak` package, ready for asset lookup and extraction.
 ///
-/// The reader parses the header, the 资源 registry and the dependency array at
-/// 打开 时间, then serves 资源 payloads on demand:
+/// The reader parses the header, the asset registry and the dependency array at
+/// open time, then serves asset payloads on demand:
 ///
 /// - [`PackageReader::open`] keeps an open [`File`] and `pread`s the ranges it
 ///   needs, so a 1 GB `.pak` costs a few kilobytes of RAM (#509);
@@ -573,7 +573,7 @@ impl Backing {
         }
     }
 
-    /// 读取 `len` 字节 at `offset`.
+    /// Read `len` bytes at `offset`.
     fn read_range(&self, offset: u64, len: u64) -> Result<Vec<u8>, PackageError> {
         match self {
             Backing::Bytes(bytes) => {
@@ -613,7 +613,7 @@ impl Backing {
     }
 }
 
-/// `pread`: 读取 `buf.len()` 字节 at `offset` without touching the file cursor.
+/// `pread`: read `buf.len()` bytes at `offset` without touching the file cursor.
 ///
 /// A `&File` is shared by every thread that holds the reader, so this must not
 /// `seek` (that would race); Windows and Unix both expose positioned reads.
@@ -648,10 +648,10 @@ fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
     }
 }
 
-/// 打开 a `.pak` file from disk without reading the whole archive into RAM.
+/// Open a `.pak` file from disk without reading the whole archive into RAM.
 ///
-/// Only the header, the 资源 registry and the dependency array are read up
-/// front; payload bytes are `pread` per asset. The 校验和 is verified in
+/// Only the header, the asset registry and the dependency array are read up
+/// front; payload bytes are `pread` per asset. The checksum is verified in
 /// bounded chunks (1 MiB at a time), so opening still costs one sequential
 /// pass over the file but no per-file allocation.
 impl PackageReader {
@@ -674,7 +674,7 @@ impl PackageReader {
         read_exact_at(&file, &mut head, 0)?;
         let header = PackageHeader::from_bytes(&head)?;
 
-        // 完整性先于一切结构性判断，理由见 `from_owned_bytes`（#89）。
+        // Integrity takes precedence over any structural judgment; see `from_owned_bytes` (#89).
         verify_checksum_file(&file, len, &header)?;
 
         Self::parse(
@@ -692,7 +692,7 @@ impl PackageReader {
         Self::from_owned_bytes(tokio::fs::read(path.as_ref()).await?)
     }
 
-    /// Parse from an in-memory byte 切片 (copies the bytes into the reader).
+    /// Parse from an in-memory byte slice (copies the bytes into the reader).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackageError> {
         Self::from_owned_bytes(bytes.to_vec())
     }
@@ -704,10 +704,10 @@ impl PackageReader {
     fn from_owned_bytes(bytes: Vec<u8>) -> Result<Self, PackageError> {
         let header = PackageHeader::from_bytes(&bytes)?;
 
-        // 完整性先于一切结构性判断：校验和只看「header 里除 magic/checksum 外的
-        // 字段」+ 文件剩余字节，不依赖 header 里那些尚未验证的偏移，所以被篡改的
-        // `version` / `asset_count` 会在这里就变成 ChecksumMismatch，而不是让后面的
-        // registry 解析在错误数据上继续跑（#89）。
+        // Integrity takes precedence over any structural judgment: checksum only looks at "header except magic/checksum fields"
+        // fields” + remaining file bytes, does not depend on offsets in header that haven't been verified yet, so tampered
+        // `version` / `asset_count` will become ChecksumMismatch here, instead of letting subsequent
+        // registry parsing continue on erroneous data (#89).
         verify_checksum(&bytes, &header)?;
 
         Self::parse(header, Backing::Bytes(Arc::new(bytes)))
@@ -747,7 +747,7 @@ impl PackageReader {
             )));
         }
 
-        // 依赖数组位于 registry 与 data 之间，长度必须是 u64 的整数倍。
+        // Dependency array is between registry and data, length must be a multiple of u64.
         let deps_start = reg_end;
         let deps_size = header.data_offset.checked_sub(deps_start).ok_or_else(|| {
             PackageError::Truncated(format!(
@@ -790,8 +790,8 @@ impl PackageReader {
             dependency_array.push(u64::from_le_bytes(chunk));
         }
 
-        // record 里的依赖区间与数据区间同样来自文件内容，不校验就会在
-        // dependencies() / read_asset_record_data 里越界切片 panic。
+        // dependency range and data range in record also come from file content; if not verified then in
+        // dependencies() / read_asset_record_data out-of-bounds slice panic.
         for rec in &records {
             let dep_end = rec
                 .dependency_start
@@ -1012,11 +1012,11 @@ impl PackageReader {
     }
 }
 
-/// 校验 `.pak` 的 xxh3-64 校验和。
+/// Verify `.pak` xxh3-64 checksum.
 ///
-/// 覆盖 `header[4..44]`（version / asset_count / 各偏移与长度）加上 header 之后的
-/// 全部字节（registry + deps + data）。只按文件布局取切片，不读 header 里那些
-/// 尚未验证的偏移，所以可以放在解析 registry **之前**（#89）。
+/// Cover `header[4..44]` (version / asset_count / each offset and length) plus header-after
+/// all bytes (registry + deps + data). Only slice by file layout, not read those in header
+/// not yet verified offsets, so can be done before parsing registry (**#89**).
 fn verify_checksum(bytes: &[u8], header: &PackageHeader) -> Result<(), PackageError> {
     let header_prefix = bytes
         .get(PackageHeader::CHECKSUM_HEADER_START..PackageHeader::CHECKSUM_FIELD_OFFSET)
@@ -1040,10 +1040,10 @@ fn verify_checksum(bytes: &[u8], header: &PackageHeader) -> Result<(), PackageEr
     Ok(())
 }
 
-/// 校验 `.pak` 的 xxh3-64 校验和，文件后端流式读取。
+/// Verify `.pak` xxh3-64 checksum, file backend streaming read.
 ///
-/// 语义与 [`verify_checksum`] 完全一致（`header[4..44]` + 其后全部字节），只是按
-/// 1 MiB 块读磁盘，所以打开大包不再需要先在内存里放一份完整映像（#509）。
+/// Semantics identical to [`verify_checksum`] (`header[4..44]` + all bytes after it), just read by
+/// 1 MiB blocks from disk, so opening large packages no longer needs to load a full image into memory first (#509).
 fn verify_checksum_file(
     file: &File,
     file_len: u64,
@@ -1066,7 +1066,7 @@ fn verify_checksum_file(
     let mut hasher = Xxh3::default();
     hasher.update(&prefix[..prefix_len]);
 
-    // 从 header 末尾开始，按块喂给 hasher；不读 header 里那些尚未验证的偏移。
+    // From end of header, feed blocks to hasher; do not read offsets in header that haven't been verified yet.
     const CHUNK: usize = 1 << 20;
     let mut buf = vec![0u8; CHUNK];
     let mut offset = PackageHeader::SERIALIZED_SIZE;

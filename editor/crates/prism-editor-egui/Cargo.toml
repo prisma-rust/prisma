@@ -3,7 +3,7 @@ name = "prism-editor-egui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Prisma 的 egui 编辑器：经典布局 + Scene/Game 视口零拷贝"
+description = "Prisma egui editor: classic layout + Scene/Game viewport zero-copy"
 
 [[bin]]
 name = "prism-editor-egui"
@@ -28,13 +28,13 @@ serde_json = { workspace = true }
 prism-render = { path = "../../../crates/prism-render" }
 prism-anim = { path = "../../../crates/prism-anim" }
 prism-engine = { path = "../../../crates/prism-engine" }
-# Project 面板的音频试听（#508）：与玩家共用同一套解码 / 混音器。
+# Project panel audio preview (#508): shares same decoder / mixer with player.
 prism-audio = { path = "../../../crates/prism-audio" }
 prism-scene = { path = "../../../crates/prism-scene" }
-# Game View 的 Play 执行用户项目 gameplay 代码：同构建 ABI 的动态模块宿主。
+# Game View Play executes user project gameplay code: dynamic module host sharing build ABI.
 prism-runtime-host = { path = "../../../crates/prism-runtime-host" }
-# 数据层（UI 框架无关）：dock 布局、文档模型、schema、
-# 撤销栈、日志缓冲、i18n、项目读写。
+# Data layer (UI-framework-agnostic): dock layout, document model, schema,
+# undo stack, log buffer, i18n, project read/write.
 prism-editor-core = { path = "../prism-editor-core" }
-# 组件 schema 的唯一来源：从 `prism-scene` 反射注册表投影出的属性面板 schema。
+# Sole source of component schema: property panel schema projected from `prism-scene` reflection registry.
 prism-editor-api = { path = "../../../crates/prism-editor-api" }

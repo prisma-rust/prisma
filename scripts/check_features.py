@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""积木特性矩阵：保证「关掉某块能力」的组合真的能编译。
+"""Building-block feature matrix: ensure combos that "turn off a capability" actually compile.
 
-    python scripts/check_features.py          # 跑默认矩阵
-    python scripts/check_features.py --list   # 只打印组合
+    python scripts/check_features.py          # run default matrix
+    python scripts/check_features.py --list   # only print combos
 
-为什么需要它：feature 一旦没人编译就会烂掉（`#[cfg]` 漏一处，几个月后才发现）。
-项目模板宣称「2D 项目不编 3D / 路径追踪」，CI 就必须真的按那些组合编一遍。
+Why needed: features rot when nobody compiles them (`#[cfg]` missed, discovered months later).
+Project template claims "2D projects do not compile 3D / path tracing", CI must really compile those combos.
 
-新增能力（feature）时在 `MATRIX` 里加一条**最小可用组合**，不要只测默认组合。
+When adding a capability (feature), add a **minimally usable combo** to `MATRIX`, do not only test default.
 """
 
 from __future__ import annotations
@@ -24,15 +24,15 @@ from lib.console import force_utf8_streams  # noqa: E402
 
 force_utf8_streams()
 
-# (标签, cargo 参数)。每条都必须是「项目模板会真的这样构建」的组合。
+# (tag, cargo args). Each must be a combo "template project would actually build this way".
 MATRIX: list[tuple[str, list[str]]] = [
-    ("prism-render 全关", ["check", "-p", "prism-render", "--no-default-features"]),
-    # UI 叠加但**不要**文字：只画四边形，不链接任何文本光栅后端。
+    ("prism-render all off", ["check", "-p", "prism-render", "--no-default-features"]),
+    # UI overlay but **no** text: only draws quads, does not link any text rasterizer backend.
     (
-        "prism-render ui（无文本后端）",
+        "prism-render ui (no text backend)",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "ui"],
     ),
-    # 文本后端必须各自单独成立（互斥，不能一起开）。
+    # Text backends must each stand alone (mutually exclusive, cannot enable both).
     (
         "prism-render ui + fontdue",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "ui,ui-fontdue"],
@@ -41,59 +41,59 @@ MATRIX: list[tuple[str, list[str]]] = [
         "prism-render sharc",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "sharc"],
     ),
-    # 光栅实时 GI：不依赖 pathtrace，只需要 ray query。退化路径（设备不支持）在运行时
-    # 判断（graph_renderer.rs 里一次性 warn），编译期必须独立成立。
+    # Raster real-time GI: does not depend on pathtrace, only needs ray query. Fallback path (device unsupported)
+    # determined at runtime (one-time warn in graph_renderer.rs), must compile independently.
     (
         "prism-render restir_gi",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "restir_gi"],
     ),
-    # `sharc` 不再蕴含 `pathtrace`：缓存的两个消费者各自可选，这两条把「只开 sharc」
-    # 这个组合钉住（DESIGN §12.2）。
+    # `sharc` no longer implies `pathtrace`: two consumers of cache each optional, these two pin down combo "sharc only"
+    # (DESIGN §12.2).
     (
-        "prism-app x11 + sharc（无 pathtrace）",
+        "prism-app x11 + sharc (no pathtrace)",
         ["check", "-p", "prism-app", "--no-default-features", "--features", "x11,sharc"],
     ),
     (
-        "prism-engine sharc（无 pathtrace）",
+        "prism-engine sharc (no pathtrace)",
         ["check", "-p", "prism-engine", "--no-default-features", "--features", "sharc"],
     ),
-    # 退化路径：有 pathtrace、没有 sharc。`gi_mode = Sharc` 时必须能编过，退化为纯 PT
-    # 并 warn 一次（graph_renderer.rs 里一次性诊断），而不是 `#[cfg]` 漏一处导致编译失败。
+    # Fallback path: with pathtrace but no sharc. Must compile with `gi_mode = Sharc`, degrades to pure PT
+    # and warns once (one-time diagnostic in graph_renderer.rs), not a `#[cfg]` miss causing compile failure.
     (
-        "prism-render pathtrace（无 sharc）",
+        "prism-render pathtrace (no sharc)",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "pathtrace"],
     ),
-    # Linux 上 winit 必须至少有一个窗口后端，所以「全关」不是合法组合；
-    # 最小可用组合是 x11-only（或 wayland-only）。
-    ("prism-app 最小 (x11)", ["check", "-p", "prism-app", "--no-default-features", "--features", "x11"]),
-    ("prism-app 最小 (wayland)", ["check", "-p", "prism-app", "--no-default-features", "--features", "wayland"]),
+    # On Linux winit must have at least one window backend, so "all off" is not a legal combo;
+    # minimal usable combo is x11-only (or wayland-only).
+    ("prism-app minimal (x11)", ["check", "-p", "prism-app", "--no-default-features", "--features", "x11"]),
+    ("prism-app minimal (wayland)", ["check", "-p", "prism-app", "--no-default-features", "--features", "wayland"]),
     (
         "prism-app x11 + pathtrace",
         ["check", "-p", "prism-app", "--no-default-features", "--features", "x11,pathtrace"],
     ),
-    ("prism-app 2D 档（无 3D 组件组）",
+    ("prism-app 2D tier (no 3D component groups)",
      ["check", "-p", "prism-app", "--no-default-features", "--features", "x11,group-2d,group-ui"],
     ),
     (
-        "prism-app 3D 极简（无 skybox/shadows/gtao）",
+        "prism-app 3D minimal (no skybox/shadows/gtao)",
         ["check", "-p", "prism-app", "--no-default-features", "--features", "x11,group-3d,ibl"],
     ),
-    # NVIDIA 桌面扩展：Streamline（DLSS-SR / DLSS-RR / DLFG）与 NRD 都是默认关的砖块。
-    # 各自单独成立，且 dlfg 蕴含 dlss；nrd 复用 Streamline 的动态库加载器但不需要
-    # DLSS 运行时，所以这两条都要钉住（DESIGN §12.2）。
+    # NVIDIA desktop extensions: Streamline (DLSS-SR / DLSS-RR / DLFG) and NRD are default-off bricks.
+    # Each must stand alone, and dlfg implies dlss; nrd reuses Streamline dynamic library loader but does not need
+    # DLSS at runtime, so both must be pinned (DESIGN §12.2).
     (
-        "prism-render dlss（无 nrd）",
+        "prism-render dlss (no nrd)",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "dlss"],
     ),
     (
-        "prism-render nrd（无 dlss）",
+        "prism-render nrd (no dlss)",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "nrd"],
     ),
     (
         "prism-render dlfg",
         ["check", "-p", "prism-render", "--no-default-features", "--features", "dlfg"],
     ),
-    ("prism-app 默认（全量）", ["check", "-p", "prism-app"]),
+    ("prism-app default (full)", ["check", "-p", "prism-app"]),
 ]
 
 
@@ -125,9 +125,9 @@ def main() -> int:
             sys.stderr.write("  ok\n")
 
     if failed:
-        print(f"| 积木特性矩阵 | ❌ | 失败：{', '.join(failed)} |")
+        print(f"| Building-block feature matrix | ❌ | Failed: {', '.join(failed)} |")
         return 1
-    print(f"| 积木特性矩阵 | ✅ | {len(MATRIX)} 个组合 |")
+    print(f"| Building-block feature matrix | ✅ | {len(MATRIX)} combos |")
     return 0
 
 

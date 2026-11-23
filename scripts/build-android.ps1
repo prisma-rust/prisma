@@ -157,8 +157,8 @@ try {
     Pop-Location
 }
 
-# 运行时挂载 `assets/` 下的**全部** `.pak`（#530），所以按扩展名复制，
-# 不再写死 `scenes.pak`——以后按内容分包不用改脚本。
+# run 时挂载 `assets/` below 的**full 部** `.pak`（#530），so 按extension copy ，
+# not again 写死 `scenes.pak`——以after 按内容分包not 用改脚本。
 $Paks = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak -File
 $Manifests = Get-ChildItem (Join-Path $GameProjectDir "assets") -Filter *.pak.meta.json -File
 if ($Paks.Count -eq 0) {
@@ -169,7 +169,7 @@ $Paks | Copy-Item -Destination $AndroidGameAssets -Force
 $Manifests | Copy-Item -Destination $AndroidGameAssets -Force
 Write-Host "Copied $($Paks.Count) package(s) into the APK assets."
 
-# 新格式 `settings.ini`；旧项目还只有 `settings.toml` 时照样带上（引擎会回退读）。
+# new 格式 `settings.ini`；old 项目还只have  `settings.toml` 时照样带on （引擎will 回退读）。
 foreach ($Name in @("settings.ini", "settings.toml")) {
     $Settings = Join-Path $GameProjectDir "assets\$Name"
     if (Test-Path $Settings) {

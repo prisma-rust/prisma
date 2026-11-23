@@ -70,7 +70,7 @@ fn the_second_frame_reports_the_first_frames_pass_timings() {
     };
 
     render_once(&mut renderer);
-    // 第一帧结束时还没有可读的结果（读回被有意延迟一帧）。
+    // First frame results are not yet readable (readback intentionally delayed by one frame).
     render_once(&mut renderer);
 
     let timings = renderer.gpu_timings();
@@ -96,7 +96,7 @@ fn the_second_frame_reports_the_first_frames_pass_timings() {
         timings.passes.iter().any(|pass| pass.ms > 0.0),
         "at least one pass must have taken measurable time"
     );
-    // 整帧区间覆盖所有 pass；时间戳量化允许 pass 之和略大一点点。
+    // Full frame interval covers all passes; timestamp quantization allows pass sum to be slightly larger.
     assert!(
         timings.has_frame_span(),
         "a rendered frame must produce a frame span: {timings:?}"

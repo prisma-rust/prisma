@@ -290,7 +290,11 @@ fn a_cooked_machine_becomes_evaluable() {
 
     let machine = StateMachine::from_info(&info);
     assert_eq!(machine.states.len(), 2);
-    assert_eq!(machine.transitions.len(), 2, "out-of-bounds transitions dropped");
+    assert_eq!(
+        machine.transitions.len(),
+        2,
+        "out-of-bounds transitions dropped"
+    );
     assert!((machine.states[1].speed - 1.2).abs() < 1e-6);
 
     // Idle only played 10%: min_state_fraction blocks.

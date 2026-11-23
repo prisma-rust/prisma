@@ -1,6 +1,6 @@
-//! `Active` 过滤：隐藏的 UI 既不进绘制列表，也不参与命中测试。
+//! `Active` filter: hidden UI neither enters draw list nor participates in hit test.
 //!
-//! `Active` 是层级面板眼睛按钮写入的组件，缺失视为激活；父级关闭要连带隐藏子树。
+//! `Active` is component written by editor panel eye button, missing treated as active; parent disable hides child tree.
 
 use super::{convert_ui_draw_list_to_overlay, ui_render_system, UiDrawItem, UiDrawList};
 use crate::scene::runtime_components::Hidden;
@@ -57,7 +57,7 @@ fn spawn_interactive(world: &mut World, rect: [f32; 4]) -> Entity {
 
 #[test]
 fn buttons_draw_their_interaction_colors() {
-    // #528：`Button` 覆盖 `Style.background`，并跟随 hover / pressed 换色。
+    // #528: `Button` overrides `Style.background`, changes color with hover / pressed.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [10.0, 10.0, 100.0, 40.0]);
     let button = Button::default();
@@ -65,7 +65,10 @@ fn buttons_draw_their_interaction_colors() {
 
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
-    assert_eq!(overlay.quads[0].color, button.normal, "默认用 normal 色");
+    assert_eq!(
+        overlay.quads[0].color, button.normal,
+        "Default uses normal color"
+    );
 
     world.insert(
         entity,
@@ -88,12 +91,15 @@ fn buttons_draw_their_interaction_colors() {
     );
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
-    assert_eq!(overlay.quads[0].color, button.pressed, "按下比 hover 优先");
+    assert_eq!(
+        overlay.quads[0].color, button.pressed,
+        "Pressed beats hover"
+    );
 }
 
 #[test]
 fn a_style_image_becomes_a_textured_quad_with_the_background_as_tint() {
-    // #591：`Style.image` 解析出 bindless 槽位后，这一格用图片 + `background` tint。
+    // #591: after `Style.image` resolves to bindless slot, this cell uses texture + `background` tint.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [0.0, 0.0, 64.0, 64.0]);
     world.get_mut::<Style>(entity).unwrap().image = "textures/icon.png".into();
@@ -112,12 +118,12 @@ fn a_style_image_becomes_a_textured_quad_with_the_background_as_tint() {
     let overlay = convert_ui_draw_list_to_overlay(&world);
     let quad = overlay.quads.first().expect("one quad");
     assert_eq!(quad.texture, Some(7));
-    assert_eq!(quad.color, [0.5, 1.0, 0.5, 1.0], "background 当 tint");
+    assert_eq!(quad.color, [0.5, 1.0, 0.5, 1.0], "background as tint");
 }
 
 #[test]
 fn an_image_with_a_transparent_background_draws_in_its_own_colours() {
-    // 作者只写 `image` 不写 `background` 时，alpha 为 0 被当作不透明白色 tint。
+    // When author writes only `image` not `background`, alpha 0 treated as opaque white tint.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [0.0, 0.0, 32.0, 32.0]);
     let style = world.get_mut::<Style>(entity).unwrap();
@@ -160,7 +166,10 @@ fn an_unresolved_image_falls_back_to_the_flat_colour() {
 
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
-    let quad = overlay.quads.first().expect("背景色仍然要画");
+    let quad = overlay
+        .quads
+        .first()
+        .expect("Background color still needs drawing");
     assert_eq!(quad.texture, None);
     assert_eq!(quad.color, [1.0, 0.0, 0.0, 1.0]);
 }
@@ -180,13 +189,13 @@ fn border_radius_is_normalised_by_the_quad_size() {
 
 #[test]
 fn text_font_path_reaches_the_overlay_input() {
-    // #583：`Text.font` 是资产路径；空字符串表示用系统默认字体。
+    // #583: `Text.font` is asset path; empty string means system default font.
     let mut world = world_with_screen();
     let entity = spawn_text(&mut world, [0.0, 0.0, 200.0, 24.0], "HUD");
 
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
-    assert_eq!(overlay.texts[0].font, None, "空 = 系统默认字体");
+    assert_eq!(overlay.texts[0].font, None, "Empty = system default font");
 
     world.get_mut::<Text>(entity).unwrap().font = "assets/fonts/hud.ttf".into();
     ui_render_system(&mut world);
@@ -199,12 +208,12 @@ fn text_font_path_reaches_the_overlay_input() {
 
 #[test]
 fn text_wrap_flag_reaches_the_overlay_input() {
-    // #527：换行是作者开关，默认单行。
+    // #527: wrapping is author switch, default single line.
     let mut world = world_with_screen();
     spawn_text(&mut world, [0.0, 0.0, 120.0, 40.0], "hello world");
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
-    assert!(!overlay.texts[0].wrap, "默认不换行");
+    assert!(!overlay.texts[0].wrap, "No wrap by default");
 
     let entity = spawn_text(&mut world, [0.0, 0.0, 120.0, 40.0], "hello world");
     world.get_mut::<Text>(entity).unwrap().wrap = true;
@@ -214,7 +223,7 @@ fn text_wrap_flag_reaches_the_overlay_input() {
         .texts
         .iter()
         .find(|text| text.content == "hello world" && text.wrap);
-    assert!(wrapped.is_some(), "开启 wrap 后应带到 overlay 输入");
+    assert!(wrapped.is_some(), "With wrap should reach overlay input");
 }
 
 #[test]
@@ -231,20 +240,28 @@ fn inactive_entities_are_skipped_by_drawing() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    assert_eq!(draw_list.quads().count(), 1, "只有激活的 quad 应该被收集");
+    assert_eq!(
+        draw_list.quads().count(),
+        1,
+        "Only active quad should be collected"
+    );
     assert_eq!(
         draw_list.quads().next().expect("quad").rect,
         [0.0, 0.0, 10.0, 10.0]
     );
-    assert_eq!(draw_list.texts().count(), 1, "只有激活的文本应该被收集");
+    assert_eq!(
+        draw_list.texts().count(),
+        1,
+        "Only active text should be collected"
+    );
     assert_eq!(draw_list.texts().next().expect("text").content, "shown");
 
-    // 隐藏的实体不会进入上屏数据。
+    // Hidden entity will not enter on-screen data.
     let overlay = convert_ui_draw_list_to_overlay(&world);
     assert_eq!(overlay.quads.len(), 1);
     assert_eq!(overlay.texts.len(), 1);
 
-    // 激活状态只是过滤条件，不是删除：组件仍然在。
+    // Active state only a filter condition, not deletion: component still there.
     assert!(world.get::<ComputedLayout>(visible_quad).is_some());
     assert!(world.get::<ComputedLayout>(visible_text).is_some());
 }
@@ -259,12 +276,18 @@ fn deactivating_a_parent_hides_the_whole_subtree() {
     HierarchyHelper::reparent(&mut world, child, Some(parent));
     HierarchyHelper::reparent(&mut world, grandchild, Some(child));
 
-    // 子节点自己没有 + 只有父节点被关掉。
+    // Child itself has no + only parent disabled.
     assert!(is_ui_active(&world, grandchild));
     world.insert(parent, Active(false));
     assert!(!is_ui_active(&world, parent));
-    assert!(!is_ui_active(&world, child), "父级关闭必须连带子级");
-    assert!(!is_ui_active(&world, grandchild), "祖先关闭必须连带孙级");
+    assert!(
+        !is_ui_active(&world, child),
+        "Parent off must cascade to child"
+    );
+    assert!(
+        !is_ui_active(&world, grandchild),
+        "Ancestor off must cascade to grandchild"
+    );
 
     ui_render_system(&mut world);
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
@@ -282,10 +305,13 @@ fn scene_visibility_hides_the_ui_subtree_without_deactivating_it() {
     world.insert(parent, Hidden(true));
 
     assert!(!is_ui_active(&world, parent));
-    assert!(!is_ui_active(&world, child), "隐藏父级必须连带 UI 子树");
+    assert!(
+        !is_ui_active(&world, child),
+        "Hidden parent must cascade UI subtree"
+    );
     assert!(
         world.get::<Active>(parent).is_none_or(|active| active.0),
-        "Hidden 不改作者数据 Active"
+        "Hidden does not change author data Active"
     );
 }
 
@@ -295,7 +321,7 @@ fn missing_active_component_counts_as_active() {
     let entity = spawn_quad(&mut world, [0.0, 0.0, 10.0, 10.0]);
     assert!(
         world.get::<Active>(entity).is_none(),
-        "场景里只有显式关闭的实体才写 Active"
+        "Only explicitly disabled entities in scene write Active"
     );
     assert!(is_ui_active(&world, entity));
 }
@@ -304,8 +330,8 @@ fn missing_active_component_counts_as_active() {
 fn inactive_element_does_not_block_hit_testing() {
     let mut world = world_with_screen();
 
-    // 两个完全重叠的可交互元素：后遍历到的（面积相同 → 更靠“上”）本该赢，
-    // 但它被 Active(false) 关掉了，光标应该落到下面的那个。
+    // Two fully overlapping interactive elements: later traversed (same area → more "top") should win,
+    // but it is Active(false) disabled, cursor should fall to the one below.
     let below = spawn_interactive(&mut world, [0.0, 0.0, 200.0, 100.0]);
     let above = spawn_interactive(&mut world, [0.0, 0.0, 200.0, 100.0]);
     world.insert(above, Active(false));
@@ -317,7 +343,7 @@ fn inactive_element_does_not_block_hit_testing() {
         ..UiInputState::default()
     });
     ui_input_system(&mut world);
-    // #528：点击在松开时成立，补一个松开帧。
+    // #528: click holds on release, add a release frame.
     world.insert_resource(UiInputState {
         cursor_pos: [50.0, 50.0],
         left_released: true,
@@ -326,7 +352,10 @@ fn inactive_element_does_not_block_hit_testing() {
     ui_input_system(&mut world);
 
     let below_interaction = world.get::<Interaction>(below).expect("interaction");
-    assert!(below_interaction.hovered, "被隐藏的遮挡元素不应吞掉点击");
+    assert!(
+        below_interaction.hovered,
+        "Hidden occluder should not swallow click"
+    );
     assert!(below_interaction.clicked);
     let above_interaction = world.get::<Interaction>(above).expect("interaction");
     assert!(!above_interaction.hovered);
@@ -341,7 +370,7 @@ fn invisible_text_is_skipped_like_quads() {
     let hidden_text = spawn_text(&mut world, [0.0, 20.0, 100.0, 20.0], "hidden");
     let hidden_quad = spawn_quad(&mut world, [0.0, 40.0, 100.0, 20.0]);
 
-    // 只改 `Style::visible`（不是 `Active`）：背景 quad 与字形都应该一起消失。
+    // Only change `Style::visible` (not `Active`): background quad and glyph should disappear together.
     world.insert(
         hidden_text,
         Style {
@@ -361,21 +390,28 @@ fn invisible_text_is_skipped_like_quads() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    assert!(draw_list.quads().count() == 0, "隐藏的 quad 不应进绘制列表");
-    assert_eq!(draw_list.texts().count(), 1, "只有可见文本应该被收集");
+    assert!(
+        draw_list.quads().count() == 0,
+        "Hidden quad should not enter draw list"
+    );
+    assert_eq!(
+        draw_list.texts().count(),
+        1,
+        "Only visible text should be collected"
+    );
     assert_eq!(draw_list.texts().next().expect("text").content, "shown");
     assert_eq!(
         draw_list.texts().next().expect("text").rect,
         [0.0, 0.0, 100.0, 20.0]
     );
 
-    // 上屏数据同样只剩可见文本。
+    // On-screen data likewise only visible text.
     let overlay = convert_ui_draw_list_to_overlay(&world);
     assert!(overlay.quads.is_empty());
     assert_eq!(overlay.texts.len(), 1);
     assert_eq!(overlay.texts[0].content, "shown");
 
-    // `visible` 只是过滤条件，不是删除：组件仍在，重新打开即恢复绘制。
+    // `visible` only a filter condition, not deletion: component stays, re-enable resumes drawing.
     assert!(world.get::<Text>(hidden_text).is_some());
     assert!(world.get::<ComputedLayout>(visible_text).is_some());
 
@@ -388,12 +424,16 @@ fn invisible_text_is_skipped_like_quads() {
     );
     ui_render_system(&mut world);
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    assert_eq!(draw_list.texts().count(), 2, "重新可见后应恢复绘制");
+    assert_eq!(
+        draw_list.texts().count(),
+        2,
+        "After re-visible should resume drawing"
+    );
 }
 
 #[test]
 fn canvas_scale_multiplies_font_size_and_border_radius() {
-    // #463：字体与圆角是「设计像素」，要按所在 Canvas 的缩放换算。
+    // #463: font and corner radius are "design pixels", convert by containing Canvas scale.
     let mut world = world_with_screen();
     let scaled = ComputedLayout {
         rect: [0.0, 0.0, 200.0, 100.0],
@@ -433,7 +473,7 @@ fn canvas_scale_multiplies_font_size_and_border_radius() {
     let quad = draw_list.quads().next().expect("one quad");
     assert_eq!(quad.border_radius, 16.0);
 
-    // 坏值（0 / NaN）按 1 处理，不能让顶点算出 NaN。
+    // Bad values (0 / NaN) treated as 1, cannot make vertices NaN.
     let broken = ComputedLayout {
         rect: [0.0, 0.0, 10.0, 10.0],
         order: 0,
@@ -450,7 +490,7 @@ fn canvas_scale_multiplies_font_size_and_border_radius() {
     assert_eq!(
         broken_text.font_size,
         Text::default().font_size,
-        "NaN 缩放不能把字号吃掉"
+        "NaN scale must not eat font size"
     );
 }
 
@@ -474,14 +514,14 @@ fn text_without_style_is_still_drawn() {
     assert_eq!(
         draw_list.texts().count(),
         1,
-        "缺少 Style 的文本按可见处理（与 `visible` 的默认值一致）"
+        "Text without Style treated visible (consistent with `visible` default)"
     );
 }
 
 #[test]
 fn overlay_ndc_keeps_screen_orientation() {
-    // Vulkan NDC：`y = -1` 是屏幕顶。像素左上角必须落在 (-1, -1)，
-    // 否则整个 UI 层会被上下镜像（intro 的标题倒着显示就是这个 bug）。
+    // Vulkan NDC: `y = -1` is screen top. Pixel top-left must land at (-1, -1),
+    // otherwise whole UI layer flipped upside down (intro title displayed upside down was this bug).
     let mut world = world_with_screen(); // 800x600
     spawn_quad(&mut world, [0.0, 0.0, 400.0, 300.0]);
     ui_render_system(&mut world);
@@ -489,20 +529,20 @@ fn overlay_ndc_keeps_screen_orientation() {
     let overlay = convert_ui_draw_list_to_overlay(&world);
     assert_eq!(overlay.quads.len(), 1);
     let [x0, y0, x1, y1] = overlay.quads[0].rect;
-    assert_eq!([x0, y0], [-1.0, -1.0], "左上角像素 → NDC 左上角");
-    assert_eq!([x1, y1], [0.0, 0.0], "屏幕中心 → NDC 原点");
+    assert_eq!([x0, y0], [-1.0, -1.0], "Top-left pixel → NDC top-left");
+    assert_eq!([x1, y1], [0.0, 0.0], "Screen center → NDC origin");
 
-    // 竖直方向单调：更靠下的像素产生更大的 NDC y。
+    // Vertical monotonic: lower pixel produces larger NDC y.
     let mut world = world_with_screen();
     spawn_quad(&mut world, [0.0, 100.0, 10.0, 10.0]);
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
     let [_, top, _, bottom] = overlay.quads[0].rect;
-    assert!(top < bottom, "NDC 上边必须小于下边");
-    assert!(top > -1.0, "y=100 应该已经离开屏幕顶");
+    assert!(top < bottom, "NDC top must be smaller than bottom");
+    assert!(top > -1.0, "y=100 should already leave screen top");
 }
 
-// ── 层级绘制顺序（#462）────────────────────────────────────────
+// ── hierarchy draw order (#462) ─────────────────────────────────────────
 
 fn spawn_node(world: &mut World, bg: Option<[f32; 4]>, text: Option<&str>) -> Entity {
     let entity = world.spawn();
@@ -541,15 +581,15 @@ fn a_later_sibling_covers_the_text_of_an_earlier_one() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    // 文本必须在黑场之前画，否则黑场盖不住它。
+    // Text must be drawn before black overlay, otherwise overlay cannot cover it.
     assert_eq!(draw_list.items.len(), 2);
     assert!(
         matches!(&draw_list.items[0], UiDrawItem::Text(t) if t.content == "Intro"),
-        "标题文本应该先画"
+        "Title text should be drawn first"
     );
     assert!(
         matches!(&draw_list.items[1], UiDrawItem::Quad(q) if q.color[3] == 1.0),
-        "后加的全屏遮罩应该盖住它"
+        "Later full-screen mask should cover it"
     );
     assert!(
         world.get::<ComputedLayout>(title).unwrap().order
@@ -570,7 +610,7 @@ fn children_draw_above_their_parent_even_when_created_first() {
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
     assert_eq!(draw_list.items.len(), 2);
-    // 父先画、子后画：子面板永远在父背景之上。
+    // Parent drawn first, child after: child panel always on parent background.
     assert!(matches!(&draw_list.items[0], UiDrawItem::Quad(q) if q.color[1] == 0.0));
     assert!(matches!(&draw_list.items[1], UiDrawItem::Quad(q) if q.color[1] == 1.0));
 }
@@ -579,7 +619,7 @@ fn children_draw_above_their_parent_even_when_created_first() {
 fn siblings_follow_the_document_id_not_the_spawn_order() {
     let mut world = world_with_screen();
 
-    // 先 spawn 的那个拿到更大的 id：绘制顺序要跟文档顺序走。
+    // First spawned gets larger id: draw order follows document order.
     let later_in_document = spawn_node(&mut world, Some([0.0, 0.0, 1.0, 1.0]), None);
     let earlier_in_document = spawn_node(&mut world, Some([1.0, 0.0, 0.0, 1.0]), None);
     world.insert(
@@ -595,7 +635,7 @@ fn siblings_follow_the_document_id_not_the_spawn_order() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    // id 2（红）在文档里更靠前，尽管它后 spawn。
+    // id 2 (red) is earlier in document, despite spawned later.
     assert!(matches!(&draw_list.items[0], UiDrawItem::Quad(q) if q.color[0] == 1.0));
     assert!(matches!(&draw_list.items[1], UiDrawItem::Quad(q) if q.color[2] == 1.0));
 }
@@ -626,7 +666,7 @@ fn an_external_layer_still_draws_above_the_whole_ui() {
             &draw_list.items[2],
             UiDrawItem::Quad(q) if q.order == crate::ui::EXTERNAL_UI_ORDER
         ),
-        "外部 quad 必须画在所有 ECS UI 实体之上"
+        "External quad must draw above all ECS UI entities"
     );
     assert_eq!(draw_texts(draw_list), vec!["Intro".to_string()]);
 }
@@ -639,7 +679,7 @@ fn quads_submitted_after_the_render_system_are_merged() {
     crate::ui::layout::ui_layout_system(&mut world);
     ui_render_system(&mut world);
 
-    // 项目 system 注册在 `ui::render` 之后（静态 Player，见 #1048）。
+    // Project system registers after `ui::render` (static Player, see #1048).
     world.insert_resource(crate::ui::ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 4.0, 4.0],
         color: [0.5, 0.5, 0.5, 1.0],
@@ -656,10 +696,10 @@ fn quads_submitted_after_the_render_system_are_merged() {
             draw_list.items.last(),
             Some(UiDrawItem::Quad(q)) if q.order == crate::ui::EXTERNAL_UI_ORDER
         ),
-        "晚于 ui::render 提交的 quad 必须补进同一帧的列表"
+        "Quad submitted later than ui::render must be merged into same frame list"
     );
     assert!(
         world.get_resource::<crate::ui::ExternalUiQuads>().is_none(),
-        "合并后要清空，否则下一帧会重复绘制"
+        "After merge must clear, else next frame draws twice"
     );
 }

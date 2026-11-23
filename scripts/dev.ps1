@@ -1,16 +1,16 @@
 ﻿# Prisma 开发启动器（RustRover / 终端通用）
 #
-#   .\scripts\dev.ps1                # 编译着色器(有 slangc 时) -> 重打场景包 -> 运行游戏
-#   .\scripts\dev.ps1 -Target editor # 启动 Tauri 编辑器 (pnpm -C editor tauri dev)
+#   .\scripts\dev.ps1                # compile shader (have  slangc 时) -> heavy 打scene 包 -> run 游戏
+#   .\scripts\dev.ps1 -Target editor # start 动 Tauri 编辑器 (pnpm -C editor tauri dev)
 #
-# 常用开关：
-#   -SkipShaders   不重编 Slang（只改了 .rs 时省几秒）
-#   -SkipScenes    不重打 projects/template/assets/scenes.pak（没改场景/预制体时可用）
-#   -Release       游戏用 --release 构建
+# 常用switch ：
+#   -SkipShaders   not heavy 编 Slang（只改了 .rs 时省几seconds ）
+#   -SkipScenes    not heavy 打 projects/template/assets/scenes.pak（没改scene /预制体时available ）
+#   -Release       游戏用 --release build
 #
-# 说明：根 workspace 没有可运行的 bin，游戏二进制在 projects/template（独立 workspace），
-# 它按 cwd 及其父目录找 `assets/scenes.pak` / `assets/settings.ini`；工程的资产在自己
-# 的 assets/ 下，所以场景包要在 projects/template 里构建。
+# description ：根 workspace 没have 可run 的 bin，游戏二进制in  projects/template（independent  workspace），
+# 它按 cwd 及其父directory 找 `assets/scenes.pak` / `assets/settings.ini`；工程的资产in 自己
+# 的 assets/ below ，so scene 包要in  projects/template inside build 。
 param(
     [ValidateSet("game", "editor")]
     [string]$Target = "game",
@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# 脚本在 scripts/ 下，切到仓库根目录（游戏按 cwd 解析 assets/）。
+# 脚本in  scripts/ below ，切到仓库根directory （游戏按 cwd parse  assets/）。
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 function Resolve-VulkanSdk {
@@ -62,7 +62,7 @@ if (-not $SkipShaders) {
 }
 
 if (-not $SkipScenes) {
-    # 场景清单在每个工程自己的 assets/ 下，仓库根只放引擎输入。
+    # scene 清单in each 工程自己的 assets/ below ，仓库根只放引擎input 。
     Write-Host "重打场景包 (projects/template/assets/scenes.pak)..." -ForegroundColor Cyan
     Push-Location "projects/template"
     try {

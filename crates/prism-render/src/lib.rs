@@ -1,22 +1,22 @@
-//! Prisma Vulkan 渲染后端
+//! Prisma Vulkan rendering backend
 //!
-//! 基于 [`ash`]（轻量 Vulkan 绑定）构建。里程碑 2 提供了完整的
-//! 光栅化管线：渲染 pass、图形管线、网格缓冲区、
-//! 描述符集和相机 UBO——足以渲染 ECS 驱动的几何体。
+//! Built on [`ash`] (lightweight Vulkan bindings). Milestone 2 provides complete
+//! rasterization pipeline: render pass, graphics pipeline, mesh buffers,
+//! descriptor sets and camera UBO — enough to render ECS-driven geometry.
 //!
-//! ## 模块
+//! ## module
 //!
-//! | 模块 | 用途 |
+//! | Module | Purpose |
 //! |--------|---------|
-//! | [`capabilities`] | 光线追踪能力检测 |
-//! | [`context`] | Vulkan 实例、设备、队列 |
-//! | swapchain | 交换链 + acquire/present 同步 |
-//! | [`render_pass`] | 渲染 pass + 帧缓冲 |
-//! | shader | SPIR-V 着色器模块加载 |
-//! | buffer | 缓冲区分配和暂存上传 |
-//! | mesh | 顶点/索引缓冲区与网格类型 |
-//! | pipeline | 图形管线 |
-//! | descriptor | 描述符集合、布局、池、UBO |
+//! | [`capabilities`] | Ray tracing capability detection |
+//! | [`context`] | Vulkan instance, device, queues |
+//! | swapchain | swapchain + acquire/present sync |
+//! | [`render_pass`] | render pass + frame buffers |
+//! | shader | SPIR-V shader module load  |
+//! | buffer | buffer allocation and staging upload |
+//! | mesh | vertex / index buffers and mesh types |
+//! | pipeline | graphics pipeline |
+//! | descriptor | descriptor sets, layouts, pools, UBO |
 //! Vulkan renderer for Prisma — the GPU half of the engine.
 //! Architecture: [`render_graph::RenderGraph`] drives [`RenderPassNode`] exec.
 
@@ -28,10 +28,10 @@ pub mod acceleration_structure;
 pub mod anf;
 #[cfg(all(test, feature = "anf"))]
 mod anf_tests;
-/// 主线程(CPU) ↔ 渲染线程(GPU) 资产解析请求/结果桥接类型。
+/// Main-thread (CPU) ↔ render-thread (GPU) asset parse request/result bridge type.
 pub mod asset_bridge;
 pub mod asset_decoders;
-/// 自动曝光（亮度直方图 + 适应），移植自 RTXGI `AutoExposurePass`。
+/// Auto exposure (brightness histogram + adaptation), ported from RTXGI `AutoExposurePass`.
 pub mod auto_exposure;
 pub mod bake_common;
 pub mod batch;
@@ -116,14 +116,14 @@ pub mod shader;
 /// after recompiling shaders on a host with slangc - see shaders/compile.sh.
 pub mod shader_bindings;
 pub mod taa;
-/// 方向光阴影贴图边长（texel）。
+/// Directional light shadow map edge length (texels).
 ///
 /// Placed outside feature gates: needed by engine texel snapping even when the `shadows`
 /// building block is disabled in minimal profiles. `shadow_map_pass` re-exports this same constant.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 
-/// 阴影贴图边长的合法范围（#526）：低于 256 基本不可用，高于 8192 在移动端 /
-/// 老桌面 GPU 上会直接分配失败。
+/// Legal range of shadow map edge length (#526): below 256 basically unavailable, above 8192 on
+/// mobile / old desktop GPUs will fail allocation directly.
 pub const MIN_SHADOW_MAP_SIZE: u32 = 256;
 pub const MAX_SHADOW_MAP_SIZE: u32 = 8192;
 

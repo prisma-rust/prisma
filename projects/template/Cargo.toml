@@ -3,46 +3,46 @@ name = "template"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Prisma 用户游戏项目（模板工程）——桌面二进制 `template`，由 launcher/ spawn"
+description = "Prisma user game project (template) — desktop binary `template`, spawned by launcher/"
 
-# 独立 workspace（仿 launcher/ 先例），不挂根 Prisma workspace。
+# Independent workspace (following launcher/ example), not attached to root Prisma workspace.
 [workspace]
 
-# 桌面二进制是 `template`；Android / 编辑器用的是同一个 cdylib，但**库名单独取**
-# `template_core`——lib 和 bin 同名时两边会抢同一个 `template.pdb`（MSVC 直接报冲突），
-# 共用 target 目录时也会互相覆盖产物。`android.app.lib_name`（launcher gen/android
-# Manifest）必须等于 `[build] lib_name` / 这里的库名。
-# `lib` 类型供桌面 bin 链接 rlib；`cdylib` 另有两个用途：
-# Android 的 GameActivity 入口，以及编辑器加载的 preview 模块。
+# Desktop binary is `template`; Android / editor use same cdylib, but **lib name separate**
+# `template_core` — when lib and bin share name they compete for same `template.pdb` (MSVC reports conflict),
+# and sharing target dir would overwrite each other outputs. `android.app.lib_name` (launcher gen/android
+# Manifest) must equal `[build] lib_name` / lib name here.
+# `lib` type for desktop bin to link rlib; `cdylib` has two other uses:
+# Android GameActivity entry, and editor-loaded preview module.
 [lib]
 name = "template_core"
 crate-type = ["lib", "cdylib"]
 
-# 两种构建形态，互相排斥：
-# - `player`（默认）：静态 Player / Android，直接链接引擎。
-# - `preview-module`：编辑器加载的 cdylib。**不链接引擎**，只依赖跨 ABI 的
-#   `prism-game-api` / `prism-project-api`，否则 .so 里会带第二份引擎。
+# Two build forms, mutually exclusive:
+# - `player` (default): static Player / Android, links engine directly.
+# - `preview-module`: cdylib loaded by editor. **Does not link engine**, only depends on cross-ABI
+#   `prism-game-api` / `prism-project-api`, otherwise .so would carry a second engine.
 [features]
 default = ["player", "winit-window"]
-# 引擎/渲染能力（`player-core`）与**窗口后端**、**文本光栅后端**分开，
-# 这样发布包能只留一个窗口后端、一个文本后端。
+# Engine / render capabilities (`player-core`) separated from **window backend** and **text rasterizer backend**,
+# so release build can keep only one window backend and one text backend.
 #
-# 文本后端从 `player-core` 里拆出来：`fontdue`（全平台）与系统 `DirectWrite`（仅 Windows）
-# 在 `prism-render` 里互斥，塞进 `player` 就没法在项目侧选 DirectWrite 了。
+# Text backend split out of `player-core`: `fontdue` (all platforms) and system `DirectWrite` (Windows only)
+# are mutually exclusive in `prism-render`, putting them in `player` would prevent project choosing DirectWrite.
 player-core = [
     "dep:prism-app",
     "dep:prism-engine",
-    # `prism-game-api` 默认开 `host`（直接借用宿主 World），会拉进
-    # `prism-engine`；preview-module 只能有 `plugin` 后端，否则 .so 里会带
-    # 第二份引擎。host 只在静态 Player 组合里显式打开。
+        # `prism-game-api` default enables `host` (borrows host World), pulls in
+        # `prism-engine`; preview-module can only have `plugin` backend, otherwise .so carries
+        # second engine. Host explicitly enabled only in static Player combo.
     "prism-game-api/host",
     "prism-app/pathtrace",
-    # 引擎默认已含 `sharc`（SHaRC）；模板关掉了 prism-app / prism-engine 的默认
-    # 特性，必须在这里显式补回，否则模板玩家会少一块引擎默认能力。
+        # Engine default already includes `sharc` (SHaRC); template disabled prism-app / prism-engine defaults,
+        # must add back explicitly here, otherwise template player misses an engine default capability.
     "prism-app/sharc",
     "prism-engine/sharc",
-    # 引擎调试层（F3 HUD / Tab 调试图 / T 色调映射 / 数字键 PBR 隔离）**默认关**，
-    # 模板显式打开：新建项目就该能看帧时间、切调试图。不需要的项目删掉这两行即可。
+        # Engine debug layer (F3 HUD / Tab debug graph / T tone map / number keys PBR isolation) **default off**,
+        # template explicitly enables: new project should see frame time, switch debug graph. Remove these two lines if not needed.
     "prism-app/engine-debug",
     "prism-engine/engine-debug",
     "prism-app/ui",
@@ -62,27 +62,27 @@ player-core = [
     "prism-engine/group-2d",
     "prism-engine/group-ui",
 ]
-# 「能出玩家二进制」的完整默认组合 = 能力 + fontdue 文本后端。
-# 需要 Windows 系统文本时用 `player-core,ui-directwrite`（见下）。
+# Full default combo that "can produce player binary" = capabilities + fontdue text backend.
+# For Windows system text use `player-core,ui-directwrite` (see below).
 player = ["player-core", "ui-fontdue"]
-# 文本后端 A：fontdue + ttf-parser（全平台，默认）。
+# Text backend A: fontdue + ttf-parser (all platforms, default).
 ui-fontdue = ["prism-app/ui-fontdue", "prism-engine/ui-fontdue"]
-# 文本后端 B：Windows 系统 DirectWrite（省掉 fontdue/ttf-parser，约 60 KiB）。
-# 用法：`cargo build --release --no-default-features --features ui-directwrite,win32-window`
+# Text backend B: Windows system DirectWrite (drops fontdue/ttf-parser, ~60 KiB).
+# Usage: `cargo build --release --no-default-features --features ui-directwrite,win32-window`
 ui-directwrite = [
     "player-core",
     "prism-app/ui-directwrite",
     "prism-engine/ui-directwrite",
 ]
-# 桌面 / Android 的 winit 后端（默认）。
+# winit backend for desktop / Android (default).
 winit-window = ["prism-app/winit-backend", "prism-app/x11", "prism-app/wayland"]
-# Windows 发布包：Win32 原生窗口，**不链接 winit**（省 ~300 KB）。
-# 用法：`cargo build --release --no-default-features --features player,win32-window`
+# Windows release build: Win32 native window, **no winit** (saves ~300 KB).
+# Usage: `cargo build --release --no-default-features --features player,win32-window`
 win32-window = ["prism-app/win32-native"]
-# 组件 schema 必须与编辑器宿主**完全一致**：宿主用默认分组编译，
-# 模块是独立 workspace、拿不到引擎的 feature 统一，所以这里显式打开
-# 三组。少了任何一组，`ProjectModule::load` 的 schema fingerprint 校验
-# 会直接拒绝模块（而且项目自己也无法编码 Style / SpriteRenderer 等组件）。
+# Component schema must match editor host **exactly**: host compiles with default groups,
+# module is independent workspace without engine feature unification, so here explicitly enables
+# three groups. Missing any group, `ProjectModule::load` schema fingerprint check
+# rejects module (and project itself cannot encode Style / SpriteRenderer etc).
 preview-module = [
     "dep:prism-project-api",
     "prism-scene/group-3d",
@@ -93,30 +93,30 @@ preview-module = [
 [[bin]]
 name = "template"
 path = "src/main.rs"
-# 没有 `player-core` 时没有 `build_app`，所以 bin 也不应被构建。
+# Without `player-core` there is no `build_app`, so bin should not be built either.
 required-features = ["player-core"]
 
 [dependencies]
-# `default-features = false`：窗口后端由本 crate 的 `winit-window` /
-# `win32-window` 显式选择（Cargo feature 只能加不能减，所以这里不能走默认值）。
+# `default-features = false`: window backend explicitly selected by this crate `winit-window` /
+# `win32-window` (Cargo features can only add not remove, so cannot use default here).
 prism-app = { path = "../../crates/prism-app", optional = true, default-features = false }
-# 必须 default-features = false：文本后端由本 crate 的 ui-fontdue / ui-directwrite
-# 显式选择（Cargo feature 只能加不能减，否则 fontdue 永远进二进制）。
+# Must default-features = false: text backend explicitly selected by ui-fontdue / ui-directwrite
+# here (Cargo features can only add not remove, otherwise fontdue always in binary).
 prism-engine = { path = "../../crates/prism-engine", optional = true, default-features = false }
 prism-game-api = { path = "../../crates/prism-game-api", default-features = false, features = [
     "plugin",
 ] }
 prism-project-api = { path = "../../crates/prism-project-api", optional = true }
-# 纯数据层（组件 / UI schema），两种形态都需要。
+# Pure data layer (component / UI schema), needed by both forms.
 prism-scene = { path = "../../crates/prism-scene", default-features = false }
 keyframe = "1.1"
 log = "0.4"
 
-# 玩家 / Android 打包：体积优先（fat LTO + 单 codegen unit + abort + strip）。
-# 编辑器/工具跑在引擎进程内，不能用这个 profile。
-# 体积优先档：opt-level=z 关掉内联与循环展开，配合 scripts/build-dist.sh --size
-# 使用（那里还会加 -C llvm-args=-inline-threshold=0、build-std 与 immediate-abort）。
-# 竞赛/极限体积场景用；命热路径掉帧明显时可把关键 crate 覆盖回 3：
+# Player / Android packaging: size priority (fat LTO + single codegen unit + abort + strip).
+# Editor / tools run inside engine process, cannot use this profile.
+# Size-priority tier: opt-level=z disables inlining and loop unrolling, for use with scripts/build-dist.sh --size
+# (which also adds -C llvm-args=-inline-threshold=0, build-std and immediate-abort).
+# For competition / extreme-size scenes; when hot path loses frames noticeably you can override key crates back to 3:
 #   [profile.tiny.package.prism-engine]
 #   opt-level = 3
 [profile.tiny]

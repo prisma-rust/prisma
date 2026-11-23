@@ -1,4 +1,4 @@
-//! ANF 单元测试（#1161）。
+//! ANF unit tests (#1161).
 
 use super::anf::{is_qualcomm_adreno, AnfCaps, QUALCOMM_VENDOR_ID};
 use ash::vk;

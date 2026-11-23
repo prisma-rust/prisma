@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""渲染 512×512 高度图 raw 为 PNG 预览图（海洋深蓝→浅蓝，陆地绿→棕→雪顶）。"""
+"""Render 512×512 heightmap raw to PNG preview (ocean deep blue → light blue, land green → brown → snow cap)."""
 import struct
 import sys
 from PIL import Image

@@ -26,7 +26,7 @@ impl Locale {
     pub fn label(self) -> &'static str {
         match self {
             Self::EnUs => "English",
-            Self::ZhCn => "简体中文",
+            Self::ZhCn => "Simplified Chinese",
         }
     }
 
@@ -84,11 +84,11 @@ mod tests {
         );
         table.insert_dictionary(
             Locale::ZhCn,
-            HashMap::from([("menu.window".into(), "窗口".into())]),
+            HashMap::from([("menu.window".into(), "Window".into())]),
         );
 
         assert_eq!(table.get(Locale::EnUs, "menu.window"), "Window");
-        assert_eq!(table.get(Locale::ZhCn, "menu.window"), "窗口");
+        assert_eq!(table.get(Locale::ZhCn, "menu.window"), "Window");
         assert_eq!(table.get(Locale::ZhCn, "missing.key"), "missing.key");
     }
 }

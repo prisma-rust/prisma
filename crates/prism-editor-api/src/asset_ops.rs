@@ -1,13 +1,13 @@
-//! 资产文件操作：在项目 `assets/` 内新建目录、重命名 / 移动、删除，
-//! 并同步 `.scene.json` / `.prefab.json` 里的路径引用。
+//! Asset file operations: create / rename / move / delete directories and files inside project `assets/`,
+//! and sync path references in `.scene.json` / `.prefab.json`.
 //!
-//! 设计约束：
-//! - 只允许操作 `assets/` 下的相对路径，拒绝 `..`、绝对路径与构建产物目录；
-//! - 重命名/移动先扫描并计划引用改写，再执行文件系统操作，最后写回文档；
-//! - 引用保持作者原来的书写风格（场景目录相对 / 项目根相对），
-//!   因此 `../valley.hdr` 与 `assets/valley.hdr` 都会被改写成等价的新路径；
-//! - 只有 schema 里**确实是资产路径**的字段（[`prism_scene::references::ASSET_PATH_FIELDS`]）会被改写，
-//!   实体名、UI 文本等恰好写着同一段路径的字符串保持原样。
+//! Design constraints:
+//! - Only allow operations on relative paths under `assets/`, reject `..`, absolute paths and build output directories;
+//! - rename / move first scans and plans reference rewrites, then performs filesystem ops, finally writes documents back;
+//! - references preserve author's original writing style (scene-dir relative / project-root relative),
+//!   so both `../valley.hdr` and `assets/valley.hdr` rewritten to equivalent new path;
+//! - only fields **actually asset paths** in schema ([`prism_scene::references::ASSET_PATH_FIELDS`]) rewritten,
+//!   entity names, UI text and other strings that happen to look like a path stay unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -20,37 +20,37 @@ use crate::scene::{list_docs, read_doc, write_doc, DocKind};
 use prism_asset::{AssetMeta, GuidIndex};
 use prism_scene::references::{guid_field, is_asset_path_field, ASSET_PATH_FIELDS};
 
-/// 与 [`crate::assets`] 保持一致：构建产物目录不参与编辑。
+/// Consistent with [`crate::assets`]: build output directories not involved in editing.
 const SKIP_DIRS: [&str; 3] = ["cooked", "heightmaps", "target"];
-/// 场景清单的**写端**路径（新格式；旧 `scenes.toml` 只读兼容）。
+/// Write-side path of scene manifest (new format; old `scenes.toml` read-only compatible).
 const SCENE_MANIFEST: &str = "assets/scenes.json";
 
-/// 一次资产操作的结果。
+/// Result of one asset operation.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetMutation {
-    /// 操作前的路径（相对项目根，`/` 分隔）。
+    /// Path before operation (relative to project root, `/` separated).
     pub from: String,
-    /// 操作后的路径；删除时为 `None`。
+    /// Path after operation; `None` when deleted.
     pub to: Option<String>,
-    /// 被改写的引用数量（JSON 字段 + 清单条目）。
+    /// Number of references rewritten (JSON fields + manifest entries).
     pub references_updated: usize,
-    /// 内容可能变化的文档（相对项目根，已映射到新路径），供前端决定是否重载。
+    /// Documents whose content may change (relative to project root, already mapped to new path), for frontend to decide whether reload.
     pub affected_documents: Vec<String>,
 }
 
-/// 在 `assets/` 下新建目录。父目录必须已存在。
+/// Create new directory under `assets/`. Parent directory must already exist.
 pub fn create_asset_dir(project_root: &Path, relative: &str) -> Result<String, String> {
     let rel = normalize_asset_path(relative)?;
     let dir = project_root.join(&rel);
     if dir.exists() {
-        return Err(format!("目录已存在：{rel}"));
+        return Err(format!("Directory already exists: {rel}"));
     }
-    std::fs::create_dir(&dir).map_err(|e| format!("创建目录 {rel} 失败: {e}"))?;
+    std::fs::create_dir(&dir).map_err(|e| format!("Failed to create directory {rel}: {e}"))?;
     Ok(rel)
 }
 
-/// 重命名 / 移动资产（文件或目录），并同步文档引用。
+/// Rename / move asset (file or directory), syncing document references.
 pub fn rename_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMutation, String> {
     let from_rel = normalize_asset_path(from)?;
     let to_rel = normalize_asset_path(to)?;
@@ -67,18 +67,18 @@ pub fn rename_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMu
     let src = project_root.join(&from_rel);
     let dst = project_root.join(&to_rel);
     let is_dir = std::fs::metadata(&src)
-        .map_err(|e| format!("找不到 {}: {e}", from_rel))?
+        .map_err(|e| format!("Cannot find {}: {e}", from_rel))?
         .is_dir();
     if std::fs::metadata(&dst).is_ok() {
-        return Err(format!("目标已存在：{to_rel}"));
+        return Err(format!("Target already exists: {to_rel}"));
     }
     if is_dir && to_rel.starts_with(&format!("{from_rel}/")) {
-        return Err("不能把目录移动到自身内部".into());
+        return Err("Cannot move directory into itself".into());
     }
     if let Some(parent) = dst.parent() {
         if !parent.is_dir() {
             return Err(format!(
-                "目标父目录不存在：{}",
+                "Target parent directory does not exist: {}",
                 parent
                     .strip_prefix(project_root)
                     .unwrap_or(parent)
@@ -95,9 +95,9 @@ pub fn rename_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMu
     let protected_guids = collect_asset_guids(project_root, &from_rel, is_dir);
     let plan = plan_rewrites(project_root, &renamer, &protected_guids)?;
 
-    std::fs::rename(&src, &dst).map_err(|e| format!("重命名 {from_rel} 失败: {e}"))?;
-    // #466：资产身份在 `<path>.rmeta` 里，重命名时 sidecar 跟着走（目录里的
-    // sidecar 本来就随目录一起移动，这里只处理单文件）。
+    std::fs::rename(&src, &dst).map_err(|e| format!("Failed to rename {from_rel}: {e}"))?;
+    // #466: asset identity in `<path>.rmeta`, sidecar follows on rename (sidecars inside
+    // directories move with directory, here only handle single file).
     if !is_dir {
         move_asset_sidecar(&src, &dst);
     }
@@ -112,14 +112,14 @@ pub fn rename_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMu
     })
 }
 
-/// [`rename_asset`] 的别名，语义上用于跨目录移动。
+/// Alias of [`rename_asset`], semantically for cross-directory moves.
 pub fn move_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMutation, String> {
     rename_asset(project_root, from, to)
 }
 
-/// 列出引用了该资产的文档（相对项目根）。
+/// List documents referencing that asset (relative to project root).
 ///
-/// 用于删除确认：前端先展示影响范围，再决定是否强制删除。
+/// For delete confirmation: frontend first shows impact scope, then decides whether force delete.
 pub fn asset_reference_documents(
     project_root: &Path,
     relative: &str,
@@ -133,7 +133,7 @@ pub fn asset_reference_documents(
 
     for entry in all_docs(project_root) {
         let path = PathBuf::from(&entry.path);
-        // 目录本身包含的文档也算「受影响」，删除前需要让用户看到。
+        // Documents contained in directory itself also count as "affected", user should see before deleting.
         if is_dir && lexical_abs(project_root, &entry.path).starts_with(&target) {
             out.insert(relative_path_string(project_root, &path));
             continue;
@@ -161,7 +161,7 @@ pub fn asset_reference_documents(
     Ok(out.into_iter().collect())
 }
 
-/// 删除资产。`force == false` 时若仍有引用则拒绝。
+/// Delete asset. When `force == false` reject if references still exist.
 pub fn delete_asset(
     project_root: &Path,
     relative: &str,
@@ -169,31 +169,32 @@ pub fn delete_asset(
 ) -> Result<AssetMutation, String> {
     let rel = normalize_asset_path(relative)?;
     let path = project_root.join(&rel);
-    let meta = std::fs::metadata(&path).map_err(|e| format!("找不到 {}: {e}", rel))?;
+    let meta = std::fs::metadata(&path).map_err(|e| format!("Cannot find {}: {e}", rel))?;
 
     let mut refs = asset_reference_documents(project_root, &rel)?;
     if !force && !refs.is_empty() {
         return Err(format!(
-            "{} 仍被 {} 个文档引用；确认后再删除",
+            "{} is still referenced by {} documents; confirm before deleting",
             rel,
             refs.len()
         ));
     }
 
     if meta.is_dir() {
-        std::fs::remove_dir_all(&path).map_err(|e| format!("删除目录 {rel} 失败: {e}"))?;
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| format!("Failed to delete directory {rel}: {e}"))?;
     } else {
-        std::fs::remove_file(&path).map_err(|e| format!("删除 {rel} 失败: {e}"))?;
-        // #466：sidecar 不是用户资产，跟着文件一起删。
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete {rel}: {e}"))?;
+        // #466: sidecar is not user asset, delete together with file.
         let sidecar = asset_sidecar_path(&path);
         if sidecar.exists() {
             std::fs::remove_file(&sidecar)
-                .map_err(|e| format!("删除 {} 失败: {e}", sidecar.display()))?;
+                .map_err(|e| format!("Failed to delete {}: {e}", sidecar.display()))?;
         }
     }
 
-    // 删掉场景文档/产物后，`scenes.json` 里指向它的条目必须一起消失，
-    // 否则 build-scenes 会因为悬空条目失败，运行场景列表也会留下无效项。
+    // After deleting scene document / artifact, entries in `scenes.json` pointing to it must also disappear,
+    // otherwise build-scenes fails on dangling entries and runtime scene list keeps invalid items.
     let mut references_updated = 0;
     let target_stem = rel.strip_prefix("assets/").and_then(|asset_rel| {
         if meta.is_dir() {
@@ -218,21 +219,21 @@ pub fn delete_asset(
     })
 }
 
-/// 资产 sidecar 路径：`wood.png` → `wood.png.rmeta`（#466）。
+/// Asset sidecar path: `wood.png` → `wood.png.rmeta` (#466).
 fn asset_sidecar_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".rmeta");
     path.with_file_name(name)
 }
 
-/// 重命名时同步移动 sidecar；sidecar 不存在时安静跳过。
+/// Move sidecar along on rename; silently skip when sidecar missing.
 fn move_asset_sidecar(src: &Path, dst: &Path) {
     let from = asset_sidecar_path(src);
     if !from.is_file() {
         return;
     }
     let to = asset_sidecar_path(dst);
-    // 目标文件事先不存在（rename_asset 已检查），残留的孤儿 sidecar 直接覆盖。
+    // Target file does not yet exist (rename_asset already checked), leftover orphan sidecar simply overwritten.
     let _ = std::fs::remove_file(&to);
     if let Err(error) = std::fs::rename(&from, &to) {
         log::warn!(
@@ -243,10 +244,10 @@ fn move_asset_sidecar(src: &Path, dst: &Path) {
     }
 }
 
-/// 重命名前收集被移动资产的稳定 GUID。
+/// Collect stable GUIDs of moved assets before rename.
 ///
-/// 这些 GUID 对应的引用在文档里已经能自解析，重命名时**不**再改写它们的
-/// `*_path`（#466 / #465）。目录会收集整棵子树。
+/// References corresponding to these GUIDs in documents can already resolve themselves, on rename **do not** rewrite their
+/// `*_path` (#466 / #465). Directory collects whole subtree.
 pub(crate) fn collect_asset_guids(
     project_root: &Path,
     relative: &str,
@@ -272,38 +273,40 @@ pub(crate) fn collect_asset_guids(
 }
 
 // ---------------------------------------------------------------------------
-// 路径校验
+// Path validation
 // ---------------------------------------------------------------------------
 
-/// 规范化成 `assets/...` 形式，并拒绝越界 / 构建目录 / Windows 非法文件名。
+/// Normalize to `assets/...` form, reject out-of-bounds / build directories / illegal Windows filenames.
 pub fn normalize_asset_path(raw: &str) -> Result<String, String> {
     let normalized = raw.trim().replace('\\', "/");
     if normalized.is_empty() {
-        return Err("路径为空".into());
+        return Err("Path is empty".into());
     }
     if normalized.starts_with('/') || normalized.contains(':') {
-        return Err("必须是 assets/ 下的相对路径".into());
+        return Err("Must be a relative path under assets/".into());
     }
 
     let mut parts: Vec<&str> = Vec::new();
     for part in normalized.split('/') {
         match part {
             "" | "." => {}
-            ".." => return Err("路径不能包含 ..".into()),
+            ".." => return Err("Path cannot contain ..".into()),
             other => parts.push(other),
         }
     }
 
     if parts.first() != Some(&"assets") {
-        return Err("路径必须以 assets/ 开头".into());
+        return Err("Path must start with assets/".into());
     }
     if parts.len() < 2 {
-        return Err("不能直接操作 assets 根目录".into());
+        return Err("Cannot operate on assets root directory".into());
     }
 
     for part in &parts[1..] {
         if SKIP_DIRS.contains(part) {
-            return Err(format!("{part}/ 是构建产物目录，不能在编辑器中操作"));
+            return Err(format!(
+                "{part}/ is a build output directory, cannot operate in editor"
+            ));
         }
         validate_name(part)?;
     }
@@ -311,23 +314,26 @@ pub fn normalize_asset_path(raw: &str) -> Result<String, String> {
     Ok(parts.join("/"))
 }
 
-/// 场景文档按扁平目录枚举（只扫 `assets/scenes/`），必须留在那里；
-/// 预制体在 `assets/` 下递归枚举，可以放在任意子目录，只要保留后缀。
+/// Scene documents enumerated as flat directory (only scan `assets/scenes/`), must stay there;
+/// prefabs enumerated recursively under `assets/`, can be in any subdirectory as long as suffix kept.
 fn ensure_document_placement(from: &str, to: &str) -> Result<(), String> {
     if matches!(from, "assets/scenes" | "assets/prefabs") {
-        return Err("不能重命名或移动编辑器文档根目录".into());
+        return Err("Cannot rename or move editor document root directory".into());
     }
     if from.ends_with(".scene.json") {
         let scenes_dir = crate::scene::DocKind::Scene.subdir();
         let parent = to.rsplit_once('/').map(|(parent, _)| parent).unwrap_or("");
         if parent != scenes_dir || !to.ends_with(".scene.json") {
             return Err(format!(
-                "场景文档必须留在 {scenes_dir}/ 根目录（编辑器按扁平目录枚举场景）"
+                "Scene documents must stay in {scenes_dir}/ root (editor enumerates scenes as flat directory)"
             ));
         }
     }
     if from.ends_with(".prefab.json") && !to.ends_with(".prefab.json") {
-        return Err("预制体必须保留 .prefab.json 后缀（否则资产树不再枚举它）".into());
+        return Err(
+            "Prefab must keep .prefab.json suffix (otherwise asset tree stops enumerating it)"
+                .into(),
+        );
     }
     Ok(())
 }
@@ -337,21 +343,21 @@ fn validate_name(name: &str) -> Result<(), String> {
         .chars()
         .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
     {
-        return Err(format!("文件名包含非法字符：{name}"));
+        return Err(format!("Filename contains illegal characters: {name}"));
     }
     if name.ends_with('.') || name.ends_with(' ') {
-        return Err(format!("文件名不能以点或空格结尾：{name}"));
+        return Err(format!("Filename cannot end with dot or space: {name}"));
     }
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     const RESERVED: [&str; 6] = ["CON", "PRN", "AUX", "NUL", "COM1", "LPT1"];
     if RESERVED.contains(&stem.as_str()) {
-        return Err(format!("Windows 保留文件名：{name}"));
+        return Err(format!("Windows reserved filename: {name}"));
     }
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// 引用改写
+// Reference rewriting
 // ---------------------------------------------------------------------------
 
 struct Renamer {
@@ -373,7 +379,7 @@ impl Renamer {
         }
     }
 
-    /// 清单里的 `scenes/foo.rscn` 按“同名 `.scene.json`”映射。
+    /// `scenes/foo.rscn` in manifest maps by "same-name `.scene.json`".
     fn map_manifest(&self, abs: &Path) -> Option<PathBuf> {
         if let Some(mapped) = self.map(abs) {
             return Some(mapped);
@@ -388,21 +394,21 @@ impl Renamer {
     }
 }
 
-/// 组件里持有**资产路径**的字段名（`prism-scene` 组件 schema 的全量清单）。
+/// Field names in components holding **asset paths** (full list from `prism-scene` component schema).
 ///
-/// 只有这些字段的字符串值参与引用改写：`.scene.json` 里其它字符串（`Name`、UI
-/// `Text.content`、材质/标签里恰好写着路径的文本）不是引用，改它们就是数据损坏。
+/// Only string values of these fields participate in reference rewriting: other strings in `.scene.json` (`Name`, UI
+/// `Text.content`, material / tag text that happens to look like a path) are not references, changing them is data corruption.
 ///
-/// 清单的真源在 `prism-scene::references`（cooker / 引擎 / 编辑器共用），
-/// 新增带路径的组件字段时只改那里；`asset_path_fields_cover_string_paths_in_schema`
-/// 会用 `prism-scene` 的注册表挡住漏加（不覆盖 `env_map` / `volume` / `prefab`
-/// 这类不以 `_path` 结尾的名字，所以别只靠测试）。
+/// True source in `prism-scene::references` (shared by cooker / engine / editor),
+/// when adding new path-carrying component field change only there; `asset_path_fields_cover_string_paths_in_schema`
+/// guards against omissions using `prism-scene` registry (does not cover `env_map` / `volume` / `prefab`
+/// names not ending in `_path`, so don't rely only on test).
 struct RewritePlan {
-    /// `(旧文档绝对路径, 改写后的 JSON)`。
+    /// `(old document absolute path, rewritten JSON)`.
     documents: Vec<(PathBuf, serde_json::Value)>,
-    /// 改写后的 `assets/scenes.json` 文本。
+    /// Rewritten `assets/scenes.json` text.
     manifest: Option<String>,
-    /// 内容变化或自身被移动的文档（相对项目根，新路径）。
+    /// Documents whose content changed or which were themselves moved (relative to project root, new path).
     affected: Vec<String>,
     references: usize,
 }
@@ -423,7 +429,7 @@ fn plan_rewrites(
         };
         let old_abs = lexical_abs(project_root, &entry.path);
         let mapped_abs = renamer.map(&old_abs).unwrap_or_else(|| old_abs.clone());
-        // 引用解析用旧目录；写给文档的路径用移动后的目录（目录整体重命名时两者不同）。
+        // Parse reference using old directory; write paths to document using directory after move (when directory renamed as whole the two differ).
         let old_dir = old_abs.parent().unwrap_or(project_root);
         let write_dir = mapped_abs.parent().unwrap_or(old_dir);
         let changed = rewrite_json(
@@ -455,7 +461,7 @@ fn plan_rewrites(
     })
 }
 
-/// 把计划的文档写回（路径按重命名映射到新位置）。
+/// Write planned document changes back (paths mapped to new locations after rename).
 fn apply_plan(project_root: &Path, plan: RewritePlan, renamer: &Renamer) -> Result<usize, String> {
     for (old_path, value) in plan.documents {
         let target = renamer.map(&old_path).unwrap_or(old_path);
@@ -463,16 +469,17 @@ fn apply_plan(project_root: &Path, plan: RewritePlan, renamer: &Renamer) -> Resu
     }
     if let Some(text) = plan.manifest {
         let path = crate::scene_manifest::manifest_path(project_root);
-        std::fs::write(&path, text).map_err(|e| format!("写入 {} 失败: {e}", path.display()))?;
+        std::fs::write(&path, text)
+            .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     }
     Ok(plan.references)
 }
 
-/// 递归改写文档里的资产路径引用。
+/// Recursively rewrite asset path references in documents.
 ///
-/// `field` 是当前字符串所在字段的名字（数组元素沿用外层字段名）。只有
-/// [`is_asset_path_field`] 认得的字段才当作引用；`None`（文档根或未命名的
-/// 嵌套值）一律不改。
+/// `field` is name of field current string is in (array elements use outer field name). Only
+/// fields recognized by [`is_asset_path_field`] treated as references; `None` (document root or unnamed
+/// nested value) never changed.
 fn rewrite_json(
     value: &mut serde_json::Value,
     resolve_dir: &Path,
@@ -750,9 +757,9 @@ fn manifest_references(
     }))
 }
 
-/// 清单路径（相对 `assets/`）去掉 `.scene.json` / `.rscn` 后的场景 stem。
+/// Manifest path (relative to `assets/`) scene stem after removing `.scene.json` / `.rscn`.
 ///
-/// 与 `build-scenes` 一致：两种后缀指向同一个场景，删掉任一形式都要清掉条目。
+/// Consistent with `build-scenes`: both suffixes point to same scene, deleting either form clears entry.
 fn scene_stem(entry_path: &str) -> Option<String> {
     let trimmed = entry_path.trim_start_matches("./");
     trimmed
@@ -769,9 +776,9 @@ fn stem_matches(target: &str, stem: &str, is_dir: bool) -> bool {
                 .is_some_and(|rest| rest.starts_with('/')))
 }
 
-/// 从 `assets/scenes.json` 删除指向被删场景的条目。
+/// Remove entries in `assets/scenes.json` pointing to deleted scene.
 ///
-/// JSON 没有注释可保，直接解析 → 过滤 → 写回（顺序与 enabled 不变）。
+/// JSON has no comments to preserve, parse → filter → write back directly (order and enabled unchanged).
 fn remove_manifest_entries(
     project_root: &Path,
     target_stem: &str,
@@ -804,10 +811,10 @@ fn all_docs(project_root: &Path) -> Vec<crate::scene::SceneEntry> {
 }
 
 // ---------------------------------------------------------------------------
-// 路径工具
+// Path utils
 // ---------------------------------------------------------------------------
 
-/// 把 `base` 与 `value` 组合并折叠 `.` / `..`，不要求路径已存在。
+/// Combine `base` and `value`, fold `.` / `..`, no requirement path already exists.
 fn lexical_abs(base: &Path, value: &str) -> PathBuf {
     let joined = if Path::new(value).is_absolute() {
         PathBuf::from(value)
@@ -927,7 +934,7 @@ mod tests {
         })
     }
 
-    /// 写一份 `assets/scenes.json`（新格式）。
+    /// Write an `assets/scenes.json` (new format).
     fn write_manifest(root: &Path, entries: &[(&str, &str)]) {
         let scenes: Vec<crate::scene_manifest::SceneListEntry> = entries
             .iter()
@@ -945,7 +952,7 @@ mod tests {
     fn normalizes_and_rejects_unsafe_paths() {
         assert_eq!(
             normalize_asset_path("assets/models/../models/a.gltf").unwrap_err(),
-            "路径不能包含 .."
+            "Path cannot contain .."
         );
         assert!(normalize_asset_path("D:/x").is_err());
         assert!(normalize_asset_path("assets/cooked/x.rscn").is_err());
@@ -1074,7 +1081,7 @@ mod tests {
         );
 
         let error = delete_asset(&root, "assets/models/new.gltf", false).unwrap_err();
-        assert!(error.contains("仍被"), "{error}");
+        assert!(error.contains("still referenced"), "{error}");
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1186,7 +1193,7 @@ mod tests {
         let result = rename_asset(&root, "assets/valley.hdr", "assets/sky.hdr").unwrap();
         assert_eq!(
             result.references_updated, 2,
-            "mesh_path 与 Text.font 是引用，Text.content 不是"
+            "mesh_path and Text.font are references, Text.content is not"
         );
 
         let text = std::fs::read_to_string(root.join("assets/scenes/demo.scene.json")).unwrap();
@@ -1202,7 +1209,7 @@ mod tests {
         );
         assert_eq!(
             components["prism_engine::ui::Text"]["font"], "assets/sky.hdr",
-            "字体是资产引用，重命名必须改写"
+            "Font is asset reference, rename must rewrite"
         );
         assert_eq!(value["entities"][0]["name"], "assets/valley.hdr");
         std::fs::remove_dir_all(&root).ok();
@@ -1216,7 +1223,7 @@ mod tests {
                 if field.kind == "string" && field.name.ends_with("_path") {
                     assert!(
                         is_asset_path_field(&field.name),
-                        "{}::{} 是路径字段，但没有登记进 ASSET_PATH_FIELDS",
+                        "{}::{} is a path field but not registered in ASSET_PATH_FIELDS",
                         ty.name,
                         field.name
                     );
@@ -1224,9 +1231,9 @@ mod tests {
             }
         }
 
-        // 不以 `_path` 结尾的引用字段靠显式登记，这里断言它们没被删掉。
+        // Reference fields not ending in `_path` rely on explicit registration, here assert they weren't removed.
         for name in ["env_map", "volume", "prefab", "font"] {
-            assert!(is_asset_path_field(name), "{name} 必须继续登记");
+            assert!(is_asset_path_field(name), "{name} must stay registered");
         }
         assert!(!is_asset_path_field("content"));
         assert!(!is_asset_path_field("name"));
@@ -1326,7 +1333,7 @@ mod tests {
         assert!(root.join("assets/actors/seat.prefab.json").is_file());
         assert!(!root.join("assets/models/chair/seat.prefab.json").exists());
 
-        // 就地改名、移回默认目录、再从默认目录移进子目录都应放行。
+        // In-place rename, move back to default dir, and move from default dir into subdir all allowed.
         rename_asset(
             &root,
             "assets/actors/seat.prefab.json",
@@ -1421,7 +1428,7 @@ mod tests {
             write_doc(&root.join(format!("assets/scenes/{name}.scene.json")), &doc).unwrap();
         }
 
-        // 删除场景文档本身不需要 force：manifest 条目会跟着一起清掉。
+        // Deleting scene document itself needs no force: manifest entry cleared along with it.
         let result = delete_asset(&root, "assets/scenes/intro.scene.json", true).unwrap();
         assert_eq!(result.references_updated, 1);
         assert!(result

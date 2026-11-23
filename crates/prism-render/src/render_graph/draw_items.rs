@@ -2,23 +2,23 @@
 
 use crate::managers::MeshHandle;
 
-/// 逐绘制的渲染状态（`Material` / `Renderer` 上那组决定管线状态的字段）。
+/// Per-draw render state (`Material` / `Renderer` fields determining pipeline state).
 ///
-/// 它同时是 `ForwardPass` 的管线缓存键：混用不同状态的绘制各自拿到正确的
-/// 剔除 / 深度写 / 混合配置，而描述符集合布局与推送常量在所有变体之间相同。
+/// It is also `ForwardPass` pipeline cache key: draws mixing different states each get correct
+/// cull / depth write / blend config, while descriptor set layout and push constants same across variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DrawState {
-    /// 剔除模式（`CullMode`）。
+    /// Cull mode (`CullMode`).
     pub cull_mode: prism_gfx::CullMode,
-    /// 渲染队列（`Material.renderQueue`），决定绘制顺序。
+    /// Render queue (`Material.renderQueue`), determines draw order.
     pub render_queue: i32,
-    /// 是否写深度（`_ZWrite`）。
+    /// Whether to write depth (`_ZWrite`).
     pub z_write: bool,
-    /// 源混合因子（`_SrcBlend`）。
+    /// Source blend factor (`_SrcBlend`).
     pub src_blend: prism_gfx::BlendMode,
-    /// 目标混合因子（`_DstBlend`）。
+    /// Destination blend factor (`_DstBlend`).
     pub dst_blend: prism_gfx::BlendMode,
-    /// 混合运算（`_BlendOp`）。
+    /// Blend operation (`_BlendOp`).
     pub blend_op: prism_gfx::BlendOp,
 }
 
@@ -28,7 +28,7 @@ impl Default for DrawState {
             cull_mode: prism_gfx::CullMode::Back,
             render_queue: prism_gfx::RenderQueue::GEOMETRY,
             z_write: true,
-            // 引擎的不透明默认值（与 `MeshRenderer::default` 保持一致）。
+            // Engine non-transparent default (consistent with `MeshRenderer::default`).
             src_blend: prism_gfx::BlendMode::One,
             dst_blend: prism_gfx::BlendMode::Zero,
             blend_op: prism_gfx::BlendOp::Add,
@@ -37,7 +37,7 @@ impl Default for DrawState {
 }
 
 impl DrawState {
-    /// 是否需要开启混合；用 `One` / `Zero` 表示不透明。
+    /// Whether to enable blend; uses `One` / `Zero` to mean non-transparent.
     pub fn blends(&self) -> bool {
         self.src_blend != prism_gfx::BlendMode::One
             || self.dst_blend != prism_gfx::BlendMode::Zero
@@ -51,11 +51,11 @@ impl DrawState {
 pub struct DrawItem {
     /// GPU mesh handle (from [`crate::managers::RenderMeshManager`]).
     pub mesh: MeshHandle,
-    /// 产生这个绘制项的 ECS 实体 id（`prism_ecs::Entity::id()`）。
+    /// ECS entity id that produced this draw item (`prism_ecs::Entity::id()`).
     ///
-    /// 渲染器本身不依赖 ECS；编辑器把选中的实体 id 交给
-    /// [`GraphRenderer::set_outline_entities`]，`ForwardPass` 据此给对应的
-    /// 网格画选中描边（#487）。程序化 / 测试绘制可用 `u32::MAX` 表示无实体。
+    /// Renderer itself does not depend on ECS; editor passes selected entity id to
+    /// [`GraphRenderer::set_outline_entities`], `ForwardPass` draws selection outline for
+    /// corresponding mesh (#487). Procedural / test draws use `u32::MAX` for no entity.
     pub entity_id: u32,
     /// Model matrix (world transform) for this instance.
     pub model: [[f32; 4]; 4],
@@ -65,26 +65,26 @@ pub struct DrawItem {
     /// via `mat_map` when building the draw list, so passes can push the
     /// slot directly without a per-draw `slot_of()` lookup.
     pub material: Option<u32>,
-    /// 是否写阴影贴图（`ShadowCastingMode::casts_shadows`）。
+    /// Whether to write shadow map (`ShadowCastingMode::casts_shadows`).
     pub cast_shadow: bool,
-    /// 是否在相机主通道可见（`ShadowsOnly` 为 `false`）。
+    /// Whether visible in camera main pass (`ShadowsOnly` is `false`).
     pub visible_in_main_pass: bool,
-    /// 阴影通道是否关闭背面剔除（`ShadowCastingMode::TwoSided`）。
-    /// `false` = 背面剔除（默认），`true` = 双面投射。只被 `ShadowMapPass` 读取。
+    /// Whether shadow pass disables back-face cull (`ShadowCastingMode::TwoSided`).
+    /// `false` = back-face cull (default), `true` = double-sided casting. Read only by `ShadowMapPass`.
     pub cast_shadow_two_sided: bool,
-    /// 管线状态（剔除 / 队列 / 深度写 / 混合），来自 `MeshRenderer`。
-    /// 阴影贴图管线忽略剔除与混合（固定双面、无混合写深度）。
+    /// Pipeline state (cull / queue / depth write / blend), from `MeshRenderer`.
+    /// Shadow map pipeline ignores cull and blend (fixed double-sided, no blend write depth).
     pub state: DrawState,
-    /// 世界空间 AABB（网格生命周期内算一次）；没有包围盒时保守地不剔除。
+    /// World-space AABB (computed once in mesh lifetime); without bounds conservatively not culled.
     ///
-    /// 主相机视锥剔除在提取阶段使用；光源视锥剔除（#526）在帧打包后用它
-    /// 判断是否还需要写阴影贴图。
+    /// Main camera frustum cull used in extract phase; light frustum cull (#526) after frame packing uses it
+    /// to decide whether still needs to write shadow map.
     pub world_bounds: Option<crate::culling::Aabb>,
-    /// 索引缓冲里的起始索引（#520 submesh）。非索引网格忽略。
+    /// Starting index in index buffer (#520 submesh). Non-indexed mesh ignores.
     pub index_start: u32,
-    /// 本次绘制使用的索引数；`None` = 整个网格（旧行为）。
+    /// Index count for this draw; `None` = entire mesh (legacy).
     ///
-    /// `Some(0)` 的绘制项会被渲染器跳过，方便调用方表达空 submesh。
+    /// Draw item with `Some(0)` skipped by renderer, lets caller express empty submesh.
     pub index_count: Option<u32>,
     /// Skinned draw (#560 P0-3): index of this draw's first bone-palette
     /// matrix inside the frame's bone SSBO (`ForwardPass::BONE_CAPACITY`).
@@ -92,27 +92,27 @@ pub struct DrawItem {
     /// `None` = static mesh; the vertex stage then skips the bone buffer
     /// entirely, so existing draws cost exactly what they did before.
     pub bone_offset: Option<u32>,
-    /// 纹理层 splat 的 4 个材质槽（#517）；`u32::MAX` = 该层缺失。
+    /// 4 material slots for texture-layer splat (#517); `u32::MAX` = that layer missing.
     pub splat_slots: [u32; 4],
-    /// 纹理层 splat 的 UV 平铺倍数；`0` = 不是 splat 绘制。
+    /// UV tiling factor for texture-layer splat; `0` = not a splat draw.
     pub splat_tiling: f32,
     /// Optional custom fragment shader handle (`None` = built-in `scene_frag.frag.spv`).
     pub shader: Option<crate::ShaderHandle>,
 }
 
 impl DrawItem {
-    /// 世界空间位置（取自 `model` 的平移列，列主序 `model[3][0..3]`）。
+    /// World-space position (taken from `model` translation column, column-major `model[3][0..3]`).
     pub fn world_position(&self) -> [f32; 3] {
         [self.model[3][0], self.model[3][1], self.model[3][2]]
     }
 }
 
-/// 按引擎的 `renderQueue` 规则给绘制列表排序。
+/// Sort draw list by engine `renderQueue` rule.
 ///
-/// - 队列值升序；相等时保持原有顺序（`sort_by` 是稳定排序）。
-/// - 队列大于 [`prism_gfx::RenderQueue::GEOMETRY_LAST`]（透明段）内部按与
-///   相机的距离**从远到近**，这样 alpha 混合的叠加顺序才正确。
-/// - 相机位置取 `eye`（世界空间）；不透明段不做距离排序。
+/// - Queue values ascending; ties keep original order (`sort_by` is stable).
+/// - Queue greater than [`prism_gfx::RenderQueue::GEOMETRY_LAST`] (transparent segment) internal sorted by
+///   distance to camera **far to near**, so alpha blend stacking order correct.
+/// - Camera position from `eye` (world space); opaque segment not distance-sorted.
 pub fn sort_draw_items(items: &mut [DrawItem], eye: [f32; 3]) {
     let distance_sq = |item: &DrawItem| {
         let p = item.world_position();
@@ -125,7 +125,7 @@ pub fn sort_draw_items(items: &mut [DrawItem], eye: [f32; 3]) {
             .cmp(&b.state.render_queue)
             .then_with(|| {
                 if b.state.render_queue > prism_gfx::RenderQueue::GEOMETRY_LAST {
-                    // 透明：远的先画。
+                    // Transparent: far drawn first.
                     distance_sq(b)
                         .partial_cmp(&distance_sq(a))
                         .unwrap_or(std::cmp::Ordering::Equal)
@@ -238,8 +238,8 @@ impl SpriteLight {
 
     /// A directional light (whole sprite multiplied by `color × intensity`).
     ///
-    /// 方向会归一化；零向量 / 非有限值回落到「向下」，这样着色器读到的永远是
-    /// 一个合法单位向量。
+    /// Direction will be normalized; zero vector / non-finite values fall back to "downward", so shader always reads
+    /// a legal identity vector.
     pub fn directional(direction: [f32; 2], color: [f32; 3], intensity: f32) -> Self {
         let direction = normalize_light_direction(direction);
         Self {
@@ -263,7 +263,7 @@ impl SpriteLight {
     }
 }
 
-/// 把 2D 光照方向归一化；零向量 / 非有限值回落到「向下」。
+/// Normalize 2D light direction; zero vector / non-finite values fall back to "downward".
 fn normalize_light_direction(direction: [f32; 2]) -> [f32; 2] {
     let length = (direction[0] * direction[0] + direction[1] * direction[1]).sqrt();
     if length.is_finite() && length > 1e-6 {
@@ -273,7 +273,7 @@ fn normalize_light_direction(direction: [f32; 2]) -> [f32; 2] {
     }
 }
 
-/// 把 `lights` 修剪到 [`SPRITE_LIGHT_MAX`]，强度高的优先（#611）。
+/// Prune `lights` to [`SPRITE_LIGHT_MAX`], higher intensity first (#611).
 pub fn trim_sprite_lights(lights: &mut Vec<SpriteLight>) {
     if lights.len() <= SPRITE_LIGHT_MAX {
         return;
@@ -285,10 +285,10 @@ pub fn trim_sprite_lights(lights: &mut Vec<SpriteLight>) {
 /// Disabled clip rect: `max < min`, which the sprite shader treats as "no clip".
 pub const NO_CLIP: [f32; 4] = [0.0, 0.0, -1.0, -1.0];
 
-/// 把作者的裁剪矩形规范成 `[min_x, min_y, max_x, max_y]`。
+/// Normalize author clip rect to `[min_x, min_y, max_x, max_y]`.
 ///
-/// 关闭、非有限值、或任一轴退化成零面积时返回 [`NO_CLIP`]——作者刚勾上
-/// `clip_enabled` 但还没填矩形时精灵不会凭空消失。
+/// Disabled, non-finite, or any axis collapsing to zero area returns [`NO_CLIP`] — author just checked
+/// `clip_enabled` but not yet filled rect, sprite will not disappear from empty.
 pub fn clip_bounds(enabled: bool, rect: [f32; 4]) -> [f32; 4] {
     if !enabled || rect.iter().any(|value| !value.is_finite()) {
         return NO_CLIP;

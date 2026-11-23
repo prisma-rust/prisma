@@ -1,12 +1,12 @@
-//! 动画图的 cooked 格式**编码器**（#560 P1）。
+//! Animation graph cooked format **encoder** (#560 P1).
 //!
-//! 解码端在 `prism_asset::formats_anim_graph`（运行时只解码，字节布局写在那里）。
-//! cooker 这一侧负责：
+//! Decode side in `prism_asset::formats_anim_graph` (runtime only decodes, byte layout written there).
+//! Cooker side is responsible for:
 //!
-//! - 解析作者的 `*.animgraph.json`（[`parse_anim_graph_json`]）；
-//! - 把连线里的**节点名字**解析成下标，拒绝未知 / 自连 / 成环的图；
-//! - 校验每种节点必需的字段（剪辑数、采样点数、参数名、状态机路径）；
-//! - 编码 `.rag`。任何一个节点不合法都返回 `Err` / `None`，不写出半份图。
+//! - Parse author's `*.animgraph.json` ([`parse_anim_graph_json`]);
+//! - Parse **node name** in connections into index, reject unknown / self-loop / cyclic graph;
+//! - Validate required fields per node type (clip count, sample point count, parameter name, state machine path);
+//! - Encode `.rag`. Any illegal node returns `Err` / `None`, not writing partial graph.
 
 use prism_asset::formats_anim_graph::{
     AnimGraphInfo, GraphInputInfo, GraphNodeInfo, GraphNodeKind, GraphParameterInfo,
@@ -15,7 +15,7 @@ use prism_asset::formats_anim_graph::{
 };
 use serde_json::Value;
 
-/// 编码 `.rag`。结构不合法时返回 `None`。
+/// Encode `.rag`. Return `None` when structure illegal.
 pub fn encode_rag(graph: &AnimGraphInfo) -> Option<Vec<u8>> {
     if graph.parameters.len() > MAX_GRAPH_PARAMETERS
         || graph.nodes.is_empty()
@@ -91,7 +91,7 @@ pub fn encode_rag(graph: &AnimGraphInfo) -> Option<Vec<u8>> {
             }
         }
 
-        // v2：每样本速度表。
+        // V2: per-sample speed table.
         if node.sample_speeds.len() > MAX_GRAPH_CLIPS {
             return None;
         }
@@ -108,7 +108,7 @@ pub fn encode_rag(graph: &AnimGraphInfo) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 解析作者的 `*.animgraph.json`。
+/// Parse author's `*.animgraph.json`.
 ///
 /// ```json
 /// {
@@ -126,9 +126,9 @@ pub fn encode_rag(graph: &AnimGraphInfo) -> Option<Vec<u8>> {
 /// }
 /// ```
 ///
-/// `type` 接受 `clip_player` / `blend_space_1d` / `blend_space_2d` /
+/// `type` accept  `clip_player` / `blend_space_1d` / `blend_space_2d` /
 /// `blend_stack` / `slot` / `layered_blend` / `cached_pose` /
-/// `state_machine` / `output`。`inputs` 里的字符串等价于权重 1 的连线。
+/// `state_machine` / `output`. Strings inside `inputs` equivalent to weight 1 connections.
 pub fn parse_anim_graph_json(document: &Value) -> Result<AnimGraphInfo, String> {
     let parameters = parse_parameters(document)?;
     let nodes_json = document
@@ -232,7 +232,7 @@ pub fn parse_anim_graph_json(document: &Value) -> Result<AnimGraphInfo, String> 
         });
     }
 
-    // 解析连线名字 -> 下标。
+    // Parse connection name -> index.
     let mut resolved: Vec<GraphNodeInfo> = Vec::with_capacity(nodes.len());
     for node in nodes {
         let mut inputs = Vec::with_capacity(node.inputs.len());

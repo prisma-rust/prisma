@@ -1,12 +1,12 @@
-//! 运行时诊断 HUD（无 UI 框架依赖）。
+//! Runtime diagnostic HUD (no UI framework dependency).
 //!
-//! egui 编辑器移除后，帧率 / 渲染模式 / 调试状态的屏幕显示由本模块接管：
+//! After egui editor removed, screen display of frame rate / render mode / debug state taken over by this module:
 //! It only appends text commands to the existing ECS UI overlay ([`prism_ui_draw::UiOverlayInput`]),
-//! 由 `prism-render` 的 `ui_overlay` 通道统一光栅化，因此不需要任何外部 UI
-//! 框架或额外渲染 pass。
+//! rasterized uniformly via `prism-render` `ui_overlay` channel, so no external UI
+//! framework or extra render pass.
 //!
-//! 快捷键（`prism-app` 处理）：
-//! - `F3`：显示 / 隐藏 HUD。
+//! Hotkeys (`prism-app` handles):
+//! - `F3`: show / hide HUD.
 
 use prism_engine::render_settings::{pbr_flag_label, RenderMode, RenderSettings};
 use prism_ui_draw::UiOverlayInput;
@@ -20,18 +20,18 @@ const FONT_SIZE: f32 = 15.0;
 const TEXT_COLOR: [f32; 4] = [0.92, 0.92, 0.92, 0.95];
 const WARN_COLOR: [f32; 4] = [1.0, 0.72, 0.3, 1.0];
 
-/// 运行时 HUD 的显示状态。
+/// Runtime HUD display state.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DebugHud {
-    /// `F3` 切换。
+    /// `F3` toggles.
     pub show: bool,
 }
 
 impl DebugHud {
-    /// 把当前帧的诊断文本追加到 UI 叠加。
+    /// Append current frame diagnostic text to UI overlay.
     ///
-    /// `width` / `height` 为交换链逻辑尺寸（像素），用于把 HUD 放在左上角
-    /// 以及居中绘制「无相机」提示。
+    /// `width` / `height` are swapchain logical size (pixels), used to place HUD at top-left
+    /// and draw centered "no camera" hint.
     pub fn append(
         &self,
         ui: &mut UiOverlayInput,
@@ -48,9 +48,9 @@ impl DebugHud {
         let mut lines = Vec::with_capacity(5);
         let mut line = format!("{:.1} ms  |  {:.0} FPS", stats.frame_time_ms, stats.fps);
         match stats.gpu_timings.as_ref().filter(|gpu| gpu.supported) {
-            // 有整帧区间时用整帧时间，否则回退到 pass 之和：两种口径必须能区分。
+            // When full-frame interval exists use full-frame time, otherwise fall back to pass sum: two metrics must be distinguishable.
             Some(gpu) => line.push_str(&format!("  |  GPU {:.1} ms", gpu.frame_or_total_ms())),
-            // 设备不支持时间戳：显式写 n/a，不拿 CPU 墙钟冒充 GPU 时间。
+            // Device does not support timestamps: explicitly write n/a, do not fake GPU time with CPU wall clock.
             None => line.push_str("  |  GPU n/a"),
         }
         if settings.render_mode == RenderMode::PathTrace {
@@ -99,7 +99,7 @@ impl DebugHud {
             pbr_flag_label(settings.debug_flags)
         ));
 
-        // 最贵的 3 个 pass：与渲染图面板同源（上一帧读回的 timestamp 结果）。
+        // Most expensive 3 passes: same source as render graph panel (last frame readback timestamp results).
         if let Some(gpu) = stats.gpu_timings.as_ref().filter(|gpu| gpu.supported) {
             if !gpu.passes.is_empty() {
                 let mut passes: Vec<_> = gpu.passes.iter().collect();
@@ -110,8 +110,8 @@ impl DebugHud {
                     .map(|pass| format!("{} {:.1}", pass.name, pass.ms))
                     .collect();
                 let suffix = if passes.len() > top.len() { " …" } else { "" };
-                // 整帧区间里没有被 pass 覆盖的部分：barrier、图外 dispatch、拷贝等。
-                // 只有确实拿到区间时才显示，否则 0 会被误读成「没有图外开销」。
+                // Part not covered by pass inside full-frame interval: barrier, out-of-graph dispatch, copy, etc.
+                // Only show when really got interval, otherwise 0 would be misread as "no out-of-graph overhead".
                 let gap = if gpu.has_frame_span() && gpu.unmeasured_ms() >= 0.05 {
                     format!(" (+{:.1} unmeasured)", gpu.unmeasured_ms())
                 } else {
@@ -222,7 +222,7 @@ mod tests {
         );
     }
 
-    /// 整帧区间存在时，HUD 显示整帧时间，并暴露没有被 pass 覆盖的部分。
+    /// When full-frame interval exists, HUD shows full-frame time, exposes part not covered by pass.
     #[test]
     fn hud_reports_the_frame_span_and_the_unmeasured_gap() {
         let stats = RenderStats {

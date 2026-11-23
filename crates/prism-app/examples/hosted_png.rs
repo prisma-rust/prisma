@@ -1,14 +1,14 @@
-//! 离屏渲染 → PNG：不创建窗口、不需要 WSI（Wayland/X11 surface），
-//! 完全走 [`App::hosted`] 的离屏目标 + 回读。
+//! Offscreen render -> PNG: no window created, no WSI (Wayland/X11 surface),
+//! fully via [`App::hosted`] offscreen target + readback.
 //!
-//! 用法：
+//! Usage:
 //! ```bash
 //! cargo run -p prism-app --example hosted_png -- \
 //!     assets/scenes/default.scene.json /tmp/opencode/offscreen.png [frames]
 //! ```
 //!
-//! 用途：在没有可用 surface（例如 turnip + Xvfb 无 DRI3、或 CI/headless 机）的
-//! 环境里验证 GPU 渲染路径、抓素材截图、给美术调参做前后对比。
+//! Purpose: verify GPU render path in environment without available surface (e.g. turnip + Xvfb no DRI3, or CI/headless machine),
+//! capture material screenshots, before/after comparison for art tuning.
 
 use std::path::Path;
 
@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("load scene '{scene}': {error}"))?;
     app.start_hosted(width, height);
 
-    // 渲染线程是异步的：逐帧 request_frame → 等回读（最多等 5s/帧）。
+    // Render thread is async: per frame request_frame -> wait readback (wait up to 5s/frame).
     let mut frame = None;
     for index in 0..frames.max(1) {
         app.host_tick(true);

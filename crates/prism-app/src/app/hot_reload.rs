@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-/// `PRISMA_HOT_RELOAD` 的取值是否表示「打开」（#495）。
+/// Whether `PRISMA_HOT_RELOAD` value means "on" (#495).
 ///
-/// 接受 `1` / `true` / `yes` / `on`（大小写、首尾空白都忽略）；其它值（含 `0`、
-/// 空串、未设置）一律算关。发布版默认关，所以运行时既不起线程也不 stat 文件。
+/// Accepts `1` / `true` / `yes` / `on` (case-insensitive, leading/trailing whitespace ignored); other values (including `0`,
+/// empty string, unset) all count as off. Release build defaults off, so runtime neither starts thread nor stats files.
 pub(super) fn hot_reload_enabled(raw: Option<&str>) -> bool {
     raw.map(|value| {
         matches!(
@@ -16,10 +16,10 @@ pub(super) fn hot_reload_enabled(raw: Option<&str>) -> bool {
     .unwrap_or(false)
 }
 
-/// `PRISMA_HOT_RELOAD=1` 时给 `assets/` 下所有 `.pak` 建一个轮询器（#495）。
+/// When `PRISMA_HOT_RELOAD=1`, build a poller for all `.pak` under `assets/` (#495).
 ///
-/// 发布版默认不建：没有线程、没有 stat，行为与之前完全一致。接受 `1` / `true` /
-/// `yes` / `on`（大小写无关），其它值（含 `0`、空串）都当关。
+/// Release build defaults off: no thread, no stat, behavior completely same as before. Accepts `1` / `true` /
+/// `yes` / `on` (case-insensitive), other values (including `0`, empty string) all count as off.
 pub(super) fn spawn_pak_watcher() -> Option<prism_engine::scene::hot_reload::HotReloadWatcher> {
     let raw = std::env::var("PRISMA_HOT_RELOAD").ok();
     if !hot_reload_enabled(raw.as_deref()) {

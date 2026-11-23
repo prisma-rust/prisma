@@ -1,25 +1,25 @@
-//! 玩家存档（#984）：一个**买了就存档、重开还在**的最小持久化层。
+//! Player save (#984): a minimal persistence layer that "saves on purchase, opens on restart".
 //!
-//! 引擎自带的 `scene_state.json` 只存场景（相机 / 变换 / 灯光），玩家的进度
-//! （钓到几条鱼、卖了多少钱、解锁了什么）没有地方放，只能每个工程自己写文件——
-//! 于是每个工程都要各自处理「存哪、怎么原子写、版本升级怎么办」。这里统一掉：
+//! Engine built-in `scene_state.json` only stores scene (camera / transform / light), player progress
+//! (fish caught, money earned, unlocks) has nowhere to go, each project had to write own file — so each project
+//! handled "where to save, how to write atomically, how to upgrade" separately. Here unified:
 //!
-//! - 位置由 [`user_data_dir`] 决定（Windows `%APPDATA%`、macOS
-//!   `Application Support`、Linux `XDG_DATA_HOME`），Android 由宿主把
-//!   `PATH` 指到 `filesDir`（[`ENV_OVERRIDE`]）。
-//! - 内容是一张 **字符串键值表**（[`UserData`]），带 `version`。引擎不理解
-//!   业务 schema，工程自己把结构序列化成字符串塞进来，升级时自己判断版本。
-//! - 写入是**原子**的（临时文件 + rename），中途崩溃不会留下半个存档。
-//! - 读到比 [`USER_DATA_VERSION`] 更高的版本时**不覆盖**：返回错误并保持原文件，
-//!   避免新版存档被旧版客户端清空。
+//! - Location decided by [`user_data_dir`] (Windows `%APPDATA%`, macOS
+//!   `Application Support`, Linux `XDG_DATA_HOME`), Android host points
+//!   `PATH` to `filesDir` ([`ENV_OVERRIDE`]).
+//! - Content is a **string key-value table** ([`UserData`]) with `version`. Engine does not understand
+//!   business schema, project serializes structure into strings itself, checks version on upgrade.
+//! - Writes are **atomic** (temp file + rename), crash midway leaves no half save.
+//! - Reading version higher than [`USER_DATA_VERSION`] **does not overwrite**: returns error and keeps original file,
+//!   avoiding new-version save wiped by old client.
 //!
-//! 用法（工程侧）：
+//! Usage (project side):
 //!
 //! ```ignore
 //! world.insert_resource(UserStore::open(save_path("my-game")));
-//! // 读
+//! // Read
 //! let caught = store.get("caught").unwrap_or("0");
-//! // 写（内存 + 落盘）
+//! // Write (memory + disk)
 //! store.set("caught", "3");
 //! store.flush()?;
 //! ```
@@ -30,22 +30,22 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 存档格式版本。字段语义变化时才加（新增键不需要）。
+/// Save format version. Bump only when field semantics change (new keys do not need).
 pub const USER_DATA_VERSION: u32 = 1;
 
-/// 覆盖用户数据根目录的环境变量（Android 宿主 / 便携版 / 测试用）。
+/// Env var overriding user data root directory (Android host / portable / tests).
 pub const ENV_OVERRIDE: &str = "PRISMA_USER_DATA";
 
-/// 落盘的文件名：放在每个工程自己的目录下。
+/// Save filename: under each project own directory.
 pub const FILE_NAME: &str = "player_data.json";
 
-/// 存档文件内容。
+/// Save file content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserData {
-    /// [`USER_DATA_VERSION`]；缺省按 1 处理（第一版没有写版本号也能读）。
+    /// [`USER_DATA_VERSION`]; missing treated as 1 (first version did not write version).
     #[serde(default = "default_version")]
     pub version: u32,
-    /// 字符串键值表。键由工程自己约定（`"caught"` / `"coins"` / `"quest.mayor"`）。
+    /// String key-value table. Keys by project convention (`"caught"` / `"coins"` / `"quest.mayor"`).
     #[serde(default)]
     pub entries: BTreeMap<String, String>,
 }
@@ -76,10 +76,10 @@ impl UserData {
         self.entries.remove(key)
     }
 
-    /// 解析文件内容。
+    /// Parse file content.
     ///
-    /// 比当前引擎更新的存档返回 `Err`——调用方据此**不要写回**，否则新版
-    /// 玩家降级回旧版客户端就会丢档。
+    /// Save newer than current engine returns `Err` — caller **must not write back**, otherwise new-version
+    /// player downgrading to old client loses save.
     pub fn parse(text: &str) -> Result<Self, String> {
         let data: Self = serde_json::from_str(text).map_err(|error| error.to_string())?;
         if data.version > USER_DATA_VERSION {
@@ -92,15 +92,15 @@ impl UserData {
     }
 
     pub fn to_json(&self) -> String {
-        // 存档给人看得懂、可手改；只写两个字段，不怕字段顺序变。
+        // Save human-readable and hand-editable; only two fields, no worry about field order changes.
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
-/// 用户数据根目录（每个工程一个子目录）。
+/// User data root directory (one subdir per project).
 ///
-/// 顺序：`PRISMA_USER_DATA` → 平台惯例目录。返回的路径**不保证存在**，
-/// 由 [`UserStore::flush`] 按需创建。
+/// Order: `PRISMA_USER_DATA` → platform conventional directory. Returned path **not guaranteed to exist**,
+/// created on demand by [`UserStore::flush`].
 pub fn user_data_dir(project: &str) -> PathBuf {
     let root = if let Some(override_dir) = std::env::var_os(ENV_OVERRIDE) {
         PathBuf::from(override_dir)
@@ -128,12 +128,12 @@ pub fn user_data_dir(project: &str) -> PathBuf {
     root.join(sanitize(project))
 }
 
-/// 某个工程的存档文件路径。
+/// Save file path for a project.
 pub fn save_path(project: &str) -> PathBuf {
     user_data_dir(project).join(FILE_NAME)
 }
 
-/// 工程名里可能有斜杠 / 冒号，落盘前统一替换，避免越出用户数据目录。
+/// Project name may contain slashes / colons, replaced before writing to disk to avoid escaping user data dir.
 fn sanitize(project: &str) -> String {
     let cleaned: String = project
         .chars()
@@ -151,26 +151,26 @@ fn sanitize(project: &str) -> String {
     }
 }
 
-/// 运行时存档状态：内存里的键值表 + 它属于哪个文件。
+/// Runtime save state: in-memory key-value table + which file it belongs to.
 ///
-/// 作为 ECS resource 挂在 `World` 上，所以 `GameWorld`（host 后端）和引擎
-/// 系统都能直接读写，不需要额外通道。
+/// Attached to `World` as ECS resource, so `GameWorld` (host backend) and engine
+/// systems can read / write directly, no extra channel needed.
 #[derive(Debug, Clone, Default)]
 pub struct UserStore {
     path: Option<PathBuf>,
     data: UserData,
-    /// 读到的是更高版本的存档：只读，不覆盖。
+    /// Read a higher-version save: read-only, not overwritten.
     read_only: bool,
     dirty: bool,
 }
 
 impl UserStore {
-    /// 只放内存（不上盘）：单元测试 / 不支持文件系统的宿主。
+    /// Memory only (not on disk): unit tests / hosts without file system.
     pub fn in_memory() -> Self {
         Self::default()
     }
 
-    /// 绑定一个存档文件并读取（文件不存在 = 空存档，不算错误）。
+    /// Bind a save file and read (missing file = empty save, not an error).
     pub fn open(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let mut store = Self {
@@ -181,7 +181,7 @@ impl UserStore {
             Ok(text) => match UserData::parse(&text) {
                 Ok(data) => store.data = data,
                 Err(error) => {
-                    // 解析失败：保留原文件（可能来自更新的版本），本次只读。
+                    // Parse failure: keep original file (may be from newer version), read-only this time.
                     log::warn!(
                         "player data {}: {error}; keeping the file untouched",
                         path.display()
@@ -230,14 +230,14 @@ impl UserStore {
         removed
     }
 
-    /// 有没有还没落盘的改动。
+    /// Whether there are unflushed changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
 
-    /// 写入磁盘（临时文件 + rename，断电不会留半个存档）。
+    /// Write to disk (temp file + rename, power failure leaves no half save).
     ///
-    /// 没有绑定路径、只读、或没有改动时直接返回 `Ok(false)`。
+    /// No bound path, read-only, or no changes returns `Ok(false)` directly.
     pub fn flush(&mut self) -> io::Result<bool> {
         if self.read_only || !self.dirty {
             return Ok(false);

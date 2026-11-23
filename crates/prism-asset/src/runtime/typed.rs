@@ -1,12 +1,12 @@
-//! 类型化资源包装器，包含每个烘焙格式的 `impl Resource`。
+//! Typed asset wrappers, containing `impl Resource` for each baked format.
 //!
-//! 这里的每个类型都是烘焙资源（RTEX、RMES、RMAT、SPIR-V、RSCN）的运行时表示。
-//! `ResourceManager::load::<T>(id)` / `get::<T>(handle)` 使用这些 impl
-//! 将原始 `.pak` 字节反序列化为结构化数据。
+//! Each type here is runtime representation of a baked asset (RTEX, RMES, RMAT, SPIR-V, RSCN).
+//! `ResourceManager::load::<T>(id)` / `get::<T>(handle)` use these impls
+//! to deserialize raw `.pak` bytes into structured data.
 //!
-//! 解码器位于共享的 [`crate::formats`] 模块中，运行时因此不依赖 cooker。
-//! RSCN 场景格式由引擎的 `SceneLoader` 惰性解析，
-//! 因此 `SceneAsset` 仅持有原始字节。
+//! Decoders live in shared [`crate::formats`] module, so runtime does not depend on cooker.
+//! RSCN scene format lazily parsed by engine `SceneLoader`,
+//! therefore `SceneAsset` only holds raw bytes.
 
 use crate::core::{AssetId, AssetType};
 use crate::formats::{
@@ -27,7 +27,7 @@ use crate::runtime::{Asset, RuntimeError};
 ///
 /// Holds the decoded [`RtexInfo`] (width, height, mip chain, format byte).
 /// The renderer's `RenderTextureManager` consumes mip-0 for the RGBA8 path;
-/// BC-compressed formats are 已支持 by the 运行时 upload path.
+/// BC-compressed formats are already supported by the runtime upload path.
 #[derive(Debug, Clone)]
 pub struct TextureAsset {
     pub info: RtexInfo,
@@ -253,10 +253,10 @@ impl Asset for SceneAsset {
 mod tests;
 
 // ---------------------------------------------------------------------------
-// 骨骼 / 蒙皮 / 动画剪辑（#560 P0）
+// Skeleton / skin / animation clip (#560 P0)
 // ---------------------------------------------------------------------------
 
-/// Cooked 骨骼（RSKL）。解码后只剩纯数据：运行时由 `Animator` / 蒙皮着色器消费。
+/// Cooked skeleton (RSKL). After decode only pure data: consumed at runtime by `Animator` / skinning shader.
 #[derive(Debug, Clone)]
 pub struct SkeletonAsset {
     pub info: SkeletonInfo,
@@ -284,7 +284,7 @@ impl Asset for SkeletonAsset {
     }
 }
 
-/// Cooked 蒙皮网格（RSKN）：每顶点 4 骨影响 + submesh + bind pose。
+/// Cooked skinned mesh (RSKN): 4-bone influence per vertex + submesh + bind pose.
 #[derive(Debug, Clone)]
 pub struct SkinnedMeshAsset {
     pub info: SkinnedMeshInfo,
@@ -312,14 +312,14 @@ impl Asset for SkinnedMeshAsset {
     }
 }
 
-/// Cooked 动画剪辑（RANI）。
+/// Cooked animation clip (RANI).
 #[derive(Debug, Clone)]
 pub struct AnimClipAsset {
     pub info: AnimClipInfo,
     raw: Vec<u8>,
 }
 
-/// 解码后的 `.rasm`：状态 / 转移 / 条件（#560 P1）。
+/// Decoded `.rasm`: states / transitions / conditions (#560 P1).
 #[derive(Debug, Clone)]
 pub struct StateMachineAsset {
     pub info: crate::formats_state_machine::StateMachineInfo,
@@ -349,7 +349,7 @@ impl Asset for StateMachineAsset {
     }
 }
 
-/// 解码后的 `.rag`：动画图参数 / 节点 / 连线（#560 P1）。
+/// Decoded `.rag`: animation graph parameters / nodes / connections (#560 P1).
 #[derive(Debug, Clone)]
 pub struct AnimGraphAsset {
     pub info: AnimGraphInfo,

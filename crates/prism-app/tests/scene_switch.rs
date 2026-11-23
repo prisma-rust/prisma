@@ -1,8 +1,8 @@
-//! 换场语义的端到端测试（#482）：`App::load_scene_json_file` 复用同一个
-//! `Engine`——旧场景卸载、`Persistent` 实体保留、不会出现「所有东西两份」。
+//! End-to-end test of scene-switch semantics (#482): `App::load_scene_json_file` reuses same
+//! `Engine`---old scene unloaded, `Persistent` entities retained, no "everything duplicated".
 //!
-//! 这些用例不启动渲染线程（`start_hosted` 之前 `render_shared` 为 `None`），
-//! 所以没有 GPU 也能跑。
+//! These cases do not start render thread (before `start_hosted` `render_shared` is `None`),
+//! so can run without GPU.
 
 use std::path::{Path, PathBuf};
 
@@ -61,10 +61,10 @@ fn switching_scenes_unloads_the_previous_one_instead_of_duplicating_it() {
     assert_eq!(
         names,
         vec!["Main Camera", "Second Thing"],
-        "换场必须卸载旧场景，而不是把两份都留着"
+        "scene switch must unload old scene, not keep both"
     );
 
-    // 同一个场景再加载一次也不重复；engine 还是同一个实例。
+    // Same scene loaded again does not duplicate; engine is same instance.
     let engine_before = app.engine_mut().scene_generation();
     app.load_scene_json_file(&second).expect("reload second");
     let mut names = named_entities(&mut app);
@@ -72,7 +72,7 @@ fn switching_scenes_unloads_the_previous_one_instead_of_duplicating_it() {
     assert_eq!(names, vec!["Main Camera", "Second Thing"]);
     assert!(
         app.engine_mut().scene_generation() > engine_before,
-        "每次换场 / 卸载都要推进场景代数"
+        "each scene switch / unload advances scene generation"
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -89,7 +89,7 @@ fn persistent_entities_survive_a_scene_switch() {
     let mut app = App::hosted(prism_engine::config::AppConfig::default());
     app.load_scene_json_file(&first).expect("load first");
 
-    // 把第一场的实体标成 `Persistent`（游戏侧等价 `DontDestroyOnLoad`）。
+    // Mark first scene entity `Persistent` (game side equivalent `DontDestroyOnLoad`).
     let persistent = {
         let world = app.engine_mut().world_mut();
         let entity = world
@@ -108,15 +108,15 @@ fn persistent_entities_survive_a_scene_switch() {
     assert_eq!(
         names,
         vec!["Main Camera", "Scene A", "Scene B"],
-        "Persistent 实体必须活过换场"
+        "Persistent entity must survive scene switch"
     );
-    // 同一个实体句柄仍然有效（engine 没有被重建）。
+    // Same entity handle still valid (engine not rebuilt).
     assert!(
         app.engine_mut()
             .world()
             .get::<prism_engine::scene::components::Name>(persistent)
             .is_some(),
-        "复用引擎时 Persistent 实体的句柄不应失效"
+        "Persistent entity handle should not invalidate when reusing engine"
     );
 
     std::fs::remove_dir_all(&dir).ok();

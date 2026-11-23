@@ -1,23 +1,23 @@
-//! Prisma 平台应用层
+//! Prisma platform application layer
 //!
-//! 拥有事件循环、窗口和帧编排——连接平台输入、引擎（ECS/逻辑）和
-//! 渲染器（Vulkan）的胶水层。
+//! Owns event loop, window and frame orchestration---glue layer connecting platform input, engine (ECS/logic) and
+//! renderer (Vulkan) glue layer.
 //!
-//! ## 窗口后端（feature）
+//! ## Window backend (feature)
 //!
-//! - `winit-backend`（默认）：winit 事件循环 + `ApplicationHandler`。
-//! - `win32-native`（默认关，仅 Windows）：Win32 原生窗口 + 自己的消息循环
-//!   （[`App::run_win32`]）。启用它必须关掉 `winit-backend`，否则本 crate
-//!   里仍会有 winit 代码参与编译（体积省不下来）。两个都开时以 winit 为准。
+//! - `winit-backend` (default): winit event loop + `ApplicationHandler`.
+//! - `win32-native` (default off, Windows only): Win32 native window + own message loop
+//!   ([`App::run_win32`]). Enable it must turn off `winit-backend`, otherwise this crate
+//!   still has winit code compiled (size not saved). Both on then winit takes precedence.
 //!
-//! 两个后端共用同一份引擎/渲染逻辑（[`App::tick_frame`] / [`App::shutdown`]），
-//! 差别只在「窗口怎么来、事件怎么派发」。
+//! Both backends share same engine/render logic ([`App::tick_frame`] / [`App::shutdown`]),
+//! difference only in "how window comes, how events dispatched".
 //!
-//! ## 用户项目接入（完全 ECS 体验）
+//! ## User project access (full ECS experience)
 //!
-//! 引擎初始化、事件循环、渲染全部由本层包办；用户项目通过
-//! [`app`] 拿到 [`App`]，用 builder 方法注册自己的 ECS 内容后
-//! 启动事件循环：
+//! Engine init, event loop, render all handled by this layer; user project via
+//! [`app`] gets [`App`], uses builder methods to register own ECS content then
+//! starts event loop:
 //!
 //! ```no_run
 //! use prism_app::app;
@@ -32,49 +32,49 @@
 //! # impl Default for MyState { fn default() -> Self { MyState } }
 //! ```
 //!
-//! - [`App::add_system`] / [`App::insert_resource`]：注册 ECS 系统与资源；
-//! - [`App::engine_mut`]：完全 ECS 访问（world / schedule / timer）；
-//! - [`App::run`]：桌面入口（自建 EventLoop / Win32 消息循环）；
-//! - [`App::run_on`]：Android 入口（外部 winit EventLoop，仅 `winit-backend`）。
+//! - [`App::add_system`] / [`App::insert_resource`]: register ECS systems and resources;
+//! - [`App::engine_mut`]: full ECS access (world / schedule / timer);
+//! - [`App::run`]: desktop entry (own EventLoop / Win32 message loop);
+//! - [`App::run_on`]: Android entry (external winit EventLoop, `winit-backend` only).
 //!
-//! UI 用引擎自研 ECS 组件 UI（`Node` / `Style` / `Text`），随主渲染
-//! 通道每帧绘制。
+//! UI uses engine self-developed ECS component UI (`Node` / `Style` / `Text`), with main render
+//! channel drawn each frame.
 //!
-//! ## 中性扩展点（调试宿主 / 未来宿主）
+//! ## Neutral extension point (debug host / future host)
 //!
-//! 本 crate 不依赖任何具体 UI 框架。外部宿主可
-//! 通过 [`App::with_frame_hook`] 注入 [`FrameHook`]：
+//! This crate does not depend on any specific UI framework. External host can
+//! inject [`FrameHook`] via [`App::with_frame_hook`]:
 //!
-//! - [`FrameHook::on_window_event`]：抢先消费窗口事件（返回 `true` 表示吃掉）；
-//! - [`FrameHook::on_tick`]：每帧访问 world / 渲染设置 / 统计，并可经
-//!   [`RenderShared::send_overlay_message`] 向渲染线程投递**类型擦除**的
-//!   overlay 消息；
-//! - [`FrameHook::overlay`]：提供渲染线程侧的
-//!   `prism_render::external_overlay::SwapchainOverlay` 工厂。
+//! - [`FrameHook::on_window_event`]: consume window events first (return `true` means consumed);
+//! - [`FrameHook::on_tick`]: access world / render settings / stats each frame, and can via
+//!   [`RenderShared::send_overlay_message`] deliver **type-erased**
+//!   overlay messages;
+//! - [`FrameHook::overlay`]: provides render-thread-side
+//!   `prism_render::external_overlay::SwapchainOverlay` factory.
 //!
-//! 加 UI 功能时**不要**把具体 UI 框架依赖加回本 crate——扩展
-//! hook 接口即可。
+//! When adding UI functions **do not** add specific UI framework dependency back into this crate---extend
+//! hook interface suffices.
 //!
-//! ## 架构（多线程）
+//! ## Architecture (multi-thread)
 //!
 //! ```text
-//! 主线程                       渲染线程
+//! Main thread                              Render thread
 //!   ────────────                        ────────────
 //!   about_to_wait:                       loop:
 //!     engine.fixed_update × N              wait_for_packet()
 //!     engine.update                        begin_frame()
 //!     engine.late_update                   execute()
-//!     audio.update                         present()    ← 垂直同步在此
+//!     audio.update                         present()    <- vertical sync here
 //!     extract_frame_packet ──packet──►   │
 //!     frame_hook.on_tick ──overlay_msg──►│
 //!
-//! resumed(): 主线程创建窗口（快速，~数毫秒）→ 生成 渲染 线程（内部异步
-//!   构建 GraphRenderer，~数百毫秒，不阻塞窗口事件）→ 立即返回
-//! suspended(): stop 渲染 线程（销毁渲染器、释放 Vulkan 表面）
+//! resumed(): main thread creates window (fast, ~ms) -> generates render thread (internal async
+//!   builds GraphRenderer, ~hundreds ms, does not block window events) -> returns immediately
+//! suspended(): stop render thread (destroy renderer, release Vulkan surface)
 //! ```
 //!
-//! 启动期资产解析经 asset_requests/asset_results 通道完成：主线程 CPU 段
-//! 准备上传请求，渲染线程 GPU 段上传并回传句柄。
+//! Startup asset parsing via asset_requests/asset_results channel: main thread CPU side
+//! prepares upload requests, render thread GPU side uploads and returns handles.
 
 #[cfg(any(target_os = "android", test))]
 mod android_assets;
@@ -113,11 +113,11 @@ mod screenshot;
 use prism_engine::config::AppConfig;
 
 #[cfg(all(feature = "win32-native", not(windows)))]
-compile_error!("prism-app: `win32-native` 只在 Windows 目标上有效");
+compile_error!("prism-app: `win32-native` valid on Windows target only");
 
 #[cfg(not(any(feature = "winit-backend", all(windows, feature = "win32-native"))))]
 compile_error!(
-    "prism-app: 至少启用一个窗口后端（`winit-backend`，或 Windows 上的 `win32-native`）"
+    "prism-app: enable at least one window backend (`winit-backend`, or `win32-native` on Windows)"
 );
 
 pub use app::{App, PointerLockPolicy, Subsystem};
@@ -134,23 +134,23 @@ pub use prism_platform::{
 };
 pub use render_shared::{FrameImage, RenderShared, RenderStats};
 
-/// 用户项目 Android 入口所需的平台句柄；具体窗口库类型由 app 层封装。
+/// Platform handle needed for user project Android entry; specific window lib type encapsulated by app layer.
 #[cfg(all(target_os = "android", feature = "winit-backend"))]
 pub use winit::platform::android::activity::AndroidApp;
 
-/// 把 APK assets 复制到内部存储并切换 cwd。
+/// Copy APK assets to internal storage and switch cwd.
 ///
-/// [`run_on_android`] 会在构造 [`App`] 前自动调用；若用户项目需要更早访问
-/// APK 资源，也可自行调用。
+/// [`run_on_android`] called automatically before [`App`] construction; if user project needs earlier access
+/// to APK resources, can also call itself.
 #[cfg(target_os = "android")]
 pub use android_assets::init_android_assets;
 
-/// 从应用资源目录读取配置；文件系统访问属于应用层，解析逻辑由 engine
-/// 的 `AppConfig::from_ini` 提供。
+/// Read config from app asset directory; filesystem access belongs to app layer, parsing logic by engine
+/// of `AppConfig::from_ini` provides.
 ///
-/// 优先 `assets/settings.ini`；不存在时回退读旧的 `assets/settings.toml`
-/// （并提示迁移）。路径经 `prism_engine::asset_paths` 解析（cwd / 可执行文件
-/// 目录 / 父目录 / `PRISMA_ASSET_ROOT`），因此从任意目录启动 exe 都能读到配置。
+/// Prefer `assets/settings.ini`; when absent fall back to read old `assets/settings.toml`
+/// (and hint migration). Path resolved via `prism_engine::asset_paths` (cwd / executable
+/// directory / parent dir / `PRISMA_ASSET_ROOT`), thus launching exe from any directory can read config.
 pub fn load_config() -> AppConfig {
     let _span = prism_engine::util::timing::span("app::load_config");
     for (name, legacy) in [("settings.ini", false), ("settings.toml", true)] {
@@ -178,11 +178,11 @@ pub fn load_config() -> AppConfig {
     AppConfig::default()
 }
 
-/// 创建应用并完成全部引擎初始化（配置加载、场景、运行时 init）。
+/// Create app and complete engine init (config load, scene, runtime init).
 ///
-/// 用户项目在此之后注册 ECS 内容（`add_system` / `insert_resource` /
-/// `engine_mut`），然后 [`App::run`]（桌面）或 [`App::run_on`]（Android）。
-/// 编辑器等宿主可用 [`App::with_frame_hook`] 注入 [`FrameHook`]。
+/// User project registers ECS content after this (`add_system` / `insert_resource` /
+/// `engine_mut`), then [`App::run`] (desktop) or [`App::run_on`] (Android).
+/// Editor etc host can inject [`FrameHook`] via [`App::with_frame_hook`].
 pub fn app() -> App {
     App::with_config(load_config())
 }
@@ -191,23 +191,23 @@ pub fn app() -> App {
 // Android entry helper
 // ===========================================================================
 
-/// 在 Android 上启动应用（供用户项目的 `android_main` 调用）。
+/// Start app on Android (for user project `android_main` call).
 ///
-/// 用户项目传入一个构造 [`App`] 的闭包，而不是已经构造好的 `App`：
-/// 本函数会先把 APK assets 复制到内部存储、切换 cwd、注入启动配置，
-/// 然后才调用闭包。这样闭包里的 [`app`] 能按与桌面完全相同的
-/// `assets/...` 路径加载 `scenes.pak`、`settings.ini` 和环境贴图。
+/// User project passes a closure constructing [`App`], not already-constructed `App`:
+/// This function first copies APK assets to internal storage, switches cwd, injects launch config,
+/// then calls closure. Closure `[`app`]` can load `scenes.pak`, `settings.ini`, env texture
+/// with `assets/...` paths same as desktop.
 ///
-/// 用户项目的 cdylib 导出 `#[no_mangle] fn android_main(...)`，在此调用
-/// 本函数，JNI 样板（android_logger、crash handler、AssetManager 拷贝、
-/// EventLoop 构建）由本函数包办：
+/// User project cdylib exports `#[no_mangle] fn android_main(...)`, called here,
+/// this function, JNI boilerplate (android_logger, crash handler, AssetManager copy,
+/// EventLoop construction) all handled by this function:
 ///
 /// ```no_run
 /// use prism_app::{app, run_on_android};
 ///
 /// fn build_app() -> prism_app::App {
 ///     let mut app = app();
-///     // ...注册 ECS 内容（add_system / insert_resource）...
+///     // ...register ECS content (add_system / insert_resource)...
 ///     app
 /// }
 ///
@@ -218,7 +218,7 @@ pub fn app() -> App {
 /// }
 /// ```
 ///
-/// 与桌面 [`App::run`] 等价，但使用外部传入的 winit EventLoop。
+/// Equivalent to desktop [`App::run`], but uses externally passed winit EventLoop.
 #[cfg(all(target_os = "android", feature = "winit-backend"))]
 pub fn run_on_android<F>(
     build_app: F,

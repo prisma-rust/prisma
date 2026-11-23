@@ -169,8 +169,6 @@ pub struct GraphNodeSnapshot {
     /// Clip path of the current state of the state machine node; empty string for other nodes.
     pub state_clip: String,
 }
-    pub state_clip: String,
-}
 
 /// A runtime summary of a Slot's Montage ([`AnimGraphEvaluator::montage_snapshots`]).
 #[derive(Debug, Clone, PartialEq)]

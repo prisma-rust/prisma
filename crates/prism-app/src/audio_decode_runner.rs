@@ -6,10 +6,10 @@
 //! The decoded [`AudioData`] is sent back to the main thread where it can be
 //! passed to [`AudioEngine::play`].
 //!
-//! # 状态：骨架（半接线）
+//! # Status: skeleton (half-wired)
 //!
-//! `audio_decode_thread_main` 已被 `App::start_audio_decode_thread` 启动，
-//! 但音频播放系统尚未调用，多数变体暂未构造。保留以抑制 dead_code 警告。
+//! `audio_decode_thread_main` started by `App::start_audio_decode_thread`,
+//! but audio playback system not yet called, most variants not yet constructed. Retained to suppress dead_code warning.
 
 use flume::{Receiver, Sender};
 use prism_audio::AudioData;

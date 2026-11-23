@@ -1,26 +1,26 @@
-//! Cozy Fishing 库目标。
+//! Cozy Fishing library target.
 //!
-//! 两种形态（`Cargo.toml` 的 `[features]`）：
+//! Two forms (`[features]` in `Cargo.toml`):
 //!
-//! - **player**（默认）：桌面端由 `src/main.rs` 调用 [`build_app`]；Android 端由
-//!   `android_main` 导出 JNI 入口（产出 `libfishing.so`）。这一形态链接引擎。
-//! - **preview-module**：编辑器 Play 时加载的动态模块。只依赖 `prism-scene` /
-//!   `prism-game-api`（plugin 后端），**不链接引擎**，跨 C ABI 读写宿主世界。
+//! - **player** (default): desktop side calls [`build_app`] from `src/main.rs`; Android side
+//!   exports `android_main` JNI entry (produces `libfishing.so`). This form links engine.
+//! - **preview-module**: dynamic module loaded by editor Play. Only depends on `prism-scene` /
+//!   `prism-game-api` (plugin backend), **does not link engine**, reads/writes host world across C ABI.
 //!
-//! 玩法代码（`game::*`）两种形态共用：`tick(&mut state, &mut GameWorld, dt)`
-//! 里拿到的 `GameWorld` 在宿主内是零拷贝的借用，在模块里是 ABI 调用。
+//! Gameplay code (`game::*`) shared by both forms: `tick(&mut state, &mut GameWorld, dt)`
+//! gets a zero-copy borrow of `GameWorld` in host, ABI calls inside module.
 
 pub mod game;
 
 // ===========================================================================
-// 玩家形态
+// Player form
 // ===========================================================================
 
-/// 构造应用：引擎从 `assets/scenes.pak` 加载湖面场景，本项目注册玩法 system。
+/// Build app: engine loads lake scene from `assets/scenes.pak`, this project registers gameplay systems.
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
-    // 音频子系统（`prism-app/audio`，feature 默认关，工程在 `[features] player`
-    // 里打开）：一次性音效（上钩水花）走 `GameWorld::play_sound`，需要混音器。
+    // Audio subsystem (`prism-app/audio`, feature default off, enabled in project `[features] player`
+    // ): one-shot sounds (hook splash) go through `GameWorld::play_sound`, need mixer.
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio);
@@ -34,7 +34,7 @@ pub fn build_app() -> prism_app::App {
 }
 
 // ===========================================================================
-// 编辑器加载的 preview 模块
+// Preview module loaded by editor
 // ===========================================================================
 
 #[cfg(feature = "preview-module")]
@@ -66,8 +66,8 @@ mod preview {
         game::boat::tick(&mut state.boat, world, dt);
         game::fishing::tick(&mut state.fishing, world, dt);
         if first_tick {
-            // 第一次 tick 会把 `data/lake_layers.json` 里的图层全部 spawn 出来：
-            // 这条日志是「工程代码真的跑起来了」最直接的证据。
+            // First tick spawns all texture layers from `data/lake_layers.json`:
+            // this log is most direct evidence that "project code actually ran".
             let layers = state
                 .world
                 .as_ref()
@@ -89,7 +89,7 @@ mod preview {
 // Android JNI entry point
 // ===========================================================================
 
-/// GameActivity 加载本库后调用的入口。
+/// Entry called after GameActivity loads this library.
 ///
 /// GameActivity's native glue resolves this symbol via `dlsym`, so it must keep
 /// C linkage and an unmangled name; a plain Rust `fn` is not exported.

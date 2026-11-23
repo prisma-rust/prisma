@@ -1,35 +1,35 @@
-//! 引擎层的**按键绑定**：把「哪个动作」和「按哪个键」分开。
+//! Engine-layer **key binding**: separates "which action" from "which key pressed".
 //!
-//! 两条规则：
+//! Two rules:
 //!
-//! 1. **默认不绑定**。引擎自己没有「全局快捷键」——HUD / 调试图 / 色调映射 / PBR 隔离
-//!    只是 `RenderSettings` 上的字段，**谁想要谁绑**。宿主（prism-app 的调试层、编辑器）
-//!    用 [`KeyBindings::default_engine_debug`] 显式声明；项目不声明就一个键都不占。
-//! 2. **引擎绑了的键先问项目**。宿主分发前先调 `FrameHook::on_platform_event`，钩子
-//!    返回 true 才轮到引擎的绑定生效——项目永远有最终发言权。
+//! 1. **No default bindings**. Engine itself has no "global shortcuts" — HUD / debug graph / tone map / PBR isolation
+//!    are just fields on `RenderSettings`, **whoever wants binds them**. Host (prism-app debug layer, editor)
+//!    declares via [`KeyBindings::default_engine_debug`]; project declaring nothing occupies no keys.
+//! 2. **Engine-bound keys ask project first**. Before host dispatch it first calls `FrameHook::on_platform_event`,
+//!    hook returns true then engine bindings apply — project always has final say.
 
 use crate::input::KeyCode;
 
-/// 引擎内置的调试动作。
+/// Engine built-in debug actions.
 ///
-/// 这些动作只改 [`crate::render_settings::RenderSettings`] 的调试字段，
-/// 默认**没有任何按键绑定**（见模块文档）。
+/// These actions only change debug fields of [`crate::render_settings::RenderSettings`],
+/// by default **no key bindings** (see module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EngineAction {
-    /// 开关运行时诊断 HUD。
+    /// Toggle runtime diagnostics HUD.
     ToggleHud,
-    /// 轮换 PostPass 调试图（0 = 正常 / 1 = 深度 / 2 = 视空间法线）。
+    /// Cycle PostPass debug graph (0 = normal / 1 = depth / 2 = view-space normal).
     CycleDebugTarget,
-    /// 轮换色调映射算子（0 = Reinhard / 1 = ACES / 2 = passthrough）。
+    /// Cycle tone map operator (0 = Reinhard / 1 = ACES / 2 = passthrough).
     CycleTonemap,
-    /// PBR 分量隔离：只显示第 `bit` 个分量（0..=14），15 位是蒙皮权重热力图。
+    /// PBR component isolation: show only component `bit` (0..=14), bit 15 is skinning weight heatmap.
     IsolatePbrComponent(u32),
 }
 
-/// 数字键 → PBR 分量。两套语义只差 Shift，所以只写一张表。
+/// Number keys → PBR component. Two semantics differ only by Shift, so one table.
 ///
-/// 不按 Shift：1..=9 → 0..=8，0 → 9。
-/// 按 Shift：1..=5 → 10..=14，6 → 15（蒙皮权重热力图），其余数字键不绑。
+/// Without Shift: 1..=9 → 0..=8, 0 → 9.
+/// With Shift: 1..=5 → 10..=14, 6 → 15 (skinning weight heatmap), other number keys unbound.
 fn digit_bindings(shift: bool) -> Vec<(KeyCode, u32)> {
     let digits = [
         KeyCode::Digit1,
@@ -62,31 +62,31 @@ fn digit_bindings(shift: bool) -> Vec<(KeyCode, u32)> {
         .collect()
 }
 
-/// 一条绑定：某个按键触发某个动作。
+/// One binding: a key triggers an action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyBinding {
     pub key: KeyCode,
     pub action: EngineAction,
 }
 
-/// 一张绑定表。空表是默认值。
+/// A binding table. Empty table is default value.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeyBindings {
     bindings: Vec<KeyBinding>,
 }
 
 impl KeyBindings {
-    /// 空表：引擎一个键都不占。
+    /// Empty table: engine occupies no keys.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// 宿主调试层用的默认绑定（prism-app 的 `engine-debug` feature 调用它）。
+    /// Default bindings for host debug layer (prism-app `engine-debug` feature calls this).
     ///
-    /// F3 = HUD，Tab = 调试图，T = 色调映射，1..=9 = PBR 分量 0..=8，
-    /// Shift+1..=Shift+6 = PBR 分量 9..=14。字母移动键一个都不占。
+    /// F3 = HUD, Tab = debug graph, T = tone map, 1..=9 = PBR components 0..=8,
+    /// Shift+1..=Shift+6 = PBR components 9..=14. Letter movement keys all unbound.
     ///
-    /// 这张表不会自动生效：项目不开调试层、或在钩子里消费事件，就能完全接管这些键。
+    /// This table does not auto-apply: if project does not enable debug layer, or consumes event in hook, it can fully take over these keys.
     pub fn default_engine_debug() -> Self {
         let mut bindings = Vec::new();
         bindings.push(KeyBinding {
@@ -101,8 +101,8 @@ impl KeyBindings {
             key: KeyCode::KeyT,
             action: EngineAction::CycleTonemap,
         });
-        // 不按 Shift：`1..=9` 是分量 0..=8，`0` 是分量 9（和键盘上数字的排列
-        // 一致，也和引擎历史上那套 PBR 隔离快捷键一致）。
+        // Without Shift: `1..=9` are components 0..=8, `0` is component 9 (consistent with keyboard number layout
+        // and engine historical PBR isolation shortcuts).
         for (key, bit) in digit_bindings(false) {
             bindings.push(KeyBinding {
                 key,
@@ -112,12 +112,12 @@ impl KeyBindings {
         Self { bindings }
     }
 
-    /// 宿主调试层的绑定，按 Shift 状态给出两套数字键语义。
+    /// Host debug layer bindings, two sets of number-key semantics by Shift state.
     ///
-    /// 不按 Shift 时 `1..=9, 0` 是 PBR 分量 0..=9；按 Shift 时 `1..=5` 是 10..=14、
-    /// `6` 是蒙皮权重热力图（第 15 位）。字母键与其余功能键不受 Shift 影响。
+    /// Without Shift `1..=9, 0` are PBR components 0..=9; with Shift `1..=5` are 10..=14,
+    /// `6` is skinning weight heatmap (bit 15). Letter keys and other function keys unaffected by Shift.
     ///
-    /// 把 Shift 作为参数而不是第二条表，是因为它只改数字键的**含义**，不改绑定集合。
+    /// Passing Shift as parameter rather than a second table is because it only changes number key **meaning**, not binding set.
     pub fn engine_debug(shift: bool) -> Self {
         let mut bindings = Self::default_engine_debug();
         bindings
@@ -129,23 +129,23 @@ impl KeyBindings {
         bindings
     }
 
-    /// 绑定一个键；同一个键重复绑定时以**后加入**的为准。
+    /// Bind a key; when same key bound repeatedly **last added** wins.
     pub fn bind(&mut self, key: KeyCode, action: EngineAction) -> &mut Self {
         self.bindings.push(KeyBinding { key, action });
         self
     }
 
-    /// 是否有任何绑定。
+    /// Whether any binding exists.
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
     }
 
-    /// 全部绑定（顺序即加入顺序；查表时后者覆盖前者）。
+    /// All bindings (order is insertion order; lookup uses later overriding earlier).
     pub fn iter(&self) -> impl Iterator<Item = &KeyBinding> {
         self.bindings.iter()
     }
 
-    /// 查一个键触发的动作；重复绑定时取最后加入的那条。
+    /// Look up action triggered by a key; with duplicate bindings takes latest added.
     pub fn action_for(&self, key: KeyCode) -> Option<EngineAction> {
         self.bindings
             .iter()
@@ -187,10 +187,10 @@ fn f_key(index: u32) -> KeyCode {
     }
 }
 
-/// 平台层虚拟键码（`prism_platform::Key::to_vk()`，Win32 `VK_*` 契约）→ 引擎键码。
+/// Platform-layer virtual key code (`prism_platform::Key::to_vk()`, Win32 `VK_*` contract) → engine key code.
 ///
-/// 换算只吃一个 `u32`，所以放在引擎里：两个窗口后端共用同一张表，并且可测。
-/// 没进表的键保留原始码（`KeyCode::Other(vk)`），项目按字面量认。
+/// Conversion takes only a `u32`, so placed in engine: both window backends share same table, and testable.
+/// Keys not in table keep raw code (`KeyCode::Other(vk)`), project recognizes by literal.
 pub fn key_code_from_vk(vk: u32) -> KeyCode {
     match vk {
         0x57 => KeyCode::KeyW,
@@ -224,7 +224,7 @@ pub fn key_code_from_vk(vk: u32) -> KeyCode {
 mod tests {
     use super::*;
 
-    /// 默认绑定表是**空的**：引擎不许在没被要求时占任何键。
+    /// Default binding table is **empty**: engine may not occupy any key when not requested.
     #[test]
     fn engine_binds_no_keys_by_default() {
         let bindings = KeyBindings::empty();
@@ -234,7 +234,7 @@ mod tests {
         }
     }
 
-    /// 宿主调试层的绑定覆盖 F3 / Tab / T / 数字键，且不碰字母移动键。
+    /// Host debug layer bindings cover F3 / Tab / T / number keys, and do not touch letter movement keys.
     #[test]
     fn host_debug_bindings_cover_the_documented_keys() {
         let bindings = KeyBindings::default_engine_debug();
@@ -271,11 +271,15 @@ mod tests {
             KeyCode::KeyE,
             KeyCode::Space,
         ] {
-            assert_eq!(bindings.action_for(key), None, "{key:?} 不该被调试层占用");
+            assert_eq!(
+                bindings.action_for(key),
+                None,
+                "{key:?} should not be occupied by debug layer"
+            );
         }
     }
 
-    /// `Key::to_vk` 的契约（Win32 虚拟键码）→ 引擎键码。
+    /// `Key::to_vk` contract (Win32 virtual key code) → engine key code.
     #[test]
     fn virtual_key_codes_map_to_engine_keys() {
         assert_eq!(key_code_from_vk(0x57), KeyCode::KeyW);

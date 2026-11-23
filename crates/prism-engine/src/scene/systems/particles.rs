@@ -1,27 +1,27 @@
-//! 世界空间 CPU 粒子模拟（#501 Phase 1）。
+//! World-space CPU particle simulation (#501 Phase 1).
 //!
-//! 数据侧只有作者组件 [`ParticleSystem`]；活着的粒子保存在运行时组件
-//! [`ParticleEmitter`] 里，**不进** `.scene.json` / RSCN（和播放头、`SpriteRef`
-//! 一样的约定）。
+//! Data side only has author component [`ParticleSystem`]; live particles stored in runtime component
+//! [`ParticleEmitter`], **not in** `.scene.json` / RSCN (same convention as playhead, `SpriteRef`).
+//! convention).
 //!
-//! 设计取舍：
+//! Design tradeoffs:
 //!
-//! - **CPU 模拟 + 实例化 billboard**：先做与 ECS / 场景格式一致的版本，
-//!   GPU（compute + indirect draw）留 Phase 2；
-//! - 粒子在**世界空间**积分，发射器移动不会拖走已飞出的粒子；初速度方向按
-//!   发射器当前的旋转换算；
-//! - 出生时按 `start_speed` / `start_size` / `lifetime` 的区间各取一个随机值；
-//!   颜色 / 尺寸 / 速度偏移都按年龄在作者曲线上求值（提取或积分时算，不在模拟里
-//!   存曲线状态，这样改作者数据立刻生效）；
-//! - 可选碰撞（#501）：`collision = true` 时，粒子按自身半径被推出带
-//!   [`Collider`] 的实体表面（盒 / 球 / 胶囊）和 [`TerrainData`] 高度场，
-//!   法向按 `collision_bounce` 反弹、切向按 `collision_friction` 衰减；
-//! - 随机源是每个发射器独立的 `xorshift32`（种子 = 实体 id），所以同一场景
-//!   每次加载的粒子分布一致——比 `rand` 依赖更轻，也让单测可复现；
-//! - `dt` 上限 0.1s：编辑器卡一下不会让粒子瞬移穿过整个场景。
+//! - **CPU simulation + instanced billboard**: first version consistent with ECS / scene format,
+//!   GPU (compute + indirect draw) left for Phase 2;
+//! - Particles integrate in **world space**, emitter movement does not drag already-flying particles; initial velocity
+//!   direction computed from emitter current rotation;
+//! - At spawn picks a random value from each `start_speed` / `start_size` / `lifetime` range;
+//!   color / size / velocity offsets sampled from author curves by age (computed at extraction or integration, not stored
+//!   as curve state in simulation, so editing author data takes effect immediately);
+//! - Optional collision (#501): with `collision = true`, particles pushed out by own radius from entity surfaces with
+//!   [`Collider`] (box / sphere / capsule) and [`TerrainData`] height field,
+//!   normal reflected by `collision_bounce`, tangential damped by `collision_friction`;
+//! - Random source is per-emitter independent `xorshift32` (seed = entity id), so same scene
+//!   loads with consistent particle distribution — lighter dependency than `rand`, also unit-test reproducible;
+//! - `dt` clamped to 0.1s: editor stutter will not teleport particles across whole scene.
 //!
-//! 系统跑在 `Engine::update` 的调度里、`hierarchy_system` 之前（和关键帧动画
-//! 并排），所以同一帧的提取看到的已经是推进后的粒子。
+//! System runs during `Engine::update` scheduling, before `hierarchy_system` (alongside keyframe animation
+//! system), so same-frame extraction sees already-advanced particles.
 
 use prism_ecs::{Entity, World};
 
@@ -31,43 +31,43 @@ use crate::scene::systems::hierarchy::is_active_in_hierarchy;
 use crate::scene::systems::terrain::{Heightfield, TerrainData};
 use std::sync::Arc;
 
-/// 单帧最大模拟步长（秒）。更大的 `dt` 被截断，避免卡顿后粒子瞬移。
+/// Max simulation step per frame (seconds). Larger `dt` clamped to avoid post-stutter teleport.
 pub const MAX_STEP: f32 = 0.1;
 
-/// 单个存活粒子（世界空间）。
+/// Single live particle (world space).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle {
-    /// 世界空间位置。
+    /// World-space position.
     pub position: glam::Vec3,
-    /// 世界空间速度（单位 / 秒）。
+    /// World-space velocity (units / sec).
     pub velocity: glam::Vec3,
-    /// 已经存活的时间（秒）。
+    /// Time already alive (seconds).
     pub age: f32,
-    /// 总寿命（秒）；`age >= lifetime` 时被回收。
+    /// Total lifetime (seconds); recycled when `age >= lifetime`.
     pub lifetime: f32,
-    /// 世界单位半径。
+    /// Radius in world units.
     pub size: f32,
 }
 
-/// 发射器的运行时状态（活粒子 + 发射计时 + 随机源）。
+/// Runtime state of an emitter (live particles + emission timer + random source).
 ///
-/// 每次场景加载都重置；不进作者格式。
+/// Reset on every scene load; not in author format.
 #[derive(Debug, Default, Clone)]
 pub struct ParticleEmitter {
-    /// 存活粒子（容量复用，不每帧重建）。
+    /// Live particles (capacity reused, not rebuilt each frame).
     pub particles: Vec<Particle>,
-    /// 发射累加器（不足一个粒子时保留小数）。
+    /// Emission accumulator (keeps fraction when not enough for one particle).
     pub accumulator: f32,
-    /// 当前发射循环内的时间（秒）。
+    /// Time within current emission loop (seconds).
     pub cycle_time: f32,
-    /// 本循环的 `burst` 是否已经发射过。
+    /// Whether `burst` of this loop already emitted.
     pub emitted_burst: bool,
-    /// `xorshift32` 状态；0 表示还没播种。
+    /// `xorshift32` state; 0 means not yet seeded.
     pub rng: u32,
 }
 
 impl ParticleEmitter {
-    /// 用实体 id 播种：同一场景每次加载的粒子分布一致。
+    /// Seed with entity id: same scene loads with consistent particle distribution.
     pub fn seeded(entity: Entity) -> Self {
         Self {
             particles: Vec::new(),
@@ -80,11 +80,11 @@ impl ParticleEmitter {
 }
 
 fn seed_from_entity(entity: Entity) -> u32 {
-    // 0 是 xorshift 的非法状态，这里强制非 0。
+    // 0 is illegal xorshift state, here force non-zero.
     entity.id().wrapping_mul(2_654_435_761).max(1)
 }
 
-/// `xorshift32` → `[0, 1)`。
+/// `xorshift32` → `[0, 1)`.
 fn next_unit(rng: &mut u32) -> f32 {
     let mut x = *rng;
     if x == 0 {
@@ -97,7 +97,7 @@ fn next_unit(rng: &mut u32) -> f32 {
     (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// 区间取值 `[min, max]`（非有限 / 倒序时回落到 `fallback`）。
+/// Range value `[min, max]` (falls back to `fallback` when non-finite / reversed).
 fn range(range: [f32; 2], t: f32, fallback: f32) -> f32 {
     ParticleSystem::random_range(range, t, fallback)
 }
@@ -111,7 +111,7 @@ fn sanitize_vec3(v: [f32; 3]) -> glam::Vec3 {
 }
 
 fn random_unit(rng: &mut u32) -> glam::Vec3 {
-    // 拒绝采样：球内均匀随机点归一化；命中概率 ~52%，重试几次就够。
+    // Rejection sample: normalize random point in sphere; hit rate ~52%, a few retries enough.
     for _ in 0..4 {
         let x = next_unit(rng) * 2.0 - 1.0;
         let y = next_unit(rng) * 2.0 - 1.0;
@@ -125,7 +125,7 @@ fn random_unit(rng: &mut u32) -> glam::Vec3 {
     glam::Vec3::Y
 }
 
-/// 发射器局部空间的出生偏移与初速度方向。
+/// Spawn offset and initial velocity direction in emitter local space.
 fn spawn_local(
     shape: ParticleShape,
     radius: f32,
@@ -152,8 +152,8 @@ fn spawn_local(
             (offset, random_unit(rng))
         }
         ParticleShape::Cone => {
-            // 圆锥绕发射器本地 +Y：先在球面上取一个点，再按 half-angle
-            // 把极角压到 [0, cone]。
+            // Cone around emitter local +Y: first pick point on sphere surface, then compress
+            // polar angle to [0, cone] by half-angle.
             let cos_max = cone_degrees.clamp(0.0, 180.0).to_radians().cos();
             let z = 1.0 - next_unit(rng) * (1.0 - cos_max);
             let phi = next_unit(rng) * std::f32::consts::TAU;
@@ -189,9 +189,9 @@ fn spawn_particle(
     });
 }
 
-/// 推进所有 `ParticleSystem` 实体：积分已有粒子、按 emission 规则发射新粒子。
+/// Advance all `ParticleSystem` entities: integrate existing particles, emit new per emission rule.
 ///
-/// 返回本帧结束时存活的粒子总数（编辑器 / 测试用）。
+/// Return total live particles at frame end (for editor / tests).
 pub fn particle_system(world: &mut World, dt: f32) -> usize {
     if !dt.is_finite() || dt < 0.0 {
         return 0;
@@ -204,8 +204,8 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
         .map(|(entity, _)| entity)
         .collect();
 
-    // #501：碰撞形状每帧快照一次；没有发射器开碰撞时也能接受这点开销
-    // （通常场景只有个位数 collider）。
+    // #501: collision shapes snapshot once per frame; can still accept this overhead even with no emitter collision
+    // (usually scene has only a few colliders).
     let colliders: Vec<WorldShape> = world
         .query::<Collider>()
         .filter_map(|(entity, collider)| {
@@ -214,12 +214,12 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
                 .map(|transform| WorldShape::new(collider, &transform.0))
         })
         .collect();
-    // #501：地形高度场用同样的每帧快照；`TerrainData` 由地形运行时系统写入。
+    // #501: terrain height field uses same per-frame snapshot; `TerrainData` written by terrain runtime system.
     let terrains = TerrainShape::from_world(world);
 
     let mut alive = 0usize;
     for entity in entities {
-        // 作者组件可能刚被删除；先拷一份，避免借用冲突。
+        // Author component may have just been deleted; copy first to avoid borrow conflict.
         let Some(system) = world.get::<ParticleSystem>(entity).cloned() else {
             continue;
         };
@@ -228,7 +228,7 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
             .map(|t| t.0)
             .unwrap_or(glam::Mat4::IDENTITY);
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
-        // 无效矩阵（NaN / 零缩放）时按单位变换处理，别把粒子射到无穷远。
+        // Invalid matrix (NaN / zero scale) treated as identity transform, don't shoot particles to infinity.
         let rotation = if rotation.is_finite() {
             rotation.normalize()
         } else {
@@ -263,8 +263,8 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
     alive
 }
 
-/// 本帧快照的一块地形高度场（#501）。`TerrainData` 已经解析好 `.raw`，
-/// 这里只保留采样需要的 `Arc` 和世界变换，避免在粒子循环里反复读 ECS。
+/// One frame snapshot of a terrain height field (#501). `TerrainData` already parsed `.raw`,
+/// here only keeps `Arc` and world transform needed for sampling, avoiding re-reading ECS inside particle loop.
 #[derive(Clone)]
 struct TerrainShape {
     origin: glam::Vec3,
@@ -296,8 +296,8 @@ impl TerrainShape {
             .collect()
     }
 
-    /// 粒子在地形覆盖范围内且低于地表时，沿高度场法线推出到地表上方。
-    /// 只处理水平覆盖范围（与 `terrain_sample` 一致，不支持旋转地形）。
+    /// When particle within terrain coverage and below surface, push out along height field normal to above surface.
+    /// Only handles horizontal coverage (consistent with `terrain_sample`, no rotated terrain).
     fn push_out(&self, point: glam::Vec3, radius: f32) -> Option<(glam::Vec3, glam::Vec3)> {
         let local = glam::Vec2::new(point.x - self.origin.x, point.z - self.origin.z);
         if local.x.abs() > self.half.x || local.y.abs() > self.half.y {
@@ -329,10 +329,10 @@ fn apply_contact(
     }
 }
 
-/// 把一个粒子推出所有相交的碰撞体，并按法向 / 切向分别处理弹跳与摩擦。
+/// Push one particle out of all intersecting colliders and handle bounce / friction by normal / tangent.
 ///
-/// 多次推出是必要的：角落 / 凹槽里可能同时碰到两个形状；每次推出都会用新的
-/// 位置继续测试，直到所有形状都满足（形状数很少，不做空间索引）。
+/// Multiple pushes are necessary: corners / grooves can touch two shapes at once; each push uses new
+/// position to continue testing until all shapes satisfied (few shapes, no spatial index).
 fn collide_particle(
     system: &ParticleSystem,
     particle: &mut Particle,
@@ -374,12 +374,12 @@ fn step(
     terrains: &[TerrainShape],
 ) {
     if !system.playing {
-        // 暂停：粒子停在原地，也不再积累发射计数。
+        // Paused: particles stay in place, emission count not accumulated.
         return;
     }
 
-    // 1. 积分 + 回收。
-    //    阻尼按「每秒衰减 drag 比例」处理：`(1 - drag)^dt`，与帧率无关。
+    // 1. Integrate + recycle.
+    //    Drag handled as "decay drag fraction per second": `(1 - drag)^dt`, frame-rate independent.
     let drag = if system.drag.is_finite() {
         system.drag.clamp(0.0, 1.0)
     } else {
@@ -391,8 +391,8 @@ fn step(
         particle.age += dt;
         particle.velocity += gravity * dt;
         particle.velocity *= damping;
-        // 速度曲线只改变**位移**，不写回 `velocity`：否则会与重力 / 阻尼叠加，
-        // 让“风速”变成永久加速度。
+        // Speed curve only changes **displacement**, not writes back `velocity`: otherwise it would stack with gravity / drag,
+        // turning "wind speed" into permanent acceleration.
         let drift = particle_velocity_offset(system, particle);
         particle.position += (particle.velocity + drift) * dt;
         if system.collision && (!colliders.is_empty() || !terrains.is_empty()) {
@@ -401,11 +401,11 @@ fn step(
     }
     emitter.particles.retain(|p| p.age < p.lifetime);
 
-    // 2. 发射窗口（duration / looping）。`duration == 0` = 一直发射。
+    // 2. Emission window (duration / looping). `duration == 0` = always emit.
     //
-    // 先按「本步开始时」的窗口状态发射，再把 `cycle_time` 往前推：这样
-    // `duration = 0.2` 的发射器能发满最后那一小段，而不是在恰好到点的那一帧
-    // 提前停下。
+    // First emit based on window state at "step start", then advance `cycle_time`: this way emitter with
+    // `duration = 0.2` can fill the final small segment, rather than stopping early on the frame
+    // that happens to hit the endpoint.
     let duration = system.emission_duration();
     let emitting = match duration {
         None => true,
@@ -414,7 +414,7 @@ fn step(
 
     let cap = system.particle_cap();
 
-    // 3. burst：每个循环开始时一次性发射。
+    // 3. Burst: emit all at once at start of each loop.
     if !emitter.emitted_burst {
         let burst = system.burst.min(cap as u32);
         for _ in 0..burst {
@@ -426,7 +426,7 @@ fn step(
         emitter.emitted_burst = true;
     }
 
-    // 4. 持续发射。
+    // 4. Continuous emission.
     if emitting {
         emitter.accumulator += system.rate() * dt;
         while emitter.accumulator >= 1.0 {
@@ -445,7 +445,7 @@ fn step(
         emitter.particles.truncate(cap);
     }
 
-    // 5. 推进发射窗口：到点后循环回 0（重新计 burst）或停在终点。
+    // 5. Advance emission window: loop back to 0 at endpoint (re-count burst) or stop at endpoint.
     if let Some(duration) = duration {
         emitter.cycle_time += dt;
         if emitter.cycle_time >= duration {
@@ -459,9 +459,9 @@ fn step(
     }
 }
 
-/// 粒子在生命周期上的进度（`0` = 出生，`1` = 死亡）。
+/// Particle progress in lifetime (`0` = spawn, `1` = dead).
 ///
-/// 寿命为 0 / 非有限值时按 `1`（已经死亡），避免除零产生 NaN。
+/// Zero / non-finite lifetime treated as `1` (already dead), avoid division by zero NaN.
 fn age_fraction(particle: &Particle) -> f32 {
     if particle.lifetime.is_finite() && particle.lifetime > 0.0 {
         (particle.age / particle.lifetime).clamp(0.0, 1.0)
@@ -470,10 +470,10 @@ fn age_fraction(particle: &Particle) -> f32 {
     }
 }
 
-/// 在多段颜色渐变上取色；`stops` 为空时返回 `None`（调用方退回两色插值）。
+/// Sample from multi-stop color gradient; returns `None` when `stops` empty (caller falls back to two-color lerp).
 ///
-/// 停靠点在 `[0, 1]` 上均匀分布，相邻两点之间线性插值；`t` 超出范围时钳到端点。
-/// 只有一个停靠点时整条生命周期都是这个颜色。
+/// Stops uniformly distributed on `[0, 1]`, linear interpolation between adjacent; `t` out of range clamped to endpoint.
+/// With one stop entire lifetime is that color.
 pub fn sample_gradient(stops: &[[f32; 4]], t: f32) -> Option<[f32; 4]> {
     match stops.len() {
         0 => None,
@@ -500,10 +500,10 @@ pub fn sample_gradient(stops: &[[f32; 4]], t: f32) -> Option<[f32; 4]> {
     }
 }
 
-/// 粒子当前颜色。
+/// Particle current color.
 ///
-/// `color_stops` 非空时按生命周期在多段渐变上取色；否则退回
-/// `start_color → end_color` 的两色线性插值（旧行为）。
+/// When `color_stops` non-empty samples from multi-stop gradient over lifetime; otherwise falls back to
+/// `start_color → end_color` two-color lerp (legacy).
 pub fn particle_color(system: &ParticleSystem, particle: &Particle) -> [f32; 4] {
     let t = age_fraction(particle);
     if let Some(color) = sample_gradient(&system.color_stops, t) {
@@ -518,9 +518,9 @@ pub fn particle_color(system: &ParticleSystem, particle: &Particle) -> [f32; 4] 
     ]
 }
 
-/// 粒子当前尺寸：出生尺寸 × `size_over_lifetime` 在生命周期上的插值。
+/// Particle current size: spawn size × `size_over_lifetime` interpolated over lifetime.
 ///
-/// 倍率非有限值时按 `1` 处理；结果钳到非负，避免 billboard 尺寸变成负 / NaN。
+/// Non-finite multiplier treated as `1`; result clamped non-negative, avoid billboard size negative / NaN.
 pub fn particle_size(system: &ParticleSystem, particle: &Particle) -> f32 {
     let t = age_fraction(particle);
     let start = system.size_over_lifetime[0];
@@ -531,9 +531,9 @@ pub fn particle_size(system: &ParticleSystem, particle: &Particle) -> f32 {
     (particle.size * scale).max(0.0)
 }
 
-/// 粒子当前的世界空间速度偏移（`velocity_over_lifetime` 在寿命上的线性插值）。
+/// Particle current world-space velocity offset (`velocity_over_lifetime` lerp over lifetime).
 ///
-/// 非有限值按 0 处理；结果只用于位移，不写回 [`Particle::velocity`]。
+/// Non-finite value as 0; result only used for displacement, not written back [`Particle::velocity`].
 pub fn particle_velocity_offset(system: &ParticleSystem, particle: &Particle) -> glam::Vec3 {
     let start = sanitize_vec3(system.velocity_over_lifetime[0]);
     let end = sanitize_vec3(system.velocity_over_lifetime[1]);
@@ -541,10 +541,10 @@ pub fn particle_velocity_offset(system: &ParticleSystem, particle: &Particle) ->
     start + (end - start) * t
 }
 
-/// 提取所有可见发射器的粒子为 billboard 绘制项，按到相机的距离**远到近**排序。
+/// Extract all visible emitter particles as billboard draw items, sorted **far to near** by camera distance.
 ///
-/// 只读；不修改模拟状态。没有 `ParticleSystem` 的孤儿 `ParticleEmitter`
-/// （作者删了组件）被跳过。
+/// Read-only; does not modify simulation state. Orphan `ParticleEmitter` without `ParticleSystem`
+/// (author deleted component) skipped.
 pub fn scene_particles_into(
     world: &World,
     eye: glam::Vec3,

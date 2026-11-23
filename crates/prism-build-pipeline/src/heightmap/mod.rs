@@ -1,7 +1,7 @@
-//! # 高度图生成器
+//! # High-degree terrain generator
 //!
-//! 参数化超高落差拟真水力+热力侵蚀高度图生成器。
-//! 支持 −11 000 m 到 +8 850 m（总落差 ≈ 20 km）。
+//! Parameterized ultra-height-difference simulated water+thermal erosion high-degree terrain generator.
+//! Supports −11,000 m to +8,850 m (total drop ≈ 20 km).
 //!
 //! ## Usage
 //! ```rust,ignore
@@ -21,22 +21,22 @@ pub use thermal::thermal_erosion;
 // Heightmap
 // ---------------------------------------------------------------------------
 
-/// 高度图，使用 `f64` 保证 20 km 高差精度。
+/// Heightgraph, using `f64` to guarantee 20 km height difference precision.
 #[derive(Clone, Debug)]
 pub struct Heightmap {
     pub width: usize,
     pub height: usize,
     pub data: Vec<f64>,
-    /// 海平面高度（相对高度模式下为 0.0）。
+    /// Sea level height (relative height mode below is 0.0).
     pub sea_level: f64,
-    /// 全局最低点（相对/绝对）。
+    /// Global lowest point (relative / absolute).
     pub min_height: f64,
-    /// 全局最高点（相对/绝对）。
+    /// Global highest point (relative / absolute).
     pub max_height: f64,
 }
 
 impl Heightmap {
-    /// 从 `Vec<f64>` 创建，自动计算 min/max。
+    /// Create from `Vec<f64>`, automatically calculate min/max.
     pub fn new(width: usize, height: usize, data: Vec<f64>) -> Self {
         assert_eq!(
             data.len(),
@@ -63,13 +63,13 @@ impl Heightmap {
         }
     }
 
-    /// 获取 (x, y) 处的高度（x ∈ [0, width), y ∈ [0, height)）。
+    /// Get height at (x, y) (x ∈ [0, width), y ∈ [0, height)).
     #[inline]
     pub fn get(&self, x: usize, y: usize) -> f64 {
         self.data[y * self.width + x]
     }
 
-    /// 设置 (x, y) 处的高度，自动更新 min/max。
+    /// Set height at (x, y), automatically update min/max.
     #[inline]
     pub fn set(&mut self, x: usize, y: usize, value: f64) {
         let idx = y * self.width + x;
@@ -82,7 +82,7 @@ impl Heightmap {
         }
     }
 
-    /// 双线性插值采样（支持浮点坐标）。
+    /// Bilinear interpolated sample (supports floating-point coordinates).
     pub fn sample(&self, x: f64, y: f64) -> f64 {
         let w = self.width as f64;
         let h = self.height as f64;
@@ -106,7 +106,7 @@ impl Heightmap {
         top + (bot - top) * fy
     }
 
-    /// 转换为相对高度：所有值减去 `min_height`，使最小值变为 0。
+    /// Convert to relative height: subtract `min_height` from all values, making min value 0.
     pub fn to_relative(&mut self) {
         let min = self.min_height;
         if min == 0.0 {
@@ -119,7 +119,7 @@ impl Heightmap {
         self.min_height = 0.0;
     }
 
-    /// 恢复绝对高度：所有值加上保存的最小值。
+    /// Restore absolute height: add saved min value to all values.
     pub fn from_relative(&mut self, saved_min: f64) {
         if saved_min == 0.0 {
             return;
@@ -131,7 +131,7 @@ impl Heightmap {
         self.max_height += saved_min;
     }
 
-    /// 无量纲化：缩放到 [0, 1] 范围。
+    /// Dimensionless: scale to [0, 1] range.
     pub fn normalize(&mut self) {
         let range = self.max_height - self.min_height;
         if range <= 0.0 {
@@ -144,7 +144,7 @@ impl Heightmap {
         self.min_height = 0.0;
     }
 
-    /// 从 [0, 1] 还原到指定范围。
+    /// Restore from [0, 1] to specified range.
     pub fn denormalize(&mut self, new_min: f64, new_max: f64) {
         let range = new_max - new_min;
         for v in self.data.iter_mut() {
@@ -159,10 +159,10 @@ impl Heightmap {
 // ErosionParams
 // ---------------------------------------------------------------------------
 
-/// 侵蚀参数，所有关键物理参数可实时调节。
+/// Erosion parameters, key physical parameters adjustable in real time.
 #[derive(Clone, Debug)]
 pub struct ErosionParams {
-    // ---- 水力参数 ----
+    // ---- Hydraulic parameters ----
     pub inertia: f64,
     pub capacity_factor: f64,
     pub min_slope: f64,
@@ -170,38 +170,38 @@ pub struct ErosionParams {
     pub erosion_rate: f64,
     pub evaporation_rate: f64,
     pub gravity: f64,
-    /// 速度硬上限，防止超高速发散（关键参数）。
+    /// Speed hard limit, prevent divergence at excessive speed (key parameter).
     pub max_velocity: f64,
-    /// 沉积容量硬上限（关键参数）。
+    /// Deposition capacity hard limit (key parameter).
     pub max_capacity: f64,
 
-    // ---- 热力参数 ----
-    /// 休止角（度）。
+    // ---- Thermal parameters ----
+    /// Repose angle (degrees).
     pub talus_angle: f64,
     pub thermal_strength: f64,
 
-    // ---- 全局控制 ----
+    // ---- Global controls ----
     pub iterations: usize,
     pub particle_count: usize,
     pub max_steps: usize,
     pub cell_size: f64,
-    /// 随机数种子（用于水力侵蚀粒子生成与随机漫步，保证相同参数输出确定性）。
+    /// Random seed (for hydraulic erosion particle generation and random walk, ensures same parameter output determinism).
     pub seed: u64,
-    /// 热力侵蚀间隔（水力每 N 轮后做一次热力）。
+    /// Thermal erosion interval (thermal once every N hydraulic rounds).
     pub thermal_interval: usize,
-    /// 预处理热力轮数。
+    /// Preprocess thermal rounds.
     pub thermal_pre_iterations: usize,
-    /// 海平面以下侵蚀倍率（0.0 ~ 1.0）。
+    /// Sea level erodes at below rate (0.0 ~ 1.0).
     pub sea_erosion_factor: f64,
 
-    // ---- 输出控制 ----
+    // ---- Output controls ----
     pub use_relative_height: bool,
 }
 
 impl Default for ErosionParams {
     fn default() -> Self {
         Self {
-            // 水力
+            // Hydraulic
             inertia: 0.05,
             capacity_factor: 4.0,
             min_slope: 0.01,
@@ -211,10 +211,10 @@ impl Default for ErosionParams {
             gravity: 4.0,
             max_velocity: 20.0,
             max_capacity: 10.0,
-            // 热力
+            // Thermal
             talus_angle: 35.0,
             thermal_strength: 0.5,
-            // 控制
+            // Control
             iterations: 100,
             particle_count: 200_000,
             max_steps: 150,
@@ -223,7 +223,7 @@ impl Default for ErosionParams {
             thermal_interval: 5,
             thermal_pre_iterations: 100,
             sea_erosion_factor: 0.05,
-            // 输出
+            // output
             use_relative_height: true,
         }
     }
@@ -233,7 +233,7 @@ impl Default for ErosionParams {
 // Particle
 // ---------------------------------------------------------------------------
 
-/// 水力侵蚀粒子。
+/// Hydraulic erosion particle.
 #[derive(Clone, Debug)]
 pub(crate) struct Particle {
     pub x: f64,
@@ -265,27 +265,27 @@ impl Particle {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// 执行完整侵蚀管线：热力预处理 → 水力+热力交替迭代。
+/// Execute complete erosion pipeline: thermal preprocessing → hydraulic + thermal alternating iteration.
 ///
-/// 返回侵蚀后的高度图。若 `params.use_relative_height` 为 true，
-/// 内部转换为相对高度计算，输出时保留相对高度。否则恢复原始绝对高度。
+/// Return height graph after erosion. If `params.use_relative_height` is true,
+/// Internal calculation converts to relative height, output retains relative height. Otherwise restores original absolute height.
 pub fn generate_eroded_heightmap(mut hm: Heightmap, params: &ErosionParams) -> Heightmap {
     let saved_min = hm.min_height;
 
-    // 转为相对高度（可选）
+    // Convert to relative height (optional)
     if params.use_relative_height {
         hm.to_relative();
     }
 
-    // 第一阶段：强力热力预处理
+    // First phase: strong thermal preprocessing
     for _ in 0..params.thermal_pre_iterations {
         thermal_erosion(&mut hm, params);
     }
 
-    // 第二阶段：水力 + 热力交替迭代
+    // Second phase: hydraulic + thermal alternating iteration
     //
-    // 累积缓冲（每线程一张整图）在整条管线里复用：默认 100 轮水力侵蚀不再
-    // 每轮重新分配一份「线程数 × 整图」的 `f64` 表。
+    // Accumulation buffer (one full graph per thread) reused throughout pipeline: default 100 hydraulic rounds not again
+    // Each round heavy new allocates a "thread count × full graph" `f64` table.
     let mut scratch = hydraulic::ErosionScratch::new();
     for iter in 0..params.iterations {
         let round_seed = params
@@ -297,7 +297,7 @@ pub fn generate_eroded_heightmap(mut hm: Heightmap, params: &ErosionParams) -> H
         }
     }
 
-    // 恢复绝对高度（可选）
+    // Restore absolute height (optional)
     if !params.use_relative_height {
         hm.from_relative(saved_min);
     }
@@ -305,7 +305,7 @@ pub fn generate_eroded_heightmap(mut hm: Heightmap, params: &ErosionParams) -> H
     hm
 }
 
-/// 双缓冲拷贝
+/// Double buffer copy
 pub(crate) fn clone_data(data: &[f64]) -> Vec<f64> {
     data.to_vec()
 }

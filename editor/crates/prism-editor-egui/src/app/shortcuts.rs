@@ -111,7 +111,7 @@ impl EditorApp {
             self.open_prompt(
                 panels::PromptKind::SaveAs,
                 "Save As",
-                "assets/ 下的相对路径（.scene.json / .prefab.json）",
+                "relative path under assets/ (.scene.json / .prefab.json)",
                 title,
             );
             return;
@@ -332,7 +332,7 @@ impl EditorApp {
                     other => {
                         return Some(crate::control::failed(
                             crate::control::Kind::BadRequest,
-                            format!("state 只能是 press / release，收到 '{other}'"),
+                            format!("state can only be press / release, received '{other}'"),
                         ))
                     }
                 };
@@ -356,7 +356,7 @@ impl EditorApp {
                     let Some(button) = button else {
                         return Some(crate::control::failed(
                             crate::control::Kind::BadRequest,
-                            "mouse 只能是 left / right / middle",
+                            "mouse can only be left / right / middle",
                         ));
                     };
                     self.pending_input
@@ -365,7 +365,7 @@ impl EditorApp {
                     let Some(key) = parse_key(key) else {
                         return Some(crate::control::failed(
                             crate::control::Kind::BadRequest,
-                            format!("不认识的按键 '{key}'（可用：w/a/s/d/q/e/space/shift/ctrl/alt/escape/tab/enter/方向键/0-9）"),
+                            format!("unrecognized key '{key}' (available: w/a/s/d/q/e/space/shift/ctrl/alt/escape/tab/enter/arrow keys/0-9)"),
                         ));
                     };
                     self.pending_input
@@ -373,7 +373,7 @@ impl EditorApp {
                 } else {
                     return Some(crate::control::failed(
                         crate::control::Kind::BadRequest,
-                        "需要 key / mouse / click 之一",
+                        "need one of key / mouse / click",
                     ));
                 }
                 json!({ "ok": true, "queued": 1, "pending": self.pending_input.len() })

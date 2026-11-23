@@ -1,15 +1,15 @@
-//! Android 崩溃 对话框 `AlertDialog` via JNI + logcat + clipboard copying.
+//! Android crash dialog `AlertDialog` via JNI + logcat + clipboard copying.
 //!
-//! The 渲染 线程 (== winit event-loop / main 线程 on Android) holds
+//! The render thread (== winit event-loop / main thread on Android) holds
 //! pointers to the JVM (`JavaVM*`) and the `Activity` jobject (registered by
 //! [`super::register_android_app`]). We attach the current thread to the JVM
 //! and, on the Activity's UI thread, build and show an `AlertDialog` with a
-//! single OK 按钮 The 对话框 is modal from the user's 透视: we
-//! poll until the 对话框 is dismissed (or activity finishes) and 块 the
-//! calling 线程 with a condvar.
+//! single OK button The dialog is modal from user's perspective: we
+//! poll until the dialog is dismissed (or activity finishes) and block the
+//! calling thread with a condvar.
 //!
-//! The 完整 错误 text is also written to logcat (tag `Prisma`) and copied
-//! to the 系统 clipboard via `ClipboardManager`.
+//! The complete error text is also written to logcat (tag `Prisma`) and copied
+//! to system clipboard via `ClipboardManager`.
 
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -80,7 +80,7 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
         }
     }
 
-    // 块 until the 对话框 is dismissed and signals `done`.
+    // Block until the dialog is dismissed and signals `done`.
     let (lock, cvar) = &*done;
     let mut guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     while !*guard {
@@ -171,7 +171,7 @@ fn show_alert_dialog(
     // Keep a global ref so the dialog isn't GC'd before the user dismisses it.
     let global_dialog = env.new_global_ref(dialog_obj)?;
 
-    // Poll until the 对话框 is dismissed (e.g. user tapped OK) or the activity finishes.
+    // Poll until the dialog is dismissed (e.g. user tapped OK) or the activity finishes.
     loop {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let is_showing = env
@@ -200,7 +200,7 @@ fn show_alert_dialog(
     Ok(())
 }
 
-/// 复制 `text` to Android 系统 clipboard via `ClipboardManager` and `ClipData`.
+/// Copy `text` to Android system clipboard via `ClipboardManager` and `ClipData`.
 pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     let handles = match ANDROID_APP.read() {
         Ok(guard) => match *guard {

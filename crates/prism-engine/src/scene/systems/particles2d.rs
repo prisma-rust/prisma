@@ -1,23 +1,23 @@
-//! 2D 世界空间 CPU 粒子（#594）。
+//! 2D world-space CPU particles (#594).
 //!
-//! 作者侧只有 [`ParticleEmitter2D`]；活着的粒子保存在运行时组件
-//! [`ParticleEmitter2DState`] 里，**不进** `.scene.json` / RSCN（和 [`SpriteRef`]、
-//! 3D 的 `ParticleEmitter` 一样）。
+//! Author side only has [`ParticleEmitter2D`]; live particles stored in runtime component
+//! [`ParticleEmitter2DState`], **not in** `.scene.json` / RSCN (same as [`SpriteRef`],
+//! and 3D `ParticleEmitter`).
 //!
-//! 设计取舍（与 3D 的 `particles` 模块保持一致）：
+//! Design tradeoffs (consistent with 3D `particles` module):
 //!
-//! - **CPU 模拟 + 精灵通道绘制**：粒子在世界 XY 平面上积分，每个粒子是一个
-//!   纯色四边形，作为 [`SpriteDrawItem`](prism_render::SpriteDrawItem) 和精灵
-//!   一起排序 —— 不需要新 pass / 新着色器，也不受屏幕分辨率影响；
-//! - 发射器移动不会拖走已经飞出的粒子；
-//! - 初速度方向按发射器当前的 Z 轴旋转（2D 只关心绕 Z），出生点偏移也走同一
-//!   个旋转；
-//! - 随机源是每个发射器独立的 `xorshift32`（种子 = 实体 id），同一场景每次
-//!   加载的粒子分布一致，单测可复现；
-//! - `dt` 上限复用 3D 的 [`MAX_STEP`]，编辑器卡一下不会让粒子瞬移。
+//! - **CPU simulation + sprite pass draw**: particles integrate in world XY plane, each particle is a
+//!   solid-color quad, drawn as [`SpriteDrawItem`](prism_render::SpriteDrawItem) sorted together with sprites —
+//!   no new pass / shader needed, unaffected by screen resolution;
+//! - Emitter movement does not drag already-flying particles;
+//! - Initial velocity direction from emitter current Z rotation (2D only cares about Z), spawn offset uses same
+//!   rotation;
+//! - Random source is per-emitter independent `xorshift32` (seed = entity id), same scene each load has
+//!   consistent particle distribution, unit-test reproducible;
+//! - `dt` clamp reuses 3D [`MAX_STEP`], editor stutter will not teleport particles.
 //!
-//! 系统跑在 `Engine::update` 的调度里、`hierarchy_system` 之前；提取阶段
-//! （`scene_2d_system_into`）读的是本帧推进后的粒子。
+//! System runs during `Engine::update` scheduling, before `hierarchy_system`; extract phase
+//! (`scene_2d_system_into`) reads this-frame advanced particles.
 
 use prism_ecs::{Entity, World};
 
@@ -25,40 +25,40 @@ use crate::scene::components::{LocalToWorld, ParticleEmitter2D, ParticleShape2D}
 use crate::scene::systems::hierarchy::is_active_in_hierarchy;
 use crate::scene::systems::particles::MAX_STEP;
 
-/// 单个存活粒子（世界 XY 平面）。
+/// Single live particle (world XY plane).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Particle2DInstance {
-    /// 世界空间位置（XY；Z 取发射器的 Z）。
+    /// World-space position (XY; Z from emitter).
     pub position: glam::Vec2,
-    /// 世界空间速度（单位 / 秒）。
+    /// World-space velocity (units / sec).
     pub velocity: glam::Vec2,
-    /// 已经存活的时间（秒）。
+    /// Time already alive (seconds).
     pub age: f32,
-    /// 总寿命（秒）；`age >= lifetime` 时被回收。
+    /// Total lifetime (seconds); recycled when `age >= lifetime`.
     pub lifetime: f32,
-    /// 四边形边长（世界单位）。
+    /// Quad edge length (world units).
     pub size: f32,
 }
 
-/// 发射器的运行时状态（活粒子 + 发射计时 + 随机源）。
+/// Runtime state of emitter (live particles + emission timer + random source).
 ///
-/// 每次场景加载都重置；不进作者格式。
+/// Reset on every scene load; not in author format.
 #[derive(Debug, Default, Clone)]
 pub struct ParticleEmitter2DState {
-    /// 存活粒子（容量复用，不每帧重建）。
+    /// Live particles (capacity reused, not rebuilt each frame).
     pub particles: Vec<Particle2DInstance>,
-    /// 发射累加器（不足一个粒子时保留小数）。
+    /// Emission accumulator (keeps fraction when not enough for one particle).
     pub accumulator: f32,
-    /// 当前发射循环内的时间（秒）。
+    /// Time within current emission loop (seconds).
     pub cycle_time: f32,
-    /// 本循环的 `burst` 是否已经发射过。
+    /// Whether `burst` of this loop already emitted.
     pub emitted_burst: bool,
-    /// `xorshift32` 状态；0 表示还没播种。
+    /// `xorshift32` state; 0 means not yet seeded.
     pub rng: u32,
 }
 
 impl ParticleEmitter2DState {
-    /// 用实体 id 播种：同一场景每次加载的粒子分布一致。
+    /// Seed with entity id: same scene each load has consistent particle distribution.
     pub fn seeded(entity: Entity) -> Self {
         Self {
             particles: Vec::new(),
@@ -71,11 +71,11 @@ impl ParticleEmitter2DState {
 }
 
 fn seed_from_entity(entity: Entity) -> u32 {
-    // 0 是 xorshift 的非法状态，这里强制非 0。
+    // 0 is illegal xorshift state, here force non-zero.
     entity.id().wrapping_mul(2_654_435_761).max(1)
 }
 
-/// `xorshift32` → `[0, 1)`。
+/// `xorshift32` → `[0, 1)`.
 fn next_unit(rng: &mut u32) -> f32 {
     let mut x = *rng;
     if x == 0 {
@@ -88,7 +88,7 @@ fn next_unit(rng: &mut u32) -> f32 {
     (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// 区间取值 `[min, max]`（非有限 / 倒序时回落到 `fallback`）。
+/// Range value `[min, max]` (falls back to `fallback` when non-finite / reversed).
 fn range(range: [f32; 2], t: f32, fallback: f32) -> f32 {
     let (lo, hi) = if range[0].is_finite() && range[1].is_finite() {
         if range[0] <= range[1] {
@@ -102,7 +102,7 @@ fn range(range: [f32; 2], t: f32, fallback: f32) -> f32 {
     lo + (hi - lo) * t
 }
 
-/// 出生点偏移（发射器本地 XY）与初速度方向。
+/// Spawn offset (emitter local XY) and initial velocity direction.
 fn spawn_local(
     shape: ParticleShape2D,
     size: [f32; 2],
@@ -136,12 +136,12 @@ fn spawn_local(
         ),
         ParticleShape2D::Circle => {
             let angle = next_unit(rng) * std::f32::consts::TAU;
-            // sqrt 让圆盘内均匀分布，而不是挤在圆心。
+            // sqrt gives uniform distribution in disc, not clustered at center.
             glam::Vec2::new(angle.cos(), angle.sin()) * radius * next_unit(rng).sqrt()
         }
     };
 
-    // 2D 锥形：基准方向绕 Z 旋转 `[-spread, +spread]`。
+    // 2D cone: base direction rotated around Z by `[-spread, +spread]`.
     let half_angle = if spread_degrees.is_finite() {
         spread_degrees.clamp(0.0, 180.0).to_radians()
     } else {
@@ -194,9 +194,9 @@ fn spawn_particle(
     });
 }
 
-/// 推进所有 `ParticleEmitter2D` 实体：积分已有粒子、按 emission 规则发射新粒子。
+/// Advance all `ParticleEmitter2D` entities: integrate existing particles, emit new per rule.
 ///
-/// 返回本帧结束时存活的粒子总数（编辑器 / 测试用）。
+/// Return total live particles at frame end (for editor / tests).
 pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
     if !dt.is_finite() || dt < 0.0 {
         return 0;
@@ -211,7 +211,7 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
 
     let mut alive = 0usize;
     for entity in entities {
-        // 作者组件可能刚被删除；先拷一份，避免借用冲突。
+        // Author component may have just been deleted; copy first to avoid borrow conflict.
         let Some(emitter_def) = world.get::<ParticleEmitter2D>(entity).cloned() else {
             continue;
         };
@@ -220,7 +220,7 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
             .map(|t| t.0)
             .unwrap_or(glam::Mat4::IDENTITY);
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
-        // 2D 只看绕 Z 的旋转；非法矩阵按单位变换处理。
+        // 2D only cares about Z rotation; invalid matrix treated as identity transform.
         let rotation = if rotation.is_finite() {
             rotation.to_euler(glam::EulerRot::XYZ).2
         } else {
@@ -250,7 +250,7 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
         world.insert(entity, state);
     }
 
-    // 作者删掉组件后，运行时状态也要跟着走，别留下不显示的孤儿粒子。
+    // After author deletes component, runtime state must go too, no invisible orphan particles.
     let orphans: Vec<Entity> = world
         .query::<ParticleEmitter2DState>()
         .filter(|(entity, _)| world.get::<ParticleEmitter2D>(*entity).is_none())
@@ -272,11 +272,11 @@ fn step(
     dt: f32,
 ) {
     if !emitter_def.playing {
-        // 暂停：粒子停在原地，也不再积累发射计数。
+        // Paused: particles stay in place, emission count not accumulated.
         return;
     }
 
-    // 1. 积分 + 回收。阻尼按「每秒衰减 drag 比例」处理，与帧率无关。
+    // 1. Integrate + recycle. Drag as "decay drag fraction per second", frame-rate independent.
     let drag = if emitter_def.drag.is_finite() {
         emitter_def.drag.clamp(0.0, 1.0)
     } else {
@@ -303,7 +303,7 @@ fn step(
     }
     state.particles.retain(|p| p.age < p.lifetime);
 
-    // 2. 发射窗口（duration / looping）。`duration == 0` = 一直发射。
+    // 2. Emission window (duration / looping). `duration == 0` = always emit.
     let duration = emitter_def.emission_duration();
     let emitting = match duration {
         None => true,
@@ -312,7 +312,7 @@ fn step(
 
     let cap = emitter_def.particle_cap();
 
-    // 3. burst：每个循环开始时一次性发射。
+    // 3. Burst: emit all at start of each loop.
     if !state.emitted_burst {
         let burst = emitter_def.burst.min(cap as u32);
         for _ in 0..burst {
@@ -324,7 +324,7 @@ fn step(
         state.emitted_burst = true;
     }
 
-    // 4. 持续发射。
+    // 4. Continuous emission.
     if emitting {
         state.accumulator += emitter_def.rate() * dt;
         while state.accumulator >= 1.0 {
@@ -343,7 +343,7 @@ fn step(
         state.particles.truncate(cap);
     }
 
-    // 5. 推进发射窗口：到点后循环回 0（重新计 burst）或停在终点。
+    // 5. Advance emission window: loop back to 0 at endpoint (re-count burst) or stop at endpoint.
     if let Some(duration) = duration {
         state.cycle_time += dt;
         if state.cycle_time >= duration {
@@ -357,7 +357,7 @@ fn step(
     }
 }
 
-/// 粒子当前颜色：`start_color → end_color` 按年龄线性插值。
+/// Particle current color: `start_color → end_color` lerped by age.
 pub fn particle_2d_color(
     emitter_def: &ParticleEmitter2D,
     particle: &Particle2DInstance,
@@ -376,13 +376,13 @@ pub fn particle_2d_color(
     ]
 }
 
-/// 2D 粒子的排序键；与精灵 / 折线共用 `SortKey` 的字段顺序。
+/// Sort key of 2D particles; shares `SortKey` field order with sprites / polylines.
 pub(crate) type Particle2DSortKey = (i32, i32, f32, u32);
 
-/// 提取所有可见 2D 发射器的粒子为绘制项。
+/// Extract all visible 2D emitter particles as draw items.
 ///
-/// 只读；不修改模拟状态。深度取发射器自身的 Z，和精灵的排序规则一致
-/// （`sorting_layer → order_in_layer → z → entity id`）。
+/// Read-only; does not modify simulation state. Depth from emitter own Z, consistent with sprite sort rule
+/// (`sorting_layer → order_in_layer → z → entity id`).
 pub(crate) fn particle_entries_2d(
     world: &World,
 ) -> Vec<(Particle2DSortKey, prism_render::SpriteDrawItem)> {
@@ -418,7 +418,7 @@ pub(crate) fn particle_entries_2d(
                     uv_rect: [0.0, 0.0, 1.0, 1.0],
                     color: particle_2d_color(emitter_def, particle),
                     texture: crate::scene::systems::render::SOLID_TEXTURE,
-                    // 纯色四边形：标准 alpha 混合，和折线一致。
+                    // Solid-color quad: standard alpha blend, same as polyline.
                     src_blend: prism_scene::render_enums::BlendMode::SrcAlpha,
                     dst_blend: prism_scene::render_enums::BlendMode::OneMinusSrcAlpha,
                     blend_op: prism_scene::render_enums::BlendOp::Add,

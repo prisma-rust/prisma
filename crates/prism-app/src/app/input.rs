@@ -3,10 +3,10 @@
 use prism_engine::input::InputManager;
 use prism_platform::Key;
 
-/// `prism-platform` 的触点 phase → 引擎输入模型的 phase。
+/// `prism-platform` touch phase -> engine input model phase.
 ///
-/// 两者当前一一对应，但分层上必须显式转换：`prism-app` 不把平台类型直接
-/// 传进引擎，避免以后任一侧加减 phase 时静默错配。
+/// Both currently one-to-one, but layering must explicitly convert: `prism-app` does not pass platform type directly
+/// into engine, to avoid silent mismatch when either side adds/removes phase later.
 pub(super) fn engine_touch_phase(
     phase: prism_platform::TouchPhase,
 ) -> prism_engine::input::TouchPhase {
@@ -19,17 +19,17 @@ pub(super) fn engine_touch_phase(
     }
 }
 
-/// 把一个平台按键事件落到 [`InputManager`] 上，返回是否需要释放指针锁定。
+/// Drop a platform key event onto [`InputManager`], return whether pointer lock should be released.
 ///
-/// 平台键码 -> 引擎键码 -> `key_held` 是三条独立的表（winit 物理键、VK、
-/// `KeyCode`），任何一张表漏项都会让「按了没反应」，而这条链路以前只有
-/// 各段自己的单测。把换算与写入收在这里，单测能一次覆盖整条路径；
-/// 真正操作窗口的 `release_pointer` 仍由调用方执行。
+/// Platform keycode -> engine keycode -> `key_held` are three independent tables (winit physical key, VK,
+/// `KeyCode`), any table missing entry will cause "pressed but no response", and this chain previously only had
+/// each segment's own unit tests. Put conversion and write here, unit test can cover whole path at once;
+/// Real window `release_pointer` operation still performed by caller.
 pub(super) fn apply_key_event(input: &mut InputManager, key: Key, pressed: bool) -> bool {
     use prism_engine::input::ElementState;
 
-    // `Other(u32::MAX)` = 平台没给出物理键（winit 的 `Unidentified`）。
-    // 旧实现直接丢弃这类事件，这里保持一致。
+    // `Other(u32::MAX)` = platform gave no physical key (winit's `Unidentified`).
+    // Old implementation directly discarded such events, keep consistent here.
     if key == Key::Other(u32::MAX) {
         return false;
     }
@@ -49,7 +49,7 @@ pub(super) fn apply_key_event(input: &mut InputManager, key: Key, pressed: bool)
     release
 }
 
-/// Esc 是指针锁定的逃生口：锁定态下它先释放光标，再作为普通按键交给游戏。
+/// Esc is pointer lock escape hatch: under lock it first releases cursor, then acts as normal key to game.
 pub(super) fn should_release_pointer_lock(
     key: prism_engine::input::KeyCode,
     pressed: bool,
@@ -58,10 +58,9 @@ pub(super) fn should_release_pointer_lock(
     locked && pressed && key == prism_engine::input::KeyCode::Escape
 }
 
-/// 锁定态下窗口光标位置是被 confinement 夹住的，不能参与累加；此时唯一的
-/// 鼠标来源是原始设备增量 [`apply_device_mouse_motion`]。
+/// mouse source is raw device delta [`apply_device_mouse_motion`].
 ///
-/// 位置本身仍然同步（不产生 delta），解锁后第一帧才不会从旧位置跳一下。
+/// Position itself still synced (no delta produced); after unlock first frame won\'t jump from old position.
 pub(super) fn apply_window_cursor_move(input: &mut InputManager, x: f64, y: f64) {
     if input.pointer_locked {
         input.set_mouse_position([x, y]);
@@ -70,8 +69,8 @@ pub(super) fn apply_window_cursor_move(input: &mut InputManager, x: f64, y: f64)
     input.handle_mouse_move([x, y]);
 }
 
-/// 原始设备增量（`DeviceEvent::MouseMotion`）：锁定态下累加到一个虚拟绝对
-/// 位置，使 `InputManager::mouse_delta()` 反映原始增量。
+/// Raw device delta (`DeviceEvent::MouseMotion`): under lock accumulate into a virtual absolute
+/// position, so `InputManager::mouse_delta()` reflects raw delta.
 pub(super) fn apply_device_mouse_motion(input: &mut InputManager, dx: f64, dy: f64) {
     if !input.pointer_locked {
         return;
@@ -80,12 +79,12 @@ pub(super) fn apply_device_mouse_motion(input: &mut InputManager, dx: f64, dy: f
     input.handle_mouse_move([cur[0] + dx, cur[1] + dy]);
 }
 
-/// 中立物理键 → 引擎键码。
+/// Neutral physical key -> engine keycode.
 ///
-/// 转换留在 `prism-app`（同时依赖 `prism-platform` 与 `prism-engine`），
-/// 而不是 `prism-platform`：平台层保持 engine-free，只产出与窗口库无关的
-/// [`prism_platform::PlatformEvent`]。未列出的键退化为 `Key::Other` 的原始码，
-/// 避免静默丢弃。
+/// Conversion stays in `prism-app` (depends on both `prism-platform` and `prism-engine`),
+/// instead of `prism-platform`: platform layer stays engine-free, only produces window-lib-independent
+/// [`prism_platform::PlatformEvent`]. Unlisted keys degrade to `Key::Other` raw code,
+/// avoid silent drop.
 pub(super) fn engine_key_from_native(key: Key) -> prism_engine::input::KeyCode {
     use prism_engine::input::KeyCode as Eng;
     match key {
@@ -132,10 +131,10 @@ pub(super) fn engine_key_from_native(key: Key) -> prism_engine::input::KeyCode {
         Key::F10 => Eng::F10,
         Key::F11 => Eng::F11,
         Key::F12 => Eng::F12,
-        // 字母键进引擎后仍是「原始键码」载荷，但取自 `Key::Letter` 的 ASCII 值，
-        // 与后端无关（两个后端都给出同一个 KeyCode::Other）。
+        // Letter key enters engine still as "raw keycode" payload, but takes ASCII value from `Key::Letter`,
+        // backend-independent (both backends give same KeyCode::Other).
         Key::Letter(byte) => Eng::Other(u32::from(byte)),
-        // 未建模的键保留原始虚拟键码，不丢键。
+        // Unmapped keys keep raw virtual keycode, do not drop key.
         Key::Other(_) => Eng::Other(key.to_vk()),
     }
 }

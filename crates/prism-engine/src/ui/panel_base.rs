@@ -1,12 +1,12 @@
 use crate::util::timer::{TimerClient, TimerId, TimerParams, TimerSet};
 
-/// UI 面板基类 —— 持有 TimerSet + 子面板树 + 可见性。
+/// UI panel base class — holds TimerSet + child panel tree + visibility.
 pub struct PanelBase {
-    /// 定时器集合（自动缓存 id，Drop 时批量销毁）。
+    /// Timer set (auto-caches ids, batch destroy on Drop).
     pub timers: TimerSet,
-    /// 子面板。
+    /// Child panels.
     pub children: Vec<Box<dyn super::Panel>>,
-    /// 是否可见/激活。
+    /// Whether visible / active.
     pub visible: bool,
 }
 
@@ -19,9 +19,9 @@ impl PanelBase {
         }
     }
 
-    // ── Timer 转发 ─────────────────────────────────────────
+    // ── Timer forwarding ─────────────────────────────────────────
 
-    /// 创建定时器（自动缓存 id，面板析构时自动清理）。
+    /// Create timer (auto-caches id, auto-cleaned when panel drops).
     pub fn create_timer(&mut self, params: TimerParams) -> TimerId {
         self.timers.create_timer(params)
     }
@@ -38,7 +38,7 @@ impl PanelBase {
         self.timers.resume(id);
     }
 
-    /// 清空本面板所有定时器（关闭面板时调用）。
+    /// Clear all timers of this panel (called when disabling panel).
     pub fn clear_timers(&mut self) {
         self.timers.clear();
     }

@@ -1,27 +1,27 @@
-//! 物理查询（#522 Phase 1）。
+//! Physics query (#522 Phase 1).
 //!
-//! 这一层只做**纯几何**：把作者的 [`Collider`] 换成世界空间的解析形状，再做射线求交。
-//! `prism-app` 的 physics feature 已经用 rapier 积分刚体；这里仍然不依赖
-//! `rapier3d`，也不持有物理世界状态 —— 每次查询都直接读 ECS。rapier 的
-//! Started/Stopped 事件由 `prism-app::physics_runner` 写进 [`PhysicsEvents`] 资源。
+//! This layer does pure geometry only: converts author's [`Collider`] into world-space parsed shape, then raycast intersection.
+//! `prism-app`'s physics feature already uses rapier rigid bodies; this inside still does not depend
+//! `rapier3d`, nor holds physics world state — every query reads ECS directly. rapier's
+//! Started/Stopped events written by `prism-app::physics_runner` into [`PhysicsEvents`] resource.
 //!
-//! 支持的形状：盒（OBB，按实体的旋转/缩放求交）、球、胶囊（沿本地 +Y）。
-//! 胶囊按「盒 + 球」两段求交近似（圆柱段当盒，两端当球），足够做角色/子弹查询。
+//! Supported shapes: box (OBB, intersected by entity rotation/scale), sphere, capsule (along local +Y).
+//! Capsule uses "box + sphere" two-segment intersection similar (cylinder segment when box, ends when sphere), enough for character/bullet query.
 
 use prism_ecs::{Entity, World};
 use prism_scene::components::{Collider, ColliderShape, LocalToWorld};
 
-/// 一次碰撞 / 触发器事件的方向。
+/// Direction of one collision / trigger event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhysicsEventKind {
     Started,
     Stopped,
 }
 
-/// rapier 在固定步内报告的碰撞事件，已映射回 ECS 实体。
+/// Collision events reported by rapier within fixed step, already mapped to ECS entity.
 ///
-/// `is_sensor == true` 表示至少一方是 `Collider.is_trigger`；普通刚体之间的
-/// 接触也会产生 Started/Stopped，便于做落地 / 撞击逻辑。
+/// `is_sensor == true` means at least one side is `Collider.is_trigger`; normal rigid bodies between
+/// contact also produces Started/Stopped, convenient for landing / impact logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhysicsEvent {
     pub kind: PhysicsEventKind,
@@ -30,10 +30,10 @@ pub struct PhysicsEvent {
     pub is_sensor: bool,
 }
 
-/// 主线程可见的物理事件缓冲。
+/// Main-thread visible physics event buffer.
 ///
-/// 每个固定步覆盖一次：上一次 `step` 之后发生的 Started/Stopped 都放在这里。
-/// 需要跨步累积的消费方应在每步后自行 drain 到自己的队列。
+/// Each fixed step covers once: Started/Stopped occurring after one `step` go inside here.
+/// Consumer needing cross-step accumulation should drain into its own queue after each step.
 #[derive(Debug, Clone, Default)]
 pub struct PhysicsEvents {
     pub events: Vec<PhysicsEvent>,
@@ -45,24 +45,24 @@ impl PhysicsEvents {
     }
 }
 
-/// 一次命中的结果。
+/// Result of one hit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RayHit {
     pub entity: Entity,
-    /// 从射线起点算起的距离（世界单位）。
+    /// Distance from raycast origin (world units).
     pub distance: f32,
-    /// 命中点的世界坐标。
+    /// World coordinates of hit point.
     pub point: [f32; 3],
-    /// 命中面的世界空间法线（球/胶囊是径向法线）。
+    /// World space normal of hit face (sphere/capsule is radial normal).
     pub normal: [f32; 3],
-    /// 命中的碰撞体是不是触发器（触发器不阻挡移动，但查询能看到）。
+    /// Hit collision body is not trigger (trigger does not block movement, but query can see it).
     pub is_trigger: bool,
 }
 
-/// 射一条射线，返回最近的命中。
+/// Casts a raycast, returns nearest hit.
 ///
-/// `layer_mask` 与碰撞体的 `layer` 相与非 0 才参与；`max_distance` 之外的不算命中。
-/// 方向会被归一化，零向量直接返回 `None`。
+/// `layer_mask` ANDed with collision body's `layer` non-zero to participate; `max_distance` outside does not count as hit.
+/// Direction will be normalized, zero vector directly returns `None`.
 pub fn raycast(
     world: &World,
     origin: [f32; 3],
@@ -141,10 +141,10 @@ fn raycast_inner(
     best
 }
 
-/// 世界空间的碰撞形状（已把实体的旋转/缩放/中心偏移烘进去）。
+/// World space collision shape (already baked entity rotation/scale/center offset into it).
 #[derive(Debug, Clone, Copy)]
 pub enum WorldShape {
-    /// 定向盒：中心 + 三个半轴向量。
+    /// Oriented box: center + three half-axis vectors.
     Box {
         center: glam::Vec3,
         axes: [glam::Vec3; 3],
@@ -156,10 +156,10 @@ pub enum WorldShape {
 }
 
 impl WorldShape {
-    /// 由作者的碰撞体 + 实体的世界矩阵构造。
+    /// Constructed from author's collision body + entity world matrix.
     ///
-    /// 胶囊退化成「以中心为心、覆盖两个端点的盒」，盒本身保留旋转（OBB）。
-    /// 非有限/退化的尺寸返回球（半径 0）—— 求交时永远不会命中。
+    /// Capsule degrades into "box centered at center, covering both end points", box itself retains rotation (OBB).
+    /// Unlimited/degenerate size returns sphere (radius 0) — intersection will never hit.
     pub fn new(collider: &Collider, world: &glam::Mat4) -> Self {
         let scale = world.to_scale_rotation_translation().0;
         let rotation = world.to_scale_rotation_translation().1;
@@ -181,7 +181,7 @@ impl WorldShape {
                 radius: (collider.radius * abs_scale.max_element()).max(0.0),
             },
             ColliderShape::Capsule => {
-                // 圆柱段 + 两端半球：用「盒 + 胶囊半径」的 OBB 覆盖，够查询用。
+                // Cylinder segment + two end hemispheres: covered by "box + capsule radius" OBB, enough for query.
                 let half = glam::Vec3::new(
                     collider.radius * abs_scale.x,
                     (collider.half_height + collider.radius) * abs_scale.y,
@@ -199,10 +199,10 @@ impl WorldShape {
         }
     }
 
-    /// 把一个半径为 `radius` 的点推出形状表面（#501 粒子碰撞用）。
+    /// Pushes a point of radius `radius` out of shape surface (#501 particle collision use).
     ///
-    /// 返回 `(修正后的位置, 表面世界法线)`；点在形状外（且离表面超过半径）时
-    /// 返回 `None`。盒内部用「穿透最浅的面」推出，球用径向法线。
+    /// Returns `(corrected position, surface world normal)`; point outside shape (and beyond radius from surface) when
+    /// returns `None`. Box internal pushed out along "most shallow face", sphere uses radial normal.
     pub fn push_out(&self, point: glam::Vec3, radius: f32) -> Option<(glam::Vec3, glam::Vec3)> {
         if !point.is_finite() || !radius.is_finite() || radius < 0.0 {
             return None;
@@ -257,7 +257,7 @@ impl WorldShape {
                     return Some((closest + normal * radius, normal));
                 }
 
-                // 在盒内部：沿穿透最浅的轴推出去。
+                // Inside box: pushed out along most shallow penetration axis.
                 let mut best_penetration = f32::INFINITY;
                 let mut normal = glam::Vec3::Y;
                 let mut face = center;
@@ -283,7 +283,7 @@ impl WorldShape {
         }
     }
 
-    /// 射线求交：返回 `(距离, 世界法线)`。
+    /// Raycast intersection: returns `(distance, world normal)`.
     pub fn intersect(
         &self,
         origin: glam::Vec3,
@@ -292,7 +292,7 @@ impl WorldShape {
     ) -> Option<(f32, glam::Vec3)> {
         match *self {
             Self::Box { center, axes } => {
-                // slab 法：把射线变换到盒的局部坐标系（轴向量可能带缩放，先归一化取长度）。
+                // Slab method: transform raycast into box's local coordinate system (axis vectors can carry scale, first normalize to take lengths).
                 let lengths = [axes[0].length(), axes[1].length(), axes[2].length()];
                 if lengths.iter().any(|l| !l.is_finite() || *l <= 1e-6) {
                     return None;
@@ -330,7 +330,7 @@ impl WorldShape {
                     let inv = 1.0 / d;
                     let mut t1 = (-1.0 - o) * inv;
                     let mut t2 = (1.0 - o) * inv;
-                    // 记录进入面：先进入的那个平面就是命中面。
+                    // Record entering face: first plane entered is the hit face.
                     let mut near_sign = -1.0;
                     if t1 > t2 {
                         std::mem::swap(&mut t1, &mut t2);
@@ -363,7 +363,7 @@ impl WorldShape {
                 let sqrt = discriminant.sqrt();
                 let mut t = -b - sqrt;
                 if t < 0.0 {
-                    // 起点在球内：从内部射出，用远交点。
+                    // Origin inside sphere: shoot from inside, use far intersection point.
                     t = -b + sqrt;
                 }
                 if t < 0.0 || t > max_distance {

@@ -1,16 +1,16 @@
-//! 编辑器内嵌的引擎实例（**零拷贝**宿主）。
+//! Embedded engine instance in editor (**zero-copy** host).
 //!
-//! 与 `prism-app` 的 hosted 模式不同，这里**不建渲染线程**：
-//! 编辑器在 egui 的绘制线程上同步驱动 `Engine` + `GraphRenderer`，
-//! 渲染结果留在 `GraphRenderer` 自己的离屏图像里，随后把 `VkImageView`
-//! 交给 egui 采样（[`crate::viewport`]）。因此：
+//! Unlike `prism-app` hosted mode, here **no render thread created**:
+//! editor drives `Engine` + `GraphRenderer` synchronously on egui draw thread,
+//! render result stays in `GraphRenderer`'s offscreen image, then `VkImageView` handed
+//! to egui for sampling ([`crate::viewport`]). Therefore:
 //!
-//! - 只有一条队列、一个线程 → 不需要跨线程 semaphore / fence；
-//! - 没有 `vkCmdCopyImageToBuffer`，也没有 CPU 像素回读。
+//! - only one queue, one thread → no cross-thread semaphore / fence needed;
+//! - no `vkCmdCopyImageToBuffer`, no CPU pixel readback.
 //!
-//! 资产上传同样同步完成：`GpuAssetResolver::prepare_requests` →（渲染器）
-//! `apply_asset_requests` → `apply_results` 写回 ECS，原本分属两个线程的
-//! 两段在这里串起来。
+//! Asset upload also done synchronously: `GpuAssetResolver::prepare_requests` → (renderer)
+//! `apply_asset_requests` → `apply_results` writes back ECS, two sections originally on separate threads
+//! chained together here.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ use prism_render::{FrameInput, GraphRenderer, VulkanContext};
 use crate::diagnostics::Diagnostic;
 use crate::project_module::{ProjectEvent, ProjectModuleDriver, ProjectModuleStatus};
 
-/// 视口种类：Scene view 用编辑器轨道相机，Game view 用文档相机。
+/// Viewport kind: Scene view uses editor orbit camera, Game view uses authored camera.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
     Scene,
@@ -54,15 +54,15 @@ impl ViewKind {
     }
 }
 
-/// 一个视口背后的引擎实例。
+/// Engine instance behind one viewport.
 pub struct EngineHost {
     kind: ViewKind,
-    /// 用户项目模块（只有 Game view 会挂）。
+    /// User project module (only Game view attaches).
     ///
-    /// **必须声明在 `engine` 之前**：项目 session 的回调指针指向宿主世界，
-    /// 卸载顺序必须是「先停项目代码，再拆引擎」。
+    /// **Must be declared before `engine`**: project session callback pointers point to host world,
+    /// unload order must be "stop project code first, then tear down engine".
     project: Option<ProjectModuleDriver>,
-    /// 场景重建代数：项目模块用它判断实体句柄是否失效。
+    /// Scene rebuild generation: project module uses it to check entity handle invalidation.
     scene_generation: u64,
     engine: Engine,
     asset_resolver: GpuAssetResolver,
@@ -70,19 +70,19 @@ pub struct EngineHost {
     input: InputManager,
     packet: FramePacket,
     settings: RenderSettings,
-    /// `.scene.json` 文档顺序的实体表（= 层级 / 检查器下标）。
+    /// Entity list in `.scene.json` document order (= layer level / checker subscript).
     entities: Vec<Entity>,
     editor_camera: Option<Entity>,
     width: u32,
     height: u32,
-    /// Scene view 的编辑器相机是否用场景天空盒当背景（引擎默认开）。
+    /// Whether Scene view uses scene skybox as background (engine default on).
     show_skybox: bool,
-    /// Scene 视图会话级隐藏的实体 id（#417）。Game 视图永远为空。
+    /// Entity ids hidden at session level in Scene view (#417). Game view always empty.
     hidden_entities: HashSet<u32>,
-    /// Scene view 当前是否是 2D（正交）视图（#641）。由
-    /// [`Self::place_editor_camera`] 每帧同步，用来关掉侧着看的 XZ 网格。
+    /// Whether Scene view currently 2D (orthographic) view (#641). Synced each frame by
+    /// [`Self::place_editor_camera`], used to disable XZ mesh seen edge-on.
     view_2d: bool,
-    /// 下一次出帧后把离屏图像读回写到这个路径（编辑器截图）。
+    /// Path to write offscreen image back after next frame (editor screenshot).
     capture_path: Option<PathBuf>,
     simulate: bool,
     paused: bool,
@@ -90,14 +90,14 @@ pub struct EngineHost {
     accumulator: Duration,
     last_tick: Instant,
     scene_loaded: bool,
-    /// 已经卷积进渲染器的环境贴图路径（`None` = 没有 IBL）。
+    /// Path of environment texture already convolved into renderer (`None` = no IBL).
     ///
-    /// 改个名字也要重跑 IBL 卷积是整场重载里最贵的部分（#435），所以只有
-    /// 场景声明的环境贴图换了才重新 `set_environment`。
+    /// Reconing IBL just for a rename is most expensive part of whole reload (#435), so only
+    /// re-run `set_environment` when scene-declared environment texture actually changed.
     env_path: Option<String>,
-    /// `assets/scenes.pak` 的修改时间：只有 pak 本身重建了才重新读它。
+    /// Modify time of `assets/scenes.pak`: only re-read it when pak itself rebuilt.
     pak_mtime: Option<std::time::SystemTime>,
-    /// 上一次检查资产变更的时间（500ms 轮询节流，见 [`EngineHost::poll_asset_changes`]）。
+    /// Time of last asset change check (500ms throttled, see [`EngineHost::poll_asset_changes`]).
     asset_check_at: Instant,
     /// Project root used to resolve loose scene asset paths such as GI probe volumes.
     project_root: Option<PathBuf>,
@@ -107,16 +107,16 @@ pub struct EngineHost {
     prev_view_proj: Option<[[f32; 4]; 4]>,
 }
 
-/// 编辑器地面网格只在 Scene 视图出现。
+/// Editor ground mesh only appears in Scene view.
 ///
-/// Game 视图代表独立构建跑起来的样子：网格是编辑器的辅助对象，不属于游戏画面
-/// （#454）。这里再挡一层，避免「设置通过别的路径漏进来」时又画上去。
+/// Game view represents independent build: mesh is editor helper object, not part of game image
+/// (#454). Another layer of guarding here, avoid it leaking in via other paths.
 fn editor_grid_visible(
     kind: ViewKind,
     settings: &prism_engine::render_settings::RenderSettings,
     view_2d: bool,
 ) -> bool {
-    // 2D 视图里 XZ 网格是侧着的一条线（XY 网格见 #602），先不画。
+    // In 2D view XZ mesh is a line seen edge-on (XY mesh see #602), don't draw first.
     kind == ViewKind::Scene && settings.show_grid && !view_2d
 }
 
@@ -186,7 +186,7 @@ impl EngineHost {
         self.loaded_gi = None;
     }
 
-    /// 给 Game view 挂上用户项目模块的驱动器（Scene view 不跑项目代码）。
+    /// Attach driver for user project module to Game view (Scene view doesn't run project code).
     pub fn attach_project_module(&mut self, root: &Path) {
         self.project_root = Some(root.to_path_buf());
         if self.kind != ViewKind::Game || self.project.is_some() {
@@ -199,7 +199,7 @@ impl EngineHost {
         self.project.as_ref().map(ProjectModuleDriver::status)
     }
 
-    /// Problems 面板的明细（state 里只放条数，避免状态栏每帧克隆诊断）。
+    /// Problems panel details (status only holds count, avoid cloning diagnostics each frame).
     pub fn project_diagnostics(&self) -> &[Diagnostic] {
         self.project
             .as_ref()
@@ -207,7 +207,7 @@ impl EngineHost {
             .unwrap_or_default()
     }
 
-    /// 每帧轮询：收编译结果 / 按需编译。不阻塞 UI 线程。
+    /// Poll each frame: collect compile result / compile as needed. Doesn't block UI thread.
     pub fn poll_project_module(&mut self, playing: bool) {
         if let Some(project) = self.project.as_mut() {
             project.poll(playing);
@@ -248,19 +248,19 @@ impl EngineHost {
         &mut self.input
     }
 
-    /// 把编辑器文档里的选中下标映射成 ECS 实体 id，交给渲染器画网格描边（#487）。
+    /// Map selected subscript in editor document to ECS entity id, hand to renderer for outline (#487).
     ///
-    /// `enabled == false` 或下标越界时清空列表；父级 / 子级的投影线框仍由
-    /// 视口覆盖层负责，这里只画直接选中的网格。
+    /// `enabled == false` or subscript out of range clears list; projection wireframe of
+    /// parent / child still handled by viewport overlay layer, here only directly selected meshes.
     pub fn set_selection_outline(&mut self, selected: &[usize], enabled: bool) {
         let ids = selection_entity_ids(&self.entities, selected, enabled);
         self.renderer.set_outline_entities(&ids);
     }
 
-    /// 把 Scene 视图的会话级隐藏集合同步到 ECS（#417）。
+    /// Sync Scene view's session-level hidden set to ECS (#417).
     ///
-    /// 引擎只在渲染类系统里读 [`Hidden`]，所以物理 / 脚本 / 文档都不受影响。
-    /// 集合没变时直接返回；场景重载后会由 [`Self::apply_scene_hidden`] 重新打标。
+    /// Engine only reads [`Hidden`] in render-type systems, so physics / scripts / documents unaffected.
+    /// Return early when set unchanged; after scene rebuild re-stamp via [`Self::apply_scene_hidden`].
     pub fn set_scene_hidden(&mut self, hidden: &[u32]) {
         let next: HashSet<u32> = hidden.iter().copied().collect();
         if self.hidden_entities == next {
@@ -286,9 +286,9 @@ impl EngineHost {
         }
     }
 
-    /// 文档下标对应的 cooked mesh 局部 AABB（Scene 视图精确拾取用，#600）。
+    /// Cooked mesh local AABB for document subscript (precise Scene picking, #600).
     ///
-    /// 场景尚未完成资产上传时返回 `None`，调用方退回单位立方体。
+    /// Returns `None` when scene hasn't finished asset upload, caller falls back to unit cube.
     pub fn mesh_bounds(&self, index: usize) -> Option<([f32; 3], [f32; 3])> {
         let entity = *self.entities.get(index)?;
         let world = self.engine.world();
@@ -299,11 +299,11 @@ impl EngineHost {
         Some((bounds.min, bounds.max))
     }
 
-    /// 选中实体的骨架在世界空间里的关节位置与父子连线（#560 骨骼叠加）。
+    /// Selected entity's joints positions and parent-child lines in world space (#560 skeleton overlay).
     ///
-    /// 需要三样东西同时在场：实体的 `BonePalette`（动画系统每帧写）、
-    /// `SkeletonRoot` 上的骨架路径，以及 `SkeletonLibrary` 里已经加载的骨架。
-    /// 缺一样就返回空——蒙皮网格还没上传完时不该画出一堆原点。
+    /// Need three things present: entity `BonePalette` (written each frame by animation system),
+    /// skeleton path on `SkeletonRoot`, and skeleton already loaded in `SkeletonLibrary`.
+    /// Missing any returns empty — shouldn't draw a pile of origins before skinned mesh uploaded.
     pub fn skeleton_overlay(&self, index: usize) -> crate::skeleton_overlay::SkeletonOverlay {
         let empty = || crate::skeleton_overlay::SkeletonOverlay {
             joints: Vec::new(),
@@ -349,8 +349,8 @@ impl EngineHost {
         )
     }
 
-    /// 精灵实际纹理尺寸（好让 Scene 拾取在 `frame_size = [0,0]` 时也能知道
-    /// 可见范围，而不是退回单位立方体，#600）。
+    /// Sprite actual texture size (so Scene picking can know visible range even with
+    /// `frame_size = [0,0]`, rather than falling back to unit cube, #600).
     pub fn sprite_texture_size(&self, index: usize) -> Option<[f32; 2]> {
         let entity = *self.entities.get(index)?;
         let sprite = self
@@ -364,8 +364,8 @@ impl EngineHost {
         self.engine.world()
     }
 
-    /// 编辑器笔刷改过高度图后，丢掉运行时的 `TerrainData`，让地形系统下一帧
-    /// 从磁盘重新生成网格（#517）。
+    /// After editor brush changes heightmap, drop runtime `TerrainData` so terrain system next frame
+    /// regenerates mesh from disk (#517).
     pub fn reload_terrain_heightmap(&mut self, scene_id: u32) {
         let world = self.engine.world_mut();
         let entity = world
@@ -377,10 +377,10 @@ impl EngineHost {
         }
     }
 
-    /// 文档下标对应的 UI 屏幕矩形，以及它用来定位的父矩形（#429）。
+    /// UI screen rect for document subscript and parent rect used to resolve it (#429).
     ///
-    /// 两者都在离屏目标的像素空间里，和引擎 `ComputedLayout` 同一套坐标。
-    /// 父级不是 UI 节点（没有 `ComputedLayout`）时退回整个屏幕；根节点同理。
+    /// Both in offscreen target pixel space, same coordinates as engine `ComputedLayout`.
+    /// When parent isn't UI node (no `ComputedLayout`) fall back to whole screen; root node same.
     pub fn ui_rect(&self, index: usize) -> Option<([f32; 4], [f32; 4])> {
         let world = self.engine.world();
         let entity = *self.entities.get(index)?;
@@ -394,7 +394,7 @@ impl EngineHost {
         Some((layout.rect, parent))
     }
 
-    /// 离屏渲染目标尺寸（Game view 的「绘图区像素」，与面板逻辑像素不同）。
+    /// Offscreen render target size ("drawing area pixels" of Game view, differs from panel logical pixels).
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
     }
@@ -403,10 +403,10 @@ impl EngineHost {
         &self.renderer
     }
 
-    /// 把当前渲染图导出成 `target/prism-render-graph.json`（分析面板读它）。
+    /// Export current render graph to `target/prism-render-graph.json` (analysis panel reads it).
     ///
-    /// 编辑器以前只会**读**这个文件，写端在 `prism-app` 里（游戏进程），所以面板
-    /// 永远是空的（#451）。现在视口自己写：图和设置都在手上，不需要环境变量。
+    /// Previously editor only **read** this file, write side in `prism-app` (game process), so panel
+    /// was always empty (#451). Now viewport writes it itself: graph and settings at hand, no env var needed.
     pub fn write_render_graph_report(
         &self,
         path: &std::path::Path,
@@ -434,10 +434,10 @@ impl EngineHost {
         &mut self.settings
     }
 
-    /// 局部光源预算 `(kept, total)`：实际画出来的 / 场景里启用的。
+    /// Local light budget `(kept, total)`: actually drawn / enabled in scene.
     ///
-    /// `total > kept` 说明有灯被前向渲染的 `LIGHT_MAX` 挤掉了（#468），
-    /// 视口角标与检查器据此提示。
+    /// `total > kept` means some lights squeezed out by forward `LIGHT_MAX` (#468),
+    /// viewport corner badge and checker hint accordingly.
     pub fn local_light_stats(&self) -> (usize, usize) {
         (
             self.packet.scene.local_lights_kept,
@@ -445,21 +445,21 @@ impl EngineHost {
         )
     }
 
-    /// 被 `LIGHT_MAX` 挤掉的局部光实体（`.scene.json` 的 id）。
+    /// Local light entities squeezed out by `LIGHT_MAX` (`.scene.json` ids).
     pub fn dropped_light_ids(&self) -> &[u32] {
         &self.packet.scene.dropped_light_ids
     }
 
-    /// 从 `.scene.json` 重建世界（与 Web 编辑器同一条路径）。
+    /// Rebuild world from `.scene.json` (same path as Web editor).
     pub fn load_scene(&mut self, path: &Path) -> Result<usize, String> {
-        // 旧世界的实体句柄全部失效：项目模块按这个代数丢弃缓存的句柄。
+        // All entity handles of old world invalidated: project module discards cached handles by this generation.
         self.scene_generation = self.scene_generation.wrapping_add(1).max(1);
-        // 旧世界的实体句柄全部失效，helper 实体要重新创建。
+        // All entity handles of old world invalidated, helper entities need recreating.
         self.editor_camera = None;
         self.engine = Engine::empty();
-        // 资产解析器（含已解的 `.pak` 与已上传的句柄）跨重载复用：以前每次
-        // 编辑都 `GpuAssetResolver::new()` + 重读 pak（#435）。只有 pak 文件
-        // 本身重建了才需要重读清单。
+        // Asset parser (with already-resolved `.pak` and uploaded handles) reused across reloads: previously each
+        // edit called `GpuAssetResolver::new()` + re-read pak (#435). Only re-read manifest when pak file
+        // itself was rebuilt.
         let mtime = resource_package_mtime();
         if mtime != self.pak_mtime {
             self.asset_resolver.load_resource_package();
@@ -547,10 +547,10 @@ impl EngineHost {
         }
     }
 
-    /// Scene view 的编辑器相机 + 背景策略。
+    /// Editor camera for Scene view + background policy.
     ///
-    /// 引擎的 Scene view 默认把场景天空盒当背景（`SceneViewState.showSkybox`），
-    /// 所以这里的编辑器相机默认是 `Skybox` 而不是纯色。
+    /// Engine Scene view default uses scene skybox as background (`SceneViewState.showSkybox`),
+    /// so editor camera here defaults to `Skybox` not solid color.
     fn editor_clear_flags(&self) -> prism_scene::CameraClearFlags {
         if self.show_skybox {
             prism_scene::CameraClearFlags::Skybox
@@ -559,7 +559,7 @@ impl EngineHost {
         }
     }
 
-    /// 切换 Scene view 背景（天空盒 / 纯色），立即作用到编辑器相机。
+    /// Toggle Scene view background (skybox / solid), immediately applies to editor camera.
     pub fn set_show_skybox(&mut self, on: bool) {
         if self.show_skybox == on {
             return;
@@ -574,7 +574,7 @@ impl EngineHost {
         }
     }
 
-    /// 编辑器相机 + 选中标记（只在 Scene view 创建）。
+    /// Editor camera + selection flag (only created in Scene view).
     fn ensure_helper_entities(&mut self) {
         if self.kind == ViewKind::Scene {
             if self.editor_camera.is_none() {
@@ -596,10 +596,10 @@ impl EngineHost {
         }
     }
 
-    /// 把轨道相机写进编辑器相机实体（Scene view 每帧调用）。
+    /// Write orbit camera into editor camera entity (Scene view calls each frame).
     ///
-    /// 与 Tauri 编辑器一致：`LocalTransform` 与 `LocalToWorld` 同时写，
-    /// 因为 extract 只读 `LocalToWorld`，而相机实体没有父级、不参与传播。
+    /// Consistent with Tauri editor: `LocalTransform` and `LocalToWorld` written together,
+    /// because extract only reads `LocalToWorld`, and camera entity has no parent, no propagation.
     pub fn place_editor_camera(&mut self, orbit: &prism_editor_core::workspace::OrbitCamera) {
         let Some(entity) = self.editor_camera else {
             return;
@@ -628,13 +628,13 @@ impl EngineHost {
         );
         if let Some(camera) = world.get_mut::<Camera>(entity) {
             camera.aspect = self.width as f32 / self.height.max(1) as f32;
-            // 2D 视图：正交半高直接复用 `distance`，滚轮缩放的手感不变（#641）。
+            // 2D view: orthographic half height directly reuses `distance`, wheel zoom feel unchanged (#641).
             camera.orthographic = orbit.orthographic;
             if orbit.orthographic {
                 camera.orthographic_size = orbit.distance.max(0.05);
             }
-            // 编辑器的「View…」设置（#416）：FOV 与裁剪面同时作用于渲染与拾取，
-            // 否则屏幕上的 gizmo / 点选会和画面对不上。
+            // Editor "View..." settings (#416): FOV and clip planes apply to both render and picking,
+            // otherwise gizmos / point selection on screen won't match image.
             camera.fov_y_degrees = orbit.fov_y_degrees.clamp(10.0, 170.0);
             camera.near = orbit.near;
             camera.far = orbit.far;
@@ -643,7 +643,7 @@ impl EngineHost {
 
     pub fn set_simulate(&mut self, simulate: bool) {
         if self.simulate != simulate {
-            // 动画图调试快照只在 Play 时维护（#560 编辑器-运行时桥）。
+            // Animation graph debug snapshot only maintained during Play (#560 editor-runtime bridge).
             if simulate {
                 self.engine.world_mut().insert_resource(
                     prism_engine::scene::systems::animator::AnimGraphDebug::default(),
@@ -658,8 +658,8 @@ impl EngineHost {
             self.paused = false;
             self.step_pending = false;
             if !simulate {
-                // 停止 Play 时丢弃按键 / 鼠标的瞬时状态：否则下一次 Play
-                // 会继承上一次的「刚按下」。
+                // On stopping Play discard transient key / mouse state: otherwise next Play
+                // would inherit previous "just pressed".
                 self.input = InputManager::new();
             }
         }
@@ -689,7 +689,7 @@ impl EngineHost {
         self.height = height;
         self.renderer.resize_offscreen(width, height)?;
         if self.kind == ViewKind::Scene {
-            // 尺寸变化后编辑器相机的 aspect 要跟上。
+            // After size change editor camera aspect must follow.
             if let Some(entity) = self.editor_camera {
                 if let Some(camera) = self.engine.world_mut().get_mut::<Camera>(entity) {
                     camera.aspect = width as f32 / height as f32;
@@ -699,7 +699,7 @@ impl EngineHost {
         Ok(())
     }
 
-    /// 场景声明式光照：只有声明的环境贴图真的换了才重新卷积 IBL。
+    /// Scene declarative lighting: only reconvolve IBL when declared environment texture truly changed.
     fn refresh_scene_environment(&mut self) {
         let env_path =
             prism_engine::scene::SceneReadView::new(&self.engine.world()).environment_asset_path();
@@ -778,11 +778,11 @@ impl EngineHost {
         self.loaded_gi = Some(key);
     }
 
-    /// 执行项目代码请求的换场（#482）。在 tick 的引擎 update 之后调用。
+    /// Execute scene change requested by project code (#482). Called after this tick's engine update.
     ///
-    /// 复用同一个 `Engine`（`Single` 会保留 `Persistent` 子树），并推进
-    /// `scene_generation`，让项目模块丢掉旧世界的实体句柄；旧资产的 GPU 槽位
-    /// 由解析器记账后交回渲染器回收（#495）。新场景加载失败时保留旧场景。
+    /// Reuses same `Engine` (`Single` keeps `Persistent` subtree), advances
+    /// `scene_generation` so project module drops old world's entity handles; old asset GPU slots
+    /// accounted by parser then returned to renderer for recycling (#495). On failure keep old scene.
     fn apply_scene_request(&mut self, request: prism_runtime_host::SceneRequest) {
         match request {
             prism_runtime_host::SceneRequest::Load { path, additive } => {
@@ -824,9 +824,9 @@ impl EngineHost {
         self.pump_assets();
     }
 
-    /// 推进模拟（Play）或只传播层级（编辑态），并把资产上传同步做完。
+    /// Advance simulation (Play) or only propagate layer level (edit mode), finish asset upload sync.
     pub fn tick(&mut self) {
-        // ECS UI 布局依赖 `ScreenSize`；离屏宿主没有 winit 窗口，自己写。
+        // ECS UI layout depends on `ScreenSize`; offscreen host has no winit window, writes it itself.
         self.engine
             .world_mut()
             .insert_resource(prism_engine::ui::ScreenSize::new(self.width, self.height));
@@ -878,8 +878,8 @@ impl EngineHost {
                 elapsed.as_secs_f32()
             };
             self.step_pending = false;
-            // 用户项目的 gameplay 代码先于引擎 system 执行：它写入的组件
-            // 和 UI 四边形在同一帧被 hierarchy / ui::render 看到。
+            // User project gameplay code runs before engine systems: components it writes
+            // and UI quads seen by hierarchy / ui::render in same frame.
             let mut scene_request = None;
             if let Some(project) = self.project.as_mut() {
                 project.tick(
@@ -891,14 +891,14 @@ impl EngineHost {
                 );
                 scene_request = project.take_scene_request();
             }
-            // 项目代码请求的换场在世界借用结束后执行（#482）。
+            // Scene change requested by project code executed after world borrow ends (#482).
             if let Some(request) = scene_request {
                 self.apply_scene_request(request);
             }
             self.engine.update(dt, &self.input);
             self.engine.late_update();
         } else {
-            // 编辑态（或暂停）：不跑游戏 system，只传播层级。
+            // Edit mode (or paused): don't run game systems, only propagate layer level.
             self.accumulator = Duration::ZERO;
             prism_engine::scene::systems::hierarchy::hierarchy_system(self.engine.world_mut());
             prism_engine::scene::systems::hierarchy::active_hierarchy_system(
@@ -910,13 +910,13 @@ impl EngineHost {
         self.input.begin_frame();
     }
 
-    /// 轮询 `assets/scenes.pak`：重建过就换掉 reader、把已上传的资产打回待解析（#495）。
+    /// Poll `assets/scenes.pak`: if rebuilt swap reader, mark already-uploaded assets for re-parse (#495).
     ///
-    /// 每 500ms 最多检查一次（与 `prism_asset` 的 watcher 同节奏）。返回重新解析的
-    /// 实体数；0 表示这一帧什么都没变。上传在这里同步走完（和 [`Self::pump_assets`]
-    /// 同一条路径），所以 Play 中的下一帧就能看到新贴图 / 新网格，不用退出再进。
+    /// Check at most once every 500ms (same cadence as `prism_asset` watcher). Returns number of
+    /// re-parsed entities; 0 means nothing changed this frame. Upload done synchronously here (same path as
+    /// [`Self::pump_assets`]), so next frame during Play sees new texture / mesh without exit & re-enter.
     ///
-    /// 只处理 `.pak`：运行时只从包里读资产，单独改一张松散贴图不会进到内存里。
+    /// Only handles `.pak`: runtime reads assets only from package, changing a loose texture won't enter memory.
     pub fn poll_asset_changes(&mut self) -> usize {
         const INTERVAL: Duration = Duration::from_millis(500);
         if self.asset_check_at.elapsed() < INTERVAL {
@@ -933,7 +933,7 @@ impl EngineHost {
         if mtime == self.pak_mtime {
             return 0;
         }
-        // 打开失败（pak 正在被写）就等下一轮，别把 reader 换成半截文件。
+        // On open failure (pak being written) wait next round, don't swap reader to half file.
         if let Err(error) = self.asset_resolver.resource_manager.on_pak_changed(&pak) {
             log::warn!(
                 "hot reload: reopening {} failed: {error}; will retry",
@@ -965,23 +965,23 @@ impl EngineHost {
         count
     }
 
-    /// 资产解析：CPU 段 → GPU 上传 → 结果写回 ECS，全部同步。
+    /// Asset parsing: CPU stage → GPU upload → results write back ECS, all synchronous.
     fn pump_assets(&mut self) {
-        // 工程自带字体（#583）：读 `.pak` 里的字节交给 UI 图集。只在新路径出现时
-        // 读一次，和贴图/网格的失败缓存同一策略。
+        // Project-bundled fonts (#583): read bytes from `.pak` hand to UI atlas. Only on new path
+        // read once, same failure-cache strategy as textures / meshes.
         let fonts = self.asset_resolver.prepare_ui_fonts(self.engine.world());
         for (name, bytes) in fonts {
             self.renderer.register_ui_font(name, bytes);
         }
 
-        // 骨骼动画资产（#560 P0-2）：幂等，只有新出现的 `.rskel` / `.ranim` 才读盘。
+        // Skeletal animation assets (#560 P0-2): idempotent, only new `.rskel` / `.ranim` read from disk.
         self.asset_resolver
             .load_animation_assets(self.engine.world_mut());
 
         let requests = self
             .asset_resolver
             .prepare_requests(self.engine.world_mut());
-        // 失效的 GPU 资源同步释放（编辑器没有渲染线程，#495）。
+        // Invalidated GPU resources released synchronously (editor has no render thread, #495).
         let releases = self.asset_resolver.take_releases();
         if !releases.is_empty() {
             self.renderer.release_assets(&releases);
@@ -995,13 +995,13 @@ impl EngineHost {
         }
     }
 
-    /// 渲染一帧到离屏图像，并把图像转成可采样的
-    /// `SHADER_READ_ONLY_OPTIMAL`。返回 `(image_view, extent)`。
+    /// Render one frame to offscreen image, transition image to samplable
+    /// `SHADER_READ_ONLY_OPTIMAL`. Returns `(image_view, extent)`.
     pub fn render(&mut self) -> anyhow::Result<Option<(ash::vk::ImageView, ash::vk::Extent2D)>> {
-        // 编辑态不跑 `tick()`（它只在 Play 时被调用），但出帧同样需要「模拟步末尾」
-        // 那两步：层级传播 + 资产上传。否则 `LocalToWorld` 停在加载时的值，
-        // `SpriteRef::generation == 0` 又会让 2D 渲染系统把所有精灵过滤掉 ——
-        // 编辑态的 Scene / Game 视图就只剩清屏色（#579）。
+        // Edit mode doesn't run `tick()` (only called during Play), but producing a frame also needs
+        // those two "end of simulation step" steps: layer propagation + asset upload. Otherwise `LocalToWorld` stays at load value,
+        // and `SpriteRef::generation == 0` makes 2D render system filter out all sprites —
+        // edit-mode Scene / Game view would show only clear color (#579).
         self.engine
             .world_mut()
             .insert_resource(prism_engine::ui::ScreenSize::new(self.width, self.height));
@@ -1041,8 +1041,8 @@ impl EngineHost {
             prism_engine::ui::ui_layout_system(self.engine.world_mut());
         }
         self.pump_assets();
-        // #613：内部渲染分辨率与游戏进程走同一条路径，编辑器 Game 视图看到的
-        // 像素比例就是真机的比例。
+        // #613: internal render resolution follows same path as game process, pixel ratio seen by
+        // editor Game view is actual device ratio.
         let aspect = self
             .settings
             .render_aspect(self.width as f32 / self.height.max(1) as f32);
@@ -1052,12 +1052,12 @@ impl EngineHost {
             &Mat4::IDENTITY,
             self.settings.shadow_distance,
             self.settings.shadow_cascade_count,
-            // #978：亚像素折线按实际渲染高度加宽到 1 像素。
+            // #978: sub-pixel lines widened to 1 pixel by actual render height.
             self.settings.render_height(self.width, self.height),
             &mut self.packet,
         );
         self.packet.settings = self.settings.clone();
-        // 局部后处理体积（#502 Phase 2）：与玩家路径共用同一个解析函数。
+        // Local post-processing volume (#502 Phase 2): shares same parse function with player path.
         self.packet.grade = Some(
             prism_engine::scene::systems::post_process::resolve_post_grade(
                 self.engine.world(),
@@ -1097,7 +1097,7 @@ impl EngineHost {
         };
         self.renderer.apply_taa_jitter(&mut frame_data);
 
-        // #502：LUT 强度跟随全局设置，路径解析到 assets/ 下。
+        // #502: LUT strength follows global setting, path resolved under assets/.
         let mut resolved_grade = self
             .packet
             .grade
@@ -1140,7 +1140,7 @@ impl EngineHost {
             pt_max_iterations: self.settings.pt_max_iterations,
             exposure: scene.exposure,
             pt_lights: &scene.pt_lights,
-            // 编辑器只在「有变化」时重绘，因此每次渲染都视为新的累积起点。
+            // Editor only redraws on "changes", so each render treated as fresh accumulation start.
             pt_accum_dirty: true,
             has_camera: scene.has_camera,
             camera_orthographic: scene.camera_orthographic,
@@ -1180,8 +1180,8 @@ impl EngineHost {
         }
         self.prev_view_proj = Some(current_view_proj);
 
-        // 截图要读离屏图像当前布局（帧结束是 `COLOR_ATTACHMENT_OPTIMAL`），
-        // 所以必须在转采样布局**之前**做。
+        // Screenshot must read offscreen image current layout (frame end is `COLOR_ATTACHMENT_OPTIMAL`),
+        // so must do before transitioning to sample layout.
         if let Some(path) = self.capture_path.take() {
             match self.capture_offscreen(&path) {
                 Ok(path) => log::info!("viewport capture: {}", path.display()),
@@ -1189,8 +1189,8 @@ impl EngineHost {
             }
         }
 
-        // COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL：egui 的采样描述符要求
-        // 后者，且这一步在同一个队列上完成，不需要额外 semaphore。
+        // COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL: egui sampling descriptor requires
+        // latter, and step happens on same queue, no extra semaphore.
         self.renderer.offscreen_present_for_sampling()?;
 
         Ok(self
@@ -1199,12 +1199,12 @@ impl EngineHost {
             .map(|view| (view, extent)))
     }
 
-    /// 请求**下一次出帧**时把离屏图像读回并写成 PNG（编辑器截图用）。
+    /// Request **next frame** to read offscreen image back and write PNG (editor screenshot).
     pub fn request_capture(&mut self, path: PathBuf) {
         self.capture_path = Some(path);
     }
 
-    /// 离屏图像 → host-visible 缓冲区 → RGBA8 → PNG。
+    /// Offscreen image → host-visible buffer → RGBA8 → PNG.
     fn capture_offscreen(&mut self, path: &Path) -> anyhow::Result<PathBuf> {
         let extent = self
             .renderer
@@ -1220,12 +1220,12 @@ fn fixed_tick_requested(paused: bool, step_pending: bool) -> bool {
     !paused || step_pending
 }
 
-/// 单步模拟使用的固定步长。
+/// Fixed step size for single-step simulation.
 fn xstep_dt() -> f32 {
     1.0 / 60.0
 }
 
-/// 文档下标 → ECS 实体 id；越界 / 关闭时跳过。抽成纯函数便于单测（#487）。
+/// Document subscript → ECS entity id; skip out-of-range / disabled. Pure function for easy tests (#487).
 fn selection_entity_ids(entities: &[Entity], selected: &[usize], enabled: bool) -> Vec<u32> {
     if !enabled {
         return Vec::new();
@@ -1248,7 +1248,7 @@ mod tests {
         assert_ne!(ViewKind::Scene, ViewKind::Game);
     }
 
-    /// #454：网格是 Scene 视图的辅助对象，Game 视图永远不画。
+    /// #454: mesh is Scene view helper object, Game view never draws it.
     #[test]
     fn the_editor_grid_never_reaches_the_game_view() {
         let mut settings = prism_engine::render_settings::RenderSettings::default();
@@ -1261,7 +1261,7 @@ mod tests {
         assert!(!editor_grid_visible(ViewKind::Game, &settings, false));
     }
 
-    /// #641：2D 视图里 XZ 网格是侧着的一条线，必须关掉。
+    /// #641: XZ mesh in 2D view is edge-on line, must disable.
     #[test]
     fn the_grid_is_hidden_in_the_2d_view() {
         let mut settings = prism_engine::render_settings::RenderSettings::default();
@@ -1281,7 +1281,7 @@ mod tests {
         assert!(!fixed_tick_requested(true, false));
     }
 
-    /// #487：只把文档里真正存在的选中下标映射成实体 id；关闭时清空。
+    /// #487: only map truly existing selected subscripts in document to entity ids; clear when disabled.
     #[test]
     fn selection_outline_maps_document_indices_to_entity_ids() {
         let entities = [
@@ -1312,7 +1312,7 @@ mod tests {
     }
 }
 
-/// `assets/scenes.pak` 的修改时间；没有 pak 或读不到元数据时为 `None`。
+/// Modify time of `assets/scenes.pak`; `None` when no pak or metadata unreadable.
 fn resource_package_mtime() -> Option<std::time::SystemTime> {
     let path = prism_engine::asset_paths::asset_path("scenes.pak")?;
     std::fs::metadata(path)

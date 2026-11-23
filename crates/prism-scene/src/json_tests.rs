@@ -1,8 +1,8 @@
-//! `.scene.json` 作者层的结构不变量。
+//! `.scene.json` author layer structure invariants.
 //!
-//! 重点是「变换只有一个权威来源」：作者写 `transform`，loader / cooker 负责
-//! bake 成 `LocalTransform` + `LocalToWorld`；`components` 里再写一份会被
-//! 迁移折回 `transform`（读）或被校验拒绝（写 / cook）。
+//! Key point is "transform has only one authoritative source": author writes `transform`, loader / cooker responsible for
+//! baking into `LocalTransform` + `LocalToWorld`; writing another copy in `components` gets
+//! folded back into `transform` (read) or rejected by validation (write / cook).
 
 use prism_reflect::Reflect;
 
@@ -28,8 +28,8 @@ fn scene_with(components: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn legacy_local_transform_component_is_normalized_on_read() {
-    // 历史文档把变换写成组件。读入时应 bake 到 `transform` 而不是保留组件，
-    // 否则 loader 会在 `LocalToWorld` 算完之后再覆盖 `LocalTransform`。
+    // Historical doc wrote transform as a component. On read should bake into `transform` not keep component,
+    // otherwise loader overwrites `LocalTransform` again after `LocalToWorld` computed.
     let scene = SceneJson::from_value(serde_json::json!({
         "entities": [{
             "components": {
@@ -55,7 +55,7 @@ fn hand_built_derived_component_is_rejected_by_validate() {
         .expect_err("validate must reject derived component");
     assert!(error.contains("LocalTransform"), "{error}");
 
-    // cook 走同一条 `validate`，因此也会在编码前失败。
+    // cook goes through same `validate`, so it also fails before encode.
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     assert!(crate::encode_scene(&scene, &registry).is_err());
@@ -107,7 +107,7 @@ fn derived_components_are_types_not_mountable_components() {
         );
     }
 
-    // 仍然要留在类型表里：RTTIBin 类型表 / 编辑器字段描述依赖它。
+    // Still must stay in type table: RTTIBin type table / editor field descriptions depend on it.
     let id = <LocalTransform as Reflect>::type_desc().id;
     assert!(
         registry.type_registry().descriptor(id).is_some(),
@@ -115,7 +115,7 @@ fn derived_components_are_types_not_mountable_components() {
     );
 }
 
-/// 链式场景：`entities[i].parent == i - 1`。
+/// Chained scene: `entities[i].parent == i - 1`.
 fn chain_scene(n: usize) -> SceneJson {
     let entities: Vec<serde_json::Value> = (0..n)
         .map(|index| {
@@ -139,7 +139,7 @@ fn chain_scene(n: usize) -> SceneJson {
 
 #[test]
 fn topological_order_is_parent_first_for_deep_chains() {
-    // 旧实现每个节点都扫全表（O(n²)），2 万节点会做 4 亿次比较。
+    // Old impl scanned full table per node (O(n²)), 20k nodes would do 400M comparisons.
     let n = 20_000;
     let order = chain_scene(n).topological_order();
     assert_eq!(order, (0..n).collect::<Vec<_>>());
@@ -253,7 +253,7 @@ fn self_parent_is_checked_by_id_not_position() {
 
 #[test]
 fn v2_documents_get_identity_ids_on_migration() {
-    // v2：`parent` 是数组下标，没有 id。
+    // v2: `parent` is array index, no id.
     let scene = SceneJson::from_value(serde_json::json!({
         "version": 2,
         "entities": [
@@ -268,7 +268,7 @@ fn v2_documents_get_identity_ids_on_migration() {
     assert_eq!(scene.entities[0].id, 0);
     assert_eq!(scene.entities[1].id, 1);
     assert_eq!(scene.entities[2].id, 2);
-    // 恒等映射：旧的父下标数值直接变成 id，层级不变。
+    // Identity map: old parent index value directly becomes id, level unchanged.
     assert_eq!(scene.entities[1].parent, Some(0));
     assert_eq!(scene.entities[2].parent, Some(1));
     scene.validate().unwrap();
@@ -285,7 +285,7 @@ fn next_id_is_monotonic_and_never_reuses() {
         ],
     }))
     .unwrap();
-    // 删掉 id 9 也不会让下一个 id 回退到 9。
+    // Deleting id 9 does not make next id fall back to 9.
     assert_eq!(scene.next_id(), 10);
 }
 
@@ -302,13 +302,13 @@ fn topological_order_resolves_non_contiguous_ids() {
     .unwrap();
 
     let order = scene.topological_order();
-    // 索引而非 id：40 → 0，12 → 1，3 → 2。
+    // Index not id: 40 → 0, 12 → 1, 3 → 2.
     assert_eq!(order, vec![0, 1, 2]);
 }
 
 #[test]
 fn keyframe_animation_tracks_cook_and_decode() {
-    // 轨道是「结构体列表」，最容易在 RSCN 的位置化编码里掉数据（#490）。
+    // Track is "struct list", most likely to lose data in RSCN positional encoding (#490).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -363,8 +363,8 @@ fn keyframe_animation_tracks_cook_and_decode() {
 
 #[test]
 fn a_particle_system_survives_cook_and_decode() {
-    // 发射器带一个枚举字段（`shape`）：RSCN 把枚举写成小整数，解码时再还原，
-    // 最容易在位置化编码里掉值（#501）。
+    // Emitter has an enum field (`shape`): RSCN writes enum as small integer, restores on decode,
+    // most likely to lose value in positional encoding (#501).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -428,8 +428,8 @@ fn a_particle_system_survives_cook_and_decode() {
 
 #[test]
 fn an_audio_source_survives_cook_and_decode() {
-    // 音频组件只有一个字符串路径 + 若干标量；RSCN 位置化编码最容易丢的是
-    // 字符串（`sound_path`）与布尔（#508）。
+    // Audio component only a string path + scalars; RSCN positional encoding most likely to lose
+    // string (`sound_path`) and boolean (#508).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -484,8 +484,8 @@ fn an_audio_source_survives_cook_and_decode() {
 
 #[test]
 fn physics_components_survive_cook_and_decode() {
-    // 物理组件的两个枚举（ColliderShape / BodyType）走的是「JSON 用变体名、RSCN 用小整数」
-    // 的手写 ReflectType，最容易在往返里错位（#522）。
+    // Physics component two enums (ColliderShape / BodyType) use hand-written ReflectType with "JSON variant name, RSCN small integer"
+    // most likely to go wrong in round trip (#522).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -590,12 +590,19 @@ fn an_animator_survives_cook_and_decode() {
     assert_eq!(animator.speed, 2.0);
     assert!(!animator.looped);
     assert!(animator.playing);
-    assert_eq!(animator.blend_duration, 0.35, "交叉淡入时长要进 RSCN");
+    assert_eq!(
+        animator.blend_duration, 0.35,
+        "Cross-fade duration must enter RSCN"
+    );
     assert_eq!(
         animator.anim_graph_path, "graphs/hero.rag",
-        "动画图路径要进 RSCN"
+        "Animation graph path must enter RSCN"
     );
-    assert_eq!(animator.layers.len(), 1, "动画图层要进 RSCN");
+    assert_eq!(
+        animator.layers.len(),
+        1,
+        "Animation graph layers must enter RSCN"
+    );
     assert_eq!(
         animator.layers[0].clip_path,
         "models/hero.skinning/clips/2_aim.ranim"
@@ -607,7 +614,7 @@ fn an_animator_survives_cook_and_decode() {
 
 #[test]
 fn an_animator_without_a_blend_duration_falls_back_to_the_default() {
-    // 新增字段必须对旧文档宽容：缺 `blend_duration` 时用 0.2s，而不是 0（硬切）。
+    // New fields must tolerate old document: missing `blend_duration` uses 0.2s, not 0 (hard cut).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -637,8 +644,8 @@ fn an_animator_without_a_blend_duration_falls_back_to_the_default() {
 
 #[test]
 fn a_terrain_survives_cook_and_decode() {
-    // 地形组件是「路径 + 若干标量」，RSCN 的位置化编码最容易丢字符串（heightmap）
-    // 和 `[f32; 2]`（size）（#517）。
+    // Terrain component is "path + scalars", RSCN positional encoding most likely to lose string (heightmap)
+    // and `[f32; 2]` (size) (#517).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -674,12 +681,12 @@ fn a_terrain_survives_cook_and_decode() {
     assert_eq!(terrain.heightmap, "heightmaps/terrain.raw");
     assert_eq!(terrain.size, [512.0, 256.0]);
     assert_eq!(terrain.height_scale, 1.5);
-    assert_eq!(terrain.resolution, 0, "0 = 跟随高度图大小");
+    assert_eq!(terrain.resolution, 0, "0 = follow heightmap size");
 }
 
 #[test]
 fn a_lod_group_survives_cook_and_decode() {
-    // 距离 LOD 只有一个 `Vec<f32>` 字段（#491）。
+    // Distance LOD only one `Vec<f32>` field (#491).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -718,7 +725,7 @@ fn a_lod_group_survives_cook_and_decode() {
 
 #[test]
 fn a_lod_group_without_screen_fields_uses_defaults() {
-    // 旧场景只写了 `distances`；新增字段必须靠 serde default 兼容。
+    // Old scene only wrote `distances`; new fields must stay compatible via serde default.
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -754,7 +761,7 @@ fn a_lod_group_without_screen_fields_uses_defaults() {
 
 #[test]
 fn skinned_components_survive_cook_and_decode() {
-    // 骨架与蒙皮渲染器只有路径 + 一个 `Vec<String>`（#560）。
+    // Skeleton and skin renderer only have path + one `Vec<String>` (#560).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(

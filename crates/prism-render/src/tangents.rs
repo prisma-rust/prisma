@@ -1,10 +1,10 @@
-//! 从 UV 推导顶点切线（#515）。
+//! Derive vertex tangents from UV (#515).
 //!
-//! 导入网格的中间格式没有切线槽位，`scene/loader.rs` 只能给每个顶点填常量
-//! `[1, 0, 0, 1]`；片元着色器却真的用这根切线建 TBN，所以所有导入网格的法线
-//! 贴图方向都是错的（法线朝 ±X 的面甚至直接退化）。
+//! Import mesh intermediate format has no tangent slot, `scene/loader.rs` only fills constant
+//! `[1, 0, 0, 1]` per vertex; fragment shader actually uses this tangent to build TBN, so all imported mesh normal
+//! texture directions are wrong (faces with normal ±X even degenerate).
 //!
-//! 这里在**上传前**按三角形 UV 累加出切线，也就是 MikkTSpace 的基本形态：
+//! Here **before upload** accumulate tangents per triangle by UV, the basic form of MikkTSpace:
 //!
 //! ```text
 //! e1 = p1 - p0              duv1 = uv1 - uv0
@@ -14,15 +14,15 @@
 //! B  = (e2 * duv1.x - e1 * duv2.x) * r
 //! ```
 //!
-//! 每个顶点再对 `T` 做 Gram-Schmidt 正交化（去掉法线方向的分量），并用
-//! `w = sign(dot(cross(N, T), B))` 记录手性 —— 与 `scene_frag.slang` 里
-//! `b = cross(N, T) * w` 的约定一致。
+//! Each vertex then Gram-Schmidt orthogonalizes `T` against normal (removes normal direction component), and uses
+//! `w = sign(dot(cross(N, T), B))` to record handedness — consistent with `scene_frag.slang` convention
+//! `b = cross(N, T) * w`.
 //!
-//! 只在**调用方没有可用切线**时才用（全常量 / 长度不足），见
-//! `managers::mesh_manager::build_vertices`。纯数学、无依赖，与 `culling` 一样
-//! 不引 `glam`。
+//! Only used when **caller has no tangent available** (fully constant / insufficient length), see
+//! `managers::mesh_manager::build_vertices`. Pure math, no dependency, does not pull in `glam` like `culling`.
+//! does not pull in `glam` like `culling`.
 
-/// 一组三角形的切线 / 副切线累加结果，内部用。
+/// Tangent / bitangent accumulation result for a group of triangles, internal use.
 struct Accum {
     tangent: [f32; 3],
     bitangent: [f32; 3],
@@ -62,11 +62,11 @@ fn normalize(a: [f32; 3]) -> Option<[f32; 3]> {
     Some(scale(a, 1.0 / length))
 }
 
-/// 按 UV 为每个顶点生成切线，`w` 在 `+1` / `-1` 之间。
+/// Generate tangents per vertex by UV, `w` in `+1` / `-1`.
 ///
-/// 长度等于 `positions.len()`；输入长度对不上或没有三角形时返回 `None`。
-/// UV 退化（同一三角形的 UV 面积为 0）不参与累加，整条网格都退化时该顶点退回
-/// `[1, 0, 0, 1]`，由调用方决定要不要 log。
+/// Length equal to `positions.len()`; returns `None` when input lengths mismatch or no triangles.
+/// Degenerate UV (triangle UV area 0) not accumulated, when whole mesh degenerate vertex falls back to
+/// `[1, 0, 0, 1]`, caller decides whether to log.
 pub fn generate(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
@@ -122,7 +122,7 @@ pub fn generate(
     let mut out = Vec::with_capacity(positions.len());
     for (index, entry) in accum.into_iter().enumerate() {
         let normal = normalize(normals[index]).unwrap_or([0.0, 0.0, 1.0]);
-        // Gram-Schmidt：去掉法线方向的分量，TBN 才是正交的。
+        // Gram-Schmidt: remove normal direction component so TBN is orthogonal.
         let projected = sub(entry.tangent, scale(normal, dot(normal, entry.tangent)));
         let Some(tangent) = normalize(projected) else {
             out.push(FALLBACK);
@@ -138,10 +138,10 @@ pub fn generate(
     Some(out)
 }
 
-/// 给定的切线能不能用：数量对得上，而且不是一个常量。
+/// Whether given tangents are usable: count matches and not a constant.
 ///
-/// 导入路径给每个顶点都写 `[1, 0, 0, 1]`，所以在渲染前必须能识别出这种情况 ——
-/// 真网格不可能所有顶点的切线都同向（球、立方体、任何带曲面的模型都不同向）。
+/// Import path writes `[1, 0, 0, 1]` per vertex, so before render must detect this case —
+/// real mesh cannot have all vertex tangents same direction (sphere, cube, any curved model differ).
 pub fn are_placeholders(tangents: &[[f32; 4]], vertex_count: usize) -> bool {
     if tangents.len() != vertex_count || tangents.is_empty() {
         return true;
@@ -155,7 +155,7 @@ pub fn are_placeholders(tangents: &[[f32; 4]], vertex_count: usize) -> bool {
 mod tests {
     use super::*;
 
-    /// 顶点三件套 + 索引，测试里批量传递。
+    /// Vertex triple + index, passed in test in batch.
     struct Quad {
         positions: Vec<[f32; 3]>,
         normals: Vec<[f32; 3]>,
@@ -163,7 +163,7 @@ mod tests {
         indices: Vec<u32>,
     }
 
-    /// XY 平面上的单位正方形，法线 +Z；`uvs` 决定切线应该指向哪里。
+    /// Identity square on XY plane, normal +Z; `uvs` decides which direction tangent should point.
     fn quad(uvs: [[f32; 2]; 4]) -> Quad {
         let positions = vec![
             [0.0, 0.0, 0.0],
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn tangents_follow_the_uvs_not_the_x_axis() {
-        // U 轴沿 +Y、V 轴沿 −X：切线应当是 +Y，而不是导入路径硬编码的 +X。
+        // U axis along +Y, V axis along −X: tangent should be +Y, not hard-coded +X by import path.
         let uvs = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]];
         let quad = quad(uvs);
         let tangents =
@@ -195,8 +195,8 @@ mod tests {
                 "expected +Y tangent, got {tangent:?}"
             );
         }
-        // 注意：这个四边形所有切线同向，所以 `are_placeholders` 仍会认为是占位 ——
-        // 对平面网格两者结果一致，重复生成不会更差。
+        // Note: this quad has all tangents same direction, so `are_placeholders` still thinks placeholder —
+        // for flat mesh both results agree, re-generation no worse.
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn mirrored_uvs_flip_the_handedness() {
-        // V 轴翻转（镜像）：切线仍是 +X，但副切线方向反了 → w = −1。
+        // V axis flipped (mirror): tangent still +X but bitangent direction flipped → w = −1.
         let uvs = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
         let quad = quad(uvs);
         let tangents =
@@ -248,7 +248,10 @@ mod tests {
     #[test]
     fn placeholders_are_detected_by_uniformity() {
         assert!(are_placeholders(&[[1.0, 0.0, 0.0, 1.0]; 4], 4));
-        assert!(are_placeholders(&[], 4), "空切线也要视为占位");
+        assert!(
+            are_placeholders(&[], 4),
+            "Empty tangent should also count as placeholder"
+        );
         assert!(!are_placeholders(
             &[[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]],
             2

@@ -18,10 +18,10 @@ use crate::context::VulkanContext;
 /// [`VulkanContext::graphics_queue_family`]) so it can submit clear + copy
 /// operations without borrowing a pool from another subsystem.
 ///
-/// 编辑器宿主模式用它实现**零拷贝**视口：帧结束时把图像转到
-/// `SHADER_READ_ONLY_OPTIMAL`，再把 [`image_view`](Self::image_view) 交给
-/// UI 框架采样（`egui-ash` 的 `ImageRegistry`、wgpu 的 native texture ……），
-/// 不需要 `TRANSFER_SRC` 回读。
+/// Editor host mode uses it to implement **zero-copy** viewport: at frame end transition image to
+/// `SHADER_READ_ONLY_OPTIMAL`, then hand [`image_view`](Self::image_view) to
+/// UI framework for sampling (`egui-ash` `ImageRegistry`, wgpu native texture, ...),
+/// no `TRANSFER_SRC` readback needed.
 pub struct OffscreenTarget {
     image: vk::Image,
     image_memory: vk::DeviceMemory,
@@ -38,15 +38,15 @@ pub struct OffscreenTarget {
 impl OffscreenTarget {
     const FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 
-    /// 图像句柄（布局在帧结束后为 `COLOR_ATTACHMENT_OPTIMAL`：headless
-    /// 上下文没有 `VK_KHR_swapchain`，`PRESENT_SRC_KHR` 在那里不是合法布局；调用
-    /// [`transition_to_shader_read`](Self::transition_to_shader_read) 后为
-    /// `SHADER_READ_ONLY_OPTIMAL`）。
+    /// Image handle (layout at frame end is `COLOR_ATTACHMENT_OPTIMAL`: headless
+    /// context has no `VK_KHR_swapchain`, `PRESENT_SRC_KHR` is not a legal layout there; call
+    /// [`transition_to_shader_read`](Self::transition_to_shader_read) to make it
+    /// `SHADER_READ_ONLY_OPTIMAL`).
     pub fn image(&self) -> vk::Image {
         self.image
     }
 
-    /// 可直接注册进 UI 框架纹理表的视图（`R8G8B8A8_UNORM`，mip 1）。
+    /// View directly registrable into UI framework texture table (`R8G8B8A8_UNORM`, mip 1).
     pub fn image_view(&self) -> vk::ImageView {
         self.image_view
     }
@@ -62,8 +62,8 @@ impl OffscreenTarget {
     /// Create the offscreen image, a host-visible readback buffer, and a
     /// dedicated command pool.
     ///
-    /// `usage` 同时包含 `COLOR_ATTACHMENT`：PostPass 会把 tonemap 结果直接
-    /// 渲染进这张图（无交换链的宿主模式），随后经 `TRANSFER_SRC` 读回 CPU。
+    /// `usage` also contains `COLOR_ATTACHMENT`: PostPass renders tonemap result directly
+    /// into this image (host mode with no swapchain), then read back to CPU via `TRANSFER_SRC`.
     pub fn new(context: &VulkanContext, width: u32, height: u32) -> anyhow::Result<Self> {
         let extent = vk::Extent2D {
             width: width.max(1),
@@ -290,9 +290,9 @@ impl OffscreenTarget {
 
     /// Copy the current offscreen image contents to the host-visible readback buffer
     /// without clearing. Afterwards call [`readback`](Self::readback).
-    /// 把帧结束后的图像从 `current_layout` 转到 `SHADER_READ_ONLY_OPTIMAL`，
-    /// 供 UI 框架采样（零拷贝视口）。提交并等待完成，随后可以安全地交给
-    /// 另一个命令缓冲区（同一队列）读取。
+    /// Transition post-frame-end image from `current_layout` to `SHADER_READ_ONLY_OPTIMAL`,
+    /// for UI framework sampling (zero-copy viewport). Submit and wait for completion, then can safely hand to
+    /// another command buffer (same queue) for reading.
     pub fn transition_to_shader_read(
         &mut self,
         context: &VulkanContext,
@@ -573,7 +573,7 @@ impl OffscreenTarget {
     /// # Safety
     ///
     /// `device` must be the same `ash::Device` used to create these objects,
-    /// and must 已 have been destroyed.
+    /// and must already  have been destroyed.
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe {
             device.device_wait_idle().ok();

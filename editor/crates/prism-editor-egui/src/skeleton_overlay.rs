@@ -1,20 +1,20 @@
-//! 视口骨骼叠加（#560 P0-4 的增量）。
+//! Viewport skeleton overlay (#560 P0-4 increment).
 //!
-//! 蒙皮网格在 Scene 视图里只有一张变形后的网格，看不出骨架长什么样、哪根骨骼在动。
-//! 这里把选中实体的 `BonePalette` 还原成世界空间的关节位置，画成线 + 点：
+//! Skinned mesh in Scene view only has one deformed mesh, cannot see what skeleton looks like, which bone moves.
+//! Restore selected entity's `BonePalette` to world-space joint positions, draw as lines + dots:
 //!
-//! - `palette[j] = world_j * inverse_bind_j`（见 `prism_anim::Skeleton::bone_palette`），
-//!   所以 `world_j = palette[j] * inverse_bind_j⁻¹`；
-//! - 连线画在父 → 子之间，父骨骼下标在 cooked 数据里一定小于自身，所以不用排序。
+//! - `palette[j] = world_j * inverse_bind_j` (see `prism_anim::Skeleton::bone_palette`),
+//!   so `world_j = palette[j] * inverse_bind_j⁻¹`;
+//! - Lines drawn between parent -> child, parent bone index in cooked data always smaller than itself, no sort needed.
 //!
-//! 纯数学放在 [`bone_overlay`] 里，视口只负责投影和画。
+//! Pure math in [`bone_overlay`], viewport only responsible for projection and drawing.
 
-/// 世界空间的骨架：关节位置 + 父子连线。
+/// Skeleton in world space: joint positions + parent-child lines.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkeletonOverlay {
-    /// 每个关节的世界位置，顺序与骨架的 `joints` 一致。
+    /// World position of each joint, order consistent with skeleton `joints`.
     pub joints: Vec<[f32; 3]>,
-    /// `(父下标, 子下标)`，用于画线。
+    /// `(parent index, child index)`, used for drawing lines.
     pub segments: Vec<(usize, usize)>,
 }
 
@@ -24,10 +24,10 @@ impl SkeletonOverlay {
     }
 }
 
-/// 由调色板 + 父表 + inverse bind 矩阵还原世界空间骨架。
+/// Restore world-space skeleton from palette + parent table + inverse bind matrix.
 ///
-/// 三个输入长度不一致时按最短的来（`palette` 可能被 `BONE_CAPACITY` 截断），
-/// 非有限的结果会被跳过 —— 画一个 NaN 关节只会让整帧的线飞出去。
+/// When three inputs length inconsistent, take shortest (`palette` may be truncated by `BONE_CAPACITY`),
+/// Non-finite results skipped --- drawing a NaN joint would send whole frame lines flying.
 pub fn bone_overlay(
     palette: &[[[f32; 4]; 4]],
     parents: &[Option<usize>],

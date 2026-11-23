@@ -18,8 +18,8 @@ use crate::render_graph::RenderMode;
 
 use super::GraphRenderer;
 
-/// 构造 IBL 资源。`ibl` feature 关闭时一律返回 1x1 中性灰（descriptor 布局不变，
-/// 前向 pass 照常绑定 set 2），HDR 解码 / 卷积 / 预过滤 / BRDF LUT 全部不参与编译。
+/// Construct IBL resources. When `ibl` feature disabled always returns 1x1 neutral gray (descriptor layout unchanged,
+/// forward pass still binds set 2), HDR decode / convolution / prefilter / BRDF LUT entirely not compiled.
 #[cfg(feature = "ibl")]
 pub(super) fn make_ibl(
     context: std::sync::Arc<crate::context::VulkanContext>,
@@ -51,7 +51,7 @@ pub(super) fn make_ibl(
     scope: crate::ibl::IblScope,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
-    // 无 IBL 构建：忽略环境贴图，始终用中性立方体。
+    // No IBL build: ignore environment texture, always use neutral cube.
     let _ = (env, scope);
     IblResources::new_empty(context, command_pool, queue, layout)
 }
@@ -68,17 +68,17 @@ pub(super) fn env_bytes_fingerprint(bytes: &[u8]) -> u64 {
 }
 
 impl GraphRenderer {
-    /// 注册一个工程自带字体（`.ttf` / `.otf` / `.ttc` 的原始字节，#583）。
+    /// Register a project-bundled font (raw bytes of `.ttf` / `.otf` / `.ttc`, #583).
     ///
-    /// 宿主从 `.pak` 读出字节后调用一次即可；名字是 `Text.font` 里写的资产路径。
-    /// UI overlay 是懒创建的，所以这里先把字节存起来，等第一帧真正画 UI 时
-    /// 再灌进图集；已经创建的那一份立即生效。
+    /// Host reads bytes from `.pak` then calls once; name is asset path written in `Text.font`.
+    /// UI overlay is lazily created, so here first stores bytes, waits until first frame actually drawing UI
+    /// then feeds into atlas; already-created one takes effect immediately.
     pub fn register_ui_font(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
         self.ui_host.register_ui_font(name.into(), bytes);
     }
 
     /// IBL descriptor set + layout for the environment cubemap (set 2).
-    /// Used by PathTracePass and ForwardPass for 高动态范围 sky / 间接 lighting.
+    /// Used by PathTracePass and ForwardPass for high dynamic range sky / indirect lighting.
     pub fn ibl_descriptor_set(&self) -> vk::DescriptorSet {
         self.ibl.descriptor_set
     }
@@ -86,12 +86,12 @@ impl GraphRenderer {
         self.ibl.descriptor_set_layout
     }
 
-    /// 按场景重建 IBL。`env_bytes = Some(data)` 接收离线烘焙的 `PIBL` 或原始 `.hdr`；
-    /// `None` 重建为廉价中性空 IBL（与 `new_empty` 等价）。用于在「场景切换」
-    /// 时按需构建/移除光照，而不在引擎启动期无条件加载 3D IBL/GI。
+    /// Rebuild IBL per scene. `env_bytes = Some(data)` accepts offline-baked `PIBL` or raw `.hdr`;
+    /// `None` rebuilds as cheap neutral empty IBL (equivalent to `new_empty`). Used when building / removing lighting
+    /// on demand at "scene switch", not unconditionally loading 3D IBL/GI at engine startup.
     ///
-    /// 在 `PathTrace` 模式下仅加载 `envCube`（跳过 `irradiance` / `prefiltered` / `BRDF LUT`），
-    /// 切回 `Raster` 模式时再按需升级。
+    /// In `PathTrace` mode only loads `envCube` (skips `irradiance` / `prefiltered` / `BRDF LUT`),
+    /// switches back to `Raster` mode upgrades on demand again.
     pub fn set_environment(&mut self, env_bytes: Option<Vec<u8>>) -> anyhow::Result<()> {
         let fp = env_bytes.as_deref().map(env_bytes_fingerprint);
         let want_pbr = self.settings.render_mode == RenderMode::Raster;
@@ -125,8 +125,8 @@ impl GraphRenderer {
         unsafe { self.runtime.context.device.device_wait_idle() }
             .context("wait idle before replacing IBL")?;
 
-        // `None` = 无光照场景（开屏/UI）：走廉价中性空 IBL（new_empty，不卷积，≈0ms）。
-        // 共享 set2 描述符 布局 保持稳定。
+        // `None` = no lighting scene (splash / UI): cheap neutral empty IBL (new_empty, no convolution, ≈0ms).
+        // Shared set2 descriptor layout stays stable.
         let new_ibl = make_ibl(
             self.runtime.context.clone(),
             self.runtime.command_pool,
@@ -136,13 +136,13 @@ impl GraphRenderer {
             self.ibl.descriptor_set_layout,
         )
         .context("rebuild IBL resources for scene")?;
-        // 覆盖同一 bindless 槽的 BRDF LUT（表不增长）。
+        // Overwrite BRDF LUT at same bindless slot (table does not grow).
         self.texture_manager
             .bindless_mut()
             .register_with_handle(self.brdf_bindless_slot, new_ibl.brdf_image_view())
             .context("overwrite BRDF LUT bindless slot")?;
 
-        // 切换 forward pass / skybox 的 set2（布局共享，不重建管线）。
+        // Switch forward pass / skybox set2 (layout shared, no pipeline rebuild).
         if let Some(fp) = self.graph.pass_mut::<ForwardPass>() {
             fp.set_ibl(new_ibl.descriptor_set, self.brdf_bindless_slot);
         }
@@ -151,12 +151,12 @@ impl GraphRenderer {
             pt.set_ibl_resources(new_ibl.descriptor_set, self.ibl.descriptor_set_layout);
         }
 
-        // 销毁旧 IBL（不销毁共享 布局）后接管新的。
+        // Destroy old IBL (not shared layout) after taking over new.
         self.ibl.destroy();
         self.ibl = new_ibl;
         self.ibl_has_pbr = env_bytes.is_some() && scope == crate::ibl::IblScope::Full;
-        // 天空/IBL 是辐射缓存训练时的入射光来源；换了环境，旧体素里的辐射
-        // 就不再属于这个场景（repair spec §8）。
+        // Sky / IBL is incident light source for radiance cache training; environment changed, old voxel radiance
+        // no longer belongs to this scene (repair spec §8).
         #[cfg(feature = "sharc")]
         {
             self.sharc_invalidation.sky = true;
@@ -173,8 +173,8 @@ impl GraphRenderer {
         )
     }
 
-    /// `register_mesh` 的蒙皮版本（#560 P0-3）：额外上传 joints/weights
-    /// 到第二个顶点缓冲，绘制项要用 `bone_offset` 指向骨骼调色板。
+    /// Skinning version of `register_mesh` (#560 P0-3): additionally uploads joints/weights
+    /// to second vertex buffer, draw item must use `bone_offset` to point to bone palette.
     pub fn register_mesh_skinned(
         &mut self,
         input: &MeshUploadInput,
@@ -260,18 +260,18 @@ impl GraphRenderer {
         &self.mesh_manager
     }
 
-    /// GPU 侧资产解析：执行主线程准备好的上传请求，返回句柄。
+    /// GPU-side asset parse: execute upload requests prepared by main thread, return handles.
     ///
-    /// 在渲染线程调用（拥有 `&mut self`）。每个请求独立上传 mesh / 纹理 /
-    /// 材质：纹理先上传取 bindless 槽，再据此组装 `MaterialUploadInput` 上传材质。
-    /// 返回顺序与输入一致，调用方按实体配对写回 `World`。
+    /// Called on render thread (owns `&mut self`). Each request independently uploads mesh / texture /
+    /// material: texture uploaded first to get bindless slot, then assembles `MaterialUploadInput` to upload material.
+    /// Return order consistent with input, caller matches by entity to write back `World`.
     ///
-    /// 输入为空时直接返回，避免无谓地创建 `BatchUploader` 命令缓冲。
-    /// 释放一组主线程判定为不再需要的 GPU 资源（#495）。
+    /// Empty input returns directly, avoiding needlessly creating `BatchUploader` command buffer.
+    /// Release a group of GPU resources main thread judged no longer needed (#495).
     ///
-    /// 热重载 / 实体销毁 / 组件路径被改写时，`GpuAssetResolver` 会把旧槽位与
-    /// 句柄交回来；这里真正销毁图像、网格与材质槽，避免每次重载都泄漏一份显存。
-    /// 值已经释放过（重复请求、渲染器重启）时静默忽略。
+    /// On hot reload / entity destroy / component path rewritten, `GpuAssetResolver` returns old slot bits and
+    /// handles; here truly destroys images, meshes and material slots, avoiding a VRAM leak per reload.
+    /// Already released values (duplicate request, renderer restart) silently ignored.
     pub fn release_assets(&mut self, releases: &[crate::asset_bridge::AssetRelease]) {
         if releases.is_empty() {
             return;
@@ -311,7 +311,7 @@ impl GraphRenderer {
         }
     }
 
-    /// 暂存资产上传请求，由下一次 `prepare` 统一批量执行（DESIGN §9 / #1157）。
+    /// Stage asset upload requests, batch executed by next `prepare` (DESIGN §9 / #1157).
     pub fn stage_asset_requests(
         &mut self,
         requests: Vec<crate::asset_bridge::AssetResolveRequest>,
@@ -319,12 +319,12 @@ impl GraphRenderer {
         self.staged_asset_requests.extend(requests);
     }
 
-    /// 暂存资产释放请求，由下一次 `prepare` 统一批量执行（DESIGN §9 / #1157）。
+    /// Stage asset release requests, batch executed by next `prepare` (DESIGN §9 / #1157).
     pub fn stage_asset_releases(&mut self, releases: Vec<crate::asset_bridge::AssetRelease>) {
         self.staged_asset_releases.extend(releases);
     }
 
-    /// 在 `prepare` 阶段统一收敛并刷新已暂存的批量资产释放与上传（DESIGN §9 / #1157）。
+    /// In `prepare` phase converge and flush already-staged batch asset release & upload (DESIGN §9 / #1157).
     pub fn flush_staged_assets(&mut self) -> anyhow::Result<()> {
         if !self.staged_asset_releases.is_empty() {
             let releases = std::mem::take(&mut self.staged_asset_releases);
@@ -596,11 +596,11 @@ impl GraphRenderer {
         false
     }
 
-    /// 设置内部渲染分辨率（#613）：`[0, 0]` = 按窗口分辨率渲染。
+    /// Set internal render resolution (#613): `[0, 0]` = render at window resolution.
     ///
-    /// 每帧调用是安全的：值没变时直接返回。改动后 `ForwardPass` 会在下一次
-    /// `execute` 发现 extent 不同并重建目标（`ensure_target` 已经按 extent
-    /// 做了失效判断）。
+    /// Calling every frame is safe: returns directly when unchanged. After change `ForwardPass` will on next
+    /// `execute` detect differing extent and rebuild target (`ensure_target` already does
+    /// invalidate check by extent).
     /// Load a `.cube` LUT and bind it to `PostPass` (#502).
     ///
     /// This is the explicit entry point used by tests and tools; the per-frame

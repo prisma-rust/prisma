@@ -1,13 +1,13 @@
-//! Build-time asset pipeline：importer → cooker → database。
+//! Build-time asset pipeline: importer → cooker → database.
 //!
-//! 这个 crate 只在构建机/编辑器里用，**不进入** shipping runtime。
-//! 运行时格式（`AssetId`/`Handle`/`.pak`/`ResourceManager`）在 `prism-asset`。
+//! This crate only used in build machine/editor, **does not enter** shipping runtime.
+//! Runtime format (`AssetId`/`Handle`/`.pak`/`ResourceManager`) in `prism-asset`.
 //!
-//! 分层：
-//! - `importer`：源文件 → 中间数据（glTF、scene JSON、图片…）
-//! - `cooker`：中间数据 → 运行时 blob（mesh/texture/material/…）
-//! - `db`：资产记录与导入缓存（构建期数据库）
-//! - `pack`：已 cook 目录 → `.pak` + 路径清单（底层打包工具）
+//! Layers:
+//! - `importer`: source file → import-time data (glTF, scene JSON, texture slices…)
+//! - `cooker`: import-time data → runtime blob (mesh/texture/material/…)
+//! - `db`: asset records and import cache (build-time database)
+//! - `pack`: already cooked directory → `.pak` + path manifest (bottom-layer packaging tool)
 
 pub mod aseprite;
 pub mod atlas;

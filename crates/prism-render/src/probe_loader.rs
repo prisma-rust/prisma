@@ -1,22 +1,22 @@
-//! 烘焙全局光照探测器体积的二进制加载器/保存器。
+//! Binary loader/saver for baked global illumination probe volumes.
 //!
-//! 从旧版开发模式 `prism-asset` crate 迁移至此，使全局光照运行时
-//! 完全不依赖该 crate。磁盘格式不变（PRPV 魔数，版本 2）；
-//! 现有的 `.bin` 文件继续可加载。
+//! Migrated from old dev-mode `prism-asset` crate so global illumination at runtime
+//! fully does not depend on that crate. Disk format unchanged (PRPV magic, version 2);
+//! existing `.bin` files remain loadable.
 //!
-//! 文件格式（小端序）：
+//! File format (little-endian):
 //!
-//! | 偏移 | 大小 | 字段 |
+//! | offset  | size  | field  |
 //! |-------:|-----:|-------|
-//! | 0 | 4 | 魔数 `b"PRPV"` |
-//! | 4 | 4 | 版本 `u32`（当前为 2） |
-//! | 8 | 12 | 原点 `[f32; 3]` |
-//! | 20 | 12 | 间距 `[f32; 3]` |
-//! | 32 | 12 | 维度 `[u32; 3]` |
-//! | 44 | 4 | 系数格式 `u32`（0 = f32，1 = f16 - 预留） |
-//! | 48 | 64 | 场景名称 `[u8; 64]`（空填充 UTF-8） |
-//! | 112 | 4 | 全局命中率 `f32`（每个探测器的均值；-1 = 未知） |
-//! | 116 | N | 系数字段：`dims.x*dims.y*dims.z*9*3` 个 f32 值（每个系数 RGB） |
+//! | 0 | 4 | magic `b"PRPV"` |
+//! | 4 | 4 | version `u32` (currently 2) |
+//! | 8 | 12 | origin `[f32; 3]` |
+//! | 20 | 12 | spacing `[f32; 3]` |
+//! | 32 | 12 | dimensions `[u32; 3]` |
+//! | 44 | 4 | coefficient format `u32` (0 = f32, 1 = f16 - reserved) |
+//! | 48 | 64 | scene name `[u8; 64]` (zero-padded UTF-8) |
+//! | 112 | 4 | global hit rate `f32` (mean per probe; -1 = unknown) |
+//! | 116 | N | coefficient field: `dims.x*dims.y*dims.z*9*3` f32 values (RGB per coefficient) |
 //!
 //! Header = 116 bytes. Body = `probe_count * 9 * 3 * 4` bytes (f32).
 
@@ -38,7 +38,7 @@ pub struct ProbeVolumeData {
     pub dims: [u32; 3],
     /// SH coefficients: `dims.x * dims.y * dims.z * 9` RGB triplets.
     pub coeffs: Vec<[f32; 3]>,
-    /// Name of the scene this 音量 was baked for (from the scene manifest).
+    /// Name of the scene this volume was baked for (from the scene manifest).
     /// Used at runtime to reject a `.bin` baked for a different scene
     /// (prevents silent wrong-scene GI). Empty for v1 files / unknown scenes
     /// -> the runtime skips the binding check.

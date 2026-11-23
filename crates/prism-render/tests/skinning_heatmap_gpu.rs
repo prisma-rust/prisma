@@ -186,8 +186,8 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         return;
     };
     let cube = prism_render::primitives::builtin("__builtin/cube").expect("builtin cube");
-    // 一半顶点挂 joint 0、一半挂 joint 1，权重都是 1 —— 两个 joint 的矩阵都是单位，
-    // 所以几何完全一样，任何颜色差异都只能来自热图着色。
+    // Half vertices attached to joint 0, half to joint 1, weights all 1 — both joint matrices are identity,
+    // so geometry is completely identical, any color difference can only come from heatmap shading.
     let count = cube.positions.len();
     let sk = SkinAttributes {
         joints: (0..count)
@@ -199,7 +199,7 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         .register_mesh_skinned(&cube, &sk)
         .expect("register skinned cube");
 
-    // 正常着色：默认材质是中性色，不该出现明显色偏。
+    // Normal shading: default material is linear color, no obvious color cast.
     let shaded = render(
         &mut renderer,
         &[draw_item(handle)],
@@ -212,8 +212,8 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         "the lit view must not already look like a heatmap ({shaded_tinted} tinted pixels)"
     );
 
-    // 热图：hue = joint × 金色角。joint 0 → 红 (1, .15, .15)，
-    // joint 1 (0.618 圈) → 蓝 (.15, .4, 1)。
+    // Heatmap: hue = joint × golden angle. joint 0 → red (1, .15, .15),
+    // joint 1 (0.618 turn) → blue (.15, .4, 1).
     let heat = render(
         &mut renderer,
         &[draw_item(handle)],
@@ -242,7 +242,7 @@ fn an_unweighted_vertex_stays_grey_in_the_heatmap() {
         return;
     };
     let cube = prism_render::primitives::builtin("__builtin/cube").expect("builtin cube");
-    // 权重全 0 = 坏导入 / 静态数据：不能把它画成某根骨骼的颜色。
+    // Weight all 0 = bad import / static data: cannot paint it as some bone color.
     let sk = SkinAttributes {
         joints: vec![[0, 0, 0, 0]; cube.positions.len()],
         weights: vec![[0.0; 4]; cube.positions.len()],

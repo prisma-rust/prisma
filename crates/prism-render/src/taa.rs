@@ -392,7 +392,7 @@ impl RenderPassNode for TaaPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
-        // 每帧都走这里：只在 trace 级别输出，`RUST_LOG` 默认不打开。
+        // Executed every frame: only output at trace level, `RUST_LOG` disabled by default.
         log::trace!(
             "TAA exec taa={} jitter={:?}",
             ctx.settings.taa,

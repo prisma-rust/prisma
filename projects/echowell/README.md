@@ -1,30 +1,30 @@
 # EchoWell
 
-`EchoWell` 是按需求文档制作的 2D 灰盒平台跳跃切片，目前包含 320×180 的“回声之井”和“蓄水池”两间相连房间。角色使用固定 60 Hz 模拟，包含土狼时间、跳跃输入缓冲、可变跳跃高度、空中冲刺、能力水晶、能力门、尖刺死亡和 0.5 秒重生。
+`EchoWell` is a 2D gray-box platformer slice made per the design doc, currently containing two connected rooms: the 320×180 "Echo Well" and "Reservoir". The character uses fixed 60 Hz simulation with coyote time, jump input buffering, variable jump height, air dash, ability crystals, ability gates, spike death and 0.5s respawn.
 
-玩法代码在用户项目侧，直接复用 Prisma 已有的 `SpriteRenderer`、`SpriteAnimation`、`Tilemap`、`ParticleEmitter2D`、`Light2D`、正交相机、输入快照、UI quad 和存档接口。`assets/player.json` 是可热替换的移动参数；`assets/rooms.json` 维护房间 ID、边界、瓦片、碰撞、出口目标、落点和能力条件。冲刺水晶解锁后可穿过井室出口，房间切换保留速度与永久能力；当前房间 ID 写入存档，死亡后回到当前房间入口。`assets/scenes/well.scene.json` 保存基础相机，房间实体由玩法系统按稳定名称生成，便于后续接 Tiled / Aseprite cooker。
+Gameplay code lives on the user project side, directly reusing Prisma's existing `SpriteRenderer`, `SpriteAnimation`, `Tilemap`, `ParticleEmitter2D`, `Light2D`, orthographic camera, input snapshot, UI quad and save interface. `assets/player.json` is the hot-reloadable movement parameters; `assets/rooms.json` maintains room IDs, bounds, tiles, collisions, exit targets, landing spots and ability conditions. After the dash crystal is unlocked the player can pass the well room exit; room switches preserve velocity and permanent abilities; current room ID is written to save, and death returns to the current room entrance. `assets/scenes/well.scene.json` holds the base camera; room entities are spawned by the gameplay system under stable names, making it easy to hook up Tiled / Aseprite cooker later.
 
-碰撞约定：玩家、尖刺、能力门和水晶都以碰撞 AABB 的中心作为实体位置，使用中心 pivot，并把精灵 quad 缩放到对应碰撞尺寸；预置 scene 实体也会在运行时套用这套对齐规则。
+Collision convention: player, spikes, ability gates and crystals all use collision AABB center as entity position, with center pivot, and scale the sprite quad to matching collision size; preset scene entities also apply this alignment rule at runtime.
 
-## 运行
+## run
 
 ```powershell
 cd projects/echowell
 .\scripts\run.ps1
 ```
 
-首次运行会生成原创灰盒精灵并从场景清单烘焙资源包。手动改过精灵后可用 `-SkipAssetGeneration` 保留修改；只改代码可用 `-SkipSceneBuild`。
+First run generates original gray-box sprites and bakes the asset pack from the scene manifest. After manually editing sprites you can use `-SkipAssetGeneration` to keep changes; for code-only edits use `-SkipSceneBuild`.
 
-编辑器预览模块：
+Editor preview module:
 
 ```text
 cargo build --no-default-features --features preview-module
 ```
 
-操作：`A/D` 或方向键移动，`Space` 从一开始就能跳跃，`Shift` 在触碰金色水晶后解锁冲刺。跳过地面尖刺，到右侧紫色门前在空中冲刺穿过。`F1` 切换碰撞调试叠加层；按 `E` 开始或结束录制，按 `Enter` 从录制起点重放。
+Controls: `A/D` or arrow keys to move, `Space` jumps from the start, `Shift` unlocks dash after touching the gold crystal. Jump over ground spikes, dash through the purple gate on the right. `F1` toggles collision debug overlay; press `E` to start/end recording, press `Enter` to replay from recording start.
 
-房间出口由 `rooms.json` 的 `exits` 定义；出口可声明 `required_ability`，目标房间的 `entry` 是切换后的玩家落点。相机按当前房间 `bounds` 夹取，超出视口的房间会跟随玩家滚动。
+Room exits are defined by `exits` in `rooms.json`; an exit can declare `required_ability`, and the target room's `entry` is the player landing spot after switch. Camera clamps by current room `bounds`; rooms larger than viewport scroll with the player.
 
-## 2D issue 对照
+## 2D issue snapshot
 
-本切片直接验证已合并的 Tilemap（#529）、输入快照（#589）、多帧精灵动画（#584）、2D 粒子（#594）、精灵混合/排序（#610）和 Light2D（#611）。图集 cooker（#1158）、Aseprite/Tiled 离线导入（#1159）以及 Rapier2D / 2D 相机 confiner（#1160）保留为下一阶段增量，当前关卡数据已使用 JSON 结构为迁移留下边界。
+This slice directly validates merged Tilemap (#529), input snapshot (#589), multi-frame sprite animation (#584), 2D particles (#594), sprite blending/sorting (#610) and Light2D (#611). Atlas cooker (#1158), Aseprite/Tiled offline import (#1159) and Rapier2D / 2D camera confiner (#1160) remain as next-stage increments; current level data already uses JSON structures leaving a migration boundary.

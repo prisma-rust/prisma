@@ -1,15 +1,15 @@
-//! 显存子分配器与暂存传输 Arena。
+//! VRAM suballocator and staging transfer arena.
 //!
-//! 提供基于 Chunk 的 Vulkan 显存子分配管理（#1030），
-//! 减少直接调用 `vkAllocateMemory` 的次数并防止达到驱动 `maxMemoryAllocationCount` 上限。
+//! Provides Chunk-based Vulkan VRAM suballocation management (#1030),
+//! reducing direct `vkAllocateMemory` calls and avoiding hitting driver `maxMemoryAllocationCount` limit.
 //!
-//! 核心结构：
-//! - `MemorySuballocator`: 多内存类型索引的大块 `VkDeviceMemory` 管理器，
-//!   执行对齐子分配与释放时相邻区间合并（free-list coalescing）。
-//! - `StagingArena`: 批量上传（`crate::batch::BatchUploader`）专用的分块暂存区，
-//!   将数百次逐资源 staging `vkAllocateMemory` 合并为大块暂存缓冲分配，并在提交前显式 unmap
-//!   以保证跨驱动（包括 llvmpipe）正确同步。
-//! - `SuballocatorStats`: 保留显存、活跃显存、Chunk 数量与分配数统计。
+//! Core structures:
+//! - `MemorySuballocator`: large `VkDeviceMemory` manager per memory type index,
+//!   performs aligned suballocation and coalescing of adjacent free ranges on release (free-list coalescing).
+//! - `StagingArena`: chunked staging area dedicated to batched uploads (`crate::batch::BatchUploader`),
+//!   merges hundreds of per-resource staging `vkAllocateMemory` into large staging buffer allocations, and explicitly unmaps
+//!   before submit to guarantee correct synchronization across drivers (including llvmpipe).
+//! - `SuballocatorStats`: stats for reserved VRAM, active VRAM, chunk count and allocation count.
 
 use anyhow::{Context as _, Result};
 use ash::vk;
@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::buffer::{create_buffer, BufferUsage, MemoryProperties};
 use crate::context::VulkanContext;
 
-/// 将数值向上按 `alignment` 对齐。
+/// Round value up to `alignment`.
 pub fn align_up(value: vk::DeviceSize, alignment: vk::DeviceSize) -> vk::DeviceSize {
     if alignment <= 1 {
         return value;
@@ -31,14 +31,14 @@ pub fn align_up(value: vk::DeviceSize, alignment: vk::DeviceSize) -> vk::DeviceS
     }
 }
 
-/// 显存中的连续空闲区间。
+/// Contiguous free range in VRAM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryRange {
     pub offset: vk::DeviceSize,
     pub size: vk::DeviceSize,
 }
 
-/// 显存子分配句柄。
+/// VRAM suballocation handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Suballocation {
     pub memory: vk::DeviceMemory,
@@ -48,7 +48,7 @@ pub struct Suballocation {
     pub memory_type_index: u32,
 }
 
-/// 显存子分配器运行状态统计。
+/// VRAM suballocator runtime stats.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuballocatorStats {
@@ -58,7 +58,7 @@ pub struct SuballocatorStats {
     pub allocation_count: usize,
 }
 
-/// 拥有一整块 `VkDeviceMemory` 的 Chunk，维护内部空闲区间列表。
+/// Chunk owning one whole `VkDeviceMemory`, maintains internal free range list.
 pub struct MemoryChunk {
     pub memory: vk::DeviceMemory,
     pub size: vk::DeviceSize,
@@ -69,7 +69,7 @@ pub struct MemoryChunk {
 }
 
 impl MemoryChunk {
-    /// 分配并初始化一个新的显存 Chunk。
+    /// Allocate and initialize a new VRAM Chunk.
     pub fn new(device: &ash::Device, size: vk::DeviceSize, memory_type_index: u32) -> Result<Self> {
         let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(size)
@@ -86,7 +86,7 @@ impl MemoryChunk {
         })
     }
 
-    /// 构造用于纯算法测试的 Mock Chunk（无 Vulkan 设备调用）。
+    /// Construct a Mock Chunk for pure algorithm tests (no Vulkan device calls).
     #[cfg(test)]
     pub(crate) fn new_mock(size: vk::DeviceSize, memory_type_index: u32) -> Self {
         Self {
@@ -99,7 +99,7 @@ impl MemoryChunk {
         }
     }
 
-    /// 在当前 Chunk 中分配指定大小和对齐要求的区间。
+    /// Allocate a range of given size and alignment in current Chunk.
     pub fn allocate(
         &mut self,
         size: vk::DeviceSize,
@@ -116,7 +116,7 @@ impl MemoryChunk {
             let range_end = range.offset.checked_add(range.size)?;
 
             if end_offset <= range_end {
-                // 命中空闲区间：移除原区间并插入分割后的剩余部分
+                // Hit free range: remove original and insert remaining part after split
                 self.free_ranges.remove(i);
                 let mut insert_idx = i;
                 if aligned_offset > range.offset {
@@ -146,7 +146,7 @@ impl MemoryChunk {
         None
     }
 
-    /// 释放区间并将相邻的空闲区间自动合并。
+    /// Release range and automatically coalesce adjacent free ranges.
     pub fn free(&mut self, offset: vk::DeviceSize, size: vk::DeviceSize) {
         if size == 0 {
             return;
@@ -160,7 +160,7 @@ impl MemoryChunk {
         self.active_allocations = self.active_allocations.saturating_sub(1);
         self.allocated_bytes = self.allocated_bytes.saturating_sub(size);
 
-        // 合并相邻区间
+        // Coalesce adjacent ranges
         let mut i = 0;
         while i + 1 < self.free_ranges.len() {
             let current = self.free_ranges[i];
@@ -174,12 +174,12 @@ impl MemoryChunk {
         }
     }
 
-    /// 当前 Chunk 是否没有任何活跃分配。
+    /// Whether current Chunk has no active allocations.
     pub fn is_empty(&self) -> bool {
         self.active_allocations == 0
     }
 
-    /// 释放底层的 Vulkan DeviceMemory。
+    /// Release underlying Vulkan DeviceMemory.
     pub fn destroy(&mut self, device: &ash::Device) {
         if self.memory != vk::DeviceMemory::null() {
             unsafe {
@@ -193,14 +193,14 @@ impl MemoryChunk {
     }
 }
 
-/// Vulkan 显存子分配器。
+/// Vulkan VRAM suballocator.
 pub struct MemorySuballocator {
     chunks: Vec<Option<MemoryChunk>>,
     default_chunk_size: vk::DeviceSize,
 }
 
 impl MemorySuballocator {
-    /// 默认 64 MiB 单 Chunk 尺寸。
+    /// Default 64 MiB single Chunk size.
     pub const DEFAULT_CHUNK_SIZE: vk::DeviceSize = 64 * 1024 * 1024;
 
     pub fn new(default_chunk_size: vk::DeviceSize) -> Self {
@@ -210,7 +210,7 @@ impl MemorySuballocator {
         }
     }
 
-    /// 分配一段指定大小、对齐与内存类型的显存。
+    /// Allocate VRAM range of given size, alignment and memory type.
     pub fn allocate(
         &mut self,
         device: &ash::Device,
@@ -218,7 +218,7 @@ impl MemorySuballocator {
         alignment: vk::DeviceSize,
         memory_type_index: u32,
     ) -> Result<Suballocation> {
-        // 先尝试在已有同内存类型的 Chunk 中分配
+        // First try allocating in existing Chunk of same memory type
         for (chunk_id, chunk_opt) in self.chunks.iter_mut().enumerate() {
             if let Some(chunk) = chunk_opt {
                 if chunk.memory_type_index == memory_type_index {
@@ -235,7 +235,7 @@ impl MemorySuballocator {
             }
         }
 
-        // 无法容纳时分配新 Chunk
+        // If cannot fit allocate new Chunk
         let chunk_size = self
             .default_chunk_size
             .max(align_up(size, alignment).next_power_of_two());
@@ -263,7 +263,7 @@ impl MemorySuballocator {
         })
     }
 
-    /// 释放子分配区。若同内存类型下已有多个 Chunk 且当前 Chunk 空闲，则销毁释放回驱动。
+    /// Release suballocation range. If multiple Chunks of same memory type and current Chunk free, destroy and return to driver.
     pub fn free(&mut self, device: &ash::Device, suballoc: &Suballocation) {
         if let Some(Some(chunk)) = self.chunks.get_mut(suballoc.chunk_id) {
             chunk.free(suballoc.offset, suballoc.size);
@@ -282,7 +282,7 @@ impl MemorySuballocator {
         }
     }
 
-    /// 查询当前子分配统计信息。
+    /// Query current suballocation stats.
     pub fn stats(&self) -> SuballocatorStats {
         let mut total_reserved_bytes = 0;
         let mut active_used_bytes = 0;
@@ -304,7 +304,7 @@ impl MemorySuballocator {
         }
     }
 
-    /// 销毁所有 Chunk 并释放底层 Vulkan 显存。
+    /// Destroy all Chunks and release underlying VRAM.
     pub fn destroy(&mut self, device: &ash::Device) {
         for chunk_opt in self.chunks.iter_mut() {
             if let Some(mut chunk) = chunk_opt.take() {
@@ -319,7 +319,7 @@ impl MemorySuballocator {
 // Staging Arena
 // ---------------------------------------------------------------------------
 
-/// 单个用于暂存上传的 Buffer + Memory Chunk。
+/// One Buffer + Memory Chunk for staging uploads.
 pub struct StagingChunk {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
@@ -328,7 +328,7 @@ pub struct StagingChunk {
     pub mapped_ptr: *mut u8,
 }
 
-// Safety: StagingChunk 独占其映射指针与 Vulkan 对象，跨线程移动安全。
+// Safety: StagingChunk exclusively owns its mapped pointer and Vulkan objects, cross-thread move safe.
 unsafe impl Send for StagingChunk {}
 unsafe impl Sync for StagingChunk {}
 
@@ -411,11 +411,11 @@ impl StagingChunk {
     }
 }
 
-/// 批量上传暂存区 Arena。
+/// Batched upload staging arena.
 ///
-/// 替代逐个资源单独 `create_buffer` + `vkAllocateMemory`，批量加载时将数百次小分配聚合为
-/// 少量 16~64 MiB Chunk 分配。提交前统一调用 `unmap_all` 显式解绑映射，保证 llvmpipe
-/// 等纯软件栅格化后端与硬件驱动的渲染一致性。
+/// Replaces per-resource `create_buffer` + `vkAllocateMemory`, aggregating hundreds of small allocations during batch load into
+/// a few 16~64 MiB Chunk allocations. Before submit calls `unmap_all` explicitly to ensure llvmpipe
+/// software rasterizer and hardware drivers render consistently.
 pub struct StagingArena {
     chunks: Vec<StagingChunk>,
     default_chunk_size: vk::DeviceSize,
@@ -423,7 +423,7 @@ pub struct StagingArena {
 }
 
 impl StagingArena {
-    /// 默认单 Chunk 大小（16 MiB）。
+    /// Default single Chunk size (16 MiB).
     pub const DEFAULT_CHUNK_SIZE: vk::DeviceSize = 16 * 1024 * 1024;
 
     pub fn new(default_chunk_size: vk::DeviceSize) -> Self {
@@ -434,7 +434,7 @@ impl StagingArena {
         }
     }
 
-    /// 将数据拷贝进暂存区，返回对应的 `(VkBuffer, offset)`。
+    /// Copy data into staging area, return corresponding `(VkBuffer, offset)`.
     pub fn stage(
         &mut self,
         context: &VulkanContext,
@@ -451,7 +451,7 @@ impl StagingArena {
             }
         }
 
-        // 当前 Chunk 放不下，创建新 Chunk
+        // Current Chunk cannot fit, create new Chunk
         let needed = align_up(size, alignment);
         let chunk_size = self.default_chunk_size.max(needed.next_power_of_two());
         let mut chunk = StagingChunk::new(context, chunk_size)?;
@@ -460,14 +460,14 @@ impl StagingArena {
         Ok(result)
     }
 
-    /// 在提交命令前显式解映射所有 Chunk（针对 llvmpipe 驱动时序要求）。
+    /// Explicitly unmap all Chunks before submitting commands (for llvmpipe driver timing requirements).
     pub fn unmap_all(&mut self, device: &ash::Device) {
         for chunk in &mut self.chunks {
             chunk.unmap(device);
         }
     }
 
-    /// 释放全部暂存 Chunk 与显存。
+    /// Release all staging Chunks and VRAM.
     pub fn destroy(&mut self, device: &ash::Device) {
         for mut chunk in self.chunks.drain(..) {
             chunk.destroy(device);
@@ -475,7 +475,7 @@ impl StagingArena {
         self.allocation_count = 0;
     }
 
-    /// 获取暂存区统计。
+    /// Get staging area stats.
     pub fn stats(&self) -> SuballocatorStats {
         let mut total_reserved_bytes = 0;
         let mut active_used_bytes = 0;
@@ -524,30 +524,30 @@ mod tests {
             }
         );
 
-        // 分配 1: offset 0, size 100
+        // Allocation 1: offset 0, size 100
         let a1 = chunk.allocate(100, 16).unwrap();
         assert_eq!(a1, 0);
 
-        // 分配 2: offset 112 (align 16), size 200
+        // Allocation 2: offset 112 (align 16), size 200
         let a2 = chunk.allocate(200, 16).unwrap();
         assert_eq!(a2, 112);
 
-        // 分配 3: offset 320 (align 64), size 100
+        // Allocation 3: offset 320 (align 64), size 100
         let a3 = chunk.allocate(100, 64).unwrap();
         assert_eq!(a3, 320);
 
         assert_eq!(chunk.active_allocations, 3);
         assert_eq!(chunk.allocated_bytes, 400);
 
-        // 释放 a2 (112..312)
+        // Release a2 (112..312)
         chunk.free(a2, 200);
         assert_eq!(chunk.active_allocations, 2);
 
-        // 释放 a1 (0..100) -> 与对齐空隙 (100..112) 及已释放的 a2 (112..312) 合并为 0..320
+        // Release a1 (0..100) -> merges with aligned gap (100..112) and already released a2 (112..312) into 0..320
         chunk.free(a1, 100);
         assert_eq!(chunk.active_allocations, 1);
 
-        // 释放 a3 (320..420) -> 全部空闲区间合并回 0..1024
+        // Release a3 (320..420) -> all free ranges merge back to 0..1024
         chunk.free(a3, 100);
         assert_eq!(chunk.active_allocations, 0);
         assert_eq!(chunk.allocated_bytes, 0);

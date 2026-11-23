@@ -147,7 +147,7 @@ fn two_cascades_allocate_an_atlas_and_render() {
     assert_eq!(pixels.len(), SIZE * SIZE * 4);
 }
 
-/// 与源码单测相同的单位盒正交投影：世界 `[-1, 1]^3` → Vulkan 裁剪空间。
+/// Identity-box exact intersection projection same as source unit test: world `[-1, 1]^3` → Vulkan clip space.
 fn unit_box_ortho() -> [[f32; 4]; 4] {
     [
         [0.5, 0.0, 0.0, 0.0],
@@ -157,10 +157,10 @@ fn unit_box_ortho() -> [[f32; 4]; 4] {
     ]
 }
 
-/// #491：`world_bounds` 落在阴影覆盖范围之外的 caster 不会进阴影通道。
+/// #491: caster whose `world_bounds` lies outside shadow coverage range will not enter shadow pass.
 ///
-/// 两个 caster 用同一个立方体、同一个模型矩阵，唯一区别是 `world_bounds`：
-/// 如果剔除没生效，两者都会被提交（`last_casters == (2, 0)`）。
+/// Two casters use same cube, same model matrix, only difference is `world_bounds`:
+/// If cull did not work, both would be submitted (`last_casters == (2, 0)`).
 #[test]
 fn casters_outside_the_light_frustum_are_not_submitted() {
     let Some(mut renderer) = try_create() else {
@@ -176,8 +176,8 @@ fn casters_outside_the_light_frustum_are_not_submitted() {
 
     let mut outside = caster(mesh);
     outside.entity_id = 2;
-    // 完全在单位盒之外；光源矩阵退化时它仍会被提交，所以这条断言能区分
-    // 「剔除生效」和「矩阵没法建视锥」。
+    // Completely outside identity box; when light matrix degenerates it will still be submitted, so this assertion can distinguish
+    // "cull works" from "matrix cannot build frustum".
     outside.world_bounds = Some(Aabb::new([10.0, -0.5, 0.1], [11.0, 0.5, 0.9]));
 
     let mut data = frame_data();
@@ -227,10 +227,10 @@ fn casters_outside_the_light_frustum_are_not_submitted() {
     );
 }
 
-/// #491：两个相同 mesh / 剔除模式的静态 caster 合并成一次实例化 draw。
+/// #491: two static casters with same mesh / cull mode merged into one instanced draw.
 ///
-/// `last_casters` 仍是逻辑 caster 数（2），`last_shadow_draw_calls` 必须是 1；
-/// 如果实例化没有生效，这里会是 2。
+/// `last_casters` is still logical caster count (2), `last_shadow_draw_calls` must be 1;
+/// if instancing did not work, this would be 2.
 #[test]
 fn identical_static_casters_share_one_shadow_draw_call() {
     let Some(mut renderer) = try_create() else {

@@ -6,32 +6,32 @@ use crate::forward_pass::ForwardPass;
 
 use super::{GraphRenderer, OCCLUSION_TILE_SIZE};
 
-/// 一个交换链图像对应的深度回读缓冲（#1007）。
+/// Depth readback buffer corresponding to one swapchain image (#1007).
 pub(super) struct OcclusionTarget {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
     size: vk::DeviceSize,
 }
 
-/// 遮挡剔除的 GPU 侧状态（#1007，路径 A：上一帧粗深度 + 代理盒）。
+/// GPU-side state for occlusion culling (#1007, path A: previous-frame coarse depth + proxy boxes).
 #[derive(Default)]
 pub(super) struct OcclusionState {
     pub(super) enabled: bool,
-    /// 判定时向外扩的深度块数，抵消一帧延迟带来的边缘误差。
+    /// How many depth blocks to expand outward when testing, compensating one-frame latency edge error.
     pub(super) margin_tiles: u32,
     pub(super) targets: Vec<Option<OcclusionTarget>>,
-    /// 最近一次成功回读的粗深度及其相机矩阵（上一帧）。
+    /// Most recent successfully read coarse depth and its camera matrix (previous frame).
     pub(super) tiles: Option<crate::culling::DepthTiles>,
     pub(super) tiles_view_proj: Option<[[f32; 4]; 4]>,
-    /// 每个交换链图像上「已记录拷贝、等待读回」的相机矩阵。
+    /// Camera matrix per swapchain image with "copy recorded, waiting readback".
     pub(super) pending_view_proj: Vec<Option<[[f32; 4]; 4]>>,
     pub(super) counts: crate::culling::OcclusionCounts,
 }
 
 impl GraphRenderer {
-    /// 开关遮挡剔除（#1007）。
+    /// Toggle occlusion culling (#1007).
     ///
-    /// 关闭时立即丢弃已回读的粗深度并停止深度拷贝，下一帧回到旧行为。
+    /// When disabled, immediately discard already-read coarse depth and stop depth copy, next frame returns to old behavior.
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
         if self.occlusion.enabled == enabled {
             return;
@@ -52,12 +52,12 @@ impl GraphRenderer {
         self.occlusion.enabled
     }
 
-    /// 最近一帧遮挡剔除的统计（报告 / 调试用）。
+    /// Statistics of most recent frame occlusion culling (for reports / debug).
     pub fn occlusion_counts(&self) -> crate::culling::OcclusionCounts {
         self.occlusion.counts
     }
 
-    /// 上一帧的粗深度与生成它的相机矩阵；没有可用数据时返回 `None`。
+    /// Previous-frame coarse depth and camera matrix that generated it; returns `None` when no data available.
     pub fn occlusion_view(&self) -> Option<(&crate::culling::DepthTiles, [[f32; 4]; 4])> {
         if !self.occlusion.enabled {
             return None;
@@ -68,10 +68,10 @@ impl GraphRenderer {
         ))
     }
 
-    /// 用上一帧粗深度把关掉的绘制项标记成主通道不可见，并记录统计。
+    /// Use previous-frame coarse depth to flag culled draw items as not visible in main pass, record stats.
     ///
-    /// 调用方在把绘制列表交给 `prepare` / `execute` 之前调用；没有可用深度
-    /// （第一帧、关闭、读回失败）时原样返回。
+    /// Caller should invoke before handing draw list to `prepare` / `execute`; when no depth available
+    /// (first frame, disabled, readback failure) returns as-is.
     pub fn cull_occluded_draws(
         &mut self,
         items: &mut [crate::render_graph::DrawItem],
@@ -90,7 +90,7 @@ impl GraphRenderer {
         counts
     }
 
-    /// 确保当前图像在 `extent` 下有一个可写的深度回读缓冲。
+    /// Ensure current image has a writable depth readback buffer under `extent`.
     pub(super) fn ensure_occlusion_target(
         &mut self,
         image_index: u32,
@@ -154,8 +154,8 @@ impl GraphRenderer {
         self.occlusion.targets.clear();
     }
 
-    /// 读回上一帧写入的深度并生成粗深度。`begin_frame` 已经等过该图像的
-    /// 围栏，所以这里映射内存不会和 GPU 抢写。
+    /// Read back depth written last frame and generate coarse depth. `begin_frame` already waited on this image
+    /// fence, so mapping memory here will not race with GPU writes.
     pub(super) fn collect_occlusion_depth(&mut self, image_index: u32, extent: vk::Extent2D) {
         if !self.occlusion.enabled {
             return;

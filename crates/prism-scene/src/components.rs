@@ -1,22 +1,22 @@
-//! 现代场景系统的 ECS 组件
+//! ECS components of the modern scene system
 //!
-//! | 类别       | 组件 |
-//! |-----------|------------|
-//! | 层次结构  | `Parent`, `Child` |
-//! | 变换     | `LocalTransform`, `LocalToWorld`, `TransformDirty` |
-//! | 渲染     | `MeshRenderer`, `LodGroup`（距离 LOD）, `SpriteRenderer`, `Tilemap`, `Active` |
-//! | 动画     | `SpriteAnimation`（2D 帧）, `KeyframeAnimation`（曲线） |
-//! | 粒子     | `ParticleSystem`（世界空间 3D CPU 粒子）、`ParticleEmitter2D`（世界 XY 平面 2D 粒子）、`UiParticleEmitter`（屏幕空间，画在 UI 图层） |
-//! | 光源 | `Light`（形状）, `DirectionalLight`, `PointLight`, `SpotLight`（旧）, `Light2D`（2D 精灵光照） |
-//! | 相机     | `Camera`, `VirtualCamera2D`, `FlyCameraController` |
-//! | 天空盒   | `Skybox` |
-//! | 音频     | `AudioSource`（场景内播放）, `AudioListener`（听者） |
-//! | 地形     | `Terrain`（高度场 → 运行时生成网格） |
-//! | 蒙皮     | `SkeletonRoot`（骨架）, `SkinnedMeshRenderer`（蒙皮网格） |
-//! | 物理     | `Collider`（形状 + 查询层）, `Rigidbody`（Static/Kinematic/Dynamic） |
-//! | 调试     | `Gizmo` |
-//! | 场景     | `SceneMember` |
-//! | 标识     | `Name` |
+//! | Category     | Component |
+//! |------------|------------|
+//! | Hierarchy | `Parent`, `Child` |
+//! | Transform | `LocalTransform`, `LocalToWorld`, `TransformDirty` |
+//! | Render | `MeshRenderer`, `LodGroup` (distance LOD), `SpriteRenderer`, `Tilemap`, `Active` |
+//! | Animation | `SpriteAnimation` (2D frames), `KeyframeAnimation` (curves) |
+//! | Particles | `ParticleSystem` (world-space 3D CPU particles), `ParticleEmitter2D` (world XY plane 2D particles), `UiParticleEmitter` (screen space, drawn on UI layer) |
+//! | Light | `Light` (shape), `DirectionalLight`, `PointLight`, `SpotLight` (legacy), `Light2D` (2D sprite lighting) |
+//! | Camera | `Camera`, `VirtualCamera2D`, `FlyCameraController` |
+//! | Skybox | `Skybox` |
+//! | Audio | `AudioSource` (play in scene), `AudioListener` (listener) |
+//! | Terrain | `Terrain` (heightfield → runtime-generated mesh) |
+//! | Skinning | `SkeletonRoot` (skeleton), `SkinnedMeshRenderer` (skinned mesh) |
+//! | Physics | `Collider` (shape + query layer), `Rigidbody` (Static/Kinematic/Dynamic) |
+//! | Debug | `Gizmo` |
+//! | Scene | `SceneMember` |
+//! | Identity | `Name` |
 
 use prism_ecs::Entity;
 use prism_reflect::{FieldType, Reflect, ReflectError, ReflectType, Value};
@@ -32,10 +32,10 @@ use prism_physics2d::Aabb2;
 // SceneAssetId
 // ---------------------------------------------------------------------------
 
-/// 场景 schema 使用的 64 位资源标识符。
+/// 64-bit asset identifier used by scene schema.
 ///
-/// 与 `prism_asset::core::AssetId` 的二进制表示一致，但保留为本地类型，
-/// 使 `prism-scene` 不依赖运行时 `.pak` 代码。engine 在资产解析边界做转换。
+/// Consistent with `prism_asset::core::AssetId` binary representation, but kept as a local type,
+/// so `prism-scene` does not depend on runtime `.pak` code; engine converts at asset resolution boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SceneAssetId(pub u64);
 
@@ -69,34 +69,34 @@ impl SceneAssetId {
 // Hierarchy
 // ---------------------------------------------------------------------------
 
-/// 指向父实体的引用。对应 数据导向 `.Transforms.Parent`（`.0` ≡ `.Value`）。
+/// Reference to parent entity. Corresponds to data-oriented `.Transforms.Parent` (`.0` ≡ `.Value`).
 ///
-/// 没有 `Parent` 组件的实体是场景层次中的**根节点**。请用
-/// [`HierarchyHelper`](super::helpers::HierarchyHelper) 修改父子关系 —— 不要直接改 `Child`。
+/// An entity without `Parent` component is a **root node** in scene hierarchy. Use
+/// [`HierarchyHelper`](super::helpers::HierarchyHelper) to modify parent-child relationships --- do not modify `Child` directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parent(pub Entity);
 
 impl Parent {
-    /// DOTS `Parent.Value`：父实体。
+    /// DOTS `Parent.Value`: parent entity.
     pub const fn value(&self) -> Entity {
         self.0
     }
 }
 
-/// 派生的子实体列表。对应 数据导向 `.Transforms.Child`（缓冲区）。
+/// Derived child entity list. Corresponds to data-oriented `.Transforms.Child` (buffer).
 ///
-/// 由 [`HierarchyHelper::reparent`] 保持同步；**不要**手工修改。
-/// 没有该组件的实体没有子节点。
+/// Kept in sync by [`HierarchyHelper::reparent`]; **do not** modify manually.
+/// Entities without this component have no children.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Child(pub Vec<Entity>);
 
 impl Child {
-    /// 子实体切片。
+    /// Child entity slice.
     pub fn value(&self) -> &[Entity] {
         &self.0
     }
 
-    /// 子实体列表（可变）。
+    /// Child entity list (mutable).
     pub fn value_mut(&mut self) -> &mut Vec<Entity> {
         &mut self.0
     }
@@ -106,10 +106,10 @@ impl Child {
 // Transform
 // ---------------------------------------------------------------------------
 
-/// 相对父实体的局部变换（根节点则为世界空间）。
+/// Local transform relative to parent entity (world space for root nodes).
 ///
-/// 对应 数据导向 `.Transforms.LocalTransform`
-/// （`position` / `rotation` / `scale` ≡ DOTS 的 `Position` / `Rotation` / `Scale`）。
+/// Corresponds to data-oriented `.Transforms.LocalTransform`
+/// (`position` / `rotation` / `scale` ≡ DOTS `Position` / `Rotation` / `Scale`).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::LocalTransform")]
 #[serde(default)]
@@ -137,14 +137,14 @@ impl LocalTransform {
     }
 }
 
-/// 由层次系统（`HierarchySystem`）计算的世界空间变换矩阵，每帧更新。
+/// World-space transform matrix computed by `HierarchySystem`, updated every frame.
 ///
-/// 对应 数据导向 `.Transforms.LocalToWorld`（`.0` ≡ DOTS 的 `.Value`）。
+/// Corresponds to data-oriented `.Transforms.LocalToWorld` (`.0` ≡ DOTS `.Value`).
 #[derive(Debug, Clone, Copy)]
 pub struct LocalToWorld(pub glam::Mat4);
 
 impl LocalToWorld {
-    /// DOTS `LocalToWorld.Value`：世界变换矩阵。
+    /// DOTS `LocalToWorld.Value`: world transform matrix.
     pub const fn value(&self) -> glam::Mat4 {
         self.0
     }
@@ -207,21 +207,21 @@ impl Default for Active {
     }
 }
 
-/// 跨场景保留标记（Unity 的 `DontDestroyOnLoad` 等价物）。
+/// Cross-scene persistence marker (Unity `DontDestroyOnLoad` equivalent).
 ///
-/// 场景切换（`Engine::unload_scene` 或 `LoadSceneMode::Single` 加载）时，
-/// 带这个标记的实体**以及它们的整棵子树**不会被卸载 —— 玩家管理器、音频源、
-/// 转场遮罩这类东西需要活过换场。只在运行时添加，不是可挂载组件，
-/// 因此不会出现在 `.scene.json` 里（见 `json::DERIVED_COMPONENTS`）。
+/// When switching scenes (`Engine::unload_scene` or `LoadSceneMode::Single` load),
+/// entities with this marker **and their entire subtree** are not unloaded --- player manager, audio sources,
+/// transition masks etc need to survive scene change. Added at runtime only, not a mountable component,
+/// therefore does not appear in `.scene.json` (see `json::DERIVED_COMPONENTS`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Persistent;
 
-/// 派生：自身 [`Active`] 与所有祖先 `Active` 的与（Unity 的
-/// `activeInHierarchy`）。
+/// Derived: AND of own [`Active`] and all ancestors `Active` (Unity
+/// `activeInHierarchy`).
 ///
-/// 由 `prism_engine::scene::systems::hierarchy::active_hierarchy_system` 每帧重写，
-/// 与 [`LocalToWorld`] 同类的运行时派生数据：**不进 `.scene.json`、不进组件注册表**。
-/// 作者 / 检查器写的永远是 [`Active`]（Unity 的 `activeSelf`）。
+/// Overwritten every frame by `prism_engine::scene::systems::hierarchy::active_hierarchy_system`,
+/// runtime derived data of the same kind as [`LocalToWorld`]: **not in `.scene.json`, not in component registry**.
+/// Author/inspector always writes [`Active`] (Unity `activeSelf`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActiveInHierarchy(pub bool);
 
@@ -238,8 +238,8 @@ impl Default for ActiveInHierarchy {
 /// Authoring-time bundle marker for a renderable entity.
 ///
 /// Inserted by [`SceneLoader`](crate::scene::loader::SceneLoader) during
-/// scene 生成 when an 实体 carries a 网格 path; the 材质 path is optional
-/// (a mesh-only renderer still draws, using the 渲染器 default 材质).
+/// scene generation when an entity carries a mesh path; the material path is optional
+/// (a mesh-only renderer still draws, using the renderer default material).
 /// This component does **not** participate in render queries — the actual
 /// rendering data lives on [`MeshRef`] and [`MaterialRef`] — but provides a
 /// convenient handle for inspector editing and future hot-reload.
@@ -248,38 +248,38 @@ impl Default for ActiveInHierarchy {
 #[serde(default)]
 pub struct MeshRenderer {
     pub mesh_path: String,
-    /// 单材质路径（兼容旧场景；`material_paths` 为空时使用）。
+    /// Single material path (compatible with old scenes; used when `material_paths` is empty).
     pub material_path: String,
-    /// 每个 submesh 一个材质路径（#520）。
+    /// One material path per submesh (#520).
     ///
-    /// 长度通常等于网格的 submesh 数；为空时回退到 [`Self::material_path`]。
-    /// 长度不足时按 submesh 的源材质索引（glTF `material.index()`）取，
-    /// 再退到 `material_path`。空字符串表示该 submesh 使用默认材质。
+    /// Length usually equals number of submeshes; falls back to [`Self::material_path`] when empty.
+    /// When length insufficient, takes source material index from submesh (glTF `material.index()`),
+    /// then falls back to `material_path`. Empty string means submesh uses default material.
     pub material_paths: Vec<String>,
     /// Optional custom fragment shader asset path (`.frag.spv` / `.slang`).
     /// Empty uses the built-in PBR fragment shader (`scene_frag.frag.spv`).
     pub shader_path: String,
-    /// 阴影投射模式 = `Renderer.shadowCastingMode`。
+    /// Shadow casting mode = `Renderer.shadowCastingMode`.
     ///
-    /// 决定该物体是否写阴影贴图、是否出现在相机主通道（`ShadowsOnly` 只投影）。
+    /// Determines whether object writes shadow map, whether it appears in camera main pass (`ShadowsOnly` only projects).
     pub shadow_casting_mode: ShadowCastingMode,
-    /// 剔除模式 = 材质/渲染器的 `CullMode`（着色器属性 `_Cull`）。
+    /// Cull mode = material/renderer `CullMode` (shader property `_Cull`).
     ///
-    /// 把它放在 `Material` 上；Prisma 的材质目前只有 PBR 参数，
-    /// 所以先落在渲染器上，语义仍是「这一个绘制用哪一面」。
+    /// Put it on `Material`; Prisma material currently only has PBR parameters,
+    /// so lands on renderer for now, semantics still "which face this draw uses".
     pub cull_mode: CullMode,
-    /// 渲染队列 = `Material.renderQueue`（`int`，不是枚举）。
+    /// Render queue = `Material.renderQueue` (`int`, not enum).
     ///
-    /// 决定绘制顺序：小于 [`RenderQueue::GEOMETRY_LAST`] 的不透明物体先画，
-    /// 之后才是（透明）队列，透明队列内部按距离从远到近。
+    /// Determines draw order: opaque objects less than [`RenderQueue::GEOMETRY_LAST`] drawn first,
+    /// then (transparent) queue, transparent queue internally sorted far-to-near by distance.
     pub render_queue: RenderQueue,
-    /// 是否写深度 = `_ZWrite`。透明物体通常关掉。
+    /// Whether to write depth = `_ZWrite`. Transparent objects usually turned off.
     pub z_write: bool,
-    /// 源混合因子 = `_SrcBlend`。
+    /// Source blend factor = `_SrcBlend`.
     pub src_blend: BlendMode,
-    /// 目标混合因子 = `_DstBlend`。
+    /// Destination blend factor = `_DstBlend`.
     pub dst_blend: BlendMode,
-    /// 混合运算 = `_BlendOp`。
+    /// Blend operation = `_BlendOp`.
     pub blend_op: BlendOp,
 }
 
@@ -294,7 +294,7 @@ impl Default for MeshRenderer {
             cull_mode: CullMode::default(),
             render_queue: RenderQueue::default(),
             z_write: true,
-            // 引擎的不透明默认值：One / Zero / Add（见 `blends`）。
+            // Engine opaque default: One / Zero / Add (see `blends`).
             src_blend: BlendMode::One,
             dst_blend: BlendMode::Zero,
             blend_op: BlendOp::Add,
@@ -310,13 +310,13 @@ impl MeshRenderer {
         !self.material_path.is_empty() || self.material_paths.iter().any(|path| !path.is_empty())
     }
 
-    /// 第 `submesh` 个 submesh 应该用哪个材质路径（#520）。
+    /// Which material path should submesh `submesh` use (#520).
     ///
-    /// 解析顺序：
-    /// 1. `material_paths` 与 submesh 数一一对应时，直接用同下标；
-    /// 2. 否则如果知道源文件里的材质索引（glTF），按材质索引取；
-    /// 3. 再退到同下标（短列表时最后一个之外的项由调用方决定默认）；
-    /// 4. 最后回退到单数字段 [`Self::material_path`]。
+    /// Resolution order:
+    /// 1. When `material_paths` matches submesh count one-to-one, use same index directly;
+    /// 2. Otherwise if source file material index known (glTF), take by material index;
+    /// 3. Then fall back to same index (for short list, items beyond last decided by caller default);
+    /// 4. Finally fall back to single field [`Self::material_path`].
     pub fn material_path_for_submesh(
         &self,
         submesh: usize,
@@ -353,8 +353,8 @@ impl MeshRenderer {
 
         (!self.material_path.is_empty()).then_some(self.material_path.as_str())
     }
-    /// 是否真的需要开启混合：用 `One` / `Zero` 表示「不混合」，
-    /// 所以默认值代表不透明。
+    /// Whether blending is actually needed: `One` / `Zero` means "no blend",
+    /// so default value means opaque.
     pub fn blends(&self) -> bool {
         self.src_blend != BlendMode::One
             || self.dst_blend != BlendMode::Zero
@@ -363,40 +363,40 @@ impl MeshRenderer {
 }
 
 // ---------------------------------------------------------------------------
-// 距离 LOD
+// Distance LOD
 // ---------------------------------------------------------------------------
 
-/// 距离分级 LOD（#491）。
+/// Distance-based LOD (#491).
 ///
-/// 挂在父实体上，父实体的 [`Child`] 列表**顺序就是 LOD 顺序**：第一个子实体
-/// 是 LOD0（最近、最细），第二个是 LOD1，依此类推。运行时系统按到最近启用
-/// 相机的距离选级，并用运行时 `LodHidden` 隐藏其它级；作者的 [`Active`] 与
-/// 编辑器的 `Hidden` 都不会被改写。
+/// Attached to parent entity, parent entity [`Child`] list **order IS LOD order**: first child
+/// is LOD0 (nearest, finest), second is LOD1, etc. Runtime system selects level by distance to nearest enabled
+/// camera distance, and uses runtime `LodHidden` to hide other levels; author [`Active`] and
+/// editor `Hidden` are not overwritten.
 ///
-/// `distances[i]` 是第 `i` 级仍然显示的最大距离（米）。距离超过所有阈值时
-/// 显示最后一个子实体；`distances` 为空时始终显示第一个。
+/// `distances[i]` is max distance at which level `i` is still shown (meters). When distance exceeds all thresholds,
+/// show last child entity; when `distances` empty always show first one.
 ///
-/// 例：`distances = [20.0, 60.0]` + 三个子实体 = 20 米内 LOD0、20–60 米
-/// LOD1、60 米外 LOD2。
+/// Example: `distances = [20.0, 60.0]` + three children = LOD0 within 20m, 20-60m
+/// LOD1, LOD2 beyond 60m.
 ///
-/// 也可以改用**屏幕占比**选级：`screen_ratios` 非空时，用
-/// `bounds_radius`（世界单位包围球半径）和相机投影算出物体在视口中的高度
-/// 占比，再按阈值选级。`screen_ratios[i]` 是第 `i` 级仍然显示的最小占比，
-/// 按 LOD0、LOD1……从大到小排列；超过最后一个阈值时显示最后一个子实体。
-/// 屏幕占比模式优先于 `distances`，为空时继续走距离模式。
+/// Can also use **screen ratio** level selection: when `screen_ratios` non-empty, use
+/// `bounds_radius` (world-space bounding sphere radius) and camera projection to compute object height
+/// ratio, then select level by threshold. `screen_ratios[i]` is minimum ratio at which level `i` is still shown,
+/// arranged LOD0, LOD1... from large to small; beyond last threshold show last child entity.
+/// Screen ratio mode takes priority over `distances`; when empty continues distance mode.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::LodGroup")]
 #[serde(default)]
 pub struct LodGroup {
-    /// 每一级仍然显示的最大距离（米），按 LOD0、LOD1……排列。
+    /// Max distance at which each level still shown (meters), arranged LOD0, LOD1...
     pub distances: Vec<f32>,
-    /// 每一级仍然显示的最小屏幕高度占比（0–1），按 LOD0、LOD1……从大到小排列。
+    /// Minimum screen height ratio at which each level still shown (0-1), arranged LOD0, LOD1... from large to small.
     ///
-    /// 为空时使用 `distances` 的距离模式。
+    /// When empty uses `distances` distance mode.
     pub screen_ratios: Vec<f32>,
-    /// 屏幕占比模式使用的包围球半径（世界单位）。
+    /// Bounding sphere radius (world units) used in screen ratio mode.
     ///
-    /// 非有限或非正时回落到距离模式，避免把整组物体误藏。
+    /// When non-finite or non-positive falls back to distance mode, avoiding accidentally hiding whole group.
     pub bounds_radius: f32,
 }
 
@@ -411,10 +411,10 @@ impl Default for LodGroup {
 }
 
 impl LodGroup {
-    /// 给定距离和子实体数量，返回应该显示的 LOD 下标。
+    /// Given distance and child count, return LOD index that should be shown.
     ///
-    /// 退化输入按「显示最详细的一级」处理：没有子实体返回 `None`，距离非
-    /// 有限按 0，负阈值按 0。距离超过所有阈值时夹到最后一个子实体。
+    /// Degenerate input handled as "show most detailed level": no children returns `None`, non-finite distance
+    /// treated as 0, negative thresholds treated as 0. Distance beyond all thresholds clamped to last child.
     pub fn level_for_distance(&self, distance: f32, child_count: usize) -> Option<usize> {
         if child_count == 0 {
             return None;
@@ -442,11 +442,11 @@ impl LodGroup {
         Some(index.min(child_count - 1))
     }
 
-    /// 给定屏幕高度占比和子实体数量，返回应该显示的 LOD 下标。
+    /// Given screen height ratio and child count, return LOD index that should be shown.
     ///
-    /// `screen_ratios` 为空或没有有限阈值时返回 `None`，调用方应回落到
-    /// [`Self::level_for_distance`]。占比非有限按 0 处理；阈值夹到 `0..=1`
-    /// 并按作者顺序匹配，所以阈值应按 LOD0、LOD1……从大到小排列。
+    /// When `screen_ratios` empty or no finite thresholds returns `None`, caller should fall back to
+    /// [`Self::level_for_distance`]. Non-finite ratio treated as 0; thresholds clamped to `0..=1`
+    /// and matched in author order, so thresholds should be arranged LOD0, LOD1... from large to small.
     pub fn level_for_screen_ratio(&self, ratio: f32, child_count: usize) -> Option<usize> {
         if child_count == 0 {
             return None;
@@ -475,71 +475,71 @@ impl LodGroup {
 }
 
 // ---------------------------------------------------------------------------
-// 2D 精灵
+// 2D Sprite
 // ---------------------------------------------------------------------------
 
-/// 2D 精灵渲染器 = `SpriteRenderer`（渲染子集）。
+/// 2D sprite renderer = `SpriteRenderer` (rendering subset).
 ///
-/// 只承载**作者态**字段：贴图路径、精灵表帧、排序层。GPU 纹理句柄在运行时由
-/// `SpriteRef`（`prism-engine::scene::runtime_components`）持有——和
-/// `MeshRenderer` → `MeshRef` 的关系完全一致。
+/// Only carries **authoring-time** fields: texture path, sprite sheet frames, sorting layer. GPU texture handle at runtime held by
+/// `SpriteRef` (`prism-engine::scene::runtime_components`) held --- same relationship as
+/// `MeshRenderer` → `MeshRef`.
 ///
-/// 2D 约定（见 `projects/fishing/DESIGN.md`）：
-/// 相机在 **+Z 看向 −Z**，`z` 越大越靠近相机；世界尺寸 =
-/// 纹理像素尺寸 / [`SpriteRenderer::pixels_per_unit`]。
+/// 2D convention (see `projects/fishing/DESIGN.md`):
+/// Camera looks **+Z towards −Z**, larger `z` closer to camera; world size =
+/// texture pixel size / [`SpriteRenderer::pixels_per_unit`].
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::SpriteRenderer")]
 #[serde(default)]
 pub struct SpriteRenderer {
-    /// 贴图资源路径 = `SpriteRenderer.sprite`。空字符串 = 不绘制。
+    /// Texture resource path = `SpriteRenderer.sprite`. Empty string = do not draw.
     pub sprite_path: String,
-    /// 精灵表单帧像素尺寸；`[0, 0]` 表示整张纹理就是一帧。
+    /// Sprite sheet single frame pixel size; `[0, 0]` means whole texture is one frame.
     pub frame_size: [u32; 2],
-    /// 图集每行的列数；`0` = 由「纹理宽度 / 单帧宽度」推导（#584）。
+    /// Atlas columns per row; `0` = derived from "texture width / single frame width" (#584).
     ///
-    /// 多行图集里一行通常是一个动作 / 一个角色。
+    /// In multi-row atlas, one row is usually one action / one character.
     pub sheet_columns: u32,
-    /// 图集行号（0 = 第一行）；超出范围时夹到最后一行（#584）。
+    /// Atlas row number (0 = first row); clamped to last row when out of range (#584).
     pub sheet_row: u32,
-    /// 当前帧索引（在本行内从左到右；超过列数才继续到下一行）。
+    /// Current frame index (left-to-right within row; continues to next row beyond column count).
     pub frame_index: u32,
-    /// 每世界单位像素数 = `Sprite.pixelsPerUnit`。
+    /// Pixels per world unit = `Sprite.pixelsPerUnit`.
     pub pixels_per_unit: f32,
-    /// 轴心（`0..1`，**左下角**为原点）= `Sprite.pivot` 归一化形式。
-    /// `[0.5, 0.5]` = 居中，`[0.5, 0.0]` = 底边居中，`[0.5, 1.0]` = 顶边居中。
+    /// Pivot (`0..1`, **bottom-left** as origin) = normalized form of `Sprite.pivot`.
+    /// `[0.5, 0.5]` = centered, `[0.5, 0.0]` = bottom-centered, `[0.5, 1.0]` = top-centered.
     pub pivot: [f32; 2],
-    /// 顶点色乘算（线性 RGBA）= `SpriteRenderer.color`。
+    /// Vertex color multiply (linear RGBA) = `SpriteRenderer.color`.
     pub color: [f32; 4],
-    /// 水平翻转 = `SpriteRenderer.flipX`。
+    /// Horizontal flip = `SpriteRenderer.flipX`.
     pub flip_x: bool,
-    /// 垂直翻转 = `SpriteRenderer.flipY`。
+    /// Vertical flip = `SpriteRenderer.flipY`.
     pub flip_y: bool,
-    /// 排序层，数值越大越靠前 = `sortingLayerName` 的数值形式。
+    /// Sorting layer, larger value more front = numeric form of `sortingLayerName`.
     pub sorting_layer: i32,
-    /// 同层内顺序 = `sortingOrder`。
+    /// Order within layer = `sortingOrder`.
     pub order_in_layer: i32,
-    /// 源混合因子（默认 `SrcAlpha`，标准 alpha 混合，#610）。
+    /// Source blend factor (default `SrcAlpha`, standard alpha blend, #610).
     pub src_blend: BlendMode,
-    /// 目标混合因子（默认 `OneMinusSrcAlpha`）。
+    /// Destination blend factor (default `OneMinusSrcAlpha`).
     pub dst_blend: BlendMode,
-    /// 混合运算（默认 `Add`）；加色辉光用 `SrcAlpha` / `One`。
+    /// Blend operation (default `Add`); additive glow uses `SrcAlpha` / `One`.
     pub blend_op: BlendOp,
-    /// 是否用 [`SpriteRenderer::clip_rect`] 裁剪这个精灵（#582）。
+    /// Whether to clip this sprite using [`SpriteRenderer::clip_rect`] (#582).
     ///
-    /// 裁剪在片元着色器里按**世界坐标**逐像素判断，所以不影响一次 draw call，
-    /// 同一张水线矩形可以被任意多个精灵共享（倒影、水面以下的整组装饰）。
-    /// 多个精灵用同一个矩形 = Unity `SpriteMask` 的矩形模式。
+    /// Clipping judged per-pixel in fragment shader by **world coordinates**, so does not affect one draw call,
+    /// same waterline rectangle can be shared by arbitrarily many sprites (reflections, whole group of underwater decorations).
+    /// Multiple sprites using same rectangle = Unity `SpriteMask` rectangle mode.
     pub clip_enabled: bool,
-    /// 世界空间裁剪矩形 `[x0, y0, x1, y1]`（`x0 <= x1`、`y0 <= y1` 不是必须的，
-    /// 引擎会自己排序）；只有 `clip_enabled` 为真时生效。
+    /// World-space clip rect `[x0, y0, x1, y1]` (`x0 <= x1`, `y0 <= y1` not required,
+    /// engine sorts itself); only takes effect when `clip_enabled` is true.
     ///
-    /// 启用一个零面积矩形会把整个精灵裁掉——先填好矩形再打开开关。
+    /// Enabling a zero-area rectangle clips the entire sprite---fill rect first then enable switch.
     pub clip_rect: [f32; 4],
-    /// 是否被 [`Light2D`] 照亮（#611）。
+    /// Whether illuminated by [`Light2D`] (#611).
     ///
-    /// 默认 `false`：2D 精灵保持引入光照之前的样子（`贴图 × color`）。
-    /// 打开后片元按世界位置累加场景里的 `Light2D`，再加上环境光——
-    /// 没有任何 `Light2D` 时仍然按 unlit 处理，所以只改这一个开关不会让画面变黑。
+    /// Default `false`: 2D sprite keeps appearance before lighting introduced (`texture × color`).
+    /// When turned on, fragments accumulate scene `Light2D` by world position, then add ambient light ---
+    /// when no `Light2D` still treated as unlit, so changing only this switch won't make screen black.
     pub receive_lights: bool,
 }
 
@@ -569,12 +569,12 @@ impl Default for SpriteRenderer {
 }
 
 impl SpriteRenderer {
-    /// 是否有可绘制的贴图。
+    /// Whether there is a drawable texture.
     pub fn has_sprite(&self) -> bool {
         !self.sprite_path.is_empty()
     }
 
-    /// 单帧像素尺寸；未配置精灵表时由调用方回落到纹理尺寸。
+    /// Single frame pixel size; when sprite sheet not configured caller falls back to texture size.
     pub fn frame_size_or(&self, texture_size: [u32; 2]) -> [u32; 2] {
         if self.frame_size[0] > 0 && self.frame_size[1] > 0 {
             self.frame_size
@@ -583,7 +583,7 @@ impl SpriteRenderer {
         }
     }
 
-    /// 图集列数：显式 `sheet_columns` 优先，否则按纹理宽度 / 单帧宽度推导。
+    /// Atlas columns: explicit `sheet_columns` takes priority, otherwise derived from texture width / single frame width.
     pub fn sheet_columns_or(&self, texture_size: [u32; 2]) -> u32 {
         if self.sheet_columns > 0 {
             return self.sheet_columns.max(1);
@@ -592,13 +592,13 @@ impl SpriteRenderer {
         (texture_size[0] / frame[0].max(1)).max(1)
     }
 
-    /// 图集行数（至少 1）。
+    /// Atlas row count (at least 1).
     pub fn sheet_rows(&self, texture_size: [u32; 2]) -> u32 {
         let frame = self.frame_size_or(texture_size);
         (texture_size[1] / frame[1].max(1)).max(1)
     }
 
-    /// 单帧在世界空间的尺寸（单位/世界）。`pixels_per_unit` 非法时回落到 100。
+    /// Single frame size in world space (units/world). Falls back to 100 when `pixels_per_unit` invalid.
     pub fn world_size(&self, texture_size: [u32; 2]) -> [f32; 2] {
         let ppu = if self.pixels_per_unit.is_finite() && self.pixels_per_unit > 0.0 {
             self.pixels_per_unit
@@ -709,40 +709,40 @@ fn transformed_aabb2(
     Some(Aabb2 { min, max })
 }
 
-/// 2D 瓦片地图 = `Tilemap`（#529）。
+/// 2D tilemap = `Tilemap` (#529).
 ///
-/// 一个实体承载整张网格：引擎每帧把**非空**格子展开成 `SpriteDrawItem`
-/// （共用 `SpritePass` 的实例缓冲与 bindless 纹理表），所以几百格仍然只有
-/// 一次 draw call，而不是几百个实体各带一份 `SpriteRenderer`。
+/// One entity carries whole grid: engine expands **non-empty** cells each frame into `SpriteDrawItem`
+/// (sharing `SpritePass` instance buffer and bindless texture table), so hundreds of cells still have only
+/// one draw call, instead of hundreds of entities each with a `SpriteRenderer`.
 ///
-/// 约定：
-/// - `tiles` 是**行优先**的扁平数组，`0` = 空格（与 Tiled 的 GID 0 一致），
-///   `n > 0` = tileset 里第 `n - 1` 块（从左到右、从上到下）；
-/// - `columns == 0` 表示所有瓦片排成一行；
-/// - 第 0 行在**上方**（世界 `+Y` 方向是屏幕上方），所以行号越大世界 `y` 越小；
-/// - 网格原点 = 实体世界位置（父级变换、旋转、缩放都会生效）。
+/// Convention:
+/// - `tiles` is row-major flat array, `0` = empty cell (consistent with Tiled GID 0),
+///   `n > 0` = `n - 1`-th tile in tileset (left-to-right, top-to-bottom);
+/// - `columns == 0` means all tiles arranged in one row;
+/// - Row 0 at **top** (world `+Y` is screen top), so larger row number means smaller world `y`;
+/// - Grid origin = entity world position (parent transform, rotation, scale all take effect).
 ///
-/// 与 `SpriteRenderer` 共用图集：`tile_size` 是 tileset 里单块瓦片的像素尺寸，
-/// 实际列数由「纹理宽度 / `tile_size.x`」在运行时推导（和精灵表一致）。
+/// Shares atlas with `SpriteRenderer`: `tile_size` is pixel size of single tile in tileset,
+/// actual column count derived at runtime from "texture width / `tile_size.x`" (same as sprite sheet).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Tilemap")]
 #[serde(default)]
 pub struct Tilemap {
-    /// tileset 贴图路径；空 = 不绘制。
+    /// tileset texture path; empty = do not draw.
     pub tileset_path: String,
-    /// tileset 里单块瓦片的像素尺寸；`[0, 0]` = 整张图一块。
+    /// Pixel size of single tile in tileset; `[0, 0]` = whole image is one tile.
     pub tile_size: [u32; 2],
-    /// 每格的世界尺寸。
+    /// World size per cell.
     pub cell_size: [f32; 2],
-    /// 网格列数；`0` = 所有瓦片排成一行。
+    /// Grid column count; `0` = all tiles arranged in one row.
     pub columns: u32,
-    /// 行优先的瓦片索引；`0` = 空格，`n > 0` = 第 `n - 1` 块。
+    /// Row-major tile index; `0` = empty cell, `n > 0` = `n - 1`-th tile.
     pub tiles: Vec<u32>,
-    /// 顶点色乘算（线性 RGBA）。
+    /// Vertex color multiply (linear RGBA).
     pub color: [f32; 4],
-    /// 排序层，数值越大越靠前（与 `SpriteRenderer` 同一套排序键）。
+    /// Sorting layer, larger value more front (same sorting key set as `SpriteRenderer`).
     pub sorting_layer: i32,
-    /// 同层内顺序。
+    /// Order within layer.
     pub order_in_layer: i32,
 }
 
@@ -762,7 +762,7 @@ impl Default for Tilemap {
 }
 
 impl Tilemap {
-    /// 是否有可绘制的内容。
+    /// Whether there is drawable content.
     pub fn has_tiles(&self) -> bool {
         !self.tileset_path.is_empty()
             && self.tiles.iter().any(|tile| *tile != 0)
@@ -772,7 +772,7 @@ impl Tilemap {
             && self.cell_size[1] > 0.0
     }
 
-    /// 网格规模 `(columns, rows)`；空 `tiles` 时返回 `(1, 0)`。
+    /// Grid scale `(columns, rows)`; returns `(1, 0)` when `tiles` empty.
     pub fn grid(&self) -> (u32, u32) {
         let columns = if self.columns > 0 {
             self.columns as usize
@@ -783,7 +783,7 @@ impl Tilemap {
         (columns.max(1) as u32, rows as u32)
     }
 
-    /// 单块瓦片在 tileset 里的像素尺寸（`tile_size` 非法时退化为整张纹理）。
+    /// Pixel size of single tile in tileset (degrades to whole texture when `tile_size` invalid).
     pub fn tile_size_or(&self, texture_size: [u32; 2]) -> [u32; 2] {
         if self.tile_size[0] > 0 && self.tile_size[1] > 0 {
             self.tile_size
@@ -792,7 +792,7 @@ impl Tilemap {
         }
     }
 
-    /// tileset 的列数 / 行数。
+    /// Tileset column count / row count.
     pub fn tileset_grid(&self, texture_size: [u32; 2]) -> (u32, u32) {
         let tile = self.tile_size_or(texture_size);
         (
@@ -801,7 +801,7 @@ impl Tilemap {
         )
     }
 
-    /// 第 `index`（0 起）块瓦片在 tileset 里的 UV 矩形 `[u0, v0, u1, v1]`。
+    /// UV rect `[u0, v0, u1, v1]` of tile `index` (0-based) in tileset.
     pub fn tile_uv(&self, index: u32, texture_size: [u32; 2]) -> [f32; 4] {
         let tile = self.tile_size_or(texture_size);
         let (columns, rows) = self.tileset_grid(texture_size);
@@ -820,7 +820,7 @@ impl Tilemap {
         ]
     }
 
-    /// 第 `row / column` 格中心的局部坐标（左下角为原点、`+Y` 向上）。
+    /// Local coordinates of cell center `row / column` (bottom-left as origin, `+Y` up).
     pub fn cell_center(&self, column: u32, row: u32, rows: u32) -> [f32; 2] {
         let (cell_w, cell_h) = (self.cell_size[0], self.cell_size[1]);
         [
@@ -830,28 +830,28 @@ impl Tilemap {
     }
 }
 
-/// 2D 精灵帧动画 = `Animator` + `AnimationClip` 的最小替身。
+/// 2D Sprite frame animation = minimal substitute for `Animator` + `AnimationClip`.
 ///
-/// 只描述「怎么播」；当前帧写回 [`SpriteRenderer::frame_index`]，由引擎的
-/// `sprite_animation_system` 每帧推进（播放进度不进场景，见该系统的说明）。
+/// Only describes how to play; current frame written back to [`SpriteRenderer::frame_index`], advanced by engine
+/// `sprite_animation_system` every frame (play progress does not enter scene, see that system docs).
 ///
-/// 精灵表约定：单帧像素尺寸由 [`SpriteRenderer::frame_size`] 给出；一行内
-/// 从左到右播放，行由 [`SpriteRenderer::sheet_row`] 选择（多行图集，#584）。
+/// Sprite sheet convention: single frame pixel size given by [`SpriteRenderer::frame_size`]; within a row
+/// played left-to-right, row selected by [`SpriteRenderer::sheet_row`] (multi-row atlas, #584).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::SpriteAnimation")]
 #[serde(default)]
 pub struct SpriteAnimation {
-    /// 总帧数；`0` = 由本行的列数推导（#584）。
+    /// Total frame count; `0` = derived from row column count (#584).
     pub frames: u32,
-    /// 本行内的起始帧（`0` = 从第一列开始）；用于同一行里切多个动作。
+    /// Start frame within row (`0` = start from first column); used to switch multiple actions in same row.
     pub frame_start: u32,
-    /// 每秒帧数。
+    /// Frames per second.
     pub fps: f32,
-    /// 是否循环；`false` 时停在最后一帧。
+    /// Whether looped; `false` stops at last frame.
     pub looped: bool,
-    /// 是否播放（暂停时保持当前帧）。
+    /// Whether playing (paused keeps current frame).
     pub playing: bool,
-    /// 相位偏移（秒），用于让多个实体不同步。
+    /// Phase offset (seconds), used to desync multiple entities.
     pub phase: f32,
 }
 
@@ -868,43 +868,43 @@ impl Default for SpriteAnimation {
     }
 }
 
-/// 关键帧动画剪辑：驱动**自身** `Transform` 的 position / euler / scale。
+/// Keyframe animation clip: drives **own** `Transform` position / euler / scale.
 ///
-/// 与 [`SpriteAnimation`]（2D 精灵帧，换 `frame_index`）并列，这里是曲线动画。
-/// 播放头不放在组件里（那样会随 `.scene.json` 序列化），而是引擎侧的运行时
-/// 组件 `ClipPlayhead`，见
-/// `prism_engine::scene::systems::animation::keyframe_animation_system`。
+/// Alongside [`SpriteAnimation`] (2D sprite frames, using `frame_index`), this is curve animation.
+/// Playhead not placed in component (would serialize with `.scene.json`), but runtime component on engine side
+/// component `ClipPlayhead`, see
+/// `prism_engine::scene::systems::animation::keyframe_animation_system`.
 ///
-/// 三条轨道互相独立：没有关键帧的通道保持作者写进 `transform` 的值，
-/// 因此「只动画 position」不会把旋转 / 缩放清零。
+/// Three tracks independent: channel without keyframes keeps author-written `transform` value,
+/// therefore "only animate position" will not zero rotation / scale.
 ///
-/// 旋转的关键帧是 XYZ 欧拉角（**度**），与 [`DirectionalLight::euler_xyz`]
-/// 同一约定；端点保持（不外插），所以单次播放结束时停在最后一帧。
+/// Rotation keyframes are XYZ Euler angles (**degrees**), same convention as [`DirectionalLight::euler_xyz`]
+/// same convention; endpoints held (no extrapolation), so single playback ends at last frame.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::KeyframeAnimation")]
 #[serde(default)]
 pub struct KeyframeAnimation {
-    /// 剪辑名（日志 / 编辑器显示用，不影响播放）。
+    /// Clip name (for log / editor display, does not affect playback).
     pub name: String,
-    /// 剪辑时长（秒）；`0` = 由三条轨道里最后一个关键帧推导。
+    /// Clip duration (seconds); `0` = derived from last keyframe of three tracks.
     ///
-    /// 比最后一帧更长时，末帧之后保持最后一帧的值。
+    /// When longer than last frame, keeps last frame value after last frame.
     pub duration: f32,
-    /// 播放倍率；`0` 等于暂停，负数倒放。
+    /// Playback multiplier; `0` equals pause, negative reverses.
     pub speed: f32,
-    /// 是否循环；`false` 时播到 `duration` 停在末帧。
+    /// Whether looped; `false` plays to `duration` then stops at end frame.
     pub looped: bool,
-    /// 是否播放（暂停时保持当前姿势）。
+    /// Whether playing (paused keeps current pose).
     pub playing: bool,
-    /// 起始时间偏移（秒）。
+    /// Start time offset (seconds).
     pub phase: f32,
-    /// 位置轨道。
+    /// Position track.
     pub position: Vec<crate::animation::Vec3Key>,
-    /// 旋转轨道（XYZ 欧拉角，度）。
+    /// Rotation track (XYZ Euler angles, degrees).
     pub euler_xyz: Vec<crate::animation::Vec3Key>,
-    /// 缩放轨道。
+    /// Scale track.
     pub scale: Vec<crate::animation::Vec3Key>,
-    /// 剪辑事件（#490）：播放头穿过事件时间时写进 `AnimationEventQueue`。
+    /// Clip events (#490): when playhead crosses event time, written to `AnimationEventQueue`.
     pub events: Vec<crate::animation::AnimationEvent>,
 }
 
@@ -926,9 +926,9 @@ impl Default for KeyframeAnimation {
 }
 
 impl KeyframeAnimation {
-    /// 有效时长：`duration > 0` 用它，否则取三条轨道 / 事件里最晚的时间。
+    /// Effective duration: use `duration > 0`, otherwise take latest time from three tracks / events.
     ///
-    /// 只有事件的剪辑也必须有长度，否则播放头不会前进、事件永远不触发。
+    /// Clip with only events must also have length, otherwise playhead will not advance, events never trigger.
     pub fn clip_duration(&self) -> f32 {
         if self.duration > 0.0 && self.duration.is_finite() {
             return self.duration;
@@ -945,7 +945,7 @@ impl KeyframeAnimation {
             .max(last_event)
     }
 
-    /// 三条轨道与事件是否都为空（空剪辑不驱动任何通道，也不占播放头）。
+    /// Whether all three tracks and events are empty (empty clip drives no channels, occupies no playhead).
     pub fn is_empty(&self) -> bool {
         self.position.is_empty()
             && self.euler_xyz.is_empty()
@@ -953,7 +953,7 @@ impl KeyframeAnimation {
             && self.events.is_empty()
     }
 
-    /// 采样 `local_time`（已按循环 / 端点处理过的时间）。
+    /// Sample `local_time` (time already processed by loop / endpoints).
     pub fn sample(&self, local_time: f32) -> crate::animation::ClipSample {
         crate::animation::ClipSample {
             position: crate::animation::sample_vec3(&self.position, local_time),
@@ -963,14 +963,14 @@ impl KeyframeAnimation {
     }
 }
 
-/// 折线拐点的连接方式（#604）。
+/// Polyline corner join style (#604).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LineJoin {
-    /// 斜接：外角延伸到两条边相交处；超过 `miter_limit` 时退化成
-    /// [`Bevel`](Self::Bevel)，避免尖角拉出很长的刺。
+    /// Miter: outer corner extends to intersection of two edges; degrades to
+    /// [`Bevel`](Self::Bevel), avoiding sharp corners pulling out long spikes.
     #[default]
     Miter,
-    /// 斜切：两段各自在拐点结束，用三角形补上缺口。
+    /// Bevel: each segment ends at corner, triangle fills the gap.
     Bevel,
 }
 
@@ -1001,15 +1001,15 @@ impl ReflectType for LineJoin {
     }
 }
 
-/// 折线端点的收尾方式（#604）。
+/// Polyline endpoint cap style (#604).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LineCap {
-    /// 平头：线段正好在端点结束。
+    /// Butt: line segment ends exactly at endpoint.
     #[default]
     Butt,
-    /// 方头：沿线段方向多延伸半个线宽。
+    /// Square: extends half line width beyond endpoint along segment direction.
     Square,
-    /// 圆头：以端点为圆心的半圆。
+    /// Round: semicircle centered at endpoint.
     Round,
 }
 
@@ -1042,36 +1042,36 @@ impl ReflectType for LineCap {
     }
 }
 
-/// 2D 折线渲染器 = `LineRenderer`（2D 子集）。
+/// 2D polyline renderer = `LineRenderer` (2D subset).
 ///
-/// 点是**世界空间**的（等价 `useWorldSpace = true`），引擎把折线三角化成
-/// 一条**不重叠**的加宽笔触（拐点 join + 端点 cap）并入精灵通道，因此排序 /
-/// 混合与精灵完全一致，半透明折线也不会在拐点叠加两次（#604）。
+/// Points are in **world space** (equivalent to `useWorldSpace = true`); engine triangulates polyline into
+/// one **non-overlapping** thick stroke (corner join + endpoint cap) merged into sprite channel, so sorting /
+/// blending consistent with sprite; translucent polyline will not double-overlap at corners (#604).
 ///
-/// 线的颜色走精灵通道的 `texture == u32::MAX`（纯色）分支，不采样贴图。
+/// Line color goes through sprite channel `texture == u32::MAX` (solid color) branch, does not sample texture.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::LineRenderer")]
 #[serde(default)]
 pub struct LineRenderer {
-    /// 世界空间折线点；少于 2 个点时不绘制。
+    /// World-space polyline points; does not draw when fewer than 2 points.
     pub points: Vec<[f32; 3]>,
-    /// 线性 RGBA 颜色。
+    /// Linear RGBA color.
     pub color: [f32; 4],
-    /// 线宽（世界单位）。
+    /// Line width (world units).
     ///
-    /// **小于 1 个渲染像素时按 1 像素绘制**（#978）：亚像素宽的几何会让像素
-    /// 中心落在三角形之外，屏幕上断成一串点。渲染时按主相机把 1 像素换算成
-    /// 世界长度，宽度取两者较大值。
+    /// **Draws as 1 pixel when less than 1 render pixel** (#978): subpixel-wide geometry causes pixel
+    /// centers to fall outside triangles, screen breaks into dots. Rendering converts 1 pixel to world
+    /// length via main camera, width takes larger of the two.
     pub width: f32,
-    /// 排序层，与 [`SpriteRenderer::sorting_layer`] 同一套数值。
+    /// Sorting layer, same numeric set as [`SpriteRenderer::sorting_layer`].
     pub sorting_layer: i32,
-    /// 同层内顺序。
+    /// Order within layer.
     pub order_in_layer: i32,
-    /// 拐点连接方式（默认斜接）。
+    /// Corner join style (default miter).
     pub join: LineJoin,
-    /// 端点收尾方式（默认平头）。
+    /// Endpoint cap style (default butt).
     pub cap: LineCap,
-    /// 斜接长度上限（相对半宽的倍数）；`Miter` 超过它就退化成斜切。
+    /// Miter length limit (multiple of half width); `Miter` degrades to bevel when exceeded.
     pub miter_limit: f32,
 }
 
@@ -1091,7 +1091,7 @@ impl Default for LineRenderer {
 }
 
 impl LineRenderer {
-    /// 是否有可绘制的线段。
+    /// Whether there is a drawable line segment.
     pub fn has_line(&self) -> bool {
         self.points.len() >= 2
     }
@@ -1101,19 +1101,19 @@ impl LineRenderer {
 // Particles
 // ---------------------------------------------------------------------------
 
-/// 发射器形状 = `ParticleSystemShape`。
+/// Emitter shape = `ParticleSystemShape`.
 ///
-/// 只影响「粒子出生点的偏移」和「初速度方向」；Phase 1 没有碰撞/拖尾。
+/// Only affects particle birth offset and initial velocity direction; Phase 1 has no collision/trail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ParticleShape {
-    /// 全部从发射器原点出发，方向随机。
+    /// All emitted from emitter origin, random direction.
     #[default]
     Point,
-    /// 球壳内出生，方向沿径向向外。
+    /// Born inside sphere shell, direction along radial outward.
     Sphere,
-    /// 立方体内出生，方向随机。
+    /// Born inside cube, random direction.
     Box,
-    /// 锥形（沿发射器本地 **+Y**），`cone_angle_degrees` 是半角。
+    /// Cone (along emitter local **+Y**), `cone_angle_degrees` is half angle.
     Cone,
 }
 
@@ -1123,7 +1123,7 @@ impl ReflectType for ParticleShape {
     }
 
     fn enum_variants() -> Option<&'static [&'static str]> {
-        // 顺序与声明一致；这些字符串就是 `.scene.json` 里的取值。
+        // Order consistent with declaration; these strings are values in `.scene.json`.
         Some(&["Point", "Sphere", "Box", "Cone"])
     }
 
@@ -1149,77 +1149,77 @@ impl ReflectType for ParticleShape {
     }
 }
 
-/// 世界空间 CPU 粒子发射器 = `ParticleSystem`（Phase 1 子集）。
+/// World-space CPU particle emitter = `ParticleSystem` (Phase 1 subset).
 ///
-/// 只描述**作者参数**；活着的粒子存在运行时组件
-/// `prism_engine::scene::systems::particles::ParticleEmitter` 里，不进
-/// `.scene.json` / RSCN。每个粒子出生时取一次
-/// `start_speed` / `start_size` / `lifetime` 的随机值。
+/// Only describes authoring parameters; living particles exist in runtime component
+/// `prism_engine::scene::systems::particles::ParticleEmitter`, does not enter
+/// `.scene.json` / RSCN. Each particle takes once at birth
+/// random value of `start_speed` / `start_size` / `lifetime`.
 ///
-/// 颜色有两种写法：`color_stops` 非空时按生命周期**均匀采样多段渐变**（一个停靠点 =
-/// 恒定色）；为空时退回 `start_color → end_color` 的两色线性插值。尺寸同理：
-/// `size_over_lifetime` 是出生 / 死亡时的倍率（`[1, 0]` 收缩、`[0.5, 2]` 长大），
-/// 乘在粒子出生尺寸上。
+/// Color has two forms: when `color_stops` non-empty, samples multi-segment gradient uniformly by lifetime (one stop =
+/// constant color); when empty falls back to two-color linear interpolation `start_color → end_color`. Size similarly:
+/// `size_over_lifetime` is multiplier at birth / death (`[1, 0]` shrinks, `[0.5, 2]` grows),
+/// multiplied by particle birth size.
 ///
-/// 粒子在**世界空间**模拟（发射器移动不会拖走已有的粒子），初速度方向按发射器
-/// 当前的旋转换算。
+/// Particles simulated in **world space** (emitter movement does not drag existing particles), initial velocity direction per emitter
+/// current rotation conversion.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::ParticleSystem")]
 #[serde(default)]
 pub struct ParticleSystem {
-    /// 是否发射/推进；`false` 时已有粒子停在原地（不是清除）。
+    /// Whether emitting/advancing; `false` existing particles stop in place (not cleared).
     pub playing: bool,
-    /// 每秒发射数量。
+    /// Emission count per second.
     pub emission_rate: f32,
-    /// 每个循环开始时额外一次性发射的数量。
+    /// Extra one-shot emission count at start of each loop.
     pub burst: u32,
-    /// 发射持续时长（秒）；`0` = 一直发射（忽略 `looping`）。
+    /// Emission duration (seconds); `0` = emit continuously (ignores `looping`).
     pub duration: f32,
-    /// `duration > 0` 时是否循环发射。
+    /// Whether looping emission when `duration > 0`.
     pub looping: bool,
-    /// 同时存活的粒子上限；`0` = 内置默认（256）。
+    /// Max particles alive simultaneously; `0` = built-in default (256).
     pub max_particles: u32,
-    /// 生命周期随机区间 `[min, max]`（秒）。
+    /// Lifetime random interval `[min, max]` (seconds).
     pub lifetime: [f32; 2],
-    /// 初始速度随机区间（世界单位 / 秒）。
+    /// Initial velocity random interval (world units / second).
     pub start_speed: [f32; 2],
-    /// 初始半径随机区间（世界单位）。
+    /// Initial size random interval (world units).
     pub start_size: [f32; 2],
-    /// 出生时的线性 RGBA 颜色（含 alpha）。
+    /// Linear RGBA color at birth (including alpha).
     pub start_color: [f32; 4],
-    /// 死亡时的线性 RGBA 颜色；alpha 通常写 0 做淡出。
+    /// Linear RGBA color at death; alpha usually 0 for fade out.
     pub end_color: [f32; 4],
-    /// 多段颜色渐变（线性 RGBA）；非空时**覆盖** `start_color → end_color`。
+    /// Multi-segment color gradient (linear RGBA); when non-empty overrides `start_color → end_color`.
     ///
-    /// 停靠点在生命周期上**均匀分布**（第 0 个 = 出生，最后一个 = 死亡），相邻两点
-    /// 之间线性插值；只写一个点等于恒定颜色。空 = 用两色插值（旧行为）。
-    /// 检查器的列表编辑器可以直接增删 / 编辑这些 `[f32; 4]`。
+    /// Stops distributed uniformly over lifetime (0th = birth, last = death), between adjacent points
+    /// linearly interpolated; writing one point equals constant color. Empty = two-color interpolation (old behavior).
+    /// Inspector list editor can directly add/remove/edit these `[f32; 4]`.
     pub color_stops: Vec<[f32; 4]>,
-    /// 出生 / 死亡时的尺寸倍率，乘在粒子的出生尺寸上（`[1, 1]` = 不变）。
+    /// Size multiplier at birth / death, multiplied by particle birth size (`[1, 1]` = unchanged).
     ///
-    /// `[1, 0]` 收缩到消失，`[0.5, 2]` 逐渐变大；非有限值按 1 处理，结果不会为负。
+    /// `[1, 0]` shrinks to disappear, `[0.5, 2]` gradually grows; non-finite treated as 1, result will not be negative.
     pub size_over_lifetime: [f32; 2],
-    /// 出生 / 死亡时的**世界空间速度偏移**（单位 / 秒），按寿命线性插值后
-    /// 叠加到位移上（不写入粒子速度，因此不会反过来影响重力 / 阻尼）。
+    /// World-space velocity offset at birth / death (units / second), after linear interpolation over lifetime
+    /// added to displacement (not written to particle velocity, so will not affect gravity / drag in reverse).
     ///
-    /// `[[0, 0, 0], [0, 0, 0]]` = 不变。可用来做风、上升气流、横向飘移；
-    /// 非有限分量按 0 处理。
+    /// `[[0, 0, 0], [0, 0, 0]]` = unchanged. Can be used for wind, updraft, lateral drift;
+    /// Non-finite components treated as 0.
     pub velocity_over_lifetime: [[f32; 3]; 2],
-    /// 恒定加速度（世界单位 / 秒²），`[0, -9.81, 0]` 是重力。
+    /// Constant acceleration (world units / second²), `[0, -9.81, 0]` is gravity.
     pub gravity: [f32; 3],
-    /// 速度阻尼（每秒衰减比例，`0` = 无阻尼，`1` = 一秒内速度归零）。
+    /// Velocity drag (per-second decay ratio, `0` = no drag, `1` = velocity to zero within one second).
     pub drag: f32,
-    /// 是否把粒子推出带 `Collider` 的实体表面（#501）。默认关，保持旧行为。
+    /// Whether to push particles out of entity surfaces with `Collider` (#501). Default off, keeps old behavior.
     pub collision: bool,
-    /// 碰撞恢复系数：`0` = 贴住表面，`1` = 完全反弹。越界值会被钳到 `[0, 1]`。
+    /// Collision restitution: `0` = stick to surface, `1` = full bounce. Out-of-range clamped to `[0, 1]`.
     pub collision_bounce: f32,
-    /// 碰撞切向摩擦：`0` = 保留全部切向速度，`1` = 切向速度归零。
+    /// Collision tangential friction: `0` = keep all tangential velocity, `1` = zero tangential velocity.
     pub collision_friction: f32,
-    /// 发射器形状。
+    /// Emitter shape.
     pub shape: ParticleShape,
-    /// `Sphere` / `Box` 的半径（世界单位）。
+    /// `Sphere` / `Box` radius (world units).
     pub shape_radius: f32,
-    /// `Cone` 的半角（度，0..90）。
+    /// `Cone` half angle (degrees, 0..90).
     pub cone_angle_degrees: f32,
 }
 
@@ -1253,7 +1253,7 @@ impl Default for ParticleSystem {
 }
 
 impl ParticleSystem {
-    /// 同时存活粒子上限（`max_particles == 0` 时回落到 256）。
+    /// Max particles alive simultaneously (falls back to 256 when `max_particles == 0`).
     pub fn particle_cap(&self) -> usize {
         if self.max_particles == 0 {
             256
@@ -1262,7 +1262,7 @@ impl ParticleSystem {
         }
     }
 
-    /// 发射时长（秒）；`0` / 非有限值表示无限。
+    /// Emission duration (seconds); `0` / non-finite means infinite.
     pub fn emission_duration(&self) -> Option<f32> {
         if self.duration.is_finite() && self.duration > 0.0 {
             Some(self.duration)
@@ -1271,7 +1271,7 @@ impl ParticleSystem {
         }
     }
 
-    /// 每秒发射数量（非法值按 0，负值不发射）。
+    /// Emission per second (invalid treated as 0, negative does not emit).
     pub fn rate(&self) -> f32 {
         if self.emission_rate.is_finite() && self.emission_rate > 0.0 {
             self.emission_rate
@@ -1280,7 +1280,7 @@ impl ParticleSystem {
         }
     }
 
-    /// 区间取值（非法/倒序时用 `fallback`，并把两端排序）。
+    /// Interval value (uses `fallback` when invalid / reversed, and sorts both ends).
     pub fn random_range(range: [f32; 2], t: f32, fallback: f32) -> f32 {
         let (lo, hi) = if range[0].is_finite() && range[1].is_finite() {
             if range[0] <= range[1] {
@@ -1295,20 +1295,20 @@ impl ParticleSystem {
     }
 }
 
-/// 2D 发射器形状（`ParticleEmitter2D`）。
+/// 2D emitter shape (`ParticleEmitter2D`).
 ///
-/// 只影响粒子出生点在发射器本地 XY 平面里的偏移；初速度方向由
-/// `direction` + `spread_degrees` 决定。
+/// Only affects particle birth offset in emitter local XY plane; initial velocity direction by
+/// `direction` + `spread_degrees` determined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ParticleShape2D {
-    /// 全部从发射器原点出发。
+    /// All emitted from emitter origin.
     #[default]
     Point,
-    /// 沿本地 X 轴的一条线段（`shape_size[0]` 是半长）。
+    /// A line segment along local X axis (`shape_size[0]` is half length).
     Line,
-    /// 本地矩形（`shape_size` 是半宽 / 半高）。
+    /// Local rectangle (`shape_size` is half width / half height).
     Box,
-    /// 本地圆盘（`shape_radius`）。
+    /// Local disk (`shape_radius`).
     Circle,
 }
 
@@ -1343,19 +1343,19 @@ impl ReflectType for ParticleShape2D {
     }
 }
 
-/// 2D 世界空间粒子发射器（#594）。
+/// 2D world-space particle emitter (#594).
 ///
-/// 和 3D 的 [`ParticleSystem`] 是同一套思路：这里只描述**作者参数**，活着的
-/// 粒子存在运行时组件
-/// `prism_engine::scene::systems::particles2d::ParticleEmitter2DState` 里，
-/// 不进 `.scene.json` / RSCN。粒子在**世界 XY 平面**积分（发射器移动不会
-/// 拖走已飞出的粒子），初速度方向按发射器当前的 Z 轴旋转换算。
+/// Same idea as 3D [`ParticleSystem`]: only describes **authoring parameters**, living
+/// particles exist in runtime component
+/// `prism_engine::scene::systems::particles2d::ParticleEmitter2DState`,
+/// not in `.scene.json` / RSCN. Particles integrated in **world XY plane** (emitter movement will not
+/// drag already-flown particles), initial velocity direction per emitter current Z axis rotation.
 ///
-/// 绘制走 2D 精灵通道（`SpriteDrawItem`）：每个粒子是一个纯色四边形，
-/// 和精灵一起按 `sorting_layer → order_in_layer → z` 排序，因此水花可以夹在
-/// 船和水面之间，而不需要单独的渲染 pass。
+/// Drawing via 2D sprite channel (`SpriteDrawItem`): each particle is a solid color quad,
+/// sorted together with sprites by `sorting_layer → order_in_layer → z`, so splashes can be interleaved
+/// between ship and water surface, without separate render pass.
 ///
-/// 常见的雨 / 雪 / 水花不需要新的着色器，只是参数不同：
+/// Common rain / snow / splash do not need new shaders, just different parameters:
 ///
 /// ```json
 /// "prism_engine::scene::ParticleEmitter2D": {
@@ -1372,45 +1372,45 @@ impl ReflectType for ParticleShape2D {
 #[reflect(name = "prism_engine::scene::ParticleEmitter2D")]
 #[serde(default)]
 pub struct ParticleEmitter2D {
-    /// 是否发射/推进；`false` 时已有粒子停在原地（不是清除）。
+    /// Whether emitting/advancing; `false` existing particles stop in place (not cleared).
     pub playing: bool,
-    /// 每秒发射数量。
+    /// Emission count per second.
     pub emission_rate: f32,
-    /// 每个发射循环开始时额外一次性发射的数量。
+    /// Extra one-shot emission count at start of each emission loop.
     pub burst: u32,
-    /// 发射持续时长（秒）；`0` = 一直发射（忽略 `looping`）。
+    /// Emission duration (seconds); `0` = emit continuously (ignores `looping`).
     pub duration: f32,
-    /// `duration > 0` 时是否循环发射。
+    /// Whether looping emission when `duration > 0`.
     pub looping: bool,
-    /// 同时存活的粒子上限；`0` = 内置默认（256）。
+    /// Max particles alive simultaneously; `0` = built-in default (256).
     pub max_particles: u32,
-    /// 生命周期随机区间 `[min, max]`（秒）。
+    /// Lifetime random interval `[min, max]` (seconds).
     pub lifetime: [f32; 2],
-    /// 初始速度随机区间（世界单位 / 秒）。
+    /// Initial velocity random interval (world units / second).
     pub start_speed: [f32; 2],
-    /// 初始边长随机区间（世界单位；四边形是正方形）。
+    /// Initial side length random interval (world units; quad is square).
     pub start_size: [f32; 2],
-    /// 出生时的 RGBA 颜色（含 alpha）。
+    /// RGBA color at birth (including alpha).
     pub start_color: [f32; 4],
-    /// 死亡时的 RGBA 颜色；alpha 通常写 0 做淡出。
+    /// RGBA color at death; alpha usually 0 for fade out.
     pub end_color: [f32; 4],
-    /// 恒定加速度（世界单位 / 秒²），`[0, -9.8]` 是重力。
+    /// Constant acceleration (world units / second²), `[0, -9.8]` is gravity.
     pub gravity: [f32; 2],
-    /// 速度阻尼（每秒衰减比例，`0` = 无阻尼，`1` = 一秒内速度归零）。
+    /// Velocity drag (per-second decay ratio, `0` = no drag, `1` = velocity to zero within one second).
     pub drag: f32,
-    /// 出生点形状。
+    /// Birth point shape.
     pub shape: ParticleShape2D,
-    /// `Line` / `Box` 的半尺寸（世界单位）；`Line` 只用 `[0]`。
+    /// `Line` / `Box` half size (world units); `Line` only uses [0].
     pub shape_size: [f32; 2],
-    /// `Circle` 的半径（世界单位）。
+    /// `Circle` radius (world units).
     pub shape_radius: f32,
-    /// 初速度基准方向（本地空间，不必归一化）；零向量时用 `[0, -1]`。
+    /// Initial velocity base direction (local space, need not normalize); use `[0, -1]` for zero vector.
     pub direction: [f32; 2],
-    /// 相对 `direction` 的随机半角（度，0 = 全部沿同一方向）。
+    /// Random half angle relative to `direction` (degrees, 0 = all along same direction).
     pub spread_degrees: f32,
-    /// 与其它 2D 绘制项一起排序的层。
+    /// Layer sorted together with other 2D drawing items.
     pub sorting_layer: i32,
-    /// 同层内的顺序。
+    /// Order within layer.
     pub order_in_layer: i32,
 }
 
@@ -1442,7 +1442,7 @@ impl Default for ParticleEmitter2D {
 }
 
 impl ParticleEmitter2D {
-    /// 同时存活粒子上限（`max_particles == 0` 时回落到 256）。
+    /// Max particles alive simultaneously (falls back to 256 when `max_particles == 0`).
     pub fn particle_cap(&self) -> usize {
         if self.max_particles == 0 {
             256
@@ -1451,7 +1451,7 @@ impl ParticleEmitter2D {
         }
     }
 
-    /// 发射时长（秒）；`0` / 非有限值表示无限。
+    /// Emission duration (seconds); `0` / non-finite means infinite.
     pub fn emission_duration(&self) -> Option<f32> {
         if self.duration.is_finite() && self.duration > 0.0 {
             Some(self.duration)
@@ -1460,7 +1460,7 @@ impl ParticleEmitter2D {
         }
     }
 
-    /// 每秒发射数量（非法值按 0，负值不发射）。
+    /// Emission per second (invalid treated as 0, negative does not emit).
     pub fn rate(&self) -> f32 {
         if self.emission_rate.is_finite() && self.emission_rate > 0.0 {
             self.emission_rate
@@ -1469,7 +1469,7 @@ impl ParticleEmitter2D {
         }
     }
 
-    /// 归一化的基准方向；零向量 / 非有限值时回落到「向下」。
+    /// Normalized base direction; falls back to "down" when zero / non-finite.
     pub fn direction_or_down(&self) -> [f32; 2] {
         let length =
             (self.direction[0] * self.direction[0] + self.direction[1] * self.direction[1]).sqrt();
@@ -1619,16 +1619,16 @@ impl UiParticleEmitter {
 // Lighting
 // ---------------------------------------------------------------------------
 
-/// 2D 光源类型（#611）。
+/// 2D light type (#611).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Light2DKind {
-    /// 均匀照亮整幅画面（夜晚的底色）。`intensity` 直接乘到颜色上。
+    /// Uniformly illuminates entire screen (night background color). `intensity` directly multiplies color.
     Ambient,
-    /// 圆形衰减：半径内按 `(1 - d / radius)^2` 衰减。
+    /// Circular attenuation: attenuates by `(1 - d / radius)^2` within radius.
     #[default]
     Point,
-    /// 平行光：没有位置 / 衰减，方向上不做阴影——2D 精灵没有法线，
-    /// 只能整体乘一个颜色，用来做「夕阳把画面染成橙色」。
+    /// Directional light: no position / attenuation, no shadow on direction---2D sprites have no normals,
+    /// can only multiply an overall color, used for "sunset dyes screen orange".
     Directional,
 }
 
@@ -1661,15 +1661,15 @@ impl ReflectType for Light2DKind {
     }
 }
 
-/// 2D 光源（#611）：照亮打开了 [`SpriteRenderer::receive_lights`] 的精灵。
+/// 2D light (#611): illuminates sprites that opened [`SpriteRenderer::receive_lights`].
 ///
-/// 与 3D 的 [`PointLight`] / [`DirectionalLight`] 是**两套单位**：3D 用坎德拉
-/// / lux，2D 这里 `intensity = 1.0` 就是「原色」，方便作者按画面调。
+/// Different unit system from 3D [`PointLight`] / [`DirectionalLight`]: 3D uses candela
+/// / lux; here `intensity = 1.0` means "original color", convenient for authors to adjust by screen.
 ///
-/// 2D 精灵没有法线，所以点光只做径向衰减（不做兰伯特），方向光对整个精灵
-/// 乘一个颜色。软阴影 / 光斑贴图留到后续（#611 Phase 2）。
+/// 2D Sprite has no normal, so point light only does radial attenuation (no Lambert), directional light multiplies
+/// a color on entire sprite. Soft shadow / light cookie left for later (#611 Phase 2).
 ///
-/// 用法（夜晚灯笼）：
+/// Usage (night lantern):
 ///
 /// ```json
 /// "prism_engine::scene::Light2D": {
@@ -1677,25 +1677,25 @@ impl ReflectType for Light2DKind {
 /// }
 /// ```
 ///
-/// 再放一盏 `kind = "Ambient"`, `color = [0.18, 0.2, 0.32]`, `intensity = 1.0`
-/// 做夜色底子；没有环境光时，半径外的精灵会变黑（这是 2D 光照的正常结果）。
+/// Add another `kind = "Ambient"`, `color = [0.18, 0.2, 0.32]`, `intensity = 1.0`
+/// as night background; without ambient light, sprites outside radius turn black (normal result of 2D lighting).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Light2D")]
 #[serde(default)]
 pub struct Light2D {
-    /// 光源类型（默认点光）。
+    /// Light type (default point light).
     pub kind: Light2DKind,
-    /// 线性 RGB 颜色（`intensity = 1` 时乘到精灵上的比例）。
+    /// Linear RGB color (proportion multiplied onto sprite when `intensity = 1`).
     pub color: [f32; 3],
-    /// 强度倍数；`0` = 关灯，负值按 0 处理。
+    /// Intensity multiplier; `0` = light off, negative treated as 0.
     pub intensity: f32,
-    /// 点光半径（世界单位）；`<= 0` / 非有限值时点光退化成「全画面」，
-    /// 便于调试时先看到效果。
+    /// Point light radius (world units); when `<= 0` / non-finite point light degenerates to "full screen",
+    /// convenient to see effect during debugging first.
     pub radius: f32,
-    /// 方向光的照射方向（世界 XY，归一化前）。2D 没有法线，这个值只用于
-    /// 后续的方向性衰减（Phase 2），当前不影响结果。
+    /// Directional light irradiation direction (world XY, before normalization). 2D has no normal, this value only used for
+    /// subsequent directional attenuation (Phase 2), currently does not affect result.
     pub direction: [f32; 2],
-    /// 是否参与光照。
+    /// Whether participates in lighting.
     pub enabled: bool,
 }
 
@@ -1713,7 +1713,7 @@ impl Default for Light2D {
 }
 
 impl Light2D {
-    /// 是否会给 `receive_lights` 的精灵增加亮度（关闭 / 强度非正 → `false`）。
+    /// Whether to add brightness to `receive_lights` sprites (off / non-positive intensity → `false`).
     pub fn contributes(&self) -> bool {
         self.enabled
             && self.intensity.is_finite()
@@ -1721,7 +1721,7 @@ impl Light2D {
             && self.color.iter().any(|channel| *channel > 0.0)
     }
 
-    /// 有效的强度（非有限 / 负值按 0）。
+    /// Effective intensity (non-finite / negative treated as 0).
     pub fn strength(&self) -> f32 {
         if self.intensity.is_finite() && self.intensity > 0.0 {
             self.intensity
@@ -1730,7 +1730,7 @@ impl Light2D {
         }
     }
 
-    /// 有效的半径；`0` 表示「不衰减 / 全画面」。
+    /// Effective radius; `0` means "no attenuation / full screen".
     pub fn falloff_radius(&self) -> f32 {
         if self.radius.is_finite() && self.radius > 0.0 {
             self.radius
@@ -1740,54 +1740,54 @@ impl Light2D {
     }
 }
 
-/// 昼夜时钟（#983）：一个组件就是一天，不用每个工程自己写计时代码。
+/// Day-night clock (#983): one component equals one day, no need for each project to write timer code.
 ///
-/// 系统每帧推进 `hours`，并把它换算成**环境光**写回同一实体上的
-/// [`Light2D`]（`kind = Ambient`）。因此「夜晚灯笼」只需要两样东西：
+/// System advances `hours` every frame and converts to **ambient light** written back to same entity
+/// [`Light2D`] (`kind = Ambient`). Therefore "night lantern" only needs two things:
 ///
 /// ```json
 /// "prism_engine::scene::TimeOfDay": { "hours": 8.0, "day_length_seconds": 600.0 },
 /// "prism_engine::scene::Light2D": { "kind": "Ambient" }
 /// ```
 ///
-/// 点光（灯笼、篝火）自己不动，靠环境光变暗自然显出对比。
-/// 阅读当前时间用 [`TimeOfDay::clock_text`]，判断阶段用 [`TimeOfDay::phase`]。
+/// Point light (lantern, campfire) does not move itself, relies on ambient light dimming to naturally show contrast.
+/// Read current time via [`TimeOfDay::clock_text`], judge phase via [`TimeOfDay::phase`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::TimeOfDay")]
 #[serde(default)]
 pub struct TimeOfDay {
-    /// 当前时刻，`0.0..24.0`（小数部分就是分钟）。
+    /// Current time, `0.0..24.0` (fractional part is minutes).
     pub hours: f32,
-    /// 游戏里一天多少秒；`<= 0` 表示时间冻结（只读 `hours`）。
+    /// How many seconds per game day; `<= 0` means time frozen (read-only `hours`).
     pub day_length_seconds: f32,
-    /// 暂停推进（`hours` 仍可被脚本直接写）。
+    /// Pause advancement (`hours` can still be directly written by script).
     pub paused: bool,
-    /// 日出小时，晨昏过渡以它为中心。
+    /// Sunrise hour, dawn/dusk transition centered on it.
     pub sunrise_hour: f32,
-    /// 日落小时，晨昏过渡以它为中心。
+    /// Sunset hour, dawn/dusk transition centered on it.
     pub sunset_hour: f32,
-    /// 晨昏过渡的半宽（小时）：`sunrise ± twilight_hours` 之间是渐变。
+    /// Half-width of dawn/dusk transition (hours): gradient between `sunrise ± twilight_hours`.
     pub twilight_hours: f32,
-    /// 白天的环境光颜色（线性 RGB）。
+    /// Daytime ambient light color (linear RGB).
     pub day_color: [f32; 3],
-    /// 白天的环境光强度。
+    /// Daytime ambient light intensity.
     pub day_intensity: f32,
-    /// 夜晚的环境光颜色（线性 RGB）。
+    /// Nighttime ambient light color (linear RGB).
     pub night_color: [f32; 3],
-    /// 夜晚的环境光强度。
+    /// Nighttime ambient light intensity.
     pub night_intensity: f32,
 }
 
-/// 一天里的四个阶段（给游戏逻辑 / HUD 用，不影响环境光计算）。
+/// Four phases of a day (for game logic / HUD, does not affect ambient light calculation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeOfDayPhase {
-    /// 日出前后（含晨昏过渡）。
+    /// Around sunrise (including dawn/dusk transition).
     Dawn,
-    /// 白天。
+    /// Daytime.
     Day,
-    /// 日落前后（含晨昏过渡）。
+    /// Around sunset (including dawn/dusk transition).
     Dusk,
-    /// 夜晚。
+    /// Nighttime.
     Night,
 }
 
@@ -1809,7 +1809,7 @@ impl Default for TimeOfDay {
 }
 
 impl TimeOfDay {
-    /// 推进时间；`dt` 是秒。暂停 / `day_length_seconds <= 0` 时不动。
+    /// Advance time; `dt` is seconds. Does not move when paused / `day_length_seconds <= 0`.
     pub fn advance(&mut self, dt: f32) {
         if self.paused || !(dt.is_finite() && dt > 0.0) {
             return;
@@ -1822,7 +1822,7 @@ impl TimeOfDay {
         self.hours = hours.rem_euclid(24.0);
     }
 
-    /// `hours` 归一化到 `0..24`（作者写了 `-3` 或 `30` 也能用）。
+    /// `hours` normalized to `0..24` (author wrote `-3` or `30` also usable).
     pub fn normalized_hours(&self) -> f32 {
         let hours = if self.hours.is_finite() {
             self.hours
@@ -1832,7 +1832,7 @@ impl TimeOfDay {
         hours.rem_euclid(24.0)
     }
 
-    /// `HH:MM`，给 HUD 直接显示。
+    /// `HH:MM`, for HUD direct display.
     pub fn clock_text(&self) -> String {
         let hours = self.normalized_hours();
         let whole = hours.floor();
@@ -1840,7 +1840,7 @@ impl TimeOfDay {
         format!("{:02}:{:02}", whole as u32 % 24, (minutes as u32).min(59))
     }
 
-    /// 当前阶段。晨昏过渡区间算 `Dawn` / `Dusk`。
+    /// Current phase. Dawn/dusk transition interval counts as `Dawn` / `Dusk**.
     pub fn phase(&self) -> TimeOfDayPhase {
         let h = self.normalized_hours();
         let twilight = self.twilight_hours.max(0.0);
@@ -1857,13 +1857,13 @@ impl TimeOfDay {
         }
     }
 
-    /// 当前环境光：`(color, intensity)`。晨昏之间线性插值，其余时间取白/夜值。
+    /// Current ambient light: `(color, intensity)`. Linearly interpolated between dawn/dusk, otherwise takes day/night values.
     pub fn ambient(&self) -> ([f32; 3], f32) {
         let h = self.normalized_hours();
         let twilight = self.twilight_hours.max(0.0);
         let sunrise = self.sunrise_hour.rem_euclid(24.0);
         let sunset = self.sunset_hour.rem_euclid(24.0);
-        // 0 = 夜, 1 = 昼；日出 / 日落各有一半的过渡。
+        // 0 = night, 1 = day; sunrise / sunset each have half transition.
         let daylight = if twilight <= 0.0 {
             if day_side(h, sunrise, sunset) {
                 1.0
@@ -1891,13 +1891,13 @@ impl TimeOfDay {
     }
 }
 
-/// `hour` 是否落在 `center ± width` 内（跨零点也算）。
+/// Whether `hour` falls within `center ± width` (counts across zero point).
 fn within(hour: f32, center: f32, width: f32) -> bool {
     let delta = (hour - center).rem_euclid(24.0);
     delta <= width || delta >= 24.0 - width
 }
 
-/// `hour` 是否在日出与日落之间的白天一侧（支持日出晚于日落的多夜昼配置）。
+/// Whether `hour` is on daytime side between sunrise and sunset (supports sunrise-later-than-sunset multi-night-day configuration).
 fn day_side(hour: f32, sunrise: f32, sunset: f32) -> bool {
     if sunrise <= sunset {
         hour >= sunrise && hour < sunset
@@ -1992,46 +1992,46 @@ impl Default for SpotLight {
     }
 }
 
-/// 统一光源组件。
+/// Unified light component.
 ///
-/// 只有一个 `Light` 组件，用 [`LightType`] 区分方向光 / 点光 / 聚光；光源的
-/// **方向由实体变换决定**（里是 `light.transform.forward`），位置由
-/// `LocalToWorld` 决定。本组件就是那个形状。
+/// Only one `Light` component, distinguished by [`LightType`] for directional / point / spot light; light source
+/// **direction determined by entity transform** (is `light.transform.forward`), position determined by
+/// `LocalToWorld**. This component is that shape.
 ///
-/// 旧的 [`DirectionalLight`] / [`PointLight`] / [`SpotLight`] 仍然可用（渲染器两者
-/// 都收，见 `prism-engine::scene::systems::lights`），所以老场景不需要迁移；
-/// 新场景建议只用本组件。
+/// Old [`DirectionalLight`] / [`PointLight`] / [`SpotLight`] still usable (renderer receives both,
+/// both collected, see `prism-engine::scene::systems::lights`), so old scenes do not need migration;
+/// new scenes recommended to use only this component.
 ///
-/// 单位与旧组件一致，采用**物理量**（方向光 lux、点光/聚光 candela），而不是
-/// 默认的归一化 `intensity = 1`：渲染器内部按 `LUX_TO_RADIANCE_SCALE` 折算，改
-/// `intensity` 的观感与旧组件相同。
+/// Units consistent with old components, use **physical quantities** (directional light lux / point/spot candela), not
+/// default normalized `intensity = 1`: renderer internally converts by `LUX_TO_RADIANCE_SCALE`, changing
+/// `intensity` feel same as old component.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Light")]
 #[serde(default)]
 pub struct Light {
-    /// `Behaviour.enabled`：为 `false` 时渲染器跳过该光源。
+    /// `Behaviour.enabled`: renderer skips this light when `false`.
     pub enabled: bool,
-    /// 光源类型 = `Light.type`。
+    /// Light type = `Light.type**.
     pub light_type: LightType,
-    /// 线性 RGB 颜色 = `Light.color`。
+    /// Linear RGB color = `Light.color**.
     pub color: glam::Vec3,
-    /// 强度（方向光 lux / 点光与聚光 candela）= `Light.intensity`。
+    /// Intensity (directional light lux / point & spot candela) = `Light.intensity**.
     pub intensity: f32,
-    /// 衰减半径（世界单位）= `Light.range`（方向光忽略）。
+    /// Attenuation radius (world units) = `Light.range** (directional light ignores).
     pub range: f32,
-    /// 聚光**全锥角**（度）= `Light.spotAngle`。
+    /// Spot **full cone angle** (degrees) = `Light.spotAngle**.
     pub spot_angle: f32,
-    /// 内锥**全锥角**（度）= `Light.innerSpotAngle`；小于 `spot_angle`。
+    /// Inner cone **full cone angle** (degrees) = `Light.innerSpotAngle**; less than `spot_angle**.
     pub inner_spot_angle: f32,
-    /// 阴影模式 = `Light.shadows`。
+    /// Shadow mode = `Light.shadows**.
     pub shadows: LightShadows,
-    /// 阴影强度 = `Light.shadowStrength`（`0..=1`）。
+    /// Shadow strength = `Light.shadowStrength` (`0..=1**).
     pub shadow_strength: f32,
-    /// 色温（开尔文）= `Light.colorTemperature`。
+    /// Color temperature (kelvin) = `Light.colorTemperature**.
     pub color_temperature: f32,
-    /// 是否让色温参与光源颜色 = `Light.useColorTemperature`。
+    /// Whether color temperature participates in light color = `Light.useColorTemperature**.
     pub use_color_temperature: bool,
-    /// 渲染模式 = `Light.renderMode`。
+    /// Render mode = `Light.renderMode**.
     pub render_mode: LightRenderMode,
 }
 
@@ -2039,7 +2039,7 @@ impl Default for Light {
     fn default() -> Self {
         Self {
             enabled: true,
-            // 引擎的 `new Light()` 默认是点光源。
+            // Engine `new Light()` defaults to point light source.
             light_type: LightType::Point,
             color: glam::Vec3::ONE,
             intensity: 100.0,
@@ -2056,10 +2056,10 @@ impl Default for Light {
 }
 
 impl Light {
-    /// 最终光源颜色 = `color`（× 色温滤色片）。
+    /// Final light color = `color** (× color temperature filter).
     ///
-    /// 对应引擎的 `ExtractColorTemperature` + `ApplyColorTemperature`：
-    /// 只有 `use_color_temperature` 为真时才乘色温，且不归一化。
+    /// Corresponds to engine `ExtractColorTemperature` + `ApplyColorTemperature**:
+    /// Color temperature only multiplied when `use_color_temperature` is true, and not normalized.
     pub fn effective_color(&self) -> glam::Vec3 {
         if self.use_color_temperature {
             self.color * correlated_color_temperature_to_rgb(self.color_temperature)
@@ -2068,48 +2068,48 @@ impl Light {
         }
     }
 
-    /// 聚光的内 / 外**半锥角**（弧度），供 GPU 与着色器使用。
+    /// Spot inner / outer **half cone angle** (radians), for GPU and shader use.
     ///
-    /// 引擎的 `spotAngle` / `innerSpotAngle` 都是全锥角（度）；这里除以 2 转成
-    /// 半角，并把内角裁到 `[0, 外角]`，避免非法配置产生负的余弦区间。
+    /// Engine `spotAngle` / `innerSpotAngle` are both full cone angles (degrees); here divide by 2 to convert to
+    /// half angle, and clamp inner angle to `[0, outer angle]`, avoiding invalid config producing negative cosine interval.
     pub fn cone_half_angles_radians(&self) -> (f32, f32) {
         let outer = (self.spot_angle.max(0.0) * 0.5).to_radians();
         let inner = (self.inner_spot_angle.max(0.0) * 0.5).to_radians();
         (inner.min(outer), outer)
     }
 
-    /// 是否投阴影（启用 + `shadows != None`）。
+    /// Whether casts shadow (enabled + `shadows != None**).
     pub fn is_shadow_caster(&self) -> bool {
         self.enabled && self.shadows.casts_shadows()
     }
 }
 
-/// 场景环境光照（IBL）声明式组件。
+/// Scene environment lighting (IBL) declarative component.
 ///
-/// 引擎采用「场景声明式光照」：只有当场景显式携带此组件且 `env_map` 为 `Some` 时，
-/// 渲染器才在场景加载时构建 IBL 预卷积（CPU 卷积，约数 ms）。开屏等无 3D 光照
-/// 需求的场景不写此组件（或 `env_map = None`）→ 渲染器以廉价中性空 IBL 启动，
-/// 秒开、不加载 3D 环境贴图。
+/// Engine uses "scene declarative lighting": renderer builds IBL pre-convolution at scene load only when scene explicitly carries this component and `env_map` is `Some**,
+/// (CPU convolution, approx ms). Splash screens etc with no 3D lighting needs do not write this component (or `env_map = None`) → renderer starts
+/// with cheap neutral empty IBL, starts in seconds, does not load 3D environment map.
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::EnvironmentLighting")]
 #[serde(default)]
 pub struct EnvironmentLighting {
-    /// 环境贴图（等距柱状 HDR）相对场景文件的路径。`None` 或缺失 = 不构建 IBL。
+    /// Environment map (equirectangular HDR) path relative to scene file. `None** or missing = does not build IBL.**
     pub env_map: Option<String>,
 }
 
-/// 场景全局光照（GI probe 音量）声明式组件。
+/// Scene global illumination (GI probe volume) declarative component.
 ///
-/// 仅当 `enabled = true` 且存在烘焙好的体积数据时，渲染器才上传真实 GI probe
-/// 音量；否则保留免费的 synthetic sky 预留（仅让 set5 描述符 合法）。无 3D 光照
-/// 需求的场景（如开屏）不写此组件。
+/// Only when `enabled = true` and baked volume data exists does renderer upload real GI probe
+/// volume; otherwise keeps free synthetic sky placeholder (only makes set5 descriptor valid). No 3D lighting
+/// demand scenes (like splash screen) do not write this component.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::GiConfig")]
 #[serde(default)]
 pub struct GiConfig {
-    /// 是否启用真实 GI（替换 synthetic sky 预留）。
+    /// Whether to enable real GI (replacing synthetic sky placeholder).
     pub enabled: bool,
-    /// 烘焙 GI 体积数据相对场景文件的路径（可选）。
+    /// Baked GI volume data path relative to scene file (optional).
     pub volume: Option<String>,
 }
 
@@ -2199,7 +2199,7 @@ impl Default for ProbeVolume {
 /// and the entity's [`LocalToWorld`].
 ///
 /// `aspect` is a runtime cache written by the app on resize; it is exposed in
-/// 检查器视为只读。启用标志控制渲染器是否拾取
+/// Inspector treats as read-only. Enable flag controls whether renderer picks up
 /// this camera.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Camera")]
@@ -2218,15 +2218,15 @@ pub struct Camera {
     /// When `false` the camera is skipped during scene collection (the
     /// renderer falls back to the next available camera).
     pub enabled: bool,
-    /// 清屏方式 = `Camera.clearFlags`（[`CameraClearFlags`]）。
+    /// Clear mode = `Camera.clearFlags` ([`CameraClearFlags`]**).
     pub clear_flags: CameraClearFlags,
-    /// 纯色背景 = `Camera.backgroundColor`（线性 RGBA，`SolidColor` 时生效）。
+    /// Solid color background = `Camera.backgroundColor` (linear RGBA, takes effect when `SolidColor**)**).
     pub background_color: [f32; 4],
-    /// 正交投影 = `Camera.orthographic`。
+    /// Orthographic projection = `Camera.orthographic**.
     pub orthographic: bool,
-    /// 正交视口半高（世界单位）= `Camera.orthographicSize`。
+    /// Orthographic viewport half height (world units) = `Camera.orthographicSize**.
     pub orthographic_size: f32,
-    /// 渲染顺序 = `Camera.depth`；数值大的后绘制，`main_camera` 取最大者。
+    /// Render order = `Camera.depth`; larger value drawn later, `main_camera` takes maximum.
     pub depth: f32,
 }
 
@@ -2249,13 +2249,13 @@ impl Default for Camera {
 }
 
 impl Camera {
-    /// 投影矩阵（列主序）= `Camera.projectionMatrix`。
+    /// Projection matrix (column-major) = `Camera.projectionMatrix**.
     ///
-    /// 右手系、相机看向 −Z、Vulkan y-flip（`p[1][1] = -inv_tan`）、
-    /// 深度范围 `[0, 1]`。`aspect` 由调用方给出（运行时来自 framebuffer，
-    /// 编辑器里来自面板），非有限或非正时退化为 1.0。
+    /// Right-handed, camera looks toward −Z, Vulkan y-flip (`p[1][1] = -inv_tan**),
+    /// depth range `[0, 1]`. `aspect` provided by caller (runtime from framebuffer,**
+    /// editor from panel), degenerates to 1.0 when non-finite or non-positive.
     ///
-    /// `orthographic` 为真时用 [`Camera::orthographic_size`]（半高，世界单位）。
+    /// When `orthographic` true uses [`Camera::orthographic_size`] (half height, world units**)**).
     pub fn projection_matrix(&self, aspect: f32) -> glam::Mat4 {
         let aspect = if aspect.is_finite() && aspect > 0.0 {
             aspect
@@ -2284,45 +2284,45 @@ impl Camera {
         }
     }
 
-    /// 世界 → 相机空间 = `Camera.worldToCameraMatrix`（即 view 矩阵）。
+    /// World → camera space = `Camera.worldToCameraMatrix` (i.e. view matrix**).
     pub fn world_to_camera_matrix(camera_to_world: glam::Mat4) -> glam::Mat4 {
         camera_to_world.inverse()
     }
 
-    /// 相机 → 世界空间 = `Camera.cameraToWorldMatrix`。
+    /// Camera → world space = `Camera.cameraToWorldMatrix**.
     pub fn camera_to_world_matrix(world_to_camera: glam::Mat4) -> glam::Mat4 {
         world_to_camera.inverse()
     }
 }
 
-/// 2D 虚拟相机控制器组件（#1160）。
+/// 2D virtual camera controller component (#1160).
 ///
-/// 配合 [`Camera`] 使用，针对 2D 游戏场景提供：
-/// 1. 目标跟随与平滑阻尼（Damping）
-/// 2. 死区矩形窗口（Deadzone）
-/// 3. 关卡边界碰撞围栏（Confiner）
-/// 4. 像素网格吸附防抖（Pixel Snapping）
+/// Used with [`Camera`] for 2D game scenes, provides:
+/// 1. Target follow and smooth damping
+/// 2. Deadzone rectangular window
+/// 3. Level boundary confiner
+/// 4. Pixel grid snapping anti-jitter
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Camera2D")]
 #[serde(default)]
 pub struct Camera2D {
-    /// 开关状态。
+    /// Toggle state.
     pub enabled: bool,
-    /// 跟随目标实体的 ID（u64::MAX 或 0 表示无目标跟随）。
+    /// Follow target entity ID (u64::MAX or 0 means no target follow).
     pub target_entity: u64,
-    /// 目标相对偏移量 [x, y]（世界坐标单位）。
+    /// Target relative offset [x, y] (world coordinate units).
     pub offset: [f32; 2],
-    /// 跟随平滑阻尼因子（0.0 表示瞬移紧跟，大于 0 越平滑，如 5.0 ~ 10.0）。
+    /// Follow smooth damping factor (0.0 means teleport tight follow, larger means smoother, e.g. 5.0 ~ 10.0).
     pub damping: f32,
-    /// 死区半宽高 [half_width, half_height]。目标在此矩形窗口内移动时相机保持静止。
+    /// Deadzone half width/height [half_width, half_height]. Camera stays still when target moves within this rectangular window.
     pub deadzone: [f32; 2],
-    /// 是否启用关卡边界约束（Confiner）。
+    /// Whether to enable level boundary constraint (Confiner).
     pub confiner_enabled: bool,
-    /// 关卡世界边界矩形 [min_x, min_y, max_x, max_y]。
+    /// Level world boundary rectangle [min_x, min_y, max_x, max_y].
     pub confiner_bounds: [f32; 4],
-    /// 像素吸附开关（像素艺术游戏防抖，将最终世界坐标取整到像素网格）。
+    /// Pixel snap switch (anti-jitter for pixel art games, rounds final world coordinates to pixel grid).
     pub pixel_snapping: bool,
-    /// 每世界单位的像素数（Pixels Per Unit，默认 16.0）。
+    /// Pixels per world unit (Pixels Per Unit, default 16.0).
     pub pixels_per_unit: f32,
 }
 
@@ -2387,58 +2387,58 @@ impl Default for VirtualCamera2D {
     }
 }
 
-/// 局部后处理体积（#502 Phase 2）。
+/// Local post-processing volume (#502 Phase 2).
 ///
-/// 挂在场景实体上，用轴对齐盒（`size` = 半尺寸，米）圈出一块区域；主相机进入
-/// 盒子后，盒内参数按 `priority` 从低到高混合到本帧的 [`PostGrade`] 上。
-/// `global = true` 时忽略盒子与距离，永远参与混合。
+/// Attached to scene entity, uses axis-aligned box (`size` = half size, meters) to outline an area; main camera enters
+/// box, box parameters mixed from low to high `priority` onto this frame's [`PostGrade`].
+/// When `global = true`, ignores box and distance, always participates in mixing.
 ///
-/// 只读取实体世界变换的**平移 + 轴长**（缩放），旋转不参与 —— 与地形高度场
-/// 的约定一致。`blend_distance` 是盒子外缘再向外淡出的距离（米）；0 表示只在
-/// 盒内生效、边界硬切。
+/// Only reads entity world transform **translation + axis length** (scale), rotation does not participate --- consistent with terrain heightfield
+/// convention. `blend_distance` is fade-out distance outside box edge (meters); 0 means only effective inside
+/// box, hard cut at boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::PostProcessVolume")]
 #[serde(default)]
 pub struct PostProcessVolume {
-    /// 关闭后整块体积不参与混合（作者态开关）。
+    /// When turned off, entire volume does not participate in mixing (authoring-time switch).
     pub enabled: bool,
-    /// 优先级：数值大的最后应用，通常覆盖数值小的。
+    /// Priority: larger value applied last, usually overrides smaller value.
     pub priority: f32,
-    /// 忽略 `size` / `blend_distance`，永远生效。
+    /// Ignores `size` / `blend_distance`, always effective.
     pub global: bool,
-    /// 盒子的半尺寸（米），按实体缩放放大；旋转被忽略。
+    /// Box half size (meters), scaled by entity scale; rotation ignored.
     pub size: [f32; 3],
-    /// 盒子外缘向外淡出的距离（米）；`0` = 盒内硬切。
+    /// Fade-out distance outside box edge (meters); `0` = hard cut inside box.
     pub blend_distance: f32,
-    /// 显示空间对比度（`1.0` = 不变）。
+    /// Display-space contrast (`1.0` = unchanged).
     pub contrast: f32,
-    /// 显示空间饱和度（`0.0` = 灰度）。
+    /// Display-space saturation (`0.0` = grayscale).
     pub saturation: f32,
-    /// 暗角强度（`0.0` = 关闭）。
+    /// Vignette strength (`0.0` = off).
     pub vignette: f32,
-    /// 是否启用 HDR bloom。
+    /// Whether to enable HDR bloom.
     pub bloom: bool,
-    /// bloom 加性强度。
+    /// Bloom additive strength.
     pub bloom_intensity: f32,
-    /// bloom 亮度阈值。
+    /// Bloom brightness threshold.
     pub bloom_threshold: f32,
-    /// 镜头色差强度。
+    /// Lens chromatic aberration strength.
     pub chromatic_aberration: f32,
-    /// 胶片颗粒强度。
+    /// Film grain strength.
     pub film_grain: f32,
-    /// 白平衡：暖 / 冷（`-1..=1`，`0` = 中性）。
+    /// White balance: warm / cool (`-1..=1`, `0` = neutral).
     pub temperature: f32,
-    /// 白平衡：品红 / 绿（`-1..=1`，`0` = 中性）。
+    /// White balance: magenta / green (`-1..=1`, `0` = neutral).
     pub tint: f32,
-    /// 景深对焦距离（米，#502 Phase 2）。
+    /// Depth of field focus distance (meters, #502 Phase 2).
     pub dof_focus_distance: f32,
-    /// 景深强度（`0.0` = 关闭，`1.0` = 最强）。
+    /// Depth of field strength (`0.0` = off, `1.0` = strongest).
     pub dof_aperture: f32,
-    /// 景深最大模糊半径（像素，0–32）。
+    /// Depth of field max blur radius (pixels, 0-32).
     pub dof_max_blur: f32,
-    /// 相机运动模糊强度（`0.0` = 关闭，`1.0` = 最强）。
+    /// Camera motion blur strength (`0.0` = off, `1.0` = strongest).
     pub motion_blur: f32,
-    /// 运动模糊最大拖影长度（像素，0–64）。
+    /// Motion blur max ghosting length (pixels, 0-64).
     pub motion_blur_max_pixels: f32,
 }
 
@@ -2475,7 +2475,7 @@ impl Default for PostProcessVolume {
 /// `yaw`/`pitch` are written each frame by [`super::systems::camera`] from
 /// input, while `move_speed`/`look_sensitivity` are editor-editable. The
 /// camera position lives on the sibling [`LocalTransform`] (and its derived
-/// [`LocalToWorld`]), so this 分量 carries no position of its own.
+/// [`LocalToWorld`]), so this component carries no position of its own.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::FlyCameraController")]
 #[serde(default)]
@@ -2505,16 +2505,16 @@ impl Default for FlyCameraController {
 // Prefab instances (editor metadata)
 // ---------------------------------------------------------------------------
 
-/// **编辑器元数据**：该实体（子树根）是从哪个预制体实例化来的。
+/// **Editor metadata**: which prefab this entity (subtree root) was instantiated from.
 ///
-/// 引擎运行时对它没有任何行为（没有 system 查询它），但它是普通场景组件，
-/// 因此会随场景一起 cook/加载 —— 这样编辑器才能做到「反向链接 / 还原 / 应用到预制体 /
-/// 同步同源实例」，而不需要额外的 sidecar 文件。
+/// Engine runtime has no behavior for it (no system queries it), but it is a normal scene component,
+/// therefore cooks/loads with scene --- so editor can do "reverse link / restore / apply to prefab /
+/// sync same-origin instances", without needing extra sidecar file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::PrefabInstance")]
 #[serde(default)]
 pub struct PrefabInstance {
-    /// 预制体路径（**相对项目根**，`/` 分隔），如 `assets/prefabs/door.prefab.json`。
+    /// Prefab path (**relative to project root**, `/` separated), e.g. `assets/prefabs/door.prefab.json`.
     pub prefab: String,
 }
 
@@ -2575,7 +2575,7 @@ impl Default for Skybox {
 
 /// World-space XYZ axis gizmo owned by an entity.
 ///
-/// 控制手柄显示模式（平移 / 旋转 / 缩放）。
+/// Handle display mode (translate / rotate / scale).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum GizmoMode {
     #[default]
@@ -2623,7 +2623,7 @@ pub struct Gizmo {
     pub enabled: bool,
     /// Additional uniform scale applied on top of the entity transform.
     pub scale: f32,
-    /// 显示手柄模式（平移箭头、旋转圆环、缩放手柄）。
+    /// Show handle mode (translate arrow, rotate ring, scale handle).
     pub mode: GizmoMode,
 }
 
@@ -2638,21 +2638,21 @@ impl Default for Gizmo {
 }
 
 // ---------------------------------------------------------------------------
-// 物理
+// Physics
 // ---------------------------------------------------------------------------
 
-/// 碰撞体形状 = `ColliderShape`。
+/// Collider shape = `ColliderShape`.
 ///
-/// 尺寸都是**本地空间**的（再乘实体缩放）；Phase 1 只做形状/射线查询，
-/// 还没有真正的刚体积分（见 #522 的后续步骤）。
+/// Dimensions are all in **local space** (multiplied by entity scale); Phase 1 only does shape/raycast query,
+/// no real rigidbody integration yet (see #522 follow-up steps).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ColliderShape {
-    /// 轴对齐盒：`half_extents` 是三个方向上的半尺寸。
+    /// Axis-aligned box: `half_extents` is half size along three axes.
     #[default]
     Box,
-    /// 球：`radius` 是半径。
+    /// Sphere: `radius` is radius.
     Sphere,
-    /// 胶囊：沿本地 **+Y**，`radius` + `half_height`（圆柱段半高）。
+    /// Capsule: along local **+Y**, `radius` + `half_height` (cylinder segment half height).
     Capsule,
 }
 
@@ -2685,15 +2685,15 @@ impl ReflectType for ColliderShape {
     }
 }
 
-/// 刚体类型 = `BodyType`。
+/// Rigidbody type = `BodyType**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BodyType {
-    /// 不动，只参与碰撞/查询（地板、墙）。
+    /// Stationary, only participates in collision/query (floor, wall).
     #[default]
     Static,
-    /// 由动画/代码移动，推开动态物体，自己不被推。
+    /// Moved by animation/code, pushes dynamic objects, not pushed itself.
     Kinematic,
-    /// 受重力与碰撞影响。
+    /// Affected by gravity and collision.
     Dynamic,
 }
 
@@ -2726,32 +2726,32 @@ impl ReflectType for BodyType {
     }
 }
 
-/// 碰撞体 = `Collider`。
+/// Collider = `Collider`.
 ///
-/// 形状由 [`ColliderShape`] 决定，具体尺寸用下面三个字段（彼此独立，按形状取用）：
-/// 盒用 `half_extents`，球用 `radius`，胶囊用 `radius` + `half_height`。
-/// 所有尺寸都在**本地空间**，世界空间大小再乘实体缩放。
+/// Shape determined by [`ColliderShape`], specific size uses the following three fields (independent, used per shape):
+/// Box uses `half_extents`, sphere uses `radius`, capsule uses `radius` + `half_height`.
+/// All sizes are in **local space**, world space size multiplied by entity scale.
 ///
-/// `#522` 已落地「可创作 + 射线查询 + rapier 刚体积分」：场景/编辑器里能加、
-/// 能改，引擎的 `physics::raycast` 按真实形状求交；触发器回调与碰撞网格仍待接线。
+/// `#522` implemented "authorable + raycast + rapier rigidbody integration": scene/editor can add and modify,
+/// engine `physics::raycast` intersects by true shape; trigger callback and collision mesh still pending wiring.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Collider")]
 #[serde(default)]
 pub struct Collider {
     pub shape: ColliderShape,
-    /// 形状中心相对实体原点的偏移（本地空间）。
+    /// Offset of shape center relative to entity origin (local space).
     pub center: [f32; 3],
-    /// 盒的三个半尺寸。
+    /// Box three half sizes.
     pub half_extents: [f32; 3],
-    /// 球 / 胶囊半径。
+    /// Sphere / capsule radius.
     pub radius: f32,
-    /// 胶囊圆柱段的半高（不含两端半球）。
+    /// Capsule cylinder segment half height (excluding both end hemispheres).
     pub half_height: f32,
-    /// 触发器：参与查询但**不阻挡**刚体（rapier sensor 事件尚未接回调）。
+    /// Trigger: participates in query but **does not block** rigidbody (rapier sensor event not yet wired to callback).
     pub is_trigger: bool,
     pub friction: f32,
     pub restitution: f32,
-    /// 查询用的层掩码位；`raycast` 只命中与掩码相与非 0 的碰撞体。
+    /// Query layer mask bits; `raycast` only hits colliders with mask AND non-zero.
     pub layer: u32,
 }
 
@@ -2771,30 +2771,30 @@ impl Default for Collider {
     }
 }
 
-/// 运动学角色的移动参数（#560 P2）。
+/// Kinematic character movement parameters (#560 P2).
 ///
-/// 实体同时需要 `Rigidbody { body_type: Kinematic }` 与胶囊 `Collider`；
-/// `prism-app/physics` 的角色系统按这些参数把输入方向、重力和跳跃换成
-/// `CharacterMoveRequests`，碰撞由 rapier 的 `KinematicCharacterController` 求解。
+/// Entity needs both `Rigidbody { body_type: Kinematic }` and capsule `Collider`;
+/// `prism-app/physics` character system converts input direction, gravity and jump by these parameters into
+/// `CharacterMoveRequests`, collision solved by rapier `KinematicCharacterController**.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::CharacterController")]
 #[serde(default)]
 pub struct CharacterController {
-    /// 走路速度（米/秒）。
+    /// Walk speed (meters/second).
     pub walk_speed: f32,
-    /// 冲刺速度（米/秒）。
+    /// Sprint speed (meters/second).
     pub run_speed: f32,
-    /// 水平速度趋近目标速度的加速度（米/秒²）。
+    /// Horizontal speed approaches target velocity acceleration (meters/second²).
     pub acceleration: f32,
-    /// 起跳初速度（米/秒）。
+    /// Jump initial velocity (meters/second).
     pub jump_speed: f32,
-    /// 重力加速度（米/秒²）。
+    /// Gravity acceleration (meters/second²).
     pub gravity: f32,
-    /// 能爬的最大坡度（度）；超过后角色会沿坡下滑。
+    /// Max climbable slope (degrees); beyond which character slides down.
     pub max_slope_degrees: f32,
-    /// 离地小于这个距离就贴回地面（米）。
+    /// Snap back to ground when closer than this distance (meters).
     pub snap_distance: f32,
-    /// 与环境的间隙（米）；太小会抖，不能为 0。
+    /// Gap with environment (meters); too small causes jitter, cannot be 0.
     pub skin_offset: f32,
 }
 
@@ -2813,22 +2813,22 @@ impl Default for CharacterController {
     }
 }
 
-/// 刚体 = `Rigidbody`。
+/// Rigidbody = `Rigidbody**.
 ///
-/// 真正的积分/求解由 `prism-app` 的 rapier 线程完成（#522），支持父子层级；
-/// 有 `Collider` 没有 `Rigidbody` 的实体按静态障碍处理。
+/// Real integration/solving done by `prism-app` rapier thread (#522), supports parent-child hierarchy;
+/// Entities with `Collider` but no `Rigidbody` treated as static obstacle.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Rigidbody")]
 #[serde(default)]
 pub struct Rigidbody {
     pub body_type: BodyType,
-    /// 质量（公斤）；`Dynamic` 才有意义。
+    /// Mass (kilograms); only meaningful for `Dynamic`.
     pub mass: f32,
     pub linear_damping: f32,
     pub angular_damping: f32,
     pub use_gravity: bool,
-    /// 连续碰撞检测（CCD）：快速移动的刚体也不会穿过薄碰撞体。
-    /// 只对 `Dynamic` 刚体有意义；默认关闭。
+    /// Continuous collision detection (CCD): fast-moving rigidbody won't tunnel through thin colliders.
+    /// Only meaningful for `Dynamic` rigidbody; default off.
     pub ccd: bool,
 }
 
@@ -2846,18 +2846,18 @@ impl Default for Rigidbody {
 }
 
 // ---------------------------------------------------------------------------
-// 2D 物理
+// 2D Physics
 // ---------------------------------------------------------------------------
 
-/// 2D 刚体类型 = `RigidBody2DType`。
+/// 2D rigidbody type = `RigidBody2DType**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RigidBody2DType {
-    /// 静态物体：不动，只参与碰撞与射线查询（地面、地形边界、不可破坏墙体）。
+    /// Static object: stationary, only participates in collision and raycast (ground, terrain boundary, indestructible wall).
     #[default]
     Static,
-    /// 运动学物体：由代码/动画直接移动，推动动态物体，自身不受重力或外力冲量影响（移动平台、电梯）。
+    /// Kinematic object: moved directly by code/animation, pushes dynamic objects, not affected by gravity or external impulse (moving platform, elevator).
     Kinematic,
-    /// 动态物体：完全受 2D 物理系统模拟（重力、碰撞冲量、反弹、阻尼）。
+    /// Dynamic object: fully simulated by 2D physics system (gravity, collision impulse, bounce, drag).
     Dynamic,
 }
 
@@ -2890,29 +2890,29 @@ impl ReflectType for RigidBody2DType {
     }
 }
 
-/// 2D 刚体 = `RigidBody2D`（#1160）。
+/// 2D rigidbody = `RigidBody2D** (#1160).
 ///
-/// 拥有 2D 质量、线速度、角速度及重力因子的物理实体。
+/// Physics entity with 2D mass, linear velocity, angular velocity and gravity factor.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::RigidBody2D")]
 #[serde(default)]
 pub struct RigidBody2D {
     pub body_type: RigidBody2DType,
-    /// 质量（千克），Dynamic 物体生效。
+    /// Mass (kilograms), effective for Dynamic objects.
     pub mass: f32,
-    /// 2D 线速度 [vx, vy]（米/秒）。
+    /// 2D linear velocity [vx, vy] (meters/second).
     pub linear_velocity: [f32; 2],
-    /// 2D 角速度（弧度/秒）。
+    /// 2D angular velocity (radians/second).
     pub angular_velocity: f32,
-    /// 重力加速度倍率（默认 1.0）。
+    /// Gravity acceleration multiplier (default 1.0).
     pub gravity_scale: f32,
-    /// 线性阻尼系数（减缓平移速度）。
+    /// Linear drag coefficient (slows translation speed).
     pub linear_damping: f32,
-    /// 角阻尼系数（减缓旋转速度）。
+    /// Angular drag coefficient (slows rotation speed).
     pub angular_damping: f32,
-    /// 是否固定朝向（禁止旋转，常用于 2D 角色控制器）。
+    /// Whether to fix orientation (prohibits rotation, commonly used for 2D character controller).
     pub fixed_rotation: bool,
-    /// 连续碰撞检测开关（防止极高速物体如子弹穿墙）。
+    /// Continuous collision detection switch (prevents extremely fast objects like bullets from penetrating walls).
     pub is_bullet: bool,
 }
 
@@ -2932,19 +2932,19 @@ impl Default for RigidBody2D {
     }
 }
 
-/// 2D 碰撞体形状 = `Collider2DShape`。
+/// 2D collider shape = `Collider2DShape**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Collider2DShape {
-    /// 2D 矩形盒：`half_extents` [half_w, half_h]。
+    /// 2D rectangle box: `half_extents` [half_w, half_h].
     #[default]
     Box,
-    /// 2D 圆形：`radius` 半径。
+    /// 2D circle: `radius` radius.
     Circle,
-    /// 2D 胶囊体：`radius` 半径 + `half_height` 半高。
+    /// 2D capsule: `radius` radius + `half_height` half height.
     Capsule,
-    /// 2D 多边形：`vertices` 顶点列表。
+    /// 2D polygon: `vertices` vertex list.
     Polygon,
-    /// 2D 线段：`offset` 起点到 `segment_b` 终点。
+    /// 2D line segment: `offset` start point to `segment_b` end point.
     Segment,
 }
 
@@ -2981,35 +2981,35 @@ impl ReflectType for Collider2DShape {
     }
 }
 
-/// 2D 碰撞体 = `PhysicsCollider2D`（#1160）。
+/// 2D collider = `PhysicsCollider2D** (#1160).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::PhysicsCollider2D")]
 #[serde(default)]
 pub struct PhysicsCollider2D {
     pub shape: Collider2DShape,
-    /// 形状中心相对实体原点的局部偏移。
+    /// Shape center local offset relative to entity origin.
     pub offset: [f32; 2],
-    /// 盒形半尺寸 [half_w, half_h]。
+    /// Box half size [half_w, half_h].
     pub half_extents: [f32; 2],
-    /// 圆形 / 胶囊体半径。
+    /// Circle / capsule radius.
     pub radius: f32,
-    /// 胶囊体半高。
+    /// Capsule half height.
     pub half_height: f32,
-    /// 多边形凸包局部顶点列表。
+    /// Polygon convex hull local vertex list.
     pub vertices: Vec<[f32; 2]>,
-    /// 线段终点。
+    /// Line segment end point.
     pub segment_b: [f32; 2],
-    /// 传感器触发器（只产生进入/离开事件，不阻挡物体移动）。
+    /// Sensor trigger (only produces enter/leave events, does not block object movement).
     pub is_sensor: bool,
-    /// 摩擦系数 [0, 1]。
+    /// Friction coefficient [0, 1].
     pub friction: f32,
-    /// 弹性恢复系数 [0, 1]（0 = 完全非弹性，1 = 完全弹性）。
+    /// Restitution coefficient [0, 1] (0 = fully inelastic, 1 = fully elastic).
     pub restitution: f32,
-    /// 密度（千克/平方米），用于计算碰撞体积质量。
+    /// Density (kg/m²), used to calculate collider volume mass.
     pub density: f32,
-    /// 碰撞分组层掩码位。
+    /// Collision group layer mask bits.
     pub collision_groups: u32,
-    /// 发生碰撞的过滤层掩码位。
+    /// Collision filter layer mask bits.
     pub collision_mask: u32,
 }
 
@@ -3082,22 +3082,22 @@ pub type CircleCollider2D = PhysicsCollider2D;
 pub type PolygonCollider2D = PhysicsCollider2D;
 
 // ---------------------------------------------------------------------------
-// 蒙皮
+// Skinning
 // ---------------------------------------------------------------------------
 
-/// 骨架根（#560）：指向一份 `.rskel`，是这个实体子树里所有
-/// [`SkinnedMeshRenderer`] 共用的骨骼 + 参考姿态。
+/// Skeleton root (#560): points to a `.rskel`, skeleton shared by all
+/// [`SkinnedMeshRenderer`] bones + reference pose.
 ///
-/// 骨骼的世界矩阵由 `prism-anim` 在运行时从参考姿态 + 动画剪辑求出来，
-/// 场景文件里只存路径，不存任何逐骨骼数据。
+/// Bone world matrices computed by `prism-anim` at runtime from reference pose + animation clip,
+/// scene file only stores paths, no per-bone data.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::SkeletonRoot")]
 #[serde(default)]
 #[derive(Default)]
 pub struct SkeletonRoot {
-    /// `.rskel` 路径（相对 `assets/`）。
+    /// `.rskel` path (relative to `assets/`).
     pub skeleton_path: String,
-    /// 默认动画剪辑路径（`.ranim`，可空：由代码/编辑器决定播哪条）。
+    /// Default animation clip path (`.ranim`, optional: code/editor decides which to play).
     pub default_clip_path: String,
 }
 
@@ -3107,25 +3107,25 @@ impl SkeletonRoot {
     }
 }
 
-/// 蒙皮网格渲染器（#560）。
+/// Skinned mesh renderer (#560).
 ///
-/// 与 [`MeshRenderer`] 并列而不是扩展它：`.rskin` 的顶点带着 joints/weights，
-/// 上传路径和普通 `.rmes` 不同，GPU 蒙皮（P0-3）也要走单独的管线分支。
-/// 材质、阴影、剔除这些「怎么画」的设置照抄 [`MeshRenderer`] 的语义。
+/// Alongside [`MeshRenderer`] not extending it: `.rskin` vertices carry joints/weights,
+/// upload path different from normal `.rmes`, GPU skinning (P0-3) also takes separate pipeline branch.
+/// Material, shadow, culling "how to draw" settings copy [`MeshRenderer`] semantics.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::SkinnedMeshRenderer")]
 #[serde(default)]
 #[derive(Default)]
 pub struct SkinnedMeshRenderer {
-    /// `.rskin` 路径（相对 `assets/`）。
+    /// `.rskin` path (relative to `assets/`).
     pub skinned_mesh_path: String,
-    /// 每个 submesh 一个材质路径；为空时用 `material_path`。
+    /// One material path per submesh; uses `material_path` when empty.
     pub material_paths: Vec<String>,
-    /// 单材质回退路径。
+    /// Single material fallback path.
     pub material_path: String,
     /// Optional custom fragment shader asset path (`.frag.spv` / `.slang`).
     pub shader_path: String,
-    /// 阴影投射模式（与 [`MeshRenderer`] 同义）。
+    /// Shadow casting mode (same as [`MeshRenderer`]).
     pub shadow_casting_mode: ShadowCastingMode,
 }
 
@@ -3134,9 +3134,9 @@ impl SkinnedMeshRenderer {
         !self.skinned_mesh_path.trim().is_empty()
     }
 
-    /// 绘制/材质解析需要的等价 [`MeshRenderer`]（网格路径留空：网格来自 `.rskin`）。
+    /// Equivalent [`MeshRenderer`] needed for draw/material parse (mesh path empty: mesh comes from `.rskin`).
     ///
-    /// 让蒙皮实体复用静态网格那条资源解析与绘制状态代码，而不是再抄一遍。
+    /// Let skinned entities reuse static mesh resource parsing and draw state code, instead of copying again.
     pub fn as_mesh_renderer(&self) -> MeshRenderer {
         MeshRenderer {
             mesh_path: String::new(),
@@ -3150,25 +3150,25 @@ impl SkinnedMeshRenderer {
 }
 
 // ---------------------------------------------------------------------------
-// 蒙皮动画
+// Skinning Animation
 // ---------------------------------------------------------------------------
 
-/// 一层叠加在基础动画上的动画（#560 P1 的 Layer / Avatar Mask）。
+/// One animation layer over base animation (#560 P1 Layer / Avatar Mask).
 ///
-/// `clip_path` 与基础剪辑同一时间轴采样；`weight` 为 0 时整层跳过。
-/// `bone_mask` 为空表示全身；否则只有列出的骨骼受影响（名字与
-/// `SkeletonRoot` 的骨架关节名一致，找不到的名字忽略）。
+/// `clip_path` samples on same timeline as base clip; `weight` of 0 skips whole layer.
+/// `bone_mask` empty means full body; otherwise only listed bones affected (names consistent with
+/// `SkeletonRoot` skeleton joint names consistent, missing names ignored).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect, PartialEq)]
 #[reflect(name = "prism_engine::scene::AnimLayer")]
 #[serde(default)]
 pub struct AnimLayer {
-    /// 该层的剪辑路径（`.ranim`，相对 `assets/`）。
+    /// Clip path for this layer (`.ranim`, relative to `assets/`).
     pub clip_path: String,
-    /// 混合权重（`0..=1`，NaN / 越界会被引擎清洗）。
+    /// Blend weight (`0..=1`, NaN/out-of-range cleaned by engine).
     pub weight: f32,
-    /// `true` = 相对 reference（bind）姿态的增量层；`false` = 普通覆盖层。
+    /// `true` = additive layer relative to reference (bind) pose; `false` = normal override layer.
     pub additive: bool,
-    /// 只有这些骨骼参与该层；空 = 全身。
+    /// Only these bones participate in this layer; empty = full body.
     pub bone_mask: Vec<String>,
 }
 
@@ -3245,96 +3245,96 @@ impl Default for FootIk {
     }
 }
 
-/// 骨架的播放控制（#560 P0-2）。
+/// Skeleton playback control (#560 P0-2).
 ///
-/// 事件源是 cooked 的 `.ranim` 剪辑；骨架由同一实体上的 [`SkeletonRoot`] 指定。
-/// `clip_path` 为空时用 `SkeletonRoot::default_clip_path`。
+/// Event source is cooked `.ranim` clip; skeleton specified by [`SkeletonRoot`] on same entity.
+/// When `clip_path` empty, uses `SkeletonRoot::default_clip_path`.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Animator")]
 #[serde(default)]
 pub struct Animator {
-    /// 动画剪辑路径（`.ranim`，相对 `assets/`）。空 = 用骨架的默认剪辑。
+    /// Animation clip path (`.ranim`, relative to `assets/`). Empty = uses skeleton default clip.
     pub clip_path: String,
-    /// 起始时间（秒）；编辑器 scrub 直接写这里。
+    /// Start time (seconds); editor scrub writes directly here.
     pub time: f32,
-    /// 播放速度倍数（负值倒放）。
+    /// Playback speed multiplier (negative reverses).
     pub speed: f32,
-    /// 循环播放。
+    /// Loop playback.
     pub looped: bool,
-    /// 是否推进时间。
+    /// Whether to advance time.
     pub playing: bool,
-    /// 状态机（`.rasm`）路径（#560 P1）。非空且已加载时，**状态机决定播哪个剪辑**：
-    /// `clip_path` / 混合空间只在状态自己的剪辑为空时兜底。
+    /// State machine (`.rasm`) path (#560 P1). When non-empty and loaded, **state machine decides which clip to play**:
+    /// `clip_path` / blend space only falls back when state's own clip is empty.
     pub state_machine_path: String,
-    /// 动画图（`.rag` / `*.animgraph.json`）路径（#560 P1）。非空且已加载时
-    /// **优先于**状态机 / 混合空间 / 单剪辑：由 `AnimGraphEvaluator` 求值。
+    /// Animation graph (`.rag` / `*.animgraph.json`) path (#560 P1). When non-empty and loaded,
+    /// **takes priority over** state machine / blend space / single clip: evaluated by `AnimGraphEvaluator`.
     pub anim_graph_path: String,
-    /// 当前状态名（引擎每帧写回；作者也可以预置起始状态）。空 / 找不到 = 第一个状态。
+    /// Current state name (engine writes back every frame; author can pre-set start state). Empty / not found = first state.
     pub state: String,
-    /// 一维混合空间的剪辑路径（#560 P1）。≥2 项且能找到剪辑时**优先于**
-    /// `clip_path`：姿态由 `blend_parameter` 在 `blend_positions` 上插值得到。
+    /// 1D blend space clip paths (#560 P1). ≥2 items and clip found **takes priority over**
+    /// `clip_path`: pose interpolated by `blend_parameter` on `blend_positions`.
     pub blend_clip_paths: Vec<String>,
-    /// 与 [`Self::blend_clip_paths`] 一一对应的参数轴位置（不必排序）。
+    /// Parameter axis positions corresponding one-to-one with [`Self::blend_clip_paths`] (need not be sorted).
     pub blend_positions: Vec<f32>,
-    /// 混合参数（游戏侧每帧写，通常就是速度）。范围外夹到两端。
+    /// Blend parameter (game writes every frame, usually velocity). Clamped to ends when out of range.
     pub blend_parameter: f32,
-    /// 混合参数的平滑时间常数（秒，#560 P1）。`0` = 直接使用写入值；
-    /// `> 0` 时按指数趋近目标（每帧 `1 - exp(-dt / tau)`），避免游戏侧速度
-    /// 跳变让姿态弹一下。只作用于混合空间的参数轴，不改组件里的值。
+    /// Blend parameter smooth time constant (seconds, #560 P1). `0` = use written value directly;
+    /// `> 0` exponentially approaches target (per frame `1 - exp(-dt / tau)`), avoids game-side velocity
+    /// jump causing pose pop. Only applies to blend space parameter axis, does not change component value.
     pub blend_smoothing: f32,
-    /// 二维混合空间的剪辑路径（#560 P1）。至少 3 项且 `blend_2d_positions`
-    /// 长度一致时**优先于**一维混合空间与 `clip_path`：姿态由参数平面上的
-    /// 位置在样本点之间三角化插值得到。
+    /// 2D blend space clip paths (#560 P1). ≥3 items and `blend_2d_positions`
+    /// length consistent **takes priority over** 1D blend space and `clip_path`: pose from parameter plane
+    /// positions interpolated by triangulation between sample points.
     pub blend_2d_clip_paths: Vec<String>,
-    /// 与 [`Self::blend_2d_clip_paths`] 一一对应的参数平面坐标
-    /// （`[x, y]`，通常 x = 速度、y = 方向）。不必排序。
+    /// Parameter plane coordinates corresponding one-to-one with [`Self::blend_2d_clip_paths`]
+    /// (`[x, y]`, usually x = velocity, y = direction). Need not be sorted.
     pub blend_2d_positions: Vec<[f32; 2]>,
-    /// 二维混合空间的第二个参数轴（y）。范围外夹到样本凸包边界。
+    /// 2D blend space second parameter axis (y). Clamped to sample convex hull boundary when out of range.
     pub blend_parameter_y: f32,
-    /// 叠加（additive）剪辑路径（#560 P1）。空 = 没有叠加层。
+    /// Additive clip path (#560 P1). Empty = no additive layer.
     ///
-    /// 叠加剪辑的局部变换相对 reference（bind）姿态求差后再按
-    /// [`Self::additive_weight`] 打到最终姿态上 —— 呼吸、瞄准偏移、受击抖动这类
-    /// 只改一部分骨骼的剪辑不需要再做一份基础剪辑。
+    /// Additive clip local transform relative to reference (bind) pose difference then multiplied by
+    /// [`Self::additive_weight`] onto final pose --- breathing, aim offset, hit shake etc
+    /// clips that only modify some bones don't need a separate base clip.
     pub additive_clip_path: String,
-    /// 叠加层权重（`0` = 关闭，`1` = 完整增量）。负数 / NaN 按 0 处理。
+    /// Additive layer weight (`0` = off, `1` = full increment). Negative / NaN treated as 0.
     pub additive_weight: f32,
-    /// 换剪辑时的交叉淡入时长（秒）。
+    /// Cross-fade duration when changing clip (seconds).
     ///
-    /// `clip_path` 在运行时被改掉时，从**旧剪辑停在那一刻的姿态**过渡到新剪辑，
-    /// 而不是硬切（硬切会让角色"跳"一下）。`0` = 直接切换；负值 / NaN 同样按 0
-    /// 处理。过渡本身只影响姿态，不改变组件里的 `time`。
+    /// When `clip_path` changed at runtime, transitions from **pose where old clip stopped** to new clip,
+    /// instead of hard cut (hard cut makes character "jump"). `0` = direct switch; negative / NaN also treated as 0
+    /// handle. Transition itself only affects pose, does not change component `time`.
     pub blend_duration: f32,
-    /// 基础姿态之上的附加动画层（#560 P1）。按数组顺序依次叠加，后面的层
-    /// 覆盖前面的结果；`additive` 层按相对 bind 姿态的增量应用。
+    /// Additional animation layer on top of base pose (#560 P1). Stacked in array order, later layers
+    /// cover previous results; `additive` layer applied as relative to bind pose increment.
     ///
-    /// 这些层在交叉淡入之后求值，不参与基础剪辑之间的过渡。
+    /// These layers evaluated after cross-fade, do not participate in base clip transitions.
     pub layers: Vec<AnimLayer>,
-    /// 动画 LOD（#560 P6）：开启后，实体离相机超过 [`Self::lod_far`] 米时
-    /// **停止推进**（冻结在当前姿态），回到范围内继续播放。
+    /// Animation LOD (#560 P6): when enabled, entity farther than [`Self::lod_far`] meters from camera
+    /// **stops advancing** (frozen at current pose), continues playing when back in range.
     ///
-    /// 默认关闭，避免没有相机 / 编辑器预览时行为突变。降频与骨骼子集是后续档位。
+    /// Default off, to avoid behavior change when no camera / editor preview. Frequency reduction and bone subset are later tiers.
     pub lod_enabled: bool,
-    /// 动画 LOD 的冻结距离（米）。非有限值或 `<= 0` 时按 50m 处理。
+    /// Animation LOD freeze distance (meters). Non-finite or `<= 0` treated as 50m.
     pub lod_far: f32,
-    /// 动画 LOD 的降频起点（米）：`lod_near..lod_far` 之间隔帧求值，
-    /// 每次更新推进 `2 * dt` 保持播放速度。非有限 / `<= 0` / 大于 `lod_far`
-    /// 时等于 `lod_far`（没有降频档）。
+    /// Animation LOD frequency reduction start (meters): between `lod_near..lod_far` evaluated every other frame,
+    /// each update advances `2 * dt` to maintain playback speed. Non-finite / `<= 0` / larger than `lod_far`
+    /// equals `lod_far` (no frequency reduction tier).
     pub lod_near: f32,
-    /// 动画 LOD 的「骨骼子集」档（#560 P6）：超过 `lod_far` 时只更新根关节和这里
-    /// 列出的骨骼，其余骨骼保持上一帧姿态。空列表 = 不启用（和 `lod_root_only`
-    /// 一样，只有单剪辑实体支持）；名字按骨架解析，找不到的忽略。
-    /// 根关节总是参与更新，不需要写进来。
+    /// Animation LOD "bone subset" tier (#560 P6): beyond `lod_far` only updates root joint and bones
+    /// listed here, other bones keep last frame pose. Empty list = not enabled (same as `lod_root_only`
+    /// same, only single-clip entities supported); names parsed by skeleton, missing names ignored.
+    /// Root joint always participates in update, no need to write it in.
     pub lod_bones: Vec<String>,
-    /// 动画 LOD 的「仅根骨」档（#560 P6）：超过 `lod_far` 时不整体冻结，而是
-    /// 只推进时间并采样根关节（其余骨骼保持上一帧姿态），根运动消费仍然生效。
-    /// 只支持单剪辑 / 普通剪辑路径；状态机、混合空间、动画图的实体仍然整体冻结
-    /// （它们需要完整求值器推进）。第一次进入该档时会先完整求值一帧。
+    /// Animation LOD "root-only" tier (#560 P6): beyond `lod_far` not frozen as whole, but
+    /// only advances time and samples root joint (other bones keep last frame pose), root motion consumption still effective.
+    /// Only supports single clip / regular clip path; state machine, blend space, animation graph entities still frozen as whole
+    /// (they need full evaluator advance). First time entering this tier, evaluates one full frame first.
     pub lod_root_only: bool,
-    /// 根运动消费（#560 P2）：`true` 时把每帧的根位移增量加到实体的
-    /// [`LocalTransform`] 上，并把姿态里的根平移清零，避免「实体走了、骨骼里的
-    /// 根也跟着走」的双倍位移。只消费**平移**；根旋转增量仍只记录在
-    /// `AnimatorPlayhead.root_motion`，等 CharacterMovement 接管。
+    /// Root motion consumption (#560 P2): `true` adds each frame root displacement increment to entity's
+    /// [`LocalTransform`], and clears root translation in pose, avoiding "entity moved, skeleton root
+    /// root also moves" double displacement. Only consumes **translation**; root rotation increment still only recorded in
+    /// `AnimatorPlayhead.root_motion`, waiting for CharacterMovement to take over.
     pub root_motion_consume: bool,
 }
 
@@ -3358,7 +3358,7 @@ impl Default for Animator {
             blend_parameter_y: 0.0,
             additive_clip_path: String::new(),
             additive_weight: 1.0,
-            // 0.2s ≈ UE 的默认混合时间：短到不拖沓，又能盖住大部分姿势差。
+            // 0.2s ≈ UE default blend time: short enough not to drag, covers most pose differences.
             blend_duration: 0.2,
             layers: Vec::new(),
             lod_enabled: false,
@@ -3376,78 +3376,78 @@ impl Animator {
         !self.clip_path.trim().is_empty()
     }
 
-    /// 是否应该走一维混合空间（至少两个剪辑 + 至少两个位置）。
+    /// Whether to use 1D blend space (at least two clips + at least two positions).
     pub fn uses_blend_space(&self) -> bool {
         self.blend_clip_paths.len() >= 2 && self.blend_positions.len() >= 2
     }
 
-    /// 是否应该走二维混合空间（至少三个剪辑 + 至少三个位置，且能拼成三角形）。
+    /// Whether to use 2D blend space (at least three clips + at least three positions, and can form triangle).
     ///
-    /// 只有两个点 / 全部共线时三角化没有面积，运行时会让给一维混合空间。
+    /// Only two points / all collinear means triangulation has no area, runtime falls back to 1D blend space.
     pub fn uses_blend_space_2d(&self) -> bool {
         self.blend_2d_clip_paths.len() >= 3 && self.blend_2d_positions.len() >= 3
     }
 }
 
 // ---------------------------------------------------------------------------
-// 地形
+// Terrain
 // ---------------------------------------------------------------------------
 
-/// 高度场地形（#517 Phase 1）。
+/// Heightfield terrain (#517 Phase 1).
 ///
-/// 只是一个数据组件：运行时按 `heightmap`（f32 little-endian 高度数组）+ 网格参数生成
-/// 地形网格。`chunks == 1` 时挂到同一实体的 [`MeshRenderer`] 上；`chunks > 1` 时
-/// 每块生成一个运行时子实体，便于逐块视锥剔除。`lod_distances` 再按距离生成
-/// 1–3 级整地形 LOD；`vegetation_*` 按高度 / 坡度散布共享网格的植被实例；
-/// `splat` 把高度 / 坡度色带写进顶点色。材质仍然由 MeshRenderer 决定。
+/// Just a data component: runtime generates terrain mesh from `heightmap` (f32 little-endian height array) + mesh parameters,
+/// Terrain mesh. `chunks == 1` attaches to same entity [`MeshRenderer`]; `chunks > 1` when
+/// generates a runtime child entity per chunk, convenient for per-chunk frustum culling. `lod_distances` then generates
+/// 1-3 level terrain LOD; `vegetation_*` scatters vegetation instances sharing mesh by height/slope;
+/// `splat` writes height/slope color bands to vertex colors. Material still determined by MeshRenderer.
 ///
-/// 高度数组是行优先的 `resolution × resolution` 个 f32（`resolution = 0` 按 32 处理），
-/// 世界尺寸是 `size` 米（x / z），`height_scale` 把 `[0, 1]` 的高度放大成米。
+/// Height array is row-major `resolution × resolution` f32 (`resolution = 0` treated as 32),
+/// world size is `size` meters (x/z), `height_scale` scales `[0, 1]` height to meters.
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::Terrain")]
 #[serde(default)]
 pub struct Terrain {
-    /// `.raw` 高度图路径（相对 `assets/`，与其它资产路径一样解析）。
+    /// `.raw` heightmap path (relative to `assets/`, parsed same as other asset paths).
     pub heightmap: String,
-    /// 水平尺寸（米）：`[x, z]`。
+    /// Horizontal size (meters): `[x, z]`.
     pub size: [f32; 2],
-    /// 高度倍数：网格高度 = 高度图数值 × `height_scale`（米）。
+    /// Height multiplier: mesh height = heightmap value × `height_scale` (meters).
     ///
-    /// heightmap CLI 写出的 `.raw` 已经是米，所以这里的默认值是 `1.0`；
-    /// 归一化到 `[0, 1]` 的高度场可以用它（例如 `100.0`）换算成米。
+    /// heightmap CLI output `.raw` already in meters, so default here is `1.0`;
+    /// normalized `[0, 1]` heightfield can use it (e.g. `100.0`) to convert to meters.
     pub height_scale: f32,
-    /// 每边格子数。`0` = 跟随高度图大小（样本数必须是完全平方数）。
+    /// Cells per side. `0` = follows heightmap size (sample count must be perfect square).
     ///
-    /// 非 `0` 时高度数组长度必须正好是 `resolution * resolution`，否则退回平坦地形并告警。
+    /// When non-zero, height array length must exactly be `resolution * resolution`, otherwise falls back to flat terrain and warns.
     pub resolution: u32,
-    /// 每边切成多少块（#517 Phase 2）。`1` = 整张地形一个网格；
-    /// 大于 `1` 时每块是独立实体 / 独立网格，渲染与阴影可以逐块剔除。
+    /// How many chunks per side (#517 Phase 2). `1` = one mesh for whole terrain;
+    /// greater than `1` each chunk is independent entity / independent mesh, rendering and shadows can be culled per chunk.
     ///
-    /// 运行时钳到 `1..=16`，并且不会超过 `cells - 1`（每块至少一个 quad）。
+    /// Clamped at runtime to `1..=16`, and won't exceed `cells - 1` (at least one quad per chunk).
     pub chunks: u32,
-    /// 地形 LOD 的距离阈值（米），按 LOD0、LOD1……排列（#517 Phase 2）。
+    /// Terrain LOD distance thresholds (meters), arranged LOD0, LOD1... (#517 Phase 2).
     ///
-    /// 空数组 = 不生成 LOD；默认两级阈值，生成 3 级（步长 1 / 2 / 4）。
-    /// 距离取最近启用相机到地形原点的距离，**整张地形统一切级**，避免相邻
-    /// chunk 用不同 LOD 时出现接缝裂缝。
+    /// Empty array = no LOD generated; default two thresholds generates 3 levels (step 1 / 2 / 4).
+    /// Distance takes nearest enabled camera to terrain origin distance, **entire terrain uses single level**, avoids adjacent
+    /// chunks using different LODs causing seam cracks.
     pub lod_distances: Vec<f32>,
-    /// 植被密度：每 100 m² 的实例数（0 = 不生成）。运行时钳到最多 4096 个。
+    /// Vegetation density: instances per 100 m² (0 = not generated). Clamped to max 4096 at runtime.
     pub vegetation_density: f32,
-    /// 植被网格路径；空 = 使用内置的双面 cross-quad（高 1 m）。
+    /// Vegetation mesh path; empty = uses built-in double-sided cross-quad (height 1 m).
     pub vegetation_mesh: String,
-    /// 植被材质路径；空 = 默认材质（作者可填草地 / 树叶材质）。
+    /// Vegetation material path; empty = default material (author can fill grass / leaf material).
     pub vegetation_material: String,
-    /// 单株高度（米）：实例在 Y 轴按这个值缩放。
+    /// Single plant height (meters): instances scaled on Y axis by this value.
     pub vegetation_size: f32,
-    /// 程序化色带 splat（#517）：按高度 / 坡度把沙 / 草 / 岩石 / 雪写进顶点色，
-    /// 前向 PBR 用顶点色调制 albedo。默认关闭，现有场景不受影响。
+    /// Procedural color band splat (#517): writes sand/grass/rock/snow to vertex colors by height/slope,
+    /// forward PBR uses vertex color to modulate albedo. Default off, existing scenes unaffected.
     pub splat: bool,
-    /// 纹理层 splat（#517）：最多 4 个材质路径，按高度 / 坡度混合。
+    /// Texture layer splat (#517): up to 4 material paths, mixed by height/slope.
     ///
-    /// 非空时顶点色改为 4 层权重（R/G/B 是前三层，第四层 = 1 - R - G - B），
-    /// 前向 PBR 采样各材质的 albedo / normal / metallic-roughness。空数组 = 关闭。
+    /// When non-empty vertex color becomes 4 layer weights (R/G/B first three layers, fourth = 1 - R - G - B),
+    /// forward PBR samples albedo/normal/metallic-roughness of each material. Empty array = off.
     pub splat_materials: Vec<String>,
-    /// 纹理层 splat 的 UV 平铺倍数（默认 16；仅 `splat_materials` 非空时生效）。
+    /// Texture layer splat UV tiling multiplier (default 16; only effective when `splat_materials` non-empty).
     pub splat_tiling: f32,
 }
 
@@ -3472,7 +3472,7 @@ impl Default for Terrain {
 }
 
 impl Terrain {
-    /// 每边格子数：`0` 走默认值，再钳到安全范围。
+    /// Cells per side: `0` uses default, then clamped to safe range.
     pub fn cells(&self) -> usize {
         let cells = if self.resolution == 0 {
             32
@@ -3486,7 +3486,7 @@ impl Terrain {
         !self.heightmap.trim().is_empty()
     }
 
-    /// 请求的每边块数，钳到 `1..=16`；实际块数还要受 `cells - 1` 限制。
+    /// Requested blocks per side, clamped to `1..=16`; actual block count also limited by `cells - 1`.
     pub fn chunk_count(&self) -> usize {
         if self.chunks == 0 {
             1
@@ -3495,7 +3495,7 @@ impl Terrain {
         }
     }
 
-    /// LOD 级数：没有阈值时 1 级，否则 `1 + 阈值数`，最多 3 级（步长 1/2/4）。
+    /// LOD level count: 1 level without thresholds, otherwise `1 + threshold count`, max 3 levels (step 1/2/4).
     pub fn lod_level_count(&self) -> usize {
         (1 + self.lod_distances.len()).min(3)
     }
@@ -3505,10 +3505,10 @@ impl Terrain {
 // Audio
 // ---------------------------------------------------------------------------
 
-/// 音频总线 = 分组音量（#508）。
+/// Audio bus = grouped volume (#508).
 ///
-/// `Master` 乘在**所有**总线上；其余总线各自再乘一层。项目代码可以在设置菜单里
-/// 调 `prism_app::App::set_audio_bus_volume`，不需要重建任何声部。
+/// `Master` multiplies **all** buses; remaining buses each multiply another layer. Project code can call
+/// `prism_app::App::set_audio_bus_volume` in settings menu, no need to rebuild any voice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum AudioBus {
     Master,
@@ -3566,36 +3566,36 @@ impl ReflectType for AudioBus {
     }
 }
 
-/// 音频播放器 = `AudioSource`。
+/// Audio player = `AudioSource`.
 ///
-/// 只承载**作者态**参数：片段路径 + 播放/衰减设置。真正的解码与混音在宿主层
-/// （`prism-app::scene_audio`）：按路径从 `assets/` 取文件、后台线程解码、
-/// `AudioEngine::play`，与 `MeshRenderer` → `MeshRef` 的分层一致 —— 引擎/场景层
-/// 不持有任何音频句柄。
+/// Only carries **authoring-time** parameters: clip path + playback/attenuation settings. Real decoding and mixing done at host layer
+/// (`prism-app::scene_audio`): takes file from `assets/` by path, background thread decodes,
+/// `AudioEngine::play`, consistent with `MeshRenderer` → `MeshRef` layering --- engine/scene layer
+/// does not hold any audio handle.
 ///
-/// 空间化做**距离衰减 + 等功率声像**：`spatial_blend = 0` 时按 2D 播放（不衰减、
-/// 居中），`= 1` 时完全按 [`AudioSource::volume_at`] 衰减，并按声源在听者空间中的
-/// 水平夹角声像。声像由混音器的空间化节点实时更新，不烘焙进片段（#508、#1034）。
+/// Spatialization does **distance attenuation + equal-power panning**: `spatial_blend = 0` plays 2D (no attenuation,
+/// centered), `= 1` fully attenuates per [`AudioSource::volume_at`], and by sound source horizontal angle in listener space
+/// horizontal angle panning. Panning updated in real-time by mixer spatialization node, not baked into clip (#508, #1034).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::AudioSource")]
 #[serde(default)]
 pub struct AudioSource {
-    /// 音频资源路径，相对 `assets/`（`.ogg` / `.wav` / `.mp3` / `.flac`）。
-    /// 空字符串 = 不播放。
+    /// Audio asset path, relative to `assets/` (`.ogg` / `.wav` / `.mp3` / `.flac`).
+    /// Empty string = not playing.
     pub sound_path: String,
-    /// 音量，`0.0..=1.0`（乘上距离衰减与监听者增益）。
+    /// Volume, `0.0..=1.0` (multiplied by distance attenuation and listener gain).
     pub volume: f32,
-    /// 循环播放：播完自动从头再来。
+    /// Loop playback: automatically restarts after finishing.
     pub looped: bool,
-    /// 场景加载后自动播放；关掉后组件只是「装了个片段」，需要代码/编辑器手动触发。
+    /// Auto-play after scene load; when off component is just "has a clip loaded", needs code/editor manual trigger.
     pub play_on_awake: bool,
-    /// 音量分组（#508）；`Master` 总线会再乘在所有分组上。
+    /// Volume group (#508); `Master` bus multiplies over all groups.
     pub bus: AudioBus,
-    /// 3D 空间化程度：`0.0` = 纯 2D（不衰减），`1.0` = 完全按距离衰减。
+    /// 3D spatialization degree: `0.0` = pure 2D (no attenuation), `1.0` = fully distance attenuated.
     pub spatial_blend: f32,
-    /// 开始衰减的近距离（世界单位）。
+    /// Near distance where attenuation starts (world units).
     pub min_distance: f32,
-    /// 衰减到静止的远距离（世界单位）。
+    /// Far distance where attenuation reaches silence (world units).
     pub max_distance: f32,
 }
 
@@ -3615,15 +3615,15 @@ impl Default for AudioSource {
 }
 
 impl AudioSource {
-    /// 是否配置了片段（空路径 = 静默占位）。
+    /// Whether clip configured (empty path = silent placeholder).
     pub fn has_sound(&self) -> bool {
         !self.sound_path.is_empty()
     }
 
-    /// 给定与监听者的距离时的**实际音量**（已含 `volume` 与 `spatial_blend`）。
+    /// **Actual volume** at given distance to listener (already includes `volume` and `spatial_blend`).
     ///
-    /// 曲线：`min_distance` 内为 1.0，之后线性衰减，`max_distance` 处为 0，
-    /// 再远保持 0。`spatial_blend` 把这条曲线与「2D 的 1.0」线性混合。
+    /// Curve: 1.0 within `min_distance`, then linear decay, 0 at `max_distance`,
+    /// stays 0 beyond. `spatial_blend` linearly mixes this curve with "2D 1.0".
     pub fn volume_at(&self, distance: f32) -> f32 {
         let near = self.min_distance.max(0.0);
         let far = self.max_distance.max(near);
@@ -3639,15 +3639,15 @@ impl AudioSource {
     }
 }
 
-/// 听者 = `AudioListener`。
+/// Listener = `AudioListener**.
 ///
-/// 位置取实体的 `LocalToWorld`；场景里没有听者时宿主退回到「第一个相机实体」，
-/// 再没有就用世界原点。多个听者时只认第一个（同 `Skybox` 的约定）。
+/// Position taken from entity `LocalToWorld`; when no listener in scene host falls back to "first camera entity",
+/// then uses world origin. With multiple listeners only first is recognized (same convention as `Skybox`).
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::scene::AudioListener")]
 #[serde(default)]
 pub struct AudioListener {
-    /// 全局增益，`0.0..=1.0`（乘在每个 `AudioSource` 的音量上）。
+    /// Global gain, `0.0..=1.0` (multiplied onto each `AudioSource` volume).
     pub gain: f32,
 }
 

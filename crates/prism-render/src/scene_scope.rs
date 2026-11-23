@@ -5,7 +5,7 @@
 //! when the scene/level changes (`recreate_probe_volume`).
 //!
 //! Design: mirrors the IBL pattern — GraphRenderer holds `SceneScope`, borrows
-//! its 描述符 集合 + 布局 into `ForwardPass` 集合 5).
+//! its descriptor set collection + layout into `ForwardPass` set 5).
 
 use anyhow::Context as _;
 use anyhow::Result;

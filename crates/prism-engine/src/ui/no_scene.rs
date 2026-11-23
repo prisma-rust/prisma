@@ -90,8 +90,8 @@ pub fn push_no_scene_screen(list: &mut UiDrawList, width: f32, height: f32, time
         body_size,
         BODY,
     );
-    // 提示里给完整命令：只写 "run build-scenes" 的话，读的人还得猜
-    // `cargo run build-scenes` 之类的错误写法。
+    // Tip with full command: if you only write "run build-scenes", the reader still has to guess
+    // `cargo run build-scenes` style incorrect usage.
     let steps = match crate::asset_paths::asset_dir() {
         Some(dir) => crate::asset_paths::build_scenes_steps(&dir),
         None => [

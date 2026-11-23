@@ -1,20 +1,20 @@
-//! 主逻辑线程与渲染线程之间的跨线程共享状态
+//! Cross-thread shared state between main logic thread and render thread
 //!
-//! # 设计
+//! # Design
 //!
-//! [`FramePacket`] 每帧都会被覆盖：
-//! - **主线程**在渲染线程读取前写入最新数据。
-//! - **渲染线程**每轮迭代读取最新数据并处理。
-//! - 无阻塞——渲染线程始终使用最新的可用数据。
+//! [`FramePacket`] overwritten every frame:
+//! - **Main thread** writes latest data before render thread reads.
+//! - **Render thread** reads latest data every iteration and processes.
+//! - No blocking---render thread always uses latest available data.
 //!
-//! 外部叠加层（宿主 UI 等）的 CPU 帧数据经 [`overlay_messages`]
-//! 传递：主线程把类型擦除的闭包（[`OverlayMessage`]）入队，渲染线程
-//! 在每帧开始时取出并应用到叠加层。
+//! CPU frame data of external overlay (host UI etc) passed via [`overlay_messages`]
+//! pass: main thread enqueues type-erased closures ([`OverlayMessage`]), render thread
+//! takes out and applies to overlay at each frame start.
 //!
-//! `running` 是一个 [`AtomicBool`]，主线程将其设为 `false` 以通知渲染线程退出。
+//! `running` is an [`AtomicBool`], main thread sets it to `false` to notify render thread to exit.
 //!
-//! [`RenderStats`] 流向相反方向（渲染线程 → 主线程），
-//! `pt_reset_requested` 同理（主线程 → 渲染线程）。
+//! [`RenderStats`] flows opposite direction (render thread -> main thread),
+//! `pt_reset_requested` same (main thread -> render thread).
 
 use std::collections::HashMap;
 use std::sync::{
@@ -32,26 +32,26 @@ use prism_render::frame_stats::FrameStatsSummary;
 use prism_render::gpu_timer::GpuTimings;
 use prism_render::GraphRenderer;
 
-/// 进程启动基准时刻，仅用于启动期诊断打印。
+/// Process startup baseline timestamp, only for startup diagnostic print.
 static START_EPOCH: OnceLock<Instant> = OnceLock::new();
 
-/// 自进程启动起经过的毫秒数（单调）。
+/// Milliseconds since process start (monotonic).
 pub fn startup_ms() -> u64 {
     START_EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-/// 类型擦除的渲染器命令（主线程→渲染线程）：渲染线程每帧取出并应用到
-/// `&mut GraphRenderer`（如 `set_environment` 在场景切换时按需重建 IBL）。
+/// Type-erased renderer command (main thread -> render thread): render thread takes out and applies every frame to
+/// `&mut GraphRenderer` (e.g. `set_environment` rebuilds IBL on demand on scene switch).
 pub type RendererMessage = Box<dyn FnOnce(&mut GraphRenderer) + Send>;
 
 // ---------------------------------------------------------------------------
-// FrameImage — 渲染线程 → 宿主（编辑器）
+// FrameImage --- render thread -> host (editor)
 // ---------------------------------------------------------------------------
 
-/// 一帧离屏渲染结果（RGBA8，行优先，左上原点）。
+/// One frame offscreen render result (RGBA8, row-major, top-left origin).
 ///
-/// 只有无窗口（`GraphRenderer::offscreen_new`）模式会产生它：宿主请求一帧后，
-/// 渲染线程把 PostPass 的 tonemap 结果读回 CPU 并放在 [`RenderShared::frame`]。
+/// Only produced in windowless (`GraphRenderer::offscreen_new`) mode: after host requests a frame,
+/// render thread reads back PostPass tonemap result to CPU and puts into [`RenderShared::frame`].
 #[derive(Clone, Debug)]
 pub struct FrameImage {
     pub width: u32,
@@ -60,21 +60,21 @@ pub struct FrameImage {
 }
 
 // ---------------------------------------------------------------------------
-// RenderStats — 渲染线程 → 主线程
+// FrameStats --- render thread -> main thread
 // ---------------------------------------------------------------------------
 
-/// 渲染线程产生的每帧渲染指标，由主线程消费以显示编辑器 HUD。
+/// Per-frame render metrics produced by render thread, consumed by main thread to show editor HUD.
 #[derive(Clone, Debug, Default)]
 pub struct RenderStats {
     /// Monotonic counter incremented once per completed render-thread frame.
     pub render_seq: u64,
-    /// 从 begin_frame 到 present 的总时间（毫秒）
+    /// Total time from begin_frame to present (ms)
     pub frame_time_ms: f32,
-    /// 平滑后的每秒帧数
+    /// Smoothed frames per second
     pub fps: f32,
-    /// 当前路径追踪采样数（None = 无 PT 通道）
+    /// Current path tracing sample count (None = no PT channel)
     pub pt_frame_count: Option<u32>,
-    /// 上一帧的 per-pass GPU 计时（None = 设备不支持时间戳）
+    /// Per-pass GPU timing of last frame (None = device does not support timestamps)
     pub gpu_timings: Option<GpuTimings>,
     /// Rolling CPU / GPU frame-time distribution (#1002). Refreshed a few times
     /// per second, not every frame.
@@ -85,43 +85,43 @@ pub struct RenderStats {
 // RenderShared
 // ---------------------------------------------------------------------------
 
-/// 主线程（写入者）与渲染线程（读取者）之间的共享状态。
+/// Shared state between main thread (writer) and render thread (reader).
 pub struct RenderShared {
-    /// 由主线程设为 `false` 以通知渲染线程退出。
+    /// Set to `false` by main thread to notify render thread to exit.
     pub running: Arc<AtomicBool>,
-    /// 来自游戏循环的最新帧数据包（主线程→渲染线程）
+    /// Latest frame packet from game loop (main thread -> render thread)
     pub packet: Mutex<Option<FramePacket>>,
     /// Wakes the renderer when a new packet or renderer-side command arrives.
     pub packet_ready: Condvar,
-    /// 渲染线程用完归还的空包（渲染线程→主线程），主线程下一帧
-    /// `clear()` + 重填，复用里面的 `Vec` 容量（issue #66）。
+    /// Empty packet returned by render thread (render thread -> main thread), main thread next frame
+    /// `clear()` + refill, reusing inner `Vec` capacity (issue #66).
     pub spare_packet: Mutex<Option<FramePacket>>,
-    /// 投递给外部叠加层的类型擦除消息队列（主线程→渲染线程）
+    /// Type-erased message queue delivered to external overlay (main thread -> render thread)
     pub overlay_messages: Mutex<Vec<OverlayMessage>>,
-    /// 投递给渲染器本身的类型擦除消息队列（主线程→渲染线程）。
-    /// 用于跨线程调用 [`GraphRenderer`] 方法（如 `set_environment` 在
-    /// 场景切换时按需重建 IBL），避免在渲染线程持有所有权时从主线程
-    /// 直接借用 `&mut GraphRenderer`。
+    /// Type-erased message queue delivered to renderer itself (main thread -> render thread).
+    /// Used to call [`GraphRenderer`] methods across threads (e.g. `set_environment` in
+    /// scene switch rebuild IBL on demand), avoid accessing from main thread while render thread holds ownership
+    /// Directly borrow `&mut GraphRenderer`.
     pub renderer_messages: Mutex<Vec<RendererMessage>>,
-    /// 来自渲染线程的最新渲染统计（渲染→主线程）。
+    /// Latest render stats from render thread (render -> main thread).
     pub render_stats: Mutex<RenderStats>,
     /// Set `true` by main thread to request PT accumulation reset.
     pub pt_reset_requested: AtomicBool,
-    /// 资产上传请求队列（主线程 CPU 段 → 渲染线程 GPU 段）。
-    /// 主线程 `prepare_requests` 生成的纯数据请求在这里入队；
-    /// 渲染线程每帧取走并交给 `GraphRenderer::apply_asset_requests`。
+    /// Asset upload request queue (main thread CPU side -> render thread GPU side).
+    /// Pure data requests generated by main thread `prepare_requests` enqueued here;
+    /// render thread takes each frame and hands to `GraphRenderer::apply_asset_requests`.
     pub asset_requests: Mutex<Vec<(Entity, AssetResolveRequest)>>,
-    /// 资产上传结果队列（渲染线程 GPU 段 → 主线程 CPU 段）。
-    /// 渲染线程完成上传后回传 `(Entity, AssetResolveResult)`；
-    /// 主线程每帧取走并写回 `MeshRef`/`MaterialRef`。
+    /// Asset upload result queue (render thread GPU side -> main thread CPU side).
+    /// render thread returns `(Entity, AssetResolveResult)` after upload completes;
+    /// Main thread takes and writes back `MeshRef`/`MaterialRef` each frame.
     pub asset_results: Mutex<Vec<(Entity, AssetResolveResult)>>,
-    /// 启动期计时标记（主线程 + 渲染线程共享，仅用于启动诊断打印）。
+    /// Startup timing marker (shared between main thread and render thread, only for startup diagnostic print).
     pub startup_marks: Mutex<HashMap<&'static str, u64>>,
-    /// 渲染线程无法继续时记录的致命错误（初始化失败等），由主线程取出并展示。
+    /// Fatal error recorded when render thread cannot continue (init failure etc), taken out and displayed by main thread.
     pub render_failure: Mutex<Option<String>>,
-    /// 宿主（编辑器）请求下一帧读回（主线程→渲染线程，一次性）。
+    /// Host (editor) requests next frame readback (main thread -> render thread, one-shot).
     pub frame_requested: AtomicBool,
-    /// 最近一次读回的离屏帧（渲染线程→主线程）。
+    /// Latest offscreen frame read back (render thread -> main thread).
     pub frame: Mutex<Option<FrameImage>>,
     /// The render thread finished building the renderer and warming up.
     ///
@@ -173,10 +173,10 @@ impl RenderShared {
         self.packet_ready.notify_one();
     }
 
-    /// 入队一条叠加层消息（主线程 → 渲染线程）。
+    /// Enqueue one overlay message (main thread -> render thread).
     ///
-    /// 消息是类型擦除的闭包：渲染线程在每帧开始时取出并应用到
-    /// 外部叠加层（如"这是新的宿主 UI 帧"）。
+    /// Message is type-erased closure: render thread takes out and applies at each frame start
+    /// External overlay (e.g. "this is new host UI frame").
     pub fn send_overlay_message(&self, msg: OverlayMessage) {
         self.overlay_messages.lock().unwrap().push(msg);
     }
@@ -186,33 +186,33 @@ impl RenderShared {
         self.packet.lock().unwrap().take()
     }
 
-    /// 取回渲染线程归还的空包（主线程）。
+    /// Take empty packet returned by render thread (main thread).
     ///
-    /// 没有可复用的包时返回 `None`，调用方用 [`FramePacket::default`] 兜底。
+    /// Returns `None` when no reusable packet, caller falls back to [`FramePacket::default`].
     pub fn take_spare_packet(&self) -> Option<FramePacket> {
         self.spare_packet.lock().unwrap().take()
     }
 
-    /// 渲染线程用完帧数据包后归还，供下一帧 `clear()` + 重填复用（issue #66）。
+    /// Render thread returns frame packet after use, for next frame `clear()` + refill reuse (issue #66).
     ///
-    /// 只保留最新一个：主线程没取走时覆盖旧的，避免无界堆积。
+    /// Only keep latest one: overwrite old if main thread hasn't taken, avoid unbounded buildup.
     pub fn recycle_packet(&self, packet: FramePacket) {
         *self.spare_packet.lock().unwrap() = Some(packet);
     }
 
-    /// 取走所有排队中的叠加层消息（渲染线程）。
+    /// Take all queued overlay messages (render thread).
     pub fn take_overlay_messages(&self) -> Vec<OverlayMessage> {
         std::mem::take(&mut *self.overlay_messages.lock().unwrap())
     }
 
     // -------------------------------------------------------------------
-    // 离屏帧读回（宿主模式）
+    // Offscreen frame readback (host mode)
     // -------------------------------------------------------------------
 
-    /// 请求渲染线程在下一帧把 tonemap 结果读回 CPU（主线程 → 渲染线程）。
+    /// Request render thread read back tonemap result to CPU next frame (main thread -> render thread).
     ///
-    /// 一次性标志：渲染线程在**有可用帧**时消费；宿主每 tick 重新请求即可，
-    /// 掉帧时自然降频，不会堆积请求。
+    /// One-shot flag: render thread consumes when **frame available**; host re-requests every tick,
+    /// naturally throttles on dropped frames, no request pileup.
     pub fn request_frame(&self) {
         self.frame_requested.store(true, Ordering::Relaxed);
         self.packet_ready.notify_one();
@@ -223,32 +223,32 @@ impl RenderShared {
         self.packet_ready.notify_one();
     }
 
-    /// 取走最近读回的帧（主线程）；没有新帧时返回 `None`。
+    /// Take latest readback frame (main thread); returns `None` when no new frame.
     pub fn take_frame(&self) -> Option<FrameImage> {
         self.frame.lock().unwrap().take()
     }
 
     // -------------------------------------------------------------------
-    // Renderer messages (main → 渲染线程)
+    // Renderer messages (main -> render thread)
     // -------------------------------------------------------------------
 
-    /// 入队一条渲染器命令（主线程 → 渲染线程）。渲染线程在每帧开始时取出并
-    /// 应用到 `&mut GraphRenderer`。用于跨线程触发 `set_environment` 等。
+    /// Enqueue one renderer command (main thread -> render thread). Render thread takes out at each frame start and
+    /// applies to `&mut GraphRenderer`. Used to trigger `set_environment` etc across threads.
     pub fn send_renderer_message(&self, msg: RendererMessage) {
         self.renderer_messages.lock().unwrap().push(msg);
         self.packet_ready.notify_one();
     }
 
-    /// 取走所有排队中的渲染器命令（渲染线程）。
+    /// Take all queued renderer commands (render thread).
     pub fn take_renderer_messages(&self) -> Vec<RendererMessage> {
         std::mem::take(&mut *self.renderer_messages.lock().unwrap())
     }
 
     // -------------------------------------------------------------------
-    // 资产解析（主线程 CPU 段 ↔ 渲染线程 GPU 段）
+    // Asset parsing (main thread CPU side <-> render thread GPU side)
     // -------------------------------------------------------------------
 
-    /// 入队一批资产上传请求（主线程 → 渲染线程）。
+    /// Enqueue a batch of asset upload requests (main thread -> render thread).
     pub fn enqueue_asset_requests(&self, reqs: Vec<(Entity, AssetResolveRequest)>) {
         if reqs.is_empty() {
             return;
@@ -256,12 +256,12 @@ impl RenderShared {
         self.asset_requests.lock().unwrap().extend(reqs);
     }
 
-    /// 取走所有排队中的资产上传请求（渲染线程）。
+    /// Take all queued asset upload requests (render thread).
     pub fn take_asset_requests(&self) -> Vec<(Entity, AssetResolveRequest)> {
         std::mem::take(&mut *self.asset_requests.lock().unwrap())
     }
 
-    /// 回传一批资产上传结果（渲染线程 → 主线程）。
+    /// Return a batch of asset upload results (render thread -> main thread).
     pub fn push_asset_results(&self, results: Vec<(Entity, AssetResolveResult)>) {
         if results.is_empty() {
             return;
@@ -269,29 +269,29 @@ impl RenderShared {
         self.asset_results.lock().unwrap().extend(results);
     }
 
-    /// 取走所有排队中的资产上传结果（主线程）。
+    /// Take all queued asset upload results (main thread).
     pub fn take_asset_results(&self) -> Vec<(Entity, AssetResolveResult)> {
         std::mem::take(&mut *self.asset_results.lock().unwrap())
     }
 
     // -------------------------------------------------------------------
-    // 启动计时（主线程 + 渲染线程共享）
+    // Startup timing (main thread + render thread shared)
     // -------------------------------------------------------------------
 
-    /// 记录一个启动里程碑（相对进程启动时刻的毫秒数）。
+    /// Record a startup milestone (milliseconds relative to process start).
     pub fn mark(&self, key: &'static str) {
         self.set_mark(key, startup_ms());
     }
 
-    /// 写入一个指定毫秒数的启动里程碑（主线程一次性写入跨线程已知时刻）。
+    /// Write a startup milestone at specified milliseconds (one-time write by main thread, cross-thread known moment).
     pub fn set_mark(&self, key: &'static str, ms: u64) {
         self.startup_marks.lock().unwrap().insert(key, ms);
     }
 
-    /// 首帧呈现后打印启动汇总。各里程碑在 `mark` 时收集，此处计算相对差值：
-    /// `event_loop_free`（resumed 返回，证明事件循环已解锁）、`window`
-    /// （建窗耗时）、`renderer`（渲染线程建渲染器耗时）、`warmup`（管线预热）、
-    /// `first_frame`（首帧呈现总耗时）。
+    /// Print startup summary after first frame presents. Milestones collected at `mark`, relative differences computed here:
+    /// `event_loop_free` (`resumed` returned, proves event loop unlocked), `window`
+    /// (window build time), `renderer` (render thread build renderer time), `warmup` (pipeline warmup),
+    /// `first_frame` (first frame present total time).
     pub fn print_startup_report(&self) {
         let m = self.startup_marks.lock().unwrap();
         let get = |k: &str| m.get(k).copied();
@@ -347,7 +347,7 @@ impl RenderShared {
     }
 
     // -------------------------------------------------------------------
-    // Render-thread failure (渲染 → main)
+    // Render-thread failure (render -> main)
     // -------------------------------------------------------------------
 
     /// Record a fatal render-thread error so the main thread can surface it.
@@ -360,7 +360,7 @@ impl RenderShared {
         self.render_failure.lock().unwrap().take()
     }
 
-    /// 只读当前错误（不消费），供宿主轮询展示。
+    /// Read current error read-only (no consume), for host polling display.
     pub fn read_render_failure(&self) -> Option<String> {
         self.render_failure.lock().unwrap().clone()
     }

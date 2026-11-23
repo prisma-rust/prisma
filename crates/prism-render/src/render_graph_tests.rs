@@ -22,7 +22,7 @@ fn builder_creates_resources() {
 
 #[test]
 fn settings_default_is_high_precision_gbuffer() {
-    // P0 默认 flipped to `true`: world-space normals from 法线
+    // P0 default flipped to `true`: world-space normals from normal
     // maps need Rgba16F precision in GBuffer A. See Plan §4.3.
     let s = RenderSettings::default();
     assert!(s.gbuffer_high_precision);
@@ -36,7 +36,7 @@ fn settings_default_is_high_precision_gbuffer() {
 }
 
 fn draw_item(queue: i32, eye_distance_x: f32) -> DrawItem {
-    // 用一个只有平移的模型矩阵，`world_position()` 读到的是 x 轴位置。
+    // Use a model matrix with only translation, `world_position()` reads x-axis position.
     let mut model = [[0.0f32; 4]; 4];
     for (i, column) in model.iter_mut().enumerate() {
         column[i] = 1.0;
@@ -70,7 +70,10 @@ fn draw_state_defaults_to_opaque() {
     assert_eq!(state.cull_mode, prism_gfx::CullMode::Back);
     assert_eq!(state.render_queue, prism_gfx::RenderQueue::GEOMETRY);
     assert!(state.z_write);
-    assert!(!state.blends(), "One/Zero/Add 是不透明，必须关掉混合");
+    assert!(
+        !state.blends(),
+        "One/Zero/Add are opaque, blending must be off"
+    );
 
     let transparent = DrawState {
         src_blend: prism_gfx::BlendMode::SrcAlpha,
@@ -84,9 +87,9 @@ fn draw_state_defaults_to_opaque() {
 fn sort_draw_items_orders_opaque_first_then_transparent_back_to_front() {
     let eye = [0.0, 0.0, 0.0];
     let mut items = vec![
-        // 透明段：近的放前面，排序后必须变成远 -> 近。
+        // Transparent segment: near drawn first, after sort must become far -> near.
         draw_item(prism_gfx::RenderQueue::TRANSPARENT, 1.0),
-        // 不透明但队列更大的要排在不透明段后面。
+        // Non-transparent but larger queue must be placed after transparent segment.
         draw_item(prism_gfx::RenderQueue::ALPHA_TEST, 0.0),
         draw_item(prism_gfx::RenderQueue::GEOMETRY, 0.0),
         draw_item(prism_gfx::RenderQueue::TRANSPARENT, 9.0),
@@ -105,7 +108,7 @@ fn sort_draw_items_orders_opaque_first_then_transparent_back_to_front() {
             prism_gfx::RenderQueue::TRANSPARENT,
         ]
     );
-    // 透明段内部按距离从远到近（x = 9 先于 x = 1）。
+    // Transparent segment sorted by distance far to near (x = 9 before x = 1).
     assert_eq!(items[3].world_position()[0], 9.0);
     assert_eq!(items[4].world_position()[0], 1.0);
 }
@@ -118,7 +121,7 @@ fn sort_draw_items_is_stable_for_equal_queues() {
         draw_item(prism_gfx::RenderQueue::GEOMETRY, 1.0),
     ];
     sort_draw_items(&mut items, eye);
-    // 不透明段不按距离重排，保持提交顺序。
+    // Non-transparent segment not re-sorted by distance, keeps submit order.
     assert_eq!(items[0].world_position()[0], 5.0);
     assert_eq!(items[1].world_position()[0], 1.0);
 }
@@ -308,23 +311,23 @@ fn graph_resources_clear_frame_preserves_persistent_resources() {
 
 #[test]
 fn clip_bounds_normalises_and_disables_degenerate_rects() {
-    // 作者可以任意顺序写角点。
+    // Author can write corners in any order.
     assert_eq!(
         clip_bounds(true, [10.0, 20.0, -5.0, 4.0]),
         [-5.0, 4.0, 10.0, 20.0]
     );
-    // 关闭 / 非有限 / 零面积 → 不裁剪（刚勾上开关还没填矩形时不会隐藏精灵）。
+    // Disabled / non-finite / zero area → no clip (just toggled on before rectangle filled, will not hide sprite).
     assert_eq!(clip_bounds(false, [0.0, 0.0, 8.0, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [0.0, 0.0, f32::NAN, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [4.0, 0.0, 4.0, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [0.0, 0.0, 0.0, 0.0]), NO_CLIP);
-    // 半平面式裁剪（水面以下的倒影）保持有效：`max < min` 才是关。
+    // Half-plane style clip (reflection below water surface) remains valid: only `max < min` is wrong.
     let below = clip_bounds(true, [-1.0e4, -1.0e4, 1.0e4, 12.0]);
     assert_eq!(below, [-1.0e4, -1.0e4, 1.0e4, 12.0]);
     assert!(below[2] >= below[0] && below[3] >= below[1]);
 }
 
-/// #613：内部分辨率只在两个轴都有效时生效，单轴时按窗口宽高比推导。
+/// #613: internal resolution only active when both axes valid, single axis derives from window aspect.
 #[test]
 fn internal_extent_derives_and_clamps() {
     let swapchain = vk::Extent2D {
@@ -339,7 +342,7 @@ fn internal_extent_derives_and_clamps() {
             height: 360
         })
     );
-    // 只给宽：高度按窗口比例推出来（640 / (2000/1125) = 360）。
+    // Only width given: height derived by window ratio (640 / (2000/1125) = 360).
     assert_eq!(
         internal_extent(swapchain, [640, 0]),
         Some(vk::Extent2D {
@@ -347,7 +350,7 @@ fn internal_extent_derives_and_clamps() {
             height: 360
         })
     );
-    // 空窗口不能算出 0 尺寸的目标。
+    // Empty window cannot compute target of size 0.
     let tiny = vk::Extent2D {
         width: 0,
         height: 0,
@@ -356,7 +359,7 @@ fn internal_extent_derives_and_clamps() {
     assert!(derived.width >= 1 && derived.height >= 1, "{derived:?}");
 }
 
-/// #613：整数缩放取整到最大整数倍并居中，stretch 铺满窗口。
+/// #613: integer scale rounds to max integer multiple, centered; stretch fills window.
 #[test]
 fn post_destination_centres_an_integer_upscale() {
     let swapchain = vk::Extent2D {
@@ -374,14 +377,14 @@ fn post_destination_centres_an_integer_upscale() {
     assert_eq!(stretched.extent.width, 2000);
     assert_eq!(stretched.extent.height, 1125);
 
-    // min(2000/640, 1125/360) = min(3.125, 3.125) → 3 倍，1920x1080，居中。
+    // min(2000/640, 1125/360) = min(3.125, 3.125) → 3x, 1920x1080, centered.
     let integer = post_destination(swapchain, internal, InternalScaleMode::Integer);
     assert_eq!(integer.extent.width, 1920);
     assert_eq!(integer.extent.height, 1080);
     assert_eq!(integer.offset.x, 40);
     assert_eq!(integer.offset.y, 22);
 
-    // 内部分辨率比窗口还大时不会有 0 倍：退化成 1 倍并居中裁切。
+    // When internal resolution larger than window, no 0x: degenerates to 1x centered crop.
     let oversized = post_destination(
         swapchain,
         vk::Extent2D {
@@ -459,7 +462,7 @@ fn mobile_upscaler_modes_parse_and_classify_correctly() {
 
 #[test]
 fn sprite_lights_are_sorted_by_strength_and_truncated() {
-    // #611：2D 光表固定 16 条，超出的按「强度 × 亮度」丢掉最弱的。
+    // #611: 2D light table fixed 16 entries, overflow drops weakest by "intensity × brightness".
     let mut lights: Vec<SpriteLight> = (0..SPRITE_LIGHT_MAX + 4)
         .map(|index| {
             SpriteLight::point(
@@ -470,14 +473,14 @@ fn sprite_lights_are_sorted_by_strength_and_truncated() {
             )
         })
         .collect();
-    // 一条比所有点光都暗的氛围光：不该挤进前 16 名。
+    // An ambient light darker than all point lights: must not squeeze into top 16.
     lights.push(SpriteLight::ambient([1.0, 1.0, 1.0], 0.01));
     trim_sprite_lights(&mut lights);
 
     assert_eq!(lights.len(), SPRITE_LIGHT_MAX);
-    // 最强的那条 20 留在最前面。
+    // Strongest one 20 stays at very front.
     assert_eq!(lights[0].position_range[3], 20.0);
-    // 最弱的 0.01 氛围光被丢掉；最小的点光现在是 5.0。
+    // Weakest 0.01 ambient dropped; min point light now is 5.0.
     assert!(lights.iter().all(|light| light.position_range[3] >= 5.0));
 }
 
@@ -489,7 +492,10 @@ fn sprite_light_constructors_pack_the_shader_layout() {
 
     let ambient = SpriteLight::ambient([0.1, 0.1, 0.2], 0.5);
     assert_eq!(ambient.position_range[3], 0.5);
-    assert_eq!(ambient.position_range[2], 0.0, "氛围光没有半径");
+    assert_eq!(
+        ambient.position_range[2], 0.0,
+        "Ambient light has no radius"
+    );
     assert_eq!(ambient.color_kind[3], SPRITE_LIGHT_AMBIENT as f32);
 
     let directional = SpriteLight::directional([1.0, 0.0], [1.0, 0.9, 0.8], 0.75);
@@ -498,10 +504,10 @@ fn sprite_light_constructors_pack_the_shader_layout() {
     assert_eq!(
         std::mem::size_of::<SpriteLight>(),
         48,
-        "stride 是 3 个 float4"
+        "Stride is 3 float4s"
     );
 
-    // 方向会被归一化，零向量回落到「向下」。
+    // Direction will be normalized, zero vector falls back to "downward".
     let zero = SpriteLight::directional([0.0, 0.0], [1.0; 3], 1.0);
     assert_eq!(zero.direction[0..2], [0.0, -1.0]);
 }

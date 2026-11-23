@@ -41,13 +41,13 @@ const SPONZA_CUSTOM_SHADER: &str = "shaders/sponza_custom.frag.spv";
 
 #[derive(Debug)]
 pub struct SponzaTuningHook {
-    /// 指针锁定（相机接管键鼠）时的快照，每帧由 `on_tick` 从窗口同步。
+    /// Pointer lock (camera takes over mouse/keyboard) snapshot, synced from window each frame by `on_tick`.
     ///
-    /// 键盘事件不带锁定信息，而面板按键要走「锁定态归相机、解锁态归面板」的
-    /// 分流，所以这里存一份：事件处理时读到的是上一帧的值，比窗口查询快，
-    /// 也不会在一帧里中途变卦。
+    /// Keyboard events carry no lock info, and panel key routing needs the split "locked → camera, unlocked → panel"
+    /// stream, so store a copy here: event handlers read previous-frame value, faster than window query,
+    /// and it will not change mid-frame.
     pub locked: bool,
-    /// 上一帧的锁定状态：用来识别「刚进入锁定态」这一帧。
+    /// Previous-frame lock state: used to detect "just entered locked" frame.
     was_locked: bool,
     pub show: bool,
     pub selected_index: usize,
@@ -463,25 +463,25 @@ impl SponzaTuningHook {
     }
 }
 
-/// 一次按键的路由结果。
+/// One key routing result.
 ///
-/// 钩子先于 App 看到事件：返回 `false` 时 App 会走自己的快捷键（F3 / Tab / T /
-/// 数字键 PBR 隔离）**并**把按键交给 InputManager。
+/// Hook sees events before App: returning `false` lets App run its own shortcuts (F3 / Tab / T /
+/// number keys PBR isolation) **and** pass key to InputManager.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyRoute {
-    /// 面板不处理：原样交给 App（含引擎的移动键）。
+    /// Panel does not handle: pass through to App (including engine movement keys).
     Forward,
-    /// 面板吃掉了这个键（App 的快捷键与引擎的按键状态都不再看到它）。
+    /// Panel consumed the key (App shortcuts and engine key state no longer see it).
     Consume,
 }
 
-/// 面板在锁定态下的可见性。
+/// Panel visibility in locked state.
 ///
-/// 两种模式互不重叠：**锁定** = 鼠标隐藏、面板隐藏、WASD 走位；**未锁定** =
-/// 鼠标显示、面板显示、WASD 翻菜单。所以锁定状态**变化的那一帧**直接把面板
-/// 对齐到目标状态（锁上就收起、解锁就展开），中间的帧保留玩家的 F1 / Tab
-/// 开关——每帧无条件写 `show && !locked` 会把钩子刚置上的 `show = true`
-/// 立刻抹掉，F1 / Tab 看上去就是坏的。
+/// Two modes never overlap: **locked** = mouse hidden, panel hidden, WASD goes to bit; **unlocked** =
+/// mouse shown, panel shown, WASD flips menu. So lock state **changing frame** directly aligns panel
+/// to target state (lock hides, unlock expands), intermediate frames preserve player F1 / Tab
+/// switches — unconditionally writing `show && !locked` each frame would erase hook just-set `show = true`
+/// immediately, F1 / Tab would appear broken.
 fn panel_visible_after_lock(show: bool, locked: bool, was_locked: bool) -> bool {
     if locked == was_locked {
         show
@@ -491,16 +491,16 @@ fn panel_visible_after_lock(show: bool, locked: bool, was_locked: bool) -> bool 
 }
 
 impl SponzaTuningHook {
-    /// 面板按键不区分按下 / 松开：按一次触发一次。
+    /// Panel toggle swallowed by hook, otherwise App Tab (debug target switch) would fire at same time.
     fn on_key_pressed(&mut self, key: Key) -> KeyRoute {
         match key {
-            // 面板开关：任何遮挡键都不能抢它，否则面板一开就再也关不掉。
+            // Panel toggle: no occlusion key may steal it, else panel opens then cannot close.
             Key::F1 | Key::Tab => {
                 self.show = !self.show;
                 return KeyRoute::Consume;
             }
-            // GI 模式是 Sponza 的招牌操作，面板收着也要能用（和顶部状态栏写的
-            // 「[1] Ref [2] SHaRC [3] NRC」一致）。
+            // GI mode is Sponza signature operation, panel should allow it even when hidden (consistent with
+            // top status bar "[1] Ref [2] SHaRC [3] NRC").
             Key::Digit1 => {
                 self.pt_gi = PtGiMode::Off;
                 self.render_mode = RenderMode::PathTrace;
@@ -531,11 +531,11 @@ impl SponzaTuningHook {
                 self.request_reset = true;
                 return KeyRoute::Consume;
             }
-            // M / R / V 是面板自己的功能键，相机从不读它们
-            // （`camera_controller_system` 只看 WASD / QE / Space / Ctrl / Shift），
-            // 所以锁定与否都不影响按键语义，两个状态下都接收。
-            // 之前按「锁定态归相机」加了 `!self.locked` 守卫，而窗口拿到焦点就自动
-            // 锁定，等于这三个键在游戏里永远收不到——M 不响应就是这么来的。
+            // M / R / V are panel own function keys, camera never reads them
+            // (`camera_controller_system` only looks at WASD / QE / Space / Ctrl / Shift),
+            // so lock state does not affect key semantics, both states receive.
+            // Previously added `!self.locked` guard for "locked → camera", but window auto-locks on focus,
+            // effectively making these keys unreachable in game — M not responding came from this.
             Key::Letter(b'M') => {
                 self.cycle_render_mode();
                 return KeyRoute::Consume;
@@ -548,23 +548,23 @@ impl SponzaTuningHook {
                 self.vsync = !self.vsync;
                 return KeyRoute::Consume;
             }
-            // 色调映射也是面板自己的设置：面板收着时同样可用（状态栏一直显示它）。
+            // Tone map also panel own setting: available even when panel hidden (status bar always shows it).
             Key::KeyT => {
                 self.tonemap_mode = (self.tonemap_mode + 1) % 3;
                 return KeyRoute::Consume;
             }
-            // 下面全是**菜单操作**，只属于解锁态。锁定 = 相机接管键鼠，菜单一个键
-            // 都不该收到（以前只挡了 WASD，方向键 / Space / Enter 仍被吃掉，
-            // 锁定态下按空格既不开火也不翻菜单，纯属吞键）。
+            // Next panel full is **menu operation**, only belongs to unlocked state. Locked = camera takes
+            // mouse/keyboard, menu should receive no keys (previously only blocked WASD, arrows / Space / Enter still eaten,
+            // locked pressing empty slot neither fires nor flips menu, pure key swallow).
             _ if self.locked => KeyRoute::Forward,
-            // 解锁态：WASD 就是菜单导航。面板若被 F1 手动收起，先展开再导航，
-            // 否则按键作用在一个看不见的列表上。
+            // Unlocked: WASD is menu navigation. If panel manually hidden by F1, re-expand then navigate,
+            // else keys act on invisible list.
             Key::KeyW | Key::KeyA | Key::KeyS | Key::KeyD => {
                 self.show = true;
                 self.navigate_with_wasd(key);
                 KeyRoute::Consume
             }
-            // 面板关着时下面这些都没意义：原样交回给 App。
+            // Panel closed then next panel meaningless: pass back to App as-is.
             _ if !self.show => KeyRoute::Forward,
             Key::ArrowUp => {
                 self.selected_index = if self.selected_index == 0 {
@@ -594,7 +594,7 @@ impl SponzaTuningHook {
         }
     }
 
-    /// 解锁态下 WASD 与方向键同义（面板是唯一在用键盘的地方）。
+    /// In unlocked state WASD same as arrow keys (panel is only place using keyboard).
     fn navigate_with_wasd(&mut self, key: Key) {
         match key {
             Key::KeyW => self.on_key_pressed(Key::ArrowUp),
@@ -611,15 +611,15 @@ impl FrameHook for SponzaTuningHook {
         let PlatformEvent::Key { key, pressed } = event else {
             return false;
         };
-        // 锁定状态直接问窗口：`on_tick` 的缓存是上一帧的，而「点一下画面锁定」
-        // 和「Esc 解锁」都发生在帧中间，用旧值会把这一次按键分错流。
+        // Lock state ask window directly: `on_tick` cache is previous-frame, while "click screen to lock"
+        // and "Esc unlock" happen between frames, using old value would misroute this key.
         self.locked = window.is_pointer_locked();
         if pressed && self.on_key_pressed(key) == KeyRoute::Consume {
             return true;
         }
-        // false = 没消费：App 照常走快捷键，并把按键路由进 InputManager（锁定态下
-        // WASD 走的就是这条：面板不管，相机照常移动）。注意消费与否都拦不住
-        // InputManager——所以「解锁态 WASD 不动相机」由引擎侧按指针锁定把关。
+        // false = not consumed: App runs shortcuts as usual and routes key into InputManager (under lock
+        // WASD goes this path: panel ignores, camera moves normally). Note consumption does not block
+        // InputManager — so "unlocked WASD does not move camera" enforced by engine-side pointer lock check.
         false
     }
 
@@ -631,8 +631,8 @@ impl FrameHook for SponzaTuningHook {
         stats: &RenderStats,
         _shared: &RenderShared,
     ) {
-        // 指针锁定 = 相机接管键鼠。平台层是唯一真值来源（App 里那份
-        // `InputManager::pointer_locked` 钩子拿不到），每帧同步一次给键盘分流用。
+        // Pointer lock = camera takes over keyboard/mouse. Platform layer is only true source (App copy
+        // `InputManager::pointer_locked` not reachable by hook), synced each frame for key routing.
         self.locked = window.is_pointer_locked();
 
         // Sync runtime settings to engine
@@ -643,14 +643,14 @@ impl FrameHook for SponzaTuningHook {
         settings.pt_max_bounces = self.bounces;
         settings.pt_ray_max_distance = self.ray_max_distance;
         settings.tonemap_mode = self.tonemap_mode;
-        // 锁定后光标是藏起来的，UI 不该再处理悬停 / 点击：否则光标被夹在窗口中央
-        // 时，指针下恰好有按钮就会被「按住」，锁定期间界面一直亮着被按下的样子。
+        // After lock cursor hidden, UI should not handle hover / click: otherwise when cursor clamped at
+        // window center, pointer over a button would be "held", border glowing pressed during lock.
         if self.locked {
             world.remove_resource::<prism_engine::ui::UiInputState>();
         }
-        // 指针锁定 = 在走位看画面，面板收起来（F1 / Tab 随时可以叫回来）。
-        // 只在**刚锁上**那一帧收起：每帧都写 `show && !locked` 会让 F1 彻底失效
-        // ——按下时钩子把 show 置 true，下一帧 on_tick 又抹回 false，面板永远打不开。
+        // Pointer lock = full-screen view, panel hidden (F1 / Tab can bring back anytime).
+        // Only hide on **just locked** frame: writing `show && !locked` every frame makes F1 useless
+        // — on press hook sets show true, next frame on_tick wipes false, panel never opens.
         self.show = panel_visible_after_lock(self.show, self.locked, self.was_locked);
         self.was_locked = self.locked;
         settings.sharc_enable_clear = self.sharc_enable_clear;
@@ -1006,18 +1006,18 @@ mod tests {
     use super::{panel_visible_after_lock, KeyRoute, SponzaTuningHook};
     use prism_platform::Key;
 
-    /// 面板开关必须被钩子吃掉，否则 App 的 Tab（调试目标切换）会同时生效。
+    /// Panel toggle must be swallowed by hook, otherwise App Tab (debug target switch) fires too.
     #[test]
     fn f1_and_tab_toggle_the_panel_and_are_consumed() {
         let mut hook = SponzaTuningHook::default();
         let before = hook.show;
         assert_eq!(hook.on_key_pressed(Key::F1), KeyRoute::Consume);
-        assert_ne!(hook.show, before, "F1 必须真的切换面板");
+        assert_ne!(hook.show, before, "F1 must really toggle panel");
         assert_eq!(hook.on_key_pressed(Key::Tab), KeyRoute::Consume);
-        assert_eq!(hook.show, before, "Tab 与 F1 等价，再按一次切回去");
+        assert_eq!(hook.show, before, "Tab equals F1, press again toggles back");
     }
 
-    /// 锁定态：WASD 原样交给相机，面板一行都不许动。
+    /// Locked state: WASD passes to camera as-is, panel must not touch anything.
     #[test]
     fn wasd_goes_to_the_camera_while_locked() {
         let mut hook = SponzaTuningHook {
@@ -1028,10 +1028,13 @@ mod tests {
         for key in [Key::KeyW, Key::KeyA, Key::KeyS, Key::KeyD] {
             assert_eq!(hook.on_key_pressed(key), KeyRoute::Forward, "{key:?}");
         }
-        assert_eq!(hook.selected_index, before, "锁定态下 WASD 不许翻菜单");
+        assert_eq!(
+            hook.selected_index, before,
+            "WASD must not flip menu in locked state"
+        );
     }
 
-    /// 锁定态：菜单键一个都不许吞——面板收着，方向键 / Space 要原样交给游戏。
+    /// Locked state: no menu key may be swallowed — panel hidden, arrows / Space must pass to game as-is.
     #[test]
     fn menu_keys_are_forwarded_while_locked() {
         let mut hook = SponzaTuningHook {
@@ -1050,10 +1053,13 @@ mod tests {
         ] {
             assert_eq!(hook.on_key_pressed(key), KeyRoute::Forward, "{key:?}");
         }
-        assert_eq!(hook.selected_index, before, "锁定态下方向键不许翻菜单");
+        assert_eq!(
+            hook.selected_index, before,
+            "Arrow keys must not flip menu in locked state"
+        );
     }
 
-    /// 未锁定：WASD 只翻菜单，且必须被吃掉——否则相机同时也在动。
+    /// Unlocked: WASD only flips menu and must be consumed — else camera moves too.
     #[test]
     fn wasd_drives_the_menu_and_is_consumed_while_unlocked() {
         let mut hook = SponzaTuningHook {
@@ -1062,25 +1068,34 @@ mod tests {
         };
         let before = hook.selected_index;
         assert_eq!(hook.on_key_pressed(Key::KeyS), KeyRoute::Consume);
-        assert_ne!(hook.selected_index, before, "未锁定态下 S 应下移选中行");
+        assert_ne!(
+            hook.selected_index, before,
+            "S should move selection down in unlocked state"
+        );
     }
 
-    /// 锁定状态一变，面板立刻对齐目标状态；中间的帧保留 F1 / Tab 的开关。
+    /// Lock state change: panel immediately aligns to target state; intermediate frames preserve F1 / Tab toggles.
     #[test]
     fn panel_follows_the_lock_state() {
-        assert!(!panel_visible_after_lock(true, true, false), "锁上即收起");
-        assert!(panel_visible_after_lock(false, false, true), "解锁即展开");
+        assert!(
+            !panel_visible_after_lock(true, true, false),
+            "Hide immediately on lock"
+        );
+        assert!(
+            panel_visible_after_lock(false, false, true),
+            "Expand immediately on unlock"
+        );
         assert!(
             panel_visible_after_lock(true, true, true),
-            "锁定态下按 F1 打开后必须保持打开"
+            "After F1 opens in locked state must stay open"
         );
         assert!(
             !panel_visible_after_lock(false, true, true),
-            "锁定态下保留收起"
+            "Preserve hidden in locked state"
         );
         assert!(
             panel_visible_after_lock(true, false, false),
-            "解锁态下保留展开"
+            "Preserve expanded in unlocked state"
         );
     }
 }

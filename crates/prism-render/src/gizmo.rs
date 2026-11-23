@@ -1,8 +1,8 @@
-//! 世界空间 XYZ 方向辅助工具（始终置顶的调试辅助）。
+//! World-space XYZ direction helper (always-on-top debug aid).
 //!
-//! 从场景原点绘制三个彩色箭头——X = 红色，Y = 绿色，Z = 蓝色——
-//! 使观察者一目了然地读取世界坐标轴。禁用深度测试渲染，
-//! 因此不会被 3D 场景遮挡。
+//! Draws three colored arrows from scene origin — X = red, Y = green, Z = blue —
+//! so viewer can read world axes at a glance. Disabled depth test rendering,
+//! therefore never occluded by 3D scene.
 
 use std::ffi::CString;
 use std::mem::size_of;
@@ -170,17 +170,17 @@ impl Gizmo {
         // RGBA, while 1-3 keep an empty write mask so the cleared values survive.
         let blend_attachments = [
             color_blend_attachment,
-            // 附件 1 = view-space 法线 MRT：空写入遮罩，保留 ForwardPass 清好的值。
+            // Attachment 1 = view-space normal MRT: empty write mask, keep values ForwardPass cleared.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // 附件 2 = 运动矢量（#883）：同样只写 0 号附件，否则
-            // `pColorBlendState->attachmentCount` 与渲染 pass 的颜色附件数
-            // 不一致（#973，VUID-...-renderPass-07609）。
+            // Attachment 2 = motion vectors (#883): likewise only write slot 0, otherwise
+            // `pColorBlendState->attachmentCount` inconsistent with render pass color attachment count
+            // (#973, VUID-...-renderPass-07609).
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // 附件 3 = albedo + 粗糙度（ReSTIR GI 的 G-buffer）：gizmo 不写。
+            // Attachment 3 = albedo + roughness (ReSTIR GI G-buffer): gizmo does not write.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
@@ -283,7 +283,7 @@ impl Drop for Gizmo {
 // Geometry generation
 // ---------------------------------------------------------------------------
 
-/// 构建平移箭头、旋转圆环和缩放手柄的几何体
+/// Build geometry for translation arrows, rotation rings and scale handles.
 fn generate_all_gizmos() -> (Vec<GizmoVertex>, u32, (u32, u32), (u32, u32)) {
     let mut v = Vec::new();
     let len = 1.5f32; // shaft length
@@ -292,7 +292,7 @@ fn generate_all_gizmos() -> (Vec<GizmoVertex>, u32, (u32, u32), (u32, u32)) {
     let head_r = 0.13f32; // cone base radius
     let segs = 20u32; // cone radial segments
 
-    // (direction, perpendicular-1, perpendicular-2, 颜色)
+    // (direction, perpendicular-1, perpendicular-2, color )
     type Axis = ([f32; 3], [f32; 3], [f32; 3], [f32; 3]);
     let axes: [Axis; 3] = [
         (
@@ -315,7 +315,7 @@ fn generate_all_gizmos() -> (Vec<GizmoVertex>, u32, (u32, u32), (u32, u32)) {
         ),
     ];
 
-    // 1. Translate (平移箭头 + 2D 平面手柄角标)
+    // 1. Translate (translation arrows + 2D plane handle corner marks)
     for (dir, p1, p2, color) in axes {
         let geo = AxisGeometry {
             dir,
@@ -327,15 +327,15 @@ fn generate_all_gizmos() -> (Vec<GizmoVertex>, u32, (u32, u32), (u32, u32)) {
         push_shaft(&mut v, &geo, thick);
         push_cone(&mut v, &geo, head_len, head_r, segs);
     }
-    // XY 面 (法线 +Z，蓝色)
+    // XY plane (normal +Z, blue)
     push_plane_handle(&mut v, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.3, 0.5, 1.0]);
-    // XZ 面 (法线 +Y，绿色，地表平移)
+    // XZ plane (normal +Y, green, ground translation)
     push_plane_handle(&mut v, [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.3, 1.0, 0.3]);
-    // YZ 面 (法线 +X，红色)
+    // YZ plane (normal +X, red)
     push_plane_handle(&mut v, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.25, 0.25]);
     let translate_count = v.len() as u32;
 
-    // 2. Rotate (旋转圆环)
+    // 2. Rotate (rotation rings)
     let rotate_first = v.len() as u32;
     let ring_radius = 1.5f32;
     let ring_thick = 0.025f32;
@@ -354,7 +354,7 @@ fn generate_all_gizmos() -> (Vec<GizmoVertex>, u32, (u32, u32), (u32, u32)) {
     }
     let rotate_count = (v.len() as u32) - rotate_first;
 
-    // 3. Scale (缩放轴 + 端点立方体 + 中心均匀缩放立方体)
+    // 3. Scale (scale axes + endpoint cubes + center uniform scale cube)
     let scale_first = v.len() as u32;
     let cube_half = 0.09f32;
     for (dir, p1, p2, color) in axes {
@@ -444,7 +444,7 @@ fn push_ring(
             p1[2] * c1 + p2[2] * s1,
         ];
 
-        // 平面内带状表面
+        // In-plane ribbon surface
         let r_in = radius - thick;
         let r_out = radius + thick;
         let p0_in = [rad0[0] * r_in, rad0[1] * r_in, rad0[2] * r_in];
@@ -454,7 +454,7 @@ fn push_ring(
         push_tri(v, p0_in, p0_out, p1_out, color);
         push_tri(v, p0_in, p1_out, p1_in, color);
 
-        // 垂直于平面的带状表面（保证各视角可见）
+        // Ribbon surface perpendicular to plane (visible from all angles)
         let p0_up = [
             rad0[0] * radius + dir[0] * thick,
             rad0[1] * radius + dir[1] * thick,
@@ -571,7 +571,7 @@ fn push_cone(v: &mut Vec<GizmoVertex>, geo: &AxisGeometry, head_len: f32, head_r
     }
 }
 
-/// 推送双面 2D 平面手柄 quad + 边缘 L 型边框。
+/// Push double-sided 2D plane handle quad + edge L-shaped border.
 fn push_plane_handle(v: &mut Vec<GizmoVertex>, axis1: [f32; 3], axis2: [f32; 3], color: [f32; 3]) {
     let min = 0.35f32;
     let max = 0.70f32;
@@ -597,14 +597,14 @@ fn push_plane_handle(v: &mut Vec<GizmoVertex>, axis1: [f32; 3], axis2: [f32; 3],
     ];
 
     let face_color = [color[0] * 0.75, color[1] * 0.75, color[2] * 0.75];
-    // 正面
+    // positive face
     push_tri(v, p0, p1, p2, face_color);
     push_tri(v, p0, p2, p3, face_color);
-    // 反面
+    // incorrect face
     push_tri(v, p2, p1, p0, face_color);
     push_tri(v, p3, p2, p0, face_color);
 
-    // 外边缘 L 型边框 (p1 -> p2 -> p3)
+    // Outer edge L border (p1 -> p2 -> p3)
     let border_thick = 0.025f32;
     push_line_strip(v, p1, p2, axis1, border_thick, color);
     push_line_strip(v, p3, p2, axis2, border_thick, color);

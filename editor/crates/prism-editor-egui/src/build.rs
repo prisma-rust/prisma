@@ -1,12 +1,12 @@
-//! 构建 / Cook：以**子进程**调用 `prism-build-pipeline`（与 Web 编辑器同一路径）。
+//! Build / Cook: invoke `prism-build-pipeline` as **subprocess** (same path as Web editor).
 //!
-//! 编辑器不链接 cooker/build 流水线（AGENTS.md 的硬规则），所以这里只 spawn
-//! `cargo run -p prism-build-pipeline -- …`，把 stdout/stderr 逐行送回 Console。
-//! 编译/打包可能几十秒，全部跑在后台线程，UI 线程只 `try_recv`。
+//! Editor does not link cooker/build pipeline (AGENTS.md hard rule), so here only spawn
+//! `cargo run -p prism-build-pipeline -- …`, streaming stdout/stderr line by line to Console.
+//! Compile / package may take tens of seconds, all on background thread, UI thread only `try_recv`.
 //!
-//! 输出是**流式**的：stdout / stderr 各有一个读线程，`cargo` 每写一行就进 Console，
-//! 不再等进程退出才一次性出现。`BuildJob::cancel()` 会杀掉子进程并让它正常收尾。
-//! 一个任务可能包含多步命令（玩家构建先 cook 场景），每一步都走同一条流式路径。
+//! Output is **streaming**: stdout / stderr each has a read thread, each `cargo` line goes to Console,
+//! no longer wait for process exit to appear all at once. `BuildJob::cancel()` kills subprocess and lets it finish normally.
+//! One task may contain multi-step commands (player build first cooks scene), each step takes same streaming path.
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -20,42 +20,42 @@ use crate::diagnostics::{parse_cargo_line, Diagnostic, MAX_DIAGNOSTICS};
 use prism_editor_core::build::{copy_artifacts, plan_build, BuildPlan};
 use prism_editor_core::settings::ProjectSettings;
 
-/// 一次构建任务。
+/// One build task.
 pub struct BuildJob {
     rx: Receiver<String>,
     label: String,
     running: bool,
     cancel: Arc<AtomicBool>,
-    /// `cargo build` 的 JSON 诊断；Console 仍然收到一行摘要，Problems 面板拿结构化数据。
+    /// `cargo build` JSON diagnostics; Console still gets one summary line, Problems panel gets structured data.
     diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
-    /// 有没有步骤失败（非 0 退出 / 产物缺失 / spawn 失败）。
+    /// Whether any step failed (non-0 exit / missing product / spawn failure).
     failed: Arc<AtomicBool>,
 }
 
 pub enum BuildKind {
-    /// `prism-build-pipeline build-scenes`（所有启用的场景 → `scenes.pak`）。
+    /// `prism-build-pipeline build-scenes` (all enabled scenes -> `scenes.pak`).
     ScenePack,
-    /// `prism-build-pipeline cook <scene>`（单个 `.scene.json` → `.rscn`）。
+    /// `prism-build-pipeline cook <scene>` (single `.scene.json` -> `.rscn`).
     Cook(PathBuf),
-    /// 构建用户项目（`File → Build Player`）：按 `[build]` 设置选 profile，
-    /// 再 cook 场景包、按 `output_dir` 摆好 exe + `assets/`。
+    /// Build user project (`File → Build Player`): select profile per `[build]` settings,
+    /// then cook scene package, place exe + `assets/` per `output_dir`.
     Player,
-    /// 同 [`BuildKind::Player`]，构建完直接跑 `output_dir/<exe>`（`Build And Run`）。
+    /// Same as [`BuildKind::Player`], run `output_dir/<exe>` directly after build (`Build And Run`).
     PlayerRun,
-    /// `cargo clean` 玩家工程（引擎的 Clean Build）。
+    /// `cargo clean` player project (engine Clean Build).
     ///
-    /// 玩家是**独立 workspace**（`projects/<p>/target`），清理它才是 Clean Build 的本意；
-    /// 清仓库根的 `target/` 会连带删掉引擎和所有 crate 的产物，属于另一件事。
+    /// Player is **independent workspace** (`projects/<p>/target`), cleaning it is the meaning of Clean Build;
+    /// cleaning repo root `target/` also deletes engine and all crate products, another matter.
     Clean,
-    /// `cargo clean` 仓库根 workspace（引擎 + 全部 crate 的编译缓存）。
+    /// `cargo clean` repo root workspace (engine + all crates compile cache).
     CleanEngine,
-    /// `prism-build-pipeline bake-gi`：离线 GI 探针体烘焙（Offline Tools，#477）。
+    /// `prism-build-pipeline bake-gi`: offline GI probe baking (Offline Tools, #477).
     BakeGi {
         output: String,
         rays: u32,
         bounces: u32,
     },
-    /// `prism-build-pipeline heightmap`：程序化地形 + 侵蚀（Offline Tools，#477）。
+    /// `prism-build-pipeline heightmap`: procedural terrain + erosion (Offline Tools, #477).
     Heightmap {
         output: String,
         width: u32,
@@ -64,7 +64,7 @@ pub enum BuildKind {
         iterations: u32,
         sea_level: f32,
     },
-    /// `prism-build-pipeline build-scenes --output … --compression …`：自定义打包（#477）。
+    /// `prism-build-pipeline build-scenes --output … --compression …`: custom packaging (#477).
     ScenePackCustom { output: String, compression: u32 },
 }
 
@@ -78,11 +78,11 @@ pub(crate) fn game_manifest_path(root: &Path) -> PathBuf {
 }
 
 fn pipeline_manifest_path(root: &Path) -> Option<PathBuf> {
-    // 只有一份实现（数据层），玩家构建与 ScenePack 都从这里取。
+    // Only one implementation (data layer), player build and ScenePack both take from here.
     prism_editor_core::build::pipeline_manifest_path(root)
 }
 
-/// 读 `[build]` 设置并生成玩家构建计划；设置文件坏了就用默认值（debug + `build/`）。
+/// Read `[build]` settings and generate player build plan; use defaults (debug + `build/`) if settings file bad.
 fn player_plan(root: &Path) -> BuildPlan {
     let settings = ProjectSettings::read(root).unwrap_or_default();
     plan_build(root, &settings)
@@ -131,18 +131,18 @@ impl BuildKind {
         }
     }
 
-    /// 玩家构建（需要 cook + 摆产物 + 可选运行）而不是单纯的 cargo 步骤。
+    /// Player build (needs cook + place products + optional run) rather than plain cargo step.
     pub fn is_player_build(&self) -> bool {
         matches!(self, BuildKind::Player | BuildKind::PlayerRun)
     }
 
-    /// 这个任务构建完要不要直接启动产物。
+    /// Whether this task launches product directly after build.
     pub fn runs_after_build(&self) -> bool {
         matches!(self, BuildKind::PlayerRun)
     }
 
-    /// 这个任务要顺序执行的 cargo 命令。玩家构建先刷新 `scenes.pak`，
-    /// 否则会跑上一次 cook 的场景。
+    /// cargo commands this task executes sequentially. Player build first refreshes `scenes.pak`,
+    /// otherwise runs scene from previous cook.
     fn commands(&self, root: &Path) -> Result<Vec<Vec<String>>, String> {
         let pipeline_with = |features: &[&str], extra: &[&str]| -> Result<Vec<String>, String> {
             let manifest = pipeline_manifest_path(root)
@@ -163,8 +163,8 @@ impl BuildKind {
             Ok(args)
         };
         let pipeline = |extra: &[&str]| pipeline_with(&[], extra);
-        // 玩家构建复用数据层的 `BuildPlan`（profile / output_dir / 产物布局都在那里），
-        // 这里只是把它的步骤翻译成 cargo 参数。
+        // Player build reuses data layer `BuildPlan` (profile / output_dir / product layout all there),
+        // here only translates its steps to cargo params.
         let player_commands = || -> Result<Vec<Vec<String>>, String> {
             Ok(player_plan(root)
                 .steps
@@ -243,7 +243,7 @@ impl BuildKind {
     }
 }
 
-/// 把一个管道逐行转发到 channel；写端关闭时线程自然结束。
+/// Forward a pipeline line by line to channel; thread naturally ends when write end closes.
 fn forward_lines(
     stream: impl Read + Send + 'static,
     tx: Sender<String>,
@@ -260,8 +260,8 @@ fn forward_lines(
     })
 }
 
-/// `cargo --message-format=json` 的 stdout：解析成诊断，
-/// 同时在 Console 留一行人类可读的摘要（JSON 本身没人想看）。
+/// stdout of `cargo --message-format=json`: parse into diagnostics,
+/// while leaving one human-readable summary line in Console (JSON itself no one wants to see).
 fn forward_cargo_json(
     stream: impl Read + Send + 'static,
     tx: Sender<String>,
@@ -274,7 +274,7 @@ fn forward_cargo_json(
                 break;
             };
             let Some(diagnostic) = parse_cargo_line(&line, &root) else {
-                // cargo 偶尔混入非 JSON 行；JSON 事件本身已经由诊断/摘要覆盖。
+                // cargo occasionally mixes non-JSON lines; JSON events already covered by diagnostics / summary.
                 if !line.trim_start().starts_with('{') && tx.send(line).is_err() {
                     break;
                 }
@@ -298,7 +298,7 @@ fn forward_cargo_json(
 }
 
 impl BuildJob {
-    /// 启动任务。`root` 是项目根（含 `assets/` 与根 `Cargo.toml`）。
+    /// Start task. `root` is project root (contains `assets/` and root `Cargo.toml`).
     pub fn spawn(kind: BuildKind, root: &Path, label: String) -> Self {
         let (tx, rx) = channel();
         let root = root.to_path_buf();
@@ -338,12 +338,12 @@ impl BuildJob {
                     }
                 };
 
-                // 这一步是不是结构化诊断模式（只有 `cargo build` 带这个参数）。
+                // whether this step is structured diagnostic mode (only `cargo build` has this param).
                 let json = args.iter().any(|arg| arg == "json");
                 if json {
                     worker_diagnostics.lock().unwrap().clear();
                 }
-                // 诊断里的 span 相对 workspace 根（`--manifest-path` 的父目录）。
+                // diagnostic span relative to workspace root (parent dir of `--manifest-path`).
                 let span_root = args
                     .iter()
                     .position(|arg| arg == "--manifest-path")
@@ -352,7 +352,7 @@ impl BuildJob {
                     .and_then(|manifest| manifest.parent().map(Path::to_path_buf))
                     .unwrap_or_else(|| root.clone());
 
-                // stdout / stderr 各一个读线程，保证两路输出都不会互相饿死。
+                // one read thread each for stdout / stderr, guarantee both outputs do not starve each other.
                 let mut readers = Vec::new();
                 if let Some(stdout) = child.stdout.take() {
                     readers.push(if json {
@@ -373,7 +373,7 @@ impl BuildJob {
                 let mut cancelled = false;
                 loop {
                     if worker_cancel.load(Ordering::Relaxed) {
-                        // kill 只是发信号；下面的 wait() 负责回收，读线程也要等。
+                        // kill only sends signal; below wait() reaps, read thread also waits.
                         let _ = child.kill();
                         cancelled = true;
                         break;
@@ -400,7 +400,7 @@ impl BuildJob {
                 }
                 let code = status.and_then(|status| status.code()).unwrap_or(-1);
                 let _ = tx.send(format!("── exit {code} ──"));
-                // 前一步失败就不再跑后面的步骤（例如 cook 失败时不要打包旧场景）。
+                // if previous step fails, do not run subsequent steps (e.g. cook failure should not package old scene).
                 if !status.map(|status| status.success()).unwrap_or(false) {
                     let _ = tx.send("build stopped: step failed".to_string());
                     worker_failed.store(true, Ordering::Relaxed);
@@ -408,7 +408,7 @@ impl BuildJob {
                 }
             }
 
-            // 玩家构建：把 exe / `assets/` 摆到 `[build].output_dir`，需要时直接运行产物。
+            // Player build: place exe / `assets/` into `[build].output_dir`, run product directly when needed.
             if kind.is_player_build() {
                 let plan = player_plan(&root);
                 let _ = tx.send(format!(
@@ -475,7 +475,7 @@ impl BuildJob {
         }
     }
 
-    /// 取走后台线程解析出的编译器诊断（Problems 面板用）。
+    /// Take compiler diagnostics parsed by background thread (for Problems panel).
     pub fn take_diagnostics(&self) -> Vec<Diagnostic> {
         std::mem::take(&mut *self.diagnostics.lock().unwrap())
     }
@@ -488,22 +488,22 @@ impl BuildJob {
         self.running
     }
 
-    /// 请求中断：后台线程会 `kill()` 子进程并发送 `── cancelled ──`。
+    /// Request interrupt: background thread will `kill()` subprocess and send `── cancelled ──`.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
-    /// 这次任务是否被用户取消（`cancel()` 之后为 true）。
+    /// Whether this task was cancelled by user (true after `cancel()`).
     pub fn was_cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    /// 有没有步骤真的失败（非 0 退出 / 产物缺失 / spawn 失败）。
+    /// Whether any step really failed (non-0 exit / missing product / spawn failure).
     pub fn failed(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
     }
 
-    /// 取走新输出（`None` = 任务已结束）。
+    /// Take new output (`None` = task ended).
     pub fn poll(&mut self) -> (Vec<String>, bool) {
         let mut lines = Vec::new();
         loop {
@@ -539,7 +539,7 @@ mod tests {
         args.iter().any(|arg| arg.contains(needle))
     }
 
-    /// #477：Offline Tools 的面板只是把参数拼成 `prism-build-pipeline` 的命令行。
+    /// #477: Offline Tools panel only assembles args into `prism-build-pipeline` command line.
     #[test]
     fn offline_tool_commands_target_the_pipeline() {
         let root = repo_root();
@@ -607,7 +607,7 @@ mod tests {
             .any(|pair| pair[0] == "--compression" && pair[1] == "7"));
     }
 
-    /// 建一个带 `assets/settings.ini` 的临时工程根（构建计划读它取 profile / output_dir）。
+    /// Build a temp project root with `assets/settings.ini` (build plan reads profile / output_dir from it).
     fn project_root(name: &str, build_section: &str) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("prism-egui-build-{name}-{}", std::process::id()));
@@ -622,7 +622,7 @@ mod tests {
             ),
         )
         .unwrap();
-        // 真实工程里 cook 过一轮就有这些产物；产物清单按存在与否展开，测试也要有这个前提。
+        // Real project cooked once has these products; product list expands by existence; test also needs this premise.
         for name in ["scenes.pak", "scenes.pak.meta.json", "scenes.json"] {
             std::fs::write(root.join("assets").join(name), b"{}").unwrap();
         }
@@ -647,7 +647,7 @@ mod tests {
         }
     }
 
-    /// `[build].profile` 决定 `--release`：以前 Build Player 永远构建 debug 版。
+    /// `[build].profile` decides `--release`: previously Build Player always built debug.
     #[test]
     fn the_release_profile_survives_the_trip_from_settings() {
         let debug_root = project_root("profile-debug", "profile = debug");
@@ -667,7 +667,7 @@ mod tests {
     fn player_build_targets_project_root_manifest() {
         let repo = repo_root();
         let root = project_root("manifest", "profile = debug");
-        // 没有 `projects/template` 的用户工程回落到自己的 manifest。
+        // User project without `projects/template` falls back to its own manifest.
         assert_eq!(
             BuildKind::Player.commands(&root).unwrap()[0],
             vec![
@@ -684,7 +684,7 @@ mod tests {
         );
     }
 
-    /// 玩家构建要 JSON 诊断（Problems 面板）；打包/cook 步骤不能加。
+    /// Player build wants JSON diagnostics (Problems panel); package/cook steps cannot add.
     #[test]
     fn only_the_player_build_asks_for_json_diagnostics() {
         let root = project_root("diagnostics", "profile = debug");
@@ -692,12 +692,12 @@ mod tests {
             let commands = kind.commands(&root).unwrap();
             assert!(mentions(&commands[0], "json"));
         }
-        // 打包步骤走真实仓库根（临时根里没有 pipeline workspace）。
+        // Package step uses real repo root (temp root has no pipeline workspace).
         let pack = BuildKind::ScenePack.commands(&repo_root()).unwrap();
         assert!(!mentions(&pack[0], "json"));
     }
 
-    /// `Build And Run` 运行的是**摆好的产物**，不是 `cargo run` 的调试版。
+    /// `Build And Run` runs **placed product**, not `cargo run` debug build.
     #[test]
     fn build_and_run_launches_the_staged_binary() {
         assert!(BuildKind::PlayerRun.is_player_build());
@@ -735,7 +735,7 @@ output_dir = build/win",
         assert!(mentions(&commands[0], "build-scenes"));
     }
 
-    /// Clean 只清玩家 workspace，CleanEngine 才清仓库根。
+    /// Clean only cleans player workspace, CleanEngine cleans repo root.
     #[test]
     fn clean_targets_differ_between_player_and_engine() {
         let repo = repo_root();

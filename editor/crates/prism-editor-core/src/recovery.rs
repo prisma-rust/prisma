@@ -1,12 +1,12 @@
-//! 未保存文档的退出快照（#619）。
+//! Exit snapshot for unsaved documents (#619).
 //!
-//! egui-ash 在 winit 的 `CloseRequested` 里先调用了 `event_loop.exit()`，所以编辑器
-//! 里那套 `CancelClose` + “Unsaved Changes” 对话框在实际关窗时来不及生效。与其把
-//! 防止丢数据的希望寄托在依赖仓库的事件循环上，这里在 `AppEvent::LoopExiting`
-//! （事件循环已经结束、但 app 仍可访问）把 dirty 文档写进项目内的恢复文件。
+//! egui-ash calls `event_loop.exit()` in winit's `CloseRequested` first, so the editor
+//! `CancelClose` + "Unsaved Changes" dialog does not take effect in time on actual window close. Rather than
+//! pin hopes of preventing data loss on the dependency repo's event loop, this writes dirty documents
+//! (`LoopExiting` — event loop ended but app still accessible) into the project's recovery file.
 //!
-//! 快照**不覆盖**原场景 / 预制体：下次启动时由 UI 询问 Recover / Discard，恢复出来
-//! 的文档仍是 dirty 状态，用户确认后才落盘。文件放在 `target/` 下，不会进版本库。
+//! Snapshot does **not** overwrite original scene / prefab: next launch UI asks Recover / Discard, recovered
+//! document is still dirty, saved to disk only after user confirmation. File under `target/`, not in version control.
 
 use crate::doc::SceneDoc;
 use crate::workspace::DocKind;
@@ -15,15 +15,15 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// 恢复快照相对项目根的位置。
+/// Recovery snapshot location relative to project root.
 pub const RECOVERY_DIR: &str = "target/editor-recovery";
-/// 快照文件名；所有文档装在同一个 JSON 数组里，写入是原子的。
+/// Snapshot file name; all documents in one JSON array, write is atomic.
 pub const RECOVERY_FILE: &str = "recovery.json";
 
-/// 一条待恢复的文档。
+/// One document awaiting recovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveredDocument {
-    /// 原文档相对项目根的路径；`None` = 从未保存过的 Untitled 文档。
+    /// Original document path relative to project root; `None` = never-saved Untitled document.
     pub path: Option<String>,
     pub kind: DocKind,
     pub document: SceneDoc,
@@ -33,8 +33,8 @@ fn recovery_path(root: &Path) -> PathBuf {
     root.join(RECOVERY_DIR).join(RECOVERY_FILE)
 }
 
-/// 原子写入快照。`documents` 为空时什么都不做（不删除旧快照——删除只能由
-/// Recover / Discard 显式触发，避免用户忽略提示后被一次普通保存清掉）。
+/// Atomically write snapshot. Does nothing when `documents` empty (does not delete old snapshot — deletion only by
+/// Recover / Discard explicit trigger, avoiding a normal save wiping it after user ignores the hint).
 pub fn write(root: &Path, documents: &[RecoveredDocument]) -> io::Result<usize> {
     if documents.is_empty() {
         return Ok(0);
@@ -49,14 +49,14 @@ pub fn write(root: &Path, documents: &[RecoveredDocument]) -> io::Result<usize> 
     {
         let mut file = fs::File::create(&tmp)?;
         file.write_all(text.as_bytes())?;
-        // 快照就是最后一道保险，必须真正落盘后再 rename。
+        // Snapshot is the last insurance, must really flush to disk before rename.
         file.sync_all()?;
     }
     fs::rename(&tmp, &path)?;
     Ok(documents.len())
 }
 
-/// 读取快照；没有快照时返回空列表。
+/// Read snapshot; returns empty list when no snapshot.
 pub fn read(root: &Path) -> io::Result<Vec<RecoveredDocument>> {
     let path = recovery_path(root);
     let text = match fs::read_to_string(&path) {
@@ -67,7 +67,7 @@ pub fn read(root: &Path) -> io::Result<Vec<RecoveredDocument>> {
     serde_json::from_str(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-/// 删除快照（连同空的恢复目录）。
+/// Delete snapshot (along with empty recovery directory).
 pub fn clear(root: &Path) -> io::Result<()> {
     let path = recovery_path(root);
     match fs::remove_file(&path) {
@@ -75,7 +75,7 @@ pub fn clear(root: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    // 目录里可能还有用户 / 其他进程放的东西，只在空的时候删。
+    // Directory may contain user / other process files, delete only when empty.
     let _ = fs::remove_dir(root.join(RECOVERY_DIR));
     Ok(())
 }

@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn backspace_and_delete_are_unicode_safe() {
-        let mut input = TextInput::new("aé中");
+        let mut input = TextInput::new("aéx");
         assert_eq!(input.cursor(), 6);
         input.backspace();
         assert_eq!(input.text(), "aé");

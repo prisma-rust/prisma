@@ -1,9 +1,9 @@
-//! Prisma Android 启动壳的 Tauri 外壳。
+//! Tauri outer shell for Prisma Android launcher.
 //!
-//! 这里只保留 APK 的「开始游戏」页：
+//! This only keeps the APK "start game" page:
 //!
-//! - **Android**：通过 Kotlin plugin 启动 `com.prisma.MainActivity`（GameActivity）；
-//! - **桌面**：拉起本地游戏二进制，方便不打包也能验证启动页与参数传递。
+//! - **Android**: launch `com.prisma.MainActivity` (GameActivity) via Kotlin plugin;
+//! - **Desktop**: spawn local game binary, so launch page and parameter passing can be validated without packaging.
 
 #[cfg(not(mobile))]
 mod game_launcher;
@@ -15,16 +15,16 @@ use tauri::plugin::PluginHandle;
 #[cfg(mobile)]
 use tauri::Manager;
 
-// ==================== Android: 自定义 Native Plugin ====================
+// ==================== Android: custom  Native Plugin ====================
 //
-// 通过 Kotlin 调用 Android 原生 API：
+// Call Android native API via Kotlin:
 //   - toggle_immersive / set_status_bar_color / vibrate / get_device_info
-//   - launch_game：启动 GameActivity
+//   - launch_game: start GameActivity
 
 #[cfg(mobile)]
 const NATIVE_PLUGIN_IDENTIFIER: &str = "com.example.tauriandroidapp";
 
-/// 封装对 Kotlin plugin 的调用。
+/// Wrap calls to the correct Kotlin plugin.
 #[cfg(mobile)]
 struct NativeApi(PluginHandle<Wry>);
 
@@ -48,7 +48,7 @@ fn toggle_immersive(state: tauri::State<NativeApi>) -> Result<bool, String> {
     result
         .get("immersive")
         .and_then(|v| v.as_bool())
-        .ok_or("Kotlin 返回格式异常".to_string())
+        .ok_or("Kotlin returned malformed format".to_string())
 }
 
 #[tauri::command]
@@ -74,23 +74,23 @@ fn get_device_info(state: tauri::State<NativeApi>) -> Result<serde_json::Value, 
     state.call("get_device_info", ())
 }
 
-// Desktop 桩实现：让命令在桌面端也能编译，调用时返回提示。
+// Desktop stub impl: let commands compile on desktop, return hint when called.
 #[cfg(not(mobile))]
 #[tauri::command]
 fn toggle_immersive() -> Result<bool, String> {
-    Err("全屏模式仅在 Android 端可用".into())
+    Err("Fullscreen mode only available on Android".into())
 }
 
 #[cfg(not(mobile))]
 #[tauri::command]
 fn set_status_bar_color(_color: String) -> Result<(), String> {
-    Err("状态栏控制仅在 Android 端可用".into())
+    Err("Status bar control only available on Android".into())
 }
 
 #[cfg(not(mobile))]
 #[tauri::command]
 fn vibrate(_duration: u64) -> Result<(), String> {
-    Err("震动仅在 Android 端可用".into())
+    Err("Vibration only available on Android".into())
 }
 
 #[cfg(not(mobile))]
@@ -98,13 +98,13 @@ fn vibrate(_duration: u64) -> Result<(), String> {
 fn get_device_info() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "platform": "desktop",
-        "message": "设备信息仅在 Android 端可获取"
+                "message": "Device info only available on Android"
     }))
 }
 
-/// 启动游戏：移动端通过 Kotlin plugin 启动 GameActivity；桌面端拉起
-/// `template` 二进制。`config` 为可选 LaunchConfig JSON（场景 / 日志级别等），
-/// 经 `PRISMA_LAUNCH_CONFIG` env（桌面）或 files 目录文件（Android）传递。
+/// Launch game: mobile starts GameActivity via Kotlin plugin; desktop spawns
+/// `template` binary. `config` is optional LaunchConfig JSON (scene / log level etc.),
+/// passed via `PRISMA_LAUNCH_CONFIG` env (desktop) or files-dir file (Android).
 #[cfg(mobile)]
 #[tauri::command]
 fn launch_game(state: tauri::State<NativeApi>, config: Option<String>) -> Result<(), String> {
@@ -113,8 +113,8 @@ fn launch_game(state: tauri::State<NativeApi>, config: Option<String>) -> Result
         .map(|_| ())
 }
 
-/// 桌面端：二进制由 [`game_launcher::resolve`] 定位（不走 `PATH`），
-/// 已有一个游戏在跑时直接拒绝，避免同时开两个实例。
+/// Desktop: binary located by [`game_launcher::resolve`] (not via `PATH`),
+/// rejects immediately if a game is already running, to avoid two instances.
 #[cfg(not(mobile))]
 #[tauri::command]
 fn launch_game(
@@ -124,7 +124,7 @@ fn launch_game(
     state.launch(config)
 }
 
-/// 初始化自定义原生插件（mobile 端注册 Kotlin plugin）。
+/// Initialize custom native plugin (register Kotlin plugin on mobile).
 pub fn init_native_plugin() -> tauri::plugin::TauriPlugin<Wry> {
     tauri::plugin::Builder::<Wry>::new("native-api")
         .setup(|_app, _api| {

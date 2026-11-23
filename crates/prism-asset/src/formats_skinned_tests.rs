@@ -1,11 +1,11 @@
-//! 解码器的“坏输入不能 panic”测试。
+//! Decoder "bad input must not panic" test.
 //!
-//! 往返（encode → decode）在 `prism-cooker::cooker::skinned` 的测试里做 —— 那里才有编码器。
-//! 这里只喂**任意字节**，保证解码路径的每个长度都做了边界检查。
+//! Round-trip (encode -> decode) tested in `prism-cooker::cooker::skinned` --- that's where the encoder is.
+//! Here we only feed **arbitrary bytes**, guaranteeing every length in the decode path gets bounds-checked.
 
 use super::*;
 
-/// 一个最小的 RSKN 头（3 顶点 / 3 索引 / 2 骨骼 / 1 submesh / 无附加流）。
+/// A minimal RSKN header (3 vertices / 3 indices / 2 bones / 1 submesh / no extra streams).
 fn minimal_rskin_header() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(RSKN_MAGIC);
@@ -84,18 +84,18 @@ fn bad_magic_version_and_flags_are_rejected() {
 
     let mut bytes = minimal_rskin();
     bytes[4] = 2;
-    assert!(decode_rskin(&bytes).is_none(), "未知版本");
+    assert!(decode_rskin(&bytes).is_none(), "unknown version");
 
     let mut bytes = minimal_rskin();
     bytes[21..25].copy_from_slice(&(1u32 << 7).to_le_bytes());
-    assert!(decode_rskin(&bytes).is_none(), "未知标志位");
+    assert!(decode_rskin(&bytes).is_none(), "unknown flags");
 
     let mut bytes = minimal_rskin();
     bytes[13..17].copy_from_slice(&0u32.to_le_bytes());
     assert!(decode_rskin(&bytes).is_none(), "joint_count = 0");
 
     let mut bytes = minimal_rskin();
-    // 子网格索引区间越界。
+    // Submesh index range out of bounds.
     let submesh_offset = bytes.len() - 40 - 12;
     bytes[submesh_offset + 8..submesh_offset + 12].copy_from_slice(&99u32.to_le_bytes());
     assert!(decode_rskin(&bytes).is_none());
@@ -115,6 +115,6 @@ fn rskel_and_rani_reject_short_or_bad_input() {
     assert!(decode_rskel(b"RSKL\x01").is_none());
     assert!(decode_ranim(b"RANI").is_none());
     assert!(decode_ranim(&[]).is_none());
-    // 合法 magic、未知版本。
+    // Valid magic, unknown version.
     assert!(decode_rskel(b"RSKL\x09\x00\x00\x00\x00\x00\x00\x00\x00\x00").is_none());
 }

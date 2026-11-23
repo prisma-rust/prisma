@@ -1,15 +1,15 @@
-//! # 烹饪配置系统
+//! # Cooking config system
 //!
-//! 支持平台的烹饪配置，包含基于文件的配置文件、继承、
-//! 深度合并、优先级覆盖和稳定哈希计算。
+//! Supports platform cooking config, contains file-based config file, inheritance,
+//! Depth merge, priority override and stable hash calculation.
 //!
-//! ## 优先级（从高到低）
+//! ## Priority (from high to low)
 //!
-//! 1. CLI 覆盖（命令行参数）
-//! 2. 资源级覆盖（逐记录设置）
-//! 3. 激活的项目配置（CLI `--profile`；没有持久化的 active 文件，缺省即平台默认）
-//! 4. 平台默认配置（从 `--platform` 派生）
-//! 5. `base.json`（可选，最低优先级）
+//! 1. CLI override (command line parameter)
+//! 2. Asset-level override (per-record setting)
+//! 3. Active project config (CLI `--profile`; no persistent active file, default to platform default)
+//! 4. Platform default config (derived from `--platform`)
+//! 5. `base.json` (optional, lowest priority)
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -147,7 +147,7 @@ impl Default for MeshSettings {
     }
 }
 
-/// 着色器 cooking settings (实现).
+/// Shader cooking settings (implementation).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShaderSettings {
@@ -343,11 +343,11 @@ impl CookSettings {
         self.streaming && uncompressed_size as u64 >= self.streaming_threshold_bytes
     }
 
-    /// 计算一个稳定的确定性哈希，供增量构建缓存使用。
+    /// Compute a stable deterministic hash for incremental build cache.
     ///
-    /// `custom` 是 `HashMap`，迭代顺序每个进程都随机化，所以先去掉它再序列化，
-    /// 然后把**按 key 排序**后的键值对追加到哈希输入。否则同样的设置在不同进程
-    /// 或不同插入顺序下会得到不同哈希，缓存会被误判为失效。
+    /// `custom` is `HashMap`, iteration order randomized each process, so first remove it then serialize,
+    /// then append key-value pairs sorted by key correctly into hash input. Otherwise same settings in differentocess
+    /// or different insertion order will get different hash, cache will be misjudged as invalidated.
     pub fn settings_hash(&self) -> u64 {
         let mut canonical = self.clone();
         canonical.custom.clear();
@@ -359,13 +359,13 @@ impl CookSettings {
         keys.sort();
         for key in keys {
             buffer.extend_from_slice(key.as_bytes());
-            buffer.push(0x1f); // unit separator：key 与 value 之间
+            buffer.push(0x1f); // unit separator: between key and value
             buffer.extend_from_slice(
                 serde_json::to_string(&self.custom[key])
                     .expect("custom values should always serialize")
                     .as_bytes(),
             );
-            buffer.push(0x1e); // record separator：不同条目之间
+            buffer.push(0x1e); // record separator: between different entries
         }
 
         xxhash_rust::xxh3::xxh3_64(&buffer)
@@ -514,7 +514,7 @@ impl ProfileManager {
             None => CookSettings::default(),
         };
 
-        // 叠加 only the fields this profile explicitly specifies.
+        // Overlay only the fields this profile explicitly specifies.
         if let Some(ref p) = profile.platform {
             settings.platform = p.clone();
         }

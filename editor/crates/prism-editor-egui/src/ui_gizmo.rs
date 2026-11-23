@@ -1,20 +1,20 @@
-//! Scene 视图里的 UI 锚点手柄（#429）。
+//! UI anchor handles in Scene view (#429).
 //!
-//! 只做纯几何：把归一化锚点换算成视口里的手柄位置、命中最近的 handle，
-//! 以及把拖动中的光标换算回新的锚点。文档写入在
-//! `Workspace::set_ui_anchors_preserving_rect` 里完成，方便单测。
+//! Pure geometry: convert normalized anchor to viewport handle position, hit nearest handle,
+//! and convert dragging cursor back to new anchor. Document writing done in
+//! `Workspace::set_ui_anchors_preserving_rect`, convenient for unit test.
 
 use egui::{Pos2, Rect};
 
-/// 手柄的视觉半径（正方形半边长）。
+/// Handle visual radius (half side length of square).
 pub const HANDLE_RADIUS: f32 = 4.0;
 
-/// 命中半径：比视觉稍大，触屏 / 高 DPI 下也好点。
+/// Hit radius: slightly larger than visual, better for touchscreen / HiDPI.
 pub const HIT_RADIUS: f32 = 9.0;
 
-/// 锚点矩形上的一个可拖动手柄。
+/// One draggable handle on anchor rect.
 ///
-/// 点锚点只出一个 `Point`（min == max），拉伸轴按被拉伸的方向出边 / 角手柄。
+/// Point anchor emits one `Point` (min == max), stretch axis emits edge / corner handles per stretched direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiAnchorHandle {
     Point,
@@ -28,7 +28,7 @@ pub enum UiAnchorHandle {
     BottomRight,
 }
 
-/// 在当前父矩形里列出所有手柄。坐标是 egui points。
+/// List all handles in current parent rect. Coordinates are egui points.
 pub fn anchor_handles(anchors: [f32; 4], parent: Rect) -> Vec<(UiAnchorHandle, Pos2)> {
     let [min_x, min_y, max_x, max_y] = anchors;
     let x0 = parent.min.x + min_x * parent.width();
@@ -65,7 +65,7 @@ pub fn anchor_handles(anchors: [f32; 4], parent: Rect) -> Vec<(UiAnchorHandle, P
     }
 }
 
-/// 离光标最近、且在命中半径内的手柄。
+/// Handle nearest to cursor, within hit radius.
 pub fn hit_handle(handles: &[(UiAnchorHandle, Pos2)], pointer: Pos2) -> Option<UiAnchorHandle> {
     handles
         .iter()
@@ -75,10 +75,10 @@ pub fn hit_handle(handles: &[(UiAnchorHandle, Pos2)], pointer: Pos2) -> Option<U
         .map(|(handle, _)| handle)
 }
 
-/// 拖动光标 → 新锚点。
+/// Drag cursor -> new anchor.
 ///
-/// `snap` 时把归一化坐标吸到 5% 的整数倍，和编辑器里 Ctrl 吸附的手感一致。
-/// 轴被拖成点锚点时 min == max，保持点锚点；越过另一条边时夹住，不交换。
+/// When `snap`, snap normalized coordinates to multiples of 5%, consistent with editor Ctrl snap feel.
+/// When axis dragged to point anchor min == max, keep point anchor; clamp when crossing other edge, do not swap.
 pub fn anchors_from_drag(
     handle: UiAnchorHandle,
     pointer: Pos2,
@@ -195,7 +195,10 @@ mod tests {
             [0.2, 0.2, 0.8, 0.8],
             false,
         );
-        assert_eq!(clamped[2], 0.2, "右边界不能拖到左边界左边");
+        assert_eq!(
+            clamped[2], 0.2,
+            "right boundary cannot drag to left of left boundary"
+        );
     }
 
     #[test]

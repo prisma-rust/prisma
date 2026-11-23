@@ -1,27 +1,27 @@
-//! 编辑器内置截图。
+//! Editor built-in screenshot.
 //!
-//! 两条路径：
+//! Two paths:
 //!
-//! - **整窗**（`window`）：Windows 上用 `PrintWindow` + `PW_RENDERFULLCONTENT`
-//!   把窗口当前合成结果画进一个 32bpp DIB，再转 RGBA 写 PNG。Vulkan 交换链
-//!   由 egui-ash 持有，宿主拿不到 `VkImage`，所以这是唯一能连 UI 一起抓下来的
-//!   办法；它在 DWM 合成之后取样，窗口即使部分在屏幕外也能抓全。
-//! - **视口**（`scene` / `game`）：引擎自己的离屏图像（`COLOR_ATTACHMENT_OPTIMAL` 布局）
-//!   读回后写 PNG，不依赖窗口 / 合成器，无显示器也能出图（CI / 远程）。
+//! - **Whole window** (`window`): Windows uses `PrintWindow` + `PW_RENDERFULLCONTENT`
+//!   draws window current composite into a 32bpp DIB, then converts to RGBA writes PNG. Vulkan swapchain
+//!   held by egui-ash, host cannot get `VkImage`, so this is the only way to grab UI together
+//!   method; samples after DWM composition, window even partially off-screen can still capture fully.
+//! - **Viewport** (`scene` / `game`): engine own offscreen image (`COLOR_ATTACHMENT_OPTIMAL` layout)
+//!   read back then writes PNG, does not depend on window / compositor, can output without display (CI / remote).
 //!
-//! 触发方是 MCP（`crates/prism-editor-mcp` 的 `editor_capture`）或菜单
-//! 「Window → Capture Window」，都经过 `control.rs` 的本地控制通道。
+//! Triggered by MCP (`editor_capture` in `crates/prism-editor-mcp`) or menu
+//! "Window → Capture Window", both via `control.rs` local control channel.
 
 use std::path::PathBuf;
 
-/// 抓什么。
+/// What to grab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureTarget {
-    /// 整个编辑器窗口（UI + 视口）。
+    /// Whole editor window (UI + viewport).
     Window,
-    /// Scene view 的引擎离屏图像。
+    /// Scene view engine offscreen image.
     Scene,
-    /// Game view 的引擎离屏图像。
+    /// Game view engine offscreen image.
     Game,
 }
 
@@ -44,7 +44,7 @@ impl CaptureTarget {
     }
 }
 
-/// `1920x1080` / `1920X1080` / `1920,1080`。
+/// `1920x1080` / `1920X1080` / `1920,1080`.
 pub fn parse_size(text: &str) -> Option<[u32; 2]> {
     let normalized = text.replace(['X', ','], "x");
     let (w, h) = normalized.split_once('x')?;
@@ -56,7 +56,7 @@ pub fn parse_size(text: &str) -> Option<[u32; 2]> {
     Some([w, h])
 }
 
-/// 默认输出路径：`<state 目录>/captures/<target>-<毫秒>.png`。
+/// Default output path: `<state dir>/captures/<target>-<milliseconds>.png`.
 pub fn default_path(dir: &std::path::Path, target: CaptureTarget) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -66,7 +66,7 @@ pub fn default_path(dir: &std::path::Path, target: CaptureTarget) -> PathBuf {
         .join(format!("{}-{stamp}.png", target.name()))
 }
 
-/// 抓整个窗口的客户区，返回 `(宽, 高, RGBA8)`。
+/// Grab whole window client area, return `(width, height, RGBA8)`.
 pub fn capture_window(hwnd: isize) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     #[cfg(target_os = "windows")]
     {
@@ -162,14 +162,14 @@ mod win32 {
             bail!("window capture: window has an empty client area");
         }
 
-        // 桌面 DC 只用来建兼容 DC / DIB，DIB 本身是设备无关的。
+        // Desktop DC only used to build compatible DC / DIB, DIB itself is device-independent.
         let screen_dc = unsafe { GetDC(0) };
         if screen_dc == 0 {
             bail!("window capture: GetDC(NULL) failed");
         }
         let mem_dc = unsafe { CreateCompatibleDC(screen_dc) };
 
-        // 负高度 = 自顶向下，读回来的行序就是屏幕顺序。
+        // Negative height = top-to-bottom, rows read back are screen order.
         let info = BitmapInfo {
             header: BitmapInfoHeader {
                 size: std::mem::size_of::<BitmapInfoHeader>() as u32,
@@ -196,7 +196,7 @@ mod win32 {
 
         let old = unsafe { SelectObject(mem_dc, dib) };
         let printed = unsafe { PrintWindow(hwnd, mem_dc, PW_CLIENTONLY | PW_RENDERFULLCONTENT) };
-        // PrintWindow 是异步 GDI 调用，必须 flush 之后才能读 DIB。
+        // PrintWindow is async GDI call, must flush before reading DIB.
         unsafe { GdiFlush() };
 
         let mut pixels = vec![0u8; (width * height * 4) as usize];
@@ -204,7 +204,7 @@ mod win32 {
             unsafe {
                 std::ptr::copy_nonoverlapping(bits as *const u8, pixels.as_mut_ptr(), pixels.len());
             }
-            // DIB 是 BGRA；PNG 要 RGBA。
+            // DIB is BGRA; PNG needs RGBA.
             prism_render::screenshot::bgra_to_rgba_in_place(&mut pixels);
         }
 
@@ -222,7 +222,7 @@ mod win32 {
     }
 }
 
-/// 抓窗口并写 PNG，返回实际写入的路径。
+/// Grab window and write PNG, return actual path written.
 pub fn save_window_png(
     hwnd: isize,
     path: &std::path::Path,

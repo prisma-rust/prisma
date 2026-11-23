@@ -75,7 +75,11 @@ fn mismatched_lengths_blend_the_shared_joints_and_keep_the_rest_of_a() {
     let mut out = pose(Vec::new());
     let shared = blend_into(&mut out, &a, &b, 0.5);
     assert_eq!(shared, 1, "only one joint can be blended");
-    assert_eq!(out.len(), 2, "length kept per `a`, missing joints not collapsed to the origin");
+    assert_eq!(
+        out.len(),
+        2,
+        "length kept per `a`, missing joints not collapsed to the origin"
+    );
     assert!((out.local(0).unwrap().translation.x - 2.0).abs() < 1e-6);
     assert!(
         (out.local(1).unwrap().translation.x - 1.0).abs() < 1e-6,
@@ -408,14 +412,8 @@ fn additive_scale_is_multiplicative_and_ignores_a_zero_reference() {
         (scale.x - 2.0).abs() < 1e-5,
         "reference 0 keeps 2, got {scale:?}"
     );
-    assert!(
-        (scale.y - 4.0).abs() < 1e-5,
-        "2 × (4/2) = 4, got {scale:?}"
-    );
-    assert!(
-        (scale.z - 4.0).abs() < 1e-5,
-        "2 × (8/4) = 4, got {scale:?}"
-    );
+    assert!((scale.y - 4.0).abs() < 1e-5, "2 × (4/2) = 4, got {scale:?}");
+    assert!((scale.z - 4.0).abs() < 1e-5, "2 × (8/4) = 4, got {scale:?}");
 }
 
 #[test]

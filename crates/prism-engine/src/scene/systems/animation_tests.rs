@@ -141,22 +141,30 @@ fn one_shot_restarts_when_playing_is_re_enabled() {
     );
 
     sprite_animation_system(&mut world, 5.0);
-    assert_eq!(frame_of(&world, entity), 2, "一次性动画停在末帧");
+    assert_eq!(
+        frame_of(&world, entity),
+        2,
+        "One-shot animation stays at last frame"
+    );
 
     world.get_mut::<SpriteAnimation>(entity).unwrap().playing = false;
     sprite_animation_system(&mut world, 5.0);
-    assert_eq!(frame_of(&world, entity), 2, "暂停时保持当前帧");
+    assert_eq!(
+        frame_of(&world, entity),
+        2,
+        "Holds current frame when paused"
+    );
 
     world.get_mut::<SpriteAnimation>(entity).unwrap().playing = true;
     sprite_animation_system(&mut world, 0.05);
-    assert_eq!(frame_of(&world, entity), 0, "重新播放从第 0 帧开始");
+    assert_eq!(frame_of(&world, entity), 0, "Replay starts from frame 0");
     sprite_animation_system(&mut world, 0.1);
     assert_eq!(frame_of(&world, entity), 1);
 }
 
 #[test]
 fn frame_start_offsets_the_written_frame_within_the_row() {
-    // #584：同一行第 2..3 列作为独立动作，只播 2 帧并循环。
+    // #584: same row columns 2..3 as independent action, plays 2 frames and loops.
     let mut world = World::new();
     let entity = spawn(
         &mut world,
@@ -171,9 +179,9 @@ fn frame_start_offsets_the_written_frame_within_the_row() {
 
     sprite_animation_system(&mut world, 0.0);
     assert_eq!(frame_of(&world, entity), 2);
-    sprite_animation_system(&mut world, 0.15); // t = 0.15 -> 第 2 帧
+    sprite_animation_system(&mut world, 0.15); // t = 0.15 -> frame 2
     assert_eq!(frame_of(&world, entity), 3);
-    sprite_animation_system(&mut world, 0.1); // t = 0.25 -> 循环回 frame_start
+    sprite_animation_system(&mut world, 0.1); // t = 0.25 -> loop back to frame_start
     assert_eq!(frame_of(&world, entity), 2);
 }
 
@@ -191,7 +199,7 @@ fn derived_frames_stop_at_the_selected_rows_end() {
         [64, 16],
     );
 
-    // 4 列，从第 2 列开始 -> 只剩 2 帧。
+    // 4 columns, starting from column 2 -> only 2 frames left.
     sprite_animation_system(&mut world, 0.05);
     assert_eq!(frame_of(&world, entity), 2);
     sprite_animation_system(&mut world, 0.1);

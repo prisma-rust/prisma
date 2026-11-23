@@ -1,8 +1,8 @@
-//! 组件 schema：把 `prism-scene` 的反射注册表投影成前端属性面板可消费的形状。
+//! Component schema: project `prism-scene`'s reflection registration table into a shape consumable by frontend property panels.
 //!
-//! 前端不硬编码任何组件类型——拿到 [`Schema`] 后按字段 `kind`
-//! （`bool` / `f32` / `string` / `struct` / `list` / `option` / `array`…）
-//! 生成对应控件，`struct` 字段再按类型名递归查表。
+//! Frontend hardcodes no component type — after getting [`Schema`] it generates corresponding controls by field `kind`
+//! (`bool` / `f32` / `string` / `struct` / `list` / `option` / `array`...),
+//! and `struct` fields recursively look up table by type name.
 
 use prism_reflect::{FieldDesc, FieldType, TypeRegistry};
 use prism_scene::ComponentRegistry;
@@ -10,65 +10,65 @@ use serde::Serialize;
 
 use crate::property_drawer::{PropertyDrawer, PropertyDrawerRegistry};
 
-/// 一个类型的字段 schema。
+/// Field schema of one type.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FieldSchema {
-    /// schema 字段名（作者 JSON 的键）。
+    /// Schema field name (author JSON key).
     pub name: String,
-    /// 控件类型标签：`bool` / `i32` / `f32` / `f64` / `string` /
-    /// `struct` / `list` / `option` / `array`。
+    /// Control type tag: `bool` / `i32` / `f32` / `f64` / `string` /
+    /// `struct` / `list` / `option` / `array`.
     pub kind: &'static str,
-    /// `kind == "struct"` 时的嵌套类型名（前端按名字递归查 [`Schema`]）。
+    /// Nested type name when `kind == "struct"` (frontend recursively looks up [`Schema`] by name).
     pub struct_type: Option<String>,
-    /// `list` / `option` / `array` 的元素 schema。
+    /// Element schema for `list` / `option` / `array`.
     pub inner: Option<Box<FieldSchema>>,
-    /// `array` 的定长长度。
+    /// Fixed array length for `array`.
     pub array_len: Option<usize>,
-    /// 枚举变体名（按声明顺序）。`Some` 时前端应渲染**下拉框**，
-    /// 选项文字与写回值都是变体名（即作者 JSON 里的字符串）。
+    /// Enum variant names (in declaration order). When `Some`, frontend should render a **dropdown**,
+    /// option text and written-back value are both variant name (i.e. string in author JSON).
     pub variants: Option<Vec<String>>,
-    /// 编辑器只读（`#[reflect(read_only)]`）。
+    /// Editor read-only (`#[reflect(read_only)]`).
     pub read_only: bool,
-    /// 字段绘制器 = `PropertyDrawer`（`[Range]` / `[TextArea]` /
-    /// `[ColorUsage]` / `[CustomPropertyDrawer]`）。缺省（不序列化）时前端按
-    /// `kind` 选默认控件。见 [`crate::property_drawer`]。
+    /// Field drawer = `PropertyDrawer` (`[Range]` / `[TextArea]` /
+    /// `[ColorUsage]` / `[CustomPropertyDrawer]`). When absent (not serialized) frontend picks default control
+    /// by `kind`. See [`crate::property_drawer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drawer: Option<PropertyDrawer>,
 }
 
-/// 一个类型（组件或嵌套结构体）的 schema。
+/// Schema of one type (component or nested struct).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeSchema {
-    /// 规范化类型名（如 `prism_engine::scene::Camera`）。
+    /// Normalized type name (like `prism_engine::scene::Camera`).
     pub name: String,
-    /// 稳定类型 id（16 位十六进制）。
+    /// Stable type id (16-bit hex).
     pub type_id: String,
-    /// schema 版本。
+    /// Schema version.
     pub version: u32,
-    /// 是否为可挂到实体上的组件（`false` = 仅作嵌套字段类型）。
+    /// Whether it is a component attachable to entities (`false` = nested field type only).
     pub is_component: bool,
-    /// 字段列表（源码顺序）。
+    /// Field list (source order).
     pub fields: Vec<FieldSchema>,
-    /// 组件「添加」时的默认作者 JSON（非组件为 `None`）。
+    /// Default author JSON when "adding" component (`None` for non-components).
     pub default_json: Option<serde_json::Value>,
 }
 
-/// 整个编辑器的类型表。
+/// Type table for whole editor.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Schema {
-    /// 组件在前、嵌套结构体在后，各自按类型名排序。
+    /// Components first, nested structs after, each sorted by type name.
     pub types: Vec<TypeSchema>,
 }
 
 impl Schema {
-    /// 按类型名查一项。
+    /// Look up one entry by type name.
     pub fn type_by_name(&self, name: &str) -> Option<&TypeSchema> {
         self.types.iter().find(|ty| ty.name == name)
     }
 
-    /// 所有可挂载组件的类型名（稳定顺序）。
+    /// Type names of all attachable components (stable order).
     pub fn component_names(&self) -> Vec<&str> {
         self.types
             .iter()
@@ -78,31 +78,31 @@ impl Schema {
     }
 }
 
-/// 进程内共享的内置组件注册表。
+/// Process-wide shared built-in component registry.
 ///
-/// 注册内置组件要建若干 `HashMap` 并注册整棵反射类型树，而字段写入 /
-/// 规范化是**输入事件级**的热路径（拖动滑块时每帧都会调用），因此这里只
-/// 构建一次。实例由 `prism_scene::builtin_registry` 提供，编辑器、引擎与
-/// 工程模块共用同一份 schema。注册表构建后只读，回调都要求
-/// `Send + Sync`，可以安全地跨线程共享。
+/// Registering built-in components requires building several `HashMap`s and registering whole reflection type tree, while field write /
+/// normalization is an **input-event-level** hot path (called every frame when dragging slider), so here
+/// build only once. Instance provided by `prism_scene::builtin_registry`; editor, engine and
+/// project modules share same schema. Registry read-only after build, callbacks all require
+/// `Send + Sync`, can be safely shared across threads.
 ///
-/// 需要追加自定义组件的宿主仍然用 [`build_schema_with`] 传入自己的注册表，
-/// 不受这里影响。
+/// Host needing to append custom components still uses [`build_schema_with`] to pass its own registry,
+/// not affected by this.
 pub fn builtin_registry() -> &'static ComponentRegistry {
     prism_scene::builtin_registry()
 }
 
-/// 构建完整 schema（内置组件的唯一来源是 `prism-scene` 的注册表）。
+/// Build complete schema (only source of built-in components is `prism-scene`'s registry).
 ///
-/// 字段绘制器用 [`PropertyDrawerRegistry::with_builtin`] 的内置声明。
+/// Field drawers use built-in declarations from [`PropertyDrawerRegistry::with_builtin`].
 pub fn build_schema() -> Schema {
     build_schema_from(builtin_registry())
 }
 
-/// 用给定注册表 + 给定绘制器注册表构建 schema。
+/// Build schema with given registry + given drawer registry.
 ///
-/// 宿主（未来插件、自定义组件）可以在内置声明之上追加自己的
-/// `[CustomPropertyDrawer]`；字段级声明优先于类型级。
+/// Host (non-plugin, custom components) can append its own
+/// `[CustomPropertyDrawer]` on top of built-in declarations; field-level declarations take priority over type-level.
 pub fn build_schema_with(registry: &ComponentRegistry, drawers: &PropertyDrawerRegistry) -> Schema {
     let component_names = registry.component_names();
     let types_registry = registry.type_registry();
@@ -131,7 +131,7 @@ pub fn build_schema_with(registry: &ComponentRegistry, drawers: &PropertyDrawerR
         })
         .collect();
 
-    // 组件优先，其后嵌套类型；同组按名字排序，保证 UI 顺序稳定。
+    // Components first, then nested types; within same group sort by name, keep UI order stable.
     types.sort_by(|a, b| {
         b.is_component
             .cmp(&a.is_component)
@@ -141,8 +141,8 @@ pub fn build_schema_with(registry: &ComponentRegistry, drawers: &PropertyDrawerR
     Schema { types }
 }
 
-/// 用给定注册表构建 schema，绘制器用内置声明。测试可借此注入只含容器枚举
-/// 字段的组件，不必为了覆盖 schema 逻辑往 `prism-scene` 里加真实组件。
+/// Build schema with given registry, drawers use built-in declarations. Tests can inject a component containing only container enum
+/// fields this way, without adding a real component into `prism-scene` just to cover schema logic.
 fn build_schema_from(registry: &ComponentRegistry) -> Schema {
     build_schema_with(registry, &PropertyDrawerRegistry::with_builtin())
 }
@@ -179,11 +179,11 @@ fn value_type_name(schema: &FieldSchema) -> Option<&str> {
     None
 }
 
-/// 把枚举变体挂到**最内层**的标量 leaf 上。
+/// Attach enum variants to the **innermost layer** scalar leaf.
 ///
-/// `enum_variants()` 由 `Vec<T>` / `Option<T>` / `[T; N]` 向内层转发，所以
-/// `Vec<Enum>` 字段拿到的是 `inner`（`u8`）该有的变体名；前端只有叶子控件
-/// （以及数组/列表元素自己的 `FieldEditor`）会渲染下拉框。
+/// `enum_variants()` forwards inward through `Vec<T>` / `Option<T>` / `[T; N]`, so
+/// a `Vec<Enum>` field gets variant names that `inner` (`u8`) should have; frontend only has the leaf control
+/// (and array / list elements' own `FieldEditor`) will render dropdown.
 fn attach_variants(schema: &mut FieldSchema, variants: Vec<String>) {
     match schema.inner.as_mut() {
         Some(inner) if matches!(schema.kind, "list" | "option" | "array") => {
@@ -193,7 +193,7 @@ fn attach_variants(schema: &mut FieldSchema, variants: Vec<String>) {
     }
 }
 
-/// 生成无名字段 schema（供 list/option/array 的元素与顶层复用）。
+/// Generate nameless field schema (reused for list/option/array elements and top level).
 fn leaf_schema(ty: &FieldType, registry: &TypeRegistry) -> FieldSchema {
     let (kind, struct_type, inner, array_len) = match ty {
         FieldType::Bool => ("bool", None, None, None),
@@ -255,7 +255,7 @@ mod tests {
     fn schema_exposes_enum_variants_for_dropdowns() {
         let schema = build_schema();
 
-        // `Camera.clear_flags` 是 `CameraClearFlags`：u8 编码 + 变体名。
+        // `Camera.clear_flags` is `CameraClearFlags`: u8 encoding + variant names.
         let camera = schema
             .type_by_name("prism_engine::scene::Camera")
             .expect("Camera schema");
@@ -277,7 +277,7 @@ mod tests {
             )
         );
 
-        // `Text.alignment` 走同一套机制（证明不是为 Camera 特判的）。
+        // `Text.alignment` uses same mechanism (proves no special-case for Camera).
         let text = schema
             .type_by_name("prism_engine::ui::Text")
             .expect("Text schema");
@@ -297,7 +297,7 @@ mod tests {
             )
         );
 
-        // 普通数值字段没有变体。
+        // Normal numeric fields have no variants.
         let exposure = camera.fields.iter().find(|f| f.name == "exposure").unwrap();
         assert!(exposure.variants.is_none());
     }
@@ -306,7 +306,7 @@ mod tests {
     fn schema_exposes_components_and_nested_types() {
         let schema = build_schema();
 
-        // 组件优先排序，且每个组件都带默认值。
+        // Components sorted first, and each component carries default value.
         let first_non_component = schema
             .types
             .iter()
@@ -325,7 +325,7 @@ mod tests {
         assert!(camera.is_component);
         assert!(camera.default_json.is_some());
 
-        // `aspect` 是只读字段，`enabled` 不是。
+        // `aspect` is read-only field, `enabled` is not.
         assert!(
             camera
                 .fields
@@ -343,7 +343,7 @@ mod tests {
                 .read_only
         );
 
-        // 嵌套类型 `glam::Vec3` 出现在表里，且 Style.anchors 指向 struct。
+        // Nested type `glam::Vec3` appears in table, and Style.anchors points to struct.
         assert!(schema.type_by_name("glam::Vec3").is_some());
         assert!(schema.type_by_name("prism_engine::ui::Anchors").is_some());
 
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(width.kind, "option");
         assert_eq!(width.inner.as_ref().unwrap().kind, "f32");
 
-        // 非组件类型没有默认值。
+        // Non-component types have no default value.
         let vec3 = schema.type_by_name("glam::Vec3").unwrap();
         assert!(!vec3.is_component);
         assert!(vec3.default_json.is_none());
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(rect.inner.as_ref().unwrap().kind, "f32");
     }
 
-    // —— 字段绘制器（`PropertyDrawer` / `PropertyAttribute`） ——
+    // —— field drawers (`PropertyDrawer` / `PropertyAttribute`) ——
 
     #[test]
     fn builtin_drawers_reach_editor_fields() {
@@ -396,33 +396,33 @@ mod tests {
                 .clone()
         };
 
-        // `[Range]` → 滑动条 + 上下界。
+        // `[Range]` → slider + upper/lower bounds.
         let exposure = field("prism_engine::scene::Camera", "exposure").expect("Camera.exposure");
         assert_eq!(exposure.renderer, PropertyRenderer::Slider);
         assert_eq!(exposure.range_bounds(), Some((0.0, 5.0)));
         assert!(exposure.tooltip().is_some());
 
-        // `[ColorUsage]` → 取色盘。
+        // `[ColorUsage]` → color picker.
         let background =
             field("prism_engine::scene::Camera", "background_color").expect("background_color");
         assert_eq!(background.renderer, PropertyRenderer::Color);
         assert_eq!(background.color_usage_flags(), Some((true, false)));
 
-        // `[TextArea]` → 多行文本框。
+        // `[TextArea]` → multi-line text box.
         let content = field("prism_engine::ui::Text", "content").expect("Text.content");
         assert_eq!(content.renderer, PropertyRenderer::TextArea);
         assert_eq!(content.line_range(), Some((2, 6)));
 
-        // 没有声明的字段不带 drawer（前端退回默认控件）。
+        // Fields without declarations carry no drawer (frontend falls back to default control).
         assert!(field("prism_engine::scene::Camera", "aspect").is_none());
     }
 
     #[test]
     fn builtin_registry_is_shared_and_matches_a_fresh_one() {
-        // 同一进程只构建一次（字段写入是输入事件热路径）。
+        // Same process builds only once (field write is input event hot path).
         assert!(std::ptr::eq(builtin_registry(), builtin_registry()));
 
-        // 缓存内容必须与手工注册的结果一致，避免把初始化写歪。
+        // Cache content must match manually registered result, avoid initializing wrong.
         let mut fresh = ComponentRegistry::new();
         register_builtin_components(&mut fresh);
         assert_eq!(
@@ -430,7 +430,7 @@ mod tests {
             fresh.component_names()
         );
 
-        // `build_schema()` 走的就是这份共享注册表。
+        // `build_schema()` goes through this shared registry.
         assert_eq!(
             build_schema().component_names(),
             builtin_registry().component_names()
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(background.renderer, PropertyRenderer::Custom);
         assert_eq!(background.custom.as_deref(), Some("LinearColorEditor"));
 
-        // 同字段的后注册声明覆盖内置的 `[Range(1,179)]`。
+        // Later registration for same field overrides built-in `[Range(1,179)]`.
         let fov = camera
             .fields
             .iter()
@@ -482,7 +482,7 @@ mod tests {
             .expect("fov drawer");
         assert_eq!(fov.range_bounds(), Some((10.0, 120.0)));
 
-        // 未覆盖的内置声明仍在。
+        // Un-overridden built-in declarations remain.
         let exposure = camera
             .fields
             .iter()
@@ -493,8 +493,8 @@ mod tests {
             .expect("exposure drawer");
         assert_eq!(exposure.range_bounds(), Some((0.0, 5.0)));
 
-        // 类型级绘制器（`[CustomPropertyDrawer(typeof(Anchors))]`）：
-        // 凡是值类型为 `prism_engine::ui::Anchors` 的字段（如 `Style.anchors`）都获得该绘制器。
+        // Type-level drawer (`[CustomPropertyDrawer(typeof(Anchors))]`):
+        // any field whose value type is `prism_engine::ui::Anchors` (like `Style.anchors`) gets this drawer.
         drawers.register_type(
             "prism_engine::ui::Anchors",
             PropertyDrawer::custom("AnchorGizmo"),
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(anchors_drawer.renderer, PropertyRenderer::Custom);
         assert_eq!(anchors_drawer.custom.as_deref(), Some("AnchorGizmo"));
 
-        // 宿主注册表是局部覆盖：默认 schema 仍是内置的 `[ColorUsage]`。
+        // Host registry is local override: default schema still has built-in `[ColorUsage]`.
         let builtin_schema = build_schema();
         let builtin_background = builtin_schema
             .type_by_name("prism_engine::scene::Camera")
@@ -525,7 +525,7 @@ mod tests {
         assert_eq!(builtin_background.renderer, PropertyRenderer::Color);
     }
 
-    // —— 容器里的枚举：`Vec<Enum>` / `Option<Enum>` / `[Enum; N]` ——
+    // —— enums inside containers: `Vec<Enum>` / `Option<Enum>` / `[Enum; N]` ——
     use prism_reflect::{FieldType, Reflect, ReflectError, ReflectType, Value};
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -576,7 +576,7 @@ mod tests {
         let field = |name: &str| ty.fields.iter().find(|f| f.name == name).unwrap();
         let expected = || Some(vec!["Left".to_string(), "Center".to_string()]);
 
-        // 容器本身不带变体，变体在最内层的标量 leaf 上。
+        // Container itself carries no variants, variants live on innermost scalar leaf.
         for (name, kind) in [("flags", "list"), ("maybe", "option"), ("fixed", "array")] {
             let schema = field(name);
             assert_eq!(schema.kind, kind, "{name} kind");

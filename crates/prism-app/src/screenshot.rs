@@ -1,18 +1,18 @@
-//! 内置截图：用环境变量在某一帧把画面写成 PNG。
+//! Built-in screenshot: write frame to PNG via env var at a certain frame.
 //!
-//! 这是给自动化（CI 截图、编辑器 / MCP 抓图、美术调参）用的最小接口，
-//! 不引入新的公开 API：
+//! Minimal interface for automation (CI screenshots, editor / MCP capture, art tuning),
+//! no new public API introduced:
 //!
-//! - `PRISMA_SCREENSHOT=<path>` 启用，写出 PNG（父目录需已存在）。
-//! - `PRISMA_SCREENSHOT_FRAME=<n>` 在第 n 帧抓（默认 90，给资源上传和动画留时间）。
-//! - `PRISMA_SCREENSHOT_SIZE=1920x1080` 指定输出分辨率。
-//! - `PRISMA_SCREENSHOT_SCALE=2` 按窗口分辨率的倍数放大（`SIZE` 优先）。
+//! - `PRISMA_SCREENSHOT=<path>` enable, write PNG (parent dir must exist).
+//! - `PRISMA_SCREENSHOT_FRAME=<n>` grab at frame n (default 90, give resource upload and animation time).
+//! - `PRISMA_SCREENSHOT_SIZE=1920x1080` specify output resolution.
+//! - `PRISMA_SCREENSHOT_SCALE=2` scale by window resolution multiple (`SIZE` priority).
 //!
-//! 缩放是最近邻，像素画放大不会糊；内容本身仍是窗口那一帧，不重渲染。
+//! Scaling is nearest-neighbor, pixel art scaling won't blur; content itself is still that window frame, no re-render.
 
 use std::path::PathBuf;
 
-/// 一次待执行的截图。
+/// One pending screenshot.
 #[derive(Debug, Clone)]
 pub struct ScreenshotPlan {
     pub path: PathBuf,
@@ -22,7 +22,7 @@ pub struct ScreenshotPlan {
 }
 
 impl ScreenshotPlan {
-    /// 从环境变量读取；没有 `PRISMA_SCREENSHOT` 时返回 `None`。
+    /// Read from env var; returns `None` when no `PRISMA_SCREENSHOT`.
     pub fn from_env() -> Option<Self> {
         let raw_path = std::env::var("PRISMA_SCREENSHOT").ok()?;
         let trimmed = raw_path.trim();
@@ -53,13 +53,13 @@ impl ScreenshotPlan {
         })
     }
 
-    /// 这一帧是否达到或超过设定帧数（一旦满足且内容就绪即可抓图）。
+    /// Whether this frame reaches or exceeds set frame count (once satisfied and content ready can grab).
     pub fn fires_on(&self, frame_count: u64) -> bool {
         frame_count >= self.frame
     }
 }
 
-/// 解析 `1920x1080` / `1920X1080` / `1280,720`。
+/// Parse `1920x1080` / `1920X1080` / `1280,720`.
 fn parse_size(raw: &str) -> Option<[u32; 2]> {
     let normalized = raw.trim().replace(['X', ',', '*'], "x");
     let (width, height) = normalized.split_once('x')?;

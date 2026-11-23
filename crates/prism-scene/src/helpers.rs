@@ -93,7 +93,7 @@ impl HierarchyHelper {
     ///
     /// - `Some(parent)` attaches the entity under `parent`.
     /// - `None` detaches the entity (it becomes a root node).
-    /// - Updates both old and new parent's [`Child`] 列表
+    /// - Updates both old and new parent's [`Child`] list
     /// - Self-parent and cycles (reparenting under a descendant) are rejected.
     /// - Dead entities are rejected (logged and ignored).
     ///
@@ -119,7 +119,7 @@ impl HierarchyHelper {
             }
         }
 
-        // 1. 移除 from old parent's Child 列表
+        // 1. Remove from old parent's Child list
         if let Some(old_parent) = world.get::<Parent>(entity).map(|p| p.0) {
             if let Some(children) = world.get_mut::<Child>(old_parent) {
                 children.0.retain(|e| *e != entity);

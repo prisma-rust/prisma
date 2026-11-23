@@ -1,9 +1,9 @@
-//! `Engine` 的换场语义（#482）：再加载一次不能把实体变成两份。
+//! `Engine` scene-switch semantics (#482): loading again cannot turn entity into two copies.
 
 use super::*;
 use crate::scene::components::SceneMember;
 
-/// 写一个只含 `count` 个空实体的作者格式场景，返回路径。
+/// Write an author-format scene containing only `count` empty entities, return path.
 fn write_scene(name: &str, count: usize) -> std::path::PathBuf {
     let mut entities = Vec::new();
     for index in 0..count {
@@ -39,7 +39,11 @@ fn loading_the_same_scene_twice_does_not_duplicate_entities() {
 
     let second = engine.load_scene_json_file(&path).unwrap();
     assert_eq!(second.len(), 3);
-    assert_eq!(scene_members(&engine), 3, "旧场景必须被卸载，而不是叠加");
+    assert_eq!(
+        scene_members(&engine),
+        3,
+        "Old scene must be unloaded, not overlaid"
+    );
     assert!(engine.scene_generation() > generation);
 
     let _ = std::fs::remove_file(&path);
@@ -73,7 +77,7 @@ fn unloading_leaves_the_engine_ready_for_the_next_scene() {
     assert_eq!(scene_members(&engine), 0);
     assert_eq!(engine.current_scene_name(), None);
 
-    // 卸载之后再加载同一个场景：计数必须还是 2。
+    // After unload then load same scene again: count must still be 2.
     engine.load_scene_json_file(&path).unwrap();
     assert_eq!(scene_members(&engine), 2);
 

@@ -1,18 +1,18 @@
-//! 帧截图：把最后一帧的交换链图像读回 CPU，可选缩放到指定分辨率后写成 PNG。
+//! Frame screenshot: read back last frame swapchain image to CPU, optional scale to target resolution then write PNG.
 //!
-//! 用法是两段式，因为读回必须发生在帧提交之后：
+//! Usage is two-phase, because readback must happen after frame submit:
 //!
 //! ```ignore
 //! renderer.request_screenshot(ScreenshotRequest { path, size: Some([1920, 1080]) });
-//! // … 下一帧 execute 时插入 copy，present 提交 …
+//! // ... on next frame execute insert copy, present submit ...
 //! renderer.finish_screenshot(&ctx)?;
 //! ```
 //!
-//! `execute` 在把交换链图像交还给 present 之前插入一次
-//! `vkCmdCopyImageToBuffer`（`PRESENT_SRC → TRANSFER_SRC → PRESENT_SRC`），
-//! 所以截图拿到的是**屏幕上那一帧**，不是重渲染。
+//! `execute` inserts one `vkCmdCopyImageToBuffer` before returning swapchain image to present
+//! (`PRESENT_SRC → TRANSFER_SRC → PRESENT_SRC`),
+//! so screenshot gets the frame **that was on screen**, not a re-render.
 //!
-//! 缩放用最近邻：像素画放大后保持硬边，不做插值。
+//! Scaling uses nearest neighbor: pixel art keeps hard edges after upscale, no interpolation.
 
 use std::path::PathBuf;
 
@@ -22,20 +22,20 @@ use ash::vk;
 use crate::buffer::find_memory_type;
 use crate::context::VulkanContext;
 
-/// 一次截图请求。
+/// One screenshot request.
 #[derive(Debug, Clone)]
 pub struct ScreenshotRequest {
-    /// PNG 输出路径（父目录必须已存在）。
+    /// PNG output path (parent directory must already exist).
     pub path: PathBuf,
-    /// 目标分辨率；`None` 表示与交换链一致。
+    /// Target resolution; `None` means same as swapchain.
     pub size: Option<[u32; 2]>,
-    /// 目标缩放倍数（相对交换链分辨率）；`size` 优先。
+    /// Target scale factor (relative swapchain resolution); `size` takes priority.
     pub scale: Option<f32>,
 }
 
-/// 把 RGBA8 像素写成 PNG，可选最近邻缩放到目标分辨率。
+/// Write RGBA8 pixels to PNG, optional nearest-neighbor scale to target resolution.
 ///
-/// 供宿主（编辑器窗口截图、离屏出图）复用：调用方只负责拿到 RGBA8。
+/// For host reuse (editor window screenshot, offscreen output): caller only responsible for getting RGBA8.
 pub fn save_rgba_png(
     path: &std::path::Path,
     width: u32,
@@ -80,14 +80,14 @@ pub fn save_rgba_png(
     Ok(path.to_path_buf())
 }
 
-/// 把 BGRA8 就地转成 RGBA8（交换链 / Win32 DIB 都是 BGRA 顺序）。
+/// Convert BGRA8 in place to RGBA8 (swapchain / Win32 DIB both BGRA order).
 pub fn bgra_to_rgba_in_place(pixels: &mut [u8]) {
     for texel in pixels.as_chunks_mut::<4>().0 {
         texel.swap(0, 2);
     }
 }
 
-/// 一次进行中的截图：host-visible 缓冲区 + 请求。
+/// One in-progress screenshot: host-visible buffer + request.
 pub(crate) struct ScreenshotCapture {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -96,13 +96,13 @@ pub(crate) struct ScreenshotCapture {
 }
 
 impl ScreenshotCapture {
-    /// 按交换链尺寸分配读回缓冲区。
+    /// Allocate readback buffer by swapchain size.
     pub(crate) fn new(
         context: &VulkanContext,
         extent: vk::Extent2D,
         mut request: ScreenshotRequest,
     ) -> Result<Self> {
-        // 缩放倍数在这里解析：调用方不需要先知道交换链尺寸。
+        // Scale factor parsed here: caller need not know swapchain size first.
         if request.size.is_none() {
             if let Some(scale) = request.scale.filter(|s| *s > 0.0) {
                 let w = ((extent.width as f32) * scale).round().max(1.0) as u32;
@@ -144,9 +144,9 @@ impl ScreenshotCapture {
         })
     }
 
-    /// 在命令缓冲区里记录：图像 → 缓冲区 → 恢复原布局。
+    /// Record in command buffer: image → buffer → resume original layout.
     ///
-    /// 支持窗口模式（`PRESENT_SRC_KHR`）与无窗口离屏模式（`COLOR_ATTACHMENT_OPTIMAL`）。
+    /// Supports window mode (`PRESENT_SRC_KHR`) and windowless offscreen mode (`COLOR_ATTACHMENT_OPTIMAL`).
     pub(crate) fn record_copy(
         &self,
         device: &ash::Device,
@@ -244,7 +244,7 @@ impl ScreenshotCapture {
         Ok(())
     }
 
-    /// 帧提交完成后读回并写 PNG，返回实际写入的路径。
+    /// After frame submit complete, read back and write PNG, return actual written path.
     pub(crate) fn finish(
         &self,
         context: &VulkanContext,
@@ -265,7 +265,7 @@ impl ScreenshotCapture {
             context.device.unmap_memory(self.memory);
         }
 
-        // 交换链常见格式是 B8G8R8A8；PNG 要 RGBA。
+        // Swapchain common format is B8G8R8A8; PNG needs RGBA.
         let bgra = matches!(
             swapchain_format,
             vk::Format::B8G8R8A8_SRGB | vk::Format::B8G8R8A8_UNORM
@@ -275,7 +275,7 @@ impl ScreenshotCapture {
                 texel.swap(0, 2);
             }
         }
-        // 交换链可能是 sRGB 存储；PNG 按 sRGB 存即可，不需要再做转换。
+        // Swapchain may be sRGB storage; PNG stored as sRGB, no need to convert again.
 
         let mut image = image::RgbaImage::from_raw(width as u32, height as u32, pixels)
             .context("screenshot: build image buffer")?;

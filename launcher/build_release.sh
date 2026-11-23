@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# 打 arm64-v8a 的 release APK（产物在 launcher/src-tauri/gen/android/app/build/outputs/）。
+# Build arm64-v8a release APK (output in launcher/src-tauri/gen/android/app/build/outputs/).
 #
-# 用法（Git Bash / WSL / Linux）：bash launcher/build_release.sh
-# 仓库按 core.autocrlf 检出，Windows 上直接 ./build_release.sh 会因 shebang 带 CR 失败。
+# Usage (Git Bash / WSL / Linux): bash launcher/build_release.sh
+# Repo checked out per core.autocrlf; on Windows directly ./build_release.sh will fail because shebang has CR.
 #
-# 依赖环境变量（见 launcher/SETUP.md），脚本本身不指向任何一台机器的路径：
-#   JAVA_HOME          JDK 17（Tauri/Gradle 要求）
+# Depends on env vars (see launcher/SETUP.md), script itself does not point to any machine path:
+#   JAVA_HOME          JDK 17 (required by Tauri/Gradle)
 #   ANDROID_HOME       Android SDK
-#   ANDROID_NDK_HOME   或 NDK_HOME，NDK 安装目录
+#   ANDROID_NDK_HOME   or NDK_HOME, NDK install directory
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +24,7 @@ export ANDROID_HOME
 export ANDROID_NDK_HOME="$ndk"
 export NDK_HOME="$ndk"
 
-# Windows 上 Gradle 默认读不到 Windows 证书库；需要时用 JAVA_TOOL_OPTIONS 覆盖。
+# On Windows Gradle cannot read Windows cert store by default; override with JAVA_TOOL_OPTIONS when needed.
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Djavax.net.ssl.trustStoreType=Windows-ROOT -Dcom.sun.net.ssl.checkRevocation=false -Dcom.sun.security.disableRevocation=true}"
 
 cd "$repo_root/launcher"

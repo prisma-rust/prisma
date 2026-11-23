@@ -64,14 +64,14 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
 
       immersive = !immersive
       if (immersive) {
-        // 隐藏状态栏和导航栏,沉浸模式
+        // hide state 栏和导航栏,沉浸mode
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
           WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        // 让内容延伸到系统栏区域
+        // 让内容延伸到system 栏region
         WindowCompat.setDecorFitsSystemWindows(window, false)
       } else {
-        // 恢复显示系统栏
+        // resume display system 栏
         controller.show(WindowInsetsCompat.Type.systemBars())
         WindowCompat.setDecorFitsSystemWindows(window, true)
       }
@@ -96,14 +96,14 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
       val color = android.graphics.Color.parseColor(args.color)
 
       val window = activity.window
-      // 清除 FLAG_TRANSLUCENT_STATUS(否则 setColor 无效)
+      // 清除 FLAG_TRANSLUCENT_STATUS(otherwise  setColor no 效)
       window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
-      // 让内容延伸到状态栏下方
+      // 让内容延伸到state 栏below 方
       window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
       window.statusBarColor = color
       window.navigationBarColor = color
 
-      // 根据背景亮度自动切换状态栏图标颜色(深色背景用浅色图标)
+      // 根据背景bright degrees 自动切换state 栏graph 标color (深色背景用浅色graph 标)
       val controller = WindowCompat.getInsetsController(window, window.decorView)
       val isLight = isColorLight(color)
       controller.isAppearanceLightStatusBars = isLight
@@ -174,7 +174,7 @@ class NativePlugin(private val activity: Activity) : Plugin(activity) {
         Build.CPU_ABI
       }
       result.put("cpuAbi", abis)
-      // 屏幕尺寸
+      // 屏幕size
       val metrics = DisplayMetrics()
       activity.windowManager.defaultDisplay.getMetrics(metrics)
       result.put("screenWidth", metrics.widthPixels)

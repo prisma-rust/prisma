@@ -41,7 +41,7 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
     let body_w = to_wide(&body);
 
     let flags = MB_YESNO | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND | MB_DEFBUTTON2;
-    // HWND 所有者 = null（无父窗口；渲染窗口可能处于不良状态）
+    // HWND owner = null (no parent window; render window might be in bad state)
     let ret = unsafe {
         MessageBoxW(
             std::ptr::null_mut(),

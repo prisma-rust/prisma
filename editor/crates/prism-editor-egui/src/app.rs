@@ -1679,7 +1679,7 @@ mod tests {
         let seeded = seeded_render_settings(None, Some(project.clone()), true);
         assert_eq!(seeded.tonemap_mode, 2);
         assert!((seeded.bloom_intensity - 0.75).abs() < 1e-6);
-        assert!(seeded.show_grid, "网格仍是编辑器开关");
+        assert!(seeded.show_grid, "grid still editor switch");
 
         let restored = serde_json::json!({ "tonemapMode": 0, "showGrid": false });
         let seeded = seeded_render_settings(Some(&restored), Some(project.clone()), true);
@@ -1766,10 +1766,10 @@ bloom_intensity = 0.5
     fn every_listed_shortcut_maps_to_a_key() {
         for entry in SHORTCUTS.iter().chain(SHORTCUT_ALIASES.iter()) {
             let chord = KeyChord::parse(entry.keys)
-                .unwrap_or_else(|| panic!("{:?} 的键位 {:?} 解析不了", entry.command, entry.keys));
+                .unwrap_or_else(|| panic!("{:?} key {:?} cannot parse", entry.command, entry.keys));
             assert!(
                 key_for(&chord.key).is_some(),
-                "{:?} 的键名 {:?} 在 egui 里没有对应键",
+                "{:?} key name {:?} has no corresponding key in egui",
                 entry.command,
                 chord.key
             );
@@ -1777,7 +1777,7 @@ bloom_intensity = 0.5
         assert_eq!(
             editor_shortcuts(&Default::default()).len(),
             SHORTCUTS.len() + SHORTCUT_ALIASES.len(),
-            "分发表应当覆盖整张表（含别名）"
+            "shortcut table should cover whole table (incl. aliases)"
         );
     }
 
@@ -1793,7 +1793,7 @@ bloom_intensity = 0.5
             };
             assert!(
                 modifiers(&pair[0].0) >= modifiers(&pair[1].0),
-                "排序必须按修饰键数量从多到少，否则 Ctrl+Shift+S 会被 Ctrl+S 吃掉"
+                "sort must be by modifier count descending, otherwise Ctrl+Shift+S eaten by Ctrl+S"
             );
         }
 
@@ -1812,13 +1812,13 @@ bloom_intensity = 0.5
         );
         assert!(
             !consume_shortcut_exact(&mut input, &save),
-            "Ctrl+Shift+S 不能触发 Save"
+            "Ctrl+Shift+S cannot trigger Save"
         );
         assert!(
             consume_shortcut_exact(&mut input, &save_as),
-            "Ctrl+Shift+S 必须触发 Save As"
+            "Ctrl+Shift+S must trigger Save As"
         );
-        assert!(input.events.is_empty(), "命中后事件要被消费掉");
+        assert!(input.events.is_empty(), "events consumed after hit");
 
         input.events.push(egui::Event::Key {
             key: egui::Key::S,
@@ -1837,7 +1837,7 @@ bloom_intensity = 0.5
         for entry in SHORTCUTS {
             assert!(
                 !seen.contains(&entry.command),
-                "{:?} 在 SHORTCUTS 里出现了两次",
+                "{:?} appears twice in SHORTCUTS",
                 entry.command
             );
             seen.push(entry.command);
@@ -1850,7 +1850,7 @@ bloom_intensity = 0.5
         for entry in SHORTCUTS {
             assert!(
                 table.iter().any(|(_, command)| *command == entry.command),
-                "{:?} 在表里但没有进分发表",
+                "{:?} in table but not in shortcut table",
                 entry.command
             );
         }
@@ -1858,8 +1858,11 @@ bloom_intensity = 0.5
 
     #[test]
     fn typing_in_a_text_field_keeps_the_bare_shortcuts() {
-        assert!(plain_shortcut(Command::FrameSelection), "F 是裸键");
-        assert!(plain_shortcut(Command::DeleteSelection), "Delete 是裸键");
+        assert!(plain_shortcut(Command::FrameSelection), "F is bare key");
+        assert!(
+            plain_shortcut(Command::DeleteSelection),
+            "Delete is bare key"
+        );
         assert!(plain_shortcut(Command::SelectAll));
 
         assert!(!plain_shortcut(Command::Save));
@@ -1880,7 +1883,7 @@ bloom_intensity = 0.5
                 .iter()
                 .any(|(entry, _)| entry.modifiers == egui::Modifiers::NONE
                     && entry.logical_key == egui::Key::A),
-            "裸 A 会把输入框里打的字变成全选实体"
+            "bare A turns typed chars in input box into select-all-entities"
         );
     }
 

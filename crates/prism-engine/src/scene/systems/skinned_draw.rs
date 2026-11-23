@@ -1,7 +1,7 @@
-// 蒙皮（#560 P0-3b）：把 `SkinnedMeshRenderer` 实体接成绘制项。
+// Skinning (#560 P0-3b): hook `SkinnedMeshRenderer` entities into draw items.
 //
-// 单独一个文件而不是塞进 `render.rs`：静态网格那条循环已经很满，这里的分支
-// 还要顺手把每个实体的骨骼调色板追加进帧包。
+// Separate file instead of stuffing into `render.rs`: static mesh loop already full, this branch
+// also needs to append each entity bone palette into frame pack.
 
 use prism_ecs::{Entity, World};
 use prism_render::culling::{Aabb, Frustum};
@@ -14,19 +14,19 @@ use crate::scene::components::{
 };
 use crate::scene::systems::render::MeshBounds;
 
-/// 每帧最大骨骼矩阵数（与 `ForwardPass::BONE_CAPACITY` 一致）。
+/// Max bone matrices per frame (consistent with `ForwardPass::BONE_CAPACITY`).
 ///
-/// 超出的实体退回 bind pose（`bone_offset = None`）并告警一次，而不是让
-/// 多个实例的调色板互相覆盖。
+/// Entities over budget fall back to bind pose (`bone_offset = None`) and warn once, rather than
+/// letting multiple instance palettes overwrite each other.
 const BONE_BUDGET: usize = prism_render::forward_pass::ForwardPass::BONE_CAPACITY;
 
-/// 把 `SkinnedMeshRenderer` 实体追加到绘制列表，并收集它们的骨骼调色板。
+/// Append `SkinnedMeshRenderer` entities to draw list, collect their bone palettes.
 ///
-/// `bones` 是整帧共享的调色板缓冲：每个实体把自己 `BonePalette` 的矩阵追加在
-/// 尾部，绘制项只记 `bone_offset`（顶点阶段按它索引 SSBO），所以同一个骨架
-/// 被多个网格复用时也不需要复制。
+/// `bones` is whole-frame shared palette buffer: each entity appends its `BonePalette` matrices at
+/// tail, draw item only records `bone_offset` (vertex stage indexes SSBO by it), so same skeleton
+/// reused by multiple meshes needs no copy.
 ///
-/// 返回追加的绘制项数量。
+/// Return count of appended draw items.
 pub fn append_skinned_draw_items(
     world: &World,
     frustum: Option<&Frustum>,
@@ -46,7 +46,7 @@ pub fn append_skinned_draw_items(
 
 /// [`append_skinned_draw_items`] for a set of camera frustums (#491).
 ///
-/// 与静态网格一致：只要任意一台相机能看到就保留，空切片 = 不剔除。
+/// Consistent with static mesh: keep if any camera can see, empty slice = not culled.
 pub fn append_skinned_draw_items_with_frustums(
     world: &World,
     frustums: &[Frustum],
@@ -64,8 +64,8 @@ pub fn append_skinned_draw_items_with_frustums(
         let palette = world
             .get::<BonePalette>(entity)
             .filter(|palette| !palette.matrices.is_empty());
-        // 剔除用**蒙皮后**的包围盒：bind pose 的盒子在角色摆大动作时会偏，
-        // 用它做剔除会把还在画面里的角色剔掉（#560 P0-3c）。
+        // Cull uses **post-skinning** bounding box: bind pose box is off when character in large pose,
+        // using it would cull character still on screen (#560 P0-3c).
         let local_bounds = bounds
             .and_then(|bounds| bounds.get(mr.render_handle))
             .map(|bind| match palette {
@@ -149,10 +149,10 @@ pub fn append_skinned_draw_items_with_frustums(
     appended
 }
 
-/// 追加一个实体的骨骼调色板，返回它在整帧缓冲里的起始下标。
+/// Append one entity bone palette, return its start index in whole-frame buffer.
 ///
-/// 没有 `BonePalette`（动画系统还没跑 / 骨架缺失）或超出预算时返回 `None`，
-/// 绘制项按 bind pose 画。
+/// Return `None` when no `BonePalette` (animation system not run / missing skeleton) or over budget,
+/// draw item rendered in bind pose.
 fn append_palette(
     palette: Option<&BonePalette>,
     entity: Entity,
@@ -178,11 +178,11 @@ fn append_palette(
     Some(offset)
 }
 
-/// 蒙皮后的局部包围盒：把 bind 包围盒按调色板里每个骨骼矩阵变换后取并集。
+/// Post-skinning local bounding box: transform bind box by each bone matrix in palette then union.
 ///
-/// 蒙皮顶点 = `Σ wᵢ · (Mᵢ · p)`（权重非负、和为 1），因此它一定落在
-/// `{Mᵢ · p}` 的凸包里 —— 并集是保守上界，不会把可见几何剔掉。
-/// 调色板为空或全部矩阵非有限时返回 `None`，调用方退回 bind 包围盒。
+/// Skinned vertex = `Σ wᵢ · (Mᵢ · p)` (non-negative weights sum to 1), therefore it must fall in
+/// convex hull of `{Mᵢ · p}` — union is conservative upper bound, will not cull visible geometry.
+/// Return `None` when palette empty or all matrices non-finite, caller falls back to bind box.
 fn skinned_local_bounds(bind: &Aabb, palette: &[[[f32; 4]; 4]]) -> Option<Aabb> {
     let mut merged: Option<Aabb> = None;
     for matrix in palette {

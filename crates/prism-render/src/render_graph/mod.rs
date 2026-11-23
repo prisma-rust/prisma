@@ -1,17 +1,17 @@
-//! Prisma 的模块化渲染通道图。
+//! Prisma modular render pass graph.
 //!
-//! 取代旧版整体式渲染器。每个渲染阶段（GBuffer、RayQuery、SHARC GI、Lighting、Post）
-//! 是一个 [`RenderPassNode`]，声明其输入/输出和一个执行方法。
-//! 通道注册到 [`RenderGraph`] 中，该图管理临时资源分配和执行顺序。
+//! Replaces old monolithic renderer. Each render phase (GBuffer, RayQuery, SHaRC GI, Lighting, Post)
+//! is a [`RenderPassNode`], declaring its inputs / outputs and an execute method.
+//! Passes register into [`RenderGraph`], which manages transient resource allocation and execution order.
 //!
-//! ## 设计
+//! ## Design
 //!
-//! - **通道是 trait 对象**——可在运行时添加/移除（特性开关：RT 开/关、GI 模式切换）。
-//! - **资源句柄是类型化 ID**——图拥有实际的 Vulkan 资源；通道通过句柄引用它们，
-//!   而非原始 `vk::Image`。
-//! - **临时附件**使用 `LAZILY_ALLOCATED` 内存以实现 TBDR 效率（参见 `transient.rs`）。
-//! - **子通道融合**——读取彼此 GBuffer 的通道可以融合到单个渲染通道中，
-//!   以避免瓦片内存回写。
+//! - **Passes are trait objects** — can be added / removed at runtime (feature switches: RT on / off, GI mode).
+//! - **Resource handles are typed IDs** — graph owns actual Vulkan resources; passes reference them by handle,
+//!   not raw `vk::Image`.
+//! - **Transient attachments** use `LAZILY_ALLOCATED` memory for TBDR efficiency (see `transient.rs`).
+//! - **Sub-pass fusion** — passes reading each other GBuffer can merge into a single render pass,
+//!   avoiding tile memory writeback.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -41,7 +41,7 @@ pub use settings::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ResourceHandle(pub u32);
 
-/// Well-known graph-edge 资源 handles published by `ForwardPass` and 读取
+/// Well-known graph-edge resource handles published by `ForwardPass` and read
 /// by downstream passes (`GtaoPass`, `PostPass`). Fixed (not counter-based)
 /// so a pass added later can reference them without knowing the upstream
 /// pass's internal handle field. The graph's `next_handle` counter is kept
@@ -49,7 +49,7 @@ pub struct ResourceHandle(pub u32);
 pub const FORWARD_DEPTH_H: ResourceHandle = ResourceHandle(1000);
 pub const FORWARD_NORMAL_H: ResourceHandle = ResourceHandle(1001);
 pub const FORWARD_COLOR_H: ResourceHandle = ResourceHandle(1002);
-/// PT (path tracing) 输出 颜色 — replaces FORWARD_COLOR_H when
+/// PT (path tracing) output  color  — replaces FORWARD_COLOR_H when
 /// `RenderSettings.render_mode == PathTrace`. Written by PathTracePass
 /// as a storage+sampled image, read by PostPass for tonemapping.
 pub const PT_COLOR_H: ResourceHandle = ResourceHandle(1003);
@@ -176,7 +176,7 @@ pub struct ResourceEdge {
 
 /// Per-resource lifecycle span `[first_write_pass, last_read_pass]`, computed
 /// at build time. Currently only surfaced to the visualizer; reserved as input
-/// for future TBDR 内存 aliasing (已实现).
+/// for future TBDR memory aliasing (already implemented).
 #[derive(Clone, Debug, Default)]
 pub struct ResourceLifecycle {
     pub first_write: Option<usize>,
@@ -201,7 +201,7 @@ impl ResourceLifecycle {
 // Read-only snapshots for render-graph visualizers / diagnostics.
 //
 // The engine-side viz must not borrow `RenderGraph` (its passes are private
-// trait objects) nor 触摸 `vk::*` handles inside the UI 闭包 These
+// trait objects) nor touch `vk::*` handles inside the UI closure. These
 // plain-data structs are produced by `RenderGraph::snapshot` + each pass's
 // `RenderPassNode::graph_info`, cloned once per frame, and consumed by the UI.
 // ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ impl ResourceLifecycle {
 pub enum PassKind {
     /// Rasterized depth-only shadow map (`ShadowMapPass`).
     Shadow,
-    /// 向前 PBR scene 渲染 (`ForwardPass`).
+    /// Forward PBR scene render (`ForwardPass`).
     Forward,
     /// Half-resolution screen-space ambient occlusion (`GtaoPass`).
     Gtao,
@@ -220,7 +220,7 @@ pub enum PassKind {
     Post,
     /// Real-time path tracing compute pass (`PathTracePass`).
     Pt,
-    /// 离屏 RenderTexture 渲染 (`RenderToTexturePass`).
+    /// Offscreen RenderTexture render (`RenderToTexturePass`).
     Rt,
     /// Qualcomm Adreno Neural Fusion compute pass (`AnfPass`).
     Anf,
@@ -327,15 +327,15 @@ pub struct GraphFrame<'a> {
     /// `PBR_FLAG_*`). 0 = all components neutral (raw baseColor). Forwarded
     /// to the bindless push constant `debug_flags` field.
     pub debug_flags: u32,
-    /// 前向管线线框模式（#431）。设备不支持 `fillModeNonSolid` 时忽略。
+    /// Forward pipeline wireframe mode (#431). Ignored when device lacks `fillModeNonSolid`.
     pub wireframe: bool,
-    /// 正常填充 + 线框叠加（#431）。`wireframe` 为 true 时以纯线框为准。
+    /// Normal fill + wireframe overlay (#431). If `wireframe` true, pure wireframe takes precedence.
     pub shaded_wireframe: bool,
-    /// 需要画选中描边的 ECS 实体 id（#487）。
+    /// ECS entity ids needing selection outline (#487).
     ///
-    /// 由编辑器通过 [`GraphRenderer::set_outline_entities`] 每帧设置；空切片
-    /// 表示没有选中物体。`ForwardPass` 只对 `DrawItem::entity_id` 命中的绘制
-    /// 项画反向外壳。
+    /// Set each frame by editor via [`GraphRenderer::set_outline_entities`]; empty slice
+    /// means no selected object. `ForwardPass` only draws inverse-hull outline for draw items
+    /// whose `DrawItem::entity_id` hits.
     pub outline_entities: &'a [u32],
     /// Inverse-view rotation (upper-left 3x3 of inverse(view)), packed as mat4.
     /// Used by the skybox pass to rotate view-space look directions into world
@@ -354,10 +354,10 @@ pub struct GraphFrame<'a> {
     /// unjittered camera matrix for history reprojection.
     pub view_proj_jitter: [f32; 2],
     /// Point lights collected from the ECS this frame, rewritten into the
-    /// scene shader's 光源 SSBO. Forwarded to `ForwardPass::execute` so it can
+    /// scene shader's light source  SSBO. Forwarded to `ForwardPass::execute` so it can
     /// update its descriptor set without `GraphRenderer` poking it directly.
     pub lights: &'a [GpuLight],
-    /// Previous-frame GTAO 可见性 视图 (1-frame 延迟 `ForwardPass`
+    /// Previous-frame GTAO visibility view (1-frame delay `ForwardPass`
     /// binds this as its AO input; it reads `ao[(frame + 1) % 2]` written by
     /// `GtaoPass` last frame. Forwarded via `GraphFrame` so the graph, not
     /// `GraphRenderer`, owns the cross-pass wiring.
@@ -402,7 +402,7 @@ pub struct GraphFrame<'a> {
     /// When true, freezes temporal accumulation, jitter, and history ping-ponging.
     pub freeze_temporal: bool,
     /// Active render mode (Raster vs PathTrace). Passes check this to decide
-    /// whether to run (ForwardPass skips in PT 众数 PathTracePass skips in
+    /// Whether to run (ForwardPass skips in PT mode, PathTracePass skips in
     /// Raster mode).
     pub render_mode: RenderMode,
     /// Path tracing max bounces.
@@ -423,7 +423,7 @@ pub struct GraphFrame<'a> {
     pub light_color: [f32; 4],
     /// Exposure multiplier applied to the final HDR color before tonemapping.
     /// Forwarded from [`FrameInput`](crate::graph_renderer::FrameInput) so both
-    /// ForwardPass (via FrameUBOData) and PathTracePass (via 推送 常量 apply
+    /// ForwardPass (via FrameUBOData) and PathTracePass (via push constants apply
     /// the same exposure value from the camera entity.
     pub exposure: f32,
     /// Analytic lights for path tracing (point/spot/area/directional).
@@ -438,14 +438,14 @@ pub struct GraphFrame<'a> {
     /// Whether the active camera is orthographic; the PT pass casts parallel
     /// primary rays in that case (issue #10).
     pub camera_orthographic: bool,
-    /// 清空 颜色 for the scene 颜色 附件 Applied by ForwardPass on
+    /// Cleared color for the scene color attachment. Applied by ForwardPass on
     /// render-pass begin; visible when the skybox and scene geometry are
     /// absent or transparent (e.g. no-camera fallback). Matches the app-level
     /// `clear_color` parameter passed to `render_system`.
     pub clear_color: [f32; 4],
-    /// 是否在场景渲染中绘制地面参考网格。
+    /// Whether to draw ground reference mesh in scene render.
     pub show_grid: bool,
-    /// 统一脏分派计划（DESIGN §9 / #1157）。
+    /// Unified dirty dispatch plan (DESIGN §9 / #1157).
     pub dispatch_plan: Option<&'a crate::dirty_dispatch::DirtyDispatchPlan>,
 }
 
@@ -460,14 +460,14 @@ pub struct RenderContext<'a> {
     /// `frame_index` (which is the frame-in-flight index): with N swapchain
     /// images and 2 frames in flight, `frame_index` cycles 0..2 while
     /// `image_index` cycles 0..N. Passes that own per-swapchain-image resources
-    /// (e.g. `ForwardPass`'s framebuffers) 索引 by this, not `frame_index`.
+    /// (e.g. `ForwardPass`'s framebuffers) index  by this, not `frame_index`.
     pub image_index: u32,
     /// Current swapchain extent.
     pub extent: vk::Extent2D,
-    /// 场景实际渲染的 extent（内部渲染分辨率，#613）。
+    /// Actual scene render extent (internal render resolution, #613).
     ///
-    /// 没有开启内部分辨率时与 [`Self::extent`] 相同。`ForwardPass` / 路径追踪
-    /// 按这个尺寸分配目标；`PostPass` / UI 叠加 / 截图仍用 `extent`。
+    /// Same as [`Self::extent`] when internal resolution not enabled. `ForwardPass` / path tracing
+    /// allocate targets at this size; `PostPass` / UI overlay / screenshot still use `extent`.
     pub render_extent: vk::Extent2D,
     /// Per-frame scene + lighting state (see [`GraphFrame`]).
     pub frame: &'a GraphFrame<'a>,
@@ -601,7 +601,7 @@ impl ResourceStateTracker {
     /// Build barriers for all read edges whose tracked layout differs from the
     /// declared usage. Returns `(barriers, src_stage, dst_stage)`; callers
     /// should emit a single `vkCmdPipelineBarrier` with the union of stages.
-    /// Skips resources already in the desired 布局 or 待发布.
+    /// Skips resources already in the desired layout or pending publish.
     ///
     /// Each emitted barrier also updates the tracked layout to the reader's
     /// `usage.layout`, so a second reader of the same resource in the same
@@ -778,13 +778,13 @@ impl GraphResources {
         self.images.get(&h).copied()
     }
 
-    /// 发布 a scalar value under a handle (e.g. a bindless slot) so downstream
-    /// passes can 读取 it without knowing the producer's internals.
+    /// publish  a scalar value under a handle (e.g. a bindless slot) so downstream
+    /// passes can read  it without knowing the producer's internals.
     pub fn set_param(&mut self, h: ResourceHandle, value: u32) {
         self.params.insert(h, value);
     }
 
-    /// 读取 a scalar published by an upstream pass.
+    /// read  a scalar published by an upstream pass.
     pub fn param(&self, h: ResourceHandle) -> Option<u32> {
         self.params.get(&h).copied()
     }
@@ -1001,7 +1001,7 @@ pub struct RenderGraph {
     last_writers: HashMap<ResourceHandle, ResourceUsage>,
     /// Per-`(handle, image_index)` resource state tracker, persisted across
     /// frames so cross-frame reads (e.g. GTAO's double-buffered AO) keep their
-    /// 布局 Keyed by `image_index` because `ForwardPass`/`PostPass` own
+    /// layout  Keyed by `image_index` because `ForwardPass`/`PostPass` own
     /// per-swapchain-image attachments under the same handle.
     state_tracker: ResourceStateTracker,
     /// `[first_write, last_read]` span per resource, for the visualizer and
@@ -1112,7 +1112,7 @@ impl RenderGraph {
         self.last_writers = build_last_writers(&self.edges);
     }
 
-    /// 追加 a pass to an already-built 图 (e.g. ForwardPass / GtaoPass /
+    /// append  a pass to an already-built graph  (e.g. ForwardPass / GtaoPass /
     /// PostPass, registered after the shadow map's resources are allocated so
     /// the scene can bind the shadow view). Runs `setup` on the new pass
     /// (merging its declared resources into the graph) and appends it to the
@@ -1224,7 +1224,7 @@ impl RenderGraph {
     /// pass's own render pass performs that transition via `final_layout`).
     ///
     /// Note: cross-frame reads (e.g. GTAO's double-buffered AO fed back to
-    /// `ForwardPass`) and the 交换链 `-> PRESENT_SRC_KHR` 过渡 are NOT
+    /// `ForwardPass`) and the swapchain `-> PRESENT_SRC_KHR` transition are NOT
     /// graph edges and remain manual (see the pass-level comments). The layout
     /// cache only tracks the four graph-flow handles (shadow / scene depth /
     /// normal / HDR color).
@@ -1232,10 +1232,10 @@ impl RenderGraph {
         self.execute_with_timer(ctx, None)
     }
 
-    /// 同上，但记录每个 pass 的 GPU 时间戳（#518）。
+    /// same on screen, but records each pass GPU time stamp (#518).
     ///
-    /// `timer` 为 `Some` 时，pass 首尾各写一个时间戳；时间戳池由调用方拥有，
-    /// 结果也要等下一帧再由调用方读回（避免 stall）。
+    /// When `timer` is `Some`, writes a time stamp at pass start and end; stamp pool owned by caller,
+    /// results also read back by caller next frame (avoid stall).
     pub fn execute_with_timer(
         &mut self,
         ctx: &RenderContext,
@@ -2114,7 +2114,7 @@ fn create_transient_image(
     let image = unsafe { device.create_image(&image_create_info, None) }?;
     let req = unsafe { device.get_image_memory_requirements(image) };
 
-    // For real transient attachments, prefer LAZILY_ALLOCATED 内存 类型.
+    // For real transient attachments, prefer LAZILY_ALLOCATED memory type.
     let lazy = lazy_allocation_allowed(usage);
     debug_assert!(
         !lazy

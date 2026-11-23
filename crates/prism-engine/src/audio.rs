@@ -1,30 +1,30 @@
-//! ECS 音频集成。
+//! ECS audio integration.
 //!
-//! 提供 [`AudioSource`] ECS 组件和 [`sync_audio_sources`] 函数，
-//! 每帧桥接 ECS 状态与 [`AudioEngine`]。
+//! Provides [`AudioSource`] ECS component and [`sync_audio_sources`] function,
+//! bridging ECS state with [`AudioEngine`] each frame.
 //!
-//! # 状态：遗留代码路径
+//! # State: legacy code path
 //!
-//! 这里的 `AudioSource` **不是**场景组件（不进 `.scene.json` / RSCN），
-//! 也持有内联 PCM，作者没法在编辑器里写。场景音频请用
-//! `prism_engine::scene::components::AudioSource`（反射组件，按 `sound_path`
-//! 加载），由 `prism-app::scene_audio` 驱动混音器（#508）。
-//! [`sync_audio_sources`] 目前没有任何调用方；保留它是为了不破坏已有的
-//! 外部用法，新代码不要接这条路径。
+//! `AudioSource` here **is not** a scene component (not in `.scene.json` / RSCN),
+//! nor holds inline PCM, author cannot write it in editor. For scene audio use
+//! `prism_engine::scene::components::AudioSource` (mapping component, loaded by `sound_path`),
+//! driven by `prism-app::scene_audio` mixer (#508).
+//! [`sync_audio_sources`] currently has no callers; kept to avoid breaking existing
+//! external usage, new code should not take this path.
 
 use prism_audio::{AudioData, AudioEngine, PlaybackHandle};
 use prism_ecs::World;
 
-/// 用于在实体上播放音频的 ECS 组件
+/// ECS component for playing audio on entity.
 ///
-/// 每帧 [`sync_audio_sources`] 读取每个带有此组件的实体，
-/// 并相应驱动 [`AudioEngine`] 的方法：
+/// Each frame [`sync_audio_sources`] reads each entity carrying this component,
+/// and drives [`AudioEngine`] methods accordingly:
 ///
-/// * `playing && handle is None` → 开始播放
-/// * `playing && handle 存在` → 更新音量
-/// * `!playing && handle 存在` → 停止
+/// * `playing && handle is None` → start playing
+/// * `playing && handle exists` → update volume
+/// * `!playing && handle exists` → stop
 pub struct AudioSource {
-    /// 要播放的音频片段。设为 `None` 可保持组件存活但不带片段（用于预留槽位）。
+    /// Audio clip to play. Set to `None` to keep component alive without clip (for reserved slots).
     pub data: Option<AudioData>,
 
     /// Volume level, 0.0 (silent) to 1.0 (original), clamped.
@@ -33,7 +33,7 @@ pub struct AudioSource {
     /// Whether this source should be playing. Set to `false` to stop.
     pub playing: bool,
 
-    /// Whether the 片段 loops. 已接线 to the sampler's repeat 众数
+    /// Whether the clip loops. Already wired to sampler's repeat mode
     pub repeat: bool,
 
     /// Internal: the active playback handle, if any.
@@ -41,7 +41,7 @@ pub struct AudioSource {
 }
 
 impl AudioSource {
-    /// 创建一个新的 `AudioSource`，可供播放。
+    /// Create a new `AudioSource`, ready for playback.
     pub fn new(data: AudioData) -> Self {
         Self {
             data: Some(data),
@@ -74,7 +74,7 @@ pub fn sync_audio_sources(engine: &mut AudioEngine, world: &mut World) {
         if src.playing {
             if let Some(ref data) = src.data {
                 if src.handle.is_none() {
-                    // 开始新的播放。
+                    // Start new playback.
                     let handle = engine.play(data);
                     if handle.is_valid() {
                         engine.set_volume(&handle, src.volume);

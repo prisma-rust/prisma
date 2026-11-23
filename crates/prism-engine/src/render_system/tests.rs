@@ -2,8 +2,8 @@ use super::shadow::{camera_frustum_corners, shadow_matrix_fitting};
 use super::*;
 use crate::scene::components::LocalToWorld;
 
-/// 每台启用相机各出一层，按 `Camera.depth` 升序；`clearFlags` 映射到
-/// 颜色 / 深度清除位（#461）。
+/// Each enabled camera produces one layer, ascending by `Camera.depth`; `clearFlags` maps to
+/// color / depth clear bits (#461).
 #[test]
 fn every_enabled_camera_becomes_a_composited_layer_in_depth_order() {
     use crate::scene::components::{Camera, LocalTransform};
@@ -59,7 +59,7 @@ fn every_enabled_camera_becomes_a_composited_layer_in_depth_order() {
     assert!(!out.cameras[1].draw_skybox);
 }
 
-/// 没有相机时仍然合成一层灰色回退（不画天空盒），与旧行为一致。
+/// With no camera still composites one gray fallback layer (no skybox), legacy behavior.
 #[test]
 fn a_scene_without_cameras_still_composites_one_fallback_layer() {
     let mut world = World::new();
@@ -71,7 +71,7 @@ fn a_scene_without_cameras_still_composites_one_fallback_layer() {
     assert!(!out.cameras[0].draw_skybox);
 }
 
-/// #491：第二台相机视野里的物体不能被主相机视锥剔掉（多相机合成 #461）。
+/// #491: objects in second camera view must not be culled by main camera frustum (multi-camera compositing #461).
 #[test]
 fn extraction_keeps_objects_visible_only_through_a_second_camera() {
     use crate::scene::components::{Camera, LocalTransform, MeshRef};
@@ -103,7 +103,7 @@ fn extraction_keeps_objects_visible_only_through_a_second_camera() {
     );
     world.insert(secondary, LocalToWorld(Mat4::from_quat(rotation)));
 
-    // 主相机看向 −Z，所以 +Z 的物体只在第二台（旋转 180°）相机里可见。
+    // Main camera looks −Z, so object at +Z only visible in second (rotation 180°) camera.
     let mesh = world.spawn();
     world.insert(
         mesh,
@@ -125,11 +125,15 @@ fn extraction_keeps_objects_visible_only_through_a_second_camera() {
     world.insert_resource(bounds);
 
     let packet = extract_frame_packet(&mut world, 1.0, &Mat4::IDENTITY);
-    assert_eq!(packet.scene.cameras.len(), 2, "两台相机都参与合成");
+    assert_eq!(
+        packet.scene.cameras.len(),
+        2,
+        "Both cameras participate in compositing"
+    );
     assert_eq!(
         packet.draw_items.len(),
         1,
-        "物体在第二台相机里可见，不能被主相机剔除"
+        "Object visible in second camera must not be culled by main camera"
     );
 }
 
@@ -327,7 +331,7 @@ fn shadow_caster(bounds: Option<prism_render::culling::Aabb>) -> DrawItem {
     }
 }
 
-/// 光源视锥外的投射者不再写阴影贴图；没有 AABB 的实体保守提交（#526）。
+/// Casters outside light frustum no longer write shadow map; entities without AABB conservatively submitted (#526).
 #[test]
 fn shadow_casters_outside_the_light_box_are_skipped() {
     use prism_render::culling::Aabb;
@@ -353,7 +357,7 @@ fn shadow_casters_outside_the_light_box_are_skipped() {
     );
 }
 
-/// 退化矩阵（没有可用视锥）时一个都不裁，避免把整场阴影删掉。
+/// Degenerate matrix (no frustum available) culls nothing, avoid deleting whole scene shadow.
 #[test]
 fn an_invalid_light_frustum_disables_shadow_culling() {
     use prism_render::culling::Aabb;
@@ -366,7 +370,7 @@ fn an_invalid_light_frustum_disables_shadow_culling() {
     assert!(items[0].cast_shadow);
 }
 
-/// `LightSample.direction` 是光传播方向，UBO 的 `lightDirection` 要「指向光源」。
+/// `LightSample.direction` is light propagation direction, UBO `lightDirection` should "point to light source".
 #[test]
 fn directional_ubo_direction_points_to_the_light() {
     let ubo = directional_light_ubo_direction(Vec3::Z, 2.0);
@@ -374,8 +378,8 @@ fn directional_ubo_direction_points_to_the_light() {
     assert_eq!(ubo.w, 2.0);
 }
 
-/// PR #38 review finding 1：视口 aspect 必须写到**实际渲染**的相机上。
-/// 主相机（`depth` 更大）缺 `LocalToWorld` 时渲染的是低 `depth` 那台。
+/// PR #38 review finding 1: viewport aspect must be written to **actually rendered** camera.
+/// When main camera (higher `depth`) lacks `LocalToWorld`, rendered one is lower `depth`.
 #[test]
 fn viewport_aspect_lands_on_the_rendered_camera() {
     let mut world = World::new();
@@ -408,7 +412,7 @@ fn viewport_aspect_lands_on_the_rendered_camera() {
         .aspect;
     assert!(
         (rendered_aspect - 2.5).abs() < 1e-6,
-        "渲染用的相机应拿到视口 aspect，实际 {rendered_aspect}"
+        "Rendered camera should get viewport aspect, actual {rendered_aspect}"
     );
     let untouched = world
         .get::<Camera>(transform_less)
@@ -416,12 +420,12 @@ fn viewport_aspect_lands_on_the_rendered_camera() {
         .aspect;
     assert!(
         (untouched - Camera::default().aspect).abs() < 1e-6,
-        "不参与渲染的相机不应被改写 aspect，实际 {untouched}"
+        "Non-rendered camera should not have aspect overwritten, actual {untouched}"
     );
 }
 
-/// issue #10：PT 主光线要区分透视/正交，所以「正交标志」也必须来自
-/// **实际渲染**的那台相机，而不是随便挑一台。
+/// issue #10: PT primary ray must distinguish perspective/orthographic, so "orthographic flag" must also come from
+/// **actually rendered** camera, not an arbitrary one.
 #[test]
 fn orthographic_flag_comes_from_the_rendered_camera() {
     let mut world = World::new();
@@ -451,20 +455,20 @@ fn orthographic_flag_comes_from_the_rendered_camera() {
     assert!(changes.has_camera);
     assert!(
         changes.camera_orthographic,
-        "正交标志应跟随实际渲染的相机（有 LocalToWorld 的那台）"
+        "Orthographic flag should follow actually rendered camera (one with LocalToWorld)"
     );
 
-    // 没有可渲染相机时退化到 fallback 透视相机。
+    // With no renderable camera falls back to fallback perspective camera.
     let mut empty = World::new();
     let fallback = collect_scene_changes(&mut empty, 16.0 / 9.0, &Mat4::IDENTITY);
     assert!(!fallback.has_camera);
     assert!(!fallback.camera_orthographic);
 }
 
-/// #468：局部光超过 `LIGHT_MAX` 时按重要性挑，而不是文档顺序。
+/// #468: local lights over `LIGHT_MAX` picked by importance, not document order.
 ///
-/// 场景里 5 盏近处亮灯 + 5 盏远处暗灯：留下的必须是 5 盏亮的再加 3 盏暗的，
-/// 被丢的只有 2 盏最靠后的暗灯（同分时按文档顺序）。
+/// Scene has 5 near bright lights + 5 far dim lights: kept must be 5 bright + 3 dim,
+/// dropped only 2 farthest dim lights (ties by document order).
 #[test]
 fn only_the_most_important_local_lights_reach_the_ssbo() {
     use crate::scene::components::{LocalTransform, PointLight};
@@ -516,25 +520,28 @@ fn only_the_most_important_local_lights_reach_the_ssbo() {
 
     let changes = collect_scene_changes(&mut world, 16.0 / 9.0, &Mat4::IDENTITY);
 
-    assert_eq!(changes.local_lights_total, 10, "十盏灯都该被统计到");
+    assert_eq!(
+        changes.local_lights_total, 10,
+        "All ten lights should be counted"
+    );
     assert_eq!(
         changes.local_lights_kept,
         prism_render::LIGHT_MAX as usize,
-        "SSBO 容量不变"
+        "SSBO capacity unchanged"
     );
     assert_eq!(changes.lights.len(), prism_render::LIGHT_MAX as usize);
     assert_eq!(
         changes.dropped_light_ids,
         vec![9, 10],
-        "被丢的是最远的暗灯，不是文档里最后两盏亮灯"
+        "Dropped are farthest dim lights, not last two bright lights in document"
     );
 }
 
-/// 统一语义：只有 `clearFlags == Skybox` 才会绘制天空盒背景。
+/// Unified semantics: only `clearFlags == Skybox` draws skybox background.
 ///
-/// 场景里放一个启用的 `Skybox` 实体，逐一切换相机的清屏方式；只有 `Skybox`
-/// 时 `FramePacket.skybox` 才是 `Some`，其余都应是 `None`（`ForwardPass`
-/// 对 `None` 直接跳过天空盒）。
+/// Put an enabled `Skybox` entity in scene, switch camera clear mode one by one; only `Skybox`
+/// makes `FramePacket.skybox` `Some`, others all `None` (`ForwardPass`
+/// skips skybox on `None`).
 #[test]
 fn skybox_is_only_drawn_for_skybox_clear_flags() {
     use crate::scene::components::Skybox;
@@ -572,13 +579,13 @@ fn skybox_is_only_drawn_for_skybox_clear_flags() {
         assert_eq!(
             packet.skybox.is_some(),
             draws,
-            "clear_flags = {flags:?} 时是否绘制天空盒应为 {draws}"
+            "Whether skybox is drawn for clear_flags = {flags:?} should be {draws}"
         );
     }
 }
 
-/// #66：`extract_frame_packet_into` 必须复用调用方数据包里的分配，
-/// 否则每帧都会重新 `collect()` 一遍。
+/// #66: `extract_frame_packet_into` must reuse caller data pack allocations,
+/// otherwise each frame re-`collect()`s.
 #[test]
 fn extract_into_reuses_the_packet_allocations() {
     use crate::scene::components::Gizmo;
@@ -613,14 +620,17 @@ fn extract_into_reuses_the_packet_allocations() {
 
     let mut packet = FramePacket::default();
     extract_frame_packet_into(&mut world, 1.0, &Mat4::IDENTITY, &mut packet);
-    assert!(!packet.gizmos.is_empty(), "用例需要至少一个绘制项");
+    assert!(
+        !packet.gizmos.is_empty(),
+        "Test case needs at least one draw item"
+    );
     let first = capacities(&packet);
 
     extract_frame_packet_into(&mut world, 1.0, &Mat4::IDENTITY, &mut packet);
     let second = capacities(&packet);
     assert_eq!(
         first, second,
-        "第二次 extract 应复用同一批 Vec 容量，而不是重新分配"
+        "Second extract should reuse same Vec capacity, not reallocate"
     );
     assert!(!packet.gizmos.is_empty());
 }

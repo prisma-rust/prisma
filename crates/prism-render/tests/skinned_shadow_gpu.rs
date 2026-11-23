@@ -165,7 +165,7 @@ fn a_skinned_caster_reaches_the_shadow_pass() {
         "a skinned caster must go through the skinned depth pipeline, not be skipped"
     );
 
-    // 没有调色板却声明了蒙皮：这个 caster 不能画（否则会是 bind pose 之外的垃圾）。
+    // No palette but declares skinning: this caster cannot draw (otherwise garbage outside bind pose).
     let _ = render(&mut renderer, &[caster(static_mesh, Some(0))], &[IDENTITY]);
     let (static_casters, skinned_casters) = shadow_casters(&mut renderer).expect("pass present");
     assert_eq!(
@@ -195,7 +195,7 @@ fn a_moved_palette_keeps_the_caster_in_the_shadow_pass() {
         return;
     };
     if skinned_casters == 0 {
-        // 阴影通道在这次构建里没跑（`ShadowMode::Raster` 之外的配置）。
+        // Shadow channel did not run in this build (config outside `ShadowMode::Raster`).
         let _ = render(&mut renderer, &[caster(handle, Some(0))], &[IDENTITY]);
         let Some((_, skinned_casters)) = shadow_casters(&mut renderer) else {
             return;
@@ -206,8 +206,8 @@ fn a_moved_palette_keeps_the_caster_in_the_shadow_pass() {
         }
     }
 
-    // 非单位调色板：不 panic、仍然提交。像素级对比这里做不了 —— 需要一个
-    // 采样阴影贴图的接收者场景；蒙皮顶点混合本身由 `skinning_gpu.rs` 覆盖。
+    // Non-identity palette: no panic, still submitted. Per-pixel correctness cannot be done here — need a
+    // receiver scene sampling shadow texture; skinned vertex blend itself covered by `skinning_gpu.rs`.
     let mut moved = IDENTITY;
     moved[3][0] = 0.75;
     let _ = render(&mut renderer, &[caster(handle, Some(0))], &[moved]);

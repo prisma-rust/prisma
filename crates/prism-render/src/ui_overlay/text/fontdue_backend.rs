@@ -1,13 +1,13 @@
-//! 文本光栅后端 A：`fontdue`（全平台，默认）。
+//! Text rasterizer backend A: `fontdue` (all platforms, default).
 //!
-//! 字体有两条来源（#583）：
+//! Fonts have two sources (#583):
 //!
-//! * **系统默认字体**：启动时按 [`FONT_CANDIDATES`] 找第一个可用文件，或读
-//!   `PRISMA_UI_FONT`。找不到时不再直接放弃——工程可能自带字体，所以实例照常
-//!   创建，只是 `font` 为空且没有注册字体时文字仍然被丢弃（quad 背景照常绘制）。
-//! * **工程自带字体**：宿主把 `assets/fonts/*.ttf|otf` 的字节经
-//!   [`TextRasterizer::register_font`] 注册进来，`Text.font` 写相对路径即可选用。
-//!   某个路径没注册 / 解析失败时回落到系统默认字体，并只 warn 一次。
+//! * **System default font**: at launch finds first available file per [`FONT_CANDIDATES`], or reads
+//!   `PRISMA_UI_FONT`. When not found, does not just give up — project can bundle fonts, so instance
+//!   still created; only when `font` empty and no registered font is text dropped (quad background still drawn).
+//! * **Project-bundled font**: host registers `assets/fonts/*.ttf|otf` bytes via
+//!   [`TextRasterizer::register_font`]; `Text.font` set to relative path to use.
+//!   If path not registered / parse fails, falls back to system default font and warns once.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -16,14 +16,14 @@ use fontdue::Font;
 
 use super::{GlyphBitmap, LineMetrics, TextRasterizer};
 
-/// 字体文件候选（按序尝试；ttc 用 collection_index 指定第一个字体）。
+/// Font file candidates (tried in order; ttc uses collection_index for first font).
 ///
-/// 优先挑带 CJK 的字体——intro 标题是中文。全部失败则回落到「只有注册的工程
-/// 字体能用」，并 log::warn。
+/// Prefer fonts with CJK glyphs — intro title is Chinese. If all fail, falls back to "only registered project
+/// fonts usable", with log::warn.
 const FONT_CANDIDATES: &[(&str, u32)] = &[
     // Windows
-    ("C:/Windows/Fonts/msyh.ttc", 0),   // 微软雅黑（含中文）
-    ("C:/Windows/Fonts/simhei.ttf", 0), // 黑体（含中文）
+    ("C:/Windows/Fonts/msyh.ttc", 0), // Microsoft YaHei (includes Chinese)
+    ("C:/Windows/Fonts/simhei.ttf", 0), // SimHei (includes Chinese)
     ("C:/Windows/Fonts/arial.ttf", 0),
     // Android
     ("/system/fonts/NotoSansCJK-Regular.ttc", 0),
@@ -58,10 +58,10 @@ fn first_available<T>(
     None
 }
 
-/// 加载第一个可用的系统字体（fontdue 只接受单字体；ttc 走 collection_index）。
+/// Load first available system font (fontdue only accepts single font; ttc via collection_index).
 ///
-/// `PRISMA_UI_FONT` 可以显式指定字体文件：Android / 精简系统上候选路径可能都不
-/// 存在，那时游戏要能自带一份字体，而不是默默丢掉所有文字。
+/// `PRISMA_UI_FONT` can explicitly specify font file: on Android / slim systems candidate paths may all not
+/// exist, then game should bundle a font rather than silently dropping all text.
 fn load_system_font() -> Option<Font> {
     let load = |path: &str, collection_index: u32| {
         let read_start = std::time::Instant::now();
@@ -92,8 +92,8 @@ fn load_system_font() -> Option<Font> {
                 log::info!("ui overlay: loaded font {path} (PRISMA_UI_FONT)");
                 return Some(font);
             }
-            // 显式指定的字体用不了就照常找候选字体，但必须说清楚，否则
-            // 「字体没换」和「字体根本没加载」在日志里长得一样。
+                        // Explicit font unusable → still search candidates, but must say so clearly, otherwise
+                        // "font not swapped" and "font never loaded" look identical in logs.
             None => log::warn!(
                 "ui overlay: PRISMA_UI_FONT={path} could not be loaded — falling back to system fonts"
             ),
@@ -106,14 +106,14 @@ fn load_system_font() -> Option<Font> {
 }
 
 pub(crate) struct FontdueRasterizer {
-    /// 系统默认字体；`None` 时只有注册过的工程字体能用。
+    /// System default font; `None` means only registered project fonts usable.
     default: Option<Font>,
     /// CJK fallback font when the primary/project font lacks a glyph.
     fallback_cjk: Option<Font>,
-    /// 工程自带字体：资产路径（`assets/fonts/x.ttf`）→ 解析后的字体。
+    /// Project-bundled font: asset path (`assets/fonts/x.ttf`) → parsed font.
     fonts: HashMap<String, Font>,
-    /// 已经 warn 过「这个路径没注册」的集合：`line_metrics` 是 `&self`，用
-    /// `RefCell` 保证每帧查字形也不会刷日志。
+    /// Set that has warned "this path not registered": `line_metrics` is `&self`, use
+    /// `RefCell` so per-frame glyph lookup does not spam logs.
     reported_missing: RefCell<HashSet<String>>,
 }
 
@@ -134,8 +134,8 @@ impl FontdueRasterizer {
         })
         .map(|(_, f)| f);
         if default.is_none() {
-            // 不再直接放弃：工程可以在运行时注册自带字体（#583）。但如果整个
-            // 生命周期都没注册，文字仍然一个都不画——这里必须留下线索。
+            // Do not just give up: project can register bundled font at runtime (#583). But if no font registered in
+            // whole lifetime, still no text drawn — must keep this line of reasoning.
             log::warn!(
                 "ui overlay: no usable system UI font (tried {} candidates) — text falls back to \
                  project fonts registered via `assets/fonts/`; set PRISMA_UI_FONT to override",
@@ -150,7 +150,7 @@ impl FontdueRasterizer {
         }
     }
 
-    /// 该路径的字体；找不到时 warn 一次并回落到默认字体。
+    /// Font for that path; on miss warns once and falls back to default font.
     fn resolve(&self, font: Option<&str>) -> Option<&Font> {
         if let Some(name) = font {
             if let Some(found) = self.fonts.get(name) {
@@ -186,14 +186,14 @@ impl TextRasterizer for FontdueRasterizer {
         let metrics = font.horizontal_line_metrics(font_size)?;
         Some(LineMetrics {
             ascent: metrics.ascent,
-            // fontdue 的 descent 是负数（向下为负），这里统一成「基线下方的正距离」。
+            // fontdue descent is negative number (downward negative), here normalized to "positive distance below baseline".
             descent: -metrics.descent,
             line_height: metrics.new_line_size,
         })
     }
 
     fn rasterize(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<GlyphBitmap> {
-        // 先解析出字体再可变借用 rasterize：`resolve` 只读。
+        // First parse font then mutably borrow rasterize: `resolve` read-only.
         let found = self.resolve_for_char(font, ch)?;
         let (metrics, pixels) = found.rasterize(ch, font_size);
         Some(GlyphBitmap {
@@ -211,7 +211,7 @@ impl TextRasterizer for FontdueRasterizer {
             Ok(font) => {
                 log::info!("ui overlay: registered project font {name}");
                 self.fonts.insert(name.to_string(), font);
-                // 之前可能因为「没注册」warn 过，现在能用了就别再报。
+                // Could previously warn "not registered", now usable so do not report again.
                 self.reported_missing.borrow_mut().remove(name);
                 true
             }
@@ -253,7 +253,7 @@ mod tests {
         };
         assert!(!backend.register_font("assets/fonts/broken.ttf", vec![0, 1, 2, 3]));
         assert!(backend.fonts.is_empty());
-        // 没注册的字体 + 没有默认字体 = 拿不到字形，而不是 panic。
+        // Unregistered font + no default font = cannot get glyph, not panic.
         assert!(backend
             .rasterize(Some("assets/fonts/broken.ttf"), 'a', 16.0)
             .is_none());
@@ -264,8 +264,8 @@ mod tests {
 
     #[test]
     fn a_registered_font_replaces_the_previous_bytes() {
-        // 用仓库里真实存在的 TTF 验证注册路径（找不到就跳过，不把测试绑死在
-        // 某个系统字体上）。
+        // Use TTF actually present in repo to validate register path (skip if missing, not tying test to
+        // some system font).
         let Some(bytes) = FONT_CANDIDATES
             .iter()
             .find_map(|(path, _)| std::fs::read(path).ok())
@@ -285,7 +285,7 @@ mod tests {
         assert!(backend
             .rasterize(Some("assets/fonts/hud.ttf"), 'A', 24.0)
             .is_some());
-        // 同一路径重新注册：直接覆盖，不报错。
+        // Re-register same path: directly overwrite, no error.
         assert!(backend.register_font("assets/fonts/hud.ttf", bytes));
     }
 }

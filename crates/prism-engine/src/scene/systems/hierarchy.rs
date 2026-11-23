@@ -1,15 +1,15 @@
-//! Hierarchy 系统 — computes [`LocalToWorld`] for every 实体
+//! Hierarchy system  — computes [`LocalToWorld`] for every entity
 //!
-//! Walks the scene 树 from root entities in DFS order, accumulating parent
+//! Walks the scene tree  from root entities in DFS order, accumulating parent
 //! transforms: `world_child = world_parent × local_child`.
 //!
 //! Run once per frame **after** any local-transform or reparenting changes.
 //!
-//! 树形不一致时按 统一语义兜底（见 `#48`）：
-//! - 没有 `LocalTransform` 的中间节点**不阻断传播**：它自己保持无
-//!   `LocalToWorld`，但子节点继续拿到它的累积矩阵；
-//! - `Parent` 指向已死实体、或父实体的 `Child` 里并没有列出它的子节点，
-//!   视为根（`LocalToWorld = LocalTransform`），而不是永远冻结在旧值。
+//! When tree shape inconsistent, fall back to unified semantics (see `#48`):
+//! - Intermediate node without `LocalTransform` **does not block propagation**: it keeps no
+//!   `LocalToWorld`, but child nodes still get its accumulated matrix;
+//! - `Parent` pointing to dead entity, or parent `Child` not listing it,
+//!   treated as root (`LocalToWorld = LocalTransform`), not frozen in old value forever.
 
 use std::collections::HashSet;
 
@@ -17,7 +17,7 @@ use prism_ecs::{Entity, World};
 
 use crate::scene::components::*;
 
-/// Recompute [`LocalToWorld`] for every 实体 in the hierarchy.
+/// Recompute [`LocalToWorld`] for every entity  in the hierarchy.
 ///
 /// - Roots (entities without [`Parent`]) get `LocalToWorld = LocalTransform`.
 /// - Child get `LocalToWorld = parent_WorldTransform × local_Transform`.
@@ -38,7 +38,7 @@ pub fn hierarchy_system(world: &mut World) {
         if !visited.insert(root) {
             continue;
         }
-        // 无 `LocalTransform` 的根（只有 `Child`）按单位矩阵向下传播。
+        // Root without `LocalTransform` (only `Child`) propagates downward with identity matrix.
         let world_mat = match world.get::<LocalTransform>(root).cloned() {
             Some(local) => {
                 let matrix = local.to_model_matrix();
@@ -51,8 +51,8 @@ pub fn hierarchy_system(world: &mut World) {
     }
 }
 
-/// 可能参与传播的实体：带 `LocalTransform` 的，以及带 `Child` 的
-/// （后者即使自己没有变换，也要让子树继续传播）。
+/// Entities that can participate in propagation: those with `LocalTransform`, and those with `Child`
+/// (latter, even without own transform, must let child tree keep propagating).
 fn candidate_entities(world: &World) -> Vec<Entity> {
     let mut entities: Vec<Entity> = world.query::<LocalTransform>().map(|(e, _)| e).collect();
     entities.extend(world.query::<Child>().map(|(e, _)| e));
@@ -61,8 +61,8 @@ fn candidate_entities(world: &World) -> Vec<Entity> {
     entities
 }
 
-/// 实体是否挂在一个**有效的**父级下：父实体还活着，且父的 `Child` 列表里
-/// 确实列出了它。任何一条不满足都按根处理（里子物体会提升为根）。
+/// Whether entity hangs under a **valid** parent: parent alive, and parent `Child` list
+/// actually contains it. Any failure treated as root (children promoted to root).
 fn has_live_parent(world: &World, entity: Entity) -> bool {
     let Some(parent) = world.get::<Parent>(entity).map(|parent| parent.0) else {
         return false;
@@ -95,7 +95,7 @@ fn visit_children(
         else {
             break;
         };
-        // `visited` 同时兜住脏数据里可能出现的环（A.Child=[B]，B.Child=[A]）。
+        // `visited` also catches cycles in dirty data (A.Child=[B], B.Child=[A]).
         if !world.is_alive(child) || !visited.insert(child) {
             continue;
         }
@@ -105,31 +105,31 @@ fn visit_children(
                 world.insert(child, LocalToWorld(matrix));
                 matrix
             }
-            // 无变换的中间节点：自身不写 `LocalToWorld`，但把父矩阵原样
-            // 传给后代（里 Transform 缺失等价于单位变换）。
+            // No-transform intermediate node: does not write `LocalToWorld` itself, but passes parent matrix as-is
+            // to descendants (missing Transform equivalent to identity transform).
             None => parent_world,
         };
         visit_children(world, child, child_world, visited);
     }
 }
 
-/// 把 [`Active`] 沿父子关系传播成 [`ActiveInHierarchy`]。
+/// Propagate [`Active`] along parent-child relations into [`ActiveInHierarchy`].
 ///
-/// Unity 的 `activeSelf`（层级里那个眼睛）与 `activeInHierarchy`（实际是否参与
-/// 渲染 / 逻辑）是两件事：任一祖先 inactive，整棵子树都算 inactive。之前引擎
-/// 只按单实体的 `Active` 过滤，关掉父级后子物体照常出现（#433）。
+/// Unity `activeSelf` (editor eye icon) and `activeInHierarchy` (actually participating in
+/// render / logic) are two things: any ancestor inactive, whole child tree counts inactive. Previously engine
+/// only filtered by single entity `Active`, so disabling parent left children appearing normally (#433).
 ///
-/// 与 [`hierarchy_system`] 一样在 `Engine::update` 末尾跑一次 —— 用户在 tick 里
-/// 关掉父级，同一帧的 extract 就要看到结果。这里单独走一趟而不是塞进
-/// `hierarchy_system`：矩阵传播只为「有 `LocalTransform` / `Child`」的实体建树，
-/// 而 `Active` 可能挂在不带变换的纯逻辑节点上。
+/// Like [`hierarchy_system`], runs once at end of `Engine::update` — user disabling parent in tick
+/// should be visible to extract in same frame. Runs separately rather than merged into
+/// `hierarchy_system`: matrix propagation only builds tree for entities with `LocalTransform` / `Child`,
+/// while `Active` can be attached to pure logic nodes without transform.
 pub fn active_hierarchy_system(world: &mut World) {
     let mut entities: Vec<Entity> = world.query::<Active>().map(|(entity, _)| entity).collect();
     entities.extend(world.query::<Parent>().map(|(entity, _)| entity));
     entities.sort_unstable_by_key(|entity| entity.id());
     entities.dedup();
 
-    // 沿父链累乘，命中已算过的祖先就直接复用（深树也是 O(n)）。
+    // Multiply along parent chain, reuse already-computed ancestor (deep tree also O(n)).
     let mut resolved: std::collections::HashMap<Entity, bool> = std::collections::HashMap::new();
     for entity in entities {
         let mut chain: Vec<Entity> = Vec::new();
@@ -140,7 +140,7 @@ pub fn active_hierarchy_system(world: &mut World) {
                 effective &= *done;
                 break;
             }
-            // 脏数据里可能成环（A→B→A）：按已累计的结果收尾，别死循环。
+            // Dirty data can cycle (A→B→A): finish with already accumulated result, avoid infinite loop.
             if chain.contains(&current) {
                 break;
             }
@@ -164,17 +164,17 @@ pub fn active_hierarchy_system(world: &mut World) {
     }
 }
 
-/// 渲染 / 光照 / UI 过滤用的有效激活状态：优先派生值，其次自身 [`Active`]。
+/// Effective active state used by render / light / UI filters: derived value first, then own [`Active`].
 ///
-/// 派生组件缺失时（实体刚 spawn 还没跑过系统）退回自身 `Active`，与旧行为一致。
-/// 编辑器的 Scene 可见性（[`Hidden`]）在最后叠加：隐藏只影响渲染类系统，
-/// 不改 `Active` / `ActiveInHierarchy`，也不影响物理或脚本。
+/// When derived component missing (entity just spawned, system not run) fall back to own `Active`, legacy behavior.
+/// Editor Scene visibility ([`Hidden`]) layered last: hiding only affects render-class systems,
+/// does not change `Active` / `ActiveInHierarchy`, nor affect physics or scripts.
 pub fn is_active_in_hierarchy(world: &World, entity: Entity) -> bool {
     if world.get::<Hidden>(entity).is_some_and(|hidden| hidden.0) {
         return false;
     }
-    // 距离 LOD（#491）：运行时系统选级后把其它级标成隐藏。它和编辑器自己
-    // 的 `Hidden` 分开，避免 LOD 覆盖作者 / 编辑器的可见性选择。
+    // Distance LOD (#491): runtime system selects level then marks others hidden. It is separate from editor
+    // own `Hidden`, to avoid LOD overriding author / editor visibility choice.
     if world
         .get::<LodHidden>(entity)
         .is_some_and(|hidden| hidden.0)

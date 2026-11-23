@@ -9,7 +9,7 @@ mod cases {
     use super::super::*;
     use prism_platform::PlatformEvent;
 
-    /// 场景里写的环境贴图路径常见三种写法，都要落到 pak 的键上。
+    /// Environment texture path written in scene has three common forms, all land on pak key.
     #[test]
     fn environment_paths_normalize_to_package_keys() {
         assert_eq!(
@@ -25,8 +25,8 @@ mod cases {
         );
     }
 
-    /// #1054：玩法状态在 tick 之间必须活过 `remove_resource` / `insert_resource`，
-    /// 且第一次 tick 拿到 `None`（插件形态同一语义）。
+    /// #1054: Gameplay state must survive across `remove_resource` / `insert_resource` between ticks,
+    /// and first tick gets `None` (plugin form same semantics).
     #[test]
     fn gameplay_state_survives_between_ticks() {
         let mut world = prism_engine::ecs::World::new();
@@ -54,7 +54,7 @@ mod cases {
         );
     }
 
-    /// `touch_event` 走 winit 的 `WindowEvent`，只有 winit 后端才编得出来。
+    /// `touch_event` goes through winit's `WindowEvent`, only winit backend compiles it.
     #[cfg(feature = "winit-backend")]
     fn touch_event(phase: winit::event::TouchPhase, id: u64) -> WindowEvent {
         WindowEvent::Touch(winit::event::Touch {
@@ -66,8 +66,8 @@ mod cases {
         })
     }
 
-    /// 触摸必须经平台快照落到 `InputManager::touches()`，并保留触点 id 与 phase
-    /// （回归防护：`handle_platform_event` 的 `_ => {}` 曾把整条链路丢掉）。
+    /// Touch must reach `InputManager::touches()` via platform snapshot, keep touch id and phase
+    /// (regression guard: `handle_platform_event` `_ => {}` once dropped whole chain).
     #[cfg(feature = "winit-backend")]
     #[test]
     fn touch_snapshot_reaches_input_manager() {
@@ -80,7 +80,7 @@ mod cases {
                 PlatformEvent::Touch { id, x, y, phase } => {
                     input.handle_touch(id, engine_touch_phase(phase), [x, y])
                 }
-                other => panic!("touch 被转换成了 {other:?}"),
+                other => panic!("touch converted to {other:?}"),
             }
         }
 
@@ -92,7 +92,7 @@ mod cases {
         assert_eq!(touches[1].phase, prism_engine::input::TouchPhase::Moved);
     }
 
-    /// #988：UI 与 PostPass 的目标矩形重合，指针换算用同一组参数。
+    /// #988: UI and PostPass target rect overlap, pointer conversion uses same set of params.
     #[test]
     fn ui_layout_mapping_follows_the_internal_resolution_letterbox() {
         let mapping = ui_layout_mapping(
@@ -101,14 +101,14 @@ mod cases {
             [640, 360],
             prism_render::InternalScaleMode::Integer,
         );
-        // 整数倍向下取整：2 倍 → 1280×720，居中留 160 / 90 的黑边。
+        // Integer floor down: 2x -> 1280x720, centered leaves 160/90 black borders.
         assert!(
             (mapping.scale - 0.8).abs() < 1e-6,
             "scale {}",
             mapping.scale
         );
         assert_eq!(mapping.offset, [160.0, 90.0]);
-        // 窗口中心就是布局中心（画面中心），点哪里选哪里。
+        // Window center is layout center (screen center), click where you select.
         assert_eq!(mapping.window_to_layout([800.0, 450.0]), [800.0, 450.0]);
     }
 
@@ -125,31 +125,39 @@ mod cases {
         }
     }
 
-    /// 锁定态下窗口光标位置不再参与累加（confinement 会把它夹在窗口内）。
+    /// Locked state window cursor position no longer participates in accumulation (confinement clamps it inside window).
     #[test]
     fn locked_pointer_ignores_window_cursor_positions() {
         let mut input = InputManager::new();
         input.set_locked(true);
         apply_window_cursor_move(&mut input, 120.0, 80.0);
-        assert_eq!(input.mouse_delta(), [0.0, 0.0], "窗口光标不该产生增量");
+        assert_eq!(
+            input.mouse_delta(),
+            [0.0, 0.0],
+            "window cursor should not produce delta"
+        );
 
         input.set_locked(false);
         apply_window_cursor_move(&mut input, 132.0, 80.0);
-        assert_eq!(input.mouse_delta(), [12.0, 0.0], "解锁后光标位置恢复正常");
+        assert_eq!(
+            input.mouse_delta(),
+            [12.0, 0.0],
+            "cursor position restores normal after unlock"
+        );
     }
 
-    /// 回归防护：锁定态下原始设备增量是唯一来源，不能与窗口光标叠加。
+    /// Regression guard: locked state raw device delta is only source, cannot stack with window cursor.
     #[test]
     fn raw_device_motion_is_the_only_delta_while_locked() {
         let mut input = InputManager::new();
         input.set_locked(true);
-        // 夹住后的光标位置先到（以前会先累加一次 delta）。
+        // Clamped cursor position arrives first (previously delta was accumulated first).
         apply_window_cursor_move(&mut input, 640.0, 360.0);
         apply_device_mouse_motion(&mut input, 3.0, -4.0);
         assert_eq!(input.mouse_delta(), [3.0, -4.0]);
     }
 
-    /// 未锁定时不接受原始增量（否则窗口光标与设备增量会同时生效）。
+    /// Unlocked state does not accept raw delta (otherwise window cursor and device delta both take effect).
     #[test]
     fn raw_device_motion_is_ignored_when_unlocked() {
         let mut input = InputManager::new();
@@ -157,7 +165,7 @@ mod cases {
         assert_eq!(input.mouse_delta(), [0.0, 0.0]);
     }
 
-    /// Esc 是锁定态下的释放入口；其它按键和按键释放都不影响锁定。
+    /// Esc is release entry under locked state; other keys and key releases do not affect lock.
     #[test]
     fn escape_releases_the_pointer_lock() {
         use prism_engine::input::KeyCode;
@@ -167,7 +175,7 @@ mod cases {
         assert!(!should_release_pointer_lock(KeyCode::Escape, true, false));
     }
 
-    /// 未按 Shift 的 1..9、0 覆盖分量 0..9。
+    /// Unshifted 1..9, 0 cover components 0..9.
     #[test]
     fn plain_digits_select_the_lower_pbr_components() {
         use prism_engine::EngineAction;
@@ -193,7 +201,7 @@ mod cases {
         }
     }
 
-    /// 回归防护：Shift 曾经被硬编码成 `false`，分量 10..14 完全不可达。
+    /// Regression guard: Shift was once hardcoded `false`, components 10..14 completely unreachable.
     #[test]
     fn shift_digits_select_the_upper_pbr_components() {
         use prism_engine::EngineAction;
@@ -205,7 +213,7 @@ mod cases {
             (K::Digit3, 12),
             (K::Digit4, 13),
             (K::Digit5, 14),
-            // Shift+6 是蒙皮权重热图（#560），不是 PBR 分量，但同样是 15 号 debug 位。
+            // Shift+6 is skin weight heatmap (#560), not PBR component, but also debug bit 15.
             (K::Digit6, 15),
         ] {
             assert_eq!(
@@ -214,7 +222,7 @@ mod cases {
                 "{key:?} with Shift"
             );
         }
-        // 15 个 debug 位已经用完；Shift+7..0 与普通字母都不该抢快捷键。
+        // 15 debug bits already used; Shift+7..0 with normal letters should not grab hotkeys.
         for key in [K::Digit7, K::Digit8, K::Digit9, K::Digit0, K::KeyA] {
             assert_eq!(
                 bindings.action_for(prism_engine::key_code_from_vk(key.to_vk())),
@@ -224,8 +232,8 @@ mod cases {
         }
     }
 
-    /// 键盘映射是手工表：抽查移动/修饰/功能/数字键，防止平台层改动后
-    /// 只有部分键还能到达 `InputManager`。
+    /// Keyboard mapping is hand table: spot-check movement/modifier/function/digit keys, prevent platform layer change after
+    /// only some keys still reach `InputManager`.
     #[test]
     fn native_keys_map_to_engine_keys() {
         use prism_engine::input::KeyCode as Eng;
@@ -261,35 +269,41 @@ mod cases {
         ] {
             assert_eq!(engine_key_from_native(key), expected, "{key:?}");
         }
-        // 未列出的键不能丢：退化为原始码（winit 判别值 / Win32 VK）。
+        // Unlisted keys cannot be dropped: degrade to raw code (winit discriminant / Win32 VK).
         assert_eq!(engine_key_from_native(K::Other(0x5A)), Eng::Other(0x5A));
     }
 
-    /// 端到端：平台按键事件走完换算后必须能在 `InputManager` 里查到，
-    /// 否则相机读 `key_held(KeyW)` 永远是 false（「WASD 不动相机」的根因）。
+    /// End-to-end: platform key event after conversion must be findable in `InputManager`,
+    /// otherwise camera reading `key_held(KeyW)` forever false ("WASD doesn't move camera" root cause).
     #[test]
     fn platform_key_events_reach_the_engine_input_state() {
         use prism_engine::input::KeyCode;
         use prism_platform::Key as K;
         let mut input = InputManager::new();
         for key in [K::KeyW, K::KeyA, K::KeyS, K::KeyD, K::KeyQ, K::KeyE] {
-            assert!(!apply_key_event(&mut input, key, true), "{key:?} 不该解锁");
+            assert!(
+                !apply_key_event(&mut input, key, true),
+                "{key:?} should not unlock"
+            );
             assert!(
                 input.key_held(engine_key_from_native(key)),
-                "{key:?} 按下后不在 key_held 里"
+                "{key:?} not in key_held after press"
             );
-            assert!(!apply_key_event(&mut input, key, false), "{key:?} 不该解锁");
+            assert!(
+                !apply_key_event(&mut input, key, false),
+                "{key:?} should not unlock"
+            );
             assert!(
                 !input.key_held(engine_key_from_native(key)),
-                "{key:?} 抬起后仍在 key_held 里"
+                "{key:?} still in key_held after release"
             );
         }
-        // 只走 `LETTER_KEYS` 兜底的那些键同样不能丢。
+        // Keys only covered by `LETTER_KEYS` fallback also cannot be dropped.
         assert!(!apply_key_event(&mut input, K::Letter(b'R'), true));
         assert!(input.key_held(KeyCode::Other(u32::from(b'R'))));
     }
 
-    /// Esc 在锁定态下先释放锁定，然后仍作为普通按键交给游戏。
+    /// Esc under locked state first releases lock, then still acts as normal key to game.
     #[test]
     fn escape_unlocks_and_still_reaches_the_game() {
         use prism_engine::input::KeyCode;
@@ -298,15 +312,18 @@ mod cases {
         input.set_locked(true);
         assert!(
             apply_key_event(&mut input, K::Escape, true),
-            "锁定态 Esc 要解锁"
+            "locked state Esc must unlock"
         );
-        assert!(!input.pointer_locked, "Esc 之后必须已经解锁");
-        assert!(input.key_held(KeyCode::Escape), "解锁不影响 Esc 本身的分发");
-        // 已解锁时再按 Esc 不重复触发。
+        assert!(!input.pointer_locked, "after Esc must already be unlocked");
+        assert!(
+            input.key_held(KeyCode::Escape),
+            "unlock does not affect Esc itself being dispatched"
+        );
+        // Pressing Esc again when already unlocked does not re-trigger.
         assert!(!apply_key_event(&mut input, K::Escape, true));
     }
 
-    /// winit 的 `Unidentified`（`Other(u32::MAX)`）必须被丢弃，不能塞进输入表。
+    /// winit's `Unidentified` (`Other(u32::MAX)`) must be dropped, not stuffed into input table.
     #[test]
     fn unidentified_keys_are_dropped() {
         use prism_engine::input::KeyCode;
@@ -315,7 +332,10 @@ mod cases {
         input.set_locked(true);
         assert!(!apply_key_event(&mut input, K::Other(u32::MAX), true));
         assert!(!input.key_held(KeyCode::Other(u32::MAX)));
-        assert!(input.pointer_locked, "丢弃事件不该动锁定状态");
+        assert!(
+            input.pointer_locked,
+            "dropping event should not change lock state"
+        );
     }
 }
 
@@ -323,7 +343,7 @@ mod cases {
 mod hot_reload_tests {
     use super::super::hot_reload::hot_reload_enabled;
 
-    /// #495：只有显式的「开」才建轮询线程，发布版默认完全不做额外工作。
+    /// #495: Only explicit "on" builds poller thread, release build completely does no extra work.
     #[test]
     fn only_explicit_truthy_values_enable_hot_reload() {
         for value in ["1", "true", "TRUE", " yes ", "On"] {
@@ -332,6 +352,6 @@ mod hot_reload_tests {
         for value in ["0", "false", "", "  ", "off", "no", "2", "enabled"] {
             assert!(!hot_reload_enabled(Some(value)), "{value}");
         }
-        assert!(!hot_reload_enabled(None), "未设置 = 关");
+        assert!(!hot_reload_enabled(None), "unset = off");
     }
 }

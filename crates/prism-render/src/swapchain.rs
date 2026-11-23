@@ -79,7 +79,7 @@ impl Swapchain {
         Self::new_with_vsync(context, window, window_handle, true)
     }
 
-    /// 创建 the 表面 and 交换链 with an explicit vsync preference.
+    /// Create the surface and swapchain with an explicit vsync preference.
     ///
     /// `vsync = false` prefers `IMMEDIATE` (uncapped, may tear) and falls
     /// back to `MAILBOX` / `FIFO`; `true` prefers `FIFO` (vblank cap) then
@@ -277,8 +277,8 @@ impl Swapchain {
         let image_available = self.image_available[frame];
         let fence = self.in_flight_fences[frame];
 
-        // Wait for the 上一个 submission using this frame's 围栏. This ensures
-        // the frame's 命令 缓冲区 is no longer in use and its acquire 信号量
+        // Wait for the previous submission using this frame's fence. This ensures
+        // the frame's command buffer is no longer in use and its acquire semaphore
         // has been consumed by the prior submit.
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
             .context("wait for in_flight fence")?;
@@ -341,7 +341,7 @@ impl Swapchain {
     /// # Safety
     ///
     /// `device` must be the same [`ash::Device`] the swapchain was created
-    /// with, and must 已 have been destroyed. After this 调用 the
+    /// with, and must already have been destroyed. After this call the
     /// swapchain and all its handles are invalid and must not be used.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe { device.device_wait_idle() }.ok();

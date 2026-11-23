@@ -51,14 +51,17 @@ impl Workspace {
                 self.log(
                     LogSource::Editor,
                     LogLevel::Warn,
-                    format!("{} 已有该组件，未做修改", component.display_name()),
+                    format!(
+                        "{} already has this component, no modification",
+                        component.display_name()
+                    ),
                 );
             }
             return 0;
         }
         let name = component.name.clone();
         let value = component_value_with_overrides(&component.default_value(), None);
-        let added = self.edit("添加组件", |document| {
+        let added = self.edit("add component", |document| {
             for index in &missing {
                 let entity = &mut document.doc.entities[*index];
                 entity.components.insert(name.clone(), value.clone());
@@ -75,7 +78,7 @@ impl Workspace {
         if component_name == "Transform" {
             return;
         }
-        self.edit("移除组件", |document| {
+        self.edit("remove component", |document| {
             document.doc.remove_component(index, component_name);
         });
     }
@@ -84,7 +87,7 @@ impl Workspace {
         if component_name == "Transform" || delta == 0 {
             return false;
         }
-        self.edit("调整组件顺序", |document| {
+        self.edit("adjust component order", |document| {
             let Some(entity) = document.doc.entities.get_mut(index) else {
                 return false;
             };
@@ -126,7 +129,7 @@ impl Workspace {
         self.log(
             LogSource::Editor,
             LogLevel::Debug,
-            format!("已复制组件 {component_name}"),
+            format!("copied component {component_name}"),
         );
     }
 
@@ -137,7 +140,7 @@ impl Workspace {
         let Some(index) = self.primary_selection() else {
             return;
         };
-        self.edit("粘贴组件", |document| {
+        self.edit("paste component", |document| {
             document.doc.entities[index]
                 .components
                 .insert(clipboard.component.clone(), clipboard.value.clone());
@@ -153,7 +156,7 @@ impl Workspace {
         }
         let indices = indices.to_vec();
         let component_name = component_name.to_string();
-        self.edit("粘贴组件值", |document| {
+        self.edit("paste component value", |document| {
             let mut applied = 0;
             for index in indices {
                 let Some(component) = document
@@ -210,7 +213,7 @@ impl Workspace {
         }
         let component_name = component.to_string();
         let path = path.to_string();
-        self.edit("批量修改字段", |document| {
+        self.edit("batch edit fields", |document| {
             let mut applied = 0;
             for id in entity_ids {
                 let Some(index) = document.doc.index_of_id(*id) else {
@@ -233,7 +236,7 @@ impl Workspace {
     pub fn remove_component_multi(&mut self, indices: &[usize], component: &str) {
         let indices = indices.to_vec();
         let component_name = component.to_string();
-        self.edit("批量移除组件", |document| {
+        self.edit("batch remove components", |document| {
             for index in &indices {
                 document.doc.remove_component(*index, &component_name);
             }
@@ -282,7 +285,7 @@ impl Workspace {
             return false;
         }
         let [min_x, min_y, max_x, max_y] = anchors.map(|value| value.clamp(0.0, 1.0));
-        self.edit("调整 UI 锚点", |document| {
+        self.edit("adjust UI anchor", |document| {
             let Some(style) = document
                 .doc
                 .entities
@@ -378,7 +381,7 @@ impl Workspace {
     pub fn set_ui_anchors_raw(&mut self, index: usize, anchors: [f32; 4]) -> bool {
         const STYLE: &str = "prism_engine::ui::Style";
         let [min_x, min_y, max_x, max_y] = anchors.map(|value| value.clamp(0.0, 1.0));
-        self.edit("调整 UI 锚点（Raw）", |document| {
+        self.edit("adjust UI anchor (Raw)", |document| {
             let Some(style) = document
                 .doc
                 .entities

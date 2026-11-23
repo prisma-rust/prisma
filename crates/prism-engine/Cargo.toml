@@ -18,34 +18,34 @@ dlss = ["prism-render/dlss"]
 dlfg = ["prism-render/dlfg", "dlss"]
 nrd = ["prism-render/nrd"]
 anf = ["prism-render/anf"]
-# 调试层标记（透传）：引擎自己只用来给 `RenderSettings` 的调试字段做编译期说明，
-# 真正消费它的是 `prism-app`（F3 HUD / 调试图 / 调试快捷键）。默认关，见 prism-app。
+# Debug layer flag (pass-through): engine itself only uses it for compile-time description of `RenderSettings` debug fields,
+# the real consumer is `prism-app` (F3 HUD / debug graph / debug shortcuts). Default off, see prism-app.
 engine-debug = []
 ui = ["prism-render/ui"]
-# 文本光栅后端（透传）：默认 fontdue；Windows 可选系统 DirectWrite。
+# Text rasterizer backend (pass-through): default fontdue; Windows optionally uses system DirectWrite.
 ui-fontdue = ["prism-render/ui-fontdue"]
 ui-directwrite = ["prism-render/ui-directwrite"]
 ibl = ["prism-render/ibl"]
 skybox = ["prism-render/skybox"]
 shadows = ["prism-render/shadows"]
 gtao = ["prism-render/gtao"]
-# 组件分组（透传 prism-scene）：关掉一组 = 该组组件不注册、serde 代码不链接。
+# Component groups (pass-through prism-scene): disabling a group = group components not registered, serde code not linked.
 group-3d = ["prism-scene/group-3d"]
 group-2d = ["prism-scene/group-2d"]
 group-ui = ["prism-scene/group-ui"]
-# ECS 音频集成（`AudioSource` + `sync_audio_sources`）。默认关：整条 cpal /
-# firewheel / symphonia 链路（约 30 个 crate）只在需要声音的项目里开。
+# ECS audio integration (`AudioSource` + `sync_audio_sources`). Default off: entire cpal /
+# firewheel / symphonia chain (~30 crates) only enabled in projects needing sound.
 audio = ["dep:prism-audio"]
 
 [dependencies]
 prism-ecs = { path = "../prism-ecs" }
-# ABI 快照类型（`InputSnapshot`）。纯数据 crate、无依赖；引擎每帧把它写进
-# World resource，静态 Player 的 `GameWorld::input()` 因此有真实输入（#589）。
+# ABI snapshot type (`InputSnapshot`). Pure data crate, no deps; engine writes it into
+# World resource each frame, static Player `GameWorld::input()` therefore has real input (#589).
 prism-project-api = { path = "../prism-project-api" }
 prism-reflect = { path = "../prism-reflect" }
-# settings.ini 方言：引擎 / editor-api / editor-core 共用一份解析器。
+# settings.ini dialect: engine / editor-api / editor-core share one parser.
 prism-ini = { path = "../prism-ini" }
-# 必须 default-features = false：否则组件组开关会被 prism-scene 的默认特性重新打开。
+# Must use default-features = false: otherwise component group switches get re-enabled by prism-scene default features.
 prism-scene = { path = "../prism-scene", default-features = false }
 prism-render = { path = "../prism-render", default-features = false }
 # The engine builds UI draw packets directly, without naming the renderer.

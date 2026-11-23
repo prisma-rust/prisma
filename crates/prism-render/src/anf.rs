@@ -1,9 +1,9 @@
-//! Qualcomm Adreno Neural Fusion（ANF）移动端神经超分辨率与插帧支持（#1161）。
+//! Qualcomm Adreno Neural Fusion (ANF) mobile neural super-resolution and frame interpolation support (#1161).
 //!
-//! 专为骁龙 Adreno GPU（如高通骁龙 8 至尊版 / Adreno 850+ 矩阵加速单元）设计的
-//! 神经网络渲染增强管线：
-//! - 神经超分辨率（Super Resolution, SR）：从低分辨率带 Jitter 的 Color / Depth / Motion Vector 重建全高清画面
-//! - 动态动态库加载（`libanf.so`）：在非 Adreno、桌面或缺少动态库时优雅降级，维持跨平台统一二进制契约
+//! Neural rendering enhancement pipeline designed for Snapdragon Adreno GPUs
+//! (e.g. Snapdragon 8 Elite / Adreno 850+ matrix acceleration unit):
+//! - Neural Super Resolution (SR): reconstruct full-resolution image from low-res jittered Color / Depth / Motion Vector
+//! - Dynamic library loading (`libanf.so`): graceful degradation on non-Adreno, desktop or missing library, keeping cross-platform unified binary contract
 
 use anyhow::{Context as _, Result};
 use ash::vk;
@@ -17,10 +17,10 @@ use crate::render_graph::{
     FORWARD_VELOCITY_H,
 };
 
-/// Qualcomm 厂商 ID（0x5143）。
+/// Qualcomm vendor ID (0x5143).
 pub const QUALCOMM_VENDOR_ID: u32 = 0x5143;
 
-/// 探测物理设备是否为 Qualcomm Adreno GPU。
+/// Probe whether physical device is a Qualcomm Adreno GPU.
 pub fn is_qualcomm_adreno(properties: &vk::PhysicalDeviceProperties) -> bool {
     if properties.vendor_id == QUALCOMM_VENDOR_ID {
         return true;
@@ -33,7 +33,7 @@ pub fn is_qualcomm_adreno(properties: &vk::PhysicalDeviceProperties) -> bool {
     name_str.contains("Adreno") || name_str.contains("adreno")
 }
 
-/// ANF 运行能力配置概况。
+/// ANF runtime capability config summary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AnfCaps {
     pub is_adreno: bool,
@@ -53,7 +53,7 @@ impl AnfCaps {
 }
 
 // ---------------------------------------------------------------------------
-// Native ANF FFI 定义
+// Native ANF FFI definitions
 // ---------------------------------------------------------------------------
 
 pub type AnfContext = *mut c_void;
@@ -112,7 +112,7 @@ pub struct AnfBinding {
 }
 
 impl AnfBinding {
-    /// 尝试动态加载 `libanf.so`。若在非 Android 平台或缺失库则返回 `None`。
+    /// Try to dynamically load `libanf.so`. Returns `None` on non-Android platform or missing library.
     #[cfg(target_os = "android")]
     pub fn try_load() -> Option<Self> {
         let lib_name = b"libanf.so\0";
@@ -164,10 +164,10 @@ extern "C" {
 }
 
 // ---------------------------------------------------------------------------
-// AnfPass — RenderGraph 节点
+// AnfPass — RenderGraph node
 // ---------------------------------------------------------------------------
 
-/// 负责将低分辨率渲染输出通过 ANF 超采样放大到全屏交换链尺寸的渲染通道。
+/// Pass responsible for upscaling low-res render output to full-screen swapchain size via ANF supersampling.
 pub struct AnfPass {
     output_extent: vk::Extent2D,
     input_extent: vk::Extent2D,
@@ -264,7 +264,7 @@ impl AnfPass {
         self.output_extent = output_extent;
         self.input_extent = input_extent;
 
-        // 重建 SR 实例
+        // Rebuild SR instance.
         if let (Some(b), Some(ctx)) = (&self.binding, self.context) {
             if let Some(sr) = self.sr_instance.take() {
                 unsafe { (b.destroy_sr)(ctx, sr) };
@@ -403,7 +403,7 @@ impl RenderPassNode for AnfPass {
                 (b.dispatch_sr)(ctx_anf, sr, ctx.cmd, &dispatch);
             }
 
-            // 转换输出图像到 SHADER_READ_ONLY_OPTIMAL 给下游 PostPass 采样
+            // Convert output image to SHADER_READ_ONLY_OPTIMAL for next PostPass sampling.
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::GENERAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)

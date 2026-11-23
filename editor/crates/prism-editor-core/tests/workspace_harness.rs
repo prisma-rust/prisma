@@ -105,7 +105,7 @@ fn save_reload_and_external_conflict_are_observable() {
 
     assert_eq!(harness.workspace_mut().check_external_changes(), 1);
     let error = harness.workspace_mut().save_active().expect_err("conflict");
-    assert!(error.to_string().contains("已被修改"), "{error}");
+    assert!(error.to_string().contains("has been modified"), "{error}");
     assert_eq!(harness.workspace().pending_save_conflict, Some(scene_index));
 
     harness

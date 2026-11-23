@@ -1,16 +1,16 @@
 ﻿# 发布档构建（Windows）：nightly `-Z build-std` + immediate-abort。
-# 与 `scripts/build-dist.sh` 等价，参数/理由见那边的注释。
+# 与 `scripts/build-dist.sh` 等价，parameter /理由见那边的注释。
 #
 #   powershell -File scripts/build-dist.ps1
 #   powershell -File scripts/build-dist.ps1 projects/template
 #   powershell -File scripts/build-dist.ps1 projects/template x86_64-pc-windows-gnu
-#   powershell -File scripts/build-dist.ps1 -Size projects/template    # 极限体积（tiny + 禁内联）
-#   powershell -File scripts/build-dist.ps1 -Pack projects/template    # 再套 UPX 压缩壳
+#   powershell -File scripts/build-dist.ps1 -Size projects/template    # 极限volume （tiny + 禁内联）
+#   powershell -File scripts/build-dist.ps1 -Pack projects/template    # again 套 UPX compress 壳
 #
-# -Size 对 `.sh --size`：切 `tiny` profile（opt-level="z"）并禁内联，比 dist 再小 ~30%，
-# 代价是 CPU 热路径慢 10–30%。-Size 与 -Profile 同时给时以 -Profile 为准。
-# -Pack 只给发布档用，压完必须做代码签名（未签名的自解压壳会被 Windows Defender 等误报）。
-# 找不到 upx 时只提示、不失败。
+# -Size correct  `.sh --size`：切 `tiny` profile（opt-level="z"）并禁内联，比 dist again small  ~30%，
+# 代价is  CPU 热path slow  10–30%。-Size 与 -Profile same 时给时以 -Profile 为准。
+# -Pack 只给publish 档用，压完must 做代码签名（not 签名的自decompress 壳will 被 Windows Defender 等误报）。
+# 找not 到 upx 时只hint 、not failure 。
 param(
     [string]$Project = "projects/template",
     [string]$Target = "",
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-# scripts/ 的上一级就是仓库根；参数一律用位置传，PowerShell 5.1 的 Join-Path 不吃 -LiteralPath。
+# scripts/ 的on 一级就is 仓库根；parameter 一律用position 传，PowerShell 5.1 的 Join-Path not 吃 -LiteralPath。
 $Root = Split-Path -Parent $PSScriptRoot
 $Manifest = Join-Path $Root (Join-Path $Project "Cargo.toml")
 if (-not (Test-Path $Manifest)) { throw "找不到 $Manifest" }
@@ -47,8 +47,8 @@ if ([string]::IsNullOrEmpty($Target)) {
 
 $name = (Select-String -Path $Manifest -Pattern '^name = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 
-# -Size 对 `.sh --size`：默认档位切 tiny，再叠「禁内联」这刀（纯体积手段）。
-# 显式给了 -Profile 就尊重它，只加禁内联。
+# -Size correct  `.sh --size`：default 档bit 切 tiny，again 叠「禁内联」这刀（纯volume 手段）。
+# 显式给了 -Profile 就尊heavy 它，只加禁内联。
 $ExtraRustFlags = ""
 if ($Size) {
     if ($Profile -eq "dist") { $Profile = "tiny" }
@@ -57,7 +57,7 @@ if ($Size) {
 
 Write-Host "build-dist: $Project ($name) → $Target / profile=$Profile"
 
-# 参数只走命令行，不写进 Cargo.toml：stable 构建不受影响。
+# parameter 只走命令行，not 写进 Cargo.toml：stable build not 受影响。
 $env:RUSTFLAGS = "-Zunstable-options -Cpanic=immediate-abort$ExtraRustFlags"
 cargo "+$Nightly" build `
     --manifest-path $Manifest `
@@ -69,14 +69,14 @@ if ($LASTEXITCODE -ne 0) { throw "cargo build 失败（exit $LASTEXITCODE）" }
 
 $bin = Join-Path $Root (Join-Path $Project "target\${Target}\${Profile}\${name}.exe")
 if (Test-Path $bin) {
-    # 注意别用 `$size`：PowerShell 变量大小写不敏感，会和 `-Size` 开关撞名。
+    # note 别用 `$size`：PowerShell variable size 写not 敏感，will 和 `-Size` switch 撞名。
     $bytes = (Get-Item $bin).Length
     Write-Host ("build-dist: {0}  {1} bytes ({2:N2} MB)" -f $bin, $bytes, ($bytes / 1MB))
 } else {
     Write-Host "build-dist: 构建成功但没找到 $bin（检查包名与 bin 名是否一致）"
 }
 
-# 可选压缩壳（-Pack）。压缩不是构建的正确性前提，任何一步失败都只提示。
+# optional compress 壳（-Pack）。compress not is build 的positive 确性before 提，any 一步failure 都只hint 。
 if ($Pack) {
     if (-not (Test-Path $bin)) {
         Write-Host "build-dist: -Pack 跳过（没有找到产物）"

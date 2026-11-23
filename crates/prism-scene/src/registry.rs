@@ -1,11 +1,11 @@
-//! ComponentRegistry — 通用组件反序列化注册表。
+//! ComponentRegistry — generic component deserialization registry.
 //!
-//! 场景文件（.scene.json）中的每个实体携带一个组件列表，
-//! 每个组件由其类型名（全限定路径）标识。运行时加载时通过
-//! [`ComponentRegistry`] 查找对应的反序列化工厂，将 JSON 数据还原为
-//! ECS 组件并插入实体。
+//! Each entity in scene file (.scene.json) carries a component list,
+//! each component identified by its type name (fully qualified path). At runtime load
+//! [`ComponentRegistry`] finds matching deserialization factory, restores JSON data to
+//! ECS component and inserts into entity.
 //!
-//! 内置组件通过 [`register_builtin_components`] 批量注册。
+//! Built-in components registered in batch via [`register_builtin_components`].
 
 use std::collections::HashMap;
 
@@ -21,22 +21,22 @@ type DeserializerFn = Box<dyn Fn(&mut World, Entity, &serde_json::Value) + Send 
 
 type JsonToObjectFn = Box<dyn Fn(&serde_json::Value) -> Option<Object> + Send + Sync>;
 
-/// 产出某个组件的**作者 JSON 默认形状**（编辑器「添加组件」用）。
+/// Produce **default author JSON shape** of some component (for editor "add component").
 type DefaultJsonFn = Box<dyn Fn() -> serde_json::Value + Send + Sync>;
 
-/// 反射对象 → 作者 JSON（编辑器「基于反射改字段后写回」用）。
+/// Reflection object → author JSON (for editor "modify fields based on reflection then write back").
 type ObjectToJsonFn = Box<dyn Fn(&Object) -> Option<serde_json::Value> + Send + Sync>;
 
 type ReflectApplyFn = fn(&mut World, Entity, &Object) -> bool;
 type ReflectExtractFn = fn(&World, Entity) -> Option<Object>;
-/// 在反射对象上按字段名写入（`Object -> C -> set_field -> Object`）。
+/// Write fields by name on reflection object (`Object -> C -> set_field -> Object`).
 type ReflectSetFn = fn(&mut Object, &str, Value) -> Result<(), ReflectError>;
-/// 列出拥有该组件的实体（类型擦除的 `World::query`）。
+/// List entities owning that component (type-erased `World::query`).
 type ReflectQueryFn = fn(&World) -> Vec<Entity>;
-/// 移除该组件并报告它是否存在（类型擦除的 `World::remove`）。
+/// Remove that component and report whether it existed (type-erased `World::remove`).
 type ReflectRemoveFn = fn(&mut World, Entity) -> bool;
 
-/// 一个组件的反射适配器：`Object <-> 具体 ECS 组件`。
+/// Reflection adapter for one component: `Object <-> concrete ECS component`.
 struct ReflectEntry {
     desc: &'static TypeDesc,
     apply: ReflectApplyFn,
@@ -46,11 +46,11 @@ struct ReflectEntry {
     remove: ReflectRemoveFn,
 }
 
-/// 组件反序列化注册表。
+/// Component deserialization registry.
 ///
-/// 同时持有一条 **反射路径**：`prism-reflect` 的 `Object` 可以绕过 serde，
-/// 直接还原成组件。后者是 RTTIBin / 编辑器的通用入口，前者保留给
-/// `.scene.json` 作者格式。
+/// Also holds a **reflection path**: `prism-reflect`'s `Object` can bypass serde,
+/// restoring directly into component. Latter is generic entry for RTTIBin / editor, former kept for
+/// `.scene.json` author format.
 pub struct ComponentRegistry {
     deserializers: HashMap<String, DeserializerFn>,
     reflect: TypeRegistry,
@@ -74,7 +74,7 @@ impl ComponentRegistry {
         }
     }
 
-    /// 注册一个 serde 组件类型。
+    /// Register a serde component type.
     pub fn register<C>(&mut self, name: &str)
     where
         C: DeserializeOwned + Send + Sync + 'static,
@@ -98,7 +98,7 @@ impl ComponentRegistry {
         );
     }
 
-    /// 注册一个自定义反序列化器。
+    /// Register a custom deserializer.
     pub fn register_with<F>(&mut self, name: &str, f: F)
     where
         F: Fn(&mut World, Entity, &serde_json::Value) + 'static + Send + Sync,
@@ -106,10 +106,10 @@ impl ComponentRegistry {
         self.deserializers.insert(name.to_string(), Box::new(f));
     }
 
-    /// 注册一个反射组件类型。
+    /// Register a reflection component type.
     ///
-    /// 类型名取自 `#[reflect(name = "...")]`（应与 `.scene.json` 中的组件名
-    /// 一致），因此调用方不再重复传名字。
+    /// Type name taken from `#[reflect(name = "...")]` (should match component name in `.scene.json`),
+    /// so caller need not pass name again.
     pub fn register_reflect<C>(&mut self)
     where
         C: Reflect + Send + Sync,
@@ -151,11 +151,11 @@ impl ComponentRegistry {
         );
     }
 
-    /// 在反射对象上按字段名写入，返回写入后的对象。
+    /// Write fields by name on reflection object, return object after writing.
     ///
-    /// 走的是 [`Reflect::set_field`]：`#[reflect(read_only)]` 字段会被拒绝，
-    /// 值类型也必须是该字段声明的反射类型。类型未注册时返回
-    /// [`ReflectError::NotRegistered`]。
+    /// Goes through [`Reflect::set_field`]: `#[reflect(read_only)]` fields rejected,
+    /// value type must also be field's declared reflection type. If type not registered returns
+    /// [`ReflectError::NotRegistered`].
     pub fn set_object_field(
         &self,
         object: &mut Object,
@@ -169,11 +169,11 @@ impl ComponentRegistry {
         (entry.set_field)(object, field, value)
     }
 
-    /// 注册一个既支持 serde 反序列化、又支持反射的组件。
+    /// Register a component supporting both serde deserialization and reflection.
     ///
-    /// `name` 必须与 `#[reflect(name = "...")]` 一致（场景 JSON 的键）。
-    /// 同时登记 JSON → `Object` 的转换器，供 cook 工具把作者 JSON
-    /// 转成紧凑的 RSCN 载荷。
+    /// `name` must match `#[reflect(name = "...")]` (key of scene JSON).
+    /// Also registers JSON → `Object` converter for cook tool converting author JSON
+    /// into compact RSCN payload.
     pub fn register_reflect_serde<C>(&mut self, name: &str)
     where
         C: Reflect + DeserializeOwned + Serialize + Send + Sync + 'static,
@@ -189,12 +189,12 @@ impl ComponentRegistry {
                     .map(|component| <C as Reflect>::to_object(&component))
             }),
         );
-        // 编辑器「添加组件」的默认作者 JSON：`C::default()` 的 serde 形状。
+        // Default author JSON for editor "add component": serde shape of `C::default()`.
         self.defaults.insert(
             key.clone(),
             Box::new(|| serde_json::to_value(C::default()).unwrap_or(serde_json::Value::Null)),
         );
-        // 反射对象 → 作者 JSON（`Object -> C -> serde JSON`）。
+        // Reflection object → author JSON (`Object -> C -> serde JSON`).
         self.object_to_json.insert(
             key,
             Box::new(|object| {
@@ -204,9 +204,9 @@ impl ComponentRegistry {
         );
     }
 
-    /// 手工登记「反射对象 → 作者 JSON」转换器。
+    /// Manually register "reflection object → author JSON" converter.
     ///
-    /// 用于 `Name` 这类 serde 形状与派生默认不一致的组件。
+    /// For components like `Name` whose serde shape differs from derived default.
     pub fn register_object_to_json<F>(&mut self, name: &str, f: F)
     where
         F: Fn(&Object) -> Option<serde_json::Value> + Send + Sync + 'static,
@@ -214,28 +214,28 @@ impl ComponentRegistry {
         self.object_to_json.insert(name.to_string(), Box::new(f));
     }
 
-    /// 反射对象 → 作者 JSON（未登记返回 `None`）。
+    /// Reflection object → author JSON (returns `None` if not registered).
     pub fn object_to_json(&self, name: &str, object: &Object) -> Option<serde_json::Value> {
         self.object_to_json.get(name).and_then(|f| f(object))
     }
 
-    /// 为某个组件手工登记作者 JSON 默认形状。
+    /// Manually register default author JSON shape for some component.
     ///
-    /// 用于 `Name` 这类 serde 形状与派生默认不一致的组件
-    /// （`register_reflect_serde` 无法覆盖）。
+    /// For components like `Name` whose serde shape differs from derived default
+    /// (`register_reflect_serde` cannot cover).
     pub fn set_default_json(&mut self, name: &str, value: serde_json::Value) {
         self.defaults
             .insert(name.to_string(), Box::new(move || value.clone()));
     }
 
-    /// 某个组件的作者 JSON 默认形状（编辑器「添加组件」用）。
+    /// Default author JSON shape of some component (for editor "add component").
     ///
-    /// 未登记返回 `None`；调用方可回退到 `serde_json::Value::Object` 空表。
+    /// Returns `None` if not registered; caller can fall back to empty `serde_json::Value::Object`.
     pub fn default_json(&self, name: &str) -> Option<serde_json::Value> {
         self.defaults.get(name).map(|f| f())
     }
 
-    /// 所有已登记组件的类型名（稳定顺序，供编辑器组件列表）。
+    /// Type names of all registered components (stable order, for editor component list).
     pub fn component_names(&self) -> Vec<&'static str> {
         let mut names: Vec<&'static str> = self
             .reflect_entries
@@ -247,9 +247,9 @@ impl ComponentRegistry {
         names
     }
 
-    /// 为已有反射组件登记一个自定义 JSON → `Object` 转换器。
+    /// Register a custom JSON → `Object` converter for an already reflection-registered component.
     ///
-    /// 用于 `Name` 这种 JSON 形状与派生 serde 默认形状不一致的组件。
+    /// For components like `Name` whose JSON shape differs from derived serde default.
     pub fn register_json_object<F>(&mut self, name: &str, f: F)
     where
         F: Fn(&serde_json::Value) -> Option<Object> + Send + Sync + 'static,
@@ -257,20 +257,20 @@ impl ComponentRegistry {
         self.json_to_object.insert(name.to_string(), Box::new(f));
     }
 
-    /// 把作者 JSON 转成反射对象（cook 工具路径）。
+    /// Convert author JSON to reflection object (cook tool path).
     pub fn object_from_json(&self, name: &str, value: &serde_json::Value) -> Option<Object> {
         self.json_to_object.get(name).and_then(|f| f(value))
     }
 
-    /// 只注册类型描述（不注册为组件）。
+    /// Register type description only (not as component).
     ///
-    /// 用于组件字段里出现的嵌套类型（如 `glam::Vec3` / `glam::Quat`）：
-    /// `rtti_bin::encode` 收集类型表时要求这些类型也已在 `TypeRegistry` 中。
+    /// For nested types appearing in component fields (like `glam::Vec3` / `glam::Quat`):
+    /// `rtti_bin::encode` collecting type table requires these types also in `TypeRegistry`.
     pub fn register_reflect_type<T: Reflect>(&mut self) {
         self.reflect.register::<T>();
     }
 
-    /// 反序列化并插入一个组件。
+    /// Deserialize and insert one component.
     pub fn apply(&self, world: &mut World, entity: Entity, name: &str, data: &serde_json::Value) {
         match self.deserializers.get(name) {
             Some(f) => f(world, entity, data),
@@ -280,9 +280,9 @@ impl ComponentRegistry {
         }
     }
 
-    /// 用反射对象插入组件（RTTIBin / 编辑器路径）。
+    /// Insert component with reflection object (RTTIBin / editor path).
     ///
-    /// 返回 `false` 表示类型未注册或字段还原失败。
+    /// Returns `false` meaning type not registered or field restore failed.
     pub fn apply_object(&self, world: &mut World, entity: Entity, object: &Object) -> bool {
         match self.reflect_entries.get(&object.type_id) {
             Some(entry) => (entry.apply)(world, entity, object),
@@ -297,13 +297,13 @@ impl ComponentRegistry {
         }
     }
 
-    /// 从实体提取反射对象（用于保存 / 编辑器）。
+    /// Extract reflection object from entity (for save / editor).
     pub fn extract_object(&self, world: &World, entity: Entity, type_id: TypeId) -> Option<Object> {
         let entry = self.reflect_entries.get(&type_id)?;
         (entry.extract)(world, entity)
     }
 
-    /// 按类型名提取反射对象。
+    /// Extract reflection object by type name.
     pub fn extract_object_by_name(
         &self,
         world: &World,
@@ -314,22 +314,22 @@ impl ComponentRegistry {
         self.extract_object(world, entity, *type_id)
     }
 
-    /// 类型名 → 稳定类型 id。
+    /// Type name → stable type id.
     pub fn type_id(&self, name: &str) -> Option<TypeId> {
         self.name_to_id.get(name).copied()
     }
 
-    /// 列出拥有组件 `type_id` 的实体（类型擦除，供宿主 ABI 使用）。
+    /// List entities owning component `type_id` (type-erased, for host ABI).
     ///
-    /// 返回 `None` 表示该类型没有注册反射组件。
+    /// Returns `None` meaning type has no registered reflection component.
     pub fn entities_with(&self, world: &World, type_id: TypeId) -> Option<Vec<Entity>> {
         let entry = self.reflect_entries.get(&type_id)?;
         Some((entry.query)(world))
     }
 
-    /// 按 `type_id` 移除组件，返回它是否存在过。
+    /// Remove component by `type_id`, return whether it existed.
     ///
-    /// 类型未注册时返回 `false`（与「组件不存在」一致，调用方无需区分）。
+    /// Returns `false` when type not registered (same as "component does not exist", caller need not distinguish).
     pub fn remove_component(&self, world: &mut World, entity: Entity, type_id: TypeId) -> bool {
         match self.reflect_entries.get(&type_id) {
             Some(entry) => (entry.remove)(world, entity),
@@ -337,17 +337,17 @@ impl ComponentRegistry {
         }
     }
 
-    /// 类型描述（编辑器属性面板 / schema 浏览用）。
+    /// Type description (for editor property panel / schema browsing).
     pub fn descriptor(&self, type_id: TypeId) -> Option<&'static TypeDesc> {
         self.reflect_entries.get(&type_id).map(|entry| entry.desc)
     }
 
-    /// 底层 `TypeRegistry`，供 `rtti_bin::encode` 收集类型表。
+    /// Underlying `TypeRegistry`, for `rtti_bin::encode` collecting type table.
     pub fn type_registry(&self) -> &TypeRegistry {
         &self.reflect
     }
 
-    /// 已注册的反射组件数量。
+    /// Number of registered reflection components.
     pub fn reflect_component_count(&self) -> usize {
         self.reflect_entries.len()
     }
@@ -390,7 +390,7 @@ impl Default for ComponentRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// 内置组件注册
+// built-in component register
 // ---------------------------------------------------------------------------
 
 /// The builtin registry, built once per process.
@@ -426,10 +426,10 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         Text,
     };
 
-    // ── 场景基础组件 ──
+    // ── scene base components ──
     registry.register_reflect_serde::<Active>("prism_engine::scene::Active");
 
-    // Name 使用自定义 JSON 形状（字符串，而不是 {"0": ...}）。
+    // Name uses custom JSON shape (string, not {"0": ...}).
     registry.register_with("prism_engine::scene::Name", |world, entity, value| {
         if let Some(s) = value.as_str() {
             world.insert(entity, Name(s.to_string()));
@@ -449,7 +449,7 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
             .map(|name| serde_json::json!(name))
     });
 
-    // ── 光源 ──
+    // ── light source  ──
     #[cfg(feature = "group-3d")]
     {
         registry.register_reflect_serde::<Light>("prism_engine::scene::Light");
@@ -458,7 +458,7 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_serde::<PointLight>("prism_engine::scene::PointLight");
         registry.register_reflect_serde::<SpotLight>("prism_engine::scene::SpotLight");
 
-        // ── 声明式光照（场景驱动 IBL / GI，避免引擎启动无条件加载）──
+        // ── declarative lighting (scene-driven IBL / GI, avoid engine startup unconditional load) ──
         registry.register_reflect_serde::<EnvironmentLighting>(
             "prism_engine::scene::EnvironmentLighting",
         );
@@ -466,7 +466,7 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_serde::<ProbeVolume>("prism_engine::scene::ProbeVolume");
     }
 
-    // ── 相机 ──
+    // ── camera  ──
     registry.register_reflect_serde::<Camera>("prism_engine::scene::Camera");
     #[cfg(feature = "group-2d")]
     registry.register_reflect_serde::<VirtualCamera2D>("prism_engine::scene::VirtualCamera2D");
@@ -477,59 +477,59 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         );
     }
 
-    // ── 天空盒 / 渲染 bundle ──
+    // ── skybox / render bundle ──
     #[cfg(feature = "group-3d")]
     {
         registry.register_reflect_serde::<Skybox>("prism_engine::scene::Skybox");
         registry.register_reflect_serde::<Gizmo>("prism_engine::scene::Gizmo");
         registry.register_reflect_serde::<MeshRenderer>("prism_engine::scene::MeshRenderer");
-        // #491：距离 LOD（子实体即 LOD 级）。
+        // #491: distance LOD (child entity is LOD level).
         registry.register_reflect_serde::<LodGroup>("prism_engine::scene::LodGroup");
     }
 
-    // ── 2D 精灵（作者态；GPU 句柄由运行时 `SpriteRef` 持有）──
+    // ── 2D sprite (author state; GPU handle held by runtime `SpriteRef`) ──
     #[cfg(feature = "group-2d")]
     {
         registry.register_reflect_serde::<SpriteRenderer>("prism_engine::scene::SpriteRenderer");
         registry.register_reflect_serde::<LineRenderer>("prism_engine::scene::LineRenderer");
         registry.register_reflect_serde::<SpriteAnimation>("prism_engine::scene::SpriteAnimation");
         registry.register_reflect_serde::<Tilemap>("prism_engine::scene::Tilemap");
-        // #611：2D 精灵光照（与 SpriteRenderer 同组，没有精灵就没有意义）。
+        // #611: 2D sprite lighting (same group as SpriteRenderer, meaningless without sprite).
         registry.register_reflect_serde::<Light2D>("prism_engine::scene::Light2D");
-        // #983：昼夜时钟。它只是往同一实体的环境光里写颜色，2D 场景用得上，
-        // 但也可能在纯 3D 工程里做逻辑计时，所以不受 `group-2d` 限制更合理；
-        // 目前与 Light2D 一起登记，保持「没有 2D 就没有昼夜表现」的一致。
+        // #983: day-night clock. It only writes color into ambient light of same entity, 2D scenes use it often,
+        // but can also do logical timing in pure 3D projects, so not limiting by `group-2d` is more sensible;
+        // currently registered with Light2D, keeping consistency "no 2D means no day-night appearance".
         registry.register_reflect_serde::<TimeOfDay>("prism_engine::scene::TimeOfDay");
-        // #1160：2D 相机与 2D 物理
+        // #1160: 2D camera and 2D physics
         registry.register_reflect_serde::<Camera2D>("prism_engine::scene::Camera2D");
         registry.register_reflect_serde::<RigidBody2D>("prism_engine::scene::RigidBody2D");
         registry
             .register_reflect_serde::<PhysicsCollider2D>("prism_engine::scene::PhysicsCollider2D");
     }
 
-    // ── 本地变换 ──
-    // 只登记**类型**（RTTIBin 类型表 / 编辑器字段描述），不登记为可挂载组件：
-    // 作者只写 `EntityJson::transform`，由 loader / cooker bake 成
-    // `LocalTransform` + `LocalToWorld`（作者态那个不可移除的 Transform）。
-    // 若登记成组件，`registry.apply` 会在 `LocalToWorld` 计算完之后覆盖
-    // `LocalTransform`，留下一个按旧变换算出的世界矩阵。
+    // ── local transform  ──
+    // Register **types only** (RTTIBin type table / editor field descriptions), not as attachable component:
+    // Author only writes `EntityJson::transform`, baked by loader / cooker into
+    // `LocalTransform` + `LocalToWorld` (the non-removable Transform in author state).
+    // If registered as component, `registry.apply` would overwrite `LocalTransform` after
+    // `LocalToWorld` computed, leaving world matrix calculated from old transform.
     registry.register_reflect_type::<LocalTransform>();
     registry.register_reflect_type::<TransformInterpolation2D>();
 
-    // ── 关键帧动画 ──
-    // 轨道里的是嵌套结构体，先登记类型（RTTIBin 类型表 / 编辑器字段描述），
-    // 再登记组件本身。
+    // ── keyframe animation ──
+    // Tracks contain nested structs, first register type (RTTIBin type table / editor field descriptions),
+    // then register component itself.
     registry.register_reflect_type::<crate::animation::Vec3Key>();
     registry.register_reflect_type::<crate::animation::AnimationEvent>();
     registry.register_reflect_serde::<KeyframeAnimation>("prism_engine::scene::KeyframeAnimation");
 
-    // ── 粒子发射器（作者态；活粒子在运行时 `ParticleEmitter` 里）──
+    // ── particle emitter (author state; live particles in runtime `ParticleEmitter`) ──
     registry.register_reflect_serde::<ParticleSystem>("prism_engine::scene::ParticleSystem");
     registry.register_reflect_serde::<ParticleEmitter2D>("prism_engine::scene::ParticleEmitter2D");
     // Screen-space emitter: simulated in the engine, emitted as UI quads (#1057).
     registry.register_reflect_serde::<UiParticleEmitter>("prism_engine::scene::UiParticleEmitter");
 
-    // ── 音频（作者态；解码与混音在宿主层 `prism-app::scene_audio`）──
+    // ── audio (author state; decode and mixing in host layer `prism-app::scene_audio`) ──
     registry.register_reflect_serde::<AudioSource>("prism_engine::scene::AudioSource");
     registry.register_reflect_serde::<Terrain>("prism_engine::scene::Terrain");
     registry.register_reflect_type::<crate::voxel::VoxelBrick>();
@@ -538,7 +538,7 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         "prism_engine::scene::VoxelCursorHighlight",
     );
     registry.register_reflect_serde::<PostProcessVolume>("prism_engine::scene::PostProcessVolume");
-    // `Animator.layers` 是嵌套结构体；先登记类型，RSCN / 编辑器 schema 才能解析。
+    // `Animator.layers` is nested struct; only after registering type can RSCN / editor schema parse.
     registry.register_reflect_type::<AnimLayer>();
     registry.register_reflect_serde::<Animator>("prism_engine::scene::Animator");
     registry.register_reflect_serde::<SkeletonRoot>("prism_engine::scene::SkeletonRoot");
@@ -553,27 +553,27 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         .register_reflect_serde::<CharacterController>("prism_engine::scene::CharacterController");
     registry.register_reflect_serde::<AudioListener>("prism_engine::scene::AudioListener");
 
-    // ── 预制体实例（编辑器元数据）──
+    // ── prefab instance (editor metadata) ──
     registry.register_reflect_serde::<PrefabInstance>("prism_engine::scene::PrefabInstance");
 
-    // ── UI 组件 ──
+    // ── UI component  ──
     #[cfg(feature = "group-ui")]
     {
         registry.register_reflect_serde::<Layout>("prism_engine::ui::Layout");
         registry.register_reflect_serde::<Node>("prism_engine::ui::Node");
         registry.register_reflect_serde::<Style>("prism_engine::ui::Style");
-        // `ComputedLayout` 是布局系统的输出（`rect` 每帧被重写），由
-        // `ui::layout` 自己 ensure；只登记类型，不让作者挂载。
+        // `ComputedLayout` is output of layout system (`rect` rewritten every frame),
+        // ensured by `ui::layout`; only register type, don't let author attach.
         registry.register_reflect_type::<ComputedLayout>();
         registry.register_reflect_serde::<Text>("prism_engine::ui::Text");
-        // #528：可交互 UI 的组件必须能在场景 / 预制体里保存。
+        // #528: components of interactive UI must be savable in scene / prefab.
         registry.register_reflect_serde::<Interaction>("prism_engine::ui::Interaction");
         registry.register_reflect_serde::<Button>("prism_engine::ui::Button");
-        // #463：画布缩放（参考分辨率 → 实际屏幕）。
+        // #463: canvas scale (reference resolution → actual screen).
         registry.register_reflect_serde::<Canvas>("prism_engine::ui::Canvas");
     }
 
-    // ── 嵌套类型（类型表/cook 需要）──
+    // ── nested types (type table / cook needed) ──
     registry.register_reflect_type::<glam::Vec2>();
     registry.register_reflect_type::<glam::Vec3>();
     registry.register_reflect_type::<glam::Vec4>();
@@ -583,8 +583,8 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_type::<Anchors>();
         registry.register_reflect_type::<Pivot>();
         registry.register_reflect_type::<Margin>();
-        // `Style.layout` 的嵌套类型（#527 / #709）：漏登记会让所有带 `Style`
-        // 的场景在 RSCN 编码时以 `type ... is not registered` 失败。
+        // Nested type of `Style.layout` (#527 / #709): missing registration makes all scenes with `Style`
+        // fail RSCN encode with `type ... is not registered`.
         registry.register_reflect_type::<Layout>();
     }
 }
@@ -635,7 +635,7 @@ mod tests {
             glam::Vec3::new(1.0, 2.0, 3.0)
         );
 
-        // 导出走同一份 schema。
+        // export goes through same schema.
         let extracted = registry
             .extract_object_by_name(&world, entity, "prism_engine::scene::Camera")
             .unwrap();
@@ -668,7 +668,7 @@ mod tests {
         let mut registry = ComponentRegistry::new();
         crate::registry::register_builtin_components(&mut registry);
 
-        // 每个内置组件都有「添加组件」默认值，且能反序列化回组件。
+        // Each built-in component has "add component" default value, and can deserialize back to component.
         let names = registry.component_names();
 
         // schema_fingerprint is deterministic and non-zero
@@ -685,7 +685,7 @@ mod tests {
             let entity = world.spawn();
             registry.apply(&mut world, entity, name, &default);
 
-            // 走反射路径导出，形状应与默认一致（Name 走自定义转换器）。
+            // Export via reflection path, shape should match default (Name uses custom converter).
             if let Some(object) = registry.extract_object_by_name(&world, entity, name) {
                 assert_eq!(
                     registry.object_from_json(name, &default),
@@ -695,14 +695,14 @@ mod tests {
             }
         }
 
-        // Name 的默认形状是裸字符串（自定义 JSON 形状）。
+        // Name default shape is bare string (custom JSON shape).
         assert_eq!(
             registry.default_json("prism_engine::scene::Name"),
             Some(serde_json::json!("entity"))
         );
 
-        // 嵌套在作者组件里的类型也必须登记，否则 RSCN 编码会以
-        // `type ... is not registered` 失败（#709 的 `Style.layout`）。
+        // Types nested in author components must also be registered, otherwise RSCN encode will
+        // fail with `type ... is not registered` (#709 `Style.layout`).
         for nested in [
             "prism_engine::ui::Anchors",
             "prism_engine::ui::Pivot",
@@ -718,7 +718,7 @@ mod tests {
             );
         }
 
-        // 每个组件都能「作者 JSON -> 反射对象 -> 作者 JSON」往返。
+        // Each component can round-trip "author JSON -> reflection object -> author JSON".
         for name in &names {
             let default = registry.default_json(name).unwrap();
             let object = registry

@@ -72,7 +72,10 @@ fn looping_times_wrap_and_once_clips_clamp() {
         ..Default::default()
     };
     assert!((clip.wrap_time(2.5) - 0.5).abs() < 1e-6);
-    assert!((clip.wrap_time(-0.5) - 1.5).abs() < 1e-6, "negative time also wraps around");
+    assert!(
+        (clip.wrap_time(-0.5) - 1.5).abs() < 1e-6,
+        "negative time also wraps around"
+    );
     assert_eq!(clip.wrap_time(f32::NAN), 0.0);
 
     clip.looped = false;
@@ -131,7 +134,10 @@ fn a_track_for_a_missing_joint_is_ignored() {
     };
     let before = pose.clone();
     clip.sample_into(0.0, &mut pose);
-    assert_eq!(pose, before, "track pointing to a nonexistent bone should not modify the pose");
+    assert_eq!(
+        pose, before,
+        "track pointing to a nonexistent bone should not modify the pose"
+    );
 }
 
 #[test]
@@ -310,10 +316,17 @@ fn sample_joint_into_only_touches_the_requested_joint() {
         crate::skeleton::JointTransform::IDENTITY,
     ]);
     assert!(clip.sample_joint_into(0.0, 1, &mut pose));
-    assert_eq!(pose.local(0).unwrap().translation, Vec3::ZERO, "root didn't move");
+    assert_eq!(
+        pose.local(0).unwrap().translation,
+        Vec3::ZERO,
+        "root didn't move"
+    );
     assert!(
         (pose.local(1).unwrap().rotation.z - 0.5f32.sin()).abs() < 1e-6,
         "joint 1 sampled"
     );
-    assert!(!clip.sample_joint_into(0.0, 9, &mut pose), "out-of-range joint");
+    assert!(
+        !clip.sample_joint_into(0.0, 9, &mut pose),
+        "out-of-range joint"
+    );
 }

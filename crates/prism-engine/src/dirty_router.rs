@@ -1,10 +1,10 @@
-//! 帧间脏数据追踪，用于 [`SceneChanges`]（PR-S2）。
+//! Cross-frame dirty data tracking for [`SceneChanges`] (PR-S2).
 //!
-//! [`DirtyRouter`] 存储上一帧的 [`SceneChanges`]，
-//! 并在更新时比较每个字段以生成 [`DirtyFlags`]。
-//! 下游消费者（PR-S3 SceneReadView / PR-S4 上传阶段）使用这些标志跳过
-//! 冗余的 GPU 上传——例如仅在 `POINT_LIGHTS` 变脏时重新上传光源缓冲区，
-//! 仅在相机变脏时重新绑定相机 UBO 等。
+//! [`DirtyRouter`] stores previous-frame [`SceneChanges`],
+//! and compares each field during update to generate [`DirtyFlags`].
+//! Downstream consumers (PR-S3 SceneReadView / PR-S4 upload phase) use these flags to skip
+//! redundant GPU uploads — e.g. re-upload light buffer only when `POINT_LIGHTS` dirty,
+//! re-bind camera UBO only when camera dirty.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -18,19 +18,19 @@ use crate::render_system::SceneChanges;
 // DirtyFlags
 // ---------------------------------------------------------------------------
 
-/// 连续帧之间发生变化的场景字段集合。
+/// Set of scene fields that changed between consecutive frames.
 ///
-/// 零延迟：在 [`DirtyRouter::update`] 期间同步计算，早于任何渲染工作开始，
-/// 因此准备/渲染阶段可以立即作用于当前帧的脏数据（无帧延迟）。
+/// Zero latency: computed synchronously in [`DirtyRouter::update`], before any render work starts,
+/// so prepare/render phase can act on current-frame dirty data immediately (no frame delay).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DirtyFlags {
-    /// 相机（view-proj、eye、视图投影或任何派生值）。
+    /// Camera (view-proj, eye, view projection or any derived value).
     pub camera: bool,
-    /// 方向光的方向、颜色或强度。
+    /// Directional light direction, color or intensity.
     pub directional_light: bool,
-    /// 点光源列表（数量、位置、颜色、范围）。
+    /// Point light source list (count, position, color, range).
     pub point_lights: bool,
-    /// 曝光/相机存在性（影响 tonemap）
+    /// Exposure / camera exposure (affects tonemap).
     pub exposure: bool,
 }
 
@@ -77,16 +77,16 @@ impl DirtyRouter {
         }
     }
 
-    /// 追踪 draw items 的内容变化（矩阵 / mesh / material / 阴影标志），
-    /// 不再只看数量：数量不变但物体移动或换网格同样算脏。
+    /// Track content changes of draw items (matrix / mesh / material / shadow flags),
+    /// not just count: same count but object moved or mesh changed also counts as dirty.
     pub fn draw_items_dirty(&mut self, signature: u64) -> bool {
         let dirty = self.prev_draw_signature != Some(signature);
         self.prev_draw_signature = Some(signature);
         dirty
     }
 
-    /// 追踪路径追踪的回弹次数变化：变化后已有累积样本的反弹路径失效，
-    /// 调用方必须重置累积。
+    /// Track path tracing bounce count changes: after change, invalidate reverse path of existing accumulated samples,
+    /// caller must reset accumulation.
     pub fn pt_bounces_dirty(&mut self, max_bounces: u32) -> bool {
         let dirty = self.prev_pt_bounces != Some(max_bounces);
         self.prev_pt_bounces = Some(max_bounces);
@@ -130,8 +130,8 @@ impl DirtyRouter {
         flags
     }
 
-    /// 根据本帧 `SceneChanges`、绘制项签名与待上传资源计数，
-    /// 生成符合 DESIGN §9 静态规则集的统一 [`DirtyDispatchPlan`]。
+    /// Based on current-frame `SceneChanges`, draw item signatures and pending upload resource count,
+    /// generate unified [`DirtyDispatchPlan`] conforming to DESIGN §9 static rule set.
     pub fn plan_dispatch(
         &mut self,
         changes: &SceneChanges,
@@ -170,10 +170,10 @@ impl Default for DirtyRouter {
     }
 }
 
-/// 绘制列表的内容签名：模型矩阵、mesh、material 槽与阴影标志。
+/// Content signature of draw list: model matrix, mesh, material slot and shadow flag.
 ///
-/// 数量不变但物体移动 / 换了网格时签名也会变化，供路径追踪判断是否需要
-/// 丢弃已有累积样本。
+/// Signature changes when count unchanged but object moved / mesh swapped, for path tracing to decide whether
+/// to discard existing accumulated samples.
 pub fn draw_items_signature(items: &[DrawItem]) -> u64 {
     let mut hasher = DefaultHasher::new();
     items.len().hash(&mut hasher);

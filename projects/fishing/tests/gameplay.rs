@@ -1,18 +1,18 @@
-//! 玩法回归测试（host 后端，不需要 Vulkan / 窗口）。
+//! Gameplay regression tests (host backend, no Vulkan / window needed).
 //!
-//! 这些测试跑的是**和 Play 里同一份** `game::*::tick` 代码，只是把宿主从
-//! 「编辑器进程」换成普通的 `prism_ecs::World`：`GameWorld::host` 直接借用世界，
-//! 所以断言到的组件状态就是 Play 时模块通过 ABI 写进去的状态。
+//! These tests run the **same** `game::*::tick` code as in Play, just swapping host from
+//! "editor process" to a plain `prism_ecs::World`: `GameWorld::host` directly borrows the world,
+//! so asserted component state is what module writes through ABI during Play.
 //!
-//! 运行（工程目录内）：`cargo test`
+//! Run (in project dir): `cargo test`
 //!
-//! `world::tick` 会读 `assets/data/lake_layers.json`，靠 `prism_engine::asset_paths`
-//! 从 cwd 往上找 `assets/`，所以必须在 `projects/fishing` 下跑。
+//! `world::tick` reads `assets/data/lake_layers.json`, uses `prism_engine::asset_paths`
+//! to search upward from cwd for `assets/`, so must run under `projects/fishing`.
 
 use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
 use prism_scene::components::{Camera, LineRenderer, LocalTransform, Name, SpriteRenderer};
 
-/// 建一个最小世界：船 + 浮标 + 相机（与 `lake.scene.json` 的实体同名）。
+/// Build a minimal world: boat + bobber + camera (same entity names as `lake.scene.json`).
 fn scene_world() -> prism_ecs::World {
     let mut world = prism_ecs::World::new();
     let camera = world.spawn();
@@ -40,10 +40,10 @@ fn click() -> InputSnapshot {
     }
 }
 
-/// 8 个图层全部 spawn，并且每个都带变换和贴图路径。
+/// All 8 texture layers spawned, each with transform and texture path.
 ///
-/// 这条断言盯的是 `prism-runtime-host` 曾经丢掉 `LocalTransform` 的那个坑：
-/// 图层建出来了但没变换，屏幕上就是空的。
+/// This assertion watches the bug where `prism-runtime-host` once dropped `LocalTransform`:
+/// texture layer created but no transform, screen would be empty.
 #[test]
 fn lake_world_spawns_every_layer_with_transform() {
     let mut world = scene_world();
@@ -80,7 +80,7 @@ fn lake_world_spawns_every_layer_with_transform() {
     }
 }
 
-/// 抛竿 → 落水 → 咬钩 → 收线 → 钓到一条鱼。
+/// Cast → splash → bite → reel → catch a fish.
 #[test]
 fn fishing_state_machine_runs_cast_to_catch() {
     use fishing::game::fishing::Phase;
@@ -89,24 +89,24 @@ fn fishing_state_machine_runs_cast_to_catch() {
     let mut api = GameWorld::host(&mut world);
     let mut state = None;
 
-    // 第一次 tick 会找 boat/bobber 并建鱼线。
+    // First tick finds boat/bobber and creates fishing line.
     api.set_input(InputSnapshot::default());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     let state_ref = state.as_ref().expect("state created");
     assert_eq!(state_ref.phase(), Phase::Idle);
     assert_eq!(state_ref.caught(), 0);
 
-    // 点击 = 抛竿。
+    // Click = cast.
     api.set_input(click());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Casting);
 
-    // 浮标落水（CAST_SECONDS = 0.55）。
+    // Bobber splashes (CAST_SECONDS = 0.55).
     api.set_input(InputSnapshot::default());
     fishing::game::fishing::tick(&mut state, &mut api, 0.6);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Waiting);
 
-    // 等咬钩（`bite_at` 在 1.4~3.6s 之间）。
+    // Wait for bite (`bite_at` between 1.4~3.6s).
     let mut phase = Phase::Waiting;
     for _ in 0..300 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
@@ -117,12 +117,12 @@ fn fishing_state_machine_runs_cast_to_catch() {
     }
     assert_eq!(phase, Phase::Biting, "bite should arrive within ~5s");
 
-    // 咬钩窗口内再点一次 = 扬竿。
+    // Click again within bite window = hook.
     api.set_input(click());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Reeling);
 
-    // 收线（REEL_SECONDS = 0.9）。
+    // Reel (REEL_SECONDS = 0.9).
     api.set_input(InputSnapshot::default());
     for _ in 0..120 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
@@ -218,7 +218,7 @@ fn holding_space_does_not_repeat_the_cast_or_set_the_hook() {
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Reeling);
 }
 
-/// 鱼线在非 Idle/Caught 阶段可见，且终点跟着浮标走。
+/// Fishing line visible in non-Idle/Caught phases, and endpoint follows bobber.
 #[test]
 fn rod_line_follows_the_bobber() {
     use fishing::game::fishing::Phase;

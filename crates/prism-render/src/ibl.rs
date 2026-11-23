@@ -1,14 +1,14 @@
-//! 基于图像的光照（IBL）资源，用于 PBR 渲染。
+//! Image-based lighting (IBL) resources for PBR rendering.
 //!
-//! 用户的等距柱状投影 HDR 环境贴图（或程序化回退）在加载时被转换为
-//! 浮点**立方体贴图**（6 个面 + 完整 mip 链）。PBR 着色器通过反射方向
-//! 对立方体贴图进行采样，这没有极点奇异性也无接缝——因此反射在视图或对象
-//! 旋转时保持稳定（旧的等距柱状采样在极点附近闪烁）。这是来自用户资源的"真实"IBL。
+//! User equirectangular HDR environment texture (or procedural fallback) converted at load time to
+//! floating-point **cubemap** (6 faces + full mip chain). PBR shader samples cubemap by reflection direction,
+//! which has no pole singularity or seam — so it remains stable when reflections view or object
+//! rotates (old equirectangular sampling flickered near poles). This is "true" IBL from user asset.
 //!
-//! 此外，从等距柱状贴图计算出三个真实 IBL 资源：
-//! - 漫反射辐照度立方体贴图（余弦加权半球卷积）
-//! - 预滤波环境贴图（逐 mip 层级的 GGX 重要性采样）
-//! - BRDF 积分 LUT（2D，分割求和）
+//! Additionally, three true IBL resources computed from equirectangular texture:
+//! - diffuse irradiance cubemap (cosine-weighted hemisphere convolution)
+//! - prefiltered environment texture (per mip level GGX importance sampling)
+//! - BRDF integration LUT (2D, split-sum)
 
 use anyhow::Context as _;
 use ash::vk;
@@ -53,10 +53,10 @@ pub struct IblResources {
     descriptor_pool: vk::DescriptorPool,
 }
 
-/// 共享的 IBL 描述符 集合 布局（集合 2）：3 个 COMBINED_IMAGE_SAMPLER
-/// 绑定（envCube / irradianceCube / prefilteredCube）。由 `GraphRenderer`
-/// 创建一次并传递给空/完整 IBL，确保 set2 布局在「场景切换重建 IBL」时
-/// 保持稳定，forward pass / skybox 管线 布局 无需重建。
+/// Shared IBL descriptor set layout (set 2): 3 COMBINED_IMAGE_SAMPLER
+/// bindings (envCube / irradianceCube / prefilteredCube). Created once by `GraphRenderer`
+/// and passed to empty / full IBL, ensuring set2 layout stays stable during "scene switch rebuild IBL",
+/// forward pass / skybox pipeline layouts need no rebuild.
 pub fn ibl_descriptor_set_layout(device: &ash::Device) -> anyhow::Result<vk::DescriptorSetLayout> {
     let layout = unsafe {
         device.create_descriptor_set_layout(
@@ -89,8 +89,8 @@ pub fn ibl_descriptor_set_layout(device: &ash::Device) -> anyhow::Result<vk::Des
     Ok(layout)
 }
 
-/// 分配一个 face×face×6 的中性立方体贴图（R16G16B16A16_SFLOAT，1 mip），
-/// 返回 (image, memory, staging, staging_memory)。用于廉价空 IBL。
+/// Allocate a face×face×6 neutral cubemap (R16G16B16A16_SFLOAT, 1 mip),
+/// return (image, memory, staging, staging_memory). Used for cheap empty IBL.
 fn alloc_neutral_cube(
     device: &ash::Device,
     mem_props: &vk::PhysicalDeviceMemoryProperties,
@@ -777,9 +777,9 @@ impl IblResources {
             )
         }?;
 
-        // 5. 描述符 集合 集合 2)：3 绑定 envCube/irradianceCube/prefilteredCube。
-        // 布局由调用方共享传入（ds_layout），保证场景切换重建 IBL 时
-        // forward pass / skybox 管线 布局 稳定。brdfLUT 单独注册到 bindless 表。
+        // 5. Descriptor set (set 2): 3 bindings envCube/irradianceCube/prefilteredCube.
+        // Layout shared and passed by caller (ds_layout), ensuring forward pass / skybox pipeline
+        // layouts stay stable when scene rebuilds IBL. brdfLUT registered separately to bindless table.
         let descriptor_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
@@ -1861,10 +1861,10 @@ impl IblResources {
         })
     }
 
-    /// 廉价中性 IBL：创建 1×1 的合法 cubemap / irradiance / prefiltered + BRDF LUT，
-    /// **不做任何 CPU 预卷积**（≈0ms）。用于「无光照」场景（开屏 UI），仅让
-    /// forward pass 的 set2 descriptor 合法；真实 IBL 由 `GraphRenderer::set_environment`
-    /// 在加载带光照的 3D 场景时按需重建（走完整 `new` 路径）。
+    /// Cheap neutral IBL: create 1×1 legal cubemap / irradiance / prefiltered + BRDF LUT,
+    /// **no CPU pre-convolution** (≈0ms). Used for "no lighting" scenes (splash screen UI), only making
+    /// forward pass set2 descriptor legal; true IBL built on demand by `GraphRenderer::set_environment`
+    /// when loading 3D scene with lighting (full `new` path).
     pub fn new_empty(
         context: Arc<VulkanContext>,
         command_pool: vk::CommandPool,
@@ -1875,7 +1875,7 @@ impl IblResources {
         let mem_props = &context.physical_device_memory_properties;
         const F: u32 = 1u32;
 
-        // env / irradiance / prefiltered cube (1x1x6, 1 mip) — 中性灰（开屏无几何，不被采样）
+        // env / irradiance / prefiltered cube (1x1x6, 1 mip) — neutral gray (splash screen no geometry, not sampled)
         let (image, memory, staging, staging_memory) = alloc_neutral_cube(&device, mem_props, F)?;
         let (irradiance_image, irradiance_memory, irradiance_staging, irradiance_staging_memory) =
             alloc_neutral_cube(&device, mem_props, F)?;
@@ -1915,7 +1915,7 @@ impl IblResources {
             device.unmap_memory(prefiltered_staging_memory);
         }
 
-        // BRDF LUT (1x1, RG16) — 中性 (1,1) 回退。
+        // BRDF LUT (1x1, RG16) — neutral (1,1) fallback.
         let brdf_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(vk::Format::R16G16_SFLOAT)
@@ -1953,7 +1953,7 @@ impl IblResources {
             }
         }
 
-        // 一次性上传 4 张图。
+        // One-shot upload of 4 images.
         let cmd = allocate_temp_command_buffer(&device, command_pool)?;
         unsafe { device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default())? };
         let upload_cube = |img: vk::Image, stg: vk::Buffer| {
@@ -2050,7 +2050,7 @@ impl IblResources {
         unsafe { device.end_command_buffer(cmd) }?;
         submit_and_wait(&device, queue, command_pool, cmd).context("empty IBL upload submit")?;
 
-        // views + samplers (max_lod 1，因仅 1 mip)
+        // views + samplers (max_lod 1, since only 1 mip)
         let mk_sampler = || unsafe {
             device
                 .create_sampler(
@@ -2153,7 +2153,7 @@ impl IblResources {
         };
         let brdf_sampler = mk_sampler();
 
-        // 描述符 集合 (set2) — 复用共享布局 ds_layout。
+        // Descriptor set (set2) — reuse shared layout ds_layout.
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(
@@ -2311,7 +2311,7 @@ impl IblResources {
             self.device.free_memory(self.brdf_memory, None);
             free_buf(self.brdf_staging, self.brdf_staging_memory);
             self.device.destroy_sampler(self.brdf_sampler, None);
-            // 描述符 池（集合 布局 由 GraphRenderer 共享持有，此处不销毁）
+            // Descriptor pool (set layout shared and held by GraphRenderer, not destroyed here)
             self.device
                 .destroy_descriptor_pool(self.descriptor_pool, None);
         }

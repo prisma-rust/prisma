@@ -1,22 +1,22 @@
-//! 2D 精灵通道。
+//! 2D sprite pass.
 //!
-//! [`SpritePass`] 把 ECS 收集来的精灵实例（[`SpriteDrawItem`]）作为
-//! **实例化四边形**绘制到 ForwardPass 的 HDR 颜色附件里——和
-//! [`crate::skybox_pass::SkyboxPass`] 一样，它不拥有自己的 render pass /
-//! 帧缓冲，而是在 ForwardPass 已开启的 pass 内记录命令。
+//! [`SpritePass`] draws ECS-collected sprite instances ([`SpriteDrawItem`]) as
+//! **instanced quads** into ForwardPass HDR color attachment — like
+//! [`crate::skybox_pass::SkyboxPass`], it does not own its own render pass /
+//! framebuffer, just records commands in ForwardPass already-open pass.
 //!
-//! 设计要点（见 `projects/fishing/DESIGN.md`）：
+//! Design points (see `projects/fishing/DESIGN.md`):
 //!
-//! - **一次 draw call**：所有精灵共享一个实例缓冲，纹理索引进 bindless 表；
-//! - **关闭深度测试/写入**：2D 的前后关系由 CPU 侧排序
-//!   （`sorting_layer` → `order_in_layer` → `z`）保证，不依赖深度缓冲；
-//! - **Nearest 采样**：像素画在 `sprites.slang` 里固定用 bindless 表里的
-//!   nearest 采样器，帧矩形由 CPU 预先 clamp，避免精灵表串色；
-//! - 输出到线性 HDR 目标，由 `PostPass` 在 `tonemap_mode = 2`（直通）时
-//!   保持原始调色板。
+//! - **One draw call**: all sprites share one instance buffer, texture index into bindless table;
+//! - **Disable depth test / write**: 2D front-back order guaranteed by CPU sort
+//!   (`sorting_layer` → `order_in_layer` → `z`), not depending on depth buffer;
+//! - **Nearest sampling**: pixel art in `sprites.slang` fixed uses nearest sampler from bindless table,
+//!   frame rect pre-clamped on CPU to avoid sprite texture bleeding;
+//! - Output to linear HDR target, `PostPass` with `tonemap_mode = 2` (passthrough)
+//!   preserves original palette.
 //!
-//! 描述符布局：绑定 ForwardPass 共享的 bindless 表，但放在 **set 0**
-//! （该布局对象与集合索引无关；scene 管线把它绑在 set 1）。
+//! Descriptor layout: binds ForwardPass shared bindless table, but in **set 0**
+//! (layout object independent of set index; scene pipeline binds it in set 1).
 
 use std::mem::size_of;
 
@@ -36,29 +36,29 @@ const _: () = assert!(size_of::<bindings::SpritePush>() as u32 == bindings::PUSH
 const SPRITE_VERT_SPV: &[u8] = prism_render_shaders::SPRITES_VERT_SPV;
 const SPRITE_FRAG_SPV: &[u8] = prism_render_shaders::SPRITES_FRAG_SPV;
 
-/// 初始实例容量（按需增长）。
+/// Initial instance capacity (grows on demand).
 const INITIAL_CAPACITY: u32 = 256;
 
-/// 单实例顶点数据 —— 必须与 `sprites.slang` 的 `SpriteVertexIn` 一致。
+/// Single instance vertex data — must match `sprites.slang` `SpriteVertexIn`.
 ///
-/// 四个角点是**世界空间**坐标（顺序 `BL, BR, TR, TL`）：精灵的模型矩阵在 CPU
-/// 侧展开，折线的三角形直接给顶点（#604）。三角形 = 最后两个角点重合的四边形。
+/// Four corner points are **world-space** coords (order `BL, BR, TR, TL`): sprite model matrix expanded on
+/// CPU side, polyline triangles given directly as vertices (#604). Triangle = quad split into last two corners.
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct SpriteInstance {
-    /// 四边形四个角（世界空间）。
+    /// Quad four corners (world space).
     corners: [[f32; 3]; 4],
-    /// UV 矩形 `(u0, v0, u1, v1)`。
+    /// UV rect `(u0, v0, u1, v1)`.
     uv_rect: [f32; 4],
-    /// 线性 RGBA 乘算色。
+    /// Linear RGBA multiply color.
     color: [f32; 4],
-    /// bindless 纹理索引。
+    /// Bindless texture index.
     texture: u32,
     _pad: [u32; 3],
-    /// 世界空间裁剪矩形 `[min_x, min_y, max_x, max_y]`（#582）。
-    /// `max < min` = 不裁剪。
+    /// World-space clip rect `[min_x, min_y, max_x, max_y]` (#582).
+    /// `max < min` = no clip.
     clip: [f32; 4],
-    /// 位标志：bit 0 = 接收 2D 光照（#611）。
+    /// Bit flags: bit 0 = receives 2D lighting (#611).
     flags: u32,
 }
 
@@ -107,8 +107,8 @@ impl SpriteInstance {
     }
 }
 
-/// 由模型矩阵展开四个世界空间角点（与旧 vertex shader 的
-/// `m0*x + m1*y + m3` 完全一致，顺序 `BL, BR, TR, TL`）。
+/// Expand four world-space corners from model matrix (fully consistent with old vertex shader
+/// `m0*x + m1*y + m3`, order `BL, BR, TR, TL`).
 fn corners_from_model(model: &[[f32; 4]; 4]) -> [[f32; 3]; 4] {
     const UNIT: [[f32; 2]; 4] = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
     let (m0, m1, m3) = (model[0], model[1], model[3]);
@@ -121,22 +121,22 @@ fn corners_from_model(model: &[[f32; 4]; 4]) -> [[f32; 3]; 4] {
     out
 }
 
-/// `(src, dst, op)` 唯一标识一条混合管线。
+/// `(src, dst, op)` uniquely identifies a blend pipeline.
 type BlendKey = (BlendMode, BlendMode, BlendOp);
 
-/// 2D 精灵实例化绘制通道。
+/// 2D sprite instanced draw pass.
 pub struct SpritePass {
-    /// 按混合状态缓存的管线（#610）：Alpha / Additive / Multiply 共用实例缓冲。
+    /// Pipeline cached by blend state (#610): alpha / Additive / Multiply share instance buffer.
     pipelines: std::collections::HashMap<BlendKey, GraphicsPipeline>,
-    /// 管线编译时使用的 render pass（ForwardPass 重建后需要重编）。
+    /// Render pass used at pipeline compile (needs recompile when ForwardPass rebuilds).
     built_for_render_pass: Option<vk::RenderPass>,
     instance_buffer: vk::Buffer,
     instance_memory: vk::DeviceMemory,
     instance_capacity: u32,
     device: Option<ash::Device>,
 
-    // ---- 2D 光照（#611）----
-    /// set 1 binding 0：`StructuredBuffer<SpriteLight>`。
+    // ---- 2D lighting (#611) ----
+    /// set 1 binding 0: `StructuredBuffer<SpriteLight>`.
     light_layout: vk::DescriptorSetLayout,
     light_pool: vk::DescriptorPool,
     light_set: vk::DescriptorSet,
@@ -178,10 +178,10 @@ impl Default for SpritePass {
 }
 
 impl SpritePass {
-    /// 在已开启的 render pass 内绘制 `items`（按给定顺序，先画先覆盖）。
+    /// Draw `items` inside already-open render pass (in given order, first drawn covered first).
     ///
-    /// `bindless_set` / `bindless_layout` 由 ForwardPass 提供；`view_proj`
-    /// 是本帧世界→裁剪矩阵（2D 时即正交相机矩阵）。
+    /// `bindless_set` / `bindless_layout` provided by ForwardPass; `view_proj`
+    /// is this frame world→clip matrix (for 2D the orthographic camera matrix).
     #[expect(
         clippy::too_many_arguments,
         reason = "draw takes the per-frame matrices and descriptor sets the caller owns"
@@ -204,8 +204,8 @@ impl SpritePass {
         if items.is_empty() || bindless_set == vk::DescriptorSet::null() {
             return Ok(());
         }
-        // 光照资源是懒创建的（`SpritePass::new` 不持有设备）。即使这一帧
-        // 没有灯光也要建好，否则 `light_count == 0` 的分支没有 set 1 可绑。
+        // Lighting resources lazily created (`SpritePass::new` has no device). Even if this frame
+        // has no lights must be built, else `light_count == 0` branch has no set 1 to bind.
         self.ensure_lights(device, context)?;
         self.upload_lights(device, lights)?;
         if self.built_for_render_pass != Some(render_pass) {
@@ -215,8 +215,8 @@ impl SpritePass {
         self.grow(device, context, items.len() as u32)?;
         self.upload(context, items)?;
 
-        // 保持 CPU 排序顺序，只把相邻的同混合状态合并成一次 draw。
-        // 混合模式不是排序键，所以交错的精确顺序仍然保留。
+        // Keep CPU sort order, only merge adjacent same-blend-state into one draw.
+        // Blend mode not a sort key, so correct exact order preserved.
         let mut start = 0usize;
         while start < items.len() {
             let key = (
@@ -330,8 +330,8 @@ impl SpritePass {
                 .src_color_blend_factor(blend_factor(src_blend))
                 .dst_color_blend_factor(blend_factor(dst_blend))
                 .color_blend_op(blend_operation(blend_op))
-                // alpha 通道只在标准 alpha 混合时累乘；加色 / 乘法的 alpha
-                // 保持目标值，避免把后面的精灵变透明。
+                // Alpha channel only accumulates in standard alpha blend; additive / multiply alpha
+                // keeps target value, avoid turning later sprites transparent.
                 .src_alpha_blend_factor(if alpha_blend {
                     vk::BlendFactor::ONE
                 } else {
@@ -368,7 +368,7 @@ impl SpritePass {
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
-            // 2D 顺序由 CPU 排序决定：不测试也不写深度。
+            // 2D order decided by CPU sort: no depth test nor write.
             depth_write_enable: Some(false),
             depth_test_enable: Some(false),
             color_attachment_count: None,
@@ -456,7 +456,7 @@ impl SpritePass {
         Ok(())
     }
 
-    /// 交换链重建 / 销毁前释放 GPU 资源。
+    /// Release GPU resources before swapchain rebuild / destroy.
     pub fn destroy(&mut self, device: &ash::Device) {
         self.pipelines.clear();
         self.built_for_render_pass = None;
@@ -493,10 +493,10 @@ impl SpritePass {
         self.device = None;
     }
 
-    /// 懒创建 2D 光照资源（set 1 = `StructuredBuffer<SpriteLight>`，#611）。
+    /// Lazily create 2D lighting resources (set 1 = `StructuredBuffer<SpriteLight>`, #611).
     ///
-    /// `SpritePass::new()` 不持有 `VulkanContext`，所以第一次 `draw` 才建；
-    /// 容量固定为 [`SPRITE_LIGHT_MAX`]（16 × 48 = 768 字节），不需要增长。
+    /// `SpritePass::new()` has no `VulkanContext`, so first `draw` creates;
+    /// capacity fixed at [`SPRITE_LIGHT_MAX`] (16 × 48 = 768 bytes), no growth needed.
     fn ensure_lights(&mut self, device: &ash::Device, context: &VulkanContext) -> Result<()> {
         if self.light_set != vk::DescriptorSet::null() {
             return Ok(());
@@ -556,7 +556,7 @@ impl SpritePass {
         Ok(())
     }
 
-    /// 把本帧灯光写进 host-visible SSBO（最多 [`SPRITE_LIGHT_MAX`] 盏）。
+    /// Write this frame lights into host-visible SSBO (max [`SPRITE_LIGHT_MAX`]).
     fn upload_lights(&self, device: &ash::Device, lights: &[SpriteLight]) -> Result<()> {
         let count = lights.len().min(SPRITE_LIGHT_MAX);
         if count == 0 || self.light_memory == vk::DeviceMemory::null() {
@@ -589,7 +589,7 @@ impl Drop for SpritePass {
                 if self.instance_memory != vk::DeviceMemory::null() {
                     device.free_memory(self.instance_memory, None);
                 }
-                // 2D 光照资源（#611）。
+                // 2D lighting resources (#611).
                 if self.light_buffer != vk::Buffer::null() {
                     device.destroy_buffer(self.light_buffer, None);
                 }
@@ -611,8 +611,8 @@ impl Drop for SpritePass {
 mod tests {
     use super::{corners_from_model, SpriteInstance};
 
-    /// #604：角点由模型矩阵展开，必须与旧 vertex shader 的
-    /// `m0*x + m1*y + m3` 逐位一致（顺序 BL, BR, TR, TL）。
+    /// #604: corners expanded by model matrix, must match old vertex shader bit-by-bit
+    /// (`m0*x + m1*y + m3`, order BL, BR, TR, TL).
     #[test]
     fn model_corners_match_the_old_vertex_shader() {
         let model = [
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(corners[3], [8.0, 21.0, 0.0]);
     }
 
-    /// 顶点布局是 Rust 与 `sprites.slang` 之间的手工契约，改一边就必须改另一边。
+    /// Vertex layout is manual contract between Rust and `sprites.slang`, change one must change other.
     #[test]
     fn the_instance_layout_matches_the_shader_locations() {
         assert_eq!(std::mem::size_of::<SpriteInstance>(), 116);

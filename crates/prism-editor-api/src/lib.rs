@@ -1,24 +1,24 @@
-//! Prisma 编辑器 / MCP 的**后端数据层**。
+//! Prisma editor / MCP **backend data layer**.
 //!
-//! 这一层刻意保持纯净：只依赖 `prism-scene` / `prism-reflect`，
-//! **不依赖 egui、不依赖 Vulkan / 引擎 / 渲染**。它把「场景 schema」和
-//! 「`.scene.json` 文档 IO」暴露成可序列化的数据结构，供 MCP 工具
-//! （见 `crates/prism-editor-mcp`）直接转成 JSON。
+//! This layer deliberately stays pure: only depends on `prism-scene` / `prism-reflect`,
+//! **does not depend on egui, Vulkan / engine / rendering**. It exposes "scene schema" and
+//! "`.scene.json` document IO" as serializable data structures, for MCP tools
+//! (see `crates/prism-editor-mcp`) to convert directly to JSON.
 //!
-//! 职责划分：
-//! - [`schema`]：把 `prism-scene` 的组件注册表投影成前端可消费的属性面板
-//!   schema（字段名 / 类型 / 只读 / 嵌套结构 / 默认值）。
-//! - [`scene`]：定位项目根、枚举/读写/校验 `.scene.json`、场景模板与文件操作。
-//! - [`presets`]：快速添加实体的预设（相机 / 光源 / UI / 网格 / 空）。
-//! - [`assets`]：`assets/` 目录枚举（含大小/分类）与 `.scene.json` 引用分析。
-//! - [`reflect_edit`]：**基于反射**的字段级写入（只读拒绝、类型校验、作者 JSON 往返）。
+//! Responsibilities:
+//! - [`schema`]: projects `prism-scene` component registry into frontend-consumable property panel
+//!   schema (field name / type / read-only / nested structure / default value).
+//! - [`scene`]: locates project root, enumerates / reads / writes / validates `.scene.json`, scene templates and file ops.
+//! - [`presets`]: quick-add entity presets (camera / light / UI / mesh / empty).
+//! - [`assets`]: `assets/` directory enumeration (with size / classification) and `.scene.json` reference analysis.
+//! - [`reflect_edit`]: **reflection-based** field-level writes (read-only rejected, type validation, author JSON round-trip).
 //!
-//! 数据层（供 `editor/` 与自动化工具消费）：
-//! - [`asset_inspect`]：已 cook 资源（RSKL / RSKN / RANI / RMES …）的检查与校验。
-//! - [`asset_importer`]：按扩展名投影导入器类别 / 主资产类型。
-//! - [`property_drawer`]：字段渲染声明（范围 / 多行文本 / 颜色用法 / 自定义绘制）。
-//! - [`scene_manifest`]：`assets/scenes.json` 清单读写。
-//! - [`settings`]：`assets/settings.ini` 的项目 / 渲染设置模型。
+//! Data layer (consumed by `editor/` and automation tools):
+//! - [`asset_inspect`]: inspection and validation of cooked assets (RSKL / RSKN / RANI / RMES ...).
+//! - [`asset_importer`]: map by extension to importer category / main asset type.
+//! - [`property_drawer`]: field render declarations (range / multiline text / color usage / custom draw).
+//! - [`scene_manifest`]: `assets/scenes.json` manifest read/write.
+//! - [`settings`]: project / render settings model for the engine settings file.
 //!
 
 pub mod asset_importer;
@@ -46,19 +46,19 @@ pub use assets::{
     read_asset_bytes, read_asset_text, AssetInfo, AssetRef, AssetTextPreview, MAX_ASSETS,
     MAX_PREVIEW_BYTES, MAX_TEXT_PREVIEW_BYTES,
 };
-// 形状门面（`delete_asset` / `move_asset` / `rename_asset` /
-// `instantiate_prefab` / `revert_prefab_instance` / `sync_prefab_instances` 等
-// 与既有导出同名，保留模块路径访问，不在根上重复导出）。
+// Shape gates (`delete_asset` / `move_asset` / `rename_asset` /
+// `instantiate_prefab` / `revert_prefab_instance` / `sync_prefab_instances` etc.
+// same names as existing exports, keep module path access, do not re-export again at root).
 pub use presets::{entity_presets, EntityPreset};
 pub use property_drawer::{
     PropertyAttribute, PropertyDrawer, PropertyDrawerRegistry, PropertyRenderer,
 };
 pub use reflect_edit::{normalize_component, set_component_field};
 pub use scene::{
-    // 通用（场景 / 预制体）
+    // Generic (scene / prefab)
     delete_doc,
     delete_entities,
-    // 场景别名（旧调用）
+    // Scene aliases (legacy calls)
     delete_scene,
     doc_path,
     docs_dir,

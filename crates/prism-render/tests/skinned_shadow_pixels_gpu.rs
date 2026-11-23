@@ -298,12 +298,12 @@ fn a_moving_skinned_caster_moves_its_shadow_on_the_receiver() {
 
     let items = [receiver(receiver_handle), caster(caster_handle)];
 
-    // 基线：关掉阴影，接收面没有暗块。
+    // Baseline: no shadows, no shadow on receiver face.
     let baseline = render(&mut renderer, &items, &[placed_at(-1.2)], 0.0);
     let (shadow_count, _) = shadowed_pixels(&baseline, &baseline);
     assert_eq!(shadow_count, 0, "the baseline must not contain a shadow");
 
-    // 开阴影 + 把骨骼放到 x = −1.2：接收面上出现一块阴影。
+    // Enable shadows + place bone at x = -1.2: a shadow appears on receiver face.
     let left = render(&mut renderer, &items, &[placed_at(-1.2)], 1.0);
     let (left_count, left_center) = shadowed_pixels(&baseline, &left);
     assert!(
@@ -311,7 +311,7 @@ fn a_moving_skinned_caster_moves_its_shadow_on_the_receiver() {
         "a skinned caster must darken the receiver ({left_count} pixels changed)"
     );
 
-    // 骨骼移到 x = +1.2：阴影必须跟着一起走，而不是留在原地。
+    // Move bone to x = +1.2: shadow must follow, not stay at original position.
     let right = render(&mut renderer, &items, &[placed_at(1.2)], 1.0);
     let (right_count, right_center) = shadowed_pixels(&baseline, &right);
     assert!(

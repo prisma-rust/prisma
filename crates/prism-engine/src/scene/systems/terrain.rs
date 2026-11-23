@@ -1,24 +1,24 @@
-//! 高度场地形运行时（#517 Phase 1）。
+//! Heightfield terrain runtime (#517 Phase 1).
 //!
-//! 场景里的 [`Terrain`] 只是数据：这里把它读成 [`Heightfield`]，生成一张
-//! `MeshUploadInput`（positions / normals / uv0 / indices），登记进
-//! [`ProceduralMeshes`]，再把同一实体的 `MeshRenderer.mesh_path` 指向这条虚构路径。
-//! 资产解析器遇到 `__proc/` 前缀时直接从 [`ProceduralMeshes`] 取网格，不需要 cook。
+//! [`Terrain`] in scene is only data: here read it into [`Heightfield`], generate a
+//! `MeshUploadInput` (positions / normals / uv0 / indices), register into
+//! [`ProceduralMeshes`], then point same entity's `MeshRenderer.mesh_path` to this virtual path.
+//! Asset parser seeing `__proc/` prefix takes mesh directly from [`ProceduralMeshes`], no cook needed.
 //!
-//! 查询接口：[`Heightfield::sample_height`] / [`Heightfield::sample_normal`] 是纯函数，
-//! [`terrain_height`] / [`terrain_sample`] 在世界上按 `TerrainData` 找覆盖点，
-//! [`terrain_raycast`] 用同样的采样做解析射线查询（玩法落地 / 拾取用）。
+//! Query interface: [`Heightfield::sample_height`] / [`Heightfield::sample_normal`] are pure functions,
+//! [`terrain_height`] / [`terrain_sample`] find covering terrain at world point by `TerrainData`,
+//! [`terrain_raycast`] uses same sampling for parsed raycast query (gameplay landing / picking).
 //!
-//! 多 chunk + LOD + 植被已实现（#517 Phase 2）：`Terrain.chunks > 1` 时每个块是
-//! 独立子实体 / 独立网格，渲染与阴影可以逐块剔除；`Terrain.lod_distances`
-//! 控制 1–3 级 LOD，整张地形按最近相机统一切级（避免跨块裂缝）。
-//! `Terrain.vegetation_*` 按高度 / 坡度确定性散布共享网格的实例，交给渲染器
-//! 静态实例化合批。[`Heightfield::sculpt`]、`prism-build-pipeline sculpt-heightmap`
-//! 与编辑器 Scene 视口 Sculpt 模式提供 raise/lower/smooth/flatten 笔刷；
-//! `Terrain.splat` 提供按高度 / 坡度的 4 层程序化色带（顶点色）；
-//! `Terrain.splat_materials` 提供最多 4 层的纹理 splat（albedo / normal /
-//! metallic-roughness 按顶点权重混合）。rapier 地形碰撞体由 `prism-app`
-//! 的物理线程维护（见 `physics_runner`）。
+//! Multi-chunk + LOD + vegetation implemented (#517 Phase 2): when `Terrain.chunks > 1` each chunk is
+//! independent child entity / independent mesh, render and shadow can cull per chunk; `Terrain.lod_distances`
+//! controls 1–3 LOD levels, whole terrain switches level uniformly by nearest camera (avoid cross-chunk cracks).
+//! `Terrain.vegetation_*` scatters shared-mesh instances deterministically by height / slope, handed to renderer
+//! static instancing batching. [`Heightfield::sculpt`], `prism-build-pipeline sculpt-heightmap`
+//! and editor Scene viewport Sculpt mode provide raise / lower / smooth / flatten brushes;
+//! `Terrain.splat` provides 4-layer procedural color bands by height / slope (vertex colors);
+//! `Terrain.splat_materials` provides up to 4 layers of texture splat (albedo / normal /
+//! metallic-roughness blended by vertex weights). rapier terrain collision body maintained by `prism-app`'s
+//! physics thread (see `physics_runner`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -32,20 +32,20 @@ use prism_render::managers::mesh_manager::MeshUploadInput;
 use prism_scene::components::SceneAssetId;
 use prism_scene::{CullMode, ShadowCastingMode};
 
-/// 进程内生成网格的路径前缀；不为它们 cook、不进 `.pak`。
+/// Prefix for in-process generated mesh paths; not cooked for them, not in `.pak`.
 pub const PROCEDURAL_PREFIX: &str = "__proc/";
 
-/// 解析后的高度场：行优先，`cells × cells` 个高度。
+/// Parsed heightfield: row-major, `cells × cells` heights.
 ///
-/// 数值用的就是 `.raw` 里的单位 —— heightmap CLI 写的是**米**（绝对高程，可以为负），
-/// 而手工/归一化[0,1] 的高度场再靠 `height_scale` 放大成米。
+/// Value used is unit from `.raw` — heightmap CLI writes **meters** (absolute elevation, can be negative),
+/// while hand-authored / normalized [0,1] heightfield scaled to meters via `height_scale`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Heightfield {
     cells: usize,
     heights: Vec<f32>,
 }
 
-/// 顶点色的用途：无 / 程序化色带 / 纹理层 4 层权重。
+/// Use of vertex color: none / procedural color band / texture layer 4-layer weight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VertexSplat {
     None,
@@ -53,7 +53,7 @@ enum VertexSplat {
     Weights,
 }
 
-/// 高度场笔刷模式（#517 Phase 2 雕刻基础层）。
+/// Heightfield brush mode (#517 Phase 2 sculpt foundation layer).
 ///
 /// The enum lives in `prism-scene` so the pipeline CLI can sculpt a raw
 /// heightmap without linking the engine; this re-export keeps the scene-side
@@ -61,22 +61,22 @@ enum VertexSplat {
 pub use prism_scene::terrain::SculptMode;
 
 impl Heightfield {
-    /// 从 `.raw`（f32 little-endian，行优先）解析。
+    /// Parse from `.raw` (f32 little-endian, row-major).
     ///
-    /// 长度必须正好是 `cells * cells * 4`；不足或多余都返回 `None`（`resolution`
-    /// 和文件对不上时宁可报错，也不要画出一张错位的地形）。高度值不钳制范围 ——
-    /// heightmap CLI 写出的是米（有负值），归一化高度场靠 `height_scale` 放大。
+    /// Length must be exactly `cells * cells * 4`; shorter or longer returns `None` (`resolution`
+    /// and file mismatch prefer reporting error over drawing a wrong terrain). Height values not clamped to range —
+    /// heightmap CLI writes meters (with negative values), normalized heightfield scaled by `height_scale`.
     pub fn from_raw(bytes: &[u8], cells: usize) -> Option<Self> {
         prism_scene::terrain::decode_heights(bytes, cells).map(|heights| Self { cells, heights })
     }
 
-    /// 从 `.raw` 推断分辨率：样本数必须是完全平方数（heightmap CLI 默认 1024×1024）。
+    /// Infer resolution from `.raw`: sample count must be perfect square (heightmap CLI default 1024×1024).
     pub fn from_raw_auto(bytes: &[u8]) -> Option<Self> {
         prism_scene::terrain::decode_heights_auto(bytes)
             .map(|(cells, heights)| Self { cells, heights })
     }
 
-    /// 全零的高度场（没有高度图时的占位，仍然是平的可见地面）。
+    /// All-zero heightfield (placeholder when no heightmap, still a flat visible surface).
     pub fn flat(cells: usize) -> Self {
         let cells = cells.max(2);
         Self {
@@ -93,7 +93,7 @@ impl Heightfield {
         &self.heights
     }
 
-    /// 网格坐标上的高度：`u` / `v` 是 `[0, 1]` 的格子坐标（越界夹到边界）。
+    /// Height at mesh coordinates: `u` / `v` are `[0, 1]` cell coords (out of bounds clamped to boundary).
     pub fn sample_height(&self, u: f32, v: f32) -> f32 {
         prism_scene::terrain::sample_height(self.cells, &self.heights, u, v)
     }
@@ -102,14 +102,14 @@ impl Heightfield {
         self.heights[y * self.cells + x]
     }
 
-    /// 网格坐标上的法线（中心差分，Y 已归一化）。
+    /// Normal at mesh coordinates (central difference, Y already normalized).
     pub fn sample_normal(&self, u: f32, v: f32, height_scale: f32) -> [f32; 3] {
         let step = 1.0 / (self.cells - 1) as f32;
         let left = self.sample_height(u - step, v) * height_scale;
         let right = self.sample_height(u + step, v) * height_scale;
         let down = self.sample_height(u, v - step) * height_scale;
         let up = self.sample_height(u, v + step) * height_scale;
-        // 网格是世界尺寸上的等距采样，所以梯度只需按格距缩放。
+        // Mesh is equidistant samples over world size, so gradient only needs scaling by cell distance.
         let dx = (right - left) / (2.0 * step).max(1e-6);
         let dz = (up - down) / (2.0 * step).max(1e-6);
         let normal = glam::Vec3::new(-dx, 1.0, -dz).normalize_or_zero();
@@ -120,12 +120,12 @@ impl Heightfield {
         }
     }
 
-    /// 生成整张地形的网格（单 chunk）：沿 `size` 铺开，`y = height * height_scale`。
+    /// Generate mesh for whole terrain (single chunk): spread over `size`, `y = height * height_scale`.
     pub fn build_mesh(&self, size: [f32; 2], height_scale: f32) -> MeshUploadInput {
         self.build_mesh_with_splat(size, height_scale, false)
     }
 
-    /// 单块网格 + 可选的程序化色带 splat（#517）。
+    /// Single mesh + optional procedural color band splat (#517).
     pub fn build_mesh_with_splat(
         &self,
         size: [f32; 2],
@@ -144,11 +144,11 @@ impl Heightfield {
         )
     }
 
-    /// 生成 `[x0, x1] × [z0, z1]` 格子范围的网格（#517 Phase 2）。
+    /// Generate mesh for `[x0, x1] × [z0, z1]` cell range (#517 Phase 2).
     ///
-    /// 顶点坐标相对**这一块的中心**，方便把块实体挂在父地形下；UV 仍用整张
-    /// 地形的 `[0, 1]`，所以相邻块的材质不会在接缝处重置。范围会自动排序、
-    /// 夹到 `0..=cells-1`，并至少保留一个 quad。
+    /// Vertex coords relative to **this chunk's center**, for attaching chunk entity under parent terrain; UV still uses whole
+    /// terrain's `[0, 1]`, so adjacent chunks' materials won't reset at seams. Range auto-sorted,
+    /// clamped to `0..=cells-1`, at least one quad kept.
     pub fn build_chunk_mesh(
         &self,
         size: [f32; 2],
@@ -161,10 +161,10 @@ impl Heightfield {
         self.build_chunk_mesh_lod(size, height_scale, x0, x1, z0, z1, 1)
     }
 
-    /// 带步长的 chunk 网格（#517 LOD）：`step = 1/2/4` 对应 LOD0/1/2。
+    /// Chunk mesh with step (#517 LOD): `step = 1/2/4` for LOD0/1/2.
     ///
-    /// 两端格子始终保留，所以每一级的边界与相邻块 / 更细一级对齐；级内
-    /// 只是减少中间的采样行。整张地形统一选级时不会出现跨块裂缝。
+    /// Both end cells always kept, so each level's boundary matches adjacent chunks / finer level; within level
+    /// only interior sample rows reduced. Whole terrain selecting level uniformly avoids cross-chunk cracks.
     #[expect(
         clippy::too_many_arguments,
         reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
@@ -182,7 +182,7 @@ impl Heightfield {
         self.build_chunk_mesh_lod_with_splat(size, height_scale, x0, x1, z0, z1, step, false)
     }
 
-    /// 带步长 + 可选程序化色带 splat 的 chunk 网格。
+    /// Chunk mesh with step + optional procedural color band splat.
     #[expect(
         clippy::too_many_arguments,
         reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
@@ -214,7 +214,7 @@ impl Heightfield {
         )
     }
 
-    /// 纹理层 splat 的 4 层权重（写进顶点色 R/G/B，第四层隐式）。
+    /// 4-layer weights of texture layer splat (written to vertex color R/G/B, 4th layer implicit).
     #[expect(
         clippy::too_many_arguments,
         reason = "chunk bounds and LOD step are one flat rectangle plus a stride"
@@ -241,7 +241,7 @@ impl Heightfield {
         )
     }
 
-    /// 单块网格 + 纹理层权重（供无 chunk 的旧路径使用）。
+    /// Single mesh + texture layer weights (for no-chunk legacy path).
     pub fn build_mesh_with_weights(&self, size: [f32; 2], height_scale: f32) -> MeshUploadInput {
         self.build_chunk_mesh_lod_mode(
             size,
@@ -281,7 +281,7 @@ impl Heightfield {
 
         let [size_x, size_z] = [size[0].max(0.001), size[1].max(0.001)];
         let last_f = last as f32;
-        // 块中心在整张地形局部空间里的位置；顶点再减掉它。
+        // Chunk center position in whole terrain local space; vertices subtract it.
         let center_x = ((x0 + x1) as f32 * 0.5 / last_f - 0.5) * size_x;
         let center_z = ((z0 + z1) as f32 * 0.5 / last_f - 0.5) * size_z;
         let xs = sample_indices(x0, x1, step);
@@ -356,13 +356,13 @@ impl Heightfield {
         }
     }
 
-    /// 在归一化坐标 `(center_u, center_v)` 处应用一次笔刷（#517 Phase 2）。
+    /// Apply one brush at normalized coords `(center_u, center_v)` (#517 Phase 2).
     ///
-    /// `radius` 也是归一化到地形宽度的 `[0, 1]`；`strength` 对 Raise/Lower
-    /// 是高度场单位，对 Smooth/Flatten 是 `0..1` 的混合系数。半径外的格子
-    /// 完全不动，边缘用 `(1 - t²)²` 平滑衰减。返回受影响的格子数。
+    /// `radius` also normalized to terrain width `[0, 1]`; `strength` for Raise/Lower is heightfield unit,
+    /// for Smooth/Flatten is `0..1` blend factor. Cells outside radius
+    /// are untouched, edge uses `(1 - t²)²` smooth falloff. Returns affected cell count.
     ///
-    /// 非有限 / 非正参数按 no-op 处理；高度不会产生 NaN。
+    /// Non-finite / non-positive params treated as no-op; height won't produce NaN.
     pub fn sculpt(
         &mut self,
         center_u: f32,
@@ -382,13 +382,13 @@ impl Heightfield {
         )
     }
 
-    /// 序列化回 `.raw`（f32 little-endian，行优先）——供 CLI / 编辑器写盘。
+    /// Serialize back to `.raw` (f32 little-endian, row-major) — for CLI / editor writing disk.
     pub fn to_raw_bytes(&self) -> Vec<u8> {
         prism_scene::terrain::encode_heights(&self.heights)
     }
 }
 
-/// `[start, end]` 的采样下标：按 `step` 跳，但始终包含两端。
+/// Sample index range for `[start, end]`: step by `step`, but always include both ends.
 fn sample_indices(start: usize, end: usize, step: usize) -> Vec<usize> {
     let step = step.max(1);
     let mut indices = Vec::new();
@@ -401,7 +401,7 @@ fn sample_indices(start: usize, end: usize, step: usize) -> Vec<usize> {
     indices
 }
 
-/// 程序化色带 splat 的 4 层调色板（沙 / 草 / 岩石 / 雪）。
+/// 4-layer palette for procedural color band splat (sand / grass / rock / snow).
 const SPLAT_SAND: [f32; 3] = [0.78, 0.70, 0.49];
 const SPLAT_GRASS: [f32; 3] = [0.30, 0.47, 0.21];
 const SPLAT_ROCK: [f32; 3] = [0.43, 0.40, 0.36];
@@ -420,7 +420,7 @@ fn mix_color(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     ]
 }
 
-/// 高度 / 坡度 → 顶点色：低处沙、中段草、高处岩石 / 雪，陡坡偏向岩石。
+/// Height / slope → vertex color: sand low, grass mid, rock / snow high, steep slope favors rock.
 fn terrain_splat_color(
     height: f32,
     min_height: f32,
@@ -445,10 +445,10 @@ fn terrain_splat_color(
     mix_color(base, SPLAT_ROCK, rock)
 }
 
-/// 高度 / 坡度 → 4 层纹理权重，前三层写进顶点色 RGB，第四层 = 1 - sum。
+/// Height / slope → 4-layer texture weights, first three written to vertex color RGB, 4th = 1 - sum.
 ///
-/// 层的顺序固定为沙 / 草 / 岩石 / 雪，对应 `Terrain.splat_materials` 的顺序；
-/// 陡坡会把低处的沙 / 草权重转移到岩石。
+/// Layer order fixed as sand / grass / rock / snow, matching `Terrain.splat_materials` order;
+/// steep slope shifts low-altitude sand / grass weight to rock.
 fn terrain_splat_weights(
     height: f32,
     min_height: f32,
@@ -475,7 +475,7 @@ fn terrain_splat_weights(
     [sand / total, grass / total, rock / total]
 }
 
-/// 进程内生成的网格表：路径 → 顶点数据（资产解析器据此绕过 `.pak`）。
+/// In-process generated mesh table: path → vertex data (asset parser bypasses `.pak`).
 #[derive(Debug, Default)]
 pub struct ProceduralMeshes {
     meshes: HashMap<String, Arc<MeshUploadInput>>,
@@ -507,63 +507,63 @@ impl ProceduralMeshes {
     }
 }
 
-/// 地形实体的运行时状态：解析好的高度场 + 当前生成的网格路径。
+/// Runtime state of terrain entity: parsed heightfield + current generated mesh path.
 ///
-/// `key` 变了（高度图 / 尺寸 / 高度倍数 / 分辨率 / 实体变了）就重建网格。
+/// When `key` changes (heightmap / size / height scale / resolution / entity changed) rebuild mesh.
 #[derive(Debug, Clone)]
 pub struct TerrainData {
     pub key: String,
     pub field: Arc<Heightfield>,
-    /// 单块模式是实体自己的网格；多块模式是第 0 块（用于调试 / 兼容旧测试）。
+    /// Single-chunk mode is entity's own mesh; multi-chunk mode is chunk 0 (for debug / old tests).
     pub mesh_path: String,
     pub size: [f32; 2],
     pub height_scale: f32,
 }
 
-/// 运行时生成的地形分块实体（#517 Phase 2）。
+/// Runtime generated terrain chunk entity (#517 Phase 2).
 ///
-/// 每块是一个挂在 `owner` 下的普通实体，带自己的 `MeshRenderer` / `MeshRef` /
-/// `LocalTransform`；主相机与阴影视锥因此能逐块剔除。它没有 `SceneEntityId`，
-/// 不会被场景状态保存。
+/// Each chunk is a normal entity under `owner`, with own `MeshRenderer` / `MeshRef` /
+/// `LocalTransform`; main camera and shadow frustum can cull per chunk. It has no `SceneEntityId`,
+/// won't be saved by scene state.
 #[derive(Debug, Clone)]
 pub struct TerrainChunk {
     pub owner: prism_ecs::Entity,
     pub mesh_path: String,
 }
 
-/// 某一级 LOD 下的一组地形块；`Child` 里是这一级的所有块实体。
+/// A group of terrain chunks at one LOD level; `Child` holds all chunk entities of that level.
 ///
-/// 整张地形统一切级（而不是每块各自切），所以相邻块永远用同一个步长，
-/// 不会因为边界顶点密度不同产生裂缝。
+/// Whole terrain switches level uniformly (rather than each chunk separately), so adjacent chunks always use same step,
+/// no cracks from differing boundary vertex density.
 #[derive(Debug, Clone)]
 pub struct TerrainLodSet {
     pub owner: prism_ecs::Entity,
     pub level: usize,
 }
 
-/// 运行时散布的一株地形植被实例（#517 Phase 2）。
+/// Runtime scattered terrain vegetation instance (#517 Phase 2).
 #[derive(Debug, Clone)]
 pub struct TerrainVegetation {
     pub owner: prism_ecs::Entity,
     pub mesh_path: String,
 }
 
-/// 纹理层 splat 的运行时标记：顶点色是 4 层权重，tiling 是 UV 倍数。
+/// Runtime flag of texture layer splat: vertex color is 4-layer weights, tiling is UV multiplier.
 #[derive(Debug, Clone, Copy)]
 pub struct TerrainSplat {
     pub tiling: f32,
 }
 
-/// 世界坐标 `(x, z)` 上的地形高度（米）。没被任何地形覆盖时返回 `None`。
+/// Terrain height (meters) at world coord `(x, z)`. Returns `None` if no terrain covers.
 ///
-/// 只支持平移过的地形（旋转按轴向处理，不参与插值）；多个地形重叠时取最高的那个。
+/// Only supports translated terrain (rotation axis-aligned, not interpolated); overlapping terrain takes highest.
 pub fn terrain_height(world: &prism_ecs::World, x: f32, z: f32) -> Option<f32> {
     terrain_sample(world, x, z).map(|(_, height, _)| height)
 }
 
-/// 世界坐标 `(x, z)` 上最高的地形：实体、高度（米）与世界法线。
+/// Highest terrain at world coord `(x, z)`: entity, height (meters) and world normal.
 ///
-/// 与 [`terrain_height`] 共用同一套定位规则：只看实体平移，重叠时取最高的那份。
+/// Shares same resolution rule with [`terrain_height`]: only entity translation, highest when overlapping.
 pub fn terrain_sample(
     world: &prism_ecs::World,
     x: f32,
@@ -591,25 +591,25 @@ pub fn terrain_sample(
     best
 }
 
-/// 一次地形射线命中。
+/// One terrain raycast hit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TerrainHit {
     pub entity: prism_ecs::Entity,
-    /// 从射线起点算起的距离（世界单位）。
+    /// Distance from raycast origin (world units).
     pub distance: f32,
-    /// 命中点的世界坐标。
+    /// World coord of hit point.
     pub point: [f32; 3],
-    /// 命中处的高度场法线（世界空间，Y 分量向上）。
+    /// Heightfield normal at hit (world space, Y upward).
     pub normal: [f32; 3],
 }
 
-/// 对高度场地形做射线查询（#517 Phase 2 第 4 条）。
+/// Raycast query against heightfield terrain (#517 Phase 2 item 4).
 ///
-/// 先沿射线采样 `(x, z)` 处的地形高度，找到第一次从地表上方穿到下方，再用
-/// 二分细化；`max_distance` 之外、或射线起点已经在地表以下时不返回命中。
+/// First sample terrain height at `(x, z)` along ray, find first crossing from above surface to below, then
+/// binary refine; beyond `max_distance`, or ray origin already below surface, no hit returned.
 ///
-/// 和 [`terrain_height`] 一样只支持**平移**过的地形；多份地形重叠时按最高的
-/// 那份求交（与查询接口一致）。这是玩法用的解析查询，不是物理引擎的连续碰撞。
+/// Like [`terrain_height`] only supports **translated** terrain; overlapping terrain intersects highest one
+/// (consistent with query interface). This is parsed query for gameplay, not physics engine continuous collision.
 pub fn terrain_raycast(
     world: &prism_ecs::World,
     origin: [f32; 3],
@@ -629,11 +629,11 @@ pub fn terrain_raycast(
 
     let (_, start_height, _) = terrain_sample(world, origin.x, origin.z)?;
     if origin.y < start_height {
-        // 起点已经在地表以下（例如相机埋进山里）：不做“从内部穿出”的命中。
+        // Origin already below surface (e.g. camera buried in mountain): no "crossing from inside" hit.
         return None;
     }
 
-    // 粗采样步长：短射线更细，长射线最多 512 次采样；随后二分 16 次。
+    // Coarse sample step: shorter ray finer, longer ray at most 512 samples; then 16 binary steps.
     let step = (max_distance / 512.0).clamp(0.25, 8.0).min(max_distance);
     let samples = ((max_distance / step).ceil() as usize).clamp(1, 4096);
     let mut previous: Option<(f32, f32)> = if origin.y > start_height {
@@ -666,7 +666,7 @@ pub fn terrain_raycast(
     None
 }
 
-/// 在 `[lo, hi]` 之间二分出射线与地形的交点（`lo` 在地表上方，`hi` 在下方）。
+/// Binary search between `[lo, hi]` for ray-terrain intersection (`lo` above surface, `hi` below).
 fn refine_terrain_hit(
     world: &prism_ecs::World,
     origin: glam::Vec3,
@@ -694,12 +694,12 @@ fn refine_terrain_hit(
     (hi, entity, normal)
 }
 
-/// 二分过程中还没采到样本时的占位实体（正常路径上一定会被真实样本覆盖）。
+/// Placeholder entity while binary search hasn't sampled yet (normally always covered by real sample).
 fn none_entity() -> prism_ecs::Entity {
     prism_ecs::Entity::from_raw(u32::MAX, u32::MAX)
 }
 
-/// `Terrain` 的网格参数指纹：变了就要重建网格。
+/// Mesh parameter fingerprint of `Terrain`: change means rebuild mesh.
 pub fn terrain_key(entity_id: u32, terrain: &Terrain) -> String {
     format!(
         "{entity_id}|{}|{}x{}|{}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}",
@@ -720,7 +720,7 @@ pub fn terrain_key(entity_id: u32, terrain: &Terrain) -> String {
     )
 }
 
-/// 读高度图（`.raw`，f32 LE）。路径解析与其它资产一致；失败时返回 `None` 并由调用方告警。
+/// Read heightmap (`.raw`, f32 LE). Path resolution consistent with other assets; returns `None` on failure and caller warns.
 pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
     if !terrain.has_heightmap() {
         return Some(Heightfield::flat(terrain.cells()));
@@ -742,7 +742,7 @@ pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
             return Some(Heightfield::flat(terrain.cells()));
         }
     };
-    // `resolution = 0` = 跟随文件大小；否则必须严格匹配，免得画出错位的地形。
+    // `resolution = 0` = follow file size; otherwise must match exactly, avoid drawing wrong terrain.
     let parsed = if terrain.resolution == 0 {
         Heightfield::from_raw_auto(&bytes)
     } else {
@@ -763,11 +763,11 @@ pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
     }
 }
 
-/// 把 `Terrain` 实体变成可渲染的网格（#517）。
+/// Turn `Terrain` entity into renderable mesh (#517).
 ///
-/// 只在参数指纹变化时重建：（重新）生成 `MeshUploadInput` → 登记进
-/// [`ProceduralMeshes`] → 让同一实体的 `MeshRenderer` 指向它，并把 `MeshRef`
-/// 的 generation 清零，交给资产解析器上传。材质沿用 MeshRenderer 上作者设置的路径。
+/// Rebuild only when parameter fingerprint changes: (re)generate `MeshUploadInput` → register into
+/// [`ProceduralMeshes`] → point same entity's `MeshRenderer` to it, clear `MeshRef` generation,
+/// hand to asset parser for upload. Material uses path authored on MeshRenderer.
 pub fn terrain_system(world: &mut prism_ecs::World) {
     cleanup_orphan_chunks(world);
 
@@ -787,7 +787,7 @@ pub fn terrain_system(world: &mut prism_ecs::World) {
     apply_terrain_lod(world);
 }
 
-/// 每边块数对应的格子边界：长度 `chunks + 1`，至少每块一个 quad。
+/// Cell boundary for given chunk count per side: length `chunks + 1`, at least one quad per chunk.
 fn chunk_bounds(cells: usize, chunks: usize) -> Vec<usize> {
     let segments = cells.saturating_sub(1);
     (0..=chunks)
@@ -795,7 +795,7 @@ fn chunk_bounds(cells: usize, chunks: usize) -> Vec<usize> {
         .collect()
 }
 
-/// 回收某个地形 owner 名下的所有分块实体与程序化网格。
+/// Recycle all chunk entities and procedural meshes under some terrain owner name.
 fn despawn_chunks(world: &mut prism_ecs::World, owner: prism_ecs::Entity) {
     let chunks: Vec<(prism_ecs::Entity, String)> = world
         .query::<TerrainChunk>()
@@ -837,7 +837,7 @@ fn despawn_chunks(world: &mut prism_ecs::World, owner: prism_ecs::Entity) {
     }
 }
 
-/// 回收某个地形 owner 名下的所有植被实例。
+/// Recycle all vegetation instances under some terrain owner name.
 fn despawn_vegetation(world: &mut prism_ecs::World, owner: prism_ecs::Entity) {
     let stale: Vec<(prism_ecs::Entity, String)> = world
         .query::<TerrainVegetation>()
@@ -869,7 +869,7 @@ fn despawn_vegetation(world: &mut prism_ecs::World, owner: prism_ecs::Entity) {
     }
 }
 
-/// 地形实体被删除后，清掉它遗留的分块 / 植被（没有 owner 的实例不会自己消失）。
+/// After terrain entity deleted, clear leftover chunks / vegetation (instances without owner won't disappear on their own).
 fn cleanup_orphan_chunks(world: &mut prism_ecs::World) {
     let live: HashSet<prism_ecs::Entity> =
         world.query::<Terrain>().map(|(entity, _)| entity).collect();
@@ -890,7 +890,7 @@ fn cleanup_orphan_chunks(world: &mut prism_ecs::World) {
     }
 }
 
-/// 按最近的启用相机到地形原点的距离选择 LOD 级，并整张地形统一切级。
+/// Choose LOD level by distance from nearest enabled camera to terrain origin, whole terrain switches level uniformly.
 fn apply_terrain_lod(world: &mut prism_ecs::World) {
     let eyes: Vec<glam::Vec3> = world
         .query2::<Camera, LocalToWorld>()
@@ -908,7 +908,7 @@ fn apply_terrain_lod(world: &mut prism_ecs::World) {
             )
         })
         .collect();
-    // 还没有世界矩阵的地形（刚 spawn）：按原点算距离。
+    // Terrain without world matrix yet (just spawned): distance by origin.
     let terrains_without_transform: Vec<(prism_ecs::Entity, Vec<f32>)> = world
         .query::<Terrain>()
         .filter(|(entity, _)| world.get::<LocalToWorld>(*entity).is_none())
@@ -942,7 +942,7 @@ fn apply_terrain_lod(world: &mut prism_ecs::World) {
     }
 }
 
-/// 距离 → LOD 级：取第一个大于等于距离的阈值；超过全部阈值时用最后一级。
+/// Distance → LOD level: first threshold >= distance; beyond all thresholds use last level.
 fn lod_level(distances: &[f32], position: glam::Vec3, eyes: &[glam::Vec3]) -> usize {
     if distances.is_empty() {
         return 0;
@@ -970,7 +970,7 @@ fn lod_level(distances: &[f32], position: glam::Vec3, eyes: &[glam::Vec3]) -> us
         .min(2)
 }
 
-/// 确保实体进入「等待资产解析」状态。
+/// Ensure entity enters "waiting asset parse" state.
 fn ensure_mesh_ref(world: &mut prism_ecs::World, entity: prism_ecs::Entity) {
     match world.get_mut::<MeshRef>(entity) {
         Some(reference) => reference.generation = 0,
@@ -987,7 +987,7 @@ fn ensure_mesh_ref(world: &mut prism_ecs::World, entity: prism_ecs::Entity) {
     }
 }
 
-/// 双面 cross-quad：高 1 m、宽 1 m，底面在 y = 0，供没有自定义网格的植被使用。
+/// Double-sided cross-quad: height 1 m, width 1 m, bottom at y = 0, for vegetation without custom mesh.
 fn vegetation_cross_mesh() -> MeshUploadInput {
     let positions = vec![
         [-0.5, 0.0, 0.0],
@@ -1021,7 +1021,7 @@ fn vegetation_cross_mesh() -> MeshUploadInput {
     }
 }
 
-/// 稳定 64 位散列（植被散布 / 变体种子）。
+/// Stable 64-bit hash (vegetation scattering / variant seed).
 fn splitmix64(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
     value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -1029,10 +1029,10 @@ fn splitmix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
-/// 按高度场确定性散布植被实例（#517 Phase 2）。
+/// Scatter vegetation instances deterministically by heightfield (#517 Phase 2).
 ///
-/// 所有实例共用同一个网格路径，交给渲染器的静态实例化合批；陡坡（法线 Y < 0.55）
-/// 跳过。没有自定义网格时生成双面 cross-quad。
+/// All instances share same mesh path, handed to renderer static instancing batching; steep slopes (normal Y < 0.55)
+/// skipped. Without custom mesh generate double-sided cross-quad.
 fn spawn_vegetation(
     world: &mut prism_ecs::World,
     owner: prism_ecs::Entity,
@@ -1129,7 +1129,7 @@ fn spawn_vegetation(
     }
 }
 
-/// 确保实体进入「等待材质解析」状态。
+/// Ensure entity enters "waiting material parse" state.
 fn ensure_material_ref(world: &mut prism_ecs::World, entity: prism_ecs::Entity) {
     if world.get::<MaterialRef>(entity).is_none() {
         world.insert(
@@ -1143,7 +1143,7 @@ fn ensure_material_ref(world: &mut prism_ecs::World, entity: prism_ecs::Entity) 
     }
 }
 
-/// 把 `Terrain.splat_materials` 写进渲染器的多材质路径（最多 4 层）。
+/// Write `Terrain.splat_materials` into renderer's multiple material paths (up to 4 layers).
 fn apply_splat_renderer(renderer: &mut MeshRenderer, terrain: &Terrain) {
     let layers: Vec<String> = terrain
         .splat_materials
@@ -1158,7 +1158,7 @@ fn apply_splat_renderer(renderer: &mut MeshRenderer, terrain: &Terrain) {
     }
 }
 
-/// 重建一个地形的网格：一个整块，或 `chunks × chunks` 个独立子实体。
+/// Rebuild one terrain's mesh: one whole piece, or `chunks × chunks` independent child entities.
 fn rebuild_terrain(
     world: &mut prism_ecs::World,
     entity: prism_ecs::Entity,
@@ -1172,7 +1172,7 @@ fn rebuild_terrain(
     despawn_vegetation(world, entity);
     world.remove::<TerrainSplat>(entity);
 
-    // 旧的那份网格没有实体引用了，顺手回收。
+    // Old mesh no longer referenced, recycle it too.
     if let Some(previous) = world.get::<TerrainData>(entity) {
         let previous_path = previous.mesh_path.clone();
         if !previous_path.is_empty() {
@@ -1188,7 +1188,7 @@ fn rebuild_terrain(
     let size = terrain.size;
     let height_scale = terrain.height_scale;
     let hash = fnv1a64(&key);
-    // 每块至少一个 quad；小网格（cells = 2）自动退化成单块。
+    // At least one quad per chunk; small mesh (cells = 2) degrades to single chunk.
     let chunks = terrain.chunk_count().min(field.cells() - 1).max(1);
 
     let levels = terrain.lod_level_count();
@@ -1209,7 +1209,7 @@ fn rebuild_terrain(
             meshes.insert(path.clone(), mesh);
         }
 
-        // MeshRenderer 是作者组件：只改路径，保留材质与阴影设置。
+        // MeshRenderer is author component: only change path, keep material and shadow settings.
         match world.get_mut::<MeshRenderer>(entity) {
             Some(renderer) => renderer.mesh_path = path.clone(),
             None => {
@@ -1261,8 +1261,8 @@ fn rebuild_terrain(
         return;
     }
 
-    // 多块 / LOD：owner 只保留材质 / 阴影设置，不再直接绘制。
-    // 每个 LOD 级是一个 set 实体，set 下挂这一级的全部 chunk。
+    // Multi-chunk / LOD: owner only keeps material / shadow settings, no longer draws directly.
+    // Each LOD level is a set entity, under it all chunks of that level.
     if let Some(renderer) = world.get_mut::<MeshRenderer>(entity) {
         apply_splat_renderer(renderer, &terrain);
     }
@@ -1376,7 +1376,7 @@ fn rebuild_terrain(
         &renderer_template,
     );
 
-    // owner 不再有 MeshRef，因此不会被主通道重复绘制。
+    // Owner no longer has MeshRef, so won't be drawn again in main pass.
     world.remove::<MeshRef>(entity);
     if let Some(renderer) = world.get_mut::<MeshRenderer>(entity) {
         renderer.mesh_path.clear();
@@ -1393,7 +1393,7 @@ fn rebuild_terrain(
     );
 }
 
-/// FNV-1a：网格路径里的短指纹（不需要密码学强度，只要稳定）。
+/// FNV-1a: short fingerprint in mesh path (no crypto strength needed, just stable).
 fn fnv1a64(text: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in text.as_bytes() {

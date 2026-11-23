@@ -1,18 +1,18 @@
 //! # prism-asset::runtime
 //!
-//! 轻量级运行时资源加载器，仅依赖 `prism-asset` 的 `core` 与 `package` 模块。
+//! Lightweight runtime resource asset loader, depends only on `prism-asset` `core` and `package` modules.
 //!
-//! 此模块是游戏代码唯一面向消费者的资产读取 API。它提供 [`ResourceManager`]，
-//! 用于加载 `.pak` 包并通过 [`AssetId`] 查询解析 [`Handle<T>`] 引用。
+//! This module is the game code-only consumer-facing resource reading API. It provides [`ResourceManager`],
+//! used to load `.pak` package and query/resolve [`Handle<T>`] reference via [`AssetId`].
 //!
-//! ## 设计约束
+//! ## Design constraints
 //!
-//! - 运行时无源文件路径——所有访问均通过 [`AssetId`]。
-//! - 不依赖构建工具（`prism-cooker` 的 importer/cooker/db 等）。
-//! - 支持同步 + 异步加载。
-//! - 通过 LRU 淘汰控制内存预算（阶段 3）。
-//! - 通过文件监视器支持热重载（[`HotReloadWatcher`]，运行时总是可用）。
-//! - 大资源流式读取（阶段 3，特性 `streaming`）。
+//! - Runtime has no source file path---all access goes through [`AssetId`].
+//! - Does not depend on build tool (`prism-cooker` importer/cooker/db etc.).
+//! - Supports sync + async loading.
+//! - Controls memory budget via LRU eviction (phase 3).
+//! - Supports hot reload via file watcher ([`HotReloadWatcher`]), always available at runtime.
+//! - Large resource streaming read (phase 3, feature `streaming`).
 
 use crate::core::{AnyHandle, AssetId, AssetType, Handle};
 use crate::package::{PackageError, PackageReader};
@@ -28,8 +28,8 @@ use thiserror::Error;
 // Hot-reload support
 // ---------------------------------------------------------------------------
 
-// 轮询器只依赖 `std`，运行时和构建期都能用；以前它藏在 `hot-reload` feature 后面，
-// 而打开该 feature 的只有构建期的 `prism-cooker`，于是运行期根本拿不到 watcher（#495）。
+// Poller depends only on `std`, runtime and build can both use; previously it hid behind `hot-reload` feature,
+// and only build-time `prism-cooker` opened that feature, so runtime never got watcher (#495).
 mod hot_reload;
 
 pub use hot_reload::{HotReloadError, HotReloadEvent, HotReloadWatcher};
@@ -106,7 +106,7 @@ struct Slot {
     asset_type: AssetType,
     /// The raw cooked data, as stored in the .pak (uncompressed).
     data: Option<Vec<u8>>,
-    /// 最后一个 访问 时间戳 (for LRU eviction). `Cell` lets read-only
+    /// Last access timestamp (for LRU eviction). `Cell` allows read-only
     /// accessors (`get_raw`, `read_stream`) refresh recency without `&mut`.
     last_access: Cell<Instant>,
     /// Size of the asset data in bytes (for memory tracking)
@@ -205,14 +205,14 @@ impl MemoryTracker {
 // Resource Manager
 // ---------------------------------------------------------------------------
 
-/// 已注册的 `.pak`：连来源路径一起保存。
+/// Registered `.pak`: keeps source path together.
 ///
-/// `on_pak_changed` 只有知道每个 reader 来自哪个文件，才能把**陈旧 reader** 换掉；
-/// 否则热重载之后新 `load` 仍会从旧字节里读。
+/// `on_pak_changed` only knows which reader came from which file, can then replace **stale reader**;
+/// otherwise after hot reload new `load` would still read old bytes.
 struct LoadedPackage {
-    /// `None` = 从内存字节注册（[`ResourceManager::load_package_bytes`]），磁盘上没有可替换的文件。
+    /// `None` = register from memory bytes (`ResourceManager::load_package_bytes`), no file on disk to replace.
     ///
-    /// 只有 `on_pak_changed` 读它（热重载要靠它找回被替换的那个 reader）。
+    /// Only `on_pak_changed` reads it (hot reload relies on it to find reader to replace).
     path: Option<PathBuf>,
     reader: PackageReader,
 }
@@ -226,12 +226,12 @@ struct LoadedPackage {
 /// ## Phase 3 features
 ///
 /// - **Memory budget**: call [`set_memory_budget()`](ResourceManager::set_memory_budget)
-///   to cap 总计 loaded 字节 LRU or FIFO eviction.
+///   to cap total loaded bytes LRU or FIFO eviction.
 /// - **Hot reload**: use [`HotReloadWatcher`] to watch `.pak` files, then hand each
 ///   event to [`ResourceManager::on_pak_changed`].
 /// - **Streaming**: call [`read_stream()`](ResourceManager::read_stream) to
 ///   iterate over an asset's data in fixed-size chunks (zero-copy within a
-///   loaded 包).
+///   loaded package).
 ///
 pub struct ResourceManager {
     /// Slot array indexed by handle index.
@@ -314,7 +314,7 @@ impl ResourceManager {
 
         let mut freed: u64 = 0;
 
-        // 构建 eviction candidate 列表: (slot, last_access, size, load_epoch)
+        // Build eviction candidate list: (slot, last_access, size, load_epoch)
         let mut candidates: Vec<(u32, Instant, u64, u64)> = self
             .id_map
             .values()
@@ -378,7 +378,7 @@ impl ResourceManager {
         Ok(())
     }
 
-    /// 从内存中的 `.pak` 字节加载资源，供 Android asset/嵌入式宿主使用。
+    /// Load asset from `.pak` bytes in memory, for Android asset/embedded host use.
     pub fn load_package_bytes(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
         let reader = PackageReader::from_bytes(bytes)?;
         self.register_package(LoadedPackage { path: None, reader });
@@ -400,7 +400,7 @@ impl ResourceManager {
         Ok(())
     }
 
-    /// 加载 a path manifest (`.pak.meta.json` written by `prism-cook build`
+    /// Load a path manifest (`.pak.meta.json` written by `prism-cook build`
     /// so the engine can resolve source-relative asset paths to runtime
     /// `AssetId`s.
     ///
@@ -1121,16 +1121,16 @@ impl ResourceManager {
 
     /// Called by the [`HotReloadWatcher`] when a `.pak` file changes.
     ///
-    /// 两件事必须同时做到，否则热重载是假的：
-    /// 1. **换掉 reader** —— 管理器里留的是打开时的文件字节（`PackageReader` 持有
-    ///    `Arc<Vec<u8>>`），不替换的话之后新 `load` 仍从旧字节读；
-    /// 2. **只刷新仍在内存里的资源** —— 已卸载（被淘汰）的槽不该因为热重载被急切加载回来，
-    ///    它们下次 `load` 时自然会从新 reader 读到新数据。
+    /// Two things must happen together otherwise hot reload is fake:
+    /// 1. **Swap reader** --- manager keeps file bytes opened (`PackageReader` holds
+    ///    `Arc<Vec<u8>>`); if not replaced then subsequent `load` still reads old bytes;
+    /// 2. **Only refresh resources still in memory** --- slots evicted should not be eagerly reloaded by hot reload,
+    ///    they will read new data from new reader naturally on next `load`.
     ///
-    /// 刷新是**原地换内容**：`generation` 不变，所以热重载前发出的 [`Handle`] 仍然有效
-    /// （只用于「槽被回收给别的资源」时才递增）。
+    /// Refresh is **in-place content replacement**: `generation` stays same, so [`Handle`] issued before hot reload remains valid
+    /// (only incremented when **slot recycled to other resource**).
     ///
-    /// 未知路径视为新出现的 `.pak`，按普通注册处理。
+    /// Unknown path treated as new `.pak`, registered normally.
     pub fn on_pak_changed(&mut self, path: &Path) -> Result<(), RuntimeError> {
         let reader = PackageReader::open(path)?;
 
@@ -1163,7 +1163,7 @@ impl ResourceManager {
             };
             let slot_index = slot_index as usize;
             if self.slots[slot_index].data.is_none() {
-                // 没加载过 / 已被淘汰：不为它做急切加载。
+                // Not loaded / already evicted: do not eagerly load it.
                 continue;
             }
             let Ok(Some(data)) = self.packages[index].reader.read_asset_data(asset_id) else {

@@ -1,76 +1,76 @@
-# GitHub App setup（manifest flow）
+# GitHub App setup (manifest flow)
 
-GitHub **没有** “创建 App”的 REST API。唯一的自动化路径是官方
-[App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)：
-浏览器里确认一次，GitHub 回调一个一次性 code，脚本用它换 App ID、私钥和 client secret。
+GitHub **has no** REST API to "create an App". The only automated path is official
+[App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
+confirm once in browser, GitHub callbacks a one-time code, script exchanges it for App ID, private key and client secret.
 
-`create_app.py` 把除“点按钮”以外的步骤都做掉：
+`create_app.py` does all steps except "click button":
 
-1. 起一个本地回调服务器；
-2. 生成 manifest 并打开 GitHub 创建页；
-3. 你点 **Create GitHub App**；
-4. 脚本换取凭据，写到仓库外，并打印安装链接；
-5. 你点 **Install**，脚本记录 `installation_id`。
+1. Start a local callback server;
+2. Generate manifest and open GitHub create page;
+3. You click **Create GitHub App**;
+4. Script exchanges credentials, writes outside repo, prints install link;
+5. You click **Install**, script records `installation_id`.
 
-2FA 和账号密码始终在你那边，脚本不接触。
+2FA and account password always on your side, script never touches them.
 
-## 用法
+## Usage
 
 ```bash
-# 个人账号，默认 App 名 prisma-agent，凭据写到 ~/.prisma/github-app
+# Personal account, default App name prisma-agent, credentials written to ~/.prisma/github-app
 python tools/github-app/create_app.py
 
-# 组织账号
+# Organization account
 python tools/github-app/create_app.py --owner my-org --owner-type org --name prisma-agent
 
-# 只看 manifest URL，不启动服务器
+# Only print manifest URL, do not start server
 python tools/github-app/create_app.py --dry-run
 ```
 
-默认回调地址是 `http://localhost:<随机端口>/callback`，不需要公网。
-如果 900 秒内没完成，脚本退出；已创建的 App 和凭据仍保留，重新运行会创建新的 App。
+Default callback address is `http://localhost:<random port>/callback`, no public network needed.
+If not completed within 900 seconds script exits; created App and credentials remain, rerun creates a new App.
 
-## 创建的权限
+## create permissions
 
-- Repository permissions: **Issues: Read and write**、**Metadata: Read-only**
-- 不订阅 webhook（`default_events: []`）
-- Private App，只安装到 `Excurs1ons/Prisma`
+- Repository permissions: **Issues: Read and write**, **Metadata: Read-only**
+- No webhook subscription (`default_events: []`)
+- Private App, installed only to `Excurs1ons/Prisma`
 
-安装时在 GitHub 的安装页**只勾选 Prisma**，不要选 “All repositories”。
+On GitHub install page **only check Prisma**, do not select "All repositories".
 
-## 凭据位置
+## Credential location
 
-默认在仓库外：
+Default outside repo:
 
 ```text
 %USERPROFILE%\.prisma\github-app\
-├── github-app.pem      # App 私钥（0600）
+├── github-app.pem      # App private key (0600)
 ├── github-app.json     # app_id / slug / client secrets / installation_id
-└── create-url.txt      # 本次 manifest URL（可删）
+└── create-url.txt      # This manifest URL (can delete)
 ```
 
-`github-app.json` 含 `client_secret` / `webhook_secret`，同样是敏感文件。
-**不要把 `.pem` 或这个 JSON 提交进 git**；仓库已忽略 `*.pem`、`.secrets/`、`.env`。
+`github-app.json` contains `client_secret` / `webhook_secret`, also sensitive.
+**Do not commit `.pem` or this JSON to git**; repo already ignores `*.pem`, `.secrets/`, `.env`.
 
-## 给 bot 的环境变量
+## Env vars for bot
 
 ```bash
-GITHUB_APP_ID=<github-app.json 里的 app_id>
-GITHUB_APP_PRIVATE_KEY_PATH=<github-app.pem 的绝对路径>
-GITHUB_INSTALLATION_ID=<安装后记录的值；不填则由 bot 列出 installations>
+GITHUB_APP_ID=<app_id in github-app.json>
+GITHUB_APP_PRIVATE_KEY_PATH=<absolute path to github-app.pem>
+GITHUB_INSTALLATION_ID=<value recorded after install; if empty bot lists installations>
 ```
 
-Bot 用 App JWT 换 1 小时有效的 installation token；不要用私钥直接调 REST。
-如果 `installation_id` 没记录到，bot 可以先 `GET /app/installations` 找到对应仓库的安装。
+Bot exchanges App JWT for 1-hour installation token; do not call REST directly with private key.
+If `installation_id` not recorded, bot can first `GET /app/installations` to find repo installation.
 
-## 轮换 / 吊销
+## Rotate / revoke
 
-- 私钥泄露：GitHub App 设置 → **Private keys** → 删除旧 key → **Generate a private key**，更新
-  `GITHUB_APP_PRIVATE_KEY_PATH` 指向的新文件。
-- 不想用了：App 设置 → **Delete GitHub App**；安装会自动失效。
-- 重新跑脚本会创建**新 App**，不会覆盖旧 App。
+- Private key leaked: GitHub App settings → **Private keys** → delete old key → **Generate a private key**, update
+    the new file `GITHUB_APP_PRIVATE_KEY_PATH` points to.
+- No longer needed: App settings → **Delete GitHub App**; installation auto-invalidates.
+- Rerunning script creates **new App**, does not overwrite old.
 
-## 为什么不能全自动
+## Why cannot be fully automated
 
-GitHub 要求 App 的创建和安装由登录用户在浏览器里确认，这是防止第三方静默创建
-OAuth/App 权限的安全边界。脚本能自动化的是 manifest、回调、换取凭据和安装 ID。
+GitHub requires App creation and installation confirmed by logged-in user in browser, a security boundary
+preventing third parties silently creating OAuth/App permissions. Script can automate manifest, callback, credential exchange and install ID.

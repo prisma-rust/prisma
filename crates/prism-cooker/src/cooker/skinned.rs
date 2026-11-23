@@ -1,11 +1,11 @@
-//! 骨骼 / 蒙皮 / 动画剪辑的 cooked 格式**编码器**（#560 P0）。
+//! Skeleton / skin / animation clip cooked format **encoder** (#560 P0).
 //!
-//! 解码端在 `prism_asset::formats_skinned`（运行时只解码）—— 与 RMES 的分层一致。
-//! 字节布局写在那里模块文档里，两份实现必须同步改。
+//! Decode side in `prism_asset::formats_skinned` (runtime only decodes) — consistent with RMES layering.
+//! Byte layout written in that module document, both implementations must sync changes.
 //!
-//! cooker 这一侧多做两件运行时不做的事：
-//! - 拒绝父索引不指向更早骨骼（成环 / 乱序）的 skeleton；
-//! - 把权重归一化、把未使用的 joint 槽写成 0，保证 GPU 侧直接可用。
+//! Cooker side does two things runtime does not do:
+//! - Reject skeleton where parent index does not point to earlier bone (cycle / out of order);
+//! - Normalize weights, write unused joint slots as 0, ensuring GPU side directly available.
 
 use prism_asset::formats_skinned::{
     AnimClipInfo, SkeletonInfo, SkinnedMeshInfo, RANI_ADDITIVE, RANI_LOOPED, RANI_MAGIC,
@@ -13,7 +13,7 @@ use prism_asset::formats_skinned::{
     RSKN_HAS_TANGENTS, RSKN_HAS_UV0, RSKN_HEADER_SIZE, RSKN_MAGIC, SKINNED_FORMAT_VERSION,
 };
 
-/// 编码 `.rskel`。`skeleton` 必须是拓扑序（父索引 < 自身下标），否则返回 `None`。
+/// Encode `.rskel`. `skeleton` must be topological order (parent index < own index), otherwise return `None`.
 pub fn encode_rskel(skeleton: &SkeletonInfo) -> Option<Vec<u8>> {
     if skeleton.joints.is_empty() || !skeleton.is_topologically_sorted() {
         return None;
@@ -50,7 +50,7 @@ pub fn encode_rskel(skeleton: &SkeletonInfo) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 把权重归一化：和为 0 时退化成「全部挂在 joint 0 上」，否则按和缩放。
+/// Normalize weights: sum zero degenerates to "all attached to joint 0", otherwise scale by sum.
 fn normalize_weights(weights: [f32; 4], joints: &mut [u16; 4]) -> [f32; 4] {
     let cleaned = weights.map(|weight| {
         if weight.is_finite() {
@@ -67,7 +67,7 @@ fn normalize_weights(weights: [f32; 4], joints: &mut [u16; 4]) -> [f32; 4] {
     cleaned.map(|weight| weight / sum)
 }
 
-/// 编码 `.rskin`。权重会归一化，joint 索引会按 `joint_count` 夹紧。
+/// Encode `.rskin`. Weights will be normalized, joint index clamped tight by `joint_count`.
 pub fn encode_rskin(mesh: &SkinnedMeshInfo) -> Option<Vec<u8>> {
     let verts = mesh.positions.len();
     if verts == 0 || mesh.joints.len() != verts || mesh.weights.len() != verts {
@@ -145,7 +145,7 @@ pub fn encode_rskin(mesh: &SkinnedMeshInfo) -> Option<Vec<u8>> {
         }
     }
 
-    // joint 索引与权重是两个独立的流（先全部 joints，再全部 weights）——解码端按流读。
+    // Joint index and weight are two independent streams (first all joints, then all weights) — decode side reads per stream.
     let mut joint_stream = Vec::with_capacity(verts * 8);
     let mut weight_stream = Vec::with_capacity(verts * 16);
     for index in 0..verts {
@@ -179,7 +179,7 @@ pub fn encode_rskin(mesh: &SkinnedMeshInfo) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 编码 `.ranim`。关键帧按时间升序写出（同刻保留原始顺序）。
+/// Encode `.ranim`. Close key frames written out by time ascending (same timestamp retains original order).
 pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
     let name = clip.name.as_bytes();
     if name.len() > u16::MAX as usize || clip.tracks.is_empty() {
@@ -237,8 +237,8 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         }
     }
 
-    // 事件表（#560 P1 Notify）：按时间排序写出，让同一个源文件每次 cook 出同样的字节。
-    // 剪辑里的 notify 顺序没有语义。
+    // Event table (#560 P1 Notify): written out sorted by time, so same source file always cooks same bytes.
+    // Notify order inside clip has no semantic.
     let mut notifies: Vec<&prism_asset::formats_skinned::AnimNotifyInfo> = clip
         .notifies
         .iter()
@@ -252,8 +252,8 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(notify.name.as_bytes());
     }
 
-    // v3 同步标记（#560）：归一化相位、升序、去重，保证同一份作者数据每次 cook
-    // 出同样的字节。非有限值直接丢弃。
+    // V3 sync flag (#560): normalize bitwise, ascending, deduplicate, guaranteeing same author data cooks same
+    // out same bytes. Non-limited values directly discarded.
     let mut markers: Vec<f32> = clip
         .sync_markers
         .iter()
@@ -268,8 +268,8 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(&phase.to_le_bytes());
     }
 
-    // v4 Montage 段（#560 P4）：按 start 排序写出，名字为空 / 时间非法的段直接
-    // 丢弃；同一份作者数据每次 cook 都得到同样的字节。
+    // V4 Montage segments (#560 P4): written out sorted by start, segments with empty name / illegal time directly
+    // discarded; same author data always gets same bytes each cook.
     let mut sections: Vec<&prism_asset::formats_skinned::AnimClipSectionInfo> = clip
         .sections
         .iter()
@@ -295,7 +295,7 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(section.name.as_bytes());
     }
 
-    // v5 MotionWarping 窗口（#560 P4）：同样的排序 / 过滤规则。
+    // V5 MotionWarping window (#560 P4): same sort / filter rule.
     let mut windows: Vec<&prism_asset::formats_skinned::AnimClipWarpWindowInfo> = clip
         .warp_windows
         .iter()

@@ -168,7 +168,7 @@ impl Mesh {
     ) -> anyhow::Result<Self> {
         let vertex_size = std::mem::size_of_val(vertices) as vk::DeviceSize;
 
-        // 顶点 缓冲区 (device-local). On devices that support them, add
+        // Vertex buffer (device-local). On devices that support them, add
         // device-address + AS-build usages so the same buffer can feed BLAS
         // builds without reallocation.
         let (vertex_buffer, vertex_memory) = buffer::create_buffer(

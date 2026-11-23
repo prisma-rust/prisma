@@ -1,11 +1,11 @@
-//! 把 `log` 记录同时转发到编辑器的 Console 面板。
+//! Forward `log` records also to editor Console panel.
 //!
-//! `env_logger` 仍然负责终端输出（`RUST_LOG` 语义不变）；这里再包一层
-//! `log::Log`，把同一条记录塞进一个环形缓冲，`EditorApp` 每帧取走写进
-//! `prism_editor_core::LogBuffer`（面板按来源 / 级别过滤 + 窗口化渲染）。
+//! `env_logger` still responsible for terminal output (`RUST_LOG` semantics unchanged); here wrap another layer
+//! `log::Log`, put same record into a ring buffer, `EditorApp` takes per frame and writes into
+//! `prism_editor_core::LogBuffer` (panel filters by source / level + windowed rendering).
 //!
-//! 不加这个的话，视口里的 `prism_render` / `prism_engine` 警告只能在终端里看到，
-//! 与 Web 编辑器（进程内引擎日志进 Console）不一致。
+//! Without this, `prism_render` / `prism_engine` warnings in viewport only visible in terminal,
+//! inconsistent with Web editor (in-process engine logs go to Console).
 
 use std::collections::VecDeque;
 use std::panic::PanicHookInfo;
@@ -21,11 +21,11 @@ struct Entry {
     text: String,
 }
 
-/// 工程模块（preview module）的日志目标前缀。
+/// Project module (preview module) log target prefix.
 ///
-/// `prism-runtime-host` 把模块通过 `HostApi::log` 发出的记录转成
-/// `project: ...`；`panic` 来自本文件的崩溃 hook。两者都属于「游戏进程」，
-/// Console 面板按来源过滤时要和引擎日志分开。
+/// `prism-runtime-host` converts records emitted by module via `HostApi::log` into
+/// `project: ...`; `panic` from crash hook in this file. Both belong to "game process",
+/// Console panel filtering by source must separate from engine logs.
 fn source_for(target: &str) -> LogSource {
     if target == "panic" || target.starts_with("project") {
         LogSource::Game
@@ -53,7 +53,7 @@ impl log::Log for Tee {
         if self.inner.enabled(record.metadata()) {
             self.inner.log(record);
         }
-        // 只把「编辑器自己关心」的级别送进面板，Trace 会淹没窗口。
+        // Only send levels "editor itself cares about" to panel, Trace would flood window.
         let level = match record.level() {
             log::Level::Error => LogLevel::Error,
             log::Level::Warn => LogLevel::Warn,
@@ -78,12 +78,12 @@ impl log::Log for Tee {
     }
 }
 
-/// 安装 tee logger 与崩溃 hook。重复调用是 no-op。
+/// Install tee logger and crash hook. Repeated calls are no-op.
 pub fn install(default_filter: &str) {
     if SINK.get().is_some() {
         return;
     }
-    // 先占位，避免递归初始化。
+    // Placeholder first, avoid recursive initialization.
     sink();
     let inner =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
@@ -97,21 +97,21 @@ pub fn install(default_filter: &str) {
     install_panic_hook();
 }
 
-/// 把 panic 的调用栈送进 Console 面板。
+/// Send panic call stack to Console panel.
 ///
-/// 编辑器在 Play 时会把工程代码作为动态模块加载进**同一个进程**，所以工程里的
-/// `unwrap()` 会走到这里。默认 hook 只往 stderr 打印，面板看不到；这里额外抓
-/// 一份 `Backtrace`（`force_capture`，不依赖 `RUST_BACKTRACE`）。
+/// Editor during Play loads project code as dynamic module into **same process**, so project's
+/// `unwrap()` ends up here. Default hook only prints to stderr, panel cannot see; here additionally capture
+/// one `Backtrace` (`force_capture`, not relying on `RUST_BACKTRACE`).
 ///
-/// 模块帧能不能解出符号取决于 PDB：`project_module::stage` 会把 `.pdb` 和
-/// `.dll` 一起复制到暂存目录，dbghelp 按模块目录查找同名符号文件。
+/// Whether module frames can be symbolized depends on PDB: `project_module::stage` copies `.pdb` and
+/// `.dll` together to temp dir, dbghelp queries same-named symbol file by module dir.
 fn install_panic_hook() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
             push_panic(info);
-            // 保留原有行为（stderr / RUST_BACKTRACE），终端排查仍然可用。
+            // Keep original behavior (stderr / RUST_BACKTRACE), terminal troubleshooting still usable.
             previous(info);
         }));
     });
@@ -135,7 +135,7 @@ fn push_panic(info: &PanicHookInfo<'_>) {
             )
         })
         .unwrap_or_else(|| "<unknown location>".to_owned());
-    // 在 hook 里抓栈：此时还没有开始 unwind，帧是完整的（包含工程模块的帧）。
+    // Capture stack in hook: unwind not started yet, frames complete (including project module frames).
     let backtrace = std::backtrace::Backtrace::force_capture();
     if let Ok(mut queue) = sink().lock() {
         if queue.len() >= CAPACITY {
@@ -149,7 +149,7 @@ fn push_panic(info: &PanicHookInfo<'_>) {
     }
 }
 
-/// 取走缓冲里的新记录（每帧调用一次）。
+/// Take new records from buffer (called once per frame).
 pub fn drain() -> Vec<(LogSource, LogLevel, String)> {
     let Ok(mut queue) = sink().lock() else {
         return Vec::new();

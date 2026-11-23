@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sponza scenes.pak 一键重构脚本 (Bash)
+# Sponza scenes.pak one-click rebuild script (Bash)
 #
-# 用法:
+# Usage:
 #   ./rebuild-pak.sh
-#   或在仓库根目录执行:
+#   or run from repo root:
 #   bash projects/sponza/rebuild-pak.sh
 set -euo pipefail
 

@@ -1,4 +1,4 @@
-//! `Camera` / `Light` 的 schema 与数学约定测试（`components.rs` 的测试模块）。
+//! Schema and math-convention tests for `Camera` / `Light` (test module of `components.rs`).
 
 use super::*;
 
@@ -26,7 +26,7 @@ fn perspective_matches_vulkan_convention() {
     let inv_tan = 1.0 / (45.0_f32.to_radians()).tan();
 
     assert!(approx(p.col(0).x, inv_tan / aspect));
-    // Vulkan y-flip：p[1][1] 为负。
+    // Vulkan y-flip: p[1][1] is negative.
     assert!(approx(p.col(1).y, -inv_tan));
     assert!(approx(p.col(2).z, cam.far / (cam.near - cam.far)));
     assert!(approx(p.col(2).w, -1.0));
@@ -62,9 +62,9 @@ fn orthographic_maps_half_sizes_and_depth() {
     };
     let p = cam.projection_matrix(2.0);
 
-    // 半高 2 → NDC 1/2；y-flip 后上边缘（y=+2）落到 NDC y = -1。
+    // half height 2 → NDC 1/2; after y-flip the top edge (y=+2) lands at NDC y = -1.
     assert!(approx(p.col(1).y, -0.5));
-    // 半宽 = 半高 × aspect = 4。
+    // half width = half height × aspect = 4.
     assert!(approx(p.col(0).x, 0.25));
 
     let top = p * glam::vec4(0.0, 2.0, -1.0, 1.0);
@@ -129,7 +129,7 @@ fn json_round_trips_new_fields() {
 
 #[test]
 fn older_json_without_new_fields_uses_defaults() {
-    // 只有老字段的文档（v2 之前的快门相机）必须仍然可用 —— 新增字段走 serde 默认。
+    // Document with only old fields (pre-v2 fast-path camera) must still load — new fields use serde defaults.
     let json = r#"{"fov_y_degrees":72.0,"near":0.2,"far":500.0,"exposure":1.5,"aspect":1.0,"enabled":true}"#;
     let cam: Camera = serde_json::from_str(json).unwrap();
     assert!(approx(cam.fov_y_degrees, 72.0));
@@ -166,7 +166,7 @@ fn virtual_camera_json_round_trips_and_fills_defaults() {
 fn light_defaults() {
     let light = Light::default();
     assert!(light.enabled);
-    // `new Light()` 默认是点光源；聚光角度与色温沿用引擎默认值。
+    // `new Light()` defaults to point light; cone angles and color temperature use engine defaults.
     assert_eq!(light.light_type, LightType::Point);
     assert_eq!(light.shadows, LightShadows::None);
     assert_eq!(light.render_mode, LightRenderMode::Auto);
@@ -193,7 +193,7 @@ fn light_json_round_trips_and_fills_missing_fields() {
     assert_eq!(back.shadows, LightShadows::Soft);
     assert!(back.use_color_temperature);
 
-    // 只写已知字段的文档也必须能反序列化（`#[serde(default)]`）。
+    // Document containing only known fields must also serialize correctly (`#[serde(default)]`).
     let partial: Light =
         serde_json::from_str(r#"{"light_type":"Directional","intensity":3.0}"#).unwrap();
     assert_eq!(partial.light_type, LightType::Directional);
@@ -204,7 +204,7 @@ fn light_json_round_trips_and_fills_missing_fields() {
 
 #[test]
 fn light_2d_defaults_and_round_trips() {
-    // #611：2D 光照用「美术单位」——intensity 1.0 = 原色。
+    // #611: 2D lighting uses "artistic units" — intensity 1.0 = original color.
     let light = Light2D::default();
     assert_eq!(light.kind, Light2DKind::Point);
     assert_eq!(light.color, [1.0, 1.0, 1.0]);
@@ -220,7 +220,7 @@ fn light_2d_defaults_and_round_trips() {
     assert_eq!(authored.kind, Light2DKind::Ambient);
     assert_eq!(authored.color, [0.2, 0.25, 0.5]);
     assert!(approx(authored.intensity, 0.35));
-    assert_eq!(authored.radius, 5.0, "没写的字段走默认");
+    assert_eq!(authored.radius, 5.0, "Unwritten fields use default");
 
     let json = serde_json::to_string(&authored).unwrap();
     let back: Light2D = serde_json::from_str(&json).unwrap();
@@ -234,11 +234,11 @@ fn light_2d_ignores_disabled_or_degenerate_values() {
         enabled: false,
         ..Light2D::default()
     };
-    assert!(!light.contributes(), "关掉的光不参与");
+    assert!(!light.contributes(), "Disabled light does not contribute");
 
     light.enabled = true;
     light.intensity = 0.0;
-    assert!(!light.contributes(), "0 强度 = 无贡献");
+    assert!(!light.contributes(), "0 intensity = no contribution");
     assert_eq!(light.strength(), 0.0);
 
     light.intensity = f32::NAN;
@@ -247,12 +247,15 @@ fn light_2d_ignores_disabled_or_degenerate_values() {
 
     light.intensity = 2.0;
     light.color = [0.0, 0.0, 0.0];
-    assert!(!light.contributes(), "黑色光不点亮任何东西");
+    assert!(
+        !light.contributes(),
+        "Black light does not illuminate anything"
+    );
 
     light.color = [1.0, 1.0, 1.0];
     light.radius = 0.0;
     assert!(light.contributes());
-    assert_eq!(light.falloff_radius(), 0.0, "半径 0 = 不衰减");
+    assert_eq!(light.falloff_radius(), 0.0, "Radius 0 = no falloff");
     light.radius = f32::INFINITY;
     assert_eq!(light.falloff_radius(), 0.0);
     light.radius = -3.0;
@@ -284,7 +287,7 @@ fn light_2d_kind_exposes_reflect_variants() {
 
 #[test]
 fn sprites_stay_unlit_unless_receive_lights_is_enabled() {
-    // #611：默认不参与光照，老场景的调色板完全不变。
+    // #611: default does not participate in lighting, old scenes' palette unchanged.
     let legacy: SpriteRenderer = serde_json::from_str(r#"{"sprite_path":"a.png"}"#).unwrap();
     assert!(!legacy.receive_lights);
 
@@ -305,21 +308,24 @@ fn light_effective_color_applies_temperature_only_when_enabled() {
         color_temperature: 2000.0,
         ..Light::default()
     };
-    // 关闭色温：原样返回。
+    // Color temperature disabled: return as-is.
     assert_eq!(light.effective_color(), light.color);
 
     light.use_color_temperature = true;
     let tinted = light.effective_color();
-    // 2000 K 是暖色：红色分量保持，蓝色被明显压低。
+    // 2000 K is warm: red component kept, blue visibly reduced.
     assert!(approx(tinted.x, light.color.x));
-    assert!(tinted.z < light.color.z, "色温滤色片应压低蓝色: {tinted:?}");
+    assert!(
+        tinted.z < light.color.z,
+        "Color temperature filter should reduce blue: {tinted:?}"
+    );
 }
 
 #[test]
 fn light_cone_half_angles_are_derived_from_full_angles() {
     let light = Light {
         light_type: LightType::Spot,
-        // 引擎的 60° 全锥 = 30° 半锥。
+        // Engine's 60° full cone = 30° half cone.
         spot_angle: 60.0,
         inner_spot_angle: 20.0,
         ..Light::default()
@@ -328,7 +334,7 @@ fn light_cone_half_angles_are_derived_from_full_angles() {
     assert!(approx(outer, 30.0_f32.to_radians()));
     assert!(approx(inner, 10.0_f32.to_radians()));
 
-    // 内锥大于外锥时被裁到外锥，不会出现负的余弦区间。
+    // When inner cone larger than outer cone, clamp to outer cone, no negative cosine interval.
     let broken = Light {
         spot_angle: 20.0,
         inner_spot_angle: 90.0,
@@ -354,7 +360,7 @@ fn light_shadow_caster_requires_enabled_and_shadow_mode() {
 }
 
 // ---------------------------------------------------------------------------
-// SpriteRenderer（2D 精灵）
+// SpriteRenderer (2D sprite)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -412,20 +418,23 @@ fn sprite_json_round_trips_and_fills_missing_fields() {
     assert_eq!(back.clip_rect, [-4.0, -2.0, 4.0, 2.0]);
     assert!(back.receive_lights);
 
-    // 老文档只有路径：其余字段走 serde 默认。
+    // Old document with only path: remaining fields use serde defaults.
     let legacy: SpriteRenderer = serde_json::from_str(r#"{"sprite_path":"a.png"}"#).unwrap();
     assert_eq!(legacy.sprite_path, "a.png");
     assert!(approx(legacy.pixels_per_unit, 100.0));
     assert_eq!(legacy.frame_size, [0, 0]);
-    assert_eq!(legacy.sheet_columns, 0, "老文档按单行图集处理");
+    assert_eq!(
+        legacy.sheet_columns, 0,
+        "Old document treated as single-row atlas"
+    );
     assert_eq!(legacy.sheet_row, 0);
     assert_eq!(
         legacy.src_blend,
         BlendMode::SrcAlpha,
-        "老文档默认 alpha 混合"
+        "Old document defaults to alpha blending"
     );
 
-    // #582：裁剪默认关闭，旧文档不会突然被裁。
+    // #582: clipping disabled by default, old documents not suddenly clipped.
     assert!(!legacy.clip_enabled);
     assert_eq!(legacy.clip_rect, [0.0; 4]);
 }
@@ -446,12 +455,12 @@ fn sprite_clip_rect_round_trips() {
 
 #[test]
 fn tilemap_json_defaults_and_round_trips() {
-    // #529：旧文档没有 Tilemap，新字段全部走 serde 默认。
+    // #529: old documents have no Tilemap, new fields all use serde defaults.
     let map: Tilemap = serde_json::from_str(
         r#"{"tileset_path":"sprites/tiles.png","columns":2,"tiles":[0,3,0,1]}"#,
     )
     .unwrap();
-    assert_eq!(map.tile_size, [16, 16], "默认瓦片 16x16");
+    assert_eq!(map.tile_size, [16, 16], "Default tile 16x16");
     assert_eq!(map.cell_size, [1.0, 1.0]);
     assert_eq!(map.color, [1.0, 1.0, 1.0, 1.0]);
     assert_eq!(map.sorting_layer, 0);
@@ -462,8 +471,11 @@ fn tilemap_json_defaults_and_round_trips() {
     assert_eq!(back.tiles, vec![0, 3, 0, 1]);
     assert_eq!(back.columns, 2);
 
-    assert_eq!(Tilemap::default().columns, 0, "默认单行");
-    assert!(!Tilemap::default().has_tiles(), "没有 tileset 路径不绘制");
+    assert_eq!(Tilemap::default().columns, 0, "Default single row");
+    assert!(
+        !Tilemap::default().has_tiles(),
+        "No tileset path means no drawing"
+    );
 }
 
 #[test]
@@ -474,20 +486,20 @@ fn tilemap_grid_and_uv_follow_the_tileset_layout() {
         tile_size: [16, 16],
         ..Tilemap::default()
     };
-    // 2 列 → 3 行（最后一行只有一格）。
+    // 2 columns → 3 rows (last row has only one cell).
     assert_eq!(map.grid(), (2, 3));
 
     map.columns = 0;
-    assert_eq!(map.grid(), (5, 1), "columns=0 排成一行");
+    assert_eq!(map.grid(), (5, 1), "columns=0 arranged in one row");
 
-    // tileset 64x32 + 16x16 瓦片 = 4 列 2 行。
+    // tileset 64x32 + 16x16 tile = 4 columns 2 rows.
     assert_eq!(map.tileset_grid([64, 32]), (4, 2));
     assert_eq!(map.tile_uv(0, [64, 32]), [0.0, 0.0, 0.25, 0.5]);
     assert_eq!(map.tile_uv(5, [64, 32]), [0.25, 0.5, 0.5, 1.0]);
-    // 超出 tileset 的索引夹到最后一块。
+    // Index beyond tileset clamped to last tile.
     assert_eq!(map.tile_uv(99, [64, 32]), [0.75, 0.5, 1.0, 1.0]);
 
-    // 第 0 行在上：行号越大 y 越小。
+    // Row 0 at top: larger row number means smaller y.
     assert_eq!(map.cell_center(0, 0, 2), [0.5, 1.5]);
     assert_eq!(map.cell_center(1, 1, 2), [1.5, 0.5]);
 }
@@ -500,19 +512,19 @@ fn tilemap_rejects_invalid_cell_sizes() {
         cell_size: [0.0, 1.0],
         ..Tilemap::default()
     };
-    assert!(!map.has_tiles(), "cell_size 为 0 不能绘制");
+    assert!(!map.has_tiles(), "cell_size 0 cannot draw");
 }
 
 #[test]
 fn sprite_world_size_uses_frame_or_texture_and_ppu() {
-    // 整张纹理 64x32，PPU 16 -> 4x2 世界单位。
+    // Entire texture 64x32, PPU 16 -> 4x2 world units.
     let whole = SpriteRenderer {
         pixels_per_unit: 16.0,
         ..SpriteRenderer::default()
     };
     assert_eq!(whole.world_size([64, 32]), [4.0, 2.0]);
 
-    // 精灵表单帧优先于纹理尺寸。
+    // sprite sheet single frame takes priority over texture size.
     let sheet = SpriteRenderer {
         frame_size: [32, 32],
         pixels_per_unit: 32.0,
@@ -521,7 +533,7 @@ fn sprite_world_size_uses_frame_or_texture_and_ppu() {
     assert_eq!(sheet.frame_size_or([256, 32]), [32, 32]);
     assert_eq!(sheet.world_size([256, 32]), [1.0, 1.0]);
 
-    // 非法 PPU 回落到 100，不产生 NaN/Inf。
+    // Invalid PPU falls back to 100, no NaN/Inf.
     let broken = SpriteRenderer {
         pixels_per_unit: 0.0,
         ..SpriteRenderer::default()
@@ -590,10 +602,10 @@ fn collider_bounds_accept_a_composed_parent_world_matrix() {
 
 #[test]
 fn mesh_renderer_state_defaults_and_round_trips() {
-    // 老文档只有 mesh/material：所有新字段必须回退到引擎的不透明默认值。
+    // Old document with only mesh/material: all new fields must fall back to engine's opaque default.
     let legacy: MeshRenderer =
         serde_json::from_str(r#"{"mesh_path":"m.mesh","material_path":"m.mat"}"#)
-            .expect("缺少渲染状态字段的老 JSON 仍然可读");
+            .expect("Old JSON missing render state fields is still readable");
     assert_eq!(legacy.cull_mode, CullMode::Back);
     assert_eq!(legacy.shadow_casting_mode, ShadowCastingMode::On);
     assert_eq!(legacy.render_queue.value(), RenderQueue::GEOMETRY);
@@ -601,17 +613,17 @@ fn mesh_renderer_state_defaults_and_round_trips() {
     assert_eq!(legacy.src_blend, BlendMode::One);
     assert_eq!(legacy.dst_blend, BlendMode::Zero);
     assert_eq!(legacy.blend_op, BlendOp::Add);
-    // One / Zero / Add = 不透明。
+    // One / Zero / Add = opaque.
     assert!(!legacy.blends());
     assert!(legacy.material_paths.is_empty());
     assert_eq!(
         legacy.material_path_for_submesh(3, 4, None),
         Some("m.mat"),
-        "缺少 material_paths 时回退到单数字段"
+        "Fall back to singular field when material_paths missing"
     );
 
-    // 作者格式用变体名（与 `CameraClearFlags` / `TextAlign` 一致），
-    // 队列是数字（`Material.renderQueue` 的 int 形状）。
+    // Author format uses variant names (consistent with `CameraClearFlags` / `TextAlign`),
+    // queue is numeric (`Material.renderQueue` int form).
     let json = serde_json::to_value(MeshRenderer {
         mesh_path: "m.mesh".into(),
         material_path: "m.mat".into(),
@@ -637,7 +649,7 @@ fn mesh_renderer_state_defaults_and_round_trips() {
     assert_eq!(back.render_queue.value(), RenderQueue::TRANSPARENT);
     assert!(!back.z_write);
     assert_eq!(back.dst_blend, BlendMode::OneMinusSrcAlpha);
-    // 标准 alpha 混合 = 透明。
+    // Standard alpha blend = transparent.
     assert!(back.blends());
 }
 
@@ -653,23 +665,23 @@ fn mesh_renderer_resolves_material_paths_per_submesh() {
         ..MeshRenderer::default()
     };
 
-    // 一一对应时按 submesh 下标取。
+    // One-to-one correspondence uses submesh lower bound.
     assert_eq!(
         renderer.material_path_for_submesh(0, 3, Some(2)),
         Some("materials/skin.mat")
     );
-    // 空字符串不冒充材质，继续按 glTF 材质索引找。
+    // Empty string does not masquerade as material, continue matching by glTF material index.
     assert_eq!(
         renderer.material_path_for_submesh(1, 3, Some(2)),
         Some("materials/metal.mat")
     );
-    // 找不到时回退到单数字段。
+    // When not found fall back to singular field.
     assert_eq!(
         renderer.material_path_for_submesh(1, 3, None),
         Some("materials/fallback.mat")
     );
 
-    // 长度不是 submesh 数时，按源材质索引匹配（Unity 的共享材质用法）。
+    // When length is not submesh count, match by source material index (Unity shared-material usage).
     let shared = MeshRenderer {
         material_paths: vec!["materials/a.mat".into(), "materials/b.mat".into()],
         ..MeshRenderer::default()
@@ -693,7 +705,7 @@ fn particle_system_round_trips_with_variant_names() {
         ..ParticleSystem::default()
     };
 
-    // 作者格式用变体名（与 `CameraClearFlags` / `TextAlign` 一致）。
+    // Author format uses variant names (consistent with `CameraClearFlags` / `TextAlign`).
     let json = serde_json::to_value(&system).unwrap();
     assert_eq!(json["shape"], serde_json::json!("Sphere"));
     assert_eq!(json["emission_rate"], serde_json::json!(12.0));
@@ -706,7 +718,7 @@ fn particle_system_round_trips_with_variant_names() {
 
 #[test]
 fn a_particle_system_without_fields_falls_back_to_the_defaults() {
-    // 缺少字段保持默认（跨版本兼容）。
+    // Missing fields keep defaults (cross-version compatibility).
     let system: ParticleSystem = serde_json::from_str("{}").unwrap();
     assert_eq!(system.shape, ParticleShape::Cone);
     assert!(system.playing);
@@ -730,14 +742,25 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
         ..AudioSource::default()
     };
     assert!(source.has_sound());
-    assert_eq!(source.volume_at(0.0), 0.8, "近距离内不衰减");
-    assert_eq!(source.volume_at(2.0), 0.8, "min_distance 仍然满音量");
-    assert!((source.volume_at(6.0) - 0.4).abs() < 1e-6, "中点线性衰减");
-    assert_eq!(source.volume_at(10.0), 0.0, "max_distance 起完全静止");
+    assert_eq!(
+        source.volume_at(0.0),
+        0.8,
+        "No falloff within near distance"
+    );
+    assert_eq!(source.volume_at(2.0), 0.8, "min_distance still full volume");
+    assert!(
+        (source.volume_at(6.0) - 0.4).abs() < 1e-6,
+        "Linear falloff at midpoint"
+    );
+    assert_eq!(
+        source.volume_at(10.0),
+        0.0,
+        "Silent from max_distance onward"
+    );
     assert_eq!(source.volume_at(1_000.0), 0.0);
     assert_eq!(source.volume_at(f32::NAN), 0.0);
 
-    // 纯 2D：距离不起作用。
+    // Pure 2D: distance has no effect.
     let flat = AudioSource {
         spatial_blend: 0.0,
         ..source.clone()
@@ -745,14 +768,14 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
     assert_eq!(flat.volume_at(0.0), 0.8);
     assert_eq!(flat.volume_at(9_999.0), 0.8);
 
-    // 半混合：衰减只生效一半。
+    // Half blend: falloff only applies halfway.
     let half = AudioSource {
         spatial_blend: 0.5,
         ..source.clone()
     };
     assert!((half.volume_at(6.0) - 0.6).abs() < 1e-6);
 
-    // 退化区间 / 越界音量都不会算出 >1 或 NaN。
+    // Degenerate range / out-of-range volume will not produce >1 or NaN.
     let broken = AudioSource {
         volume: 4.0,
         min_distance: 5.0,
@@ -766,7 +789,7 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
 
 #[test]
 fn line_json_defaults_to_miter_join_and_butt_caps() {
-    // #604：老文档只有 points / width，新字段必须是 serde 默认值。
+    // #604: old document has only points / width, new fields must be serde defaults.
     let line: LineRenderer =
         serde_json::from_str(r#"{"points":[[0,0,0],[1,0,0]],"width":2}"#).unwrap();
     assert_eq!(line.join, LineJoin::Miter);
@@ -805,15 +828,15 @@ fn particle_emitter_2d_json_round_trips_and_defaults() {
     assert_eq!(back.shape_size, [4.0, 0.5]);
     assert_eq!(back.sorting_layer, 7);
 
-    // 老文档 / 只写一个字段：其余走 serde 默认。
+    // Old document / only one field written: rest use serde defaults.
     let legacy: ParticleEmitter2D = serde_json::from_str(r#"{"emission_rate": 5.0}"#).unwrap();
     assert!(approx(legacy.emission_rate, 5.0));
     assert_eq!(legacy.shape, ParticleShape2D::Point);
     assert!(legacy.playing);
-    assert!(approx(legacy.direction[1], -1.0), "默认向下发射");
-    assert_eq!(legacy.particle_cap(), 256, "0 = 内置上限");
+    assert!(approx(legacy.direction[1], -1.0), "Default emits downward");
+    assert_eq!(legacy.particle_cap(), 256, "0 = built-in cap");
 
-    // 方向退化 / 非有限值时回落到向下，而不是 NaN 速度。
+    // Degenerate direction / non-finite value falls back to downward, not NaN velocity.
     let broken = ParticleEmitter2D {
         direction: [0.0, 0.0],
         ..ParticleEmitter2D::default()

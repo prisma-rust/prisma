@@ -5,7 +5,7 @@
 //!   path tracing), available with the `gi-bake` feature
 //! - `heightmap` — erosion-based heightmap generator (thermal + hydraulic)
 //! - `build_scene_package()` — cook `scenes.json` entries and pack `scenes.pak`
-//! - `migrate_legacy_config()` — 旧项目 `settings.toml` / `scenes.toml` 的一次性迁移
+//! - `migrate_legacy_config()` — one-time migration of old project `settings.toml` / `scenes.toml`
 
 #[cfg(feature = "gi-bake")]
 mod bake_gi;

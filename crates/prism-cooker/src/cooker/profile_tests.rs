@@ -38,8 +38,8 @@ fn settings_hash_ignores_custom_map_insertion_order() {
         forward.custom.insert(key.to_owned(), value);
     }
 
-    // 同样的键值、相反的插入顺序 + 不同的 HashMap 容量：容量会改变桶布局，
-    // 因此迭代顺序一定与 forward 不同，能稳定暴露「直接序列化 HashMap」的问题。
+    // Same key-value pairs, incorrect insert order, plus different HashMap capacity: capacity changes bucket layout,
+    // therefore iteration order definitely differs from forward, able to stably expose "directly serialize HashMap" issue.
     let mut reverse = CookSettings {
         custom: HashMap::with_capacity(64),
         ..Default::default()
@@ -259,7 +259,7 @@ fn user_profile_overrides_builtin() {
     let dir = std::env::temp_dir().join(&unique);
     std::fs::create_dir_all(&dir).ok();
 
-    // 写入 a 自定义 配置 that inherits from built-in "desktop".
+    // Write a custom  config  that inherits from built-in "desktop".
     let user_profile = serde_json::json!({
         "base": "desktop",
         "texture": {
@@ -283,7 +283,7 @@ fn user_profile_overrides_builtin() {
 
 #[test]
 fn profile_priority_chain() {
-    // CLI overrides > resolved 配置
+    // CLI overrides > resolved config
     let dir = std::env::temp_dir().join("priority_test");
     let mut mgr = ProfileManager::new(&dir);
     let mut settings = mgr.resolve("android").unwrap();

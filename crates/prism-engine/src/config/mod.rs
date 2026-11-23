@@ -1,11 +1,11 @@
-//! Application 配置 loaded from `assets/settings.ini`.
+//! Application config  loaded from `assets/settings.ini`.
 //!
-//! 所有字段都有默认值，因此文件完全是可选的——缺少 section / key 时安静地
-//! 沿用默认值；值写坏时 `log::warn!` 一条并回到默认值（见 [`ini`]）。
+//! All fields have default values, so this file is entirely optional — missing sections / keys silently
+//! use defaults; a malformed value logs one `log::warn!` and falls back to the default (see [`ini`]).
 //!
-//! 旧项目里的 `assets/settings.toml` 仍然可读（`load()` 会回退并提示迁移），
-//! 但**写端**一律产出 `settings.ini`；一次性迁移由
-//! `prism-build-pipeline build-scenes` 完成。
+//! Old projects' `assets/settings.toml` is still readable (`load()` falls back with a migration hint),
+//! but the **write** side always emits `settings.ini`; one-time migration is completed by
+//! `prism-build-pipeline build-scenes`.
 
 pub mod ini;
 
@@ -28,85 +28,85 @@ pub struct AppConfig {
 // Render defaults (`[render]` in settings.ini)
 // ---------------------------------------------------------------------------
 
-/// `[render]` 段：启动时的渲染 / 调试 / 路径追踪默认值。
+/// `[render]` section: render / debug / path-tracing defaults at startup.
 ///
-/// 全部字段可选——缺省沿用 [`RenderSettings::default`]。编辑器（Tauri / egui）
-/// 会读写同一份文件，因此这里的字段名就是项目级渲染设置的外部契约。
+/// All fields optional — falls back to [`RenderSettings::default`]. The editor (Tauri / egui)
+/// reads and writes the same file, so field names here are the external contract for project-level render settings.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RenderConfig {
-    /// `"raster"` 或 `"path_trace"`。
+    /// `"raster"` or `"path_trace"`.
     pub render_mode: Option<String>,
-    /// PBR isolate 位掩码（0 = 正常渲染）。
+    /// PBR isolate bit mask (0 = normal render).
     pub debug_flags: Option<u32>,
-    /// 0 = Reinhard, 1 = ACES, 2 = passthrough（2D / 像素画）。
+    /// 0 = Reinhard, 1 = ACES, 2 = passthrough (2D / pixel art).
     pub tonemap_mode: Option<u32>,
-    /// 后处理抗锯齿：0 = 关（默认），1 = FXAA。
+    /// Post-processing antialiasing: 0 = off (default), 1 = FXAA.
     pub aa_mode: Option<u32>,
-    /// 遮挡剔除（#1007）：用上一帧粗深度剔掉被完全挡住的绘制项。
+    /// Occlusion culling (#1007): use previous-frame coarse depth to cull fully occluded draw items.
     pub occlusion_culling: Option<bool>,
-    /// 显示空间对比度（`1.0` = 不变，#502）。
+    /// Display space exposure (`1.0` = unchanged, #502).
     pub contrast: Option<f32>,
-    /// 主方向光阴影覆盖距离（米，见 `RenderSettings::shadow_distance`）。
+    /// Main directional light shadow coverage distance (meters, see `RenderSettings::shadow_distance`).
     pub shadow_distance: Option<f32>,
-    /// 阴影贴图边长（texel，见 `RenderSettings::shadow_map_size`，#526）。
+    /// Shadow map edge length (texels, see `RenderSettings::shadow_map_size`, #526).
     pub shadow_map_size: Option<u32>,
-    /// 方向光级联数（1/2，见 `RenderSettings::shadow_cascade_count`，#526）。
+    /// Directional light cascade count (1/2, see `RenderSettings::shadow_cascade_count`, #526).
     pub shadow_cascade_count: Option<u32>,
-    /// 显示空间饱和度（`1.0` = 不变，`0.0` = 灰度）。
+    /// Display space saturation (`1.0` = unchanged, `0.0` = grayscale).
     pub saturation: Option<f32>,
-    /// 暗角强度（`0.0` = 关，`1.0` = 四角全黑）。
+    /// Vignette strength (`0.0` = off, `1.0` = corners fully black).
     pub vignette: Option<f32>,
-    /// HDR bloom 开关（#502）。
+    /// HDR bloom switch (#502).
     pub bloom: Option<bool>,
-    /// bloom 加性强度（`0.0` = 关，`1.0` = 最强）。
+    /// Bloom additive strength (`0.0` = off, `1.0` = strongest).
     pub bloom_intensity: Option<f32>,
-    /// bloom 亮度阈值（HDR 亮度）。
+    /// Bloom brightness threshold (HDR luminance).
     pub bloom_threshold: Option<f32>,
-    /// 镜头色差强度（`0.0` = 关，`1.0` = 最强，#502 Phase 2）。
+    /// Lens chromatic aberration strength (`0.0` = off, `1.0` = strongest, #502 Phase 2).
     pub chromatic_aberration: Option<f32>,
-    /// 胶片颗粒强度（`0.0` = 关，`1.0` = 最强，#502 Phase 2）。
+    /// Film grain strength (`0.0` = off, `1.0` = strongest, #502 Phase 2).
     pub film_grain: Option<f32>,
-    /// 白平衡色温（`-1.0` = 冷，`0.0` = 中性，`1.0` = 暖，#502）。
+    /// White balance color temperature (`-1.0` = cool, `0.0` = neutral, `1.0` = warm, #502).
     pub temperature: Option<f32>,
-    /// 白平衡色调（`-1.0` = 偏绿，`0.0` = 中性，`1.0` = 偏品红，#502）。
+    /// White balance hue (`-1.0` = greenish, `0.0` = neutral, `1.0` = magenta, #502).
     pub tint: Option<f32>,
-    /// 景深对焦距离（米，#502 Phase 2）。
+    /// Depth of field focus distance (meters, #502 Phase 2).
     pub dof_focus_distance: Option<f32>,
-    /// 景深强度（`0.0` = 关，`1.0` = 最强，#502 Phase 2）。
+    /// Depth of field strength (`0.0` = off, `1.0` = strongest, #502 Phase 2).
     pub dof_aperture: Option<f32>,
-    /// 景深最大模糊半径（像素，#502 Phase 2）。
+    /// Depth of field max blur radius (pixels, #502 Phase 2).
     pub dof_max_blur: Option<f32>,
-    /// 3D 调色 LUT 的 `assets/` 相对路径（`.cube`，#502）；空 = 关闭。
+    /// 3D color grading LUT `assets/`-relative path (`.cube`, #502); empty = disabled.
     pub lut: Option<String>,
-    /// LUT 混合强度（`0.0`..=`1.0`，#502）。
+    /// LUT blend strength (`0.0`..=`1.0`, #502).
     pub lut_strength: Option<f32>,
-    /// 相机运动模糊强度（`0.0` = 关，`1.0` = 最强，#502 Phase 2）。
+    /// Camera motion blur strength (`0.0` = off, `1.0` = strongest, #502 Phase 2).
     pub motion_blur: Option<f32>,
-    /// 运动模糊最大拖影长度（像素，#502 Phase 2）。
+    /// Motion blur max trail length (pixels, #502 Phase 2).
     pub motion_blur_max_pixels: Option<f32>,
-    /// Temporal anti-aliasing (#883)。
+    /// Temporal anti-aliasing (#883).
     pub taa: Option<bool>,
-    /// TAA 历史混合强度（0..=0.95）。
+    /// TAA history blend strength (0..=0.95).
     pub taa_strength: Option<f32>,
-    /// Qualcomm Adreno Neural Fusion 超分辨率（#1161）。
+    /// Qualcomm Adreno Neural Fusion super-resolution (#1161).
     pub anf_sr: Option<bool>,
-    /// ANF 锐化强度（0.0..=1.0）。
+    /// ANF sharpening strength (0.0..=1.0).
     pub anf_sharpness: Option<f32>,
-    /// Qualcomm Adreno Neural Fusion 插帧（#1161）。
+    /// Qualcomm Adreno Neural Fusion frame interpolation (#1161).
     pub anf_fg: Option<bool>,
-    /// 0 = HDR tonemap, 1 = depth, 2 = view-space normal。
+    /// 0 = HDR tonemap, 1 = depth, 2 = view-space normal.
     pub debug_rt: Option<u32>,
-    /// 前向管线线框模式（#431）。
+    /// Forward pipeline wireframe mode (#431).
     pub wireframe: Option<bool>,
-    /// 填充 + 线框叠加（#431）。
+    /// Fill + wireframe overlay (#431).
     pub shaded_wireframe: Option<bool>,
     pub pt_max_bounces: Option<u32>,
     pub pt_ray_max_distance: Option<f32>,
-    /// 0 = accumulate forever。
+    /// 0 = accumulate forever.
     pub pt_max_iterations: Option<u32>,
-    /// 内部渲染分辨率 `"640x360"`（#613）；`"off"` / 空 = 按窗口渲染。
+    /// Internal render resolution `"640x360"` (#613); `"off"` / empty = render at window size.
     pub internal_resolution: Option<String>,
-    /// 放大方式：`"stretch"`（默认，铺满窗口）或 `"integer"`（整数倍 + 黑边）。
+    /// Upscale mode: `"stretch"` (default, fill window) or `"integer"` (integer scale + letterbox).
     pub internal_scale_mode: Option<String>,
     /// GI technique for `RenderMode::Raster` (`"baked_probe"`, `"restir"`, `"prt"`).
     pub raster_gi: Option<String>,
@@ -127,7 +127,7 @@ pub struct RenderConfig {
 }
 
 impl RenderConfig {
-    /// 把配置覆盖到运行时设置上（仅覆盖显式给出的字段）。
+    /// Apply config overrides to runtime settings (only explicitly provided fields).
     pub fn apply(&self, settings: &mut RenderSettings) {
         if let Some(mode) = &self.render_mode {
             settings.render_mode = match mode.as_str() {
@@ -227,7 +227,7 @@ impl RenderConfig {
             settings.occlusion_culling = enabled;
         }
         if let Some(distance) = self.shadow_distance {
-            // 0 或负数的盒子没有任何意义，挡住并留个日志。
+            // Boxes with zero or negative size have no meaning, reject and log.
             if distance.is_finite() && distance > 0.0 {
                 settings.shadow_distance = distance;
             } else {
@@ -255,7 +255,7 @@ impl RenderConfig {
             }
         }
         if let Some(value) = self.contrast {
-            // 负对比度会把画面翻负，这里挡在 0。
+            // Negative exposure would flip the image to negative; clamp to 0 here.
             settings.contrast = value.max(0.0);
         }
         if let Some(value) = self.saturation {
@@ -404,7 +404,7 @@ impl RenderConfig {
     }
 }
 
-/// 解析 `"640x360"` / `"640,360"` / `"640*360"`；`"off"` / `"native"` / 空 → `[0, 0]`。
+/// Parse `"640x360"` / `"640,360"` / `"640*360"`; `"off"` / `"native"` / empty → `[0, 0]`.
 fn parse_internal_resolution(value: &str) -> Option<[u32; 2]> {
     let lower = value.trim().to_ascii_lowercase();
     if lower.is_empty() || lower == "off" || lower == "native" || lower == "none" {
@@ -580,14 +580,14 @@ const fn default_vsync() -> bool {
 const CONFIG_PATH: &str = "settings.ini";
 const LEGACY_CONFIG_PATH: &str = "settings.toml";
 
-/// 引擎认识的 section / key。其余内容一律忽略（`log::debug!` 记一条），
-/// 这样编辑器把 `[build]` 等自有段写进同一份文件时引擎不会报错。
+/// Sections / keys recognized by the engine. Everything else ignored (one `log::debug!` entry),
+/// so when the editor writes `[build]` and other own sections into the same file, engine does not complain.
 const KNOWN_KEYS: &[(&str, &[&str])] = &[
     ("app", &["company", "name"]),
-    // 引擎不读 `[build]`（`lib_name` / `output_dir` / `profile` 是编辑器和打包
-    // 流程用的），但它确实是项目配置的合法段。列成「已知但无键」，
-    // `log_unknown_entries` 就不会每读一次 settings.ini 报一句
-    // "ignoring unknown section [build]"（#985）。
+    // The engine does not read `[build]` (`lib_name` / `output_dir` / `profile` are used by the editor and packaging
+    // pipelines), but it is still a legal project config section. List it as "known but no keys" so
+    // `log_unknown_entries` does not report on every settings.ini read:
+    // "ignoring unknown section [build]" (#985).
     ("build", &[]),
     (
         "window",
@@ -676,7 +676,7 @@ fn log_unknown_entries(ini: &Ini) {
 }
 
 impl AppConfig {
-    /// 从调用方提供的文本解析配置；不访问文件系统。
+    /// Parse config from caller-provided text; no filesystem access.
     pub fn from_ini(text: &str) -> Self {
         let ini = Ini::parse(text);
         log_unknown_entries(&ini);
@@ -687,10 +687,10 @@ impl AppConfig {
         }
     }
 
-    /// 加载 `assets/settings.ini`；不存在时回退读旧的 `assets/settings.toml`
-    /// 并提示迁移。两者都没有时返回默认值。
+    /// Load `assets/settings.ini`; if missing fall back to old `assets/settings.toml`
+    /// and hint migration. When neither exists return defaults.
     ///
-    /// 路径经 [`crate::asset_paths`] 解析，不依赖进程 cwd。
+    /// Path resolved via [`crate::asset_paths`], does not depend on process cwd.
     #[deprecated(note = "use prism_app::load_config or AppConfig::from_ini")]
     pub fn load() -> Self {
         for (name, legacy) in [(CONFIG_PATH, false), (LEGACY_CONFIG_PATH, true)] {
@@ -808,7 +808,7 @@ mod tests {
         assert!(settings.taa);
         assert_eq!(settings.taa_strength, 0.75);
         assert_eq!(settings.pt_max_bounces, 7);
-        // #526：阴影覆盖距离与贴图边长都是可配置的质量旋钮。
+        // #526: shadow coverage distance and map edge length are both configurable quality knobs.
         assert_eq!(settings.shadow_distance, 120.0);
         assert_eq!(settings.shadow_map_size, 1024);
         assert_eq!(settings.shadow_cascade_count, 2);
@@ -870,7 +870,7 @@ mod tests {
     fn internal_resolution_and_scale_mode_come_from_the_render_section() {
         use crate::render_settings::{InternalScaleMode, RenderSettings};
 
-        // #613：`[render] internal_resolution = 640x360` + `internal_scale_mode = integer`
+        // #613: `[render] internal_resolution = 640x360` + `internal_scale_mode = integer`
         let cfg = AppConfig::from_ini(
             "[render]\ninternal_resolution = 640x360\ninternal_scale_mode = integer\n",
         );
@@ -879,7 +879,7 @@ mod tests {
         assert_eq!(settings.internal_resolution, [640, 360]);
         assert_eq!(settings.internal_scale_mode, InternalScaleMode::Integer);
 
-        // 其它分隔符与关闭写法都接受。
+        // Other separators and disable spellings are accepted.
         for (value, expected) in [
             ("640,360", [640, 360]),
             ("640*360", [640, 360]),
@@ -893,7 +893,7 @@ mod tests {
             assert_eq!(settings.internal_resolution, expected, "{value}");
         }
 
-        // 无法解析时保持默认（不把整份配置打成无效）。
+        // On parse failure keep defaults (do not invalidate the entire config).
         let mut settings = RenderSettings::default();
         AppConfig::from_ini(
             "[render]\ninternal_resolution = 640x360x2\ninternal_scale_mode = nope\n",

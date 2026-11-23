@@ -1,42 +1,42 @@
-//! 开场 intro screen：黑场淡出 → 标题上浮 → 停留 → 淡出，任意键/点击跳过。
+//! Opening intro screen: black fade-out → title float in → hold → fade out, any key / click skips.
 //!
-//! 实体由 `assets/scenes/intro.scene.json` 加载（4 个 UI 实体：黑场 + 标题 +
-//! 副标题 + 提示）。动画逻辑走 [`prism_game_api::GameWorld`]，因此**同一份代码**
-//! 既能跑在静态 Player 里（`tick_system`），也能跑在编辑器加载的动态模块里
-//! （`preview` 模块直接调用 [`tick`]）。
+//! Entities loaded from `assets/scenes/intro.scene.json` (4 UI entities: black + title +
+//! subtitle + hint). Animation logic goes through [`prism_game_api::GameWorld`], so **same code**
+//! runs in static Player (`tick_system`) and in editor-loaded dynamic module
+//! (`preview` module directly calls [`tick`]).
 //!
-//! 本文件不出现任何 `prism_engine` 类型：组件来自纯数据的 `prism_scene`，
-//! 引擎/编辑器也不需要认识 `IntroState`。
+//! This file uses no `prism_engine` types: components from pure-data `prism_scene`,
+//! engine / editor need not know `IntroState`.
 
 use keyframe::functions::{EaseInCubic, EaseInOutCubic, EaseOutCubic};
 use keyframe::{keyframes, AnimationSequence};
 use prism_game_api::{EntityHandle, GameWorld, InputSnapshot, UiQuad};
 use prism_scene::ui::{Style, Text};
 
-/// 标题初始位置（margin.top，CENTER 锚点下负值 = 中心上方）。
+/// Title initial position (`margin.top`, CENTER anchor below negative = above center).
 const TITLE_BASE_MARGIN: f32 = -16.0;
-/// 副标题相对标题的纵向间距（px）。
+/// Subtitle vertical gap relative to title (px).
 ///
-/// 标题矩形高 108、`pivot.y = 0.5`，副标题高 42，两者中心至少要拉开
-/// `(108 + 42) / 2 = 75` 才不重叠；但标题字形（84px）的墨迹会超出自己的框，
-/// 实测 96 时副标题仍压在标题下沿，128 才留出干净的间距。
-/// `intro.scene.json` 里 `intro_subtitle` 的 `margin.top` 必须等于
-/// `TITLE_BASE_MARGIN + SUBTITLE_OFFSET`（每帧由 `tick_system` 覆写）。
+/// Title rect height 108, `pivot.y = 0.5`, subtitle height 42, centers must be separated by at least
+/// `(108 + 42) / 2 = 75` to avoid overlap; but title glyph (84px) ink exceeds its box,
+/// measured 96 still presses subtitle onto title bottom edge, 128 gives clean gap.
+/// `margin.top` of `intro_subtitle` in `intro.scene.json` must equal
+/// `TITLE_BASE_MARGIN + SUBTITLE_OFFSET` (overwritten each frame by `tick_system`).
 const SUBTITLE_OFFSET: f32 = 128.0;
 
-/// 各实体的 `Name` 组件值（与 intro.scene.json 一致）。
+/// Values of `Name` component for each entity (consistent with intro.scene.json).
 const ENTITY_OVERLAY: &str = "intro_overlay";
 const ENTITY_TITLE: &str = "intro_title";
 const ENTITY_SUBTITLE: &str = "intro_subtitle";
 const ENTITY_PROMPT: &str = "intro_prompt";
 
 // ---------------------------------------------------------------------------
-// 雨滴（项目自带的极简 2D 粒子）
+// Rain (project-bundled minimal 2D particle)
 // ---------------------------------------------------------------------------
 
 const MAX_DROPS: usize = 192;
 const SPAWN_PER_SECOND: f32 = 140.0;
-/// 雨滴绘制层级：高于 UI 但低于调试叠加。
+/// Rain draw layer: above UI but below debug overlay.
 const DROP_LAYER: i32 = 900;
 
 struct RainDrop {
@@ -46,10 +46,10 @@ struct RainDrop {
     length: f32,
 }
 
-/// 开屏雨滴。
+/// Splash screen rain.
 ///
-/// 以前用引擎的 `ParticleSystem2D` 资源；插件形态不能链接引擎，所以这里自带
-/// 一个几十行的发射器，通过 `GameWorld::draw_quad` 输出。引擎不需要知道雨。
+/// Previously used engine `ParticleSystem2D` asset; plugin form cannot link engine, so here bundled
+/// a few-dozen-line emitter, output via `GameWorld::draw_quad`. Engine need not know rain.
 struct Rain {
     drops: Vec<RainDrop>,
     carry: f32,
@@ -65,7 +65,7 @@ impl Rain {
         }
     }
 
-    /// 线性同余，够用且不引入依赖；同一 seed 序列稳定。
+    /// Linear congruential, sufficient and no dependency; same seed sequence stable.
     fn rand(&mut self) -> f32 {
         self.seed = self
             .seed
@@ -117,18 +117,18 @@ impl Rain {
 }
 
 // ---------------------------------------------------------------------------
-// 动画状态
+// Animation state
 // ---------------------------------------------------------------------------
 
-/// intro 动画状态——**项目私有**，不进入引擎或编辑器。
+/// Intro animation state — **project-private**, not entering engine or editor.
 pub struct IntroState {
-    /// 全屏黑场 alpha（1 = 全黑）。
+    /// Full-screen black alpha (1 = fully black).
     overlay: AnimationSequence<f32>,
-    /// 标题不透明度。
+    /// Title opacity.
     title_opacity: AnimationSequence<f32>,
-    /// 标题纵向位移（px，>0 在下方，动画归零上浮）。
+    /// Title vertical offset (px, >0 downward, animates to zero floating up).
     title_y: AnimationSequence<f32>,
-    /// 跳过请求（`tick` 里置位并消费）。
+    /// Skip request (set bit and consumed in `tick`).
     skip: bool,
     rain: Rain,
     overlay_entity: EntityHandle,
@@ -138,7 +138,7 @@ pub struct IntroState {
 }
 
 impl IntroState {
-    /// 推进 intro 动画（跳过时快进到结尾）。
+    /// Advance intro animation (fast-forward to end when skipping).
     fn tick(&mut self, dt: f32) {
         if self.skip {
             self.skip = false;
@@ -156,7 +156,7 @@ impl IntroState {
     }
 }
 
-/// 检查缓存的场景实体句柄是否仍属于当前场景。
+/// Check whether cached scene entity handles still belong to current scene.
 fn state_is_valid(world: &GameWorld<'_>, state: &IntroState) -> bool {
     let entities = [
         state.overlay_entity,
@@ -173,7 +173,7 @@ fn state_is_valid(world: &GameWorld<'_>, state: &IntroState) -> bool {
         && world.get::<Text>(state.prompt_entity).is_some()
 }
 
-/// 在第一帧按 Name 查找场景实体，构造 IntroState。
+/// Find scene entities by Name on first frame, build IntroState.
 fn initialize_intro(world: &GameWorld<'_>) -> Option<IntroState> {
     let overlay_entity = world.find_by_name(ENTITY_OVERLAY)?;
     let title_entity = world.find_by_name(ENTITY_TITLE)?;
@@ -218,15 +218,15 @@ fn initialize_intro(world: &GameWorld<'_>) -> Option<IntroState> {
     })
 }
 
-/// 任意键或左键点击都跳过 intro。
+/// Any key or left click skips intro.
 fn should_skip(input: &InputSnapshot) -> bool {
     input.left_clicked || input.any_key()
 }
 
-/// 推进 intro 动画并写回 UI 组件。
+/// Advance intro animation and write back UI components.
 ///
-/// 第一帧按 `Name` 组件查找实体、创建 [`IntroState`]。`state` 为 `None` 时
-/// 表示还没绑定（场景实体未就绪，或场景重载后句柄失效）。
+/// Find entities by `Name` component on first frame, create [`IntroState`]. `state` `None` means
+/// not yet bound (scene entities not ready, or handles invalidated after scene reload).
 pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) {
     if state
         .as_ref()
@@ -235,7 +235,7 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         *state = None;
     }
 
-    // 1. 惰性初始化：第一帧按 Name 查找实体。
+    // 1. Lazy init: find entities by Name on first frame.
     if state.is_none() {
         match initialize_intro(world) {
             Some(created) => *state = Some(created),
@@ -243,10 +243,10 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         }
     }
 
-    // 2. 跳过检测（引擎每帧下发的输入快照）。
+    // 2. Skip detection (input snapshot sent down by engine each frame).
     let skip = should_skip(&world.input());
 
-    // 3. 推进动画、取出本帧要写回的动画值与受控实体。
+    // 3. Advance animation, extract this-frame values to write back and controlled entities.
     let (
         overlay_alpha,
         title_alpha,
@@ -279,14 +279,14 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         )
     };
 
-    // 4. 开屏雨滴：强度跟随标题淡入淡出，提交为 UI 四边形。
+    // 4. Splash rain: intensity follows title fade in/out, submitted as UI quads.
     let screen = world.screen_size();
     if let Some(current) = state.as_mut() {
         current.rain.update(dt, screen, title_alpha);
         current.rain.draw(world, title_alpha);
     }
 
-    // 5. 写回组件（读-改-写：插件形态下没有 `&mut` 借用）。
+    // 5. Write back components (read-modify-write: plugin form has no `&mut` borrow below).
     if let Some(mut style) = world.get::<Style>(overlay_e) {
         style.background[3] = overlay_alpha;
         world.set(overlay_e, style);
@@ -367,7 +367,7 @@ mod tests {
         }
         let state = state.expect("intro binds on first tick");
 
-        // 黑场从全黑开始淡出，标题同时上浮：两者都应已经写进组件。
+        // Black fades out from full black, title floats up simultaneously: both should already be written to components.
         let overlay = world
             .get::<Style>(Entity::from_raw(
                 state.overlay_entity.id,

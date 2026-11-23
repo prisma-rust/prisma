@@ -23,18 +23,18 @@ use super::{
     report_missing_reference, AtlasSpriteMeta, GpuAssetResolver, LoadedMesh, LoadedSkinnedMesh,
 };
 
-/// 把 RTEX 头的 `format` byte 与槽位颜色空间映射成渲染层 [`TextureFormat`]。
+/// Map RTEX header `format` byte and slot-bit color space to render-layer [`TextureFormat`].
 ///
-/// RTEX 不编码颜色空间：同一个 RGBA8 payload 可能是 sRGB（albedo / emissive）
-/// 也可能是线性（normal / MR / AO），由调用方按槽位传入 `srgb`。压缩格式的
-/// 通道语义固定（BC5 是线性双通道法线，BC6H 是 HDR 线性）。未支持的格式返回
-/// `None`，调用方回退洋红。
+/// RTEX does not encode color space: same RGBA8 payload can be sRGB (albedo / emissive)
+/// or linear (normal / MR / AO), caller passes `srgb` per slot. Compressed formats have
+/// fixed channel semantics (BC5 is linear dual-channel normal, BC6H is HDR linear). Unsupported returns
+/// `None`, caller falls back to magenta.
 pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureFormat> {
     match rtex_format {
         RTEX_FORMAT_RGBA8 if srgb => Some(TextureFormat::Rgba8Srgb),
         RTEX_FORMAT_RGBA8 => Some(TextureFormat::Rgba8),
-        // 块压缩格式的颜色空间同样由槽位决定（albedo/emissive = sRGB，
-        // normal/MR/AO = 线性），与 RGBA8 一致（#519）。
+        // Block-compressed format color space also decided by slot bit (albedo/emissive = sRGB,
+        // normal/MR/AO = linear), consistent with RGBA8 (#519).
         RTEX_FORMAT_BC1 if srgb => Some(TextureFormat::Bc1Srgb),
         RTEX_FORMAT_BC1 => Some(TextureFormat::Bc1Unorm),
         RTEX_FORMAT_BC3 if srgb => Some(TextureFormat::Bc3Srgb),
@@ -43,7 +43,7 @@ pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureF
         RTEX_FORMAT_BC7 => Some(TextureFormat::Bc7Unorm),
         RTEX_FORMAT_BC5 => Some(TextureFormat::Bc5Unorm),
         RTEX_FORMAT_BC6H => Some(TextureFormat::Bc6HUfloat),
-        // ASTC / ETC2 同样由槽位决定颜色空间（#519）。
+        // ASTC / ETC2 also decided by slot bit for color space (#519).
         RTEX_FORMAT_ASTC_4X4 if srgb => Some(TextureFormat::Astc4x4Srgb),
         RTEX_FORMAT_ASTC_4X4 => Some(TextureFormat::Astc4x4Unorm),
         RTEX_FORMAT_ASTC_6X6 if srgb => Some(TextureFormat::Astc6x6Srgb),
@@ -58,7 +58,7 @@ pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureF
     }
 }
 
-/// `.rskin` 的子网格表 → 渲染侧的材质区间。
+/// `.rskin` submesh table → render-side material ranges.
 pub(super) fn skinned_submeshes(
     info: &prism_asset::formats_skinned::SkinnedMeshInfo,
 ) -> Vec<MeshSubmesh> {
@@ -78,14 +78,14 @@ pub(super) fn skinned_submeshes(
 
 impl GpuAssetResolver {
     // -----------------------------------------------------------------------
-    // 内部 CPU 加载 helpers（纯数据，无渲染器依赖）
+    // Internal CPU load helpers (pure data, no renderer dependency)
     // -----------------------------------------------------------------------
 
-    /// CPU 段：加载网格资源 + 解交织顶点 data → `MeshUploadInput` + submesh 表。
-    /// CPU 段：把 `.rskin` 解成顶点数据 + 蒙皮属性（#560 P0-3b）。
+    /// CPU stage: load mesh asset + deinterleave vertex data → `MeshUploadInput` + submesh table.
+    /// CPU stage: decode `.rskin` into vertex data + skinning attributes (#560 P0-3b).
     ///
-    /// 顶点布局与静态 RMES 一致（positions/normals/uv0/tangents/indices），额外
-    /// 带上每顶点 4 个骨骼索引与权重 —— 渲染侧把它们放进第二个顶点缓冲。
+    /// Vertex layout consistent with static RMES (positions/normals/uv0/tangents/indices), additionally
+    /// carries 4 bone indices and weights per vertex — renderer puts them in second vertex buffer.
     pub(super) fn load_skinned_mesh_inputs(&mut self, path: &str) -> Option<LoadedSkinnedMesh> {
         let id = self.resource_manager.id_by_path(path).or_else(|| {
             report_missing_reference(path, "skinned mesh");
@@ -144,7 +144,7 @@ impl GpuAssetResolver {
     }
 
     pub(super) fn load_mesh_inputs(&mut self, path: &str) -> Option<LoadedMesh> {
-        // 内置基础网格（编辑器 3D Object 预设）：不读 `.pak`、不需要 cook。
+        // Built-in primitive meshes (editor 3D Object presets): no `.pak` read, no cook.
         if prism_render::primitives::is_builtin(path) {
             return prism_render::primitives::builtin(path).map(|input| LoadedMesh {
                 input,
@@ -218,8 +218,8 @@ impl GpuAssetResolver {
         decode_rcld_page_slice(&bytes, page.cluster_count)
     }
 
-    /// CPU 段：加载材质资源 → 18 个 PBR 标量 + 5 张纹理像素
-    /// （顺序：albedo, normal, metallic_roughness, emissive, occlusion）。
+    /// CPU stage: load material asset → 18 PBR scalars + 5 texture pixels
+    /// (order: albedo, normal, metallic_roughness, emissive, occlusion).
     pub(super) fn load_material_data(&mut self, path: &str) -> Option<MaterialResolveData> {
         let id = self.resource_manager.id_by_path(path).or_else(|| {
             report_missing_reference(path, "material");
@@ -253,8 +253,8 @@ impl GpuAssetResolver {
         };
 
         let tex_ids = mat.texture_ids();
-        // 颜色贴图是 sRGB 编码：让硬件在采样时解码。法线/MR/AO 存的是线性
-        // 数据，按 sRGB 解码会把 0.5 压成 ≈0.214（法线 Z 变负、光照全错）。
+        // Color texture is sRGB encoded: let hardware decode on sample. Normal / MR / AO store linear
+        // data, decoding as sRGB would squash 0.5 to ≈0.214 (normal Z negative, lighting totally wrong).
         let albedo = self.load_texture_data(tex_ids[0], true);
         let normal = self.load_texture_data(tex_ids[1], false);
         let mr = self.load_texture_data(tex_ids[2], false);
@@ -328,10 +328,10 @@ impl GpuAssetResolver {
         }
     }
 
-    /// CPU 段：加载单张纹理依赖 → `TextureUploadInput` 像素（或品红回退）。
+    /// CPU stage: load single texture dependency → `TextureUploadInput` pixels (or magenta fallback).
     ///
-    /// `srgb` 是**槽位**的颜色空间（RTEX 头不区分 sRGB/线性）：albedo、emissive、
-    /// 精灵贴图为 `true`，normal、metallic_roughness、occlusion 为 `false`。
+    /// `srgb` is **slot bit** color space (RTEX header does not distinguish sRGB/linear): albedo, emissive,
+    /// sprite texture `true`, normal, metallic_roughness, occlusion `false`.
     pub(super) fn load_texture_data(
         &mut self,
         tex_id_opt: Option<AssetId>,
@@ -441,16 +441,16 @@ impl GpuAssetResolver {
     }
 }
 
-/// 把 RMES 的分段顶点区解成 split arrays。
+/// Decode RMES segmented vertex region into split arrays.
 ///
-/// RMES 的顶点区**不是**每顶点交错，而是三段连续存放：
-/// `[positions × vert_count][normals × vert_count][uv0 × vert_count]`。
-/// 布局来自写入端 —— `prism-cooker` 的 `GltfImporter::write_intermediate`
-/// 按这个顺序产出 RMXI，`MeshCooker::write_rmes` 原样复制，并按同样的分段
-/// 写出 `pos_off / nrm_off / uv0_off`。
+/// RMES vertex region is **not** interleaved per vertex, but three contiguous segments:
+/// `[positions × vert_count][normals × vert_count][uv0 × vert_count]`.
+/// Layout from writer side — `prism-cooker` `GltfImporter::write_intermediate`
+/// produces RMXI in this order, `MeshCooker::write_rmes` copies as-is, and writes
+/// `pos_off / nrm_off / uv0_off` in same fashion.
 ///
-/// `stride_bytes` 只表示「每顶点合计多少字节」，拿它当 interleaved 行宽会把
-/// 第二个顶点之后的 positions 读进 normals / uv 的内存里。
+/// `stride_bytes` only means "total bytes per vertex"; treating it as interleaved row width would read
+/// positions after second vertex into normals / uv memory.
 pub(super) fn deinterleave_rmes(
     path: &str,
     info: &prism_asset::formats::RmesInfo,
@@ -464,7 +464,7 @@ pub(super) fn deinterleave_rmes(
     let vert_count = info.vert_count as usize;
     let uv_floats = if info.uv_channels >= 1 { 2 } else { 0 };
 
-    // 两种合法组合：每顶点 3 + uv 个 float（无 normals），或 6 + uv 个（有 normals）。
+    // Two legal combos: 3 + uv floats per vertex (no normals), or 6 + uv (with normals).
     let has_normals = if float_stride == 3 + uv_floats {
         false
     } else if float_stride == 6 + uv_floats {
@@ -487,7 +487,7 @@ pub(super) fn deinterleave_rmes(
         return None;
     }
 
-    // 段首（单位：float）。
+    // Segment header (identity: float).
     let nrm_base = vert_count * 3;
     let uv_base = nrm_base + if has_normals { vert_count * 3 } else { 0 };
 
@@ -508,8 +508,8 @@ pub(super) fn deinterleave_rmes(
             let n = nrm_base + v * 3;
             normals.push([read(n), read(n + 1), read(n + 2)]);
         } else {
-            // 没有法线的资源没有可靠的着色法线；给一个固定方向而不是 0 向量，
-            // 避免光照直接退化成 NaN / 全黑。
+            // Asset without normals has no reliable shading normal; give a fixed direction rather than zero vector,
+            // to avoid lighting degenerating to NaN / full black.
             normals.push([0.0, 0.0, 1.0]);
         }
         if uv_floats == 2 {

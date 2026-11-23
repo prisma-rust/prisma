@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Engine-independent gameplay API shared by the runtime host and project modules"
 
-# 两个后端共用同一套函数签名：
-# - `host`：直接借用宿主自己的 ECS World，零序列化（静态 Player / 宿主内）。
-# - `plugin`：通过宿主下发的 C 函数表读写，组件以 RTTIBin 字节流跨边界。
-# 插件构建只需 `--no-default-features --features plugin`。
+# Both backends share the same set of function signatures:
+# - `host`: directly borrow host's own ECS World, zero serialization (static Player / in-host).
+# - `plugin`: read/write through C function table provided by host, components cross boundary as RTTIBin byte streams.
+# Plugin build only needs `--no-default-features --features plugin`.
 [features]
 default = ["host", "plugin"]
 host = ["dep:prism-engine", "dep:prism-ui-draw"]
@@ -17,14 +17,14 @@ plugin = []
 [dependencies]
 prism-reflect = { path = "../prism-reflect" }
 prism-project-api = { path = "../prism-project-api" }
-# 纯数据 ECS（无 Vulkan / 无 UI）。插件侧只用它的 `Entity` 句柄布局与
-# `Component` blanket impl，永远不会把宿主的 `World` 指针传出去。
+# Pure data ECS (no Vulkan / no UI). Plugin side only uses its `Entity` handle layout and
+# `Component` blanket impl, never passing host `World` pointer out.
 prism-ecs = { path = "../prism-ecs" }
 # `find_by_name` needs the `Name` schema component. `prism-scene` is pure data
 # (no engine, render or UI), so it stays inside the plugin boundary rules.
 prism-scene = { path = "../prism-scene" }
 prism-physics2d = { path = "../prism-physics2d" }
-# 仅 `host` 后端用于松散资产定位（插件构建不会拉进引擎）。
+# Only `host` backend used for loose asset location (plugin build will not pull in engine).
 # **Must use default-features = false**: otherwise prism-engine defaults (such as `pathtrace`)
 # are forced onto every player, breaking project template building-block toggles (#535 verified).
 prism-engine = { path = "../prism-engine", optional = true, default-features = false }
@@ -34,8 +34,8 @@ prism-ui-draw = { path = "../prism-ui-draw", optional = true }
 log.workspace = true
 
 [dev-dependencies]
-# 用真实的宿主函数表验证 plugin 后端，而不是在测试里仿造一张表。
+# Validate plugin backend with a real host function table, not a fake one in test.
 prism-runtime-host = { path = "../prism-runtime-host" }
 prism-scene = { path = "../prism-scene" }
-# 测试里构造世界矩阵（`LocalToWorld`），与 prism-scene 用的是同一个 workspace 依赖。
+# Test builds world matrix (`LocalToWorld`), same workspace dependency as prism-scene.
 glam.workspace = true

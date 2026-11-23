@@ -113,7 +113,7 @@ fn asset_path_joins_under_the_assets_directory() {
     assert!(resolved.unwrap().exists());
 }
 
-/// #530：运行时挂载 `assets/` 下的全部 `.pak`，不写死 `scenes.pak`。
+/// #530: at runtime mount all `.pak` under `assets/`, not hardcoding `scenes.pak`.
 #[test]
 fn pak_files_lists_every_package_sorted() {
     let tree = TempTree::new("pak-list");
@@ -127,12 +127,12 @@ fn pak_files_lists_every_package_sorted() {
         .iter()
         .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    // 排序稳定；只认文件、只认 `.pak` 扩展名。
+    // Sort stable; only files, only `.pak` extension.
     assert_eq!(found, vec!["assets.pak", "scenes.pak"]);
 }
 
-/// #509：分包写在 `assets/optional/` 子目录，顶层自动扫描不会带出它们；
-/// 想挂载的一方用 `optional_pak_files()` / `load_optional_packages()` 显式取。
+/// #509: split packages written into `assets/optional/` subdirectory, top-level auto-scan will not bring them out;
+/// the mounter uses `optional_pak_files()` / `load_optional_packages()` to get them explicitly.
 #[test]
 fn optional_packages_stay_out_of_the_top_level_scan() {
     let tree = TempTree::new("optional-pak");
@@ -155,7 +155,7 @@ fn optional_packages_stay_out_of_the_top_level_scan() {
     assert_eq!(split, vec!["optional_audio.pak"]);
 }
 
-/// 测试期间设置 `PRISMA_ASSET_ROOT`，结束时恢复原值。
+/// Test sets `PRISMA_ASSET_ROOT` during, restores original value at end.
 struct EnvRoot {
     previous: Option<std::ffi::OsString>,
 }
@@ -177,8 +177,8 @@ impl Drop for EnvRoot {
     }
 }
 
-/// #1049：松散文件不存在时，`asset_exists` / `read_asset_text` 回退到 `.pak`。
-/// 打包版（Android / 发布包）只有 `.pak`，关卡数据必须还能读到。
+/// #1049: when loose file absent, `asset_exists` / `read_asset_text` fall back to `.pak`.
+/// Packaged version (Android / release) only has `.pak`, level data must still be readable.
 #[test]
 fn packaged_assets_are_visible_without_loose_files() {
     use prism_asset::package::PackageBuilder;
@@ -206,7 +206,7 @@ fn packaged_assets_are_visible_without_loose_files() {
     let _env = EnvRoot::set(&root);
     assert!(
         !asset_path("data/lake_layers.json").unwrap().exists(),
-        "回退测试必须没有松散文件"
+        "Fallback test must have no loose files"
     );
     assert!(asset_exists("data/lake_layers.json"));
     assert!(!asset_exists("data/missing.json"));
@@ -215,10 +215,10 @@ fn packaged_assets_are_visible_without_loose_files() {
         String::from_utf8_lossy(layers)
     );
     assert!(read_asset_text("data/missing.json").is_err());
-    // 反斜杠与开头的 `./` 都归一到同一个包内路径。
+    // Incorrect slashes and leading `./` normalize to same package-internal path.
     assert!(asset_exists("./data\\lake_layers.json"));
 
-    // 重建包后缓存必须换成新内容（mtime + 长度都变了）。
+    // Cache after rebuild must switch to new content (both mtime and length changed).
     write_pak(&assets, &[("data/lake_layers.json", b"v2")]);
     assert_eq!(
         read_asset_text("data/lake_layers.json").unwrap(),

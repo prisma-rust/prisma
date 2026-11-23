@@ -1,7 +1,7 @@
-//! 描述符集合布局、池和集合管理。
+//! Descriptor set layout, pool and set management.
 //!
-//! 帧 UBO 位于描述符集 0、绑定 0（顶点+片元阶段）。
-//! 每帧都有其自己的描述符集，这样无需管线停顿即可更新 UBO。
+//! Frame UBO lives in descriptor set 0, bind 0 (vertex + fragment stages).
+//! Each frame has its own descriptor set, so UBO can be updated without pipeline stalls.
 
 use anyhow::Context as _;
 use ash::vk;
@@ -9,7 +9,7 @@ use ash::vk;
 use crate::buffer::{self, BufferUsage, MemoryProperties};
 use crate::context::VulkanContext;
 
-/// 相机 UBO 描述符集的布局（集合 = 0，绑定 = 0）。
+/// Camera UBO descriptor set layout (set = 0, bind = 0).
 /// Maximum number of cameras composited into a single frame (#461).
 ///
 /// The per-frame UBO buffer holds one aligned block per camera slot, and the
@@ -162,12 +162,12 @@ impl Drop for DescriptorPool {
     }
 }
 
-/// 最大 number of **local** lights（点光 + 聚光）in the 光源 SSBO.
+/// Max number of **local** lights (point + spot) in the light source SSBO.
 pub const LIGHT_MAX: u32 = 8;
 
-/// [`GpuLight::color`] 的 `.w` 取值：点光源（全向）。
+/// Value of [`GpuLight::color`] `.w`: point light source (full direction).
 pub const GPU_LIGHT_KIND_POINT: f32 = 0.0;
-/// [`GpuLight::color`] 的 `.w` 取值：聚光灯（锥形）。
+/// Value of [`GpuLight::color`] `.w`: spotlight (cone).
 pub const GPU_LIGHT_KIND_SPOT: f32 = 1.0;
 
 /// Point/spot light record, laid out by the Slang `GpuLight` reflection.
@@ -177,7 +177,7 @@ pub const GPU_LIGHT_KIND_SPOT: f32 = 1.0;
 /// [`GPU_LIGHT_KIND_POINT`] / [`GPU_LIGHT_KIND_SPOT`]).
 pub use crate::shader_bindings::scene_frag::GpuLight;
 
-/// [`GpuLight`] 的字节大小（SSBO 步长，与着色器结构体必须一致）。
+/// Byte size of [`GpuLight`] (SSBO stride, must match shader struct).
 pub const GPU_LIGHT_SIZE: usize = std::mem::size_of::<GpuLight>();
 
 /// Maximum number of analytic lights in the PT light SSBO.
@@ -323,7 +323,7 @@ impl FrameUBO {
         (self.stride * slot.min(MAX_CAMERAS - 1) as u64) as u32
     }
 
-    /// Upload new 帧 data to the GPU for camera `slot`.
+    /// Upload new frame  data to the GPU for camera `slot`.
     pub fn update(
         &self,
         device: &ash::Device,

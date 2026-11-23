@@ -276,7 +276,7 @@ pub fn preferences(
             state.status = workspace.tf("desktop.status.locale", &[("locale", "en-US")]);
         }
         if ui
-            .selectable_label(locale == Locale::ZhCn, "简体中文")
+            .selectable_label(locale == Locale::ZhCn, "Simplified Chinese")
             .clicked()
         {
             workspace.set_locale(Locale::ZhCn);

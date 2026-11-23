@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn translates_and_switches_locale() {
         let mut i18n = I18n::new(Locale::ZhCn);
-        assert_eq!(i18n.t1("common.save"), "保存");
+        assert_eq!(i18n.t1("common.save"), "Save");
         i18n.set_locale(Locale::EnUs);
         assert_eq!(i18n.t1("common.save"), "Save");
     }

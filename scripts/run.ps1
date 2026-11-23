@@ -1,11 +1,11 @@
 ﻿# Prisma 一键构建脚本 (Windows)
-# 用法: 在 PowerShell 中 cd 到本目录后执行  .\run.ps1
-# 需要: 已安装 Vulkan SDK (默认 D:\VulkanSDK\1.4.350.0，自带 slangc) 和 Rust
+# 用法: in  PowerShell in  cd 到本directory after execute   .\run.ps1
+# need : already install  Vulkan SDK (default  D:\VulkanSDK\1.4.350.0，自带 slangc) 和 Rust
 $ErrorActionPreference = "Stop"
 
 $sdk = "D:\VulkanSDK\1.4.350.0"
 if (-not (Test-Path "$sdk\Bin\glslc.exe")) {
-    # 回退到常见安装路径
+    # 回退到常见install path
     $sdk = "C:\VulkanSDK\1.4.350.0"
 }
 if (-not (Test-Path "$sdk\Bin\glslc.exe")) {
@@ -18,11 +18,11 @@ $env:VK_LAYER_PATH = "$sdk\Bin"
 $env:VULKAN_SDK = $sdk
 $env:RUST_LOG = "warn,tracy_client=off"
 
-# 脚本位于 scripts/ 下，切到仓库根目录
+# 脚本bit 于 scripts/ below ，切到仓库根directory
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# 重新编译 Slang 着色器 (slangc 保留 vertexMain/fragmentMain 入口名)。
-# slangc 随 Vulkan SDK 提供；.spv 不提交，必须编译后引擎才使用最新着色器。
+# heavy new compile  Slang shader  (slangc 保留 vertexMain/fragmentMain 入口名)。
+# slangc 随 Vulkan SDK 提供；.spv not 提交，must compile after 引擎才使用most new shader 。
 if (Get-Command slangc -ErrorAction SilentlyContinue) {
     Write-Host "重新编译 Slang 着色器..."
     & bash assets/shaders/compile.sh
@@ -32,16 +32,16 @@ if (Get-Command slangc -ErrorAction SilentlyContinue) {
     Write-Warning "跳过着色器编译 (将使用上次编译产物或 CI 产出的 .spv)。"
 }
 
-# 构建整个 workspace（渲染 / ECS / 引擎 / 资产管线均以库形式构建）。
-# 注意：桌面可执行入口已迁移到 launcher/（Tauri 独立 workspace），
-# 根 workspace 没有可运行的 bin，`cargo run` 不再适用。
+# build 整个 workspace（render  / ECS / 引擎 / 资产管line 均以库形式build ）。
+# note ：桌face 可execute 入口already 迁移到 launcher/（Tauri independent  workspace），
+# 根 workspace 没have 可run 的 bin，`cargo run` not again 适用。
 Write-Host "构建 Prisma (debug)..."
 cargo build
 if ($LASTEXITCODE -ne 0) { Write-Error "构建失败"; exit 1 }
 
-# 生成运行时场景包：scenes.json -> cooked RSCN -> assets/scenes.pak。
-# 游戏运行时只从该 .pak 的路径清单解析场景，因此开发启动前也必须生成。
-# 每个工程的 manifest 在自己的 assets/ 下，仓库根只放引擎输入（shaders、GI 探针）。
+# generate run 时scene 包：scenes.json -> cooked RSCN -> assets/scenes.pak。
+# 游戏run 时只从该 .pak 的path 清单parse scene ，therefore open 发start 动before 也must generate 。
+# each 工程的 manifest in 自己的 assets/ below ，仓库根只放引擎input （shaders、GI 探针）。
 $SceneProject = "projects/template"
 if (Test-Path "$SceneProject/assets/scenes.json") {
     Write-Host "构建场景包 ($SceneProject/assets/scenes.pak)..."

@@ -423,8 +423,14 @@ fn node_snapshots_report_time_state_and_blend() {
     assert!(!snapshots[0].blending);
     assert!((snapshots[0].time - 0.1).abs() < 1e-5);
     assert_eq!(snapshots[1].kind, GraphNodeKind::Output);
-    assert!((snapshots[0].weight - 1.0).abs() < 1e-6, "weight 1 on output chain");
-    assert!((snapshots[1].weight - 1.0).abs() < 1e-6, "output node weight 1");
+    assert!(
+        (snapshots[0].weight - 1.0).abs() < 1e-6,
+        "weight 1 on output chain"
+    );
+    assert!(
+        (snapshots[1].weight - 1.0).abs() < 1e-6,
+        "output node weight 1"
+    );
 
     evaluator.parameters_mut().set_trigger("go");
     evaluator.evaluate(&source, &skeleton, 0.05).expect("walk");

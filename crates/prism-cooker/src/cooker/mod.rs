@@ -1,14 +1,14 @@
 //! # prism-cooker
 //!
-//! Prisma 资源管线的烹饪器框架
+//! Prisma asset pipeline cooker framework
 //!
-//! 烹饪器将中间导入数据转换为运行时就绪的二进制格式，
-//! 然后打包为 .pak 存档。
+//! Cooker converts imported data into runtime-ready binary format,
+//! then packages into .pak archive.
 //!
-//! 烹饪管线如下：
+//! Cooking pipeline like below:
 //!
 //! ```text
-//! ImportResult（中间数据）→ [Cooker] → .pak data → [PackageBuilder]
+//! ImportResult (import-time data) → [Cooker] → .pak data → [PackageBuilder]
 //! ```
 
 use crate::db::AssetRecord;
@@ -197,10 +197,10 @@ impl Cooker for BinaryCooker {
 }
 
 // ---------------------------------------------------------------------------
-// 动画图 Cooker (pass-through)
+// Animation graph cooker (pass-through)
 // ---------------------------------------------------------------------------
 
-/// 动画图 importer 已经输出 RAGP 二进制，cooker 只做格式校验与透传。
+/// Animation graph importer already output RAGP binary, cooker only does format validation and pass-through.
 pub struct AnimGraphCooker;
 
 impl Cooker for AnimGraphCooker {
@@ -276,10 +276,10 @@ impl TextureCooker {
         Some((w, h, &data[pixels_start..pixels_start + expected]))
     }
 
-    /// 把最长边压到 `max_size` 以内（0 = 不限制），保持宽高比。
+    /// Squash longest edge into `max_size` (0 = no limit), keep aspect ratio.
     ///
-    /// 用面积平均（box filter）而不是最近邻：缩小后不会丢掉整体亮度，
-    /// 也不会产生摩尔纹。只做**缩小**，小图不会被放大。
+    /// Use area average (box filter) not nearest neighbor: shrinking won't lose overall brightness,
+    /// nor produce moiré patterns. Only downscaling, small images won't be upscaled.
     fn clamp_max_size<'a>(
         width: u32,
         height: u32,
@@ -303,7 +303,7 @@ impl TextureCooker {
         )
     }
 
-    /// 面积平均缩放（只用于缩小）。
+    /// Area-average scale (only for downscaling).
     ///
     /// RGB is accumulated in premultiplied space and divided by the summed
     /// alpha, so a transparent pixel's colour cannot tint its neighbours --
@@ -556,8 +556,8 @@ impl Cooker for TextureCooker {
             return Err(CookError::CookFailed("Zero-dimension texture".into()));
         }
 
-        // 每资产导入设置（`<asset>.import.json`）可以覆盖 profile 的 max_size / mips：
-        // 先把最长边压到 max_size 以内，再按需生成 mip 链。
+        // Per-asset import setting (`<asset>.import.json`) can override profile max_size / mips:
+        // First squash longest edge into max_size, then generate mip chain as needed.
         let (w, h, rgba) = Self::clamp_max_size(w, h, rgba, ctx.settings.texture.max_size);
         let mips_rgba = if ctx.settings.texture.generate_mips {
             Self::generate_mips(w, h, &rgba)
@@ -565,9 +565,9 @@ impl Cooker for TextureCooker {
             vec![(w, h, rgba.to_vec())]
         };
 
-        // 格式 byte：桌面 BC1/BC3/BC5/BC7 走纯 Rust 编码器；移动端 ASTC /
-        // ETC2 走 vendored 的 astcenc / etcpak。只有 BC6H（HDR）还没有编码器，
-        // 明确 warning 后回退 RGBA8（不静默冒充已压缩，#519）。
+        // Format byte: desktop BC1/BC3/BC5/BC7 use pure Rust encoder; mobile ASTC /
+        // ETC2 use vendored astcenc / etcpak. Only BC6H (HDR) has no encoder yet,
+        // Explicit warning then fall back to RGBA8 (not silently masquerade as already compressed, #519).
         let (format, mips, block_compressed) = match ctx.settings.texture.compression {
             profile::TextureCompression::Rgba8 | profile::TextureCompression::None => {
                 (RTEX_FORMAT_RGBA8, mips_rgba, false)
@@ -627,8 +627,8 @@ impl Cooker for TextureCooker {
 
         let cooked_data = Self::write_rtex(&mips, format);
 
-        // 块压缩的 mip 数据已经够紧凑，再套一层 zstd 收益很小；未压缩的 RGBA8
-        // 像素很好压（一般能省 30~50% 体积），所以让它进 pak 的压缩流程（#519）。
+        // Block-compressed mip data already tight enough, adding zstd layer yields little; uncompressed RGBA8
+        // pixels compress well (generally save 30~50% volume), so let it into pak compression stream (#519).
         Ok(CookResult {
             cooked_data,
             compress: !block_compressed,
@@ -723,7 +723,7 @@ const RMES_MAGIC: &[u8; 4] = b"RMES";
 /// RMXI intermediate mesh magic.
 const RMXI_MAGIC: &[u8; 4] = b"RMXI";
 
-/// 从 RMXI 头/长度推导出的布局。
+/// Infer export layout from RMXI header/length.
 struct RmxiLayout {
     version: u8,
     vert_count: u32,
@@ -736,7 +736,7 @@ struct RmxiLayout {
     submeshes: Vec<prism_asset::formats::RmesSubmesh>,
 }
 
-/// 读取 RMXI v2 的 submesh 表。
+/// Read RMXI v2 submesh table.
 fn read_submesh_table(
     data: &[u8],
     offset: usize,
@@ -767,12 +767,12 @@ fn read_submesh_table(
     Some(submeshes)
 }
 
-/// 解析 RMXI 头并确定 `[positions][normals?][uv0][indices][submeshes?]` 布局。
+/// Parse RMXI header and determine `[positions][normals?][uv0][indices][submeshes?]` layout.
 ///
-/// RMXI v1 没有 submesh 表；v2 在 index block 后追加
-/// `[count:u32][index_start:u32][index_count:u32][material_index:u32]...`。
-/// 没有显式的 `has_normals` 位，所以 v2 用「候选 base + 表长度 == 文件长度」
-/// 来判定，避免把 submesh 表误当成法线数据。
+/// RMXI v1 has no submesh table; v2 in index block after append
+/// `[count:u32][index_start:u32][index_count:u32][material_index:u32]...`.
+/// No explicit `has_normals` bit, so v2 uses "candidate base + table length == file length"
+/// to determine, avoiding mistaking submesh table for normal data.
 fn rmxi_layout(data: &[u8]) -> Option<RmxiLayout> {
     if data.len() < 17 || &data[..4] != RMXI_MAGIC {
         return None;
@@ -1084,14 +1084,14 @@ pub struct RmesInfo {
     pub stride_bytes: u32,
     pub vertex_data: Vec<u8>,
     pub index_data: Vec<u8>,
-    /// RMES v2 submesh table（v1 为空）。
+    /// RMES v2 submesh table (v1 empty).
     pub submeshes: Vec<prism_asset::formats::RmesSubmesh>,
 }
 
 /// Decode a cooked RMES blob back into structured vertex/index data.
 ///
 /// This is the inverse of [`MeshCooker::write_rmes`]. Returns `None` if the
-/// data is malformed. v1（没有 submesh 表）仍然可读。
+/// data is malformed. v1 (no submesh table) still readable.
 pub fn decode_rmes(data: &[u8]) -> Option<RmesInfo> {
     if data.len() < 33 || &data[..4] != RMES_MAGIC {
         return None;

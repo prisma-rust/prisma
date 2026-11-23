@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""检测高度图的山脊结构：脊线像素、脊线连贯性（相邻脊线像素的连通性）。"""
+"""Detect ridge structures in heightmap: ridge pixels, ridge continuity (connectivity of adjacent ridge pixels)."""
 import struct
 import sys
 
@@ -11,7 +11,7 @@ vals = load_raw(sys.argv[1])
 n = len(vals)
 w = h = int(n ** 0.5)
 
-# 山脊 = 高于两侧的像素（水平方向比左右都高，或垂直方向比上下都高）
+# Ridge = pixels higher than both sides (horizontally higher than left and right, or vertically higher than above and below)
 ridge = [[False] * w for _ in range(h)]
 for y in range(1, h - 1):
     for x in range(1, w - 1):
@@ -24,8 +24,8 @@ for y in range(1, h - 1):
 total_ridge = sum(sum(row) for row in ridge)
 print(f'ridge pixels: {total_ridge} ({100.0 * total_ridge / n:.1f}%)')
 
-# 连通性：每个脊线像素周围 8 邻域中还有多少脊线像素
-# 孤立点（邻域 0 个）= 噪点脊；连贯脊线（邻域 >= 2 个）= 山脉
+# Connectivity: how many ridge pixels in 8-neighborhood of each ridge pixel
+# Isolated point (0 neighbors) = noisy ridge; continuous ridge (>=2 neighbors) = mountain range
 isolated = 0
 connected = 0
 for y in range(1, h - 1):

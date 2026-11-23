@@ -1,11 +1,11 @@
-//! Cozy Fishing —— 桌面入口。
+//! Cozy Fishing — desktop entry point.
 //!
-//! 引擎初始化、事件循环与渲染都由 [`prism_app::app`] 负责；本项目只注册
-//! 玩法 system（见 `game::`）。场景内容来自 `assets/scenes.pak`，由
-//! `prism-build-pipeline build-scenes` 从 `assets/scenes/lake.scene.json`
-//! 烘焙而来。
+//! Engine initialization, event loop and rendering handled by [`prism_app::app`]; this project only registers
+//! gameplay systems (see `game::`). Scene content comes from `assets/scenes.pak`,
+//! baked by `prism-build-pipeline build-scenes` from `assets/scenes/lake.scene.json`.
 //!
-//! 运行（工作目录必须是本工程，才能解析 `assets/...`）：
+//!
+//! Run (working directory must be this project to resolve `assets/...`):
 //! ```text
 //! cd projects/fishing
 //! cargo run

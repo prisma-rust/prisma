@@ -1,11 +1,11 @@
-//! 2D 瓦片地图（`Tilemap` → `SpriteDrawItem`，#529）。
+//! 2D tile map (`Tilemap` → `SpriteDrawItem`, #529).
 //!
-//! 一张网格只占一个实体：这里把**非空**格子展开成四边形，交给 `SpritePass`
-//! 的实例缓冲，与精灵 / 折线 / 2D 粒子共用同一条通道与排序键
-//! （`sorting_layer → order_in_layer → z → 实体 id`）。
+//! One mesh occupies one entity: this expands **non-empty** cells into quads, hands them to `SpritePass`
+//! instance buffer, sharing the same pass and sort key with sprites / lines / 2D particles
+//! (`sorting_layer → order_in_layer → z → entity id`).
 //!
-//! 裁剪：提取阶段有主相机视锥时逐格做 AABB 相交测试（只裁行列，不做 LOD / chunk）。
-//! 没有视锥（headless、测试、离线工具）时输出全部非空格子。
+//! Clip: when main camera frustum present, per-cell AABB intersection test (only culls rows/cols, no LOD / chunk).
+//! Without frustum (headless, tests, offline tools) output all non-empty cells.
 
 use glam::{Mat4, Quat, Vec3};
 use prism_ecs::World;
@@ -16,9 +16,9 @@ use prism_scene::components::{LocalToWorld, Tilemap};
 use super::render::SortKey;
 use crate::scene::runtime_components::TilemapRef;
 
-/// 一条瓦片地图实体的绘制项。
+/// Draw items for one tile map entity.
 ///
-/// `tileset.generation == 0`（还没上传完）或网格为空时返回空列表。
+/// `tileset.generation == 0` (not yet uploaded) or empty mesh returns empty list.
 pub(crate) fn tilemap_draw_items(
     tilemap: &Tilemap,
     tileset: &TilemapRef,
@@ -84,10 +84,10 @@ pub(crate) fn tilemap_draw_items(
     out
 }
 
-/// 一格的**世界空间** AABB（单位四边形四角变换后取 min/max）。
+/// **World-space** AABB of one cell (min/max after transforming four corners of identity quad).
 ///
-/// `model` 已经包含格子尺寸与实体变换，所以这里用 `±0.5` 的局部坐标，
-/// 不能再乘一次 `cell_size`。
+/// `model` already contains cell size and entity transform, so this uses `±0.5` local coords,
+/// must not multiply `cell_size` again.
 fn cell_bounds(model: &Mat4) -> Aabb {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
@@ -101,7 +101,7 @@ fn cell_bounds(model: &Mat4) -> Aabb {
     Aabb { min, max }
 }
 
-/// 世界里所有 `Tilemap` 实体的绘制项（含视锥裁剪）。
+/// Draw items for all `Tilemap` entities in world (with frustum clip).
 pub(crate) fn tilemap_entries(
     world: &World,
     frustum: Option<&Frustum>,

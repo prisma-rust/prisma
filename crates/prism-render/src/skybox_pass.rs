@@ -1,8 +1,8 @@
-//! 环境天空盒通道。
+//! Environment skybox pass.
 //!
-//! [`SkyboxPass`] 绘制 IBL 环境立方体贴图背景。由
-//! [`crate::forward_pass::ForwardPass`] 持有：在 ForwardPass 的渲染
-//! pass 内最先绘制（共享同一 render pass 与帧缓冲）。
+//! [`SkyboxPass`] draws IBL environment cubemap background. Held by
+//! [`crate::forward_pass::ForwardPass`]: drawn first inside ForwardPass render
+//! pass (sharing same render pass and frame buffer).
 
 use ash::vk;
 
@@ -22,8 +22,8 @@ const _: () =
 
 /// Per-frame skybox parameters extracted from the ECS `Skybox` component.
 ///
-/// 这个类型始终编译：它是 `FrameInput` / `GraphFrame` 的公共数据形状，
-/// 关掉 `skybox` 只是不画天空盒（`SkyboxPass` 退化成空实现）。
+/// This type always compiles: it is public data shape for `FrameInput` / `GraphFrame`,
+/// disabling `skybox` merely does not draw skybox (`SkyboxPass` degrades to empty impl).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyboxSettings {
     /// Background yaw rotation in radians.
@@ -61,7 +61,7 @@ pub struct SkyboxPass {
     pipeline: Option<GraphicsPipeline>,
     /// Render pass the current `pipeline` was built against (to detect when a
     /// rebuild is needed, e.g. after a swapchain recreate rebuilds the
-    /// ForwardPass 渲染 pass
+    /// ForwardPass render  pass
     built_for_render_pass: Option<vk::RenderPass>,
     /// Cached device handle for Drop.
     device: Option<ash::Device>,
@@ -79,8 +79,8 @@ impl SkyboxPass {
         }
     }
 
-    /// 场景切换重建 IBL 时，更新当前绑定的 set2 描述符 集合 句柄
-    /// （管线布局共享，无需重建管线）。
+    /// When scene switches rebuild IBL, update set2 descriptor set handle of current bind
+    /// (pipeline layout shared, no need to rebuild pipeline).
     pub fn set_descriptor_set(&mut self, set: vk::DescriptorSet) {
         self.ibl_descriptor_set = set;
     }
@@ -94,14 +94,14 @@ impl SkyboxPass {
 
         // The render pass + color/depth formats are provided at draw time via
         // `execute_with` because the skybox must render into the *same*
-        // 帧缓冲 the ForwardPass uses. We can't 构建 a fixed 管线
+        // Frame buffer the ForwardPass uses. We can't build a fixed pipeline
         // here without that render pass, so the pipeline is created lazily
         // inside `execute_with` (which has the render pass).
         Ok(())
     }
 
     /// Draw the skybox into the currently-bound render pass (begun by the
-    /// 调用者 `ForwardPass`). `render_pass` + `extent` are needed to lazily
+    /// Caller `ForwardPass`). `render_pass` + `extent` are needed to lazily
     /// create the pipeline. `inv_view_rot` is the inverse view rotation
     /// (world <- view), used to rotate the view-space look direction into
     /// world space for cubemap sampling.
@@ -117,7 +117,7 @@ impl SkyboxPass {
         self.ensure_pipeline(device)?;
 
         // Lazily (re)build the pipeline if the render pass differs (e.g. after
-        // a 交换链 recreate that rebuilt ForwardPass' 渲染 pass
+        // A swapchain recreate that rebuilt ForwardPass' render pass
         let rebuild = self.built_for_render_pass != Some(render_pass);
         if rebuild {
             // Drop the old pipeline via GraphicsPipeline::Drop (which destroys
@@ -150,13 +150,13 @@ impl SkyboxPass {
             let binding_descs: [vk::VertexInputBindingDescription; 0] = [];
             let attr_descs: [vk::VertexInputAttributeDescription; 0] = [];
 
-            // 推送 constants: SkyboxPush 结构体，大小直接来自 Slang 反射。
+            // Push constants: SkyboxPush struct, size directly from Slang reflection.
             let push = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(bindings::PUSH_CONSTANT_SIZE)];
 
-            // MRT 混合 状态 ForwardPass's 渲染 pass now has 2 颜色
+            // MRT blend  state  ForwardPass's render  pass now has 2 color
             // attachments (color + view-normal). Every pipeline bound inside
             // that render pass must declare a matching attachmentCount, so the
             // skybox pipeline lists 2 blend states even though it only writes
@@ -275,11 +275,11 @@ impl Drop for SkyboxPass {
     }
 }
 
-/// `skybox` feature 关闭时的空实现。
+/// Empty impl when `skybox` feature disabled.
 ///
-/// `ForwardPass` 的调用点保持原样（`new` / `set_descriptor_set` / `draw` /
-/// `destroy`），所以场景 pass 里**没有**运行期分支；天空盒的管线、SPIR-V
-/// （`skybox.vert/frag.spv`）与深度状态全部不参与编译。IBL 的 set 2 布局不变。
+/// `ForwardPass` call sites unchanged (`new` / `set_descriptor_set` / `draw` /
+/// `destroy`), so scene pass has **no** runtime branch; skybox pipeline, SPIR-V
+/// (`skybox.vert/frag.spv`) and depth state entirely not involved in compile. IBL set 2 layout unchanged.
 #[cfg(not(feature = "skybox"))]
 pub struct SkyboxPass;
 
@@ -292,10 +292,10 @@ impl SkyboxPass {
         Self
     }
 
-    /// 场景切换重建 IBL 时的钩子；空实现下没有可更新的描述符。
+    /// Hook when scene switches rebuild IBL; empty impl has no descriptor to update.
     pub fn set_descriptor_set(&mut self, _set: vk::DescriptorSet) {}
 
-    /// 不画天空盒：直接返回成功（清屏色继续显示）。
+    /// Do not draw skybox: directly return success (clear color remains visible).
     pub fn draw(
         &mut self,
         _device: &ash::Device,

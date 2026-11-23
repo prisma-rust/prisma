@@ -1,8 +1,8 @@
-//! schema 驱动的字段控件（检查器用）。
+//! Schema-driven field controls (used by inspector).
 //!
-//! 规则与 Web 编辑器一致：控件类型完全来自
-//! `prism-editor-core` 的 `FieldSchema::widget()`，所以新增组件字段不需要改
-//! 这里。写回统一走 `Workspace::set_field`（反射校验 + 撤销合并）。
+//! Rules consistent with Web editor: control type entirely comes from
+//! `prism-editor-core` `FieldSchema::widget()`, so new component fields do not require changing
+//! here. Write-back uniformly via `Workspace::set_field` (reflection validation + undo merge).
 
 use egui::{Response, Ui};
 use egui_phosphor::regular as icons;
@@ -10,38 +10,38 @@ use prism_editor_core::viewport_math as vm;
 use prism_editor_core::{FieldSchema, FieldWidget, Schema, TypeSchema};
 use serde_json::Value;
 
-/// 资产拖拽载荷：从 Project 面板拖到层级 / 检查器字段 / 目录。
+/// Asset drag payload: drag from Project panel to hierarchy / inspector field / directory.
 #[derive(Clone, Debug)]
 pub struct AssetDrag {
     pub path: String,
 }
 
-/// 组件卡片上的按钮动作（先收集，渲染结束后由调用方应用）。
+/// Button actions on component card (collect first, applied by caller after render ends).
 pub enum CardAction {
     Copy(String),
-    /// 把剪贴板里的同类型组件值粘贴到选中实体（#418 的组件菜单）。
+    /// Paste same-type component value from clipboard to selected entity (#418 component menu).
     Paste(String),
     Remove(String),
-    /// 在检查器顺序里上移 / 下移一个组件（#512）。
+    /// Move component up / down in inspector order (#512).
     MoveUp(String),
     MoveDown(String),
-    /// 把组件当前值存成命名预设（#418）。
+    /// Save component current value as named preset (#418).
     SavePreset {
         component: String,
         name: String,
         value: Value,
     },
-    /// 把命名预设写回组件（整份组件 = 一个撤销步）。
+    /// Write named preset back to component (whole component = one undo step).
     ApplyPreset {
         component: String,
         name: String,
     },
 }
 
-/// 一个组件卡片：标题栏 + 字段列表 + 复制/删除按钮。
+/// One component card: header bar + field list + copy/delete buttons.
 ///
-/// `set(field, value)` 由调用方决定写到哪个实体（单选 / 多选批量）。
-/// 同 [`component_card`]，但路径字段带资产选择器。
+/// `set(field, value)` decided by caller which entity to write (single / multi-select batch).
+/// Same as [`component_card`], but path field has asset picker.
 /// Map a component type name to a semantic Phosphor icon glyph.
 pub fn component_icon(name: &str) -> &'static str {
     if name.contains("Camera") {
@@ -119,7 +119,7 @@ pub fn component_card_with_assets(
                             {
                                 actions.push(CardAction::Remove(component.name.clone()));
                             }
-                            // 组件顺序是文档的一部分（#512）：这两个箭头走一次撤销步。
+                            // Component order is part of document (#512): these two arrows take one undo step.
                             if ui
                                 .small_button(icons::CARET_DOWN)
                                 .on_hover_text(i18n.t1("inspector.moveDown"))
@@ -141,8 +141,8 @@ pub fn component_card_with_assets(
                             {
                                 actions.push(CardAction::Copy(component.name.clone()));
                             }
-                            // `…` 菜单（#418）：Copy / Paste Values / 顺序 / Reset / Remove。
-                            // Paste 的启用状态由调用方在应用时判断（剪贴板可能不是这个类型）。
+                            // `…` menu (#418): Copy / Paste Values / order / Reset / Remove.
+                            // Paste enabled state judged by caller at apply time (clipboard may not be this type).
                             ui.menu_button(icons::DOTS_THREE, |ui| {
                                 if ui.button(i18n.t1("inspector.copyComponent")).clicked() {
                                     actions.push(CardAction::Copy(component.name.clone()));
@@ -162,7 +162,7 @@ pub fn component_card_with_assets(
                                     ui.close();
                                 }
                                 ui.separator();
-                                // Reset 写回 schema 的 defaultJson（整份组件 = 一个撤销步）。
+                                // Reset writes back schema defaultJson (whole component = one undo step).
                                 let default = component.default_json.clone();
                                 if ui
                                     .add_enabled(
@@ -177,7 +177,7 @@ pub fn component_card_with_assets(
                                     ui.close();
                                 }
                                 ui.separator();
-                                // 组件预设（#418）：保存当前值 / 套用已有预设。
+                                // Component preset (#418): save current value / apply existing preset.
                                 ui.menu_button(i18n.t1("inspector.presets"), |ui| {
                                     ui.menu_button(i18n.t1("inspector.savePreset"), |ui| {
                                         let id =
@@ -258,12 +258,12 @@ pub fn component_card_with_assets(
         });
 }
 
-/// 单个字段的编辑控件。`set(field, value)` 写回（单选走 `set_field`，
-/// 多选走 `set_field_multi`），所以这里不关心实体。
-/// 资产字段的扩展名过滤（引擎的 object field 只列可接受的类型）。
+/// Single field edit control. `set(field, value)` writes back (single goes via `set_field`,
+/// multi via `set_field_multi`), so here does not care about entity.
+/// Asset field extension filter (engine object field lists only acceptable types).
 fn asset_filter(name: &str) -> Option<&'static [&'static str]> {
     if name == "font" || name.ends_with("_font") {
-        // #583：UI 文本可以用工程自带字体。
+        // #583: UI text can use project bundled font.
         Some(&["ttf", "otf", "ttc"])
     } else if name.contains("mesh") {
         Some(&["obj", "gltf", "glb", "fbx", "mesh"])
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn text_fields_commit_on_enter_or_focus_loss_only() {
-        // 编辑中：每敲一个字符都不碰文档。
+        // Editing: every keystroke does not touch document.
         assert_eq!(
             text_commit_decision(true, false, false, false, false),
             TextCommit::Keep
@@ -304,17 +304,17 @@ mod tests {
             text_commit_decision(true, false, true, false, false),
             TextCommit::Commit
         );
-        // 丢焦点 = 提交（点别处那种情况）。
+        // Lose focus = submit (click elsewhere case).
         assert_eq!(
             text_commit_decision(false, true, false, false, false),
             TextCommit::Commit
         );
-        // Esc 丢弃，即使同一帧还按了回车。
+        // Esc discards, even if Enter pressed same frame.
         assert_eq!(
             text_commit_decision(true, false, true, true, false),
             TextCommit::Cancel
         );
-        // 多行框里回车是换行，只能靠失焦提交。
+        // Enter in multi-line box is newline, only blur submit.
         assert_eq!(
             text_commit_decision(true, false, true, false, true),
             TextCommit::Keep
@@ -337,7 +337,7 @@ mod tests {
             (1.0, 1.0, 1.0, 1.0)
         );
 
-        // 拉伸只改一个轴，另一轴保留当前中心。
+        // Stretch changes only one axis, other axis keeps current center.
         assert_eq!(
             AnchorPreset::StretchHorizontal.anchors(current),
             (0.0, 0.8, 1.0, 0.8)
@@ -348,13 +348,13 @@ mod tests {
         );
         assert_eq!(AnchorPreset::Stretch.anchors(current), (0.0, 0.0, 1.0, 1.0));
 
-        // 高亮判定：水平拉伸不能把「全拉伸」也算成自己。
+        // Highlight judgment: horizontal stretch cannot count "full stretch" as itself.
         let horizontal = AnchorPreset::StretchHorizontal.anchors(current);
         assert!(AnchorPreset::StretchHorizontal.is_active(horizontal));
         assert!(!AnchorPreset::Stretch.is_active(horizontal));
         assert!(AnchorPreset::Stretch.is_active((0.0, 0.0, 1.0, 1.0)));
 
-        // 写回 JSON 的键必须是 schema 里的 snake_case。
+        // Keys written back to JSON must be snake_case in schema.
         let value = anchors_value((0.0, 0.5, 1.0, 0.5));
         assert_eq!(value["min_x"], serde_json::json!(0.0));
         assert_eq!(value["min_y"], serde_json::json!(0.5));
@@ -375,7 +375,7 @@ mod tests {
         assert!(asset_matches("label", "anything.bin"));
     }
 
-    /// 一个带两种列表的合成 schema：`points: Vec<Vec3>` 与 `nodes: Vec<Point>`。
+    /// A composite schema with two lists: `points: Vec<Vec3>` and `nodes: Vec<Point>`.
     fn list_schema() -> Schema {
         Schema::from_value(&serde_json::json!({
             "types": [
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn field_paste_requires_the_same_json_shape() {
-        // #418：粘贴值不做类型强转，形状不一致时按钮保持禁用。
+        // #418: pasted value does not type-cast, button stays disabled when shape inconsistent.
         assert!(values_compatible(
             &serde_json::json!([0.0, 0.0, 0.0]),
             &serde_json::json!([1.0, 2.0, 3.0])
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn list_elements_default_from_the_schema() {
-        // #418：`+ Add` 的默认值来自元素 schema，不猜 JSON。
+        // #418: `+ Add` default value comes from element schema, does not guess JSON.
         let schema = list_schema();
         let line = schema.component("test::Line").unwrap();
         let points = line
@@ -508,7 +508,7 @@ mod tests {
             serde_json::json!({"x": 0.0, "y": 0.0})
         );
 
-        // 递归有上限，损坏的 schema 不会栈溢出。
+        // Recursion has limit, corrupted schema will not stack overflow.
         assert_eq!(
             default_value_for(&schema, nodes.inner.as_deref().unwrap(), 99),
             Value::Null
@@ -524,7 +524,7 @@ mod tests {
         assert!(list_move(&mut items, 0, 2));
         assert_eq!(items[0], Value::from(3));
         assert_eq!(items[2], Value::from(1));
-        // 越界 / 原地移动不动数组。
+        // Out-of-bounds / in-place move does not move array.
         assert!(!list_move(&mut items, 3, 9));
         assert!(!list_move(&mut items, 1, 1));
 
@@ -562,7 +562,10 @@ mod tests {
                 }
             });
         });
-        assert!(writes.is_empty(), "只是渲染，不能写文档：{writes:?}");
+        assert!(
+            writes.is_empty(),
+            "only rendering, cannot write document: {writes:?}"
+        );
     }
 
     #[test]
@@ -612,9 +615,9 @@ mod tests {
     }
 }
 
-/// 数值输入框接的表达式解析器（`90/2`、`2*(3+4)`、`sin(30)`）。
+/// Expression parser connected to numeric input (`90/2`, `2*(3+4)`, `sin(30)`).
 ///
-/// `DragValue::custom_parser` 只在用户敲完回车时调用，所以平时显示的还是数字本身。
+/// `DragValue::custom_parser` only called after user presses Enter, so normally shows number itself.
 pub fn number_parser(text: &str) -> Option<f64> {
     prism_editor_core::expr::parse_number_or_expression(text)
 }
@@ -682,11 +685,11 @@ pub fn scrubbable_axis_badge(
     true
 }
 
-/// 画一个可拖动的字段标签，返回**这一帧**拖动产生的增量（已按 `speed` 与修饰键换算）。
+/// Draw a draggable field label, returns **this frame** drag increment (already converted by `speed` and modifiers).
 ///
-/// Unity 的 `EditorGUIUtility.DragZoneRect`：把数值字段左边的文字变成拖动热区，
-/// 左右拖就能连续调值，不用去够右边那个小把手（#479）。按住 Shift 精调（×0.1），
-/// 按住 Alt 粗调（×10）。
+/// Unity `EditorGUIUtility.DragZoneRect`: turns text left of numeric field into drag hotzone,
+/// drag left/right to continuously adjust, no need to reach right small handle (#479). Hold Shift for fine tune (×0.1),
+/// Hold Alt for coarse adjust (×10).
 pub fn drag_label(ui: &mut Ui, text: &str, speed: f32) -> f32 {
     let response = ui
         .add(egui::Label::new(egui::RichText::new(text).size(11.0)).sense(egui::Sense::drag()))
@@ -713,7 +716,7 @@ pub fn aligned_scrubbable_label(
     changed
 }
 
-/// [`drag_label`] 的单值版本：拖动标签直接改 `value`，返回是否变了。
+/// Single-value version of [`drag_label`]: drag label directly changes `value`, returns whether changed.
 pub fn scrubbable_label(ui: &mut Ui, text: &str, value: &mut f32, speed: f32) -> bool {
     let delta = drag_label(ui, text, speed);
     if delta == 0.0 {
@@ -723,18 +726,18 @@ pub fn scrubbable_label(ui: &mut Ui, text: &str, value: &mut f32, speed: f32) ->
     true
 }
 
-/// 文本字段该不该写回文档（#479：编辑期间只改本地缓冲）。
+/// Whether text field should write back to document (#479: during editing only local buffer changed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextCommit {
-    /// 继续编辑，别碰文档。
+    /// Continue editing, do not touch document.
     Keep,
-    /// Enter（单行）或失焦：把缓冲写回。
+    /// Enter (single line) or blur: write buffer back.
     Commit,
-    /// Esc：丢弃缓冲，回到文档里的值。
+    /// Esc: discard buffer, return to document value.
     Cancel,
 }
 
-/// 输入框状态的纯函数部分，方便单测（egui 交互没法在测试里模拟）。
+/// Pure functional part of input state, convenient for unit test (egui interaction cannot be simulated in test).
 pub(crate) fn text_commit_decision(
     focused: bool,
     lost_focus: bool,
@@ -745,17 +748,17 @@ pub(crate) fn text_commit_decision(
     if focused && escape {
         return TextCommit::Cancel;
     }
-    // 多行文本的 Enter 是换行，只能靠失焦提交。
+    // Multi-line text Enter is newline, only blur submit.
     if (focused && enter && !multiline) || lost_focus {
         return TextCommit::Commit;
     }
     TextCommit::Keep
 }
 
-/// 延迟提交的文本输入：编辑期间只改 `egui` 里的临时缓冲，提交时返回新值。
+/// Delayed-submit text input: during editing only changes egui temp buffer, returns new value at submit.
 ///
-/// 以前每敲一个字符就 `set_field`：撤销栈被灌满、`dirty` 一直闪，
-/// 还会触发文档同步的整场重载（#435 / #473）。
+/// Previously every keystroke called `set_field`: undo stack flooded, `dirty` kept flashing,
+/// also triggered whole document sync reload (#435 / #473).
 fn delayed_text_edit(
     ui: &mut Ui,
     id: egui::Id,
@@ -1148,7 +1151,7 @@ fn field_row_at(
         // Nested struct (`Style.anchors`, `Style.pivot`, `Margin` …): recurse
         // through the registry so every leaf keeps its real widget and path.
         FieldWidget::Struct => {
-            // UI 锚点：在数值字段之上加 Unity `RectTransform` 式预设网格（#429）。
+            // UI anchor: add Unity `RectTransform` style preset grid above numeric field (#429).
             if field.struct_type.as_deref() == Some("prism_engine::ui::Anchors") {
                 anchor_preset_grid(ui, &name, value, set);
             }
@@ -1188,7 +1191,7 @@ fn field_row_at(
     }
 }
 
-/// 锚点预设（Unity `LayoutDropdownWindow` 的 9 个点 + 3 种拉伸）。
+/// Anchor presets (Unity `LayoutDropdownWindow` 9 points + 3 stretch types).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AnchorPreset {
     Point { x: u8, y: u8 },
@@ -1198,7 +1201,7 @@ enum AnchorPreset {
 }
 
 impl AnchorPreset {
-    /// 3×3 点锚点网格，按「上 → 下、左 → 右」排列。
+    /// 3×3 point anchor grid, arranged "top -> bottom, left -> right".
     const GRID: [[Self; 3]; 3] = [
         [
             Self::Point { x: 0, y: 0 },
@@ -1253,8 +1256,8 @@ impl AnchorPreset {
         }
     }
 
-    /// 把预设应用到当前锚点。拉伸预设保留另一轴的中心，和 Unity 的
-    /// `anchorMin/anchorMax` 面板一致。
+    /// Apply preset to current anchor. Stretch preset keeps other axis center, consistent with Unity's
+    /// `anchorMin/anchorMax` panel.
     fn anchors(self, current: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
         let (min_x, min_y, max_x, max_y) = current;
         let center_x = (min_x + max_x) * 0.5;
@@ -1281,7 +1284,7 @@ impl AnchorPreset {
                     && close(current.2, max_x)
                     && close(current.3, max_y)
             }
-            // 拉伸预设只保证「另一轴是点锚点」，中心值随当前值变化。
+            // Stretch preset only guarantees "other axis is point anchor", center value changes with current value.
             Self::StretchHorizontal => {
                 close(current.0, 0.0) && close(current.2, 1.0) && close(current.1, current.3)
             }
@@ -1313,7 +1316,7 @@ fn anchors_value(anchors: (f32, f32, f32, f32)) -> Value {
     })
 }
 
-/// 在 `Anchors` struct 上方画预设按钮；点击整份 anchors 写回（一个撤销步）。
+/// Draw preset buttons above `Anchors` struct; click writes back whole anchors (one undo step).
 fn anchor_preset_grid(ui: &mut Ui, name: &str, value: &Value, set: &mut dyn FnMut(&str, Value)) {
     let current = anchors_tuple(value);
     egui::Grid::new(("anchor-presets", name))
@@ -1352,11 +1355,11 @@ fn anchor_preset_grid(ui: &mut Ui, name: &str, value: &Value, set: &mut dyn FnMu
     ui.add_space(2.0);
 }
 
-/// 字段右键菜单（#418）：复制 / 粘贴值、复制属性路径。
+/// Field right-click menu (#418): copy / paste value, copy property path.
 ///
-/// 剪贴板放在 `egui` 的临时数据里（`serde_json::Value` 可存），所以
-/// [`field_row_at`] 的签名不用再涨一个 `UiState` 参数，组件面板也能复用。
-/// 粘贴前用 [`values_compatible`] 校验形状，避免把字符串写进 `Vec3`。
+/// Clipboard in `egui` temp data (`serde_json::Value` storable), so
+/// [`field_row_at`] signature no longer needs an extra `UiState` param, component panel can reuse.
+/// Validate shape with [`values_compatible`] before paste, avoid writing string into `Vec3`.
 fn field_context_menu(
     response: &Response,
     name: &str,
@@ -1398,7 +1401,7 @@ fn field_context_menu(
     });
 }
 
-/// 两个 JSON 值是否同形状（粘贴值前的校验；不做类型强转）。
+/// Whether two JSON values have same shape (validation before paste; no type cast).
 fn values_compatible(current: &Value, candidate: &Value) -> bool {
     matches!(
         (current, candidate),
@@ -1411,7 +1414,7 @@ fn values_compatible(current: &Value, candidate: &Value) -> bool {
     )
 }
 
-/// 嵌套字段的灰色 JSON 兜底（列表、无法解析的 struct）。
+/// Gray JSON fallback for nested fields (lists, unparseable structs).
 fn json_row(ui: &mut Ui, label: &str, value: &Value) {
     ui.horizontal(|ui| {
         ui.label(label);
@@ -1426,10 +1429,10 @@ fn json_row(ui: &mut Ui, label: &str, value: &Value) {
     });
 }
 
-/// 字段的「新增元素」默认值；完全由 schema 决定，不猜 JSON 类型。
+/// Default value for field "add element"; decided entirely by schema, does not guess JSON type.
 ///
-/// `Option<T>` 有值 / 列表追加元素都走它：`Struct` 递归问 registry，
-/// 标量用中性值，`Vec3` / `Quat` 用单位值，`Enum` 取第一个变体。
+/// `Option<T>` has value / list append element all go through it: `Struct` recursively asks registry,
+/// scalar uses neutral value, `Vec3` / `Quat` uses unit value, `Enum` takes first variant.
 fn default_value_for(registry: &Schema, field: &FieldSchema, depth: usize) -> Value {
     if depth > 8 {
         return Value::Null;
@@ -1452,7 +1455,7 @@ fn default_value_for(registry: &Schema, field: &FieldSchema, depth: usize) -> Va
             }
             Value::Object(map)
         }
-        // 列表默认空；`Option` 默认不存在。
+        // List defaults empty; `Option` defaults absent.
         FieldWidget::List => Value::Array(Vec::new()),
         FieldWidget::Option => Value::Null,
         FieldWidget::Enum { variants } => variants
@@ -1482,16 +1485,16 @@ fn default_value_for(registry: &Schema, field: &FieldSchema, depth: usize) -> Va
     }
 }
 
-/// `Vec<T>` / 定长数组的编辑控件（#418）。
+/// Edit control for `Vec<T>` / fixed array (#418).
 ///
-/// - 动态列表（`kind = "list"`）：每个元素一行，带 `▲` / `▼` / `✕`；底部 `+ Add`
-///   按元素 schema 生成默认值（`Vec3` → `[0,0,0]`，`Struct` → 各子字段默认值）；
-/// - 定长数组（`array_len = Some(n)`）：不提供增删，只逐项编辑；
-/// - 元素本身复用 [`field_row_at`]，所以 `Vec<Vec3>` / `Vec<Struct>` 里的字段仍然用
-///   真正的控件，路径是 `field[i]` / `field[i].child`（`prism_editor_core::schema`
-///   的 `parse_path` 支持下标）。
+/// - Dynamic list (`kind = "list"`): one row per element, with `▲` / `▼` / `✕`; bottom `+ Add`
+///   generates default value per element schema (`Vec3` -> `[0,0,0]`, `Struct` -> each subfield default);
+/// - Fixed array (`array_len = Some(n)`): no add/remove, edit per item only;
+/// - Element itself reuses [`field_row_at`], so fields inside `Vec<Vec3>` / `Vec<Struct>` still use
+///   real controls, path is `field[i]` / `field[i].child` (`prism_editor_core::schema`
+///   `parse_path` supports indexing).
 ///
-/// 增删 / 重排都写回**整个数组**：`set_field` 一次撤销步，和 Unity 的数组编辑一致。
+/// Add/remove / reorder all write back **whole array**: `set_field` one undo step, consistent with Unity array editing.
 #[allow(clippy::too_many_arguments)]
 fn list_row(
     ui: &mut Ui,
@@ -1518,8 +1521,8 @@ fn list_row(
             for (index, item) in items.iter().enumerate() {
                 let mut element = inner.clone();
                 if let Some(element) = element.as_mut() {
-                    // 元素路径 = `field[i]`；struct 的子字段再由 `field_row_at`
-                    // 拼成 `field[i].child`。
+                    // element path = `field[i]`; struct subfields again by `field_row_at`
+                    // Concatenate into `field[i].child`.
                     element.name = format!("[{index}]");
                 }
                 ui.horizontal(|ui| {
@@ -1585,12 +1588,12 @@ fn list_row(
     }
 }
 
-/// 追加一个元素（列表编辑的唯一写入口径，方便单测）。
+/// Append an element (only write entry for list editing, convenient for unit test).
 fn list_add(items: &mut Vec<Value>, element: Value) {
     items.push(element);
 }
 
-/// 删除下标 `index`；越界返回 `false`（不写回文档）。
+/// Delete index `index`; returns `False` out-of-bounds (does not write back document).
 fn list_remove(items: &mut Vec<Value>, index: usize) -> bool {
     if index < items.len() {
         items.remove(index);
@@ -1600,7 +1603,7 @@ fn list_remove(items: &mut Vec<Value>, index: usize) -> bool {
     }
 }
 
-/// 交换两个元素；任意一端越界返回 `false`。
+/// Swap two elements; returns `False` if either end out-of-bounds.
 fn list_move(items: &mut [Value], from: usize, to: usize) -> bool {
     if from < items.len() && to < items.len() && from != to {
         items.swap(from, to);

@@ -1,13 +1,13 @@
-//! 前向 PBR 主渲染通道。
+//! Forward PBR main render pass.
 //!
-//! [`ForwardPass`] 渲染整个游戏场景：环境天空盒 + 所有网格，片段着色
-//! 阶段一次性完成 PBR 光照（IBL + 方向光阴影 + GTAO 环境光遮蔽 +
-//! 全局光照 probe 采样），输出到每交换链图像的 HDR 中间目标
-//! （颜色/深度/视图空间法线 MRT），由 [`crate::post::PostPass`] 采样
-//! 并色调映射到交换链。
+//! [`ForwardPass`] renders entire game scene: environment skybox + all meshes, fragment shading
+//! phase completes PBR lighting in one go (IBL + directional shadow + GTAO ambient occlusion +
+//! global light probe sampling), outputs into HDR intermediate target of each swapchain image
+//! (color / depth / view-space normal MRT), sampled by [`crate::post::PostPass`]
+//! and tonemapped to swapchain.
 //!
-//! 拥有每交换链图像一组 framebuffer（重建仅当交换链视图变化时），
-//! 以及内嵌的 [`SkyboxPass`] 与 [`crate::gizmo::Gizmo`]。
+//! Owns one set of framebuffers per swapchain image (rebuilt only when swapchain view changes),
+//! plus embedded [`SkyboxPass`] and [`crate::gizmo::Gizmo`].
 
 use anyhow::Context as _;
 use anyhow::Result;
@@ -136,10 +136,10 @@ fn prepare_static_batches_with(
     (out, matrices)
 }
 
-/// `assets/shaders/slang/outline.slang::OutlinePush` 的 Rust 镜像。
+/// Rust mirror of `assets/shaders/slang/outline.slang::OutlinePush`.
 ///
-/// 反向外壳只读取帧 UBO（set 0 binding 0）和一个推送常量块；反射报告
-/// 块大小 96 字节（mat4 + vec4 + float + std140 尾部填充）。
+/// The reverse-facing shell only reads frame UBO (set 0 binding 0) and one push constant block; reflection report
+/// block size 96 bytes (mat4 + vec4 + float + std140 tail padding).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct OutlinePush {
@@ -161,7 +161,7 @@ struct OutlinePush {
 ///   set 3 - shadow map (SAMPLED_IMAGE + comparison SAMPLER)
 ///   set 4 - previous-frame GTAO R8 visibility texture (combined image sampler)
 pub struct ForwardPass {
-    /// 高动态范围 intermediate 颜色 格式 (the ForwardPass no longer targets the
+    /// High dynamic range intermediate color format (the ForwardPass no longer targets the
     /// swapchain directly; PostPass tonemaps HDR -> swapchain).
     color_format: vk::Format,
     /// Format of the view-space normal MRT attachment (SV_Target1). Written by
@@ -187,16 +187,16 @@ pub struct ForwardPass {
     /// VUID-vkDestroyFramebuffer-framebuffer-00892 and cascades into a
     /// device-lost). Indexed by `image_index` from `acquire_next_image`.
     framebuffers: Vec<Option<vk::Framebuffer>>,
-    /// One 高动态范围 颜色 图像 per 交换链 图像 (the ForwardPass 渲染 目标
+    /// One high dynamic range color image per swapchain image (the ForwardPass render target
     /// replacing the old direct-to-swapchain path). Reused by PostPass as its
     /// sampled input.
     color_images: Vec<Option<crate::render_pass::NormalImage>>,
     /// One depth image per swapchain image (each framebuffer references its
     /// own depth view). Parallel to `framebuffers`.
     depth_images: Vec<Option<crate::render_pass::DepthImage>>,
-    /// #1007：本帧把主通道深度拷到这个宿主可见缓冲（`None` = 关闭）。
+    /// #1007: this frame copies main pass depth to this host-visible buffer (`None` = disabled).
     depth_readback: Option<vk::Buffer>,
-    /// 最近一次真正记录了深度拷贝的帧序号（主通道没渲染时保持旧值）。
+    /// Most recent frame number that actually recorded a depth copy (keeps old value when main pass not rendered).
     depth_capture_frame: Option<u32>,
     /// One view-space normal image per swapchain image (MRT SV_Target1). Same
     /// per-slot lifetime as `depth_images`: rebuilt only when its swapchain
@@ -220,7 +220,7 @@ pub struct ForwardPass {
     /// Graph resource handles for this pass's outputs, created in `setup` and
     /// published (view registered) in `execute` so downstream passes
     /// (`GtaoPass`, `PostPass`) read them by handle instead of `GraphRenderer`
-    /// poking into `ForwardPass` internals. The 图 does not allocate the
+    /// poking into `ForwardPass` internals. The graph  does not allocate the
     /// underlying images (ForwardPass still owns its framebuffers in PR-1);
     /// only the handle->view mapping lives in `GraphResources`.
     out_color_h: ResourceHandle,
@@ -230,12 +230,12 @@ pub struct ForwardPass {
     out_albedo_h: ResourceHandle,
     extent: vk::Extent2D,
     render_pass: Option<vk::RenderPass>,
-    /// 主通道管线缓存：按 [`DrawState`]（剔除 / 深度写 / 混合）各一份。
+    /// Main pass pipeline cache: one per [`DrawState`] (cull / depth write / blend).
     ///
-    /// 所有变体的描述符集合布局 / 推送常量范围完全相同，只有光栅化与颜色
-    /// 混合状态不同，因此描述符绑定与推送常量在一次绘制列表内可以跨变体复用。
-    /// key 的第一项是可选自定义片元着色器（`None` = 内建 PBR），
-    /// 第三项是线框开关（#431）：`POLYGON_MODE_LINE` 需要单独的管线。
+    /// All variants' descriptor set layouts / push constant ranges fully identical, only rasterization and color
+    /// blend state differ, so descriptor binds and push constants can be reused across variants within one draw list.
+    /// Key's first item is optional custom fragment shader (`None` = built-in PBR),
+    /// third item is wireframe switch (#431): `POLYGON_MODE_LINE` needs separate pipeline.
     pipelines: std::collections::HashMap<
         (Option<crate::ShaderHandle>, DrawState, bool, bool),
         GraphicsPipeline,
@@ -244,11 +244,11 @@ pub struct ForwardPass {
     custom_shaders: Vec<Vec<u8>>,
     /// Content-hash deduplication map for `custom_shaders`.
     custom_shader_hashes: std::collections::HashMap<u64, crate::ShaderHandle>,
-    /// 选中描边的反向外壳管线（#487）：只读 set 0 的帧 UBO，片元输出纯色。
-    /// 与场景网格共享顶点格式 / 渲染 pass / 深度附件，只是剔除正面、不写深度。
+    /// Selected-outline reverse shell pipeline (#487): reads only set 0 frame UBO, fragment outputs solid color.
+    /// Shares vertex format / render pass / depth attachment with scene meshes, only culls front face, no depth write.
     outline_pipeline: Option<GraphicsPipeline>,
-    /// 填充 + 线框叠加的覆盖管线（#431）。复用 outline 着色器（厚度 0、纯色），
-    /// `POLYGON_MODE_LINE` + 负深度 bias 压在填充面上。
+    /// Fill + wireframe overlay pass (#431). Reuses outline shader (thickness 0, solid color),
+    /// `POLYGON_MODE_LINE` + negative depth bias pushes lines onto filled surface.
     shaded_wireframe_pipeline: Option<GraphicsPipeline>,
     ibl_descriptor_set: vk::DescriptorSet,
     /// IBL descriptor set layout (borrowed from `IblResources`). Used by the
@@ -271,7 +271,7 @@ pub struct ForwardPass {
     /// set 1 layout (from `BindlessTextureTable::layout`). Borrowed for
     /// pipeline-layout creation; not destroyed by ForwardPass.
     bindless_layout: vk::DescriptorSetLayout,
-    /// 光源 SSBO (集合 0 绑定 2): host-visible 缓冲区 holding up to
+    /// light source  SSBO (set  0 bind  2): host-visible buffer  holding up to
     /// `LIGHT_MAX` hard-coded point lights. One per frame-in-flight to avoid
     /// tearing and race conditions between concurrent in-flight frames.
     light_buffers: Vec<vk::Buffer>,
@@ -323,7 +323,7 @@ pub struct ForwardPass {
     /// World-space XYZ orientation gizmo, drawn on top of the scene (depth
     /// test disabled). Built lazily once the render pass exists.
     gizmo: Option<Gizmo>,
-    /// 地面参考网格 (Y = 0)，开启深度测试被场景几何体自然遮挡
+    /// Ground reference mesh (Y = 0), depth test enabled to be naturally occluded by scene geometry
     ground_grid: Option<GroundGrid>,
     device: Option<ash::Device>,
 }
@@ -441,14 +441,14 @@ impl ForwardPass {
     }
 
     /// Idempotent per-frame (re)creation of this swapchain image's
-    /// 帧缓冲 + HDR/depth/normal attachments. Called from `ForwardPass::
+    /// frame buffer + HDR/depth/normal attachments. Called from `ForwardPass::`
     /// execute` (driven by the `RenderGraph`) so framebuffer lifecycle no
     /// longer depends on `GraphRenderer` calling `set_target` every frame.
     /// Rebuilds only the entry for `image_index` when it is missing or the
     /// swapchain changed; safe against in-flight framebuffers (mirrors the
     /// old `set_target` contract).
-    /// 场景切换时切换 IBL 描述符 集合 句柄与 BRDF LUT 的 bindless 槽。
-    /// set2 布局共享（不重建），仅替换 set 句柄并同步 skybox pass 绑定的 set2。
+    /// Switch IBL descriptor set handle and BRDF LUT bindless slot on scene change.
+    /// set2 layout shared (not rebuilt), only replace set handle and sync skybox pass's set2 bind.
     pub fn set_ibl(&mut self, descriptor_set: vk::DescriptorSet, brdf_handle: u32) {
         self.ibl_descriptor_set = descriptor_set;
         self.brdf_handle = brdf_handle;
@@ -569,7 +569,7 @@ impl ForwardPass {
             let normal = self.normal_images[idx].as_ref().unwrap();
             let velocity = self.velocity_images[idx].as_ref().unwrap();
             let albedo = self.albedo_images[idx].as_ref().unwrap();
-            // 渲染 pass 附件 order: 颜色 深度 法线 速度 反照率
+            // render pass attachment order: color depth normal velocity albedo
             let attachments = [
                 color.view,
                 depth.view,
@@ -644,11 +644,11 @@ impl ForwardPass {
         };
     }
 
-    /// Tear 下 ALL ForwardPass GPU resources (framebuffers, 深度 images,
+    /// Tear down ALL ForwardPass GPU resources (framebuffers, depth images,
     /// render pass, pipeline, shadow descriptor set layout + pool).
     ///
     /// Called from `GraphRenderer::destroy` on shutdown. After this the
-    /// ForwardPass is 空 `device_wait_idle` must already have been called by
+    /// ForwardPass is empty  `device_wait_idle` must already have been called by
     /// the caller so no command buffers are in flight.
     pub fn destroy(&mut self, device: &ash::Device) {
         // Framebuffers + depth images (swapchain-derived).
@@ -658,7 +658,7 @@ impl ForwardPass {
         if let Some(rp) = self.render_pass.take() {
             unsafe { device.destroy_render_pass(rp, None) };
         }
-        // 管线（三种剔除变体，frees 管线 + 布局 via GraphicsPipeline::Drop）。
+        // Pipelines (three cull variants, frees pipeline + layout via GraphicsPipeline::Drop).
         self.pipelines.clear();
         self.shaded_wireframe_pipeline = None;
 
@@ -738,7 +738,7 @@ impl ForwardPass {
 
         self.device = None;
     }
-    /// Wire all 外部 resources the ForwardPass needs:
+    /// Wire all external resources the ForwardPass needs:
     /// - IBL cubemap descriptor set (set 2)
     /// - shadow map view + comparison sampler (set 3)
     /// - bindless texture table set + layout (set 1)
@@ -843,7 +843,7 @@ impl ForwardPass {
         self.frame_sets.clear();
 
         let fif_count = frame_ubo_buffers.len();
-        // 池 needs: UNIFORM_BUFFER_DYNAMIC fif_count (the frame UBO is bound
+        // Pool needs: UNIFORM_BUFFER_DYNAMIC fif_count (the frame UBO is bound
         // with a per-camera dynamic offset), plus three STORAGE_BUFFER
         // bindings per set (materials, point lights, bone palette).
         let frame_pool = unsafe {
@@ -876,11 +876,11 @@ impl ForwardPass {
         }
         .context("ForwardPass: allocate set0 sets")?;
 
-        // ---- 光源 SSBO (绑定 2) ----
-        // 创建 host-visible, coherent 缓冲区 for up to `LIGHT_MAX` point
+        // ---- light source  SSBO (bind  2) ----
+        // create  host-visible, coherent buffer  for up to `LIGHT_MAX` point
         // lights, one per frame-in-flight to avoid tearing and data races.
-        // The 缓冲区 is zero-initialized here; `ForwardPass::update_lights`
-        // rewrites the contents every frame from the ECS `PointLight` 查询 (see `render_system`).
+        // The buffer  is zero-initialized here; `ForwardPass::update_lights`
+        // rewrites the contents every frame from the ECS `PointLight` query  (see `render_system`).
         let light_ssbo_size = (crate::descriptor::LIGHT_MAX as vk::DeviceSize)
             * crate::descriptor::GPU_LIGHT_SIZE as vk::DeviceSize;
         let mut new_light_buffers = Vec::with_capacity(fif_count);
@@ -895,8 +895,8 @@ impl ForwardPass {
             )
             .context("ForwardPass: create light SSBO buffer")?;
 
-            // Zero-initialize so the 第一个 帧 (before any `update_lights` 调用)
-            // doesn't 读取 garbage.
+            // Zero-initialize so the first frame (before any `update_lights` call)
+            // doesn't read  garbage.
             let light_ptr =
                 unsafe { device.map_memory(mem, 0, light_ssbo_size, vk::MemoryMapFlags::empty()) }
                     .context("ForwardPass: map light SSBO memory")?;
@@ -1001,7 +1001,7 @@ impl ForwardPass {
         self.prev_model_memories = new_prev_model_memories;
 
         // Write each set: binding 0 = this frame's UBO, binding 1 = materials SSBO,
-        // 绑定 2 = this frame's 光源 SSBO.
+        // bind  2 = this frame's light source  SSBO.
         let ubo_size = std::mem::size_of::<crate::descriptor::FrameUBOData>() as vk::DeviceSize;
         let mat_ssbo_size = vk::WHOLE_SIZE; // SSBO: whole buffer is fine.
         let mat_info = vk::DescriptorBufferInfo::default()
@@ -1055,7 +1055,7 @@ impl ForwardPass {
                 vk::WriteDescriptorSet::default()
                     .dst_set(*set)
                     .dst_binding(scene_frag::FRAME_BINDING)
-                    // 必须与布局里的 DYNAMIC 类型一致，否则写入被忽略。
+                    // must be consistent with DYNAMIC type in layout, otherwise write ignored.
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                     .buffer_info(std::slice::from_ref(&ubo_infos[i])),
             );
@@ -1392,8 +1392,8 @@ impl ForwardPass {
             .map(|c| c.image)
     }
 
-    /// 借用 the 深度 图像 视图 for `image_index` (the 槽 ForwardPass just
-    /// rendered into). The GTAO pass samples it after ForwardPass stores 深度
+    /// Borrow the depth image view for `image_index` (the slot ForwardPass just
+    /// rendered into). The GTAO pass samples it after ForwardPass stores depth
     pub fn depth_view(&self, image_index: u32) -> Option<vk::ImageView> {
         self.depth_images
             .get(image_index as usize)
@@ -1401,13 +1401,13 @@ impl ForwardPass {
             .map(|d| d.view)
     }
 
-    /// #1007：设置本帧的深度回读缓冲。传 `None` 时本帧不做拷贝。
+    /// #1007: set this frame's depth readback buffer. Pass `None` to skip copy this frame.
     pub fn set_depth_readback(&mut self, buffer: Option<vk::Buffer>) {
         self.depth_readback = buffer;
         self.depth_capture_frame = None;
     }
 
-    /// 最近一次记录深度拷贝的帧序号（`None` = 本帧没有拷贝）。
+    /// Most recent frame number that recorded a depth copy (`None` = no copy this frame).
     pub fn depth_capture_frame(&self) -> Option<u32> {
         self.depth_capture_frame
     }
@@ -1674,21 +1674,21 @@ impl ForwardPass {
         let color_attachment = vk::AttachmentDescription::default()
             .format(self.color_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // #972: `initial_layout` is UNDEFINED (the 渲染 graph emits no
+            // #972: `initial_layout` is UNDEFINED (the render  graph emits no
             // barrier before this pass, see `setup`), and Vulkan forbids
             // LOAD with an UNDEFINED initial layout — the load would read
             // undefined texels. Every camera clears explicitly with
             // `vkCmdClearAttachments` according to `Camera.clearFlags`, and
             // the "preserve what came before" case (#461) happens **inside**
-            // this single 渲染 pass instance, where DONT_CARE never applies.
+            // this single render  pass instance, where DONT_CARE never applies.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             // Leave the swapchain image in COLOR_ATTACHMENT_OPTIMAL so a
-            // subsequent external overlay pass can 加载 it and 过渡 it to
-            // PRESENT_SRC_KHR. When the external overlay is 禁用 the 调用者
+            // subsequent external overlay pass can load it and transition it to
+            // PRESENT_SRC_KHR. When the external overlay is disabled the caller
             // (GraphRenderer::render) records a fallback pipeline barrier to
             // PRESENT_SRC_KHR after this pass ends.
             .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
@@ -1704,8 +1704,8 @@ impl ForwardPass {
         let depth_attachment = vk::AttachmentDescription::default()
             .format(vk::Format::D32_SFLOAT)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // 同 #972：UNDEFINED 起始布局只能用 CLEAR / DONT_CARE，深度由
-            // 每个 相机 的 clear flags 显式清空。
+            // Same #972: UNDEFINED starting layout can only use CLEAR / DONT_CARE, depth is
+            // explicitly cleared by each camera's clear flags.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1723,7 +1723,7 @@ impl ForwardPass {
         let normal_attachment = vk::AttachmentDescription::default()
             .format(self.normal_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // 同 #972。
+            // Same #972.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1735,7 +1735,7 @@ impl ForwardPass {
             .attachment(2)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // 附件 3: screen-space motion vectors (#883 Phase 2), RGBA16F (.xy used). Cleared
+        // Attachment 3: screen-space motion vectors (#883 Phase 2), RGBA16F (.xy used). Cleared
         // to zero; every mesh draw overwrites its footprint. Stored so TaaPass
         // can sample it after the pass.
         let velocity_attachment = vk::AttachmentDescription::default()
@@ -1752,12 +1752,12 @@ impl ForwardPass {
             .attachment(3)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // 附件 4: albedo + perceptual roughness (SV_Target3). Written every frame
+        // Attachment 4: albedo + perceptual roughness (SV_Target3). Written every frame
         // by the scene fragment shader; read by the ReSTIR GI pass.
         let albedo_attachment = vk::AttachmentDescription::default()
             .format(self.albedo_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // 同 #972。
+            // Same #972.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1819,11 +1819,11 @@ impl ForwardPass {
         }
         Ok(())
     }
-    /// 为绘制列表里出现的每种 [`DrawState`] 各建一条管线（幂等）。
+    /// Build one pipeline for each [`DrawState`] appearing in draw list (idempotent).
     ///
-    /// 剔除 / 深度写 / 混合都是 Vulkan **管线状态**，所以按状态分管线；所有
-    /// 变体的描述符布局与推送常量完全一致。调用方在录制命令前把本帧需要的
-    /// 状态收集齐（见 `execute`），避免在命令缓冲录制中间创建管线。
+    /// cull / depth write / blend are all Vulkan **pipeline state**, so split pipelines by state; all
+    /// variants' descriptor layouts and push constants fully identical. Caller collects all states needed this frame
+    /// before recording commands (see `execute`), avoid creating pipelines mid command buffer recording.
     fn ensure_pipelines(
         &mut self,
         device: &ash::Device,
@@ -1930,7 +1930,7 @@ impl ForwardPass {
             set5_layout,
         ];
 
-        // Push constants: PbrBindlessPush (116 字节 std140, VERTEX|FRAGMENT).
+        // Push constants: PbrBindlessPush (116 byte  std140, VERTEX|FRAGMENT).
         // The reflected size is also what `cmd_push_constants` sends, and the
         // module-level assertion guarantees the Rust mirror matches it.
         let push = [vk::PushConstantRange::default()
@@ -1940,7 +1940,7 @@ impl ForwardPass {
 
         for (shader_handle, state) in missing {
             let frag_module = frag_modules[&shader_handle];
-            // MRT: 附件 0 = 颜色（按 `DrawState` 混合），附件 1 = 视图法线（不混合）。
+            // MRT: attachment 0 = color (blend by `DrawState`), attachment 1 = view normal (no blend).
             let blend_attachments = color_blend_attachments(state);
             for skinned in [false, true] {
                 let (variant_stages, variant_bindings) = if skinned {
@@ -2003,7 +2003,7 @@ impl ForwardPass {
                 depth_bias_enable: None,
                 depth_bias_constant_factor: None,
                 depth_bias_slope_factor: None,
-                // 透明物体通常 `ZWrite Off`（`_ZWrite`）。
+                // transparent objects usually `ZWrite Off` (`_ZWrite`).
                 depth_write_enable: Some(state.z_write),
                 depth_test_enable: None,
                 color_attachment_count: None,
@@ -2039,11 +2039,11 @@ impl ForwardPass {
         Ok(())
     }
 
-    /// 惰性创建选中描边管线（#487）。
+    /// Lazily create selected-outline pipeline (#487).
     ///
-    /// 反向外壳只绑定 set 0（帧 UBO），所以管线布局比场景管线窄；剔除正面、
-    /// 关闭深度写入，让扩大的背面只在原网格轮廓外通过深度测试。附件 1（视图
-    /// 法线）不写，避免污染 GTAO 的输入。
+    /// Reverse shell only binds set 0 (frame UBO), so pipeline layout narrower than scene pipeline; culls front face,
+    /// disables depth write, so expanded backfaces only pass depth test outside original mesh silhouette. Attachment 1 (view
+    /// normal) not written, avoid polluting GTAO input.
     fn ensure_outline_pipeline(&mut self, device: &ash::Device) -> Result<()> {
         if self.outline_pipeline.is_some() {
             return Ok(());
@@ -2082,7 +2082,7 @@ impl ForwardPass {
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(std::mem::size_of::<OutlinePush>() as u32)];
-        // 附件 0 写纯色、不混合；附件 1（视图法线）不写。
+        // Attachment 0 writes solid color, no blend; attachment 1 (view normal) not written.
         let blend_attachments = [
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -2104,7 +2104,7 @@ impl ForwardPass {
             push_constant_ranges: &push,
             render_pass: rp,
             subpass: 0,
-            // 正面剔除：只留下被法线外扩的背面，形成轮廓。
+            // Front-face cull: only keep backfaces expanded outward by normal, forming silhouette.
             cull_mode: Some(vk::CullModeFlags::FRONT),
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
@@ -2124,11 +2124,11 @@ impl ForwardPass {
         Ok(())
     }
 
-    /// 惰性创建「填充 + 线框叠加」管线（#431）。
+    /// Lazily create "fill + wireframe overlay" pipeline (#431).
     ///
-    /// 复用 outline 着色器：顶点只做 `model` 变换（厚度 0，不外扩），片元输出
-    /// 深色线。`POLYGON_MODE_LINE` + 负深度 bias 让线压在填充面上，避免
-    /// z-fighting；不写深度，所以线不会污染后续的深度测试 / 选中描边。
+    /// Reuses outline shader: vertex only applies `model` transform (thickness 0, no expansion), fragment outputs
+    /// dark lines. `POLYGON_MODE_LINE` + negative depth bias pushes lines onto filled surface, avoiding
+    /// z-fighting; no depth write, so lines won't pollute subsequent depth test / selected outline.
     fn ensure_shaded_wireframe_pipeline(&mut self, device: &ash::Device) -> Result<()> {
         if self.shaded_wireframe_pipeline.is_some() {
             return Ok(());
@@ -2188,7 +2188,7 @@ impl ForwardPass {
             subpass: 0,
             cull_mode: Some(vk::CullModeFlags::BACK),
             depth_bias_enable: Some(true),
-            // 负 bias 把线拉向相机；线框只覆盖填充面的边缘，不写深度。
+            // Negative bias pulls lines toward camera; wireframe only covers filled face edges, no depth write.
             depth_bias_constant_factor: Some(-2.0),
             depth_bias_slope_factor: Some(-1.0),
             depth_write_enable: Some(false),
@@ -2278,8 +2278,8 @@ impl RenderPassNode for ForwardPass {
         self.out_albedo_h = FORWARD_ALBEDO_H;
 
         // Declare read edge for directional shadow map sampled in fragment shader (set 3).
-        // `shadows` 关闭时图里没有 ShadowMapPass，这个 handle 无人写入，
-        // 也就不该声明读边（forward 采样的是一张不在图里的 1×1 dummy）。
+        // When `shadows` disabled there's no ShadowMapPass in graph, nobody writes this handle,
+        // so shouldn't declare read edge either (forward samples a 1×1 dummy outside graph).
         #[cfg(feature = "shadows")]
         graph.read_usage(ResourceUsage {
             handle: SHADOW_MAP_H,
@@ -2293,7 +2293,7 @@ impl RenderPassNode for ForwardPass {
         // `final_layout`). Downstream `GtaoPass` / `PostPass` read edges then
         // trigger the ATTACHMENT -> READ_ONLY / SHADER_READ_ONLY barriers
         // automatically, with `src` stage/access taken from these write edges.
-        // No 屏障 is emitted for the writes themselves: ForwardPass's 渲染
+        // No barrier is emitted for the writes themselves: ForwardPass's render
         // pass performs the UNDEFINED -> ATTACHMENT transitions via
         // `initial_layout` (see `create_render_pass`).
         graph.write_usage(ResourceUsage {
@@ -2335,16 +2335,16 @@ impl RenderPassNode for ForwardPass {
         // or the swapchain changed. `set_ao` rebinds the previous-frame GTAO
         // visibility view (1-frame latency); `update_lights` rewrites the
         // point-light SSBO from the ECS-collected lights for this frame.
-        // #613：内部渲染分辨率开启时目标小于交换链。
+        // #613: when internal render resolution on target smaller than swapchain.
         self.ensure_target(ctx.device, ctx.context, ctx.image_index, ctx.render_extent)?;
         self.set_ao(ctx.device, ctx.frame_index, ctx.frame.ao_view);
         self.set_gi_view(ctx.device, ctx.frame_index, ctx.frame.gi_view);
         self.update_lights(ctx.device, ctx.frame_index, ctx.frame.lights)?;
 
         self.ensure_render_pass(ctx.context)?;
-        // 录制命令前把本帧需要的管线状态收集齐（不透明默认状态永远需要：
-        // 描述符集用它的 layout 绑定）。
-        // 设备不支持 `fillModeNonSolid` 时静默退回填充，不影响正常渲染。
+        // Collect all pipeline states needed this frame before recording commands (opaque default state always needed:
+        // descriptor set binds with its layout).
+        // When device lacks `fillModeNonSolid` silently fall back to fill, no impact on normal render.
         let wireframe = ctx.frame.wireframe && ctx.context.wireframe_supported;
         let shaded_wireframe =
             !wireframe && ctx.frame.shaded_wireframe && ctx.context.wireframe_supported;
@@ -2375,8 +2375,8 @@ impl RenderPassNode for ForwardPass {
             .copied()
             .flatten()
             .context("ForwardPass: no framebuffer for image_index (call set_target first)")?;
-        // 描述符 / 推送常量布局在所有状态变体之间完全相同，所以用默认
-        // （不透明、背面剔除）变体的 layout 绑定一次即可；循环里只按需重绑管线。
+        // Descriptor / push constant layouts fully identical across all state variants, so use default
+        // (opaque, back-face cull) variant's layout bind once; loop only rebinds pipelines as needed.
         // Copy the Vulkan handles out: `pipeline` borrows `self.pipelines`,
         // and the per-camera loop below may lazily create the outline pipeline
         // (`&mut self`). Handles are `Copy`, the borrow is not.
@@ -2462,7 +2462,7 @@ impl RenderPassNode for ForwardPass {
                 .collect()
         };
 
-        // 统计真正提交的绘制数（`ShadowsOnly` 会被跳过）。多相机时累加。
+        // Count draw calls actually submitted (`ShadowsOnly` skipped). Accumulated with multiple cameras.
         let mut drawn = 0usize;
         for (camera_index, camera) in cameras.iter().enumerate() {
             // Clear according to `Camera.clearFlags`: `Skybox` / `SolidColor`
@@ -2542,8 +2542,8 @@ impl RenderPassNode for ForwardPass {
                 );
             }
 
-            // 绘制 the skybox 第一个 (background) for cameras whose clear
-            // flags ask for it. It uses its own 管线 + IBL env set and writes
+            // draw  the skybox first  (background) for cameras whose clear
+            // flags ask for it. It uses its own pipeline + IBL env set and writes
             // no depth, so scene geometry always occludes it.
             if camera.draw_skybox && camera.has_camera {
                 let mut inv_view_proj_rot = [[0.0_f32; 4]; 4];
@@ -2568,7 +2568,7 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // Re-bind the scene 管线 + all 描述符 sets. Required after the
+            // Re-bind the scene pipeline + all descriptor sets. Required after the
             // skybox draw (incompatible layout at set 0) and per camera because
             // set 0 carries a camera-slot dynamic offset (#461).
             let dynamic_offset = camera_index as u32 * self.camera_stride;
@@ -2578,7 +2578,7 @@ impl RenderPassNode for ForwardPass {
                     vk::PipelineBindPoint::GRAPHICS,
                     scene_pipeline,
                 );
-                // 集合 0: 帧 UBO + materials SSBO + 光源 SSBO
+                // set  0: frame  UBO + materials SSBO + light source  SSBO
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2587,7 +2587,7 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&frame_set),
                     std::slice::from_ref(&dynamic_offset),
                 );
-                // 集合 1: bindless 纹理 表
+                // set 1: bindless texture table
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2596,7 +2596,7 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.bindless_set),
                     &[],
                 );
-                // 集合 2: IBL cubemap
+                // set  2: IBL cubemap
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2605,7 +2605,7 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.ibl_descriptor_set),
                     &[],
                 );
-                // 集合 3: shadow 映射表
+                // set 3: shadow map table
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2614,7 +2614,7 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.shadow_descriptor_set),
                     &[],
                 );
-                // 集合 4: previous-frame GTAO 可见性 (combined 图像 采样器).
+                // set 4: previous-frame GTAO visibility (combined image sampler).
                 let ao_set = self
                     .ao_descriptor_sets
                     .get(ctx.frame_index as usize)
@@ -2648,11 +2648,11 @@ impl RenderPassNode for ForwardPass {
             }
 
             unsafe {
-                // 纯 2D 模式跳过 3D 不透明/透明网格绘制、线框覆层与高亮外轮廓
+                // Pure 2D mode skips 3D opaque / transparent mesh draws, wireframe overlay and outline
                 if ctx.frame.render_mode != crate::RenderMode::Sprites2D {
-                    // 循环开始前刚绑定的是默认（不透明）管线；只有遇到别的状态才重绑
-                    // （剔除 / 深度写 / 混合都是管线状态）。描述符与推送常量布局在所有
-                    // 变体之间一致，所以不需要重新绑定描述符集。
+                    // Loop starts with just-bound default (opaque) pipeline; only rebind when encountering other state
+                    // (cull / depth write / blend all pipeline state). Descriptor and push constant layouts
+                    // identical across variants, no need to rebind descriptor sets.
                     // #491: pack static instance matrices after the live bone
                     // palette in the same SSBO. Skinned draws keep their existing
                     // offsets; instanced draws start at `bone_count`.
@@ -2814,8 +2814,8 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
 
-                // 填充 + 线框叠加（#431）：填充已经画完，再用 outline 着色器画一遍
-                // `POLYGON_MODE_LINE`；负深度 bias + 不写深度让线稳定压在面上。
+                // Fill + wireframe overlay (#431): fill already drawn, draw again with outline shader
+                // `POLYGON_MODE_LINE`; negative depth bias + no depth write keep lines stable on surface.
                 if shaded_wireframe {
                     let overlay = self
                         .shaded_wireframe_pipeline
@@ -2843,8 +2843,8 @@ impl RenderPassNode for ForwardPass {
                         };
                         let pc = OutlinePush {
                             model: item.model,
-                            // 深色线在亮面上可读；不随材质变化，接近 Unity 的
-                            // Shaded Wireframe。
+                            // Dark lines readable on bright surface; not material-dependent, close to Unity's
+                            // Shaded Wireframe.
                             color: [0.02, 0.02, 0.02, 1.0],
                             thickness: 0.0,
                             _pad: [0.0; 3],
@@ -2882,9 +2882,9 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
 
-                // 选中描边（#487）：把选中的网格再画一遍，正面剔除 + 法线外扩。
-                // 放在不透明网格之后、粒子 / 精灵之前：被其它几何挡住的部分会正常
-                // 被深度测试丢弃，不会像屏幕空间线框那样浮在最上面。
+                // Selected outline (#487): draw selected mesh again, front-face cull + normal outward expansion.
+                // Placed after opaque meshes, before particles / sprites: parts occluded by other geometry will normally
+                // be discarded by depth test, unlike screen-space wireframe that floats on topmost surface.
                 let outline_requested = ctx.frame.draw_list.iter().any(|item| {
                     item.visible_in_main_pass
                         && ctx.frame.outline_entities.contains(&item.entity_id)
@@ -2918,7 +2918,7 @@ impl RenderPassNode for ForwardPass {
                         let Some(uploaded) = ctx.frame.mesh_manager.get(item.mesh) else {
                             continue;
                         };
-                        // 线宽随物体尺度走，缩放很大的物体不会只剩一条细缝。
+                        // Line width scales with object size, very large objects won't be left with a thin seam.
                         let scale = (0..3)
                             .map(|column| {
                                 let c = &item.model[column];
@@ -2965,8 +2965,8 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // 世界空间粒子：深度测试开启（被前面的几何遮挡），所以画在不透明网格
-            // 之后、2D 精灵之前；透明排序由引擎在提交前完成（远到近）。
+            // World-space particles: depth test enabled (occluded by foreground geometry), so drawn after opaque meshes
+            // and before 2D sprites; transparent sort done by engine before submission (far to near).
             if !ctx.frame.particle_items.is_empty() {
                 if let Err(e) = self.particles.draw(
                     ctx.device,
@@ -3002,15 +3002,15 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // 绘制地面参考网格（深度测试开启，被场景实体遮挡）
+            // Draw ground reference mesh (depth test enabled, occluded by scene entities)
             if ctx.frame.show_grid && ctx.frame.render_mode != RenderMode::Sprites2D {
                 if let Some(grid) = &self.ground_grid {
                     grid.draw(ctx.cmd, &camera.view_proj, ctx.frame.camera_orthographic);
                 }
             }
 
-            // 绘制 the world-space XYZ gizmo on 顶部 of the scene (its 管线 has
-            // 深度 test 禁用 so it is never occluded). Uses the same
+            // Draw the world-space XYZ gizmo on top of the scene (its pipeline has
+            // depth test disabled so it is never occluded). Uses the same
             // view-projection the scene was drawn with.
             if let Some(gizmo) = &self.gizmo {
                 gizmo.draw(ctx.cmd, &camera.view_proj, ctx.frame.gizmos);
@@ -3019,8 +3019,8 @@ impl RenderPassNode for ForwardPass {
 
         unsafe { ctx.device.cmd_end_render_pass(ctx.cmd) };
 
-        // #1007：主通道结束、深度仍是 DEPTH_STENCIL_ATTACHMENT_OPTIMAL 时
-        // 拷到宿主可见缓冲；拷完恢复布局，后面的 GTAO 仍按原布局采样。
+        // #1007: at end of main pass, while depth still DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        // copy to host-visible buffer; after copy resume layout, later GTAO still samples with original layout.
         if let Some(buffer) = self.depth_readback {
             if let Some(depth_image) = self.depth_image(ctx.image_index) {
                 let device = ctx.device;
@@ -3139,7 +3139,7 @@ impl RenderPassNode for ForwardPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Forward,
-            // Shadow 视图 is declared as an input (SHADOW_MAP_H); IBL and
+            // Shadow view  is declared as an input (SHADOW_MAP_H); IBL and
             // previous-frame AO are bound via `set_resources` / `set_ao` and
             // bypass `GraphResources`, so they aren't listed as graph edges.
             #[cfg(feature = "shadows")]
@@ -3218,11 +3218,11 @@ impl Drop for ForwardPass {
     }
 }
 
-/// 颜色附件的混合状态（MRT：附件 0 = 颜色，附件 1 = 视图法线）。
+/// Blend state of color attachment (MRT: attachment 0 = color, attachment 1 = view normal).
 ///
-/// 附件 0 按 材质状态（`_SrcBlend` / `_DstBlend` / `_BlendOp`）配置；
-/// 默认值 `One`/`Zero`/`Add` 表示不透明，此时直接关掉混合。附件 1 永远不混合
-/// （视图空间法线需要原样写入）。
+/// Attachment 0 configured by material state (`_SrcBlend` / `_DstBlend` / `_BlendOp`);
+/// default `One`/`Zero`/`Add` means opaque, then blend disabled. Attachment 1 never blends
+/// (view-space normal must be written as-is).
 fn color_blend_attachments(state: DrawState) -> [vk::PipelineColorBlendAttachmentState; 4] {
     let mut color = vk::PipelineColorBlendAttachmentState::default()
         .color_write_mask(vk::ColorComponentFlags::RGBA);

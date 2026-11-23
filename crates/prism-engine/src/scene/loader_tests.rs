@@ -8,9 +8,9 @@ use prism_ecs::World;
 
 // ── helpers ───────────────────────────────────────────────────────
 
-/// 构建 RSCN 字节 (v2 格式 from a simple 描述
+/// Build RSCN bytes (v2 format from a simple description
 ///
-/// Each 实体 元组 `(name, parent_idx, 平移 旋转 音阶
+/// Each entity tuple `(name, parent_idx, translation rotation scale
 /// has_mesh, mesh_path, has_material, mat_path, has_light, light_type,
 /// light_color, light_intensity, light_range, has_camera, camera_fov,
 /// camera_near, camera_far, has_skybox, skybox_hdr_path, skybox_enabled)`.
@@ -20,7 +20,7 @@ fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
     buf.push(2); // version 2 (v2 = skybox support in header + per-entity)
     buf.extend_from_slice(&(entities.len() as u32).to_le_bytes());
 
-    // v2 header: env_len(2) + env_path 空 = no skybox at header level).
+    // v2 header: env_len(2) + env_path empty  = no skybox at header level).
     buf.extend_from_slice(&0u16.to_le_bytes());
 
     for e in entities {
@@ -367,7 +367,7 @@ fn spawn_has_world_transform() {
     let inst = loader.spawn_from_parsed(&mut world, &parsed, sid).unwrap();
 
     let wt = world.get::<LocalToWorld>(inst.all_entities[0]).unwrap();
-    // Identity 模型 矩阵
+    // Identity model  matrix
     assert_eq!(wt.0.col(0)[0], 1.0);
     assert_eq!(wt.0.col(3)[3], 1.0);
 }
@@ -520,7 +520,7 @@ fn spawn_multiple_roots() {
 
 #[test]
 fn spawn_rejects_dead_parent() {
-    // 实体 with parent 索引 beyond the 实体 数组
+    // entity  with parent index  beyond the entity  array
     // This is a malformed scene — the loader checks bounds.
     let child = RscnEntity {
         parent: Some(999),
@@ -534,7 +534,7 @@ fn spawn_rejects_dead_parent() {
     let sid = SceneAssetId::generate();
     let inst = loader.spawn_from_parsed(&mut world, &parsed, sid).unwrap();
 
-    // The orphan 实体 should exist but have no Parent 分量
+    // The orphan entity should exist but have no Parent component
     assert_eq!(inst.all_entities.len(), 1);
     assert!(world.get::<Parent>(inst.all_entities[0]).is_none());
     // It should be counted as a root since it has no Parent.
@@ -543,7 +543,7 @@ fn spawn_rejects_dead_parent() {
 
 #[test]
 fn spawn_camera_emits_renderer_and_data_components() {
-    // 相机 at [1,2,3], identity 旋转 (looks 下 −Z), 60° 视场角
+    // Camera at [1,2,3], identity rotation (looks down −Z), 60° field of view
     let e = RscnEntity {
         position: [1.0, 2.0, 3.0],
         has_camera: true,
@@ -562,7 +562,7 @@ fn spawn_camera_emits_renderer_and_data_components() {
 
     let entity = inst.all_entities[0];
 
-    // Data 分量 读取 by scene::systems::camera::collect_camera).
+    // Data component read by scene::systems::camera::collect_camera).
     let data = world
         .get::<Camera>(entity)
         .expect("scene::components::Camera should be present");
@@ -570,16 +570,16 @@ fn spawn_camera_emits_renderer_and_data_components() {
     assert_eq!(data.near, 0.1);
     assert_eq!(data.far, 1000.0);
 
-    // Free-fly controller (yaw/pitch derived from the 实体 四元数
+    // Free-fly controller (yaw/pitch derived from entity quaternion
     // Position lives on the sibling LocalTransform, not on the controller.
     let ctrl = world
         .get::<FlyCameraController>(entity)
         .expect("FlyCameraController should be present");
-    // Identity 四元数 -> 向前 (0,0,-1) -> yaw=0, pitch=0.
+    // Identity quaternion -> forward (0,0,-1) -> yaw=0, pitch=0.
     assert!(ctrl.yaw.abs() < 1e-5, "yaw={}", ctrl.yaw);
     assert!(ctrl.pitch.abs() < 1e-5);
 
-    // Position is the LocalTransform 平移
+    // Position is the LocalTransform translation
     let lt = world
         .get::<LocalTransform>(entity)
         .expect("LocalTransform should be present");
@@ -588,9 +588,9 @@ fn spawn_camera_emits_renderer_and_data_components() {
 
 #[test]
 fn spawn_camera_yaw_from_quaternion() {
-    // 90° 旋转 about +Y: 四元数 (0, sin45, 0, cos45). A −Z 向前
+    // 90° rotation about +Y: quaternion (0, sin45, 0, cos45). A −Z forward
     // rotated +90° about Y points to −X, which FlyCamera expresses as
-    // yaw=π/2 (向前 = [-sin(π/2), 0, -cos(π/2)] = [-1, 0, 0]).
+    // yaw=π/2 (forward = [-sin(π/2), 0, -cos(π/2)] = [-1, 0, 0]).
     let sqrt2_inv = std::f32::consts::FRAC_PI_4.sin(); // sin(45°)
     let e = RscnEntity {
         rotation: [0.0, sqrt2_inv, 0.0, sqrt2_inv],
@@ -612,7 +612,7 @@ fn spawn_camera_yaw_from_quaternion() {
     let ctrl = world
         .get::<FlyCameraController>(inst.all_entities[0])
         .expect("FlyCameraController should be present");
-    // `atan2` 只给出 ±π 之间的值；这个朝向的 yaw 就是 π/2。
+    // `atan2` only gives value between ±π; this orientation yaw is π/2.
     assert!(
         (ctrl.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
         "yaw={}",
@@ -661,7 +661,7 @@ fn load_rscn_v4_applies_components_and_hierarchy() {
                 }
             ]
         }"#;
-    // 走迁移漏斗：v1 文档没有实体 id，直接 `from_slice` 会按设计报错。
+    // Go through migration funnel: v1 document has no entity id, directly `from_slice` will by design report wrong.
     let scene = prism_scene::SceneJson::parse(std::str::from_utf8(json).unwrap()).unwrap();
     let mut registry = crate::scene::ComponentRegistry::new();
     crate::scene::register_builtin_components(&mut registry);
@@ -713,8 +713,8 @@ fn load_rscn_v4_applies_components_and_hierarchy() {
     );
 }
 
-/// 有网格、无材质的 `MeshRenderer`（编辑器 fixture 的常见形状）必须仍然
-/// 进入绘制列表：缺 `MaterialRef` 时由渲染器回落默认材质槽。
+/// Have mesh, no material `MeshRenderer` (common shape in editor fixtures) must still
+/// Enter draw list: missing `MaterialRef` falls back to default material slot by renderer.
 #[test]
 fn load_rscn_v4_mesh_without_material_still_draws() {
     let json = br#"{
@@ -751,12 +751,15 @@ fn load_rscn_v4_mesh_without_material_still_draws() {
         .expect("mesh-only entity should get a MeshRef");
     assert!(
         world.get::<MaterialRef>(entity).is_none(),
-        "空材质路径不应插入 MaterialRef"
+        "Empty material path should not be inserted into MaterialRef"
     );
 
     let items = crate::scene::SceneReadView::new(&world).draw_items();
-    assert_eq!(items.len(), 1, "网格-only 实体应进入绘制列表");
-    assert_eq!(items[0].material, None, "缺失材质应回落到默认材质槽");
+    assert_eq!(items.len(), 1, "Mesh-only entity should enter draw list");
+    assert_eq!(
+        items[0].material, None,
+        "Missing material should fall back to default material slot"
+    );
 }
 
 #[test]
@@ -820,15 +823,15 @@ fn load_from_raw_cooked() {
     assert_eq!(inst.root_entities.len(), 1);
 }
 
-/// Smoke-test the engine-builtin 默认 scene committed at
-/// `assets/scenes/default.rscn`. Ignored by 默认 because it depends on
-/// the repo working-tree 布局 (run from the repo root); run with:
+/// Smoke-test the engine-builtin default  scene committed at
+/// `assets/scenes/default.rscn`. Ignored by default  because it depends on
+/// the repo working-tree layout  (run from the repo root); run with:
 ///   `cargo test -p prism-engine load_committed_default_rscn -- --ignored --nocapture`
 /// Guards against the cooked scene drifting out of sync with the loader.
 #[test]
 #[ignore]
 fn load_committed_default_rscn() {
-    // 搜索 both the repo root and the crate dir so the test works
+    // search  both the repo root and the crate dir so the test works
     // regardless of which directory `cargo test` was invoked from.
     let candidates = [
         std::path::PathBuf::from("assets/scenes/default.rscn"),
@@ -850,15 +853,15 @@ fn load_committed_default_rscn() {
         .load_and_spawn(&mut world, SceneSource::CookedFile(path), &registry)
         .expect("default.rscn should parse");
 
-    // 6 entities: 1 skybox + 1 相机 + 1 directional 光源 + 3 point lights.
+    // 6 entities: 1 skybox + 1 camera  + 1 directional light source  + 3 point lights.
     assert_eq!(inst.all_entities.len(), 6);
 
-    // Exactly one 相机 实体 with a FlyCameraController + 相机 data
-    // 分量 + LocalTransform (position lives on the 变换
+    // Exactly one camera  entity  with a FlyCameraController + camera  data
+    // Component + LocalTransform (position lives on the transform
     let cameras: Vec<_> = world.query::<Camera>().collect();
     assert_eq!(cameras.len(), 1, "expected exactly one camera");
 
-    // The 相机 should be positioned at [0, 2.5, 18] (per default.scene.json).
+    // The camera  should be positioned at [0, 2.5, 18] (per default.scene.json).
     let cam_entity = cameras[0].0;
     let lt = world
         .get::<LocalTransform>(cam_entity)
@@ -870,7 +873,7 @@ fn load_committed_default_rscn() {
 
 // ── `.scene.json` parent = entity id (not array index) ─────────────
 
-/// 把一个 `.scene.json` 文本直接铺进 world，返回 (实例, 世界)。
+/// Paste `.scene.json` text directly into world, return (real instance, world).
 fn spawn_json_text(json: &str) -> (SceneInstance, World) {
     let mut registry = crate::scene::ComponentRegistry::new();
     crate::scene::register_builtin_components(&mut registry);
@@ -890,7 +893,7 @@ fn spawn_json_text(json: &str) -> (SceneInstance, World) {
 
 #[test]
 fn json_parent_ids_are_resolved_not_used_as_array_indices() {
-    // 数组顺序是 [child, root]，但 parent 引用的是 id 9（位于下标 1）。
+    // Array order is [child, root], but parent reference is id 9 (bit set below marker 1).
     let json = r#"{
         "version": 3,
         "entities": [
@@ -907,7 +910,7 @@ fn json_parent_ids_are_resolved_not_used_as_array_indices() {
 
     let parent = world
         .get::<Parent>(child)
-        .expect("child 应挂到 root 下（parent 是 id，不是下标）");
+        .expect("child should hang under root (parent is id, not index)");
     assert_eq!(parent.0, root);
     assert!(world.get::<Parent>(root).is_none());
     assert_eq!(inst.root_entities, vec![root]);
@@ -915,7 +918,7 @@ fn json_parent_ids_are_resolved_not_used_as_array_indices() {
 
 #[test]
 fn json_parent_chain_follows_ids_after_reordering() {
-    // root(3) ← mid(7) ← leaf(1)：三层按 id 串起来，与数组顺序无关。
+    // root(3) ← mid(7) ← leaf(1): three layers strung by id, not close to array order.
     let json = r#"{
         "version": 3,
         "entities": [

@@ -1,14 +1,14 @@
-//! 主题：把数据层的 token（Web 编辑器同一套）映射到 egui。
+//! Theme: map data-layer tokens (same set as Web editor) to egui.
 //!
-//! 颜色只在数据层定义一次，egui 侧不写死色值（与 Web 编辑器的
-//! `style.css` 保持一致）。
+//! Colors defined once in data layer, egui side does not hardcode color values (consistent with Web editor's
+//! `style.css` consistent).
 //!
-//! 视觉规则（对齐 `editor/src/style.css`）：
-//! - 表面是**中性灰**：菜单/状态栏 `chrome`、面板 `panel`、标签栏 `bg-sunken`、
-//!   浮动窗口 `panel-raised`；蓝色只出现在**选中/按下/焦点**（`selection` /
-//!   `accent`），不要给普通控件铺蓝底。
-//! - 直角（`CornerRadius::ZERO`）为主，只有弹出菜单 3px；1px 分隔线用 `border`。
-//! - 控件不做 hover 放大（`expansion = 0`），桌面 / Web 都不抖。
+//! Visual rules (aligned with `editor/src/style.css`):
+//! - Surfaces are **neutral gray**: menu/status bar `chrome`, panel `panel`, tab bar `bg-sunken`,
+//!   floating window `panel-raised`; blue appears only in **selected / pressed / focused** (`selection` /
+//!   `accent`), do not lay blue background on ordinary controls.
+//! - Right angles (`CornerRadius::ZERO`) as main, only popup menus 3px; 1px divider uses `border`.
+//! - Controls do not hover-expand (`expansion = 0`), desktop / Web do not jitter.
 
 use egui::{Color32, CornerRadius, FontId, Stroke};
 use prism_editor_core::{ThemeColors, ThemeToken};
@@ -44,7 +44,7 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
 
     let mut visuals = egui::Visuals::dark();
 
-    // ---- 表面 ----
+    // ---- surfaces ----
     visuals.panel_fill = panel;
     visuals.window_fill = panel_raised;
     visuals.extreme_bg_color = sunken;
@@ -54,7 +54,7 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     visuals.window_corner_radius = POPUP_RADIUS;
     visuals.menu_corner_radius = POPUP_RADIUS;
     visuals.window_shadow = egui::Shadow::NONE;
-    // Web 的 `.menu-popup` 阴影：0 6px 18px rgba(0,0,0,.55)
+    // Web `.menu-popup` shadow: 0 6px 18px rgba(0,0,0,.55)
     visuals.popup_shadow = egui::Shadow {
         offset: [0, 6],
         blur: 18,
@@ -72,9 +72,9 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     visuals.selection.stroke = Stroke::NONE;
     visuals.slider_trailing_fill = true;
 
-    // ---- 控件 ----
-    // 注意：egui 默认的 `weak_bg_fill`（按钮 / 可选中标签）是偏蓝的灰，
-    // 这里全部换成 token 里的中性灰；蓝色只在 `active`（按下 / 选中）出现。
+    // ---- controls ----
+    // Note: egui default `weak_bg_fill` (button / selectable label) is blueish gray,
+    // here all changed to neutral gray in tokens; blue appears only in `active` (pressed / selected).
     let widgets = &mut visuals.widgets;
 
     widgets.noninteractive.bg_fill = panel;
@@ -114,7 +114,7 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
 
     ctx.set_visuals(visuals);
 
-    // ---- 度量 ----
+    // ---- metrics ----
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
         (egui::TextStyle::Small, FontId::proportional(10.0)),
@@ -131,7 +131,7 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     style.spacing.interact_size.y = 22.0;
     style.spacing.combo_width = 160.0;
     style.spacing.scroll.floating = false;
-    // 默认 handle 取 `fg_stroke`（正文灰）→ 滚动条会亮成白色；改用 `bg_fill`。
+    // Default handle takes `fg_stroke` (text gray) -> scrollbar turns bright white; change to `bg_fill`.
     style.spacing.scroll.foreground_color = false;
     style.spacing.scroll.bar_width = 9.0;
     style.spacing.scroll.bar_inner_margin = 4.0;
@@ -142,17 +142,17 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     ctx.set_style(style);
 }
 
-/// 顶部 / 底部 chrome 条（菜单栏、工具栏、状态栏）的底：`chrome` 填充。
+/// Top / bottom chrome bar (menu bar, toolbar, status bar) bottom: `chrome` fill.
 pub fn chrome_fill(colors: &ThemeColors) -> Color32 {
     color32(colors, ThemeToken::Chrome)
 }
 
-/// 普通面板的底（与 egui 的 `panel_fill` 一致）。
+/// Ordinary panel bottom (consistent with egui `panel_fill`).
 pub fn panel_fill(colors: &ThemeColors) -> Color32 {
     color32(colors, ThemeToken::Panel)
 }
 
-/// 1px 分隔线 / 边框色。
+/// 1px divider / border color.
 pub fn border(colors: &ThemeColors) -> Color32 {
     color32(colors, ThemeToken::Border)
 }
@@ -186,10 +186,10 @@ mod tests {
     }
 }
 
-/// 字体：优先用系统 UI 字体（贴近 Web 编辑器的系统无衬线），
-/// 再追加一个 CJK 回退（egui 自带字体没有中文）。
+/// Font: prefer system UI font (close to Web editor system sans-serif),
+/// then add CJK fallback (egui built-in font has no Chinese).
 ///
-/// 都找不到时保留 egui 的内置字体，不影响功能。
+/// When none found keep egui built-in font, does not affect function.
 pub fn install_fonts(ctx: &egui::Context) {
     if std::env::var("PRISMA_EDITOR_NO_CJK").is_ok() {
         return;
@@ -198,7 +198,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     const UI_SANS: &[&str] = &[
         // Windows
         "C:/Windows/Fonts/segoeui.ttf",
-        // Linux（Web 编辑器用系统 UI 字体，这里挑最接近的）
+        // Linux (Web editor uses system UI font, pick closest here)
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -234,8 +234,8 @@ pub fn install_fonts(ctx: &egui::Context) {
 
     let mut fonts = egui::FontDefinitions::default();
     let mut loaded = 0;
-    // Phosphor Icons（MIT/Apache-2.0）作为图标字形，插在正文 UI 字体后面，
-    // 这样 `PLAY` / `EYE` / `FOLDER` 这些常量都能按文本直接画。
+    // Phosphor Icons (MIT/Apache-2.0) as icon glyphs, inserted after body UI font,
+    // so constants `PLAY` / `EYE` / `FOLDER` can be drawn directly as text.
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
 
     if let Some((path, bytes)) = first_existing(UI_SANS) {

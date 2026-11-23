@@ -1,8 +1,8 @@
-//! 用于 RenderGraph 路径的 ECS 驱动渲染系统
+//! ECS-driven render system for RenderGraph path
 //!
-//! 定义了 [`SceneChanges`] 快照结构体（相机、光源、派生矩阵）
-//! 以及主 [`render_system`] 函数，它每帧查询 ECS 世界，
-//! 构建平面绘制列表并提交给 [`GraphRenderer::render`]。
+//! Defines [`SceneChanges`] snapshot struct (camera, lights, derived matrices)
+//! and main [`render_system`] function, which queries ECS world each frame,
+//! builds flat draw lists and submits to [`GraphRenderer::render`].
 
 use glam::{self, Mat4, Vec3, Vec4};
 
@@ -21,13 +21,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// 上一次提示的「被丢弃局部光」数量（数量变化时才 warn，避免刷屏）。
+/// Count of "dropped local lights" in one hint (warn only when count changes, avoid spam).
 static LAST_DROPPED_LIGHTS: AtomicUsize = AtomicUsize::new(0);
 
-/// 局部光超过 `LIGHT_MAX` 时提示一次（#468）。
+/// Hint once when local lights exceed `LIGHT_MAX` (#468).
 ///
-/// 上限本身是前向着色器的硬约束（SSBO 固定长度），但用户不该在「加了灯没反应」
-/// 之后自己猜。每帧都 warn 会刷屏，所以只在丢弃数量**变化**时打一条。
+/// The cap itself is a hard constraint for forward shader (fixed-length SSBO), but user shouldn't have to guess
+/// after "added a light but no effect". Warning every frame would spam, so only log when dropped count **changes**.
 mod shadow;
 pub use shadow::{dir_to_euler_xyz_deg, euler_xyz_deg_to_dir};
 use shadow::{directional_light_ubo_direction, shadow_cascade_matrices};
@@ -44,9 +44,9 @@ fn warn_dropped_lights(total: usize, dropped: usize) {
     }
 }
 
-/// 预缩放因子，取代旧的 GPU 端 `exposure / PI` 单位转换。
-/// 勒克斯（或坎德拉）在 CPU 上乘以此因子，使着色器直接接收有效辐射度。
-/// `exposure` 随后成为应用于最终合成 HDR 颜色的纯亮度乘数。
+/// Pre-scale factor, replacing old GPU-side `exposure / PI` unit conversion.
+/// Lux (or candela) multiplied by this factor on CPU, so shader receives effective radiance directly.
+/// `exposure` afterwards becomes pure luminance multiplier applied to final composited HDR color.
 const LUX_TO_RADIANCE_SCALE: f32 = 1.0 / (10_000.0 * std::f32::consts::PI);
 
 // ---------------------------------------------------------------------------
@@ -88,14 +88,14 @@ pub struct SceneChanges {
     pub shadow_cascade_count: u32,
     /// Point lights collected from the ECS world (up to `LIGHT_MAX`).
     ///
-    /// 超预算时按重要性挑（见 [`lights::local_light_importance`]），不再是文档顺序。
+    /// When over budget pick by importance (see [`lights::local_light_importance`]), not document order anymore.
     pub lights: Vec<GpuLight>,
-    /// 场景里启用的局部光（点光 + 聚光）总数，截断**之前**的数量。
+    /// Total enabled local lights (point + spot) in scene, count before truncation.
     pub local_lights_total: usize,
-    /// 实际写进前向 SSBO 的局部光数量（≤ `LIGHT_MAX`）。
+    /// Actual number of local lights written to forward SSBO (≤ `LIGHT_MAX`).
     pub local_lights_kept: usize,
-    /// 被 `LIGHT_MAX` 挤掉的局部光实体（`.scene.json` 的 id；运行时实体没有 id，
-    /// 只计数不列名）。编辑器用它在检查器里标出「这盏灯没有画」。
+    /// Local light entities squeezed out by `LIGHT_MAX` (`.scene.json` ids; runtime entities have no id,
+    /// only counted not named). Editor uses this to mark "this light isn't drawn" in checker.
     pub dropped_light_ids: Vec<u32>,
     /// Analytic lights for path tracing (directional + point + spot).
     pub pt_lights: Vec<PtAnalyticLight>,
@@ -103,18 +103,18 @@ pub struct SceneChanges {
     pub exposure: f32,
     /// Whether a usable Camera entity was found in the ECS world.
     pub has_camera: bool,
-    /// 活动相机是否用正交投影（`Camera::orthographic`）。PT 主光线需要它来
-    /// 决定走平行光还是透视锥（issue #10）。
+    /// Whether active camera uses orthographic projection (`Camera::orthographic`). PT main ray needs it to
+    /// decide between directional light and perspective cone (issue #10).
     pub camera_orthographic: bool,
-    /// 清屏颜色 = 活动相机的 `background_color`（无相机时为引擎默认灰）。
+    /// Clear color = active camera's `background_color` (engine default gray when no camera).
     pub clear_color: [f32; 4],
-    /// 清屏方式 = 活动相机的 `Camera.clear_flags`（无相机时为 `Skybox`）。
-    /// 只有 `Skybox` 会绘制天空盒背景，见 [`CameraClearFlags::draws_skybox`]。
+    /// Clear mode = active camera's `Camera.clear_flags` (`Skybox` when no camera).
+    /// Only `Skybox` draws skybox background, see [`CameraClearFlags::draws_skybox`].
     pub clear_flags: CameraClearFlags,
-    /// 主方向光是否投阴影 = `Light.shadows != None`。
+    /// Whether main directional light casts shadow = `Light.shadows != None`.
     ///
-    /// 为 `false` 时整帧跳过阴影贴图渲染（`ShadowMode::None`），
-    /// 着色器也会因为 `shadow_strength = 0` 得到全亮结果。
+    /// When `false` skip shadow map render for whole frame (`ShadowMode::None`),
+    /// shader also gets fully lit result due to `shadow_strength = 0`.
     pub shadows_enabled: bool,
     /// Shadow strength copied from `Light.shadow_strength`, clamped to `0..=1`.
     pub shadow_strength: f32,
@@ -124,7 +124,7 @@ pub struct SceneChanges {
 // Extract frame packet (sim phase)
 // ---------------------------------------------------------------------------
 
-/// Run the extract phase: scene changes + draw-item 列表
+/// Run the extract phase: scene changes + draw-item list
 /// producing a [`FramePacket`] for later consumption by [`render_system`].
 ///
 /// **This is the API the sim (game‑logic) thread calls.**  [`render_system`]
@@ -146,7 +146,7 @@ pub fn extract_frame_packet(
     )
 }
 
-/// [`extract_frame_packet`]，阴影覆盖距离由调用方给定（`RenderSettings::shadow_distance`）。
+/// [`extract_frame_packet`], shadow coverage distance given by caller (`RenderSettings::shadow_distance`).
 pub fn extract_frame_packet_with_shadow(
     world: &mut World,
     display_aspect: f32,
@@ -185,10 +185,10 @@ pub fn extract_frame_packet_into(
     );
 }
 
-/// [`extract_frame_packet_into`] 加阴影覆盖距离（米，见 `RenderSettings::shadow_distance`）。
+/// [`extract_frame_packet_into`] plus shadow coverage distance (meters, see `RenderSettings::shadow_distance`).
 ///
-/// 阴影正交盒子的大小与中心都跟着它走，所以宿主每帧把它传进来，而不是让引擎
-/// 猜一个常量（#526）。
+/// Both size and center of shadow orthographic box follow it, so host passes it each frame instead of letting engine
+/// guess a constant (#526).
 pub fn extract_frame_packet_into_with_shadow(
     world: &mut World,
     display_aspect: f32,
@@ -254,21 +254,21 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
 
     // 2. Build the flat draw list and ECS-authored render helpers.
     let scene_view = scene::SceneReadView::new(world);
-    // 视锥剔除（#491）：多相机合成（#461）下，只要**任意一台**启用相机能看到
-    // 实体就提交。每层相机共用同一份绘制列表，只按主相机剔除会漏掉只在第二台
-    // 相机里出现的物体。所有相机矩阵都退化时 `camera_frustums` 为空 =
-    // 不剔除（与旧行为一致）。
+    // Frustum cull (#491): under multi-camera composition (#461), submit if **any** enabled camera can see
+    // entity. All cameras at each layer share same draw list, culling only by main camera would miss objects
+    // appearing only in second camera. When all camera matrices degenerate `camera_frustums` empty =
+    // no cull (same as old behavior).
     let camera_frustums: Vec<prism_render::culling::Frustum> = packet
         .scene
         .cameras
         .iter()
         .filter_map(|camera| prism_render::culling::Frustum::from_view_proj(&camera.view_proj))
         .collect();
-    // 引擎的 `renderQueue` 顺序：不透明段按队列升序，透明段按距离从远到近。
-    // 排序必须在提交给渲染器之前完成（`ForwardPass` 只按列表顺序绘制）。
+    // Engine's `renderQueue` order: opaque group ascending queue, transparent group far to near.
+    // Sort must complete before submitting to renderer (`ForwardPass` draws only in list order).
     scene_view.draw_items_with_frustums_into(&camera_frustums, &mut packet.draw_items);
-    // 蒙皮实体：静态那条循环会跳过它们，这里追加绘制项并把各自的骨骼调色板
-    // 塞进同一份缓冲（#560 P0-3b）。
+    // Skinned entities: static loop skips them, here append draw items and put each bone palette
+    // into same buffer (#560 P0-3b).
     scene::systems::skinned_draw::append_skinned_draw_items_with_frustums(
         world,
         &camera_frustums,
@@ -276,8 +276,8 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         &mut packet.bone_matrices,
     );
     prism_render::sort_draw_items(&mut packet.draw_items, packet.scene.eye.to_array());
-    // 光源视锥剔除（#526）：阴影盒子外的投射者不必进 shadow pass。必须放在
-    // 主相机剔除之后——相机外的对象既不画主通道，也不再浪费阴影贴图。
+    // Light frustum cull (#526): casters outside shadow box need not enter shadow pass. Must be placed
+    // after main camera cull — objects outside camera neither drawn in main pass nor waste shadow map.
     let light_view_projs = if packet.scene.shadow_cascade_count > 1 {
         [
             packet.scene.light_view_proj.to_cols_array_2d(),
@@ -294,23 +294,23 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         &light_view_projs[..packet.scene.shadow_cascade_count.clamp(1, 2) as usize],
     );
     scene_view.gizmo_instances_into(&mut packet.gizmos);
-    // 只有 `clearFlags == Skybox` 时才绘制天空盒：其余清屏方式（纯色 /
-    // 只清深度 / 不清）即使场景里有启用的 `Skybox` 实体也不画。`ForwardPass`
-    // 对 `None` 直接跳过天空盒绘制，所以这里就是它的开关。
+    // Only `clearFlags == Skybox` draws skybox: other clear modes (solid color /
+    // depth only / no clear) don't draw even if scene has enabled `Skybox` entity. `ForwardPass`
+    // `None` directly skips skybox draw, so here is its switch.
     packet.skybox = if packet.scene.clear_flags.draws_skybox() {
         scene_view.skybox_settings()
     } else {
         None
     };
-    // 2D 也走相机视锥：瓦片地图逐格裁剪（#529）。多相机时没有单一份视锥可
-    // 代表所有层，保守地不裁剪 2D（2D 很少和 3D 多相机混用）。
+    // 2D also uses camera frustum: tilemap clipped per cell (#529). With multiple cameras no single frustum can
+    // represent all layers, conservatively don't clip 2D (2D rarely mixed with multi-camera 3D).
     let primary_frustum = if camera_frustums.len() == 1 {
         camera_frustums.first()
     } else {
         None
     };
-    // 折线像素比例（#978）：用主相机的投影把「1 像素」换算成世界单位。
-    // 没有渲染高度（离线提取 / 单测）时保持纯世界空间几何。
+    // Line pixel ratio (#978): convert "1 pixel" to world units using main camera projection.
+    // Without render height (offline extraction / unit tests) keep pure world-space geometry.
     let line_scale =
         crate::scene::systems::render::LineScreenScale::new(packet.scene.view_proj, render_height);
     scene_view.sprite_items_with_frustum_and_line_scale_into(
@@ -318,9 +318,9 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         line_scale,
         &mut packet.sprite_items,
     );
-    // 2D 光照（#611）：只有 `receive_lights` 的精灵会用到，没灯光时为空。
+    // 2D lighting (#611): only sprites with `receive_lights` use it, empty when no lights.
     scene_view.sprite_lights_into(&mut packet.sprite_lights);
-    // 3D 粒子：世界空间 billboard，按到眼睛的距离远到近排序（透明混合）。
+    // 3D particles: world-space billboards, sorted far to near by distance to eye (transparent blend).
     scene_view.particle_items_into(packet.scene.eye, &mut packet.particle_items);
 
     // 3. Build the UI overlay from the ECS world (includes UiQuad/TextCmd).
@@ -329,8 +329,8 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
     // 4. Extract three-tier sparse voxel chunks and cursor highlight with version caching.
     packet.voxel_scene = extract_voxel_scene(world);
 
-    // 渲染设置由应用层（`App`）在发送前覆盖；引擎默认值保证独立使用
-    // `extract_frame_packet` 时仍然可用。
+    // Render settings overridden by app layer (`App`) before sending; engine defaults ensure independent use
+    // of `extract_frame_packet` still works.
     packet.settings = RenderSettings::default();
 }
 
@@ -504,22 +504,22 @@ pub struct FramePacket {
     /// `ParticleSystem` emitters resolved into world-space billboards
     /// (already sorted back-to-front).
     pub particle_items: Vec<prism_render::ParticleDrawItem>,
-    /// 本帧的骨骼调色板（列主序 mat4），蒙皮绘制项的 `bone_offset` 指向这里
-    /// （#560 P0-3b）。
+    /// This frame's bone palettes (column-major mat4), skinned draw item's `bone_offset` points here
+    /// (#560 P0-3b).
     pub bone_matrices: Vec<[[f32; 4]; 4]>,
     pub ui_overlay: UiOverlayInput,
-    /// 应用层渲染设置（调试标志 / 色调映射 / PT 参数）。主线程每帧写入，
-    /// 渲染线程只读——保证 `App::render_settings` 的修改（快捷键、项目配置）
-    /// 能真正到达渲染线程。
+    /// App-layer render settings (debug flags / tonemap / PT params). Written each frame by main thread,
+    /// read-only by render thread — ensures `App::render_settings` changes (shortcut keys, project config)
+    /// actually reach render thread.
     pub settings: RenderSettings,
     /// Three-tier sparse voxel payload extracted for [`prism_render::VoxelDdaPass`].
     pub voxel_scene: Option<Arc<prism_render::VoxelSceneUpload>>,
-    /// 本帧已解析的后处理参数（#502 Phase 2 的体积混合）。
+    /// This frame's already parsed post-processing params (#502 Phase 2 volume blend).
     ///
-    /// `None` = 没有宿主解析，`render_system` 直接退回 `settings.post_grade()`；
-    /// 宿主在写完 `settings` 之后调用
+    /// `None` = no host parsing, `render_system` falls back to `settings.post_grade()`;
+    /// host calls after finishing writing `settings`
     /// [`post_process::resolve_post_grade`](crate::scene::systems::post_process::resolve_post_grade)
-    /// 并写入这里，就能让 `PostProcessVolume` 生效。
+    /// and fills this, enabling `PostProcessVolume`.
     pub grade: Option<prism_render::PostGrade>,
 }
 
@@ -529,7 +529,7 @@ pub struct FramePacket {
 
 /// Read the ECS [`World`] and the orientation parameters, then produce
 /// a [`SceneChanges`] snapshot for the current frame.
-/// 采集一帧的 scene 快照（不带复用的便捷包装，测试用）。
+/// Capture one frame's scene snapshot (convenience wrapper without reuse, for tests).
 #[cfg(test)]
 fn collect_scene_changes(
     world: &mut World,
@@ -548,7 +548,7 @@ fn collect_scene_changes(
     out
 }
 
-/// 采集进调用方持有的快照。
+/// Capture into caller-held snapshot.
 ///
 /// `out` is the previous frame's snapshot (the recycled frame packet), so the
 /// light buffers keep their allocation instead of being re-collected (#66).
@@ -569,10 +569,10 @@ fn collect_scene_changes_into(
     );
     let fallback_col = Vec4::new(1.0, 1.0, 1.0, 0.0);
 
-    // 1. 相机 — 主相机（`active_camera`：`depth` 最大的可渲染启用相机）负责
-    //    取景、清屏、阴影取景与 aspect 写回；其余启用相机作为叠加层参与合成（#461）。
+    // 1. cameras — main camera (`active_camera`: renderable enabled camera with max `depth`) responsible for
+    //    framing, clearing, shadow framing and aspect writeback; other enabled cameras compose as overlay layers (#461).
     let (view_proj, eye, view, projection, exposure, has_camera, camera_entity) = {
-        // 宽高比写到**将被渲染**的相机上（`active_camera` 与下面的取景选择一致）。
+        // Aspect written to **camera that will be rendered** (active_camera consistent with framing selection below).
         if let Some(cam_entity) = scene::systems::camera::active_camera(world) {
             if let Some(cam) = world.get_mut::<Camera>(cam_entity) {
                 cam.aspect = display_aspect;
@@ -612,12 +612,12 @@ fn collect_scene_changes_into(
     let proj32 = projection.col(3).z;
     let _ = projection;
 
-    // 1.2 多相机合成（#461）：所有启用相机按 `Camera.depth` 升序各出一层。
-    //     全屏叠加（无 viewport rect），每层的 `clearFlags` 决定清颜色 / 深度。
-    //     所有相机都用同一个显示宽高比：这一版还没有逐相机视口。
+    // 1.2 multi-camera composition (#461): all enabled cameras each emit a layer in ascending `Camera.depth`.
+    //     Full-screen overlay (no viewport rect), each layer's `clearFlags` decides color / depth clear.
+    //     All cameras use same display aspect: this version has no per-camera viewport.
     let camera_entities = scene::systems::camera::all_cameras(world);
     for entity in &camera_entities {
-        // 只有真正能出图的相机（有 `LocalToWorld`）才写回视口 aspect。
+        // Only cameras truly able to produce image (have `LocalToWorld`) write back viewport aspect.
         if world
             .get::<crate::scene::components::LocalToWorld>(*entity)
             .is_some()
@@ -630,13 +630,13 @@ fn collect_scene_changes_into(
     let scene_view = scene::SceneReadView::new(world);
     out.cameras = scene_view.cameras(surface_rotation, display_aspect);
 
-    // 1.5 正交标志 —— 与取景/清屏来自**同一台**相机。PT 主光线据此决定
-    //     是共享相机原点（透视）还是逐像素近平面起点（正交，issue #10）。
+    // 1.5 orthographic flag — from **same camera** as framing / clearing. PT main ray decides
+    //     whether shared camera origin (perspective) or per-pixel near-plane origin (orthographic, issue #10).
     let camera_orthographic = camera_entity
         .and_then(|entity| world.get::<Camera>(entity))
         .map(|cam| cam.orthographic)
         .unwrap_or(false);
-    // 2. 光源 —— 统一 `Light`（形状）与旧三组件归一成 `LightSample`。
+    // 2. lights — unify `Light` (shaped) and old three components into `LightSample`.
     let samples = scene_view.light_samples();
     let dir_light = samples
         .iter()
@@ -650,17 +650,17 @@ fn collect_scene_changes_into(
         .map(|l| Vec4::new(l.color.x, l.color.y, l.color.z, l.ambient))
         .unwrap_or(fallback_col);
 
-    // 2.5 阴影开关：方向光的 `Light.shadows` / `shadowStrength`。
-    //     没有方向光时阴影没有意义（fallback 方向只是一个常量），直接关掉。
+    // 2.5 shadow switch: directional light's `Light.shadows` / `shadowStrength`.
+    //     Without directional light shadow meaningless (fallback direction just constant), turn off directly.
     let (shadows_enabled, shadow_strength) =
         scene::systems::lights::directional_shadow_state(&samples);
 
-    // 3. 局部光源（点光 + 聚光）进前向 SSBO，超过 LIGHT_MAX 时按重要性挑。
-    //    `color.w` 是类型位（0 = 点光，1 = 聚光），聚光额外带朝向与内外锥余弦。
+    // 3. local lights (point + spot) into forward SSBO, pick by importance when over LIGHT_MAX.
+    //    `color.w` is type bit (0 = point, 1 = spot), spot carries direction and inner / outer cone cosines.
     //
-    //    以前是 `.take(LIGHT_MAX)`：谁被保留取决于 ECS 迭代顺序（≈ 文档顺序），
-    //    第九盏灯被静默丢掉，删掉前面某盏它又会突然出现（#468）。现在按
-    //    「强度 × 范围² / 相机距离²」排序，近处/亮/范围大的优先。
+    //    Previously `.take(LIGHT_MAX)`: who's kept depended on ECS iteration order (≈ document order),
+    //    ninth light silently dropped, deleting previous one made it reappear (#468). Now sorted by
+    //    "intensity × range² / camera distance²", near / bright / long-range first.
     let mut locals: Vec<(usize, f32)> = samples
         .iter()
         .enumerate()
@@ -673,14 +673,14 @@ fn collect_scene_changes_into(
         })
         .collect();
     out.local_lights_total = locals.len();
-    // 重要性降序；同分时按文档顺序，保证多帧之间稳定。
+    // Importance descending; ties by document order, stable across frames.
     locals.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
     locals.truncate(prism_render::LIGHT_MAX as usize);
-    // 回到文档顺序写 SSBO：内容一致，只是便于调试时逐盏对照层级面板。
+    // Back to document order when writing SSBO: same content, only easier to match per-light with editor panel when debugging.
     locals.sort_unstable_by_key(|(index, _)| *index);
     out.local_lights_kept = locals.len();
     out.dropped_light_ids.clear();
@@ -738,7 +738,7 @@ fn collect_scene_changes_into(
     }
     warn_dropped_lights(out.local_lights_total, dropped);
 
-    // 4. 路径追踪的解析光：只喂点光（PT 着色器还没有聚光锥角分支）。
+    // 4. path tracing parsed lights: only feed point lights (PT shader has no spot cone branch yet).
     out.pt_lights.clear();
     for sample in samples
         .iter()
@@ -755,13 +755,13 @@ fn collect_scene_changes_into(
         ));
     }
 
-    // 5. Light-space view-projection（阴影贴图）。
+    // 5. Light-space view-projection (shadow map).
     //
-    // 覆盖范围贴合**主摄像机视锥**：把视锥角点投到光空间取 AABB，而不是在相机前方
-    // 摆一个固定大小的盒子。相机看不到的远景不会撑大阴影图，近平面只留一个盒高的
-    // 余量给「能把影子投进视野」的上游遮挡物，远平面止于视野内最远的接收者。
-    // 近平面深度：透视投影的 `p32 / p22` 就是 near；正交投影该比值是 (near+far)/2，
-    // 没有意义，用一个极小值即可（正交视锥的角点由远平面唯一决定）。
+    // Coverage tightly fits **main camera frustum**: project frustum corners into light space for AABB, rather than
+    // placing fixed-size box in front of camera. Distant scenery camera can't see won't inflate shadow map, near plane keeps one box-height
+    // margin for upstream occluders "able to cast shadow into view", far plane stops at farthest receiver in view.
+    // Near plane depth: perspective projection's `p32 / p22` is near; orthographic projection that ratio is (near+far)/2,
+    // meaningless, use a tiny value (orthographic frustum corners uniquely determined by far plane).
     let camera_near_plane = if camera_orthographic {
         0.001
     } else {
@@ -785,11 +785,11 @@ fn collect_scene_changes_into(
         shadow_cascade_count,
     );
 
-    // 6. 清屏色 —— 与取景来自**同一台**相机（`Camera.backgroundColor`）。
+    // 6. clear color — from **same camera** as framing (`Camera.backgroundColor`).
     let clear_color = camera_entity
         .map(|entity| scene::systems::camera::clear_color(world, entity))
         .unwrap_or(scene::systems::camera::DEFAULT_CLEAR_COLOR);
-    // 清屏方式也来自同一台相机（`Camera.clearFlags`）。
+    // Clear mode also from same camera (`Camera.clearFlags`).
     let clear_flags = camera_entity
         .map(|entity| scene::systems::camera::clear_flags(world, entity))
         .unwrap_or_default();
@@ -820,15 +820,15 @@ fn collect_scene_changes_into(
 // Render system
 // ---------------------------------------------------------------------------
 
-// 清屏色不再由渲染系统写死：它随 `SceneChanges::clear_color` 从活动相机
-// （`Camera::background_color`）过来；无相机时用
-// `scene::systems::camera::DEFAULT_CLEAR_COLOR`（中性灰）。
+// Clear color no longer hardcoded in render system: comes from `SceneChanges::clear_color` via active camera
+// (`Camera::background_color`); when no camera use
+// `scene::systems::camera::DEFAULT_CLEAR_COLOR` (neutral gray).
 
 /// Consume a pre-extracted [`FramePacket`] and drive the GPU.
 ///
 /// **Each call is stateless with respect to the ECS world.**  The simulation
 /// thread owns [`World`](prism_ecs::World) and produces the packet; this
-/// 函数仅读取数据包和渲染器
+/// Function only reads packet and renderer
 ///
 /// Returns `Err` only when [`GraphRenderer::render`] fails.
 pub fn render_system(
@@ -836,7 +836,7 @@ pub fn render_system(
     packet: &FramePacket,
     dirty_router: &mut DirtyRouter,
 ) -> anyhow::Result<()> {
-    // 渲染设置随 packet 一起从主线程过来（见 `FramePacket::settings`）。
+    // Render settings come with packet from main thread (see `FramePacket::settings`).
     let settings = &packet.settings;
     let FramePacket {
         ref scene,
@@ -879,13 +879,13 @@ pub fn render_system(
         exposure,
         has_camera,
         camera_orthographic,
-        // 清屏色直接从 `scene` 读（`scene.clear_color`），这里不解构。
+        // Clear color read directly from `scene` (`scene.clear_color`), not destructured here.
         clear_color: _,
-        // 清屏方式只影响 extract 阶段的天空盒开关，渲染系统不再需要。
+        // Clear mode only affects skybox switch in extract phase, render system no longer needs.
         clear_flags: _,
         shadows_enabled,
         shadow_strength,
-        // 光源预算只在编辑器统计里用（`#468`），渲染侧不需要。
+        // Light budget only used in editor stats (`#468`), render side doesn't need.
         ..
     } = scene;
     let light_count = lights.len() as f32;
@@ -933,7 +933,7 @@ pub fn render_system(
         Some(c) => c,
         None => return Ok(()),
     };
-    // #1007：遮挡剔除只在本帧需要时克隆绘制列表；关闭时零开销，列表原样传下去。
+    // #1007: occlusion cull clones draw list only when needed this frame; when disabled zero overhead, list passed as-is.
     let mut occlusion_items = Vec::new();
     let main_pass_items: &[prism_render::render_graph::DrawItem] = if settings.occlusion_culling {
         occlusion_items.extend_from_slice(draw_items);
@@ -942,8 +942,8 @@ pub fn render_system(
     } else {
         draw_items
     };
-    // #502：PostProcessVolume 可以覆盖调色参数，但 LUT 是全局资源；强度
-    // 始终跟随全局设置，路径解析到 assets/ 下（失败时渲染器保留上一张）。
+    // #502: PostProcessVolume can override grading params, but LUT is global resource; strength
+    // always follows global setting, path resolved to assets/ at parse time (renderer keeps previous on failure).
     let mut resolved_grade = grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
     let lut_path = if settings.lut.trim().is_empty() {
@@ -995,7 +995,7 @@ pub fn render_system(
         show_grid: settings.show_grid,
         dispatch_plan: Some(&dispatch_plan),
     };
-    // §8 五阶段：prepare 阶段批量同步（当前实现 dirty 日志 + 未来上传点）
+    // §8 five phases: prepare phase batch sync (currently dirty-log + future upload points)
     renderer.set_voxel_scene(voxel_scene.clone());
     renderer.prepare(&ctx, &input).inspect_err(|_e| {
         let _ = renderer.present(&ctx);

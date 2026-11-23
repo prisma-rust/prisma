@@ -95,8 +95,8 @@ fn probe_volume_data_validity() {
 #[test]
 fn v1_file_rejected() {
     // v1 files (48-byte header, no scene_name / hit_ratio) are no longer
-    // supported. 构建 one by hand from a v2 缓冲区 rewrite the version
-    // to 1 and 放置 the v2 tail of the header, keeping the body intact.
+    // supported. Build one by hand from a v2 buffer, rewrite the version
+    // to 1 and place the v2 tail of the header, keeping the body intact.
     let data = make_test_data();
     let v2 = save_probe_volume_to_bytes(&data).unwrap();
     const HEADER_SIZE_V1: usize = 48;
@@ -116,7 +116,7 @@ fn v1_file_rejected() {
 #[test]
 fn scene_name_truncation_roundtrips() {
     let mut data = make_test_data();
-    // A name longer than the 63-byte 限制 is truncated but still loads.
+    // A name longer than the 63-byte limit is truncated but still loads.
     data.scene_name = "x".repeat(200);
     let bytes = save_probe_volume_to_bytes(&data).unwrap();
     let loaded = load_probe_volume_from_bytes(&bytes).unwrap();

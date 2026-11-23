@@ -1,16 +1,16 @@
-//! 每资产导入设置（#514）：`<asset>.import.json` 旁挂文件。
+//! Per-asset import settings (#514): `<asset>.import.json` sidecar file.
 //!
-//! 格式很小，只覆盖 cooker 真正会消费的字段：
+//! Format is small, covers only fields the cooker actually consumes:
 //!
 //! ```json
 //! { "maxSize": 1024, "generateMips": false }
 //! ```
 //!
-//! - 字段缺失 = 跟随 profile（不是「关掉」）；写 `null` 与缺失等价；
-//! - 文件名是 `assets/sprites/boat.png.import.json`，与 Unity 的 `.meta` 同样的
-//!   「身份跟着源文件走」思路，但不引入 GUID；
-//! - 编辑器（`prism-editor-egui`）用同一份 JSON 键读写，所以这里也是格式的单一事实源
-//!   （编辑器工作区不链接 cooker，只能按文档同步这两个键）。
+//! - Missing field = follow profile (not "off"); writing `null` equals missing;
+//! - File name is `assets/sprites/boat.png.import.json`, same as Unity's `.meta` in
+//!   "identity follows source file" concept, but doesn't introduce GUID;
+//! - Editor (`prism-editor-egui`) uses same JSON keys for read/write, so this is also the single source of truth for the format
+//!   (editor workspace doesn't link cooker, must sync these two keys via docs).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,25 +19,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::cooker::profile::CookSettings;
 
-/// 纹理导入设置覆盖（缺省 = 跟随 profile）。
+/// Texture import settings override (default = follow profile).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ImportSettings {
-    /// 最长边上限（像素）；`None` / `0` = 不限。
+    /// Maximum edge length (pixels); `None` / `0` = unlimited.
     pub max_size: Option<u32>,
-    /// 是否生成 mip 链；`None` = 跟随 profile。
+    /// Whether to generate mip chain; `None` = follow profile.
     pub generate_mips: Option<bool>,
 }
 
 impl ImportSettings {
-    /// 源文件旁边的旁挂路径：`boat.png` → `boat.png.import.json`。
+    /// Sidecar path next to source file: `boat.png` → `boat.png.import.json`.
     pub fn sidecar_path(source: &Path) -> PathBuf {
         let mut path = source.as_os_str().to_owned();
         path.push(".import.json");
         PathBuf::from(path)
     }
 
-    /// 读旁挂文件；不存在 / 解析失败时返回默认值并 `warn!`（坏文件不能让构建失败）。
+    /// Read sidecar file; if missing / parse fails, return default value and warn (bad file doesn't break build).
     pub fn load(source: &Path) -> Self {
         let path = Self::sidecar_path(source);
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -52,14 +52,14 @@ impl ImportSettings {
         }
     }
 
-    /// 写旁挂文件（编辑器用）。父目录必须已存在。
+    /// Write sidecar file (editor use). Parent directory must exist.
     pub fn save(&self, source: &Path) -> io::Result<()> {
         let path = Self::sidecar_path(source);
         let text = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         std::fs::write(path, text)
     }
 
-    /// 覆盖到 cooker 设置上；`None` 的字段保持 profile 值。
+    /// Override onto cooker settings; `None` fields keep profile values.
     pub fn apply(&self, settings: &mut CookSettings) {
         if let Some(max_size) = self.max_size {
             settings.texture.max_size = max_size;
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(profile.texture.max_size, 512);
         assert!(!profile.texture.generate_mips);
 
-        // 缺省字段不覆盖 profile。
+        // Default fields don't override profile.
         ImportSettings::default().apply(&mut profile);
         assert_eq!(profile.texture.max_size, 512);
 

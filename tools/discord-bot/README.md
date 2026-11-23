@@ -1,62 +1,62 @@
 # Prisma Discord bot
 
-把 Discord 的 `/bug` 报告转成 GitHub issue。它是 [`docs/integrations.md`](../../docs/integrations.md)
-§5 的参考实现：只用 **slash command**，不需要 Message Content intent。
+Converts Discord `/bug` reports into GitHub issues. Reference implementation of [`docs/integrations.md`](../../docs/integrations.md)
+§5: uses only **slash command**, no Message Content intent needed.
 
 ```text
-/bug summary: 启动时崩溃
+/bug summary: Crash on startup
      steps:   Windows 11 / RTX 4070
-              cargo run 后黑屏，RUST_LOG=info 日志如下...
+                            Black screen after cargo run, RUST_LOG=info log below...
 ```
 
-→ 创建 issue：
+→ creates issue:
 
 ```text
-标题: [Discord] 启动时崩溃
-标签: source/discord, needs/triage
-正文: > 🤖 由 prisma-agent 从 Discord 转入...
-      > 报告者 / 频道
+Title: [Discord] Crash on startup
+Labels: source/discord, needs/triage
+Body: > 🤖 Transferred from Discord by prisma-agent...
+            > Reporter / channel
 
-      **摘要**
-      > 启动时崩溃
+            **Summary**
+            > Crash on startup
 
-      **详情 / 复现步骤**
+            **Details / Reproduction steps**
       > Windows 11 / RTX 4070
-      > cargo run 后黑屏...
+            > Black screen after cargo run...
 ```
 
-## 前置
+## Prerequisites
 
-1. **Discord Application**：<https://discord.com/developers/applications>
-   - **Bot** → Reset Token → 复制到 `.env` 的 `DISCORD_TOKEN`
-   - **OAuth2 → URL Generator**：Scopes `bot` + `applications.commands`；
-     Bot Permissions `Send Messages`、`Read Message History`
-   - 用生成的 URL 邀请进服务器
-2. **GitHub App**：用 [`tools/github-app/create_app.py`](../github-app/create_app.py) 创建，
-   安装范围**只选 `Excurs1ons/Prisma`**。
-3. Node.js 20+。
+1. **Discord Application**: <https://discord.com/developers/applications>
+      - **Bot** → Reset Token → copy to `.env` `DISCORD_TOKEN`
+      - **OAuth2 → URL Generator**: Scopes `bot` + `applications.commands`;
+          Bot Permissions `Send Messages`, `Read Message History`
+      - Invite to server with generated URL
+2. **GitHub App**: create with [`tools/github-app/create_app.py`](../github-app/create_app.py),
+      install scope **only `Excurs1ons/Prisma`**.
+3. Node.js 20+.
 
-## 运行
+## run
 
 ```bash
 cd tools/discord-bot
 npm install
 cp .env.example .env
-# 编辑 .env：DISCORD_TOKEN + GitHub App 凭据
+# Edit .env: DISCORD_TOKEN + GitHub App credentials
 npm start
 ```
 
-首次启动会：
+First launch will:
 
-- 用 App 私钥换 installation token；
-- 检查安装是否能访问 `GITHUB_OWNER/GITHUB_REPO`；
-- 如果安装范围包含多个仓库，打印警告（去 installation 设置收紧）；
-- 注册 `/bug`。设置 `DISCORD_GUILD_ID` 时只注册到该服务器，立即生效；否则全局注册，
-  最长约 1 小时。
+- Exchange App private key for installation token;
+- Check installation can access `GITHUB_OWNER/GITHUB_REPO`;
+- Warn if installation scope includes multiple repos (tighten in installation settings);
+- Register `/bug`. With `DISCORD_GUILD_ID` set registers only to that server, immediate; otherwise global,
+    up to ~1 hour.
 
-## 部署
+## Deployment
 
-常驻进程即可，推荐 systemd 或 pm2：
+Resident process, systemd or pm2 recommended:
 
 ```ini
 # /etc/systemd/system/prisma-discord-bot.service
@@ -75,23 +75,23 @@ User=prisma
 WantedBy=multi-user.target
 ```
 
-Windows 可以用 `pm2 start index.js --name prisma-bot`，或把这个目录放进一个
-只运行 bot 的小容器。私钥通过挂载/环境变量提供，不要打进镜像。
+On Windows use `pm2 start index.js --name prisma-bot`, or put this dir in a
+small bot-only container. Provide private key via mount / env var, do not bake into image.
 
-## 安全
+## Security
 
-- `.env` 和 `github-app.pem` **绝不进 git**；根目录 `.gitignore` 已忽略 `*.pem`、`.env`。
-- GitHub App 的安装范围只给 `Excurs1ons/Prisma`，权限只有 Issues + Metadata。
-- Discord token 泄露过一次就必须 Reset；旧 token 立即失效。
-- 报告文本按**不可信数据**处理：只引用、不执行其中的命令/脚本，不回帖密钥。
-- bot 没有 Message Content intent，只能读 slash command 参数。
+- `.env` and `github-app.pem` **never in git**; root `.gitignore` already ignores `*.pem`, `.env`.
+- GitHub App install scope only `Excurs1ons/Prisma`, permissions Issues + Metadata only.
+- Discord token leaked once must Reset; old token immediately invalid.
+- Report text treated as **untrusted data**: only quote, never execute commands / scripts in it, never post secrets.
+- Bot has no Message Content intent, can only read slash command args.
 
-## 排查
+## Troubleshooting
 
-| 现象 | 检查 |
+| Symptom | Check |
 |---|---|
-| `Missing Access` / 命令不出现 | 邀请 URL 是否包含 `applications.commands`；`DISCORD_GUILD_ID` 是否正确 |
-| `Resource not accessible by integration` | App 是否安装到 Prisma；Issues 权限是否为 write |
-| `Bad credentials` | Discord token 是否已 Reset；`.env` 是否被正确加载 |
-| 启动即退出 `cannot access ...` | installation 没装到目标仓库，或 `GITHUB_OWNER/REPO` 写错 |
-| 创建 issue 失败 | 标签 `source/discord` / `needs/triage` 是否存在（`sh tools/ci/ensure_labels.sh`） |
+| `Missing Access` / command not appearing | Invite URL includes `applications.commands`; `DISCORD_GUILD_ID` correct |
+| `Resource not accessible by integration` | App installed to Prisma; Issues permission write |
+| `Bad credentials` | Discord token Reset; `.env` loaded correctly |
+| Exits at startup `cannot access ...` | installation not installed to target repo, or `GITHUB_OWNER/REPO` wrong |
+| Issue creation fails | Labels `source/discord` / `needs/triage` exist (`sh tools/ci/ensure_labels.sh`) |

@@ -20,7 +20,7 @@ use ash::vk;
 use crate::context::VulkanContext;
 use crate::render_pass::find_memory_type;
 
-/// 一张 1×1、已经处于「可采样」布局的常量图。
+/// A 1×1 constant image already in "sampleable" layout.
 pub(crate) struct SolidImage {
     image: vk::Image,
     memory: vk::DeviceMemory,
@@ -52,15 +52,15 @@ impl SolidImage {
 
 impl Drop for SolidImage {
     fn drop(&mut self) {
-        // 设备句柄由 `GraphRenderer::destroy` 显式传入；这里没有句柄可用，
-        // 只能依赖显式销毁（与 `IblResources` / `GtaoPass` 的约定一致）。
+        // Device handle explicitly passed by `GraphRenderer::destroy`; this has no handle available,
+        // can only rely on explicit destruction (consistent with `IblResources` / `GtaoPass` convention).
         debug_assert_eq!(self.image, vk::Image::null());
     }
 }
 
-/// 1×1 `D32_SFLOAT`，清成远平面 1.0，布局 `DEPTH_STENCIL_READ_ONLY_OPTIMAL`。
+/// 1×1 `D32_SFLOAT`, cleared to far plane 1.0, layout `DEPTH_STENCIL_READ_ONLY_OPTIMAL`.
 ///
-/// 用于 `shadows` feature 关闭时填充 forward pass 的 set 3。
+/// Used to fill forward pass set 3 when `shadows` feature disabled.
 #[cfg(not(feature = "shadows"))]
 pub(crate) fn shadow_map_dummy(
     context: &VulkanContext,
@@ -77,8 +77,8 @@ pub(crate) fn shadow_map_dummy(
     )?;
 
     one_shot(context, command_pool, queue, |device, cmd| unsafe {
-        // `vkCmdClearDepthStencilImage` 只接受 TRANSFER_DST_OPTIMAL / GENERAL 布局，
-        // 所以先过渡到 TRANSFER_DST，清成 1.0 后再过渡到只读采样布局。
+        // `vkCmdClearDepthStencilImage` only accepts TRANSFER_DST_OPTIMAL / GENERAL layout,
+        // so first transition to TRANSFER_DST, clear to 1.0 then transition to read-only sample layout.
         device.cmd_pipeline_barrier(
             cmd,
             vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -94,7 +94,7 @@ pub(crate) fn shadow_map_dummy(
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .subresource_range(depth_subresource())],
         );
-        // 深度 1.0 = 远平面：fragment 深度 `LESS` 1.0 永远成立 → 全部受光。
+        // Depth 1.0 = far plane: fragment depth `LESS` 1.0 always true → fully lit.
         device.cmd_clear_depth_stencil_image(
             cmd,
             image.image,
@@ -125,9 +125,9 @@ pub(crate) fn shadow_map_dummy(
     Ok(image)
 }
 
-/// 1×1 `R8_UNORM`，清成 1.0（无遮蔽），布局 `SHADER_READ_ONLY_OPTIMAL`。
+/// 1×1 `R8_UNORM`, cleared to 1.0 (no occlusion), layout `SHADER_READ_ONLY_OPTIMAL`.
 ///
-/// 用于 `gtao` feature 关闭时填充 forward pass 的 set 4。
+/// Used to fill forward pass set 4 when `gtao` feature disabled.
 #[cfg(not(feature = "gtao"))]
 pub(crate) fn ao_texture_dummy(
     context: &VulkanContext,
@@ -157,7 +157,7 @@ pub(crate) fn ao_texture_dummy(
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .subresource_range(color_subresource())],
         );
-        // 可见性 1.0 = 完全无遮蔽（shader 用 `1 - ao` 衰减环境光）。
+        // Visibility 1.0 = completely unoccluded (shader uses `1 - ao` to attenuate ambient light).
         device.cmd_clear_color_image(
             cmd,
             image.image,
@@ -282,7 +282,7 @@ fn color_subresource() -> vk::ImageSubresourceRange {
     }
 }
 
-/// 创建 1×1 OPTIMAL 图像 + 设备内存 + 全 aspect 视图。
+/// Create 1×1 OPTIMAL image + device memory + full aspect view.
 fn alloc_image(
     context: &VulkanContext,
     format: vk::Format,
@@ -366,7 +366,7 @@ fn alloc_image(
     })
 }
 
-/// 在 `command_pool` 上录一条一次性命令并同步等到执行完（初始化期，不在帧循环里）。
+/// Record a one-shot command on `command_pool` and synchronously wait for completion (init phase, not in frame loop).
 fn one_shot(
     context: &VulkanContext,
     command_pool: vk::CommandPool,

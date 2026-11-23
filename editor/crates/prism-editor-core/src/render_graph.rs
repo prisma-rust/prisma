@@ -1,6 +1,6 @@
-//! `prism-render-graph.json` 的只读 DTO（与 `prism-app/src/render_graph_report.rs` 同形）。
+//! Read-only DTO of `prism-render-graph.json` (same shape as `prism-app/src/render_graph_report.rs`).
 //!
-//! 编辑器只解析展示，不依赖 render / app crate。
+//! Editor only parses/displays, does not depend on render / app crate.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -18,21 +18,21 @@ pub struct RenderGraphReport {
     pub passes: Vec<ReportPass>,
     #[serde(default)]
     pub resources: Vec<ReportResource>,
-    /// 上一帧总 GPU 时间（ms）；设备不支持时间戳时缺失。
+    /// Total GPU time of previous frame (ms); missing when device does not support timestamps.
     #[serde(default)]
     pub gpu_total_ms: Option<f32>,
-    /// 纹理 / 网格 / 材质的驻留统计（#518 Phase 2）；旧报告没有该字段。
+    /// Residency stats of texture / mesh / material (#518 Phase 2); old report lacks this field.
     #[serde(default)]
     pub stats: Option<ReportStats>,
-    /// 本帧的 draw call 列表（#518 Phase 2）；旧报告没有该字段。
+    /// Draw call list of this frame (#518 Phase 2); old report lacks this field.
     #[serde(default)]
     pub draw_calls: Vec<ReportDrawCall>,
-    /// 最近若干帧的 GPU 总时间（ms，旧 → 新，#518 Phase 2 历史曲线）。
+    /// GPU total time of recent frames (ms, old -> new, #518 Phase 2 history curve).
     #[serde(default)]
     pub gpu_history_ms: Vec<f32>,
 }
 
-/// 一条 draw call（#518 Phase 2 的数据层）。
+/// One draw call (#518 Phase 2 data layer).
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportDrawCall {
@@ -46,28 +46,28 @@ pub struct ReportDrawCall {
     pub triangles: u64,
     #[serde(default)]
     pub visible: bool,
-    /// 管线状态摘要（队列 / 剔除 / 深度写 / 混合）；旧报告没有该字段。
+    /// Pipeline state summary (queue / cull / depth write / blend); old report lacks this field.
     #[serde(default)]
     pub state: Option<String>,
-    /// 管线类别（#518 Phase 2）；旧报告没有该字段。
+    /// Pipeline category (#518 Phase 2); old report lacks this field.
     #[serde(default)]
     pub pipeline: Option<String>,
-    /// 绑定的 descriptor set 名称（按 set 序号）；旧报告是空列表。
+    /// Bound descriptor set name (by set index); old report is empty list.
     #[serde(default)]
     pub descriptor_sets: Vec<String>,
-    /// 顶点数；旧报告没有该字段。
+    /// Vertex count; old report lacks this field.
     #[serde(default)]
     pub vertices: Option<u64>,
 }
 
 impl ReportDrawCall {
-    /// 面板一行：`pass · label`。
+    /// One panel row: `pass · label`.
     pub fn summary(&self) -> String {
         format!("{} · {}", self.pass, self.label)
     }
 }
 
-/// 管理器侧的实时资源统计（#518 Phase 2）。
+/// Manager-side realtime resource stats (#518 Phase 2).
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportStats {
@@ -90,7 +90,7 @@ impl ReportStats {
         self.texture_bytes + self.mesh_bytes + self.material_bytes
     }
 
-    /// 面板显示用的三行（名字, 数量, 字节）；纯函数，方便单测。
+    /// Three rows for panel display (name, count, bytes); pure function, easy unit test.
     pub fn rows(&self) -> [(&'static str, usize, u64); 3] {
         [
             ("Textures", self.textures, self.texture_bytes),
@@ -112,7 +112,7 @@ pub struct ReportPass {
     pub inputs: Vec<u32>,
     #[serde(default)]
     pub outputs: Vec<u32>,
-    /// 该 pass 上一帧的 GPU 时间（ms，#518）。
+    /// GPU time of previous frame for this pass (ms, #518).
     #[serde(default, rename = "gpuMs")]
     pub gpu_ms: Option<f32>,
 }
@@ -147,17 +147,17 @@ impl RenderGraphReport {
             .unwrap_or_else(|| format!("resource#{handle}"))
     }
 
-    /// 解析报告文本（面板手里的 JSON 字符串）。
+    /// Parse report text (JSON string in panel hands).
     pub fn parse(text: &str) -> Option<Self> {
         serde_json::from_str(text).ok()
     }
 
-    /// 有 GPU 计时数据时的总时间。
+    /// Total time when GPU timing data available.
     pub fn gpu_total_ms(&self) -> Option<f32> {
         self.gpu_total_ms
     }
 
-    /// 按 GPU 时间从高到低排的 pass（没有计时数据的排最后）。
+    /// Passes sorted by GPU time high to low (passes without timing data last).
     pub fn passes_by_cost(&self) -> Vec<&ReportPass> {
         let mut passes: Vec<&ReportPass> = self.passes.iter().collect();
         passes.sort_by(|a, b| {
@@ -168,14 +168,14 @@ impl RenderGraphReport {
         passes
     }
 
-    /// 解析报告文件；损坏 / 缺字段时返回 `None`。
+    /// Parse report file; returns `None` when corrupt / missing fields.
     pub fn load(path: &Path) -> Option<Self> {
         let text = std::fs::read_to_string(path).ok()?;
         serde_json::from_str(&text).ok()
     }
 }
 
-/// 报告路径：环境变量优先，其次 `<project>/target/prism-render-graph.json`。
+/// Report path: env var first, then `<project>/target/prism-render-graph.json`.
 pub fn report_path(root: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(ENV_KEY) {
         return Some(PathBuf::from(path));
@@ -216,7 +216,7 @@ mod tests {
         );
         assert_eq!(parsed.draw_calls[1].instances, 4);
         assert!(!parsed.draw_calls[1].visible);
-        // 旧报告 / 缺字段时状态是 None，面板显示占位而不是空字符串。
+        // On old report / missing field status is None, panel shows placeholder not empty string.
         assert!(parsed.draw_calls[0]
             .state
             .as_deref()
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn resource_stats_are_optional_and_have_rows() {
-        // 旧报告没有 stats：整段隐藏，不拿 0 值冒充。
+        // Old report has no stats: whole section hidden, do not fake with 0 values.
         let legacy: RenderGraphReport =
             serde_json::from_str(r#"{"generatedAtMs":1,"frame":1,"passes":[],"resources":[]}"#)
                 .unwrap();

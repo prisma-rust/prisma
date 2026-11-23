@@ -1,19 +1,19 @@
-//! 实时路径追踪计算通道——每帧 1 个样本，带时间累积。
+//! Real-time path tracing compute pass — 1 sample per frame, with temporal accumulation.
 //!
-//! [`PathTracePass`] 分派一个计算着色器，每像素每帧通过 `VK_KHR_ray_query`
-//! 追踪一条光线，跨帧累积辐射度，并将解析后的（累积量/计数）结果写入
-//! `PT_COLOR_H` 图资源，`PostPass` 读取该资源进行色调映射。
+//! [`PathTracePass`] dispatches a compute shader, each pixel each frame traces one ray via `VK_KHR_ray_query`,
+//! accumulates radiance across frames, and writes decoded (accumulated / count) result
+//! to `PT_COLOR_H` image resource, which `PostPass` reads for tone mapping.
 //!
-//! ## 热切换
+//! ## Hot switching
 //!
-//! 所有 PT 资源（管线累积缓冲区、展平几何体 BLAS/TLAS）针对每个场景
-//! 创建一次并保持存活。当 `RenderMode::PathTrace` 激活时，通道分派；
-//! 当光栅化激活时，通道为空操作。
+//! All PT resources (pipeline accumulation buffer, flattened geometry BLAS/TLAS) created once per scene
+//! and kept alive. When `RenderMode::PathTrace` active, pass dispatches;
+//! when rasterization active, pass is no-op.
 //!
-//! ## 相机运动重置
+//! ## Camera motion reset
 //!
-//! 通道跟踪上一帧的相机位置和视图投影矩阵。
-//! 当任一变化超过小阈值时，累积缓冲区被清除（着色器中的重置标志被设置）。
+//! Pass tracks previous-frame camera position and view projection matrix.
+//! When either changes beyond small threshold, accumulation buffer is cleared (reset flag set in shader).
 
 use std::cell::{RefCell, RefMut};
 use std::ptr;
@@ -1619,7 +1619,7 @@ impl PtInner {
 
         let device = ctx.device;
         let cmd = ctx.cmd;
-        // #613：内部渲染分辨率开启时 PT 也在内部尺寸上累积。
+        // #613: when internal render resolution enabled, PT also accumulates at internal size.
         let w = ctx.render_extent.width.max(1);
         let h = ctx.render_extent.height.max(1);
 

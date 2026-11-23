@@ -12,7 +12,7 @@ fn build_vertices_pads_missing_attributes() {
     };
     let v = build_vertices(&input);
     assert_eq!(v.len(), 2);
-    // 缺少 normal/uv/tangent fill with safe defaults.
+    // Missing normal/uv/tangent fill with safe defaults.
     assert_eq!(v[0].normal, [0.0, 1.0, 0.0]);
     assert_eq!(v[1].normal, [0.0, 1.0, 0.0]);
     assert_eq!(v[0].uv, [0.5, 0.5]);

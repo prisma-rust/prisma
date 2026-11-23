@@ -189,9 +189,9 @@ def check(expect: str | None, markdown: bool, quiet: bool) -> int:
 
     if markdown:
         if problems:
-            print(f"| 版本一致性 | ❌ | {'；'.join(problems)} |")
+            print(f"| Version consistency | ❌ | {'; '.join(problems)} |")
         else:
-            print(f"| 版本一致性 | ✅ | {version} · {len(TARGETS)} 个同步点 |")
+            print(f"| Version consistency | ✅ | {version} · {len(TARGETS)} sync points |")
         if problems and not quiet:
             for problem in problems:
                 print(f"version: {problem}", file=sys.stderr)

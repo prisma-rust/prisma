@@ -1,52 +1,52 @@
-# Prisma Android 启动壳
+# Prisma Android launcher shell
 
-APK 里的「开始游戏」页 + 打包配置。这个 Tauri 工程只做一件事：拉起游戏。
+The "Start Game" page in APK + packaging config. This Tauri project does one thing: launch the game.
 
-- **Android**：`launch_game` 通过 Kotlin plugin 启动 `com.prisma.MainActivity`
-  （`GameActivity`，`android.app.lib_name = template_core` → `libtemplate_core.so`）。
-- **桌面**：`launch_game` 拉起本地游戏二进制，方便不打包也能验证启动页与
-  `PRISMA_LAUNCH_CONFIG` 参数传递。
+- **Android**: `launch_game` starts `com.prisma.MainActivity` via Kotlin plugin
+    (`GameActivity`, `android.app.lib_name = template_core` → `libtemplate_core.so`).
+- **Desktop**: `launch_game` spawns local game binary, so launch page and
+    `PRISMA_LAUNCH_CONFIG` parameter passing can be validated without packaging.
 
-APK 里有两个 Activity（两个进程）：
+APK has two Activities (two processes):
 
-| Activity | 作用 |
+| Activity | Role |
 |---|---|
-| `com.example.tauriandroidapp.MainActivity` | 这个 Tauri 启动壳（本目录） |
-| `com.prisma.MainActivity` | `GameActivity`，加载 `libtemplate_core.so` |
+| `com.example.tauriandroidapp.MainActivity` | This Tauri launcher shell (this directory) |
+| `com.prisma.MainActivity` | `GameActivity`, loads `libtemplate_core.so` |
 
-## 打包
+## Packaging
 
 ```powershell
 scripts/build-android.ps1     # Windows
 bash launcher/build_release.sh  # Git Bash / WSL / Linux
 ```
 
-脚本会编译游戏 cdylib、构建场景包，并把产物放进
-`launcher/src-tauri/gen/android/app/src/main/assets/game/`，最后交给 Gradle 组装 APK。
-`gen/android/` **带本地定制**（minSdk 31、arm64-v8a、签名配置、第二个 Activity），
-不要用 `tauri android init` 重新生成。
+Script compiles game cdylib, builds scene pack, puts output into
+`launcher/src-tauri/gen/android/app/src/main/assets/game/`, then Gradle assembles APK.
+`gen/android/` **has local customizations** (minSdk 31, arm64-v8a, signing config, second Activity),
+do not regenerate with `tauri android init`.
 
-## 开发
+## Development
 
 ```sh
 cd launcher
 pnpm install
-pnpm tauri dev      # 桌面：显示启动页，点击后拉起本地游戏二进制
+pnpm tauri dev      # Desktop: shows launch page, click spawns local game binary
 ```
 
-前端检查：
+Frontend check:
 
 ```sh
 cd launcher
 pnpm build
 ```
 
-后端检查 / 测试（独立 workspace，不挂根 Prisma workspace）：
+Backend check / tests (independent workspace, not attached to root Prisma workspace):
 
 ```sh
 cd launcher/src-tauri
 cargo test
 ```
 
-游戏二进制定位不查 `PATH`：`PRISMA_GAME_BIN` → 启动壳同目录的 `template[.exe]` →
-`projects/template/target/{debug,release}/template[.exe]`。
+Game binary location does not use `PATH`: `PRISMA_GAME_BIN` → `template[.exe]` next to launcher →
+`projects/template/target/{debug,release}/template[.exe]`.

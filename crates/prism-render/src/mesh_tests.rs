@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn vertex_stride_is_60() {
-    // position(3) + normal(3) + color(3) + uv(2) + tangent(4) = 15 floats = 60 字节
+    // position(3) + normal(3) + color(3) + uv(2) + tangent(4) = 15 floats = 60 bytes
     assert_eq!(std::mem::size_of::<Vertex>(), 60);
     assert_eq!(Vertex::binding_description().stride, 60);
 }

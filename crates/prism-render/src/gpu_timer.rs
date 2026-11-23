@@ -1,38 +1,38 @@
-//! Per-pass GPU 计时（`vk::QueryPool` + `TIMESTAMP`，#518 Phase 1）。
+//! Per-pass GPU timing (`vk::QueryPool` + `TIMESTAMP`, #518 Phase 1).
 //!
-//! 用法（[`crate::graph_renderer::GraphRenderer`] 已经这样做）：
+//! Usage ([`crate::graph_renderer::GraphRenderer`] already does this):
 //!
-//! 1. `begin_frame(device, frame_index)`：清掉这一帧槽位的查询（上一帧的栅栏已经等过，
-//!    所以此刻安全），顺便把上一轮留下的结果读成 [`GpuTimings`]；
-//! 2. 录制时对每个 pass 调 `begin_pass` / `end_pass`（写两个时间戳）；
-//! 3. 下一帧同一槽位再回到第 1 步 —— 结果延迟一帧读回，不会 stall。
+//! 1. `begin_frame(device, frame_index)`: clear queries for this frame slot (previous frame fence already waited,
+//!    so safe now), and read results left by previous round into [`GpuTimings`];
+//! 2. call `begin_pass` / `end_pass` at each pass during recording (writes two timestamps);
+//! 3. next frame same slot returns to step 1 — results read back one frame late, no stall.
 //!
-//! 设备不支持时间戳（`timestampPeriod == 0` 或图形队列没开 `TIMESTAMP`）时
-//! [`GpuTimer::new`] 返回 `Ok(None)`，调用方就当作「没有 GPU 计时」，
-//! 回退到 CPU 墙钟（`frame_time_ms`）。
+//! When device does not support timestamps (`timestampPeriod == 0` or graphics queue without `TIMESTAMP`)
+//! [`GpuTimer::new`] returns `Ok(None)`, caller treats as "no GPU timing",
+//! falls back to CPU wall clock (`frame_time_ms`).
 
 use ash::vk;
 
-/// 一个 pass 的 GPU 时间。
+/// GPU time of one pass.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PassTiming {
     pub name: String,
     pub ms: f32,
 }
 
-/// 一帧的 GPU 计时结果。
+/// GPU timing results for one frame.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GpuTimings {
-    /// 设备是否支持时间戳查询（false = 下面全是空）。
+    /// Whether device supports timestamp queries (false = entire report empty).
     pub supported: bool,
-    /// 整帧 GPU 区间（录制开始到录制结束，ms）；没有可用区间时为 0。
+    /// Whole-frame GPU span (recording start to end, ms); 0 when no span available.
     ///
-    /// 这个区间覆盖命令缓冲里记录的全部工作，因此能暴露没有被任何 pass 覆盖的
-    /// 时间（barrier、图外 dispatch、拷贝、present 过渡）。
+    /// This span covers all work recorded in command buffer, so it can expose time not covered by any pass
+    /// (barriers, out-of-graph dispatch, copy, present transition).
     pub frame_ms: f32,
-    /// 所有 pass 的 GPU 时间之和（ms）。
+    /// Sum of all passes' GPU time (ms).
     pub total_ms: f32,
-    /// 按录制顺序排列的 pass。
+    /// Passes in recording order.
     pub passes: Vec<PassTiming>,
 }
 
@@ -41,9 +41,9 @@ impl GpuTimings {
         self.passes.is_empty()
     }
 
-    /// 整帧 GPU 时间：有整帧区间时用它，否则回退到 pass 之和。
+    /// Whole-frame GPU time: use frame span when available, otherwise fall back to sum of passes.
     ///
-    /// 比较两次运行、写入基准报告都应该用这个值，而不是 `total_ms`。
+    /// Comparisons across runs and baseline reports should use this value, not `total_ms`.
     pub fn frame_or_total_ms(&self) -> f32 {
         if self.frame_ms > 0.0 {
             self.frame_ms
@@ -52,10 +52,10 @@ impl GpuTimings {
         }
     }
 
-    /// 整帧区间里没有被任何 pass 覆盖的部分（ms）。
+    /// Portion of whole-frame span not covered by any pass (ms).
     ///
-    /// 没有整帧区间时返回 0；调用方应先用 [`Self::has_frame_span`] 判断，
-    /// 否则 0 会被误读成“没有图外开销”。
+    /// Returns 0 when no frame span; caller should first check [`Self::has_frame_span`],
+    /// otherwise 0 would be misread as "no out-of-graph overhead".
     pub fn unmeasured_ms(&self) -> f32 {
         if self.frame_ms > 0.0 {
             (self.frame_ms - self.total_ms).max(0.0)
@@ -64,12 +64,12 @@ impl GpuTimings {
         }
     }
 
-    /// 是否拿到了整帧区间（设备支持但某一帧录制失败时可能没有）。
+    /// Whether a whole-frame span was obtained (possible to miss when device supports but one frame's recording failed).
     pub fn has_frame_span(&self) -> bool {
         self.frame_ms > 0.0
     }
 
-    /// 某个 pass 的时间（按名字查，面板显示用）。
+    /// Time of some pass (look up by name, for panel display).
     pub fn pass_ms(&self, name: &str) -> Option<f32> {
         self.passes
             .iter()
@@ -78,14 +78,14 @@ impl GpuTimings {
     }
 }
 
-/// 默认保留多少帧的 GPU 总时间（≈2 秒 @60fps）。
+/// Default retains a few frames of total GPU time (≈2 seconds @60fps).
 pub const DEFAULT_HISTORY_SAMPLES: usize = 120;
 
-/// GPU 总时间的环形缓冲（#518 Phase 2 历史曲线）。
+/// Ring buffer of total GPU time (#518 Phase 2 history chart).
 ///
-/// 只保存**已读回**的帧；设备不支持时间戳时调用方不会 push，所以空缓冲
-/// 本身就是「没有 GPU 计时」的信号。非有限 / 负数样本直接丢弃，避免把
-/// 未初始化或异常的时间戳画进面板。
+/// Only stores **already read back** frames; when device lacks timestamps caller won't push, so empty buffer
+/// itself is the "no GPU timing" signal. Non-finite / negative samples discarded, avoiding drawing
+/// uninitialized or exceptional timestamps into the panel.
 #[derive(Debug, Clone)]
 pub struct GpuHistory {
     capacity: usize,
@@ -100,7 +100,7 @@ impl GpuHistory {
         }
     }
 
-    /// 追加一帧的总 GPU 时间（ms）；超过容量时丢最旧的一帧。
+    /// Append one frame's total GPU time (ms); when over capacity drop oldest frame.
     pub fn push(&mut self, ms: f32) {
         if !ms.is_finite() || ms < 0.0 {
             return;
@@ -111,7 +111,7 @@ impl GpuHistory {
         self.samples.push_back(ms);
     }
 
-    /// 从旧到新迭代。
+    /// Iterate from old to new.
     pub fn samples(&self) -> impl ExactSizeIterator<Item = f32> + '_ {
         self.samples.iter().copied()
     }
@@ -139,47 +139,47 @@ impl Default for GpuHistory {
     }
 }
 
-/// 每个帧槽位能记录的 pass 上限；超过的部分不计时（不会 panic）。
+/// Max passes recordable per frame slot; over-limit ones not timed (no panic).
 pub const MAX_PASSES_PER_FRAME: usize = 24;
 
-/// 每个帧槽位额外预留的查询数：整帧区间的起点与终点。
+/// Extra queries reserved per frame slot: start and end of whole-frame span.
 const SPAN_QUERIES: usize = 2;
 
-/// 一个帧槽位占用的查询数（pass 成对 + 整帧区间）。
+/// Queries occupied per frame slot (pass pairs + whole-frame span).
 const fn queries_per_slot() -> usize {
     MAX_PASSES_PER_FRAME * 2 + SPAN_QUERIES
 }
 
-/// 时间戳查询池。
+/// Timestamp query pool.
 #[derive(Debug)]
 pub struct GpuTimer {
     pool: vk::QueryPool,
-    /// `timestampPeriod`（纳秒/刻度）。
+    /// `timestampPeriod` (nanoseconds / tick).
     period_ns: f32,
     slots: usize,
-    /// 每帧阶段顺序记录、该帧结束时读取的 pass 名字。
+    /// Pass names recorded in phase order this frame, read at frame end.
     names: Vec<Vec<String>>,
-    /// 每帧记录的 pass 数。
+    /// Number of passes recorded this frame.
     counts: Vec<usize>,
-    /// 该槽位是否需要在本帧录制时先 `cmd_reset_query_pool`。
+    /// Whether this slot needs `cmd_reset_query_pool` first during this frame's recording.
     ///
-    /// 设备级 `reset_query_pool` 要 Vulkan 1.2（`hostQueryReset`），所以清理由命令
-    /// 缓冲区里的 `cmd_reset_query_pool` 完成 —— 这条在所有目标上都可用。
+    /// Device-level `reset_query_pool` requires Vulkan 1.2 (`hostQueryReset`), so clearing done via
+    /// `cmd_reset_query_pool` inside command buffer — available on all targets.
     needs_reset: Vec<bool>,
-    /// 整帧区间的起点是否已经写过。
+    /// Whether whole-frame span start already written.
     span_started: Vec<bool>,
-    /// 整帧区间是否已经完整写好（起点 + 终点）；只有此时才读回。
+    /// Whether whole-frame span fully written (start + end); only then read back.
     span_ended: Vec<bool>,
-    /// 超过 pass 上限只警告一次，避免每帧刷屏。
+    /// Warn once when over pass limit, avoid spamming every frame.
     overflow_warned: bool,
-    /// 最近一次解析出来的结果（每帧槽位一份）。
+    /// Most recently parsed result (one per frame slot).
     last: Vec<GpuTimings>,
 }
 
 impl GpuTimer {
-    /// 创建计时器；设备不支持时间戳时返回 `Ok(None)`。
+    /// Create timer; returns `Ok(None)` when device lacks timestamp support.
     ///
-    /// `slots` = frames in flight（每条时间线一个独立区间，避免互相覆盖）。
+    /// `slots` = frames in flight (each timeline an independent range, avoiding overlap).
     pub fn new(
         instance: &ash::Instance,
         device: &ash::Device,
@@ -230,7 +230,7 @@ impl GpuTimer {
         }))
     }
 
-    /// 销毁查询池。必须由拥有者显式调用（`GraphRenderer` 的 `Drop`）。
+    /// Destroy query pool. Must be explicitly called by owner (`GraphRenderer`'s `Drop`).
     pub fn destroy(&mut self, device: &ash::Device) {
         if self.pool != vk::QueryPool::null() {
             unsafe { device.destroy_query_pool(self.pool, None) };
@@ -238,15 +238,15 @@ impl GpuTimer {
         }
     }
 
-    /// 最近一次解析出的结果（某个帧槽位）。
+    /// Most recently parsed result (for some frame slot).
     pub fn timings(&self, frame_index: u32) -> &GpuTimings {
         let slot = (frame_index as usize) % self.slots;
         &self.last[slot]
     }
 
-    /// 开始一帧：读回上一轮的结果，然后清掉这个槽位的时间戳。
+    /// Start a frame: read back previous round's result, then clear this slot's timestamps.
     ///
-    /// 调用时机必须在「该帧槽位的栅栏已被等待」之后（`begin_frame` 里就是这样）。
+    /// Must be called **after fence for this frame slot has been waited** (`begin_frame` does so).
     pub fn begin_frame(&mut self, device: &ash::Device, frame_index: u32) {
         let slot = (frame_index as usize) % self.slots;
         let count = self.counts[slot];
@@ -263,9 +263,9 @@ impl GpuTimer {
         self.span_ended[slot] = false;
     }
 
-    /// 记录整帧区间的起点。必须在整帧所有命令之前调用。
+    /// Record whole-frame span start. Must be called before all commands of the frame.
     ///
-    /// 返回 `false` 表示这一帧已经有区间起点（重复调用被忽略）。
+    /// Returns `false` meaning this frame already has span start (duplicate call ignored).
     pub fn begin_frame_span(
         &mut self,
         device: &ash::Device,
@@ -289,10 +289,10 @@ impl GpuTimer {
         true
     }
 
-    /// 记录整帧区间的终点。必须在整帧所有命令之后、`cmd_end_command_buffer` 之前调用。
+    /// Record whole-frame span end. Must be called after all commands of the frame and before `cmd_end_command_buffer`.
     ///
-    /// 只有起点已经写过、且终点还没写过时才会写时间戳；没有起点时什么都不做，
-    /// 这样中途录制失败的帧不会留下半个区间。
+    /// Only writes timestamp when start already written and end not yet written; does nothing without start,
+    /// so frames with mid-recording failure won't leave half a span.
     pub fn end_frame_span(
         &mut self,
         device: &ash::Device,
@@ -314,7 +314,7 @@ impl GpuTimer {
         self.span_ended[slot] = true;
     }
 
-    /// 记录一个 pass 的起始时间戳。超过每帧上限的 pass 会被忽略（返回 `false`）。
+    /// Record a pass's start timestamp. Passes over per-frame limit ignored (returns `false`).
     pub fn begin_pass(
         &mut self,
         device: &ash::Device,
@@ -344,7 +344,7 @@ impl GpuTimer {
         true
     }
 
-    /// 记录上一个 pass 的结束时间戳。
+    /// Record previous pass's end timestamp.
     pub fn end_pass(&mut self, device: &ash::Device, cmd: vk::CommandBuffer, frame_index: u32) {
         let slot = (frame_index as usize) % self.slots;
         let index = self.counts[slot];
@@ -362,8 +362,8 @@ impl GpuTimer {
         }
     }
 
-    /// 该槽位的查询在本帧第一次写入前清一次。上一轮的结果已经在
-    /// `begin_frame` 里读走了，这里清才安全。
+    /// Clear this slot's queries once before first write this frame. Previous round's results already read
+    /// in `begin_frame`, so clearing here is safe.
     fn reset_slot_queries(&mut self, device: &ash::Device, cmd: vk::CommandBuffer, slot: usize) {
         if !self.needs_reset[slot] {
             return;
@@ -398,11 +398,11 @@ impl GpuTimer {
         let names = &self.names[slot];
         let timed = count.min(names.len());
 
-        // 只读已经写过的查询：未写入的查询（即使已 reset）在没有
-        // `WITH_AVAILABILITY` 时结果是未定义的。
+        // Only read queries already written: unwritten queries (even if reset) have undefined
+        // results without `WITH_AVAILABILITY`.
         let mut pass_data = vec![0u64; timed * 2];
-        // 不用 `WITH_AVAILABILITY`：调用方保证这个槽位的栅栏已经等过，
-        // 所以结果一定写好；带 avail 位时返回值会变成 (avail, value) 交错的布局。
+        // Don't use `WITH_AVAILABILITY`: caller guarantees this slot's fence already waited,
+        // so results definitely written; with avail bit returned value becomes (avail, value) interleaved layout.
         let result = unsafe {
             device.get_query_pool_results(
                 self.pool,
@@ -424,7 +424,7 @@ impl GpuTimer {
         for index in 0..timed {
             let begin = pass_data[index * 2];
             let end = pass_data[index * 2 + 1];
-            // 未写完 / 乱序的一对跳过，不猜结果。
+            // Skip incomplete / out-of-order pairs, don't guess results.
             if end <= begin {
                 continue;
             }
@@ -483,7 +483,7 @@ mod history_tests {
         assert!((timings.unmeasured_ms() - 3.0).abs() < 1e-4);
         assert!(timings.has_frame_span());
 
-        // 没有整帧区间（只记录了 pass）时回退，并且不伪造 0 的图外开销。
+        // When no whole-frame span (only passes recorded) fall back, don't fabricate zero out-of-graph overhead.
         timings.frame_ms = 0.0;
         assert_eq!(timings.frame_or_total_ms(), 12.0);
         assert_eq!(timings.unmeasured_ms(), 0.0);
@@ -492,7 +492,7 @@ mod history_tests {
 
     #[test]
     fn unmeasured_gap_never_goes_negative() {
-        // 时间戳量化可能让 pass 之和略大于整帧区间，显示层不能出现负数。
+        // Timestamp quantization may make sum of passes slightly larger than frame span, UI must not show negative numbers.
         let timings = GpuTimings {
             supported: true,
             frame_ms: 10.0,

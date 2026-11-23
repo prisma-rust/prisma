@@ -149,7 +149,7 @@ pub fn pack_directory_split(
         bail!("pack_directory_split needs at least one optional directory");
     }
 
-    // 长的前缀先匹配：`textures` 与 `textures/4k` 同时给出时，4k 资源只进后者。
+    // Longer prefix matched first: when `textures` and `textures/4k` given same time, 4k assets only go to latter.
     let mut dirs: Vec<String> = optional_dirs
         .iter()
         .map(|dir| normalize_optional_dir(dir))
@@ -189,8 +189,8 @@ pub fn pack_directory_split(
         .unwrap_or_else(|| Path::new("."))
         .join(OPTIONAL_PAK_DIR);
 
-    // 稳定顺序 + 先写可选包：base 的 manifest 要引用它们，最后写 base 才能保证
-    // 清单不会指向一个还没生成 / 写失败的包。
+    // Stable order + first write optional package: base manifest must reference them, write base last to guarantee
+    // manifest will not point to a not-yet-generated / write-failed package.
     groups.sort_by(|a, b| a.0.cmp(&b.0));
     let mut optional = Vec::with_capacity(groups.len());
     let mut manifest_entries = Vec::with_capacity(groups.len());
@@ -221,8 +221,8 @@ pub fn pack_directory_split(
 
     let base_pack = pack_files(base, output, options)?;
 
-    // pack_files 已写完并读回校验基础包；这里再把可选包清单合进同一个
-    // manifest。失败时基础包仍然可用，下一次构建会重写清单。
+    // pack_files already written and read back to verify base package; this inside then merges optional package manifest into same one
+    // manifest. On failure base package still available; next build will heavily rewrite manifest.
     let manifest_path = base_pack.manifest_path.clone();
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -250,8 +250,8 @@ fn pack_files(
     let mut builder = PackageBuilder::new();
     builder.set_compression(compression);
     let mut entries = Vec::with_capacity(files.len());
-    // 32 位 serial 空间里撞 ID 的概率很小，但一旦撞了就是「两个文件共用一个
-    // 句柄」，运行时会静默读到错资源 —— 宁可在构建期报错。
+    // 32-bit serial ID collision probability small within import-time internals, but once collided it is "two files share one
+    // handle", at runtime will silently read wrong asset — rather report error at build time.
     let mut seen_ids: std::collections::HashMap<AssetId, String> = std::collections::HashMap::new();
     let mut total_bytes = 0u64;
     let mut streamed_assets = 0usize;
@@ -286,10 +286,10 @@ fn pack_files(
     }
 
     let pak = builder.build().context("build .pak")?;
-    // 先写同目录的临时文件再改名：`#509` 之后运行时不再把整个 `.pak` 读进内存，
-    // 而是按偏移读同一个文件，就地截断+重写会让正在运行的编辑器或游戏读到半截包。
-    // 同目录 rename 是原子的，旧句柄继续指向旧文件（Windows 也允许被共享删除的
-    // 文件被替换）。
+    // First write temp file in same directory then rename: after #509 at runtime not reading entire `.pak` into memory,
+    // but reads same file by offset; truncate + heavy write in place will let editor/game running read half package.
+    // Same directory rename is atomic, old handle continues pointing to old file (Windows also allows shared-delete of
+    // file being replaced).
     crate::fs_atomic::write_atomic(output, &pak)
         .with_context(|| format!("write {}", output.display()))?;
 
@@ -364,9 +364,9 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> R
 /// Validate + normalize an optional directory prefix (`a\b\` → `a/b`).
 fn normalize_optional_dir(dir: &str) -> Result<String> {
     let normalized = dir.trim().replace('\\', "/");
-    // `/absolute` 在 Windows 上不算 `is_absolute()`（没有盘符），但它仍是根路径；
-    // `C:` / 相对盘符也是一样 —— 三种都得在每个平台上拒绝，否则同一个参数
-    // 在 CI（Linux）上被拒、在开发机上被接受。
+    // `/absolute` in Windows not counted as `is_absolute()` (no drive letter), but it is still root path;
+    // `C:` / relative drive letter same — all three must be rejected on each platform, otherwise same parameter
+    // in CI (Linux) rejected, on dev machine accepted.
     let rooted = normalized.starts_with('/')
         || normalized.get(1..2) == Some(":")
         || Path::new(&normalized).is_absolute();
@@ -448,7 +448,7 @@ mod tests {
         assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
     }
 
-    /// #530：多一个文件不能改动已有资源的 ID，否则材质里烘进去的贴图 ID 会指错。
+    /// #530: Many files cannot change already-assigned resource ID, otherwise material texture ID baked in will point wrongly.
     #[test]
     fn adding_a_file_does_not_renumber_existing_assets() {
         let temp = tempfile::tempdir().unwrap();
@@ -468,14 +468,14 @@ mod tests {
             "manifest must use the path-derived id: {before}"
         );
 
-        // 加一个按字典序排在前面、会推后原顺序的文件。
+        // Add a lexicographically sorted prefix face, will push after original order files.
         fs::write(input.join("000-first.bin"), b"x").unwrap();
         let second = pack_directory(&input, temp.path().join("b.pak"), 0).unwrap();
         let after = fs::read_to_string(temp.path().join("b.pak.meta.json")).unwrap();
         assert!(after.contains(&format!("{:#x}", marble.into_raw())));
         assert_eq!(second.asset_count, first.asset_count + 1);
 
-        // 同一份输入重打仍然字节一致。
+        // Same input heavily packed still byte-consistent.
         let again = pack_directory(&input, temp.path().join("c.pak"), 0).unwrap();
         assert_eq!(
             fs::read(temp.path().join("b.pak")).unwrap(),
@@ -484,8 +484,8 @@ mod tests {
         assert_eq!(again.asset_count, second.asset_count);
     }
 
-    /// #509：超过阈值的文件带 `FLAG_STREAMED`，且即使开了压缩也保持未压缩，
-    /// 这样读取端可以直接从偏移区间流式读取。
+    /// #509: Files exceeding threshold get `FLAG_STREAMED`, and even if compression opened still kept uncompressed,
+    /// so read side can stream read from offset range directly.
     #[test]
     fn stream_threshold_marks_large_files_and_keeps_them_uncompressed() {
         let temp = tempfile::tempdir().unwrap();
@@ -578,8 +578,8 @@ mod tests {
         assert!(pack_directory(&input, temp.path().join("x.pak"), 0).is_err());
     }
 
-    /// #509：`--optional-dir` 把指定目录拆到 `optional/optional_*.pak`，基础包
-    /// 只保留其余文件；最长前缀优先，嵌套目录不会同时落进两个包。
+    /// #509: `--optional-dir` splits specified directory into `optional/optional_*.pak`, base package
+    /// Only keeps remaining files; longest prefix first, nested directories will not fall into two packages when different.
     #[test]
     fn split_pack_moves_optional_dirs_into_separate_packages() {
         let temp = tempfile::tempdir().unwrap();
@@ -612,8 +612,8 @@ mod tests {
         )
         .unwrap();
 
-        // audio/beep 与 scenes/default 留在基础包；`textures/4k` 归属最长的前缀，
-        // 不会再同时落进 `textures`。
+        // audio/beep and scenes/default stay in base package; `textures/4k` belongs to longest prefix,
+        // will not again fall into `textures` when same.
         assert_eq!(summary.base.asset_count, 2);
         assert_eq!(summary.optional.len(), 3);
         let groups: Vec<_> = summary.optional.iter().map(|o| o.group.as_str()).collect();
@@ -635,14 +635,14 @@ mod tests {
         );
         assert_eq!(big.pack.asset_count, 1);
 
-        // 拆包不改资产 ID：ID 仍由包内相对路径派生。
+        // Splitting package does not change asset ID: ID still derived from package-relative path.
         let big_id = AssetId::from_path("textures/4k/big.rtex");
         let base_reader = PackageReader::open(&output).unwrap();
         assert!(base_reader.find_record(big_id).is_none());
         let big_reader = PackageReader::open(&big.pak_path).unwrap();
         assert!(big_reader.find_record(big_id).is_some());
 
-        // 基础包清单列出可选包，供按需挂载方按 group 找到文件。
+        // Base package manifest lists optional packages, for on-demand mounter to find files by group.
         let manifest: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&summary.base.manifest_path).unwrap())
                 .unwrap();
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(listed[2]["asset_count"], 1);
     }
 
-    /// 拆包后每个包仍然各自应用流式阈值；基础包与可选包都不能丢 `FLAG_STREAMED`。
+    /// After splitting package each package still applies stream threshold; base package and optional package both cannot drop `FLAG_STREAMED`.
     #[test]
     fn split_pack_applies_stream_threshold_per_package() {
         let temp = tempfile::tempdir().unwrap();

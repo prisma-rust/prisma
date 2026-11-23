@@ -1,26 +1,26 @@
-//! 场景音频：把 ECS 里的 [`AudioSource`] 接到混音器上。
+//! Scene audio: connect [`AudioSource`] in ECS to mixer.
 //!
-//! 分层与 `MeshRenderer → MeshRef` 一致：`AudioSource` 只写**作者态**
-//! （片段路径 / 音量 / 是否循环 / 距离衰减），本模块负责
+//! Layered consistent with `MeshRenderer -> MeshRef`: `AudioSource` only writes **authoring state**
+//! (fragment path / volume / loop / distance attenuation), this module responsible for
 //!
-//! 1. 按路径从 `assets/` 找文件，交给后台解码线程（`audio_decode_runner`）；
-//! 2. 解码结果按路径缓存，同一个片段只解码一次；
-//! 3. 每个实体一条「声部」：`play_on_awake` + 片段就绪就播放，之后每帧同步音量、
-//!    循环重播、实体消失时停止。
+//! 1. Find files by path under `assets/`, hand to background decode thread (`audio_decode_runner`);
+//! 2. Decode results cached by path, same fragment decoded only once;
+//! 3. One "voice" per entity: `play_on_awake` + fragment plays when ready, then every frame sync volume,
+//!    loop repeat, stop when entity disappears.
 //!
-//! 混音器通过 [`AudioSink`] 抽象，因此这套状态机可以在没有声卡的环境里单测
-//! （见文件末尾的 `tests`）。
+//! Mixer goes through [`AudioSink`] abstraction, so this state machine can be unit-tested without sound card environment
+//! (see `tests` at end of file).
 //!
-//! # 现状与边界
+//! # Status and boundaries
 //!
-//! - **距离衰减 + 等功率声像**：`spatial_blend` 同时缩放衰减曲线与声像强度。
-//!   每帧把「声源相对听者的偏移」（转换到听者空间）下发给混音器
-//!   （`AudioSink::set_spatial`），由 Firewheel 的 `SpatialBasicNode` 做等功率声像
-//!   与平滑过渡，所以移动中的声源会实时左右移动，不需要为了换声像而重播片段。
-//!   距离衰减仍在这里算（`AudioSource::volume_at`），节点只负责声像。
-//! - 只读**松散文件**：`assets/**` 里的音频；`.pak` 内的音频还没接。
-//! - 片段的采样率/声道由解码器给；混音器负责重采样。
-//! - 不监听文件变化：改音频后需要重启或重新加载场景（资产热重载只处理 `.pak`）。
+//! - **Distance attenuation + equal-power panning**: `spatial_blend` simultaneously scales attenuation curve and pan strength.
+//!   Every frame send "source offset relative to listener" (converted to listener space) to mixer
+//!   (`AudioSink::set_spatial`), Firewheel's `SpatialBasicNode` does equal-power panning
+//!   and smooth transition, so moving sources pan left/right in real time, no need to re-play fragment for pan change.
+//!   Distance attenuation still computed here (`AudioSource::volume_at`), node only handles pan.
+//! - Only read **loose files**: audio under `assets/**`; audio inside `.pak` not yet connected.
+//! - Fragment sample rate / channels provided by decoder; mixer responsible for resampling.
+//! - Do not listen for file changes: need to restart or reload scene after changing audio (asset hot reload only handles `.pak`).
 
 use std::collections::HashMap;
 
@@ -31,51 +31,51 @@ use prism_engine::scene::components::{AudioBus, AudioListener, AudioSource, Came
 
 use crate::audio_decode_runner::{DecodeRequest, DecodeResult};
 
-/// 混音器的最小接口。
+/// Minimal mixer interface.
 ///
-/// 实现者维护 `voice`（不透明 id）到真实播放句柄的映射；`0` 表示「播放失败」。
+/// Implementer maintains mapping from `voice` (opaque id) to real playback handle; `0` means "play failed".
 pub trait AudioSink {
-    /// 开始播放，返回声部 id（`0` = 失败）。
+    /// Start playing, return voice id (`0` = failed).
     fn play(&mut self, clip: &AudioData) -> u64;
     fn stop(&mut self, voice: u64);
     fn set_volume(&mut self, voice: u64, volume: f32);
-    /// 实时空间化：`offset` 是声源相对听者的偏移，已转换到**听者空间**
-    /// （`+x` 右、`+y` 上、`+z` 后），`panning_threshold` 是 `0..=1` 的声像强度
-    /// （`0` 保持居中）。
+    /// Real-time spatialization: `offset` is source offset relative to listener, converted to **listener space**
+    /// (`+x` right, `+y` up, `+z` back), `panning_strength` is pan strength `0..=1`
+    /// (`0` keeps center).
     ///
-    /// 提供空实现是为了不破坏已有的测试 / 自定义 sink；真实混音器应当覆盖它。
+    /// Empty implementation provided to not break existing tests / custom sink; real mixer should override it.
     fn set_spatial(&mut self, _voice: u64, _offset: [f32; 3], _panning_threshold: f32) {}
     fn is_playing(&self, voice: u64) -> bool;
 }
 
-/// 一个实体的声部。
+/// One entity's voice.
 #[derive(Debug, Clone)]
 struct Voice {
-    /// 混音器声部 id。
+    /// Mixer voice id.
     id: u64,
-    /// 已经下发给混音器的音量（避免每帧重复排队事件）。
+    /// Volume already sent to mixer (avoid re-queueing event every frame).
     volume: f32,
-    /// 已经下发给混音器的听者空间偏移（#508，移动声源逐帧更新）。
+    /// Listener-space offset already sent to mixer (#508, moving source updated every frame).
     offset: [f32; 3],
-    /// 已经下发给混音器的声像强度（#1034，来自 `spatial_blend`）。
+    /// Pan strength already sent to mixer (#1034, from `spatial_blend`).
     panning_threshold: f32,
-    /// 音频线程是否真的开始播了（`play()` 刚返回时它还是 `false`）。
+    /// Whether audio thread really started playing (still `false` right after `play()` returns).
     started: bool,
-    /// 声部对应的片段路径（路径变了要重播）。
+    /// Fragment path corresponding to voice (replay when path changes).
     path: String,
 }
 
-/// 场景音频驱动。由宿主（`App`）每帧调用一次。
+/// Scene audio driver. Called once per frame by host (`App`).
 pub struct SceneAudio {
-    /// 已解码片段（路径 → 采样）。
+    /// Decoded fragments (path -> samples).
     clips: HashMap<String, AudioData>,
-    /// 解码失败或正在解码的路径（避免同一帧重复入队）。
+    /// Paths with decode failure or being decoded (avoid re-queueing same frame).
     pending: HashMap<String, u64>,
-    /// 请求 id → 路径，用于把异步结果对回片段。
+    /// Request id -> path, used to map async results back to fragments.
     requests: HashMap<u64, String>,
     next_request: u64,
     voices: HashMap<Entity, Voice>,
-    /// 每条总线的增益（下标 = [`AudioBus::index`]，默认全 1）。
+    /// Gain per bus (index = [`AudioBus::index`], default all 1).
     bus_gains: [f32; 5],
 }
 
@@ -97,21 +97,21 @@ impl SceneAudio {
         Self::default()
     }
 
-    /// 设置一条总线的增益（`0..=1`，非有限值忽略）。
+    /// Set gain for one bus (`0..=1`, non-finite ignored).
     ///
-    /// `Master` 乘在其它所有总线上；正在播放的声部下一帧就会按新增益更新音量。
+    /// `Master` multiplies all other buses; playing voices update volume next frame with new gain.
     pub fn set_bus_volume(&mut self, bus: AudioBus, volume: f32) {
         if volume.is_finite() {
             self.bus_gains[bus.index()] = volume.clamp(0.0, 1.0);
         }
     }
 
-    /// 读取一条总线自己的增益（不含 `Master`）。
+    /// Read one bus's own gain (excluding `Master`).
     pub fn bus_volume(&self, bus: AudioBus) -> f32 {
         self.bus_gains[bus.index()]
     }
 
-    /// 某个声部实际生效的总增益：`Master` × 自身总线。
+    /// Total gain actually effective for a voice: `Master` × its own bus.
     pub fn bus_gain(&self, bus: AudioBus) -> f32 {
         let master = self.bus_gains[AudioBus::Master.index()];
         if bus == AudioBus::Master {
@@ -121,22 +121,22 @@ impl SceneAudio {
         }
     }
 
-    /// 已缓存的片段数（诊断 / 测试）。
+    /// Number of cached fragments (diagnostic / test).
     pub fn cached_clips(&self) -> usize {
         self.clips.len()
     }
 
-    /// 正在播放的声部数（诊断 / 测试）。
+    /// Number of voices currently playing (diagnostic / test).
     pub fn active_voices(&self) -> usize {
         self.voices.len()
     }
 
-    /// 直接注入一段已解码的片段（测试 / 代码里预载声音）。
+    /// Directly inject a decoded fragment (test / preload sound in code).
     pub fn insert_clip(&mut self, path: &str, clip: AudioData) {
         self.add_clip(path, clip);
     }
 
-    /// 收下解码线程的结果：成功则入缓存。
+    /// Accept decode thread result: on success cache it.
     pub fn receive(&mut self, result: DecodeResult) {
         match result {
             DecodeResult::Decoded { request_id, data } => {
@@ -148,23 +148,23 @@ impl SceneAudio {
             }
             DecodeResult::Error { request_id, .. } => {
                 if let Some(path) = self.requests.remove(&request_id) {
-                    // 失败不缓存：下次还会重试（文件可能稍后才出现）。
+                    // Failure not cached: will retry next time (file may appear later).
                     self.pending.remove(&path);
                 }
             }
         }
     }
 
-    /// 停止全部声部（场景卸载 / 关闭时调用）。
+    /// Stop all voices (called on scene unload / shutdown).
     pub fn stop_all(&mut self, sink: &mut dyn AudioSink) {
         for (_, voice) in self.voices.drain() {
             sink.stop(voice.id);
         }
     }
 
-    /// 每帧同步：播放新声部、更新音量、循环重播、回收消失的实体。
+    /// Per-frame sync: play new voices, update volume, loop repeat, recycle disappeared entities.
     ///
-    /// `requests` 是解码线程的输入通道（`None` = 没有解码线程，只播放已缓存片段）。
+    /// `requests` is decode thread input channel (`None` = no decode thread, only play cached fragments).
     pub fn update(
         &mut self,
         world: &World,
@@ -212,7 +212,7 @@ impl SceneAudio {
                 continue;
             }
 
-            // 路径变了：旧声部先停。
+            // Path changed: stop old voice first.
             if let Some(voice) = self.voices.get(&entity) {
                 if voice.path != source.sound_path {
                     let voice = self.voices.remove(&entity).expect("checked above");
@@ -248,7 +248,7 @@ impl SceneAudio {
                     if sink.is_playing(voice.id) {
                         voice.started = true;
                     } else if voice.started {
-                        // 播完了：循环的重来，否则回收。
+                        // Finished playing: loop restarts, otherwise recycle.
                         if !source.looped {
                             let voice = self.voices.remove(&entity).expect("checked above");
                             sink.stop(voice.id);
@@ -296,7 +296,7 @@ impl SceneAudio {
             }
         }
 
-        // 实体被销毁 / 组件被移除：停掉对应声部。
+        // Entity destroyed / component removed: stop corresponding voice.
         let stale: Vec<Entity> = self
             .voices
             .keys()
@@ -340,16 +340,16 @@ impl SceneAudio {
     }
 }
 
-/// 听者：位置、增益与**基向量**（声像用）。
+/// Listener: position, gain and **basis vectors** (for panning).
 struct Listener {
     position: Option<[f32; 3]>,
     gain: f32,
-    /// 右、上、后三个世界空间单位向量。
+    /// Right, up, back three world-space unit vectors.
     basis: [[f32; 3]; 3],
 }
 
-/// 听者位置 / 增益 / 基向量：优先 `AudioListener` 实体，否则退回第一个相机，
-/// 再否则原点 + 世界坐标轴。
+/// Listener position / gain / basis vectors: prefer `AudioListener` entity, otherwise fall back to first camera,
+/// otherwise origin + world axes.
 fn listener(world: &World) -> Listener {
     let gain = |entity: Entity, fallback: f32| {
         world
@@ -378,7 +378,7 @@ fn listener(world: &World) -> Listener {
     }
 }
 
-/// 听者的右 / 上 / 后向量（世界空间，已归一化；退化轴回退到世界坐标轴）。
+/// Listener right / up / back vectors (world space, normalized; degenerate axis falls back to world axes).
 fn listener_basis(world: &World, entity: Entity) -> [[f32; 3]; 3] {
     let mut axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let Some(transform) = world.get::<LocalToWorld>(entity) else {
@@ -395,10 +395,10 @@ fn listener_basis(world: &World, entity: Entity) -> [[f32; 3]; 3] {
     axes
 }
 
-/// 声源相对听者的偏移，转换到听者空间（`+x` 右、`+y` 上、`+z` 后）。
+/// Source offset relative to listener, converted to listener space (`+x` right, `+y` up, `+z` back).
 ///
-/// Firewheel 的 `SpatialBasicNode` 用 `+x` 方向的水平夹角做等功率声像，并把
-/// 偏移长度当作距离，所以这里只需把世界坐标偏移投影到听者的基向量上。
+/// Firewheel's `SpatialBasicNode` does equal-power panning using horizontal angle of `+x` direction, and puts
+/// offset length as distance, so here only need to project world-space offset onto listener's basis vectors.
 fn listener_offset(source: [f32; 3], listener: [f32; 3], basis: [[f32; 3]; 3]) -> [f32; 3] {
     let offset = [
         source[0] - listener[0],
@@ -419,7 +419,7 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// `spatial_blend` → 声像强度；非有限值按 0 处理，`0` 表示保持居中（2D 声源）。
+/// `spatial_blend` -> pan strength; non-finite treated as 0, `0` means keep center (2D source).
 fn panning_threshold(spatial_blend: f32) -> f32 {
     if spatial_blend.is_finite() {
         spatial_blend.clamp(0.0, 1.0)
@@ -441,7 +441,7 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-/// 把 [`AudioSink`] 的 `u64` 声部映射到真实 [`prism_audio::PlaybackHandle`]。
+/// Map [`AudioSink`]'s `u64` voice to real [`prism_audio::PlaybackHandle`].
 #[derive(Debug, Default)]
 pub struct VoiceHandles {
     handles: HashMap<u64, prism_audio::PlaybackHandle>,
@@ -487,7 +487,7 @@ impl AudioSink for (&mut prism_audio::AudioEngine, &mut VoiceHandles) {
     }
 }
 
-/// 解码结果分发：宿主每帧把 `DecodeResult` 交给 [`SceneAudio::receive`]。
+/// Decode result distribution: host hands `DecodeResult` to [`SceneAudio::receive`] every frame.
 pub fn drain_decoded(scene_audio: &mut SceneAudio, results: &Receiver<DecodeResult>) -> usize {
     let mut drained = 0;
     while let Ok(result) = results.try_recv() {
@@ -503,7 +503,7 @@ mod tests {
     use glam::Mat4;
     use std::time::Duration;
 
-    /// 录音式假混音器：记录调用，`is_playing` 可以手动改。
+    /// Mock recording mixer: records calls, `is_playing` can be manually changed.
     #[derive(Default)]
     struct FakeSink {
         next: u64,
@@ -534,7 +534,10 @@ mod tests {
 
     impl AudioSink for FakeSink {
         fn play(&mut self, clip: &AudioData) -> u64 {
-            assert!(!clip.samples.is_empty(), "空片段不该开始播放");
+            assert!(
+                !clip.samples.is_empty(),
+                "empty fragment should not start playing"
+            );
             self.next += 1;
             let id = self.next;
             self.played += 1;
@@ -589,7 +592,7 @@ mod tests {
     #[test]
     fn bus_gains_multiply_the_source_volume_and_master_scales_every_bus() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // 默认监听者 = 世界原点
+        place(&mut world, [0.0; 3]); // Default listener = world origin
         let speaker = place(&mut world, [0.0; 3]);
         source(
             &mut world,
@@ -612,27 +615,27 @@ mod tests {
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.4).abs() < 1e-6);
 
-        // Master 乘在所有总线上。
+        // `Master` multiplies all buses.
         scene.set_bus_volume(AudioBus::Master, 0.5);
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.2).abs() < 1e-6);
 
-        // 其它总线不影响 Music。
+        // Other buses do not affect Music.
         scene.set_bus_volume(AudioBus::Sfx, 0.1);
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.2).abs() < 1e-6);
 
-        // 非法值被忽略，不会把总线变成 NaN。
+        // Illegal values ignored, will not turn bus into NaN.
         scene.set_bus_volume(AudioBus::Music, f32::NAN);
         assert_eq!(scene.bus_volume(AudioBus::Music), 0.5);
-        // 声源本身就在 Master 上时只乘一次。
+        // When source itself is on `Master`, only multiply once.
         assert_eq!(scene.bus_gain(AudioBus::Master), 0.5);
     }
 
     #[test]
     fn a_clip_plays_once_and_follows_the_distance_volume() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // 默认监听者 = 世界原点
+        place(&mut world, [0.0; 3]); // Default listener = world origin
         let speaker = place(&mut world, [0.0, 0.0, 5.0]);
         source(
             &mut world,
@@ -651,11 +654,14 @@ mod tests {
         let mut sink = FakeSink::default();
 
         scene.update(&world, &mut sink, None);
-        assert_eq!(sink.played, 1, "片段只播一次");
+        assert_eq!(sink.played, 1, "fragment plays once");
         assert_eq!(scene.active_voices(), 1);
-        assert!((sink.volumes()[0] - 0.5).abs() < 1e-6, "距离 5/10 → 半音量");
+        assert!(
+            (sink.volumes()[0] - 0.5).abs() < 1e-6,
+            "distance 5/10 -> half volume"
+        );
 
-        // 再靠近一点：音量更新，但不重新播放。
+        // Move closer: volume updates, but does not re-play.
         world.insert(
             speaker,
             LocalToWorld(Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.5))),
@@ -672,18 +678,18 @@ mod tests {
             listener_offset([5.0, 0.0, 0.0], [0.0; 3], identity),
             [5.0, 0.0, 0.0]
         );
-        // 听者朝向 +X：右向量是 -Z，于是世界上 +X 的声源落在正前方。
+        // Listener faces +X: right vector is -Z, so source at +X in world lands dead ahead.
         let facing_x = [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
         assert_eq!(
             listener_offset([5.0, 0.0, 0.0], [0.0; 3], facing_x),
             [0.0, 0.0, 5.0]
         );
-        // 非有限输入不会产生 NaN。
+        // Non-finite input does not produce NaN.
         assert_eq!(
             listener_offset([f32::NAN, 0.0, 0.0], [0.0; 3], identity),
             [0.0; 3]
         );
-        // 声像强度：2D 与非有限值都是 0，上限夹到 1。
+        // Pan strength: 2D and non-finite are both 0, upper clamped to 1.
         assert_eq!(panning_threshold(0.0), 0.0);
         assert_eq!(panning_threshold(f32::NAN), 0.0);
         assert_eq!(panning_threshold(2.0), 1.0);
@@ -692,7 +698,7 @@ mod tests {
 
     #[test]
     fn a_source_to_the_right_keeps_its_offset_on_x() {
-        // 听者在原点、无旋转（右向量 = +X），声源在 +X：偏移应为 (5, 0, 0)。
+        // Listener at origin, no rotation (right vector = +X), source at +X: offset should be (5, 0, 0).
         let mut world = World::new();
         let listener_entity = place(&mut world, [0.0; 3]);
         world.insert(listener_entity, Camera::default());
@@ -720,7 +726,7 @@ mod tests {
     #[test]
     fn a_moving_source_updates_the_offset_without_replaying_the_clip() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // 默认监听者 = 世界原点
+        place(&mut world, [0.0; 3]); // Default listener = world origin
         let speaker = place(&mut world, [5.0, 0.0, 0.0]);
         source(
             &mut world,
@@ -741,7 +747,7 @@ mod tests {
         assert_eq!(sink.played, 1);
         assert_eq!(sink.spatials(), vec![([5.0, 0.0, 0.0], 1.0)]);
 
-        // 移到左侧：同一声部只更新空间化参数，不重新 play。
+        // Move left: same voice only updates spatial params, not re-play.
         world.insert(
             speaker,
             LocalToWorld(Mat4::from_translation(glam::Vec3::new(-5.0, 0.0, 0.0))),
@@ -815,15 +821,15 @@ mod tests {
         assert_eq!(sink.played, 2);
         assert_eq!(scene.active_voices(), 2);
 
-        // 音频线程开始播放后才允许判定「播完」。
+        // Only allowed to judge "finished playing" after audio thread started playing.
         scene.update(&world, &mut sink, None);
         for voice in 1..=2 {
             sink.finish(voice);
         }
         scene.update(&world, &mut sink, None);
-        assert_eq!(sink.played, 3, "只有循环的那个重播");
+        assert_eq!(sink.played, 3, "only looping one re-plays");
         assert_eq!(scene.active_voices(), 1);
-        assert_eq!(sink.stopped.len(), 1, "一次性音效被回收");
+        assert_eq!(sink.stopped.len(), 1, "one-shot voice recycled");
     }
 
     #[test]
@@ -840,7 +846,7 @@ mod tests {
         scene.update(&world, &mut sink, None);
         assert_eq!(scene.active_voices(), 2);
 
-        // 一个把路径清空，另一个直接销毁。
+        // One clears path, other directly destroys.
         world.insert(
             a,
             AudioSource {
@@ -864,6 +870,10 @@ mod tests {
         let mut sink = FakeSink::default();
         scene.update(&world, &mut sink, None);
         assert_eq!(sink.played, 0);
-        assert_eq!(scene.active_voices(), 0, "没有片段就不占声部");
+        assert_eq!(
+            scene.active_voices(),
+            0,
+            "no fragment means no voice occupied"
+        );
     }
 }

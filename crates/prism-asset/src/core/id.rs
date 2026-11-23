@@ -2,17 +2,17 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
-// 用于 AssetId::generate() 的全局原子计数器
+// Global atomic counter used by AssetId::generate()
 // ---------------------------------------------------------------------------
 
-/// [`AssetId::generate`] 使用的进程全局序列计数器。
+/// Process-wide serial counter used by [`AssetId::generate`].
 static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
 // ---------------------------------------------------------------------------
-// AssetId – 全局唯一的基于 u64 的标识符
+// AssetId — globally unique u64-based identifier
 // ---------------------------------------------------------------------------
 
-/// 一个全局唯一的 64 位资源标识符。
+/// A globally unique 64-bit asset identifier.
 ///
 /// The high 32 bits encode a **generation** (monotonically increasing epoch),
 /// the low 32 bits encode a **serial** within that generation.
@@ -73,17 +73,17 @@ impl AssetId {
         self.generation() == u32::MAX
     }
 
-    /// 由**资产相对路径**派生一个稳定的 ID（构建期打包用，#530）。
+    /// Stable ID derived from asset-relative path (for build-time packing, #530).
     ///
-    /// `pack_directory` 用它给包内每个文件分配 ID，材质/预制体这类在 cook 时
-    /// 就要把依赖 ID 烘进数据块的类型（`RMAT` 里存的就是 `AssetId`）因此能在
-    /// 打包前算出与包内完全一致的 ID —— 顺序分配做不到这一点：往目录里多加
-    /// 一个文件就会把后面所有 ID 平移，烘进材质里的贴图 ID 全部指错。
+    /// `pack_directory` uses it to assign ID to each file in package; texture/prefab baked at cook time
+    /// types that bake dependency ID into data blocks (`RMAT` stores `AssetId`) therefore can
+    /// compute pack-consistent IDs before packing — sequential allocation can't do this: adding
+    /// a file to the directory shifts all subsequent IDs, texture IDs baked into materials all point wrong.
     ///
-    /// 路径先按 `/` 归一化（`\\` → `/`），因此 Windows 与 POSIX 构建产出相同
-    /// ID；generation 固定为 1（cooker/数据库命名空间），serial 取 FNV-1a 的
-    /// 低 32 位并避开 0。32 位空间下不同路径仍有极小概率碰撞，打包器会检测
-    /// 并报错而不是静默覆盖。
+    /// Path is normalized on `/` (\` -> `/`), so Windows and POSIX builds produce the same
+    /// ID; generation is fixed to 1 (cooker/database namespace), serial takes FNV-1a
+    /// low 32 bits avoiding 0. 32-bit space still has tiny collision probability across
+    /// different paths; packer detects and errors rather than silently overwriting.
     pub fn from_path(path: &str) -> Self {
         Self::from_raw((1u64 << Self::GENERATION_SHIFT) | u64::from(path_serial(path).max(1)))
     }
@@ -187,10 +187,10 @@ impl AssetIdGenerator {
     }
 }
 
-/// `path` 的 FNV-1a 32 位哈希（路径先 `/` 归一化）。
+/// FNV-1a 32-bit hash of `path` (path normalized on `/` first).
 ///
-/// 选 FNV-1a 是因为它足够短、无依赖、跨平台一致；这里的用途只是「同一路径
-/// 任何时候得到同一个 ID」，不需要密码学强度。
+/// FNV-1a is chosen because it is short, dependency-free, and cross-platform consistent;
+/// the purpose here is just "same path always gets same ID", not cryptographic strength.
 fn path_serial(path: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in path.replace('\\', "/").as_bytes() {

@@ -1,14 +1,14 @@
-//! `PropertyDrawer` / `PropertyAttribute` 形状的 schema 投影。
+//! Schema projection of `PropertyDrawer` / `PropertyAttribute` shapes.
 //!
-//! 里 `[Range]` / `[TextArea]` / `[ColorUsage]` 这类**特性**（attribute）由对应的
-//! `PropertyDrawer` 渲染成滑动条 / 多行文本框 / 取色盘；`[CustomPropertyDrawer]` 则把
-//! 某个字段或某个类型整体交给自定义绘制器。
+//! Here [`Range`] / [`TextArea`] / [`ColorUsage`] such **attributes** are
+//! rendered by corresponding `PropertyDrawer` into slider / multi-line text box / color picker; `[CustomPropertyDrawer]` hands
+//! some field or some type entirely to custom drawer.
 //!
-//! 这一层只输出**声明式 DTO**（渲染器 + 特性列表），真正的 UI 在 `editor/` 的 Vue
-//! （[`FieldEditor.vue`](../../../editor/src/components/FieldEditor.vue)）里。这样既拿到
-//! 引擎的扩展体验，又保持 `prism-editor-api` 不链接 UI / engine / Vulkan。
+//! This layer only outputs **declarative DTO** (renderer + attribute list), actual UI in `editor/`'s Vue
+//! ([`FieldEditor.vue`](../../../editor/src/components/FieldEditor.vue)). This gives
+//! engine extend experience while keeping `prism-editor-api` free of UI / engine / Vulkan link.
 //!
-//! | | 这里 |
+//! | | Here |
 //! |---|---|
 //! | `[Range(min, max)]` | [`PropertyDrawer::range`] → [`PropertyRenderer::Slider`] |
 //! | `[Min]` / `[Max]` | [`PropertyDrawer::min`] / [`PropertyDrawer::max`] |
@@ -17,35 +17,35 @@
 //! | `[ColorUsage(showAlpha, hdr)]` | [`PropertyDrawer::color_usage`] → [`PropertyRenderer::Color`] |
 //! | `[Header]` / `[Tooltip]` / `[Delayed]` | [`PropertyDrawer::with_header`] / [`PropertyDrawer::with_tooltip`] / [`PropertyDrawer::delayed`] |
 //! | `[CustomPropertyDrawer(typeof(X))]` | [`PropertyDrawerRegistry::register_type`] |
-//! | `[CustomPropertyDrawer]` 到某字段 | [`PropertyDrawerRegistry::register_custom`] |
+//! | `[CustomPropertyDrawer]` to some field | [`PropertyDrawerRegistry::register_custom`] |
 //!
-//! 内置组件的绘制器声明集中在 [`PropertyDrawerRegistry::with_builtin`]，由
-//! [`crate::schema::build_schema`] 应用；宿主也可以构造自己的注册表并用
-//! [`crate::schema::build_schema_with`] 追加声明。
+//! Built-in component drawer declarations in [`PropertyDrawerRegistry::with_builtin`], applied by
+//! [`crate::schema::build_schema`]; host can also build own registry and append declarations with
+//! [`crate::schema::build_schema_with`].
 
 use serde::{Deserialize, Serialize};
 
-/// 字段渲染器 = 里选中哪个 `PropertyDrawer`。
+/// Field renderer = which `PropertyDrawer` selected here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PropertyRenderer {
-    /// 按 `FieldSchema.kind` 的默认控件（文本框 / 复选框 / 下拉框 / 数值框）。
+    /// Default control by `FieldSchema.kind` (text box / checkbox / dropdown / number box).
     #[default]
     Default,
-    /// `[Range]` 的滑动条。
+    /// Slider for `[Range]`.
     Slider,
-    /// `[TextArea]` / `[Multiline]` 的多行文本框。
+    /// Multi-line text box for `[TextArea]` / `[Multiline]`.
     TextArea,
-    /// `[ColorUsage]` 的取色盘（即使字段名不像颜色也强制用）。
+    /// Color picker for `[ColorUsage]` (forced even if field name doesn't look like color).
     Color,
-    /// `[CustomPropertyDrawer]`：按 [`PropertyDrawer::custom`] 的名字找前端组件。
+    /// `[CustomPropertyDrawer]`: find frontend component by [`PropertyDrawer::custom`] name.
     Custom,
 }
 
-/// 一条 特性（`PropertyAttribute`）。
+/// One attribute (`PropertyAttribute`).
 ///
-/// 序列化成 `{ "type": "range", "min": 0.0, "max": 5.0 }` 这类带标签的对象，
-/// 前端按 `type` 分发，未知类型直接忽略（保持向前兼容）。
+/// Serialized into tagged object like `{ "type": "range", "min": 0.0, "max": 5.0 }`,
+/// frontend dispatches by `type`, ignores unknown type (keep forward compatibility).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -53,40 +53,40 @@ pub enum PropertyRenderer {
     rename_all_fields = "camelCase"
 )]
 pub enum PropertyAttribute {
-    /// `[Range(min, max)]`：滑动条 + 数值框。
+    /// `[Range(min, max)]`: slider + number box.
     Range { min: f32, max: f32 },
-    /// `[Min(min)]`：下限（不显示滑动条）。
+    /// `[Min(min)]`: lower limit (no slider shown).
     Min { min: f32 },
-    /// `[Max(max)]`：上限（不显示滑动条）。
+    /// `[Max(max)]`: upper limit (no slider shown).
     Max { max: f32 },
-    /// `[Multiline(lines)]`：固定行数的多行文本框。
+    /// `[Multiline(lines)]`: fixed-line multi-line text box.
     Multiline { lines: usize },
-    /// `[TextArea(minLines, maxLines)]`：可伸缩的多行文本框。
+    /// `[TextArea(minLines, maxLines)]`: resizable multi-line text box.
     TextArea { min_lines: usize, max_lines: usize },
-    /// `[ColorUsage(showAlpha, hdr)]`：取色盘是否显示 alpha / 支持 HDR。
+    /// `[ColorUsage(showalpha , hdr)]`: whether color picker shows alpha / supports HDR.
     ColorUsage { show_alpha: bool, hdr: bool },
-    /// `[Header(text)]`：字段上方的分组标题。
+    /// `[Header(text)]`: group title above field.
     Header { text: String },
-    /// `[Tooltip(text)]`：悬停提示。
+    /// `[Tooltip(text)]`: hover hint.
     Tooltip { text: String },
-    /// `[Delayed]`：只在回车 / 失焦时提交，而不是每次输入。
+    /// `[Delayed]`: commit only on Enter / blur, not on every input.
     Delayed,
 }
 
-/// 一个字段的绘制声明（渲染器 + 特性列表）。
+/// Draw declaration for one field (renderer + attribute list).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PropertyDrawer {
-    /// 选中哪个绘制器。
+    /// Which drawer to select.
     pub renderer: PropertyRenderer,
-    /// 特性列表（顺序即声明顺序）。
+    /// Attribute list (order = declaration order).
     pub attributes: Vec<PropertyAttribute>,
-    /// `renderer == Custom` 时的前端组件名（如 `TransformEditor`）。
+    /// Frontend component name when `renderer == Custom` (like `TransformEditor`).
     pub custom: Option<String>,
 }
 
 impl PropertyDrawer {
-    /// 用指定渲染器开一条空声明。
+    /// Open an empty declaration with given renderer.
     pub fn new(renderer: PropertyRenderer) -> Self {
         Self {
             renderer,
@@ -95,7 +95,7 @@ impl PropertyDrawer {
         }
     }
 
-    /// `[Range(min, max)]` → 滑动条。`max <= min` 时视为无效并退回默认控件。
+    /// `[Range(min, max)]` → slider. When `max <= min` treated invalid and falls back to default control.
     pub fn range(min: f32, max: f32) -> Self {
         if !(min.is_finite() && max.is_finite() && max > min) {
             return Self::default();
@@ -103,24 +103,24 @@ impl PropertyDrawer {
         Self::new(PropertyRenderer::Slider).attribute(PropertyAttribute::Range { min, max })
     }
 
-    /// `[Min(min)]`：只限制下限。
+    /// `[Min(min)]`: only lower limit.
     pub fn min(min: f32) -> Self {
         Self::new(PropertyRenderer::Default).attribute(PropertyAttribute::Min { min })
     }
 
-    /// `[Max(max)]`：只限制上限。
+    /// `[Max(max)]`: only upper limit.
     pub fn max(max: f32) -> Self {
         Self::new(PropertyRenderer::Default).attribute(PropertyAttribute::Max { max })
     }
 
-    /// `[Multiline(lines)]` → 多行文本框。
+    /// `[Multiline(lines)]` → multi-line text box.
     pub fn multiline(lines: usize) -> Self {
         Self::new(PropertyRenderer::TextArea).attribute(PropertyAttribute::Multiline {
             lines: lines.max(1),
         })
     }
 
-    /// `[TextArea(minLines, maxLines)]` → 可伸缩多行文本框。
+    /// `[TextArea(minLines, maxLines)]` → resizable multi-line text box.
     pub fn text_area(min_lines: usize, max_lines: usize) -> Self {
         let min_lines = min_lines.max(1);
         let max_lines = max_lines.max(min_lines);
@@ -130,13 +130,13 @@ impl PropertyDrawer {
         })
     }
 
-    /// `[ColorUsage(showAlpha, hdr)]` → 取色盘。
+    /// `[ColorUsage(showalpha , hdr)]` → color picker.
     pub fn color_usage(show_alpha: bool, hdr: bool) -> Self {
         Self::new(PropertyRenderer::Color)
             .attribute(PropertyAttribute::ColorUsage { show_alpha, hdr })
     }
 
-    /// `[CustomPropertyDrawer]`：交给名为 `renderer` 的前端组件。
+    /// `[CustomPropertyDrawer]`: hand to frontend component named `renderer`.
     pub fn custom(renderer: impl Into<String>) -> Self {
         Self {
             renderer: PropertyRenderer::Custom,
@@ -145,9 +145,9 @@ impl PropertyDrawer {
         }
     }
 
-    /// 追加一条特性。
+    /// Append one attribute.
     pub fn attribute(mut self, attribute: PropertyAttribute) -> Self {
-        // 重复的同类特性只保留最后一条（也只有一个 Range/Tooltip）。
+        // Duplicate same class attribute keeps only last (only one Range/Tooltip).
         self.attributes.retain(|existing| {
             std::mem::discriminant(existing) != std::mem::discriminant(&attribute)
         });
@@ -155,22 +155,22 @@ impl PropertyDrawer {
         self
     }
 
-    /// `[Header(text)]`。
+    /// `[Header(text)]`.
     pub fn with_header(self, text: impl Into<String>) -> Self {
         self.attribute(PropertyAttribute::Header { text: text.into() })
     }
 
-    /// `[Tooltip(text)]`。
+    /// `[Tooltip(text)]`.
     pub fn with_tooltip(self, text: impl Into<String>) -> Self {
         self.attribute(PropertyAttribute::Tooltip { text: text.into() })
     }
 
-    /// `[Delayed]`。
+    /// `[Delayed]`.
     pub fn delayed(self) -> Self {
         self.attribute(PropertyAttribute::Delayed)
     }
 
-    /// `[Range]` 的上下界（没有则 `None`）。
+    /// Upper/lower bounds of `[Range]` (`None` if absent).
     pub fn range_bounds(&self) -> Option<(f32, f32)> {
         self.attributes
             .iter()
@@ -180,7 +180,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// 下限（`[Range]` 或 `[Min]`）。
+    /// Lower limit (`[Range]` or `[Min]`).
     pub fn lower_bound(&self) -> Option<f32> {
         self.attributes
             .iter()
@@ -190,7 +190,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// 上限（`[Range]` 或 `[Max]`）。
+    /// Upper limit (`[Range]` or `[Max]`).
     pub fn upper_bound(&self) -> Option<f32> {
         self.attributes
             .iter()
@@ -200,7 +200,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// 多行文本框的行数范围。
+    /// Line count range of multi-line text box.
     pub fn line_range(&self) -> Option<(usize, usize)> {
         self.attributes
             .iter()
@@ -214,7 +214,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// `[ColorUsage]` 的 `(show_alpha, hdr)`。
+    /// `(show_alpha, hdr)` of `[ColorUsage]`.
     pub fn color_usage_flags(&self) -> Option<(bool, bool)> {
         self.attributes
             .iter()
@@ -224,7 +224,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// `[Tooltip]` 文字。
+    /// `[Tooltip]` text.
     pub fn tooltip(&self) -> Option<&str> {
         self.attributes
             .iter()
@@ -234,7 +234,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// `[Header]` 文字。
+    /// `[Header]` text.
     pub fn header(&self) -> Option<&str> {
         self.attributes
             .iter()
@@ -244,7 +244,7 @@ impl PropertyDrawer {
             })
     }
 
-    /// 是否带 `[Delayed]`。
+    /// Whether has `[Delayed]`.
     pub fn is_delayed(&self) -> bool {
         self.attributes
             .iter()
@@ -252,37 +252,37 @@ impl PropertyDrawer {
     }
 }
 
-/// 一条绘制声明的作用域。
+/// Scope of one draw declaration.
 #[derive(Debug, Clone, PartialEq)]
 struct DrawerEntry {
-    /// 声明者类型（`#[reflect(name = ...)]` 的规范名）。
+    /// Declaring type (canonical name of `#[reflect(name = ...)]`).
     type_name: String,
-    /// `Some(field)` = 只作用于该字段；`None` = 作用于整个类型
-    /// （`[CustomPropertyDrawer(typeof(X))]`）。
+    /// `Some(field)` = only that field; `None` = whole type
+    /// (`[CustomPropertyDrawer(typeof(X))]`).
     field: Option<String>,
     drawer: PropertyDrawer,
 }
 
-/// 字段绘制器注册表 = `PropertyDrawer` 的查找表。
+/// Field drawer registry = lookup table of `PropertyDrawer`.
 ///
-/// 查找顺序：**字段级声明优先于类型级**；同类声明后注册的覆盖先注册的
-/// （与 允许派生/后置特性覆盖一致）。
+/// Lookup order: **field-level declarations take priority over type-level**; same class declaration registered later overrides earlier
+/// (consistent with derived / later-set attribute override).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PropertyDrawerRegistry {
     entries: Vec<DrawerEntry>,
 }
 
 impl PropertyDrawerRegistry {
-    /// 空注册表（没有声明时 schema 的 `drawer` 全是 `None`）。
+    /// Empty registry (when no declarations schema `drawer` all `None`).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 内置组件字段的绘制器声明（[`crate::schema::build_schema`] 使用）。
+    /// Drawer declarations for built-in component fields (used by [`crate::schema::build_schema`]).
     ///
-    /// 只声明**有明确数值/展示语义**的字段，不替所有字段猜控件：
-    /// `Camera` 的曝光/视场/背景色、`Light` 的强度/范围/聚光角/阴影强度、
-    /// `Skybox` 的旋转/强度、`Text` 的正文。
+    /// Only declare fields with **explicit numeric / display semantics**, don't guess controls for all fields:
+    /// `Camera` exposure / fov / background color, `Light` intensity / range / spot angle / shadow strength,
+    /// `Skybox` rotation / intensity, `Text` foreground.
     pub fn with_builtin() -> Self {
         let mut registry = Self::new();
 
@@ -290,18 +290,19 @@ impl PropertyDrawerRegistry {
         registry.register(
             camera,
             "fov_y_degrees",
-            PropertyDrawer::range(1.0, 179.0).with_tooltip("垂直视场角（度）= Camera.fieldOfView"),
+            PropertyDrawer::range(1.0, 179.0)
+                .with_tooltip("Vertical field of view in degrees = Camera.fieldOfView"),
         );
         registry.register(
             camera,
             "exposure",
-            PropertyDrawer::range(0.0, 5.0).with_tooltip("曝光倍率，1.0 = 不缩放"),
+            PropertyDrawer::range(0.0, 5.0).with_tooltip("Exposure multiplier, 1.0 = no scaling"),
         );
         registry.register(
             camera,
             "background_color",
             PropertyDrawer::color_usage(true, false)
-                .with_tooltip("纯色背景（clearFlags = SolidColor 时生效）"),
+                .with_tooltip("Solid color background (effective when clearFlags = SolidColor)"),
         );
         registry.register(camera, "orthographic_size", PropertyDrawer::min(0.0001));
         registry.register(camera, "near", PropertyDrawer::min(0.0001));
@@ -315,7 +316,8 @@ impl PropertyDrawerRegistry {
         registry.register(
             light,
             "shadow_strength",
-            PropertyDrawer::range(0.0, 1.0).with_tooltip("阴影强度，0 = 无阴影、1 = 全黑"),
+            PropertyDrawer::range(0.0, 1.0)
+                .with_tooltip("Shadow strength, 0 = no shadow, 1 = fully black"),
         );
         registry.register(light, "color_temperature", PropertyDrawer::min(0.0));
 
@@ -336,7 +338,7 @@ impl PropertyDrawerRegistry {
         registry
     }
 
-    /// 给某个类型的某个字段登记绘制器 = `[CustomPropertyDrawer]` 到字段。
+    /// Register drawer for some field of some type = `[CustomPropertyDrawer]` to field.
     pub fn register(
         &mut self,
         type_name: impl Into<String>,
@@ -355,9 +357,9 @@ impl PropertyDrawerRegistry {
         });
     }
 
-    /// 给某个类型整体登记绘制器 = `[CustomPropertyDrawer(typeof(X))]`。
+    /// Register drawer for whole type = `[CustomPropertyDrawer(typeof(X))]`.
     ///
-    /// 字段级声明仍会覆盖它（里字段上的特性优先于类型级绘制器）。
+    /// Field-level declaration still overrides it (attribute on field takes priority over type-level drawer).
     pub fn register_type(&mut self, type_name: impl Into<String>, drawer: PropertyDrawer) {
         let type_name = type_name.into();
         self.entries
@@ -369,7 +371,7 @@ impl PropertyDrawerRegistry {
         });
     }
 
-    /// 给某个字段登记自定义前端组件（`[CustomPropertyDrawer]`）。
+    /// Register custom frontend component for some field (`[CustomPropertyDrawer]`).
     pub fn register_custom(
         &mut self,
         type_name: impl Into<String>,
@@ -379,11 +381,11 @@ impl PropertyDrawerRegistry {
         self.register(type_name, field, PropertyDrawer::custom(renderer));
     }
 
-    /// 查某个字段该用哪个绘制器。
+    /// Look up which drawer some field should use.
     ///
-    /// 查找顺序：
-    /// 1. 字段级声明（`declaring_type` + `field`）；
-    /// 2. 字段值类型级声明（`value_type`，`[CustomPropertyDrawer(typeof(X))]`）。
+    /// Lookup order:
+    /// 1. field-level declaration (`declaring_type` + `field`);
+    /// 2. field value type-level declaration (`value_type`, `[CustomPropertyDrawer(typeof(X))]`).
     pub fn drawer_for_field(
         &self,
         declaring_type: &str,
@@ -407,12 +409,12 @@ impl PropertyDrawerRegistry {
             .map(|entry| &entry.drawer)
     }
 
-    /// 查某个声明者类型的具体字段（不传值类型）。
+    /// Look up concrete field of some declaring type (without passing value type).
     pub fn drawer_for(&self, type_name: &str, field: &str) -> Option<&PropertyDrawer> {
         self.drawer_for_field(type_name, field, None)
     }
 
-    /// 查针对某个类型本身的绘制器（`[CustomPropertyDrawer(typeof(X))]`）。
+    /// Look up drawer targeting some type itself (`[CustomPropertyDrawer(typeof(X))]`).
     pub fn drawer_for_type(&self, type_name: &str) -> Option<&PropertyDrawer> {
         self.entries
             .iter()
@@ -421,12 +423,12 @@ impl PropertyDrawerRegistry {
             .map(|entry| &entry.drawer)
     }
 
-    /// 已登记的声明条数（测试 / 诊断用）。
+    /// Number of registered declarations (for tests / diagnostics).
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// 是否没有任何声明。
+    /// Whether no declarations at all.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -457,7 +459,7 @@ mod tests {
     fn text_area_and_multiline_report_line_ranges() {
         assert_eq!(PropertyDrawer::multiline(3).line_range(), Some((3, 3)));
         assert_eq!(PropertyDrawer::text_area(2, 6).line_range(), Some((2, 6)));
-        // min > max 会被规整成 max = min。
+        // min > max normalized to max = min.
         assert_eq!(PropertyDrawer::text_area(4, 1).line_range(), Some((4, 4)));
         assert_eq!(PropertyDrawer::text_area(0, 0).line_range(), Some((1, 1)));
     }
@@ -468,7 +470,7 @@ mod tests {
             .with_tooltip("first")
             .with_tooltip("second");
         assert_eq!(drawer.tooltip(), Some("second"));
-        // Range 只有一条。
+        // Range only one.
         assert_eq!(
             drawer
                 .attributes
@@ -488,10 +490,10 @@ mod tests {
     #[test]
     fn lookup_prefers_field_scope_over_type_scope() {
         let mut registry = PropertyDrawerRegistry::new();
-        // 给类型 demo::X 登记类型级绘制器（`[CustomPropertyDrawer(typeof(X))]`）
+        // Register type-level drawer for type demo::X (`[CustomPropertyDrawer(typeof(X))]`)
         registry.register_type("demo::X", PropertyDrawer::custom("WholeType"));
 
-        // 宿主包含 demo::X 类型的值字段：命中类型级绘制器
+        // Host has value field of type demo::X: hits type-level drawer
         assert_eq!(
             registry
                 .drawer_for_field("demo::Host", "x_field", Some("demo::X"))
@@ -499,7 +501,7 @@ mod tests {
             Some(PropertyRenderer::Custom)
         );
 
-        // 给特定字段登记字段级绘制器：覆盖类型级
+        // Register field-level drawer for specific field: overrides type-level
         registry.register("demo::Host", "x_field", PropertyDrawer::range(0.0, 1.0));
         assert_eq!(
             registry
@@ -508,7 +510,7 @@ mod tests {
             Some(PropertyRenderer::Slider)
         );
 
-        // 同一宿主的其它同类型字段仍走类型级声明
+        // Other same-type fields of same host still use type-level declaration
         assert_eq!(
             registry
                 .drawer_for_field("demo::Host", "other_x", Some("demo::X"))
@@ -516,7 +518,7 @@ mod tests {
             Some("WholeType")
         );
 
-        // 其它值类型的字段不受影响
+        // Fields of other value types not affected
         assert!(registry
             .drawer_for_field("demo::Host", "y_field", Some("demo::Y"))
             .is_none());
@@ -559,7 +561,7 @@ mod tests {
         assert!(registry
             .drawer_for("prism_engine::scene::Light", "shadow_strength")
             .is_some());
-        // 未声明的字段没有绘制器。
+        // Undeclared field has no drawer.
         assert!(registry.drawer_for(camera, "aspect").is_none());
     }
 

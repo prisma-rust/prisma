@@ -1,10 +1,10 @@
-//! 批量暂存上传器。
+//! Batched uploader.
 //!
-//! [`BatchUploader`] 将多次缓冲区/图像复制记录到单个一次性提交的命令缓冲区中，
-//! 然后通过一次 `vkQueueSubmit` + 一次 `vkWaitForFences` 刷新。
-//! 这取代了场景加载期间 [`crate::buffer::upload_to_buffer`] 和
-//! [`crate::buffer::create_and_upload_image`] 使用的逐资源提交等待模式，
-//! 该模式下数百次往返（Sponza: ~880）主导了加载时间。
+//! [`BatchUploader`] records many buffer / image copies into a single one-shot submit command buffer,
+//! then flushes via one `vkQueueSubmit` + one `vkWaitForFences`.
+//! This replaces the per-resource submit-and-wait mode used by scene-load time
+//! [`crate::buffer::upload_to_buffer`] and
+//! [`crate::buffer::create_and_upload_image`], where hundreds of round-trips (Sponza: ~880) dominated load time.
 //!
 //! Usage:
 //! ```ignore
@@ -381,7 +381,7 @@ impl<'a> BatchUploader<'a> {
                 },
             );
         } else if mip_levels == 1 {
-            // single mip: dst -> 着色器 读取 (the baked-chain path above already
+            // single mip: dst -> shader  read  (the baked-chain path above already
             // transitioned every level, so it must not fall through to here)
             barrier2(
                 &self.sync2,

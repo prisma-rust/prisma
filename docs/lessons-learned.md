@@ -1,692 +1,692 @@
-# Vulkan 渲染循环经验教训
+# Vulkan render loop lessons learned
 
-在实现 Prisma 里程碑 1（桌面 Vulkan 清屏循环）过程中踩过的坑和学到的经验。
+Pitfalls encountered and lessons learned while implementing Prisma milestone 1 (desktop Vulkan clear-screen loop).
 
-## 1. 工具链损坏要彻底清理
+## 1. Broken toolchain must be thoroughly cleaned
 
-**问题**：`rustup` 状态损坏（manifest 丢失、下载缓存污染、组件标记已安装但二进制缺失）。
+**Problem**: `rustup` state corrupted (manifest missing, download cache polluted, components marked installed but binaries missing).
 
-**教训**：
-- `rustup toolchain install` 显示 "unchanged" 不代表工具链完好，只是 manifest 认为已安装
-- Git Bash 的 `rm -rf` 在 Windows 上可能删不掉被占用的文件，要用 `cmd //c "rmdir /s /q ..."`
-- 修复步骤：先 `rustup toolchain uninstall`，再清空 `~/.rustup/downloads` 和 `tmp`，最后重装
-- 代理设置：`HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:7897`，rustup 默认后端（reqwest）走 HTTP CONNECT 隧道
+**Lessons**:
+- `rustup toolchain install` showing "unchanged" doesn't mean toolchain intact, only manifest thinks installed
+- Git Bash `rm -rf` on Windows may fail to delete locked files, use `cmd //c "rmdir /s /q ..."`
+- Repair steps: first `rustup toolchain uninstall`, then clear `~/.rustup/downloads` and `tmp`, finally reinstall
+- Proxy settings: `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:7897`, rustup default backend (reqwest) goes through HTTP CONNECT tunnel
 
-## 2. ash 0.38 API 与旧版本差异大
+## 2. ash 0.38 API differs greatly from old versions
 
-**问题**：照记忆写的 ash API 调用大量编译失败。
+**Problem**: many ash API calls written from memory failed to compile.
 
-**教训**：
-- **不要猜 API**，直接读 `~/.cargo/registry/src/` 下的 ash 源码确认签名
-- 关键差异：
-  - `DebugUtilsObjectNameInfoEXT` 的 `object_type` 是字段不是 builder 方法；`object_handle<T: Handle>()` 是泛型方法
-  - `set_debug_utils_object_name` 在 `ash::ext::debug_utils::Device` 上，不是 `Instance`
-  - 扩展名常量（如 `vk::EXT_DEBUG_UTILS_NAME`）是 `&'static CStr`，不是 `&str`，不能直接传给 `CString::new`
-  - `ash_window::create_surface` 接收 `RawDisplayHandle`/`RawWindowHandle`（值），需要 `.into()` 从 `HasDisplayHandle` 转换
-  - `ash_window::enumerate_required_extensions` 返回 `&'static [*const c_char]`
+**Lessons**:
+- **Never guess API**, read ash source under `~/.cargo/registry/src/` to confirm signatures
+- Key differences:
+  - `DebugUtilsObjectNameInfoEXT` `object_type` is a field not builder method; `object_handle<T: Handle>()` is generic method
+  - `set_debug_utils_object_name` is on `ash::ext::debug_utils::Device`, not `Instance`
+  - Extension-name constants (e.g. `vk::EXT_DEBUG_UTILS_NAME`) are `&'static CStr`, not `&str`, can't pass directly to `CString::new`
+  - `ash_window::create_surface` takes `RawDisplayHandle`/`RawWindowHandle` (values), needs `.into()` from `HasDisplayHandle`
+  - `ash_window::enumerate_required_extensions` returns `&'static [*const c_char]`
 
-## 3. 设备创建必须启用 swapchain 扩展
+## 3. Device creation must enable swapchain extension
 
-**问题**：`Unable to load create_swapchain_khr` panic。
+**Problem**: `Unable to load create_swapchain_khr` panic.
 
-**原因**：创建逻辑设备时没有启用 `VK_KHR_swapchain` 设备扩展，导致 swapchain 函数指针无法加载。
+**Cause**: didn't enable `VK_KHR_swapchain` device extension when creating logical device, swapchain function pointers couldn't load.
 
-**教训**：实例扩展和设备扩展是两回事。`VK_KHR_swapchain` 是**设备扩展**，必须在 `vk::DeviceCreateInfo::enabled_extension_names` 中启用。
+**Lesson**: instance extensions and device extensions are different things. `VK_KHR_swapchain` is a **device extension**, must be enabled in `vk::DeviceCreateInfo::enabled_extension_names`.
 
-## 4. 交换链重建必须传 old_swapchain
+## 4. Swapchain recreation must pass old_swapchain
 
-**问题**：重建 swapchain 时报 `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR`。
+**Problem**: `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR` on swapchain recreation.
 
-**原因**：`vk::SwapchainCreateInfoKHR` 没有设置 `old_swapchain`，导致实现无法平滑过渡旧交换链。
+**Cause**: `vk::SwapchainCreateInfoKHR` didn't set `old_swapchain`, implementation couldn't smoothly transition old swapchain.
 
-**教训**：
-- 重建时必须把旧 swapchain 传给 `create_info.old_swapchain(old)`
-- 创建新 swapchain 成功后再销毁旧的
-- 重建要事务化：先创建新的，成功后才销毁旧的资源（view/semaphore），失败时保持旧状态不变
+**Lessons**:
+- Must pass old swapchain to `create_info.old_swapchain(old)` on recreation
+- Destroy old only after new swapchain created successfully
+- Recreation transactional: create new first, destroy old resources (view / semaphore) only on success, keep old state unchanged on failure
 
-## 5. 信号量同步：per-image 而非 per-frame
+## 5. Semaphore sync: per-image not per-frame
 
-**问题**：验证层报信号量重用错误 `VUID-vkQueueSubmit-pSignalSemaphores-00067`。
+**Problem**: validation layer reports semaphore reuse error `VUID-vkQueueSubmit-pSignalSemaphores-00067`.
 
-**原因**：`render_finished` 信号量按 frame-index 轮转，但 `vkAcquireNextImageKHR` 可能连续返回同一 image index，导致同一信号量被两个 present 同时引用。
+**Cause**: `render_finished` semaphore rotated by frame-index, but `vkAcquireNextImageKHR` may return same image index consecutively, causing same semaphore referenced by two presents.
 
-**教训**：
-- `image_available`（acquire 信号量）：按 `MAX_FRAMES_IN_FLIGHT` 轮转，fence 保证复用安全
-- `render_finished`（present 等待的信号量）：**按 swapchain image index 索引**，每 image 一个
-- 验证层的建议直接照做：`Use a separate semaphore per swapchain image`
-- 编辑器窗口的交换链由 `egui-ash` 管理，上游 rev `258aee2` 仍是 per-frame；#581 通过
-  `prisma-rust/egui-ash` 的 `prismrev` 分支（commit `6b390d3`）修正后才接入，
-  以后升级这个依赖时要重新确认 `src/presenters.rs` 仍然按 `image_index` 取信号量
+**Lessons**:
+- `image_available` (acquire semaphore): rotate by `MAX_FRAMES_IN_FLIGHT`, fence guarantees safe reuse
+- `render_finished` (semaphore waited by present): **indexed by swapchain image index**, one per image
+- Follow validation-layer advice directly: `Use a separate semaphore per swapchain image`
+- Editor window swapchain managed by `egui-ash`, upstream rev `258aee2` still per-frame; #581 fixed via
+  `prisma-rust/egui-ash` `prismrev` branch (commit `6b390d3`) before integration,
+  when upgrading this dependency later reconfirm `src/presenters.rs` still takes semaphore by `image_index`
 
-## 6. 命令缓冲区必须 per-frame-in-flight
+## 6. Command buffer must be per-frame-in-flight
 
-**问题**：`vkResetCommandBuffer` 报 "commandBuffer must not be in the pending state"。
+**Problem**: `vkResetCommandBuffer` reports "commandBuffer must not be in the pending state".
 
-**原因**：只有一个命令缓冲区被所有帧共享。帧 A 提交后（pending），帧 B 在未等待帧 A 完成的情况下重置了它。
+**Cause**: only one command buffer shared by all frames. Frame A submitted (pending), frame B reset it without waiting for A.
 
-**教训**：
-- 分配 `MAX_FRAMES_IN_FLIGHT` 个命令缓冲区，按 `current_frame` 索引
-- fence 等待确保对应帧的命令缓冲区已完成，才能重置和重录
+**Lessons**:
+- Allocate `MAX_FRAMES_IN_FLIGHT` command buffers, index by `current_frame`
+- Fence wait ensures corresponding frame's command buffer finished before reset and re-record
 
-## 7. 帧同步：不要用 image_in_flight 追踪
+## 7. Frame sync: don't use image_in_flight tracking
 
-**问题**：acquire 在第 3 帧永久阻塞。
+**Problem**: acquire blocks forever at frame 3.
 
-**原因**：`image_in_flight[image_index]` 被设为 submit fence，但 image 是否可复用取决于 **present 是否完成**，而非 submit 是否完成。`wait_for_fences(image_in_flight[idx])` 等的是 submit fence，不能保证 image 已被 present 释放，形成循环等待。
+**Cause**: `image_in_flight[image_index]` set to submit fence, but whether image reusable depends on **present completion**, not submit. `wait_for_fences(image_in_flight[idx])` waits submit fence, can't guarantee image released by present, forming circular wait.
 
-**教训**：
-- 用 vulkan-tutorial 的标准模式：只用 `MAX_FRAMES_IN_FLIGHT` 个 fence 轮转，**不需要 per-image fence 追踪**
-- `MAX_FRAMES_IN_FLIGHT=2` + `min_image_count+1=3` 个 swapchain image，始终至少 1 个 image 空闲，acquire 不会阻塞
-- fence 等待放在 acquire 开头：`wait_for_fences([current_frame_fence])` -> `reset_fences` -> `acquire`，保证命令缓冲区和 acquire 信号量都可安全复用
+**Lessons**:
+- Use vulkan-tutorial standard pattern: only `MAX_FRAMES_IN_FLIGHT` fences rotating, **no per-image fence tracking needed**
+- `MAX_FRAMES_IN_FLIGHT=2` + `min_image_count+1=3` swapchain images, always at least 1 free image, acquire won't block
+- Fence wait at acquire start: `wait_for_fences([current_frame_fence])` -> `reset_fences` -> `acquire`, ensuring command buffer and acquire semaphore safely reusable
 
-## 8. winit 0.30 事件循环模型
+## 8. winit 0.30 event-loop model
 
-**问题**：双击运行时窗口"未响应"，颜色不变。
+**Problem**: double-clicking run window "not responding", color doesn't change.
 
-**原因**：winit 0.30 是事件驱动的，`about_to_wait` 不会自动持续调用。
+**Cause**: winit 0.30 event-driven, `about_to_wait` doesn't auto-call continuously.
 
-**教训**：
-- 必须调用 `window.request_redraw()` 触发下一帧
-- `request_redraw` 放在 `about_to_wait` 里（不是 `RedrawRequested` 回调里），让事件循环在帧之间回到 OS 消息泵
-- 渲染逻辑放在 `window_event` 的 `RedrawRequested` 分支中
-- 在 Windows 上 FIFO present 需要消息泵运转才能完成，事件循环不呼吸会导致 image 不释放
+**Lessons**:
+- Must call `window.request_redraw()` to trigger next frame
+- Put `request_redraw` in `about_to_wait` (not in `RedrawRequested` callback), letting event loop return to OS message pump between frames
+- Render logic in `window_event` `RedrawRequested` branch
+- On Windows FIFO present needs message pump running to complete, non-breathing event loop causes images not released
 
-## 9. 日志在无控制台环境下的问题
+## 9. Logging in no-console environment issue
 
-**问题**：双击运行时 `env_logger` 写 stderr 可能阻塞。
+**Problem**: double-clicking run `env_logger` writing stderr may block.
 
-**教训**：
-- 用 `std::io::IsTerminal` 检测是否有控制台
-- 无控制台时回退到写文件（`template.log`），避免阻塞
-- 日志 `format` 闭包里加 `buf.flush()` 确保实时落盘，方便诊断崩溃
+**Lessons**:
+- Use `std::io::IsTerminal` to detect console presence
+- Without console fall back to writing file (`template.log`), avoid blocking
+- Add `buf.flush()` in log `format` closure to ensure real-time disk write for crash diagnosis
 
-## 10. 矩阵乘法与列主序(Column-Major)的陷阱
+## 10. Matrix multiplication and column-major pitfalls
 
-**问题**：渲染循环跑通了，但屏幕上只显示清屏颜色，完全看不到绘制的物体（所有物体都在裁剪阶段被丢弃）。
+**Problem**: render loop runs but only clear color shows, no drawn objects (all discarded at clipping).
 
-**原因**：多个矩阵数学计算由于未考虑列主序（或手误）写错，导致物体坐标映射到了无效的裁剪空间外：
-1. **View-Projection 乘法写反**：自定义的矩阵乘法 `C[i][j] += A[i][k] * B[k][j]` 实质上计算的是 `(B * A)^T`。由于 `i` 代表列，`j` 代表行，标准矩阵乘法 `C = A * B` 应该是 `C[i][j] += A[k][j] * B[i][k]`。
-2. **投影矩阵 Z/W 元素位置写反**：在列主序矩阵 `proj[col][row]` 中，为了实现 `W_clip = -Z_view`，`-1.0` 应该放在 `col2.w`（即 `proj[2][3]`），而 Z 的平移项应该放在 `col3.z`（即 `proj[3][2]`）。原代码里这两者正好写反了，导致 W 被置为错误的缩放值。
-3. **模型矩阵的局部缩放应用错误**：`to_model_matrix` 在把缩放值应用到旋转矩阵时，原本的代码错误地给一行乘上了不同的 sx/sy/sz。对于 `M = T * R * S`，缩放应当在局部坐标系生效，因此旋转矩阵的每个列向量（代表局部 X/Y/Z 轴）应当被整体乘上一个对应的缩放系数。
+**Cause**: several matrix math calculations written wrong due to ignoring column-major (or typos), mapping object coords to invalid clip space:
+1. **View-Projection multiplication reversed**: custom multiply `C[i][j] += A[i][k] * B[k][j]` actually computes `(B * A)^T`. Since `i` is column, `j` row, standard `C = A * B` should be `C[i][j] += A[k][j] * B[i][k]`.
+2. **Projection Z/W element position reversed**: in column-major `proj[col][row]`, to realize `W_clip = -Z_view`, `-1.0` goes at `col2.w` (`proj[2][3]`), Z translation at `col3.z` (`proj[3][2]`). Original had them swapped, W got wrong scale.
+3. **Model matrix local scale applied wrong**: `to_model_matrix` applied scale by multiplying a *row* with different sx/sy/sz. For `M = T * R * S`, scale applies in local coords, so each rotation matrix column vector (local X/Y/Z axis) should be multiplied by corresponding scale factor.
 
-**教训**：
-- **永远要在纸上手动推演一次列主序的二维数组下标**。`m[col][row]` 格式在做 `C = A * B` 时，结果的第 `i` 列是 `B` 的第 `i` 列向量与 `A` 的每一行做点积。
-- 在图形 API 中手写底层数学运算极易出错，一个小小的下标错误就会导致黑屏/空屏。建议尽早引入经过测试的第三方数学库（如 `glam` 或 `nalgebra`），如果一定要手写，必须为每个矩阵构建、乘法函数编写严密的单元测试。
+**Lessons**:
+- **Always manually walk through column-major 2D-array indices on paper**. With `m[col][row]` doing `C = A * B`, result column `i` is `B`'s column `i` dotted with each row of `A`.
+- Hand-writing low-level math in graphics APIs is error-prone, one index mistake causes black / empty screen. Adopt tested math library (`glam` / `nalgebra`) early; if must hand-write, rigorous unit tests for every matrix build / multiply.
 
-## 11. 绕序(Winding Order)与背面剔除的空心错觉
+## 11. Winding order and back-face culling empty-mask illusion
 
-**问题**：场景中的球体光照方向看起来是反的。光源在右上角，但球体似乎是左上角亮。并且当相机转到光源同侧时，球体变成了全黑，而旁边的立方体光照完全正常。
+**Problem**: sphere lighting direction looks reversed. Light at upper-right but sphere seems lit upper-left. When camera moves to same side as light, sphere becomes all black, while nearby cube lit normally.
 
-**原因**：球体的三角形顶点索引生成时采用了**顺时针 (CW)** 绕序，而立方体使用的是**逆时针 (CCW)** 绕序。
-1. **坐标系与正面判定**：Vulkan 的投影矩阵会翻转 Y 轴（`proj[1][1] = -inv_tan`，这是 Vulkan 的正确写法，非 bug）。这意味着在世界空间（+Y 向上）里是逆时针 (CCW) 的三角形，经过 y 翻转后到了 NDC 会变成顺时针 (CW)（Vulkan 的 NDC y 与 OpenGL 相反：y=+1 对应帧缓冲底部，而非顶部）。
-2. **管线状态**：图形管线设置了 `front_face(CLOCKWISE)` 并且开启了 `cull_mode(BACK)`。因此，世界空间里的 CCW 三角形（如立方体）在裁剪空间变成 CW，被判定为“正面”从而保留；而世界空间里的 CW 三角形（如球体）被判定为“背面”从而被剔除。
-3. **视觉错觉（空心面具错觉）**：由于球体面向相机的前半个壳被全部剔除，相机实际看到的是球体**背向相机的那半个壳的内侧**！由于内侧顶点的法线是朝向球外的（即背离相机和光源），导致光照计算 `dot(N, L)` 出现完全反直觉的结果，形成光照位置相反、甚至全黑的错觉。
+**Cause**: sphere triangle indices used **clockwise (CW)** winding, cube used **counter-clockwise (CCW)**.
+1. **Coordinate system and front-face determination**: Vulkan projection flips Y (`proj[1][1] = -inv_tan`, correct Vulkan not bug). A triangle CCW in world space (+Y up) becomes CW in NDC after y-flip (Vulkan NDC y opposite OpenGL: y=+1 is framebuffer bottom, not top).
+2. **Pipeline state**: graphics pipeline set `front_face(CLOCKWISE)` with `cull_mode(BACK)`. World-space CCW triangles (cube) become CW in clip space, judged front and kept; world-space CW triangles (sphere) judged back and culled.
+3. **Visual illusion (hollow-mask illusion)**: front hemisphere facing camera entirely culled, camera actually sees **inside of back hemisphere**! Inner normals point outward (away from camera and light), making `dot(N, L)` counter-intuitive — reversed lighting or all-black illusion.
 
-**教训**：
-- **统一绕序**：程序生成的所有 3D 几何体（无论是 Cube 还是 Sphere）必须严格遵守统一的绕序（通常约定为世界空间 CCW 为正面）。
-- **光照诡异先查法线与剔除**：当发现某个物体的光照方向与其他物体不一致，或者某些角度出现不合理的纯黑时，第一时间检查该物体的绕序、法线方向，或者暂时关闭背面剔除（`CullModeFlags::NONE`）来排除是否渲染了物体的内侧面。
+**Lessons**:
+- **Unify winding order**: all generated 3D geometry (cube or sphere) must strictly follow unified winding (convention: world-space CCW = front face).
+- **Weird lighting check normals and culling first**: when object lighting inconsistent or unreasonable pure black at angles, check winding / normal direction first, or temporarily disable back-face culling (`CullModeFlags::NONE`) to rule out rendering inner faces.
 
-## 总结
+## Summary
 
-Vulkan 渲染循环的核心是**同步原语的正确配对**。最容易出错的地方不是 Vulkan 本身的复杂性，而是同步设计：
+Core of Vulkan render loop is **correct pairing of synchronization primitives**. Easiest mistakes aren't Vulkan complexity but sync design:
 
-| 原语 | 数量 | 索引方式 | 作用 |
+| Primitive | Count | Indexing | Purpose |
 |------|------|----------|------|
-| acquire 信号量 | `MAX_FRAMES_IN_FLIGHT` | `current_frame` 轮转 | acquire -> submit 等待 |
-| render_finished 信号量 | swapchain image 数 | `image_index` | submit -> present 等待 |
-| fence | `MAX_FRAMES_IN_FLIGHT` | `current_frame` 轮转 | CPU 等待 GPU 完成命令缓冲区 |
+| acquire semaphore | `MAX_FRAMES_IN_FLIGHT` | `current_frame` rotate | acquire -> submit wait |
+| render_finished semaphore | swapchain image count | `image_index` | submit -> present wait |
+| fence | `MAX_FRAMES_IN_FLIGHT` | `current_frame` rotate | CPU wait GPU command-buffer completion |
 
-**不要画蛇添足**：标准模式（fence 轮转 + per-image render_finished 信号量）已经足够，不需要 per-image fence 追踪。多余的同步机制反而会引入死锁。
+**Don't over-engineer**: standard pattern (fence rotation + per-image render_finished) is enough, no per-image fence tracking needed. Extra sync only introduces deadlocks.
 
-## 12. Vulkan 1.2 下 `VK_KHR_synchronization2` 必须显式启用且用 KHR 包装器
+## 12. Vulkan 1.2 below requires explicit enable and KHR wrapper for `VK_KHR_synchronization2`
 
-**问题**：`Unable to load cmd_pipeline_barrier2` 非展开 panic（崩在 `create_and_upload_image` 的 `vkCmdPipelineBarrier2`）。
+**Problem**: `Unable to load cmd_pipeline_barrier2` non-unwind panic (crash at `vkCmdPipelineBarrier2` in `create_and_upload_image`).
 
-**原因**：
-- 实例/设备创建使用 `API_VERSION_1_2`。在 1.2 上核心符号 `vkCmdPipelineBarrier2` **不在 dispatch 表**里，只有 `vkCmdPipelineBarrier2KHR` 可用（该扩展在 1.3 才进核心）。
-- 仅 `enabled_extension_names.push(ash::khr::synchronization2::NAME)` **不够**——`ash::Device::cmd_pipeline_barrier2` 只加载核心符号，仍 panic。
+**Causes**:
+- Instance / device created with `API_VERSION_1_2`. On 1.2 core symbol `vkCmdPipelineBarrier2` **not in dispatch table**, only `vkCmdPipelineBarrier2KHR` available (entered core in 1.3).
+- Only `enabled_extension_names.push(ash::khr::synchronization2::NAME)` **not enough** — `ash::Device::cmd_pipeline_barrier2` loads core symbol only, still panics.
 
-**教训**：
-- 在 1.2 设备上用到 sync2 barrier，必须把扩展加进 `enabled_extension_names`，并且用 `ash::khr::synchronization2::Device::new(&instance, &device)` 拿到 KHR 包装器来调用。
-- 同理 `cmd_blit_image2` 在 1.2 上来自 `VK_KHR_copy_commands2`，也要用对应 KHR 包装器。
-- 不要试图把实例升到 1.3 来"取巧"——物理设备可能只支持 1.2，会直接导致 `createDevice` 失败。
+**Lessons**:
+- To use sync2 barrier on 1.2 device, must add extension to `enabled_extension_names` and use `ash::khr::synchronization2::Device::new(&instance, &device)` KHR wrapper to call.
+- Same for `cmd_blit_image2` on 1.2 comes from `VK_KHR_copy_commands2`, also needs KHR wrapper.
+- Don't try upgrading instance to 1.3 to "cheat" — physical device may only support 1.2, directly causing `createDevice` failure.
 
-## 13. Slang 对 bindless 运行时数组会生成非法 SPIR-V
+## 13. Slang bindless runtime arrays generate illegal SPIR-V
 
-**问题**：validation 层 `vkCreateShaderModule()` 报 `Invalid explicit layout decorations on type`（`%_runtimearr_XX ArrayStride 8`），VUID-StandaloneSpirv-None-10684。
+**Problem**: validation layer `vkCreateShaderModule()` reports `Invalid explicit layout decorations on type` (`%_runtimearr_XX ArrayStride 8`), VUID-StandaloneSpirv-None-10684.
 
-**原因**：`Texture2D[]` / `SamplerState[]`（`UniformConstant` 运行时数组）被 Slang 错误加上 `OpDecorate <arr> ArrayStride 8`。SPIR-V 校验禁止对"元素是 opaque 类型（image/sampler）的运行时数组"加显式 layout 装饰。该 bug 在 `spirv_1_3`~`spirv_1_6` 所有 profile 上都复现，**Slang 2026.21 起已修复**。
+**Cause**: `Texture2D[]` / `SamplerState[]` (`UniformConstant` runtime arrays) wrongly decorated by Slang with `OpDecorate <arr> ArrayStride 8`. SPIR-V validation forbids explicit layout decoration on "runtime arrays whose elements are opaque types (image/sampler)". Bug reproduces on all `spirv_1_3`~`spirv_1_6` profiles, **fixed since Slang 2026.21**.
 
-**教训**：
-- 编译后必须过 `spirv-val`；这种错误在 debug validation 下才会暴露，release 不校验但驱动行为未定义。`compile.sh` 末尾的 gate 就是干这个的。
-- 2025.x / 2026.13 的产物需要剥离非法 `ArrayStride`（只删"元素是 `OpTypeImage`/`OpTypeSampler` 的运行时数组"，**SSBO / struct 数组的合法 stride 必须保留**）。这段后处理（`fix_spirv.py`）已在升级到 Slang 2026.21 后删除；不要再手动加回来，直接升级编译器。
-- 任何环境都优先用 `.local/tools/slang/bin/slangc`（2026.21+），`compile.sh` 会自动探测。2025.11 另有 `scene_frag.slang` 段错误，同样只能靠升级解决。
+**Lessons**:
+- Must pass `spirv-val` after compile; such errors only exposed under debug validation, release doesn't validate but driver behavior undefined. Gate at end of `compile.sh` does this.
+- 2025.x / 2026.13 outputs need stripping illegal `ArrayStride` (only "runtime arrays whose elements are `OpTypeImage`/`OpTypeSampler`", **legit strides of SSBO / struct arrays must be kept**). This post-processing (`fix_spirv.py`) removed after upgrading to Slang 2026.21; don't add back manually, upgrade compiler instead.
+- Always prefer `.local/tools/slang/bin/slangc` (2026.21+) in any environment, `compile.sh` auto-detects. 2025.11 also had `scene_frag.slang` segfault, likewise only fixed by upgrade.
 
-**手编陷阱**：不要绕过 `compile.sh` 直接手调 `slangc`（尤其是旧版本 + `-emit-spirv-directly`），否则会吐出带非法 `ArrayStride` 的 spv。统一用 `bash assets/shaders/compile.sh`（或 `run.ps1`）；手编后至少跑一次 `spirv-val.exe <file>.spv` 再提交。
+**Manual-compile trap**: don't bypass `compile.sh` to call `slangc` directly (especially old versions + `-emit-spirv-directly`), will emit spv with illegal `ArrayStride`. Always use `bash assets/shaders/compile.sh` (or `run.ps1`); after manual compile at least run `spirv-val.exe <file>.spv` once before commit.
 
-## 14. 改了 shader 源文件却没生效？先确认三件事
+## 14. Changed shader source but no effect? check three things first
 
-**问题**：反复改 `scene_bindless.slang` 的 IBL 常量，运行现象纹丝不动（"仍然灰白"）。
+**Problem**: repeatedly changed IBL constants in `scene_bindless.slang`, runtime unchanged ("still gray-white").
 
-**原因（按顺序排查）**：
-1. **shader 源文件名/编译脚本错误让 `.spv` 根本没重编**：`compile.sh` 有 `set -euo pipefail`，中途某个 shader 源文件名不对（如 `scene.slang` 实际是 `scene.vert.slang`/`scene.frag.slang`）会让脚本提前 `exit`，**下一步扩展 shader（含 bindless）没被重新生成**，磁盘上还是改之前的旧 `.spv`。profile 名字也要对：当前 slangc 接受 `spirv_1_5`，拒绝旧名 `sspirv_1_5`。
-2. **改错了 shader 文件**：sponza 走的是 `GraphRenderer` → `ForwardPass`（`scene_bindless.frag.spv`）直连 swapchain。`GBufferPass`/`LightingPass`/`PostPass` 当前**没被 GraphRenderer 连接**，改 `lighting.slang`/`post.slang` 全是无效功。
-3. **`include_bytes!` 是编译期打进二进制的**：必须 `cargo build` 重编 Rust 才能拾取新 `.spv`。
+**Causes (check in order)**:
+1. **Wrong shader filename / build script caused `.spv` never recompiled**: `compile.sh` has `set -euo pipefail`, a wrong shader source filename mid-script (e.g. `scene.slang` actually `scene.vert.slang`/`scene.frag.slang`) makes script `exit` early, **next extension shaders (incl. bindless) not regenerated**, disk still has old `.spv`. Profile name must match too: current slangc accepts `spirv_1_5`, rejects old `sspirv_1_5`.
+2. **Changed wrong shader file**: sponza goes `GraphRenderer` → `ForwardPass` (`scene_bindless.frag.spv`) direct to swapchain. `GBufferPass`/`LightingPass`/`PostPass` currently **not connected by GraphRenderer**, changing `lighting.slang`/`post.slang` is wasted work.
+3. **`include_bytes!` baked into binary at compile time**: must `cargo build` to recompile Rust to pick up new `.spv`.
 
-**教训**：
-- 改完**必须亲自用 `spirv-dis` 反编译 `.spv`，核对相关 `OpConstant %float` 确实变了**，不能只看 `compile.sh` 打印 "compiled"。
-- 改 shader 前先 grep 实际 `include_bytes!` 的 `FRAG_SPV`，以及 `GraphRenderer::render` / `add_pass` 里真正连接的 pass，确认改的是会被执行的 binary。
-- "屏蔽某段看还剩什么"是有效的隔离手段（屏蔽 IBL 后灰白消失 → 坐实 IBL 是元凶），但前提是隔离改的是对的文件。
+**Lessons**:
+- After change **must personally decompile `.spv` with `spirv-dis`, confirm relevant `OpConstant %float` actually changed**, don't just trust `compile.sh` printing "compiled".
+- Before changing shader grep actual `include_bytes!` `FRAG_SPV`, and passes truly connected in `GraphRenderer::render` / `add_pass`, confirm changing binary actually executed.
+- "Mask a segment to see what remains" is effective isolation (mask IBL, gray-white disappears → confirms IBL culprit), but only if isolation changed the right file.
 
-## 15. 色彩空间：SRGB swapchain 会对输出做二次 gamma 编码
+## 15. Color space: SRGB swapchain double gamma-encodes output
 
-**问题**：unlit 直接 `return sampled.rgb`（纹理 sRGB 字节）后，红棕瓦片被提亮成**黄白**。
+**Problem**: unlit directly `return sampled.rgb` (texture sRGB bytes), red-brown tiles brightened to **yellow-white**.
 
-**原因**：swapchain 是 `B8G8R8A8_SRGB`，Vulkan 会对 shader 输出再做一次 sRGB 编码（gamma 1/2.2）后显示。纹理以 `R8G8B8A8_UNORM`（sRGB 字节）上传，unlit 直接输出 → 被 swapchain 二次编码 → 偏亮偏黄白。
-**没有 post 参与**（本次 sponza 路径根本没接 PostPass），"黄白"不能归咎于 post 的 `pow(1/2.2)` —— 那是错误归因。
+**Cause**: swapchain is `B8G8R8A8_SRGB`, Vulkan applies another sRGB encode (gamma 1/2.2) to shader output before display. Texture uploaded as `R8G8B8A8_UNORM` (sRGB bytes), unlit outputs directly → double-encoded by swapchain → bright yellow-white.
+**No post involved** (sponza path didn't connect PostPass at all), "yellow-white" can't be blamed on post `pow(1/2.2)` — wrong attribution.
 
-**教训**：
-- unlit 想"所见即纹理"：输出前 `albedo = pow(sampled.rgb, 2.2)`（sRGB→linear），让 SRGB swapchain 编码回去 = 原纹理色。
-- **环境光"灰白污染"不是运算符问题**：漫反射 IBL `irradiance * albedo` 本来就是 multiply，正确。真问题是 `irradiance` 是个**恒定灰色常量**（如 0.06~0.12 灰），作为独立 add 项叠加，背光面只剩这层灰白。正确做法是从 `envCube` 采样真实辐照度（带环境色调），而非一坨灰常量。
-- **纹理格式应区分 sRGB / linear（根基性修复，仍待办）**：albedo / emissive 是 sRGB 数据，应上传为 `R8G8B8A8_SRGB`（采样自动转 linear，光照在 linear 空间算，输出 SRGB swapchain 编码回去）；normal / metallic-roughness 是 linear 数据，必须保持 `R8G8B8A8_UNORM`。当前所有纹理统一 `UNORM` 上传，是 PBR 色彩正确的根本缺陷，也是那套 gamma hack 的来源。
+**Lessons**:
+- For unlit "what you see is texture": before output `albedo = pow(sampled.rgb, 2.2)` (sRGB→linear), letting SRGB swapchain encode back = original texture color.
+- **Ambient "gray-white pollution" not operator problem**: diffuse IBL `irradiance * albedo` is multiply, correct. Real problem: `irradiance` is a **constant gray value** (e.g. 0.06–0.12 gray), added as independent term, leaving only gray-white on unlit side. Correct: sample real irradiance from `envCube` (with ambient tint), not a lump of gray constant.
+**Texture formats should distinguish sRGB / linear (root fix, still TODO)**: albedo / emissive are sRGB data, should upload as `R8G8B8A8_SRGB` (sampling auto-converts to linear, lighting computed in linear, SRGB swapchain encodes back); normal / metallic-roughness are linear data, must stay `R8G8B8A8_UNORM`. Currently all textures uniformly `UNORM`, root defect of PBR color correctness and source of gamma hacks.
 
-## 总结（补充）
+## Summary (supplement)
 
-本次里程碑暴露的问题集中在**扩展/校验/构建链路/色彩空间**四类，而非同步原语：
+This milestone problems concentrated in **extension / validation / build chain / color space** four categories, not sync primitives:
 
-| 类别 | 关键坑 | 验证手段 |
+| Category | Key pitfall | Verification |
 |------|--------|----------|
-| 扩展加载 | 1.2 上 sync2/copy2 要显式启用 + KHR 包装器 | 崩溃栈指向 `load_erased` |
-| SPIR-V 合法性 | Slang 给 opaque 运行时数组加非法 `ArrayStride` | `spirv-val` 报 VUID-StandaloneSpirv |
-| 构建链路 | 编译脚本中途失败导致 `.spv` 没重编；改错文件 | `spirv-dis` 反编译核对常量 |
-| 色彩空间 | SRGB swapchain 二次 gamma 编码；IBL 灰常量 | unlit 输出 + 隔离 IBL |
-| 路径确认 | sponza 走 ForwardPass 直连 swapchain，无 post | grep `include_bytes!` + `add_pass` |
+| Extension loading | sync2/copy2 on 1.2 need explicit enable + KHR wrapper | crash stack points to `load_erased` |
+| SPIR-V validity | Slang adds illegal `ArrayStride` to opaque runtime arrays | `spirv-val` reports VUID-StandaloneSpirv |
+| Build chain | build script mid-failure leaves `.spv` stale; changed wrong file | `spirv-dis` decompile confirm constant |
+| Color space | SRGB swapchain double gamma; IBL gray constant | unlit output + isolate IBL |
+| Path confirmation | sponza uses ForwardPass direct swapchain, no post | grep `include_bytes!` + `add_pass` |
 
-**先确认实际路径，再改代码**：所有"改了没生效 / 归因错"都源于先入为主假设了渲染路径。改 shader 前先确认它确实被编译、被连接、被二进制包含。
+**Confirm actual path before changing code**: all "changed but no effect / wrong attribution" stem from preconceived assumptions about render path. Before changing shader confirm it's compiled, connected, binary-included.
 
-## 16. 阴影正交投影的 z 映射 + near plane 必须自洽（否则条带/消失）
+## 16. Orthographic shadow projection z mapping and near plane must be self-consistent (else stripes / disappearance)
 
-**背景**：`DirectionalLight` 的 `light_direction` 在 shader 里是 **direction TO the light**（`dot(n, light_dir)` 受光，见 `scene_bindless.slang` 453/455 行），正交阴影投影用 Vulkan 的 `[0,1]` 深度。
+**Background**: `DirectionalLight` `light_direction` in shader is **direction TO the light** (`dot(n, light_dir)` lit, see `scene_bindless.slang` lines 453/455), orthographic shadow projection uses Vulkan `[0,1]` depth.
 
-**踩过的三个坑（按出现顺序）**：
+**Three pitfalls encountered (in order)**:
 
-1. **z 映射公式错 → 远处饱和成条带**：原 `proj[2][2]=-0.5/dist, proj[2][3]=0.5` 把 `view_z∈[-2*dist,0]` 映射到 `[1.5,0.5]`，远端 `clip.z>1` 被裁/饱和到 1.0，地面出现规则条带（shadow acne 类）。正确 Vulkan 0..1 正交：
+1. **Wrong z mapping formula → far saturates into stripes**: original `proj[2][2]=-0.5/dist, proj[2][3]=0.5` maps `view_z∈[-2*dist,0]` to `[1.5,0.5]`, far `clip.z>1` clipped / saturated to 1.0, ground shows regular stripes (shadow-acne-like). Correct Vulkan 0..1 orthographic:
    ```rust
-   // view_z = -z (z 为距光正距离, ∈[n,f]); near=n, far=f
+   // view_z = -z (z is distance to light, ∈[n,f]); near=n, far=f
    proj[2][2] = -1.0/(f-n);  proj[2][3] = -n/(f-n);
    ```
-2. **near = dist 把原点裁掉 → 阴影完全消失**：`dist = half*2`，光在距原点 `dist` 处，`near=dist` 等于把 near plane 放在原点 → 原点及周围全在 near 之前被裁 → shadow map 保持清空的 1.0 → `SampleCmpLevelZero` 永远返回 lit。必须把 `near` 设得**小于**原点距离，例如 `n = 0.5*dist`（原点落在 depth≈0.17），`f = 3*dist` 覆盖背面几何。
-3. **x/y 半宽太小 → 阴影只在中心一小块**：正交半宽用传入的 `half`(=12) 只有 24×24，多数场景几何落在 `uv` 外被当成受光。半宽取 `dist`(=24) 覆盖 48×48。
+2. **near = dist clips origin → shadow completely disappears**: `dist = half*2`, light at distance `dist` from origin, `near=dist` puts near plane at origin → origin and surroundings clipped before near → shadow map stays cleared 1.0 → `SampleCmpLevelZero` always returns lit. Must set `near` **less than** origin distance, e.g. `n = 0.5*dist` (origin at depth≈0.17), `f = 3*dist` covers back geometry.
+3. **x/y half-width too small → shadow only in small center patch**: orthographic half-width used passed `half`(=12) only 24×24, most scene geometry outside `uv` treated as lit. Half-width `dist`(=24) covers 48×48.
 
-**教训**：正交阴影投影的 near/far 围绕"光到原点的距离"取值，且 near 必须留余量；z 映射用标准 0..1 正交而非手写缩放。改完用 `spirv-val` + 实跑双确认（条带=精度/偏置，消失=near 裁切，小块=半宽不足）。
+**Lessons**: orthographic shadow projection near/far around "light-to-origin distance", near must leave margin; z mapping standard 0..1 orthographic not hand-written scale. After change confirm with `spirv-val` + actual run (stripes=precision / bias, disappearance=near clip, small patch=insufficient half-width).
 
-## 17. 阴影相机眼位置符号：eye = +direction_to_light（不是 -）
+## 17. Shadow camera eye position sign: eye = +direction_to_light (not -)
 
-**问题**：把光源眼放在 `-l*dist`（背光侧）看向原点，等于从**暗面**渲染深度图，阴影整体投到受光的错误一侧 —— 表现为"全部错位"。
+**Problem**: placed light eye at `-l*dist` (backlit side) looking at origin, renders depth map from **dark side**, shadows cast to wrong lit side — appears "all misaligned".
 
-**定位依据**：`scene_bindless.slang` 第 455 行 `n_dot_l = max(dot(n, light_dir), 0.0)` 证明 `light_dir` 是"指向光源的方向"，所以光源在 `+l` 侧。阴影相机应放在 `+l*dist` 看向原点：
+**Locating evidence**: `scene_bindless.slang` line 455 `n_dot_l = max(dot(n, light_dir), 0.0)` proves `light_dir` is "direction toward light", so light is on `+l` side. Shadow camera should be at `+l*dist` looking at origin:
 ```rust
 let eye = [l[0]*dist, l[1]*dist, l[2]*dist];  // NOT -l*dist
 ```
-**教训**：判定光源方向别靠"看起来应该朝向哪"，直接查 shader 里 `light_dir` 的真实用法（受光点积还是光线传播方向）。方向反了是"整体错位"而非"消失"，容易和 z 映射问题混淆——两条独立排查。
+**Lessons**: don't judge light direction by "looks like it should face there", check shader's actual `light_dir` usage (lit dot or light propagation). Reversed direction is "all misaligned" not "disappeared", easy to confuse with z mapping — investigate independently.
 
-## 18. Vulkan 下 shadow map 采样**不要**翻转 Y
+## 18. Vulkan shadow map sampling **must not** flip Y
 
-**问题**：`sample_shadow` 里 `uv.y = 1.0 - (proj.y*0.5+0.5)`，导致阴影在垂直方向整体镜像偏移（"有阴影但错位"）。
+**Problem**: `sample_shadow` had `uv.y = 1.0 - (proj.y*0.5+0.5)`, causing shadow vertically mirrored offset ("has shadow but misaligned").
 
-**根因**：shadow map 用**正交投影且没做 y-flip**（`proj[1][1]=+inv`，不同于主相机透视的 `p[1][1]=-inv_tan` Vulkan y-flip）。Vulkan framebuffer 原点在左上，NDC y=-1 已映射到纹理 v=0，**渲染时 `proj.y` 直接对应 `v=proj.y*0.5+0.5`，无需翻转**。occluder（写深度）和 receiver（采样）用同一个 `lightViewProj`，`proj.y` 计算相同，必须查**同一 texel**：
+**Root cause**: shadow map uses **orthographic projection without y-flip** (`proj[1][1]=+inv`, unlike main camera perspective `p[1][1]=-inv_tan` Vulkan y-flip). Vulkan framebuffer origin top-left, NDC y=-1 already maps to texture v=0, **during render `proj.y` directly corresponds `v=proj.y*0.5+0.5`, no flip needed**. Occluder (writes depth) and receiver (samples) use same `lightViewProj`, same `proj.y` computation, must look up **same texel**:
 ```hlsl
-float2 uv = float2(proj.x * 0.5 + 0.5, proj.y * 0.5 + 0.5);  // 去掉 1.0 - 翻转
+float2 uv = float2(proj.x * 0.5 + 0.5, proj.y * 0.5 + 0.5);  // removed 1.0 - flip
 ```
-X 方向自始没有翻转，本就正确，所以错位只在垂直方向——与现象吻合。
+X direction never flipped and was correct, so misalignment only vertical — matches symptom.
 
-**教训**：shadow map 的 Y 翻转不能照搬"GL 习惯"。判定要不要翻：看生成 shadow map 的投影**有没有** y-flip。有（主相机类）→ 采样侧翻；没有（正交光投影）→ 采样侧不翻。
+**Lessons**: shadow map Y flip can't copy "GL habit". To decide whether to flip: see if shadow-map-generating projection **has** y-flip. Yes (main-camera-like) → flip on sample side; no (orthographic light projection) → don't flip.
 
-## 19. 调试阴影的优先级顺序（避免来回打转）
+## 19. Debug shadow priority order (avoid going in circles)
 
-按这个顺序排查，每步一个变量：
-1. **先确认阴影被启用**：默认 `debug_flags` 必须含 `PBR_FLAG_SHADOW`(bit8) 且 `PBR_FLAG_DIRECT`(bit0) 也开，否则没有"直接光"可被遮挡，开阴影也看不见变化（本次默认 `0` 即纯 baseColor，是"开了没反应"的真因）。
-2. **阴影全无 vs 全错位 vs 垂直偏移 vs 条带** 各自对应不同根因：
-   - 全无/只在中心小块 → near 裁切 / 半宽不足（§16）
-   - 全部反向错位 → eye 符号（§17）
-   - 垂直镜像偏移 → 采样 Y 翻转（§18）
-   - 规则条带 → z 映射饱和 + 深度偏置太小（§16 + §20）
-3. **深度偏置**：D32_SFLOAT 下 `depth_bias_constant_factor` 乘格式最小可表示差（≈2^-23），`1.0` 实际≈0，地面大平面必出 acne 条带。用 `constant_factor≈64, slope_factor≈8`（可据 acne/peter-panning 微调方向）。
+Investigate in this order, one variable per step:
+1. **First confirm shadows enabled**: default `debug_flags` must contain `PBR_FLAG_SHADOW`(bit8) and `PBR_FLAG_DIRECT`(bit0), else no "direct light" to occlude, shadows show no change (this time default `0` = pure baseColor, true cause of "enabled but no response").
+2. **No shadows at all vs all misaligned vs vertical offset vs stripes** each correspond to different root causes:
+   - None / only small center patch → near clipping / insufficient half-width (§16)
+   - All reversed misaligned → eye sign (§17)
+   - Vertical mirror offset → sampling Y flip (§18)
+   - Regular stripes → z mapping saturation + depth bias too small (§16 + §20)
+3. **Depth bias**: under D32_SFLOAT `depth_bias_constant_factor` multiplies format min representable diff (≈2^-23), `1.0` effectively ≈0, large ground planes inevitably show acne stripes. Use `constant_factor≈64, slope_factor≈8` (fine-tune direction by acne / peter-panning).
 
-**横向经验**：阴影链路（方向推导 → 投影 z → near/far → 半宽 → eye 符号 → 采样 Y 翻转 → 深度偏置）每一环独立，改一处只验证一处现象，别同时动多个变量。
+**Cross-cutting experience**: shadow chain (direction derivation → projection z → near/far → half-width → eye sign → sampling Y flip → depth bias) each link independent, change one verify one symptom, don't move multiple variables at once.
 
 
-## 20. MRT 改动必须同步改所有"在同一 render pass 里绘制的"pipeline 的 blend state
+## 20. MRT changes must sync all pipelines "drawing in same render pass" blend states
 
-**问题**：ForwardPass 从 1 个 color attachment 改成 2 个（HDR color + view-space normal MRT）后，验证层报：
+**Problem**: ForwardPass changed from 1 color attachment to 2 (HDR color + view-space normal MRT), validation reports:
 ```
 vkCreateGraphicsPipelines(): pCreateInfos[0].pColorBlendState->pAttachments[1] is different
 than pAttachments[0] and independentBlend feature was not enabled.
 VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-00605
 ```
 
-**原因**：SkyboxPass 和 Gizmo 都在 ForwardPass 的 render pass 里绘制（`ForwardPass::execute` 先画 skybox，最后画 gizmo）。它们各自创建 pipeline 时只声明 1 个 blend attachment（`color_attachment_count: None` -> 默认 1），但 render pass 的 subpass 现在有 2 个 color attachment。Vulkan 规定：pipeline 的 `VkPipelineColorBlendStateCreateInfo::attachmentCount` 必须等于 subpass 的 `colorAttachmentCount`。原来 1 个 attachment 时凑巧一致；改 MRT 后就破了。
+**Cause**: SkyboxPass and Gizmo both draw in ForwardPass render pass (`ForwardPass::execute` draws skybox first, gizmo last). Each creates pipeline declaring only 1 blend attachment (`color_attachment_count: None` -> default 1), but render pass subpass now has 2 color attachments. Vulkan requires pipeline `VkPipelineColorBlendStateCreateInfo::attachmentCount` == subpass `colorAttachmentCount`. With 1 attachment happened to match; MRT broke it.
 
-**教训**：
-- **render pass 的 attachment 数是所有"在其中绘制的"pipeline 的公约数**。改 ForwardPass 的 attachment 数，必须同步改 SkyboxPass、Gizmo 的 blend state 数，哪怕它们只写 attachment 0（attachment 1 的 `colorWriteMask = 0` 即可"预留不写"）。
-- 不想每个 pipeline 都写满全量 blend state 的话，启用 `independentBlend` feature（`PhysicalDeviceFeatures::independent_blend`，桌面+现代 Android 通用支持）就能让每个 attachment 用不同 blend config。本项目选了"启用 feature + 各 pipeline 写满"双保险。
-- `GraphicsPipeline::new`（`pipeline.rs`）原本只支持 0/1 个 attachment（`slice::from_ref`），为 MRT 扩展成接受 `color_blend_attachments: Option<&[...]>` 切片。
+**Lessons**:
+- **Render-pass attachment count is common divisor of all pipelines "drawing in it"**. Changing ForwardPass attachment count must sync SkyboxPass / Gizmo blend state count, even if they only write attachment 0 (`colorWriteMask = 0` for attachment 1 = "reserve but don't write").
+- If don't want every pipeline writing full blend state, enable `independentBlend` feature (`PhysicalDeviceFeatures::independent_blend`, common on desktop + modern Android) allowing different blend config per attachment. Project chose "enable feature + each pipeline writes full" double insurance.
+- `GraphicsPipeline::new` (`pipeline.rs`) originally only supported 0/1 attachment (`slice::from_ref`), extended for MRT to accept `color_blend_attachments: Option<&[...]>` slice.
 
-## 21. `vkCmdBeginRenderPass` 的 `clearValueCount` 必须 >= 最大被 CLEAR 的 attachment index + 1
+## 21. `vkCmdBeginRenderPass` `clearValueCount` must >= max CLEARed attachment index + 1
 
-**问题**：ForwardPass 改 3 attachment（color + depth + normal）后报：
+**Problem**: ForwardPass changed to 3 attachments (color + depth + normal), reports:
 ```
 vkCmdBeginRenderPass(): pRenderPassBegin->clearValueCount is 2 but there must be at least
 3 entries... VUID-VkRenderPassBeginInfo-clearValueCount-00902
 ```
 
-**原因**：`execute` 里 `clear_values` 数组只放了 `[color, depth]` 2 个，但 attachment 2（normal）也是 `LOAD_OP_CLEAR`。clear values 按 **attachment number** 索引，所以即使中间某个 attachment 不是 CLEAR，只要最高 index 的 CLEAR attachment 是 N，数组就得有 N+1 个元素（中间非 CLEAR 的位会被忽略）。
+**Cause**: `execute` `clear_values` array only had `[color, depth]` 2, but attachment 2 (normal) also `LOAD_OP_CLEAR`. Clear values indexed by **attachment number**, so even if middle attachment not CLEAR, as long as highest-index CLEAR attachment is N, array needs N+1 elements (middle non-CLEAR slots ignored).
 
-**教训**：改 render pass 的 attachment 数后，立刻同步改 `execute` 里的 `clear_values` 数组长度，且顺序严格对应 attachment number。clear value 本身无所谓（normal attachment 被 fragment shader 全覆盖，clear 值用啥都不影响），但 count 必须对。
+**Lessons**: after changing render-pass attachment count, immediately sync `execute` `clear_values` array length, order strictly corresponding to attachment number. Clear values themselves don't matter (normal fully covered by fragment shader), but count must be right.
 
-## 22. 采样 depth attachment 必须给 image 加 `SAMPLED` usage
+## 22. Sampling depth attachment must add `SAMPLED` usage to image
 
-**问题**：GTAO pass 采样 ForwardPass 的 D32_SFLOAT depth 时报：
+**Problem**: GTAO pass sampling ForwardPass D32_SFLOAT depth reports:
 ```
 vkUpdateDescriptorSets(): pDescriptorWrites[0].pImageInfo[0].imageView was created with
 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, but descriptorType is VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE.
 VUID-VkWriteDescriptorSet-descriptorType-00337
 ```
 
-**原因**：`DepthImage::new`（`render_pass.rs`）创建 depth image 时 usage 只写了 `DEPTH_STENCIL_ATTACHMENT`。原来 depth 只用于场景内的深度测试（`STORE_OP_DONT_CARE`），从不被采样。GTAO 要读它，必须加 `SAMPLED` usage。
+**Cause**: `DepthImage::new` (`render_pass.rs`) created depth image with usage only `DEPTH_STENCIL_ATTACHMENT`. Depth only used for in-scene depth test (`STORE_OP_DONT_CARE`), never sampled. GTAO needs to read it, must add `SAMPLED` usage.
 
-**教训**：
-- Vulkan image 的 usage flags 在 **创建时** 固定，事后不能加。任何"既要当 attachment 又要被采样"的 image（depth、normal MRT、HDR color），创建时 usage 就要 `| SAMPLED`。
-- 同理 GTAO 要采样 normal MRT，`NormalImage::new` 的 usage 直接写 `COLOR_ATTACHMENT | SAMPLED`；PostPass 要采样 HDR color，ForwardPass 的 color image 也是 `COLOR_ATTACHMENT | SAMPLED`（复用 `NormalImage` helper）。
-- depth attachment 改成 `STORE_OP_STORE`（原来是 `DONT_CARE`）才能把内容保留到 pass 结束后被采样。
+**Lessons**:
+- Vulkan image usage flags fixed at **creation**, can't add later. Any image "both attachment and sampled" (depth, normal MRT, HDR color) needs `| SAMPLED` at creation.
+- Same for GTAO sampling normal MRT, `NormalImage::new` usage directly `COLOR_ATTACHMENT | SAMPLED`; PostPass sampling HDR color, ForwardPass color image also `COLOR_ATTACHMENT | SAMPLED` (reusing `NormalImage` helper).
+- Depth attachment changed to `STORE_OP_STORE` (was `DONT_CARE`) to preserve content for post-pass sampling.
 
-## 23. 每帧重写的 descriptor set 必须 per-frame-in-flight，不能全局共享
+## 23. Per-frame-rewritten descriptor sets must be per-frame-in-flight, not global
 
-**问题**：ForwardPass 的 AO descriptor set（set 4，每帧指向上一帧 GTAO 输出）和 PostPass 的 HDR-input descriptor set 都报：
+**Problem**: ForwardPass AO descriptor set (set 4, each frame points to previous GTAO output) and PostPass HDR-input descriptor set both report:
 ```
 vkUpdateDescriptorSets(): dstSet is in use by VkCommandBuffer... in the pending state.
 VUID-vkUpdateDescriptorSets-None-03047
 ```
 
-**原因**：最初两个 pass 都只分配 **1 个** descriptor set，每帧 `set_ao`/`set_input` 重写它指向新 view。但 frame N 提交后还在 GPU 跑（pending），frame N+1 就 update 了同一个 set -- 验证层判定"修改了 in-flight command buffer 正在用的 set"。
+**Cause**: initially both passes allocated only **1** descriptor set, each frame `set_ao`/`set_input` rewrote it to point to new view. But frame N still running on GPU (pending), frame N+1 updated same set — validation judges "modified set in use by in-flight command buffer".
 
-**教训**：
-- **任何每帧 `vkUpdateDescriptorSets` 重写的 descriptor set，都要按 frame-in-flight 分配 N 份**（本项目 N=2）。frame N 只更新 `sets[N]`，fence 等待保证该 set 不再被 GPU 使用。
-- 对比：shadow map descriptor set（ForwardPass set 3）从不重写（view 在 `set_resources` 里固定一次），所以 1 份够用。判断标准是"这个 set 的 binding 会不会在运行期被 `update_descriptor_sets` 改"。
-- GTAO pass 的 depth/normal input descriptor 也是每帧重写，按 `[frame][set]` 二维分配（4 份：2 frame x 2 set，因为 shader 声明了 set 0 depth + set 1 normal）。
+**Lessons**:
+- **Any descriptor set rewritten each frame via `vkUpdateDescriptorSets` must allocate N copies by frame-in-flight** (N=2 here). Frame N only updates `sets[N]`, fence wait guarantees set no longer used by GPU.
+- Contrast: shadow map descriptor set (ForwardPass set 3) never rewritten (view fixed once in `set_resources`), so 1 copy enough. Criterion: "will this set's binding be changed by `update_descriptor_sets` at runtime".
+- GTAO depth/normal input descriptors also rewritten each frame, allocated `[frame][set]` 2D (4 copies: 2 frames × 2 sets, shader declares set 0 depth + set 1 normal).
 
-## 24. 新创建的 image 在被 descriptor 引用前必须先 transition 到声明的 layout
+## 24. Newly created image referenced by descriptor must first transition to declared layout
 
-**问题**：GTAO 的 AO image 在 `new` 里创建后，第一帧 scene shader 的 AO descriptor 就指向它（`ao_view((frame+1)%2)`），但 AO image 此刻还是 `UNDEFINED` layout，而 descriptor 声明的是 `SHADER_READ_ONLY_OPTIMAL`。报：
+**Problem**: GTAO AO image created in `new`, first frame scene shader AO descriptor points to it (`ao_view((frame+1)%2)`), but AO image still `UNDEFINED` layout while descriptor declares `SHADER_READ_ONLY_OPTIMAL`. Reports:
 ```
 vkQueueSubmit(): command buffer expects VkImage ... to be in layout SHADER_READ_ONLY_OPTIMAL
 -- instead, current layout is UNDEFINED. VUID-vkCmdDraw-None-09600
 ```
 
-**原因**：第一帧 GTAO 还没运行（scene -> gtao -> post 顺序里 gtao 在 scene 之后），但 scene 已经在采样"上一帧"的 AO（即 `ao[(frame+1)%2]`，frame 0 时是 `ao[1]`，从未被写过）。descriptor 的 layout 声明和 image 实际 layout 不匹配，验证层即使该 binding 没被 shader 真正采样（`PBR_FLAG_AO` 默认 off）也会报。
+**Cause**: first frame GTAO hasn't run (scene → gtao → post order, gtao after scene), but scene already sampling "previous frame" AO (`ao[(frame+1)%2]`, frame 0 = `ao[1]`, never written). Descriptor layout declaration and actual image layout mismatch — validation reports even if binding not truly sampled (`PBR_FLAG_AO` default off).
 
-**教训**：
-- **跨帧依赖的 image（上一帧写、本帧读）创建后立刻 transition 到"读"layout**，让 descriptor 声明成立。GTAO 在 `new` 和 `recreate_target` 里用一次性 command buffer 把两个 AO image 从 `UNDEFINED` 转到 `SHADER_READ_ONLY_OPTIMAL`。
-- 被转的 image 下一步扩展被 GTAO render pass 写时，render pass 的 `initial_layout = UNDEFINED` 容忍任何 incoming layout（配合 `LOAD_OP_CLEAR`），所以预 transition 不会和下一步扩展写入冲突。
-- 对比：PostPass 读的 HDR color image 不需要预 transition -- 它总是被 ForwardPass 先写（`COLOR_ATTACHMENT_OPTIMAL`）再被 PostPass 读，第一帧也是 scene 先跑。只有"读"发生在"写"之前的跨帧 image 才需要预 transition。
+**Lessons**:
+- **Cross-frame-dependent images (previous frame writes, this frame reads) transition to "read" layout immediately after creation**, making descriptor declaration valid. GTAO uses one-shot command buffer in `new` and `recreate_target` to transition both AO images `UNDEFINED` → `SHADER_READ_ONLY_OPTIMAL`.
+- When pre-transitioned image later written by GTAO render pass, render pass `initial_layout = UNDEFINED` tolerates any incoming layout (with `LOAD_OP_CLEAR`), so pre-transition won't conflict with next write.
+- Contrast: PostPass-read HDR color image needs no pre-transition — always ForwardPass writes first (`COLOR_ATTACHMENT_OPTIMAL`) then PostPass reads, even frame 1 scene runs first. Only cross-frame images where "read" happens before "write" need pre-transition.
 
-## 25. Slang 没有 `gl_FragCoord`，用 `SV_Position` input
+## 25. Slang has no `gl_FragCoord`, use `SV_Position` input
 
-**问题**：GTAO shader 里写 `float2(gl_FragCoord.xy) / pc.viewport`，slangc 编译报 `error 30015: undefined identifier 'gl_FragCoord'`。
+**Problem**: GTAO shader wrote `float2(gl_FragCoord.xy) / pc.viewport`, slangc reports `error 30015: undefined identifier 'gl_FragCoord'`.
 
-**原因**：Slang/HLSL 习惯用 `SV_Position` 语义拿像素坐标，不暴露 GLSL 的 `gl_FragCoord` 内置变量。fragment shader 的 `clipPos : SV_Position` input 就是像素坐标（`xy` = framebuffer pixel coords，左上原点）。
+**Cause**: Slang/HLSL uses `SV_Position` semantic for pixel coords, doesn't expose GLSL `gl_FragCoord` builtin. Fragment shader `clipPos : SV_Position` input is pixel coords (`xy` = framebuffer pixel coords, top-left origin).
 
-**教训**：Slang shader 里拿像素坐标一律用 `SV_Position` input（`float4 clipPos : SV_Position`，`clipPos.xy` 即像素坐标），不要写 `gl_FragCoord`。fullscreen-triangle pass 的 vertex stage 已经输出了 `SV_Position`，fragment stage 直接接即可。
+**Lessons**: always use `SV_Position` input for pixel coords in Slang (`float4 clipPos : SV_Position`, `clipPos.xy` = pixel coords), not `gl_FragCoord`. Fullscreen-triangle pass vertex stage already outputs `SV_Position`, fragment stage just takes it.
 
-## 26. push constant 大小不必是 16 的倍数
+## 26. Push constant size needn't be multiple of 16
 
-**问题**：GTAO push constant struct 算出来 84 字节（`inv_proj`(64) + `viewport`(8) + `radius`(4) + `mode`(4) + `_pad0`(4)），最初注释写"round up to 96 for 16-byte alignment"，测试断言 `size_of == 96` 失败（实际 84）。
+**Problem**: GTAO push constant struct computed 84 bytes (`inv_proj`(64) + `viewport`(8) + `radius`(4) + `mode`(4) + `_pad0`(4)), original comment "round up to 96 for 16-byte alignment", test assert `size_of == 96` failed (actual 84).
 
-**原因**：误解了 Vulkan push constant 的对齐要求。Vulkan 规定 push constant range 的 `size` 只需 >= shader 实际读取的字节数，**不要求是 16 的倍数**（也不要求 4 的倍数，虽然实践上按 4 对齐）。Rust `#[repr(C)]` 也不加尾部 padding，所以 84 就是 84。
+**Cause**: misunderstood Vulkan push constant alignment. Vulkan requires push constant range `size` only >= bytes shader actually reads, **not multiple of 16** (nor 4, though practice aligns to 4). Rust `#[repr(C)]` adds no tail padding, so 84 is 84.
 
-**教训**：
-- push constant 的 Rust mirror 和 Slang struct 必须**字节对字节**匹配，包括尾部 padding。slangc 对 struct 也是紧凑布局（不加尾部 align padding），和 `#[repr(C)]` 一致。
-- 测试断言写实际算出来的字节数（84），不要写"对齐后的"96。Vulkan 保证 push constant 至少 128 字节可用，84 远低于这个限制，没问题。
-- 对比 UBO（std140）则**必须** 16 字节对齐（`FrameUBOData` 256 字节，尾部 `_pad: [u32; 3]` 就是补齐用的）。两者规则不同，别混。
+**Lessons**:
+- Push constant Rust mirror and Slang struct must match **byte-for-byte**, including tail padding. slangc struct also compact layout (no tail align padding), consistent with `#[repr(C)]`.
+- Test assert actual computed bytes (84), not "aligned" 96. Vulkan guarantees at least 128 bytes push constants, 84 well under limit.
+- Contrast UBO (std140) **must** 16-byte align (`FrameUBOData` 256 bytes, tail `_pad: [u32; 3]` for padding). Different rules, don't mix.
 
-## 27. 跨 pass 读 scene 输出：上一帧 AO x 本帧 IBL 的 1 帧延迟模式
+## 27. Cross-pass reading scene output: 1-frame latency pattern of previous-frame AO × this-frame IBL
 
-**背景**：GTAO 必须在 ForwardPass 之后跑（它要读 scene 的 depth+normal），但 IBL 是在 ForwardPass 内部算的。如果等 GTAO 算完再回 scene 重画 IBL，要么死锁要么多遍。
+**Background**: GTAO must run after ForwardPass (reads scene depth+normal), but IBL computed inside ForwardPass. Recomputing IBL in scene after GTAO would deadlock or require multiple passes.
 
-**方案**：GTAO 每帧产出 AO 写到 `ao[frame]`，scene 读 `ao[(frame+1)%2]`（上一帧 GTAO 的输出）。1 帧延迟，游戏通用做法。
+**Solution**: GTAO each frame writes AO to `ao[frame]`, scene reads `ao[(frame+1)%2]` (previous GTAO output). 1-frame latency, common game practice.
 
-**教训**：
-- **跨 pass 数据依赖且有时序矛盾时，1 帧延迟是标准解法**。双缓冲 AO image（按 frame-in-flight），scene 读旧帧、GTAO 写新帧，互不干扰。
-- 镜头快速移动时 AO 会"拖影"一帧 -- 可接受；下一步扩展可加 temporal filter 抹平。
-- 半分辨率 GTAO + scene 用 linear sampler 上采样到全分辨率，GTAO 本身是低频信号，轻微模糊可接受。遵循 `DESIGN.md` §2.2 高性能（heavy pass 半分辨率，RayQuery 已有 `scale=0.5` 先例）。
+**Lessons**:
+- **Cross-pass data dependency with timing contradiction: 1-frame latency is standard solution**. Double-buffer AO images (by frame-in-flight), scene reads old frame, GTAO writes new frame, no interference.
+- Fast camera movement makes AO "trail" one frame — acceptable; next step can add temporal filter to smooth.
+- Half-res GTAO + scene linear-sampler upsample to full res, GTAO low-frequency signal, slight blur acceptable. Follow `DESIGN.md` §2.2 performance (heavy pass half-res, RayQuery already `scale=0.5` precedent).
 
-## 28. ForwardPass 改渲染到中间 HDR target + 拆 PostPass：比想象中改动大
+## 28. ForwardPass render to intermediate HDR target + split PostPass: bigger change than expected
 
-**用户要求**："拆出 postpass，把 reinhard/aces 放在 postpass"。看似只是把 tonemap 从 `scene_frag.slang` 挪到新 pass，实际牵一发动全身：
+**User request**: "split out postpass, put reinhard/aces in postpass". Seems just moving tonemap from `scene_frag.slang` to new pass, actually touches everything:
 
-- ForwardPass 不再直渲 swapchain，改成渲染到 `R16G16B16A16_SFLOAT` HDR 中间 target（每 swapchain image 一个，类似 depth image）。
-- `set_target` 签名变（不再接 `swapchain_views`，改接 `image_count`），framebuffer attachments 从 `[swapchain_view, depth]` 变 `[hdr_view, depth, normal_view]`。
-- `color_format` 字段从 swapchain 格式变成 HDR 格式。
-- PostPass 新增：own render pass（swapchain 格式，`initial_layout = UNDEFINED` 容忍上一帧的 PRESENT_SRC_KHR）、per-swapchain-image framebuffer、per-frame-in-flight descriptor set（读 HDR view）、tonemap push constant。
-- `GraphRenderer::render` 帧流程从 `scene -> egui/barrier` 变成 `scene -> gtao -> post -> egui/barrier`，swapchain 的 `COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR` 转移点从 ForwardPass 后挪到 PostPass 后。
+- ForwardPass no longer renders directly to swapchain, instead to `R16G16B16A16_SFLOAT` HDR intermediate target (one per swapchain image, like depth image).
+- `set_target` signature changes (no longer takes `swapchain_views`, takes `image_count`), framebuffer attachments from `[swapchain_view, depth]` to `[hdr_view, depth, normal_view]`.
+- `color_format` field changes from swapchain format to HDR format.
+- PostPass new: own render pass (swapchain format, `initial_layout = UNDEFINED` tolerates previous PRESENT_SRC_KHR), per-swapchain-image framebuffer, per-frame-in-flight descriptor set (reads HDR view), tonemap push constant.
+- `GraphRenderer::render` frame flow from `scene -> egui/barrier` to `scene -> gtao -> post -> egui/barrier`, swapchain `COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR` transition point moves from after ForwardPass to after PostPass.
 
-**教训**：
-- **"把 X 拆到新 pass"往往伴随"原 pass 的输出目标改变"**，因为新 pass 要读原 pass 的输出作为输入 texture，原 pass 就不能再直写最终目标（swapchain）。先评估"原 pass 的 render target 要不要换成中间 target"，再动手。
-- 中间 target 的生命周期要和 swapchain 同步（`drop_target` / `recreate`），不能 leak。每 swapchain image 一个中间 target（不是每 frame-in-flight），因为 framebuffer 按 image index 索引。
-- tonemap 拆出去后，scene shader 输出的是 linear HDR；swapchain 是 sRGB，PostPass 写 swapchain 时 sRGB 编码自动发生（Vulkan `B8G8R8A8_SRGB` 格式）。不要在 PostPass 里手动 `pow(1/2.2)`，那会二次编码。
+**Lessons**:
+- **"Splitting X into new pass" usually entails "original pass output target changes"**, because new pass reads original output as input texture, original can no longer write directly to final target (swapchain). Evaluate "should original pass render target become intermediate" before starting.
+- Intermediate target lifecycle synced with swapchain (`drop_target` / `recreate`), no leak. One intermediate target per swapchain image (not per frame-in-flight), because framebuffer indexed by image index.
+- After tonemap split, scene shader outputs linear HDR; swapchain is sRGB, PostPass sRGB encoding automatic when writing swapchain (Vulkan `B8G8R8A8_SRGB`). Don't manually `pow(1/2.2)` in PostPass, that double-encodes.
 
-## 29. 验证层报错优先级：先修"创建时"错误，再修"运行时"错误
+## 29. Validation error priority: fix "creation-time" errors first, then "runtime" errors
 
-GTAO+PostPass 集成时一次性暴露了 5 个验证错误，按修复顺序：
+GTAO+PostPass integration exposed 5 validation errors at once, fix order:
 
-1. **`independentBlend` feature 未启用**（pipeline 创建时）- 改 `context.rs` 启用 feature
-2. **`clearValueCount` 不足**（render pass begin 时）- 改 `execute` 的 clear_values 数组
-3. **depth image 缺 `SAMPLED` usage**（descriptor 写入时）- 改 `DepthImage::new` 的 usage flags
-4. **descriptor set 被 in-flight command buffer 占用**（descriptor 写入时）- 改成 per-frame-in-flight 分配
-5. **AO image layout UNDEFINED 与 descriptor 声明不符**（queue submit 时）- 创建后预 transition
+1. **`independentBlend` feature not enabled** (pipeline creation) - enable feature in `context.rs`
+2. **`clearValueCount` insufficient** (render pass begin) - fix `execute` clear_values array
+3. **depth image missing `SAMPLED` usage** (descriptor write) - fix `DepthImage::new` usage flags
+4. **descriptor set occupied by in-flight command buffer** (descriptor write) - change to per-frame-in-flight allocation
+5. **AO image layout UNDEFINED mismatches descriptor declaration** (queue submit) - pre-transition after creation
 
-**教训**：
-- 验证错误按 Vulkan 调用顺序报（创建 -> 记录 -> 提交），**前面的错误可能掩盖后面的**。修一个跑一次，别一次性猜所有错。
-- 错误 4（in-flight descriptor）最初被错误 3（usage 不匹配）的 noise 掩盖 -- 修完 3 才看清 4 是独立问题。每个 VUID 独立排查，别假设"都是 descriptor 引起的"。
-- `RUST_LOG=info,prism_render=trace` + 日志写文件（`target/debug/template.log`，main.rs 的 logger 在非终端时自动落盘）是验证渲染管线的标准手段：grep `validation|ERROR|VUID` 计数，grep `ForwardPass:|GtaoPass:|PostPass:` 确认各 pass 都在执行。
+**Lessons**:
+- Validation errors reported in Vulkan call order (create -> record -> submit), **earlier errors may mask later ones**. Fix one run once, don't guess all at once.
+- Error 4 (in-flight descriptor) initially masked by noise from error 3 (usage mismatch) — after fixing 3, saw 4 as independent. Investigate each VUID separately, don't assume "all caused by descriptors".
+- `RUST_LOG=info,prism_render=trace` + logging to file (`target/debug/template.log`, main.rs logger auto-writes file when non-terminal) is standard for validating render pipeline: grep `validation|ERROR|VUID` count, grep `ForwardPass:|GtaoPass:|PostPass:` confirm each pass executing.
 
-## 30. CI 漂移 / 工具链类教训（本次修 CI 全绿踩的坑）
+## 30. CI drift / toolchain class lessons (pitfalls getting CI green this time)
 
-**背景**：一次 `git pull` 拉进大量新 shader 源（新增 `gtao.slang` / `post.slang` / `skybox.slang`，重命名 `mesh->mesh_vert`、`bindless->scene_frag`、`shadow->shadow_depth`），但没人跑 `shaders/compile.sh` + `xtask shader-bindgen` 重新生成产物，导致 CI 的 5 个 job 全红。修完一共 4 个 commit。
+**Background**: one `git pull` brought many new shader sources (added `gtao.slang` / `post.slang` / `skybox.slang`, renamed `mesh->mesh_vert`, `bindless->scene_frag`, `shadow->shadow_depth`), but nobody ran `shaders/compile.sh` + `xtask shader-bindgen` to regenerate artifacts, all 5 CI jobs red. 4 commits to fix.
 
-### 30.1 lint 类（fmt + clippy）
+### 30.1 lint class (fmt + clippy)
 
-- **`cargo fmt --all -- --check` 必须过**：pull 进来的代码若不符合当前 rustfmt 版本，`cargo fmt --all` 会改动一批文件（即使不是你逻辑改的），CI 第一步就挂。本地先 `cargo fmt --all` 再提交。
-- **clippy 以 CI 的 rustc 版本为准，不是本地**：CI 用最新 stable，本地 Termux 的 rustc 可能旧一两个小版本，会漏掉新 lint。本次 `crash_dialog_linux.rs` / `macos.rs` 的 `std::io::Error::new(ErrorKind::Other, ...)` 触发 `io_other_error` lint（CI 新版 rustc 才有），本地 1.96 不报。**本地复现不到的 lint 只能靠 CI 迭代**。根因修法：`ErrorKind::Other` → `std::io::Error::other(...)`。
-- **clippy `-D warnings` 下所有 `too_many_arguments`（阈值 7）必须重构，不要用 `#[allow]`**：本项目约定修根因。把 8+ 参数拆成参数分组 struct（`barrier2` 的 `ImageBarrier` + `color_subresource`；`transition_image_single` 收 `vk::ImageSubresourceRange`；`RenderGraph::execute` 收聚合的 `&RenderContext`）。
-- 其他常见 clippy 根因修法（均已落）：`and_then(|x| Some(y))` → `map`；`impl Default` 可派生就 derive + `#[default]`；`x as usize` 当 `x: usize` 时去掉 cast；`bits = (bits<<16)|(bits>>16)` → `bits.rotate_right(16)`；过高精度 float 字面量截断；`clone()` 在 Copy 类型上去掉；`to_json(&self)` 对 Copy 类型改 `to_json(self)`；`write!(..,"{}\n")` → `writeln!`；可合并的 `if let` 合并；显式无用 lifetime 省略。
+- **`cargo fmt --all -- --check` must pass**: pulled code not matching current rustfmt version makes `cargo fmt --all` change many files (even not your logical changes), CI first step fails. Run `cargo fmt --all` locally before commit.
+- **clippy uses CI rustc version, not local**: CI uses latest stable, local Termux rustc may be one or two minor versions older, missing new lints. This time `crash_dialog_linux.rs` / `macos.rs` `std::io::Error::new(ErrorKind::Other, ...)` triggered `io_other_error` lint (only CI new rustc), local 1.96 didn't report. **Lints not reproducible locally only caught via CI iteration**. Root fix: `ErrorKind::Other` → `std::io::Error::other(...)`.
+- Under clippy `-D warnings` all `too_many_arguments` (threshold 7) must be refactored, no `#[allow]`**: project convention fix root cause. Split 8+ params into parameter-group structs (`barrier2` `ImageBarrier` + `color_subresource`; `transition_image_single` takes `vk::ImageSubresourceRange`; `RenderGraph::execute` takes aggregate `&RenderContext`).
+- Other common clippy root fixes (all landed): `and_then(|x| Some(y))` → `map`; derive `Default` with `#[default]` if possible; drop `x as usize` when `x: usize`; `bits = (bits<<16)|(bits>>16)` → `bits.rotate_right(16)`; truncate overly precise float literals; drop `clone()` on Copy types; `to_json(&self)` → `to_json(self)` for Copy; `write!(..,"{}\n")` → `writeln!`; merge combinable `if let`; omit explicit useless lifetimes.
 
-### 30.2 shaders job 环境依赖
+### 30.2 shaders job environment dependencies
 
-- **`shaders/compile.sh` 依赖 `spirv-tools`（`spirv-val`）**：CI 的 shaders job 通过 `sudo apt-get install -y spirv-tools` 安装，作为 SPIR-V 合法性 gate。旧的 `fix_spirv.py`（剥离 bindless 运行时数组的非法 `ArrayStride`，见 §13）已随 Slang 2026.21 删除，`spirv-dis` / `spirv-as` 不再是必需依赖。
-- **`shaders/compile.sh` 只保留末尾的统一 gate**：每个 `.spv` 都过 `spirv-val`，不再按 shader 逐个后处理。
+- **`shaders/compile.sh` depends on `spirv-tools` (`spirv-val`)**: CI shaders job installs via `sudo apt-get install -y spirv-tools`, as SPIR-V validity gate. Old `fix_spirv.py` (stripping illegal `ArrayStride` of bindless runtime arrays, §13) removed with Slang 2026.21, `spirv-dis` / `spirv-as` no longer required.
+- **`shaders/compile.sh` keeps only unified gate at end**: every `.spv` passes `spirv-val`, no per-shader post-processing.
 
-### 30.3 drift check：改了 shader 源必须重生成并提交产物
+### 30.3 Drift check: changed shader source must regenerate and commit artifacts
 
-- CI shaders job 末尾有 **drift guard**：跑 `shaders/compile.sh` 重新编译 `.spv` + reflection JSON，再 `xtask shader-bindgen` 重新生成 `crates/prism-render/src/shader_bindings.rs`，然后 `git diff --quiet` 比对仓库里已提交的 `.spv` 和 `shader_bindings.rs`。**任何不一致 → `exit 1`**。
-- **规则：动了 `shaders/slang/*.slang`，必须本地跑 `bash shaders/compile.sh` + `cd xtask && cargo run --bin shader-bindgen -- ../shaders/reflection ../crates/prism-render/src/shader_bindings.rs`，把生成的 `.spv` / `reflection/*.json` / `shader_bindings.rs` 一起 commit**。否则 CI 必红。
-- **Termux 本地跑不了 `shaders/compile.sh`**：slangc 官方预编译是 glibc 二进制，Termux（bionic）无法运行；且 `.spv` 是 `include_bytes!` 进二进制的，必须和 CI 用**同版本 slangc**（当前 `2026.21`）生成才一致。`compile.sh` 现在会拒绝更旧的 `slangc`，并在反射 JSON 与仓库不一致时失败（见 #980），所以版本错配会在编译这一步就暴露，而不是等到 bindgen 漂移。本次因本地无 slangc，借 **CI artifact**（drift step 前的 `Upload compiled SPIR-V + reflection (debug)` 已上传重新编译的 `.spv` 和 reflection JSON）取回正确产物：下载 artifact 的 `.spv` + `reflection/*.json`，本地只跑 `xtask shader-bindgen`（它只吃 reflection JSON，不需要 slangc）生成 `shader_bindings.rs`，覆盖后提交。
-- **`.spv` 和 `shader_bindings.rs` 必须同时更新**：只更新一个，drift 仍挂（drift 同时检查两者）。
+- CI shaders job has **drift guard** at end: run `shaders/compile.sh` recompile `.spv` + reflection JSON, then `xtask shader-bindgen` regenerate `crates/prism-render/src/shader_bindings.rs`, then `git diff --quiet` compares committed `.spv` and `shader_bindings.rs`. **Any mismatch → `exit 1`**.
+- **Rule: touching `shaders/slang/*.slang` requires local `bash shaders/compile.sh` + `cd xtask && cargo run --bin shader-bindgen -- ../shaders/reflection ../crates/prism-render/src/shader_bindings.rs`, commit generated `.spv` / `reflection/*.json` / `shader_bindings.rs` together**. Otherwise CI red.
+- **Can't run `shaders/compile.sh` on Termux**: slangc official prebuilt is glibc binary, Termux (bionic) can't run; and `.spv` `include_bytes!` into binary, must use **same slangc version as CI** (currently `2026.21`) to match. `compile.sh` now rejects older `slangc`, fails when reflection JSON mismatches repo (see #980), so version mismatch exposed at compile step not bindgen drift. This time since no local slangc, borrowed **CI artifact** (drift step pre-`Upload compiled SPIR-V + reflection (debug)` uploaded recompiled `.spv` and reflection JSON): downloaded artifact `.spv` + `reflection/*.json`, locally only ran `xtask shader-bindgen` (only eats reflection JSON, no slangc needed) to generate `shader_bindings.rs`, overwrote and committed.
+- **`.spv` and `shader_bindings.rs` must update together**: updating one still fails drift (drift checks both).
 
-### 30.4 环境 / 操作
+### 30.4 Environment / operations
 
-- **Termux 下 `rm -rf` 被系统禁止**：清理目录用 `python3 -c "import shutil; shutil.rmtree(path)"` 或 `rmdir`（空目录），不要用 `rm -rf`。单文件 `rm` 无 `-r` 正常。
-- **crates.io 直连 TLS 抖动**：Termux 下 `static.crates.io` 下载偶发 `SSL connect error`。配置 `~/.cargo/config.toml` 走国内镜像（当前 `rsproxy`：`registry = "sparse+https://rsproxy.cn/index/"`）稳定。
-- **CI 失败先抓 `gh run view <id> --log-failed`**：GitHub API 偶发 503，用重试循环抓；失败 job 的真实错误在 `--log-failed` 末尾（`##[error]Process completed with exit code 1` 上方）。本次链路：`lint(clippy)` → `shaders(spirv-tools 缺失)` → `shaders(drift: shader 产物陈旧)` 三层，逐层迭代修。
+- **`rm -rf` forbidden by system on Termux**: clean directories with `python3 -c "import shutil; shutil.rmtree(path)"` or `rmdir` (empty dir), not `rm -rf`. Single-file `rm` without `-r` fine.
+- **crates.io direct TLS flaky**: Termux `static.crates.io` downloads occasionally `SSL connect error`. Configure `~/.cargo/config.toml` to use domestic mirror (currently `rsproxy`: `registry = "sparse+https://rsproxy.cn/index/"`) stable.
+- **CI failure first grab `gh run view <id> --log-failed`**: GitHub API occasional 503, use retry loop; real error at end of `--log-failed` (above `##[error]Process completed with exit code 1`). This time chain: `lint(clippy)` → `shaders(spirv-tools missing)` → `shaders(drift: stale shader artifacts)` three layers, iterate layer by layer.
 
-## 31. 场景加载耗时拆解 + 冗余拷贝消除（Sponza 7.6s -> 1.8s）
+## 31. Scene load time breakdown + redundant copy elimination (Sponza 7.6s -> 1.8s)
 
-**背景**：Sponza 加载日志只有一行 `gltf parse+import: 5430ms` 和 `texture upload: 1498ms`，看不出时间花在哪。先加阶段计时定位，再修最大的冗余拷贝。
+**Background**: Sponza load log only one line `gltf parse+import: 5430ms` and `texture upload: 1498ms`, can't see where time went. Added stage timing to locate, then fixed biggest redundant copy.
 
-### 31.1 先拆日志，再动手优化
+### 31.1 First break down logs, then optimize
 
-**做法**：在 `gltf_loader::load` 按阶段插 `Instant::now()`，把 `parse+import` 拆成 parse JSON / import buffers / decode images / materials / textures / meshes / scene nodes 七段；在 `load_demo_scene` 把 `texture upload` / `mesh upload` 各拆成 collect（clone scene_store 数据）+ upload（register_*_into）两段，并统计像素/顶点总量。
+**Approach**: insert `Instant::now()` by stage in `gltf_loader::load`, split `parse+import` into parse JSON / import buffers / decode images / materials / textures / meshes / scene nodes seven segments; in `load_demo_scene` split `texture upload` / `mesh upload` each into collect (clone scene_store data) + upload (register_*_into), count pixel / vertex totals.
 
-**拆出来的真相**（Intel Sponza 2022 测试资产：72 张 4K 纹理 = 1208 MP，PNG 磁盘 1.89 GB → RGBA8 解压 4.50 GB；405 mesh / 2M verts）。注意这套资产**不代表真实游戏负载**，见 §31.7。
+**Truth revealed** (Intel Sponza 2022 test asset: 72 4K textures = 1208 MP, PNG disk 1.89 GB → RGBA8 4.50 GB; 405 meshes / 2M verts). Note this asset **doesn't represent real game load**, see §31.7.
 
-| 阶段 | 耗时 | 占比 |
+| Stage | Time | Share |
 |------|------|------|
 | `gltf phase: decode images` | 713ms | 14% |
-| **`gltf phase: textures`** | **4406ms** | **84%** ← 大头 |
+| **`gltf phase: textures`** | **4406ms** | **84%** ← biggest |
 | `gltf phase: meshes` | 86ms | 2% |
 | `texture upload collect` (clone) | 543ms | - |
 | `texture upload` (per-tex pixels.clone) | 1001ms | - |
 | `batch upload submit+wait` (GPU) | 540ms | - |
 
-**教训**：聚合日志（"X 总耗时 Nms"）对定位瓶颈没用。任何超过 ~200ms 的阶段都要再拆一层，并带上规模指标（纹理总兆像素 / 顶点数 / 索引数），这样才能区分"数量多"还是"单资源大"。本次 `gltf phase: textures (72 images, 1208.0 MP)` 一行就立刻暴露 4.5 GB 像素数据是被反复拷贝的。**另一个坑**：不能拿磁盘上的 PNG 大小（1.89 GB）估算内存拷贝开销 -- PNG 解压成 RGBA8 后膨胀 ~2.4×，真正的内存压力看解压后的像素字节数（1208M × 4 = 4.5 GB）。
+**Lessons**: aggregate logs ("X total Nms") useless for locating bottleneck. Any stage over ~200ms needs another split, with scale metrics (total texture megapixels / vertex count / index count), to distinguish "many objects" vs "single large resource". This time `gltf phase: textures (72 images, 1208.0 MP)` one line immediately exposed 4.5 GB pixel data repeatedly copied. **Another pitfall**: can't estimate memory-copy cost by PNG disk size (1.89 GB) — PNG decompresses to RGBA8 expanding ~2.4×; real memory pressure is decompressed pixel bytes (1208M × 4 = 4.5 GB).
 
-### 31.2 `to_rgba8` 在做无意义的全量拷贝（4406ms 的根因）
+### 31.2 `to_rgba8` doing meaningless full copy (root cause of 4406ms)
 
-**问题**：`import_images_parallel` 已经把每张图转成 `R8G8B8A8`（`dyn_image.to_rgba8()`），但 `to_rgba8(&image)` 又对这 4.5 GB 做了三遍：`image.pixels.clone()`（4.5 GB 读 + 4.5 GB 写）+ `Vec::with_capacity(count*4)`（4.5 GB 分配）+ 逐 4 字节走 `expand_to_rgba` 函数拷贝（4.5 GB 写，非 memcpy）。≈ 18 GB 内存吞吐，在 ~3.3 GB/s 带宽下正好 ≈ 5.4s，和观测的 4406ms 吻合。
+**Problem**: `import_images_parallel` already converted each image to `R8G8B8A8` (`dyn_image.to_rgba8()`), but `to_rgba8(&image)` did three more passes over this 4.5 GB: `image.pixels.clone()` (4.5 GB read + 4.5 GB write) + `Vec::with_capacity(count*4)` (4.5 GB alloc) + per-4-byte `expand_to_rgba` copy (4.5 GB write, non-memcpy). ≈18 GB memory throughput, at ~3.3 GB/s ≈5.4s, matching observed 4406ms.
 
-**修复**（`crates/prism-asset/src/gltf_loader.rs`）：
-- `to_rgba8` 改为按值接收 `GltfImageData`（`&GltfImageData` -> `GltfImageData`），调用处 `images.iter()` -> `images.into_iter()`。
-- RGBA8 源格式走快路径：`return Ok(RgbaPixels { pixels: image.pixels })`，零拷贝 move。
-- 非 RGBA8 源格式走慢路径，**打 `log::warn!`** 报告分辨率 + 格式 + 通道数 -- 我们自己的并行 import 永远产 RGBA8，命中慢路径说明有别的代码路径喂数 RGBA8 以外的格式，必须可见。
-- 效果：`gltf phase: textures` 4406ms -> **0ms**。
+**Fix** (`crates/prism-asset/src/gltf_loader.rs`):
+- `to_rgba8` takes `GltfImageData` by value (`&GltfImageData` -> `GltfImageData`), call sites `images.iter()` -> `images.into_iter()`.
+- RGBA8 source format fast path: `return Ok(RgbaPixels { pixels: image.pixels })`, zero-copy move.
+- Non-RGBA8 source slow path, **`log::warn!`** reports resolution + format + channel count — our parallel import always produces RGBA8, hitting slow path means another code path feeds non-RGBA8, must be visible.
+- Effect: `gltf phase: textures` 4406ms -> **0ms**.
 
-**教训**：转换函数如果"输入已经是目标格式"，必须走零拷贝 move，不能无条件 clone + 逐元素处理。尤其是像素/顶点这种 GB 级数据，一次冗余拷贝就是秒级开销。代码里的 `image.pixels.clone()` + `Vec::with_capacity` + `chunks_exact` 三连是典型的"安全但浪费"写法，发现规模指标（1208 MP）后立刻能定位。
+**Lessons**: conversion function when "input already target format" must take zero-copy move, not unconditional clone + per-element processing. Especially GB-scale pixel / vertex data, one redundant copy is seconds. `image.pixels.clone()` + `Vec::with_capacity` + `chunks_exact` trio is typical "safe but wasteful" pattern, once scale metric (1208 MP) known can locate immediately.
 
-### 31.3 上传路径两处冗余 clone（collect + per-tex pixels.clone）
+### 31.2 Two redundant clones in upload path (collect + per-tex pixels.clone)
 
-**问题**：`load_demo_scene` 的纹理上传循环做了两次 4.5 GB 克隆：
+**Problem**: `load_demo_scene` texture upload loop did two 4.5 GB clones:
 1. `texture_data: Vec<_> = scene_store.textures().map(|(h, d)| (h, d.clone())).collect()` -- 543ms
-2. 循环里 `pixels: data.pixels.clone()` 进 `TextureUploadInput` -- 又一次
+2. In loop `pixels: data.pixels.clone()` into `TextureUploadInput` — again
 
-**修复**（`crates/prism-engine/src/app.rs` + `crates/prism-asset/src/scene_store.rs`）：
-- 给 `SceneStore` 加 `textures_mut() -> impl Iterator<Item = (TextureHandle, &mut TextureData)>`。
-- 上传循环改成 drain 模式：`std::mem::take(&mut data.pixels)` 直接把像素 buffer move 进 `TextureUploadInput`，store 里留空 `Vec`。上传后 CPU 侧像素本就是死重量（GPU 有 device-local 副本），drain 安全。
-- 借用坑：`for (h, data) in self.scene_store.textures_mut()` 持有 `&mut scene_store.textures`，循环体内不能再调 `self.scene_store.take_texture_pixels(h)`（二次可变借用）。正解是直接从迭代器给的 `&mut TextureData` 上 `mem::take(&mut data.pixels)`，不需要额外 accessor -- 所以最终没留 `take_texture_pixels` 方法，只留 `textures_mut`。
-- 先把 `(asset_h, TextureUploadInput)` 收集进本地 Vec，让 `&mut self.scene_store` 借用在调 `&mut self.renderer` 之前结束，避免 self 借用冲突。
-- 效果：`texture upload collect` 543ms -> **0ms**，`texture upload` total 1545ms -> **330ms**。
+**Fix** (`crates/prism-engine/src/app.rs` + `crates/prism-asset/src/scene_store.rs`):
+- Add `textures_mut() -> impl Iterator<Item = (TextureHandle, &mut TextureData)>` to `SceneStore`.
+- Upload loop changed to drain mode: `std::mem::take(&mut data.pixels)` moves pixel buffer directly into `TextureUploadInput`, store keeps empty `Vec`. After upload CPU-side pixels are dead weight (GPU has device-local copy), drain safe.
+- Borrow pitfall: `for (h, data) in self.scene_store.textures_mut()` holds `&mut scene_store.textures`, can't call `self.scene_store.take_texture_pixels(h)` in loop (second mutable borrow). Right approach: `mem::take(&mut data.pixels)` directly on `&mut TextureData` from iterator, no extra accessor — so final didn't keep `take_texture_pixels` method, only `textures_mut`.
+- First collect `(asset_h, TextureUploadInput)` into local Vec, letting `&mut self.scene_store` borrow end before calling `&mut self.renderer`, avoiding self borrow conflict.
+- Effect: `texture upload collect` 543ms -> **0ms**, `texture upload` total 1545ms -> **330ms**.
 
-**教训**：
-- **上传后不再被读的 CPU 侧数据应该 drain，不是 clone**。判断标准：grep 这个 store accessor 的所有调用点，如果上传后只剩 `.count()` 之类的元数据查询（本项目 `scene_store.textures()` 上传后只在汇总日志里 `.count()`），drain pixels 就是安全的。
-- 借用冲突时优先"从已有的 `&mut` 引用上直接操作"，不要为了对称再加一个 `take_xxx(handle)` accessor -- 后者会触发"同一结构的二次可变借用"。`textures_mut` + `mem::take` 是 Rust 里 drain slotmap 表的标准模式。
-- `TextureUploadInput` 持有 `pixels: Vec<u8>` 所有权是合理的（`reserve_into` 只借一次做 staging map），所以 move 进去后无需改 manager 签名。
+**Lessons**:
+- **CPU-side data not read after upload should be drained, not cloned**. Criterion: grep all call sites of store accessor, if after upload only metadata queries like `.count()` remain (this project `scene_store.textures()` only `.count()` in summary log), draining pixels is safe.
+- On borrow conflict prefer "operate directly on existing `&mut` reference", don't add symmetric `take_xxx(handle)` accessor — latter triggers "second mutable borrow of same struct". `textures_mut` + `mem::take` is standard pattern for draining slotmap table in Rust.
+- `TextureUploadInput` owning `pixels: Vec<u8>` is reasonable (`reserve_into` only borrows once for staging map), so moving in needs no manager signature change.
 
-### 31.4 mesh 上传路径没动（刻意）
+### 31.4 Mesh upload path untouched (deliberately)
 
-`mesh upload: collect=23ms upload=147ms` 已经很小（2M verts ≈ 100 MB，clone 成本可忽略），且 mesh 数据上传后仍可能被 scene_store 读取（不像纹理那样明确 drain 安全）。**刻意不优化**：优化的第一条原则是先看规模指标，别对 23ms 的阶段动刀。
+`mesh upload: collect=23ms upload=147ms` already small (2M verts ≈ 100 MB, clone cost negligible), and mesh data may still be read by scene_store after upload (unlike textures clearly safe to drain). **Deliberately not optimized**: first principle of optimization is look at scale metrics, don't cut 23ms stage.
 
-### 31.5 修复后瓶颈分布（~1.8s，可接受）
+### 31.5 Bottleneck distribution after fix (~1.8s, acceptable)
 
 ```
 gltf parse+import:        805ms  (45%)
-  └ decode images:        701ms  (39%)  ← PNG/JPEG 解码，rayon 已并行
+  └ decode images:        701ms  (39%)  ← PNG/JPEG decode, rayon parallel
   └ import buffers:        23ms
   └ meshes:                74ms
-batch upload submit+wait: 522ms  (29%)  ← GPU 实际 PCIe 传输
-texture upload (CPU):     330ms  (18%)  ← 72 次 vkCreateImage + alloc + staging map
+batch upload submit+wait: 522ms  (29%)  ← actual GPU PCIe transfer
+texture upload (CPU):     330ms  (18%)  ← 72 vkCreateImage + alloc + staging map
 mesh upload (CPU):        168ms   (9%)
 ```
 
-剩下的大头已经是真活儿，不是冗余拷贝。
+Remaining big items are real work, not redundant copies.
 
-### 31.6 下一步扩展优化方向（未做，按性价比排序）
+### 31.6 Next-step optimization directions (not done, sorted by cost-effectiveness)
 
-0. **GPU 块压缩上传（最高性价比，根治内存）**：当前所有纹理按 `R8G8B8A8_UNORM` 上传，4.5 GB device-local + 4.5 GB host staging 是这套资产内存爆的根本原因（§15 已记录这是 PBR 色彩正确性缺陷）。改成 BC7（0.5 bytes/pixel）上传后：GPU 纹理 ~1.1 GB，staging ~1.1 GB，CPU 峰值砍到 ~2.3 GB。需要：(a) glTF 加载阶段对 RGBA8 做 BC7 编码（CPU 侧，可用 `bc7enc` crate）；(b) `TextureUploadInput` / `BatchUploader::upload_image` 支持 BC7 格式 + 不再生成 mip blit（BC 压缩后再做 blit 要重新编码）。**这条比下面的 decode images 优先级更高**，因为它解决的是内存（GB 级），不只是加载时间（秒级）。注意 albedo/emissive 应上传为 sRGB variant（`BC7_SRGB`），normal/MR 保持 UNORM（§15 的色彩空间缺陷一起修）。
+0. **GPU block-compressed upload (highest cost-effectiveness, root memory fix)**: currently all textures uploaded as `R8G8B8A8_UNORM`, 4.5 GB device-local + 4.5 GB host staging root cause of asset memory explosion (§15 records as PBR color-correctness defect). Switch to BC7 (0.5 bytes/pixel): GPU ~1.1 GB, staging ~1.1 GB, CPU peak ~2.3 GB. Needs: (a) glTF load stage BC7-encode RGBA8 (CPU, `bc7enc` crate); (b) `TextureUploadInput` / `BatchUploader::upload_image` support BC7 format + no mip blit (BC-compressed blit needs re-encode). **Higher priority than decode images below**, solves memory (GB-scale) not just load time (seconds). Note albedo/emissive should upload sRGB variant (`BC7_SRGB`), normal/MR keep UNORM (fix §15 color-space defect together).
 
-1. **decode images 701ms（次高性价比）**：72 张 4K PNG 的 `image` crate 解码，已 rayon 并行。继续压只有换解码器：
-   - `zune-image` / `zune-png`（Rust 原生，SIMD，比 `image` 的 PNG 快 2-3×）
-   - 或 `lodepng` 纯 PNG 路径
-   - 注意：换解码器要保留"输出 RGBA8"的契约，否则 `to_rgba8` 的快路径会失效（会命中慢路径并打 warn）。
-2. **texture upload 330ms（中性价比）**：72 次 `vkCreateImage` + `vkAllocateMemory` + staging map。改成 suballocator（如 `gpu-allocator` crate 或自写 bump allocator）把逐资源分配改成批量分配，预计砍一半。改动较大，动 `BatchUploader` 和 `RenderTextureManager` 的内存所有权。
-3. **batch upload submit+wait 522ms（低性价比）**：4.5 GB 像素 + 100 MB mesh 过 PCIe，已接近物理带宽上限。除非上 async / timeline semaphore 让上传和首帧渲染重叠（本项目 `BatchUploader` 注释里提到的 follow-up），否则压不动。改 async 是架构级改动。
-4. **懒加载 / 流式上传（架构级，最彻底）**：把"全量加载完再渲染"改成"先加载 mipmap 0 的低分辨率 + 首帧立即可见，后台流式补全高 mip"。需要改 `SceneStore` 的所有权模型和渲染管线的"纹理就绪"判定，工作量大，适合里程碑级重构。
+1. **decode images 701ms (next cost-effectiveness)**: 72 4K PNG decoded by `image` crate, already rayon parallel. Further compression only by changing decoder:
+   - `zune-image` / `zune-png` (Rust native, SIMD, 2-3× faster than `image` PNG)
+   - or `lodepng` pure PNG path
+   - Note: changing decoder must keep "output RGBA8" contract, else `to_rgba8` fast path breaks (hits slow path and warns).
+2. **texture upload 330ms (medium)**: 72× `vkCreateImage` + `vkAllocateMemory` + staging map. Switch to suballocator (`gpu-allocator` crate or custom bump allocator) batching per-resource allocations, estimated halve. Larger change, touches `BatchUploader` and `RenderTextureManager` memory ownership.
+3. **batch upload submit+wait 522ms (low)**: 4.5 GB pixels + 100 MB mesh over PCIe, near physical bandwidth limit. Can't compress unless async / timeline semaphore overlaps upload with first-frame render (follow-up mentioned in `BatchUploader` comments). Async is architectural change.
+4. **Lazy / streaming upload (architectural, most thorough)**: change "load all then render" to "load low-res mipmap 0 first visible immediately, background stream high mips". Requires changing `SceneStore` ownership model and pipeline "texture ready" determination, large work, milestone-level refactor.
 
-**当前 ~1.8s 对这套 4.5 GB RGBA8 极端资产已经合理（真实游戏场景会小得多，见 §31.7）**。本次的核心教训是 31.1：**先拆日志定位，再按规模指标找冗余拷贝**，不要凭感觉猜瓶颈。`to_rgba8` 的零拷贝快路径 + drain 上传是两个通用的"GB 级数据搬运"反模式修复，下一步扩展加新资源类型（音频、动画）时直接套用。
+**Current ~1.8s is already reasonable for this 4.5 GB RGBA8 extreme asset (real game scenes much smaller, see §31.7)**. Core lesson of this round is 31.1: **break down logs to locate, then find redundant copies by scale metrics**, don't guess bottleneck by feel. `to_rgba8` zero-copy fast path + drain upload are two universal fixes for "GB-scale data movement" anti-patterns, directly reusable when adding new resource types (audio, animation).
 
-### 31.7 测试资产不代表真实游戏负载（重要归因）
+### 31.7 Test asset doesn't represent real game load (important attribution)
 
-本次优化的所有数字（4.5 GB 像素、9 GB CPU 峰值、~1.8s 加载）都建立在 **Intel Sponza 2022** 测试资产上，这套资产的纹理规模**远超真实游戏**，不能用它的绝对数字推断引擎在生产场景下的表现。
+All numbers from this optimization (4.5 GB pixels, 9 GB CPU peak, ~1.8s load) are based on **Intel Sponza 2022** test asset, whose texture scale **far exceeds real games**, can't infer engine performance in production scenes from its absolute numbers.
 
-**Sponza 版本对比**：
+**Sponza version comparison**:
 
-| 资产版本 | 纹理数 | 单张尺寸 | 像素总量 | RGBA8 解压 | 用途 |
+| Asset version | Texture count | Per-texture size | Total pixels | RGBA8 decompressed | Purpose |
 |----------|--------|----------|----------|-----------|------|
-| Crytek Sponza（经典，游戏常用） | ~20 | 混合 512/1024/2048 | ~200 MP | ~0.8 GB | 实时渲染基准 |
-| **Intel Sponza 2022（本项目在用）** | **135** | **全部 4096×4096** | **2184 MP** | **~8.5 GB** | 离线渲染/参考图 |
-| 典型 3A 游戏 Sponza 级场景 | ~30-50 | 混合 1K/2K/4K | ~400 MP | ~1.5 GB | 加上 BC 压缩后 ~0.4 GB |
+| Crytek Sponza (classic, common in games) | ~20 | mixed 512/1024/2048 | ~200 MP | ~0.8 GB | Real-time render benchmark |
+| **Intel Sponza 2022 (used here)** | **135** | **all 4096×4096** | **2184 MP** | **~8.5 GB** | Offline render / reference images |
+| Typical AAA game Sponza-class scene | ~30-50 | mixed 1K/2K/4K | ~400 MP | ~1.5 GB | ~0.4 GB with BC compression |
 
-gltf 引用的子集是 72 张全 4K（1.89 GB PNG -> 4.5 GB RGBA8），已经是极端情况。**没有任何真实游戏会给 Sponza 全 4K 纹理** -- Intel Sponza 2022 是为路径追踪参考图做的 4K 扫描资产，不是为实时渲染设计的。
+glTF-referenced subset is 72 full 4K (1.89 GB PNG -> 4.5 GB RGBA8), already extreme. **No real game gives Sponza full-4K textures** — Intel Sponza 2022 is a 4K scan asset for path-traced reference images, not designed for real-time rendering.
 
-**真实游戏如何控制纹理内存**（引擎下一步扩展应支持，按优先级）：
+**How real games control texture memory** (next engine extension should support, by priority):
 
-1. **GPU 块压缩（BC1/BC3/BC7/BCN）** -- §31.6 第 0 条已列。4096×4096 RGBA8 = 64 MB，BC7 = 16 MB（4:1），BC1 = 8 MB（8:1，无 alpha）。这是真实游戏纹理内存控制在 GB 级以下的根本手段。本项目当前全 RGBA8 上传是已知缺陷（§15），不只是色彩问题，也是内存问题。
-2. **mip chain 流式加载**：只加载可视距离需要的 mip。4K 纹理完整 mip chain = 21 MB，但只有最近物体的 1-2 张需要 4K，远处用 1K/512。真实游戏按"表面离玩家多近"动态选 mip，CPU/GPU 内存峰值远低于全量加载。
-3. **虚拟纹理（VT）**：3A 游戏把 GB 级纹理切成 64KB page 按需加载，CPU/GPU 只驻留可见 page。这是把"全 4K Sponza"压到可运行的唯一办法，但实现复杂（page table、page fault、反馈通道），属于引擎级里程碑。
-4. **分辨率分级**：不是所有表面都给 4K。真实美术会按"这块表面离玩家多近、多常被看"给 1K/2K/4K 混合，而不是 Sponza 2022 那样无脑全 4K。
+1. **GPU block compression (BC1/BC3/BC7/BCN)** — §31.6 item 0. 4096×4096 RGBA8 = 64 MB, BC7 = 16 MB (4:1), BC1 = 8 MB (8:1, no alpha). Root means for real games keeping texture memory under GB. Current all-RGBA8 upload is known defect (§15), not just color but memory.
+2. **Mip-chain streaming**: only load mips needed by visible distance. Full 4K mip chain = 21 MB, but only 1-2 nearest objects need 4K, far use 1K/512. Real games dynamically select mip by "surface distance to player", CPU/GPU memory peak far below full load.
+3. **Virtual texturing (VT)**: AAA games slice GB-scale textures into 64KB pages loaded on demand, only visible pages resident. Only way to make "full 4K Sponza" runnable, but complex (page table, page fault, feedback channel), engine-level milestone.
+4. **Resolution tiering**: not all surfaces get 4K. Real artists mix 1K/2K/4K by "how close / how often seen", not indiscriminate full 4K like Sponza 2022.
 
-**对本项目的实际影响**：
+**Actual impact on this project**:
 
-- 引擎本身**没有内存泄漏或浪费**（§31.2/§31.3 的冗余拷贝已修）。4.5 GB 是这套资产解压后的真实大小，任何引擎加载它都会面临同样的像素数据量。
-- 但引擎**缺真实游戏必备的纹理管线**：块压缩、流式加载、分辨率分级都没有。这是下一步扩展里程碑的工作，不是 bug。
-- **测试建议**：下一步扩展性能基线应该用 Crytek Sponza 或自制的"混合分辨率"场景，而不是 Intel Sponza 2022，否则优化决策会被极端资产带偏（例如为了 4.5 GB 去做 suballocator，但真实场景 0.4 GB 根本不需要）。
+- Engine itself **has no memory leak or waste** (§31.2/§31.3 redundant copies fixed). 4.5 GB is true decompressed size of this asset, any engine faces same pixel volume.
+- But engine **lacks texture pipeline essential for real games**: block compression, streaming, resolution tiering all missing. Next extension milestone work, not a bug.
+- **Test suggestion**: next performance baseline should use Crytek Sponza or custom "mixed-resolution" scene, not Intel Sponza 2022, else optimization decisions skewed by extreme asset (e.g. building suballocator for 4.5 GB when real scene 0.4 GB doesn't need it).
 
-**教训**：性能优化的结论要和测试资产绑定。用极端资产（Intel Sponza 2022 全 4K）得到的瓶颈分布，不能直接外推到生产场景。每次记录耗时数字时，旁边要标明资产规模（"72 张 4K = 4.5 GB RGBA8"），否则后人会误以为"引擎加载 Sponza 要 1.8s"是普遍结论，而实际 Crytek Sponza 大概几百毫秒就进去了。
+**Lesson**: performance conclusions must be bound to test asset. Bottleneck distribution from extreme asset (Intel Sponza 2022 full 4K) can't be extrapolated to production. When recording timing numbers, note asset scale alongside ("72 4K textures = 4.5 GB RGBA8"), else future readers think "engine loads Sponza in 1.8s" is universal, while Crytek Sponza enters in a few hundred ms.
 
-### 32 IBL CPU 卷积磁盘缓存
+### 32 IBL CPU convolution disk cache
 
-**背景**：`IblResources::new()` 在引擎启动时对 HDR 环境贴图做三类 CPU 卷积 + BRDF LUT 积分，总计 ~4127ms（Intel Sponza 2022 + 1K HDR），是启动流程中最长的单次冻结（约占 64%）。其中 BRDF LUT（3260ms）占 IBL 总耗时的 79%。
+**Background**: `IblResources::new()` performs three CPU convolutions + BRDF LUT integration on HDR env map at engine startup, ~4127ms total (Intel Sponza 2022 + 1K HDR), longest single freeze in startup (~64%). BRDF LUT (3260ms) = 79% of IBL total.
 
-#### 32.1 瓶颈分布（缓存前）
+#### 32.1 Bottleneck distribution (before cache)
 
-| 卷积步骤 | 耗时 | 占比 | 说明 |
+| Convolution step | Time | Share | Notes |
 |----------|------|------|------|
-| BRDF LUT（512x512, 1024 samples） | 3260ms | 79% | 双重循环 512x512x1024 = 268M 次迭代，最密集 |
-| 预滤波卷积（5 mips, 128 samples） | 792ms | 19% | 次热点，但 mip 链多 pass |
-| 辐照度卷积（64x64, 4096 samples） | 75ms | 2% | 分辨率低，耗时少 |
-| 总计 | 4127ms | 100% | |
+| BRDF LUT (512x512, 1024 samples) | 3260ms | 79% | double loop 512x512x1024 = 268M iterations, densest |
+| Prefiltered convolution (5 mips, 128 samples) | 792ms | 19% | second hotspot, mip chain multi-pass |
+| Irradiance convolution (64x64, 4096 samples) | 75ms | 2% | low res, short |
+| Total | 4127ms | 100% | |
 
-#### 32.2 磁盘缓存设计
+#### 32.2 Disk cache design
 
-**核心思路**：将 CPU 卷积结果缓存到磁盘，下一步扩展启动跳过计算直接加载 f32 原始数据回 `Vec<f32>`，Vulkan 上传管线（f16 转换 + staging buffer + submit）保持不变。（缓存根后来统一到 `<exe dir>/cache/ibl/`，见本节末「缓存根」段落。）
+**Core idea**: cache CPU convolution results to disk, next startup skip compute and directly load f32 raw data back into `Vec<f32>`, Vulkan upload pipeline (f16 conversion + staging buffer + submit) unchanged. (Cache root later unified to `<exe dir>/cache/ibl/`, see "cache root" paragraph at end.)
 
-**缓存 key 方案**：
+**Cache key scheme**:
 
-- **BRDF LUT**：固定文件名 `brdf_lut_512.bin`，无依赖（纯 GGX Smith 数学函数，任何场景、任何 HDR 结果相同）。缓存永远有效。
-- **Env 相关（cubemap / irradiance / prefiltered）**：对 `env_bytes`（原始 .hdr 文件内容）做 `std::hash::DefaultHasher`（SipHash-1-3），hex 编码为目录名。HDR 文件内容变化 → hash 不同 → 自动产生新缓存。
+- **BRDF LUT**: fixed filename `brdf_lut_512.bin`, no dependencies (pure GGX Smith math, same for any scene / HDR). Cache always valid.
+- **Env-related (cubemap / irradiance / prefiltered)**: `std::hash::DefaultHasher` (SipHash-1-3) on `env_bytes` (raw .hdr bytes), hex-encoded as dir name. HDR content change → different hash → new cache automatically.
 
-**文件格式**：`u32 LE（元素数）+ f32 LE × 元素数`，带长度校验。共 9 个文件：
+**File format**: `u32 LE (element count) + f32 LE × count`, with length validation. 9 files total:
 
-| 文件 | 大小 | 说明 |
+| File | Size | Notes |
 |------|------|------|
-| `<cache>/ibl/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, 独立于 HDR |
+| `<cache>/ibl/brdf_lut_512.bin` | ~2 MB | 512×512×2 floats, HDR-independent |
 | `<cache>/ibl/<hash>/cube_512.bin` | ~24 MB | 6×512×512×4 floats |
 | `<cache>/ibl/<hash>/irradiance_64.bin` | ~393 KB | 6×64×64×4 floats |
-| `<cache>/ibl/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | 各 mip 独立文件，方便单 mip 缓存命中 |
-| **总计** | **~28.5 MB** | 每 HDR 环境占 ~28MB 磁盘 |
+| `<cache>/ibl/<hash>/prefiltered_mip{0..4}.bin` | ~2.1 MB | Each mip separate, easy single-mip hit |
+| **Total** | **~28.5 MB** | ~28MB disk per HDR env |
 
-**后续演进（当前形态）**：CPU 卷积 + 磁盘缓存这条路径**已被整体取代**，`cache_paths` 模块与 `GraphRenderer::set_ibl_cache` 注入随之删除。
+**Later evolution (current form)**: CPU convolution + disk cache path **fully replaced**, `cache_paths` module and `GraphRenderer::set_ibl_cache` injection deleted.
 
-现在 IBL 由**离线 GPU 烘焙**产出：`assets/shaders/slang/ibl_bake.slang`（`ibl_brdf_lut` / `ibl_equirect_to_cube` / `ibl_irradiance` / `ibl_prefilter` 四个 compute entry point）在资产管线里烘焙成 `prism_gfx::ibl::CookedIbl`，运行期 `crates/prism-render/src/ibl.rs` 只做 `decode` + staging 上传，不再有运行时卷积，也不再有磁盘缓存目录。
+IBL now from **offline GPU bake**: `assets/shaders/slang/ibl_bake.slang` (`ibl_brdf_lut` / `ibl_equirect_to_cube` / `ibl_irradiance` / `ibl_prefilter` four compute entry points) baked into `prism_gfx::ibl::CookedIbl` in asset pipeline, runtime `crates/prism-render/src/ibl.rs` only `decode` + staging upload, no runtime convolution, no disk cache dir.
 
-**教训本身仍然成立**：运行期生成物不能写进 `assets/`（只读构建输入，装到 `Program Files` 后不可写，Android 上更在 APK 内）。只是本节的解法从「运行期算 + 缓存」换成了「构建期算 + 直接读资产」，缓存问题随之消失。
+**Lesson still holds**: runtime-generated artifacts can't go in `assets/` (read-only build input, unwritable after `Program Files` install, even more inside APK on Android). Just solution changed from "runtime compute + cache" to "build-time compute + direct asset read", cache problem disappears.
 
-#### 32.3 改动的权衡
+#### 32.3 Tradeoffs
 
-| 取舍 | 选择 | 理由 |
+| Tradeoff | Choice | Reason |
 |------|------|------|
-| 存储格式 | f32 原始数组（非 f16） | 写回时直接可用，不需转换；28MB 可接受 |
-| Hash 算法 | FNV-1a 而非 `DefaultHasher` | `DefaultHasher` 的算法跨 Rust 版本不保证稳定，升级工具链会静默让全部缓存失效并留下孤儿目录；FNV-1a 与 `prism-reflect` 的 `TypeId` 同源 |
-| 缓存粒度 | 逐文件（9 个文件）而非单一大包 | 增量失效：换 HDR 只重建 env 相关，保留 BRDF LUT |
-| 加载时机 | 同步阻塞（startup） | 当前 IBL 必须就绪才能渲染第一帧；异步下一步扩展 PR |
-| 错误处理 | 任何 I/O 失败回退到重新计算 | 幂等：计算结果与缓存内容一致 |
+| Storage format | f32 raw array (not f16) | directly usable on write-back, no conversion; 28MB acceptable |
+| Hash algorithm | FNV-1a not `DefaultHasher` | `DefaultHasher` algorithm not guaranteed stable across Rust versions, toolchain upgrade silently invalidates all caches leaving orphan dirs; FNV-1a same source as `prism-reflect` `TypeId` |
+| Cache granularity | per-file (9 files) not single blob | incremental invalidation: HDR change only rebuilds env-related, keeps BRDF LUT |
+| Load timing | synchronous blocking (startup) | IBL must be ready for first frame; async next extension PR |
+| Error handling | any I/O failure falls back to recompute | idempotent: computed result matches cache |
 
-**为什么不用更复杂的方案**：
+**Why not more complex solutions**:
 
-- **LZ4 压缩**：28MB 不值得压缩，况且 f32 数据近乎白噪声（随机采样结果），压缩比极差。
-- **异步/后台加载**：第一帧就需要 IBL 纹理（场景反射），异步需要先渲染无 IBL 再闪现的过渡逻辑，复杂度远大于收益。
-- **GPU 卷积**：IBL 卷积（辐照度/预滤波）用 compute shader 在 GPU 做更快（~5-10ms），但 BRDF LUT 是中心瓶颈，且 GPU 卷积需要额外的 compute pipeline + 同步逻辑。
+- **LZ4 compression**: 28MB not worth it, f32 data near white noise (random sampling), terrible ratio.
+- **Async / background load**: first frame needs IBL (scene reflections), async needs no-IBL-then-pop-in transition logic, complexity far exceeds gain.
+- **GPU convolution**: IBL convolution (irradiance / prefilter) faster on GPU compute (~5-10ms), but BRDF LUT is central bottleneck and GPU convolution needs extra compute pipeline + sync logic.
 
-#### 32.4 结果
+#### 32.4 Results
 
-| 指标 | 缓存前 | 缓存后 | 加速比 |
+| Metric | Before cache | After cache | Speedup |
 |------|--------|--------|--------|
-| IBL 卷积总耗时 | 4127ms | **1ms** | **~4000×** |
-| Renderer 初始化（含 IBL） | 4441ms | 233ms | 19× |
-| 启动至第一帧（含场景加载） | 6419ms | **2075ms** | **3.1×** |
+| IBL convolution total | 4127ms | **1ms** | **~4000×** |
+| Renderer init (incl. IBL) | 4441ms | 233ms | 19× |
+| Startup to first frame (incl. scene load) | 6419ms | **2075ms** | **3.1×** |
 
-#### 32.5 经验教训
+#### 32.5 Lessons
 
-1. **BRDF LUT 是最容易的优化**：不依赖任何外部输入，纯数学函数，缓存永远有效，3260ms→0ms 只花了几十行代码。任何引擎的第一个 IBL 优化都应该是 BRDF LUT 缓存。
+1. **BRDF LUT easiest optimization**: no external input, pure math, cache always valid, 3260ms→0ms with dozens of lines. Any engine's first IBL optimization should be BRDF LUT cache.
 
-2. **逐阶段拆解定位瓶颈有效**：从笼统的 "IBL: 3678ms" 拆成 8 个子阶段日志（HDR decode / generate_cubemap / convolve_irradiance / prefiltered / brdf_lut / create_images / upload / views），一眼锁定 BRDF LUT 是头号瓶颈，避免了对辐照度或预滤波做无谓优化。
+2. **Per-stage breakdown locates bottleneck**: from vague "IBL: 3678ms" into 8 sub-stage logs (HDR decode / generate_cubemap / convolve_irradiance / prefiltered / brdf_lut / create_images / upload / views), instantly locked BRDF LUT as top bottleneck, avoiding futile optimization of irradiance or prefilter.
 
-3. **内容 hash 做缓存 key 比时间戳可靠**：文件修改时间在 git checkout / 复制时会被重置，导致不必要的缓存失效。内容 hash（SipHash of HDR bytes）保证"同内容同缓存"。
+3. **Content hash better cache key than timestamp**: file mtime reset on git checkout / copy, causing unnecessary invalidation. Content hash (SipHash of HDR bytes) guarantees "same content same cache".
 
-4. **缓存路径设计要考虑增量失效**：BRDF LUT 和 env 相关数据分开目录，换 HDR 时不破坏 BRDF LUT 缓存。
+4. **Cache path design for incremental invalidation**: BRDF LUT and env-related data separate dirs, HDR change doesn't break BRDF LUT cache.
 
-5. **f32 原始数组是最简单的序列化格式**：无 schema、无依赖、零拷贝反序列化（`ptr::copy_nonoverlapping`）。对于已知大小的数组，`u32 长度前缀 + f32 数据` 足够。
+5. **f32 raw array simplest serialization**: no schema, no dependencies, zero-copy deserialization (`ptr::copy_nonoverlapping`). For known-size arrays, `u32 length prefix + f32 data` enough.
 
-6. **"缓存失效"不是问题，依赖关系才是**：BRDF LUT 零依赖→永远有效；env 数据只依赖 .hdr 内容→内容 hash 驱动失效。不存在"我改了配置但缓存没刷新"的歧义。
+6. **"Cache invalidation" isn't the problem, dependency is**: BRDF LUT zero dependency → always valid; env data only depends on .hdr content → content-hash-driven invalidation. No ambiguity of "I changed config but cache didn't refresh".
 
-#### 32.6 下一步扩展方向（不在本次范围）
+#### 32.6 Next extension directions (not in this scope)
 
-- **skybox 组件化**：将 HDR + 预计算 IBL 数据 + BRDF LUT 打包为一个可复用的 skybox 资源组件（ECS 或 asset），支持运行时切换环境贴图而不用重建 `IblResources`。
-- **GPU 卷积**：辐照度和预滤波可以用 compute shader 在 GPU 上完成（~5-10ms vs CPU ~900ms），并直接生成 Vulkan image 而非 CPU f32 staging，省掉 f16 转换 + 上传步骤。
-- **BRDF LUT samples 可配置**：当前 1024 固定，可暴露为常量或运行时参数（512 约 800ms，256 约 200ms，质量差异 < 0.5 dB）。
-- **IBL 加载进度反馈**：引擎启动时显示 "loading environment..." 或使用后台线程 + 信号量，避免无响应窗口。
+- **Skybox componentization**: package HDR + precomputed IBL data + BRDF LUT into reusable skybox resource component (ECS or asset), support runtime env-map switching without rebuilding `IblResources`.
+- **GPU convolution**: irradiance and prefilter on GPU compute (~5-10ms vs CPU ~900ms), directly generating Vulkan images instead of CPU f32 staging, skipping f16 conversion + upload.
+- **BRDF LUT samples configurable**: currently fixed 1024, expose as constant or runtime param (512 ~800ms, 256 ~200ms, quality diff < 0.5 dB).
+- **IBL load progress feedback**: show "loading environment..." at startup or background thread + semaphore, avoid unresponsive window.
 
-## 33. GI 烘焙器两大 bug：inside-solid 漏判墙体 + slangc 调度导致 SH 系数腐败
+## 33. GI baker two big bugs: inside-solid misses walls + slangc instruction scheduling corrupts SH coefficients
 
-**场景**：开启 GI 后场景五颜六色。用户怀疑"是不是把点光源也算上了"。实际上 GI 烘焙器从头到尾只用一个方向光，五颜六色是两个独立 bug 叠加的结果。
+**Scenario**: scene multicolored after enabling GI. User suspected "maybe point lights counted". Actually baker uses only one directional light start to finish; multicolor is two independent bugs stacked.
 
-### 33.1 inside-solid 检测漏判墙体内部
+### 33.1 inside-solid detection misses wall interiors
 
-**问题**：烘焙器的 inside-solid 检测（判定哪些 probe 落在墙/地板实体内并清零其 SH）用"6 条轴对齐短射线全部命中"作为判据。对真实墙体失效：
+**Problem**: baker inside-solid detection (determine which probes inside wall / floor solids and zero their SH) used "all 6 axis-aligned short rays hit" criterion. Fails on real walls:
 
-- **薄墙**：probe 落在墙板里，沿法线的 2 条轴射线命中近表面，但沿墙面内的 4 条轴射线从墙板边缘逃逸 -> 2/6 命中 -> 漏判，墙体内部产生错误的亮/暗 SH 泄漏进探针体积。
-- **门口附近的墙边**：某条轴射线从门口逃逸 -> 5/6 命中 -> 漏判。
+- **Thin wall**: probe inside wall panel, 2 rays along normal hit near surface, but 4 rays along wall plane escape through panel edge -> 2/6 hits -> missed, wrong bright / dark SH inside wall leaks into probe volume.
+- **Wall edge near doorway**: some axis ray escapes through doorway -> 5/6 hits -> missed.
 
-**原因**：6 轴全命中要求太苛刻。任何一条轴射线逃逸（薄板边缘、门洞、开口）就漏判，而真实场景的墙体恰好充满这种情况。对照实验（旧逻辑 vs 新逻辑）显示 Sponza 场景 inside-solid 从 23 升到 112（多识别 5 倍墙体内部 probe）。
+**Cause**: all-6-hit too strict. Any axis ray escaping (thin-panel edge, doorway, opening) causes miss, and real walls full of such cases. Controlled experiment (old vs new logic) Sponza inside-solid rose 23 → 112 (5× more wall-interior probes identified).
 
-**修复**：改用"背面命中 + 短距离"两个信号判定，并 fold 进主射线循环（每个 hit 本来就要取三角形法线做 bounce 光照，只多一次点积 + 比较）：
+**Fix**: use "backface hit + short distance" two signals, folded into main ray loop (each hit already samples triangle normal for bounce lighting, only extra dot + compare):
 
-- **背面**（几何法线与射线同向 = 射线正离开实体）区分"在墙里"与"在房间里"：房间的内表面是正面命中，实体的外表面是背面命中。
-- **短距离**（`CommittedRayT() < test_len` = 半个 probe 间距）区分"在墙里"与"在大空壳里"（如 test cube）：两者都看到背面，但空壳的内表面在房间尺度，远超 test_len。
+- **Backface** (geometry normal same direction as ray = ray leaving solid) distinguishes "inside wall" vs "inside room": room inner surface is front hit, solid outer surface is back hit.
+- **Short distance** (`CommittedRayT() < test_len` = half probe spacing) distinguishes "inside wall" vs "inside large hollow shell" (e.g. test cube): both see backfaces, but shell inner surface at room scale, far beyond test_len.
 
-两个信号缺一不可：只看背面会误判空壳，只看距离会误判狭窄走廊。判定阈值 `≥50%` 的射线为短距离背面命中，容忍少数射线从薄板边缘或门洞逃逸仍判为 inside-solid。test cube（空壳）验证未被误判（inside-solid=1/216，仅边界 probe），证明"短距离"信号成功区分了"墙内"与"大空壳内"。
+Both signals necessary: backface alone misjudges hollow shell, distance alone misjudges narrow corridor. Threshold `≥50%` rays short-distance backface hit, tolerating few rays escaping thin-panel edge / doorway still classified inside-solid. Test cube (hollow shell) verified not misjudged (inside-solid=1/216, only boundary probe), proving "short distance" signal distinguishes "inside wall" from "inside large hollow shell".
 
-### 33.2 slangc 指令调度 bug 导致 SH 系数腐败（五颜六色的真正根因）
+### 33.2 slangc instruction-scheduling bug corrupts SH coefficients (true root of multicolor)
 
-**问题**：27.7% 的 probe DC（c=0，平均辐照度）为负，最低 -7.478。DC = `Σ radiance·C0·w`，每一项非负，**数学上必须 ≥ 0**。负 SH 系数经 `EvalSH9(normal, sh)` 重建后随法线方向产生任意正负大值，乘 albedo/π 就是满屏色块。
+**Problem**: 27.7% probe DC (c=0, average irradiance) negative, minimum -7.478. DC = `Σ radiance·C0·w`, every term non-negative, **must be ≥ 0 mathematically**. Negative SH reconstructed by `EvalSH9(normal, sh)` produces arbitrary large positive/negative values by normal direction, times albedo/π = full-screen color patches.
 
-**排查过程（控制变量实验定位故障层）**：
+**Investigation (control-variable experiments locating faulty layer)**:
 
-1. 强制 `radiance=(1,1,1)` -> 负 DC 归零 -> readback/内存布局无罪，问题在 radiance 计算。
-2. 强制 `hit_albedo=(1,1,1)` -> 负 DC 归零 -> 嫌疑锁定 albedo 读取。
-3. CPU 端 vertex color 全 ∈ [0,1] + 索引全部 in-bounds -> 数据无罪，问题在 GPU 读取。
+1. Force `radiance=(1,1,1)` -> negative DC zeroed -> readback / memory layout innocent, problem in radiance computation.
+2. Force `hit_albedo=(1,1,1)` -> negative DC zeroed -> suspect locked to albedo read.
+3. CPU-side vertex colors all ∈ [0,1] + indices all in-bounds -> data innocent, problem in GPU read.
 
-**根因**：slangc 2025.11 对 `vertexData.Load3(... + COLOR_OFFSET)` 的颜色加载做了错误指令调度，返回垃圾值（含负值）。特征：位置加载正常、颜色加载异常（同一 buffer、同一套偏移）；R/G/B 通道**独立**腐败（不是统一符号错误，是读到了相邻内存）。
+**Root cause**: slangc 2025.11 does wrong instruction scheduling for `vertexData.Load3(... + COLOR_OFFSET)` color load, returning garbage (incl. negatives). Signature: position load normal, color load abnormal (same buffer, same offsets); R/G/B channels **independently** corrupted (not uniform sign error, reading adjacent memory).
 
-**这个 bug 的抗性（以下全部无效）**：
-- `-O0`（不是优化级别问题，是调度路径问题）
-- `Load4` 替代 `Load3`（不是 3 分量专用路径问题）
-- 函数提取（被内联了）
-- 连续加载、未使用的 `CommittedRayT()`、`0.0 * CommittedRayT()`（被 DCE 了）
-- 简单的 never-taken `continue` 分支
+**Resistance of this bug (all following ineffective)**:
+- `-O0` (not optimization-level, scheduling-path problem)
+- `Load4` instead of `Load3` (not 3-component-specific path)
+- Function extraction (inlined)
+- Consecutive loads, unused `CommittedRayT()`, `0.0 * CommittedRayT()` (DCE'd)
+- Simple never-taken `continue` branch
 
-**唯一有效**的修复：在颜色插值后，用相同重心权重重新消费 `v0/v1/v2`（位置），重建命中点位置 `recon = w0*v0 + bary.x*v1 + bary.y*v2`，与 `world_pos + dir*CommittedRayT()` 比对，用 `step(err, 0.5)` 乘到 albedo 上。正常情况下 `recon ≈ hit_pos`，乘数为 1.0（无副作用）；这个计算迫使编译器保留 v0/v1/v2 跨过颜色加载的生命周期，规避调度 bug。sentinel 实验证明该检查从不触发（max DC 中无 999 标记）--它是"语义上的 no-op"修了 bug。
+**Only effective** fix: after color interpolation, re-consume `v0/v1/v2` (positions) with same barycentric weights, reconstruct hit position `recon = w0*v0 + bary.x*v1 + bary.y*v2`, compare with `world_pos + dir*CommittedRayT()`, use `step(err, 0.5)` multiplied onto albedo. Normally `recon ≈ hit_pos`, multiplier 1.0 (no side effect); this computation forces compiler to keep v0/v1/v2 alive across color load lifecycle, avoiding scheduling bug. Sentinel experiment proved check never fires (no 999 markers in max DC) — "semantic no-op" fixed bug.
 
-### 33.3 经验教训
+### 33.3 Lessons
 
-1. **数学不变量是最强的 bug 信号**。DC 必须 ≥ 0，烘焙出 -7.478 直接违反公理。早期日志里一直有 `DC stats: min [-7.478,...]` 但被当成"室内暗"的正常现象忽略了。**反常的数值本身就在喊有 bug**，别用"看起来合理"的视觉印象掩盖数学矛盾。
+1. **Mathematical invariants strongest bug signal**. DC must ≥ 0, baked -7.478 directly violates axiom. Early logs had `DC stats: min [-7.478,...]` but dismissed as "dark interior" normal. **Abnormal numbers themselves scream bug**, don't mask math contradiction with "looks reasonable" visual impression.
 
-2. **控制变量实验比推理猜测高效**。"强制注入已知正确值"的二分法（radiance=1 / albedo=1）每个实验把嫌疑缩小一半，三轮就锁定到"GPU 颜色加载"。比逐行读代码快得多。
+2. **Control-variable experiments beat speculative reasoning**. "Force inject known-correct value" bisection (radiance=1 / albedo=1) halves suspicion each experiment, three rounds locked to "GPU color load". Much faster than reading code line by line.
 
-3. **先建 baseline，判断 bug 是新还是旧**。一度怀疑是自己改 inside-solid 引入的。`git stash` 还原旧 shader 跑一次，DC 数据逐字节相同 -> 确认是既有 bug。**改动后出问题，先证明因果关系再修**，别凭"我刚改了这块"就认领。
+3. **Build baseline first, judge bug new or old**. Once suspected introduced by own inside-solid change. `git stash` restore old shader ran once, DC data byte-identical -> confirmed pre-existing bug. **After change breaks, prove causality before fixing**, don't claim ownership just because "I just changed this".
 
-4. **"语义上的 no-op"能修 bug，但必须留下证据**。recon 校验在正常情况下对结果零影响（从不触发），却修了 bug，极度反直觉，容易在日后被当死代码删掉。注释里必须写清：它**既**是真实的数据完整性校验，**也**是规避 slangc 调度 bug 的手段，两重作用缺一不可。**workaround 要带"为什么不能删"的注释**。
+4. **"Semantic no-op" can fix bug, but must leave evidence**. recon check zero effect normally (never fires) yet fixed bug, extremely counter-intuitive, easily deleted as dead code later. Comments must state: it is **both** real data-integrity check **and** workaround for slangc scheduling bug, both roles indispensable. **Workarounds need "why can't delete" comments**.
 
-5. **假设要先用最小代价验证再深入**。排查中假设过三个错误根因（NaN from 退化三角形 / `-O` 优化 bug / StructuredBuffer 替换），每个都消耗一次完整 GPU 烘焙（~30 秒）。其中 StructuredBuffer 方案没算清 std140 会把 float3 填充到 16 字节、stride 从 56 变 80，反而更糟。改 layout 前先算清内存影响。
+5. **Verify assumptions at minimum cost before diving**. During investigation assumed three wrong root causes (NaN from degenerate triangles / `-O` optimization bug / StructuredBuffer replacement), each consuming a full GPU bake (~30s). StructuredBuffer approach didn't account std140 padding float3 to 16 bytes, stride 56→80, worse. Calculate memory impact before changing layout.
 
-	6. **slangc bug 的识别特征**：产生"数学上不可能"的值 + 通道独立腐败 + 同一 buffer 的部分加载异常。这类 bug 与 §13（Slang 给 opaque 运行时数组加非法 `ArrayStride`）同属编译器正确性问题，`spirv-val` 抓不到（SPIR-V 合法但语义错），只能靠运行时数据不变量（DC ≥ 0）发现。
+  6. **slangc bug signature**: produces "mathematically impossible" values + channel-independent corruption + partial load anomaly in same buffer. Same class as §13 (Slang illegal `ArrayStride` on opaque runtime arrays), compiler-correctness issues `spirv-val` can't catch (SPIR-V legal but semantically wrong), only found via runtime data invariants (DC ≥ 0).
 
-## 34. 设备丢失 (Device Lost) 排查：围栏同步 + TDR + BLAS 索引双倍偏移
+## 34. Device-lost investigation: fence sync + TDR + BLAS index double offset
 
-**背景**：Sponza 场景加载（405 个实例）在 BLAS/TLAS 构建阶段触发 `VK_ERROR_DEVICE_LOST`。初看是 `queue_wait_idle` 同步问题，实际有三层嵌套。
+**Background**: Sponza scene load (405 instances) triggers `VK_ERROR_DEVICE_LOST` during BLAS/TLAS build. Initially looked like `queue_wait_idle` sync issue, actually three nested layers.
 
-### 34.1 第一层：`queue_wait_idle` + 空围栏是不可靠的同步模式
+### 34.1 Layer 1: `queue_wait_idle` + no fence isn't reliable sync
 
-**现象**：`vkFreeCommandBuffers(): pCommandBuffers[0] is in use` 验证错误 → 设备丢失。
+**Symptom**: `vkFreeCommandBuffers(): pCommandBuffers[0] is in use` validation error → device lost.
 
-**问题**：`submit_and_wait` 辅助函数用 `vkQueueSubmit(queue, &submit, VK_NULL_HANDLE)` + `vkQueueWaitIdle(queue)` 来等待 GPU 完成。`queue_wait_idle` 在 Windows 驱动上可能在校验完成前返回，导致命令缓冲区在 GPU 仍在执行时被释放。验证层捕获到释放 in-use 命令缓冲区，驱动程序内部状态被破坏，最终发生设备丢失。
+**Problem**: `submit_and_wait` helper used `vkQueueSubmit(queue, &submit, VK_NULL_HANDLE)` + `vkQueueWaitIdle(queue)` to wait GPU. `queue_wait_idle` may return before validation completes on Windows drivers, causing command buffer freed while GPU still executing. Validation caught freeing in-use command buffer, driver internal state corrupted, eventually device lost.
 
-**修复**：全部替换为专用围栏模式：
+**Fix**: replace all with dedicated fence pattern:
 ```rust
-// ❌ 不可靠
+// ❌ not reliable
 device.queue_submit(queue, &submit, vk::Fence::null());
 device.queue_wait_idle(queue);
 device.free_command_buffers(pool, &cmds);
 
-// ✅ 可靠
+// ✅ reliable
 let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)?;
 device.queue_submit(queue, &submit, fence)?;
 device.wait_for_fences(&[fence], true, u64::MAX)?;
@@ -694,126 +694,127 @@ device.destroy_fence(fence, None);
 device.free_command_buffers(pool, &cmds);
 ```
 
-**教训**：
-- `queue_wait_idle` 不是 `wait_for_fences` 的替代品。它在某些驱动上可能返回过早，而 `wait_for_fences` 保证该特定提交已完成。
-- `buffer::upload_to_buffer` 已有正确的围栏模式（注释里明确写了为什么不用 `queue_wait_idle`），但 `acceleration_structure.rs`、`ibl.rs`、`gtao.rs`、`scene_scope.rs` 各有独立的 `submit_and_wait` 副本，且都用错了。**Vulkan 辅助函数容易滋生碎片化的错误副本**，应该统一到一个共享帮助函数中。
-- `queue_wait_idle` 唯一合适的用途是程序退出前的"排空（drain）"：在释放所有资源之前确保 GPU 空闲。
+**Lessons**:
+- `queue_wait_idle` isn't substitute for `wait_for_fences`. May return early on some drivers, `wait_for_fences` guarantees that specific submit completed.
+- `buffer::upload_to_buffer` already had correct fence pattern (comments explain why not `queue_wait_idle`), but `acceleration_structure.rs`, `ibl.rs`, `gtao.rs`, `scene_scope.rs` each had independent `submit_and_wait` copy, all wrong. **Vulkan helpers breed fragmented wrong copies**, should unify to one shared helper.
+- Only appropriate use of `queue_wait_idle` is "drain" before program exit: ensure GPU idle before releasing all resources.
 
-**受影响的代码位置**（6 处，全部修复）：
+**Affected code locations** (6, all fixed):
 
-| 文件 | 函数/位置 | 用途 |
+| File | Function/location | Purpose |
 |------|-----------|------|
-| `acceleration_structure.rs` | `submit_and_wait` | BLAS + TLAS 构建 |
-| `ibl.rs` | `submit_and_wait` | IBL 上传 |
-| `gtao.rs` | `transition_ao_images_to_shader_read` | GTAO 图像转换 |
-| `scene_scope.rs` | `upload_probe_volume` | GI 探测体积上传 |
-| `prism_bake_gi.rs` | 两处内联 | 烘焙读取回 |
-| `prism_bake_image.rs` | 两处内联 | 图像读取回 |
+| `acceleration_structure.rs` | `submit_and_wait` | BLAS + TLAS build |
+| `ibl.rs` | `submit_and_wait` | IBL upload |
+| `gtao.rs` | `transition_ao_images_to_shader_read` | GTAO image transition |
+| `scene_scope.rs` | `upload_probe_volume` | GI probe volume upload |
+| `prism_bake_gi.rs` | two inline | bake readback |
+| `prism_bake_image.rs` | two inline | image readback |
 
-### 34.2 第二层：405 次独立 BLAS 构建触发 Windows TDR
+### 34.2 Layer 2: 405 individual BLAS builds trigger Windows TDR
 
-**现象**：围栏修复后验证错误消失，但设备丢失仍在发生，且耗时从 ~200ms 变为 ~5s。新的耗时恰好是将每个 BLAS 构建提交到 GPU 并等待单个围栏所需的时间总和。
+**Symptom**: after fence fix validation errors gone, but device lost still occurs, time changed from ~200ms to ~5s. New time exactly sum of submitting each BLAS build to GPU and waiting single fence.
 
-**问题**：405 个 BLAS 构建分别提交（每个都有 fence create/submit/wait/free/destroy），产生了 ~5 秒的连续执行时间。`batch upload submit+wait` 约 750ms（同数据量的纹理上传）提示 BLAS 构建不应该比纹理上传慢 6 倍。
+**Problem**: 405 BLAS builds submitted separately (each with fence create/submit/wait/free/destroy), producing ~5s continuous execution. `batch upload submit+wait` ~750ms (textures same data volume) hints BLAS build shouldn't be 6× slower than texture upload.
 
-**第一次修复——单次批量提交**：将所有 405 个 BLAS 构建记录到单个命令缓冲区中，提交一次，等待一次。这消除了 ~405× 的提交开销，但连续 GPU 执行时间仍然是 ~5 秒，触发了 Windows TDR（默认 2 秒超时）。
+**First fix — single batch submit**: record all 405 BLAS builds into one command buffer, submit once, wait once. Eliminated ~405× submit overhead, but continuous GPU execution still ~5s, triggering Windows TDR (default 2s timeout).
 
-**第二次修复——分块提交**：将 405 个 BLAS 构建分成每组 64 个的批次（7 个批次），每一批用一个命令缓冲区 + 一次提交 + 一次围栏等待。这样每批的 GPU 执行时间 < 2 秒，TDR 不会触发，同时提交开销只有 7 次而非 405 次。
+**Second fix — chunked submit**: split 405 BLAS builds into batches of 64 (7 batches), each with one command buffer + one submit + one fence wait. Each batch GPU time < 2s, no TDR, submit overhead only 7 not 405.
 
-**教训**：
-- Windows TDR（超时检测与恢复）会在 GPU 连续超过 2 秒无响应时重置 GPU。大块 GPU 工作（数百个 BLAS 构建、大型计算分发）必须分成更小的批次，每个批次之间有围栏等待，让操作系统有机会与 GPU 通信。
-- 围栏等待不仅仅是 CPU-GPU 同步原语——它们也是 TDR 规避机制：GPU 在围栏信号处写入时间戳，驱动程序借此确认 GPU 仍在运转。
-- 批量提交到单个命令缓冲区 + 单个围栏等待，与逐个提交 + 逐个等待相比，CPU 开销更低（1 个分配/释放 vs 405 个）。最佳方案是**分块批量**：将工作分块，使每块执行时间 < 2 秒，但块数 << 资源数。
+**Lessons**:
+- Windows TDR (Timeout Detection and Recovery) resets GPU when continuously unresponsive over 2s. Large GPU work (hundreds of BLAS builds, big compute dispatches) must split into smaller batches with fence waits between, letting OS communicate with GPU.
+- Fence waits aren't just CPU-GPU sync primitives — also TDR-avoidance: GPU writes timestamp at fence signal, driver confirms GPU still alive.
+- Batch to single command buffer + single fence wait has lower CPU overhead (1 alloc/free vs 405). Best is **chunked batching**: chunk work so each < 2s but chunk count << resource count.
 
-**分块策略对比**：
+**Chunking strategy comparison**:
 
-| 策略 | CPU 开销 | GPU 突发 | TDR？ |
+| Strategy | CPU overhead | GPU burst | TDR? |
 |------|----------|----------|-------|
-| 逐个构建（405 次提交） | 极高（405× 围栏/缓冲区） | 短（~12ms） | 否 |
-| 全量批量（1 次提交） | 低（1× 围栏/缓冲区） | 长（~5s） | **是** |
-| **分块（64/块，7 次提交）** | **低（7× 围栏/缓冲区）** | **适中（~700ms）** | **否** |
+| Individual builds (405 submits) | very high (405× fence/buffer) | short (~12ms) | no |
+| Full batch (1 submit) | low (1× fence/buffer) | long (~5s) | **yes** |
+| **Chunked (64/chunk, 7 submits)** | **low (7× fence/buffer)** | **medium (~700ms)** | **no** |
 
-### 34.3 第三层（根因）：组合索引缓冲区中的索引偏移导致 GPU 越界读取
+### 34.3 Layer 3 (root cause): combined index buffer index offset causes GPU out-of-bounds read
 
-**现象**：分块后设备丢失仍然存在，但执行时间未变（仍是 ~5 秒 GPU 时间），说明问题不是 TDR。
+**Symptom**: after chunking device lost persists, but execution time unchanged (still ~5s GPU), so not TDR.
 
-**根因**：`build_pt_scene` 将所有实例的顶点和索引连接到一个组合缓冲区中，索引被偏移了 `vertex_base`（每个实例在组合顶点数组中的起始位置）。然后对每个实例调用 `BlasEntry::build_at(vertex_addr=组合偏移处地址, index_addr=组合索引偏移处地址, vertex_count=实例顶点数)`。
+**Root cause**: `build_pt_scene` concatenates all instances' vertices and indices into one combined buffer, indices offset by `vertex_base` (each instance's start in combined vertex array). Then calls `BlasEntry::build_at(vertex_addr=address at combined offset, index_addr=address at combined index offset, vertex_count=instance vertex count)`.
 
-在 BLAS 几何中：
-- 顶点缓冲区从 `vaddr = vbase + vertex_base × stride` 开始（实例的第一个顶点）
-- 索引缓冲区包含 `original_index + vertex_base`（偏移后的值）
-- GPU 计算顶点位置：`vaddr + (original_index + vertex_base) × stride`
+In BLAS geometry:
+- Vertex buffer starts at `vaddr = vbase + vertex_base × stride` (instance first vertex)
+- Index buffer contains `original_index + vertex_base` (offset values)
+- GPU computes vertex position: `vaddr + (original_index + vertex_base) × stride`
 - = `(vbase + vertex_base × stride) + (original_index + vertex_base) × stride`
-- = `vbase + (2 × vertex_base + original_index) × stride` ← **双倍偏移！**
+- = `vbase + (2 × vertex_base + original_index) × stride` ← **double offset!**
 
-对于后面的实例（`vertex_base` 较大），`2 × vertex_base + original_index` 轻松超过总顶点数，导致越界 GPU 内存读取 → GPU 页错误 → 设备丢失！
+For later instances (large `vertex_base`), `2 × vertex_base + original_index` easily exceeds total vertex count → out-of-bounds GPU read → GPU page fault → device lost!
 
-旧的 `queue_wait_idle` 代码没有实际执行 BLAS 构建（立即返回），所以这个 bug 从未被触发。围栏修复让它暴露了。
+Old `queue_wait_idle` code never actually executed BLAS builds (returned immediately), so bug never triggered. Fence fix exposed it.
 
-**修复**：将 `vertex_addr` 设置为组合缓冲区基地址（`vbase`），将 `vertex_count`（作为 `max_vertex`）设置为总顶点数。由于索引值已经是相对于 `vbase` 的（`vertex_base + original_index`），GPU 能正确计算：
+**Fix**: set `vertex_addr` to combined buffer base (`vbase`), set `vertex_count` (as `max_vertex`) to total vertex count. Since index values already relative to `vbase` (`vertex_base + original_index`), GPU computes correctly:
 `vbase + (vertex_base + original_index) × stride` ✓
 
-**教训**：
-- **`queue_wait_idle` 返回过早会隐藏 GPU 错误**。旧的代码可能用了几周都没发现这个 BLAS 寻址 bug，因为 GPU 从来没有实际执行过 BLAS 构建——提交被吞掉了，验证层是唯一抱怨的。切换到正确围栏同步，所有累积的 GPU 错误立刻变为设备丢失。
-- **"围栏修复导致新问题"往往是旧 bug 被暴露了**。先后出现的现象（验证错误 → 耗时变长 → 设备丢失）是同一个根本原因（索引偏移）经过不同同步层后的不同表现。
-- **验证层错误 vs 设备丢失**：验证层错误提示 API 滥用（释放 in-use 缓冲区），但不一定直接导致崩溃。设备丢失是 GPU 处于不可恢复状态。先修验证层错误，再处理设备丢失。
-- 写索引连接循环时要检查相对偏移 vs 绝对基地址的一致性。特别是当同一缓冲区被 GPU 的不同单元（BLAS 构建、着色器内存访问）以不同方式解读时，每个消费者的偏移约定必须独立验证。
-- `BlasEntry::build_at` 的设计（接受 `vertex_addr` 但根据 `vertex_count` 推断 `max_vertex`）让调用者有义务传递正确的基地址。如果调用者传递的是偏移地址，`max_vertex` 必须是相对于该偏移地址的（即实例的本地 `vertex_count - 1`）；如果传递的是组合基地址，`max_vertex` 必须是总顶点数。**这个"相对谁？"的约定没有在 API 文档中说明**，是两个消费者之间的不匹配。更好的设计：`BlasBuildParams` 要求显式传递 `max_vertex`（而非 `vertex_count`），迫使调用者思考自己在做什么。
+**Lessons**:
+- **`queue_wait_idle` returning early hides GPU errors**. Old code could run weeks without discovering BLAS addressing bug because GPU never actually executed builds — submit swallowed, validation only complainer. Switching to correct fence sync, all accumulated GPU errors instantly become device lost.
+- **"Fence fix causes new problems" usually means old bug exposed**. Sequential symptoms (validation error → longer time → device lost) are same root cause (index offset) surfacing through different sync layers.
+- **Validation error vs device lost**: validation error signals API misuse (freeing in-use buffer) but not necessarily direct crash. Device lost = GPU unrecoverable. Fix validation errors first, then device lost.
+- When writing index-concatenation loops check relative-offset vs absolute-base consistency. Especially when same buffer interpreted differently by different GPU units (BLAS build, shader memory access), each consumer's offset convention must be independently verified.
+- `BlasEntry::build_at` design (takes `vertex_addr` but infers `max_vertex` from `vertex_count`) makes caller responsible for correct base. If caller passes offset address, `max_vertex` must relative to that offset (instance local `vertex_count - 1`); if combined base, `max_vertex` must total vertex count. **This "relative to what?" convention isn't documented in API**, mismatch between two consumers. Better design: `BlasBuildParams` require explicit `max_vertex` (not `vertex_count`), forcing caller to think.
 
-### 34.4 排查逻辑
+### 34.4 Investigation logic
 
 ```
-设备丢失
-├─ 验证层：vkFreeCommandBuffers in-use
-│  └─ queue_wait_idle 返回过早 → 替换为围栏 ✓
+Device lost
+├─ Validation: vkFreeCommandBuffers in-use
+│  └─ queue_wait_idle returns early → replace with fence ✓
 │
-└─ 设备丢失（围栏修复后仍然）
-   ├─ 耗时 ~5s → 怀疑 TDR
-   │  ├─ 单次批量提交 → 仍然 ~5s + 设备丢失
-   │  └─ 分块 64/批 → 耗时不变 + 设备丢失仍然
-   │     └─ 不是 TDR，是 GPU 执行时崩溃
+└─ Device lost (still after fence fix)
+   ├─ Time ~5s → suspect TDR
+   │  ├─ Single batch submit → still ~5s + device lost
+   │  └─ Chunk 64/batch → time unchanged + device lost still
+   │     └─ Not TDR, GPU crashes during execution
    │
-   └─ BLAS 寻址错误 → 索引双倍偏移 ✓
-      └─ 旧代码从未真正执行 BLAS（queue_wait_idle 返回过早），
-         bug 被隐藏。围栏修复暴露了它。
+   └─ BLAS addressing error → index double offset ✓
+      └─ Old code never actually executed BLAS (queue_wait_idle early return),
+         bug hidden. Fence fix exposed it.
 ```
 
-### 34.5 总结
+### 34.5 Summary
 
-| 层 | 现象 | 根因 | 修复 |
+| Layer | Symptom | Root cause | Fix |
 |----|------|------|------|
-| 同步 | `vkFreeCommandBuffers in-use` 验证错误 | `queue_wait_idle` 返回过早 | 替换为专用围栏 |
-| GPU 时间 | 围栏修复后 ~5s 执行时间 | 405 次独立提交，每次 12ms | 分块批量（64/块，7 次提交） |
-| GPU 崩溃 | 设备丢失持续发生 | BLAS 索引偏移双倍 `vertex_base` | `vertex_addr` 使用组合基地址 |
+| Sync | `vkFreeCommandBuffers in-use` validation error | `queue_wait_idle` returns early | Replace with dedicated fence |
+| GPU time | ~5s execution after fence fix | 405 individual submits, 12ms each | Chunked batch (64/chunk, 7 submits) |
+| GPU crash | persistent device lost | BLAS index double `vertex_base` | `vertex_addr` uses combined base |
 
-这三层中的每一层都可能被误认为是根本原因，但实际上只有上层症状。真正的 bug（索引偏移）在旧的同步代码下一直被隐藏。**围栏修复是诊断工具，不是最终修复**——它揭示了真正的问题。
+Each layer could be mistaken for root cause, actually only upper-layer symptom. True bug (index offset) hidden under old sync code. **Fence fix is diagnostic tool, not final fix** — it revealed real problem.
 
-## 35. 描述符集每帧更新需 `UPDATE_AFTER_BIND` 标志
+## 35. Per-frame descriptor updates need `UPDATE_AFTER_BIND` flag
 
-**背景**：`PathTracePass` 每帧调用 `update_ds()` 写入全部描述符（bindings 0-7），因为几何/材质/输出资源在帧间可能变化（TLAS 重建、accum 图像 resize 等）。描述符集布局创建时没有设置 `UPDATE_AFTER_BIND`，导致 Vulkan 验证层报错：
+**Background**: `PathTracePass` calls `update_ds()` each frame writing all descriptors (bindings 0-7), because geometry / material / output resources change between frames (TLAS rebuild, accum image resize, etc). Descriptor set layout created without `UPDATE_AFTER_BIND`, validation error:
 
 ```
 vkUpdateDescriptorSets(): dstBinding (0) was created with VkDescriptorBindingFlags(0),
 but VkDescriptorSet ... is in use by VkCommandBuffer ...
 ```
 
-**根因**：PathTracePass 的描述符集在 `new()` 时创建，布局用默认 flag（= 无更新后绑定）。但 `execute()` 每帧调用 `update_ds()` 时，上一帧的命令缓冲区可能仍在飞行（pending），写入正在被 GPU 引用的描述符集违反 Vulkan 规范。
+**Root cause**: PathTracePass descriptor set created in `new()` with default flag (= no update-after-bind). But `execute()` calls `update_ds()` each frame while previous frame's command buffer may still be in flight (pending), writing descriptor set currently referenced by GPU violates spec.
 
-**修复**：
-- 描述符集布局绑定标志加 `UPDATE_AFTER_BIND | PARTIALLY_BOUND`
-- 布局创建加 `UPDATE_AFTER_BIND_POOL` flag
-- 池创建加 `UPDATE_AFTER_BIND` flag
+**Fix**:
+- Add `UPDATE_AFTER_BIND | PARTIALLY_BOUND` to descriptor set layout binding flags
+- Add `UPDATE_AFTER_BIND_POOL` flag to layout creation
+- Add `UPDATE_AFTER_BIND` flag to pool creation
 
 ```rust
-// 修改前
+// modify before
+
 let ds_layout = device.create_descriptor_set_layout(
     &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None)?;
 
-// 修改后
+// modify after
 let binding_flags = [
     vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
         | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-    // ... 每个 binding 相同
+    // ... each binding same
 ];
 let mut flags_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
     .binding_flags(&binding_flags);
@@ -824,27 +825,27 @@ let ds_layout = device.create_descriptor_set_layout(
         .push_next(&mut flags_info), None)?;
 let ds_pool = device.create_descriptor_pool(
     &vk::DescriptorPoolCreateInfo::default()
-        .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)  // 池也要
+        .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)  // pool too
         .max_sets(1).pool_sizes(&pool_sizes), None)?;
 ```
 
-**哪类描述符集需要 `UPDATE_AFTER_BIND`**：
-| 使用模式 | 需要 UAB？ | 替代方案 |
+**Which descriptor sets need `UPDATE_AFTER_BIND`**:
+| Usage pattern | UAB needed? | Alternative |
 |----------|-----------|----------|
-| 只在初始化时写入一次，之后只读 | 不需要 | — |
-| 每帧写入相同 set，但只有一帧飞行（单缓冲） | 不需要 | 若 `wait_idle` 或围栏保证 |
-| 每帧写入相同 set，多帧并行（双/三缓冲） | **需要** | 或每帧分配新 set（开销大） |
-| 只更新设置了 `UPDATE_AFTER_BIND` 的 binding | 仅该 binding | 其他 binding 仍受限 |
-| 用到 `PARTIALLY_BOUND`（有未绑定的描述符槽） | 推荐 | — |
+| Written once at init, read-only after | No | — |
+| Same set written each frame but one frame in flight (single buffer) | No | If `wait_idle` or fence guarantees |
+| Same set written each frame, multiple frames parallel (double / triple buffer) | **Yes** | Or allocate new set per frame (costly) |
+| Only updating bindings with `UPDATE_AFTER_BIND` | only that binding | Other bindings still restricted |
+| Using `PARTIALLY_BOUND` (unbound descriptor slots) | recommended | — |
 
-**教训**：
-- 描述符集的绑定标志不是可选的锦上添花——当更新模式涉及"写入正在 GPU 使用的 set"时，它们是强制性的。
-- `BindlessTextureTable` 已正确使用这些标志。`PathTracePass`（以及将来类似的时间性累积/重建每帧资源的 pass）必须遵循相同模式。
-- 一个识别信号：如果 `execute()` 里调了 `update_descriptor_sets()`，几乎肯定需要 `UPDATE_AFTER_BIND`。
+**Lessons**:
+- Descriptor binding flags aren't optional polish — mandatory when update pattern involves "writing set in use by GPU".
+- `BindlessTextureTable` already uses these flags correctly. `PathTracePass` (and future temporal-accum / per-frame-rebuild passes) must follow same pattern.
+- Signal: if `execute()` calls `update_descriptor_sets()`, almost certainly needs `UPDATE_AFTER_BIND`.
 
-## 36. `fix_spv` 遗漏：所有 import `path_integrator.slang` 的 compute shader 也需要 ArrayStride 修复
+## 36. `fix_spv` omission: all compute shaders importing `path_integrator.slang` also need ArrayStride fix
 
-**背景**：`compile.sh` 对 `scene_frag.frag.spv` 调用了 `fix_spv`（line 130），但三个 compute shader（`pt_render.comp.spv`、`gi_bake.comp.spv`、`gi_render.comp.spv`）编译后没有调用 `fix_spv`。导致 `pt_render.comp.spv` 加载时触发 SPIR-V 验证错误：
+**Background**: `compile.sh` calls `fix_spv` on `scene_frag.frag.spv` (line 130), but three compute shaders (`pt_render.comp.spv`, `gi_bake.comp.spv`, `gi_render.comp.spv`) didn't call `fix_spv` after compile. `pt_render.comp.spv` load triggers SPIR-V validation error:
 
 ```
 vkCreateShaderModule(): pCreateInfo->pCode (spirv-val produced an error):
@@ -852,21 +853,21 @@ Invalid explicit layout decorations on type for operand '580[%580]'
   %bindlessSrvs = OpVariable %_ptr_UniformConstant__runtimearr_579 UniformConstant
 ```
 
-**根因**：`path_integrator.slang` 声明了 bindless 纹理/采样器 runtime array：
+**Root cause**: `path_integrator.slang` declares bindless texture / sampler runtime arrays:
 ```slang
 [[vk::binding(0, 1)]]
 SamplerState globalSamplers[];
 [[vk::binding(1, 1)]]
 Texture2D bindlessSrvs[];
 ```
-Slang 编译器对这些 runtime array 的 opaque 元素类型生成非法的 `OpDecorate ArrayStride <n>` 装饰。`fix_spirv.py` 可以剥离这些非法装饰，但：
+Slang compiler generates illegal `OpDecorate ArrayStride <n>` decorations for these runtime arrays' opaque element types. `fix_spirv.py` can strip them, but:
 
-- `scene_frag.slang` 直接声明了相同 binding（line 78-85），但被 `fix_spv` 修复了 ✅
-- `pt_render.slang` 通过 `import path_integrator` 间接声明相同 binding，但没有 `fix_spv` ❌
+- `scene_frag.slang` directly declares same bindings (line 78-85), fixed by `fix_spv` ✅
+- `pt_render.slang` indirectly declares same bindings via `import path_integrator`, no `fix_spv` ❌
 
-`compile.sh` 当初加 `fix_spv` 时只考虑了 rasterizer 的 fragment shader，遗漏了后来添加的 compute shader。
+When `compile.sh` originally added `fix_spv` it only considered rasterizer fragment shader, missed later-added compute shaders.
 
-**修复**：为所有 import `path_integrator` 的 compute shader 添加 `fix_spv` 调用：
+**Fix**: add `fix_spv` calls for all compute shaders importing `path_integrator`:
 ```bash
 # compile.sh line 152-168
 fix_spv "$OUT/gi_bake.comp.spv"
@@ -874,16 +875,16 @@ fix_spv "$OUT/gi_render.comp.spv"
 fix_spv "$OUT/pt_render.comp.spv"
 ```
 
-> **已废弃（2026-11）**：Slang 2026.21 不再对 opaque runtime array 生成 `ArrayStride`，`fix_spirv.py` 和这些 `fix_spv` 调用已全部删除。CI 与本地统一使用 2026.21，`compile.sh` 末尾的 `spirv-val` gate 负责拦截回归。本节保留作为历史记录，判断规则不再适用。
+> **Deprecated (2026-11)**: Slang 2026.21 no longer generates `ArrayStride` for opaque runtime arrays, `fix_spirv.py` and all `fix_spv` calls deleted. CI and local both use 2026.21, `spirv-val` gate at end of `compile.sh` catches regressions. Section kept as history, judgment rules no longer apply.
 
-**教训**（以下仅适用于 Slang ≤ 2026.13；2026.21 起已不需要）：
-- `fix_spv` 不是针对特定文件名，而是针对**任何包含 bindless runtime array 声明**的 SPIR-V 模块。添加新的 slang 文件时，如果它声明或 import 了 `SamplerState[]` / `Texture2D[]` 等 opaque runtime array，就必须加上 `fix_spv`。
-- 一个简单的判断规则：如果 `.slang` 文件包含 `globalSamplers[]` 或 `bindlessSrvs[]` 声明，或者 import 了包含这些声明的模块（`path_integrator.slang`），则编译后需要 `fix_spv`。
-- Slang 的 runtime array ArrayStride bug 影响所有使用 bindless 纹理的 compute shader，不只是 fragment shader。§13 提到的是 fragment shader 的复现，§33 提到 slangc 数据腐败——这里是第三个变种：编译器生成的 SPIR-V 被 `spirv-val` 拒绝。
+**Lessons** (only for Slang ≤ 2026.13; unnecessary since 2026.21):
+- `fix_spv` isn't for specific filenames, but **any SPIR-V module containing bindless runtime array declarations**. When adding new slang files declaring or importing opaque runtime arrays like `SamplerState[]` / `Texture2D[]`, must add `fix_spv`.
+- Simple rule: if `.slang` contains `globalSamplers[]` or `bindlessSrvs[]` declarations, or imports module containing them (`path_integrator.slang`), needs `fix_spv` after compile.
+- Slang runtime-array ArrayStride bug affects all bindless-texture compute shaders, not just fragment. §13 fragment reproduction, §33 slangc data corruption — third variant: compiler-generated SPIR-V rejected by `spirv-val`.
 
-## 37. `UPDATE_AFTER_BIND` 需要对应描述符类型的设备子功能启用
+## 37. `UPDATE_AFTER_BIND` requires matching device sub-features per descriptor type
 
-**背景**：§35 给 `PathTracePass` 的 descriptor set layout 加上了 `UPDATE_AFTER_BIND | PARTIALLY_BOUND` 标志，结果 `vkCreateDescriptorSetLayout` 报错：
+**Background**: §35 added `UPDATE_AFTER_BIND | PARTIALLY_BOUND` to `PathTracePass` descriptor set layout, `vkCreateDescriptorSetLayout` error:
 
 ```
 pBindingFlags[0] includes VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
@@ -891,150 +892,150 @@ but pBindings[0].descriptorType is VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
 but descriptorBindingStorageImageUpdateAfterBind was not enabled.
 ```
 
-同样的报错重复了 bindings 0-7，三种描述符类型各对应不同的 feature bit。
+Same error repeated for bindings 0-7, three descriptor types each map to different feature bits.
 
-**根因**：`UPDATE_AFTER_BIND` 是一个绑定级别的标志，但 Vulkan 要求对每种描述符**类型**在设备创建时启用对应的子功能。只加 layout/pool flag 不够——Vulkan 1.2 的 `PhysicalDeviceVulkan12Features` 里有一组粒度很细的 `descriptorBinding<Type>UpdateAfterBind` 字段，每个控制一种描述符类型的 update-after-bind 行为。
+**Root cause**: `UPDATE_AFTER_BIND` is a binding-level flag, but Vulkan requires enabling corresponding sub-feature per descriptor **type** at device creation. Only layout/pool flag insufficient — Vulkan 1.2 `PhysicalDeviceVulkan12Features` has fine-grained `descriptorBinding<Type>UpdateAfterBind` fields, each controls update-after-bind for one descriptor type.
 
-**修复**：在 `context.rs` 的设备创建处，对 `PathTracePass` 用到的三种描述符类型启用对应的 feature：
+**Fix**: at device creation in `context.rs`, enable corresponding features for three descriptor types used by `PathTracePass`:
 
-| 描述符类型 | Vulkan feature 字段 | 所在结构体 |
+| Descriptor type | Vulkan feature field | Struct |
 |-----------|-------------------|-----------|
 | `VK_DESCRIPTOR_TYPE_STORAGE_IMAGE` | `descriptor_binding_storage_image_update_after_bind` | `PhysicalDeviceVulkan12Features` |
 | `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER` | `descriptor_binding_storage_buffer_update_after_bind` | `PhysicalDeviceVulkan12Features` |
 | `VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR` | `descriptor_binding_acceleration_structure_update_after_bind` | `PhysicalDeviceAccelerationStructureFeaturesKHR` |
 
 ```rust
-// 在 descriptor_indexing 块内
+// in descriptor_indexing block
 vk12.descriptor_binding_storage_image_update_after_bind = vk::TRUE;
 vk12.descriptor_binding_storage_buffer_update_after_bind = vk::TRUE;
 
-// 在 acceleration_structure 块内
+// in acceleration_structure block
 accel_features.descriptor_binding_acceleration_structure_update_after_bind = vk::TRUE;
 ```
 
-**为什么之前 `BindlessTextureTable` 没有触发这个问题？**
+**Why didn't `BindlessTextureTable` trigger this?**
 
-`BindlessTextureTable` 只有两种描述符类型：`SAMPLER` 和 `SAMPLED_IMAGE`。对 `SAMPLED_IMAGE` 来说需要的子功能是 `descriptor_binding_sampled_image_update_after_bind`，而它已经在 `if rt_caps.descriptor_indexing` 块中被启用了（当初就是为了 bindless 加的）。所以 bindless table 一切正常。
+`BindlessTextureTable` has only two descriptor types: `SAMPLER` and `SAMPLED_IMAGE`. `SAMPLED_IMAGE` needs `descriptor_binding_sampled_image_update_after_bind`, already enabled in `if rt_caps.descriptor_indexing` block (added for bindless originally). So bindless table fine.
 
-`PathTracePass` 额外使用了 `STORAGE_IMAGE`、`STORAGE_BUFFER`、`ACCELERATION_STRUCTURE_KHR`，每种都需要单独启用其 update-after-bind 子功能。Vulkan 的 feature 设计故意做到类型级别的粒度——你可以让 sampled image 支持 update-after-bind 而 storage image 不支持，如果应用只需要 bindless 纹理的话。
+`PathTracePass` additionally uses `STORAGE_IMAGE`, `STORAGE_BUFFER`, `ACCELERATION_STRUCTURE_KHR`, each needing separate update-after-bind sub-feature. Vulkan feature design intentionally type-granular — sampled image can support UAB while storage image not, if app only needs bindless textures.
 
-**教训**：
-- `UPDATE_AFTER_BIND` 涉及**三层**启用，缺一不可：
-  1. **设备功能**：`PhysicalDeviceVulkan12Features` 或对应扩展 feature 结构体中的 `descriptorBinding<Type>UpdateAfterBind`
-  2. **布局 flag**：`DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL` + `DescriptorSetLayoutBindingFlagsCreateInfo` 里的 `UPDATE_AFTER_BIND_BIT`
-  3. **池 flag**：`DescriptorPoolCreateFlags::UPDATE_AFTER_BIND`
-- 新增描述符类型到 update-after-bind set 时，先查对应的 `descriptorBinding<Type>UpdateAfterBind` 是否已在设备创建处启用——这是最常见的遗漏点。
-- `BindlessTextureTable::required_features()` 返回了它需要的 feature 集，但 `PathTracePass` 没有对应的 `required_features()` 方法。实践中，每个需要特殊 device feature 的模块应该暴露一个 `required_features()`，然后在设备创建处汇总启用。
+**Lessons**:
+- `UPDATE_AFTER_BIND` needs **three layers** enabled, none optional:
+  1. **Device features**: `descriptorBinding<Type>UpdateAfterBind` in `PhysicalDeviceVulkan12Features` or corresponding extension feature struct
+  2. **Layout flag**: `DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL` + `UPDATE_AFTER_BIND_BIT` in `DescriptorSetLayoutBindingFlagsCreateInfo`
+  3. **Pool flag**: `DescriptorPoolCreateFlags::UPDATE_AFTER_BIND`
+- When adding descriptor type to update-after-bind set, first check corresponding `descriptorBinding<Type>UpdateAfterBind` enabled at device creation — most common omission.
+- `BindlessTextureTable::required_features()` returns its needed feature set, but `PathTracePass` has no `required_features()`. In practice each module needing special device features should expose `required_features()`, aggregated at device creation.
 
-## MIS 只对「两种策略都能采到同一个光源」成立
+## MIS weights only valid when "both strategies can sample the same light source"
 
-`path_integrator.slang` 的多光源 NEE 曾经这样算权重：
+`path_integrator.slang` multi-light NEE weights used to be:
 
 ```slang
-float p_nee_al = 1.0 / (4.0 * PI * num_lights);   // 当成每球面度 pdf
+float p_nee_al = 1.0 / (4.0 * PI * num_lights);   // treated as per-steradian pdf
 total += brdf * L * p_nee_al / (p_nee_al*p_nee_al + p_brdf*p_brdf);
 ```
 
-点光/聚光是**解析 delta 光源**：它们不在 TLAS 里，BRDF 采样永远打不到，
-所以 NEE 是唯一策略 —— 不存在第二个 pdf 可以平衡。更糟的是那个 `1/(4πN)` 是
-**选灯概率**，量纲是「每盏灯」，而 `p_brdf` 是「每球面度」；把两者塞进同一个
-power heuristic，等于用一个量纲错的 pdf 去缩放贡献：N = 1 时点光只剩
-`p²/(p²+p_brdf²) ≈ 6%` 的能量。
+Point / spot lights are **analytic delta lights**: not in TLAS, BRDF sampling never hits them, so NEE is only strategy — no second pdf to balance. Worse `1/(4πN)` is **light-selection probability**, dimension "per light", while `p_brdf` is "per steradian"; mixing them in power heuristic scales contribution by wrong-dimension pdf: N=1 point light keeps only `p²/(p²+p_brdf²) ≈ 6%` energy.
+so NEE is only strategy — no second pdf to balance. Worse that `1/(4πN)` is
+**light-selection probability**, dimension "per light", while `p_brdf` is "per steradian"; mixing them in same
+power heuristic scales contribution with wrong-dimension pdf: N=1 point light keeps only
+`p²/(p²+p_brdf²) ≈ 6%` energy.
 
-要做 MIS，必须先把采样策略的概率换算到**同一个测度**（通常是对立体角）：面积
-采样 → 立体角要乘 Jacobian `d² / |cos_light|`（emissive triangle 的 NEE 就是这么写的）。
-delta 光源没有面积，也就不存在这个 Jacobian——正确做法是权重取 1。
+For MIS must first convert sampling-strategy probabilities to **same measure** (usually solid angle): area sampling → solid angle multiply Jacobian `d² / |cos_light|` (emissive triangle NEE does this). Delta lights have no area, no Jacobian — correct weight is 1.
+Area sampling → solid angle multiply Jacobian `d² / |cos_light|` (emissive triangle NEE does this).
+Delta lights have no area, no Jacobian — correct weight is 1.
 
-**教训**：
-- 加 MIS 前先问：两个策略是否都能采到同一个光源？delta 光源（点光、方向光、
-  用来近似面光的中心点采样）不能和 BRDF 采样做 MIS。
-- pdf 的量纲要对齐：离散概率（选灯 `1/N`）、面积 pdf、立体角 pdf 三者不同，
-  混用会静默压暗/提亮，编译器不会报错哪。
-- 这类错误只在「有解析光源 + 开 NEE」时才出现，视觉上像「灯不够亮」，
-  很容易被误当成 tonemap 或曝光问题。
+**Lessons**:
+- Before adding MIS ask: can both strategies sample same light? Delta lights (point, directional, center-point sampling approximating area lights) can't MIS with BRDF sampling.
+- pdf dimensions must align: discrete probability (light selection `1/N`), area pdf, solid-angle pdf differ; mixing silently darkens / brightens, compiler won't error.
+- Such errors only appear with "analytic lights + NEE on", visually like "lights not bright enough", easily mistaken for tonemap or exposure issue.
+  mixing silently darkens / brightens, compiler won't error.
+- ( See original for full MIS derivation )
+  easily mistaken for tonemap or exposure issue.
 
-## VkApplicationInfo.api_version 限制 Vulkan 1.2+ Core 函数符号导出
+## VkApplicationInfo.api_version limits Vulkan 1.2+ core function symbol export
 
-**问题**：无头模式或离屏渲染启用光追时，`PathTracePass::set_geometry` -> `build_pt_scene` 触发 ash panic：
-`Unable to load get_buffer_device_address`（在 `ash::tables::DeviceFnV1_2::load_erased` 处崩溃）。
+**Problem**: headless / offscreen rendering with ray tracing, `PathTracePass::set_geometry` -> `build_pt_scene` triggers ash panic:
+`Unable to load get_buffer_device_address` (crash at `ash::tables::DeviceFnV1_2::load_erased`).
 
-**根本原因**：
-创建 Vulkan 实例时，`VkApplicationInfo.apiVersion` 硬编码为 `vk::API_VERSION_1_1`。
-依据 Vulkan 规范，当实例 API 版本声明为 1.1 时，严格遵守规范的驱动（如 NVIDIA Windows 驱动）在通过 `vkGetDeviceProcAddr` 解析未带 `KHR` 后缀的 Vulkan 1.2 核心入口点（如 `vkGetBufferDeviceAddress`）时返回 `NULL`。
-`ash::Device` 的 `get_buffer_device_address` 直接调用 `self.device_fn_1_2.get_buffer_device_address`（1.2 表），遇到空指针直接进入 ash 生成的 panic stub。
+**Root cause**:
+When creating Vulkan instance, `VkApplicationInfo.apiVersion` hardcoded to `vk::API_VERSION_1_1`. Per spec, when instance API version declared 1.1, strict drivers (e.g. NVIDIA Windows) return `NULL` from `vkGetDeviceProcAddr` for Vulkan 1.2 core entry points without `KHR` suffix (`vkGetBufferDeviceAddress`).
+Per Vulkan spec, when instance API version declared 1.1, strict drivers (e.g. NVIDIA Windows) return `NULL` from `vkGetDeviceProcAddr` for Vulkan 1.2 core entry points without `KHR` suffix (e.g. `vkGetBufferDeviceAddress`).
+`ash::Device` `get_buffer_device_address` directly calls `self.device_fn_1_2.get_buffer_device_address` (1.2 table), null pointer enters ash-generated panic stub.
 
-**解决与教训**：
-- 使用 `entry.try_enumerate_instance_version()` 探测加载器支持的最大实例版本。
-- 当加载器版本支持时，请求 `vk::API_VERSION_1_2`（或者不低于 1.2），以便驱动安全导出 Vulkan 1.2 核心函数指针。
-- 绝不能一边在注释中写「目标是 Vulkan 1.2」，一边在 `ApplicationInfo` 传递 `API_VERSION_1_1`。
+**Solution and lessons**:
+- Use `entry.try_enumerate_instance_version()` to probe loader max supported instance version.
+- When loader supports, request `vk::API_VERSION_1_2` (or no less than 1.2), so driver safely exports Vulkan 1.2 core function pointers.
+- Never write "target is Vulkan 1.2" in comments while passing `API_VERSION_1_1` in `ApplicationInfo`.
 
-## include_bytes! 嵌入 SPIR-V 字节的对齐风险
+## Alignment risk of `include_bytes!` embedded SPIR-V bytes
 
-**问题**：调用 `bytemuck::cast_slice::<u8, u32>(SPV)` 转换 `include_bytes!` 宏嵌入的 SPIR-V 字节时，在部分构建配置下触发运行时 panic：
-`bytemuck: TargetAlignmentGreaterAndInputNotAligned`。
+**Problem**: calling `bytemuck::cast_slice::<u8, u32>(SPV)` on SPIR-V bytes embedded by `include_bytes!` macro panics at runtime in some build configs:
+`bytemuck: TargetAlignmentGreaterAndInputNotAligned`.
 
-**根本原因**：
-Rust 的 `include_bytes!` 宏将二进制数据嵌入到只读数据段（`.rodata`），其指针仅保证 1 字节对齐。如果嵌入的起始地址刚好不是 4 字节对齐，`bytemuck::cast_slice` 执行强转检查时会直接 panic。
+**Root cause**:
+Rust `include_bytes!` embeds binary into read-only data (`.rodata`), pointer only 1-byte aligned. If embedded start address isn't 4-byte aligned, `bytemuck::cast_slice` alignment check panics.
 
-**解决与教训**：
-- 渲染管线加载 SPIR-V 统一调用 `crate::shader::load_shader_module`。
-- `load_shader_module` 内部显式检测指针地址对齐；若未对齐则通过 `as_chunks::<4>` 安全重组为 `u32`，避免未定义行为和对齐 panic。
+**Solution and lessons**:
+- Render pipeline loading SPIR-V uniformly calls `crate::shader::load_shader_module`.
+- `load_shader_module` explicitly checks pointer alignment; if unaligned, safely regroups via `as_chunks::<4>` into `u32`, avoiding UB and alignment panic.
 
-## RTXGI SHARC 显存屏障与 64 位缓冲原子操作
+## RTXGI SHARC VRAM barriers and 64-bit buffer atomics
 
-**经验**：
-- SHARC 哈希表基于 64 位空间哈希键（`uint64`），物理设备必须在逻辑设备创建时开启 `PhysicalDeviceVulkan12Features.shader_buffer_int64_atomics`。
-- SHARC 分配显存时，首帧必须通过 `cmd_fill_buffer` 零初始化，随后必须通过 `TRANSFER -> COMPUTE_SHADER` 显存屏障（`TRANSFER_WRITE -> SHADER_READ | SHADER_WRITE`）同步，防止未初始化脏数据被识别为有效空间体素。
-- `SharcResolvePass::execute` 计算写出后，必须在执行后续光线追踪或降噪 pass 之前发出 `COMPUTE_SHADER -> COMPUTE_SHADER | FRAGMENT_SHADER` 内存屏障，保证空间哈希辐射度跨帧解析正确可见。
+**Experience**:
+- SHARC hash table based on 64-bit spatial hash keys (`uint64`), physical device must enable `PhysicalDeviceVulkan12Features.shader_buffer_int64_atomics` at logical device creation.
+- When SHARC allocates VRAM, first frame must zero-init via `cmd_fill_buffer`, then `TRANSFER -> COMPUTE_SHADER` memory barrier (`TRANSFER_WRITE -> SHADER_READ | SHADER_WRITE`) sync, preventing uninitialized dirty data recognized as valid spatial voxels.
+- After `SharcResolvePass::execute` compute writes, must issue `COMPUTE_SHADER -> COMPUTE_SHADER | FRAGMENT_SHADER` memory barrier before subsequent ray-tracing / denoise passes, ensuring spatial-hash radiance cross-frame resolve correctly visible.
 
-## 路径追踪时间累加：便利包装层切勿硬编码 pt_accum_dirty: true
+## Path-tracing temporal accumulation: convenience wrapper layers must not hardcode `pt_accum_dirty: true`
 
-**问题**：无头离屏渲染或外部调用 `GraphRenderer::render_frame_with_overrides` 时，路径追踪画面每帧都为高频随机噪点，增加采样迭代数也完全不收敛。
+**Problem**: headless offscreen render or external call `GraphRenderer::render_frame_with_overrides`, path-traced image is high-freq random noise every frame, increasing sample iterations doesn't converge.
 
-**根本原因**：
-在 `GraphRenderer` 便利方法构造 `FramePacket` 时，`pt_accum_dirty` 字段被直接硬编码为 `true`。
-渲染管线的 `PathTracePass::execute` 每次检测到 `pt_accum_dirty: true`，都会调用 `clear_accum_images` 并将 `sampleCount` 重置为 0，导致原本设计的多帧时间累积（Temporal Accumulation）在每一帧都被无条件丢弃。
+**Root cause**:
+When `GraphRenderer` convenience method constructs `FramePacket`, `pt_accum_dirty` field hardcoded `true`.
+`PathTracePass::execute` each time detects `pt_accum_dirty: true`, calls `clear_accum_images` and resets `sampleCount` to 0, so designed temporal accumulation discarded unconditionally each frame.
 
-**教训**：
-- 状态机或数据包包装函数切勿滥用硬编码重置标记，应默认为 `false`，仅在相机移动、场景变换或显式标记失效时设为 `true`。
-- 排查多帧累加管线时，应优先在日志中打出当前帧的 `sample_count` 和累积权重，一旦发现始终为 1，立即可断定是重置标记或脏状态异常。
+**Lessons**:
+- State machines / packet wrappers must not abuse hardcoded reset flags, default to `false`, set `true` only on camera move, scene change or explicit invalidation.
+- When investigating multi-frame accumulation pipelines, first log current frame `sample_count` and accumulation weight; if always 1, immediately conclude reset flag or dirty state anomaly.
 
-## 异步资产流式加载与截图落盘时序竞态
+## Async asset streaming and screenshot disk-write timing race
 
-**问题**：设置截屏计划（`ScreenshotPlan`）在第 90 帧自动抓图，输出的图片却只有天空盒或纯黑底色，场景内的核心 3D 网格全部丢失。
+**Problem**: set screenshot plan (`ScreenshotPlan`) to auto-capture at frame 90, output image only skybox or pure black, core 3D meshes all missing.
 
-**根本原因**：
-大型 3D 资产（如 Crytek Sponza 模型）通常由引擎资源系统通过后台线程异步加载与反序列化。主渲染线程在第 1 帧启动后快速循环推进，当到达第 90 帧时，后台 IO 尚未将 103 个子网格实体挂载至 ECS，导致截屏逻辑在空场景下提前触发并标记完成退出。
+**Root cause**:
+Large 3D assets (e.g. Crytek Sponza) usually loaded and deserialized async by engine resource system on background thread. Main render thread loops fast from frame 1; at frame 90, background IO hasn't yet attached 103 sub-mesh entities to ECS, so screenshot logic fires early on empty scene and marks complete exit.
 
-**教训**：
-- 自动化截屏与 Goldenframe 测试不能只依赖固定帧计数（Frame Count）。
-- 必须给抓图计划注入内容就绪守卫：`plan.fires_on(frame_count + 1) && (!packet.draw_items.is_empty() || frame_count >= 300)`，确保绘制指令真正就绪后才执行抓图落盘。
+**Lessons**:
+- Automated screenshots and goldenframe tests can't rely only on fixed frame count.
+- Must inject content-ready guard into capture plan: `plan.fires_on(frame_count + 1) && (!packet.draw_items.is_empty() || frame_count >= 300)`, ensuring draw commands truly ready before capture and disk write.
 
-## Slang 矩阵乘法字节码（RowMajor 与 OpVectorTimesMatrix）
+## Slang matrix multiply bytecode (RowMajor and OpVectorTimesMatrix)
 
-**问题**：观察到路径追踪或法线输出与光栅化存在差异，怀疑是矩阵未转置，于是在 Host 侧代码中对变换矩阵调用 `mat_transpose`，导致网格全部被拍平或投影翻转。
+**Problem**: observed path tracing / normal output differs from rasterization, suspected matrix not transposed, so called `mat_transpose` on transform matrices in Host code, causing meshes all flattened or projection flipped.
 
-**根本原因**：
-使用 `spirv-dis` 反汇编 Slang 编译生成的 SPIR-V 发现，Slang 生成的 Push Constants 默认带有 `RowMajor` 装饰，且矩阵与向量乘法编译为 `OpVectorTimesMatrix %vec %mat`。
-在 Vulkan 硬件执行上，$\vec{v} \cdot M_{\text{spirv}} = \vec{v} \cdot (M_{\text{rust}})^T = M_{\text{rust}} \cdot \vec{v}$，其读取内存的逻辑刚好与 Rust 传入的列主序数组相抵消，数学上自然等同于标准的列向量乘法。如果在 Host 侧额外调用转置，反而造成了重复转置（Double Transpose）。
+**Root cause**:
+Disassembling Slang-generated SPIR-V with `spirv-dis` revealed Slang-generated push constants default to `RowMajor` decoration, and matrix-vector multiply compiles to `OpVectorTimesMatrix %vec %mat`.
+On Vulkan hardware, $\vec{v} \cdot M_{\text{spirv}} = \vec{v} \cdot (M_{\text{rust}})^T = M_{\text{rust}} \cdot \vec{v}$, its memory-read logic exactly cancels Rust column-major array, mathematically equivalent to standard column-vector multiply. Extra transpose on Host causes Double Transpose.
 
-**教训**：
-- 涉及着色器矩阵排布问题时，切勿通过反复加减 `transpose()` 盲猜，必须直接反汇编对应的 `.spv` 文件查看具体指令。
-- 只有准确比对着色器内部的内存修饰（`RowMajor`/`ColMajor`）与矢量乘法指令（`OpVectorTimesMatrix` / `OpMatrixTimesVector`），才能正确推导 Host 侧需要传递的数据格式。
+**Lessons**:
+- For shader matrix layout issues, never blindly guess by adding/removing `transpose()`, must disassemble corresponding `.spv` to see exact instructions.
+- Only by accurately comparing shader memory decorations (`RowMajor`/`ColMajor`) and vector-multiply instructions (`OpVectorTimesMatrix` / `OpMatrixTimesVector`) can correctly derive Host-side data format.
 
-## 调查纪律案例：Sponza 相机移动与 M 键（先读调用点，禁止跨 crate 考古）
+## Investigation discipline case: Sponza camera move and M key (read call sites first, forbid cross-crate archaeology)
 
-**问题**：锁定鼠标后 WASD 不按锁定状态生效，`M` 键完全没反应。
+**Problem**: after locking mouse WASD doesn't respect lock state, `M` key no response at all.
 
-**真实翻车复盘与反思**：
-- **错误排查路径**：先 `git blame` 翻提交历史、读 winit 0.30 的 `refresh_os_cursor` 实现、写 PowerShell 探 `GetClipCursor`、后台跑 `sponza.exe` 抓日志、反复压缩上下文。这些没有一条改变了结论，只是把一个简单的条件判断问题拖成了跨 crate 的盲目考古。
-- **正确定位仅需三步**（每步只读一个函数，通过 grep 命中的调用点直接看代码）：
-  1. `projects/sponza/src/tuning_ui.rs` 的 `on_key_pressed` → `Key::Other(VK_M) if !self.locked`，而窗口一拿到焦点就自动锁定，导致该键在游戏运行时永远无法被接收。
-  2. `crates/prism-engine/src/scene/systems/camera.rs` 的 `camera_controller_system` → `look_active` 只挡了 WASD，鼠标看向还留了 `|| 右键` 后门。
-  3. `crates/prism-platform/src/window.rs` 的 `grab_pointer` → 抓取失败只 `log::warn`，照样把 `locked` 置 `true`，导致「锁定」可能处于虚假状态。
-- **状态单真值教训**：指针锁定曾经分散在平台窗口原子量、`InputManager::pointer_locked`、项目钩子自身 `self.locked` 三份状态中，各处分别更新必然出现不同步。**决定「谁接管输入」的关键状态，真值只能在平台层唯一存在，其它消费方每帧同步读取**（如 `InputManager::sync_pointer_lock`）。
+**Actual mishap review and reflection**:
+- **Wrong investigation path**: first `git blame` through commit history, read winit 0.30 `refresh_os_cursor` impl, write PowerShell probe for `GetClipCursor`, run `sponza.exe` background capturing logs, repeatedly compress context. None changed conclusion, just turned a simple conditional-judgment problem into blind cross-crate archaeology.
+- **Correct localization only three steps** (each reads one function, directly look at code through grep-hit call sites):
+  1. `projects/sponza/src/tuning_ui.rs` `on_key_pressed` → `Key::Other(VK_M) if !self.locked`, but window auto-locks on focus, so key never received during gameplay.
+  2. `crates/prism-engine/src/scene/systems/camera.rs` `camera_controller_system` → `look_active` only blocked WASD, mouse look still had `|| right-button` backdoor.
+  3. `crates/prism-platform/src/window.rs` `grab_pointer` → grab failure only `log::warn`, still sets `locked` true, so "locked" may be false state.
+- **Single source of truth for state lesson**: pointer lock used to scatter across platform-window atomic, `InputManager::pointer_locked`, project-hook own `self.locked` — three copies, each updated separately inevitably desync. **Key state deciding "who owns input" must have single truth in platform layer, other consumers re-read each frame** (e.g. `InputManager::sync_pointer_lock`).
 
-**教训**：
-- bug 报告里的行为在代码里几乎总对应一个 `if` 条件或一次状态写入。代码里已经写死的事实，严禁通过探针、blame 或翻外部 crate 源码去反复“证明”。
-- 一个 bug 只读它经过的那条链路；grep 命中的文件读完就停，不要横向全库漫游扫第二遍。
-- 状态类 bug 必须首先确认系统内该布尔值是否存在多份拷贝与缓存。
+**Lessons**:
+- Bug-report behavior almost always corresponds to one `if` condition or one state write in code. Facts already hardcoded in code must never be repeatedly "proven" via probes, blame or external crate source diving.
+- One bug reads only its traversal chain; stop after reading grep-hit files, don't roam entire repo scanning second time.
+- State bugs must first confirm whether boolean has multiple copies and caches in system.

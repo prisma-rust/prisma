@@ -278,7 +278,7 @@ can export/import whole as JSON file (same shape as Web's `prisma-editor.dock.v4
   drag to hierarchy entity = instantiate prefab, drag to inspector path field = directly write path (`AssetDrag` payload).
 - **Project panel view / search syntax / Ping (#419)**: search box right has three toggles — list /
   grid view, single column / two columns (left directory tree + right content). Search supports Unity-style `t:` prefix:
-  `t:texture` (English slug / `Texture` / Chinese label `纹理` all recognized), `dir:sprites`,
+  `t:texture` (English slug / `Texture` / localized Chinese label all recognized), `dir:sprites`,
   multiple words are AND, multiple `t:` are OR. After selecting asset, inspector shows asset details (type / size /
   GUID / reference count / preview), bottom **Ping In Scene** and right-click menu's `Ping In Scene` will
   select first entity referencing the asset and frame it in Scene view — asset ↔ scene bidirectional positioning.
@@ -360,7 +360,7 @@ can export/import whole as JSON file (same shape as Web's `prisma-editor.dock.v4
   padding, cross-axis alignment, fit content), writes via `set_field` dot path, so undo /
   dirty / reload semantics same as other fields.
   `Text.wrap = true` wraps text by rectangle width **per UAX #14 break points** (spaces, hyphens,
-  CJK between characters can break, `，` / `。` terminal punctuation won't land at line start; single word too long breaks by char),
+  CJK between characters can break, terminal punctuation won't land at line start; single word too long breaks by char),
   `\n` always wraps and keeps blank lines; lines beyond bottom not drawn.
 - **UI Canvas scale (#463)**: add `prism_engine::ui::Canvas` to UI root node
   (`reference_resolution` / `scale_mode` / `match_width_or_height`), whole subtree
@@ -514,31 +514,31 @@ for event in world.get_resource::<AnimEvents>().map(|e| e.drain()).unwrap_or_def
   Clicking blank opens new draft at that time (clip name and time pre-filled, only event name missing), clicking existing mark doesn't create new.
   After save, loose asset hot reload re-cooks, `.ranim`'s v5 event table updates accordingly.
 
-**剪辑检查器**：在资产面板选中 `.ranim` 后，Animation Graph 面板显示检查器：时长 / fps /
-loop / additive、轨道数与每条轨道的关键帧范围、Notify / 同步标记时间轴、根关节首尾位移与
-偏航角。事件和标记仍通过作者侧侧车编辑，检查器不写二进制剪辑。
-场景里选中带 `Animator` 的实体时，还可以把当前剪辑套到该实体（会清空状态机 / 动画图路径，
-避免它们覆盖剪辑），然后点击时间轴 seek、播放 / 暂停、改倍速和 loop；这些改动走场景撤销栈。
+**Clip inspector**: after selecting `.ranim` in asset panel, Animation Graph panel shows inspector: duration / fps /
+loop / additive, track count and each track's keyframe range, Notify / sync marker timeline, root joint first/last displacement and
+yaw angle. Events and markers still edited via author-side sidecar, inspector doesn't write binary clip.
+When selecting an entity with `Animator` in scene, can also apply current clip to that entity (clears state machine / animation graph path,
+so they don't override clip), then click timeline to seek, play / pause, change speed and loop; these changes go through scene undo stack.
 
-**同步标记（Sync marker）**：走路 / 跑步循环的脚落地相位不同，混合时可以按标记对齐。
-作者写侧车 `assets/<mesh>.skinning/sync_markers.json`，键是 glTF 动画名，值是归一化相位：
+**Sync marker**: walk / run loops have different foot-plant phases, can align by marker when blending.
+Author writes sidecar `assets/<mesh>.skinning/sync_markers.json`, key is glTF animation name, value is normalized phase:
 
 ```json
 { "clips": { "walk": [0.0, 0.5], "run": [0.05, 0.55] } }
 ```
 
-cook 时归一化到 `[0, 1)`、排序去重，写进 `.ranim` v5；运行时
-`Clip::sync_marker_set()` 返回 `SyncMarkerSet`，可以构造 `SyncGroup` 做相位映射。
+normalized to `[0, 1)`, sorted and deduped at cook time, written into `.ranim` v5; at runtime
+`Clip::sync_marker_set()` returns `SyncMarkerSet`, can construct `SyncGroup` for phase mapping.
 
-编辑器可以编辑这张表：在资产面板选中 `assets/<mesh>.skinning/sync_markers.json` 后打开
-Window → General → Animation Graph，按剪辑列出标记。每条有 `phase` DragValue 和 `×`；
-每个剪辑上方的时间轴（0..1）用绿色圆点显示相位，拖动改相位，空白处点一下会在该相位打开
-新增草稿，`+ Marker` 也可以手动输入剪辑名与相位。写入时归一化到 `[0, 1)` 并拒绝重复相位
-（误差 `1e-6`），数组顺序保持作者写入顺序，cook 时再排序去重。保存后由松散资产热重载重新 cook。
-文件不存在 = 没有标记；存在但解析失败会让 build 失败；名字对不上任何动画会 warn。
+Editor can edit this table: after selecting `assets/<mesh>.skinning/sync_markers.json` in asset panel open
+Window → General → Animation Graph, list markers per clip. Each has `phase` DragValue and `×`;
+timeline above each clip (0..1) shows phase as green dot, drag to change phase, clicking blank space opens
+new draft at that phase, `+ Marker` also lets manual clip name and phase entry. On write normalized to `[0, 1)` and duplicate phases rejected
+(tolerance `1e-6`), array order kept as authored, sorted / deduped again at cook. After save loose-asset hot reload re-cooks.
+File absent = no markers; present but parse failure fails build; name matching no animation warns.
 
-**Montage 段（#560 P4）**：翻越 / 受击这类一次性动画需要按段跳转（Start → Vault → Land）。
-作者写侧车 `assets/<mesh>.skinning/montages.json`，键是 glTF 动画原名：
+**Montage sections (#560 P4)**: one-shot animations like vault / hit need section jumps (Start → Vault → Land).
+Author writes sidecar `assets/<mesh>.skinning/montages.json`, key is original glTF animation name:
 
 ```json
 {
@@ -554,27 +554,27 @@ Window → General → Animation Graph，按剪辑列出标记。每条有 `phas
 }
 ```
 
-段名必须非空且同一剪辑内唯一；时间必须有限、`0 <= start <= end`，`end` 不能超过剪辑时长。
-cook 时按 `start` 排序写进 `.ranim` v5，运行时 `Clip.sections` / `MontagePlayer::active_section`
-可直接读；`MontageRequest::play_section(...)` 或 `with_section("Vault")` 会从段首开始，
-`MontagePlayer::jump_to_section` 可在播放中跳段。BranchIn 用 Notify 约定：
-`BranchIn.<section>` 事件跨过时跳到同名段（例如 `BranchIn.Land`），可以直接在 Notify
-侧车里写。文件不存在 = 没有段；存在但解析失败 / 超出剪辑长度会让 build 失败；名字对不上
-任何动画会 warn。
+Section name must non-empty and unique within clip; time must finite, `0 <= start <= end`, `end` can't exceed clip duration.
+At cook sorted by `start` into `.ranim` v5, at runtime `Clip.sections` / `MontagePlayer::active_section`
+directly readable; `MontageRequest::play_section(...)` or `with_section("Vault")` starts from section beginning,
+`MontagePlayer::jump_to_section` jumps between sections during playback. BranchIn uses Notify convention:
+`BranchIn.<section>` event when crossed jumps to same-named section (e.g. `BranchIn.Land`), can be written directly in Notify
+sidecar. File absent = no sections; present but parse failure / exceeding clip length fails build; name matching no
+animation warns.
 
-编辑器可以编辑这张表：在资产面板选中 `assets/<mesh>.skinning/montages.json` 后打开
-Window → General → Animation Graph，按剪辑列出段。每个剪辑上方有一条彩色区间条（按时间画
-start..end），下面是名字文本框（失焦写回）、`start` / `end` DragValue 和 `×`；`+ Section`
-给当前剪辑加段，`+ New clip section` 可以给新剪辑键加第一段。每个剪辑下面还有
-`Warp windows` 区：橙色区间条显示 MotionWarping 窗口，行内可改名字 / start / end、删除，
-`+ Warp` 追加。warp window 同样 cook 进 `.ranim` v5，运行时用
-`MontagePlayer::active_warp_window()` / `warp_window_progress()` 查询。保存后由松散资产
-热重载重新 cook。
+Editor can edit this table: after selecting `assets/<mesh>.skinning/montages.json` in asset panel open
+Window → General → Animation Graph, list sections per clip. Above each clip a colored range bar (drawn by time
+start..end), below is name text box (written back on blur), `start` / `end` DragValue and `×`; `+ Section`
+adds section to current clip, `+ New clip section` adds first section to new clip key. Below each clip also
+`Warp windows` area: orange range bar shows MotionWarping window, row can edit name / start / end, delete,
+`+ Warp` appends. warp window likewise cooked into `.ranim` v5, queried at runtime via
+`+ Warp` appends. warp window likewise cooked into `.ranim` v5, queried at runtime via
+`MontagePlayer::active_warp_window()` / `warp_window_progress()`. After save loose-asset hot reload re-cooks.
 
-### 状态机
+### State machine
 
-状态机写成 `assets/<something>.statemachine.json`，cook 成 `.rasm`（RASM v1：状态表 +
-转移表 + 条件；`from` 用 `u32::MAX` 表示「任意状态」）：
+State machine written as `assets/<something>.statemachine.json`, cooked into `.rasm` (RASM v1: state table +
+transition table + conditions; `from` uses `u32::MAX` for "any state"):
 
 ```json
 {
@@ -589,173 +589,173 @@ start..end），下面是名字文本框（失焦写回）、`start` / `end` Dra
 }
 ```
 
-- 条件种类：`float_greater` / `float_less`（`threshold`）、`bool_is`（`value`）、`trigger`；
-  面板可以切换已有条件的类型，切换时保留参数名并补齐 / 删除该类型需要的载荷；
-  参数名也可以直接编辑，同一转移里 `(type, name)` 重复时拒绝；
-- 缺省：`speed = 1`、`looped = true`、`from = "*"`（任意状态）、`duration = 0`（硬切）、
-  `min_state_fraction = 0`；`to` / `from` 写错状态名是**硬错误**（整份资产失败），
-  重复状态名、空的 `clip` / `name`、未知条件种类同样报错并指出是哪一条；
-- 求值是**按作者顺序第一条命中**（条件全真 + 当前状态已播到 `min_state_fraction`），
-  一帧只走一条转移；`min_state_fraction` 在剪辑时长未知时视为已播完，否则单次剪辑会卡在最后一帧；
-- `states` 的顺序同时决定初始状态：运行时 `Animator.state` 为空时从第一个状态开始。
-  面板用 `↑` / `↓` 重排状态；转移按状态名引用，重排不会改转移。
-- 面板里改状态名会同步场景 / 预制体里 `state_machine_path` 指向同一份状态机的
-  `Animator.state`：打开着的文档就地改并标脏，没打开的文档直接写回磁盘。其它状态机的
-  同名状态不受影响。
-编辑器提供 **Animation Graph** 面板（Window → General）：选中 `.animgraph.json` 或
-`.statemachine.json` 后显示参数、节点 / 连线、输出，以及状态、转移和可读条件。
-面板顶部有 `↶ Undo edit` / `↷ Redo edit`，只针对动画资产（图 / 状态机 / Notify）的
-JSON 改动，和场景的 Ctrl+Z 是两条独立历史：每步存整份文件快照，连续拖拽（DragValue /
-时间轴）在 800ms 内合并成一步；参数改名这种同时改多个文件的操作整组算一步，撤销 / 重做
-一起回滚。撤销后写回磁盘、下一次重绘直接用磁盘内容。
-图的面板顶部有一行形状检查结果（`shape check: ok` / `Shape issues (n)`）：复刻 cooker 在
-cook 前会拒绝的形状问题 —— 节点名 / 类型、剪辑与坐标数量、连线目标与自连、输出数量、
-环、参数类型、每样本速度数量 —— 在保存前就列出来。它不读资产内容，剪辑 / 状态机文件
-是否存在仍以 cook 为准。
+- Condition kinds: `float_greater` / `float_less` (`threshold`), `bool_is` (`value`), `trigger`;
+  panel can switch existing condition kind, keeping parameter name and filling / removing payload needed by new kind;
+  parameter name also editable, duplicate `(type, name)` within same transition rejected;
+- Defaults: `speed = 1`, `looped = true`, `from = "*"` (any state), `duration = 0` (hard cut),
+  `min_state_fraction = 0`; wrong `to` / `from` state name is **hard error** (whole asset fails),
+  duplicate state names, empty `clip` / `name`, unknown condition kinds likewise error with item indicated;
+- Evaluation is **first match in author order** (all conditions true + current state played to `min_state_fraction`),
+  at most one transition per frame; `min_state_fraction` treated as complete when clip duration unknown, else one-shot would stick on last frame;
+- `states` order also determines initial state: at runtime when `Animator.state` empty starts from first state.
+  Panel uses `↑` / `↓` to reorder states; transitions reference by state name, reordering doesn't change them.
+- Renaming state in panel syncs `Animator.state` in scenes / prefabs pointing to same state machine:
+  open docs changed in place and marked dirty, unopened docs written directly to disk. Same-named states in
+  other state machines unaffected.
+Editor provides **Animation Graph** panel (Window → General): after selecting `.animgraph.json` or
+`.statemachine.json` shows parameters, nodes / links, output, plus states, transitions and readable conditions.
+Panel top has `↶ Undo edit` / `↷ Redo edit`, only for animation asset (graph / state machine / Notify)
+JSON changes, separate history from scene Ctrl+Z: each step stores whole-file snapshot, consecutive drags (DragValue /
+timeline) within 800ms merged into one step; parameter rename touching multiple files counts as one group, undo / redo
+roll back together. After undo written to disk, next repaint uses disk content directly.
+Graph panel top has one line of shape-check result (`shape check: ok` / `Shape issues (n)`): replicates shape issues cooker rejects
+before cooking — node name / type, clip and coordinate counts, link targets and self-links, output count,
+cycles, parameter types, per-sample speed counts — listed before save. It doesn't read asset content, clip / state machine file
+existence still determined by cook.
 
-按 **Play** 后（Game 视图在跑）面板多出一块绿色 `Runtime · N entities`：每个动画图实体的
-节点按图顺序列出名字 / 类型 / 连线权重 / 本地时间，状态机节点显示 `状态名 · 时间`；下面还有
-该实体各 Slot 的 Montage（剪辑、时间、权重、暂停 / 播完 / 排队段数），以及这一帧该实体
-触发的 Notify（蓝色 `• 名字 @ 时间`，来自引擎的 `AnimEvents`，每帧重建）。数据来自引擎的
-`AnimGraphDebug` 资源，只在 Play 时插入，停止后移除；编辑器不复制状态，面板每帧只读。
-`Parameters` 区可以直接编辑：每行是名字文本框 · 类型 + 默认值 DragValue（bool / trigger 归一成
-0 / 1），`×` 删除参数（仍被混合空间节点引用的参数会被拒绝并指出是哪个节点），`+ Parameter`
-打开草稿表单（名字 + 类型下拉 + 默认值）。改参数名（失焦）会同时改写混合空间节点的
-`parameter` / `parameter_x` / `parameter_y`，以及图引用的状态机侧车里的条件名：
-节点写 `state_machine: "anim/hero.rasm"` 时自动找 `assets/anim/hero.statemachine.json`
-（文件不存在就跳过，可能还没落盘），状态栏会列出同步了哪些文件。重名会被拒绝。
-图节点可以在画布上拖动，位置保存到 `<graph>.layout.json`（不改图本身）；节点卡片里可以增删
-`inputs` 连线（`+ Link` / `×`），每条连线的 `w` 可以直接拖拽调 0..1 权重，保存后写回 `.animgraph.json`。使用单数 `input` 的链式节点
-仍需手改 JSON。每条连线下面还有一行逗号分隔的 `bone mask`（`spine_02, arm_l`）：失焦时才写回，
-字符串连线需要掩码时自动升级成 `{ node, weight, bone_mask }`；清空这行等于去掉掩码（整条姿态）。
-剪辑节点的剪辑路径是文本框（失焦写回），每个节点还有 `speed` / `w` DragValue 和 `loop` 复选框。
-节点名也是文本框：重命名会同步改写其它节点的 `inputs` / `input` 与顶层 `output`，但布局 sidecar
-里还是旧名字，节点会回到画布的默认网格位置。
-混合空间节点额外显示参数名文本框（二维各一个）和每个样本的 `x` / `y` DragValue（一维只写 `x`）；
-二维节点还有一块 180×120 的样本画布：按坐标画出样本点，直接拖动点就改 `positions`（与 DragValue
-共用写回路径），坐标范围标在画布下方。所有样本共线时画布下方给橙色提示「退化」——运行时三角化
-会失败并退回一维 / 单剪辑，数字上不容易看出来；
-节点卡片上的 `⧉ Duplicate` 复制整份节点（剪辑 / 坐标 / inputs / bone mask 原样保留），
-名字自动加 `_copy` / `_copy2`；复制出的节点接线仍指向原来的上游，输出节点不能复制。
-`clips` 与 `positions` 数量对不上时用橙色提示，cooker 会拒绝这种节点。样本行尾的 `×` 删除样本、
-`+ Sample` 打开草稿表单（剪辑 + x/y），一维至少留 2 个、二维至少留 3 个；节点带每样本 `speeds`
-时增删会同步维护那张表。`+ Node` 追加节点：类型下拉 `clip` / `blend stack` / `slot` /
-`layered blend` / `cached pose` / `state machine`；clip 填剪辑路径、state machine 填机器路径，
-其它类型填一个上游节点（自动写成 `input` / `inputs[0]`）。blend space 需要 >=2/3 个
-剪辑与坐标，仍然手写或复制现有节点。`× Remove node` 删除节点，输出节点和仍被引用的节点会被
-拒绝并说明原因，先断线再删。状态机视图支持 `+ Transition`（任意状态 / 指定 from → to）和 `× Remove transition`，
-保存回 `.statemachine.json`。展开一条转移后 `from` / `to` 是下拉框（`from` 可选 `any`），
-重连会拒绝重名状态、自连和与现有转移完全重复的 `(from, to)`；`↑` / `↓` 调整转移顺序，
-顺序就是优先级（运行时取第一条条件命中的转移，列表上也写了这句提示）；`⧉ Duplicate` 复制整条转移
-与条件并插入到原转移之后，作者再改 `from` / `to`。状态行末尾的 `⧉` 复制整个状态（剪辑 / speed / looped 原样保留，名字自动 `_copy`），
-转移表不变，复制出来的状态需要自己接线。状态行的名字与剪辑是文本框（失焦写回）、`speed` 是 DragValue（0..5）、
-`loop` 是复选框；重命名会同步改写转移里的 `from` / `to`，以及场景 / 预制体里指向同一状态机的
-`Animator.state`（其它状态机的同名状态不受影响）。每条转移的 `blend` / `min` 是 DragValue（混合时长 / 最小状态占比）；
-条件行可以直接改 float 阈值或 bool 期望值、`×` 删除，`+ Condition` 打开草稿表单（类型下拉
-`float >` / `float <` / `bool ==` / `trigger`、参数名、阈值或布尔值），点 `Add condition` 才写盘。
-条件只校验形状（名字非空、类型已知、`(type, name)` 不重复），参数是否真在运行时的
-`AnimParameters` 里仍由运行期决定。视口里直接拖关节做 IK（P2 的 IK 另立）还没做。
+After pressing **Play** (Game view running) panel gains green `Runtime · N entities` block: each animation-graph entity's
+nodes listed in graph order with name / type / link weight / local time, state-machine nodes show `state name · time`; below are
+that entity's Slot Montages (clip, time, weight, paused / finished / queued sections), and Notify fired by that entity this frame
+(blue `• name @ time`, from engine `AnimEvents`, rebuilt each frame). Data comes from engine `AnimGraphDebug` resource,
+only inserted during Play, removed after stop; editor doesn't copy state, panel reads only each frame.
+`Parameters` area directly editable: each row name text box · type + default DragValue (bool / trigger normalized to
+0 / 1), `×` deletes parameter (one still referenced by blend-space node rejected with node named), `+ Parameter`
+opens draft form (name + type dropdown + default). Renaming parameter (on blur) also rewrites blend-space nodes'
+`parameter` / `parameter_x` / `parameter_y`, and condition names in state-machine sidecar referenced by graph:
+node with `state_machine: "anim/hero.rasm"` auto-finds `assets/anim/hero.statemachine.json`
+(skip if absent, may not be written yet), status bar lists which files synced. Duplicate names rejected.
+Graph nodes draggable on canvas, position saved to `<graph>.layout.json` (graph itself unchanged); node card can add / remove
+`inputs` links (`+ Link` / `×`), each link's `w` directly draggable for 0..1 weight, written back to `.animgraph.json` on save. Chained nodes using singular `input`
+still need manual JSON edit. Below each link a comma-separated `bone mask` row (`spine_02, arm_l`): written back on blur,
+string link needing mask auto-upgraded to `{ node, weight, bone_mask }`; clearing row removes mask (whole pose).
+Clip node's clip path is text box (written on blur), each node also `speed` / `w` DragValue and `loop` checkbox.
+Node name also text box: rename rewrites other nodes' `inputs` / `input` and top-level `output`, but layout sidecar
+keeps old name, node returns to default grid position on canvas.
+Blend-space node additionally shows parameter name text box (one per 2D axis) and each sample's `x` / `y` DragValue (1D only `x`);
+2D node also 180×120 sample canvas: sample points drawn by coords, dragging point changes `positions` (shares write-back with DragValue
+path), coordinate range labeled below canvas. When all samples collinear orange "degenerate" hint below canvas — runtime triangulation
+fails and falls back to 1D / single clip, hard to see numerically;
+`⧉ Duplicate` on node card copies whole node (clip / coords / inputs / bone mask preserved),
+name auto-appends `_copy` / `_copy2`; duplicated node links still point to original upstream, output node can't be copied.
+When `clips` and `positions` counts mismatch orange hint, cooker rejects such node. `×` at end of sample row deletes sample,
+`+ Sample` opens draft form (clip + x/y), at least 2 for 1D, 3 for 2D; node with per-sample `speeds`
+maintains that table on add / remove. `+ Node` appends node: type dropdown `clip` / `blend stack` / `slot` /
+`layered blend` / `cached pose` / `state machine`; clip fills clip path, state machine fills machine path,
+others fill one upstream node (auto-written as `input` / `inputs[0]`). blend space needs >=2/3 clips and coords,
+still handwritten or copied from existing node. `× Remove node` deletes node, output node and still-referenced nodes
+rejected with reason, disconnect first. State-machine view supports `+ Transition` (any state / specified from → to) and `× Remove transition`,
+saved back to `.statemachine.json`. Expanding a transition shows `from` / `to` dropdowns (`from` can be `any`),
+reconnect rejects duplicate state names, self-links and exact duplicate `(from, to)` with existing; `↑` / `↓` adjusts transition order,
+order is priority (runtime takes first matching transition, also noted in list); `⧉ Duplicate` copies whole transition
+with conditions and inserts after original, author then edits `from` / `to`. `⧉` at end of state row copies whole state (clip / speed / looped preserved, name auto `_copy`),
+transition table unchanged, copied state needs own wiring. State row name and clip are text boxes (written on blur), `speed` DragValue (0..5),
+`loop` checkbox; rename rewrites `from` / `to` in transitions and `Animator.state` in scenes / prefabs pointing to same state machine
+(same-named states in other state machines unaffected). Each transition's `blend` / `min` are DragValue (blend duration / min state fraction);
+condition row can directly edit float threshold or bool expected value, `×` deletes, `+ Condition` opens draft form (type dropdown
+`float >` / `float <` / `bool ==` / `trigger`, parameter name, threshold or bool), click `Add condition` writes to disk.
+Conditions only shape-validated (name non-empty, type known, `(type, name)` not duplicate), whether parameter actually in runtime
+`AnimParameters` decided at runtime. Dragging joints in viewport for IK (P2 IK separate) not done.
 
-运行时（#560 P1）：`Animator.state_machine_path` 指向 `.rasm`、`state` 是当前状态名（引擎每帧
-写回，可在检查器里预置起始状态）。状态机生效时：
+At runtime (#560 P1): `Animator.state_machine_path` points to `.rasm`, `state` is current state name (engine writes
+each frame, can preset start state in inspector). When state machine active:
 
-- **状态决定播什么**：`state.clip_path`、`speed`、`looped` 覆盖组件上的同名字段（状态剪辑为空
-  时才回落到 `clip_path`）；
-- 转移由 **`prism_anim::AnimParameters`** 资源驱动（项目侧每帧写 `speed` / `grounded` / trigger
-  等），引擎在 `animator_system` 里求值；一帧最多走一条转移，换状态时播放时间归零；
-- `min_state_fraction` 用**上一帧**的播放时间判定（那一帧确实播到了那里），所以跨过阈值的那
-  一帧还拦着、下一帧放行；
-- 转移自己的 `duration` 覆盖组件的 `blend_duration`（那条转移说了算），淡出源仍是上一帧姿态；
-- 机器路径写错 / 还没加载时安静退回 `clip_path`，不会让实体消失。
-- 检查器的 `Animator` 卡片里显示当前状态与机器文件名（只读）。
+- **State determines what plays**: `state.clip_path`, `speed`, `looped` override same-named fields on component (state clip empty
+  falls back to `clip_path`);
+- Transitions driven by **`prism_anim::AnimParameters`** resource (project side writes `speed` / `grounded` / trigger
+  each frame), engine evaluates in `animator_system`; at most one transition per frame, switching resets play time;
+- `min_state_fraction` judged by **previous frame** play time (that frame actually reached there), so frame crossing threshold
+  is still blocked, next frame allowed;
+- Transition's own `duration` overrides component `blend_duration` (that transition wins), fade source still previous-frame pose;
+- Wrong / not-yet-loaded machine path silently falls back to `clip_path`, entity won't disappear.
+- Inspector `Animator` card shows current state and machine filename (read-only).
 
 
-## 4.4 内置截图与控制通道
+## 4.4 Built-in screenshot and control channel
 
-截图在编辑器进程里做（`editor/crates/prism-editor-egui/src/screenshot.rs`）：
+Screenshot done in editor process (`editor/crates/prism-editor-egui/src/screenshot.rs`):
 
-| target | 取法 | 说明 |
+| target | Method | Notes |
 |---|---|---|
-| `window` | Windows `PrintWindow` + `PW_RENDERFULLCONTENT` 画进 32bpp DIB | 连 UI 一起抓；DWM 合成后取样，窗口部分在屏幕外也能抓全。交换链由 egui-ash 持有，宿主拿不到 `VkImage`，这是唯一路径 |
-| `scene` / `game` | `GraphRenderer::copy_offscreen_to_readback` + `readback_pixels` | 引擎离屏图（`PRESENT_SRC_KHR` → 读回 → PNG），不需要窗口，无显示器 / CI 可用 |
+| `window` | Windows `PrintWindow` + `PW_RENDERFULLCONTENT` into 32bpp DIB | Captures UI too; sampled after DWM composition, works even if part of window off-screen. Swapchain held by egui-ash, host can't get `VkImage`, this is only path |
+| `scene` / `game` | `GraphRenderer::copy_offscreen_to_readback` + `readback_pixels` | Engine offscreen image (`PRESENT_SRC_KHR` → readback → PNG), no window needed, works headless / CI |
 
-触发方式（都不是环境变量）：MCP 的 `editor_capture`（见 `docs/editor-mcp.md`），
-或菜单「Window → Capture Window」（默认写到 `target/editor-egui/captures/`）。
+Triggers (none are env vars): MCP `editor_capture` (see `docs/editor-mcp.md`),
+or menu "Window → Capture Window" (default writes to `target/editor-egui/captures/`).
 
-控制通道（`src/control.rs`）：启动时在 `127.0.0.1:0` 上监听并把端口写进
-`<项目根>/target/editor-egui/control.port`，一行 JSON 一问一答：
+Control channel (`src/control.rs`): listens on `127.0.0.1:0` at startup and writes port to
+`<project root>/target/editor-egui/control.port`, one JSON line per request / response:
 `ping` / `status` / `play` / `stop` / `pause` / `logs` / `input` / `capture` /
 `ui.snapshot` / `ui.click` / `ui.move` / `ui.wheel` / `ui.drag` / `ui.set` /
-`quit` / `quit.confirm` / `quit.cancel`。
-`quit` 是自动化用的强制退出（不写恢复快照、不弹确认）；`quit.confirm` 走用户点窗口 ×
-的路径——有未保存文档时返回 `closing:false` / `pending:"unsaved"` 并弹出三选一，
-`quit.cancel` 关掉该对话框。
-`logs` 读 Console 的同一份缓冲（`since` 增量、`limit` 条数），自动化因此能拿到引擎日志、
-工程模块的 `project:` 日志和 panic 栈。
+`quit` / `quit.confirm` / `quit.cancel`.
+`quit` is forced exit for automation (no recovery snapshot, no confirmation); `quit.confirm` follows user clicking window ×
+path — with unsaved docs returns `closing:false` / `pending:"unsaved"` and shows three-choice dialog,
+`quit.cancel` closes that dialog.
+`logs` reads same Console buffer (`since` incremental, `limit` count), automation thus gets engine logs,
+project module `project:` logs and panic stacks.
 
-失败回执除 `ok: false` 外还带 `kind`（机器可读）与 `message`；`error` 保留同一段文本，
-旧调用方不用改（#1008）：
+Failure receipt besides `ok: false` also carries `kind` (machine-readable) and `message`; `error` keeps same text,
+old callers need no change (#1008):
 
-| `kind` | 含义 | 调用方该做什么 |
+| `kind` | Meaning | What caller should do |
 |---|---|---|
-| `bad_request` | JSON / `cmd` / 参数不合法（未知节点、越界坐标、不认识的按键） | 改参数重试 |
-| `not_ready` | 编辑器还没准备好：5 秒内没回执、视口还没布局、Play / 对话框还没打开 | 等一会再试 |
-| `denied` | 明确拒绝：平台不支持整窗截图、通道被关掉 | 不要重试 |
-| `internal` | 编辑器内部错误（截图写盘失败等） | 读 `logs`，重试通常无用 |
+| `bad_request` | Invalid JSON / `cmd` / args (unknown node, out-of-range coords, unrecognized key) | Fix args and retry |
+| `not_ready` | Editor not ready: no receipt within 5s, viewport not laid out, Play / dialog not open | Wait and retry |
+| `denied` | Explicit refusal: platform doesn't support whole-window screenshot, channel disabled | Don't retry |
+| `internal` | Editor internal error (screenshot write failure etc) | Read `logs`, retry usually useless |
 
-全局开关：`--no-control` 启动时不建 listener、不写 `control.port`（而不是「连上以后
-逐条拒绝」）；Preferences 的 `Enable local control channel` 可以在运行中关掉，
-关掉会立即停止监听并删除端口文件。`status` 回执的 `control` 段给出
-`enabled` / `cli_disabled` / `port_file` / `error`。
+Global switch: `--no-control` doesn't create listener or write `control.port` at startup (rather than "reject each request after connecting");
+Preferences `Enable local control channel` can disable at runtime, disabling immediately stops listening and deletes port file. `status` receipt `control` section gives
+`enabled` / `cli_disabled` / `port_file` / `error`.
+Pointer operations in viewport also go through control channel (#643), coordinate unit is **viewport-local logical pixels**:
 
-视口里的指针操作也走控制通道（#643），坐标单位是**视口局部逻辑像素**：
+| Command | Args | Behavior |
 
-| 命令 | 参数 | 行为 |
+| `ui.move` | `node`+`offset` or `tab`+`x`/`y` | Scene: returns entity under point (`hit`) and gizmo axis (`gizmo_axis`), no selection change; Game: sends cursor into gameplay input |
 |---|---|---|
-| `ui.move` | `node`+`offset` 或 `tab`+`x`/`y` | Scene：返回该点下的实体（`hit`）与 gizmo 轴（`gizmo_axis`），不改选择；Game：把光标送进玩法输入 |
-| `ui.wheel` | 同上 + `delta`（默认 120） | Scene：缩放到光标（`Camera::zoom_towards`，#511）；Game：滚轮进玩法输入 |
-| `ui.drag` | `from` / `to` + `steps`（默认 8） | Scene：起点命中 gizmo 就按真实拖动逻辑变换（吸附、撤销步一致），否则 `mode:"orbit"` 转轨道相机，再否则框选；Game：按下 → 逐步移动 → 松开 |
+| `ui.wheel` | same + `delta` (default 120) | Scene: zoom toward cursor (`Camera::zoom_towards`, #511); Game: wheel into gameplay input |
+| `ui.drag` | `from` / `to` + `steps` (default 8) | Scene: if start hits gizmo transform by real drag logic (snap, undo step consistent), else `mode:"orbit"` orbit camera, else box select; Game: press → step move → release |
+| `ui.drag` | `from` / `to` + `steps` (default 8) | Scene: if start hits gizmo transform by real drag logic (snap, undo step consistent), else `mode:"orbit"` orbit camera, else box select; Game: press → step move → release |
 
-`from` / `to` 是对象：`{"node":"view:scene:entity:2","offset":[40,0]}`（物体节点锚点是
-其 `screen_rect` 中心）或 `{"x":220,"y":610}`。Scene 的框选结果直接写进选择集，回执带
-`selected` 节点列表；gizmo 拖动回执带 `changed`，用于断言变换真的发生了。
-`ui.click` 的 Game 分支也走同一套 letterbox / 离屏尺寸换算（#463/#585）。
+`from` / `to` are objects: `{"node":"view:scene:entity:2","offset":[40,0]}` (object node anchored at
+center of its `screen_rect`) or `{"x":220,"y":610}`. Scene box-select result written directly to selection set, receipt carries
+`selected` node list; gizmo drag receipt carries `changed` for asserting transform really happened.
+`ui.click` Game branch uses same letterbox / offscreen size conversion (#463/#585).
 
-模态对话框也走节点树（#618）：`ui.snapshot` 的 `dialogs` 列出当前打开的对话框
-（`delete-entities` / `delete-document` / `delete-assets` / `save-conflict` / `close` /
-`confirm` / `prompt`）及按钮 id，`pending_dialog` 给出最上面那个；`ui.click` 接受
-`dialog:<id>:<button>`（如 `dialog:delete-entities:delete` /
-`dialog:close:discard`）。`ui.set` 对 `dialog:prompt` 写入输入值，再用
-`dialog:prompt:ok` 提交。命令只是挂起确认框时，回执会带 `pending_dialog`，
-不会出现「`ok: true` 但什么都没发生」。
+Modal dialogs also go through node tree (#618): `ui.snapshot` `dialogs` lists currently open dialogs
+(`delete-entities` / `delete-document` / `delete-assets` / `save-conflict` / `close` /
+`confirm` / `prompt`) and button ids, `pending_dialog` gives topmost one; `ui.click` accepts
+`dialog:<id>:<button>` (e.g. `dialog:delete-entities:delete` /
+`dialog:close:discard`). `ui.set` writes input value to `dialog:prompt`, then
+`dialog:prompt:ok` submits. When command only suspends confirmation dialog, receipt carries `pending_dialog`,
+no "`ok: true` but nothing happened".
 
-`input` 给 Play 注入键鼠（`key=space` / `mouse=left` / `click=true`，`state=press|release`）。
-事件**每帧只消费一个**：`just_pressed` 只在这一帧的 tick 里可见，下一帧就会被
-`InputManager::begin_frame` 清掉，一次塞两个等于没按。fishing 的完整一竿就是这么跑的：
-`click` → `cast` → `bobber landed` → 等到 `bite!` → 再 `click` → `hook set` →
-`landed fish #1`，全流程只用控制通道，不需要窗口焦点。请求经 `mpsc` 排进 UI 线程，所以截图和
-界面状态是同一帧的；启动前三帧内的 `capture` 会延后到画面合成后再抓（否则是白图）。
+`input` injects key / mouse into Play (`key=space` / `mouse=left` / `click=true`, `state=press|release`).
+Events **consumed one per frame**: `just_pressed` only visible in that frame's tick, next frame cleared by
+`InputManager::begin_frame`, stuffing two equals none. Full fishing cast runs this way:
+`click` → `cast` → `bobber landed` → wait for `bite!` → `click` again → `hook set` →
+`landed fish #1`, whole flow uses only control channel, no window focus. Requests queued to UI thread via `mpsc`, so screenshot and
+UI state are same frame; `capture` within first three frames after startup delayed until after composition (else blank image).
 
-## 5. 数据层
+## 5. Data layer
 
-`editor/crates/prism-editor-core` 是与 UI 框架无关的数据层：文档模型、schema、撤销栈、dock 树、日志缓冲、资产树、i18n、项目读写。
-egui 壳通过路径依赖直接使用它。
+`editor/crates/prism-editor-core` is UI-framework-independent data layer: document model, schema, undo stack, dock tree, log buffer, asset tree, i18n, project read / write.
+egui shell uses it directly via path dependency.
 
-## 6. 未完成 / 风险
+## 6. Incomplete / risks
 
-- **未在真实设备上运行**：开发机是 Termux（aarch64、无显示），只做了
-  `cargo check`（本机 + `x86_64-pc-windows-gnu`）。首帧呈现、resize、字体、
-  docking 手感都需要桌面复核。
-- **尚未实现**：材质 / 贴图拖到场景里自动挂 `MeshRenderer`；层级多选整组插入排序
-  （整组只支持改父级）；多窗口（egui viewport）的独立 DPI。
-- **内置图元（已打通）**：`crates/prism-render/src/primitives.rs` 生成 box / sphere /
-  cylinder / capsule / quad 的顶点与索引；`mesh_path = "__builtin/<name>"` 由
-  `prism-engine` 的资产解析器短路，不读 `.pak`、不需要 cook。对应的实体预设
-  （`cube / sphere / cylinder / capsule / quad / plane`）在 `prism-editor-api`
-  的 `entity_presets()` 里，GameObject → Create Other → 3D Object 直接用。
-  尺寸固定：box/sphere/cylinder 1 单位，capsule 总高 2（半径 0.5），
-  quad/plane 是 `y = 0` 上的 1×1 XZ 面、法线 +Y。
-- **性能**：每次文档变化都会整场重载两个引擎实例（防抖 120ms），大场景下偏重；
-  后续可以改成「只重建变化的实体」或引入 delta 上传。
-- **两个引擎实例**意味着两份 GPU 资源（管线、IBL、网格）。如果以后只保留一个
-  视口可见，可以按可见性懒加载 / 回收 Game view。
+- **Not run on real device**: dev machine is Termux (aarch64, no display), only `cargo check` done (local + `x86_64-pc-windows-gnu`). First-frame present, resize, fonts,
+  docking feel need desktop review.
+  docking feel need desktop review.
+- **Not implemented**: drag material / texture into scene auto-attaches `MeshRenderer`; hierarchy multi-select group insert ordering
+  (group only supports changing parent); multi-window (egui viewport) independent DPI.
+- **Built-in primitives (wired through)**: `crates/prism-render/src/primitives.rs` generates box / sphere /
+  cylinder / capsule / quad vertices and indices; `mesh_path = "__builtin/<name>"` short-circuited by
+  `prism-engine` asset parser, no `.pak` read, no cook. Corresponding entity presets
+  (`cube / sphere / cylinder / capsule / quad / plane`) in `prism-editor-api`
+  `entity_presets()`, available via GameObject → Create Other → 3D Object.
+  Fixed sizes: box / sphere / cylinder 1 unit, capsule total height 2 (radius 0.5),
+  quad / plane is 1×1 XZ plane at `y = 0`, normal +Y.
+- **Performance**: every document change reloads both engine instances whole scene (debounce 120ms), heavy for large scenes;
+  can later change to "rebuild only changed entities" or introduce delta upload.
+- **Two engine instances** means two copies of GPU resources (pipelines, IBL, meshes). If only one viewport visible later,
+  can lazily load / recycle Game view by visibility.

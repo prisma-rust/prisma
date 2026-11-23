@@ -1,18 +1,18 @@
-//! Hot-reload entry points (engine 侧再导出)。
+//! Hot-reload entry points (re-exported on engine side).
 //!
-//! 真正的轮询器是 [`prism_asset::runtime::HotReloadWatcher`]：它只依赖 `std`，运行时
-//! 总是可用，产出 [`HotReloadEvent::PakModified`] 后由宿主调用
+//! The real poller is [`prism_asset::runtime::HotReloadWatcher`]: it depends only on `std`, so it is
+//! always available at runtime; produced [`HotReloadEvent::PakModified`] is then used by host to
 //! [`ResourceManager::on_pak_changed`](prism_asset::runtime::ResourceManager::on_pak_changed)
-//! 换掉陈旧的文件字节。
+//! replace stale file bytes.
 //!
-//! **引擎自己不轮询**，也不会自动重载任何东西。宿主（编辑器 / 玩家）需要做三步：
+//! **Engine itself does not poll**, nor automatically reload anything. Host (editor / player) needs three steps:
 //!
-//! 1. 轮询 `.pak`（或在重建 `.pak` 的地方直接拿到路径）；
-//! 2. `ResourceManager::on_pak_changed(path)` 换掉 reader 并原地刷新常驻资源；
-//! 3. `GpuAssetResolver::invalidate_assets(&mut world)` 把实体侧的解析结果打回
-//!    「待解析」，下一帧 `prepare_requests` 会重新上传 —— GPU 句柄才是渲染用的那一份。
+//! 1. Poll `.pak` (or get path directly where `.pak` is rebuilt);
+//! 2. `ResourceManager::on_pak_changed(path)` swap reader and refresh resident assets in place;
+//! 3. `GpuAssetResolver::invalidate_assets(&mut world)` push entity-side parse results back to
+//!    "pending parse"; next frame `prepare_requests` re-uploads — GPU handle is the one rendering uses.
 //!
-//! 以前这个文件里有一个只返回 `bool`、没有任何调用点的 `HotReloadWatcher`，注释还写着
-//! 「已接线」；那是假的，已删除（#495）。别再往这里加第二个 watcher。
+//! Previously this file held a `HotReloadWatcher` returning only `bool` with no call sites, comment said
+//! "already wired"; that was false, already deleted (#495). Do not add a second watcher here.
 
 pub use prism_asset::runtime::{HotReloadError, HotReloadEvent, HotReloadWatcher};

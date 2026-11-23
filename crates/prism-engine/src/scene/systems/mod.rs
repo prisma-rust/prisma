@@ -5,7 +5,7 @@
 //!
 //! | Module      | Function | Read/Write | Purpose |
 //! |-------------|----------|------------|---------|
-//! | `hierarchy` | `hierarchy_system` | 写入 | Recompute `LocalToWorld`（`Engine::update` 结束时调用） |
+//! | `hierarchy` | `hierarchy_system` | Write | Recompute `LocalToWorld` (called at end of `Engine::update`) |
 //! | `render`    | `scene_render_system` | Read | Collect `DrawItem`s |
 //! | `lights`    | `collect_*` | Read | Collect light components |
 //! | `camera`    | `collect_camera` | Read | Collect camera component |

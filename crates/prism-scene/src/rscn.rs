@@ -223,12 +223,12 @@ pub fn encode_scene(scene: &SceneJson, registry: &ComponentRegistry) -> Result<V
     scene.validate().map_err(RscnError::BadValue)?;
 
     let order = scene.topological_order();
-    // 原始下标 → 拓扑序位置。预计算一次，避免每个实体都线性扫描 `order`。
+    // Original index → topological order position. Precompute once to avoid scanning `order` linearly for each entity.
     let mut positions = vec![0usize; order.len()];
     for (position, &index) in order.iter().enumerate() {
         positions[index] = position;
     }
-    // `parent` 存的是实体 id，这里解析成数组下标。
+    // `parent` stores entity id; parse into array index here.
     let index_of_id = scene.index_of_id();
     let mut entities = Vec::with_capacity(order.len());
     let mut used_types = BTreeSet::new();

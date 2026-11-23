@@ -1,31 +1,31 @@
-//! 给 agent 看的 UI 节点树（类似浏览器 MCP 的 DOM / 可访问性快照）。
+//! UI node tree for agent (like browser MCP DOM / accessibility snapshot).
 //!
-//! egui 没有 DOM，也没有稳定到可以外部点击的控件句柄，所以这里不猜坐标：节点树
-//! 直接来自**数据模型**（`Workspace` / `UiState`）+ 每帧记录的 dock 面板矩形。
-//! 每个节点有稳定的 `id`，`ui.click` / `ui.set` 按 id 走和界面完全相同的代码路径
-//! （`Command` / `Workspace::select` / `Workspace::set_field`），不注入合成鼠标事件。
+//! egui has no DOM, nor stable externally clickable control handles, so here does not guess coordinates: node tree
+//! directly comes from **data model** (`Workspace` / `UiState`) + dock panel rectangles recorded each frame.
+//! Each node has stable `id`, `ui.click` / `ui.set` go by id through exactly same code path as UI
+//! (`Command` / `Workspace::select` / `Workspace::set_field`), no synthetic mouse events injected.
 //!
-//! 节点 id 约定：
+//! Node id convention:
 //!
-//! | 前缀 | 含义 | 可点击 | 可设值 |
+//! | prefix | meaning | clickable | settable |
 //! |---|---|---|---|
-//! | `command:<Name>` | `Command` 枚举成员（`Command::ALL`） | ✅ | — |
-//! | `panel:<tab>` | dock 里的面板（`sceneView` / `hierarchy` / …） | ✅ | — |
-//! | `doc:<index>` | 打开的文档 | ✅ | — |
-//! | `entity:<id>` | 层级树实体 | ✅ | — |
-//! | `asset:<path>` | 资产面板条目（只选中） | ✅ | — |
-//! | `open:<path>` | 打开 / 激活该资产对应的文档（等同双击） | ✅ | — |
-//! | `field:<entity>:<component>:<path>` | 检查器字段 | — | ✅ |
-//! | `resolution:<WxH>` / `resolution:fit:<WxH>` / `resolution:match` | Game 视图预览分辨率 / 宽高比（#463/#585） | ✅ | — |
-//! | `dialog:<kind>` | 模态对话框（`delete-entities` / `close` / …） | — | — |
-//! | `dialog:<kind>:<button>` | 模态对话框按钮（`delete` / `cancel` / `save` / …） | ✅ | — |
+//! | `command:<Name>` | `Command` enum member (`Command::ALL`) | ✅ | — |
+//! | `panel:<tab>` | panel in dock (`sceneView` / `hierarchy` / …) | ✅ | — |
+//! | `doc:<index>` | opened document | ✅ | — |
+//! | `entity:<id>` | hierarchy tree entity | ✅ | — |
+//! | `asset:<path>` | asset panel entry (select only) | ✅ | — |
+//! | `open:<path>` | open / activate document for that asset (same as double-click) | ✅ | — |
+//! | `field:<entity>:<component>:<path>` | inspector field | — | ✅ |
+//! | `resolution:<WxH>` / `resolution:fit:<WxH>` / `resolution:match` | Game view preview resolution / aspect ratio (#463/#585) | ✅ | — |
+//! | `dialog:<kind>` | modal dialog (`delete-entities` / `close` / …) | — | — |
+//! | `dialog:<kind>:<button>` | modal dialog button (`delete` / `cancel` / `save` / …) | ✅ | — |
 
 use std::collections::BTreeMap;
 
 use prism_editor_core::{Command, Workspace};
 use serde_json::{json, Value};
 
-/// 快照需要的运行时状态（都是 `EditorApp` 的字段，单独传进来便于测试）。
+/// Runtime state needed for snapshot (all `EditorApp` fields, passed separately for testing).
 pub struct SnapshotInput<'a> {
     pub workspace: &'a Workspace,
     pub playing: bool,
@@ -35,59 +35,59 @@ pub struct SnapshotInput<'a> {
     pub fps: f32,
     pub gizmo_tool: Option<&'a str>,
     pub gizmo_space: &'a str,
-    /// `panel_body` 每帧记录的 tab → 屏幕矩形。
+    /// `panel_body` records tab -> screen rectangle each frame.
     pub rects: &'a BTreeMap<String, egui::Rect>,
-    /// leaf id → 当前激活的 tab。
+    /// leaf id -> currently active tab.
     pub leaves: &'a [(String, String, Vec<String>)],
-    /// Console 里当前可见的日志行（已按用户过滤），最多用前 50 条。
+    /// Log lines currently visible in Console (already user-filtered), at most first 50 lines.
     pub logs: &'a [String],
-    /// Scene / Game 视口里的物体（世界 → 视口像素投影已完成）。
+    /// Objects in Scene / Game viewport (world -> viewport pixel projection done).
     pub viewports: &'a [ViewObjects],
-    /// 当前打开的模态对话框（#618）。
+    /// Currently open modal dialog (#618).
     pub dialogs: &'a [Dialog],
 }
 
-/// 视口里的一个物体：世界坐标 + 投影后的视口像素坐标。
+/// One object in viewport: world coordinates + projected viewport pixel coordinates.
 ///
-/// 节点 id 是 `view:<tab>:entity:<id>`（见 [`view_object_node`]），
-/// `ui.click` 接受它，点击落在投影点上——和用户在视口里点同一像素走同一条拾取路径。
+/// Node id is `view:<tab>:entity:<id>` (see [`view_object_node`]),
+/// `ui.click` accepts it, click lands on projected point --- same picking path as user clicking same pixel in viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewObject {
-    /// 节点 id（`view:<tab>:entity:<scene id>` 或 `view:<tab>:ecs:<index>`）。
+    /// Node id (`view:<tab>:entity:<scene id>` or `view:<tab>:ecs:<index>`).
     ///
-    /// 工程代码 spawn 出来的实体没有 `.scene.json` 的稳定 id，用 ECS 索引兜底，
-    /// 两类前缀不会撞在一起。
+    /// Entities spawned by project code have no stable id from `.scene.json`, fall back to ECS index,
+    /// Two prefixes will not collide.
     pub node: String,
-    /// 场景文档里的稳定 id；`None` = 运行时 spawn 的实体。
+    /// Stable id from scene document; `None` = entity spawned at runtime.
     pub entity: Option<u32>,
     pub name: String,
     pub world: [f32; 3],
-    /// 投影后的视口局部像素（左上原点）；`None` = 在相机背后。
+    /// Projected viewport local pixels (top-left origin); `None` = behind camera.
     pub screen: Option<[f32; 2]>,
-    /// 视空间深度（越大越远）；`None` 与 `screen` 一起为 `None`。
+    /// View-space depth (larger = further); `None` together with `screen`.
     pub depth: Option<f32>,
-    /// 是否参与渲染（Scene：`Active`；Game：`ActiveInHierarchy`）。
+    /// Whether participates in rendering (Scene: `Active`; Game: `ActiveInHierarchy`).
     pub visible: bool,
 }
 
-/// 一个视口的物体列表。
+/// Object list of one viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewObjects {
-    /// 面板 tab 名：`sceneView` / `gameView`。
+    /// Panel tab name: `sceneView` / `gameView`.
     pub tab: &'static str,
     pub objects: Vec<ViewObject>,
 }
 
-/// 控制通道能看到的一个模态对话框（#618）。
+/// One modal dialog visible to control channel (#618).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dialog {
-    /// 稳定 id，例如 `delete-entities` / `close` / `save-conflict`。
+    /// Stable id, e.g. `delete-entities` / `close` / `save-conflict`.
     pub id: String,
     pub title: String,
     pub message: String,
-    /// 按钮：`(action, label)`；节点 id 是 `dialog:<id>:<action>`。
+    /// Button: `(action, label)`; node id is `dialog:<id>:<action>`.
     pub buttons: Vec<(String, String)>,
-    /// 输入框类对话框的当前值（其他对话框为 `None`）。
+    /// Current value for input-box dialogs (`None` for other dialogs).
     pub value: Option<String>,
 }
 
@@ -125,7 +125,7 @@ impl Dialog {
     }
 }
 
-/// `dialog:<id>:<action>` → `(id, action)`；`dialog:<id>` 返回 `None`。
+/// `dialog:<id>:<action>` -> `(id, action)`; `dialog:<id>` returns `None`.
 pub fn parse_dialog_node(node: &str) -> Option<(&str, Option<&str>)> {
     let rest = node.strip_prefix("dialog:")?;
     match rest.split_once(':') {
@@ -168,19 +168,19 @@ fn dialogs_json(dialogs: &[Dialog]) -> Value {
     )
 }
 
-/// 视口物体的节点 id（场景实体）。
+/// Node id of viewport object (scene entity).
 pub fn view_object_node(tab: &str, entity: u32) -> String {
     format!("view:{tab}:entity:{entity}")
 }
 
-/// 视口物体的节点 id（运行时 spawn 的实体，按 ECS 索引）。
+/// Node id of viewport object (runtime-spawned entity, by ECS index).
 pub fn view_object_node_ecs(tab: &str, index: u32) -> String {
     format!("view:{tab}:ecs:{index}")
 }
 
-/// `view:<tab>:entity:<id>` / `view:<tab>:ecs:<index>` → `tab`。
+/// `view:<tab>:entity:<id>` / `view:<tab>:ecs:<index>` -> `tab`.
 ///
-/// 只接受这两种 kind，避免把任意 `view:*` 节点当成物体。
+/// Only accepts these two kinds, avoid treating arbitrary `view:*` nodes as objects.
 pub fn parse_view_object_node(node: &str) -> Option<&str> {
     let rest = node.strip_prefix("view:")?;
     let mut parts = rest.split(':');
@@ -197,7 +197,7 @@ pub fn parse_view_object_node(node: &str) -> Option<&str> {
     Some(tab)
 }
 
-/// 把一个视口的物体转成快照里的 `objects` 数组。
+/// Convert one viewport object into snapshot `objects` array.
 fn view_objects_json(_tab: &str, objects: &[ViewObject]) -> Value {
     Value::Array(
         objects
@@ -224,7 +224,7 @@ fn view_objects_json(_tab: &str, objects: &[ViewObject]) -> Value {
     )
 }
 
-/// 整个编辑器界面的节点树。
+/// Node tree of whole editor UI.
 pub fn snapshot(input: &SnapshotInput<'_>) -> Value {
     let workspace = input.workspace;
     let mut root = json!({
@@ -304,7 +304,7 @@ pub fn snapshot(input: &SnapshotInput<'_>) -> Value {
     root
 }
 
-/// 面板内容节点（只有激活的 tab 展开）。
+/// Panel content nodes (only active tab expanded).
 fn panel_children(input: &SnapshotInput<'_>, tab: &str) -> Value {
     let workspace = input.workspace;
     match tab {
@@ -339,7 +339,7 @@ fn panel_children(input: &SnapshotInput<'_>, tab: &str) -> Value {
     }
 }
 
-/// 层级树（按文档顺序，带 `depth`）。
+/// Hierarchy tree (in document order, with `depth`).
 fn hierarchy_nodes(workspace: &Workspace) -> Vec<Value> {
     let doc = &workspace.document().doc;
     let mut out = Vec::new();
@@ -357,7 +357,7 @@ fn hierarchy_nodes(workspace: &Workspace) -> Vec<Value> {
     out
 }
 
-/// 选中实体的组件字段（可 `ui.set` 的路径）。
+/// Component fields of selected entity (paths settable via `ui.set`).
 fn inspector_components(workspace: &Workspace) -> Vec<Value> {
     let doc = &workspace.document().doc;
     let mut out = Vec::new();
@@ -404,11 +404,11 @@ fn component_node(entity_id: u32, name: &str, value: &Value) -> Value {
     })
 }
 
-/// 把嵌套对象摊平成字段路径。
+/// Flatten nested object into field paths.
 ///
-/// 对象用点号（`position.x`），数组**同时**给出整体值和下标
-/// （`position` 是 `[x,y,z]`，另有 `position[0]` …），这样 agent 既能整组替换
-/// 也能改单个分量（`prism_editor_core::schema::parse_path` 认 `a.b[2]`）。
+/// Object uses dot notation (`position.x`), array **simultaneously** gives whole value and index
+/// (`position` is `[x,y,z]`, also `position[0]` …), so agent can both replace whole group
+/// or change single component (`prism_editor_core::schema::parse_path` recognizes `a.b[2]`).
 fn flatten(value: &Value, prefix: &str, push: &mut impl FnMut(String, Value)) {
     match value {
         Value::Object(map) => {
@@ -457,7 +457,7 @@ fn file_name(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
-/// `panel:<tab>` → 界面上的标题。
+/// `panel:<tab>` -> UI title.
 pub fn panel_title(tab: &str) -> &'static str {
     match tab {
         "sceneView" => "Scene",
@@ -482,12 +482,12 @@ pub fn panel_title(tab: &str) -> &'static str {
     }
 }
 
-/// `Command` 的稳定名字（和 `Debug` 一致，agent 用这个名字点击）。
+/// Stable name of `Command` (consistent with `Debug`, agent clicks by this name).
 pub fn command_name(command: Command) -> String {
     format!("{command:?}")
 }
 
-/// 名字 → `Command`（`ui.click` 的 `command:<Name>`）。
+/// Name -> `Command` (`command:<Name>` of `ui.click`).
 pub fn command_by_name(name: &str) -> Option<Command> {
     Command::ALL
         .iter()
@@ -495,7 +495,7 @@ pub fn command_by_name(name: &str) -> Option<Command> {
         .find(|command| command_name(*command) == name)
 }
 
-/// 暴露给 `ui.set` 的错误提示：列出组件里可写的字段路径。
+/// Error hint exposed to `ui.set`: lists writable field paths in component.
 pub fn flatten_paths(value: &Value, prefix: &str, push: &mut impl FnMut(&str, &Value)) {
     flatten(value, prefix, &mut |path, value| push(&path, &value));
 }

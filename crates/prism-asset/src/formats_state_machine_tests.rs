@@ -1,9 +1,9 @@
 use super::*;
 
-/// `(from, to, min_state_fraction, duration, condition_count, 条件字节)`。
+/// `(from, to, min_state_fraction, duration, condition_count, condition bytes)`.
 type RawTransition = (u32, u32, f32, f32, u32, Vec<u8>);
 
-/// 手工拼一份 RASM（解码端测试专用：编码器在 `prism-cooker`，两 crate 不能互相依赖）。
+/// Hand-assemble a RASM (decode-side test only: encoder in `prism-cooker`, two crates cannot depend on each other).
 fn build(states: &[(&str, &str, f32, bool)], transitions: &[RawTransition]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(RASM_MAGIC);
@@ -73,7 +73,7 @@ fn a_well_formed_machine_decodes_with_names_and_indices() {
             threshold: 1.5,
         }]
     );
-    // u32::MAX = 任意状态。
+    // u32::MAX = any state.
     assert_eq!(machine.transitions[1].from, None);
     assert_eq!(
         machine.transitions[1].conditions,
@@ -126,7 +126,7 @@ fn every_condition_kind_round_trips_its_payload() {
 fn broken_files_are_rejected_instead_of_panicking() {
     let good = build(&[("A", "a.ranim", 1.0, true)], &[]);
 
-    // 太短 / 错 magic / 错版本。
+    // Too short / wrong magic / wrong version.
     assert!(decode_rasm(&[]).is_none());
     assert!(decode_rasm(&good[..12]).is_none());
     let mut wrong_magic = good.clone();
@@ -136,7 +136,7 @@ fn broken_files_are_rejected_instead_of_panicking() {
     wrong_version[4] = 99;
     assert!(decode_rasm(&wrong_version).is_none());
 
-    // 状态名字被截断、尾部多字节、状态数超大。
+    // State name truncated, trailing extra bytes, too many states.
     let mut truncated = good.clone();
     truncated.truncate(good.len() - 1);
     assert!(decode_rasm(&truncated).is_none());
@@ -147,7 +147,7 @@ fn broken_files_are_rejected_instead_of_panicking() {
     huge[5..9].copy_from_slice(&(MAX_STATES as u32 + 1).to_le_bytes());
     assert!(decode_rasm(&huge).is_none());
 
-    // 未知条件种类 / 未知状态标志。
+    // Unknown condition kind / unknown state flag.
     let mut unknown_condition = vec![CONDITION_TRIGGER + 9];
     unknown_condition.extend_from_slice(&1u16.to_le_bytes());
     unknown_condition.extend_from_slice(b"x");

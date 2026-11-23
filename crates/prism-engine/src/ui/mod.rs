@@ -1,18 +1,18 @@
-//! UI 系统 —— 基于 ECS 的声明式 UI
+//! UI system — declarative ECS-based UI
 //!
-//! # 架构
+//! # Architecture
 //!
 //! ```text
-//! UI 实体 = Node + Style + (Text | Interaction)
+//! UI entity  = Node + Style + (Text | Interaction)
 //!
-//! `ComputedLayout` 由 Layout System 按需插入并每帧重写，作者不写它。
+//! `ComputedLayout` inserted on demand by Layout System and rewritten each frame, author does not write it.
 //!
-//! [Layout System]    读取 Style → 写入 ComputedLayout
-//! [Render System]    读取 ComputedLayout + Text → 生成 UiDrawList
+//! [Layout System]    read  Style → write  ComputedLayout
+//! [Render System]    read  ComputedLayout + Text → generate  UiDrawList
 //! ```
 //!
-//! 每个 UI 元素是一个 ECS Entity，通过组件组合定义外观和行为。
-//! Panel 基类封装了常用的 UI Entity 创建逻辑。
+//! Each UI element is an ECS Entity, appearance and behavior defined by component composition.
+//! Panel base class wraps common UI Entity creation logic.
 //!
 //! # Integration
 //!
@@ -70,16 +70,16 @@ pub struct UploadedUiImages {
     pub slots: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
 }
 
-/// 实体及其祖先链是否全部处于激活状态。
+/// Whether entity and its ancestor chain are all in active state.
 ///
-/// `Active` 缺失视为激活 —— 只有显式关闭的实体才带 `Active(false)`。
-/// 父级关闭会连带隐藏整个子树，所以这里沿 `Parent` 往上查。
+/// Missing `Active` treated as active — only explicitly disabled entities carry `Active(false)`.
+/// Parent disable hides entire child tree, so this walks up along `Parent`.
 ///
-/// 渲染（`ui_render_system`）与命中测试（`ui_input_system`）都必须用它，
-/// 否则「隐藏」只对层级面板的眼睛图标生效，画面和点击都不受影响。
+/// Both render (`ui_render_system`) and hit test (`ui_input_system`) must use it,
+/// otherwise "hidden" only affects editor panel visibility icons, rendering and clicks unaffected.
 pub(crate) fn is_ui_active(world: &prism_ecs::World, entity: prism_ecs::Entity) -> bool {
     let mut current = entity;
-    // 脏数据成环时最多上溯 64 层（与 `ui::input` 的深度上限一致）。
+    // Max 64 levels up on cyclic dirty data (consistent with depth limit in `ui::input`).
     for _ in 0..64 {
         if matches!(
             world.get::<prism_scene::components::Active>(current),
@@ -87,8 +87,8 @@ pub(crate) fn is_ui_active(world: &prism_ecs::World, entity: prism_ecs::Entity) 
         ) {
             return false;
         }
-        // Scene 视图的会话级隐藏（#417）同样要挡住 UI 绘制与命中；运行时没有
-        // 这个组件，所以游戏进程不受编辑器可见性影响。
+        // Scene view speech-level hide (#417) also must block UI draw and hit test; at runtime
+        // This component absent, so game process unaffected by editor visibility.
         if world
             .get::<crate::scene::runtime_components::Hidden>(current)
             .is_some_and(|hidden| hidden.0)
@@ -103,14 +103,14 @@ pub(crate) fn is_ui_active(world: &prism_ecs::World, entity: prism_ecs::Entity) 
     true
 }
 
-/// UI 面板接口（将逐步被 ECS 组件方案取代）。
+/// UI panel interface (to be gradually replaced by ECS component approach).
 pub trait Panel {
-    /// 每帧更新。返回 `false` 表示面板请求关闭。
+    /// Update each frame. Return `false` means panel requests disable.
     fn on_update(&mut self, _dt: f32) -> bool {
         true
     }
-    /// 处理输入事件。
+    /// Handle input events.
     fn on_event(&mut self, _event: &()) {}
-    /// 面板关闭时的清理回调。
+    /// Cleanup callback when panel disabled.
     fn on_close(&mut self) {}
 }

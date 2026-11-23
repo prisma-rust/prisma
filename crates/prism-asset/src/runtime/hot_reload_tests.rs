@@ -19,7 +19,7 @@ fn polling_detects_modification() {
     let pak = builder.build().unwrap();
     fs::write(&pak_path, &pak).unwrap();
 
-    // Ensure a clock-tick boundary so the subsequent 写入 has a 不同
+    // Ensure a clock-tick boundary so the subsequent write has a different
     // mtime even on filesystems with 1-second granularity (Android/Termux
     // FUSE, etc.).
     sleep(Duration::from_secs(1));
@@ -52,7 +52,7 @@ fn polling_detects_modification() {
 
 #[test]
 fn a_size_change_counts_even_without_a_newer_mtime() {
-    // #495 ⑤：同一秒内重建、mtime 没前进时，长度变化仍然要算「变了」。
+    // #495 ⑤: Rebuild within same second, mtime unchanged, length change still counts as "changed".
     let now = std::time::SystemTime::now();
     let base = Stamp {
         modified: now,
@@ -73,7 +73,7 @@ fn a_size_change_counts_even_without_a_newer_mtime() {
             len: 10
         }
     ));
-    // 100ms 内的抖动 + 长度不变 = 视为没变（避免把一次写入拆成多次事件）。
+    // Jitter within 100ms + unchanged length = treated as unchanged (avoid splitting one write into multiple events).
     assert!(!stamp_changed(
         base,
         Stamp {
@@ -83,8 +83,8 @@ fn a_size_change_counts_even_without_a_newer_mtime() {
     ));
 }
 
-/// 端到端（数据层）：重建 `.pak` → watcher 事件 → `on_pak_changed` →
-/// 已加载资源读到新字节。`#495` 的 ④ 从此有自动化回归，不再只靠人工重进 Play。
+/// End-to-end (data layer): rebuild `.pak` → watcher event → `on_pak_changed` →
+/// Loaded resource reads new bytes. `#495` item ④ now has automated regression, no longer relies solely on manual replay.
 #[test]
 fn a_rebuilt_package_refreshes_loaded_assets() {
     use std::fs;
@@ -108,7 +108,7 @@ fn a_rebuilt_package_refreshes_loaded_assets() {
 
     let watcher = HotReloadWatcher::watch_file(&pak_path, Duration::from_millis(50)).unwrap();
 
-    // 跨过一个时间戳刻度，保证 mtime 真的前进（与既有用例一致）。
+    // Cross a timestamp boundary, ensure mtime truly advances (consistent with existing tests).
     sleep(Duration::from_secs(1));
     write_pak(b"v2-after-rebuild");
 

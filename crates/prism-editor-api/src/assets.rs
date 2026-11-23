@@ -1,7 +1,7 @@
-//! 资产目录浏览与引用分析：给编辑器的「路径字段」与「资产管理器」提供数据。
+//! Asset directory browsing and reference analysis: provides data for the editor's "path fields" and "asset manager".
 //!
-//! 只做文件名/大小枚举与 `.scene.json` 里的字符串扫描，不解析 `.pak`，
-//! 因此不需要链接运行时资产层。
+//! Only does filename / size enumeration and string scanning in `.scene.json`, does not parse `.pak`,
+//! so no need to link the runtime asset layer.
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -12,30 +12,30 @@ use serde::Serialize;
 use crate::asset_ops::normalize_asset_path;
 use prism_scene::references::{guid_field, ASSET_PATH_FIELDS};
 
-/// 单次返回的最大条目数（避免超大资源目录拖垮 UI）。
+/// Max entries returned per call (avoid huge asset directories dragging down UI).
 pub const MAX_ASSETS: usize = 4000;
 
-/// 编辑器内联预览的字节上限（图片等二进制）。
+/// Byte cap for editor inline preview (images and other binaries).
 pub const MAX_PREVIEW_BYTES: u64 = 16 * 1024 * 1024;
 
-/// 文本预览的字节上限。
+/// Byte cap for text preview.
 pub const MAX_TEXT_PREVIEW_BYTES: u64 = 512 * 1024;
 
-/// 枚举时跳过的子目录：构建产物 / 超大中间数据。
+/// Subdirectories skipped during enumeration: build outputs / huge intermediate data.
 const SKIP_DIRS: [&str; 3] = ["cooked", "heightmaps", "target"];
 
-/// 项目根下的 `assets/` 目录。
+/// `assets/` directory under project root.
 pub fn assets_dir(project_root: &Path) -> PathBuf {
     project_root.join("assets")
 }
 
-/// 递归列出 `assets/` 下的文件，返回**相对项目根**的路径（`/` 分隔，已排序）。
+/// Recursively list files under `assets/`, return paths **relative to project root** (`/` separated, already sorted).
 ///
-/// 目录遍历有深度与数量上限；隐藏目录、[`SKIP_DIRS`] 会被跳过。
+/// Directory traversal has depth and count limits; hidden dirs and [`SKIP_DIRS`] are skipped.
 pub fn list_assets(project_root: &Path) -> Result<Vec<String>, String> {
     let root = assets_dir(project_root);
     if !root.is_dir() {
-        return Err(format!("找不到资产目录 {}", root.display()));
+        return Err(format!("Asset directory not found {}", root.display()));
     }
 
     let mut out = Vec::new();
@@ -45,13 +45,13 @@ pub fn list_assets(project_root: &Path) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// 递归列出 `assets/` 下的目录（包含空目录），相对项目根、`/` 分隔。
+/// Recursively list directories under `assets/` (including empty ones), relative to project root, `/` separated.
 ///
-/// 资产管理器用它渲染目录树：仅靠文件路径无法表示刚创建的空文件夹。
+/// Asset manager uses this to render directory tree: file paths alone cannot represent a newly created empty folder.
 pub fn list_asset_dirs(project_root: &Path) -> Result<Vec<String>, String> {
     let root = assets_dir(project_root);
     if !root.is_dir() {
-        return Err(format!("找不到资产目录 {}", root.display()));
+        return Err(format!("Asset directory not found {}", root.display()));
     }
 
     let mut out = Vec::new();
@@ -96,7 +96,7 @@ fn walk_files(dir: &Path, project_root: &Path, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    // 稳定顺序：按文件名排序后再递归。
+    // Stable order: sort by filename then recurse.
     let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
     paths.sort();
 
@@ -123,24 +123,24 @@ fn walk_files(dir: &Path, project_root: &Path, out: &mut Vec<String>) {
 }
 
 // ---------------------------------------------------------------------------
-// 资产元信息
+// Asset metadata
 // ---------------------------------------------------------------------------
 
-/// 一个资产的元信息（编辑器「资产管理器」用）。
+/// Metadata of one asset (for editor "asset manager").
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetInfo {
-    /// 相对项目根的路径（`/` 分隔）。
+    /// Path relative to project root (`/` separated).
     pub path: String,
-    /// 文件大小（字节；读取失败为 0）。
+    /// File size (bytes; 0 on read failure).
     pub size_bytes: u64,
-    /// 粗分类：`model` / `texture` / `env` / `scene` / `package` / `data` / `other`。
+    /// Coarse class: `model` / `texture` / `env` / `scene` / `package` / `data` / `other`.
     pub kind: &'static str,
-    /// 负责导入该文件的导入器类名（`ImageImporter` / `ModelImporter` …）。
+    /// Name of importer class responsible for importing the file (`ImageImporter` / `ModelImporter` ...).
     pub importer: &'static str,
 }
 
-/// 按扩展名给资产粗分类。
+/// Coarse-classify asset by extension.
 pub fn asset_kind(path: &str) -> &'static str {
     let lower = path.to_ascii_lowercase();
     if lower.ends_with(".scene.json") {
@@ -159,13 +159,13 @@ pub fn asset_kind(path: &str) -> &'static str {
     }
 }
 
-/// 枚举资产并附带大小与分类。
+/// Enumerate assets with size and class attached.
 pub fn list_assets_info(project_root: &Path) -> Result<Vec<AssetInfo>, String> {
     let paths = list_assets(project_root)?;
     Ok(paths
         .into_iter()
         .map(|path| {
-            // `path` 相对项目根（不是相对 assets/）。
+            // `path` relative to project root (not relative to `assets/`).
             let size_bytes = std::fs::metadata(project_root.join(&path))
                 .map(|meta| meta.len())
                 .unwrap_or(0);
@@ -180,20 +180,20 @@ pub fn list_assets_info(project_root: &Path) -> Result<Vec<AssetInfo>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 资产预览
+// Asset preview
 // ---------------------------------------------------------------------------
 
-/// 文本资产的预览内容。
+/// Preview content of a text asset.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetTextPreview {
-    /// 相对项目根的路径（`/` 分隔）。
+    /// Path relative to project root (`/` separated).
     pub path: String,
-    /// 文件内容（最多 `max_bytes` 字节，按 UTF-8 字符边界截断）。
+    /// File content (at most `max_bytes` bytes, truncated at UTF-8 char boundary).
     pub text: String,
-    /// 是否因为超过上限而截断。
+    /// Whether truncated due to limit.
     pub truncated: bool,
-    /// 文件总大小（字节）。
+    /// Total file size (bytes).
     pub size_bytes: u64,
 }
 
@@ -201,31 +201,31 @@ fn resolve_asset_file(project_root: &Path, raw: &str) -> Result<PathBuf, String>
     let normalized = normalize_asset_path(raw)?;
     let path = project_root.join(&normalized);
     if !path.is_file() {
-        return Err(format!("资产不存在或不是文件：{normalized}"));
+        return Err(format!("Asset missing or not a file: {normalized}"));
     }
     Ok(path)
 }
 
-/// 读取资产的前 `max_bytes` 字节（图片预览用）。
+/// Read first `max_bytes` bytes of asset (for image preview).
 ///
-/// 只允许 `assets/` 下的路径，且拒绝超过上限的文件——避免一次 IPC
-/// 把几十 MB 的 HDR/模型塞进 WebView。
+/// Only allow paths under `assets/`, and reject oversized files — avoid
+/// pushing tens of MB of HDR / model into WebView in one IPC call.
 pub fn read_asset_bytes(project_root: &Path, raw: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
     let path = resolve_asset_file(project_root, raw)?;
     let size = std::fs::metadata(&path)
         .map(|meta| meta.len())
-        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+        .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
     if size > max_bytes {
         return Err(format!(
-            "文件过大：{:.1} MB（预览上限 {:.1} MB）",
+            "File too large: {:.1} MB (preview limit {:.1} MB)",
             size as f64 / (1024.0 * 1024.0),
             max_bytes as f64 / (1024.0 * 1024.0)
         ));
     }
-    std::fs::read(&path).map_err(|e| format!("无法读取 {}: {e}", path.display()))
+    std::fs::read(&path).map_err(|e| format!("Cannot read {}: {e}", path.display()))
 }
 
-/// 读取文本资产（按 UTF-8 解码，超限时截断）。
+/// Read text asset (decode as UTF-8, truncate when over limit).
 pub fn read_asset_text(
     project_root: &Path,
     raw: &str,
@@ -234,27 +234,27 @@ pub fn read_asset_text(
     let path = resolve_asset_file(project_root, raw)?;
     let size = std::fs::metadata(&path)
         .map(|meta| meta.len())
-        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+        .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
 
-    // 多读 1 字节用于判断是否截断。
+    // Read one extra byte to determine whether truncated.
     let mut file =
-        std::fs::File::open(&path).map_err(|e| format!("无法打开 {}: {e}", path.display()))?;
+        std::fs::File::open(&path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     file.by_ref()
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("无法读取 {}: {e}", path.display()))?;
+        .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
 
     let truncated = bytes.len() as u64 > max_bytes;
     if truncated {
         bytes.truncate(max_bytes as usize);
     }
     if bytes.contains(&0) {
-        return Err("该文件是二进制内容，无法作为文本预览".into());
+        return Err("File is binary content, cannot preview as text".into());
     }
 
-    // 截断可能落在多字节字符中间；只回退到最近的字符边界，
-    // 文件其余部分不是 UTF-8 时仍然报错，而不是静默吞掉内容。
+    // Truncation may land mid multi-byte char; only roll back to nearest char boundary;
+    // if the rest of file is not UTF-8 still report error, do not silently swallow content.
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(err) => {
@@ -262,9 +262,9 @@ pub fn read_asset_text(
             let bytes = err.into_bytes();
             if truncated && bytes.len() - valid <= 3 {
                 String::from_utf8(bytes[..valid].to_vec())
-                    .map_err(|_| "该文件不是 UTF-8 文本，无法预览".to_string())?
+                    .map_err(|_| "File is not UTF-8 text, cannot preview".to_string())?
             } else {
-                return Err("该文件不是 UTF-8 文本，无法预览".into());
+                return Err("File is not UTF-8 text, cannot preview".into());
             }
         }
     };
@@ -278,42 +278,42 @@ pub fn read_asset_text(
 }
 
 // ---------------------------------------------------------------------------
-// 引用分析
+// Reference analysis
 // ---------------------------------------------------------------------------
 
-/// 一条「某场景的某组件字段引用了该资产」的记录。
+/// One record of "a component field of some scene references this asset".
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetRef {
-    /// 引用来源：`"field"` = 文档里的组件字段；`"manifest"` = `assets/scenes.json` 条目。
+    /// Reference source: `"field"` = component field in document; `"manifest"` = `assets/scenes.json` entry.
     pub kind: String,
-    /// 场景逻辑名（清单条目固定为 `scenes.json`）。
+    /// Scene logical name (manifest entry fixed to `scenes.json`).
     pub scene: String,
-    /// 场景文件绝对路径。
+    /// Absolute path of scene file.
     pub scene_path: String,
-    /// 实体名（无名时为 `#<index>`；清单条目为条目名）。
+    /// Entity name (`#<index>` when unnamed; manifest entry uses entry name).
     pub entity: String,
     pub entity_index: usize,
-    /// 组件规范名（清单条目为 `assets/scenes.json`）。
+    /// Canonical component name (manifest entry uses `assets/scenes.json`).
     pub component: String,
-    /// 组件内字段路径（点号连接，数组下标用 `[i]`；清单条目为 `path`）。
+    /// Field path inside component (dot-connected, array index `[i]`; manifest entry uses `path`).
     pub field: String,
-    /// 实际写在该字段里的值（可能是相对路径）。
+    /// Actual value written in that field (may be relative path).
     pub value: String,
 }
 
-/// 扫描所有 `.scene.json` / `.prefab.json`，找出引用 `target` 的字段，
-/// 再补上 `assets/scenes.json` 里指向该资产的构建清单条目。
+/// Scan all `.scene.json` / `.prefab.json`, find fields referencing `target`,
+/// then add build manifest entries in `assets/scenes.json` pointing to that asset.
 ///
-/// `target` 是**相对项目根**的路径。字段里的引用会按两种基准解析后比较：
-/// 1. 相对场景文件所在目录（引擎约定，如 `default.scene.json` 里的 `../valley.hdr`）；
-/// 2. 相对项目根（作者偶尔写成 `assets/valley.hdr`）。
+/// `target` is path **relative to project root**. References in fields are resolved against two bases:
+/// 1. relative to scene file's directory (engine convention, e.g. `../valley.hdr` in `default.scene.json`);
+/// 2. relative to project root (authors sometimes write `assets/valley.hdr`).
 ///
-/// 两者都归一到绝对路径再判等，因此不会因为文件名相同而误报。
+/// Both normalized to absolute path then compared, so no false positives from same filename.
 pub fn asset_usage(project_root: &Path, target: &str) -> Result<Vec<AssetRef>, String> {
     let target_abs = resolve(project_root, target);
     if target_abs.is_empty() {
-        return Err("目标资产路径为空".into());
+        return Err("Target asset path is empty".into());
     }
     let target_guids = normalize_asset_path(target)
         .ok()
@@ -324,7 +324,7 @@ pub fn asset_usage(project_root: &Path, target: &str) -> Result<Vec<AssetRef>, S
         .unwrap_or_default();
     let mut refs = Vec::new();
 
-    // 场景与预制体共用同一套文档形状，都要扫；预制体在 `assets/` 下是递归枚举的。
+    // Scenes and prefabs share the same document shape, both need scanning; prefabs under `assets/` are enumerated recursively.
     let mut documents = crate::scene::list_scenes(project_root)?;
     documents.extend(crate::scene::list_docs(
         project_root,
@@ -402,10 +402,10 @@ pub fn asset_usage(project_root: &Path, target: &str) -> Result<Vec<AssetRef>, S
     Ok(refs)
 }
 
-/// `assets/scenes.json` 里指向该资产的条目。
+/// Entries in `assets/scenes.json` pointing to that asset.
 ///
-/// 清单路径可以是 `.rscn`（cook 产物）或 `.scene.json`（作者文档），两者按同一个
-/// stem 比较——和 `build-scenes` 的约定一致；所以删除/重命名任一形式都能被看到。
+/// Manifest path can be `.rscn` (cooked artifact) or `.scene.json` (authored document), both compared by same
+/// stem — consistent with `build-scenes` convention; so deleting / renaming either form is detected.
 fn manifest_usage(project_root: &Path, target_abs: &str) -> Result<Vec<AssetRef>, String> {
     let Some(path) = crate::scene_manifest::existing_manifest(project_root) else {
         return Ok(Vec::new());
@@ -445,7 +445,7 @@ fn manifest_usage(project_root: &Path, target_abs: &str) -> Result<Vec<AssetRef>
     Ok(refs)
 }
 
-/// 用 `base` 解析 `value`，并折叠 `.` / `..`，返回 `/` 分隔的归一化路径。
+/// Resolve `value` with `base`, fold `.` / `..`, return `/`-separated normalized path.
 fn resolve(base: &Path, value: &str) -> String {
     use std::path::Component;
 
@@ -472,7 +472,7 @@ fn resolve(base: &Path, value: &str) -> String {
     stack.join("/")
 }
 
-/// 递归收集 JSON 里的字符串，字段路径形如 `a.b[0].c`。
+/// Recursively collect strings in JSON, field path shaped like `a.b[0].c`.
 /// GUID-backed path slots that point at `target_guids` (the stored path may be
 /// stale after a zero-rewrite rename).
 fn collect_guid_refs(
@@ -680,9 +680,9 @@ mod tests {
         assert_eq!(refs.len(), 3, "got {refs:#?}");
 
         let fields: Vec<&str> = refs.iter().map(|r| r.field.as_str()).collect();
-        assert!(fields.contains(&"hdr_path")); // 场景目录相对：../valley.hdr
+        assert!(fields.contains(&"hdr_path")); // Scene-dir relative: ../valley.hdr
         assert!(fields.contains(&"env_map"));
-        assert!(fields.contains(&"mesh_path")); // 项目根相对：assets/valley.hdr
+        assert!(fields.contains(&"mesh_path")); // Project-root relative: assets/valley.hdr
 
         let sky = refs.iter().find(|r| r.field == "hdr_path").unwrap();
         assert_eq!(sky.entity, "Sky");
@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(sky.component, "prism_engine::scene::Skybox");
         assert_eq!(sky.scene, "demo");
 
-        // 无关字符串不产生引用。
+        // Unrelated strings do not produce references.
         assert!(asset_usage(&root, "not_an_asset").unwrap().is_empty());
 
         std::fs::remove_dir_all(&root).ok();
@@ -744,7 +744,7 @@ mod tests {
         )
         .unwrap();
 
-        // `.rscn` 与它的作者文档 `.scene.json` 视为同一个场景。
+        // `.rscn` and its authored document `.scene.json` treated as same scene.
         for target in ["assets/scenes/intro.rscn", "assets/scenes/intro.scene.json"] {
             let refs = asset_usage(&root, target).unwrap();
             assert_eq!(refs.len(), 1, "{target}: {refs:#?}");
@@ -755,7 +755,7 @@ mod tests {
             assert!(refs[0].scene_path.ends_with("scenes.json"));
         }
 
-        // 未登记的资产不产生清单引用。
+        // Unregistered asset does not produce manifest reference.
         assert!(asset_usage(&root, "assets/scenes/other.rscn")
             .unwrap()
             .is_empty());
@@ -789,7 +789,7 @@ mod tests {
         assert!(!full.truncated);
         assert_eq!(full.size_bytes, "你好，世界".len() as u64);
 
-        // 截断到 7 字节会落在“世”的中间，应回退到 6 字节（两个汉字）。
+        // Truncating to 7 bytes lands inside a multi-byte char; should fall back to 6 bytes (two CJK chars).
         let cut = read_asset_text(&root, "assets/data/a.txt", 7).unwrap();
         assert_eq!(cut.text, "你好");
         assert!(cut.truncated);

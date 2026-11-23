@@ -1,8 +1,8 @@
-//! Prisma 引擎库：渲染系统、ECS 组件、资源解析、
-//! 场景管理和编辑器集成。
+//! Prisma engine library: render system, ECS component, resource parse,
+//! scene management and editor integration.
 //!
-//! 这是一个**纯逻辑 crate**——不依赖任何窗口系统。
-//! 事件循环、窗口创建和平台相关的输入分发位于 `src/app.rs`（二进制 crate）中。
+//! This is a **pure logic crate** — not depend on any window system.
+//! Event loop, window creation and platform-related input dispatch bits in `src/app.rs` (binary crate).
 
 #![deny(warnings)]
 

@@ -141,7 +141,7 @@ fn decode_rtex_maps_astc_and_etc2_formats() {
 
 #[test]
 fn decode_rtex_accepts_bc1_and_bc3_block_data() {
-    // 块压缩贴图能直接上传（#519）：BC1 是 8 字节 / 块，BC3 是 16 字节 / 块。
+    // Block compressed texture can upload directly (#519): BC1 is 8 bytes / block, BC3 is 16 bytes / block.
     let bc1 = rtex_blob(4, 4, RTEX_FORMAT_BC1, &[vec![0u8; 8]]);
     let decoded = decode_rtex(&bc1).expect("BC1 payload decodes");
     assert_eq!(decoded.width, 4);
@@ -214,7 +214,7 @@ fn decode_rmes_accepts_v2_and_ignores_the_submesh_table() {
     let positions = [[0.0, 0.0, 0.0]];
     let mut blob = rmes_blob(&positions, None, &[], &[0u32]);
     blob[4] = 2;
-    // v2 表：一个 submesh，覆盖全部索引。
+    // v2 table: one submesh, covers all indices.
     blob.extend_from_slice(&1u32.to_le_bytes());
     blob.extend_from_slice(&0u32.to_le_bytes());
     blob.extend_from_slice(&1u32.to_le_bytes());

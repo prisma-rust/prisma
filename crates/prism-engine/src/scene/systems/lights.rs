@@ -1,16 +1,16 @@
-//! 光源收集器——查询 ECS 世界中激活的光源组件。
+//! Light source collector — queries active light source components in the ECS world.
 //!
-//! 两条路径并存：
+//! Two paths coexist:
 //!
-//! 1. **统一形状**（`Light`）：[`Light`] 用 [`crate::scene::components::LightType`]
-//!    区分方向光 / 点光 / 聚光，方向与位置来自实体变换（`transform.forward` /
-//!    `LocalToWorld`）。
-//! 2. **旧组件**：[`DirectionalLight`] / [`PointLight`] / [`SpotLight`]，老场景还在用。
+//! 1. **Unified shape** (`Light`): [`Light`] uses [`crate::scene::components::LightType`]
+//!    to distinguish directional / point / spot; direction and position from entity transform (`transform.forward` /
+//!    `LocalToWorld`).
+//! 2. **Legacy components**: [`DirectionalLight`] / [`PointLight`] / [`SpotLight`], still used in old scenes.
 //!
-//! [`collect_light_samples`] 把两者归一成 [`LightSample`]，同一实体上同时存在 `Light`
-//! 与旧组件时**只取 `Light`**（避免一个实体点亮两次）。
+//! [`collect_light_samples`] normalizes both to [`LightSample`]; when same entity has both `Light`
+//! and legacy components, **only `Light`** is taken (avoid double lighting one entity).
 //!
-//! 这些函数每帧由 `render_system::collect_scene_changes` 调用。
+//! These functions called each frame by `render_system::collect_scene_changes`.
 
 use glam::{Quat, Vec3};
 use prism_ecs::World;
@@ -19,58 +19,58 @@ use crate::euler_xyz_deg_to_dir;
 use crate::scene::components::*;
 use prism_scene::{LightShadows, LightType};
 
-/// 归一化后的光源类型（已剔除渲染器不支持的类型）。
+/// Normalized light source type (types unsupported by renderer already culled).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightKind {
-    /// 平行光（无限远）。
+    /// Directional light (infinite range).
     Directional,
-    /// 点光源（全向）。
+    /// Point light source (omni-directional).
     Point,
-    /// 聚光（锥形）。
+    /// Spot light (cone).
     Spot,
 }
 
-/// 一帧的光源采样：位置 / 朝向 / 颜色 / 单位都已解析。
+/// One frame light source sample: position / direction / color / identity all parsed.
 ///
-/// `color` 是**线性颜色、未乘强度**；强度按类型分别是 lux（方向光）或 candela
-/// （点光 / 聚光），与 [`Light`] / 旧组件的单位一致（渲染器再乘
-/// `LUX_TO_RADIANCE_SCALE`）。
+/// `color` is **linear color, intensity NOT multiplied**; intensity by type is lux (directional) or candela
+/// (point / spot), consistent with [`Light`] / legacy components units (renderer multiplies
+/// `LUX_TO_RADIANCE_SCALE`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightSample {
-    /// 光源实体（用来把「被 LIGHT_MAX 挤掉」的那几盏报给编辑器）。
+    /// Light source entity (to report ones squeezed out by LIGHT_MAX to editor).
     pub entity: prism_ecs::Entity,
     pub kind: LightKind,
-    /// 世界位置（方向光无意义，为 `ZERO`）。
+    /// World position (meaningless for directional light, `ZERO`).
     pub position: Vec3,
-    /// 光源朝向 = `transform.forward`（方向光 / 聚光有效）。
+    /// Light source direction = `transform.forward` (valid for directional / spot).
     pub direction: Vec3,
-    /// 线性颜色（已应用色温滤色片）。
+    /// Linear color (color temperature filter already applied).
     pub color: Vec3,
-    /// 强度：方向光 lux、点光/聚光 candela。
+    /// Intensity: directional lux, point / spot candela.
     pub intensity: f32,
-    /// 衰减半径（方向光忽略）。
+    /// Attenuation radius (ignored for directional).
     pub range: f32,
-    /// 聚光内锥半角的余弦。
+    /// Cosine of spot inner cone half-angle.
     pub cos_inner: f32,
-    /// 聚光外锥半角的余弦。
+    /// Cosine of spot outer cone half-angle.
     pub cos_outer: f32,
-    /// 方向光的 IBL ambient 系数（`Light` 恒为 1.0）。
+    /// IBL ambient factor of directional light (`Light` always 1.0).
     pub ambient: f32,
-    /// 阴影模式。**尚未接线**：当前阴影仍由全局方向光贴图承担，这里只提供数据。
+    /// Shadow mode. **Not yet wired**: current shadow still from global directional light map, here only provides data.
     pub shadows: LightShadows,
-    /// 阴影强度（同上，数据先行）。
+    /// Shadow intensity (same, data row first).
     pub shadow_strength: f32,
 }
 
-/// 组件级可见性。`World::query` 已排除通过 `World::set_active` 设为未激活的实体；
-/// 此函数处理检查器和场景加载器使用的场景 `Active` 组件。
+/// Component-level visibility. `World::query` already excludes entities set inactive via `World::set_active`;
+/// this function handles scene `Active` component used by inspector and scene loader.
 pub(crate) fn component_is_active(world: &World, entity: prism_ecs::Entity) -> bool {
-    // `Active` 只描述自身（Unity 的 `activeSelf`）；祖先关闭时整棵子树都不参与，
-    // 派生值由 `active_hierarchy_system` 每帧写入（#433）。
+    // `Active` only describes self (Unity `activeSelf`); when ancestor disabled whole child tree excluded,
+    // derived value written each frame by `active_hierarchy_system` (#433).
     crate::scene::systems::hierarchy::is_active_in_hierarchy(world, entity)
 }
 
-/// 实体的世界位置与旋转：优先 `LocalToWorld`，其次 `LocalTransform`。
+/// Entity world position and rotation: prefers `LocalToWorld`, then `LocalTransform`.
 fn entity_transform(world: &World, entity: prism_ecs::Entity) -> (Vec3, Quat) {
     if let Some(l2w) = world.get::<LocalToWorld>(entity) {
         let (_, rotation, translation) = l2w.value().to_scale_rotation_translation();
@@ -82,7 +82,7 @@ fn entity_transform(world: &World, entity: prism_ecs::Entity) -> (Vec3, Quat) {
     }
 }
 
-/// 里光源朝向就是 `transform.forward`（+Z）。
+/// Light source direction here is `transform.forward` (+Z).
 fn forward(rotation: Quat) -> Vec3 {
     (rotation * Vec3::Z).normalize_or_zero()
 }
@@ -97,7 +97,7 @@ fn sample_from_light(
         LightType::Directional => LightKind::Directional,
         LightType::Point => LightKind::Point,
         LightType::Spot => LightKind::Spot,
-        // 面光源 / 盒形 / 管状：schema 对齐用，渲染器暂不支持。
+        // Area light source / box / tube: schema aligned, renderer temporarily unsupported.
         _ => return None,
     };
     let (inner, outer) = light.cone_half_angles_radians();
@@ -121,10 +121,10 @@ fn sample_from_light(
     })
 }
 
-/// 局部光的「重要性」：越大越该在 [`LIGHT_MAX`] 的名额里保留。
+/// "Importance" of a local light: larger means more deserving to keep in [`LIGHT_MAX`] slots.
 ///
-/// `intensity × range² / max(distance², ε)`——近处、亮的、照得远的灯优先。
-/// 只用于超预算时挑灯，不参与着色。方向光不参与排序（返回 0）。
+/// `intensity × range² / max(distance², ε)` — close, bright, far-reaching lights first.
+/// Only used to pick lights when over budget, not in shading. Directional light not in sort (returns 0).
 pub fn local_light_importance(sample: &LightSample, eye: Vec3) -> f32 {
     if sample.kind == LightKind::Directional {
         return 0.0;
@@ -139,11 +139,11 @@ pub fn local_light_importance(sample: &LightSample, eye: Vec3) -> f32 {
     }
 }
 
-/// 收集全部可渲染光源（统一 `Light` 优先，旧组件兜底）。
+/// Collect all renderable light sources (unified `Light` first, legacy components fallback).
 ///
-/// **不截断**：局部光的上限 [`LIGHT_MAX`] 由 `render_system` 在知道相机位置之后
-/// 按「强度 × 范围² / 距离²」挑出来（#468），这里返回全部启用光源。
-/// 方向光不占 [`LIGHT_MAX`]（它走 frame UBO 的单独通路）。
+/// **No truncation**: local light limit [`LIGHT_MAX`] picked by `render_system` after knowing camera position
+/// by "intensity × range² / distance²" (#468), here returns all enabled light sources.
+/// Directional light does not occupy [`LIGHT_MAX`] (separate path via frame UBO).
 pub fn collect_light_samples(world: &World) -> Vec<LightSample> {
     let mut out: Vec<LightSample> = Vec::new();
     collect_light_samples_into(world, &mut out);
@@ -157,7 +157,7 @@ pub fn collect_light_samples(world: &World) -> Vec<LightSample> {
 pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
     out.clear();
 
-    // 1. 形状的 `Light`。
+    // 1. Shaped `Light`.
     for (entity, light) in world.query::<Light>() {
         if !light.enabled || !component_is_active(world, entity) {
             continue;
@@ -168,7 +168,7 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
         }
     }
 
-    // 2. 旧组件：跳过已经挂了 `Light` 的实体，避免重复点亮。
+    // 2. Legacy components: skip entities already carrying `Light`, avoid double lighting.
     for (entity, light) in world.query::<DirectionalLight>() {
         if world.get::<Light>(entity).is_some() || !component_is_active(world, entity) {
             continue;
@@ -177,8 +177,8 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
             entity,
             kind: LightKind::Directional,
             position: Vec3::ZERO,
-            // `euler_xyz_deg_to_dir` 给的是「指向光源」的方向，而 `LightSample.direction`
-            // 统一存光传播方向（`transform.forward`），这里取反。
+            // `euler_xyz_deg_to_dir` gives "pointing to light source" direction, but `LightSample.direction`
+            // uniformly stores light propagation direction (`transform.forward`), here take negative.
             direction: -euler_xyz_deg_to_dir(light.euler_xyz),
             color: light.color,
             intensity: light.intensity,
@@ -215,7 +215,7 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
             continue;
         }
         let (position, rotation) = entity_transform(world, entity);
-        // 旧组件存的是**半**锥角（弧度）。
+        // Legacy components store **half** cone angle (radians).
         let inner = light.inner_cone_angle.clamp(0.0, light.outer_cone_angle);
         out.push(LightSample {
             entity,
@@ -233,15 +233,15 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
         });
     }
 
-    // 这里**不截断**：局部光要等 `render_system` 知道相机位置后才能按重要性
-    // 挑最重要的 LIGHT_MAX 盏（#468）。以前在这里按 ECS 顺序砍掉多余的，
-    // 结果第九盏灯是谁被丢完全取决于文档顺序，也没人告诉用户。
+    // Here **no truncation**: local lights wait until `render_system` knows camera position to pick
+    // most important LIGHT_MAX by importance (#468). Previously cutting extras here by ECS order made
+    // which light is ninth dropped entirely depend on document order, with no user notification.
 }
 
-/// 方向光的阴影状态 `(enabled, strength)`。
+/// Directional light shadow state `(enabled, strength)`.
 ///
-/// `enabled` = `Light.shadows != None`；`strength` = `Light.shadowStrength`
-/// （clamp 到 `0..=1`）。没有方向光时两者都是「关闭」。
+/// `enabled` = `Light.shadows != None`; `strength` = `Light.shadowStrength`
+/// (clamped to `0..=1`). Both "disabled" when no directional light.
 pub fn directional_shadow_state(samples: &[LightSample]) -> (bool, f32) {
     match samples
         .iter()
@@ -255,7 +255,7 @@ pub fn directional_shadow_state(samples: &[LightSample]) -> (bool, f32) {
     }
 }
 
-/// 主方向光 = 第一个激活的方向光（统一 `Light` 或旧组件）。
+/// Primary directional light = first active directional light (unified `Light` or legacy).
 pub fn primary_directional_light(world: &World) -> Option<LightSample> {
     collect_light_samples(world)
         .into_iter()
@@ -264,8 +264,8 @@ pub fn primary_directional_light(world: &World) -> Option<LightSample> {
 
 /// Return the first [`DirectionalLight`] in the world, if any.
 ///
-/// 旧 API，保留给仍按旧组件取光源的调用方；新代码用
-/// [`primary_directional_light`]（两者都认）。
+/// Legacy API, kept for callers still fetching lights by legacy components; new code uses
+/// [`primary_directional_light`] (both recognized).
 pub fn collect_directional_light(world: &World) -> Option<DirectionalLight> {
     world
         .query::<DirectionalLight>()
@@ -275,8 +275,8 @@ pub fn collect_directional_light(world: &World) -> Option<DirectionalLight> {
 
 /// Collect point lights (all of them).
 ///
-/// 旧组件路径的便捷查询；**不截断**——[`LIGHT_MAX`] 由 `render_system` 在知道
-/// 相机位置后统一挑（#468），这里再砍一次只会让点光和聚光互相挤掉。
+/// Convenience query for legacy component path; **no truncation** — [`LIGHT_MAX`] picked by `render_system` after
+/// knowing camera position (#468), cutting again here would make point and spot lights squeeze each other out.
 pub fn collect_point_lights(world: &World) -> Vec<PointLight> {
     world
         .query::<PointLight>()

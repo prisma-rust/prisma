@@ -1,9 +1,9 @@
-//! RenderTexture 消费端示例 pass：全屏采样（bindless）→ swapchain。
+//! RenderTexture consumer example pass: full-screen sample (bindless) → swapchain.
 //!
-//! 演示引擎式 RT 消费：从 [`crate::rt_scheduler::RT_OUTPUT_H`] 拿调度器
-//! 发布的 bindless 槽位塞进 push constant，shader 从 `bindlessSrvs[]` 直接
-//! 采样 —— 与采样普通纹理无差别。RT 由 [`crate::rt_scheduler::RenderTextureScheduler`]
-//! 统一渲染，本 pass 只读不写，与 scene 零耦合。
+//! Demonstrates engine-style RT consumption: take bindless slot published by scheduler from
+//! [`crate::rt_scheduler::RT_OUTPUT_H`] into push constant, shader directly samples from `bindlessSrvs[]`
+//! — no different from sampling a normal texture. RTs rendered uniformly by [`crate::rt_scheduler::RenderTextureScheduler`]
+//! this pass only reads not writes, zero coupling with scene.
 
 use anyhow::Context as _;
 use ash::vk;
@@ -24,17 +24,17 @@ use crate::shader_bindings::rt_preview::{
 const RT_PREVIEW_VERT_SPV: &[u8] = prism_render_shaders::RT_PREVIEW_VERT_SPV;
 const RT_PREVIEW_FRAG_SPV: &[u8] = prism_render_shaders::RT_PREVIEW_FRAG_SPV;
 
-/// 全屏采样 RenderTexture（bindless）→ swapchain 的消费 pass。
+/// Consumer pass that full-screen samples RenderTexture (bindless) → swapchain.
 pub struct RtPreviewPass {
-    /// 克隆的 device（Drop 时销毁）。
+    /// Cloned device (destroyed on Drop).
     device: Option<ash::Device>,
     color_format: vk::Format,
-    /// bindless 表 layout（本 pass 的 set 0），由 GraphRenderer 注入（管线创建用）。
+    /// Bindless table layout (set 0 for this pass), injected by GraphRenderer (for pipeline creation).
     bindless_layout: Option<vk::DescriptorSetLayout>,
-    /// bindless 表 set（execute 时绑定 set 0）。
+    /// Bindless table set (bind set 0 at execute).
     bindless_set: Option<vk::DescriptorSet>,
     render_pass: Option<vk::RenderPass>,
-    /// per-swapchain-image framebuffers（复用 post/ui_overlay 模式）。
+    /// Per-swapchain-image framebuffers (reusing post/ui_overlay mode).
     framebuffers: Vec<Option<vk::Framebuffer>>,
     target_views: Vec<vk::ImageView>,
     extent: vk::Extent2D,
@@ -59,19 +59,19 @@ impl RtPreviewPass {
         }
     }
 
-    /// 注入 bindless 表 layout（GraphRenderer 构建 graph 后调用）。
+    /// Inject bindless table layout (called after GraphRenderer builds graph).
     pub fn set_bindless_layout(&mut self, layout: vk::DescriptorSetLayout) {
         self.bindless_layout = Some(layout);
     }
 
-    /// 注入 bindless 表 set（execute 时绑定 set 0）。
+    /// Inject bindless table set (bind set 0 at execute).
     pub fn set_bindless_set(&mut self, set: vk::DescriptorSet) {
         self.bindless_set = Some(set);
     }
 
     fn ensure_render_pass(&mut self, device: &ash::Device) -> anyhow::Result<()> {
         if self.render_pass.is_none() {
-            // 全屏覆盖：CLEAR 得到独立画面（RT 内容即整屏）。
+            // Full-screen coverage: CLEAR yields independent image (RT content is whole screen).
             let color_attachment = vk::AttachmentDescription::default()
                 .format(self.color_format)
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -113,7 +113,7 @@ impl RtPreviewPass {
                 shader_stage(vk::ShaderStageFlags::FRAGMENT, frag_module, &frag_entry),
             ];
 
-            // RtPreviewPush = { uint textureHandle }。
+            // RtPreviewPush = { uint textureHandle }.
             let push = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
@@ -150,7 +150,7 @@ impl RtPreviewPass {
         Ok(())
     }
 
-    /// 确保 per-swapchain framebuffers 与当前 swapchain views + extent 匹配。
+    /// Ensure per-swapchain framebuffers match current swapchain views + extent.
     fn ensure_framebuffers(
         &mut self,
         device: &ash::Device,
@@ -196,9 +196,9 @@ impl RenderPassNode for RtPreviewPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // 读边：拓扑序确保在 RenderTextureScheduler 之后；barrier 由图自动
-        // 推导（writer 留下的 SHADER_READ_ONLY_OPTIMAL == 本 pass 期望布局
-        // → 无操作）。
+        // Read edge: topological order ensures after RenderTextureScheduler; barrier automatically
+        // derived by graph (writer leaves SHADER_READ_ONLY_OPTIMAL == this pass expected layout
+        // → no-op).
         graph.read_usage(ResourceUsage {
             handle: RT_OUTPUT_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -229,7 +229,7 @@ impl RenderPassNode for RtPreviewPass {
             .context("RtPreviewPass: no framebuffer for image index")?;
         let pipeline = self.pipeline.as_ref().context("pipeline missing")?;
 
-        // RT 的 bindless 槽位（RenderTextureScheduler 发布）。
+        // RT bindless slot (published by RenderTextureScheduler).
         let slot = resources.param(RT_OUTPUT_H).unwrap_or(0);
 
         let clear = vk::ClearValue {
@@ -252,7 +252,7 @@ impl RenderPassNode for RtPreviewPass {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline)
         };
-        // set 0 = bindless 表（rt_preview.slang 的 BINDLESS_SRVS）。
+        // set 0 = bindless table (rt_preview.slang BINDLESS_SRVS).
         let bindless_set = self
             .bindless_set
             .context("RtPreviewPass: set_bindless_set not called")?;

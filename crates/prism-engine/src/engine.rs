@@ -1,25 +1,25 @@
-//! [`Engine`] — 核心模拟引擎。
+//! [`Engine`] — core simulation engine.
 //!
-//! 拥有 ECS 世界并运行游戏逻辑阶段（`fixed_update`、`update`、
-//! `late_update`）。**不**包含渲染、资源解析或脏数据路由——窗口、
-//! 渲染线程、音频线程等平台资源属于 `prism-app`；本引擎只做主线程
-//! 的纯逻辑模拟。
+//! Owns ECS world and runs game logic phases (`fixed_update`, `update`,
+//! `late_update`). **Does not** contain render, asset parsing or dirty-data routing — window,
+//! render thread, audio thread and other platform resources belong to `prism-app`; this engine only does main-thread
+//! pure logical simulation.
 //!
-//! ## 生命周期（实际参与初始化的阶段）
+//! ## Lifecycle (phases actually participating in init)
 //!
 //! ```text
 //! empty / new
-//!     ├─ init_scene(rm)          ─── 加载场景 → 世界
-//!     └─ runtime_initialize()    ─── 回退相机 + 默认 ECS 资源/调度
+//!     ├─ init_scene(rm)          ─── load scene  → world
+//!     └─ runtime_initialize()    ─── fallback camera + default ECS resources / schedules
 //!
-//! [每帧]
+//! [Each frame ]
 //! fixed_update → update → late_update
 //! ```
 //!
-//! **平台生命周期（挂起/恢复、线程 shutdown）不在这里。** 它们由
-//! `prism-app` 的 [`Subsystem`](https://docs.rs/prism-app/latest/prism_app/trait.Subsystem.html)
-//! 分层驱动：谁持有状态（线程/资源），谁接收对应的钩子。引擎自身
-//! 不持有任何需要清理的平台资源，因此没有空的线程/关闭钩子。
+//! **Platform lifecycle (hang / resume, thread shutdown) not here.** They are driven
+//! by `prism-app`'s [`Subsystem`](https://docs.rs/prism-app/latest/prism_app/trait.Subsystem.html)
+//! layer by layer: whoever holds state (thread / resource) receives corresponding hook. Engine itself
+//! holds no platform resource needing cleanup, so has no empty thread / disable hooks.
 
 use prism_ecs::World;
 
@@ -46,16 +46,16 @@ impl crate::scene::EnvironmentProvider for prism_asset::runtime::ResourceManager
 use crate::ecs::schedule::Schedule;
 use crate::input::InputManager;
 
-/// 场景加载模式（Unity `OpenSceneMode` 的等价物）。
+/// Scene load mode (equivalent to Unity `OpenSceneMode`).
 ///
-/// 之前的入口只有「往当前世界继续 spawn」，于是第二次加载会让所有实体变成
-/// 两份（见 #482）。现在模式是显式参数。
+/// Previous entry only had "keep spawning into current world", so second load made all entities
+/// doubled (see #482). Now mode is explicit parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LoadSceneMode {
-    /// 卸载已加载的场景（`Persistent` 子树除外）再加载 —— 默认。
+    /// Unload already-loaded scene (except `Persistent` subtree) then load — default.
     #[default]
     Single,
-    /// 保留已加载的场景，把新场景叠加进去。
+    /// Keep already-loaded scene, overlay new scene.
     Additive,
 }
 
@@ -63,13 +63,13 @@ pub enum LoadSceneMode {
 // Engine
 // ===========================================================================
 
-/// 模拟引擎——拥有 ECS 世界并暴露游戏逻辑阶段。
+/// Simulation engine — owns ECS world and exposes game logic phases.
 ///
-/// 所有渲染相关的关注点（资源上传、绘制列表构建、GPU 提交）
-/// 由应用程序的 `RenderContext` 处理。
+/// All render-related concerns (asset upload, draw list building, GPU submission)
+/// handled by application's `RenderContext`.
 pub struct Engine {
     world: World,
-    /// 场景系统——拥有「当前场景」状态并负责场景加载。
+    /// Scene system — owns "current scene" state and handles scene loading.
     scene: crate::scene::SceneManager,
     /// Ordered ECS system schedule — runs on every [`update`](Self::update).
     schedule: Schedule,
@@ -79,9 +79,9 @@ pub struct Engine {
     pending_fixed_key_edges: [u64; 8],
     frame_input_prepared: bool,
     interpolation_alpha: f32,
-    /// 主线程定时器服务（每帧 tick）。
+    /// Main-thread timer service (ticked each frame).
     timer: crate::util::timer::TimerService,
-    /// 秒数，「无场景」占位画面的滚动动画用。只在占位画面显示时累加。
+    /// Seconds count, used by "no scene" placeholder scrolling animation. Only accumulates when placeholder displayed.
     no_scene_time: f32,
 }
 
@@ -90,7 +90,7 @@ impl Engine {
     // Construction
     // ======================================================================
 
-    /// 创建 `Engine` 并跑完所有边界初始化（便捷构造函数）。
+    /// Create `Engine` and run all boundary init phases (convenience constructor).
     ///
     /// Loads resources from the given [`ResourceManager`] then loads the scene.
     pub fn new(rm: &mut prism_asset::runtime::ResourceManager) -> Self {
@@ -100,11 +100,11 @@ impl Engine {
         engine
     }
 
-    /// 创建空引擎——不运行任何初始化阶段。
+    /// Create empty engine — runs no init phase.
     pub fn empty() -> Self {
         let _span = crate::util::timing::span("engine::empty");
         let mut world = World::new();
-        // 一次性音效队列（#987）：项目代码排队，宿主每帧取走。
+        // One-shot audio queue (#987): project code queues, host takes each frame.
         world.insert_resource(crate::sound::SoundCommands::default());
         Self {
             world,
@@ -124,31 +124,31 @@ impl Engine {
     // Init
     // ======================================================================
 
-    /// 场景加载（默认加载 manifest 中第一个可解析场景）。
+    /// Scene load (default loads first loadable scene in manifest).
     ///
-    /// 场景加载由**场景系统**负责（委托 [`crate::scene::SceneManager::load_first_from_manifest`]），
-    /// 引擎不再自行扫描 manifest。需要按名字选择场景时用
-    /// [`Self::init_scene_named`]。
+    /// Scene load handled by **scene system** (delegates to [`crate::scene::SceneManager::load_first_from_manifest`]),
+    /// engine no longer scans manifest itself. When selecting scene by name use
+    /// [`Self::init_scene_named`].
     ///
-    /// 存档由**用户项目**实现——引擎不在初始化时自动读取存档，只提供
-    /// [`Self::save_scene_state`] / [`Self::load_scene_state`] 原语供调用。
-    /// 资源解析（`.pak` → `ResourceManager`）由调用方完成并传入，引擎不持有。
+    /// Save files implemented by **user project** — engine doesn't auto-read save at init, only provides
+    /// [`Self::save_scene_state`] / [`Self::load_scene_state`] primitives for calls.
+    /// Asset parsing (`.pak` → `ResourceManager`) done and passed in by caller, engine doesn't hold it.
     pub fn init_scene(&mut self, rm: &mut prism_asset::runtime::ResourceManager) {
         self.init_scene_named(rm, None);
     }
 
-    /// 按名字加载场景；`scene_name = None` 等价于 [`Self::init_scene`]。
+    /// Load scene by name; `scene_name = None` equivalent to [`Self::init_scene`].
     ///
-    /// 名字对应 `assets/scenes.json` 的 `scenes[].name`（见
-    /// [`prism_engine::launch_config::LaunchConfig`]）。找不到该名字时
-    /// 不加载任何场景并记录警告。
+    /// Name corresponds to `assets/scenes.json` `scenes[].name` (see
+    /// [`prism_engine::launch_config::LaunchConfig`]). When name not found
+    /// load no scene and log warning.
     pub fn init_scene_named(
         &mut self,
         rm: &mut prism_asset::runtime::ResourceManager,
         scene_name: Option<&str>,
     ) {
-        // 运行时优先从资源包读取 manifest，避免依赖当前工作目录。
-        // 旧包把清单打成 `scenes.toml`（RSCN 之前的 TOML 格式），仍可解析。
+        // Runtime prefers reading manifest from asset package, avoid depending on cwd.
+        // Old packages packed manifest as `scenes.toml` (TOML format before RSCN), still parseable.
         for name in ["scenes.json", "scenes.toml"] {
             let Some(id) = rm.id_by_path(name) else {
                 continue;
@@ -161,7 +161,7 @@ impl Engine {
             }
         }
 
-        // 兼容开发环境：资源包缺少 manifest 时由场景系统读取文件。
+        // Dev compatibility: when package lacks manifest scene system reads file.
         let mut registry = crate::scene::ComponentRegistry::new();
         crate::scene::register_builtin_components(&mut registry);
         match scene_name {
@@ -176,10 +176,10 @@ impl Engine {
         }
     }
 
-    /// 从调用方提供的内存 manifest 初始化场景。
+    /// Init scene from caller-provided in-memory manifest.
     ///
-    /// 这是 Android、打包运行时和测试环境的首选入口；引擎不会为该路径
-    /// 访问当前工作目录。
+    /// This is preferred entry for Android, packaged runtime and test environments; engine will not
+    /// access cwd for this path.
     pub fn init_scene_from_manifest_text(
         &mut self,
         rm: &mut prism_asset::runtime::ResourceManager,
@@ -197,10 +197,10 @@ impl Engine {
         )
     }
 
-    /// 从松散的 `.scene.json` 加载场景（编辑器宿主 / 开发期作者格式）。
+    /// Load scene from loose `.scene.json` (editor host / dev-time author format).
     ///
-    /// 与 manifest/cook 路径不同：不经过 `.pak`，直接用反射注册表把作者 JSON
-    /// 反序列化成 ECS 组件。返回生成的实体数。
+    /// Different from manifest / cook path: no `.pak`, directly deserialize author JSON
+    /// into ECS components using reflection registry. Returns number of entities spawned.
     pub fn load_scene_json_file(
         &mut self,
         path: &std::path::Path,
@@ -208,11 +208,11 @@ impl Engine {
         self.load_scene_json_file_with_mode(path, LoadSceneMode::Single)
     }
 
-    /// [`Self::load_scene_json_file`]，但显式指定 [`LoadSceneMode`]。
+    /// [`Self::load_scene_json_file`], but with explicit [`LoadSceneMode`].
     ///
-    /// `Single` 会先卸载上一次的场景（先问这句话：以前它不清世界，第二次调用
-    /// 就让所有实体变成两份且毫无提示）。卸载发生在新场景 spawn **成功之后** ——
-    /// 解析失败时旧场景保持原样。
+    /// `Single` first unloads previous scene (ask: previously it didn't clear world, second call
+    /// doubled all entities with no warning). Unload happens **after new scene spawned successfully** —
+    /// on parse failure old scene stays unchanged.
     pub fn load_scene_json_file_with_mode(
         &mut self,
         path: &std::path::Path,
@@ -236,71 +236,71 @@ impl Engine {
             instance.all_entities.len(),
             path.display()
         );
-        // 返回**文档顺序**的实体表：`spawn_from_json_text` 按文档数组顺序生成，
-        // 宿主（编辑器）靠这个下标与 `.scene.json` 的 `entities[i]` 对齐。
+        // Return entity list in **document order**: `spawn_from_json_text` spawns in document array order,
+        // host (editor) uses this subscript to match `.scene.json` `entities[i]`.
         Ok(instance.all_entities)
     }
 
-    /// 卸载当前场景（`Persistent` 子树与引擎自有实体除外），返回被删的实体数。
+    /// Unload current scene (except `Persistent` subtree and engine-owned entities), return deleted entity count.
     ///
-    /// 用于「回主菜单」「重开一局」这类只需要清场的场合；配合
-    /// [`Self::load_scene_json_file_with_mode`] 可以换场而不重启进程。
+    /// For "return to main menu" / "restart a round" cases needing only cleanup; combined with
+    /// [`Self::load_scene_json_file_with_mode`] can change scene without restarting process.
     pub fn unload_scene(&mut self) -> usize {
         self.scene.unload_scene(&mut self.world)
     }
 
-    /// 场景代数：每次切换 / 卸载递增。宿主把它交给项目模块，
-    /// 让后者丢弃已经失效的实体句柄（`prism-project-api::scene_generation`）。
+    /// Scene generation: incremented on each switch / unload. Host passes to project module,
+    /// letting it discard invalidated entity handles (`prism-project-api::scene_generation`).
     pub fn scene_generation(&self) -> u64 {
         self.scene.generation()
     }
 
-    /// 存档原语：将当前 ECS 世界状态写入 `scene_state.json`。
+    /// Save primitive: write current ECS world state to `scene_state.json`.
     ///
-    /// 存档由**用户项目**实现——引擎初始化不再自动读取存档；用户代码在
-    /// 合适的时机（检查点、暂停菜单、退出前等）调用本方法。
+    /// Save implemented by **user project** — engine no longer auto-reads save at init; user code calls
+    /// this method at appropriate times (checkpoint, pause menu, before exit).
     pub fn save_scene_state(&self) {
         crate::scene_state::save_scene_state(&self.world);
     }
 
-    /// 指定存档目录（宿主的 `[app] company/name` 推导出的应用数据目录）。
+    /// Specify save directory (host derives app data directory from `[app] company/name`).
     ///
-    /// 不设置时回退到 [`crate::config::app_data_dir`]，也就是所有项目共用一个
-    /// 目录 —— 那是 #484 里「项目互相覆盖存档」的根因。
+    /// When unset falls back to [`crate::config::app_data_dir`], meaning all projects share one
+    /// directory — root cause of "projects overwriting each other's saves" in #484.
     pub fn set_save_directory(&mut self, dir: impl Into<std::path::PathBuf>) {
         self.world
             .insert_resource(crate::scene_state::SaveDirectory(dir.into()));
     }
 
-    /// 当前存档路径（尊重 [`Self::set_save_directory`]）。
+    /// Current save path (respects [`Self::set_save_directory`]).
     pub fn scene_state_path(&self) -> std::path::PathBuf {
         crate::scene_state::scene_state_path(&self.world)
     }
 
-    /// 写到指定槽位：`scene_state-<slot>.json`。
+    /// Write to specified slot: `scene_state-<slot>.json`.
     pub fn save_scene_state_slot(&self, slot: u32) {
         crate::scene_state::save_scene_state_slot(&self.world, slot);
     }
 
-    /// 从指定槽位恢复。
+    /// Resume from specified slot.
     pub fn load_scene_state_slot(&mut self, slot: u32) -> bool {
         crate::scene_state::load_scene_state_slot(&mut self.world, slot)
     }
 
-    /// 写到任意路径（用于「另存存档」/ 测试）。
+    /// Write to arbitrary path (for "save as" / tests).
     pub fn save_scene_state_to(&self, path: &std::path::Path) {
         crate::scene_state::save_scene_state_to(&self.world, path);
     }
 
-    /// 从任意路径恢复。
+    /// Resume from arbitrary path.
     pub fn load_scene_state_from(&mut self, path: &std::path::Path) -> bool {
         crate::scene_state::load_scene_state_from(&mut self.world, path)
     }
 
-    /// 读档原语：从 `scene_state.json` 恢复世界状态到 ECS 世界。
+    /// Load primitive: restore world state from `scene_state.json` into ECS world.
     ///
-    /// 返回是否读取到了存档文件。由**用户项目**决定何时调用（如启动后、
-    /// 「继续游戏」入口）。
+    /// Returns whether save file was read. **User project** decides when to call (e.g. at startup,
+    /// "continue game" entry).
     pub fn load_scene_state(&mut self) -> bool {
         crate::scene_state::load_scene_state(&mut self.world)
     }
@@ -324,12 +324,12 @@ impl Engine {
     // Timer API
     // ======================================================================
 
-    /// 返回 TimerClient 引用（可 Clone，供面板等持有）。
+    /// Returns TimerClient reference (Cloneable, for panels etc).
     pub fn timer_client(&self) -> &crate::util::timer::TimerClient {
         &self.timer.client
     }
 
-    /// 注册一个定时器。返回 u32 slot 索引（即 timer id）。
+    /// Register a timer. Returns u32 slot index (timer id).
     pub fn create_timer(
         &self,
         params: crate::util::timer::TimerParams,
@@ -337,12 +337,12 @@ impl Engine {
         self.timer.client.create_timer(params)
     }
 
-    /// 暂停定时器。
+    /// Pause timer.
     pub fn pause_timer(&self, handle: crate::util::timer::TimerId) {
         self.timer.client.pause(handle);
     }
 
-    /// 恢复定时器。
+    /// Resume timer.
     pub fn resume_timer(&self, handle: crate::util::timer::TimerId) {
         self.timer.client.resume(handle);
     }
@@ -381,7 +381,7 @@ impl Engine {
         self.pending_fixed_key_edges = [0; 8];
         self.world.insert_resource(input);
         crate::scene::systems::interpolation2d::begin_fixed_step(&mut self.world);
-        // 2D 物理步进模拟（#1160）：默认重力 9.81 m/s² 向下（-Y）
+        // 2D physics step simulation (#1160): default gravity 9.81 m/s² downward (-Y)
         crate::physics2d::step_2d(&mut self.world, fixed_dt, [0.0, -9.81]);
         self.fixed_schedule.run(&mut self.world, fixed_dt.max(0.0));
         crate::scene::systems::interpolation2d::end_fixed_step(&mut self.world);
@@ -400,7 +400,7 @@ impl Engine {
 
     /// Variable‑timestep per‑frame update: game logic, camera, input.
     ///
-    /// 更新 · UE `Tick()`.
+    /// Update · UE `Tick()`.
     pub fn update(&mut self, dt: f32, input_manager: &InputManager) {
         if !self.frame_input_prepared {
             let screen = self
@@ -423,10 +423,10 @@ impl Engine {
         );
         crate::scene::systems::camera2d::camera_2d_system(&mut self.world, dt);
 
-        // ── 填充 UI 输入状态 ──────────────────────────────────────
+        // ── fill UI input state ──────────────────────────────────────
         let pos = input_manager.mouse_position();
-        // 窗口像素 → UI 布局空间（#988）：UI 画在 PostPass 的目标矩形里，
-        // 不换算的话点击会和看到的位置错开。
+        // Window pixels → UI layout space (#988): UI drawn inside PostPass target rect,
+        // without conversion clicks would mismatch visible positions.
         let mapping = self
             .world
             .get_resource::<crate::ui::UiScreenMapping>()
@@ -448,10 +448,10 @@ impl Engine {
             pressed_keys: input_manager.pressed_keys().to_vec(),
         });
 
-        // ── 同一份输入也给 gameplay 代码（#589）──────────────────
-        // 静态 Player 的 `GameWorld::input()` 读的就是这个 World resource。
-        // 以前只有编辑器的插件后端能拿到输入，发布包里的 `GameWorld::input()`
-        // 永远是全零。尺寸取自 `ScreenSize`（宿主在每帧 update 前写入）。
+        // ── same input also given to gameplay code (#589) ──────────────────
+        // Static Player's `GameWorld::input()` reads this World resource.
+        // Previously only editor plugin backend could get input, `GameWorld::input()` in release
+        // was always all-zero. Size from `ScreenSize` (host writes before each frame update).
         let screen = self
             .world
             .get_resource::<crate::ui::ScreenSize>()
@@ -464,28 +464,28 @@ impl Engine {
         // Run the ECS system schedule (user‑registered + built‑in systems).
         self.schedule.run(&mut self.world, dt);
 
-        // 用户 system 在本 tick 里通过 `GameWorld::draw_quad` 提交的四边形排在
-        // `ui::render` 之后，这里补一次合并，否则静态 Player 会晚一帧（#1048）。
+        // Quads submitted by user systems via `GameWorld::draw_quad` this tick are
+        // ordered after `ui::render`, merge here once, else static Player is one frame late (#1048).
         crate::ui::merge_external_quads(&mut self.world);
 
-        // 「没有场景」占位画面：只在启动清单一个可解析场景都没有时出现（通常
-        // 是 `.pak` 没打）。走现有 UI 通道，不加 pass、不动 clear color。
+        // "No scene" placeholder image: only appears when startup manifest has no loadable scene (usually
+        // `.pak` not packed). Goes through existing UI channel, no new pass, clear color untouched.
         if self.scene.is_missing_scene() {
             self.no_scene_time += dt.max(0.0);
             crate::ui::push_no_scene_screen_into(&mut self.world, self.no_scene_time);
         }
 
-        // ── 世界矩阵传播（模拟步末尾）────────────────────────────
-        // 用户 system 在本 tick 里 spawn 的实体/改过的 `LocalTransform` 必须
-        // 在 update 返回前变成 `LocalToWorld`，否则下面这些消费方会看到上一帧
-        // 甚至完全缺失的世界矩阵：
-        // - 同一 tick 稍后（下一帧）的 game logic / 物理 / 相机；
-        // - render extract（`extract_frame_packet` 现在只读，不再负责计算）；
-        // - 场景状态保存（`save_scene_state` 读 `LocalToWorld`）。
-        // 放在调度之后而不是放在某个 system 里，是因为用户 system 可以在
-        // `runtime_initialize` 之后再注册（App::add_system），无法靠注册顺序保证。
+        // ── world matrix propagation (end of simulation step) ─────────────────────────────
+        // Entities spawned by user systems this tick / modified `LocalTransform` must
+        // become `LocalToWorld` before update returns, otherwise consumers below see previous-frame
+        // or even missing world matrices:
+        // - later in same tick (next frame) game logic / physics / camera;
+        // - render extract (`extract_frame_packet` now read-only, no longer computes);
+        // - scene state save (`save_scene_state` reads `LocalToWorld`).
+        // Placed after schedule rather than inside a system because user systems can register
+        // after `runtime_initialize` (App::add_system), can't rely on registration order.
         crate::scene::systems::hierarchy::hierarchy_system(&mut self.world);
-        // `Active` 沿父子传播（`activeInHierarchy`），渲染 / 光照读派生值。
+        // `Active` propagates along parent-child (`activeInHierarchy`), render / lighting read derived value.
         crate::scene::systems::hierarchy::active_hierarchy_system(&mut self.world);
         crate::scene::systems::interpolation2d::apply_render_interpolation(
             &mut self.world,
@@ -500,8 +500,8 @@ impl Engine {
             &mut self.world,
             self.interpolation_alpha,
         );
-        // 距离 LOD（#491）：用本帧的世界矩阵选级，写运行时 `LodHidden`。
-        // 必须在 `hierarchy_system` 之后，提取阶段才能看到当前帧的距离。
+        // Distance LOD (#491): select level by this frame's world matrix, write runtime `LodHidden`.
+        // Must be after `hierarchy_system` so extract sees current-frame distance.
         crate::scene::systems::lod::lod_system(&mut self.world);
 
         // Tick the main‑thread timer (dispatch expired callbacks).
@@ -520,8 +520,8 @@ impl Engine {
 
     /// Pre‑shutdown: save state, flush pending work.
     ///
-    /// 平台资源（窗口、渲染/音频线程、音频引擎）由 `prism-app` 的 `App` 持有，
-    /// 关停顺序由 `App::about_to_wait` 编排；引擎只做逻辑侧收尾（当前无状态）。
+    /// Platform resources (window, render / audio threads, audio engine) held by `prism-app`'s `App`,
+    /// shutdown order orchestrated by `App::about_to_wait`; engine only does logic-side cleanup (currently no state).
     pub fn pre_shutdown(&mut self) {}
 
     /// Final cleanup after shutdown.
@@ -549,7 +549,7 @@ impl Engine {
         &mut self.world
     }
 
-    /// 当前场景名（由场景系统持有）；未加载任何 manifest 场景时为 `None`。
+    /// Current scene name (held by scene system); `None` when no manifest scene loaded.
     /// No resolvable startup scene was loaded (usually `assets/*.pak` is missing).
     ///
     /// The render side uses it to decide whether to draw the "no scene"
@@ -563,10 +563,10 @@ impl Engine {
         self.scene.current_scene_name()
     }
 
-    /// 解析「当前场景」声明式光照所需的环境贴图字节。
+    /// Resolve environment texture bytes needed for "current scene" declarative lighting.
     ///
-    /// 场景系统的职责（按 `current_scene_name` 定位场景），引擎仅转发。
-    /// 使用外部资源服务读取当前场景环境贴图，不访问文件系统。
+    /// Scene system responsibility (determines scene by `current_scene_name`), engine only forwards.
+    /// Uses external resource service to read current scene env texture, no filesystem access.
     pub fn current_scene_env_bytes_with_provider<P: crate::scene::EnvironmentProvider>(
         &self,
         provider: &mut P,
@@ -577,15 +577,15 @@ impl Engine {
         )
     }
 
-    /// 注入当前场景环境贴图，供渲染器启动或场景切换时使用。
+    /// Inject current scene environment texture for renderer startup or scene switch.
     pub fn set_scene_environment_bytes(&mut self, bytes: Option<Vec<u8>>) {
         self.scene.set_environment_bytes(bytes);
     }
 
-    /// 从运行时资源包按路径加载当前场景环境贴图。
+    /// Load current scene environment texture from runtime asset package by path.
     ///
-    /// 环境贴图通常是未类型化的 HDR 二进制资产，因此这里只负责通过
-    /// `ResourceManager` 解析路径和读取原始字节，解码仍由渲染层负责。
+    /// Environment textures usually untyped HDR binary assets, so here only responsible for resolving
+    /// path via `ResourceManager` and reading raw bytes, decode remains renderer layer's job.
     pub fn load_scene_environment_from_path(
         &mut self,
         rm: &mut prism_asset::runtime::ResourceManager,
@@ -621,72 +621,72 @@ fn default_schedule() -> Schedule {
 
     let mut s = Schedule::new();
 
-    // ── 精灵动画 ────────────────────────────────────────────
-    // 推进 `SpriteAnimation` → `SpriteRenderer.frame_index`；渲染提取之前。
+    // ── sprite animation ────────────────────────────────────────────
+    // Advance `SpriteAnimation` → `SpriteRenderer.frame_index`; before render extract.
     s.add_system("sprite::animation", |world, dt| {
         crate::scene::systems::animation::sprite_animation_system(world, dt)
     });
 
-    // ── 关键帧动画 ──────────────────────────────────────────
-    // 采样 `KeyframeAnimation` → `LocalTransform`。`Engine::update` 在调度之后
-    // 才跑 `hierarchy_system`，所以同一帧的世界矩阵就是动画后的姿势。
+    // ── keyframe animation ──────────────────────────────────────────
+    // Sample `KeyframeAnimation` → `LocalTransform`. `Engine::update` runs `hierarchy_system`
+    // after schedule, so same frame's world matrix is post-animation pose.
     s.add_system("clip::animation", |world, dt| {
         crate::scene::systems::animation::keyframe_animation_system(world, dt)
     });
 
-    // ── 骨骼动画 ────────────────────────────────────────────
-    // 采样 `Animator` → 骨骼矩阵。P0-2 只算 CPU 侧的 palette（GPU 蒙皮在 P0-3）。
+    // ── skeletal animation ────────────────────────────────────────────
+    // Sample `Animator` → bone matrices. P0-2 only computes CPU-side palette (GPU skinning in P0-3).
     s.add_system("animator::pose", |world, dt| {
         crate::scene::systems::animator::animator_system(world, dt);
     });
 
-    // ── 地形 ────────────────────────────────────────────────
-    // `Terrain` 只是数据：这里按高度图生成网格并登记到 `ProceduralMeshes`，
-    // 资产解析器在下一帧的上传阶段就能取到（#517 Phase 1）。
+    // ── terrain ────────────────────────────────────────────────
+    // `Terrain` is data only: here generate mesh from heightmap and register into `ProceduralMeshes`,
+    // asset parser can pick it up in next frame's upload phase (#517 Phase 1).
     s.add_system("terrain::mesh", |world, _dt| {
         crate::scene::systems::terrain::terrain_system(world)
     });
 
-    // ── 粒子模拟 ────────────────────────────────────────────
-    // CPU 粒子积分 + 发射（#501 Phase 1）。同样在 `hierarchy_system` 之前，
-    // 提取阶段看到的已经是本帧推进后的粒子。
+    // ── particle simulation ──────────────────────────────────────────
+    // CPU particle integration + emission (#501 Phase 1). Also before `hierarchy_system`,
+    // extract sees already-advanced particles this frame.
     s.add_system("fx::particles", |world, dt| {
         crate::scene::systems::particles::particle_system(world, dt);
     });
 
-    // ── 2D 粒子模拟 ─────────────────────────────────────────
-    // 世界 XY 平面的 CPU 粒子（#594）。和 3D 粒子并排，理由相同：与 ECS /
-    // 场景格式一致，提取阶段读到的已经是本帧推进后的粒子。
+    // ── 2D particle simulation ─────────────────────────────────
+    // CPU particles in world XY plane (#594). Parallel to 3D particles for same reason: consistent with ECS /
+    // scene format, extract sees already-advanced particles this frame.
     s.add_system("fx::particles2d", |world, dt| {
         crate::scene::systems::particles2d::particle_emitter_2d_system(world, dt);
     });
 
-    // ── 屏幕空间（UI 层）粒子（#1057）────────────────────────
-    // 模拟在像素空间，输出并入 `ExternalUiQuads`；必须排在本帧的 `ui::render`
-    // 之前，四边形才会进入同一帧的 `UiDrawList`。
+    // ── screen-space (UI layer) particles (#1057) ────────────────────────
+    // Simulated in pixel space, output merged into `ExternalUiQuads`; must be before this frame's `ui::render`
+    // so quads enter same frame's `UiDrawList`.
     s.add_system("fx::ui_particles", |world, dt| {
         crate::scene::systems::ui_particles::ui_particle_emitter_system(world, dt);
     });
 
-    // ── 昼夜（#983）────────────────────────────────────────
-    // 推进 `TimeOfDay` 并刷新环境光。放在粒子之前、`hierarchy_system` 之前：
-    // 本帧的 `sprite_light_entries` 要读到推进后的环境光，否则画面晚一帧。
+    // ── day-night (#983) ─────────────────────────────────────────
+    // Advance `TimeOfDay` and refresh ambient light. Placed before particles and `hierarchy_system`:
+    // this frame's `sprite_light_entries` must read advanced ambient light, else image is one frame late.
     s.add_system("time::of_day", |world, dt| {
         crate::scene::systems::time_of_day::time_of_day_system(world, dt);
     });
 
     // ── UI Layout ─────────────────────────────────────────────
-    // 每帧重新计算所有 UI 元素的屏幕空间矩形。
+    // Recompute screen-space rects of all UI elements each frame.
     s.add_system("ui::layout", |world, _dt| {
         crate::ui::ui_layout_system(world)
     });
 
     // ── UI Input ──────────────────────────────────────────────
-    // 命中测试，更新 Interaction 组件（需 layout 之后）。
+    // Hit test, update `Interaction` component (needs after layout).
     s.add_system("ui::input", |world, _dt| crate::ui::ui_input_system(world));
 
     // ── UI Render ─────────────────────────────────────────────
-    // 收集 UI 绘制命令为 UiDrawList resource。
+    // Collect UI draw commands into UiDrawList resource.
     s.add_system("ui::render", |world, _dt| {
         crate::ui::ui_render_system(world)
     });

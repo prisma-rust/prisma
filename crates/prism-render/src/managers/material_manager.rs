@@ -382,10 +382,10 @@ impl RenderMaterialManager {
         self.materials.remove(handle);
     }
 
-    /// 按 **SSBO 槽位** 释放（#495 热重载 / 实体销毁）。
+    /// Release by **SSBO slot bit** (#495 hot reload / entity destroy).
     ///
-    /// 组件里存的是 `MaterialRef.material_slot`，不是渲染器的句柄，所以这里
-    /// 用槽位反查句柄再走 `unregister`（复位 GPU 数据 + 归还空闲表）。
+    /// Component stores `MaterialRef.material_slot`, not renderer handle, so this inside
+    /// uses incorrect slot bit to look up handle again via `unregister` (copy GPU data + return empty idle table).
     pub fn unregister_slot(&mut self, slot: u32) -> bool {
         let Some(handle) = self.slots.get(slot as usize).copied().flatten() else {
             return false;
@@ -425,7 +425,7 @@ impl RenderMaterialManager {
         self.materials.is_empty()
     }
 
-    /// 驻留材质槽数与估算字节数（#518 Phase 2）。
+    /// Resident material slot count and estimated byte count (#518 Phase 2).
     pub fn stats(&self) -> (usize, u64) {
         let count = self.materials.len();
         (

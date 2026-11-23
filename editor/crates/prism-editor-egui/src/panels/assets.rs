@@ -1094,7 +1094,7 @@ pub fn asset_delete_confirm(ui: &Ui, workspace: &mut Workspace, state: &mut UiSt
                         ui.label(RichText::new(path).monospace().size(11.0));
                     }
                     if many.len() > 10 {
-                        ui.label(RichText::new(format!("… 还有 {} 项", many.len() - 10)).weak());
+                        ui.label(RichText::new(format!("… and {} more", many.len() - 10)).weak());
                     }
                 }
             }
@@ -1300,7 +1300,7 @@ pub fn request_save_document(workspace: &mut Workspace, state: &mut UiState, ind
         Ok(path) => state.status = workspace.tf("desktop.status.saved", &[("path", &path)]),
         Err(_) if workspace.save_conflict(index).is_some() => {
             state.pending_save_conflict = Some(index);
-            state.status = "文件在磁盘上已被修改".to_string();
+            state.status = "File modified on disk".to_string();
         }
         Err(error) => {
             state.status = workspace.tf(
@@ -1374,7 +1374,7 @@ mod asset_browser_tests {
         assert_eq!(
             names,
             ["assets/a.json", "assets/b.png", "assets/c.png"],
-            "按文件名升序，与 scan_assets 的顺序无关"
+            "Sorted by filename ascending, independent of scan_assets order"
         );
         sort_assets(&mut list, AssetSort::Name, true);
         let names: Vec<&str> = list.iter().map(|entry| entry.0.as_str()).collect();
@@ -1393,7 +1393,7 @@ mod asset_browser_tests {
         assert_eq!(
             names,
             ["assets/b.png", "assets/c.png", "assets/a.json"],
-            "Texture(1) 在 Data(7) 之前，同 kind 内按文件名"
+            "Texture(1) before Data(7), by filename within same kind"
         );
     }
 

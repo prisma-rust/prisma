@@ -140,7 +140,7 @@ pub struct FieldSchema {
     pub drawer: Option<PropertyDrawer>,
 }
 
-/// 检查器里一个字段实际用什么控件画。
+/// Which widget the inspector actually uses to draw a field.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldWidget {
     Bool,
@@ -148,11 +148,11 @@ pub enum FieldWidget {
     Float,
     Text,
     Multiline,
-    /// `glam::Vec3` / `[f32;3]` 之类，分量编辑。
+    /// `glam::Vec3` / `[f32;3]` etc., component editing.
     Vector {
         len: usize,
     },
-    /// `glam::Quat` 用欧拉角编辑。
+    /// `glam::Quat` edited with Euler angles.
     Quat,
     Color {
         alpha: bool,
@@ -202,7 +202,7 @@ impl FieldSchema {
             "array" => match self.struct_type.as_deref() {
                 Some("glam::Vec3") => FieldWidget::Vector { len: 3 },
                 Some("glam::Quat") => FieldWidget::Quat,
-                // RGBA / 颜色数组走色块 + 分量。
+                // RGBA / color array uses color block + components.
                 _ => match self.array_len {
                     Some(len @ (3 | 4)) if self.name.contains("color") => {
                         FieldWidget::Color { alpha: len == 4 }
@@ -241,7 +241,7 @@ pub struct TypeSchema {
 }
 
 impl TypeSchema {
-    /// `prism_engine::scene::Camera` → `Camera`。
+    /// `prism_engine::scene::Camera` → `Camera`.
     pub fn display_name(&self) -> &str {
         self.name.rsplit("::").next().unwrap_or(&self.name)
     }
@@ -295,7 +295,7 @@ impl Schema {
             .find(|item| item.is_component && item.name == name)
     }
 
-    /// 「添加组件」菜单：按分类分组。
+    /// "Add Component" menu: grouped by category.
     pub fn component_menu(&self) -> Vec<(&str, Vec<&TypeSchema>)> {
         let mut categories: Vec<(&str, Vec<&TypeSchema>)> = Vec::new();
         for component in self.components() {
@@ -314,7 +314,7 @@ impl Schema {
         if component.version > 1 {
             lines.push(format!("v{}", component.version));
         }
-        lines.push(format!("{} 个字段", component.fields.len()));
+        lines.push(format!("{} fields", component.fields.len()));
         Some(lines.join(" · "))
     }
 }
@@ -345,7 +345,7 @@ impl EntityPreset {
     }
 }
 
-/// 字段路径里的一段：对象键或数组下标。
+/// One segment of field path: object key or array index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSegment {
     Key(String),
@@ -396,7 +396,7 @@ pub fn value_at<'a>(root: &'a Value, segments: &[PathSegment]) -> Option<&'a Val
     Some(current)
 }
 
-/// 反射写入的编辑器侧等价物：只改存在的路径，不创建中间节点。
+/// Editor-side equivalent of reflective write: only modifies existing paths, does not create intermediate nodes.
 pub fn set_at(root: &mut Value, segments: &[PathSegment], value: Value) -> bool {
     if segments.is_empty() {
         *root = value;
@@ -448,7 +448,7 @@ pub fn set_at_path(root: &mut Value, path: &str, value: Value) -> bool {
     set_at(root, &parse_path(path), value)
 }
 
-/// 组件默认值 + 预设覆盖（浅合并，与 Web 编辑器一致）。
+/// Component default value + preset override (shallow merge, consistent with Web editor).
 pub fn component_value_with_overrides(default: &Value, overrides: Option<&Value>) -> Value {
     match (default, overrides) {
         (Value::Object(base), Some(Value::Object(over))) => {
@@ -463,7 +463,7 @@ pub fn component_value_with_overrides(default: &Value, overrides: Option<&Value>
     }
 }
 
-/// 一个 f32 字段能接受的取值范围（`Range` 特性优先，其次 `Min`/`Max`）。
+/// Value range acceptable for an f32 field (`Range` trait preferred, then `Min`/`Max`).
 pub fn numeric_bounds(field: &FieldSchema) -> (f32, Option<f32>, Option<f32>) {
     let drawer = field.drawer();
     let range = drawer.and_then(|drawer| drawer.range());
@@ -586,7 +586,7 @@ mod tests {
             Some(Value::from(0.5))
         );
 
-        // 不存在的路径不创建节点。
+        // Non-existent path does not create node.
         assert!(!set_at_path(&mut value, "nope.deep", Value::Null));
         assert!(value.get("nope").is_none());
     }
@@ -618,8 +618,8 @@ mod tests {
     #[test]
     fn preset_parsing_is_tolerant() {
         let presets = EntityPreset::from_list(&serde_json::json!([
-            {"id": "empty", "label": "空实体", "name": "entity"},
-            {"id": "camera", "label": "相机", "name": "Camera",
+            {"id": "empty", "label": "empty entity", "name": "entity"},
+            {"id": "camera", "label": "camera", "name": "Camera",
              "components": ["prism_engine::scene::Camera"],
              "overrides": {}, "position": [0.0, 0.0, 10.0], "rotation": [0.0, 0.0, 0.0, 1.0]}
         ]));

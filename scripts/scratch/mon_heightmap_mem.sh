@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 监控子进程峰值 RSS（物理内存，MB），不设虚拟限制
+# Monitor subprocess peak RSS (physical memory, MB), no virtual limit set
 "$@" > assets/heightmaps/hm_out.log 2>&1 &
 PID=$!
 PEAK=0

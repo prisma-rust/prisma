@@ -995,7 +995,11 @@ mod hierarchy_search_tests {
 
         let keep = search_matches(&doc, "pointlight", HierarchySearchMode::Component);
         assert!(keep.contains(&parent));
-        assert_eq!(keep.len(), 1, "祖先链只补命中项的祖先，不扩子孙");
+        assert_eq!(
+            keep.len(),
+            1,
+            "ancestor chain only fills ancestors of hit item, does not expand descendants"
+        );
 
         assert!(search_matches(&doc, "pointlight", HierarchySearchMode::Name).is_empty());
         assert!(search_matches(&doc, "lamp", HierarchySearchMode::Component).is_empty());

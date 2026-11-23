@@ -54,7 +54,7 @@ fn spot_lights_collected() {
 
 #[test]
 fn point_lights_are_not_truncated_by_the_legacy_collector() {
-    // #468：上限由 `render_system` 在知道相机位置后统一挑，旧组件查询不再砍。
+    // #468: limit picked uniformly by `render_system` after knowing camera position, old component query no longer culls.
     let mut world = World::new();
     let extra = LIGHT_MAX + 5;
     for _ in 0..extra {
@@ -118,7 +118,7 @@ fn missing_active_component_defaults_to_visible() {
 }
 
 // ---------------------------------------------------------------------------
-// 统一 `Light`（形状）采样
+// Unified `Light` (shape) sampling
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -153,7 +153,7 @@ fn unified_point_light_uses_transform_position() {
 fn unified_directional_light_uses_transform_forward() {
     let mut world = World::new();
     let e = world.spawn();
-    // 绕 Y 轴转 90°：引擎的 forward(+Z) 变成 +X。
+    // Rotate 90° around Y: engine forward(+Z) becomes +X.
     world.insert(
         e,
         LocalTransform {
@@ -173,7 +173,7 @@ fn unified_directional_light_uses_transform_forward() {
     let expected = glam::Vec3::X;
     assert!(
         (sample.direction - expected).length() < 1e-4,
-        "forward 应为 +X，实际 {:?}",
+        "Forward should be +X, actual {:?}",
         sample.direction
     );
 }
@@ -182,7 +182,7 @@ fn unified_directional_light_uses_transform_forward() {
 fn legacy_directional_light_stores_propagation_direction() {
     let mut world = World::new();
     let e = world.spawn();
-    // 旧组件 `euler_xyz` 表示「指向光源」的方向；采样统一存光传播方向。
+    // Old component `euler_xyz` represented "pointing to light source" direction; sampling stores propagation direction.
     world.insert(
         e,
         DirectionalLight {
@@ -195,7 +195,7 @@ fn legacy_directional_light_stores_propagation_direction() {
     let expected = -glam::Vec3::Z;
     assert!(
         (sample.direction - expected).length() < 1e-4,
-        "传播方向应为 -Z，实际 {:?}",
+        "Propagation direction should be -Z, actual {:?}",
         sample.direction
     );
 }
@@ -216,7 +216,7 @@ fn unified_spot_light_converts_full_angles_to_cosines() {
 
     let sample = collect_light_samples(&world)[0];
     assert_eq!(sample.kind, LightKind::Spot);
-    // 全锥角 60° → 半角 30° → cos = √3/2。
+    // Full cone angle 60° → half angle 30° → cos = √3/2.
     assert!((sample.cos_outer - 30.0_f32.to_radians().cos()).abs() < 1e-5);
     assert!((sample.cos_inner - 10.0_f32.to_radians().cos()).abs() < 1e-5);
     assert!(sample.cos_inner > sample.cos_outer);
@@ -236,7 +236,7 @@ fn unified_light_suppresses_legacy_component_on_same_entity() {
     );
 
     let samples = collect_light_samples(&world);
-    assert_eq!(samples.len(), 1, "同一实体不应被点亮两次");
+    assert_eq!(samples.len(), 1, "Same entity should not be lit twice");
     assert_eq!(samples[0].kind, LightKind::Point);
 }
 
@@ -253,7 +253,7 @@ fn disabled_or_unsupported_lights_are_skipped() {
         },
     );
 
-    // 面光源只做 schema 对照，渲染器跳过。
+    // Area light source only for schema verification, renderer skips.
     let rect = world.spawn();
     world.insert(
         rect,
@@ -314,8 +314,11 @@ fn local_light_budget_caps_only_point_and_spot() {
         .iter()
         .filter(|s| s.kind != LightKind::Directional)
         .count();
-    assert_eq!(directional, 1, "方向光不占局部光预算");
-    // #468：收集阶段不截断，预算由 `render_system` 按重要性挑。
+    assert_eq!(
+        directional, 1,
+        "Directional light does not occupy local light budget"
+    );
+    // #468: collect phase does not truncate, budget picked by `render_system` by importance.
     assert_eq!(local, (LIGHT_MAX + 4) as usize);
 }
 
@@ -344,19 +347,19 @@ fn nearer_and_brighter_lights_score_higher() {
     dim.intensity = 1.0;
     assert!(local_light_importance(&near, Vec3::ZERO) > local_light_importance(&dim, Vec3::ZERO));
 
-    // 范围大的照得更远，优先保留。
+    // Larger range lights reach farther, preferentially kept.
     let mut wide = near;
     wide.range = 100.0;
     assert!(local_light_importance(&wide, Vec3::ZERO) > local_light_importance(&near, Vec3::ZERO));
 
-    // 方向光不参与局部光预算。
+    // Directional light not counted in local light budget.
     let mut sun = near;
     sun.kind = LightKind::Directional;
     assert_eq!(local_light_importance(&sun, Vec3::ZERO), 0.0);
 }
 
 // ---------------------------------------------------------------------------
-// 方向光阴影状态（`Light.shadows` / `shadowStrength`）
+// Directional light shadow state (`Light.shadows` / `shadowStrength`)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -393,7 +396,10 @@ fn shadows_none_disables_but_keeps_strength() {
     );
 
     let (enabled, strength) = directional_shadow_state(&collect_light_samples(&world));
-    assert!(!enabled, "shadows = None 应整帧关闭阴影");
+    assert!(
+        !enabled,
+        "shadows = None should disable shadows for whole frame"
+    );
     assert!((strength - 0.4).abs() < 1e-6);
 }
 

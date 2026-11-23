@@ -12,10 +12,10 @@
 //! prism-cook scan
 //!
 //! # Import all assets (run importers + cache)
-//! prism-cook 导入
+//! prism-cook import
 //!
 //! # Build a .pak for distribution
-//! prism-cook 构建 --output game.pak --compression 3
+//! prism-cook build  --output game.pak --compression 3
 //!
 //! # Validate an existing .pak
 //! prism-cook validate game.pak
@@ -24,7 +24,7 @@
 //! prism-cook verify
 //!
 //! # List registered assets
-//! prism-cook 列表
+//! prism-cook list
 //!
 //! # Inspect a specific asset
 //! prism-cook inspect 10001
@@ -92,14 +92,11 @@ fn kv(key_en: &str, key_cn: &str, value: &str, key_en_width: usize) {
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(
-    name = "prism-cook",
-    about = "Prisma Resource Pipeline CLI\n资源管线命令行工具"
-)]
+#[command(name = "prism-cook", about = "Prisma Resource Pipeline CLI")]
 #[command(args_conflicts_with_subcommands = true)]
 struct Cli {
     /// .pak file to inspect / validate (shorthand for `validate`).
-    /// 直接传入 .pak 路径来验证（`validate` 的快捷方式）
+    /// Directly pass .pak path to validate (`validate` shortcut)
     #[arg(index = 1)]
     pak: Option<PathBuf>,
 
@@ -107,72 +104,72 @@ struct Cli {
     command: Option<Commands>,
 
     /// Project root (defaults to cwd).
-    /// 项目根目录（默认为当前目录）
+    /// Project root directory (default current directory)
     #[arg(long, global = true)]
     project: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new project structure. 初始化新项目
+    /// Initialize a new project structure.
     Init {
-        /// Target directory (defaults to cwd). 目标目录（默认当前目录）
+        /// Target directory (defaults to cwd).
         dir: Option<PathBuf>,
     },
 
     /// Scan the Assets/ directory and update the database.
-    /// 扫描 Assets/ 目录并更新数据库
+    /// Scan Assets/ directory and update database
     Scan,
 
-    /// Import assets (run importers). 导入资源（执行导入器）
+    /// Import assets (run importers).
     Import {
-        /// Force re-import even if cached. 强制重新导入（跳过缓存）
+        /// Force re-import even if cached.
         #[arg(long, short)]
         force: bool,
     },
 
-    /// Build a .pak package. 构建 .pak 资源包
+    /// Build a .pak package.
     Build {
-        /// Output .pak file path. 输出 .pak 文件路径
+        /// Output .pak file path. output  .pak file path
         #[arg(long, short, default_value = "game.pak")]
         output: PathBuf,
 
         /// Compression level (0-22). Overrides the profile level when given.
-        /// 压缩级别（0-22）；不填则使用 profile 的 level
+        /// Compression level (0-22); if not filled use profile level
         #[arg(long, short = 'l')]
         compression: Option<u32>,
 
         /// Platform target; selects the built-in profile of the same name.
-        /// 目标平台（选中同名内置 profile）
+        /// Target platform (select same named built-in profile)
         #[arg(long)]
         platform: Option<String>,
 
         /// Profile name to resolve (defaults to `--platform`, then `desktop`).
-        /// 要解析的 profile 名（默认取 --platform，再退回 desktop）
+        /// Profile name to parse (default from --platform, fallback desktop)
         #[arg(long)]
         profile: Option<String>,
 
         /// Mark assets at or above this many uncompressed bytes as streamed.
-        /// 按未压缩大小把资源标记为 streamed（覆盖 profile）
+        /// Flag resources as streamed by uncompressed size (overrides profile)
         #[arg(long)]
         stream_threshold: Option<u64>,
     },
 
-    /// Validate a .pak file. 验证 .pak 文件
+    /// Validate a .pak file. validate  .pak file
     Validate {
-        /// Path to the .pak file. .pak 文件路径
+        /// Path to the .pak file. .pak file path
         pak: PathBuf,
     },
 
-    /// Verify the Library/Intermediate cache. 校验中间缓存
+    /// Verify the Library/Intermediate cache.
     Verify,
 
-    /// List all registered assets. 列出所有已注册资源
+    /// List all registered assets.
     List,
 
-    /// Inspect a single asset. 查看单个资源详情
+    /// Inspect a single asset.
     Inspect {
-        /// Asset ID or path. 资源 ID 或路径
+        /// Asset ID or path.
         id: String,
     },
 }
@@ -247,7 +244,7 @@ fn resolve_build_settings(
     let mut settings = match profiles.resolve(&name) {
         Ok(settings) => settings,
         Err(profile::ProfileError::NotFound(missing)) => {
-            eprintln!("  ⚠  unknown profile / 未知 profile: {missing} (using defaults)");
+            eprintln!("  ⚠  unknown profile: {missing} (using defaults)");
             profile::CookSettings {
                 platform: missing,
                 ..Default::default()
@@ -286,19 +283,16 @@ fn cmd_init(dir: &Path) -> anyhow::Result<()> {
     let cache = ImportCache::new();
     cache.save(cache_path(dir))?;
 
-    println!(
-        "✅  Resource pipeline initialized / 资源管线已初始化: {}",
-        dir.display()
-    );
-    println!("   Assets/    –  Place source files here / 放置源文件");
-    println!("   Library/   –  Database & import cache / 数据库和导入缓存");
+    println!("✅  Resource pipeline initialized: {}", dir.display());
+    println!("   Assets/    –  Place source files here");
+    println!("   Library/   –  Database & import cache");
     Ok(())
 }
 
 fn cmd_scan(root: &Path, _cli: &Cli) -> anyhow::Result<()> {
     let assets = assets_dir(root);
     if !assets.exists() {
-        anyhow::bail!("Assets/ directory not found / 目录不存在. Run 'prism-cook init' first.");
+        anyhow::bail!("Assets/ directory not found. Run 'prism-cook init' first.");
     }
 
     let mut db = AssetDatabase::load(db_path(root))?;
@@ -326,18 +320,14 @@ fn cmd_scan(root: &Path, _cli: &Cli) -> anyhow::Result<()> {
     });
 
     db.save(db_path(root))?;
-    println!(
-        "✅  Scan complete / 扫描完成: {} new/新增, {} total/总计",
-        scanned,
-        db.len()
-    );
+    println!("✅  Scan complete: {} new, {} total", scanned, db.len());
     Ok(())
 }
 
 fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
     let assets = assets_dir(root);
     if !assets.exists() {
-        anyhow::bail!("Assets/ directory not found / 目录不存在. Run 'prism-cook init' first.");
+        anyhow::bail!("Assets/ directory not found. Run 'prism-cook init' first.");
     }
 
     let mut db = AssetDatabase::load(db_path(root))?;
@@ -401,10 +391,7 @@ fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
                         if let Some(record) = record {
                             let path = intermediate_path(root, record);
                             if let Err(e) = std::fs::write(&path, &data) {
-                                eprintln!(
-                                    "  ⚠  cannot write intermediate / 无法写入中间文件 {}: {e}",
-                                    path.display()
-                                );
+                                eprintln!("  ⚠  cannot write intermediate {}: {e}", path.display());
                             }
                         }
                     }
@@ -419,9 +406,7 @@ fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
     db.save(db_path(root))?;
     cache.save(cache_path(root))?;
 
-    println!(
-        "✅  Import complete / 导入完成: {imported} imported/导入, {cached} cached/缓存, {count} total/总计"
-    );
+    println!("✅  Import complete: {imported} imported, {cached} cached, {count} total");
     Ok(())
 }
 
@@ -435,12 +420,12 @@ fn cmd_build(
     _cli: &Cli,
 ) -> anyhow::Result<()> {
     if !db_path(root).exists() {
-        anyhow::bail!("No AssetDatabase.json found / 未找到数据库. Run 'prism-cook scan' first.");
+        anyhow::bail!("No AssetDatabase.json found. Run 'prism-cook scan' first.");
     }
 
     let db = AssetDatabase::load(db_path(root))?;
     if db.is_empty() {
-        anyhow::bail!("No assets to build / 没有可构建的资源. Run 'prism-cook scan' first.");
+        anyhow::bail!("No assets to build. Run 'prism-cook scan' first.");
     }
 
     // Resolve the platform/profile settings *before* cooking: the texture and
@@ -454,13 +439,13 @@ fn cmd_build(
         stream_threshold,
     )?;
     println!(
-        "  profile / 配置: {} (platform {}, compression level {})",
+        "  profile: {} (platform {}, compression level {})",
         resolved_profile, settings.platform, settings.compression.level
     );
 
-    // 加载 imported data: 从 Library/Intermediate/ 读取中间数据；
-    // 若尚未导入则按需执行 importer 生成中间数据，避免直接将原始文件（如 PNG）
-    // 传给期望 RTXI/RMXI 的 cooker。
+    // Load imported data: read import-time data from Library/Intermediate/;
+    // If not yet imported, execute importer on demand to generate import-time data, avoid directly passing original files (like PNG)
+    // to cooker expecting RTXI/RMXI.
     let assets = assets_dir(root);
     let inter_dir = intermediate_dir(root);
     std::fs::create_dir_all(&inter_dir)?;
@@ -485,7 +470,7 @@ fn cmd_build(
 
         let source_path = assets.join(&record.path);
         if !source_path.exists() {
-            eprintln!("  ⚠  cannot read / 无法读取 {}", record.path);
+            eprintln!("  ⚠  cannot read {}", record.path);
             continue;
         }
 
@@ -515,7 +500,7 @@ fn cmd_build(
                 }
             }
             Err(e) => {
-                eprintln!("  ⚠  import failed / 导入失败 {}: {e}", record.path);
+                eprintln!("  ⚠  import failed {}: {e}", record.path);
                 if let Ok(data) = std::fs::read(&source_path) {
                     asset_data.insert(record.id, data);
                 }
@@ -587,13 +572,13 @@ fn cmd_build(
         let meta_json =
             serde_json::to_string_pretty(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?;
         std::fs::write(&meta_path, &meta_json)?;
-        println!("   📋  Manifest / 清单:  {}", meta_path.display());
+        println!("   📋  Manifest:  {}", meta_path.display());
     } else {
-        eprintln!("   ⚠  Could not read back .pak for manifest / 无法回读 .pak");
+        eprintln!("   ⚠  Could not read back .pak for manifest");
     }
 
     println!(
-        "✅  Build complete / 构建完成: {} cooked/已烹饪, {} skipped/跳过 → {} ({})",
+        "✅  Build complete: {} cooked, {} skipped → {} ({})",
         summary.cooked,
         summary.skipped,
         output.display(),
@@ -609,26 +594,26 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     let reader = PackageReader::from_bytes(&pak).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let magic_str = std::str::from_utf8(&reader.header().magic).unwrap_or("????");
-    kv("📦  Magic", "标识", magic_str, 12);
+    kv("📦  Magic", "ID", magic_str, 12);
     kv(
         "🔢  Version",
-        "版本",
+        "Version",
         &format!("{}", reader.header().version),
         12,
     );
     kv(
         "📊  Assets",
-        "资源",
+        "Assets",
         &format!("{}", reader.asset_count()),
         12,
     );
     kv(
         "📏  Size",
-        "大小",
+        "Size",
         &format!("{} ({} bytes)", format_bytes(pak.len() as u64), pak.len()),
         12,
     );
-    kv("✅  Checksum", "校验", "PASS", 12);
+    kv("✅  Checksum", "OK", "PASS", 12);
 
     // Optionally enrich with the .pak.meta.json if it exists alongside.
     let meta_path = pak_path.with_extension("pak.meta.json");
@@ -647,7 +632,7 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     .unwrap_or_default();
 
     println!();
-    println!("   Assets / 资源清单:");
+    println!("   Assets / Asset manifest:");
     println!();
     // Column widths in display columns.
     const COL_ID: usize = 12;
@@ -655,16 +640,16 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     const COL_SIZE: usize = 12;
     const COL_CSIZE: usize = 12;
     const COL_RATIO: usize = 12;
-    // Header 行 — bilingual, EN padded to 5 so `/` aligns.
+    // Header line — bilingual, EN padded to 5 so `/` aligns.
     let hdr =
         |en: &str, cn: &str, w: usize| pad_display(&format!("{} / {}", pad_display(en, 5), cn), w);
     println!(
-        "  {}  {}  {}  {}  {}  Name / 名称",
-        hdr("ID", "标识", COL_ID),
-        hdr("Type", "类型", COL_TYPE),
-        hdr("Size", "大小", COL_SIZE),
-        hdr("Comp", "压缩", COL_CSIZE),
-        hdr("Ratio", "比率", COL_RATIO),
+        "  {}  {}  {}  {}  {}  Name",
+        hdr("ID", "ID", COL_ID),
+        hdr("Type", "Type", COL_TYPE),
+        hdr("Size", "Size", COL_SIZE),
+        hdr("Comp", "Comp", COL_CSIZE),
+        hdr("Ratio", "Ratio", COL_RATIO),
     );
     // Separator — all columns same width.
     println!(
@@ -732,9 +717,9 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     // Hint about metadata when the .meta.json was absent.
     if meta_assets.is_empty() {
         println!();
-        println!("💡  Tip / 提示:");
+        println!("💡  Tip:");
         println!("     Rebuild with current prism-cook to generate .pak.meta.json");
-        println!("     重新构建以生成可读的资产清单");
+        println!("     Rebuild to generate readable asset manifest");
     }
     Ok(())
 }
@@ -743,7 +728,7 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
 /// disk, and report intermediate files no record points at any more (#1005).
 fn cmd_verify(root: &Path) -> anyhow::Result<()> {
     if !db_path(root).exists() {
-        anyhow::bail!("No AssetDatabase.json found / 未找到数据库. Run 'prism-cook scan' first.");
+        anyhow::bail!("No AssetDatabase.json found. Run 'prism-cook scan' first.");
     }
 
     let db = AssetDatabase::load(db_path(root))?;
@@ -793,16 +778,16 @@ fn cmd_verify(root: &Path) -> anyhow::Result<()> {
     orphans.sort();
 
     for (asset, path) in &missing {
-        println!("  ✗ missing / 缺失: {asset} → {}", path.display());
+        println!("  ✗ missing: {asset} → {}", path.display());
     }
     for (asset, reason) in &outdated {
-        println!("  ✗ outdated / 过期: {asset}（{reason}）");
+        println!("  ✗ outdated: {asset} ({reason})");
     }
     for path in &orphans {
-        println!("  ? orphan / 孤儿文件: {}", path.display());
+        println!("  ? orphan: {}", path.display());
     }
     println!(
-        "  Intermediate: {available} ok / 正常, {} missing / 缺失, {} outdated / 过期, {} orphan / 孤儿",
+        "  Intermediate: {available} ok, {} missing, {} outdated, {} orphan",
         missing.len(),
         outdated.len(),
         orphans.len()
@@ -810,24 +795,22 @@ fn cmd_verify(root: &Path) -> anyhow::Result<()> {
 
     if !missing.is_empty() || !outdated.is_empty() {
         anyhow::bail!(
-            "{} intermediate file(s) missing or empty, {} record(s) out of date; run 'prism-cook import' / {} 个中间文件缺失，{} 条记录过期，请重新 import",
-            missing.len(),
-            outdated.len(),
+            "{} intermediate file(s) missing or empty, {} record(s) out of date; run 'prism-cook import'",
             missing.len(),
             outdated.len()
         );
     }
-    println!("✅  Intermediate cache verified / 中间缓存校验通过");
+    println!("✅  Intermediate cache verified");
     Ok(())
 }
 
 fn cmd_list(root: &Path, _cli: &Cli) -> anyhow::Result<()> {
     if !db_path(root).exists() {
-        anyhow::bail!("No AssetDatabase.json found / 未找到数据库. Run 'prism-cook scan' first.");
+        anyhow::bail!("No AssetDatabase.json found. Run 'prism-cook scan' first.");
     }
 
     let db = AssetDatabase::load(db_path(root))?;
-    println!("📋  Assets / 资源 ({} records / 条):", db.len());
+    println!("📋  Assets ({} records):", db.len());
     for record in db.records() {
         let type_label = format!("{:?}", record.asset_type);
         println!(
@@ -842,7 +825,7 @@ fn cmd_list(root: &Path, _cli: &Cli) -> anyhow::Result<()> {
 
 fn cmd_inspect(root: &Path, id_or_path: &str) -> anyhow::Result<()> {
     if !db_path(root).exists() {
-        anyhow::bail!("No AssetDatabase.json found / 未找到数据库.");
+        anyhow::bail!("No AssetDatabase.json found.");
     }
 
     let db = AssetDatabase::load(db_path(root))?;
@@ -856,33 +839,29 @@ fn cmd_inspect(root: &Path, id_or_path: &str) -> anyhow::Result<()> {
 
     match record {
         Some(r) => {
-            println!("── Asset / 资源 ──────────────────────────────────");
-            kv("ID", "编号", &r.id.to_string(), 11);
-            kv("Path", "路径", &r.path, 11);
-            kv("Type", "类型", &format!("{:?}", r.asset_type), 11);
-            kv("Importer", "导入器", &r.importer_name, 11);
-            kv("State", "状态", &format!("{:?}", r.state), 11);
-            kv("Version", "版本", &r.version.to_string(), 11);
-            kv("Source Hash", "哈希", &format!("{:#x}", r.source_hash), 11);
+            println!("── Asset ──────────────────────────────────");
+            kv("ID", "ID", &r.id.to_string(), 11);
+            kv("Path", "Path", &r.path, 11);
+            kv("Type", "Type", &format!("{:?}", r.asset_type), 11);
+            kv("Importer", "Importer", &r.importer_name, 11);
+            kv("State", "State", &format!("{:?}", r.state), 11);
+            kv("Version", "Version", &r.version.to_string(), 11);
+            kv("Source Hash", "Hash", &format!("{:#x}", r.source_hash), 11);
             kv(
                 "Deps",
-                "依赖",
-                &format!(
-                    "{} assets / {} 个资源",
-                    r.dependencies.len(),
-                    r.dependencies.len()
-                ),
+                "Dependencies",
+                &format!("{} assets", r.dependencies.len(),),
                 11,
             );
             for dep in &r.dependencies {
                 if let Some(dep_record) = db.get(*dep) {
                     println!("  → {}  {}", dep, dep_record.path);
                 } else {
-                    println!("  → {}  (missing / 缺失)", dep);
+                    println!("  → {}  (missing)", dep);
                 }
             }
         }
-        None => anyhow::bail!("Asset not found / 未找到资源: {id_or_path}"),
+        None => anyhow::bail!("Asset not found: {id_or_path}"),
     }
     Ok(())
 }

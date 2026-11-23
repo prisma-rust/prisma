@@ -1,14 +1,15 @@
-//! 旧项目配置的一次性迁移：`settings.toml` → `settings.ini`、
-//! `scenes.toml` → `scenes.json`。
+//! One-time migration of old project config: `settings.toml` → the INI settings file,
 //!
-//! 只在**新文件不存在**时转换，因此重复执行是安全的（幂等），也不会覆盖
-//! 用户已经改过的新格式文件。旧文件保留在磁盘上（引擎优先读新文件），
-//! 迁移只负责让旧项目继续能跑；确认无碍后可以手工删除。
+//! `scenes.toml` → `scenes.json`.
 //!
-//! `settings.toml` 的内容与 INI 方言完全重合（`[section]` + `key = value` +
-//! 引号字符串 + 裸的布尔/数字），所以直接复用引擎的 INI 解析器重排一遍；
-//! 场景清单的 `[[scenes]]` 数组表则复用
-//! [`prism_scene::SceneManifest::parse`] 的旧格式分支。
+//! Only run when **new file doesn't exist**, so repeating is safe (idempotent) and won't overwrite
+//! user-edited new format files. Old files remain on disk (engine prefers new file),
+//! migration only keeps old project runnable; after confirming no issues, manually delete.
+//!
+//! `settings.toml` content fully overlaps INI dialect (`[section]` + `key = value` +
+//! quoted strings + bare booleans/numbers), so directly reuse engine INI parser to re-serialize;
+//! scene manifest `[[scenes]]` array table then reuse
+//! [`prism_scene::SceneManifest::parse`] old format branch.
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use anyhow::{Context, Result};
 use prism_ini::Ini;
 use prism_scene::SceneManifest;
 
-/// 本次迁移写了哪些文件（`None` = 该文件不需要迁移）。
+/// Which files this migration wrote (`None` = file doesn't need migration).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MigrationSummary {
     pub settings: Option<PathBuf>,
@@ -29,10 +30,10 @@ impl MigrationSummary {
     }
 }
 
-/// 在 `assets/` 目录上执行迁移，返回实际写出的新文件。
+/// Run migration under `assets/` directory, return actually written new files.
 ///
-/// `assets_dir` 是**包含** `settings.toml` / `scenes.toml` 的目录（通常是
-/// `<project>/assets`）。
+/// `assets_dir` is **directory containing** `settings.toml` / `scenes.toml` (usually
+/// `<project>/assets`).
 pub fn migrate_legacy_config(assets_dir: &Path) -> Result<MigrationSummary> {
     let mut summary = MigrationSummary::default();
 
@@ -89,10 +90,10 @@ fn migrate_scenes(assets_dir: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(target))
 }
 
-/// 解析 `build-scenes` 的清单路径：先迁移旧配置，再返回**实际要读**的文件。
+/// Parse `build-scenes` manifest path: first migrate old config, then return **actually need to read** file.
 ///
-/// 默认参数是 `assets/scenes.json`；旧项目只有 `scenes.toml` 时会先迁移成
-/// 同目录的 `scenes.json`，因此这里只做「存在性 + 同目录回退」这一步。
+/// Default parameter is `assets/scenes.json`; old project only has `scenes.toml` will first migrate to
+/// same directory `scenes.json`, so here only do "existence + same directory fallback" step.
 pub fn resolve_scene_manifest(manifest: &Path) -> Result<PathBuf> {
     let assets_dir = manifest.parent().unwrap_or_else(|| Path::new("."));
     migrate_legacy_config(assets_dir)?;
@@ -143,7 +144,7 @@ mod tests {
         assert_eq!(document.get("app", "company"), Some("Acme"));
         assert_eq!(document.get_u32("window", "width"), Some(1280));
         assert_eq!(document.get_bool("window", "vsync"), Some(false));
-        // 旧文件保留，用户确认后可自行删除。
+        // Old file kept, user can delete after confirming.
         assert!(assets.join("settings.toml").is_file());
         std::fs::remove_dir_all(&assets).ok();
     }
@@ -164,7 +165,7 @@ mod tests {
         assert!(text.contains("\"intro\""), "{text}");
         assert!(text.contains("\"enabled\": false"), "{text}");
 
-        // 第二次不会再写（新文件已存在）。
+        // Second time won't write again (new file already exists).
         let again = migrate_legacy_config(&assets).unwrap();
         assert!(again.is_empty(), "{again:?}");
         std::fs::remove_dir_all(&assets).ok();
@@ -179,7 +180,7 @@ mod tests {
         )
         .unwrap();
 
-        // 旧项目：只给了默认的新路径。
+        // Old project: only gave default new path.
         let resolved = resolve_scene_manifest(&assets.join("scenes.json")).unwrap();
         assert_eq!(resolved, assets.join("scenes.json"));
         assert!(resolved.is_file());

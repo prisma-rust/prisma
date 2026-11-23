@@ -33,7 +33,7 @@ fn entity_with_all_components_yields_draw_item() {
             generation: 1,
         },
     );
-    // No 激活 → defaults to true.
+    // No active → defaults to true.
 
     let items = scene_render_system(&world);
     assert_eq!(items.len(), 1);
@@ -115,13 +115,16 @@ fn submeshes_become_one_draw_item_each_with_their_material() {
     );
 
     let items = scene_render_system(&world);
-    assert_eq!(items.len(), 3, "每个 submesh 一条 draw item");
+    assert_eq!(items.len(), 3, "One draw item per submesh");
     assert_eq!(items[0].index_start, 0);
     assert_eq!(items[0].index_count, Some(3));
     assert_eq!(items[0].material, Some(2));
     assert_eq!(items[1].index_start, 3);
     assert_eq!(items[1].index_count, Some(6));
-    assert_eq!(items[1].material, None, "没有材质的 submesh 回落默认槽");
+    assert_eq!(
+        items[1].material, None,
+        "Submesh without material falls back to default slot"
+    );
     assert_eq!(items[2].index_start, 9);
     assert_eq!(items[2].index_count, Some(3));
     assert_eq!(items[2].material, Some(5));
@@ -165,7 +168,7 @@ fn entity_without_mesh_is_skipped() {
         e,
         LocalToWorld(glam::Mat4::from_cols_array_2d(&[[1.0; 4]; 4])),
     );
-    // No MeshRef, no MaterialRef → no 绘制 item.
+    // No MeshRef, no MaterialRef → no draw  item.
 
     let items = scene_render_system(&world);
     assert!(items.is_empty());
@@ -187,12 +190,19 @@ fn mesh_without_material_still_draws_with_default_material() {
             generation: 1,
         },
     );
-    // 没有 `MaterialRef`：`MeshRenderer { material_path: "" }` 的
-    // 网格-only 实体（编辑器 fixture 就是这种形状）。
+    // No `MaterialRef`: `MeshRenderer { material_path: "" }``
+    // mesh-only entity (editor fixtures are this shape).
 
     let items = scene_render_system(&world);
-    assert_eq!(items.len(), 1, "有网格、无材质的实体也应该绘制");
-    assert_eq!(items[0].material, None, "缺失材质应回落到默认材质槽");
+    assert_eq!(
+        items.len(),
+        1,
+        "Entity with mesh but no material should still be drawn"
+    );
+    assert_eq!(
+        items[0].material, None,
+        "Missing material should fall back to default material slot"
+    );
 }
 
 #[test]
@@ -265,7 +275,7 @@ fn model_matrix_carries_through() {
     assert_eq!(items[0].model, model);
 }
 
-/// 建一个带渲染三件套的实体，可选 `MeshRenderer`（决定 `shadowCastingMode`）。
+/// Build an entity with the render trio, optional `MeshRenderer` (decides `shadowCastingMode`).
 fn spawn_renderable(world: &mut World, renderer: Option<MeshRenderer>) -> prism_ecs::Entity {
     let e = world.spawn();
     world.insert(
@@ -301,9 +311,15 @@ fn missing_mesh_renderer_defaults_to_casting_and_visible() {
 
     let items = scene_render_system(&world);
     assert_eq!(items.len(), 1);
-    assert!(items[0].cast_shadow, "默认 ShadowCastingMode 应为 On");
+    assert!(
+        items[0].cast_shadow,
+        "Default ShadowCastingMode should be On"
+    );
     assert!(items[0].visible_in_main_pass);
-    assert!(!items[0].cast_shadow_two_sided, "默认 On 走背面剔除阴影");
+    assert!(
+        !items[0].cast_shadow_two_sided,
+        "Default On uses back-face culling for shadow"
+    );
 }
 
 #[test]
@@ -343,14 +359,14 @@ fn shadows_only_hides_from_the_main_pass() {
 #[test]
 fn render_state_defaults_to_opaque_and_follows_the_component() {
     let mut world = World::new();
-    // 没有 `MeshRenderer`：默认不透明、队列 2000、背面剔除、写深度。
+    // No `MeshRenderer`: default opaque, queue 2000, back-face cull, depth write.
     spawn_renderable(&mut world, None);
     let items = scene_render_system(&world);
     assert_eq!(items[0].state, DrawState::default());
     assert_eq!(items[0].state.cull_mode, CullMode::Back);
     assert!(!items[0].state.blends());
 
-    // 透明材质状态必须原样传到绘制项（`CullMode.Off` / 队列 / 混合）。
+    // Material transparency state must pass through to draw item (`CullMode.Off` / queue / blend).
     let mut world = World::new();
     spawn_renderable(
         &mut world,
@@ -382,14 +398,14 @@ fn two_sided_requests_two_sided_shadow_casting() {
     );
 
     let items = scene_render_system(&world);
-    // `ShadowCastingMode::TwoSided`：投影且阴影通道关闭背面剔除。
+    // `ShadowCastingMode::TwoSided`: both forward and shadow pass disable back-face cull.
     assert!(items[0].cast_shadow);
     assert!(items[0].visible_in_main_pass);
     assert!(items[0].cast_shadow_two_sided);
 }
 
 // ---------------------------------------------------------------------------
-// 2D 精灵
+// 2D sprite
 // ---------------------------------------------------------------------------
 
 fn spawn_sprite(
@@ -509,7 +525,7 @@ fn sprite_sheet_frame_selects_horizontal_uv_slice() {
 
 #[test]
 fn sprite_sheet_rows_select_the_vertical_uv_slice() {
-    // #584：8x4 图集（128x64 / 每帧 32x32），选第 2 行、行内第 2 列。
+    // #584: 8x4 atlas (128x64 / each frame 32x32), select row 2, column 2 within row.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -531,7 +547,7 @@ fn sprite_sheet_rows_select_the_vertical_uv_slice() {
 
 #[test]
 fn explicit_sheet_columns_override_the_texture_derivation() {
-    // 纹理按 32px 宽能切 4 列，但作者显式声明 2 列：frame_index=2 应进入第 2 行。
+    // Texture can split into 4 columns at 32px width, but author declares 2 columns: frame_index=2 should enter row 2.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -553,7 +569,7 @@ fn explicit_sheet_columns_override_the_texture_derivation() {
 
 #[test]
 fn sprite_blend_state_reaches_the_draw_item() {
-    // #610：加色辉光 = SrcAlpha / One，而不是默认的 alpha 混合。
+    // #610: additive glow = SrcAlpha / One, not default alpha blend.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -576,7 +592,7 @@ fn sprite_blend_state_reaches_the_draw_item() {
 
 #[test]
 fn sprite_clip_rect_reaches_the_draw_item() {
-    // #582：倒影只需要「水面以下」这一个半平面，裁剪矩形原样进实例数据。
+    // #582: reflection only needs single half-plane "below water surface", clip rect passed straight into instance data.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -594,7 +610,7 @@ fn sprite_clip_rect_reaches_the_draw_item() {
     assert_eq!(
         items[0].clip,
         [-40.0, -1.0e4, 40.0, 12.0],
-        "角点顺序被规范化"
+        "Corner order normalized"
     );
 }
 
@@ -613,7 +629,7 @@ fn sprites_without_clipping_pass_the_disabled_rect() {
     );
     let items = scene_sprite_system(&world);
     assert_eq!(items[0].clip, prism_render::NO_CLIP);
-    // 折线 / 粒子 / 瓦片不参与作者态裁剪，同样用 NO_CLIP。
+    // Polyline / particle / tile do not participate in authored clipping, all use NO_CLIP.
     assert!(items.iter().all(|item| item.clip == prism_render::NO_CLIP));
 }
 
@@ -707,7 +723,7 @@ fn unresolved_sprite_is_skipped() {
 }
 
 // ---------------------------------------------------------------------------
-// 2D 折线（LineRenderer）
+// 2D polyline (LineRenderer)
 // ---------------------------------------------------------------------------
 
 fn spawn_line(world: &mut World, points: Vec<[f32; 3]>, layer: i32) -> prism_ecs::Entity {
@@ -727,7 +743,7 @@ fn spawn_line(world: &mut World, points: Vec<[f32; 3]>, layer: i32) -> prism_ecs
     e
 }
 
-/// 三角形在 XY 平面的面积（用于「互不重叠且覆盖完整」的断言）。
+/// Triangle area in XY plane (for assertions of "non-overlapping and complete coverage").
 fn triangle_area(corners: &[[f32; 3]; 4]) -> f32 {
     let a = glam::Vec2::new(corners[0][0], corners[0][1]);
     let b = glam::Vec2::new(corners[1][0], corners[1][1]);
@@ -749,11 +765,14 @@ fn line_renders_two_triangles_per_segment() {
     for item in &items {
         assert_eq!(item.texture, SOLID_TEXTURE);
         assert_eq!(item.color, [1.0, 0.5, 0.0, 1.0]);
-        assert!(item.corners.is_some(), "折线用显式世界空间顶点");
+        assert!(
+            item.corners.is_some(),
+            "Polyline uses explicit world-space vertices"
+        );
     }
 
-    // 斜接拐点：两段在 (10, 0) 处共享同一条边——第 0 段的两个三角形与
-    // 第 1 段的两个三角形恰好交于两个顶点（斜接边的两端）。
+    // Miter joint: two segments share one edge at (10, 0) — the two triangles of segment 0 and
+    // the two triangles of segment 1 meet exactly at two vertices (the two ends of the miter edge).
     let points = |first: usize, last: usize| -> Vec<[f32; 3]> {
         let mut out: Vec<[f32; 3]> = Vec::new();
         for item in &items[first..last] {
@@ -777,13 +796,16 @@ fn line_renders_two_triangles_per_segment() {
             })
         })
         .count();
-    assert_eq!(shared, 2, "相邻段只应共用斜接边: {first:?} / {second:?}");
+    assert_eq!(
+        shared, 2,
+        "Adjacent segments should share only miter edge: {first:?} / {second:?}"
+    );
 }
 
 #[test]
 fn line_geometry_is_not_double_blended_at_bends() {
-    // V 形折线：两段各长 10，线宽 2。等宽 miter 笔触的面积恰好等于
-    // `width * centerline_length`，三角形面积之和超过它就是在拐点重叠了（#604）。
+    // V-shaped polyline: two segments each length 10, line width 2. Equal-width miter stroke area exactly equals
+    // `width * centerline_length`; sum of triangle areas exceeding it means overlap at joint (#604).
     let mut world = World::new();
     spawn_line(
         &mut world,
@@ -799,9 +821,9 @@ fn line_geometry_is_not_double_blended_at_bends() {
     let expected = 2.0 * 20.0;
     assert!(
         (area - expected).abs() < 0.5,
-        "面积 {area} 应等于 width x length = {expected}（重叠会多出来）"
+        "Area {area} should equal width x length = {expected} (overlap would add extra)"
     );
-    assert_eq!(items.len(), 4, "miter 拐点不需要额外的补片");
+    assert_eq!(items.len(), 4, "Miter joint needs no extra patch");
 }
 
 #[test]
@@ -815,15 +837,19 @@ fn bevel_join_fills_the_corner_gap() {
     world.get_mut::<LineRenderer>(e).unwrap().join = LineJoin::Bevel;
 
     let items = scene_line_system(&world);
-    assert_eq!(items.len(), 5, "两段 4 个三角形 + 外角 1 个补片");
+    assert_eq!(
+        items.len(),
+        5,
+        "Two segments 4 triangles + outer corner 1 patch"
+    );
     let area: f32 = items
         .iter()
         .map(|item| triangle_area(&item.corners.expect("line triangle")))
         .sum();
-    // 斜切比斜接少一块外角三角形，但不会少到只剩线段：面积介于 0.9x 与 1.05x 之间。
+    // Bevel has one fewer outer-corner triangle than miter, but not so few that only line segments remain: area between 0.9x and 1.05x.
     assert!(
         area > 2.0 * 20.0 * 0.9 && area <= 2.0 * 20.0,
-        "bevel 面积 {area}"
+        "bevel area {area}"
     );
 }
 
@@ -843,19 +869,23 @@ fn square_caps_and_round_caps_extend_the_ends() {
         .sum::<f32>();
     assert!(
         (square - (flat + 2.0 * 2.0)).abs() < 0.1,
-        "方头多出两个半圆/方块: {square}"
+        "Square cap adds two half-circles/blocks: {square}"
     );
 
     world.get_mut::<LineRenderer>(e).unwrap().cap = LineCap::Round;
     let items = scene_line_system(&world);
-    assert_eq!(items.len(), 2 + 2 * 8, "圆头每端 8 个扇形三角形");
+    assert_eq!(
+        items.len(),
+        2 + 2 * 8,
+        "Round cap has 8 fan triangles per end"
+    );
     let round = items
         .iter()
         .map(|item| triangle_area(&item.corners.unwrap()))
         .sum::<f32>();
     assert!(
         (round - (flat + std::f32::consts::PI * 1.0)).abs() < 0.2,
-        "圆头面积接近半圆 pi*r^2: {round}"
+        "Round cap area near semicircle pi*r^2: {round}"
     );
 }
 
@@ -874,10 +904,10 @@ fn degenerate_segment_is_skipped() {
 }
 
 // ---------------------------------------------------------------------------
-// 亚像素线宽（#978）
+// Sub-pixel line width (#978)
 // ---------------------------------------------------------------------------
 
-/// 正交相机（半高 180）+ 360 像素渲染高度 => 1 世界单位 = 1 渲染像素。
+/// Orthographic camera (half height 180) + 360-pixel render height => 1 world unit = 1 render pixel.
 fn ortho_line_scale() -> LineScreenScale {
     let camera = prism_scene::components::Camera {
         orthographic: true,
@@ -895,8 +925,8 @@ fn point_in_triangle(point: glam::Vec2, [a, b, c]: [glam::Vec2; 3]) -> bool {
     !(has_negative && has_positive)
 }
 
-/// 以 1 世界单位 = 1 像素栅格化，返回每个像素列是否至少被一个三角形覆盖。
-/// 列 `gx` 的中心在 `x = gx - 0.5`（网格从 -1 开始）。
+/// Rasterize at 1 world unit = 1 pixel, return whether each pixel column is covered by at least one triangle.
+/// Center of column `gx` is at `x = gx - 0.5` (mesh starts at -1).
 fn covered_columns(items: &[prism_render::SpriteDrawItem]) -> Vec<bool> {
     const SIZE: usize = 14;
     const MIN: f32 = -1.0;
@@ -956,11 +986,11 @@ fn sub_pixel_line_width_is_widened_to_one_render_pixel() {
         .iter()
         .map(|item| triangle_area(&item.corners.expect("line triangle")))
         .sum();
-    // 加宽到 1 像素后：面积 = 1 x 中心线长度（(10,5) 的模）。
+    // After widening to 1 pixel: area = 1 x centerline length (magnitude of (10,5)).
     let expected = 125f32.sqrt();
     assert!(
         (area - expected).abs() < 0.05,
-        "加宽后面积 {area}，期望 width x length = {expected}"
+        "Widened area {area}, expected width x length = {expected}"
     );
 }
 
@@ -970,7 +1000,7 @@ fn sub_pixel_line_covers_every_pixel_column() {
     let unclamped = covered_columns(&sub_pixel_line_items(&mut narrow, None));
     assert!(
         unclamped[1..=10].iter().any(|covered| !covered),
-        "宽度 0.2 世界单位（远小于 1 像素）时应当出现漏采样的列: {unclamped:?}"
+        "At width 0.2 world units (far below 1 pixel) should have skipped columns: {unclamped:?}"
     );
 
     let mut clamped = World::new();
@@ -980,7 +1010,7 @@ fn sub_pixel_line_covers_every_pixel_column() {
     ));
     assert!(
         clamped_columns[1..=10].iter().all(|covered| *covered),
-        "加宽到 1 像素后每一列都应被像素中心采样到: {clamped_columns:?}"
+        "After widening to 1 pixel every column should be sampled by a pixel center: {clamped_columns:?}"
     );
 }
 
@@ -1001,7 +1031,7 @@ fn sprites_and_lines_sort_together() {
     spawn_line(&mut world, vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 5);
 
     let items = scene_2d_system(&world);
-    assert_eq!(items.len(), 3, "1 个精灵 + 折线的 2 个三角形");
+    assert_eq!(items.len(), 3, "1 sprite + 2 triangles of polyline");
     assert_eq!(items[0].texture, 7, "sprite (layer 1) draws first");
     assert!(
         items[1..].iter().all(|item| item.texture == SOLID_TEXTURE),
@@ -1009,8 +1039,8 @@ fn sprites_and_lines_sort_together() {
     );
 }
 
-/// #433：关掉父级，子物体也必须从 draw list 里消失（Unity 的
-/// `activeInHierarchy`）。派生值由 `active_hierarchy_system` 写入。
+/// #433: disabling parent must also remove child from draw list (Unity's
+/// `activeInHierarchy`). Derived value written by `active_hierarchy_system`.
 #[test]
 fn child_of_an_inactive_parent_is_skipped() {
     let mut world = World::new();
@@ -1043,21 +1073,21 @@ fn child_of_an_inactive_parent_is_skipped() {
     crate::scene::systems::hierarchy::active_hierarchy_system(&mut world);
     assert!(scene_render_system(&world).is_empty());
 
-    // 父级重新打开 → 子物体回来。
+    // Parent re-enabled → child returns.
     world.insert(parent, Active(true));
     crate::scene::systems::hierarchy::active_hierarchy_system(&mut world);
     assert_eq!(scene_render_system(&world).len(), 1);
 }
 
-// ── 视锥剔除（#491） ──────────────────────────────────────────────
+// ── frustum culling (#491) ──────────────────────────────────────────────
 
-/// 相机在原点、看向 −Z 的视锥（与 `prism-render` 的 culling 测试同一构造）。
+/// Frustum of camera at origin looking down −Z (same construction as `prism-render` culling test).
 fn camera_frustum() -> prism_render::culling::Frustum {
     camera_frustum_looking(glam::Vec3::ZERO, glam::Vec3::new(0.0, 0.0, -1.0))
 }
 
-/// 任意位置 / 朝向的相机视锥；投影走引擎自己的 `Camera::projection_matrix`
-/// （Vulkan 深度 [0,1] + y-flip），不另写一份公式。
+/// Frustum of camera at any position / orientation; projection uses engine's own `Camera::projection_matrix`
+/// (Vulkan depth [0,1] + y-flip), no separate formula.
 fn camera_frustum_looking(eye: glam::Vec3, forward: glam::Vec3) -> prism_render::culling::Frustum {
     let camera = prism_scene::Camera {
         fov_y_degrees: 45.0,
@@ -1092,7 +1122,7 @@ fn unit_bounds() -> prism_render::culling::Aabb {
 #[test]
 fn a_mesh_outside_the_camera_frustum_is_culled() {
     let mut world = World::new();
-    // 两个实体共用同一个网格句柄：区别只在模型矩阵。
+    // Two entities share same mesh handle: differ only in model matrix.
     let front = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
@@ -1123,8 +1153,11 @@ fn a_mesh_outside_the_camera_frustum_is_culled() {
     let mut out = Vec::new();
     scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
 
-    assert_eq!(out.len(), 1, "只有相机前的网格留下");
-    assert!(out[0].model[3][2] < 0.0, "留下的是 −Z 方向的实体");
+    assert_eq!(out.len(), 1, "Only mesh in front of camera remains");
+    assert!(
+        out[0].model[3][2] < 0.0,
+        "Remaining one is entity in −Z direction"
+    );
 }
 
 #[test]
@@ -1137,7 +1170,7 @@ fn meshes_without_bounds_are_never_culled() {
 
     let frustum = camera_frustum();
     let mut out = Vec::new();
-    // 没有 `MeshBounds`：程序化网格 / 还没解析完的网格照旧提交。
+    // No `MeshBounds`: procedural mesh / not-yet-parsed mesh submitted as before.
     scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
     assert_eq!(out.len(), 1);
 }
@@ -1157,13 +1190,16 @@ fn culling_keeps_the_rest_of_the_extraction_rules() {
     let frustum = camera_frustum();
     let mut out = Vec::new();
     scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
-    assert!(out.is_empty(), "视锥内但未激活的实体仍然不画");
+    assert!(
+        out.is_empty(),
+        "In-frustum but inactive entity still not drawn"
+    );
 }
 
 #[test]
 fn a_mesh_visible_only_through_a_second_camera_is_kept() {
     let mut world = World::new();
-    // 主相机看 −Z，第二台相机看 +Z：两个实体各自只被其中一台看到。
+    // Main camera looks −Z, second camera looks +Z: each entity seen by exactly one.
     let front_entity = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
@@ -1195,11 +1231,19 @@ fn a_mesh_visible_only_through_a_second_camera_is_kept() {
 
     let mut single = Vec::new();
     scene_render_system_into_with_frustums(&world, std::slice::from_ref(&front), &mut single);
-    assert_eq!(single.len(), 1, "只按主相机剔除时只剩 −Z 的实体");
+    assert_eq!(
+        single.len(),
+        1,
+        "When culling only by main camera, only −Z entity remains"
+    );
 
     let mut both = Vec::new();
     scene_render_system_into_with_frustums(&world, &[front, back], &mut both);
-    assert_eq!(both.len(), 2, "第二台相机视野里的实体不能被主相机剔掉");
+    assert_eq!(
+        both.len(),
+        2,
+        "Entities in second camera's view must not be culled by main camera"
+    );
 }
 
 #[test]
@@ -1236,11 +1280,15 @@ fn an_off_camera_shadow_caster_is_kept_for_shadow_rendering() {
     let mut out = Vec::new();
     scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
 
-    assert_eq!(out.len(), 2, "阴影 caster 即使在主相机视锥外也必须保留");
+    assert_eq!(
+        out.len(),
+        2,
+        "Shadow casters must be kept even outside main camera frustum"
+    );
     let off_camera = out
         .iter()
         .find(|item| item.model[3][2] > 0.0)
-        .expect("视锥外的 caster 应存在");
+        .expect("Caster outside frustum should exist");
     assert!(off_camera.cast_shadow);
     assert!(!off_camera.visible_in_main_pass);
 }
@@ -1262,7 +1310,7 @@ fn an_empty_frustum_set_keeps_everything() {
 
     let mut out = Vec::new();
     scene_render_system_into_with_frustums(&world, &[], &mut out);
-    assert_eq!(out.len(), 2, "没有可用视锥时不剔除");
+    assert_eq!(out.len(), 2, "No culling when no usable frustum");
 }
 
 #[test]
@@ -1287,7 +1335,7 @@ fn no_frustum_matches_the_unculled_extraction() {
 }
 
 // ---------------------------------------------------------------------------
-// 2D 光照（Light2D，#611）
+// 2D lighting (Light2D, #611)
 // ---------------------------------------------------------------------------
 
 fn spawn_light(world: &mut World, light: Light2D, position: glam::Vec3) -> prism_ecs::Entity {
@@ -1354,13 +1402,16 @@ fn ambient_and_directional_lights_2d_map_to_their_shader_kinds() {
         .expect("ambient light");
     assert_eq!(ambient.color_kind[0..3], [0.2, 0.25, 0.5]);
     assert_eq!(ambient.position_range[3], 0.35);
-    assert_eq!(ambient.position_range[2], 0.0, "氛围光没有半径");
+    assert_eq!(
+        ambient.position_range[2], 0.0,
+        "Ambient light has no radius"
+    );
 
     let directional = lights
         .iter()
         .find(|light| light.color_kind[3] == prism_render::SPRITE_LIGHT_DIRECTIONAL as f32)
         .expect("directional light");
-    // 方向被归一化成单位向量，位置不参与。
+    // Direction normalized to unit vector, position does not participate.
     assert_eq!(directional.direction[0..2], [1.0, 0.0]);
     assert_eq!(directional.position_range[0..2], [0.0, 0.0]);
 }
@@ -1380,19 +1431,19 @@ fn disabled_or_inactive_light_2d_entries_are_skipped() {
     world.insert(inactive, prism_scene::components::Active(false));
     assert!(sprite_light_entries(&world).is_empty());
 
-    // 关掉的父级同样会连带隐藏光。
+    // Disabled parent likewise hides light.
     world.get_mut::<Light2D>(disabled).unwrap().enabled = true;
     let parent = spawn_light(&mut world, Light2D::default(), glam::Vec3::ZERO);
     world.insert(parent, prism_scene::components::Active(false));
     prism_scene::HierarchyHelper::reparent(&mut world, disabled, Some(parent));
-    // 父级开关是通过 `ActiveInHierarchy` 传播的派生值，模拟步末尾才算。
+    // Parent switch is derived value propagated via `ActiveInHierarchy`, only computed at end of simulation step.
     super::super::hierarchy::active_hierarchy_system(&mut world);
     assert!(sprite_light_entries(&world).is_empty());
 }
 
 #[test]
 fn only_3d_lights_leave_the_2d_light_table_empty() {
-    // 3D 光照不参与 2D：表为空，精灵保持不受光照（并打印一次提示）。
+    // 3D lighting does not participate in 2D: table empty, sprite remains unlit (and prints one hint).
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(
@@ -1433,5 +1484,5 @@ fn receive_lights_reaches_the_sprite_draw_item() {
         0,
     );
     let items = scene_sprite_system(&world);
-    assert!(!items[0].receive_lights, "默认不受光照");
+    assert!(!items[0].receive_lights, "Not lit by default");
 }

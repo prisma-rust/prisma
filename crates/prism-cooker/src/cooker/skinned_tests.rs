@@ -51,7 +51,7 @@ fn quad_mesh() -> SkinnedMeshInfo {
         uv0: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
         tangents: Vec::new(),
         joints: vec![[0, 1, 0, 0]; 4],
-        // 故意不归一化：编码时应该被修正。
+        // Deliberately not normalized: should be fixed at encode time.
         weights: vec![[2.0, 2.0, 0.0, 0.0]; 4],
         indices: vec![0, 2, 1, 1, 2, 3],
         submeshes: vec![SubmeshInfo {
@@ -76,7 +76,7 @@ fn walk_clip() -> AnimClipInfo {
         warp_windows: Vec::new(),
         tracks: vec![AnimTrackInfo {
             joint: 1,
-            // 故意乱序：编码器要按时间排好。
+            // Deliberately out of order: encoder must sort by time.
             positions: vec![
                 Vec3KeyInfo {
                     time: 0.5,
@@ -89,7 +89,7 @@ fn walk_clip() -> AnimClipInfo {
             ],
             rotations: vec![QuatKeyInfo {
                 time: 0.0,
-                // 未归一化的四元数：解码端会归一化。
+                // Non-normalized quaternion: decode side will normalize.
                 value: [0.0, 0.0, 0.0, 2.0],
             }],
             scales: Vec::new(),
@@ -114,9 +114,12 @@ fn a_skeleton_round_trips_through_rskel() {
 fn a_skeleton_with_an_out_of_order_parent_is_rejected() {
     let mut skeleton = two_bone_skeleton();
     skeleton.joints[0].parent = Some(1);
-    assert!(encode_rskel(&skeleton).is_none(), "父索引必须在自身之前");
+    assert!(
+        encode_rskel(&skeleton).is_none(),
+        "Parent index must come before self"
+    );
 
-    // 解码端也挡：手工把根骨骼的 parent 改成 1。
+    // Decode side also blocks: manually change root bone parent to 1.
     let mut bytes = encode_rskel(&two_bone_skeleton()).expect("encode");
     bytes[13..17].copy_from_slice(&1i32.to_le_bytes());
     assert!(decode_rskel(&bytes).is_none());
@@ -141,7 +144,10 @@ fn a_skinned_mesh_round_trips_and_normalises_weights() {
     assert_eq!(decoded.indices, vec![0, 2, 1, 1, 2, 3]);
     assert_eq!(decoded.submeshes.len(), 1);
     assert_eq!(decoded.submeshes[0].index_count, 6);
-    assert!(decoded.weights_are_normalized(), "编码时归一化");
+    assert!(
+        decoded.weights_are_normalized(),
+        "Normalized at encode time"
+    );
     assert!((decoded.weights[0][0] - 0.5).abs() < 1e-5);
     assert!(decoded.joint_indices_are_in_range());
 }
@@ -181,7 +187,10 @@ fn a_mesh_without_streams_round_trips() {
 fn a_mesh_whose_streams_disagree_on_length_is_rejected() {
     let mut mesh = quad_mesh();
     mesh.normals.pop();
-    assert!(encode_rskin(&mesh).is_none(), "法线流长度必须和顶点数一致");
+    assert!(
+        encode_rskin(&mesh).is_none(),
+        "Normal stream length must match vertex count"
+    );
 }
 
 #[test]
@@ -196,9 +205,9 @@ fn a_clip_round_trips_with_sorted_keys_and_unit_quaternions() {
     let track = &decoded.tracks[0];
     assert_eq!(track.joint, 1);
     assert_eq!(track.positions.len(), 2);
-    assert_eq!(track.positions[0].time, 0.0, "关键帧按时间排序");
+    assert_eq!(track.positions[0].time, 0.0, "Key frames sorted by time");
     assert_eq!(track.positions[1].value, [0.0, 0.2, 0.0]);
-    assert_eq!(track.rotations[0].value, [0.0, 0.0, 0.0, 1.0], "归一化");
+    assert_eq!(track.rotations[0].value, [0.0, 0.0, 0.0, 1.0], "Normalized");
     assert_eq!(decoded.clip_duration(), 1.0);
 }
 
@@ -244,7 +253,7 @@ fn trailing_bytes_are_rejected() {
 fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
     use prism_asset::formats_skinned::{decode_ranim, AnimNotifyInfo};
 
-    // v2：事件表按时间排序写出。
+    // v2: event table written out sorted by time.
     let mut clip = walk_clip();
     clip.notifies = vec![
         AnimNotifyInfo {
@@ -257,42 +266,55 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
         },
     ];
     let bytes = encode_ranim(&clip).expect("encode");
-    assert_eq!(bytes[4], RANI_VERSION, "版本号要写成 v5");
+    assert_eq!(bytes[4], RANI_VERSION, "Version should be written as v5");
     let decoded = decode_ranim(&bytes).expect("decode v5");
     let names: Vec<&str> = decoded
         .notifies
         .iter()
         .map(|notify| notify.name.as_str())
         .collect();
-    assert_eq!(names, vec!["Footstep.L", "Footstep.R"], "编码时按时间排序");
+    assert_eq!(
+        names,
+        vec!["Footstep.L", "Footstep.R"],
+        "Sorted by time at encode time"
+    );
     assert!((decoded.notifies[0].time - 0.2).abs() < 1e-6);
 
-    // v4 兼容：去掉末尾的 warp window 表、版本号写回 4。
+    // v4 compat: drop trailing warp window table, write version back to 4.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
     legacy.truncate(legacy.len() - 4); // warp_window_count
     legacy[4] = RANI_SECTION_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v4");
-    assert!(decoded.warp_windows.is_empty(), "v4 剪辑没有 warp window");
+    assert!(
+        decoded.warp_windows.is_empty(),
+        "v4 clip has no warp window"
+    );
 
-    // v3 兼容：再去掉 section 表、版本号写回 3，事件 / 标记仍然能解出。
+    // v3 compat: again drop section table, write version back to 3, events / flags still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
     legacy.truncate(legacy.len() - 4); // warp_window_count
     legacy.truncate(legacy.len() - 4); // section_count
     legacy[4] = RANI_SYNC_MARKER_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v3");
-    assert!(decoded.sections.is_empty(), "v3 剪辑没有 Montage 段");
+    assert!(
+        decoded.sections.is_empty(),
+        "v3 clip has no Montage segments"
+    );
 
-    // v2 兼容：再去掉 sync marker 表、版本号写回 2，事件表仍然能解出。
+    // v2 compat: again drop sync marker table, write version back to 2, event table still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
     legacy.truncate(legacy.len() - 4); // warp_window_count
     legacy.truncate(legacy.len() - 4); // section_count
     legacy.truncate(legacy.len() - 4); // marker_count
     legacy[4] = RANI_NOTIFY_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v2");
-    assert!(decoded.sync_markers.is_empty(), "v2 剪辑没有同步标记");
+    assert!(
+        decoded.sync_markers.is_empty(),
+        "v2 clip has no sync markers"
+    );
     assert_eq!(decoded.name, "walk");
 
-    // v1 兼容：再从 v2 去掉事件表（notify_count = 0 的 4 字节），仍然能解出剪辑。
+    // v1 compat: again drop event table from v2 (notify_count = 0, 4 bytes), clip still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
     legacy.truncate(legacy.len() - 4); // warp_window_count
     legacy.truncate(legacy.len() - 4); // section_count
@@ -300,8 +322,11 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
     legacy.truncate(legacy.len() - 4); // notify_count (empty)
     legacy[4] = SKINNED_FORMAT_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v1");
-    assert!(decoded.notifies.is_empty(), "v1 剪辑没有事件");
-    assert!(decoded.sync_markers.is_empty(), "v1 剪辑没有同步标记");
+    assert!(decoded.notifies.is_empty(), "v1 clip has no events");
+    assert!(
+        decoded.sync_markers.is_empty(),
+        "v1 clip has no sync markers"
+    );
     assert_eq!(decoded.name, "walk");
 }
 
@@ -327,7 +352,7 @@ fn ranim_v5_round_trips_normalized_markers_ranges_and_windows() {
             start: 0.3,
             end: 0.8,
         },
-        // 非法段：编码器丢弃，不写进资产。
+        // Illegal segment: encoder discards, not written into asset.
         AnimClipSectionInfo {
             name: "".into(),
             start: 0.0,
@@ -353,14 +378,18 @@ fn ranim_v5_round_trips_normalized_markers_ranges_and_windows() {
     ];
     let bytes = encode_ranim(&clip).expect("encode");
     let decoded = decode_ranim(&bytes).expect("decode");
-    // 归一化、排序、去重、丢掉非有限值。
+    // Normalize, sort, deduplicate, drop non-limited values.
     assert_eq!(decoded.sync_markers, vec![0.0, 0.5, 0.75]);
     let names: Vec<&str> = decoded
         .sections
         .iter()
         .map(|section| section.name.as_str())
         .collect();
-    assert_eq!(names, vec!["Start", "Vault", "Land"], "编码时按 start 排序");
+    assert_eq!(
+        names,
+        vec!["Start", "Vault", "Land"],
+        "Sorted by start at encode time"
+    );
     assert!((decoded.sections[1].start - 0.3).abs() < 1e-6);
     assert!((decoded.sections[2].end - 1.0).abs() < 1e-6);
     let windows: Vec<&str> = decoded

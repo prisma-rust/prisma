@@ -1,4 +1,4 @@
-//! Integration tests for the `prism-cook` 二进制 (std::process::Command).
+//! Integration tests for the `prism-cook` binary (std::process::Command).
 //!
 //! These tests build a minimal .pak, invoke the CLI binary, and verify its
 //! stdout / stderr output — ensuring the validate-shortcut and metadata
@@ -14,10 +14,10 @@ use prism_asset::package::PackageBuilder;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// 定位 the compiled prism-cook 二进制
+/// Locate the compiled prism-cook binary
 ///
 /// `cargo test` places the test executable in `target/debug/deps/`, while the
-/// CLI 二进制 lives in `target/debug/` (or `target/debug/prism-cook.exe` on
+/// CLI binary lives in `target/debug/` (or `target/debug/prism-cook.exe` on
 /// Windows).  We walk up from the test exe to find it.
 fn cli_binary() -> PathBuf {
     if let Some(bin) = option_env!("CARGO_BIN_EXE_prism-cook") {
@@ -154,14 +154,14 @@ fn cli_validate_without_meta_json_shows_fallback() {
 
     assert!(stderr.is_empty(), "no error expected:\n{stderr}");
     assert!(stdout.contains("RPAK"), "should show magic:\n{stdout}");
-    // 回退 标签 should mention 二进制 and 资源
+    // Fallback tag should mention binary and asset
     assert!(
         stdout.contains("binary") && stdout.contains("asset"),
         "fallback should mention asset type:\n{stdout}"
     );
     // Tip about rebuilding should appear.
     assert!(
-        stdout.contains("Tip / 提示"),
+        stdout.contains("Tip"),
         "should show tip about rebuilding:\n{stdout}"
     );
 }

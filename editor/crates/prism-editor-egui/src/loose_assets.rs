@@ -1,15 +1,15 @@
-//! 松散资产热重载（#495 第 ② 条）：`assets/` 下没进包的文件变了，就自动重打场景包。
+//! Loose asset hot reload (#495 item 2): files under `assets/` not packed changed, auto repack scene package.
 //!
-//! 运行时只从 `.pak` 读资产，所以改一张贴图 / 换一个 HDR / 新导入的网格，必须重新
-//! cook 打包才会进内存。编辑器在这里做最小闭环：
+//! Runtime reads assets only from `.pak`, so changing a texture / swapping HDR / newly imported mesh must re-
+//! cook package to enter memory. Editor here does minimal closed loop:
 //!
-//! 1. 轮询 `assets/` 下**作者资产**的版本戳（mtime + 长度，排除 `.pak` / `.rscn` / `.spv` 等生成物，
-//!    以及 `.scene.json` / `.prefab.json` —— 它们由文档自动保存写盘，重打包没有意义）；
-//! 2. 变化后静默 `DEBOUNCE`，避免保存大文件时连续触发；
-//! 3. 触发一次现有的 `BuildKind::ScenePack`，打完包后 `EngineHost::poll_asset_changes`
-//!    的现有链路会重开 `.pak` 并 `invalidate_assets`，不用退出 Play。
+//! 1. Poll version stamps (mtime + size) of **authoring assets** under `assets/` (excluding generated `.pak` / `.rscn` / `.spv` etc.,
+//!    and `.scene.json` / `.prefab.json` --- they are auto-saved by document, repacking meaningless);
+//! 2. After change silently `DEBOUNCE`, avoid continuous trigger when saving large file;
+//! 3. Trigger existing `BuildKind::ScenePack` once; after pack `EngineHost::poll_asset_changes`
+//!    existing link reopens `.pak` and `invalidate_assets`, no need to exit Play.
 //!
-//! 扫描是纯文件系统操作，测试用临时目录直接验证；时间由调用方注入，方便测 debounce。
+//! Scan is pure filesystem op, test with temp dir directly; time injected by caller, convenient to test debounce.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,15 +17,15 @@ use std::time::{Duration, Instant};
 
 use prism_editor_core::project::{file_stamp_at, FileStamp};
 
-/// 变化后等待这么久再打包（覆盖一次多文件保存 / 大文件分块写入）。
+/// Wait this long after change before packing (covers multi-file save / large file chunked write).
 pub const DEBOUNCE: Duration = Duration::from_millis(800);
 
-/// 生成物 / 编辑器文档：不参与松散资产扫描。
+/// Generated products / editor docs: not participate in loose asset scan.
 ///
-/// - `.pak` / `.pak.meta.json`：打包输出本身，包含进来会无限触发；
-/// - `.rscn`：`cook` 的单场景产物；
-/// - `.spv`：shader 编译产物（改 shader 需要重新 compile，不是资产打包）；
-/// - `.scene.json` / `.prefab.json`：文档自动保存写盘，重打包没有收益。
+/// - `.pak` / `.pak.meta.json`: packaging output itself, including causes infinite trigger;
+/// - `.rscn`: `cook` single-scene product;
+/// - `.spv`: shader compile product (changing shader needs recompile, not asset packaging);
+/// - `.scene.json` / `.prefab.json`: document auto-save writes disk, repacking no benefit.
 fn is_watched(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -41,7 +41,7 @@ fn is_watched(path: &Path) -> bool {
     {
         return false;
     }
-    // 隐藏文件 / 临时文件（vim、VSCode 的原子保存、系统缩略图缓存）。
+    // Hidden files / temp files (vim, VSCode atomic save, system thumbnail cache).
     if name.starts_with('.') || name.ends_with('~') || name.ends_with(".swp") {
         return false;
     }
@@ -52,10 +52,10 @@ fn skip_dir(name: &str) -> bool {
     matches!(name, ".git" | "target" | "node_modules" | ".svn" | ".hg")
 }
 
-/// 扫描 `assets/` 下所有被监视文件的 `(路径, mtime)`。
+/// Scan `(path, mtime)` of all watched files under `assets/`.
 ///
-/// 路径是**相对项目根**的（与 `.pak` / manifest 里的写法一致），这样换机器 / 换
-/// 绝对路径不会让快照整体失效。
+/// Path is **relative to project root** (consistent with `.pak` / manifest writing), so changing machine / changing
+/// absolute path does not invalidate whole snapshot.
 fn scan(root: &Path) -> BTreeMap<PathBuf, FileStamp> {
     let mut out = BTreeMap::new();
     let assets = root.join("assets");
@@ -90,11 +90,11 @@ fn collect(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, FileStamp>) {
     }
 }
 
-/// 松散资产轮询器：快照 + debounce 状态。
+/// Loose asset poller: snapshot + debounce state.
 #[derive(Debug, Default)]
 pub struct LooseAssetWatcher {
     snapshot: BTreeMap<PathBuf, FileStamp>,
-    /// 最近一次检测到变化的时间；安静满 [`DEBOUNCE`] 才触发。
+    /// Time of most recent change detected; trigger only after quiet [`DEBOUNCE`].
     pending: Option<Instant>,
 }
 
@@ -106,9 +106,9 @@ impl LooseAssetWatcher {
         }
     }
 
-    /// 轮询一次；变化后安静满 [`DEBOUNCE`] 时返回 `true`（只返回一次）。
+    /// Poll once; returns `true` (once) after change quiet for [`DEBOUNCE`].
     ///
-    /// `now` 由调用方注入，测试可以精确控制 debounce 时序。
+    /// `now` injected by caller, test can precisely control debounce timing.
     pub fn poll(&mut self, root: &Path, now: Instant) -> bool {
         let current = scan(root);
         if current != self.snapshot {
@@ -125,13 +125,13 @@ impl LooseAssetWatcher {
         }
     }
 
-    /// 重新对齐快照（构建刚写完包 / 切换工程时用），丢弃未触发的 debounce。
+    /// Re-align snapshot (used after build just wrote pack / switch project), discard untriggered debounce.
     pub fn resync(&mut self, root: &Path) {
         self.snapshot = scan(root);
         self.pending = None;
     }
 
-    /// 当前是否在等待 debounce 结束（测试用）。
+    /// Whether currently waiting for debounce end (for test).
     #[cfg(test)]
     pub fn is_pending(&self) -> bool {
         self.pending.is_some()
@@ -194,22 +194,22 @@ mod tests {
         let mut watcher = LooseAssetWatcher::new(&root);
         let start = Instant::now();
 
-        // 没变化：永远不触发。
+        // No change: never trigger.
         assert!(!watcher.poll(&root, start));
         assert!(!watcher.poll(&root, start + DEBOUNCE * 2));
 
-        // 改文件 → 只记录 pending，不立刻触发。
+        // File changed -> only record pending, do not trigger immediately.
         touch(&root.join("assets/sprites/boat.png"), b"v2-longer");
         assert!(!watcher.poll(&root, start));
         assert!(watcher.is_pending());
         assert!(!watcher.poll(&root, start + DEBOUNCE / 2));
 
-        // 安静满 DEBOUNCE → 触发一次，然后回到空闲。
+        // Quiet for DEBOUNCE -> trigger once, then return to idle.
         assert!(watcher.poll(&root, start + DEBOUNCE + Duration::from_millis(1)));
         assert!(!watcher.is_pending());
         assert!(!watcher.poll(&root, start + DEBOUNCE * 3));
 
-        // 连续写入会把 debounce 重新计时。
+        // Continuous writes re-time debounce.
         touch(&root.join("assets/sprites/boat.png"), b"v3-a");
         assert!(!watcher.poll(&root, start));
         touch(&root.join("assets/sprites/boat.png"), b"v4-longer");
@@ -217,7 +217,7 @@ mod tests {
         assert!(!watcher.poll(&root, start + DEBOUNCE));
         assert!(watcher.poll(&root, start + Duration::from_millis(600) + DEBOUNCE));
 
-        // 新文件 / 删除也算变化。
+        // New file / deletion also counts as change.
         touch(&root.join("assets/models/new.gltf"), b"x");
         assert!(!watcher.poll(&root, start));
         assert!(watcher.poll(&root, start + DEBOUNCE + Duration::from_millis(2)));

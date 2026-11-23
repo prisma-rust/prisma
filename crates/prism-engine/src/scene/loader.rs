@@ -1,26 +1,26 @@
-//! 场景加载器——解析 RSCN 二进制烘焙场景并生成 ECS 实体。
+//! Scene loader — parses RSCN binary baked scene and generates ECS entities.
 //!
-//! ## 架构
+//! ## Architecture
 //!
-//! [`SceneLoader`] 通过 [`SceneSource`] 接受三种输入：
-//! - **`RawCooked(Vec<u8>)`** — 已在内存中的 RSCN 字节（来自 `.pak` 资源的
-//!   `ResourceManager`，或来自程序化固定数据）。
-//! - **`CookedFile(PathBuf)`** — 磁盘上的松散 RSCN 文件（开发者便利）。
-//! - **`JsonFile(PathBuf)`** — 松散的 `.scene.json`（开发期直接加载作者格式）。
+//! [`SceneLoader`] accepts three inputs via [`SceneSource`]:
+//! - **`RawCooked(Vec<u8>)`** — RSCN bytes already in memory (from `.pak` resource via
+//!   `ResourceManager`, or from procedural fixed data).
+//! - **`CookedFile(PathBuf)`** — loose RSCN file on disk (developer convenience).
+//! - **`JsonFile(PathBuf)`** — loose `.scene.json` (loads author format directly during dev).
 //!
-//! 前两者汇聚到 `spawn_from_bytes`：v4 走 `prism_scene::rscn::decode_scene`，
-//! 旧 v1/v2 走 `parse_rscn`。随后统一插入 ECS 组件并解析层级。
+//! First two converge at `spawn_from_bytes`: v4 goes through `prism_scene::rscn::decode_scene`,
+//! old v1/v2 goes through `parse_rscn`. Then uniformly inserts ECS components and parses hierarchy.
 //!
-//! ## RSCN 二进制格式
+//! ## RSCN binary format
 //!
-//! v4 是唯一的 shipped 场景格式，由 `prism-cooker` 的 `SceneCooker` 从
-//! `.scene.json` 编出，codec 在 `prism-scene::rscn`：
+//! v4 is the only shipped scene format, compiled from `.scene.json` by `prism-cooker` `SceneCooker`,
+//! codec in `prism-scene::rscn`:
 //!
 //! ```text
 //! [magic:4]        b"RSCN"
 //! [version:1]      4
 //! [entities:4]     u32 LE
-//! [types:4]        u32 LE — (type_id, schema_hash) 表
+//! [types:4]        u32 LE — (type_id, schema_hash) table
 //!   [type_id:8][schema_hash:8] × types
 //!
 //! Per entity (parent-first):
@@ -29,13 +29,13 @@
 //!     [type_id:u64] [payload_len:u32] [payload]
 //! ```
 //!
-//! 组件 payload 按 `TypeDesc::fields` 顺序位置编码，不含字段名；解码时用
-//! 编译进二进制的 `TypeDesc` 校验 `schema_hash`。场景组件通过
-//! [`prism_scene::ComponentRegistry`] 还原，GPU 句柄（`MeshRef` /
-//! `MaterialRef`）由本加载器在之后注入。
+//! Component payloads encoded positionally in `TypeDesc::fields` order, no field names; decode uses
+//! compiled-in `TypeDesc` to validate `schema_hash`. Scene components restored via
+//! [`prism_scene::ComponentRegistry`], GPU handles (`MeshRef` /
+//! `MaterialRef`) injected afterward by this loader.
 //!
-//! 为兼容旧资产，[`parse_rscn`] 仍能读取 v1/v2 的扁平组件记录；新 cook
-//! 一律走 v4，不再生成旧格式。
+//! For legacy assets [`parse_rscn`] still reads flat v1/v2 component records; new cook
+//! always produces v4, no longer generates old format.
 
 use std::path::PathBuf;
 
@@ -382,9 +382,9 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
 ///   - `pitch = asin(forward.y)`
 ///   - `yaw   = atan2(-forward.x, -forward.z)`
 ///
-/// 音符 this means an identity 四元数 (向前 = (0,0,−1)) maps to
-/// `yaw = 0, 音高 = 0` — the same orientation the entity's transform already
-/// expresses. Roll is discarded (the free-fly 相机 has no roll). Matches the
+/// Note this means an identity quaternion (forward = (0,0,−1)) maps to
+/// `yaw = 0, pitch = 0` — the same orientation the entity's transform already
+/// expresses. Roll is discarded (the free-fly camera  has no roll). Matches the
 /// right-handed conventions in `README.md` (+X right, +Y up, +Z toward
 /// viewer, camera looks down −Z).
 /// Inserts an unresolved [`SpriteRef`] for entities that carry a
@@ -485,7 +485,7 @@ impl SceneLoader {
 
     /// High-level entry: accept any [`SceneSource`] and spawn into the world.
     ///
-    /// `registry` 用于反序列化 `.scene.json` 中的组件。
+    /// `registry` used to deserialize components in `.scene.json`.
     pub fn load_and_spawn(
         &mut self,
         world: &mut World,
@@ -604,8 +604,8 @@ impl SceneLoader {
                 && !camera_is_orthographic
                 && world.get::<FlyCameraController>(entity).is_none()
             {
-                // 朝向以场景里存的旋转为准。只给平移改了旋转 = 载入后视角不变，
-                // 按 WASD 却沿世界轴滑（Sponza 的场景相机就是这种手写 JSON）。
+                // Orientation follows rotation stored in scene. Only changing translation but leaving rotation gives post-load view unchanged,
+                // but WASD slides along world axes (Sponza scene camera is such hand-written JSON).
                 let (yaw, pitch) = quat_to_yaw_pitch(decoded_entity.rotation);
                 world.insert(
                     entity,
@@ -640,7 +640,7 @@ impl SceneLoader {
         })
     }
 
-    /// 从 `.scene.json` 文件加载场景。
+    /// Load scene from `.scene.json` file.
     fn load_and_spawn_json(
         &self,
         world: &mut World,
@@ -654,10 +654,10 @@ impl SceneLoader {
         self.spawn_from_json_text(world, &text, &origin, scene_id, registry)
     }
 
-    /// 从 `.scene.json` 文本加载场景。
+    /// Load scene from `.scene.json` text.
     ///
-    /// 与 [`Self::load_and_spawn_json`] 共用同一套逻辑，只是把「读文件」与
-    /// 「解析 + spawn」分开，便于不落盘的测试。
+    /// Shares same logic with [`Self::load_and_spawn_json`], only separates "read file"
+    /// from "parse + spawn", for tests that do not write to disk.
     fn spawn_from_json_text(
         &self,
         world: &mut World,
@@ -707,7 +707,7 @@ impl SceneLoader {
                 world.insert(entity, Name(name.clone()));
             }
 
-            // 稳定 id：`.scene.json` v3+ 的 `id`，跨会话身份（scene_state / 编辑器同步）。
+            // Stable id: `.scene.json` v3+ `id`, cross-session identity (scene_state / editor sync).
             world.insert(entity, SceneEntityId(ej.id));
 
             // Transform
@@ -758,10 +758,10 @@ impl SceneLoader {
 
         // Phase 2: hierarchy.
         //
-        // `.scene.json` v3+ 的 `parent` 是**稳定实体 id**，不是数组下标
-        // （见 `prism_scene::json::EntityJson::parent`）；id 与下标只在
-        // `migrate_scene_doc` 给旧文档按数组顺序补 id 时才恰好相等。
-        // 直接拿 id 当下标会在实体重排/删除后接错父级，甚至越界变成根节点。
+        // `.scene.json` v3+ `parent` is **stable entity id**, not array index
+        // (see `prism_scene::json::EntityJson::parent`); id and index only happen to be equal when
+        // `migrate_scene_doc` fills ids for old document by array order.
+        // Taking id directly as index attaches wrong parent after reorder / deletion, even out-of-bounds becomes root.
         let index_of_id = scene.index_of_id();
         for (i, ej) in scene.entities.iter().enumerate() {
             let Some(parent_id) = ej.parent else {
@@ -771,8 +771,8 @@ impl SceneLoader {
                 Some(parent_index) => {
                     HierarchyHelper::reparent(world, entities[i], Some(entities[parent_index]));
                 }
-                // `SceneJson::parse` 只校验作者写法，不跑 `validate()`；
-                // dev 场景里出现悬空 id 时保留实体、按根节点处理，不要整场失败。
+                // `SceneJson::parse` only validates author writing, does not run `validate()`;
+                // when dev scene has dangling id, keep entity and treat as root node, do not fail whole scene.
                 None => log::warn!(
                     "scene entity {i} references parent id {parent_id} which does not exist; \
                      keeping it as a root"

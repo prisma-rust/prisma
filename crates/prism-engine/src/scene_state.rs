@@ -48,21 +48,21 @@ const LEGACY_INDEPENDENT_LIGHTS_VERSION: u32 = 2;
 // File path
 // ---------------------------------------------------------------------------
 
-/// 存档目录（`World` resource）。宿主在启动时插入真实的工程配置目录。
+/// Save directory (`World` resource). Host inserts real project config directory at launch.
 ///
-/// 以前 `scene_state_path()` 直接用 [`crate::config::app_data_dir`]，而那个函数
-/// 拿的是 `AppConfig::default()` —— 所有项目都写进
-/// `%APPDATA%/Excurs1ons/Prisma/scene_state.json`，互相覆盖（#484）。
+/// Previously `scene_state_path()` used [`crate::config::app_data_dir`] directly, which used
+/// `AppConfig::default()` — all projects wrote to
+/// `%APPDATA%/Excurs1ons/Prisma/scene_state.json`, overwriting each other (#484).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SaveDirectory(pub std::path::PathBuf);
 
-/// 默认存档目录（`config::app_data_dir()`，即真实配置不可用时的兜底）。
+/// Default save directory (`config::app_data_dir()`, fallback when real config unavailable).
 pub fn default_save_dir() -> Option<std::path::PathBuf> {
     crate::config::app_data_dir()
 }
 
-/// `dir` 下的存档文件名：`slot` 为 `None` 时是 `scene_state.json`，
-/// 否则 `scene_state-<slot>.json`。
+/// Save filename under `dir`: `scene_state.json` when `slot` is `None`,
+/// otherwise `scene_state-<slot>.json`.
 pub fn scene_state_path_in(dir: Option<&std::path::Path>, slot: Option<u32>) -> std::path::PathBuf {
     let dir = dir
         .map(|dir| dir.to_path_buf())
@@ -79,7 +79,7 @@ pub fn scene_state_path_in(dir: Option<&std::path::Path>, slot: Option<u32>) -> 
     }
 }
 
-/// 当前世界的存档路径：优先 [`SaveDirectory`] resource，其次默认目录。
+/// Save path of current world: prefers [`SaveDirectory`] resource, then default directory.
 pub fn scene_state_path(world: &World) -> std::path::PathBuf {
     scene_state_path_in(
         world
@@ -89,7 +89,7 @@ pub fn scene_state_path(world: &World) -> std::path::PathBuf {
     )
 }
 
-/// 指定槽位的存档路径（同样尊重 [`SaveDirectory`]）。
+/// Save path of specified slot (also honors [`SaveDirectory`]).
 pub fn scene_state_path_for_slot(world: &World, slot: u32) -> std::path::PathBuf {
     scene_state_path_in(
         world
@@ -123,10 +123,10 @@ pub struct SceneState {
     pub transforms: Vec<SavedTransform>,
 }
 
-/// 一条保存的变换记录：稳定 id + 位姿。
+/// One save transform record: stable id + pose.
 ///
-/// `id` 来自加载时写入的 [`SceneEntityId`]（`.scene.json` v3+ 的 `id`）。v4 之前的
-/// 存档没有这个字段，恢复时退回按顺序配对（#118）。
+/// `id` from [`SceneEntityId`] written at load (`.scene.json` v3+ `id`). Saves before v4 lack
+/// this field, restore falls back to order-based matching (#118).
 #[derive(Clone, Debug)]
 pub struct SavedTransform {
     pub id: Option<u32>,
@@ -151,7 +151,7 @@ struct SavedTimeOfDay {
     hours: f32,
 }
 
-/// 取实体的稳定 id（没有 `.scene.json` id 时返回 `None`）。
+/// Get entity stable id (returns `None` when no `.scene.json` id).
 fn scene_entity_id(world: &World, entity: Entity) -> Option<u32> {
     world.get::<SceneEntityId>(entity).map(|id| id.0)
 }
@@ -304,26 +304,26 @@ impl SavedPointLight {
 // Save / load
 // ---------------------------------------------------------------------------
 
-/// 保存/恢复所用的相机实体：**真正被渲染的那台**。
+/// Camera entity used for save / restore: **the one actually rendered**.
 ///
-/// 与渲染、宽高比写回、飞行输入共用
-/// [`scene::systems::camera::active_camera`]（`#45`）：多相机时取 `depth` 最大的
-/// 启用相机，而不是 ECS 插入顺序里的第一台，否则保存的是 A、玩家看到的是 B。
+/// Shared with render, aspect writeback, fly input via
+/// [`scene::systems::camera::active_camera`] (`#45`): with multiple cameras picks max `depth`
+/// enabled camera, not first in ECS insert order, otherwise save is A but player sees B.
 ///
-/// `active_camera` 要求相机已有 `LocalToWorld`；恢复场景状态时层级传播可能还没跑过，
-/// 所以回退到 `main_camera`（`depth` 最大的启用相机），最后才退回第一台相机，
-/// 保持「世界里只有被禁用的相机」时的旧兜底行为。
+/// `active_camera` requires camera already has `LocalToWorld`; when restoring scene state hierarchy propagation may not have run,
+/// so fall back to `main_camera` (max depth enabled camera), finally to first camera,
+/// preserving legacy fallback when "only disabled cameras in world".
 fn state_camera(world: &World) -> Option<Entity> {
     camera::active_camera(world)
         .or_else(|| camera::main_camera(world))
         .or_else(|| world.query::<Camera>().next().map(|(entity, _)| entity))
 }
 
-/// 从**被渲染的相机**快照 [`CameraState`]。
+/// Snapshot [`CameraState`] from **rendered camera**.
 ///
-/// position 来自 `LocalTransform`，yaw/pitch/move_speed/look_sensitivity 来自
-/// `FlyCameraController`，fov/near/far 来自 `Camera`（位置在控制器重构后住在变换上，
-/// 见 `scene::systems::camera`）。选中的相机缺少其中任一组件时返回 `None`。
+/// Position from `LocalTransform`, yaw/pitch/move_speed/look_sensitivity from
+/// `FlyCameraController`, fov/near/far from `Camera` (position written to transform by controller rebuild,
+/// see `scene::systems::camera`). Returns `None` when selected camera lacks any component.
 fn snapshot_camera_state(world: &World) -> Option<CameraState> {
     let entity = state_camera(world)?;
     let cam = world.get::<Camera>(entity)?;
@@ -341,7 +341,7 @@ fn snapshot_camera_state(world: &World) -> Option<CameraState> {
     })
 }
 
-/// 查询 the ECS 世界 + 相机 and 写入 JSON 到 `path`。
+/// Query ECS world + camera and write JSON to `path`.
 pub fn save_scene_state_to(world: &World, path: &std::path::Path) {
     use std::fmt::Write;
 
@@ -427,12 +427,12 @@ pub fn save_scene_state_to(world: &World, path: &std::path::Path) {
     }
 }
 
-/// 写到世界的默认存档路径（[`scene_state_path`]）。
+/// Write to world default save path ([`scene_state_path`]).
 pub fn save_scene_state(world: &World) {
     save_scene_state_to(world, &scene_state_path(world));
 }
 
-/// 写到指定槽位（`scene_state-<slot>.json`）。
+/// Write to specified slot (`scene_state-<slot>.json`).
 pub fn save_scene_state_slot(world: &World, slot: u32) {
     save_scene_state_to(world, &scene_state_path_for_slot(world, slot));
 }
@@ -451,12 +451,12 @@ pub fn load_scene_state_from(world: &mut World, path: &std::path::Path) -> bool 
     true
 }
 
-/// 从世界的默认存档路径恢复。
+/// Restore from world default save path.
 pub fn load_scene_state(world: &mut World) -> bool {
     load_scene_state_from(world, &scene_state_path(world))
 }
 
-/// 从指定槽位恢复。
+/// Restore from specified slot.
 pub fn load_scene_state_slot(world: &mut World, slot: u32) -> bool {
     load_scene_state_from(world, &scene_state_path_for_slot(world, slot))
 }
@@ -471,11 +471,11 @@ fn apply_scene_state(world: &mut World, text: &str) {
         .map(|array| parse_transform_array(&array))
         .unwrap_or_default();
 
-    // --- 相机（data components on 被渲染的那台相机实体，见 `state_camera`）---
+    // --- camera (on rendered camera entity, data components, see `state_camera`) ---
     if let Some(cs) = extract_object(text, "camera").and_then(|json| CameraState::from_json(&json))
     {
-        // 先一次性解析出实体，随后逐组件的 `get_mut` 不会和查询的
-        // 世界借用重叠。
+        // First parse entity once, subsequent per-component `get_mut` will not conflict with
+        // world borrow of query.
         if let Some(cam_entity) = state_camera(world) {
             if let Some(cam) = world.get_mut::<Camera>(cam_entity) {
                 cam.fov_y_degrees = cs.fov_y.to_degrees();
@@ -544,7 +544,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
             );
         }
 
-        // v4+：按稳定 id 配对；旧存档没有 id 时退回「按顺序配对」。
+        // v4+: match by stable id; old saves without id fall back to "match by order".
         let mut unmatched: Vec<SavedPointLight> = Vec::new();
         let mut remaining: Vec<Entity> = old_point_entities.clone();
         for saved in parsed {
@@ -561,7 +561,7 @@ fn apply_scene_state(world: &mut World, text: &str) {
                 None => unmatched.push(saved),
             }
         }
-        // 没有 id 的记录（v3 及更早）仍然按池顺序落到剩余光源上。
+        // Records without id (v3 and earlier) still land on remaining lights by pool order.
         for (entity, saved) in remaining.into_iter().zip(unmatched) {
             apply_saved_light(world, entity, saved, &mut reserved_transform_entities);
         }
@@ -602,8 +602,8 @@ fn apply_scene_state(world: &mut World, text: &str) {
     }
 
     // --- Non-light transforms ---
-    // v4+ 按 `.scene.json` 稳定 id 配对，场景里插入/删除实体不会再让后面的位姿整体
-    // 错位（#118）；没有 id 的旧记录退回按顺序配对。
+    // v4+ matches by `.scene.json` stable id, inserting / deleting entities no longer misaligns later poses
+    // (#118); old records without id fall back to order matching.
     let mut matched_transforms: HashSet<Entity> = HashSet::new();
     let mut legacy_transforms: Vec<SavedTransform> = Vec::new();
     for saved in parsed_transforms
@@ -661,7 +661,7 @@ fn apply_saved_time_of_day(world: &mut World, entity: Entity, hours: f32) {
     }
 }
 
-/// 把一条存档光源应用到已存在的实体上（不新建实体）。
+/// Apply one save light to an already existing entity (does not create new entity).
 fn apply_saved_light(
     world: &mut World,
     entity: Entity,
@@ -727,7 +727,7 @@ fn find_field_bool(s: &str, key: &str) -> Option<bool> {
     rest[..end].trim().parse::<bool>().ok()
 }
 
-/// 查找 a bare `u32` following 调 in a JSON-ish 字符串
+/// Find a bare `u32` following a key in a JSON-ish string
 fn find_field_u32(s: &str, key: &str) -> Option<u32> {
     let needle = format!("\"{key}\":");
     let pos = s.find(&needle)? + needle.len();

@@ -32,7 +32,7 @@ mod win32;
 
 #[cfg(not(any(feature = "winit-backend", all(windows, feature = "win32-native"))))]
 compile_error!(
-    "prism-platform: 至少启用一个窗口后端（`winit-backend`，或 Windows 上的 `win32-native`）"
+    "prism-platform: At least one window backend required (`winit-backend`, or `win32-native` on Windows)"
 );
 
 pub use config::WindowConfig;

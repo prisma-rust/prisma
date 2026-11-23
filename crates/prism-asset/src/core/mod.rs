@@ -1,11 +1,11 @@
 //! # prism-asset::core
 //!
-//! Prisma 资源管道的基础类型
+//! Prisma resource pipeline basic types
 //!
-//! 提供管道中所有其他 crate 共享的原始构建块：
-//! [`AssetId`]、[`AssetGuid`]、[`AssetType`]、[`Handle<T>`]、
-//! [`AssetRef`]，以及 ScriptableObject 风格的 [`AssetData`](asset_data::AssetData)
-//! trait 和 [`AssetHandle<T>`](asset_data::AssetHandle)。
+//! Provides primitive building blocks shared by all other crates in pipeline:
+//! [`AssetId`], [`AssetGuid`], [`AssetType`], [`Handle<T>`],
+//! [`AssetRef`], and ScriptableObject-style [`AssetData`](asset_data::AssetData)
+//! trait and [`AssetHandle<T>`](asset_data::AssetHandle).
 
 #[cfg(feature = "asset-data")]
 pub mod asset_data;

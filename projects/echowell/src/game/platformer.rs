@@ -1,7 +1,7 @@
-//! EchoWell 的确定性平台跳跃切片。
+//! EchoWell deterministic platformer slice.
 //!
-//! 玩法状态放在项目侧，渲染和输入仍由 Prisma 提供。`step` 是纯状态更新
-//! 入口，测试和输入回放都调用它；`tick` 只负责把状态绑定到场景实体。
+//! Gameplay state lives on project side, rendering and input still provided by Prisma. `step` is the pure state-update
+//! entry point, called by tests and input replay; `tick` only binds state to scene entities.
 
 use prism_game_api::physics2d::{move_and_slide, Aabb2, MoveResult2};
 use prism_game_api::{keys, EntityHandle, GameWorld, InputSnapshot};
@@ -67,7 +67,7 @@ impl AbilityFlags {
     }
 }
 
-/// 由配置文件覆盖的手感参数。数值默认与需求文档的量级一致。
+/// Feel parameters overridden by config file. Default values match the magnitude in the design doc.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Tuning {
@@ -175,7 +175,7 @@ impl EnemyState {
     }
 }
 
-/// 一个房间的灰盒关卡数据。后续可直接由 Tilemap / Tiled cooker 生成同样的数组。
+/// Gray-box tile data for one room. Can later be generated as same array by Tilemap / Tiled cooker.
 #[derive(Debug, Clone)]
 pub struct WorldGeometry {
     pub solids: Vec<Aabb>,
@@ -499,7 +499,7 @@ pub struct StepEvents {
     pub enemy_defeated: bool,
 }
 
-/// 输入回放只保存逻辑帧，不保存渲染时间或实体句柄。
+/// Input replay only saves logical frames, not render time or entity handles.
 #[derive(Debug, Clone, Default)]
 pub struct InputReplay {
     pub recording: bool,
@@ -848,7 +848,7 @@ impl PlayerState {
                     self.jump_buffer_timer = 0.0;
                     self.variable_jump_timer = self.tuning.variable_jump_seconds;
                 } else if input.jump_pressed && self.abilities.contains(AbilityFlags::WALL_JUMP) {
-                    // 在墙边允许蹬墙跳；真正的碰撞方向由本帧横向解析结果决定。
+                    // Allow wall jump at wall; true collision direction determined by this frame horizontal parse.
                     let wall = self.near_wall();
                     if wall != 0.0 {
                         self.velocity = [
@@ -859,7 +859,7 @@ impl PlayerState {
                     }
                 }
 
-                // 起跳保持阶段减半重力；松开跳跃立即截断上升速度。
+                // Jump hold keeps phase with halved gravity; releasing jump immediately cuts upward speed.
                 let holding_jump = input.jump_held && self.velocity[1] > 0.0;
                 if !input.jump_held && self.velocity[1] > 0.0 {
                     self.velocity[1] = self.velocity[1].min(self.tuning.jump_speed * 0.45);
@@ -1694,7 +1694,7 @@ pub struct PlatformerRuntime {
     pub debug_enabled: bool,
 }
 
-/// ECS resource 名称，便于项目入口和 preview 模块保持简洁。
+/// ECS resource name, keeps project entry and preview module concise.
 pub type PlatformerState = PlatformerRuntime;
 
 impl PlatformerRuntime {

@@ -1,7 +1,7 @@
-//! Vulkan 设备上下文：实例、物理设备、逻辑设备、队列。
+//! Vulkan context: instance, physical device, logical device, queues.
 //!
-//! 拥有任何渲染发生前所需的长期 Vulkan 句柄。
-//! 交换链和每帧资源位于 [`crate::swapchain`] 和 [`crate::renderer`] 中。
+//! Holds long-lived Vulkan handles needed before any rendering happens.
+//! Swapchain and per-frame resources live in [`crate::swapchain`] and [`crate::renderer`].
 
 use std::ffi::{c_char, CStr, CString};
 use std::os::raw::c_void;
@@ -10,20 +10,20 @@ use ash::vk;
 
 use crate::capabilities::{self, RayTracingCaps};
 
-/// 调试构建/当加载器存在时请求的验证层。
+/// Validation layers requested in debug build / when loader has them.
 const VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
-/// 设置后，debug 构建没有 validation layer 时直接失败，而不是静默降级。
+/// When set, debug build with no validation layer fails directly, rather than silently degrading.
 ///
-/// CI 用它把“验证层真的启用了”变成硬门禁；本地没有安装 layer 时不要设置。
+/// CI uses it to turn "validation truly enabled" into a hard gate; local without installed layer need not set it.
 const REQUIRE_VALIDATION_ENV: &str = "PRISM_REQUIRE_VALIDATION";
 
-/// 谁拥有上下文背后的 Vulkan 对象。
+/// Who owns the context-behind Vulkan objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextOwnership {
-    /// [`VulkanContext::new`] 创建，随上下文一起销毁。
+    /// Created by [`VulkanContext::new`], destroyed with context.
     Owned,
-    /// 宿主（编辑器 UI 框架）创建并与渲染器共享；上下文析构时**不销毁**。
+    /// Created by host (editor UI framework) and shared with renderer; **not destroyed** on context drop.
     External,
 }
 
@@ -50,7 +50,7 @@ pub struct VulkanContext {
     #[cfg(feature = "anf")]
     pub anf_caps: crate::anf::AnfCaps,
 
-    /// `fillModeNonSolid` 是否可用（Wireframe 管线需要）。
+    /// Whether `fillModeNonSolid` available (needed for Wireframe pipeline).
     pub wireframe_supported: bool,
 
     /// Acceleration structure function pointers (loaded when the
@@ -61,7 +61,7 @@ pub struct VulkanContext {
     /// conditional; the rest are always-on). Stored for later RT modules.
     enabled_extensions: Vec<CString>,
 
-    /// 对象所有权：`Owned` 在析构时销毁设备/实例，`External` 留给宿主。
+    /// Ownership: `Owned` destroys device/instance on drop, `External` leaves to host.
     ownership: ContextOwnership,
 
     /// Whether `ash::Entry` was loaded through `sl.interposer` (Streamline Vulkan hooks active).
@@ -75,10 +75,10 @@ pub struct VulkanContext {
 }
 
 impl VulkanContext {
-    /// 本上下文是否真的启用了 Vulkan validation layer / debug messenger。
+    /// Whether this context truly enabled Vulkan validation layer / debug messenger.
     ///
-    /// debug 构建会尝试启用它；如果系统没有安装 layer，这里返回 `false`。
-    /// CI 在 `PRISM_REQUIRE_VALIDATION=1` 下会断言它为 `true`。
+    /// Debug build tries to enable it; if system lacks layer, this returns `false`.
+    /// CI under `PRISMA_REQUIRE_VALIDATION=1` asserts it is `true`.
     pub fn validation_enabled(&self) -> bool {
         self._debug_messenger.is_some()
     }
@@ -192,15 +192,15 @@ impl VulkanContext {
         })
     }
 
-    /// 宿主（编辑器 / UI 框架）已经建好 instance 与物理设备，但希望渲染器与
-    /// UI **共用同一个 `VkDevice`** 时使用。
+    /// For host (editor / UI framework) that already built instance and physical device, but wants renderer and
+    /// UI to **share same `VkDevice`**.
     ///
-    /// 设备仍由本函数按与 [`VulkanContext::new`] 相同的特性集创建（bindless、
-    /// 时间线信号量、synchronization2 …… 的前提都在这里），宿主只需要额外
-    /// 声明自己的设备扩展（例如 `VK_KHR_swapchain`）。
+    /// Device still created by this function with same feature set as [`VulkanContext::new`] (bindless,
+    /// timeline semaphores, synchronization2 prerequisites all here), host only needs to additionally
+    /// declare its device extensions (e.g. `VK_KHR_swapchain`).
     ///
-    /// 所有权：`instance` 与 `device` 归宿主，上下文析构时**不会**销毁它们；
-    /// 宿主必须在渲染器全部销毁之后再销毁设备/实例。
+    /// Ownership: `instance` and `device` belong to host, context drop **will not** destroy them;
+    /// host must destroy device/instance only after renderer fully destroyed.
     pub fn from_host(
         entry: ash::Entry,
         instance: ash::Instance,
@@ -307,8 +307,8 @@ impl VulkanContext {
 
 impl Drop for VulkanContext {
     fn drop(&mut self) {
-        // 外部（宿主）创建的对象由宿主销毁：UI 框架的 device 生命周期比渲染器长，
-        // 在这里销毁会让 UI 侧句柄悬空。
+        // Externally (host) created objects destroyed by host: UI framework device lives longer than renderer,
+        // destroying here would leave UI side handles dangling.
         if self.ownership == ContextOwnership::External {
             return;
         }
@@ -333,11 +333,11 @@ impl Drop for VulkanContext {
 // instance
 // ---------------------------------------------------------------------------
 
-/// 为**宿主**创建 Vulkan 实例（编辑器 UI 框架需要自己持有 instance 来创建
-/// surface / swapchain，同时又要和渲染器共用设备）。
+/// Create Vulkan instance for **host** (editor UI framework needs own instance to create
+/// surface / swapchain, while also sharing device with renderer).
 ///
-/// 扩展列表由宿主给出（通常是 `ash_window::enumerate_required_extensions` 的
-/// 结果）；debug/validation 策略与 [`VulkanContext::new`] 一致。
+/// Extension list given by host (usually `ash_window::enumerate_required_extensions`
+/// result); debug/validation policy consistent with [`VulkanContext::new`].
 pub fn create_host_instance(
     entry: &ash::Entry,
     extensions: &[&str],
@@ -352,10 +352,10 @@ pub fn create_host_instance(
     Ok((instance, messenger))
 }
 
-/// 选择一块能向 `surface` 呈现、且有图形队列的物理设备。
+/// Select a physical device that can present to `surface` and has a graphics queue.
 ///
-/// 渲染器要求 `maxPushConstantsSize >= 176`（PathTracePass），这里一并校验，
-/// 避免宿主先建好设备、渲染器初始化时才失败。
+/// Renderer requires `maxPushConstantsSize >= 176` (PathTracePass), checked here too,
+/// to avoid host building device then renderer init failing.
 pub fn pick_host_physical_device(
     instance: &ash::Instance,
     surface_loader: &ash::khr::surface::Instance,
@@ -366,7 +366,7 @@ pub fn pick_host_physical_device(
     })
 }
 
-/// 同时支持图形与呈现的队列 family（共享设备的宿主只能用同一个队列族）。
+/// Queue family supporting both graphics and presentation (host sharing device can only use same queue family).
 pub fn pick_present_queue_family(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
@@ -437,9 +437,9 @@ fn create_instance(
     }
     let extension_ptrs: Vec<*const c_char> = extension_names.iter().map(|c| c.as_ptr()).collect();
 
-    // 验证 layers only in 调试 builds — and only when actually installed.
-    // 无条件请求会导致无 layer 的环境（如无 validation 包的 Termux/CI）
-    // 在 create_instance 阶段直接失败；先枚举可用 layer 再启用。
+    // validate  layers only in debug  builds — and only when actually installed.
+    // Unconditionally requesting layers would fail on environments without them (like Termux/CI without
+    // validation package) at create_instance; first enumerate available layers then enable.
     let mut enabled_layers: Vec<CString> = Vec::new();
     if enable_debug {
         let available = unsafe { entry.enumerate_instance_layer_properties() }
@@ -572,13 +572,13 @@ fn create_device(
     let available_features = unsafe { instance.get_physical_device_features(physical_device) };
     let mut legacy_features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: available_features.shader_clip_distance,
-        // MRT pipelines (ForwardPass writes 颜色 + view-space 法线 use
+        // MRT pipelines (ForwardPass writes color + view-space normal use
         // different blend states per attachment (color = alpha blend, normal =
         // no blend). Vulkan requires `independentBlend` for that; without it
         // every attachment must share the same blend config. Universally
         // supported on desktop + modern Android
         independent_blend: available_features.independent_blend,
-        // Wireframe（POLYGON_MODE_LINE）需要这个特性；设备不支持时不要请求。
+        // Wireframe (POLYGON_MODE_LINE) needs this feature; do not request if unsupported.
         fill_mode_non_solid: available_features.fill_mode_non_solid,
         shader_storage_image_write_without_format: available_features
             .shader_storage_image_write_without_format,
@@ -630,8 +630,8 @@ fn create_device(
     for rt_ext in capabilities::rt_extension_names(rt_caps) {
         enabled_extensions.push(rt_ext.into());
     }
-    // 宿主额外要求的扩展（例如 UI 框架的 `VK_KHR_swapchain`）。去重，避免
-    // `VUID-VkDeviceCreateInfo-ppEnabledExtensionNames-00374`（重复扩展名）。
+    // Host extra required extensions (e.g. UI framework `VK_KHR_swapchain`). Deduplicate, avoid
+    // `VUID-VkDeviceCreateInfo-ppEnabledExtensionNames-00374` (duplicate extension).
     for name in extra_device_extensions {
         let already = enabled_extensions
             .iter()

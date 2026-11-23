@@ -76,7 +76,7 @@ fn component_add_field_set_entity_get_and_remove_round_trip() {
             json!({ "path": SCENE, "entity": "Cube", "component": CAMERA }),
         )
         .expect("remove component");
-    assert!(removed.contains("已移除"), "{removed}");
+    assert!(removed.contains("Removed"), "{removed}");
     let entity = harness
         .call_json("entity_get", json!({ "path": SCENE, "entity": "Cube" }))
         .expect("get entity after removal");
@@ -93,12 +93,15 @@ fn invalid_inputs_return_actionable_errors() {
     let missing_entity = harness
         .call("entity_get", json!({ "path": SCENE, "entity": "Missing" }))
         .expect_err("missing entity");
-    assert!(missing_entity.contains("找不到实体"), "{missing_entity}");
+    assert!(
+        missing_entity.contains("Entity not found"),
+        "{missing_entity}"
+    );
 
     let missing_file = harness
         .call("document_read", json!({ "path": "../outside.scene.json" }))
         .expect_err("missing document");
-    assert!(missing_file.contains("无法读取"), "{missing_file}");
+    assert!(missing_file.contains("Cannot read"), "{missing_file}");
 
     let bad_component = harness
         .call(
@@ -112,7 +115,10 @@ fn invalid_inputs_return_actionable_errors() {
             }),
         )
         .expect_err("unknown component");
-    assert!(bad_component.contains("没有组件"), "{bad_component}");
+    assert!(
+        bad_component.contains("has no component"),
+        "{bad_component}"
+    );
 
     let bad_add = harness
         .call(
@@ -120,7 +126,7 @@ fn invalid_inputs_return_actionable_errors() {
             json!({ "path": SCENE, "entity": "Cube", "component": "not::a::Type" }),
         )
         .expect_err("unknown component type");
-    assert!(bad_add.contains("不是已注册类型"), "{bad_add}");
+    assert!(bad_add.contains("is not a registered type"), "{bad_add}");
 
     let invalid_doc = harness
         .call(
@@ -133,7 +139,7 @@ fn invalid_inputs_return_actionable_errors() {
     let unknown = harness
         .call("does_not_exist", json!({}))
         .expect_err("unknown tool");
-    assert!(unknown.contains("未知工具"), "{unknown}");
+    assert!(unknown.contains("Unknown tool"), "{unknown}");
 
     assert!(harness.disk_text().contains("Cube"));
 }

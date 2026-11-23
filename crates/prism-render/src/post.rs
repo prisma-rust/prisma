@@ -1,22 +1,22 @@
-//! 后处理通道——HDR 场景色调映射（+ 可选 FXAA）→ sRGB 交换链
+//! Post-processing pass — HDR scene tone map (+ optional FXAA) → sRGB swapchain
 //!
-//! 全屏三角形片元通道，对 ForwardPass 的 HDR 中间颜色附件进行采样，
-//! 应用 Reinhard 或 ACES 色调映射（根据 `tonemap_mode`），
-//! 并将结果写入交换链图像。取代了之前位于 `scene_frag.slang` 中的内联色调映射，
-//! 使场景输出保持线性 HDR（可被未来的后处理效果使用：泛光、时域抗锯齿等）。
+//! Full-screen triangle fragment pass, samples ForwardPass HDR intermediate color attachment,
+//! applies Reinhard or ACES tone map (per `tonemap_mode`),
+//! and writes result to swapchain image. Replaces inline tone map previously in `scene_frag.slang`,
+//! keeping scene output linear HDR (usable by later post effects: bloom, temporal AA, etc.).
 //!
-//! `aa_mode = 1` 时在色调映射之后再做一遍 FXAA（后处理抗锯齿，见 #494）：
-//! 只在本通道内多采样几次已经色调映射过的颜色，**不改任何管线状态**，也
-//! 不需要多采样目标 / resolve，因此交换链与离屏（编辑器视口）路径拿到的是
-//! 同一份结果。调试图（`debug_rt != 0`）会强制关掉它。
+//! When `aa_mode = 1`, performs FXAA after tone map (post antialiasing, see #494):
+//! only samples already-tonemapped color several times within this pass, **no pipeline state changes**,
+//! no extra render targets / resolve needed, so swapchain and offscreen (editor viewport) paths get
+//! same result. Debug graph (`debug_rt != 0`) force-disables it.
 //!
-//! ## 资源
-//! - 一个描述符集，将 HDR 颜色绑定为组合图像采样器
-//! - 拥有自己的渲染通道+管线（1 个颜色附件 = 交换链格式，无深度）
-//! - HDR 输入视图每帧通过 `set_input` 更新（ForwardPass 每交换链槽轮换一个 HDR 图像，
-//!   匹配其刚写入的帧缓冲）。
+//! ## Resources
+//! - One descriptor set binding HDR color as combined image sampler
+//! - Own render pass + pipeline (1 color attachment = swapchain format, no depth)
+//! - HDR input view updated each frame via `set_input` (ForwardPass rotates one HDR image per swapchain slot,
+//!   matching its just-written frame buffer).
 //!
-//! ## `execute` 中记录的布局转换
+//! ## Layout transitions recorded in `execute`
 //! 1. barrier: HDR `COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL`.
 //! 2. barrier: swapchain `UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL` via the render
 //!    pass load op.
@@ -72,7 +72,7 @@ pub struct PostPass {
     /// One framebuffer per swapchain image (each wraps its swapchain view).
     framebuffers: Vec<Option<vk::Framebuffer>>,
     /// Cached swapchain views the framebuffers were built against (for
-    /// rebuild detection, mirroring ForwardPass's 模式
+    /// rebuild detection, mirroring ForwardPass's mode
     target_views: Vec<vk::ImageView>,
     target_images: Vec<vk::Image>,
     extent: vk::Extent2D,
@@ -85,16 +85,16 @@ pub struct PostPass {
     ds_layout: vk::DescriptorSetLayout,
     ds_pool: vk::DescriptorPool,
     sampler: vk::Sampler,
-    /// 最近邻采样器（`InternalScaleMode::Integer`，#613）：像素画放大不糊。
+    /// Nearest sampler (`InternalScaleMode::Integer`, #613): pixel art upscale not blurred.
     sampler_nearest: vk::Sampler,
-    /// 深度采样器（`ShaderMode::Depth` / 景深）：最近邻，避免在深度边上插值。
+    /// Depth sampler (`ShaderMode::Depth` / depth of field): nearest, avoid interpolating across depth edges.
     sampler_depth: vk::Sampler,
     /// The HDR view currently bound to each frame-in-flight's descriptor set.
     /// Tracked so we skip redundant descriptor rewrites.
     bound_hdrs: Vec<vk::ImageView>,
-    /// 每个 in-flight 帧当前绑定的是否是最近邻采样器（与 `bound_hdrs` 一起判缓存）。
+    /// Whether each in-flight frame currently bound nearest sampler (cached with `bound_hdrs`).
     bound_nearest: Vec<bool>,
-    /// 每个 in-flight 帧当前绑定的深度视图（#502 DOF）。
+    /// Depth view currently bound per in-flight frame (#502 DOF).
     bound_depths: Vec<vk::ImageView>,
     /// 3D color-grading LUT (#502). Always bound (identity by default), so
     /// `lutStrength = 0` can skip the sample without an unbound descriptor.
@@ -437,7 +437,7 @@ impl PostPass {
     }
 
     /// Ensure the framebuffer for `image_index` exists and is built against the
-    /// 当前 交换链 views + extent. Mirrors ForwardPass::set_target's
+    /// Current swapchain views + extent. Mirrors ForwardPass::set_target's
     /// per-slot rebuild logic (only rebuild an entry when its view changes, so
     /// in-flight framebuffers are never touched).
     pub fn set_target(
@@ -657,7 +657,7 @@ impl PostPass {
 
     /// Record the PostPass into `cmd`. Must run AFTER ForwardPass (which leaves
     /// the HDR color in COLOR_ATTACHMENT_OPTIMAL). The caller barriers the
-    /// 交换链 to PRESENT_SRC_KHR (or the external overlay handles it) after this.
+    /// Swapchain to PRESENT_SRC_KHR (or external overlay handles it) after this.
     /// `frame_index` selects the per-frame-in-flight descriptor set; `image_index`
     /// selects the per-swapchain-image framebuffer.
     #[expect(
@@ -697,7 +697,7 @@ impl PostPass {
         let _ = hdr_image;
 
         // The swapchain image transitions UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL
-        // via the 渲染 pass `initial_layout` (the external overlay or the caller's
+        // via the render  pass `initial_layout` (the external overlay or the caller's
         // PRESENT_SRC_KHR barrier handles the final transition out).
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
@@ -724,7 +724,7 @@ impl PostPass {
                 std::slice::from_ref(&ds),
                 &[],
             );
-            // #613：内部分辨率按整数倍/拉伸放到 `dest`，其余区域由清屏色填黑边。
+            // #613: internal resolution placed into `dest` by integer multiple / stretch, remaining region filled black by clear color.
             device.cmd_set_viewport(
                 cmd,
                 0,
@@ -887,7 +887,7 @@ impl RenderPassNode for PostPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // 高动态范围 输入 is published by ForwardPass under FORWARD_COLOR_H; 读取 in
+        // high dynamic range  input  is published by ForwardPass under FORWARD_COLOR_H; read  in
         // `execute`. PostPass owns no graph-managed resources of its own.
         //
         // Declare the read edge so the render graph inserts the
@@ -980,9 +980,9 @@ impl RenderPassNode for PostPass {
         resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
         // Pick the input RT based on the render mode and debug viewer (Tab).
-        // In path-trace 众数 we 读取 PT_COLOR_H instead of FORWARD_COLOR_H,
+        // In path-trace mode we read PT_COLOR_H instead of FORWARD_COLOR_H,
         // unless no usable Camera exists — in that case the PT pass was skipped
-        // so fall 后 to FORWARD_COLOR_H (the gray 清空 颜色 from ForwardPass).
+        // so fall back to FORWARD_COLOR_H (the cleared color from ForwardPass).
         // If PT_COLOR_H was not published (e.g. no RT hardware, pass skipped,
         // or geometry/materials not yet uploaded), also fall back to FORWARD_COLOR_H
         // so PostPass can tonemap and transition the swapchain image to PRESENT_SRC_KHR.
@@ -990,7 +990,7 @@ impl RenderPassNode for PostPass {
         let is_pt = ctx.frame.render_mode == RenderMode::PathTrace;
         let has_camera = ctx.frame.has_camera;
         let has_pt_view = resources.published_view(PT_COLOR_H).is_some();
-        // ANF 超分辨率输出在启用时优先级最高（#1161）
+        // ANF super-resolution output highest priority when enabled (#1161)
         let anf_view = if ctx.settings.anf_sr && !is_pt && ctx.frame.debug_rt == 0 {
             resources.published_view(ANF_COLOR_H)
         } else {
@@ -1066,7 +1066,7 @@ impl RenderPassNode for PostPass {
             .unwrap_or(vk::Image::null());
 
         // (Re)build this swapchain image's framebuffer if missing or the
-        // 交换链 changed - mirrors `ForwardPass::ensure_target`. Before PR-1
+        // Swapchain changed - mirrors `ForwardPass::ensure_target`. Before PR-1
         // this was `GraphRenderer`'s job (it called `set_target` every frame);
         // now the graph drives it so the framebuffer lifecycle is owned here.
         self.set_target(
@@ -1080,9 +1080,9 @@ impl RenderPassNode for PostPass {
         // Bind the selected input view into this frame's descriptor set. The
         // cache (`bound_hdrs`) keys on the view handle, so switching modes
         // (which changes the view) triggers a rewrite automatically.
-        // #613：内部渲染分辨率 → 目标矩形与采样方式。
-        // 若已经由 ANF 或 MobileUpscalerPass 升采样到窗口全分辨率，则 PostPass 直接全屏线性采样。
-        // Nearest / Linear 空间升采样模式则直接在 PostPass 内用对应的硬件采样器拉伸到全屏。
+        // #613: internal render resolution → target rect and sampling mode.
+        // If already upscaled to window full resolution by ANF or MobileUpscalerPass, PostPass directly full-screen linear samples.
+        // Nearest / Linear empty-space upscale mode samples directly in PostPass with matching hardware sampler stretched to full screen.
         let already_upscaled = anf_view.is_some() || upscaled_view.is_some();
         let spatial_upscale = matches!(
             ctx.settings.mobile_upscaler,
@@ -1156,7 +1156,7 @@ impl RenderPassNode for PostPass {
         // The generated PostPush carries tonemapMode (Reinhard / ACES /
         // passthrough), aaMode (0 = off, 1 = FXAA) and invTexelSize (one texel in
         // UV units, used by the FXAA taps). debug_rt, proj22/proj32, near/far
-        // etc. are consumed on the Rust side 输入 绑定 selection,
+        // etc. are consumed on the Rust side input  bind  selection,
         // depth linearization) and are NOT part of the GPU push constant.
         // proj22/proj32/near/far depth linearization values are still computed
         // here as a reference for future shader extensions.
@@ -1207,8 +1207,8 @@ impl RenderPassNode for PostPass {
             lut_size: self.lut_size as f32,
             motion_blur,
             motion_blur_max_pixels: ctx.frame.grade.motion_blur_max_pixels,
-            // #613：FXAA 采样的是**内部渲染目标**，一个 texel 的 UV 尺寸按它的
-            // 分辨率算；用交换链尺寸会在内部分辨率缩小时把采样步长算小。
+            // #613: FXAA samples **internal render target**, one texel UV size computed from its
+            // resolution; using swapchain size would make sample step too small when internal resolution downscaled.
             inv_texel_size: [
                 if ctx.render_extent.width > 0 {
                     1.0 / ctx.render_extent.width as f32
@@ -1245,7 +1245,7 @@ impl RenderPassNode for PostPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Post,
-            // 高动态范围 颜色 comes from ForwardPass via FORWARD_COLOR_H.
+            // high dynamic range  color  comes from ForwardPass via FORWARD_COLOR_H.
             inputs: vec![FORWARD_COLOR_H],
             // PostPass writes FINAL_COLOR_H (swapchain or offscreen image).
             outputs: vec![FINAL_COLOR_H],
@@ -1267,11 +1267,11 @@ impl RenderPassNode for PostPass {
     }
 }
 
-/// 创建 the PostPass 渲染 pass 1 color-format 颜色 附件
+/// Create PostPass render pass with 1 color-format color attachment
 /// (CLEAR -> STORE), no depth. `initial_layout = UNDEFINED` so the GPU
-/// transitions the target 图像 from whatever 布局 it was in (typically
-/// `PRESENT_SRC_KHR` from 最后一个 帧 into COLOR_ATTACHMENT_OPTIMAL as part of
-/// the 加载 op.
+/// transitions target image from whatever layout it was in (typically
+/// `PRESENT_SRC_KHR` from last  frame  into COLOR_ATTACHMENT_OPTIMAL as part of
+/// the load  op.
 ///
 /// `final_layout` is supplied by the caller: `PRESENT_SRC_KHR` for a swapchain
 /// image, `COLOR_ATTACHMENT_OPTIMAL` for an offscreen image. Headless contexts
@@ -1320,7 +1320,7 @@ fn create_render_pass(
 
 // Re-export the memory-type finder so this module is self-contained for
 // future HDR-image helpers (currently none - the HDR image is owned by
-// ForwardPass). Kept here as a placeholder 导入 to avoid an unused 警告
+// ForwardPass). Kept here as a placeholder import  to avoid an unused warn
 // if no callers use it.
 fn _memory_type_for_hdr(context: &VulkanContext, mem_type_bits: u32) -> anyhow::Result<u32> {
     find_memory_type(

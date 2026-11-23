@@ -7,7 +7,7 @@ fn ramp(cells: usize) -> Heightfield {
             heights.push(x as f32 / (cells - 1) as f32 + y as f32 / (cells - 1) as f32);
         }
     }
-    // 直接走 from_raw，避免为测试开一个只有测试用的构造器。
+    // Go directly through from_raw, avoid opening a test-only constructor.
     let bytes: Vec<u8> = heights
         .iter()
         .flat_map(|value| (value * 0.5).to_le_bytes())
@@ -15,7 +15,7 @@ fn ramp(cells: usize) -> Heightfield {
     Heightfield::from_raw(&bytes, cells).expect("valid ramp")
 }
 
-/// 直接塞一个运行时 `TerrainData`（跳过文件加载），供查询测试用。
+/// Directly stuff a runtime `TerrainData` (skip file load), for query tests.
 fn terrain_world(
     field: Heightfield,
     size: [f32; 2],
@@ -57,7 +57,7 @@ fn terrain_raycast_hits_a_flat_field_from_above() {
 
 #[test]
 fn terrain_raycast_refines_a_slope() {
-    // 2×2 斜坡：中心插值到 0.5，法线应该倾斜。
+    // 2×2 slope: center interpolates to 0.5, normal should be tilted.
     let (world, _) = terrain_world(ramp(2), [10.0, 10.0], glam::Vec3::ZERO);
     let hit = terrain_raycast(&world, [0.0, 5.0, 0.0], [0.0, -1.0, 0.0], 20.0).expect("hit slope");
     assert!((hit.point[1] - 0.5).abs() < 0.02, "hit y {}", hit.point[1]);
@@ -109,27 +109,27 @@ fn a_heightmap_needs_exactly_one_float_per_cell() {
     assert!(Heightfield::from_raw(&ok, 4).is_some());
     assert!(
         Heightfield::from_raw(&ok, 5).is_none(),
-        "长度必须和分辨率一致"
+        "Length must match resolution"
     );
 }
 
 #[test]
 fn sampling_is_bilinear_and_clamped() {
     let field = ramp(3);
-    // 角点就是原始值。
+    // Corner is original value.
     assert!((field.sample_height(0.0, 0.0) - 0.0).abs() < 1e-6);
     assert!((field.sample_height(1.0, 1.0) - 1.0).abs() < 1e-6);
-    // 中点插值。
+    // Center interpolates.
     let middle = field.sample_height(0.5, 0.5);
     assert!((middle - 0.5).abs() < 1e-6, "got {middle}");
-    // 越界夹到边界。
+    // Out-of-bounds clamped to boundary.
     assert!((field.sample_height(-1.0, 0.0) - 0.0).abs() < 1e-6);
     assert!((field.sample_height(2.0, 1.0) - 1.0).abs() < 1e-6);
 }
 
 #[test]
 fn heights_keep_the_units_the_cli_writes() {
-    // heightmap CLI 写出的是米（可以为负），不能被钳成 [0, 1]。
+    // heightmap CLI writes meters (can be negative), must not be clamped to [0, 1].
     let mut bytes = Vec::new();
     for value in [-11000.0f32, 250.0, 0.0, 8850.0] {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -161,7 +161,7 @@ fn the_mesh_covers_the_requested_size() {
     assert!((xs.iter().cloned().fold(f32::INFINITY, f32::min) + 10.0).abs() < 1e-5);
     assert!((xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max) - 10.0).abs() < 1e-5);
     assert!((zs.iter().cloned().fold(f32::INFINITY, f32::min) + 5.0).abs() < 1e-5);
-    // 全平的地面：法线都是 +Y，高度是 0。
+    // Fully flat ground: normals all +Y, height is 0.
     assert!(mesh.normals.iter().all(|n| (n[1] - 1.0).abs() < 1e-5));
     assert!(mesh.positions.iter().all(|p| p[1].abs() < 1e-6));
     assert_eq!(mesh.uvs.len(), 16);
@@ -179,7 +179,7 @@ fn splat_colours_follow_height_and_can_be_disabled() {
     let splat = field.build_mesh_with_splat([10.0, 10.0], 1.0, true);
     assert_eq!(splat.colors.len(), splat.positions.len());
     assert_ne!(splat.colors[0], splat.colors[splat.colors.len() - 1]);
-    // 纯高度带（平地法线）的端点颜色。
+    // Endpoint color of pure-height band (flat normal).
     let low = terrain_splat_color(0.0, 0.0, 1.0, [0.0, 1.0, 0.0]);
     let high = terrain_splat_color(1.0, 0.0, 1.0, [0.0, 1.0, 0.0]);
     assert!((low[0] - SPLAT_SAND[0]).abs() < 1e-5);
@@ -187,7 +187,7 @@ fn splat_colours_follow_height_and_can_be_disabled() {
     assert!((high[0] - SPLAT_SNOW[0]).abs() < 1e-5);
     assert!((high[2] - SPLAT_SNOW[2]).abs() < 1e-5);
 
-    // LOD 网格同样带颜色，数量与顶点一致。
+    // LOD mesh also carries color, count matches vertex.
     let half = field.build_chunk_mesh_lod_with_splat([10.0, 10.0], 1.0, 0, 4, 0, 4, 2, true);
     assert_eq!(half.colors.len(), half.positions.len());
 }
@@ -286,7 +286,7 @@ fn vegetation_scatter_follows_the_heightfield_and_shares_one_mesh() {
         assert!(world.get::<MeshRef>(*plant_entity).is_some());
     }
 
-    // 参数变化：重建，数量跟着密度走，旧实例回收。
+    // Param change: rebuild, count follows density, old instance recycled.
     world.get_mut::<Terrain>(entity).unwrap().vegetation_density = 50.0;
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainVegetation>().count(), 50);
@@ -396,7 +396,11 @@ fn the_terrain_key_changes_with_the_parameters() {
     let base = Terrain::default();
     let key = terrain_key(1, &base);
     assert_eq!(key, terrain_key(1, &base));
-    assert_ne!(key, terrain_key(2, &base), "换个实体要重建");
+    assert_ne!(
+        key,
+        terrain_key(2, &base),
+        "Different entity triggers rebuild"
+    );
     let mut scaled = base.clone();
     scaled.height_scale = 20.0;
     assert_ne!(key, terrain_key(1, &scaled));
@@ -431,22 +435,28 @@ fn the_terrain_system_builds_a_mesh_and_points_the_renderer_at_it() {
     let meshes = world.get_resource::<ProceduralMeshes>().expect("meshes");
     assert!(
         meshes.get(&data.mesh_path).is_some(),
-        "网格要登记进程序化网格表"
+        "Mesh must be registered in procedural mesh table"
     );
-    assert!(world.get::<MeshRef>(entity).is_some(), "要排队上传");
+    assert!(
+        world.get::<MeshRef>(entity).is_some(),
+        "Must be queued for upload"
+    );
 
-    // 参数没变：第二次跑不重建（路径不变、引用还在）。
+    // Param unchanged: second run does not rebuild (path unchanged, ref still there).
     let path = data.mesh_path.clone();
     terrain_system(&mut world);
     assert_eq!(world.get::<TerrainData>(entity).unwrap().mesh_path, path);
 
-    // 参数变了：新路径，旧网格被回收。
+    // Param changed: new path, old mesh recycled.
     world.get_mut::<Terrain>(entity).unwrap().height_scale = 42.0;
     terrain_system(&mut world);
     let new_path = world.get::<TerrainData>(entity).unwrap().mesh_path.clone();
     assert_ne!(new_path, path);
     let meshes = world.get_resource::<ProceduralMeshes>().unwrap();
-    assert!(meshes.get(&path).is_none(), "旧网格不该留在表里");
+    assert!(
+        meshes.get(&path).is_none(),
+        "Old mesh should not stay in table"
+    );
     assert!(meshes.get(&new_path).is_some());
 }
 
@@ -463,10 +473,10 @@ fn the_terrain_height_follows_the_entity_placement() {
     );
     terrain_system(&mut world);
 
-    // 默认地形是平的：到处都是 2.0（实体的高度）。
+    // Default terrain is flat: everywhere 2.0 (entity height).
     let height = terrain_height(&world, 10.0, -5.0).expect("covered");
     assert!((height - 2.0).abs() < 1e-4);
-    // 范围外没有地形。
+    // Outside range has no terrain.
     assert!(terrain_height(&world, 1000.0, -5.0).is_none());
 }
 
@@ -494,7 +504,7 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
 
     assert!(
         world.get::<MeshRef>(entity).is_none(),
-        "多块模式下 owner 不再直接绘制"
+        "In multi-chunk mode owner no longer draws directly"
     );
     let data = world.get::<TerrainData>(entity).expect("terrain data");
     assert!(data.mesh_path.starts_with(PROCEDURAL_PREFIX));
@@ -508,7 +518,7 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
         .query::<TerrainLodSet>()
         .map(|(set_entity, set)| (set_entity, set.clone()))
         .collect();
-    assert_eq!(sets.len(), 1, "没有 LOD 阈值时只有一级 set");
+    assert_eq!(sets.len(), 1, "With no LOD threshold only one set level");
     let children = world.get::<Child>(entity).expect("children");
     assert_eq!(children.0, vec![sets[0].0]);
 
@@ -529,8 +539,8 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
             let mesh = meshes.get(&chunk.mesh_path).expect("chunk mesh");
             assert!(!mesh.positions.is_empty());
         }
-        // 32 samples / 2 chunks：接缝行被两边各存一次，所以顶点总数是 (16+17)²；
-        // 三角形仍然只覆盖 31×31 个 quad。
+        // 32 samples / 2 chunks: seam row stored twice by both sides, so vertex total is (16+17)²;
+        // triangles still cover only 31×31 quads.
         let total_vertices: usize = chunks
             .iter()
             .map(|(_, chunk)| meshes.get(&chunk.mesh_path).unwrap().positions.len())
@@ -539,20 +549,27 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
             .iter()
             .map(|(_, chunk)| meshes.get(&chunk.mesh_path).unwrap().indices.len())
             .sum();
-        assert_eq!(total_vertices, 33 * 33, "接缝行被两边各存一次");
+        assert_eq!(
+            total_vertices,
+            33 * 33,
+            "Seam row stored twice by both sides"
+        );
         assert_eq!(total_indices, 31 * 31 * 6);
     }
 
-    // 参数没变：不重建。
+    // Param unchanged: no rebuild.
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainChunk>().count(), 4);
 
-    // 切回单块：子实体与旧网格都回收，owner 重新进入上传队列。
+    // Switch back to single chunk: child entities and old mesh recycled, owner re-enters upload queue.
     world.get_mut::<Terrain>(entity).unwrap().chunks = 1;
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainChunk>().count(), 0);
     assert_eq!(world.query::<TerrainLodSet>().count(), 0);
-    assert!(world.get::<Child>(entity).is_none(), "空 Child 应被移除");
+    assert!(
+        world.get::<Child>(entity).is_none(),
+        "Empty Child should be removed"
+    );
     assert!(world.get::<MeshRef>(entity).is_some());
     let data = world.get::<TerrainData>(entity).unwrap();
     assert!(world
@@ -571,7 +588,7 @@ fn adjacent_chunks_share_the_seam_and_keep_global_uvs() {
     assert_eq!(left.positions.len(), 9);
     assert_eq!(right.positions.len(), 9);
 
-    // 左块右边缘在局部 x=+2.5，右块左边缘在局部 x=-2.5；加上块中心后都落在世界 x=0。
+    // Left chunk right edge at local x=+2.5, right chunk left edge at local x=-2.5; after adding center offset both land at world x=0.
     let left_edge: Vec<_> = left
         .positions
         .iter()
@@ -589,7 +606,7 @@ fn adjacent_chunks_share_the_seam_and_keep_global_uvs() {
         assert!((left[2] - right[2]).abs() < 1e-5, "seam z differs");
     }
 
-    // UV 用整张地形的 [0,1]，接缝两侧都是 u=0.5。
+    // UV uses whole terrain [0,1], both sides of seam are u=0.5.
     let seam_u = 2.0 / 4.0;
     assert!(left.uvs.iter().any(|uv| (uv[0] - seam_u).abs() < 1e-5));
     assert!(right.uvs.iter().any(|uv| (uv[0] - seam_u).abs() < 1e-5));
@@ -656,7 +673,7 @@ fn lod_meshes_reduce_resolution_but_keep_the_boundary() {
     assert_eq!(half.positions.len(), 5 * 5);
     assert_eq!(quarter.positions.len(), 3 * 3);
 
-    // 四个角必须完全一致，否则相邻块 / 切换级别会露出裂缝。
+    // Four corners must be fully consistent, otherwise adjacent chunks / level switches reveal cracks.
     for mesh in [&half, &quarter] {
         let side = (mesh.positions.len() as f64).sqrt() as usize;
         for (full_index, lod_index) in [

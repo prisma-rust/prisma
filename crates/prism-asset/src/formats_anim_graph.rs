@@ -1,8 +1,8 @@
-//! 动画图 cooked 格式解码（#560 P1）。
+//! Animation graph cooked format decoder (#560 P1).
 //!
-//! 作者写 `*.animgraph.json`，cooker 编成 `.rag` 放进 `.pak`；运行时只解码。
-//! 与 `.rskel` / `.rskin` / `.ranim` / `.rasm` 同一套分层（编码端在
-//! `prism-cooker::cooker::anim_graph`）。
+//! Author writes `*.animgraph.json`, cooker compiles to `.rag` placed in `.pak`; runtime only decodes.
+//! Same layering as `.rskel` / `.rskin` / `.ranim` / `.rasm` (encode side in
+//! `prism-cooker::cooker::anim_graph`).
 //!
 //! ## RAGP v2
 //!
@@ -33,38 +33,38 @@
 //!     }
 //!     [speed_count:4] sample_speeds: speed_count × f32  // v2
 //! }
-//! [output:4]                    // 输出节点下标
+//! [output:4]                    // output node index
 //! ```
 //!
-//! v2 在节点末尾追加每样本速度表；v1 没有该表，解出来为空。连线在 cook 时
-//! 就解析成节点下标，运行时不需要再查名字。所有计数都有上限，
-//! 坏文件返回 `None` 而不是分配一大块内存；cooker 还会拒绝重复节点名、未知
-//! 连线和成环的图。
+//! v2 appends per-sample velocity table at node end; v1 has no table, resolves empty. Connections at cook time
+//! are parsed to node indices at cook time, runtime does not need to look up names again. All counts have upper limits,
+//! Bad file returns `None` instead of allocating a big block; cooker also rejects duplicate node names, unknown
+//! connections and cyclic graphs.
 
 use crate::formats_skinned::Reader;
 
-/// RAGP magic。
+/// RAGP magic.
 pub const RAGP_MAGIC: &[u8; 4] = b"RAGP";
-/// RAGP 版本。
+/// RAGP version.
 pub const RAGP_VERSION: u8 = 2;
 
-/// 参数上限。
+/// Param upper limit.
 pub const MAX_GRAPH_PARAMETERS: usize = 1024;
-/// 节点上限。
+/// Node upper limit.
 pub const MAX_GRAPH_NODES: usize = 4096;
-/// 单节点剪辑 / 采样点上限。
+/// Per-node clip / sample point upper limit.
 pub const MAX_GRAPH_CLIPS: usize = 4096;
-/// 单节点输入连线上限。
+/// Per-node input connection upper limit.
 pub const MAX_GRAPH_INPUTS: usize = 256;
-/// 单条连线的骨骼遮罩上限。
+/// Per-connection bone mask upper limit.
 pub const MAX_GRAPH_BONE_MASK: usize = 1024;
 
-/// 节点标志：循环。
+/// Node flag: loop.
 pub const RAGP_NODE_LOOPED: u8 = 1 << 0;
-/// 节点标志：additive。
+/// Node flag: additive.
 pub const RAGP_NODE_ADDITIVE: u8 = 1 << 1;
 
-/// 图参数类型。
+/// Graph param type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphParameterKind {
     Float,
@@ -91,7 +91,7 @@ impl GraphParameterKind {
     }
 }
 
-/// 图参数。`default` 对 bool / trigger 也是 0/1。
+/// Graph param. `default` is 0/1 for bool / trigger too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphParameterInfo {
     pub name: String,
@@ -99,26 +99,26 @@ pub struct GraphParameterInfo {
     pub default: f32,
 }
 
-/// 节点类型（对应 #560 P1 的动画图节点）。
+/// Node type (corresponds to animation graph node in #560 P1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphNodeKind {
-    /// 播放单个剪辑。
+    /// Play single clip.
     ClipPlayer,
-    /// 一维混合空间。
+    /// 1D blend space.
     BlendSpace1D,
-    /// 二维混合空间。
+    /// 2D blend space.
     BlendSpace2D,
-    /// 多层姿态栈。
+    /// Multi-layer pose stack.
     BlendStack,
-    /// Montage / Notify 插槽。
+    /// Montage / Notify slot.
     Slot,
-    /// 按骨骼遮罩分层混合。
+    /// Layer blend by bone mask.
     LayeredBlend,
-    /// 缓存一份姿态。
+    /// Cache one pose.
     CachedPose,
-    /// 引用 `.rasm` 状态机。
+    /// Reference `.rasm` state machine.
     StateMachine,
-    /// 图输出。
+    /// Graph output.
     Output,
 }
 
@@ -167,16 +167,16 @@ impl GraphNodeKind {
     }
 }
 
-/// 一条节点输入连线。`node` 是上游节点下标。
+/// One node input connection. `node` is upstream node index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphInputInfo {
     pub node: u32,
     pub weight: f32,
-    /// 该连线只影响的骨骼名；空 = 全身。
+    /// Bone name only affected by this connection; empty = whole body.
     pub bone_mask: Vec<String>,
 }
 
-/// 解码后的一个节点。
+/// One decoded node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphNodeInfo {
     pub name: String,
@@ -185,11 +185,11 @@ pub struct GraphNodeInfo {
     pub additive: bool,
     pub speed: f32,
     pub weight: f32,
-    /// ClipPlayer 一个；BlendSpace 每个采样一个。
+    /// One ClipPlayer; one BlendSpace per sample.
     pub clips: Vec<String>,
-    /// BlendSpace 的采样坐标（1D 只用 x；其他节点为空）。
+    /// BlendSpace sample coordinate (1D only uses x; other nodes empty).
     pub positions: Vec<[f32; 2]>,
-    /// BlendSpace 每样本播放速度（空 = 全部 1 / 共享相位；按 `clips` 顺序）。
+    /// BlendSpace per-sample playback speed (empty = all 1 / shared phase; per `clips` order).
     pub sample_speeds: Vec<f32>,
     pub parameter_x: String,
     pub parameter_y: String,
@@ -197,16 +197,16 @@ pub struct GraphNodeInfo {
     pub inputs: Vec<GraphInputInfo>,
 }
 
-/// 解码后的 `.rag`。
+/// Decode `.rag`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimGraphInfo {
     pub parameters: Vec<GraphParameterInfo>,
     pub nodes: Vec<GraphNodeInfo>,
-    /// 输出节点下标（`nodes` 内）。
+    /// Output node index (inside `nodes`).
     pub output: u32,
 }
 
-/// 解码 `.rag`。
+/// Decode `.rag`.
 pub fn decode_rag(data: &[u8]) -> Option<AnimGraphInfo> {
     if data.len() < 9 || &data[..4] != RAGP_MAGIC {
         return None;
@@ -295,7 +295,7 @@ pub fn decode_rag(data: &[u8]) -> Option<AnimGraphInfo> {
             });
         }
 
-        // v2：节点末尾追加每样本速度表；v1 无此表。
+        // v2: node end appends per-sample velocity table; v1 has no table.
         let mut sample_speeds = Vec::new();
         if version >= 2 {
             let speed_count = reader.u32()? as usize;

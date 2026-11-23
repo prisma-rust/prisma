@@ -1,14 +1,14 @@
-//! 2D 物理体系与空间查询（#1160）。
+//! 2D physics system and spatial queries (#1160).
 //!
-//! 提供轻量级、确定性、零外部依赖的 2D 物理后端与空间查询系统：
-//! 1. 刚体动力学积分（重力、阻尼、冲量响应）
-//! 2. 窄相碰撞检测（盒-盒 SAT、圆-圆、盒-圆、凸多边形、线段）
-//! 3. 接触求解器（弹性系数、库仑摩擦力、Baumgarte 穿透修正）
-//! 4. 传感器（Sensor/Trigger）与碰撞事件（Started / Stopped）
-//! 5. 2D 空间查询（`raycast_2d`、`overlap_circle_2d`、`overlap_box_2d`、`shapecast_2d`）
+//! Provides lightweight, deterministic, zero-external-dependency 2D physics backend and spatial query system:
+//! 1. Rigid body dynamics integration (gravity, drag, impulse response)
+//! 2. Narrow-phase collision detection (box-box SAT, circle-circle, box-circle, convex polygon, line segment)
+//! 3. Contact solver (restitution, Coulomb friction, Baumgarte penetration correction)
+//! 4. Sensors (Sensor/Trigger) and collision events (Started / Stopped)
+//! 5. 2D spatial queries (`raycast_2d`, `overlap_circle_2d`, `overlap_box_2d`, `shapecast_2d`)
 //!
-//! 纯几何内核 `prism-physics2d` 也从这里 re-export，玩法代码与静态 Player
-//! 共用同一套 AABB 扫掠 / move-and-slide 实现。
+//! Pure geometry kernel `prism-physics2d` also re-exported here, gameplay code and static Player
+//! share same AABB sweep / move-and-slide implementation.
 
 pub use prism_physics2d::*;
 
@@ -18,14 +18,14 @@ use prism_scene::components::{
     Collider2DShape, LocalToWorld, LocalTransform, PhysicsCollider2D, RigidBody2D, RigidBody2DType,
 };
 
-/// 2D 碰撞 / 传感器事件类型。
+/// 2D collision / sensor event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Physics2DEventKind {
     Started,
     Stopped,
 }
 
-/// 两个实体之间的 2D 碰撞或触发事件。
+/// 2D collision or trigger event between two entities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Physics2DEvent {
     pub kind: Physics2DEventKind,
@@ -34,7 +34,7 @@ pub struct Physics2DEvent {
     pub is_sensor: bool,
 }
 
-/// 主线程可见的 2D 物理事件缓冲资源。
+/// Main-thread visible 2D physics event buffer resource.
 #[derive(Debug, Clone, Default)]
 pub struct Physics2DEvents {
     pub events: Vec<Physics2DEvent>,
@@ -50,27 +50,27 @@ impl Physics2DEvents {
     }
 }
 
-/// 内部保留的活跃接触对资源，用于检测 Started / Stopped 转换。
+/// Internally kept active contact correspondence resource, for detecting Started / Stopped transitions.
 #[derive(Debug, Clone, Default)]
 struct ActiveContactPairs {
     pairs: std::collections::HashSet<(Entity, Entity)>,
 }
 
-/// 2D 射线检测命中结果。
+/// 2D raycast hit result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RayHit2D {
     pub entity: Entity,
-    /// 射线起点到命中点的距离（世界单位）。
+    /// Distance from raycast origin to hit point (world units).
     pub distance: f32,
-    /// 命中点的世界坐标 [x, y]。
+    /// Hit point world coords [x, y].
     pub point: [f32; 2],
-    /// 命中表面的外法线 [nx, ny]（单位向量）。
+    /// Outward normal of hit surface [nx, ny] (identity vector).
     pub normal: [f32; 2],
-    /// 命中的碰撞体是否是传感器。
+    /// Whether hit collider is a sensor.
     pub is_sensor: bool,
 }
 
-/// 内部世界空间 2D 形状。
+/// Internal world-space 2D shape.
 #[derive(Debug, Clone)]
 enum WorldShape2D {
     Circle {
@@ -139,7 +139,7 @@ impl WorldShape2D {
                     verts.push(pos + rot_mat(Vec2::from_array(v)));
                 }
                 if verts.len() < 3 {
-                    // 退化为盒
+                    // Degenerate to box
                     let half = Vec2::from_array(collider.half_extents)
                         .abs()
                         .max(Vec2::splat(1e-4));
@@ -164,7 +164,7 @@ impl WorldShape2D {
         }
     }
 
-    /// 射线与形状求交，返回 (距离, 法线)。
+    /// Intersect raycast with shape, return (distance, normal).
     fn intersect_ray(&self, origin: Vec2, dir: Vec2, max_dist: f32) -> Option<(f32, Vec2)> {
         match self {
             WorldShape2D::Circle { center, radius } => {
@@ -311,7 +311,7 @@ impl WorldShape2D {
                 }
             }
             WorldShape2D::Capsule { a, b, radius } => {
-                // 简化为线段求交后退化到圆
+                // Simplified to line-segment intersection then degenerate to circle
                 let seg = *b - *a;
                 let len = seg.length();
                 if len < 1e-6 {
@@ -334,7 +334,7 @@ impl WorldShape2D {
                         }
                     }
                 }
-                // 胶囊身段
+                // Capsule body segment
                 let n = Vec2::new(-seg.y, seg.x).normalize_or_zero() * *radius;
                 let quad = WorldShape2D::Polygon {
                     vertices: vec![*a + n, *b + n, *b - n, *a - n],
@@ -351,10 +351,10 @@ impl WorldShape2D {
 }
 
 // ---------------------------------------------------------------------------
-// 空间查询 API
+// Spatial query API
 // ---------------------------------------------------------------------------
 
-/// 2D 射线投射检测最近碰撞体。
+/// 2D raycast finds nearest collider.
 pub fn raycast_2d(
     world: &World,
     origin: [f32; 2],
@@ -365,7 +365,7 @@ pub fn raycast_2d(
     raycast_2d_excluding(world, origin, direction, max_distance, layer_mask, None)
 }
 
-/// 2D 射线投射（跳过指定实体自身）。
+/// 2D raycast (skipping specified entity itself).
 pub fn raycast_2d_excluding(
     world: &World,
     origin: [f32; 2],
@@ -409,7 +409,7 @@ pub fn raycast_2d_excluding(
     best
 }
 
-/// 2D 射线投射检测所有命中的碰撞体，按距离升序排列。
+/// 2D raycast finds all hit colliders, sorted by distance ascending.
 pub fn raycast_2d_all(
     world: &World,
     origin: [f32; 2],
@@ -453,7 +453,7 @@ pub fn raycast_2d_all(
     hits
 }
 
-/// 2D 圆形重叠查询，返回落在此圆范围内的所有实体。
+/// 2D circle overlap query, returns all entities within that circle.
 pub fn overlap_circle_2d(
     world: &World,
     center: [f32; 2],
@@ -477,7 +477,7 @@ pub fn overlap_circle_2d(
     result
 }
 
-/// 2D 矩形盒重叠查询。
+/// 2D box overlap query.
 pub fn overlap_box_2d(
     world: &World,
     center: [f32; 2],
@@ -509,7 +509,7 @@ pub fn overlap_box_2d(
     result
 }
 
-/// 2D 形状投射查询（Shapecast2D）。
+/// 2D shape cast query (Shapecast2D).
 pub fn shapecast_2d(
     world: &World,
     cast_shape: &PhysicsCollider2D,
@@ -518,7 +518,7 @@ pub fn shapecast_2d(
     max_distance: f32,
     layer_mask: u32,
 ) -> Option<RayHit2D> {
-    // 按步长采样推进检测
+    // Advance detection by step sampling
     let dir = Vec2::from_array(direction).normalize_or_zero();
     if dir == Vec2::ZERO || max_distance <= 0.0 {
         return None;
@@ -556,7 +556,7 @@ pub fn shapecast_2d(
 }
 
 // ---------------------------------------------------------------------------
-// 碰撞与接触求解器
+// Collision and contact solver
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -688,7 +688,7 @@ fn collide_shapes(a: &WorldShape2D, b: &WorldShape2D) -> Option<ContactManifold>
                 ..
             },
         ) => {
-            // SAT 检测盒-盒碰撞
+            // SAT box-box collision detection
             let d = *c2 - *c1;
             let mut min_overlap = f32::MAX;
             let mut best_axis = Vec2::ZERO;
@@ -720,17 +720,17 @@ fn collide_shapes(a: &WorldShape2D, b: &WorldShape2D) -> Option<ContactManifold>
 }
 
 // ---------------------------------------------------------------------------
-// 物理模拟步进系统
+// Physics simulation step system
 // ---------------------------------------------------------------------------
 
-/// 推进 2D 物理系统模拟单步（推荐在 `fixed_update` 中调用）。
+/// Advance 2D physics system one simulation step (recommended called in `fixed_update`).
 ///
-/// 包括：
-/// 1. 动态刚体受重力与阻尼积分
-/// 2. 窄相碰撞与触发器检测
-/// 3. 冲量求解与反弹修正
-/// 4. 实体位置与朝向同步
-/// 5. 碰撞 / 传感器事件发射
+/// Includes:
+/// 1. Dynamic rigid body velocity integration under gravity and drag
+/// 2. Narrow-phase collision and trigger detection
+/// 3. Impulse solving and reflection correction
+/// 4. Sync entity position and orientation
+/// 5. Emit collision / sensor events
 pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
     if dt <= 0.0 {
         return;
@@ -738,7 +738,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
 
     let g = Vec2::from_array(gravity);
 
-    // 1. 积分动态刚体速度
+    // 1. Integrate dynamic rigid body velocities
     for (_, rb) in world.query_mut::<RigidBody2D>() {
         if rb.body_type != RigidBody2DType::Dynamic {
             continue;
@@ -756,7 +756,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         rb.linear_velocity = [vel.x, vel.y];
     }
 
-    // 收集所有带 PhysicsCollider2D 的实体
+    // Collect all entities with PhysicsCollider2D
     let mut colliders = Vec::new();
     for (entity, col) in world.query::<PhysicsCollider2D>() {
         let (pos, rot) = extract_2d_transform(world, entity);
@@ -768,7 +768,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
     let mut current_contacts = std::collections::HashSet::new();
     let mut events = Vec::new();
 
-    // 2. 窄相碰撞检测与求解
+    // 2. Narrow-phase collision detection and solving
     let count = colliders.len();
     for i in 0..count {
         for j in (i + 1)..count {
@@ -792,7 +792,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
                 let is_sensor = col_a.is_sensor || col_b.is_sensor;
 
                 if !is_sensor {
-                    // 求解刚体冲量
+                    // Solve rigid body impulse
                     let type_a = rb_a
                         .as_ref()
                         .map_or(RigidBody2DType::Static, |r| r.body_type);
@@ -843,7 +843,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
                             }
                         }
 
-                        // Baumgarte 穿透修正
+                        // Baumgarte penetration correction
                         let slop = 0.005f32;
                         let percent = 0.4f32;
                         let correction =
@@ -868,7 +868,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         }
     }
 
-    // 3. 状态转换对比并生成 Started / Stopped 事件
+    // 3. State transition compare and generate Started / Stopped events
     let prev_contacts = world
         .get_resource::<ActiveContactPairs>()
         .cloned()
@@ -913,7 +913,7 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
     });
     world.insert_resource(Physics2DEvents { events });
 
-    // 4. 推进动态与运动学刚体的位置与旋转
+    // 4. Advance dynamic and kinematic rigid body position and rotation
     for (_, tf, rb) in world.query2_mut::<LocalTransform, RigidBody2D>() {
         if rb.body_type == RigidBody2DType::Static {
             continue;

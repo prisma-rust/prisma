@@ -1,4 +1,4 @@
-//! `keyframe_animation_system` 测试。
+//! `keyframe_animation_system` tests.
 
 use super::*;
 use crate::scene::components::KeyframeAnimation;
@@ -66,7 +66,7 @@ fn a_looped_clip_wraps_the_playhead() {
         clip(&[(0.0, [0.0; 3]), (1.0, [10.0, 0.0, 0.0])], &[]),
     );
 
-    // 1.5 秒 → 一个完整循环 + 半程。
+    // 1.5 seconds → one full loop + half.
     keyframe_animation_system(&mut world, 1.5);
     let head = *world.get::<ClipPlayhead>(entity).unwrap();
     assert!(head.time > 1.5 - 1e-4);
@@ -106,7 +106,7 @@ fn speed_scales_the_playhead() {
         },
     );
 
-    // dt 0.25 × speed 2 = 0.5 秒，加上 phase 0.5 → 采样 1.0 秒 = 中间值。
+    // dt 0.25 × speed 2 = 0.5 seconds, plus phase 0.5 → sample 1.0 seconds = intermediate value.
     keyframe_animation_system(&mut world, 0.25);
     assert!((transform_of(&world, entity).position.x - 1.0).abs() < 1e-4);
 }
@@ -126,9 +126,9 @@ fn channels_without_keys_keep_the_authored_transform() {
 
     keyframe_animation_system(&mut world, 0.5);
     let transform = transform_of(&world, entity);
-    // position 被轨道接管……
+    // Position taken over by track...
     assert!((transform.position.x - 3.0).abs() < 1e-5);
-    // ……旋转 / 缩放没有关键帧，保持作者值。
+    // ...rotation / scale have no key frames, keep author value.
     assert_eq!(transform.rotation, glam::Quat::IDENTITY);
     assert_eq!(transform.scale, glam::Vec3::new(2.0, 3.0, 4.0));
 }
@@ -136,7 +136,7 @@ fn channels_without_keys_keep_the_authored_transform() {
 #[test]
 fn euler_keys_are_degrees_and_rotate_the_transform() {
     let mut world = World::new();
-    // 循环剪辑在 `time == duration` 处会绕回 0，检查末帧用单次播放。
+    // Looping clip wraps to 0 at `time == duration`, single play used to check last frame.
     let entity = spawn(
         &mut world,
         KeyframeAnimation {
@@ -148,7 +148,7 @@ fn euler_keys_are_degrees_and_rotate_the_transform() {
     keyframe_animation_system(&mut world, 1.0);
     let rotation = transform_of(&world, entity).rotation;
     let forward = rotation * glam::Vec3::Z;
-    // 绕 Y 轴 +90°：+Z 转到 +X。
+    // +90° around Y: +Z becomes +X.
     assert!((forward.x - 1.0).abs() < 1e-5);
     assert!(forward.z.abs() < 1e-5);
 }
@@ -189,7 +189,7 @@ fn fired(world: &World) -> Vec<(String, f32)> {
         .unwrap_or_default()
 }
 
-/// #490：播放头穿过事件时间时入队；没穿过的帧不发。
+/// #490: enqueue when playhead crosses event time; frames that do not cross emit nothing.
 #[test]
 fn events_fire_when_the_playhead_crosses_them() {
     let mut world = World::new();
@@ -221,7 +221,7 @@ fn events_fire_when_the_playhead_crosses_them() {
     keyframe_animation_system(&mut world, 0.3);
     assert_eq!(fired(&world), vec![("land".to_string(), 1.5)]);
 
-    // 夹在末帧之后不再重复。
+    // No re-fire after clamping to last frame.
     keyframe_animation_system(&mut world, 0.5);
     assert!(fired(&world).is_empty());
 }
@@ -259,10 +259,10 @@ fn a_looped_clip_fires_events_once_per_cycle() {
     assert!(fired(&world).is_empty());
     keyframe_animation_system(&mut world, 0.3);
     assert!(fired(&world).is_empty());
-    // 0.9 → 1.2：回绕到 0.2，还没到 0.25。
+    // 0.9 → 1.2: wraps to 0.2, not yet 0.25.
     keyframe_animation_system(&mut world, 0.3);
     assert!(fired(&world).is_empty());
-    // 0.2 → 0.5：第二圈的 tick。
+    // 0.2 → 0.5: second loop tick.
     keyframe_animation_system(&mut world, 0.3);
     assert_eq!(fired(&world), vec![("tick".to_string(), 0.25)]);
 }
@@ -282,7 +282,7 @@ fn paused_clips_do_not_fire_events_and_the_queue_is_cleared() {
     keyframe_animation_system(&mut world, 1.0);
     assert!(fired(&world).is_empty());
 
-    // 上一帧有事件、下一帧没有时也必须被清空。
+    // Event present this frame, absent next frame must also be cleared.
     let stale_entity = world.spawn();
     world.insert_resource(AnimationEventQueue {
         events: vec![FiredAnimationEvent {
@@ -295,7 +295,7 @@ fn paused_clips_do_not_fire_events_and_the_queue_is_cleared() {
     assert!(fired(&world).is_empty());
 }
 
-/// #490：倒放时播放头向下穿过事件也要入队。
+/// #490: when playing backwards, crossing event time downward must also enqueue.
 #[test]
 fn reverse_playback_fires_events_when_the_playhead_crosses_backwards() {
     let mut world = World::new();
@@ -316,10 +316,10 @@ fn reverse_playback_fires_events_when_the_playhead_crosses_backwards() {
         },
     );
 
-    // 0.9 → 0.7：还没到 0.5。
+    // 0.9 → 0.7: not yet 0.5.
     keyframe_animation_system(&mut world, 0.2);
     assert!(fired(&world).is_empty());
-    // 0.7 → 0.4：向下穿过 0.5。
+    // 0.7 → 0.4: crossing 0.5 downward.
     keyframe_animation_system(&mut world, 0.3);
     assert_eq!(fired(&world), vec![("back".to_string(), 0.5)]);
 }
@@ -344,7 +344,7 @@ fn reverse_looped_playback_fires_events_after_wrapping_past_zero() {
         },
     );
 
-    // 0.1 → -0.2 回绕到 0.8：倒放跨过 0 后从末尾继续，命中 0.8。
+    // 0.1 → -0.2 wraps to 0.8: reverse crossing 0 continues from end, hits event at 0.8.
     keyframe_animation_system(&mut world, 0.3);
     assert_eq!(fired(&world), vec![("tail".to_string(), 0.8)]);
 }

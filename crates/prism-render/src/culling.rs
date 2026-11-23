@@ -1,21 +1,21 @@
-//! 包围盒与视锥剔除（纯数学，不含 Vulkan 句柄，也不依赖 glam）。
+//! Bounding box and frustum culling (pure math, no Vulkan handles, no glam dependency).
 //!
-//! 提取阶段（`prism-engine` 的 `scene_render_system`）在提交绘制项之前做一次
-//! 保守剔除：实体在**主相机视锥**外就整帧不提交。这是 #491 建议里的第一步 ——
-//! 以前每个实体每帧都是一次 draw，一半还在相机背后。
+//! During extraction phase (`prism-engine`'s `scene_render_system`), before submitting draw items do one
+//! conservative cull: entity outside **main camera frustum** not submitted for whole frame. This is first step suggested in #491 —
+//! previously each entity drew every frame, half of them behind camera.
 //!
-//! 约定：
+//! Conventions:
 //!
-//! - 坐标与矩阵遵循 `docs/DESIGN.md` 的约定：右手系、相机看 −Z、列主序
-//!   `mat[col][row]`、`clip = projection * view * model`、Vulkan 深度范围
-//!   **[0, 1]**。近平面因此是 `z_clip >= 0`（第 2 行），远平面是
-//!   `w - z >= 0`（第 3 行 − 第 2 行），不是 OpenGL 的 `w + z`。
-//! - 剔除是**保守**的：包围盒与视锥有任何交叠就保留。宁可多画一个，也不要把半个
-//!   物体裁掉。
-//! - 没有包围盒（程序化网格、句柄还没解析）或矩阵非有限时**不剔除**：数据未知时
-//!   保持旧行为，比让物体凭空消失好。
+//! - Coordinates and matrices follow `docs/DESIGN.md`: right-handed, camera looks −Z, column-major
+//!   `mat[col][row]`, `clip = projection * view * model`, Vulkan depth range
+//!   **[0, 1]**. Near plane therefore `z_clip >= 0` (row 2), far plane is
+//!   `w - z >= 0` (row 3 − row 2), not OpenGL's `w + z`.
+//! - Culling is **conservative**: keep if bounding box and frustum have any overlap. Rather draw one extra than
+//!   cut half an object.
+//! - No bounding box (procedural mesh, handle not yet parsed) or non-finite matrix: **do not cull**: keep
+//!   old behavior when data unknown, better than objects disappearing into thin air.
 
-/// 轴对齐包围盒（局部或世界空间，由调用方决定）。
+/// Axis-aligned bounding box (local or world space, caller decides).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
     pub min: [f32; 3],
@@ -27,7 +27,7 @@ impl Aabb {
         Self { min, max }
     }
 
-    /// 由顶点位置计算包围盒；空集合或非有限坐标返回 `None`。
+    /// Compute bounding box from vertex positions; empty set or non-finite coords returns `None`.
     pub fn from_positions<I: IntoIterator<Item = [f32; 3]>>(positions: I) -> Option<Self> {
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
@@ -46,10 +46,10 @@ impl Aabb {
         any.then_some(Self { min, max })
     }
 
-    /// 两个包围盒的并集（分量取 min/max）。任一方无效时返回另一方。
+    /// Union of two bounding boxes (component-wise min/max). If either invalid returns the other.
     ///
-    /// 蒙皮网格用它把「每个骨骼变换后的 bind 包围盒」合成一个保守包围盒
-    /// （#560 P0-3c）：蒙皮后的顶点是这些盒子的凸包，所以并集不会漏掉。
+    /// Skinned mesh uses this to combine "bind bounding box after each bone transform" into one conservative box
+    /// (#560 P0-3c): post-skin vertices are convex hull of these boxes, so union won't miss any.
     pub fn union(&self, other: &Self) -> Option<Self> {
         match (self.is_valid(), other.is_valid()) {
             (true, true) => {
@@ -66,7 +66,7 @@ impl Aabb {
         }
     }
 
-    /// `min <= max` 且分量有限。空/损坏的包围盒不参与剔除。
+    /// `min <= max` and components finite. Empty / malformed boxes do not participate in culling.
     pub fn is_valid(&self) -> bool {
         (0..3).all(|axis| {
             let (min, max) = (self.min[axis], self.max[axis]);
@@ -82,7 +82,7 @@ impl Aabb {
         ]
     }
 
-    /// 外接球半径（半个对角线长度）。
+    /// Bounding sphere radius (half diagonal length).
     pub fn radius(&self) -> f32 {
         let dx = (self.max[0] - self.min[0]) * 0.5;
         let dy = (self.max[1] - self.min[1]) * 0.5;
@@ -90,7 +90,7 @@ impl Aabb {
         (dx * dx + dy * dy + dz * dz).sqrt()
     }
 
-    /// 8 个角点（顺序固定，测试与拾取都依赖这一点）。
+    /// 8 corner points (fixed order, tests and picking depend on this order).
     pub fn corners(&self) -> [[f32; 3]; 8] {
         let [x0, y0, z0] = self.min;
         let [x1, y1, z1] = self.max;
@@ -106,9 +106,9 @@ impl Aabb {
         ]
     }
 
-    /// 用模型矩阵（列主序 `mat[col][row]`）变换成世界空间的轴对齐包围盒。
+    /// Transform into world-space AABB with model matrix (column-major `mat[col][row]`).
     ///
-    /// 非有限变换或无效包围盒返回 `None` —— 调用方据此放弃剔除。
+    /// Non-finite transform or invalid box returns `None` — caller then gives up culling.
     pub fn transformed(&self, model: &[[f32; 4]; 4]) -> Option<Self> {
         if !self.is_valid() {
             return None;
@@ -130,7 +130,7 @@ impl Aabb {
     }
 }
 
-/// 列主序 `mat[col][row]` 变换一个点（`w = 1`，不做透视除法）。
+/// Transform a point with column-major `mat[col][row]` (`w = 1`, no perspective divide).
 fn transform_point3(model: &[[f32; 4]; 4], point: [f32; 3]) -> [f32; 3] {
     let [x, y, z] = point;
     [
@@ -140,20 +140,20 @@ fn transform_point3(model: &[[f32; 4]; 4], point: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// 视锥的 6 个平面（`[nx, ny, nz, d]`：单位法线 + 距离）。
+/// 6 frustum planes (`[nx, ny, nz, d]`: unit normal + distance).
 ///
-/// 平面顺序无关紧要（只用「是否全在某一侧之外」），但保持
-/// 左 / 右 / 下 / 上 / 近 / 远 便于调试。
+/// Plane order doesn't matter much (only "whether entirely outside one side" used), but keep
+/// left / right / bottom / top / near / far for easier debugging.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frustum {
     planes: [[f32; 4]; 6],
 }
 
 impl Frustum {
-    /// 从 `view_proj`（列主序）提取视锥平面。
+    /// Extract frustum planes from `view_proj` (column-major).
     ///
-    /// 退化矩阵（全零 / 非有限 / 法线长度为 0，例如单位矩阵）返回 `None`：
-    /// 这种输入下任何「剔除」都只是瞎裁，调用方应当跳过剔除。
+    /// Degenerate matrix (all zero / non-finite / normal length 0, e.g. unit matrix) returns `None`:
+    /// any "culling" from such input is blind clipping, caller should skip culling.
     pub fn from_view_proj(view_proj: &[[f32; 4]; 4]) -> Option<Self> {
         let row = |index: usize| {
             [
@@ -165,12 +165,12 @@ impl Frustum {
         };
         let (r0, r1, r2, r3) = (row(0), row(1), row(2), row(3));
         let raw = [
-            add4(r3, r0), // 左：  w + x >= 0
-            sub4(r3, r0), // 右：  w - x >= 0
-            add4(r3, r1), // 下：  w + y >= 0
-            sub4(r3, r1), // 上：  w - y >= 0
-            r2,           // 近：  z >= 0（Vulkan 深度范围 [0, 1]）
-            sub4(r3, r2), // 远：  w - z >= 0
+            add4(r3, r0), // left:   w + x >= 0
+            sub4(r3, r0), // right:  w - x >= 0
+            add4(r3, r1), // bottom: w + y >= 0
+            sub4(r3, r1), // top:    w - y >= 0
+            r2,           // near:   z >= 0 (Vulkan depth range [0, 1])
+            sub4(r3, r2), // far:    w - z >= 0
         ];
         let mut planes = [[0.0f32; 4]; 6];
         for (slot, plane) in planes.iter_mut().zip(raw) {
@@ -185,16 +185,16 @@ impl Frustum {
         Some(Self { planes })
     }
 
-    /// 包围盒是否与视锥相交（保守：贴边、包含、部分交叠都返回 `true`）。
+    /// Whether bounding box intersects frustum (conservative: touching, containing, partial overlap all `true`).
     ///
-    /// 无效包围盒一律返回 `true`（不剔除）。
+    /// Invalid box always returns `true` (no cull).
     pub fn intersects_aabb(&self, aabb: &Aabb) -> bool {
         if !aabb.is_valid() {
             return true;
         }
         for plane in self.planes {
-            // 取包围盒在该平面法线方向上「最远」的角点（p-vertex）：
-            // 它都在平面外侧，整个盒子里就没有可见部分。
+            // Take box corner "farthest" along this plane's normal (p-vertex):
+            // if it is on outside side, no visible part inside box.
             let positive = [
                 if plane[0] > 0.0 {
                     aabb.max[0]
@@ -221,35 +221,35 @@ impl Frustum {
         true
     }
 
-    /// 6 个平面（调试 / 测试用）。
+    /// 6 planes (for debug / tests).
     pub fn planes(&self) -> &[[f32; 4]; 6] {
         &self.planes
     }
 }
 
-/// 屏幕空间粗深度（“保守遮挡剔除”用的第一级深度缓存）。
+/// Screen-space coarse depth ("conservative occlusion culling" first-level depth cache).
 ///
-/// 每个 `tile_size × tile_size` 的屏幕块保存块内**最大**深度（最远的片元），
-/// 背景保持清屏深度 `1.0`。这样「整个包围盒都被挡住」的判据可以写成：
-/// 盒子投影矩形覆盖的每一块都满足 `tile_max < 盒子最近点深度` —— 只要块里
-/// 还有背景（1.0）或更远的表面，就不会误剔。
+/// Each `tile_size × tile_size` screen tile stores **max** depth inside tile (farthest fragment),
+/// background keeps clear depth `1.0`. Then criterion "whole box occluded" can be written:
+/// every tile covered by box projection rect satisfies `tile_max < box nearest point depth` — as long as tile
+/// still has background (1.0) or farther surface, no false culling.
 ///
-/// 深度来自**上一帧**：渲染器把主通道的深度图异步回读、下采样后交给这里。
-/// 延迟一帧只会让快速移动的物体偶尔晚一帧被剔除，不会影响正确性。
+/// Depth comes from **previous frame**: renderer async reads back main channel depth map, downsamples then hands here.
+/// One-frame delay only makes fast-moving objects occasionally culled a frame late, no correctness impact.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepthTiles {
     width: u32,
     height: u32,
     tile_size: u32,
-    /// 行主序，长度 `width * height`。
+    /// Row-major, length `width * height`.
     max_depth: Vec<f32>,
 }
 
 impl DepthTiles {
-    /// 从一张行主序的 `D32_SFLOAT` 深度图构建粗深度。
+    /// Build coarse depth from row-major `D32_SFLOAT` depth map.
     ///
-    /// `samples.len()` 必须至少是 `extent[0] * extent[1]`；非有限深度按
-    /// `1.0`（最远）处理，宁可少剔。参数非法时返回 `None`。
+    /// `samples.len()` must be at least `extent[0] * extent[1]`; non-finite depths treated as
+    /// `1.0` (farthest), prefer fewer culls. Returns `None` on invalid parameters.
     pub fn from_samples(extent: [u32; 2], tile_size: u32, samples: &[f32]) -> Option<Self> {
         let (width, height) = (extent[0], extent[1]);
         if width == 0 || height == 0 || tile_size == 0 {
@@ -275,7 +275,7 @@ impl DepthTiles {
                 }
             }
         }
-        // 没有任何有限样本的块保持清屏深度（最远），不会误剔。
+        // Tiles with no finite sample keep clear depth (farthest), no false culling.
         for depth in &mut max_depth {
             if !depth.is_finite() {
                 *depth = 1.0;
@@ -297,14 +297,14 @@ impl DepthTiles {
         self.tile_size
     }
 
-    /// 包围盒是否被**完全**挡住。
+    /// Whether bounding box is **fully** occluded.
     ///
-    /// 判据是保守的：只有 8 个角点都在屏幕内、深度都在 `[0, 1]`，并且投影
-    /// 矩形覆盖的每个深度块都严格近于盒子的最近点时才返回 `true`。任何角点
-    /// 在屏幕外、盒子跨过近平面、或块里有背景，都保持可见。
+    /// Criterion conservative: only when all 8 corners inside screen, depths in `[0, 1]`, and every depth tile
+    /// covered by projection rect strictly nearer than box's nearest point return `true`. Any corner
+    /// outside screen, box crossing near plane, or tile with background stays visible.
     ///
-    /// `view_proj` 必须是**生成这张深度图那一帧**的矩阵；`margin_tiles` 用来
-    /// 向外扩一圈，抵消一帧延迟带来的边缘误差。
+    /// `view_proj` must be matrix **from the frame that generated this depth map**; `margin_tiles` expands
+    /// outward one ring to offset edge error from one-frame delay.
     pub fn is_box_occluded(
         &self,
         view_proj: &[[f32; 4]; 4],
@@ -325,7 +325,7 @@ impl DepthTiles {
                 view_proj[0][2] * x + view_proj[1][2] * y + view_proj[2][2] * z + view_proj[3][2],
                 view_proj[0][3] * x + view_proj[1][3] * y + view_proj[2][3] * z + view_proj[3][3],
             ];
-            // 角点在相机平面上或背后：没有可靠的屏幕投影，保守保留。
+            // Corner on or behind camera plane: no reliable screen projection, conservatively keep.
             if !clip[3].is_finite() || clip[3] <= 1e-6 {
                 return false;
             }
@@ -370,19 +370,19 @@ impl DepthTiles {
     }
 }
 
-/// 一帧的遮挡剔除结果（报告 / 测试用）。
+/// Occlusion culling result of one frame (for report / tests).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OcclusionCounts {
-    /// 参与测试的绘制项数（没有世界包围盒的不算）。
+    /// Number of draw items tested (those without world bounding box not counted).
     pub tested: usize,
-    /// 被判定为完全遮挡、主通道不再提交的数量。
+    /// Count judged fully occluded and no longer submitted in main channel.
     pub culled: usize,
 }
 
-/// 把上一帧粗深度判定为完全遮挡的绘制项标记成「主通道不可见」。
+/// Flag draw items judged fully occluded by previous-frame coarse depth as "not visible in main channel".
 ///
-/// 只改 `visible_in_main_pass`：阴影通道不读这个字段，所以被挡住的物体仍然
-/// 会投下可见的影子（这是正确的 —— 遮挡关系只对当前相机成立）。
+/// Only changes `visible_in_main_pass`: shadow channel does not read this field, so occluded objects still
+/// cast visible shadows (correct — occlusion relation only holds for current camera).
 pub fn mark_occluded_draws(
     items: &mut [crate::render_graph::DrawItem],
     tiles: &DepthTiles,
@@ -418,7 +418,7 @@ fn sub4(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 mod tests {
     use super::*;
 
-    // ── 手写小矩阵工具（本 crate 不依赖 glam） ─────────────────────────
+    // ── hand-written small matrix utils (this crate no glam dependency) ─────────────────────────
 
     fn mul4(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
         let mut out = [[0.0f32; 4]; 4];
@@ -452,7 +452,7 @@ mod tests {
         m
     }
 
-    /// Vulkan 风格透视（深度 0..1，y 向下翻转），fov 45°，近 0.1 / 远 100。
+    /// Vulkan-style perspective (depth 0..1, y flipped downward), fov 45°, near 0.1 / far 100.
     fn perspective() -> [[f32; 4]; 4] {
         let fov = 45f32.to_radians();
         let (near, far) = (0.1f32, 100.0f32);
@@ -466,7 +466,7 @@ mod tests {
         m
     }
 
-    /// 相机在原点、看向 −Z 的 `view_proj`。
+    /// `view_proj` of camera at origin looking down −Z.
     fn camera() -> Frustum {
         Frustum::from_view_proj(&perspective()).expect("camera frustum must be valid")
     }
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn a_box_straddling_the_left_plane_is_kept() {
-        // 在 z = −5 处半个画面宽度约 2.07（45° 视场），这个盒子一半在外。
+        // At z = −5 half image width ≈ 2.07 (45° fov), this box half outside.
         assert!(camera().intersects_aabb(&Aabb::new([-2.5, -0.2, -5.5], [-2.0, 0.2, -4.5],)));
     }
 
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn a_degenerate_matrix_produces_no_frustum() {
-        // 全零 / 归一化后长度仍为 0 的矩阵：没有可用的平面。
+        // All-zero / zero-length-after-normalize matrix: no usable planes.
         assert!(Frustum::from_view_proj(&[[0.0; 4]; 4]).is_none());
         assert!(Frustum::from_view_proj(&scale(0.0)).is_none());
     }
@@ -536,10 +536,10 @@ mod tests {
 
     #[test]
     fn a_box_spanning_the_camera_plane_is_kept() {
-        // z 从 +1 跨到 −1：既有相机背后的部分，也有近平面外的部分。
+        // z from +1 to −1: has part behind camera and part outside near plane.
         let straddling = Aabb::new([-0.1, -0.1, -1.0], [0.1, 0.1, 1.0]);
         assert!(camera().intersects_aabb(&straddling));
-        // 同一个盒子整体推到相机背后（z 1..2）就看不见了。
+        // Same box pushed entirely behind camera (z 1..2) becomes invisible.
         let behind = Aabb::new([-0.1, -0.1, 1.0], [0.1, 0.1, 2.0]);
         assert!(!camera().intersects_aabb(&behind));
     }
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn a_moved_camera_keeps_its_own_box_visible() {
-        // 相机平移到 (0, 0, -10) 后看向 −Z：(0,0,-15) 在视锥内，(0,0,-5) 在背后。
+        // After camera translated to (0, 0, -10) looking −Z: (0,0,-15) inside frustum, (0,0,-5) behind.
         let view_proj = mul4(&perspective(), &translation(0.0, 0.0, 10.0));
         let frustum = Frustum::from_view_proj(&view_proj).unwrap();
         assert!(frustum.intersects_aabb(&unit_box_at(0.0, 0.0, -15.0)));
@@ -576,7 +576,7 @@ mod tests {
         let merged = left.union(&right).expect("both valid");
         assert_eq!(merged.min, [-1.0, -2.0, -1.0]);
         assert_eq!(merged.max, [2.0, 1.0, 1.0]);
-        // 无效的一方被忽略，两个都无效则没有结果。
+        // Invalid one ignored; both invalid then no result.
         let broken = Aabb::new([f32::NAN, 0.0, 0.0], [1.0, 1.0, 1.0]);
         assert_eq!(left.union(&broken), Some(left));
         assert_eq!(broken.union(&broken), None);
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn a_box_behind_a_full_screen_surface_is_occluded() {
-        // 墙的深度 0.99（约 z = −10），盒子在 z = −50（深度 ≈ 0.999）。
+        // Wall depth 0.99 (≈ z = −10), box at z = −50 (depth ≈ 0.999).
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
         assert!(tiles.is_box_occluded(&camera, &unit_box_at(0.0, 0.0, -50.0), 1));
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn a_box_in_front_of_the_surface_stays_visible() {
-        // z = −5 的深度 ≈ 0.981 < 0.99：盒子比墙近，不能剔。
+        // Depth at z = −5 ≈ 0.981 < 0.99: box nearer than wall, must not cull.
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(0.0, 0.0, -5.0), 1));
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn a_background_tile_inside_the_rect_keeps_the_box_visible() {
-        // 右半边是背景（1.0）：盒子投影覆盖到它就说明那里没有遮挡物。
+        // Right half is background (1.0): if box projection covers it there's no occluder there.
         let mut samples = vec![0.99f32; 128 * 128];
         for y in 0..128 {
             for x in 64..128 {
@@ -613,7 +613,7 @@ mod tests {
         }
         let tiles = DepthTiles::from_samples([128, 128], 4, &samples).unwrap();
         let camera = perspective();
-        // 盒子在 z = −50、x = 6：投影落在右半边。
+        // Box at z = −50, x = 6: projection lands in right half.
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(6.0, 0.0, -50.0), 1));
     }
 
@@ -621,14 +621,14 @@ mod tests {
     fn boxes_touching_the_screen_edge_or_camera_plane_stay_visible() {
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
-        // 屏幕外（x = 100）与跨近平面（z 从 −0.05 到 +0.05）都保守保留。
+        // Outside screen (x = 100) and crossing near plane (z from −0.05 to +0.05) both conservatively kept.
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(100.0, 0.0, -50.0), 1));
         assert!(!tiles.is_box_occluded(
             &camera,
             &Aabb::new([-0.1, -0.1, -0.05], [0.1, 0.1, 0.05]),
             1
         ));
-        // 无效包围盒同样不剔。
+        // Invalid box likewise not culled.
         assert!(!tiles.is_box_occluded(&camera, &Aabb::new([f32::NAN; 3], [1.0; 3]), 1));
     }
 
@@ -670,7 +670,7 @@ mod tests {
         assert!(!items[0].visible_in_main_pass);
         assert!(items[1].visible_in_main_pass);
         assert!(items[2].visible_in_main_pass);
-        // 阴影仍然由 `cast_shadow` 决定，剔除不碰它。
+        // Shadow still decided by `cast_shadow`, culling doesn't touch it.
         assert!(items[0].cast_shadow);
     }
 
@@ -681,7 +681,7 @@ mod tests {
         assert!(DepthTiles::from_samples([4, 4], 4, &[0.0; 15]).is_none());
         let tiles = DepthTiles::from_samples([5, 3], 4, &[f32::NAN; 15]).unwrap();
         assert_eq!(tiles.tiles(), (2, 1));
-        // 非有限深度按最远处理，绝不剔除。
+        // Non-finite depth treated as farthest, never cull.
         assert!(!tiles.is_box_occluded(&perspective(), &unit_box_at(0.0, 0.0, -50.0), 0));
     }
 

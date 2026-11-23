@@ -1,17 +1,17 @@
-//! 主线程(CPU) ↔ 渲染线程(GPU) 资产解析请求/结果桥接类型。
+//! Main-thread (CPU) ↔ render-thread (GPU) asset parse request/result bridge types.
 //!
-//! 这些类型是纯数据（`Send`），通过 [`prism_app::RenderShared`] 的通道在两侧传递：
-//! - 主线程准备上传输入（CPU：加载 `.pak` + 解交织顶点/纹理），不碰 `GraphRenderer`；
-//! - 渲染线程（`GraphRenderer::apply_asset_requests`）执行 GPU 上传并返回句柄。
+//! These types are pure data (`Send`), passed via [`prism_app::RenderShared`] channel:
+//! - Main thread prepares upload input (CPU: load `.pak` + deinterleave vertex / texture), does not touch `GraphRenderer`;
+//! - Render thread (`GraphRenderer::apply_asset_requests`) executes GPU upload and returns handles.
 //!
-//! 这样资产解析可以异步进行，而不要求 `&mut World` 与 `&mut GraphRenderer`
-//! 同时存在于同一线程——启动期渲染器在渲染线程构建时，主线程仍可处理窗口事件。
+//! So asset parsing can run async, without requiring `&mut World` and `&mut GraphRenderer`
+//! simultaneously on same thread — during startup renderer is built on render thread while main thread still handles window events.
 
 use crate::managers::{MeshHandle, MeshUploadInput, TextureUploadInput};
 
-/// 材质解析所需的 CPU 侧数据：18 个 PBR 标量 + 5 张纹理像素
-/// （固定顺序：albedo, normal, metallic_roughness, emissive, occlusion）。
-/// 渲染线程负责上传纹理取 bindless 槽，再据此组装 `MaterialUploadInput`。
+/// CPU-side data needed for material parsing: 18 PBR scalars + 5 texture pixels
+/// (fixed order: albedo, normal, metallic_roughness, emissive, occlusion).
+/// Render thread uploads textures to get bindless slots, then assembles `MaterialUploadInput`.
 pub struct MaterialResolveData {
     pub scalars: [f32; 18],
     /// Alpha semantics from the cooked RMAT. Geometry whose material is
@@ -21,38 +21,38 @@ pub struct MaterialResolveData {
     pub textures: [Option<TextureUploadInput>; 5],
 }
 
-/// 单个实体的 GPU 上传请求（纯数据，Send）。
+/// One entity GPU upload request (pure data, Send).
 pub struct AssetResolveRequest {
     pub mesh: Option<MeshUploadInput>,
-    /// 蒙皮属性（`.rskin` 顶点带关节/权重时；#560 P0-3）。
+    /// Skinning attributes (when `.rskin` vertices carry joint/weight; #560 P0-3).
     pub skin: Option<crate::managers::SkinAttributes>,
-    /// 去重后的材质列表；`materials[i]` 对应 `AssetResolveResult::material_slots[i]`。
-    /// 同一路径的多个 submesh 共享一项。
+    /// Deduplicated material list; `materials[i]` corresponds to `AssetResolveResult::material_slots[i]`.
+    /// Multiple submeshes of same path share one entry.
     pub materials: Vec<Option<MaterialResolveData>>,
-    /// 2D 精灵贴图（`SpriteRenderer.sprite_path` 解析结果）。
+    /// 2D sprite texture (`SpriteRenderer.sprite_path` parse result).
     pub texture: Option<TextureUploadInput>,
     /// Optional custom fragment shader SPIR-V bytecode (`ShaderAsset`).
     pub shader: Option<Vec<u8>>,
 }
 
-/// 一 decided 释放的 GPU 资源（纯数据，Send）。
+/// One decided-to-release GPU resource (pure data, Send).
 ///
-/// 主线程不知道渲染器的内部句柄，只知道组件里存的槽位 / 句柄值，所以回传的
-/// 释放请求也用同一组值；渲染线程按值反查并销毁（#495）。
+/// Main thread does not know renderer internal handles, only slot bits / handle values stored in components, so returned
+/// release request uses same values; render thread looks up and destroys by value (#495).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AssetRelease {
-    /// bindless SRV 槽位。
+    /// Bindless SRV slot bit.
     pub texture_slot: Option<u32>,
-    /// 网格句柄。
+    /// Mesh handle.
     pub mesh_handle: Option<MeshHandle>,
-    /// 材质 SSBO 槽位（第一个，保持旧字段语义）。
+    /// Material SSBO slot bit (first, keeps old field semantics).
     pub material_slot: Option<u32>,
-    /// 这个实体占用的全部材质槽位（多 submesh）。
+    /// All material slot bits occupied by this entity (multi-submesh).
     pub material_slots: Vec<u32>,
 }
 
 impl AssetRelease {
-    /// 是否包含任何需要释放的资源。
+    /// Whether contains any resource to release.
     pub fn is_empty(&self) -> bool {
         self.texture_slot.is_none()
             && self.mesh_handle.is_none()
@@ -61,17 +61,17 @@ impl AssetRelease {
     }
 }
 
-/// 渲染线程完成上传后回传的句柄（纯数据，Send）。
+/// Handles returned after render thread completes upload (pure data, Send).
 #[derive(Default)]
 pub struct AssetResolveResult {
     pub mesh_handle: Option<MeshHandle>,
-    /// 第一个材质槽（兼容只读这个字段的旧代码）。
+    /// First material slot (for legacy code reading only that field).
     pub material_slot: Option<u32>,
-    /// 与请求 `materials` 一一对应的槽位；`None` = 该项加载/上传失败。
+    /// Slot bits one-to-one with request `materials`; `None` = that entry load/upload failed.
     pub material_slots: Vec<Option<u32>>,
-    /// 精灵贴图的 bindless SRV 槽位。
+    /// Sprite texture bindless SRV slot bit.
     pub texture_slot: Option<u32>,
-    /// 精灵贴图的像素尺寸 `[width, height]`（与 `texture_slot` 同时有效）。
+    /// Sprite texture pixel size `[width, height]` (valid only when `texture_slot` valid).
     pub texture_size: Option<[u32; 2]>,
     /// Registered custom fragment shader handle.
     pub shader_handle: Option<crate::ShaderHandle>,

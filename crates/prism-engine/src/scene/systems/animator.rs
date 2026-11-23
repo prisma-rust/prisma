@@ -1,13 +1,13 @@
-//! 骨骼动画求值（#560 P0-2）。
+//! Skeletal animation sampling (#560 P0-2).
 //!
-//! 数据流：`SkeletonRoot.skeleton_path` + `Animator.clip_path` → 已解码的
-//! [`prism_anim::Skeleton`] / [`prism_anim::Clip`]（放在 [`SkeletonLibrary`] 资源里）
-//! → 采样成 `Pose` → `bone_palette` → [`BonePalette`]。
+//! Data stream: `SkeletonRoot.skeleton_path` + `Animator.clip_path` → already decoded
+//! [`prism_anim::Skeleton`] / [`prism_anim::Clip`] (placed in [`SkeletonLibrary`] resource inside)
+//! → sampled into `Pose` → `bone_palette` → [`BonePalette`].
 //!
-//! 资源从 `.pak` 里读出来的那一步在 `asset_resolver::load_animation_assets`
-//! （需要 `&mut World` 与 `ResourceManager`，所以不在调度系统里做）。
+//! Resource loading step from `. pak` inside happens in `asset_resolver::load_animation_assets`
+//! (needs `&mut World` and `ResourceManager`, so not done in degrees system inside).
 //!
-//! 这一层仍然**不渲染**：GPU 蒙皮在 P0-3，届时 `BonePalette::matrices` 直接上传。
+//! This layer still does not render: GPU skinning in P0-3, at that time `BonePalette::matrices` directly uploaded.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use prism_asset::formats_anim_graph::AnimGraphInfo;
 use prism_ecs::{Entity, World};
 use prism_scene::components::{Animator, Camera, LocalToWorld, LocalTransform, SkeletonRoot};
 
-/// 已解码的骨架与剪辑，按资产路径索引（与 `MeshBounds` 一样是 World 资源）。
+/// Already decoded skeletons and clips, indexed by asset path (same as `MeshBounds`, is World resource).
 #[derive(Debug, Default)]
 pub struct SkeletonLibrary {
     skeletons: HashMap<String, Arc<Skeleton>>,
@@ -33,7 +33,7 @@ impl SkeletonLibrary {
         Self::default()
     }
 
-    /// 存入骨架；返回 `true` 表示这是新路径。
+    /// Insert skeleton; returns `true` indicating this is new path.
     pub fn insert_skeleton(&mut self, path: impl Into<String>, skeleton: Skeleton) -> bool {
         self.skeletons
             .insert(path.into(), Arc::new(skeleton))
@@ -52,7 +52,7 @@ impl SkeletonLibrary {
         self.clips.get(path).cloned()
     }
 
-    /// 剪辑里的 Notify（时间 + 名字，按时间升序）；没加载过的路径返回空。
+    /// Clips inside Notify (time + name, sorted by time); paths not loaded return empty.
     pub fn clip_notifies(&self, path: &str) -> Vec<(f32, String)> {
         self.clips
             .get(path)
@@ -65,7 +65,7 @@ impl SkeletonLibrary {
             .unwrap_or_default()
     }
 
-    /// 剪辑里出现的关键帧时间点（升序去重）；没加载过的路径返回空。
+    /// Clip key frame time points appearing inside (sorted ascending, deduplicated); paths not loaded return empty.
     pub fn clip_key_times(&self, path: &str) -> Vec<f32> {
         self.clips
             .get(path)
@@ -95,7 +95,7 @@ impl SkeletonLibrary {
     }
 }
 
-/// 本帧算出来的骨骼矩阵（列主序，P0-3 直接写进 storage buffer）。
+/// Bone matrices computed this frame (column-major, P0-3 directly writes to storage buffer).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BonePalette {
     pub matrices: Vec<[[f32; 4]; 4]>,
@@ -117,51 +117,51 @@ impl BonePalette {
     }
 }
 
-/// 本帧触发的一个关键帧事件（#560 P1 Notify）。
+/// Close key frame event triggered this frame (#560 P1 Notify).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimEvent {
     pub entity: Entity,
-    /// 事件名，由项目解释（`Footstep.L` / `Traversal.Window` / …）。
+    /// Event name, interpreted by project (`Footstep.L` / `Traversal.Window` / …).
     pub name: String,
-    /// 事件在剪辑里的时间（秒）。
+    /// Event time inside clip (seconds).
     pub time: f32,
 }
 
-/// 每个实体动画图节点的运行时摘要（World 资源，#560 实时调试）。
+/// Per-entity animation graph node runtime summary (World resource, #560 real-time debug).
 ///
-/// **opt-in**：世界里有这个资源时引擎才每帧重建它；没有就不做额外的字符串拷贝。
-/// 键是实体，值是 [`GraphNodeSnapshot`] 列表（顺序与图节点一致）。冻结 / 降频的
-/// 实体保留上一次快照，方便面板显示「停在哪」。
+/// **opt-in**: engine only heavy-builds it every frame when World has this resource; if not, does not do extra char copy outside.
+/// Key is entity, value is [`GraphNodeSnapshot`] list (order consistent with graph node). Frozen / throttled
+/// entity retains one fast snapshot, convenient for frontend display "stopped at where".
 #[derive(Debug, Clone, Default)]
 pub struct AnimGraphDebug {
     pub entities: HashMap<Entity, Vec<GraphNodeSnapshot>>,
-    /// 每个图实体的 Slot Montage 摘要（按 Slot 名排序）。
+    /// Per-graph-entity Slot Montage summary (sorted by Slot name).
     pub montages: HashMap<Entity, Vec<MontageSnapshot>>,
-    /// 每个图实体当前使用的图资产路径（面板按资产过滤用）。
+    /// Per-graph-entity current graph asset path (frontend filters by asset).
     pub paths: HashMap<Entity, String>,
 }
 
 impl AnimGraphDebug {
-    /// 某个实体的节点快照；不是图实体返回 `None`。
+    /// Per-entity node fast snapshot; returns `None` if not a graph entity.
     pub fn states(&self, entity: Entity) -> Option<&[GraphNodeSnapshot]> {
         self.entities.get(&entity).map(Vec::as_slice)
     }
 
-    /// 某个实体的 Slot Montage 摘要；没有播放过 Montage 时是空列表。
+    /// Per-entity Slot Montage summary; empty list when no Montage played.
     pub fn montages(&self, entity: Entity) -> Option<&[MontageSnapshot]> {
         self.montages.get(&entity).map(Vec::as_slice)
     }
 
-    /// 某个图实体当前使用的图资产路径。
+    /// Per-graph-entity current graph asset path.
     pub fn path(&self, entity: Entity) -> Option<&str> {
         self.paths.get(&entity).map(String::as_str)
     }
 }
 
-/// 一次 `animator_system` 调用里触发的事件（World 资源）。
+/// Events triggered by one `animator_system` call (World resource).
 ///
-/// 每个 tick **整体重建**（不是累加）：消费者在 `update` 之后读到的永远只是这一帧
-/// 跨过的时间点，不会重复播上一帧的脚步声。要跨帧缓存就自己 `drain` 走。
+/// Each tick **entirely heavy-built** (not accumulated): consumer reads after `update` always only this frame
+/// crossed time points, will not replay footsteps duplicated within one frame. To cross-frame cache, `drain` yourself.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnimEvents {
     pub events: Vec<AnimEvent>,
@@ -176,12 +176,12 @@ impl AnimEvents {
         self.events.len()
     }
 
-    /// 取走这一帧的事件（资源本身留空）。
+    /// Take this frame's events (resource itself remains empty).
     pub fn drain(&mut self) -> Vec<AnimEvent> {
         std::mem::take(&mut self.events)
     }
 
-    /// 某个实体这一帧触发的事件名。
+    /// Event names triggered by some entity this frame.
     pub fn names_for(&self, entity: Entity) -> impl Iterator<Item = &str> {
         self.events
             .iter()
@@ -190,10 +190,10 @@ impl AnimEvents {
     }
 }
 
-/// 已解码的状态机，按 `.rasm` 路径索引（#560 P1）。
+/// Already decoded state machines, indexed by `.rasm` path (#560 P1).
 ///
-/// 与 [`SkeletonLibrary`] 分开：状态机是可选的（多数实体只用单剪辑 / 混合空间），
-/// 没挂状态机的场景不该被迫建一张空表。
+/// Separate from [`SkeletonLibrary`]: state machine is optional (many entities only use single clip / empty blend between),
+/// Scenes without state machine should not be forced to build an empty table.
 #[derive(Debug, Default)]
 pub struct StateMachineLibrary {
     machines: HashMap<String, Arc<StateMachine>>,
@@ -204,7 +204,7 @@ impl StateMachineLibrary {
         Self::default()
     }
 
-    /// 存入状态机；返回 `true` 表示这是新路径。
+    /// Insert state machine; returns `true` indicating this is new path.
     pub fn insert(&mut self, path: impl Into<String>, machine: StateMachine) -> bool {
         self.machines
             .insert(path.into(), Arc::new(machine))
@@ -219,7 +219,7 @@ impl StateMachineLibrary {
         self.machines.contains_key(path)
     }
 
-    /// 所有已加载的状态机（资产解析在机器加载完之后要靠它补请求状态剪辑）。
+    /// All already loaded state machines (asset parsing after machine load completes relies on it to supplement clip requests).
     pub fn all(&self) -> impl Iterator<Item = &Arc<StateMachine>> {
         self.machines.values()
     }
@@ -233,7 +233,7 @@ impl StateMachineLibrary {
     }
 }
 
-/// 已解码的动画图（`.rag` / `.animgraph.json`），按资产路径索引（#560 P1）。
+/// Already decoded animation graphs (`.rag` / `*.animgraph.json`), indexed by asset path (#560 P1).
 #[derive(Debug, Default)]
 pub struct AnimGraphLibrary {
     graphs: HashMap<String, Arc<AnimGraphInfo>>,
@@ -269,7 +269,7 @@ impl AnimGraphLibrary {
     }
 }
 
-/// 每个实体的图求值器（运行时资源，不进场景）。
+/// Per-entity graph evaluator (runtime resource, not in scene).
 #[derive(Debug, Default)]
 struct AnimGraphRuntimes {
     runtimes: HashMap<Entity, GraphRuntime>,
@@ -300,15 +300,15 @@ impl AnimGraphRuntimes {
     }
 }
 
-/// 一个实体本帧的图求值工作项（#560 P6）。
+/// Per-entity per-frame graph evaluation work item (#560 P6).
 ///
-/// 求值器在收集阶段从 [`AnimGraphRuntimes`] 里取出来、求值完再放回，这样每个
-/// 工作项独占自己的求值器，可以分给不同线程。
+/// Evaluator taken from [`AnimGraphRuntimes`] inside during collect phase, put back after evaluation, so each
+/// work item exclusively owns its evaluator, can be assigned to different threads.
 struct GraphPoseJob {
     entity: Entity,
     skeleton: Arc<Skeleton>,
     runtime: GraphRuntime,
-    /// 这一帧该推进的时间（LOD 降频帧是 `2 * dt`）。
+    /// Time this frame should advance (LOD throttled frame is `2 * dt`).
     dt: f32,
     result: Option<Result<(Pose, Vec<AnimEvent>), GraphEvalError>>,
 }
@@ -334,11 +334,11 @@ impl GraphPoseJob {
     }
 }
 
-/// 先顺序应用 Montage 请求 / 参数，再把各实体的图求值分给工作线程（#560 P6）。
+/// First order applies Montage requests / parameters, then distributes each entity's graph evaluation to worker threads (#560 P6).
 ///
-/// 每个图求值器只属于一个实体，彼此不共享状态；`LibraryView` 只读且全是
-/// `Arc`，可以安全地在多个线程里同时借用。少于两个实体或只有单核时不建线程，
-/// 直接顺序求值 —— 线程开销比这点工作在单角色场景里更贵。
+/// Each graph evaluator belongs to only one entity, does not share state with each other; `LibraryView` is read-only and fully is
+/// `Arc`, can be safely borrowed by multiple threads at the same time. Fewer than two entities or only single-core does not build threads,
+/// Directly order evaluate --- thread open/close overhead more expensive than this work in single-character scene inside.
 fn evaluate_graph_poses(
     world: &World,
     library: &LibraryView,
@@ -364,7 +364,7 @@ fn evaluate_graph_poses(
             continue;
         };
         graph_entities.insert(entity);
-        // 冻结 / 跳帧的实体保留求值器（状态机 / Montage 进度回来接着走），这一帧不推进。
+        // Frozen / frame-skipped entities keep evaluators (state machine / Montage progress comes back and continues), this frame does not advance.
         let Some(&entity_dt) = plans.get(&entity) else {
             continue;
         };
@@ -372,7 +372,7 @@ fn evaluate_graph_poses(
         if let Some(requests) = montage_requests.remove(&entity) {
             apply_montage_requests(evaluator, requests, &library.clips);
         }
-        // 项目侧写入的 float / bool / trigger 同步进图求值器。
+        // Project-side written float / bool / trigger synced into graph evaluator.
         for parameter in evaluator.graph().parameters.clone() {
             match parameter.kind {
                 prism_asset::formats_anim_graph::GraphParameterKind::Float => {
@@ -429,31 +429,31 @@ fn evaluate_graph_poses(
     results
 }
 
-/// 图求值最多用几个工作线程；超过角色数之后再多线程也不涨吞吐。
+/// Graph evaluation uses at most several worker threads; beyond entity count, more threads don't increase throughput.
 const MAX_GRAPH_EVAL_THREADS: usize = 8;
 
-/// 一次 Montage 请求的动作。
+/// A single Montage request action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MontageAction {
-    /// 立即播放并清空该 Slot 的队列。
+    /// Immediately play and clear this Slot's queue.
     PlayNow,
-    /// 排到该 Slot 的队尾；空闲时立即开始。
+    /// Queued to this Slot's tail; immediately starts when empty idle.
     Enqueue,
-    /// 停止该 Slot 并清空队列。
+    /// Stop this Slot and clear empty queue.
     Stop,
-    /// 当前段播完后停止，不接下一段。
+    /// Stops after current segment finishes, does not connect to next segment.
     StopAfterCurrent,
-    /// 暂停 Slot 的活动段（保留时间 / 队列 / 权重）。
+    /// Pause Slot's active segment (retains time / queue / weight).
     Pause,
-    /// 恢复 Slot 的活动段。
+    /// Resume Slot's active segment.
     Resume,
 }
 
-/// 项目侧对某个实体 Slot 发起的 Montage 请求（#560 P1）。
+/// Project-side corrects some entity Slot-initiated Montage request (#560 P1).
 ///
-/// 请求只活一帧：加入 [`AnimMontageRequests`] 后，下一次 [`animator_system`] 会消费它。
-/// 剪辑路径必须在 [`SkeletonLibrary`] 里已经加载；实体必须正在驱动动画图，且图里有
-/// 同名 Slot 节点，否则请求会被忽略并打日志。
+/// Request lives only one frame: added to [`AnimMontageRequests`], next [`animator_system`] will consume it.
+/// Clip path must already be loaded in [`SkeletonLibrary`]; entity must positively drive animation graph, and graph inside have
+/// same-named Slot node, otherwise request will be ignored and logged.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MontageRequest {
     pub entity: Entity,
@@ -464,16 +464,16 @@ pub struct MontageRequest {
     pub speed: f32,
     pub weight: f32,
     pub start_time: f32,
-    /// 从剪辑的哪个 Montage 段开始；空 = 从 `start_time` 开始。
+    /// Starts from which Montage segment of clip; empty = starts from `start_time`.
     pub section: String,
-    /// 起始淡入时长（秒）。
+    /// Fade-in duration at start (seconds).
     pub blend_in: f32,
-    /// 单次 Montage 结束前的淡出时长（秒）。
+    /// Fade-out duration before single Montage ends (seconds).
     pub blend_out: f32,
 }
 
 impl MontageRequest {
-    /// 立即播放。默认单次、速度 1、权重 1、从 0 开始。
+    /// Immediately play. Default single time, speed 1, weight 1, starts from 0.
     pub fn play(entity: Entity, slot: impl Into<String>, clip_path: impl Into<String>) -> Self {
         Self {
             entity,
@@ -490,7 +490,7 @@ impl MontageRequest {
         }
     }
 
-    /// 排队播放。默认单次、速度 1、权重 1、从 0 开始。
+    /// Queued play. Default single time, speed 1, weight 1, starts from 0.
     pub fn enqueue(entity: Entity, slot: impl Into<String>, clip_path: impl Into<String>) -> Self {
         Self {
             action: MontageAction::Enqueue,
@@ -498,7 +498,7 @@ impl MontageRequest {
         }
     }
 
-    /// 暂停 Slot 的活动段。
+    /// Pause Slot's active segment.
     pub fn pause(entity: Entity, slot: impl Into<String>) -> Self {
         Self {
             action: MontageAction::Pause,
@@ -506,7 +506,7 @@ impl MontageRequest {
         }
     }
 
-    /// 恢复 Slot 的活动段。
+    /// Resume Slot's active segment.
     pub fn resume(entity: Entity, slot: impl Into<String>) -> Self {
         Self {
             action: MontageAction::Resume,
@@ -514,7 +514,7 @@ impl MontageRequest {
         }
     }
 
-    /// 停止 Slot 的活动段与队列。
+    /// Stop Slot's active segment and queue.
     pub fn stop(entity: Entity, slot: impl Into<String>) -> Self {
         Self {
             action: MontageAction::Stop,
@@ -522,7 +522,7 @@ impl MontageRequest {
         }
     }
 
-    /// 当前段播完后停止。
+    /// Stops after current segment finishes.
     pub fn stop_after_current(entity: Entity, slot: impl Into<String>) -> Self {
         Self {
             action: MontageAction::StopAfterCurrent,
@@ -550,26 +550,26 @@ impl MontageRequest {
         self
     }
 
-    /// 从命名 Montage 段开始；段不存在时回退到 `start_time`。
+    /// Starts from named Montage segment; falls back to `start_time` when segment not present.
     pub fn with_section(mut self, section: impl Into<String>) -> Self {
         self.section = section.into();
         self
     }
 
-    /// 起始淡入时长（秒）。
+    /// Fade-in duration at start (seconds).
     pub fn with_blend_in(mut self, seconds: f32) -> Self {
         self.blend_in = seconds;
         self
     }
 
-    /// 单次 Montage 结束前的淡出时长（秒）。
+    /// Fade-out duration before single Montage ends (seconds).
     pub fn with_blend_out(mut self, seconds: f32) -> Self {
         self.blend_out = seconds;
         self
     }
 }
 
-/// 每帧由项目侧填充、由 [`animator_system`] 消费的 Montage 请求队列。
+/// Montage request queue filled by project side each frame, consumed by [`animator_system`].
 #[derive(Debug, Default)]
 pub struct AnimMontageRequests {
     requests: Vec<MontageRequest>,
@@ -597,7 +597,7 @@ impl AnimMontageRequests {
         self.push(MontageRequest::enqueue(entity, slot, clip_path));
     }
 
-    /// 从命名段开始立即播放。
+    /// Immediately plays from named segment start.
     pub fn play_section(
         &mut self,
         entity: Entity,
@@ -628,13 +628,13 @@ impl AnimMontageRequests {
         &self.requests
     }
 
-    /// 取走所有待处理请求（系统每帧调用）。
+    /// Takes all pending requests (system calls every frame).
     pub fn take(&mut self) -> Vec<MontageRequest> {
         std::mem::take(&mut self.requests)
     }
 }
 
-/// 把一帧的请求应用到实体的图求值器。
+/// Apply one frame's requests to entity graph evaluator.
 fn apply_montage_requests(
     evaluator: &mut AnimGraphEvaluator,
     requests: Vec<MontageRequest>,
@@ -694,45 +694,45 @@ fn apply_montage_requests(
     }
 }
 
-/// 根关节（joint 0）相对上一帧的位移增量（#560 P0，先只记录，P2 交给 CharacterMovement）。
+/// Root joint (joint 0) relative per-frame bit movement increment (#560 P0, first only recorded, P2 handed to CharacterMovement).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct RootMotionDelta {
-    /// 根关节局部空间的平移增量（米）。
+    /// Root joint local empty-interval translation increment (meters).
     pub translation: glam::Vec3,
-    /// 绕 Y 轴的偏航增量（弧度，最短路径）。
+    /// Yaw increment around Y axis (radians, most short path).
     pub yaw: f32,
 }
 
-/// 播放头（运行时组件，不进场景）。
+/// Playhead (runtime component, not in scene).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimatorPlayhead {
-    /// 当前播放内容的键：剪辑路径，或 [`BLEND_SPACE_KEY`]。换了就从头播。
+    /// Current playback key: clip path, or [`BLEND_SPACE_KEY`]. Changes cause playback from start.
     pub clip_path: String,
     pub time: f32,
-    /// 单次播放且已经播完。
+    /// Single play and already played.
     pub finished: bool,
-    /// 交叉淡入的淡出源姿态（`None` = 当前没有过渡），过渡开始时冻结、权重到 1 丢掉。
+    /// Cross-fade fade-out source pose (`None` = current has no transition), transition starts frozen, weight to 1 drops.
     ///
-    /// 存姿态而不是「旧剪辑 + 时间」：混合空间的退出、来源剪辑被删、连续换剪辑这些
-    /// 情况都没有（或不该再找）一个可采样的剪辑，快照让它们都能正常淡出。
+    /// Store pose not as "old clip + time": blend empty interval exit, source clip deleted, continuous clip change these
+    /// cases don't have (or shouldn't again find) a samplable clip, fast snapshot lets them all able to always fade out.
     pub previous_pose: Option<Pose>,
-    /// 上一帧**实际显示**的姿态：下一次过渡的淡出源就是它。
+    /// Per-frame **actual display** pose: below one transition's fade-out source is it.
     pub pose: Pose,
-    /// 过渡已经进行的秒数（`>= blend_duration` 时清掉来源）。
+    /// Transition already performed seconds (>= blend_duration clears source).
     pub blend_elapsed: f32,
-    /// 这一次过渡自己的时长（状态机转移带的 `duration`）；`None` = 用组件的
-    /// `blend_duration`。
+    /// This transition's own duration (state machine transition brings `duration`); `None` = use component's
+    /// `blend_duration`.
     pub blend_total: Option<f32>,
-    /// 这一帧从根关节推导出的位移增量；首帧 / 换播放内容 / 冻结帧为零。
+    /// This frame from root joint pushes bit movement increment; first frame / switch play content / freeze frame is zero.
     pub root_motion: RootMotionDelta,
-    /// 上一帧最终姿态的根关节局部变换，用来算下一帧的 delta。
+    /// Per-frame most final pose root joint local transform, used to calculate below frame delta.
     pub root_previous: Option<prism_anim::JointTransform>,
-    /// 平滑后的混合空间参数（x, y）；`None` = 没开平滑或参数非有限。
+    /// Smooth after blend empty interval parameter (x, y); `None` = no smooth open or parameter non-have limit.
     pub smoothed_blend: Option<[f32; 2]>,
 }
 
 impl AnimatorPlayhead {
-    /// 过渡权重：`0` = 完全是旧剪辑，`1` = 完全是新剪辑。
+    /// Transition weight: `0` = full old clip, `1` = full new clip.
     pub fn blend_weight(&self, blend_duration: f32) -> Option<f32> {
         if self.previous_pose.is_none() || blend_duration <= 0.0 {
             return None;
@@ -740,10 +740,10 @@ impl AnimatorPlayhead {
         Some((self.blend_elapsed / blend_duration).clamp(0.0, 1.0))
     }
 
-    /// 用这一帧的最终姿态更新 root motion delta（#560 P0）。
+    /// Use this frame's most final pose to update root motion delta (#560 P0).
     ///
-    /// 只读根关节的**局部**变换：换播放内容时播放头是新建的，`root_previous` 为空，
-    /// 所以过渡 / 切剪辑的第一帧 delta 为零，不会把旧剪辑的根位移重复计一次。
+    /// Read root joint's **local** transform: when switching play content, playhead is new built, `root_previous` is empty,
+    /// so transition / clip switch's first frame delta is zero, will not repeat old clip's root bit movement once.
     fn record_root_motion(&mut self, pose: &Pose) {
         let Some(now) = pose.local(0) else {
             self.root_motion = RootMotionDelta::default();
@@ -760,8 +760,8 @@ impl AnimatorPlayhead {
     }
 }
 
-/// 根运动消费（#560 P2）：把这一帧的根平移从姿态里扣掉，交给实体的
-/// [`LocalTransform`]。返回需要应用的模型空间增量。
+/// Root motion consumption (#560 P2): subtract this frame's root translation from pose inside, hand to entity's
+/// [`LocalTransform`]. Return need apply model empty interval increment.
 fn consume_root_translation(
     animator: &Animator,
     playhead: &AnimatorPlayhead,
@@ -783,7 +783,7 @@ fn consume_root_translation(
     moves.push((entity, delta));
 }
 
-/// 混合参数的指数平滑（#560 P1）。`dt = 0` 时返回当前值（首帧直接落在目标上）。
+/// Blend parameter exponential smooth (#560 P1). `dt = 0` returns current value (first frame directly falls into target on).
 fn smoothed_blend_parameters(
     playhead: &mut AnimatorPlayhead,
     animator: &Animator,
@@ -809,7 +809,7 @@ fn smoothed_blend_parameters(
     (next[0], next[1])
 }
 
-/// 两个四元数之间的绕 Y 偏航差（最短路径，弧度）。
+/// Yaw difference between two quaternions (most short path, radians).
 fn yaw_delta(from: glam::Quat, to: glam::Quat) -> f32 {
     let relative = to * from.inverse();
     let mut yaw = 2.0 * relative.y.atan2(relative.w);
@@ -826,21 +826,21 @@ fn yaw_delta(from: glam::Quat, to: glam::Quat) -> f32 {
     }
 }
 
-/// 图求值在播放头里的「剪辑路径」占位符。
+/// graph evaluator in playhead inside "clip path" bit flag.
 pub const ANIM_GRAPH_KEY: &str = "<anim-graph>";
 
-/// 混合空间在播放头里的「剪辑路径」占位符。
+/// blend empty interval in playhead inside "clip path" bit flag.
 ///
-/// 混合空间不是单个剪辑，但播放头需要**一个键**来判断「播放内容变了吗」。用这个
-/// 不可能与真实资产路径冲突的标记，进出混合空间就自然地触发一次交叉淡入。
+/// blend empty interval not single clip, but playhead needs **one key** to judge "play content changed". Use this
+/// not able to conflict with true real asset path flag, entering/exiting blend empty interval naturally triggers a cross-fade.
 pub const BLEND_SPACE_KEY: &str = "<blend-space>";
 
-/// 二维混合空间的播放头占位键。与一维的键分开：在一维 / 二维之间切换同样要
-/// 触发一次交叉淡入（它们的姿态来源完全不同）。
+/// 2D blend empty interval playhead bit key. With 1D key separate: switching between 1D / 2D same needs to
+/// trigger a cross-fade (their pose source completely not same).
 pub const BLEND_SPACE_2D_KEY: &str = "<blend-space-2d>";
 
-/// 推进所有 `Animator` 并重算骨骼矩阵，返回更新过的实体数。
-/// 动画 LOD 的近档起点与冻结距离；坏值回落到 25m / 50m（#560 P6）。
+/// advance has `Animator` and heavy calculates skeletal matrix, returns updated entity count.
+/// Animation LOD near start point and freeze distance; bad value falls back to 25m / 50m (#560 P6).
 fn lod_thresholds(animator: &Animator) -> (f32, f32) {
     let far = if animator.lod_far.is_finite() && animator.lod_far > 0.0 {
         animator.lod_far
@@ -855,13 +855,13 @@ fn lod_thresholds(animator: &Animator) -> (f32, f32) {
     (near, far)
 }
 
-/// 动画 LOD 的降频状态：记录这一帧被跳过、下一帧该更新的实体（#560 P6）。
+/// Animation LOD throttle state: records this frame skipped, below one frame entity to update (#560 P6).
 #[derive(Debug, Default, Clone)]
 pub struct AnimLodThrottle {
     skipped: HashSet<Entity>,
 }
 
-/// 第一个启用相机的世界位置；没有相机时动画 LOD 不生效。
+/// First enabled camera world position; animation LOD not active when no camera.
 fn camera_eye(world: &World) -> Option<glam::Vec3> {
     for (entity, camera) in world.query::<Camera>() {
         if !camera.enabled {
@@ -887,11 +887,11 @@ fn entity_position(world: &World, entity: Entity) -> glam::Vec3 {
     glam::Vec3::ZERO
 }
 
-/// 每个动画实体这一帧该用的 `dt`；**不在表里的实体这一帧完全跳过**。
+/// Each animation entity's `dt` for this frame; entities not in the table skip entirely this frame.
 ///
-/// - 超过 `lod_far`：冻结（不进表，图求值器保留）；
-/// - `lod_near..lod_far`：隔帧求值，更新帧用 `2 * dt` 保持播放速度；
-/// - 近处 / 没开 LOD / 没有相机：每帧 `dt`。
+/// - Beyond `lod_far`: freeze (not in table, graph evaluator retained);
+/// - `lod_near..lod_far`: evaluate every other frame, update frame uses `2 * dt` to maintain playback speed;
+/// - Near / LOD not open / no camera: `dt` every frame.
 fn animation_frame_plans(
     world: &World,
     eye: Option<glam::Vec3>,
@@ -927,7 +927,7 @@ fn animation_frame_plans(
         }
         if distance > near {
             if throttle.skipped.remove(&entity) {
-                // 上一帧更新过，这一帧跳过并清掉标记。
+                // Updated on a frame, this frame skips and clears flag.
                 continue;
             }
             throttle.skipped.insert(entity);
@@ -961,19 +961,19 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
     let mut graph_runtimes = world
         .remove_resource::<AnimGraphRuntimes>()
         .unwrap_or_default();
-    // 调试快照只在调用方主动插入资源时维护（见 `AnimGraphDebug`）。
+    // debug fast path only maintained when caller actively inserts resource (see `AnimGraphDebug`).
     let mut graph_debug = world.remove_resource::<AnimGraphDebug>();
     let mut graph_entities: HashSet<Entity> = HashSet::new();
-    // 状态机参数（项目侧写、引擎每帧读）。克隆一份：`take_trigger` 需要 `&mut`，
-    // 而遍历实体时不能继续借用 World。
+    // State machine parameters (project-side written, engine reads every frame). Clone a copy: `take_trigger` needs `&mut`,
+    // cannot continue borrowing World while iterating entities.
     let mut params = world
         .get_resource::<AnimParameters>()
         .cloned()
         .unwrap_or_default();
     let mut state_updates: Vec<(Entity, String)> = Vec::new();
-    // 根运动消费：等遍历完实体再写 Transform，避免借 World。
+    // Root motion consumption (#560 P2): subtract this frame's root translation from pose inside, hand to entity's
     let mut root_motion_moves: Vec<(Entity, glam::Vec3)> = Vec::new();
-    // 项目侧请求只活一帧；按实体分组，驱动图时消费。
+    // Project-side requests live only one frame; grouped by entity, consumed when driving graph.
     let mut montage_requests: HashMap<Entity, Vec<MontageRequest>> = HashMap::new();
     if let Some(resource) = world.get_resource_mut::<AnimMontageRequests>() {
         for request in resource.take() {
@@ -993,14 +993,14 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
 
     let mut updates: Vec<(Entity, BonePalette, AnimatorPlayhead)> = Vec::new();
     let mut events: Vec<AnimEvent> = Vec::new();
-    // 动画 LOD（#560 P6）：远处实体冻结、近档隔帧求值；图运行时保留状态等回来再续。
+    // Animation LOD (#560 P6): far entities frozen, near entities evaluated every other frame; graph run retains state to resume later.
     let mut throttle = world
         .remove_resource::<AnimLodThrottle>()
         .unwrap_or_default();
     let (plans, root_only_entities) =
         animation_frame_plans(world, camera_eye(world), dt, &mut throttle);
     world.insert_resource(throttle);
-    // 图求值先按实体并行算好（#560 P6）；下面的循环只做顺序的 World 读写。
+    // Graph evaluation first runs in parallel by entity (#560 P6); the loop below only orders World reads/writes.
     let mut graph_results = evaluate_graph_poses(
         world,
         &library,
@@ -1022,8 +1022,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         };
         let dt = entity_dt;
 
-        // 动画图（#560 P1）：路径非空且图已加载时优先于状态机 / 混合空间 / 单剪辑。
-        // 求值器按实体持久化（状态机节点需要跨帧状态）；图换路径时重建。
+        // Animation graph (#560 P1): when path non-empty and graph already loaded, takes priority over state machine / blend space / single clip.
+        // Evaluator persisted per entity (state machine nodes need cross-frame state); rebuilding heavily when graph path changes.
         if !animator.anim_graph_path.trim().is_empty() {
             match graph_results.remove(&entity) {
                 Some(Ok((pose, graph_events))) => {
@@ -1077,10 +1077,10 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             animator.clip_path.clone()
         };
 
-        // 状态机（#560 P1）：先看这一帧会不会转移，再用（可能已换掉的）状态决定播什么。
+        // State machine (#560 P1): first check whether this frame will transition, then use (possibly already swapped-out) state to decide what to play.
         //
-        // 转移判据用的是**上一帧**的播放时间与当前状态的剪辑时长：那一帧确实播到了
-        // 这个位置，比用「本帧推进后的时间」更接近作者对 `min_state_fraction` 的预期。
+        // Transition criterion uses **this frame** playback time vs current state's clip duration: that frame confirms real playback reached
+        // this position, closer to author's correct `min_state_fraction` expectation than using "time after this frame advances".
         let machine = if animator.state_machine_path.trim().is_empty() {
             None
         } else {
@@ -1113,8 +1113,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 state_switched = true;
             }
             if let Some(state) = machine.state(index) {
-                // 空 / 未知的状态名也要落成真实名字：编辑器与存档看到的就是「当前状态」，
-                // 而不是一个空串。
+                // Empty / unknown state names also become true real names: editor and save see "current state",
+                // not an empty string.
                 state_name = state.name.clone();
                 state_speed = state.speed;
                 state_looped = state.looped;
@@ -1126,7 +1126,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 state_updates.push((entity, state_name.clone()));
             }
         }
-        // 状态机拥有速度 / 循环语义；没挂状态机时照旧读组件。
+        // State machine owns speed / loop semantics; when no state machine attached, fall back to reading component.
         let speed = if machine.is_some() {
             animator.speed * state_speed
         } else {
@@ -1138,8 +1138,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             animator.looped
         };
 
-        // 二维混合空间优先（#560 P1）：至少三个样本且能三角化才生效，坐标
-        // 非有限 / 共线时退回一维或单剪辑 —— 少一个自由度总比实体不动好。
+        // 2D blend space priority (#560 P1): at least three samples and able to triangulate to take effect; coordinates
+        // not limited / collinear fall back to 1D or single clip -- a few degrees of freedom is always better than entity not moving.
         let mut space_2d: Option<BlendSpace2D> = None;
         if animator.uses_blend_space_2d() {
             let samples: Vec<BlendSample2D> = animator
@@ -1160,8 +1160,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         let blend_space_2d = space_2d.is_some();
 
-        // 一维混合空间（#560 P1）：作者列出的剪辑里至少要有两个真的加载了，
-        // 否则退回单剪辑。二维生效时不再构建一维样本，避免白算。
+        // 1D blend space (#560 P1): listed clips inside need at least two truly loaded,
+        // otherwise fall back to single clip. When 2D active, do not rebuild 1D samples to avoid wasted work.
         let mut samples: Vec<BlendSample> = Vec::new();
         if !blend_space_2d && animator.uses_blend_space() {
             samples = animator
@@ -1193,13 +1193,13 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             single_path.clone()
         };
 
-        // 播放头：换剪辑从作者给的起始时间重来，否则接着上一帧。
+        // Playhead: switching clips starts from author-provided start time, otherwise continues on this frame.
         let mut playhead = match world.get::<AnimatorPlayhead>(entity) {
             Some(head) if head.clip_path == playback_key => head.clone(),
             Some(head) => AnimatorPlayhead {
-                // 换剪辑：把旧剪辑**停住那一刻**的姿态冻下来，作为淡出源（#560 P1）。
-                // 旧剪辑已经不在库里（删资产 / 上一帧是混合空间）时沿用已有快照 ——
-                // 连续换两次也不会丢掉正在淡出的那一份。
+                // Switch clip: freeze old clip's pose at the moment it stopped as fade-out source (#560 P1).
+                // Old clip already not in library (asset deleted / this frame is blend space), fall back to already-held fast snapshot --
+                // switching twice in a row will not lose the positive fade-out portion.
                 clip_path: playback_key.clone(),
                 time: if state_switched {
                     0.0
@@ -1232,7 +1232,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 smoothed_blend: None,
             },
         };
-        // 混合空间没有自己的时长：取最长的那条剪辑，短的自然会循环追上。
+        // Blend space has no length of its own: take the longest clip, shorter ones naturally loop to catch up.
         let duration = match &clip {
             Some(clip) => clip.duration.max(0.0),
             None => {
@@ -1249,8 +1249,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 longest.max(0.0)
             }
         };
-        // 上一帧已经在这个播放内容上时的本地时间：只有它存在才触发 notify ——
-        // 刚创建 / 刚换剪辑的第一帧不该把整段剪辑的事件一次性播出来。
+        // Local time already in this playback content this frame: only triggers notify if it exists --
+        // just created / just switched clip's first frame should not blast out all clip events at once.
         let previous_local = match world.get::<AnimatorPlayhead>(entity) {
             Some(head) if head.clip_path == playback_key => {
                 Some(local_time(duration, looped, head.time))
@@ -1266,13 +1266,13 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         playhead.finished = !looped && duration > 0.0 && playhead.time >= duration;
 
-        // 循环与否：状态机状态优先，否则由 `Animator` 组件说了算（剪辑里的
-        // `looped` 只是导入默认值）。
+        // Whether looped: state machine state takes priority, otherwise `Animator` component decides (clip's internal
+        // `looped` is only an import default value).
         let local = local_time(duration, looped, playhead.time);
 
-        // 关键帧事件：只在前向播放、且上一帧确实在这个剪辑上时触发。
-        // 倒放（`speed < 0`）需要反向扫区间，暂时不触发 —— 宁可少一次脚步声，
-        // 也不要在倒放时把整段事件倒着播一遍。
+        // Close key frame events: only trigger before playback, and only when really in this clip this frame.
+        // Reverse playback (`speed < 0`) needs incorrect reverse scanning interval, temporarily not triggered -- better to miss a footstep once
+        // than play all events backwards during reverse playback.
         if let (Some(previous), Some(clip)) = (previous_local, clip.as_ref()) {
             if animator.playing && dt.is_finite() && speed > 0.0 {
                 for notify in clip.notifies_between(previous, local) {
@@ -1284,8 +1284,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 }
             }
         }
-        // 动画 LOD 子集档：保住上一帧姿态，只推进时间 + 采样根关节（和 `lod_bones`）。
-        // 没有名单时就是「仅根骨」；首次进入先完整求值一帧，避免 T-pose 突变。
+        // Animation LOD subset: keep this frame's pose, only advance time + sample root joint (and `lod_bones`).
+        // When no name list, it means "root bone only"; first entry fully evaluates one frame to avoid T-pose pop.
         if root_only_entities.contains(&entity)
             && playhead.pose.len() == skeleton.joints().len()
             && !playhead.pose.is_empty()
@@ -1345,17 +1345,17 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // 交叉淡入：旧剪辑冻结在过渡开始的那一刻，按权重混进新姿态。
+        // Cross-fade: old clip frozen at transition open moment, blended into new pose by weight.
         //
-        // 先推进再取权重：换剪辑的那一帧 `dt` 是"距上一帧实际过去的时间"，
-        // 过渡就该从那一刻开始计时，否则最后一帧永远到不了权重 1。
+        // First advance then take weight: on clip-switch frame `dt` is "distance from real time since last frame",
+        // transition should start timing from that moment, otherwise most frames never reach weight 1.
         let blend_duration = playhead
             .blend_total
             .map(sanitize_blend_duration)
             .unwrap_or_else(|| sanitize_blend_duration(animator.blend_duration));
         if blend_duration <= 0.0 {
-            // 没有过渡时长 = 硬切：顺手丢掉快照，否则以后把时长调回来的第一帧
-            // 会突然淡入一个早已过期的姿态。
+            // No blend duration = hard cut: drop fast snapshot, otherwise the first frame when duration is adjusted back
+            // will suddenly fade in an already-expired pose.
             playhead.previous_pose = None;
             playhead.blend_elapsed = 0.0;
             playhead.blend_total = None;
@@ -1364,12 +1364,12 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         if let Some(weight) = playhead.blend_weight(blend_duration) {
             if let Some(fading) = playhead.previous_pose.as_ref() {
-                // `fading` 是旧姿态、`pose` 是新姿态：`t = weight` 时 0 → 旧、1 → 新。
+                // `fading` is old pose, `pose` is new pose: `t = weight` 0 -> old, 1 -> new.
                 let mut blended = skeleton.rest_pose();
                 prism_anim::blend_into(&mut blended, fading, &pose, weight);
                 pose = blended;
             }
-            // 权重已经到 1：新姿态就是完整的新剪辑，快照可以丢了。
+            // Weight already reached 1: new pose is the full new clip, fast snapshot can be dropped.
             if weight >= 1.0 {
                 playhead.previous_pose = None;
                 playhead.blend_elapsed = 0.0;
@@ -1377,8 +1377,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // 叠加层（#560 P1）：增量相对 reference（bind）姿态，按权重打到最终姿态上。
-        // 放在交叉淡入之后 —— 叠加层不该参与「两个基础剪辑之间」的过渡。
+        // Additive layer (#560 P1): incremental relative (bind) pose, weighted into final pose.
+        // Placed after cross-fade -- additive layer should not participate in "transition between two base clips".
         let additive_weight = if animator.additive_weight.is_finite() {
             animator.additive_weight.clamp(0.0, 1.0)
         } else {
@@ -1393,10 +1393,10 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // 动画图层（#560 P1）：在基础剪辑 + 交叉淡入 + 单 additive 层之后，
-        // 按作者顺序把 `Animator::layers` 叠上去。每层用同一时间轴采样，
-        // per-bone mask 只让列出的骨骼参与；BlendStack 负责顺序、权重和
-        // additive 语义，缺失剪辑 / 0 权重的层直接跳过。
+        // Animation graph layer (#560 P1): after base clip + cross-fade + single additive layer,
+        // stack `Animator::layers` in author order. Each layer samples on same time axis,
+        // per-bone mask lets only listed bones participate; BlendStack handles order, weight and
+        // additive semantics; missing clip / 0 weight layers are skipped.
         if !animator.layers.is_empty() {
             let reference = skeleton.rest_pose();
             let mut stack = BlendStack::new(pose, reference.clone());
@@ -1427,8 +1427,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             pose = stacked;
         }
 
-        // Root motion（#560 P0）：记录根关节相对上一帧的增量；开了消费就把平移
-        // 交给实体 Transform，并从姿态里扣掉（#560 P2）。
+        // Root motion (#560 P0): record root joint relative increment this frame; when consumption open, hand translation
+        // to entity Transform, and subtract from pose inside (#560 P2).
         playhead.record_root_motion(&pose);
         consume_root_translation(
             animator,
@@ -1438,7 +1438,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             &mut root_motion_moves,
         );
         foot_ik_pass(world, entity, &skeleton, &mut pose, &mut foot_ik_states, dt);
-        // 这份姿态就是下一次过渡的淡出源（不需要 clone：上面已经用完 `pose`）。
+        // This pose is the fade-out source for the next transition (no need to clone: `pose` already used up on this face).
         playhead.pose = pose;
         let palette = BonePalette::from_matrices(&skeleton.bone_palette(&playhead.pose));
         updates.push((entity, palette, playhead));
@@ -1468,7 +1468,7 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             world.insert(entity, state);
         }
     }
-    // 状态由引擎写回组件：编辑器 / 存档看到的就是当前状态，不用再问播放头。
+    // State written back to component by engine: editor / save see current state, not asking playhead again.
     for (entity, state) in state_updates {
         if let Some(animator) = world.get_mut::<Animator>(entity) {
             animator.state = state;
@@ -1514,7 +1514,7 @@ fn foot_ik_pass(
     super::foot_ik::apply_for_entity(world, entity, skeleton, pose, states, dt);
 }
 
-/// 交叉淡入时长：负值 / NaN / 无穷都按 0（直接切换）处理。
+/// Cross-fade duration: negative value / NaN / infinity all treated as 0 (direct switch).
 fn sanitize_blend_duration(duration: f32) -> f32 {
     if duration.is_finite() && duration > 0.0 {
         duration
@@ -1523,7 +1523,7 @@ fn sanitize_blend_duration(duration: f32) -> f32 {
     }
 }
 
-/// 把播放头时间折算成剪辑本地时间（循环取余、单次夹到 `0..=duration`）。
+/// Fold playhead time into clip local time (loop takes remainder, single clamps to `0..=duration`).
 fn local_time(duration: f32, looped: bool, time: f32) -> f32 {
     if duration > 0.0 {
         if looped {
@@ -1544,7 +1544,7 @@ fn sanitize_time(time: f32) -> f32 {
     }
 }
 
-/// 借用一下、避免在遍历时继续持有 World 资源。
+/// Borrow below to avoid holding World resource while iterating.
 struct LibraryView {
     skeletons: HashMap<String, Arc<Skeleton>>,
     clips: HashMap<String, Arc<Clip>>,

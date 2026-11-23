@@ -1,15 +1,15 @@
-//! 视口数学：世界 ↔ 屏幕投影、射线、AABB 拾取、gizmo 轴命中。
+//! Viewport math: world <-> screen projection, rays, AABB picking, gizmo axis hit.
 //!
-//! 与引擎共享同一套坐标约定（右手系、相机看 −Z、Vulkan 深度 [0,1]）。
-//! 拾取优先用实体真实局部包围盒（网格 AABB / 精灵尺寸），没有数据时退回
-//! 单位立方体（`[-0.5,0.5]³` × scale）。
+//! Shares the same coordinate convention with engine (right-handed, camera looks -Z, Vulkan depth [0,1]).
+//! Picking prefers entity real local AABB (mesh AABB / sprite size); falls back when no data to
+//! unit cube (`[-0.5,0.5]^3` × scale).
 
 use glam::{Mat3, Mat4, Quat, Vec2, Vec3};
 
 use crate::doc::{EntityJson, SceneDoc, TransformJson};
 use crate::workspace::OrbitCamera;
 
-/// `[x, y, z, w]` → glam 四元数（公开接口仍用数组，调用方不用改）。
+/// `[x, y, z, w]` -> glam quaternion (public interface still uses array, caller unchanged).
 fn quat(q: [f32; 4]) -> Quat {
     Quat::from_xyzw(q[0], q[1], q[2], q[3])
 }
@@ -20,16 +20,16 @@ fn quat_array(q: Quat) -> [f32; 4] {
 
 pub const GIZMO_SCREEN_PIXELS: f32 = 90.0;
 pub const GIZMO_PICK_RADIUS: f32 = 8.0;
-/// 旋转 gizmo 圆环的命中带宽（像素）。
+/// Hit bandwidth (pixels) of rotation gizmo ring.
 pub const GIZMO_RING_TOLERANCE: f32 = 10.0;
 
 pub const IDENTITY_BASIS: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 pub const IDENTITY_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
-/// 实体在自身局部空间的包围盒，用于精确拾取（#600）。
+/// Entity local-space AABB, used for accurate picking (#600).
 ///
-/// 网格来自 cooked mesh 的 local AABB；精灵由 `frame_size / pixels_per_unit`
-/// 和 pivot 推出。没有数据时退回原有的单位立方体代理。
+/// Mesh from cooked mesh local AABB; sprite derived from `frame_size / pixels_per_unit`
+/// and pivot; falls back to existing unit-cube proxy when no data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PickBounds {
     pub min: [f32; 3],
@@ -54,7 +54,7 @@ impl PickBounds {
     }
 }
 
-/// gizmo 的坐标空间：世界轴或实体自身轴。
+/// Gizmo coordinate space: world axes or entity own axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GizmoSpace {
     #[default]
@@ -65,8 +65,8 @@ pub enum GizmoSpace {
 impl GizmoSpace {
     pub fn label(self) -> &'static str {
         match self {
-            GizmoSpace::World => "世界",
-            GizmoSpace::Local => "局部",
+            GizmoSpace::World => "World",
+            GizmoSpace::Local => "Local",
         }
     }
 
@@ -78,7 +78,7 @@ impl GizmoSpace {
     }
 }
 
-/// 旋转 gizmo 的圆环在屏幕上的半径（每个轴一条）。
+/// Screen radius of rotation gizmo ring (one per axis).
 pub fn ring_screen_radius(
     frame: &CameraFrame,
     origin: [f32; 3],
@@ -98,7 +98,7 @@ pub fn ring_screen_radius(
     )
 }
 
-/// 局部坐标下的圆环半径：`basis` 的三列是实体局部轴在世界空间的方向。
+/// Ring radius in local coordinates: three columns of `basis` are entity local axes in world space direction.
 pub fn ring_screen_radius_oriented(
     frame: &CameraFrame,
     origin: [f32; 3],
@@ -108,7 +108,7 @@ pub fn ring_screen_radius_oriented(
     width: f32,
     height: f32,
 ) -> Option<(f32, f32, f32)> {
-    // 圆环在垂直于轴的平面里；用两条正交半径的屏幕长度平均近似半径。
+    // Ring lies in plane perpendicular to axis; radius approximated by average of two orthogonal radius screen lengths.
     let (u, v) = match axis {
         0 => (basis[1], basis[2]),
         1 => (basis[0], basis[2]),
@@ -122,7 +122,7 @@ pub fn ring_screen_radius_oriented(
     Some((start.0, start.1, (ra + rb) * 0.5))
 }
 
-/// 命中旋转圆环：返回轴。屏幕距离与投影半径之差小于带宽即命中。
+/// Hit rotation ring: return axis. Hit when screen distance minus projected radius smaller than bandwidth.
 pub fn pick_rotation_axis(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -154,7 +154,7 @@ pub enum GizmoHandle {
     ScreenRing,
 }
 
-/// 局部坐标下的圆环命中。
+/// Ring hit in local coordinates.
 pub fn pick_rotation_axis_oriented(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -317,12 +317,12 @@ pub fn pick_rotation_handle_oriented(
     best.map(|(handle, _)| handle)
 }
 
-/// 屏幕点相对圆心的角度（用于旋转拖动）。
+/// Angle of screen point relative to center (used for rotation drag).
 pub fn screen_angle(point: (f32, f32), center: (f32, f32)) -> f32 {
     (point.1 - center.1).atan2(point.0 - center.0)
 }
 
-/// 把角度差规范到 `(-π, π]`。
+/// Normalize angle difference into `(-π, π]`.
 pub fn wrap_angle(angle: f32) -> f32 {
     let two_pi = std::f32::consts::TAU;
     let mut wrapped = angle % two_pi;
@@ -334,12 +334,12 @@ pub fn wrap_angle(angle: f32) -> f32 {
     wrapped
 }
 
-/// 四元数乘法（`a * b`，与 glam 的 `Quat::mul_quat` 同序）。
+/// Quaternion multiplication (`a * b`, same order as glam `Quat::mul_quat`).
 pub fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     quat_array(quat(a) * quat(b))
 }
 
-/// 绕世界轴旋转 `angle` 弧度的四元数。
+/// Quaternion rotating `angle` radians around world axis.
 pub fn quat_axis_angle(axis: usize, angle: f32) -> [f32; 4] {
     let axis = match axis {
         0 => Vec3::X,
@@ -349,7 +349,7 @@ pub fn quat_axis_angle(axis: usize, angle: f32) -> [f32; 4] {
     quat_array(Quat::from_axis_angle(axis, angle))
 }
 
-/// 用四元数旋转向量（测试 / 旋转后的轴端点用）。
+/// Rotate vector by quaternion (test / rotated axis endpoint use).
 pub fn quat_rotate(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
     (quat(q) * Vec3::from(v)).to_array()
 }
@@ -358,22 +358,22 @@ pub fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
     quat_array(quat(q) / quat(q).length().max(1e-6))
 }
 
-/// 单位四元数的共轭（= 逆）。
+/// Conjugate of unit quaternion (= inverse).
 pub fn quat_conjugate(q: [f32; 4]) -> [f32; 4] {
     quat_array(quat(q).conjugate())
 }
 
-/// 四元数 → XYZ 欧拉角（度）。
+/// Quaternion -> XYZ Euler angles (degrees).
 ///
-/// 约定 `R = Rz * Ry * Rx`（glam 的 `EulerRot::XYZ`），检查器用它把
-/// `rotation` 显示成可读的角度；`euler_degrees_to_quat` 是它的逆。
+/// Convention `R = Rz * Ry * Rx` (glam `EulerRot::XYZ`), inspector uses it to show
+/// `rotation` as readable degrees; `euler_degrees_to_quat` is its inverse.
 pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
     let q = quat(q);
     let length = q.length();
     if length < 1e-8 {
         return [0.0; 3];
     }
-    // 旋转矩阵按列取：`m[c][r]` 与下面的 `m00..m22` 行主序下标一致。
+    // Rotation matrix taken by column: `m[c][r]` consistent with below `m00..m22` row-major indexing.
     let m = Mat3::from_quat(q / length);
     let (m00, m10, m20) = (m.x_axis.x, m.x_axis.y, m.x_axis.z);
     let (m21, m22) = (m.y_axis.z, m.z_axis.z);
@@ -381,7 +381,7 @@ pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
 
     let sin_y = (-m20).clamp(-1.0, 1.0);
     let ey = sin_y.asin();
-    // 万向锁：Y 接近 ±90° 时 X/Z 耦合，把滚转挪到 Z 上（Unity 同样取 0）。
+    // Gimbal lock: when Y near ±90° X/Z couple, move roll to Z (Unity also takes 0).
     let (ex, ez) = if sin_y.abs() < 0.999_99 {
         (m21.atan2(m22), m10.atan2(m00))
     } else {
@@ -390,9 +390,9 @@ pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
     [ex.to_degrees(), ey.to_degrees(), ez.to_degrees()]
 }
 
-/// XYZ 欧拉角（度）→ 四元数，[`quat_to_euler_degrees`] 的逆。
+/// XYZ Euler angles (degrees) -> Quaternion, inverse of [`quat_to_euler_degrees`].
 pub fn euler_degrees_to_quat(euler: [f32; 3]) -> [f32; 4] {
-    // `R = Rz * Ry * Rx`：先绕 X、再 Y、最后 Z（固定轴）。
+    // `R = Rz * Ry * Rx`: rotate X first, then Y, then Z (fixed axes).
     quat_array(
         Quat::from_rotation_z(euler[2].to_radians())
             * Quat::from_rotation_y(euler[1].to_radians())
@@ -400,7 +400,7 @@ pub fn euler_degrees_to_quat(euler: [f32; 3]) -> [f32; 4] {
     )
 }
 
-/// 局部三轴在世界空间的方向（列向量）。
+/// Local three-axis directions in world space (column vectors).
 pub fn basis_from_quat(q: [f32; 4]) -> [[f32; 3]; 3] {
     let q = quat(q);
     [
@@ -410,7 +410,7 @@ pub fn basis_from_quat(q: [f32; 4]) -> [[f32; 3]; 3] {
     ]
 }
 
-/// 实体沿父链累积的世界旋转（含自身；父级优先，遇环时截断）。
+/// Entity world rotation accumulated along parent chain (including self; parent first, truncated on cycle).
 pub fn world_rotation(doc: &SceneDoc, index: usize) -> [f32; 4] {
     let mut chain = Vec::new();
     let mut current = Some(index);
@@ -430,7 +430,7 @@ pub fn world_rotation(doc: &SceneDoc, index: usize) -> [f32; 4] {
     quat_normalize(rotation)
 }
 
-/// 父级的世界旋转（不含自身；根实体的父级为单位旋转）。
+/// Parent world rotation (excluding self; root entity parent is identity rotation).
 pub fn parent_world_rotation(doc: &SceneDoc, index: usize) -> [f32; 4] {
     doc.entities[index]
         .parent
@@ -481,7 +481,7 @@ pub fn world_position(doc: &SceneDoc, index: usize) -> [f32; 3] {
     world_matrix(doc, index).w_axis.truncate().to_array()
 }
 
-/// 实体世界缩放（父链分量相乘）。
+/// Entity world scale (multiply components along parent chain).
 pub fn world_scale(doc: &SceneDoc, index: usize) -> [f32; 3] {
     let mut scale = doc
         .entities
@@ -507,25 +507,25 @@ pub fn world_scale(doc: &SceneDoc, index: usize) -> [f32; 3] {
     scale
 }
 
-/// 一组实体在世界空间的**包围球** `(center, radius)`（`#505`）。
+/// **Bounding sphere** `(center, radius)` of a set of entities in world space (#505).
 ///
-/// 编辑器文档里没有网格数据，所以每个实体用「单位立方体 × 世界缩放」当代理
-/// （与选择描边 / gizmo 的代理一致）：8 个角点按世界旋转换算到世界空间，
-/// 取并集 AABB 的中心与半对角线作为半径。父链的平移 / 旋转 / 缩放都通过
-/// [`world_position`] / [`world_rotation`] / [`world_scale`] 累积，所以子物体框选
-/// 得到的是它在**世界**里的位置（而不是局部 `transform.position`）。
+/// Editor document has no mesh data, so each entity uses "unit cube × world scale" as proxy
+/// (consistent with selection outline / gizmo proxy): 8 corners transformed to world space by world rotation,
+/// center and half-diagonal of union AABB as radius. Parent chain translation / rotation / scale all via
+/// [`world_position`] / [`world_rotation`] / [`world_scale`] accumulated, so child bounding box is its position in **world**
+/// (not local `transform.position`).
 ///
-/// 越界索引、非有限变换、空集合都只跳过；全空时返回 `None`。半径下限 `0.25`，
-/// 免得零缩放 / 单点实体的取景距离塌到相机最小距离。
+/// Out-of-bounds index, non-finite transform, empty set all skipped; returns `None` when all empty. Radius floor `0.25`,
+/// so zero-scale / single-point entity framing distance does not collapse to camera minimum distance.
 pub fn world_bounds(doc: &SceneDoc, indices: &[usize]) -> Option<([f32; 3], f32)> {
     world_bounds_with(doc, indices, |index| authored_local_bounds(doc, index))
 }
 
-/// 从**作者文档**能推出来的局部包围盒（精灵 / 碰撞体）。
+/// Local AABB derivable from **authoring document** (sprite / collider).
 ///
-/// 精灵只在写了 `frame_size` 时才算得出来（`[0, 0]` = 整张纹理，尺寸只有引擎
-/// 知道）；碰撞体形状是作者数据，随时可用。推不出来返回 `None`，调用方退回
-/// 单位立方体。
+/// Sprite only computable when `frame_size` written (`[0, 0]` = whole texture, size only engine
+/// knows); collider shape is authoring data, always available. If cannot derive returns `None`, caller falls back to
+/// unit cube.
 pub fn authored_local_bounds(doc: &SceneDoc, index: usize) -> Option<PickBounds> {
     let entity = doc.entities.get(index)?;
     collider_local_bounds(entity).or_else(|| sprite_local_bounds(entity))
@@ -596,11 +596,11 @@ fn sprite_local_bounds(entity: &EntityJson) -> Option<PickBounds> {
     })
 }
 
-/// [`world_bounds`] 的可注入版本：`bounds_for` 返回实体的**局部**包围盒
-/// （`None` = 退回单位立方体）。
+/// Inject-able version of [`world_bounds`]: `bounds_for` returns entity **local** AABB
+/// (`None` = fall back to unit cube).
 ///
-/// 编辑器进程里引擎知道贴图尺寸（`frame_size` 没写时也能算），数据层只读文档
-/// 不知道，所以取景时由调用方把「带纹理尺寸的 bounds」注进来。
+/// In editor process engine knows texture size (computable even when `frame_size` not written), data layer only reads document
+/// does not know, so caller injects "bounds with texture size" when framing.
 pub fn world_bounds_with(
     doc: &SceneDoc,
     indices: &[usize],
@@ -620,8 +620,8 @@ pub fn world_bounds_with(
         {
             continue;
         }
-        // 有真实局部包围盒就用它：单位立方体对 2D 精灵来说差了整整一个
-        // 「贴图像素尺寸」，取景会贴到脸上（#991）。
+        // Use real local AABB if available: unit cube differs from 2D sprite by a whole
+        // "texture pixel size", framing sticks to face (#991).
         let local = bounds_for(*index);
         let half = match &local {
             Some(bounds) => {
@@ -638,7 +638,7 @@ pub fn world_bounds_with(
                 scale[2].abs() * 0.5,
             ],
         };
-        // 局部中心不为零时（精灵轴心、碰撞体中心）先跟着旋转缩放搬到世界。
+        // When local center non-zero (sprite pivot / collider center) first carried to world by rotation-scale.
         let offset = local
             .as_ref()
             .map(|bounds| {
@@ -679,8 +679,8 @@ pub fn world_bounds_with(
         (min[1] + max[1]) * 0.5,
         (min[2] + max[2]) * 0.5,
     ];
-    // 半径取「中心到最远角点」而不是 AABB 半对角线：后者会随旋转变大，
-    // 同一个物体转一下就换了取景距离。
+    // Radius takes "center to farthest corner" not AABB half-diagonal: latter grows with rotation,
+    // same object turns and framing distance changes.
     let radius = points
         .iter()
         .map(|point| {
@@ -698,7 +698,7 @@ pub fn world_bounds_with(
     Some((center, radius))
 }
 
-/// 世界轴在当前相机里的屏幕方向（x 右、y 下）。
+/// Screen direction of world axes in current camera (x right, y down).
 pub fn orientation_axis_direction(frame: &CameraFrame, axis: usize, sign: f32) -> [f32; 2] {
     let world = match axis {
         0 => [sign, 0.0, 0.0],
@@ -708,7 +708,7 @@ pub fn orientation_axis_direction(frame: &CameraFrame, axis: usize, sign: f32) -
     [dot(world, frame.right), -dot(world, frame.up)]
 }
 
-/// 方向 gizmo 某根轴的端点（屏幕坐标）。
+/// Endpoint of a direction gizmo axis (screen coordinates).
 pub fn orientation_axis_end(
     frame: &CameraFrame,
     axis: usize,
@@ -723,7 +723,7 @@ pub fn orientation_axis_end(
     )
 }
 
-/// 点中方向 gizmo 的哪根轴（返回 `(axis, sign)`），容差 9px。
+/// Which direction gizmo axis is clicked (returns `(axis, sign)`), tolerance 9px.
 pub fn pick_orientation_axis(
     position: (f32, f32),
     center: (f32, f32),
@@ -734,7 +734,7 @@ pub fn pick_orientation_axis(
     for axis in 0..3 {
         for sign in [1.0_f32, -1.0] {
             let direction = orientation_axis_direction(frame, axis, sign);
-            // 正对相机的轴投影长度为 0，无法点击。
+            // Axis projected length is 0 when facing camera, cannot click.
             if (direction[0] * direction[0] + direction[1] * direction[1]).sqrt() < 0.2 {
                 continue;
             }
@@ -756,12 +756,12 @@ pub struct CameraFrame {
     pub right: [f32; 3],
     pub up: [f32; 3],
     pub forward: [f32; 3],
-    /// 正交半高（世界单位）；`None` = 透视。
+    /// Orthographic half-height (world units); `None` = perspective.
     ///
-    /// [#641] Scene view 的 2D 模式是正交相机，投影 / 拾取射线都要跟着换公式，
-    /// 否则屏幕上的位置和引擎里画出来的对不上。
+    /// [#641] Scene view 2D mode is orthographic camera, projection / picking rays need formula change,
+    /// otherwise screen position does not match engine drawing.
     pub ortho_half_height: Option<f32>,
-    /// 垂直视场角（度）；投影 / 拾取射线按它推导半角（#416）。
+    /// Vertical field-of-view (degrees); projection / picking rays derive half-angle from it (#416).
     pub fov_y_degrees: f32,
 }
 
@@ -786,7 +786,7 @@ pub fn camera_frame(camera: &OrbitCamera) -> CameraFrame {
     }
 }
 
-/// 透视相机的半角正切；`CameraFrame::fov_y_degrees` 已在构造时夹好范围。
+/// Perspective camera half-angle tangent; `CameraFrame::fov_y_degrees` already clamped at construction.
 fn half_fov_tan(frame: &CameraFrame) -> f32 {
     (frame.fov_y_degrees * 0.5).to_radians().tan().max(1e-4)
 }
@@ -815,7 +815,7 @@ pub fn scale(a: [f32; 3], factor: f32) -> [f32; 3] {
     (Vec3::from(a) * factor).to_array()
 }
 
-/// 世界坐标 → 屏幕坐标（像素，相对视口左上角），返回 `(x, y, depth)`。
+/// World coordinates -> screen coordinates (pixels relative to viewport top-left), returns `(x, y, depth)`.
 pub fn project(
     point: [f32; 3],
     frame: &CameraFrame,
@@ -830,7 +830,7 @@ pub fn project(
     }
     let aspect = (width / height.max(1.0)).max(0.2);
     let (ndc_x, ndc_y) = match frame.ortho_half_height {
-        // 正交：屏幕位置与深度无关，半高就是世界单位。
+        // Orthographic: screen position independent of depth, half-height is world units.
         Some(half_h) => {
             let half_h = half_h.max(1e-4);
             (
@@ -853,7 +853,7 @@ pub fn project(
     ))
 }
 
-/// 屏幕像素 → 世界射线 `(origin, direction)`。
+/// Screen pixels -> world ray `(origin, direction)`.
 pub fn ray_from_screen(
     x: f32,
     y: f32,
@@ -871,7 +871,7 @@ pub fn ray_from_screen(
     let up = Vec3::from(frame.up);
     let forward = Vec3::from(frame.forward);
     if let Some(half_h) = frame.ortho_half_height {
-        // 正交：所有射线方向相同，起点在近平面上按半宽 / 半高铺开。
+        // Orthographic: all rays same direction, origin spread on near plane by half-width / half-height.
         let half_h = half_h.max(1e-4);
         let offset = right * (ndc_x * half_h * aspect) + up * (ndc_y * half_h);
         return ((eye + offset).to_array(), forward.to_array());
@@ -883,7 +883,7 @@ pub fn ray_from_screen(
     (eye.to_array(), direction.to_array())
 }
 
-/// 射线与轴对齐盒求交，返回最近命中距离。
+/// Ray-axis-aligned-box intersection, returns nearest hit distance.
 pub fn ray_box(
     origin: [f32; 3],
     direction: [f32; 3],
@@ -922,7 +922,7 @@ pub fn ray_box(
     }
 }
 
-/// 屏幕空间点到线段的距离。
+/// Screen-space point to segment distance.
 pub fn distance_point_segment(point: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let ab = (b.0 - a.0, b.1 - a.1);
     let ap = (point.0 - a.0, point.1 - a.1);
@@ -1048,7 +1048,7 @@ pub fn signed_angle_around_axis(prev_vec: [f32; 3], next_vec: [f32; 3], axis_dir
     sin_term.atan2(cos_term)
 }
 
-/// gizmo 轴的世界长度：保持屏幕上的长度近似恒定。
+/// World length of gizmo axis: keeps screen length approximately constant.
 pub fn gizmo_world_length(camera: &OrbitCamera, viewport_height: f32) -> f32 {
     let pixels = GIZMO_SCREEN_PIXELS / viewport_height.max(1.0);
     if camera.orthographic {
@@ -1079,10 +1079,10 @@ pub fn gizmo_world_length_at(
     depth * pixels * 2.0 * tan_half
 }
 
-/// 一条 gizmo 轴的屏幕端点 `(start, end, 每世界单位像素)`。
+/// Screen endpoints `(start, end, pixels per world unit)` of one gizmo axis.
 pub type ScreenSegment = ((f32, f32), (f32, f32), f32);
 
-/// 一条 gizmo 轴的屏幕端点与「每世界单位多少像素」。
+/// Screen endpoints and "pixels per world unit" of one gizmo axis.
 pub fn axis_screen_segment(
     frame: &CameraFrame,
     origin: [f32; 3],
@@ -1096,7 +1096,7 @@ pub fn axis_screen_segment(
     axis_screen_segment_oriented(frame, origin, direction, world_length, width, height)
 }
 
-/// 指定方向的轴线段（局部 gizmo 用）。
+/// Axis line segment in given direction (for local gizmo).
 pub fn axis_screen_segment_oriented(
     frame: &CameraFrame,
     origin: [f32; 3],
@@ -1116,7 +1116,7 @@ pub fn axis_screen_segment_oriented(
     ))
 }
 
-/// 命中测试：返回 (轴, 屏幕方向单位向量, 每世界单位像素)。
+/// Hit test: returns (axis, screen direction unit vector, pixels per world unit).
 pub fn pick_gizmo_axis(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -1136,7 +1136,7 @@ pub fn pick_gizmo_axis(
     )
 }
 
-/// 局部坐标下的轴命中。
+/// Axis hit in local coordinates.
 pub fn pick_gizmo_axis_oriented(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -1292,10 +1292,10 @@ pub fn normalize2(v: (f32, f32)) -> [f32; 2] {
     (v / v.length().max(1e-6)).to_array()
 }
 
-/// 实体局部单位立方体的 8 个角（世界坐标，含旋转与缩放）。
+/// 8 corners of entity local unit cube (world coordinates, including rotation and scale).
 ///
-/// 代理里的 `transform` 已经是世界变换（`world_position` / `world_rotation` /
-/// `world_scale`），所以这里不再沿父链推导。
+/// Proxy `transform` is already world transform (`world_position` / `world_rotation` /
+/// `world_scale`), so no longer derive along parent chain here.
 fn transformed_corners(transform: &TransformJson) -> [[f32; 3]; 8] {
     let rotation = quat_normalize(transform.rotation);
     let half = [
@@ -1322,11 +1322,11 @@ fn transformed_corners(transform: &TransformJson) -> [[f32; 3]; 8] {
     corners
 }
 
-/// 世界代理立方体的 12 条边投影到屏幕空间（#487 的选中描边）。
+/// 12 edges of world proxy cube projected to screen space (#487 selection outline).
 ///
-/// 返回 `[((x0, y0), (x1, y1)); 12]`，坐标是**视口像素**（左上原点，与
-/// [`box_select`] / `pick_entity` 同一坐标系）。任何一个角落在相机背后时
-/// 返回 `None`：那种情况下逐点裁剪只会画出穿透屏幕的乱线。
+/// Returns `[((x0, y0), (x1, y1)); 12]`, coordinates are **viewport pixels** (top-left origin, same
+/// [`box_select`] / `pick_entity` coordinate system). When any corner is behind camera, returns
+/// `None`: per-point clipping in that case only draws penetrating junk lines.
 pub fn projected_box_edges(
     transform: &TransformJson,
     frame: &CameraFrame,
@@ -1339,20 +1339,20 @@ pub fn projected_box_edges(
         let (x, y, _) = project(*corner, frame, width, height)?;
         screen[slot] = (x, y);
     }
-    // 角点下标按「dx / dy / dz 各占一位」排列：z 变化最快。
+    // Corner index arranged as "dx/dy/dz each one bit": z changes fastest.
     const EDGES: [(usize, usize); 12] = [
         (0, 1),
         (2, 3),
         (4, 5),
-        (6, 7), // 沿 z
+        (6, 7), // along z
         (0, 2),
         (1, 3),
         (4, 6),
-        (5, 7), // 沿 y
+        (5, 7), // along y
         (0, 4),
         (1, 5),
         (2, 6),
-        (3, 7), // 沿 x
+        (3, 7), // along x
     ];
     let mut out = [((0.0f32, 0.0f32), (0.0f32, 0.0f32)); 12];
     for (slot, (a, b)) in EDGES.iter().enumerate() {
@@ -1361,11 +1361,11 @@ pub fn projected_box_edges(
     Some(out)
 }
 
-/// 拖放落点：射线与「作者平面」的交点（#646）。
+/// Drag-drop landing point: ray intersection with "authoring plane" (#646).
 ///
-/// 3D 视图把资产扔到地面 `y = 0`；2D 视图（#641）是正视 XY，地面在那里是
-/// 侧着的一条线，所以改打 `z = 0`（UI / sprite 所在平面）。射线与平面平行、
-/// 交点在相机背后（`t <= 0`）或非有限时返回 `None`。
+/// 3D view drops asset to ground `y = 0`; 2D view (#641) is front-facing XY, ground there is
+/// a sideways line, so switch to `z = 0` (UI / sprite plane). Ray parallel to plane,
+/// intersection behind camera (`t <= 0`) or non-finite returns `None`.
 pub fn drop_point(camera: &OrbitCamera, ray: ([f32; 3], [f32; 3])) -> Option<[f32; 3]> {
     let (origin, direction) = ray;
     let axis = if camera.orthographic { 2 } else { 1 };
@@ -1392,12 +1392,12 @@ pub fn drop_point(camera: &OrbitCamera, ray: ([f32; 3], [f32; 3])) -> Option<[f3
     }
 }
 
-/// 2D 矩形（sprite / rect）的 4 条边投影到屏幕空间（#643）。
+/// 4 edges of 2D rectangle (sprite / rect) projected to screen space (#643).
 ///
-/// `size` 是世界单位下的宽高，`pivot` 是 `0..1` 的轴心（左下角为原点，
-/// 与 `SpriteRenderer::pivot` 同约定）。矩形在实体的局部 XY 平面上，
-/// 跟着 `transform` 的旋转 / 缩放走。返回的是首尾相接的 4 条边，
-/// 坐标同样是**视口像素**（左上原点）。
+/// `size` is width/height in world units, `pivot` is `0..1` pivot (bottom-left as origin,
+/// consistent with `SpriteRenderer::pivot`). Rectangle on entity local XY plane,
+/// following `transform` rotation / scale; returns 4 connected edges,
+/// Coordinates also **viewport pixels** (top-left origin).
 pub fn projected_rect_edges(
     transform: &TransformJson,
     size: [f32; 2],
@@ -1432,11 +1432,11 @@ pub fn projected_rect_edges(
     ])
 }
 
-/// 把屏幕上的拖拽框换算成视口像素坐标 `(min_x, min_y, max_x, max_y)`。
+/// Convert screen drag box to viewport pixel coordinates `(min_x, min_y, max_x, max_y)`.
 ///
-/// [`box_select`] 和 `pick_entity` 都以**视口左上角**为原点，而 egui 给的是屏幕坐标：
-/// 视口左边有层级面板时原点不为零。忘了减原点，框选就会恒从视口左上角开始，
-/// 把光标上方的所有物体一起选中（#422）。反方向拖拽也会在这里归一化成 min/max。
+/// [`box_select`] and `pick_entity` use **viewport top-left** as origin, while egui gives screen coordinates:
+/// When hierarchy panel on viewport left origin is non-zero. Forgot to subtract origin, box select always starts from viewport top-left,
+/// selects all objects above cursor together (#422). Reverse drag also normalized to min/max here.
 pub fn local_box(start: (f32, f32), end: (f32, f32), origin: (f32, f32)) -> (f32, f32, f32, f32) {
     let start = (start.0 - origin.0, start.1 - origin.1);
     let end = (end.0 - origin.0, end.1 - origin.1);
@@ -1448,10 +1448,10 @@ pub fn local_box(start: (f32, f32), end: (f32, f32), origin: (f32, f32)) -> (f32
     )
 }
 
-/// 框选：实体旋转后的包围盒投影成屏幕 AABB，与矩形**相交**即选中。
+/// Box select: entity rotated AABB projected to screen AABB, selected when **intersects** rectangle.
 ///
-/// 矩形是 `(min_x, min_y, max_x, max_y)`（视口像素坐标）；索引按文档顺序返回。
-/// 用相交而不是「角点落在矩形内」，所以填满视口的大物体也能被小框选中。
+/// Rectangle is `(min_x, min_y, max_x, max_y)` (viewport pixel coordinates); indices returned in document order.
+/// Uses intersection not "corners inside rectangle", so large objects filling viewport can be selected by small box.
 /// Project all 12 world proxy box edges clipped against the camera near plane.
 pub fn projected_box_clipped_edges(
     transform: &TransformJson,
@@ -1514,11 +1514,11 @@ pub fn box_select(
     selected
 }
 
-/// 射线与实体的**有向**包围盒求交，返回世界空间射线参数。
+/// Ray intersection with entity **oriented** AABB, returns world-space ray parameter.
 ///
-/// 把射线变换到实体局部空间（先反旋转、再除以缩放）后与单位立方体
-/// `[-0.5, 0.5]³` 求交；`ray_box` 返回的参数与世界射线同一尺度，所以
-/// 不同缩放的实体之间仍可直接比较远近。
+/// Transform ray into entity local space (first inverse-rotate, then divide scale) then intersect unit cube
+/// `[-0.5, 0.5]^3`; `ray_box` returned parameter same scale as world ray, so
+/// entities with different scales can still be directly compared by distance.
 fn ray_obb(origin: [f32; 3], direction: [f32; 3], transform: &TransformJson) -> Option<f32> {
     let inverse = quat_conjugate(quat_normalize(transform.rotation));
     let scale = [
@@ -1549,7 +1549,7 @@ fn ray_obb(origin: [f32; 3], direction: [f32; 3], transform: &TransformJson) -> 
     )
 }
 
-/// 用实体的真实局部 AABB 做 OBB 命中；`None` 时退回单位立方体。
+/// Use entity real local AABB for OBB hit; falls back to unit cube when `None`.
 fn ray_obb_with_bounds(
     origin: [f32; 3],
     direction: [f32; 3],
@@ -1588,9 +1588,9 @@ fn ray_obb_with_bounds(
     )
 }
 
-/// 拾取离相机最近的实体（索引, 命中距离）。
+/// Pick entity nearest to camera (index, hit distance).
 ///
-/// 兼容旧调用：没有 bounds 数据时用单位立方体。
+/// Compatible with old calls: use unit cube when no bounds data.
 pub fn pick_entity(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -1610,9 +1610,9 @@ pub fn pick_entity(
     best.map(|(index, _)| index)
 }
 
-/// 同一个屏幕点下的**全部**命中，按距离从近到远（#416 点选循环穿透）。
+/// **All** hits under the same screen point, sorted by distance near to far (#416 click cycle penetration).
 ///
-/// 返回的是实体下标，重复点击同一位置可以依次选中被挡住的下一层。
+/// Returns entity indices; repeated clicks at same position select next covered layer in turn.
 pub fn pick_entities_with_bounds(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -1632,7 +1632,7 @@ pub fn pick_entities_with_bounds(
     hits.into_iter().map(|(index, _)| index).collect()
 }
 
-/// 带真实局部包围盒的拾取（#600）。
+/// Picking with real local AABB (#600).
 pub fn pick_entity_with_bounds(
     point: (f32, f32),
     frame: &CameraFrame,
@@ -1668,7 +1668,7 @@ mod tests {
         camera
     }
 
-    /// #641：2D 视图是正交投影，屏幕位置与深度无关。
+    /// #641: 2D view is orthographic projection, screen position independent of depth.
     #[test]
     fn ortho_projection_ignores_depth() {
         let camera = camera_2d();
@@ -1677,13 +1677,13 @@ mod tests {
         let far = project([1.0, 0.5, -6.0], &frame, 800.0, 600.0).unwrap();
         assert!((near.0 - far.0).abs() < 1e-4);
         assert!((near.1 - far.1).abs() < 1e-4);
-        // 半高 = distance = 10 → 600px 高的视口里每世界单位 30px：
-        // +1 X 右移 30px、+0.5 Y 上抬 15px。
+        // half-height = distance = 10 -> 30px per world unit in 600px-high viewport:
+        // +1 X right moves 30px, +0.5 Y lifts 15px.
         assert!((near.0 - 430.0).abs() < 1e-3);
         assert!((near.1 - 285.0).abs() < 1e-3);
     }
 
-    /// 正交射线互相平行，起点按像素铺开；正中那条就从 eye 出发。
+    /// Orthographic rays parallel to each other, origins spread by pixels; center ray starts from eye.
     #[test]
     fn ortho_rays_are_parallel() {
         let camera = camera_2d();
@@ -1695,10 +1695,13 @@ mod tests {
         }
         assert!((o_center[0] - frame.eye[0]).abs() < 1e-4);
         assert!((o_center[1] - frame.eye[1]).abs() < 1e-4);
-        assert!(o_side[0] > o_center[0], "屏幕右移 → 起点沿 +X 平移");
-        assert!(o_side[1] > o_center[1], "屏幕上移 → 起点沿 +Y 平移");
-        // 中心射线命中盒子；横向平移 10 个世界单位的那条直接打空
-        // （正交没有近大远小，不会因为「更靠近相机」而命中）。
+        assert!(
+            o_side[0] > o_center[0],
+            "screen right -> origin translates +X"
+        );
+        assert!(o_side[1] > o_center[1], "screen up -> origin translates +Y");
+        // Center ray hits box; the one shifted horizontally 10 world units misses directly
+        // (orthographic no near-large-far-small, does not hit just because "closer to camera").
         assert!(ray_box(o_center, d_center, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_some());
         assert!(ray_box(o_side, d_side, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_none());
     }
@@ -1711,12 +1714,12 @@ mod tests {
         }
     }
 
-    /// #643：sprite 矩形按 `size` + `pivot` 落在屏幕上的正确像素。
+    /// #643: sprite rect lands on correct screen pixels by `size` + `pivot`.
     #[test]
     fn sprite_rect_uses_size_and_pivot() {
         let camera = camera_2d();
         let frame = camera_frame(&camera);
-        // 半高 10 → 600px 高的视口里每世界单位 30px。
+        // half-height 10 -> 30px per world unit in 600px-high viewport.
         let centered = rect_transform([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let edges =
             projected_rect_edges(&centered, [2.0, 1.0], [0.5, 0.5], &frame, 800.0, 600.0).unwrap();
@@ -1727,17 +1730,17 @@ mod tests {
         assert!((ys.iter().cloned().fold(f32::MIN, f32::max) - 315.0).abs() < 1e-3);
         assert!((ys.iter().cloned().fold(f32::MAX, f32::min) - 285.0).abs() < 1e-3);
 
-        // 底边轴心 `[0.5, 0.0]`：矩形整体在实体上方半个高度。
+        // bottom-edge pivot `[0.5, 0.0]`: rect overall above entity by half height.
         let bottom =
             projected_rect_edges(&centered, [2.0, 1.0], [0.5, 0.0], &frame, 800.0, 600.0).unwrap();
         let min_y = bottom.iter().map(|(a, _)| a.1).fold(f32::MAX, f32::min);
         let max_y = bottom.iter().map(|(a, _)| a.1).fold(f32::MIN, f32::max);
-        // 屏幕 y 向下：抬高半个世界单位 = 屏幕 y 变小 15px。
+        // screen y down: lifting half world unit = screen y decreases 15px.
         assert!((max_y - 300.0).abs() < 1e-3);
         assert!((min_y - 270.0).abs() < 1e-3);
     }
 
-    /// 退化尺寸（没填 `frame_size`）不画，避免出现零面积矩形。
+    /// Degenerate size (no `frame_size` filled) not drawn, avoids zero-area rect.
     #[test]
     fn sprite_rect_rejects_degenerate_sizes() {
         let camera = camera_2d();
@@ -1758,25 +1761,28 @@ mod tests {
         .is_none());
     }
 
-    /// #646：拖放落点 —— 3D 打地面 y = 0，2D 打 z = 0。
+    /// #646: Drag-drop landing point --- 3D hits ground y = 0, 2D hits z = 0.
     #[test]
     fn drop_point_uses_the_authoring_plane_per_view() {
-        // 2D：正视 XY，30px/世界单位，屏幕 (430, 285) = 世界 (+1, +0.5)。
+        // 2D: front-facing XY, 30px/world unit, screen (430, 285) = world (+1, +0.5).
         let mut camera = camera_2d();
         let frame = camera_frame(&camera);
         let ray = ray_from_screen(430.0, 285.0, &frame, 800.0, 600.0);
         let point = drop_point(&camera, ray).unwrap();
-        assert!(point[2].abs() < 1e-4, "2D 落点必须在 z = 0 平面上");
+        assert!(
+            point[2].abs() < 1e-4,
+            "2D landing point must be on z = 0 plane"
+        );
         assert!((point[0] - 1.0).abs() < 1e-3);
         assert!((point[1] - 0.5).abs() < 1e-3);
 
-        // 3D：俯视时中心射线落到原点（target）处的地面。
+        // 3D: top-down center ray lands on ground at origin (target).
         camera.set_2d(false);
         camera.pitch = 0.6;
         let frame = camera_frame(&camera);
         let ray = ray_from_screen(400.0, 300.0, &frame, 800.0, 600.0);
         let point = drop_point(&camera, ray).unwrap();
-        assert!(point[1].abs() < 1e-4, "3D 落点必须在地面上");
+        assert!(point[1].abs() < 1e-4, "3D landing point must be on ground");
         assert!(point[0].abs() < 1e-3 && point[2].abs() < 1e-3);
     }
 
@@ -1784,10 +1790,10 @@ mod tests {
     fn drop_point_rejects_rays_parallel_to_the_plane() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // 默认相机水平看向 −Z，与 y = 0 平行 → 没有落点。
+        // Default camera looks horizontally at −Z, parallel to y = 0 -> no landing point.
         let ray = ray_from_screen(400.0, 300.0, &frame, 800.0, 600.0);
         assert!(drop_point(&camera, ray).is_none());
-        // 平行射线 / 朝平面外飞的射线都拒绝；垂直向下的射线正常投影到地面。
+        // Parallel rays / rays flying away from plane all rejected; vertically downward ray normally projects to ground.
         assert!(drop_point(&camera, ([0.0, 5.0, 0.0], [1.0, 0.0, 0.0])).is_none());
         assert!(drop_point(&camera, ([0.0, 5.0, 0.0], [0.0, 1.0, 0.0])).is_none());
         let point = drop_point(&camera, ([1.0, 5.0, 2.0], [0.0, -1.0, 0.0])).unwrap();
@@ -1817,7 +1823,7 @@ mod tests {
     fn points_behind_the_camera_are_rejected() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // eye 在 +Z 10；再往前是 +Z 20（相机背后）。
+        // eye at +Z 10; further forward is +Z 20 (behind camera).
         assert!(project([0.0, 0.0, 20.0], &frame, 800.0, 600.0).is_none());
     }
 
@@ -1829,7 +1835,7 @@ mod tests {
         let distance = ray_box(origin, direction, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).unwrap();
         assert!((distance - 9.5).abs() < 0.2, "distance = {distance}");
 
-        // 偏到画面角落就不命中。
+        // Offset to screen corner does not hit.
         let (origin, direction) = ray_from_screen(10.0, 10.0, &frame, 800.0, 600.0);
         assert!(ray_box(origin, direction, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_none());
     }
@@ -1857,7 +1863,7 @@ mod tests {
         let picked = pick_entity((400.0, 300.0), &frame, 800.0, 600.0, &entities);
         assert_eq!(picked, Some(0));
 
-        // 右移命中第二个。
+        // Right shift hits second one.
         let (x, _, _) = project([3.0, 0.0, 0.0], &frame, 800.0, 600.0).unwrap();
         let picked = pick_entity((x, 300.0), &frame, 800.0, 600.0, &entities);
         assert_eq!(picked, Some(1));
@@ -1865,7 +1871,7 @@ mod tests {
 
     #[test]
     fn projection_follows_the_configured_fov() {
-        // #416：窄视场把同样的世界偏移推到更靠屏幕边缘的位置。
+        // #416: narrow FOV pushes same world offset closer to screen edge.
         let mut camera = camera();
         let frame = camera_frame(&camera);
         let (wide_x, _, _) = project([1.0, 0.0, 0.0], &frame, 800.0, 600.0).unwrap();
@@ -1876,9 +1882,9 @@ mod tests {
         let narrow_offset = (narrow_x - 400.0).abs();
         assert!(
             narrow_offset > wide_offset * 1.5,
-            "30° 偏移 {narrow_offset} 应该明显大于 60° 偏移 {wide_offset}"
+            "30° offset {narrow_offset} should be clearly larger than 60° offset {wide_offset}"
         );
-        // 拾取射线与投影互逆：同一屏幕点的射线方向一致。
+        // Picking ray and projection are inverses: same screen point ray direction consistent.
         let frame = camera_frame(&camera);
         let (origin, direction) = ray_from_screen(narrow_x, 300.0, &frame, 800.0, 600.0);
         assert!(origin.iter().all(|value| value.is_finite()));
@@ -1887,7 +1893,7 @@ mod tests {
 
     #[test]
     fn overlapping_hits_are_returned_near_to_far() {
-        // #416：候选集按距离排序，第一次点击选最近的。
+        // #416: candidate set sorted by distance, first click picks nearest.
         let camera = camera();
         let frame = camera_frame(&camera);
         let entities = vec![
@@ -1909,7 +1915,7 @@ mod tests {
             ),
         ];
         let hits = pick_entities_with_bounds((400.0, 300.0), &frame, 800.0, 600.0, &entities);
-        assert_eq!(hits, vec![1, 0], "近的 z = 2 在前，远的 z = -5 在后");
+        assert_eq!(hits, vec![1, 0], "near z = 2 in front, far z = -5 behind");
         assert_eq!(
             pick_entity_with_bounds((400.0, 300.0), &frame, 800.0, 600.0, &entities),
             Some(1)
@@ -1932,33 +1938,33 @@ mod tests {
         assert_eq!(
             pick_entity_with_bounds((x, y), &frame, 800.0, 600.0, &entities),
             Some(0),
-            "真实 AABB 内应命中"
+            "should hit inside real AABB"
         );
         assert_eq!(
             pick_entity_with_bounds((400.0, 300.0), &frame, 800.0, 600.0, &entities),
             None,
-            "原点处的单位立方体不应再冒充整个精灵"
+            "unit cube at origin should no longer impersonate whole sprite"
         );
     }
 
     #[test]
     fn picking_uses_the_rotated_box_not_its_axis_aligned_bounds() {
-        // 薄板 2 × 0.1 × 2，绕 Z 转 45°：视觉上是斜的，轴对齐盒却是正放的。
+        // Thin plate 2 × 0.1 × 2 rotated 45° around Z: visually slanted, axis-aligned box still upright.
         let plate = TransformJson {
             position: [0.0, 0.0, 0.0],
             rotation: quat_axis_angle(2, std::f32::consts::FRAC_PI_4),
             scale: [2.0, 0.1, 2.0],
         };
         let (origin, direction) = ([0.9f32, 0.0, 5.0], [0.0f32, 0.0, -1.0]);
-        // 轴对齐盒里的空白点（旧实现会误选）现在必须落空。
+        // Empty point in axis-aligned box (old impl would mis-select) now must miss.
         assert!(
             ray_obb(origin, direction, &plate).is_none(),
-            "AABB 角落的空处不应命中旋转后的薄板"
+            "empty AABB corner should not hit rotated thin plate"
         );
-        // 薄板真实的一端（旧实现反而选不中）。
+        // Real end of thin plate (old impl instead missed it).
         assert!(
             ray_obb([0.636, 0.636, 5.0], direction, &plate).is_some(),
-            "旋转后薄板本体应可点中"
+            "rotated thin plate body should be clickable"
         );
     }
 
@@ -1966,7 +1972,7 @@ mod tests {
     fn box_select_matches_a_wall_that_fills_the_viewport() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // 一面 40 × 40 的墙，投影后覆盖整个视口，但四个角都在视口外。
+        // One 40 × 40 wall, projected covers whole viewport, but four corners all outside viewport.
         let wall = TransformJson {
             position: [0.0, 0.0, 0.0],
             rotation: [0.0, 0.0, 0.0, 1.0],
@@ -1980,9 +1986,13 @@ mod tests {
             600.0,
             &entities,
         );
-        assert_eq!(hits, vec![7], "与屏幕矩形相交的大物体应被框选中");
+        assert_eq!(
+            hits,
+            vec![7],
+            "large object intersecting screen rect should be box-selected"
+        );
 
-        // 远离墙的框仍然什么都选不到。
+        // Box far from wall still selects nothing.
         let misses = box_select(
             (4000.0, 4000.0, 4100.0, 4100.0),
             &frame,
@@ -2029,14 +2039,14 @@ mod tests {
 
     #[test]
     fn euler_conversion_handles_the_gimbal_pole_and_degenerate_quat() {
-        // Y = 90° 是万向锁：只能保证整体旋转一致，不保证分量一致。
+        // Y = 90° is gimbal lock: only guarantees overall rotation consistent, not component consistent.
         let quat = euler_degrees_to_quat([20.0, 90.0, 0.0]);
         let back = quat_to_euler_degrees(quat);
         assert!((back[1] - 90.0).abs() < 1e-3, "{back:?}");
         assert_eq!(back[2], 0.0);
-        // 退化四元数不能出 NaN。
+        // Degenerate quaternion must not produce NaN.
         assert_eq!(quat_to_euler_degrees([0.0; 4]), [0.0; 3]);
-        // 未归一化的输入先归一化。
+        // Non-normalized input normalized first.
         let long = euler_degrees_to_quat([0.0, 90.0, 0.0]).map(|value| value * 3.0);
         let back = quat_to_euler_degrees(long);
         assert!((back[1] - 90.0).abs() < 1e-4, "{back:?}");
@@ -2047,11 +2057,11 @@ mod tests {
         let camera = camera();
         let short = gizmo_world_length(&camera, 600.0);
         let tall = gizmo_world_length(&camera, 1200.0);
-        // 屏幕像素长度固定，视口越高，同样的像素对应的世界长度越小。
+        // Screen pixel length fixed; taller viewport means same pixel corresponds to smaller world length.
         assert!((short - tall * 2.0).abs() < 1e-4);
         assert!(
             gizmo_world_length(&camera, 0.0).is_finite(),
-            "退化高度不能除零"
+            "degenerate height cannot divide by zero"
         );
     }
 
@@ -2065,10 +2075,10 @@ mod tests {
         assert!(px_per_unit > 1.0);
         let middle = ((start.0 + end.0) * 0.5, (start.1 + end.1) * 0.5);
         let hit = pick_gizmo_axis(middle, &frame, [0.0, 0.0, 0.0], length, 800.0, 600.0);
-        let (axis, _, _) = hit.expect("X 轴命中");
-        assert_eq!(axis, 0, "水平方向最接近 X 轴");
+        let (axis, _, _) = hit.expect("X axis hit");
+        assert_eq!(axis, 0, "horizontal direction closest to X axis");
 
-        // 远离所有轴 → 不命中。
+        // Away from all axes -> no hit.
         assert!(
             pick_gizmo_axis((10.0, 590.0), &frame, [0.0, 0.0, 0.0], length, 800.0, 600.0).is_none()
         );
@@ -2082,7 +2092,7 @@ mod tests {
         assert!((rotated[1]).abs() < 1e-4);
         assert!((rotated[2] - 1.0).abs() < 1e-4, "+Y → +Z");
 
-        // 组合：绕 X 90° 再绕 Y 90°。
+        // Composition: rotate X 90° then Y 90°.
         let qx = quat_axis_angle(0, std::f32::consts::FRAC_PI_2);
         let qy = quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
         let combined = quat_normalize(quat_mul(qy, qx));
@@ -2138,7 +2148,7 @@ mod tests {
     #[test]
     fn basis_from_quat_rotates_axes() {
         let basis = basis_from_quat(quat_axis_angle(1, std::f32::consts::FRAC_PI_2));
-        // 绕 Y 90°：X → −Z，Y 不变，Z → X。
+        // Rotate Y 90°: X -> −Z, Y unchanged, Z -> X.
         assert!((basis[0][2] + 1.0).abs() < 1e-4);
         assert!((basis[1][1] - 1.0).abs() < 1e-4);
         assert!((basis[2][0] - 1.0).abs() < 1e-4);
@@ -2153,10 +2163,13 @@ mod tests {
         doc.entities[child].transform.rotation = quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
 
         let x = quat_rotate(world_rotation(&doc, child), [1.0, 0.0, 0.0]);
-        assert!((x[0] + 1.0).abs() < 1e-4, "两级 90° = 180°，X → −X");
+        assert!((x[0] + 1.0).abs() < 1e-4, "two 90° = 180°, X -> −X");
 
         let parent_x = quat_rotate(parent_world_rotation(&doc, child), [1.0, 0.0, 0.0]);
-        assert!((parent_x[2] + 1.0).abs() < 1e-4, "父级只含 Root 自身旋转");
+        assert!(
+            (parent_x[2] + 1.0).abs() < 1e-4,
+            "parent only has Root own rotation"
+        );
     }
 
     #[test]
@@ -2205,7 +2218,7 @@ mod tests {
 
     #[test]
     fn box_select_starts_where_the_drag_started_not_at_the_viewport_origin() {
-        // 视口左边有层级面板时原点不为零（#422）：屏幕坐标必须先减去它。
+        // Viewport left has hierarchy panel origin non-zero (#422): screen coordinates must subtract it first.
         let origin = (300.0, 120.0);
         assert_eq!(
             local_box((700.0, 500.0), (720.0, 520.0), origin),
@@ -2220,13 +2233,13 @@ mod tests {
         let transform = TransformJson::default();
         let edges = projected_box_edges(&transform, &frame, 800.0, 600.0).expect("in front");
         assert_eq!(edges.len(), 12);
-        // 单位立方体在原点、相机沿 +Z 后退 10：中心应该落在屏幕中心附近。
+        // Unit cube at origin, camera backed off along +Z by 10: center should fall near screen center.
         let center_x: f32 = edges.iter().map(|(a, b)| (a.0 + b.0) * 0.5).sum::<f32>() / 12.0;
         let center_y: f32 = edges.iter().map(|(a, b)| (a.1 + b.1) * 0.5).sum::<f32>() / 12.0;
         assert!((center_x - 400.0).abs() < 1.0, "{center_x}");
         assert!((center_y - 300.0).abs() < 1.0, "{center_y}");
 
-        // 相机背后的盒子不画（否则会画出穿透屏幕的线）。
+        // Box behind camera not drawn (otherwise draws lines penetrating screen).
         let behind = TransformJson {
             position: [0.0, 0.0, 50.0],
             ..TransformJson::default()
@@ -2253,7 +2266,7 @@ mod tests {
         let world = world_position(&doc, child);
         assert!(
             (world[0] - 3.0).abs() < 1e-4,
-            "父缩放作用在子局部位置上: {world:?}"
+            "parent scale applies to child local position: {world:?}"
         );
         assert!((world[1] - 2.0).abs() < 1e-4);
         assert!((world[2] - 3.0).abs() < 1e-4);
@@ -2268,30 +2281,33 @@ mod tests {
         doc.entities[parent].transform.position = [100.0, 0.0, 0.0];
         let child = doc.add_named_child(Some(parent), "Child");
 
-        // 单位立方体：半对角线 = sqrt(3)/2 ≈ 0.866。
+        // Unit cube: half-diagonal = sqrt(3)/2 ≈ 0.866.
         let (center, radius) = world_bounds(&doc, &[child]).expect("bounds");
         assert!(
             (center[0] - 100.0).abs() < 1e-4,
-            "子物体应在世界 x=100: {center:?}"
+            "child should be at world x=100: {center:?}"
         );
         assert!((radius - 0.866_025).abs() < 1e-3, "radius {radius}");
 
-        // 父缩放放大包围盒。
+        // Parent scale enlarges bounding box.
         doc.entities[parent].transform.scale = [10.0, 1.0, 1.0];
         let (_, scaled_radius) = world_bounds(&doc, &[child]).expect("bounds");
         assert!(
             scaled_radius > radius * 5.0,
-            "缩放后半径应变大: {scaled_radius}"
+            "radius after scale should grow: {scaled_radius}"
         );
 
-        // 旋转不改变立方体的包围球半径（只是换了朝向）。
+        // Rotation does not change cube bounding sphere radius (only changes orientation).
         doc.entities[parent].transform.scale = [1.0; 3];
         doc.entities[parent].transform.rotation = euler_degrees_to_quat([30.0, 45.0, 10.0]);
         let (_, rotated_radius) = world_bounds(&doc, &[child]).expect("bounds");
-        assert!((rotated_radius - radius).abs() < 1e-3, "旋转不该改变半径");
+        assert!(
+            (rotated_radius - radius).abs() < 1e-3,
+            "rotation should not change radius"
+        );
     }
 
-    /// #991：2D 精灵要按贴图尺寸取景，不能拿单位立方体顶替。
+    /// #991: 2D sprite framing must use texture size, cannot substitute unit cube.
     #[test]
     fn world_bounds_uses_the_sprite_extent_from_the_document() {
         let mut doc = SceneDoc::default();
@@ -2306,14 +2322,14 @@ mod tests {
             }),
         );
         let (_, radius) = world_bounds(&doc, &[entity]).expect("bounds");
-        // 64×16 贴图 @1 ppu → 32×8 半尺寸，再加 ±0.05 的厚度。
+        // 64×16 texture @1 ppu -> 32×8 half size, then add ±0.05 thickness.
         let expected = (32.0f32 * 32.0 + 8.0 * 8.0 + 0.05 * 0.05).sqrt();
         assert!(
             (radius - expected).abs() < 1e-2,
-            "半径应来自贴图尺寸 {expected}，实际 {radius}"
+            "radius should come from texture size {expected}, actual {radius}"
         );
 
-        // 没写 `frame_size` 时退回单位立方体（引擎才知道整张纹理多大）。
+        // Falls back to unit cube when `frame_size` not written (only engine knows whole texture size).
         doc.entities[entity].components.insert(
             "prism_engine::scene::SpriteRenderer".to_string(),
             serde_json::json!({
@@ -2323,10 +2339,13 @@ mod tests {
             }),
         );
         let (_, unit) = world_bounds(&doc, &[entity]).expect("bounds");
-        assert!((unit - 0.866_025).abs() < 1e-3, "退回单位立方体: {unit}");
+        assert!(
+            (unit - 0.866_025).abs() < 1e-3,
+            "fell back to unit cube: {unit}"
+        );
     }
 
-    /// 碰撞体比精灵更贴形状，取景时优先用它。
+    /// Collider fits shape better than sprite, preferred for framing.
     #[test]
     fn world_bounds_prefers_the_collider_shape() {
         let mut doc = SceneDoc::default();
@@ -2343,11 +2362,11 @@ mod tests {
         let expected = (4.0f32 + 1.0 + 0.25).sqrt();
         assert!(
             (radius - expected).abs() < 1e-3,
-            "碰撞体半尺寸 2×1×0.5 → 半径 {expected}，实际 {radius}"
+            "collider half-size 2×1×0.5 -> radius {expected}, actual {radius}"
         );
     }
 
-    /// 编辑器注入的 bounds 优先于文档里能算出来的部分（贴图尺寸只有引擎知道）。
+    /// Editor-injected bounds take precedence over document-computable part (texture size only engine knows).
     #[test]
     fn world_bounds_with_uses_the_injected_bounds() {
         let mut doc = SceneDoc::default();
@@ -2357,22 +2376,34 @@ mod tests {
             max: [32.0, 8.0, 0.05],
         };
         let (_, radius) = world_bounds_with(&doc, &[entity], |_| Some(injected)).expect("bounds");
-        assert!(radius > 32.0, "注入 64×16 后半径应大于 32，实际 {radius}");
+        assert!(
+            radius > 32.0,
+            "after injecting 64×16 radius should exceed 32, actual {radius}"
+        );
         let (_, unit) = world_bounds(&doc, &[entity]).expect("bounds");
-        assert!(unit < 1.0, "同一实体没有注入时仍是单位立方体: {unit}");
+        assert!(
+            unit < 1.0,
+            "same entity without injection still unit cube: {unit}"
+        );
     }
 
     #[test]
     fn world_bounds_handles_empty_and_broken_input() {
         let doc = SceneDoc::default();
         assert!(world_bounds(&doc, &[]).is_none());
-        assert!(world_bounds(&doc, &[7]).is_none(), "越界索引跳过");
+        assert!(
+            world_bounds(&doc, &[7]).is_none(),
+            "out-of-bounds index skipped"
+        );
 
         let mut doc = SceneDoc::default();
         let entity = doc.add_named_child(None, "Tiny");
         doc.entities[entity].transform.scale = [0.0; 3];
-        let (_, radius) = world_bounds(&doc, &[entity]).expect("零缩放仍要有一个半径");
-        assert_eq!(radius, 0.25, "半径下限让取景距离不会塌到 0");
+        let (_, radius) = world_bounds(&doc, &[entity]).expect("zero scale still needs a radius");
+        assert_eq!(
+            radius, 0.25,
+            "radius floor prevents framing distance collapsing to 0"
+        );
     }
 
     #[test]
@@ -2394,8 +2425,8 @@ mod tests {
 
     #[test]
     fn scaled_boxes_report_world_space_distance() {
-        // 回归 #403：旧 Tauri 实现把 slab 参数又除以一次 |M⁻¹·dir|，
-        // 导致返回距离跟实体缩放成正比（scale 4 时距离翻 4 倍）。
+        // Regression #403: old Tauri impl divided slab param again by |M⁻¹·dir|,
+        // causing returned distance proportional to entity scale (scale 4 -> distance ×4).
         let origin = [0.0f32, 0.0, 5.0];
         let direction = [0.0f32, 0.0, -1.0];
         for scale in [1.0f32, 2.0, 4.0] {
@@ -2415,8 +2446,8 @@ mod tests {
 
     #[test]
     fn pick_prefers_a_near_scaled_box_over_a_far_unit_box() {
-        // 同一个屏幕点上重叠两个盒子：近处的大盒子（scale 4，前表面 z = 2）
-        // 必须压过远处的小盒子（scale 1，前表面 z = -9.5）。
+        // Two boxes overlapping at same screen point: near large box (scale 4, front surface z = 2)
+        // must beat far small box (scale 1, front surface z = -9.5).
         let camera = camera();
         let frame = camera_frame(&camera);
         let entities = vec![
@@ -2440,7 +2471,7 @@ mod tests {
         assert_eq!(
             pick_entity((400.0, 300.0), &frame, 800.0, 600.0, &entities),
             Some(0),
-            "近处缩放实体应该赢，而不是被放大后的距离挤到后面"
+            "near scaled entity should win, not be pushed back by enlarged distance"
         );
     }
 

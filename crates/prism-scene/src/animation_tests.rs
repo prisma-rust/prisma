@@ -1,4 +1,4 @@
-//! `animation` 采样测试。
+//! Animation sampling tests.
 
 use super::*;
 
@@ -54,7 +54,7 @@ fn keys_on_the_same_frame_do_not_divide_by_zero() {
 #[test]
 fn a_non_finite_time_samples_the_start_of_the_track() {
     let keys = track(&[(0.0, [1.0; 3]), (2.0, [5.0; 3])]);
-    // NaN / Infinity 都按 0 处理：宁可停在起始姿势，也不要写出 NaN 变换。
+    // NaN / Infinity are treated as 0: better to stop at the initial pose than write NaN transforms.
     assert_eq!(sample_vec3(&keys, f32::NAN), Some([1.0; 3]));
     assert_eq!(sample_vec3(&keys, f32::INFINITY), Some([1.0; 3]));
 }

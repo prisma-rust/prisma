@@ -1,12 +1,12 @@
-//! 项目级渲染设置（`assets/settings.ini` 的 `[render]` 段）。
+//! Project-level render settings (`[render]` section of the engine settings file).
 //!
-//! 引擎启动时由 `prism_app::load_config` 读取并覆盖 `RenderSettings`，
-//! 因此这里的字段就是「编辑器 → 运行时」的持久化契约。读写保留文件里
-//! 其它段（`[app]` / `[window]` / `[build]`），但 INI 往返不会保留注释。
+//! Read by `prism_app::load_config` at engine startup to override `RenderSettings`,
+//! so fields here are the "editor → runtime" persistence contract. Read/write preserves other
+//! sections in the file (`[app]` / `[window]` / `[build]`), but INI round-trip does not preserve comments.
 //!
-//! 这里刻意重复一份字段定义（而不是依赖 `prism-engine`）：编辑器后端
-//! 必须保持 Vulkan-free。字段名/取值与 `prism_engine::config::RenderConfig`
-//! 一一对应。
+//! Here deliberately duplicates field definitions (rather than depending on `prism-engine`): editor backend
+//! must stay Vulkan-free. Field names / values correspond one-to-one with `prism_engine::config::RenderConfig`.
+//! One-to-one correspondence with the above.
 
 use std::path::{Path, PathBuf};
 
@@ -15,21 +15,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::ini::IniDocument;
 
-/// 前端使用的渲染设置（camelCase JSON）。
+/// Render settings for frontend use (camelCase JSON).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderSettingsData {
-    /// `"raster"` 或 `"path_trace"`。
+    /// `"raster"` or `"path_trace"`.
     pub render_mode: String,
-    /// PBR isolate 位掩码（0 = 正常渲染）。
+    /// PBR isolate bit mask (0 = normal render).
     pub debug_flags: u32,
-    /// 0 = Reinhard, 1 = ACES, 2 = passthrough（2D / 像素画，保留源色）。
+    /// 0 = Reinhard, 1 = ACES, 2 = passthrough (2D / pixel art, preserve source colors).
     pub tonemap_mode: u32,
-    /// 0 = HDR tonemap, 1 = depth, 2 = view-space normal。
+    /// 0 = HDR tonemap, 1 = depth, 2 = view-space normal.
     pub debug_rt: u32,
     pub pt_max_bounces: u32,
     pub pt_ray_max_distance: f32,
-    /// 0 = 无限累积。
+    /// 0 = unlimited accumulation.
     pub pt_max_iterations: u32,
 }
 
@@ -53,38 +53,40 @@ impl RenderSettingsData {
             "raster" | "path_trace" => {}
             other => {
                 return Err(format!(
-                    "render_mode 只能是 \"raster\" 或 \"path_trace\"（收到 {other:?}）"
+                    "render_mode can only be \"raster\" or \"path_trace\" (got {other:?})"
                 ))
             }
         }
         if self.tonemap_mode > 2 {
-            return Err("tonemap_mode 只能是 0（Reinhard）、1（ACES）或 2（Passthrough）".into());
+            return Err(
+                "tonemap_mode can only be 0 (Reinhard), 1 (ACES), or 2 (Passthrough)".into(),
+            );
         }
         if self.debug_rt > 2 {
-            return Err("debug_rt 只能是 0 / 1 / 2".into());
+            return Err("debug_rt can only be 0 / 1 / 2".into());
         }
         if !(1..=64).contains(&self.pt_max_bounces) {
-            return Err("pt_max_bounces 必须在 1..=64".into());
+            return Err("pt_max_bounces must be in 1..=64".into());
         }
         if !(self.pt_ray_max_distance.is_finite() && self.pt_ray_max_distance > 0.0) {
-            return Err("pt_ray_max_distance 必须是正数".into());
+            return Err("pt_ray_max_distance must be positive".into());
         }
         Ok(())
     }
 }
 
-/// 写端目标：`assets/settings.ini`。
+/// Write target: the engine settings file.
 pub fn settings_path(root: &Path) -> PathBuf {
     root.join("assets").join("settings.ini")
 }
 
-/// 读取现有配置文档。文件不存在时返回空文档（= 全部默认值）。
+/// Read existing config document. Missing file returns empty document (= all default values).
 fn read_document(root: &Path) -> Result<IniDocument, String> {
     let path = settings_path(root);
     match std::fs::read_to_string(&path) {
         Ok(text) => Ok(IniDocument::parse(&text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(IniDocument::default()),
-        Err(error) => Err(format!("无法读取 {}: {error}", path.display())),
+        Err(error) => Err(format!("Cannot read {}: {error}", path.display())),
     }
 }
 
@@ -92,13 +94,13 @@ fn write_document(root: &Path, document: &IniDocument) -> Result<(), String> {
     let path = settings_path(root);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("无法创建 {}: {error}", parent.display()))?;
+            .map_err(|error| format!("Cannot create {}: {error}", parent.display()))?;
     }
     std::fs::write(&path, document.render())
-        .map_err(|error| format!("无法写入 {}: {error}", path.display()))
+        .map_err(|error| format!("Cannot write {}: {error}", path.display()))
 }
 
-/// 读取 `[render]` 段（文件/段缺失时返回默认值）。
+/// Read `[render]` section (returns defaults when file / section missing).
 pub fn read_render_settings(root: &Path) -> Result<RenderSettingsData, String> {
     let document = read_document(root)?;
     let mut data = RenderSettingsData::default();
@@ -126,7 +128,7 @@ pub fn read_render_settings(root: &Path) -> Result<RenderSettingsData, String> {
     Ok(data)
 }
 
-/// 写入 `[render]` 段（保留文件中的其它段）。
+/// Write `[render]` section (preserves other sections in file).
 pub fn write_render_settings(root: &Path, data: &RenderSettingsData) -> Result<(), String> {
     data.validate()?;
 
@@ -226,42 +228,42 @@ pub struct ProjectSettingsData {
 impl ProjectSettingsData {
     fn validate(&self) -> Result<(), String> {
         if self.app.name.trim().is_empty() || self.app.company.trim().is_empty() {
-            return Err("应用名称和公司名不能为空".into());
+            return Err("Application name and company name cannot be empty".into());
         }
         if self.window.title.trim().is_empty() {
-            return Err("窗口标题不能为空".into());
+            return Err("Window title cannot be empty".into());
         }
         if !(320..=16384).contains(&self.window.width)
             || !(240..=16384).contains(&self.window.height)
         {
-            return Err("窗口尺寸必须在 320x240 .. 16384x16384".into());
+            return Err("Window size must be in 320x240 .. 16384x16384".into());
         }
         if self.build.target != "windows" {
-            return Err("目前只支持 windows 构建目标".into());
+            return Err("Only windows build target currently supported".into());
         }
         if !matches!(self.build.profile.as_str(), "debug" | "release") {
-            return Err("构建配置只能是 debug 或 release".into());
+            return Err("Build profile can only be debug or release".into());
         }
         if self.build.output_dir.trim().is_empty() {
-            return Err("输出目录不能为空".into());
+            return Err("Output directory cannot be empty".into());
         }
         Ok(())
     }
 }
 
 // ---------------------------------------------------------------------------
-// 只写入「真正改动的字段」
+// Only write fields **actually changed**
 // ---------------------------------------------------------------------------
 //
-// 编辑器里有多个面板同时编辑同一个 `settings.ini`（项目设置面板管
-// `[app]`/`[window]`/`[build]`/`[render]`，构建面板也改 `[build]`）。面板都是
-// 打开时读一份快照、保存时整段写回，于是一个面板会把另一个面板**没碰过**的
-// 段（以及同段里没碰过的字段）用旧值覆盖掉。
+// Multiple panels in editor edit the same settings file at once (project settings panel handles
+// `[app]`/`[window]`/`[build]`/`[render]`, build panel also edits `[build]`). Each panel reads a
+// snapshot on open, writes whole section back on save, so one panel overwrites sections (and fields
+// within same section) that another panel **never touched** with old values.
 //
-// 这里让前端把「打开时的快照 before」和「现在的值 after」一起发过来，只把
-// 两者不同的叶子写到磁盘上当前的设置里：没改过的字段永远以磁盘为准。
+// Here frontend sends both "snapshot before open" and "current values after" together, only writing
+// changed leaves to disk current settings: untouched fields always defer to disk.
 
-/// 把 `before` → `after` 之间**改动的叶子**合并到 `current` 上。
+/// Merge **changed leaves** between `before` → `after` onto `current`.
 fn merge_changed_values(
     current: serde_json::Value,
     before: &serde_json::Value,
@@ -281,7 +283,7 @@ fn merge_changed_values(
     };
 
     for (key, after_value) in after {
-        // 面板没改这个键（或它根本不在快照里）→ 保留磁盘上的值。
+        // Panel did not change this key (or it was not in snapshot) → keep disk value.
         if before.get(key) == Some(after_value) {
             continue;
         }
@@ -304,15 +306,17 @@ fn merged_settings<T>(current: &T, before: &T, after: &T) -> Result<T, String>
 where
     T: Serialize + DeserializeOwned,
 {
-    let to_value =
-        |value: &T| serde_json::to_value(value).map_err(|error| format!("序列化设置失败: {error}"));
+    let to_value = |value: &T| {
+        serde_json::to_value(value)
+            .map_err(|error| format!("Failed to serialize settings: {error}"))
+    };
     let merged = merge_changed_values(to_value(current)?, &to_value(before)?, &to_value(after)?);
-    serde_json::from_value(merged).map_err(|error| format!("合并设置失败: {error}"))
+    serde_json::from_value(merged).map_err(|error| format!("Failed to merge settings: {error}"))
 }
 
-/// 只写入 `[app]`/`[window]`/`[build]` 中 `before` → `after` 真正改动的字段。
+/// Only write fields in `[app]`/`[window]`/`[build]` actually changed `before` → `after`.
 ///
-/// 其它面板在两次读写之间改过的字段保留磁盘值；`before == after` 时不写文件。
+/// Fields changed by other panels between reads keep disk value; `before == after` does not write file.
 pub fn write_project_settings_diff(
     root: &Path,
     before: &ProjectSettingsData,
@@ -326,7 +330,7 @@ pub fn write_project_settings_diff(
     write_project_settings(root, &merged)
 }
 
-/// 只写入 `[render]` 中 `before` → `after` 真正改动的字段。
+/// Only write fields in `[render]` actually changed `before` → `after`.
 pub fn write_render_settings_diff(
     root: &Path,
     before: &RenderSettingsData,
@@ -340,7 +344,7 @@ pub fn write_render_settings_diff(
     write_render_settings(root, &merged)
 }
 
-/// 读取项目设置（`[app]` / `[window]` / `[build]`）；缺失时使用默认值。
+/// Read project settings (`[app]` / `[window]` / `[build]`); defaults when missing.
 pub fn read_project_settings(root: &Path) -> Result<ProjectSettingsData, String> {
     let document = read_document(root)?;
     let mut data = ProjectSettingsData::default();
@@ -390,7 +394,7 @@ pub fn read_project_settings(root: &Path) -> Result<ProjectSettingsData, String>
     Ok(data)
 }
 
-/// 写入项目设置，保留 `[render]` 等其它段。
+/// Write project settings, preserving `[render]` and other sections.
 pub fn write_project_settings(root: &Path, data: &ProjectSettingsData) -> Result<(), String> {
     data.validate()?;
     let mut document = read_document(root)?;
@@ -513,21 +517,24 @@ mod tests {
         let dir = temp_dir("prism-editor-api-project-settings-diff-panels");
         write_project_settings(&dir, &ProjectSettingsData::default()).unwrap();
 
-        // 构建面板打开时的快照。
+        // Build panel snapshot on open.
         let before = read_project_settings(&dir).unwrap();
 
-        // 项目设置面板在此期间改了 [app]，并已写入磁盘。
+        // Project settings panel changed [app] meanwhile and already wrote disk.
         let mut other = read_project_settings(&dir).unwrap();
         other.app.name = "Renamed".into();
         write_project_settings(&dir, &other).unwrap();
 
-        // 构建面板只改了 [build].output_dir 后保存。
+        // Build panel only changed [build].output_dir then saved.
         let mut after = before.clone();
         after.build.output_dir = "build/out".into();
         write_project_settings_diff(&dir, &before, &after).unwrap();
 
         let saved = read_project_settings(&dir).unwrap();
-        assert_eq!(saved.app.name, "Renamed", "别的面板改过的段被旧快照覆盖了");
+        assert_eq!(
+            saved.app.name, "Renamed",
+            "Section changed by another panel overwritten by old snapshot"
+        );
         assert_eq!(saved.build.output_dir, "build/out");
     }
 
@@ -537,32 +544,38 @@ mod tests {
         write_project_settings(&dir, &ProjectSettingsData::default()).unwrap();
         let before = read_project_settings(&dir).unwrap();
 
-        // 同一段里的另一个字段被别处改了。
+        // Another field in same section changed elsewhere.
         let mut other = read_project_settings(&dir).unwrap();
         other.build.profile = "debug".into();
         write_project_settings(&dir, &other).unwrap();
 
-        // 面板只改窗口宽度（快照里的 build.profile 还是 release，但没改过）。
+        // Panel only changed window width (build.profile in snapshot still release, but untouched).
         let mut after = before.clone();
         after.window.width = 1280;
         write_project_settings_diff(&dir, &before, &after).unwrap();
 
         let saved = read_project_settings(&dir).unwrap();
         assert_eq!(saved.window.width, 1280);
-        assert_eq!(saved.build.profile, "debug", "未改动的同段字段被旧值覆盖了");
+        assert_eq!(
+            saved.build.profile, "debug",
+            "Untouched field in same section overwritten by old value"
+        );
     }
 
     #[test]
     fn project_settings_diff_does_not_rewrite_unchanged_snapshots() {
         let dir = temp_dir("prism-editor-api-project-settings-diff-noop");
-        // 手写文件（写回会丢掉注释）用来证明「没改动就不写文件」。
+        // Hand-written file (writeback drops comments) proves "no change does not write file".
         std::fs::write(settings_path(&dir), "# keep me\n[app]\nname = \"Demo\"\n").unwrap();
 
         let snapshot = read_project_settings(&dir).unwrap();
         write_project_settings_diff(&dir, &snapshot, &snapshot.clone()).unwrap();
 
         let text = std::fs::read_to_string(settings_path(&dir)).unwrap();
-        assert!(text.contains("# keep me"), "无改动时不应重写文件: {text}");
+        assert!(
+            text.contains("# keep me"),
+            "File should not be rewritten with no changes: {text}"
+        );
     }
 
     #[test]
@@ -571,18 +584,21 @@ mod tests {
         write_render_settings(&dir, &RenderSettingsData::default()).unwrap();
         let before = read_render_settings(&dir).unwrap();
 
-        // 别处改了色调映射。
+        // Elsewhere changed tone map.
         let mut other = read_render_settings(&dir).unwrap();
         other.tonemap_mode = 1;
         write_render_settings(&dir, &other).unwrap();
 
-        // 面板只改最大弹射次数。
+        // Panel only changed max bounce count.
         let mut after = before.clone();
         after.pt_max_bounces = 7;
         write_render_settings_diff(&dir, &before, &after).unwrap();
 
         let saved = read_render_settings(&dir).unwrap();
         assert_eq!(saved.pt_max_bounces, 7);
-        assert_eq!(saved.tonemap_mode, 1, "未改动的同段字段被旧值覆盖了");
+        assert_eq!(
+            saved.tonemap_mode, 1,
+            "Untouched field in same section overwritten by old value"
+        );
     }
 }

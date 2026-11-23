@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn gpu_light_size_is_64() {
-    // P3b：点光 + 聚光共用一条 SSBO，多了 direction / params 两个 float4。
+    // P3b: point light + spot light share one SSBO, plus direction / params two float4s.
     assert_eq!(std::mem::size_of::<GpuLight>(), 64);
     assert_eq!(GPU_LIGHT_SIZE, 64);
 }

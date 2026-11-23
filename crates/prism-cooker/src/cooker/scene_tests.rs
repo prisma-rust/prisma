@@ -31,7 +31,7 @@ fn cook_scene_json(json: &[u8]) -> Result<(SceneCooker, CookResult), CookError> 
     cooker.cook(&ctx).map(|result| (cooker, result))
 }
 
-// ── 样本 scene JSON ────────────────────────────────────────────
+// ── sample  scene JSON ────────────────────────────────────────────
 
 const SCENE_JSON: &str = r#"{
     "version": 1,
@@ -289,10 +289,10 @@ fn cooks_real_intro_scene_with_ui_components() {
     let json = include_bytes!("../../../../projects/template/assets/scenes/intro.scene.json");
     let (cooker, result) = cook_scene_json(json).unwrap();
     let decoded = rscn::decode_scene(&result.cooked_data, cooker.registry()).unwrap();
-    // 4 个 UI 实体 + intro 场景自己的相机（黑场淡入结束后不能露出清屏色，#409）。
+    // 4 UI entities + intro scene's own camera (black fade-in end after cannot reveal clear color, #409).
     assert_eq!(decoded.entities.len(), 5);
-    // 每个 UI 实体都带 `Node` + `Style`（`ComputedLayout` 是运行时输出，不进场景）。
-    // 相机实体不参与 UI 计数，所以这里按「有没有 Node」筛。
+    // Each UI entity carries `Node` + `Style` (`ComputedLayout` is runtime output, not in scene).
+    // Camera entity not counted in UI, so this filters by "has / no Node".
     let (mut nodes, mut styles) = (0, 0);
     for entity in &decoded.entities {
         let names: Vec<String> = entity
@@ -305,7 +305,7 @@ fn cooks_real_intro_scene_with_ui_components() {
                 names
                     .iter()
                     .any(|name| name == "prism_engine::scene::Camera"),
-                "非 UI 实体只允许是相机: {names:?}"
+                "Non-UI entities only allowed to be cameras: {names:?}"
             );
             continue;
         }

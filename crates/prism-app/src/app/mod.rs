@@ -1,14 +1,14 @@
-//! [`App`] — 平台应用层，拥有事件循环。
+//! [`App`] — platform application layer, owns event loop.
 //!
-//! 窗口后端由 feature 决定（见 crate 文档）：`winit-backend` 走
-//! [`ApplicationHandler`]，`win32-native` 走 [`App::run_win32`] 的
-//! Win32 消息循环。两者共用同一份引擎/渲染/关闭逻辑
-//! （[`App::tick_frame`] / [`App::shutdown`]），差别只在窗口与事件来源。
+//! Window backend decided by feature (see crate docs): `winit-backend` uses
+//! [`ApplicationHandler`], `win32-native` uses [`App::run_win32`]'s
+//! Win32 message loop. Both share the same engine/render/shutdown logic
+//! ([`App::tick_frame`] / [`App::shutdown`]), difference only in window and event source.
 //!
-//! # 架构（渲染线程 = 后台线程）
+//! # Architecture (render thread = background thread)
 //!
 //! ```text
-//! 主线程 (窗口事件)               渲染线程
+//! Main thread (window events)           Render thread
 //!   ──────────────────────────         ──────────────
 //!   about_to_wait:                       loop:
 //!     engine.fixed_update × N             take_packet()
@@ -19,19 +19,19 @@
 //!     frame_hook.on_tick ──overlay_msg──►
 //! ```
 //!
-//! 渲染线程独立于窗口事件运行。垂直同步仅阻塞渲染线程——主线程继续执行。
+//! Render thread runs independently of window events. VSync only blocks render thread --- main thread continues executing.
 //!
-//! **初始化**（窗口在主线程快速创建，渲染器在渲染线程异步构建）：
+//! **Initialization** (window quickly created on main thread, renderer asynchronously constructed on render thread):
 //! ```text
 //!   App::new:
 //!     Engine::empty → pre_init → init_core → init_config → init_resources
 //!     → init_scene → runtime_initialize
 //!   [resumed]:
-//!     PlatformContext::create_window（主线程，~数毫秒）→ 计算扩展名/场景光照
-//!     → 生成渲染线程（窗口启动即返回，事件不被阻塞）
-//!   [渲染线程]:
-//!     GraphRenderer::new（~数百毫秒，不阻塞主线程）→ warmup → set_environment
-//!     → 进入帧循环；资源解析经 asset_requests/asset_results 通道异步完成
+//!     PlatformContext::create_window (main thread, ~few ms) → compute extension name / scene lighting
+//!     → create render thread (returns on window start, events not blocked)
+//!   [render thread]:
+//!     GraphRenderer::new (~few hundred ms, not blocking main thread) → warmup → set_environment
+//!     → enter frame loop; resource resolution completed asynchronously via asset_requests/asset_results channel
 //! ```
 
 use std::path::Path;
@@ -53,10 +53,10 @@ use prism_platform::{
     WindowConfig,
 };
 
-/// 「窗口像素 → UI 布局空间」的映射（#988）。
+/// Mapping from "window pixels → UI layout space" (#988).
 ///
-/// 没有 `internal_resolution` 时是恒等映射（旧行为）。生效时 UI 与 PostPass 的
-/// 目标矩形重合，缩放比例 = 矩形宽度 / 窗口宽度，偏移 = 矩形的居中偏移。
+/// When no `internal_resolution` it is identity mapping (old behavior). When effective UI and PostPass target rectangle
+/// target rectangle coincide, scale ratio = rect width / window width, offset = rect centered offset.
 fn ui_layout_mapping(
     surface_w: u32,
     surface_h: u32,
@@ -94,10 +94,10 @@ use crate::render_runner::{render_thread_main, OverlayFactory, RenderTarget};
 use crate::render_shared::{FrameImage, RenderShared, RenderStats};
 
 // ===========================================================================
-// Subsystem 枚举
+// Subsystem enum
 // ===========================================================================
 
-/// 引擎子系统，用户项目通过 [`App::with_subsystem`] 显式声明。
+/// Engine subsystem, explicitly declared by user project via [`App::with_subsystem`].
 mod hot_reload;
 mod input;
 #[cfg(test)]
@@ -110,15 +110,15 @@ use input::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subsystem {
-    /// 渲染子系统（窗口 + Vulkan + 渲染线程）。
+    /// Render subsystem (window + Vulkan + render thread).
     Render,
-    /// 音频引擎（AudioEngine + 音频解码线程）。
+    /// Audio engine (AudioEngine + audio decode thread).
     Audio,
-    /// 物理模拟（Rapier 后台线程）。
+    /// Physics simulation (Rapier background thread).
     Physics,
-    /// 场景系统
+    /// Scene system
     Scene,
-    /// 资源系统
+    /// Asset system
     Asset,
     UI,
     Animation,
@@ -142,7 +142,7 @@ impl Subsystem {
 // App
 // ===========================================================================
 
-/// Application shell：拥有引擎、窗口与渲染线程。
+/// Application shell: owns engine, window and render thread.
 /// Who owns the cursor: the app (FPS-style games) or the host (editors, tools).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PointerLockPolicy {
@@ -157,50 +157,50 @@ pub enum PointerLockPolicy {
 }
 
 pub struct App {
-    // ---------- 启动配置 ----------
+    // ---------- Startup config ----------
     config: AppConfig,
 
-    /// 已启用的子系统位掩码。
+    /// Enabled subsystem bitmask.
     subsystems: u32,
 
-    // ---------- 引擎（主线程） ----------
+    // ---------- Engine (main thread) ----------
     engine: Option<Engine>,
     asset_resolver: GpuAssetResolver,
 
-    // ---------- 渲染线程 ----------
+    // ---------- Render thread ----------
     render_shared: Option<Arc<RenderShared>>,
     render_running: Option<Arc<AtomicBool>>,
     render_thread: Option<JoinHandle<()>>,
 
-    // ---------- 窗口上下文 ----------
-    /// 主线程持有的窗口（`Arc` 与渲染线程共享）。`None` 表示尚未创建。
+    // ---------- Window context ----------
+    /// Window held by main thread (`Arc` shared with render thread). `None` means not yet created.
     platform: Option<PlatformContext>,
 
-    // ---------- 帧钩子（编辑器等宿主注入） ----------
+    // ---------- Frame hook (injected by editor/host etc) ----------
     frame_hook: Option<Box<dyn FrameHook>>,
     render_settings: RenderSettings,
-    /// 运行时诊断 HUD（F3；无 UI 框架依赖）。
-    /// 运行时诊断 HUD（F3）。只在编译了引擎调试层时存在。
+    /// Runtime diagnostics HUD (F3; no UI framework dependency).
+    /// Runtime diagnostics HUD (F3). Only exists when engine debug layer compiled.
     #[cfg(feature = "engine-debug")]
     debug_hud: DebugHud,
 
-    // ---------- 每帧状态 ----------
+    // ---------- Per-frame state ----------
     display_aspect: f32,
-    /// 开发期资产热重载（#495）：`PRISMA_HOT_RELOAD` 打开时轮询 `.pak`。
+    /// Dev-time asset hot reload (#495): polls `.pak` when `PRISMA_HOT_RELOAD` enabled.
     ///
-    /// 发布版默认关（不建线程、不做任何 stat）；打开后重建 `.pak` 不用退出
-    /// 再进游戏。旧 GPU 句柄不会立即释放（渲染器还没有按句柄回收的接口），
-    /// 所以只适合开发期反复迭代。
+    /// Release default off (no thread, no stats); after opening, rebuild `.pak` without exiting
+    /// and re-entering game. Old GPU handles not immediately released (renderer has no per-handle recycle interface yet),
+    /// so only suitable for dev-time repeated iteration.
     pak_watcher: Option<prism_engine::scene::hot_reload::HotReloadWatcher>,
     surface_rotation: glam::Mat4,
 
-    // ---------- 输入（主线程） ----------
+    // ---------- Input (main thread) ----------
     input: InputManager,
     /// Whether the app grabs the pointer on its own (FPS-style games) or leaves
     /// cursor ownership to the host (editors, tools).
     pointer_lock: PointerLockPolicy,
 
-    // ---------- 音频（主线程，`audio` feature） ----------
+    // ---------- Audio (main thread, `audio` feature) ----------
     #[cfg(feature = "audio")]
     audio: Option<AudioEngine>,
     #[cfg(feature = "audio")]
@@ -209,45 +209,45 @@ pub struct App {
     audio_decode_tx: Option<flume::Sender<crate::audio_decode_runner::DecodeRequest>>,
     #[cfg(feature = "audio")]
     audio_decode_rx: Option<flume::Receiver<crate::audio_decode_runner::DecodeResult>>,
-    /// 场景音频驱动：把 ECS 的 `AudioSource` 接到混音器（#508）。
+    /// Scene audio driver: connects ECS `AudioSource` to mixer (#508).
     #[cfg(feature = "audio")]
     scene_audio: crate::scene_audio::SceneAudio,
-    /// `SceneAudio` 声部 id → 真实播放句柄。
+    /// `SceneAudio` voice id → real playback handle.
     #[cfg(feature = "audio")]
     audio_voices: crate::scene_audio::VoiceHandles,
-    /// `GameWorld::play_sound` 排队的一次性音效（#987）：id → 播放句柄 + 片段。
+    /// `GameWorld::play_sound` queued one-shot sounds (#987): id → playback handle + clip.
     #[cfg(feature = "audio")]
     one_shot_sounds: std::collections::HashMap<u32, crate::one_shot::OneShotSound>,
 
-    // ---------- 物理（主线程 + 独立步进线程，`physics` feature） ----------
-    /// 每个固定步把 ECS 里的 `Rigidbody` / `Collider` 送进 rapier，并把结果写回
-    /// `LocalTransform`（#522）。`None` = 未启用 / 构建没有 physics feature。
+    // ---------- Physics (main thread + independent step thread, `physics` feature) ----------
+    /// Each fixed step sends ECS `Rigidbody` / `Collider` to rapier, and writes results back to
+    /// `LocalTransform` (#522). `None` = not enabled / build without physics feature.
     #[cfg(feature = "physics")]
     physics: Option<crate::physics_runner::PhysicsRuntime>,
 
-    // ---------- 窗口大小调整 ----------
+    // ---------- Window resize ----------
     needs_resize: bool,
 
-    /// 宿主（编辑器）模式下的离屏渲染尺寸。
+    /// Offscreen render size in host (editor) mode.
     ///
-    /// `Some` 表示本实例没有 winit 窗口：`tick_sim` 用它写 `ScreenSize`/宽高比，
-    /// 渲染线程跑 `RenderTarget::Offscreen`，帧经 [`RenderShared::take_frame`] 读回。
+    /// `Some` means this instance has no winit window: `tick_sim` uses it to write `ScreenSize`/aspect ratio,
+    /// render thread runs `RenderTarget::Offscreen`, frames read back via [`RenderShared::take_frame`].
     host_extent: Option<(u32, u32)>,
     /// Optional native window surface supplied by an embedding host.
     host_surface: Option<(prism_platform::SendWindowHandles, Vec<String>)>,
     host_native_surface: bool,
 
-    /// 最近一次修饰键快照（winit 的 `ModifiersChanged` / Win32 的 `GetKeyState`）。
+    /// Latest modifier key snapshot (winit `ModifiersChanged` / Win32 `GetKeyState`).
     ///
-    /// 键盘事件本身不携带修饰键，PBR 分量调试快捷键
-    /// （Shift+1..5 = 分量 bit 10..14）只能从这里判断 Shift 是否按下，
-    /// 否则那 5 个 bit 永远不可达。
+    /// Keyboard event itself does not carry modifier keys, PBR component debug hotkeys
+    /// (Shift+1..5 = component bit 10..14) can only judge whether Shift is pressed from here,
+    /// otherwise those 5 bits are forever unreachable.
     modifiers: Modifiers,
 
     // ---------- lifecycle ----------
     fatal_error: Option<String>,
-    /// 后台挂起标志：`suspended()` 置位、`resumed()` 复位。置位期间
-    /// `about_to_wait` 跳过 `tick_sim`，防止后台空转烧电（T4）。
+    /// Background suspend flag: `suspended()` set, `resumed()` cleared. When set,
+    /// `about_to_wait` skips `tick_sim`, preventing background idle spinning burning battery (T4).
     suspended: bool,
     /// The window was created hidden and must be shown once a frame exists.
     ///
@@ -266,10 +266,10 @@ pub struct App {
     pub(crate) plugin_registry: crate::plugin::PluginRegistry,
 }
 
-/// 把场景里写的资产路径归一化成 pak 内的相对路径。
+/// Normalize asset paths written in scenes to relative paths inside pak.
 ///
-/// 场景作者常写 `assets/` 前缀或相对路径（`../x.hdr`），而 pak 的键是
-/// 去掉 `assets/` 且已经解析过 `.`/`..` 的相对路径；不归一化就会查不到。
+/// Scene authors often write `assets/` prefix or relative paths (`../x.hdr`), while pak keys are
+/// `assets/` stripped and already-resolved `.`/`..` relative paths; without normalization cannot look up.
 fn normalize_asset_path(path: &str) -> String {
     let unified = path.replace('\\', "/");
     let stripped = unified.strip_prefix("assets/").unwrap_or(unified.as_str());
@@ -310,16 +310,16 @@ where
 }
 
 impl App {
-    /// 无参构造 = 默认配置的完整引擎（无演示内容）。
+    /// Parameterless constructor = complete engine with default config (no demo content).
     pub fn new() -> Self {
         Self::with_config(crate::load_config())
     }
 
-    /// 用指定配置创建应用，并跑完所有引擎初始化阶段。
+    /// Create app with specified config, run all engine initialization stages.
     ///
-    /// 用户项目在此之后通过 [`Self::engine_mut`] / [`Self::add_system`] /
-    /// [`Self::insert_resource`] 注册自己的 ECS 内容，最后调用
-    /// [`Self::run`]（桌面）或 [`Self::run_on`]（Android）启动事件循环。
+    /// User projects then register their own ECS content via [`Self::engine_mut`] / [`Self::add_system`] /
+    /// [`Self::insert_resource`] to register their own ECS content, finally call
+    /// [`Self::run`] (desktop) or [`Self::run_on`] (Android) to start event loop.
     pub fn with_config(config: AppConfig) -> Self {
         // Bring the logger up before `build`, which mounts the asset packages and
         // loads the startup scene; their warnings must not be dropped (#1013).
@@ -362,7 +362,7 @@ impl App {
 
         // Phase 1 – Subsystem registration
 
-        // 资源 loading：ResourceManager 由应用层持有并注入引擎。
+        // Resource loading: ResourceManager held by app layer and injected into engine.
         let mut asset_resolver = GpuAssetResolver::new();
         asset_resolver.load_resource_package();
 
@@ -372,20 +372,20 @@ impl App {
         // `update` would paint the full-window placeholder.
         let launch = prism_engine::launch_config::LaunchConfig::from_env();
         if load_scene && !launch.no_scene {
-            // 场景 loading — 启动配置可指定场景名（编辑器/启动器预览用）；
-            // 未指定时沿用「manifest 第一个可解析场景」的默认行为。
+            // Scene loading — launch config can specify scene name (editor/launcher preview);
+            // when not specified follows default behavior "manifest first parseable scene".
             engine.init_scene_named(
                 &mut asset_resolver.resource_manager,
                 launch.scene.as_deref(),
             );
         }
 
-        // 存档目录跟随工程 `[app] company/name`（AppConfig 已从 settings 读好）。
-        // 以前 `scene_state_path()` 用默认配置，所有项目共用一个目录（#484）。
+        // Save directory follows project `[app] company/name` (AppConfig already read from settings).
+        // Previously `scene_state_path()` used default config, all projects shared one directory (#484).
         let _save_dir_span = prism_engine::util::timing::span("app::open_save_directory");
         if let Some(dir) = prism_engine::config::app_data_dir_for(&config) {
-            // 玩家存档（#984）与场景存档同目录：都跟着 `[app] company/name` 走。
-            // 设了 `PRISMA_USER_DATA` 时改用它（便携版 / Android 宿主）。
+            // Player save (#984) and scene save same directory: both follow `[app] company/name`.
+            // when `PRISMA_USER_DATA` set use it instead (portable / Android host).
             let player_data = if std::env::var_os(prism_engine::user_data::ENV_OVERRIDE).is_some() {
                 prism_engine::user_data::save_path(&config.app.name)
             } else {
@@ -397,10 +397,10 @@ impl App {
                 .insert_resource(prism_engine::user_data::UserStore::open(player_data));
         }
 
-        // 运行时 startup callbacks
+        // Runtime startup callbacks
         engine.runtime_initialize();
 
-        // 项目级渲染默认值（`[render]` 段）。
+        // Project-level render defaults (`[render]` section).
         let mut render_settings = RenderSettings::default();
         config.render.apply(&mut render_settings);
         build_span.detail(format!(
@@ -461,10 +461,10 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // ECS 接入（用户项目）
+    // ECS integration (user projects)
     // -----------------------------------------------------------------------
 
-    /// 完全 ECS 访问——world / schedule / timer 等入口都通过 `Engine`。
+    /// Full ECS access — world / schedule / timer etc entry points all via `Engine`.
     /// Current pointer-ownership policy (diagnostics / tests).
     pub fn pointer_lock_policy(&self) -> PointerLockPolicy {
         self.pointer_lock
@@ -479,9 +479,9 @@ impl App {
         self.engine.as_mut().expect("engine alive")
     }
 
-    /// 设置一条音频总线的增益（#508）；`Master` 乘在其它所有总线上。
+    /// Set gain of one audio bus (#508); `Master` multiplies all other buses.
     ///
-    /// 没有 `audio` feature 时是 no-op，方便项目代码无条件调用。
+    /// No-op without `audio` feature, convenient for unconditional project code calls.
     pub fn set_audio_bus_volume(
         &mut self,
         bus: prism_engine::scene::components::AudioBus,
@@ -494,7 +494,7 @@ impl App {
         self
     }
 
-    /// 读取一条音频总线自己的增益（不含 `Master`）；无 `audio` feature 时为 1。
+    /// Read one audio bus's own gain (excluding `Master`); 1 without `audio` feature.
     pub fn audio_bus_volume(&self, bus: prism_engine::scene::components::AudioBus) -> f32 {
         #[cfg(feature = "audio")]
         {
@@ -507,10 +507,10 @@ impl App {
         }
     }
 
-    /// 注册一个 ECS system（等价于 `engine_mut().schedule_mut().add_system`）。
+    /// Register an ECS system (equivalent to `engine_mut().schedule_mut().add_system`).
     ///
-    /// 引擎默认调度（UI 基础设施）在构造时已并入，这里注册的系统
-    /// 在其之后按注册顺序每帧运行。
+    /// Engine default schedule (UI infrastructure) already merged at construction, systems registered here
+    /// run every frame after in registration order.
     pub fn add_system<F>(&mut self, label: &str, f: F) -> &mut Self
     where
         F: FnMut(&mut prism_engine::ecs::World, f32) + 'static,
@@ -568,19 +568,19 @@ impl App {
         self
     }
 
-    /// 插入一个 ECS 资源（等价于 `engine_mut().world_mut().insert_resource`）。
+    /// Insert an ECS resource (equivalent to `engine_mut().world_mut().insert_resource`).
     pub fn insert_resource<R: 'static + Send + Sync>(&mut self, resource: R) -> &mut Self {
         self.engine_mut().world_mut().insert_resource(resource);
         self
     }
 
-    /// 修改应用级渲染设置；用户项目可在启动时选择 Raster 或 PathTrace，
-    /// 不需要依赖编辑器或直接访问渲染器。
+    /// Modify app-level render settings; user projects can choose Raster or PathTrace at startup,
+    /// without depending on editor or direct renderer access.
     pub fn render_settings_mut(&mut self) -> &mut RenderSettings {
         &mut self.render_settings
     }
 
-    /// 以闭包配置应用级渲染设置。
+    /// Configure app-level render settings via closure.
     pub fn with_render_settings(mut self, configure: impl FnOnce(&mut RenderSettings)) -> Self {
         configure(&mut self.render_settings);
         self
@@ -601,38 +601,38 @@ impl App {
         self
     }
 
-    /// 注入帧钩子（编辑器等宿主）。钩子在渲染线程启动前被询问外部
-    /// 叠加层工厂，之后每帧收到 tick 与窗口事件转发。
+    /// Inject frame hook (editor etc host). Hook asked for external overlay factory before render thread starts,
+    /// overlay factory, then receives tick and window event forwarding each frame.
     pub fn with_frame_hook(mut self, hook: impl FrameHook + 'static) -> Self {
         self.frame_hook = Some(Box::new(hook));
         self
     }
 
-    /// 显式声明需要启用某个引擎子系统。
+    /// Explicitly declare need to enable an engine subsystem.
     ///
-    /// 不调用此方法则对应子系统不创建（无窗口、无音频、无物理等）。
+    /// If not called, corresponding subsystem not created (no window, no audio, no physics, etc.).
     pub fn with_subsystem(mut self, subsystem: Subsystem) -> Self {
         self.enable_subsystem(subsystem);
         self
     }
 
-    /// 显式启用某个引擎子系统。
+    /// Explicitly enable an engine subsystem.
     pub fn enable_subsystem(&mut self, subsystem: Subsystem) -> &mut Self {
         let bit = subsystem.bit();
         if self.subsystems & bit != 0 {
-            return self; // 已启用，跳过
+            return self; // already enabled, skip
         }
         self.subsystems |= bit;
 
         match subsystem {
             Subsystem::Render => {
-                // 渲染在 resumed() 时条件创建
+                // render conditionally created at resumed()
             }
             Subsystem::Physics => {
                 #[cfg(feature = "physics")]
                 {
-                    // #522：物理线程每个固定步积分 `Rigidbody`，结果写回
-                    // `LocalTransform`；`Collider` 同时继续服务射线查询。
+                    // #522: physics thread integrates `Rigidbody` each fixed step, results written back to
+                    // `LocalTransform`; `Collider` continues serving raycast queries.
                     self.physics = Some(crate::physics_runner::PhysicsRuntime::spawn());
                 }
                 #[cfg(not(feature = "physics"))]
@@ -646,7 +646,7 @@ impl App {
                 {
                     match AudioEngine::new(prism_audio::AudioConfig::default()) {
                         Ok(engine) => self.audio = Some(engine),
-                        // 没有声卡 / 设备被独占时不要静默：一次性音效会因此全部丢弃。
+                        // do not stay silent when no sound card / device is exclusive: one-shot sounds would all be discarded.
                         Err(error) => log::warn!(
                             "audio subsystem requested but failed to initialize: {error}"
                         ),
@@ -660,14 +660,14 @@ impl App {
                 );
             }
             Subsystem::Scene | Subsystem::Asset | Subsystem::UI | Subsystem::Animation => {
-                // 场景/资产/UI/动画本来就是常开的引擎能力，没有单独的开关要拨。
+                // Scene/asset/UI/animation are always-on engine capabilities, no separate switch to flip.
                 log::debug!("{:?} subsystem is always on — nothing to start", subsystem);
             }
         }
         self
     }
 
-    /// 禁用某个引擎子系统并释放其后台运行时（若已存在）。
+    /// Disable an engine subsystem and release its background runtime (if exists).
     pub fn disable_subsystem(&mut self, subsystem: Subsystem) -> &mut Self {
         let bit = subsystem.bit();
         if self.subsystems & bit == 0 {
@@ -698,62 +698,62 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // 插件系统（#1165）
+    // Plugin system (#1165)
     // -----------------------------------------------------------------------
 
-    /// 注册一个应用插件（可定制/替换子系统、添加资源或注入 ECS 逻辑）。
+    /// Register an app plugin (customize/replace subsystems, add resources or inject ECS logic).
     pub fn add_plugin<P: crate::plugin::AppPlugin>(&mut self, plugin: P) -> &mut Self {
         self.plugin_registry.add(plugin);
         self
     }
 
-    /// 以链式调用方式注册一个应用插件。
+    /// Register an app plugin via chained call.
     pub fn with_plugin<P: crate::plugin::AppPlugin>(mut self, plugin: P) -> Self {
         self.add_plugin(plugin);
         self
     }
 
-    /// 注册一组插件。
+    /// Register a group of plugins.
     pub fn add_plugins<G: crate::plugin::PluginGroup>(&mut self, group: G) -> &mut Self {
         group.build(self);
         self
     }
 
-    /// 以链式调用方式注册一组插件。
+    /// Register a group of plugins via chained call.
     pub fn with_plugins<G: crate::plugin::PluginGroup>(mut self, group: G) -> Self {
         group.build(&mut self);
         self
     }
 
-    /// 禁用特定类型的插件（其 `build` 方法将被跳过）。
+    /// Disable a specific type of plugin (its `build` method will be skipped).
     pub fn disable_plugin<P: crate::plugin::AppPlugin>(&mut self) -> &mut Self {
         self.plugin_registry.disable::<P>();
         self
     }
 
-    /// 检查指定类型的插件当前是否处于启用状态。
+    /// Check whether specified type of plugin is currently enabled.
     pub fn is_plugin_enabled<P: crate::plugin::AppPlugin>(&self) -> bool {
         self.plugin_registry.is_enabled::<P>()
     }
 
-    /// 立即构建并应用所有已登记的待处理插件。
+    /// Immediately build and apply all registered pending plugins.
     pub fn build_plugins(&mut self) -> &mut Self {
         crate::plugin::PluginRegistry::apply_pending(self);
         self
     }
 
-    /// 检查是否启用了指定子系统。
+    /// Check whether specified subsystem is enabled.
     pub fn has_subsystem(&self, subsystem: Subsystem) -> bool {
         self.subsystems & subsystem.bit() != 0
     }
 
     // -----------------------------------------------------------------------
-    // 宿主（编辑器）模式
+    // Host (editor) mode
     // -----------------------------------------------------------------------
 
-    /// 当前渲染表面的逻辑尺寸（像素）。
+    /// Current render surface logical size (pixels).
     ///
-    /// 宿主模式用 [`Self::host_extent`]，游戏模式取窗口客户区尺寸。
+    /// Host mode uses [`Self::host_extent`], game mode takes window client area size.
     fn surface_size(&self) -> (u32, u32) {
         if let Some(size) = self.host_extent {
             return size;
@@ -764,11 +764,11 @@ impl App {
             .unwrap_or((1920, 1080))
     }
 
-    /// 以**离屏目标**启动渲染线程（编辑器视口）。
+    /// Start render thread with **offscreen target** (editor viewport).
     ///
-    /// 与 [`Self::run`]/[`Self::run_on`] 互斥：宿主模式不创建 winit 窗口，
-    /// 由宿主按自己的节奏调用 [`Self::host_tick`] 并取走
-    /// [`Self::take_hosted_frame`] 返回的像素。
+    /// Mutually exclusive with [`Self::run`]/[`Self::run_on`]: host mode does not create winit window,
+    /// host calls [`Self::host_tick`] at its own pace and takes
+    /// [`Self::take_hosted_frame`] returned pixels.
     pub fn start_hosted(&mut self, width: u32, height: u32) {
         // Every entry point that starts delivering frames must drain the pending
         // plugin list first, or a host driving the app itself (`start_hosted` +
@@ -795,7 +795,7 @@ impl App {
         self.spawn_render_thread_with(target, scene_env, None);
     }
 
-    /// 调整离屏渲染尺寸（面板 resize）；下一帧起生效。
+    /// Adjust offscreen render size (panel resize); takes effect from next frame.
     pub fn host_resize(&mut self, width: u32, height: u32) {
         let size = (width.max(1), height.max(1));
         if self.host_extent == Some(size) {
@@ -818,9 +818,9 @@ impl App {
         }
     }
 
-    /// 宿主驱动的一帧：模拟（可选）+ extract + 提交渲染 + 请求回读。
+    /// Host-driven one frame: simulate (optional) + extract + submit render + request readback.
     ///
-    /// `simulate = false` 即编辑器「编辑态」：只传播层级，不跑游戏 system。
+    /// `simulate = false` is editor "edit mode": only propagates hierarchy, does not run game systems.
     pub fn host_tick(&mut self, simulate: bool) {
         self.tick_sim(simulate);
         if let Some(shared) = self.render_shared.as_ref() {
@@ -832,33 +832,33 @@ impl App {
         }
     }
 
-    /// 取走渲染线程最近读回的一帧（RGBA8）。
+    /// Take the most recent frame read back by render thread (RGBA8).
     pub fn take_hosted_frame(&self) -> Option<FrameImage> {
         self.render_shared
             .as_ref()
             .and_then(|shared| shared.take_frame())
     }
 
-    /// 渲染线程的致命错误（初始化失败 / 线程退出）。宿主模式用它给面板报错。
+    /// Render thread fatal error (init failure / thread exit). Host mode uses it to report errors to panel.
     pub fn render_failure(&self) -> Option<String> {
         self.render_shared
             .as_ref()
             .and_then(|shared| shared.read_render_failure())
     }
 
-    /// 渲染线程的实时统计（FPS / 帧时间）。
+    /// Render thread real-time stats (FPS / frame time).
     pub fn render_stats(&self) -> Option<RenderStats> {
         self.render_shared
             .as_ref()
             .map(|shared| shared.read_render_stats())
     }
 
-    /// 输入句柄：宿主把鼠标/键盘事件写进同一个 [`InputManager`]。
+    /// Input handle: host writes mouse/keyboard events into same [`InputManager`].
     pub fn input_manager_mut(&mut self) -> &mut InputManager {
         &mut self.input
     }
 
-    /// 停止宿主渲染线程并收尾（音频 / 引擎 pre/post shutdown）。
+    /// Stop host render thread and cleanup (audio / engine pre/post shutdown).
     pub fn shutdown_hosted(&mut self) {
         if let Some(watcher) = self.pak_watcher.as_mut() {
             watcher.stop();
@@ -877,12 +877,12 @@ impl App {
         }
     }
 
-    /// 与渲染线程做一次同步：等它处理完**已经排队**的资产上传，然后丢弃结果。
+    /// Sync once with render thread: wait for it to process **already queued** asset uploads, then discard results.
     ///
-    /// 重新加载场景会把世界整体换掉，而 `prism-ecs` 的实体 id 从 0 重新分配；
-    /// 旧场景在途的上传结果一旦晚到，就会挂到新场景同 id 的实体上（错误网格）。
-    /// 渲染线程每帧先处理 `asset_requests`、再处理 `renderer_messages`，所以
-    /// 一条消息返回即代表之前的请求都已应用到结果队列。
+    /// Reloading scene replaces entire world, while `prism-ecs` entity ids re-allocated from 0;
+    /// old scene in-flight upload results if late will attach to new scene same-id entities (wrong mesh).
+    /// render thread processes `asset_requests` first each frame, then `renderer_messages`, so
+    /// one message returned means previous requests have all been applied to result queue.
     fn sync_render_thread(&self) {
         let Some(shared) = self.render_shared.as_ref() else {
             return;
@@ -897,18 +897,18 @@ impl App {
         let _ = shared.take_asset_results();
     }
 
-    /// 从松散的 `.scene.json` 加载 / 切换场景（宿主 / 编辑器）。
+    /// Load / switch scene from loose `.scene.json` (host / editor).
     ///
-    /// **复用同一个 `Engine`**（#482）：`Engine::load_scene_json_file` 是 `Single`
-    /// 模式——先加载新场景、成功后才卸载旧场景，`Persistent` 实体（等价
-    /// `DontDestroyOnLoad`）连同子树活过换场；注册过的 system / schedule 也不会
-    /// 被冲掉。
+    /// **Reuse same `Engine`** (#482): `Engine::load_scene_json_file` is `Single`
+    /// mode --- load new scene first, unload old scene after success; `Persistent` entities (equivalent
+    /// `DontDestroyOnLoad`) survive scene switch along with subtree; registered systems/schedules will not
+    /// be flushed out.
     ///
-    /// 旧场景的 GPU 句柄由资源解析器回收：被卸载的实体不再出现在世界里，
-    /// `prepare_requests` 会把它们的纹理 / 网格 / 材质槽交回渲染器（#495）。
-    /// 只有第一次加载才新建 engine 与资源解析器（`.pak` 也只挂一次）。
+    /// Old scene GPU handles recycled by asset resolver: unloaded entities no longer appear in world,
+    /// `prepare_requests` will return their texture / mesh / material slots to renderer (#495).
+    /// Only first load creates new engine and asset resolver (`.pak` also mounted only once).
     ///
-    /// 返回**文档顺序**的实体表（与 `.scene.json` 的 `entities` 下标一一对应）。
+    /// Returns entity table in **document order** (one-to-one with `.scene.json` `entities` index).
     pub fn load_scene_json_file(
         &mut self,
         path: &Path,
@@ -931,12 +931,12 @@ impl App {
         Ok(entities)
     }
 
-    /// #509：按需挂载 `assets/optional/` 下的分包（`optional_*.pak`）。
+    /// #509: Mount optional packages under `assets/optional/` on demand (`optional_*.pak`).
     ///
-    /// 启动时的自动挂载只扫描 `assets/` 顶层，所以分包里的资源不占常驻内存。
-    /// 进入需要它们的关卡 / 玩法时调用；已经挂过的包会跳过，重复调用安全。
-    /// 挂载后之前因为「路径不在包里」失败过的实体会重新解析（否则失败缓存会
-    /// 挡住它们）。返回**本次新挂载**的包数。
+    /// Auto-mount at startup only scans `assets/` top level, so optional package resources do not occupy resident memory.
+    /// Call when entering levels/gameplay needing them; already-mounted packages skipped, repeat calls safe.
+    /// After mounting, entities previously failed due to "path not in package" will be re-resolved (otherwise failure cache will
+    /// block them). Returns **newly mounted** package count this time.
     pub fn load_optional_packages(&mut self) -> usize {
         let count = self.asset_resolver.load_optional_packages();
         if count > 0 {
@@ -948,10 +948,10 @@ impl App {
         count
     }
 
-    /// 换场后清掉只对「上一场」有意义的播放状态。
+    /// Clear playback state only meaningful for "previous scene" after scene switch.
     ///
-    /// 资源解析器按 `(实体, 槽位)` 记账（#495）；旧实体已经被卸载，这里让
-    /// 缓存立刻丢弃它们的条目，而不是等下一次 `prepare_requests` 才清理。
+    /// Asset resolver accounts by `(entity, slot)` (#495); old entity already unloaded, here lets
+    /// cache immediately discard their entries, instead of waiting until next `prepare_requests` to clean up.
     fn reset_persistent_play_state(&mut self) {
         let Some(engine) = self.engine.as_mut() else {
             return;
@@ -959,10 +959,10 @@ impl App {
         self.asset_resolver.forget_missing_entities(engine.world());
     }
 
-    /// 把场景 `Skybox` 指向的 HDR 交给渲染线程重建 IBL。
+    /// Hand scene `Skybox`-pointed HDR to render thread to rebuild IBL.
     ///
-    /// manifest 路径下 IBL 来自 cook 进 `.rscn` 的环境字节；松散 `.scene.json`
-    /// 没有 manifest 条目，所以由宿主按组件里的 `hdr_path` 现取现送。
+    /// IBL under manifest path comes from environment bytes cooked into `.rscn`; loose `.scene.json`
+    /// has no manifest entry, so host fetches and sends on the spot by `hdr_path` in component.
     fn apply_scene_environment(&mut self) {
         let Some(shared) = self.render_shared.clone() else {
             return;
@@ -999,10 +999,10 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // 启动配置
+    // Launch config
     // -----------------------------------------------------------------------
 
-    /// 构造这次启动要用的窗口参数（两个后端共用）。
+    /// Construct window parameters for this launch (shared by both backends).
     fn window_config(&self) -> WindowConfig {
         WindowConfig {
             title: self.config.window.title.clone(),
@@ -1023,14 +1023,14 @@ impl App {
         }
     }
 
-    /// 启动事件循环（桌面入口，自建 winit EventLoop）。
+    /// Start event loop (desktop entry, self-built winit EventLoop).
     ///
-    /// 内部构造 EventLoop 并交给 [`Self::run_on`]；致命错误直接 panic。
-    /// 若环境变量设置了 `PRISMA_HEADLESS`，则直接走纯后台离屏循环，不创建任何窗口。
+    /// Internally construct EventLoop and hand to [`Self::run_on`]; fatal errors panic directly.
+    /// If env var `PRISMA_HEADLESS` set, directly go pure background offscreen loop, no window created.
     #[cfg(feature = "winit-backend")]
     pub fn run(mut self) {
         prism_engine::util::timing::init();
-        // 兜底：`App::hosted` 之外的构造路径也要在事件循环前有 logger（幂等）。
+        // Fallback: construction paths outside `App::hosted` also need logger before event loop (idempotent).
         crate::logging::init_player_logging();
         Self::log_asset_root();
         prism_engine::util::timing::event("app::event_loop_ready", "");
@@ -1049,12 +1049,12 @@ impl App {
         self.run_on(event_loop).expect("fatal application error");
     }
 
-    /// 在已构建的 winit EventLoop 上运行（Android 入口用）。
+    /// Run on already-built winit EventLoop (Android entry used).
     ///
-    /// 启动前解析启动配置（`PRISMA_LAUNCH_CONFIG` env）并设置日志级别。
+    /// Parse launch config before startup (`PRISMA_LAUNCH_CONFIG` env) and set log level.
     ///
-    /// Android 的 `android_main` 应在调用本函数 **之前** 自行注入
-    /// `PRISMA_LAUNCH_CONFIG` env（从 files 目录读取）。
+    /// Android `android_main` should inject before calling this function **by itself**
+    /// `PRISMA_LAUNCH_CONFIG` env (read from files directory).
     #[cfg(feature = "winit-backend")]
     pub fn run_on(mut self, event_loop: winit::event_loop::EventLoop<()>) -> anyhow::Result<()> {
         crate::logging::init_player_logging();
@@ -1063,10 +1063,10 @@ impl App {
         Ok(())
     }
 
-    /// 启动应用（桌面入口，Win32 原生窗口 + 自己的消息循环）。
+    /// Start application (desktop entry, Win32 native window + own message loop).
     ///
-    /// 与 winit 入口等价——窗口、渲染线程、模拟循环、关闭顺序完全一致，
-    /// 只是窗口与消息来自 `prism-platform` 的 `win32-native` 后端。
+    /// Equivalent to winit entry --- window, render thread, simulation loop, shutdown order exactly same,
+    /// only window and messages come from `prism-platform` `win32-native` backend.
     #[cfg(all(windows, feature = "win32-native", not(feature = "winit-backend")))]
     pub fn run(mut self) {
         crate::logging::init_player_logging();
@@ -1154,18 +1154,18 @@ impl App {
         Ok(())
     }
 
-    /// 日志可用之后打一行资产根目录（#985）。
+    /// Print one line of asset root after logging available (#985).
     ///
-    /// `asset_paths::asset_root()` 每个资产查询都会调用一次，那里只能留 `trace`；
-    /// 启动日志里有一行就够定位「assets/ 到底解析到了哪」，也不用再让编辑器
-    /// 的日志面板被几百行同样的路径刷满。
+    /// `asset_paths::asset_root()` called for every asset query, can only leave `trace` there;
+    /// one line in startup log enough to locate "where assets/ actually resolved to", no need to let editor
+    /// log panel be swamped by hundreds of same path lines.
     fn log_asset_root() {
         if let Some(root) = prism_engine::asset_paths::asset_root() {
             log::debug!("asset root: {}", root.display());
         }
     }
 
-    /// 恢复时重启随挂起释放的子系统（音频流 / 解码线程）。
+    /// Restart subsystems released with suspend on resume (audio stream / decode thread).
     fn resume_subsystems(&mut self) {
         #[cfg(feature = "audio")]
         if self.has_subsystem(Subsystem::Audio) {
@@ -1178,10 +1178,10 @@ impl App {
         }
     }
 
-    /// 每帧主线程工作：渲染线程存活检查 → 模拟 → 宿主钩子。
+    /// Per-frame main thread work: render thread survival check → simulate → host hook.
     ///
-    /// 返回 `Some(message)` 表示渲染线程已经死亡（初始化失败 / panic），
-    /// 调用方应弹出致命错误并关闭窗口，而不是空转一个白窗口。
+    /// Returns `Some(message)` meaning render thread already died (init failure / panic),
+    /// caller should pop fatal error and close window, instead of spinning a blank window.
     fn tick_frame(&mut self) -> Option<String> {
         let _frame_span = prism_engine::util::timing::span("app::tick_frame");
         // The render thread exclusively owns the Vulkan context. If it exited
@@ -1202,7 +1202,7 @@ impl App {
 
         self.tick_sim(true);
 
-        // 帧钩子（宿主 UI 等）— 主线程。全部用字段级借用（不整体借 self）。
+        // Frame hook (host UI etc) — main thread. All use field-level borrows (not borrow self as a whole).
         let window = self.platform.as_ref().map(PlatformContext::window_arc);
         if let (Some(hook), Some(shared), Some(engine), Some(window)) = (
             self.frame_hook.as_mut(),
@@ -1244,43 +1244,43 @@ impl App {
         None
     }
 
-    /// 关闭顺序（两个后端共用）——顺序很重要。
+    /// Shutdown order (shared by both backends) — order matters.
     fn shutdown(&mut self) {
-        // 1. 停音频解码线程
+        // 1. Stop audio decode thread
         #[cfg(feature = "audio")]
         self.stop_audio_decode_thread();
-        // 2. 停渲染线程
+        // 2. Stop render thread
         self.stop_render_thread();
-        // 4. 引擎预关闭
+        // 4. Engine pre-shutdown
         if let Some(ref mut engine) = self.engine {
             engine.pre_shutdown();
         }
-        // 5. 丢弃音频引擎（在平台/引擎之前停止音频流）
+        // 5. Drop audio engine (stop audio stream before platform/engine)
         #[cfg(feature = "audio")]
         self.audio.take();
-        // 6. 丢弃窗口（渲染器归渲染线程所有，已随渲染线程停止而销毁）
+        // 6. Drop window (renderer owned by render thread, destroyed with render thread stop)
         self.platform = None;
-        // 7. 引擎后关闭
+        // 7. Engine post-shutdown
         if let Some(ref mut engine) = self.engine {
             engine.post_shutdown();
         }
     }
 
-    /// 取出致命错误文案（关闭窗口前弹的对话框内容）。
+    /// Take fatal error text (dialog content shown before closing window).
     fn take_fatal_message(&mut self) -> String {
         self.fatal_error
             .take()
             .unwrap_or_else(|| "An unknown fatal error occurred.".to_string())
     }
 
-    /// Win32 原生窗口的主循环（`win32-native` 构建的 `run_app` 等价物）。
+    /// Win32 native window main loop (`win32-native` built `run_app` equivalent).
     ///
-    /// 消息循环用 `PeekMessageW` 泵 + `MsgWaitForMultipleObjectsEx` 让出
-    /// CPU（原因见 `prism_platform::win32` 的模块文档）：主线程必须在没有
-    /// 窗口消息时继续推进模拟，阻塞式 `GetMessageW` 会让静止画面冻住。
+    /// Message loop uses `PeekMessageW` pump + `MsgWaitForMultipleObjectsEx` to yield
+    /// CPU (see `prism_platform::win32` module docs): main thread must continue advancing simulation
+    /// when no window messages; blocking `GetMessageW` freezes static screen.
     #[cfg(all(windows, feature = "win32-native", not(feature = "winit-backend")))]
     fn run_win32(mut self) -> anyhow::Result<()> {
-        // 复位挂起标志 + 恢复子系统（对应 winit 的 `resumed`）。
+        // Reset suspend flag + restore subsystems (corresponds to winit `resumed`).
         self.suspended = false;
         self.resume_subsystems();
 
@@ -1303,7 +1303,7 @@ impl App {
         drop(window_span);
 
         self.platform = Some(platform);
-        // 渲染线程异步构建渲染器 + 启动帧循环（重量级初始化不阻塞主线程）。
+        // Render thread asynchronously builds renderer + starts frame loop (heavy init doesn't block main thread).
         let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
         self.spawn_render_thread();
         drop(spawn_span);
@@ -1322,7 +1322,7 @@ impl App {
 
         let mut exit = false;
         while !exit {
-            // 1. 消息泵：把 WM_* 变成中立事件（含用户点关闭按钮）。
+            // 1. Message pump: convert WM_* to neutral events (including user close button click).
             let events = window.poll_events();
             for event in events {
                 if self.fatal_error.is_some() {
@@ -1330,13 +1330,13 @@ impl App {
                     break;
                 }
 
-                // 先把事件发给帧钩子（宿主 UI 等）；被消费则跳过快捷键。
+                // First send events to frame hook (host UI etc); if consumed skip hotkeys.
                 let consumed = match self.frame_hook.as_mut() {
                     Some(hook) => hook.on_platform_event(&window, event),
                     None => false,
                 };
 
-                // 路由到 InputManager；`false` = 用户关闭窗口。
+                // Route to InputManager; `false` = user closed window.
                 if !self.handle_platform_event(&window, event) {
                     exit = true;
                     break;
@@ -1357,14 +1357,14 @@ impl App {
                 break;
             }
 
-            // 2. 模拟 + 提取 + 提交渲染（与 winit 的 `about_to_wait` 同一份）。
+            // 2. Simulate + extract + submit render (same as winit `about_to_wait`).
             if let Some(message) = self.tick_frame() {
                 log::error!("{message}");
                 self.fatal_error = Some(message);
                 break;
             }
 
-            // 3. 让出 CPU：有消息立即返回，否则最多等 1 ms。
+            // 3. Yield CPU: return immediately if message, otherwise wait at most 1 ms.
             window.wait_events(1);
         }
 
@@ -1378,23 +1378,23 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // 渲染线程生命周期
+    // Render thread lifecycle
     // -----------------------------------------------------------------------
 
-    /// 在**渲染线程**异步构建 [`GraphRenderer`] 并启动帧循环。
+    /// Asynchronously build [`GraphRenderer`] and start frame loop on **render thread**.
     ///
-    /// 主线程只持有已创建的平台窗口。本函数计算场景光照、
-    /// Vulkan 扩展名、叠加层工厂，创建共享状态，然后 spawn 渲染线程——
-    /// 渲染线程内部才构建渲染器（~数百毫秒），因此 `resumed` 调用后能立即
-    /// 返回，窗口事件（关闭/移动/缩放）全程不被阻塞。
+    /// Main thread only holds created platform window. This function computes scene lighting,
+    /// Vulkan extensions, overlay factory, create shared state, then spawn render thread ---
+    /// renderer built inside render thread (~few hundred ms), so after `resumed` call can immediately
+    /// return, window events (close/move/scale) not blocked throughout.
     fn spawn_render_thread(&mut self) {
-        // 原始句柄必须在**窗口创建线程**取好再跨线程传递（winit 的
-        // `window_handle()` 在其他线程会失败）；原始 HWND 是进程级值，
-        // 跨线程用于创建 Vulkan 表面是安全的（见 `SendWindowHandles`）。
+        // Raw handles must be obtained on **window creation thread** before cross-thread transfer (winit's
+        // `window_handle()` fails on other threads); raw HWND is process-level value,
+        // cross-thread used to create Vulkan surface is safe (see `SendWindowHandles`).
         let (handles, extensions) = match self.platform.as_ref().map(PlatformContext::window) {
             Some(window) => (
                 prism_platform::raw_window_handles(window).expect("get raw window handles"),
-                // Vulkan 实例扩展名（依赖窗口 display handle，便宜）。
+                // Vulkan instance extensions (depends on window display handle, cheap).
                 required_vulkan_extensions(window),
             ),
             None => {
@@ -1403,13 +1403,13 @@ impl App {
             }
         };
 
-        // 场景声明式光照：纯 CPU 计算，无需渲染器（None → 廉价空 IBL）。
+        // Scene declarative lighting: pure CPU computation, no renderer needed (None → cheap empty IBL).
         let scene_env = self.engine.as_ref().and_then(|engine| {
             engine.current_scene_env_bytes_with_provider(&mut self.asset_resolver.resource_manager)
         });
 
-        // 外部叠加层工厂（宿主 UI 等）——仅提供工厂，渲染线程建好
-        // 渲染器后调用一次产出叠加层（GPU 资源 record 时懒创建）。
+        // External overlay factory (host UI etc) --- only provide factory, render thread built
+        // renderer then call once to produce overlay (GPU resources lazily created at record time).
         let overlay_factory: Option<OverlayFactory> =
             self.frame_hook.as_ref().and_then(|h| h.overlay());
 
@@ -1425,7 +1425,7 @@ impl App {
         );
     }
 
-    /// 启动渲染线程——目标（交换链 / 离屏图像）由调用方决定。
+    /// Start render thread --- target (swapchain / offscreen image) decided by caller.
     fn spawn_render_thread_with(
         &mut self,
         target: RenderTarget,
@@ -1460,7 +1460,7 @@ impl App {
     }
 
     fn stop_render_thread(&mut self) {
-        // 通知渲染线程停止。
+        // Notify render thread to stop.
         if let Some(ref running) = self.render_running {
             running.store(false, Ordering::Relaxed);
         }
@@ -1468,7 +1468,7 @@ impl App {
             shared.packet_ready.notify_all();
         }
 
-        // 等待线程结束
+        // Wait for thread to end
         if let Some(handle) = self.render_thread.take() {
             if handle.join().is_err() {
                 log::error!("render thread panicked");
@@ -1479,7 +1479,7 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // 音频解码线程生命周期（`audio` feature）
+    // Audio decode thread lifecycle (`audio` feature)
     // -----------------------------------------------------------------------
 
     #[cfg(feature = "audio")]
@@ -1516,19 +1516,19 @@ impl App {
     }
 
     // -----------------------------------------------------------------------
-    // 平台上下文（窗口 + 渲染器）生命周期
+    // Platform context (window + renderer) lifecycle
     // -----------------------------------------------------------------------
-    // 注意：窗口由主线程的 `PlatformContext::create_window` 创建（快速），
-    // 渲染器由 `spawn_render_thread` → 渲染线程内部构建（异步、不阻塞事件）。
+    // Note: window created by main thread `PlatformContext::create_window` (fast),
+    // renderer by `spawn_render_thread` → render thread internal construction (async, not blocking events).
 
     // -----------------------------------------------------------------------
-    // 游戏循环（主线程）
+    // Game loop (main thread)
     // -----------------------------------------------------------------------
 
-    /// 单步模拟 + extract + 提交渲染。
+    /// Single-step simulate + extract + submit render.
     ///
-    /// `simulate = false` 是编辑器「编辑态」：只传播层级后直接 extract，不跑
-    /// 任何游戏 system（相机控制器 / UI / 用户逻辑都不该在点 Play 之前动场景）。
+    /// `simulate = false` is editor "edit mode": only propagate hierarchy then directly extract, not run
+    /// any game system (camera controller / UI / user logic should not touch scene before clicking Play).
     fn tick_sim(&mut self, simulate: bool) {
         let _sim_span = prism_engine::util::timing::span("app::tick_sim");
         // Poll mode may call this at any event rate. Time is measured once from
@@ -1549,19 +1549,19 @@ impl App {
         // often winit woke the loop (i.e. on mouse movement).
         self.last_frame = Some(now);
 
-        // --- 引擎模拟（独立借用 self.engine，块结束即释放） ---
-        // 尺寸要在借用 engine 之前取：`surface_size()` 借整个 `&self`。
+        // --- Engine simulation (independent borrow self.engine, released at block end) ---
+        // Size must be taken before borrowing engine: `surface_size()` borrows entire `&self`.
         let (surface_w, surface_h) = self.surface_size();
         {
             let Some(engine) = self.engine.as_mut() else {
                 return;
             };
 
-            // --- 同步屏幕尺寸（ECS UI 布局依赖 ScreenSize resource） ---
+            // --- Sync screen size (ECS UI layout depends on ScreenSize resource) ---
             //
-            // 布局仍按窗口像素算；`internal_resolution` 生效时 UI 与场景一起
-            // 画在 PostPass 的目标矩形里，所以再告诉引擎「窗口 → 布局空间」
-            // 的换算，指针命中测试才不会偏（#988）。
+            // Layout still computed by window pixels; when `internal_resolution` effective UI and scene together
+            // drawn in PostPass target rectangle, so tell engine again "window → layout space"
+            // conversion, pointer hit test won't be off (#988).
             if surface_w > 0 && surface_h > 0 {
                 let mapping = ui_layout_mapping(
                     surface_w,
@@ -1575,9 +1575,9 @@ impl App {
             }
 
             if simulate {
-                // 指针锁定只有一个真值（平台窗口），每帧抄进 InputManager：
-                // 抓取被系统拒绝、Esc 解锁、失焦释放都会改窗口状态，这里对齐之后
-                // 相机（引擎）和面板（项目钩子）读到的布尔值不会各说各话。
+                // Pointer lock has single truth (platform window), copied into InputManager each frame:
+                // grab rejected by system / Esc unlock / focus loss release all change window state, after alignment here
+                // camera (engine) and panel (project hook) read boolean values won't each say their own thing.
                 if let Some(platform) = self.platform.as_ref() {
                     self.input
                         .sync_pointer_lock(platform.window().is_pointer_locked());
@@ -1587,8 +1587,8 @@ impl App {
                 engine.begin_frame(&self.input, [surface_w as f32, surface_h as f32]);
                 let mut fixed_steps = 0;
                 while self.fixed_accumulator >= FIXED_STEP && fixed_steps < 8 {
-                    // 物理走固定步（#522）：结果在下面的 `engine.update()` 里由
-                    // `hierarchy_system` 传播成 `LocalToWorld`，渲染当帧就能看到。
+                    // Physics uses fixed step (#522): result in below `engine.update()` by
+                    // `hierarchy_system` propagated to `LocalToWorld`, render same frame can see it.
                     #[cfg(feature = "physics")]
                     if let Some(physics) = self.physics.as_mut() {
                         physics.step(engine.world_mut());
@@ -1602,13 +1602,13 @@ impl App {
                     self.fixed_accumulator.as_secs_f32() / FIXED_STEP.as_secs_f32(),
                 );
 
-                // --- 可变时间步长更新 ---
+                // --- Variable time step update ---
                 engine.update(dt, &self.input);
 
-                // --- 延迟更新 ---
+                // --- Late update ---
                 engine.late_update();
             } else {
-                // 编辑态：不消费 fixed accumulator，避免切到 Play 时补跑一大段。
+                // Edit mode: does not consume fixed accumulator, avoids catching up big chunk when switching to Play.
                 self.fixed_accumulator = Duration::ZERO;
                 prism_engine::scene::systems::hierarchy::hierarchy_system(engine.world_mut());
                 prism_engine::scene::systems::hierarchy::active_hierarchy_system(
@@ -1616,15 +1616,15 @@ impl App {
                 );
             }
 
-            // --- 音频更新（`audio` feature） ---
+            // --- Audio update (`audio` feature) ---
             #[cfg(feature = "audio")]
             {
                 if let Some(audio) = self.audio.as_mut() {
                     audio.update();
                 }
 
-                // 处理音频解码结果：交给场景音频缓存（不再自动播放，
-                // 播放由 `AudioSource` 组件决定）。
+                // Process audio decode results: hand to scene audio cache (no longer auto-play,
+                // playback decided by `AudioSource` component).
                 if let Some(rx) = self.audio_decode_rx.as_ref() {
                     while let Ok(result) = rx.try_recv() {
                         if let crate::audio_decode_runner::DecodeResult::Error { message, .. } =
@@ -1636,7 +1636,7 @@ impl App {
                     }
                 }
 
-                // 场景音频：ECS `AudioSource` → 混音器（#508）。
+                // Scene audio: ECS `AudioSource` → mixer (#508).
                 if let Some(audio) = self.audio.as_mut() {
                     let mut sink = (audio, &mut self.audio_voices);
                     self.scene_audio.update(
@@ -1645,7 +1645,7 @@ impl App {
                         self.audio_decode_tx.as_ref(),
                     );
                 }
-                // 一次性音效（#987）：项目代码排队，这里真正播放。
+                // One-shot sounds (#987): project code queues, here actually play.
                 crate::one_shot::drain(
                     engine.world_mut(),
                     self.audio.as_mut(),
@@ -1653,7 +1653,7 @@ impl App {
                     &mut self.asset_resolver.resource_manager,
                 );
             }
-        } // engine 借用在此结束
+        } // engine borrow ends here
 
         // Window events arrive after the previous tick, so transient input must
         // be cleared only after this frame's gameplay / UI have read the
@@ -1661,20 +1661,20 @@ impl App {
         // before the ECS sees it. Held state stays valid across frames.
         self.input.begin_frame();
 
-        // --- 开发期热重载（#495）：重建 `.pak` 后不用退出再进 ---
+        // --- Dev hot reload (#495): after rebuilding `.pak` no need to exit and re-enter ---
         self.poll_asset_changes();
 
-        // --- 资产解析：主线程 CPU 段准备请求 → 通道 → 渲染线程 GPU 段 ---
+        // --- Asset resolution: main thread CPU segment prepares request → channel → render thread GPU segment ---
         self.pump_asset_requests();
 
-        // --- 提取帧数据包 → 发送到渲染线程（仅渲染启用时） ---
+        // --- Extract frame packet → send to render thread (render enabled only) ---
         if let (Some(shared), Some(engine)) = (self.render_shared.as_ref(), self.engine.as_mut()) {
-            // 复用渲染线程上一帧归还的数据包（`Vec` 容量随之保留，#66）。
+            // Reuse data packet returned by render thread last frame (`Vec` capacity retained, #66).
             let mut packet = shared.take_spare_packet().unwrap_or_default();
-            // #613：内部分辨率生效时相机按**内部**宽高比投影，后处理再整数
-            // 放大到窗口；否则 2D 像素会被拉成不等宽的矩形。
+            // #613: when internal resolution effective camera projects by **internal** aspect ratio, post-process then integer
+            // upscale to window; otherwise 2D pixels stretched into unequal-width rectangles.
             let aspect = self.render_settings.render_aspect(self.display_aspect);
-            // #978：亚像素折线按场景实际渲染高度换算「1 像素」的世界长度。
+            // #978: subpixel polyline converts "1 pixel" world length by scene actual render height.
             let render_height = self.render_settings.render_height(surface_w, surface_h);
             let mut extract_span = prism_engine::util::timing::span("app::extract_frame_packet");
             extract_frame_packet_into_with_shadow_cascades_and_render_height(
@@ -1686,9 +1686,9 @@ impl App {
                 render_height,
                 &mut packet,
             );
-            // 渲染设置随帧数据包送到渲染线程（快捷键 / 项目配置的修改在此生效）。
+            // Render settings sent to render thread with frame packet (hotkey / project config changes take effect here).
             packet.settings = self.render_settings.clone();
-            // 局部后处理体积（#502 Phase 2）：按主相机位置解析本帧的 PostGrade。
+            // Local post-processing volume (#502 Phase 2): parse this frame PostGrade by main camera position.
             packet.grade = Some(
                 prism_engine::scene::systems::post_process::resolve_post_grade(
                     engine.world(),
@@ -1697,7 +1697,7 @@ impl App {
                 ),
             );
 
-            // 运行时诊断 HUD：追加到 ECS UI 叠加（随后统一由 ui_overlay 绘制）。
+            // Runtime diagnostics HUD: appended to ECS UI overlay (then uniformly drawn by ui_overlay).
             #[cfg(feature = "engine-debug")]
             if self.debug_hud.show {
                 let (width, height) = self.surface_size();
@@ -1723,14 +1723,14 @@ impl App {
         }
     }
 
-    /// 每帧驱动跨线程资产解析：
-    /// 1. **CPU 段**（主线程）：扫描待解析 `MeshRenderer` 实体，加载 `.pak`
-    ///    + 解交织顶点/纹理像素，产出纯数据上传请求并入队（不碰渲染器）。
-    /// 2. **结果写回**（主线程）：取走渲染线程 GPU 段回传的句柄，写入
-    ///    `MeshRef`/`MaterialRef`（`generation = 1`）。
+    /// Drive cross-thread asset resolution every frame:
+    /// 1. **CPU segment** (main thread): scan pending-parse `MeshRenderer` entities, load `.pak`
+    ///    + deinterleave vertex/texture pixels, produce pure data upload requests enqueued (not touching renderer).
+    /// 2. **Result write-back** (main thread): take handles returned by render thread GPU segment, write into
+    ///    `MeshRef`/`MaterialRef` (`generation = 1`).
     ///
-    /// 渲染器在渲染线程异步构建，故此函数可在首帧前安全地每帧调用——
-    /// 请求会暂存在通道中直到渲染器就绪。
+    /// Renderer asynchronously built on render thread, so this function safely called every frame before first frame ---
+    /// requests wait in channel until renderer ready.
     fn pump_asset_requests(&mut self) {
         let _span = prism_engine::util::timing::span("app::pump_asset_requests");
         let (Some(shared), Some(engine)) = (self.render_shared.as_ref(), self.engine.as_mut())
@@ -1738,7 +1738,7 @@ impl App {
             return;
         };
 
-        // 工程自带字体（#583）：主线程读字节，渲染线程把它注册进 UI 图集。
+        // Project bundled font (#583): main thread reads bytes, render thread registers it into UI atlas.
         let fonts = self.asset_resolver.prepare_ui_fonts(engine.world());
         for (name, bytes) in fonts {
             shared.send_renderer_message(Box::new(move |renderer| {
@@ -1783,17 +1783,17 @@ impl App {
             }
         }
 
-        // 骨骼动画资产（#560 P0-2）：幂等，只有出现新的 `.rskel` / `.ranim` 才读盘。
+        // Skeletal animation assets (#560 P0-2): idempotent, only read disk when new `.rskel` / `.ranim` appears.
         self.asset_resolver
             .load_animation_assets(engine.world_mut());
 
-        // CPU 段：扫描待解析实体并产出上传请求（纯数据，不碰渲染器）。
+        // CPU segment: scan pending-parse entities and produce upload requests (pure data, not touching renderer).
         let reqs = self.asset_resolver.prepare_requests(engine.world_mut());
         if !reqs.is_empty() {
             shared.enqueue_asset_requests(reqs);
         }
 
-        // 失效的 GPU 资源（实体销毁 / 热重载 / 路径改写）在渲染线程真正释放（#495）。
+        // Invalid GPU resources (entity destroyed / hot reload / path rewrite) truly released on render thread (#495).
         let releases = self.asset_resolver.take_releases();
         if !releases.is_empty() {
             shared.send_renderer_message(Box::new(move |renderer| {
@@ -1801,7 +1801,7 @@ impl App {
             }));
         }
 
-        // GPU 段结果写回：渲染线程回传句柄，主线程写入组件。
+        // GPU segment result write-back: render thread returns handles, main thread writes into components.
         let results = shared.take_asset_results();
         if !results.is_empty() {
             self.asset_resolver
@@ -1809,20 +1809,20 @@ impl App {
         }
     }
 
-    /// 开发期资产热重载：`.pak` 重建后换掉 reader 并让实体重新解析（#495）。
+    /// Dev asset hot reload: after `.pak` rebuild swap reader and let entities re-parse (#495).
     ///
-    /// 只在 [`spawn_pak_watcher`] 建了轮询线程时生效（`PRISMA_HOT_RELOAD`
-    /// 打开）。和编辑器一样分三步：`on_pak_changed` 换文件字节 → 重载路径清单
-    /// → `invalidate_assets` 把实体打回待解析，下一帧 `pump_asset_requests`
-    /// 会重新上传。
+    /// Only effective when [`spawn_pak_watcher`] built polling thread (`PRISMA_HOT_RELOAD`
+    /// enabled). Same as editor three steps: `on_pak_changed` swap file bytes → reload path list
+    /// → `invalidate_assets` marks entities back to pending-parse, next frame `pump_asset_requests`
+    /// will re-upload.
     ///
-    /// 已知代价：渲染器没有「按句柄释放」的接口，被替换的旧纹理 / 网格槽会一直
-    /// 占用，所以这条路径只用于开发期。
+    /// Known cost: renderer has no "release by handle" interface, replaced old texture / mesh slots will always
+    /// occupy, so this path only used for dev time.
     fn poll_asset_changes(&mut self) {
         let Some(watcher) = self.pak_watcher.as_ref() else {
             return;
         };
-        // 先把事件收干净再改状态：`receiver()` 借的是 watcher，处理事件要借 self。
+        // First drain events then change state: `receiver()` borrows watcher, processing events borrows self.
         let mut changed: Vec<std::path::PathBuf> = Vec::new();
         while let Ok(event) = watcher.receiver().try_recv() {
             match event {
@@ -1862,8 +1862,8 @@ impl App {
                     );
                 }
             }
-            // 重新打包后也校验一次构建戳（#976）：包和文档对不上时立刻提示，
-            // 而不是等玩家发现画面不对。
+            // Also verify build stamp once after repack (#976): when package and document don't match immediately prompt,
+            // instead of waiting for player to find screen wrong.
             self.asset_resolver.check_cook_stamp(pak);
             reloaded += 1;
         }
@@ -1880,10 +1880,10 @@ impl App {
     // PBR debug helpers
     // -----------------------------------------------------------------------
 
-    /// 把一个中立平台事件路由到 [`InputManager`] 与窗口状态。
+    /// Route a neutral platform event to [`InputManager`] and window state.
     ///
-    /// 返回 `false` 表示应用应退出（用户关闭窗口）。两个窗口后端共用这一份，
-    /// 所以 winit 与 Win32 的输入语义不会各写一遍再慢慢漂移。
+    /// Returns `false` meaning app should exit (user closed window). Both window backends share this one,
+    /// so winit and Win32 input semantics won't each be written separately then slowly drift.
     fn handle_platform_event(&mut self, window: &PlatformWindow, event: PlatformEvent) -> bool {
         use prism_engine::input::{ElementState, MouseButton};
 
@@ -1913,16 +1913,16 @@ impl App {
             PlatformEvent::CursorMoved { x, y } => {
                 apply_window_cursor_move(&mut self.input, x, y);
             }
-            // 锁定态下的原始设备增量（winit: `DeviceEvent::MouseMotion`，
-            // Win32: 回中式鼠标捕获的偏移）。
+            // Raw device increments in locked state (winit: `DeviceEvent::MouseMotion`,
+            // Win32: re-center mouse capture offset).
             PlatformEvent::MouseMotion { dx, dy } => {
                 apply_device_mouse_motion(&mut self.input, dx, dy);
             }
             PlatformEvent::MouseWheel { delta } => self.input.handle_scroll(delta),
             PlatformEvent::Touch { id, x, y, phase } => {
-                // 触摸不走鼠标按钮模拟：多点触控必须保留触点 id 与 phase，
-                // 项目模块经 `InputSnapshot::touches`（宿主填表，最多
-                // `InputSnapshot::MAX_TOUCHES` 点）自行解释，而不是被压成左键。
+                // Touch does not go through mouse button simulation: multi-touch must retain touch id and phase,
+                // project module via `InputSnapshot::touches` (host fills table, at most
+                // `InputSnapshot::MAX_TOUCHES` points) self-interpreted, instead of being compressed to left button.
                 self.input
                     .handle_touch(id, engine_touch_phase(phase), [x, y]);
             }
@@ -1953,9 +1953,9 @@ impl App {
                 );
             }
             PlatformEvent::Key { key, pressed } => {
-                // 键码换算 + Esc 解锁 + 写进 InputManager 收在 `apply_key_event`，
-                // 单测才能覆盖「平台键 -> 引擎键 -> key_held」整条链路；
-                // 只有真正碰窗口的 release_pointer 留在外面。
+                // Key code conversion + Esc unlock + write to InputManager collected in `apply_key_event`,
+                // only unit tests can cover "platform key → engine key → key_held" entire chain;
+                // only real window-touching release_pointer left outside.
                 if apply_key_event(&mut self.input, key, pressed)
                     && self.pointer_lock == PointerLockPolicy::Auto
                 {
@@ -1963,34 +1963,34 @@ impl App {
                 }
             }
             PlatformEvent::Modifiers(modifiers) => self.modifiers = modifiers,
-            // 尺寸变化同时更新宽高比（渲染线程从平台上下文读真实尺寸）。
+            // Size change also updates aspect ratio (render thread reads real size from platform context).
             PlatformEvent::Resized { width, height } => {
                 self.needs_resize = true;
                 if width > 0 && height > 0 {
                     self.display_aspect = width as f32 / height as f32;
                 }
             }
-            // 尚未建模的事件：保持显式列出，避免 `_ => {}` 静默吞掉新变体
-            // （`PlatformEvent::Touch` 就是这样丢了整条触摸链路）。
+            // Unmodeled events: keep explicitly listed, avoid `_ => {}` silently swallowing new variants
+            // (`PlatformEvent::Touch` is how entire touch chain was lost).
             PlatformEvent::Other => {}
         }
 
         true
     }
 
-    /// 应用级键盘快捷键（F3 / Tab / T）+ PBR 分量隔离。
+    /// App-level keyboard hotkeys (F3 / Tab / T) + PBR component isolation.
     ///
-    /// 只在按键**按下**时调用；返回 `true` 表示这个键已被吃掉。
+    /// Only called when key **pressed**; returns `true` meaning this key consumed.
     fn handle_shortcut(&mut self, key: Key) -> bool {
-        // 宿主钩子**不在这里**调用：两个事件循环入口（平台事件泵与 winit
-        // `window_event`）都在调本函数之前已经把同一个按键事件原样发给过钩子，
-        // 被消费时直接跳过本函数。这里再转一次等于同一个键按了两次——项目那边
-        // 的「按一次切换一次」就会自己抵消（F1 面板永远打不开）。
+        // Host hook **not called here**: two event loop entries (platform event pump and winit
+        // `window_event`) both already send same key event to hook before calling this function,
+        // if consumed skip this function directly. Converting again here equals same key pressed twice --- project side
+        // of "press once toggle once" will self-cancel (F1 panel never opens).
         //
-        // 绑定的查找与「数字键 + Shift = 另一个 PBR 分量」都由引擎的
-        // `KeyBindings` 决定；宿主这里只负责把动作落到 `RenderSettings` 上。
-        // 没绑定的键一律返回 false：不消费，项目的输入原样可用。
-        // 调试层没编译进来时表是空的：F3 / Tab / T / 数字键全部原样留给项目。
+        // Binding lookup and "number key + Shift = another PBR component" both decided by engine's
+        // `KeyBindings` decide; host here only responsible for applying action to `RenderSettings`.
+        // Unbound keys all return false: not consumed, project input available as-is.
+        // When debug layer not compiled table is empty: F3 / Tab / T / number keys all left as-is for project.
         let shift = self.modifiers.shift;
         let key_bindings = if cfg!(feature = "engine-debug") {
             prism_engine::KeyBindings::engine_debug(shift)
@@ -2039,11 +2039,11 @@ impl App {
                 log::info!("debug RT = {} ({})", self.render_settings.debug_rt, name);
             }
             prism_engine::EngineAction::CycleTonemap => {
-                // 0 = Reinhard, 1 = ACES, 2 = passthrough（2D / 像素画）。
+                // 0 = Reinhard, 1 = ACES, 2 = passthrough (2D / pixel art).
                 self.render_settings.tonemap_mode = (self.render_settings.tonemap_mode + 1) % 3;
                 log::info!("tonemap mode = {}", self.render_settings.tonemap_mode);
             }
-            // 上面已经处理过，这里只是把分支写全。
+            // Already handled above, here just writing branches complete.
             prism_engine::EngineAction::IsolatePbrComponent(_) => {}
         }
         true
@@ -2079,7 +2079,7 @@ impl ApplicationHandler for App {
         // freezes animation when the user is idle.
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        // 复位挂起标志（必须先于任何子系统门控——audio 恢复不依赖 Render）。
+        // Reset suspend flag (must precede any subsystem gate --- audio resume doesn't depend on Render).
         self.suspended = false;
         self.resume_subsystems();
 
@@ -2091,8 +2091,8 @@ impl ApplicationHandler for App {
         let resumed_entry = crate::render_shared::startup_ms();
 
         if self.platform.is_none() {
-            // 主线程仅创建窗口（快速，~数毫秒），随后立即返回——窗口事件
-            // （关闭/移动/缩放）此刻起即可被 winit 派发，不被任何初始化阻塞。
+            // Main thread only creates window (fast, ~few ms), then immediately returns --- window events
+            // (close/move/scale) from now can be dispatched by winit, not blocked by any init.
             let window_config = self.window_config();
             let window_span = prism_engine::util::timing::span("app::create_window");
             // Create hidden: the first frame is hundreds of milliseconds away
@@ -2108,12 +2108,12 @@ impl ApplicationHandler for App {
 
             self.platform = Some(platform);
 
-            // 渲染线程异步构建渲染器 + 启动帧循环（重量级初始化不阻塞主线程）。
+            // Render thread asynchronously builds renderer + starts frame loop (heavy init doesn't block main thread).
             let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
             self.spawn_render_thread();
             drop(spawn_span);
 
-            // 记录启动里程碑：resumed 返回时刻 = event_loop_free（事件循环已解锁）。
+            // Record startup milestone: resumed return time = event_loop_free (event loop unlocked).
             let spawned = crate::render_shared::startup_ms();
             if let Some(shared) = self.render_shared.as_ref() {
                 shared.set_mark("resumed_entry", resumed_entry);
@@ -2123,8 +2123,8 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // Android suspend 后重建表面：本设计在 suspended 时已停止渲染线程并
-        // 丢弃窗口，故此处会重新走上面的「首次恢复」分支。仅作预留日志。
+        // After Android suspend rebuild surface: this design already stopped render thread at suspended and
+        // dropped window, so here re-walk above "first resume" branch. Reserved log only.
         log::info!("resumed (surface already active)");
     }
 
@@ -2145,8 +2145,8 @@ impl ApplicationHandler for App {
 
         let platform_event = prism_platform::to_platform_event(&event);
 
-        // 先将事件转发给帧钩子（宿主 UI 等）；被消费则不再走应用
-        // 自身的快捷键处理（输入仍会路由到 InputManager 保持按键状态一致）。
+        // First forward events to frame hook (host UI etc); if consumed no longer walk app
+        // own hotkey handling (input still routed to InputManager to keep key state consistent).
         let consumed = match (self.frame_hook.as_mut(), self.platform.as_ref()) {
             (Some(hook), Some(platform)) => {
                 let window = platform.window();
@@ -2156,7 +2156,7 @@ impl ApplicationHandler for App {
             _ => false,
         };
 
-        // 路由窗口事件 → InputManager（始终路由，包括快捷键未处理的重复事件）。
+        // Route window events → InputManager (always route, including hotkey-unhandled repeat events).
         if let Some(window) = self.platform.as_ref().map(PlatformContext::window_arc) {
             if !self.handle_platform_event(&window, platform_event) {
                 event_loop.exit();
@@ -2168,15 +2168,15 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // 修饰键状态只随 `ModifiersChanged` 更新（路由已写入），事件本身无需处理。
+        // Modifier key state only updates with `ModifiersChanged` (route already written), event itself needs no handling.
         if matches!(event, WindowEvent::ModifiersChanged(_)) {
             return;
         }
 
-        // 键盘快捷键（仅按下时触发）。这里直接复用上面已经算好的
-        // `platform_event`，不再从 `WindowEvent` 里二次解析按键：两条路径各算一次
-        // 就会各用一套换算（`Key::from_winit` vs `winit_to_vk`），同一个键在
-        // 「平台事件泵」和「winit 事件」下变成两个不同的 `Key`。
+        // Keyboard hotkeys (triggered on press only). Here directly reuse already computed above
+        // `platform_event`, no longer re-parse keys from `WindowEvent`: two paths each compute once
+        // then each uses different conversion (`Key::from_winit` vs `winit_to_vk`), same key under
+        // "platform event pump" and "winit event" becomes two different `Key`.
         if let PlatformEvent::Key { key, pressed: true } = platform_event {
             self.handle_shortcut(key);
         }
@@ -2188,7 +2188,7 @@ impl ApplicationHandler for App {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        // 在指针锁定模式下，鼠标移动以原始设备增量形式到达。
+        // In pointer lock mode, mouse movement arrives as raw device increments.
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             apply_device_mouse_motion(&mut self.input, dx, dy);
         }
@@ -2200,9 +2200,9 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // 游戏循环 tick（主线程）——后台挂起期间暂停模拟并提前返回（T4）：
-        // 不投喂 dt → 模拟冻结 → 后台进程 CPU 归零，且音频解码已随
-        // suspended 停止，无队列空转。
+        // Game loop tick (main thread) --- background suspend pauses simulate and returns early (T4):
+        // not feeding dt → simulate frozen → background process CPU zeroed, and audio decode already
+        // stopped with suspended, no queue idle spin.
         if self.suspended {
             return;
         }
@@ -2215,15 +2215,15 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        // 后台不再需要逐帧轮询；`resumed()` 会恢复 `Poll`。否则 winit 在
-        // Android 后台仍持续空转，CPU 占用保持 100%。
+        // Background no longer needs per-frame polling; `resumed()` will restore `Poll`. Otherwise winit at
+        // Android background still keeps spinning idle, CPU usage stays 100%.
         event_loop.set_control_flow(ControlFlow::Wait);
 
-        // 置位挂起标志（必须先于任何子系统门控——audio 挂起不依赖 Render）。
+        // Set suspend flag (must precede any subsystem gate --- audio suspend doesn't depend on Render).
         self.suspended = true;
 
-        // --- 音频子系统：交还音频设备（T4）。drop cpal 流 → 停止回调线程；
-        // Firewheel 图与活动播放节点保留，恢复时以挂起前配置重新注册并续播。 ---
+        // --- Audio subsystem: return audio device (T4). drop cpal stream → stop callback thread;
+        // Firewheel graph and active playback nodes retained, on resume re-registered with pre-suspend config and resume playback. ---
         #[cfg(feature = "audio")]
         if self.has_subsystem(Subsystem::Audio) {
             if let Some(audio) = self.audio.as_mut() {
@@ -2235,11 +2235,11 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // 停止后台线程。
+        // Stop background thread.
         #[cfg(feature = "audio")]
         self.stop_audio_decode_thread();
 
-        // 停止渲染线程（渲染器归渲染线程所有，停止即释放 Vulkan 表面）。
+        // Stop render thread (renderer owned by render thread, stop releases Vulkan surface).
         self.stop_render_thread();
 
         self.platform = None;

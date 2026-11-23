@@ -1,11 +1,11 @@
-//! Prisma 编辑器（egui + ash Vulkan）。
+//! Prisma editor (egui + ash Vulkan).
 //!
-//! 与 Web 编辑器（Tauri + Vue）共享同一份数据层（`prism-editor-core`），
-//! 与 Web 编辑器共享同一套布局 / 文档 / 撤销模型。关键差异在视口：
-//! Scene / Game 视图**零拷贝** —— 引擎渲染到离屏 `VkImage`，egui 用同一个
-//! `VkDevice` 直接采样，没有 GPU→CPU 回读。
+//! Shares same data layer (`prism-editor-core`) with Web editor (Tauri + Vue),
+//! Shares same layout / document / undo model with Web editor. Key difference in viewport:
+//! Scene / Game view **zero-copy** --- engine renders to offscreen `VkImage`, egui samples directly via
+//! the same `VkDevice`, no GPU->CPU readback.
 //!
-//! 运行：`cargo run -p prism-editor-egui`（需要 Vulkan 设备 + 已编译的 `.spv`）。
+//! Run: `cargo run -p prism-editor-egui` (needs Vulkan device + compiled `.spv`).
 
 mod app;
 mod build;
@@ -60,8 +60,8 @@ fn main() -> std::process::ExitCode {
 
     logging::install("warn");
 
-    // 全局控制通道开关：`--no-control` 完全不建 listener、不写 `control.port`，
-    // 而不是接受连接后逐条拒绝 —— 否则 agent 看到的是「连上了但都不行」。
+    // Global control channel switch: `--no-control` builds no listener, writes no `control.port`,
+    // instead of rejecting each message after accept --- otherwise agent sees "connected but nothing works".
     if std::env::args().any(|arg| arg == "--no-control") {
         control::set_cli_disabled(true);
     }

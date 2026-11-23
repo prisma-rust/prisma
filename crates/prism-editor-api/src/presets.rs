@@ -1,39 +1,39 @@
-//! 实体预设：工具栏「快速添加」用的预置实体（相机 / 光源 / UI / 网格 / 空）。
+//! Entity presets: prebuilt entities for toolbar "quick add" (camera / light / UI / mesh / empty).
 //!
-//! 预设只声明**要挂哪些组件**（用注册表里的规范名）与初始位置；具体字段值由
-//! 前端从 `prism-editor-api` 的 schema（`default_json`）取，保持单一来源。
+//! Presets only declare **which components to attach** (canonical names from registry) and initial position; field values from
+//! frontend via `prism-editor-api` schema (`default_json`), keeping single source.
 
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// 一个实体预设。
+/// One entity preset.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityPreset {
-    /// 稳定 id（前端用于按键/图标）。
+    /// Stable id (frontend for key / icon).
     pub id: String,
-    /// 展示名。
+    /// Display name.
     pub label: String,
-    /// 新实体的 `name` 初始值。
+    /// New entity `name` initial value.
     pub name: String,
-    /// 要挂载的组件规范名（顺序即挂载顺序）。
+    /// Canonical names of components to attach (order is attachment order).
     pub components: Vec<String>,
-    /// 组件字段覆盖（组件规范名 → 部分 JSON），前端与 schema 默认值做浅合并。
+    /// Component field overrides (canonical name → partial JSON), frontend shallow-merges with schema defaults.
     ///
-    /// 用于表达「方向光 / 聚光」这类**同组件不同配置**的预设 ——
-    /// 光靠组件名只能拿到 `Light` 的默认值（点光源）。
+    /// For presets of "directional / spot" class **same component different config** —
+    /// component name alone only gets `Light` default (point light).
     #[serde(default)]
     pub overrides: BTreeMap<String, Value>,
-    /// 初始旋转（四元数 xyzw）。
+    /// Initial rotation (quaternion xyzw).
     ///
-    /// 光源朝向由 `transform.forward`（+Z）决定，所以方向光/聚光必须带上旋转。
+    /// Light direction determined by `transform.forward` (+Z), so directional / spot must carry rotation.
     pub rotation: [f32; 4],
-    /// 初始位移。
+    /// Initial offset.
     pub position: [f32; 3],
 }
 
-/// 内置实体预设（顺序即 UI 展示顺序）。
+/// Built-in entity presets (order is UI display order).
 pub fn entity_presets() -> Vec<EntityPreset> {
     let preset =
         |id: &str, label: &str, name: &str, components: &[&str], position: [f32; 3]| EntityPreset {
@@ -46,9 +46,9 @@ pub fn entity_presets() -> Vec<EntityPreset> {
             position,
         };
 
-    // 太阳：`Light` 的默认类型是 Point，所以方向光必须覆盖 `light_type`；
-    // 朝向 = `Quat::from_rotation_arc(+Z, (−0.5, √½, 0.5))`，
-    // 对应旧 `DirectionalLight.euler_xyz = (45, −45, 0)` 的光照方向。
+    // Sun: `Light` default type is Point, so directional must override `light_type`;
+    // direction = `Quat::from_rotation_arc(+Z, (−0.5, √½, 0.5))`,
+    // corresponds to old `DirectionalLight.euler_xyz = (45, −45, 0)` lighting direction.
     let sun = |mut p: EntityPreset| {
         p.components = vec!["prism_engine::scene::Light".to_string()];
         p.overrides.insert(
@@ -59,7 +59,7 @@ pub fn entity_presets() -> Vec<EntityPreset> {
                 "shadows": "Soft",
             }),
         );
-        // 轴 (−√½, −0.5, 0) / |axis|、角 60°，写成精确常量避免手抄误差。
+        // Axis (−√½, −0.5, 0) / |axis|, angle 60°, exact constants avoid transcription error.
         let sqrt3 = 3.0_f32.sqrt();
         p.rotation = [
             -std::f32::consts::FRAC_1_SQRT_2 / sqrt3,
@@ -70,7 +70,7 @@ pub fn entity_presets() -> Vec<EntityPreset> {
         p
     };
 
-    // 聚光默认朝向要朝下（+Z → −Y）：绕 X 轴 +90°。
+    // Spot default direction should point down (+Z → −Y): +90° around X.
     let spot = |mut p: EntityPreset| {
         p.components = vec!["prism_engine::scene::Light".to_string()];
         p.overrides.insert(
@@ -93,8 +93,8 @@ pub fn entity_presets() -> Vec<EntityPreset> {
         p
     };
 
-    // `GameObject → 3D Object` 的等价物：`mesh_path` 指内置程序化网格
-    // （`prism_render::primitives`），不读 `.pak`、不需要 cook。
+    // Equivalent of `GameObject → 3D Object`: `mesh_path` points to built-in procedural mesh
+    // (`prism_render::primitives`), no `.pak` read, no cook.
     let primitive = |id: &str, label: &str, name: &str, mesh: &str, position: [f32; 3]| {
         let mut p = preset(
             id,
@@ -114,22 +114,22 @@ pub fn entity_presets() -> Vec<EntityPreset> {
     };
 
     vec![
-        primitive("cube", "立方体", "Cube", "box", [0.0, 0.5, 0.0]),
-        primitive("sphere", "球体", "Sphere", "sphere", [0.0, 0.5, 0.0]),
+        primitive("cube", "Cube", "Cube", "box", [0.0, 0.5, 0.0]),
+        primitive("sphere", "Sphere", "Sphere", "sphere", [0.0, 0.5, 0.0]),
         primitive(
             "cylinder",
-            "圆柱体",
+            "Cylinder",
             "Cylinder",
             "cylinder",
             [0.0, 0.5, 0.0],
         ),
-        primitive("capsule", "胶囊体", "Capsule", "capsule", [0.0, 1.0, 0.0]),
-        primitive("quad", "四边形", "Quad", "quad", [0.0, 0.0, 0.0]),
-        primitive("plane", "平面", "Plane", "quad", [0.0, 0.0, 0.0]),
-        preset("empty", "空实体", "entity", &[], [0.0, 0.0, 0.0]),
+        primitive("capsule", "Capsule", "Capsule", "capsule", [0.0, 1.0, 0.0]),
+        primitive("quad", "Quad", "Quad", "quad", [0.0, 0.0, 0.0]),
+        primitive("plane", "Plane", "Plane", "quad", [0.0, 0.0, 0.0]),
+        preset("empty", "Empty entity", "entity", &[], [0.0, 0.0, 0.0]),
         preset(
             "camera",
-            "相机",
+            "Camera",
             "Camera",
             &[
                 "prism_engine::scene::Camera",
@@ -137,24 +137,30 @@ pub fn entity_presets() -> Vec<EntityPreset> {
             ],
             [0.0, 0.0, 10.0],
         ),
-        sun(preset("sun", "平行光", "Sun", &[], [0.0, 6.0, 0.0])),
+        sun(preset(
+            "sun",
+            "Directional light",
+            "Sun",
+            &[],
+            [0.0, 6.0, 0.0],
+        )),
         preset(
             "point_light",
-            "点光源",
+            "Point light",
             "PointLight",
             &["prism_engine::scene::Light"],
             [3.0, 3.0, 3.0],
         ),
         spot(preset(
             "spot_light",
-            "聚光灯",
+            "Spot light",
             "SpotLight",
             &[],
             [0.0, 6.0, 0.0],
         )),
         preset(
             "mesh",
-            "网格",
+            "Mesh",
             "Mesh",
             &[
                 "prism_engine::scene::MeshRenderer",
@@ -164,14 +170,14 @@ pub fn entity_presets() -> Vec<EntityPreset> {
         ),
         preset(
             "skybox",
-            "天空盒",
+            "Skybox",
             "Skybox",
             &["prism_engine::scene::Skybox"],
             [0.0, 0.0, 0.0],
         ),
         preset(
             "ui",
-            "UI 元素",
+            "UI element",
             "ui_node",
             &["prism_engine::ui::Node", "prism_engine::ui::Style"],
             [0.0, 0.0, 0.0],
@@ -201,7 +207,7 @@ mod tests {
             }
         }
 
-        // 相机预设必须真的带相机组件。
+        // Camera preset must genuinely carry camera component.
         let camera = entity_presets()
             .into_iter()
             .find(|p| p.id == "camera")
@@ -230,7 +236,7 @@ mod light_preset_tests {
             let len = (x * x + y * y + z * z + w * w).sqrt();
             assert!(
                 (len - 1.0).abs() < 1e-4,
-                "preset '{}' rotation 不是单位四元数: {len}",
+                "Preset '{}' rotation is not identity quaternion: {len}",
                 preset.id
             );
         }
@@ -243,7 +249,7 @@ mod light_preset_tests {
             assert_eq!(
                 preset.components,
                 vec!["prism_engine::scene::Light".to_string()],
-                "preset '{id}' 应使用统一 Light 组件"
+                "Preset '{id}' should use unified Light component"
             );
         }
 
@@ -257,7 +263,7 @@ mod light_preset_tests {
         };
         assert_eq!(light_type("sun").as_deref(), Some("Directional"));
         assert_eq!(light_type("spot_light").as_deref(), Some("Spot"));
-        // 点光源用 `Light` 的默认类型：不需要覆盖。
+        // Point light uses `Light` default type: no override needed.
         assert_eq!(light_type("point_light"), None);
     }
 
@@ -269,19 +275,19 @@ mod light_preset_tests {
             for (component, overrides) in &preset.overrides {
                 assert!(
                     preset.components.contains(component),
-                    "preset '{}' 覆盖了未挂载的组件 '{component}'",
+                    "Preset '{}' overrides unattached component '{component}'",
                     preset.id
                 );
                 let ty = schema
                     .type_by_name(component)
-                    .unwrap_or_else(|| panic!("schema 里没有组件 '{component}'"));
+                    .unwrap_or_else(|| panic!("No component '{component}' in schema"));
                 let fields = overrides
                     .as_object()
-                    .unwrap_or_else(|| panic!("preset '{}' 的 overrides 不是对象", preset.id));
+                    .unwrap_or_else(|| panic!("Preset '{}' overrides not object", preset.id));
                 for key in fields.keys() {
                     assert!(
                         ty.fields.iter().any(|field| &field.name == key),
-                        "preset '{}' 覆盖了 '{component}' 上不存在的字段 '{key}'",
+                        "Preset '{}' overrides nonexistent field '{key}' on '{component}'",
                         preset.id
                     );
                 }

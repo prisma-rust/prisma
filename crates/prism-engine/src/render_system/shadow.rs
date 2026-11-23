@@ -31,12 +31,12 @@ pub fn dir_to_euler_xyz_deg(d: Vec3) -> Vec3 {
 // Matrix helpers
 // ---------------------------------------------------------------------------
 
-/// 方向光从「光传播方向」（`transform.forward`）转换为
-/// `FrameUBO.lightDirection` 的「指向光源」约定（见 `common.slang`）。
+/// Directional light from "light propagation direction" (`transform.forward`) converted to
+/// `FrameUBO.lightDirection` "pointing to light source" convention (see `common.slang`).
 ///
-/// `LightSample.direction` 与光学的 `transform.forward` 一致；着色器和阴影相机都要求
-/// 指向光源的方向，所以方向光在写入 UBO 时取反。点光 / 聚光的 `direction` 是锥轴传播
-/// 方向，不走这条通路。
+/// `LightSample.direction` consistent with optical `transform.forward`; shader and shadow camera both require
+/// direction pointing to light source, so directional light takes incorrect when writing UBO. Point light / spotlight `direction` is cone axis propagation
+/// direction, not taking this path.
 pub(super) fn directional_light_ubo_direction(direction: Vec3, radiance: f32) -> Vec4 {
     Vec4::new(-direction.x, -direction.y, -direction.z, radiance)
 }

@@ -47,7 +47,7 @@ impl EditorHost {
             "editor_play" => play(root, args),
             "editor_logs" => logs(root, args),
             "editor_input" => input(root, args),
-            other => Err(format!("未知的编辑器工具 '{other}'")),
+            other => Err(format!("Unknown editor tool '{other}'")),
         }
     }
 
@@ -58,7 +58,7 @@ impl EditorHost {
             .map_err(|_| "editor child lock poisoned")?;
         if let Some(child) = guard.as_mut() {
             match child.try_wait() {
-                Ok(None) => return Err("编辑器已经在运行（先 editor_quit）".into()),
+                Ok(None) => return Err("Editor already running (call editor_quit first)".into()),
                 _ => *guard = None,
             }
         }
@@ -73,14 +73,14 @@ impl EditorHost {
             .map(str::to_owned)
             .unwrap_or_else(|| default_command(root));
         let mut parts = command.split_whitespace();
-        let program = parts.next().ok_or("command 为空")?;
+        let program = parts.next().ok_or("command is empty")?;
         let mut child = Command::new(program)
             .args(parts)
             .current_dir(root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|err| format!("启动 '{program}' 失败: {err}"))?;
+            .map_err(|err| format!("Failed to launch '{program}': {err}"))?;
 
         let wait = args
             .get("wait_ms")
@@ -111,11 +111,13 @@ impl EditorHost {
                 }
             }
             if let Ok(Some(code)) = child.try_wait() {
-                return Err(format!("编辑器退出（code {code}），控制通道没起来"));
+                return Err(format!(
+                    "Editor exited (code {code}), control channel did not come up"
+                ));
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        Err(format!("等待控制通道超时（{wait} ms）"))
+        Err(format!("Timed out waiting for control channel ({wait} ms)"))
     }
 }
 
@@ -123,61 +125,61 @@ pub fn definitions() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "editor_launch",
-            description: "启动 egui 编辑器（默认 target/debug/prism-editor-egui），等本地控制通道就绪后返回 pid。",
+                        description: "Launch egui editor (default target/debug/prism-editor-egui), return pid after local control channel ready.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "覆盖启动命令（相对项目根）" },
+                                        "command": { "type": "string", "description": "Override launch command (relative to project root)" },
                     "wait_ms": { "type": "integer", "default": 30000 }
                 }
             }),
         },
         ToolDef {
             name: "editor_status",
-            description: "正在运行的 egui 编辑器状态：帧数、当前场景、选中实体、Play / 暂停、是否有未保存改动。",
+                        description: "Status of running egui editor: frame count, current scene, selected entity, Play / paused, whether unsaved changes.",
             input_schema: json!({ "type": "object", "properties": {} }),
         },
         ToolDef {
             name: "editor_capture",
-            description: "让正在运行的编辑器截图：target=window 抓整窗（UI + 视口），target=scene|game 抓该视口的引擎离屏图。返回 PNG 绝对路径。",
+                        description: "Take screenshot from running editor: target=window captures whole window (UI + viewport), target=scene|game captures that viewport engine offscreen image. Returns absolute PNG path.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "target": {
                         "type": "string",
                         "enum": ["window", "scene", "game"],
-                        "description": "抓什么：整窗 / Scene view / Game view，默认 window"
+                                                "description": "What to capture: window / Scene view / Game view, default window"
                     },
-                    "path": { "type": "string", "description": "输出 PNG（相对项目根或绝对路径）；不给则写到 target/editor-egui/captures/" },
-                    "size": { "type": "string", "description": "如 1920x1080（最近邻缩放在编辑器里做）" }
+                                        "path": { "type": "string", "description": "Output PNG (relative to project root or absolute); if omitted writes to target/editor-egui/captures/" },
+                                        "size": { "type": "string", "description": "e.g. 1920x1080 (nearest-neighbor scaling done in editor)" }
                 }
             }),
         },
         ToolDef {
             name: "editor_ui",
-            description: "编辑器 UI 节点树与指针：action=snapshot 返回整棵界面树（面板 / 文档 / 层级实体 / 资产 / 检查器字段 / 视口物体 / 模态对话框 / 命令表）；action=click 按节点 id 点击（command:Save / panel:hierarchy / doc:0 / entity:3 / asset:assets/x.prefab.json / view:scene:entity:2 / dialog:close:discard）；action=move 报告视口某点下的目标；action=wheel 在视口里滚动（Scene 缩放 / Game 滚轮）；action=drag 在视口里拖动（gizmo / 框选 / 轨道 / 玩法指针）；action=set 给检查器字段或对话框输入框赋值。",
+                        description: "Editor UI node tree and pointer: action=snapshot returns whole UI tree (panels / docs / hierarchy entities / assets / inspector fields / viewport objects / modal dialogs / command list); action=click clicks by node id (command:Save / panel:hierarchy / doc:0 / entity:3 / asset:assets/x.prefab.json / view:scene:entity:2 / dialog:close:discard); action=move reports target under a viewport point; action=wheel scrolls in viewport (Scene zoom / Game wheel); action=drag drags in viewport (gizmo / box select / orbit / gameplay pointer); action=set assigns inspector field or dialog input.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["snapshot", "click", "move", "wheel", "drag", "set"], "default": "snapshot" },
-                    "node": { "type": "string", "description": "click / set / move / wheel 时的节点 id（见 snapshot 返回）" },
-                    "offset": { "description": "move / wheel 时相对节点锚点的像素偏移 [dx,dy]" },
-                    "tab": { "type": "string", "description": "没有 node 时用 tab + x/y（sceneView / gameView）" },
-                    "x": { "type": "number", "description": "视口局部 X（没有 node 时）" },
-                    "y": { "type": "number", "description": "视口局部 Y（没有 node 时）" },
-                    "delta": { "type": "number", "description": "wheel 的滚轮增量（默认 120）" },
-                    "from": { "description": "drag 起点：{node,offset} 或 {x,y}" },
-                    "to": { "description": "drag 终点：{node,offset} 或 {x,y}" },
-                    "steps": { "type": "integer", "description": "drag 的采样步数（默认 8）" },
-                    "mode": { "type": "string", "enum": ["orbit"], "description": "drag 时强制轨道相机" },
-                    "ctrl": { "type": "boolean", "description": "drag 时按住 Ctrl（gizmo 吸附反转）" },
-                    "value": { "description": "set 时的值（JSON：数字 / 字符串 / bool / 数组）" }
+                                        "node": { "type": "string", "description": "Node id for click / set / move / wheel (see snapshot return)" },
+                                        "offset": { "description": "Pixel offset relative to node anchor for move / wheel [dx,dy]" },
+                                        "tab": { "type": "string", "description": "When no node use tab + x/y (sceneView / gameView)" },
+                                        "x": { "type": "number", "description": "Viewport local X (when no node)" },
+                                        "y": { "type": "number", "description": "Viewport local Y (when no node)" },
+                                        "delta": { "type": "number", "description": "Wheel delta (default 120)" },
+                                        "from": { "description": "Drag start: {node,offset} or {x,y}" },
+                                        "to": { "description": "Drag end: {node,offset} or {x,y}" },
+                                        "steps": { "type": "integer", "description": "Drag sampling steps (default 8)" },
+                                        "mode": { "type": "string", "enum": ["orbit"], "description": "Force orbit camera during drag" },
+                                        "ctrl": { "type": "boolean", "description": "Hold Ctrl during drag (gizmo snap invert)" },
+                                        "value": { "description": "Value for set (JSON: number / string / bool / array)" }
                 }
             }),
         },
         ToolDef {
             name: "editor_play",
-            description: "控制编辑器 Play：action=play 开始（会后台编译并加载工程模块，工程代码在 Game view 里跑）、stop 停止、pause 暂停/继续。",
+                        description: "Control editor Play: action=play starts (compiles and loads project module in background, project code runs in Game view), stop stops, pause pauses / resumes.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -191,31 +193,31 @@ pub fn definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "editor_logs",
-            description: "读编辑器 Console 缓冲（引擎日志 + 工程模块的 project: 日志 + panic 调用栈）。since 是上一轮的 next，用于增量拉取。",
+                        description: "Read editor Console buffer (engine logs + project module project: logs + panic backtraces). since is previous next, for incremental pull.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "since": { "type": "integer", "default": 0, "description": "只要 seq >= since 的行（用上次返回的 next）" },
+                                        "since": { "type": "integer", "default": 0, "description": "Only lines with seq >= since (use next from last return)" },
                     "limit": { "type": "integer", "default": 200 }
                 }
             }),
         },
         ToolDef {
             name: "editor_input",
-            description: "给正在 Play 的 Game View 注入输入：key=space/w/a/s/d/... 或 mouse=left/right/middle，state=press|release；click=true 等价于左键按下+松开。事件按帧排队，按下/松开不会被同一帧吞掉。",
+                        description: "Inject input into Game View currently in Play: key=space/w/a/s/d/... or mouse=left/right/middle, state=press|release; click=true equals left press+release. Events queued per frame, press / release not swallowed by same frame.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "key": { "type": "string", "description": "按键名：w/a/s/d/q/e/space/shift/ctrl/alt/escape/tab/enter/up/down/left/right/0-9" },
+                                        "key": { "type": "string", "description": "Key name: w/a/s/d/q/e/space/shift/ctrl/alt/escape/tab/enter/up/down/left/right/0-9" },
                     "mouse": { "type": "string", "enum": ["left", "right", "middle"] },
                     "state": { "type": "string", "enum": ["press", "release"], "default": "press" },
-                    "click": { "type": "boolean", "description": "左键点一下（按下 + 松开）" }
+                                        "click": { "type": "boolean", "description": "Left click once (press + release)" }
                 }
             }),
         },
         ToolDef {
             name: "editor_quit",
-            description: "让编辑器走正常退出路径（会落盘 state.json）。",
+                        description: "Make editor exit through normal path (will write state.json).",
             input_schema: json!({ "type": "object", "properties": {} }),
         },
     ]
@@ -227,7 +229,11 @@ fn play(root: &Path, args: &Value) -> Result<String, String> {
         "play" => "play",
         "stop" => "stop",
         "pause" => "pause",
-        other => return Err(format!("action 只能是 play / stop / pause，收到 '{other}'")),
+        other => {
+            return Err(format!(
+                "action can only be play / stop / pause, got '{other}'"
+            ))
+        }
     };
     let reply = request(root, json!({ "cmd": cmd }))?;
     Ok(reply.to_string())
@@ -284,14 +290,14 @@ fn ui(root: &Path, args: &Value) -> Result<String, String> {
             let node = args
                 .get("node")
                 .and_then(Value::as_str)
-                .ok_or("click 需要 node")?;
+                .ok_or("click needs node")?;
             ("ui.click", json!({ "node": node }))
         }
         "move" => ("ui.move", pointer_args(args)),
         "wheel" => ("ui.wheel", pointer_args(args)),
         "drag" => {
             if args.get("from").is_none() || args.get("to").is_none() {
-                return Err("drag 需要 from / to".to_string());
+                return Err("drag needs from / to".to_string());
             }
             ("ui.drag", pointer_args(args))
         }
@@ -299,7 +305,7 @@ fn ui(root: &Path, args: &Value) -> Result<String, String> {
             let node = args
                 .get("node")
                 .and_then(Value::as_str)
-                .ok_or("set 需要 node")?;
+                .ok_or("set needs node")?;
             (
                 "ui.set",
                 json!({ "node": node, "value": args.get("value").cloned().unwrap_or(Value::Null) }),
@@ -307,7 +313,7 @@ fn ui(root: &Path, args: &Value) -> Result<String, String> {
         }
         other => {
             return Err(format!(
-                "未知 action '{other}'（snapshot / click / move / wheel / drag / set）"
+                "Unknown action '{other}' (snapshot / click / move / wheel / drag / set)"
             ))
         }
     };
@@ -327,7 +333,7 @@ fn capture(root: &Path, args: &Value) -> Result<String, String> {
         .and_then(Value::as_str)
         .unwrap_or("window");
     if !matches!(target, "window" | "scene" | "game") {
-        return Err(format!("未知 target '{target}'（window / scene / game）"));
+        return Err(format!("Unknown target '{target}' (window / scene / game)"));
     }
     let path = match args.get("path").and_then(Value::as_str) {
         Some(value) => {
@@ -348,7 +354,8 @@ fn capture(root: &Path, args: &Value) -> Result<String, String> {
         }
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| format!("建目录失败: {err}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create directory: {err}"))?;
     }
     let mut request_body =
         json!({ "cmd": "capture", "target": target, "path": path.to_string_lossy() });
@@ -392,31 +399,32 @@ fn control_port(root: &Path) -> Result<u16, String> {
     let file = port_file(root);
     let text = std::fs::read_to_string(&file).map_err(|err| {
         format!(
-            "读不到控制端口 {}: {err}（编辑器没开、用了 --no-control，或先 editor_launch）",
+                        "Cannot read control port {}: {err} (editor not open, used --no-control, or call editor_launch first)",
             file.display()
         )
     })?;
     text.trim()
         .parse::<u16>()
-        .map_err(|err| format!("控制端口文件内容无效: {err}"))
+        .map_err(|err| format!("Control port file invalid: {err}"))
 }
 
 fn request(root: &Path, body: Value) -> Result<Value, String> {
     let port = control_port(root)?;
-    let stream = TcpStream::connect(("127.0.0.1", port))
-        .map_err(|err| format!("连不上编辑器控制通道 127.0.0.1:{port}: {err}"))?;
+    let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|err| {
+        format!("Cannot connect to editor control channel 127.0.0.1:{port}: {err}")
+    })?;
     stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
     let mut writer = stream
         .try_clone()
-        .map_err(|err| format!("复制 socket 失败: {err}"))?;
-    writeln!(writer, "{body}").map_err(|err| format!("写控制通道失败: {err}"))?;
+        .map_err(|err| format!("Failed to copy socket: {err}"))?;
+    writeln!(writer, "{body}").map_err(|err| format!("Failed to write control channel: {err}"))?;
     writer.flush().ok();
     let mut line = String::new();
     BufReader::new(stream)
         .read_line(&mut line)
-        .map_err(|err| format!("读控制通道失败: {err}"))?;
-    let reply: Value =
-        serde_json::from_str(line.trim()).map_err(|err| format!("控制通道回执不是 JSON: {err}"))?;
+        .map_err(|err| format!("Failed to read control channel: {err}"))?;
+    let reply: Value = serde_json::from_str(line.trim())
+        .map_err(|err| format!("Control channel reply not JSON: {err}"))?;
     // Keep the raw reply (including `kind`: bad_request / not_ready / denied /
     // internal) in the error text so the tool caller can decide whether to retry.
     if reply.get("ok").and_then(Value::as_bool) == Some(false) {

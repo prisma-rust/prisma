@@ -614,7 +614,11 @@ mod tests {
             json!(70.0),
             100,
         );
-        assert_eq!(stack.history().len(), 1, "continuous input on same field coalesces into one step");
+        assert_eq!(
+            stack.history().len(),
+            1,
+            "continuous input on same field coalesces into one step"
+        );
         assert_eq!(stack.history()[0], "Camera · fov_y_degrees");
 
         // Undo back to the initial 60.
@@ -667,7 +671,11 @@ mod tests {
             json!(80.0),
             10_000,
         );
-        assert_eq!(stack.history().len(), 3, "exceeding the coalesce window counts as a new step");
+        assert_eq!(
+            stack.history().len(),
+            3,
+            "exceeding the coalesce window counts as a new step"
+        );
     }
 
     #[test]
@@ -819,10 +827,16 @@ mod tests {
         assert!(stack.is_dirty());
 
         stack.undo(&mut doc);
-        assert!(!stack.is_dirty(), "undoing back to saved point should be clean");
+        assert!(
+            !stack.is_dirty(),
+            "undoing back to saved point should be clean"
+        );
 
         stack.redo(&mut doc);
-        assert!(stack.is_dirty(), "redoing back away from saved point becomes dirty again");
+        assert!(
+            stack.is_dirty(),
+            "redoing back away from saved point becomes dirty again"
+        );
     }
 
     #[test]
@@ -852,7 +866,10 @@ mod tests {
             json!(0.3),
             10_000,
         );
-        assert!(stack.is_dirty(), "same depth but different content is still unsaved");
+        assert!(
+            stack.is_dirty(),
+            "same depth but different content is still unsaved"
+        );
     }
 
     #[test]
@@ -874,7 +891,10 @@ mod tests {
         stack.undo(&mut doc);
         assert!(stack.is_dirty(), "undoing after saving is still unsaved");
         stack.redo(&mut doc);
-        assert!(!stack.is_dirty(), "redoing back to saved point is clean again");
+        assert!(
+            !stack.is_dirty(),
+            "redoing back to saved point is clean again"
+        );
     }
 
     #[test]
@@ -882,7 +902,10 @@ mod tests {
         let (mut doc, id) = doc_with_camera();
         let mut stack = UndoStack::new();
         stack.clear();
-        assert!(!stack.is_dirty(), "clean document clearing history stays clean");
+        assert!(
+            !stack.is_dirty(),
+            "clean document clearing history stays clean"
+        );
 
         stack.push_field(
             &mut doc,
@@ -894,6 +917,9 @@ mod tests {
             0,
         );
         stack.clear();
-        assert!(stack.is_dirty(), "clearing history cannot wash unsaved edits");
+        assert!(
+            stack.is_dirty(),
+            "clearing history cannot wash unsaved edits"
+        );
     }
 }

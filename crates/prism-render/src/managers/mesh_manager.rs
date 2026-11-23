@@ -45,17 +45,17 @@ pub struct MeshUploadInput {
 }
 
 impl MeshUploadInput {
-    /// 顶点位置的局部包围盒（#491：视锥剔除 / 阴影通道剔除 / 编辑器精确拾取
-    /// 都要它）。空网格或非有限坐标返回 `None`，调用方据此跳过剔除。
+    /// Local bounding box of vertex positions (#491: frustum cull / shadow pass cull / editor precise picking
+    /// all need it). Empty mesh or non-finite coords returns `None`, caller skips cull accordingly.
     pub fn bounds(&self) -> Option<crate::culling::Aabb> {
         crate::culling::Aabb::from_positions(self.positions.iter().copied())
     }
 }
 
-/// 蒙皮属性（#560 P0-3）：每顶点最多 4 个关节下标 + 权重。
+/// Skinning attributes (#560 P0-3): max 4 joint indices + weights per vertex.
 ///
-/// 单独于 [`MeshUploadInput`] 存在是有意的：绝大多数网格没有蒙皮，把它们
-/// 塞进同一个结构会让每个构造点都要写两个空 `Vec`。
+/// Stored separately from [`MeshUploadInput`] intentionally: vast majority of meshes have no skinning,
+/// stuffing them into same struct would make every construction point write two empty `Vec`s.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SkinAttributes {
     pub joints: Vec<[u16; 4]>,
@@ -67,7 +67,7 @@ impl SkinAttributes {
         self.joints.is_empty() || self.weights.is_empty()
     }
 
-    /// 顶点数是否和网格对齐（不一致时调用方必须放弃蒙皮，而不是读越界）。
+    /// Whether vertex count matches mesh (when inconsistent caller must give up skinning, not read out of bounds).
     pub fn matches_vertex_count(&self, vertex_count: usize) -> bool {
         self.joints.len() == vertex_count && self.weights.len() == vertex_count
     }
@@ -155,7 +155,7 @@ impl RenderMeshManager {
         self.meshes.is_empty()
     }
 
-    /// 驻留网格数与估算字节数（标准顶点布局 + 4 字节索引；#518 Phase 2）。
+    /// Resident mesh count and estimated byte count (standard vertex layout + 4-byte index; #518 Phase 2).
     pub fn stats(&self) -> (usize, u64) {
         let vertex_size = std::mem::size_of::<crate::mesh::Vertex>() as u64;
         let bytes = self
@@ -211,8 +211,8 @@ impl RenderMeshManager {
     /// [`BatchUploader`](crate::batch::BatchUploader) so many meshes can be
     /// uploaded with a single submit + fence. The caller must finish the
     /// uploader before drawing.
-    /// `register` 的蒙皮版本（#560 P0-3）：顶点数据完全相同，另外把
-    /// `SkinAttributes` 传成第二个顶点缓冲（binding 1）。
+    /// Skinning version of `register` (#560 P0-3): vertex data entirely same, additionally passes
+    /// `SkinAttributes` as second vertex buffer (binding 1).
     pub fn register_skinned(
         &mut self,
         context: &VulkanContext,
@@ -254,7 +254,7 @@ impl RenderMeshManager {
         self.register_skinned_into(context, uploader, input, None)
     }
 
-    /// [`Self::register_into`] 的蒙皮版本：`None` = 普通网格。
+    /// Skinning version of [`Self::register_into`]: `None` = normal mesh.
     pub fn register_skinned_into(
         &mut self,
         context: &VulkanContext,
@@ -270,7 +270,7 @@ impl RenderMeshManager {
         };
         let mesh = Mesh::new_into(context, uploader, &vertices, indices_opt)
             .context("RenderMeshManager::register_into: Mesh::new_into failed")?;
-        // 蒙皮缓冲走与顶点缓冲相同的共享 uploader（一次 submit/围栏）。
+        // Skin buffer goes through same shared uploader as vertex buffer (one submit/fence).
         let skin_buffer = match skin {
             Some(skin) if !skin.is_empty() => {
                 upload_skin_vertices_into(context, uploader, skin, vertices.len())?
@@ -367,9 +367,9 @@ fn build_vertices(input: &MeshUploadInput) -> Vec<crate::mesh::Vertex> {
     out
 }
 
-/// 把 `SkinAttributes` 展开成 `SkinVertex` 交错数组并上传（device-local）。
+/// Expand `SkinAttributes` into `SkinVertex` upload array (device-local).
 ///
-/// 顶点数不匹配时返回 `None`：宁可不蒙皮，也不要读到别的顶点的权重。
+/// Return `None` when vertex count does not match: rather not skin than read another vertex weights.
 fn skin_vertices(
     skin: &SkinAttributes,
     vertex_count: usize,
@@ -491,7 +491,7 @@ mod bounds_tests {
         assert!(input(vec![[f32::INFINITY, 0.0, 0.0]]).bounds().is_none());
     }
 
-    /// #515：导入路径给每个顶点写 `[1,0,0,1]`，上传时要按 UV 换成真切线。
+    /// #515: import path writes `[1,0,0,1]` per vertex, on upload must swap to real tangent by UV.
     #[test]
     fn placeholder_tangents_are_regenerated_from_the_uvs() {
         let mut mesh = MeshUploadInput {
@@ -503,7 +503,7 @@ mod bounds_tests {
             ],
             normals: vec![[0.0, 0.0, 1.0]; 4],
             colors: Vec::new(),
-            // U 轴沿 +Y、V 轴沿 −X：真切线是 +Y。
+            // U axis along +Y, V axis along −X: real tangent is +Y.
             uvs: vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
             tangents: vec![[1.0, 0.0, 0.0, 1.0]; 4],
             indices: vec![0, 1, 2, 0, 2, 3],
@@ -517,7 +517,7 @@ mod bounds_tests {
             );
         }
 
-        // 自己带了真切线（不统一）的网格不被覆盖。
+        // Meshes with own real tangent (not uniform) are not overwritten.
         mesh.tangents = vec![
             [1.0, 0.0, 0.0, 1.0],
             [0.0, 1.0, 0.0, 1.0],

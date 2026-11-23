@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Prisma 引擎展示视频制作脚本（简化版）
+Prisma engine showcase video production script (simplified version)
 
-不依赖引擎截图，纯动效展示特性清单
+No engine screenshots needed, pure animated feature list
 """
 
 import os
@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import List
 
-# 检查并安装依赖
+# Check and install dependencies
 try:
     import moviepy
     from moviepy import (
@@ -33,17 +33,17 @@ except ImportError:
     )
     import numpy as np
 
-# Windows 字体路径
+# Windows font paths
 if sys.platform == 'win32':
     FONT_PATH = r'C:\Windows\Fonts\arial.ttf'
 else:
     FONT_PATH = 'Arial'
 
-# 视频配置
+# Video config
 W, H = 1920, 1080
 FPS = 30
 
-# 配色（深空蓝 + 青绿强调）
+# Color scheme (deep empty blue + cyan-green accent)
 BG = np.array([5, 7, 12], dtype=np.uint8)
 SURFACE_1 = np.array([15, 19, 28], dtype=np.uint8)
 SURFACE_2 = np.array([22, 29, 42], dtype=np.uint8)
@@ -54,34 +54,34 @@ TEXT_GRAY = np.array([160, 170, 180], dtype=np.uint8)
 
 
 def generate_ambient_audio(duration: float, output_path: str):
-    """生成环境音（简单的 drone 和弦）"""
+    """Generate ambient audio (simple drone chord)"""
     print(f"Generating audio ({duration:.0f}s)...")
-    
+
     sr = 44100
     t = np.linspace(0, duration, int(sr * duration))
-    
-    # 泛音叠加（A 小调）
+
+    # Overtone layering (A minor key)
     freqs = [55, 110, 165, 220, 330, 440]
     audio = np.zeros_like(t)
-    
+
     for i, f in enumerate(freqs):
         env = 0.25 * (1 + 0.25 * np.sin(2 * np.pi * 0.08 * (i + 1) * t))
         phase = 2 * np.pi * f * t + 0.3 * np.sin(2 * np.pi * 0.03 * t)
         audio += env * np.sin(phase) / len(freqs)
-    
-    # 低频 sub-bass
+
+    # Low-frequency sub-bass
     audio += 0.12 * np.sin(2 * np.pi * 27.5 * t)
-    
+
     audio = audio / np.max(np.abs(audio)) * 0.65
-    
-    # 淡入淡出
+
+    # Fade in/out
     fade = int(sr * 1.5)
     audio[:fade] *= np.linspace(0, 1, fade)
     audio[-fade:] *= np.linspace(1, 0, fade)
-    
+
     audio_int16 = (audio * 32767).astype(np.int16)
-    
-    # 写 WAV
+
+    # Write WAV
     import struct
     with open(output_path, 'wb') as f:
         f.write(b'RIFF')
@@ -101,7 +101,7 @@ def generate_ambient_audio(duration: float, output_path: str):
 
 
 def make_gradient_bg(color1, color2, horizontal=False):
-    """创建渐变背景 numpy 生成器"""
+    """Create gradient background numpy generator"""
     def make_frame(t):
         frame = np.zeros((H, W, 3), dtype=np.uint8)
         for i in range(H if not horizontal else W):
@@ -116,8 +116,8 @@ def make_gradient_bg(color1, color2, horizontal=False):
 
 
 def make_particle_bg(color_base, n_particles=40):
-    """创建粒子背景（缓慢移动的光点）"""
-    # 随机粒子位置和速度
+    """Create particle background (slowly moving light points)"""
+    # Random particle positions and speeds
     particles = []
     for _ in range(n_particles):
         x = np.random.randint(0, W)
@@ -127,66 +127,66 @@ def make_particle_bg(color_base, n_particles=40):
         size = np.random.randint(2, 6)
         brightness = np.random.uniform(0.3, 0.8)
         particles.append([x, y, vx, vy, size, brightness])
-    
+
     def make_frame(t):
         frame = np.tile(color_base, (H, W, 1)).astype(np.float32)
-        
+
         for p in particles:
             x = int((p[0] + p[2] * t) % W)
             y = int((p[1] + p[3] * t) % H)
             size, brightness = p[4], p[5]
-            
-            # 绘制光晕
+
+            # Draw glow
             y1, y2 = max(0, y - size), min(H, y + size + 1)
             x1, x2 = max(0, x - size), min(W, x + size + 1)
-            
+
             for dy in range(y1, y2):
                 for dx in range(x1, x2):
                     dist = np.sqrt((dx - x)**2 + (dy - y)**2)
                     if dist <= size:
                         alpha = brightness * (1 - dist / size)
                         frame[dy, dx] = frame[dy, dx] * (1 - alpha * 0.6) + ACCENT_CYAN * alpha
-        
+
         return frame.astype(np.uint8)
-    
+
     return make_frame
 
 
 def make_title_card(title: str, subtitle: str, duration: float) -> VideoClip:
-    """创建标题卡"""
+    """Create title card"""
     bg = VideoClip(make_gradient_bg(BG, SURFACE_1), duration=duration)
-    
+
     title_txt = TextClip(
         font=FONT_PATH, text=title, font_size=90, color='white'
     ).with_duration(duration).with_position('center').with_effects([vfx.FadeIn(0.5)])
-    
+
     subtitle_txt = TextClip(
         font=FONT_PATH, text=subtitle, font_size=42, color=tuple(TEXT_GRAY)
     ).with_duration(duration).with_position(('center', H * 0.58)).with_effects([vfx.FadeIn(0.8)])
-    
+
     return CompositeVideoClip([bg, title_txt, subtitle_txt])
 
 
 def make_feature_card(title: str, subtitle: str, bullets: List[str], duration: float) -> VideoClip:
-    """创建特性卡片（动态背景 + 文本叠加）"""
-    # 动态粒子背景
+    """Create feature card (dynamic background + text overlay)"""
+    # Dynamic particle background
     bg = VideoClip(make_particle_bg(SURFACE_1), duration=duration)
-    
-    # 标题
+
+    # title
     title_txt = TextClip(
         font=FONT_PATH, text=title, font_size=64, color=tuple(ACCENT_CYAN),
         stroke_color=tuple(BG), stroke_width=2
     ).with_duration(duration).with_position(('center', 120)).with_effects([vfx.FadeIn(0.3)])
-    
-    # 副标题
+
+    # Subtitle
     subtitle_txt = TextClip(
         font=FONT_PATH, text=subtitle, font_size=38, color=tuple(TEXT_WHITE),
         stroke_color=tuple(BG), stroke_width=1
     ).with_duration(duration).with_position(('center', 200)).with_effects([vfx.FadeIn(0.5)])
-    
+
     layers = [bg, title_txt, subtitle_txt]
-    
-    # 特性列表
+
+    # Feature list
     if bullets:
         y_start = 360
         for i, bullet in enumerate(bullets):
@@ -196,46 +196,46 @@ def make_feature_card(title: str, subtitle: str, bullets: List[str], duration: f
                 color=tuple(TEXT_GRAY)
             ).with_duration(duration).with_position((120, y_start + i * 60)).with_effects([vfx.FadeIn(0.6 + i * 0.15)])
             layers.append(bullet_txt)
-    
+
     return CompositeVideoClip(layers)
 
 
 def make_end_card(duration: float) -> VideoClip:
-    """结尾卡"""
+    """Ending card"""
     bg = VideoClip(make_gradient_bg(SURFACE_1, BG), duration=duration)
-    
+
     logo_txt = TextClip(
         font=FONT_PATH, text="Prisma", font_size=80, color=tuple(ACCENT_GREEN)
     ).with_duration(duration).with_position(('center', H * 0.35)).with_effects([vfx.FadeIn(0.5)])
-    
+
     tagline = TextClip(
         font=FONT_PATH, text="Modern · Mobile-First · Modular",
         font_size=36, color=tuple(TEXT_GRAY)
     ).with_duration(duration).with_position(('center', H * 0.50)).with_effects([vfx.FadeIn(0.8)])
-    
+
     github = TextClip(
         font=FONT_PATH, text="github.com/YourUsername/Prisma",
         font_size=32, color=tuple(ACCENT_CYAN)
     ).with_duration(duration).with_position(('center', H * 0.62)).with_effects([vfx.FadeIn(1.0)])
-    
+
     return CompositeVideoClip([bg, logo_txt, tagline, github])
 
 
 def main():
     output_dir = Path(__file__).parent.parent / "target" / "showcase"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     audio_path = output_dir / "ambient.wav"
     video_path = output_dir / "prisma_showcase.mp4"
-    
+
     print("=" * 60)
     print("Prisma Showcase Video Generator")
     print("=" * 60)
-    
-    # 场景定义
+
+    # Scene definitions
     scenes = [
         ("title", "Prisma", "A Modern Mobile-First Game Engine", [], 4.0),
-        
+
         ("feature", "Mobile-First Architecture",
          "Optimized for TBDR GPUs · Vulkan Powered",
          [
@@ -244,7 +244,7 @@ def main():
              "Automatic bandwidth reduction",
              "Android + Desktop unified pipeline"
          ], 10.0),
-        
+
         ("feature", "Modular Render Graph",
          "Extensible Pass-Based Design",
          [
@@ -253,7 +253,7 @@ def main():
              "Pluggable feature passes",
              "Runtime capability detection"
          ], 10.0),
-        
+
         ("feature", "Advanced Lighting",
          "PBR · IBL · Cascaded Shadows",
          [
@@ -262,7 +262,7 @@ def main():
              "Cascaded shadow maps",
              "Baked probe-volume GI (SH)"
          ], 10.0),
-        
+
         ("feature", "Data-Oriented ECS",
          "High-Performance Entity Component System",
          [
@@ -271,7 +271,7 @@ def main():
              "Component versioning",
              "Cross-platform scenes (RSCN v4)"
          ], 10.0),
-        
+
         ("feature", "Asset Pipeline",
          "Offline Cooker · Runtime Pak Loading",
          [
@@ -280,7 +280,7 @@ def main():
              "Scene packaging (.pak format)",
              "Hot-reload ready architecture"
          ], 10.0),
-        
+
         ("feature", "Web-Based Editor",
          "Tauri 2 + Vue 3 · Live Editing",
          [
@@ -289,7 +289,7 @@ def main():
              "Prefab system with instance links",
              "Field-level undo/redo merging"
          ], 10.0),
-        
+
         ("feature", "Bindless Everything",
          "Modern Descriptor Management",
          [
@@ -298,7 +298,7 @@ def main():
              "GPU-driven rendering ready",
              "Legacy descriptor fallback"
          ], 9.0),
-        
+
         ("feature", "Slang Shaders",
          "Cross-Platform Shader Compilation",
          [
@@ -307,7 +307,7 @@ def main():
              "Auto-generated Rust structs",
              "SPIR-V output with validation"
          ], 9.0),
-        
+
         ("feature", "Built-In Automation",
          "Screenshot · MCP · CDP Integration",
          [
@@ -316,22 +316,22 @@ def main():
              "CDP-driven UI testing",
              "Deterministic frame capture"
          ], 9.0),
-        
+
         ("end", "", "", [], 5.0),
     ]
-    
-    # 1. 生成音频
+
+    # 1. Generate audio
     print("\n[1/3] Generating audio...")
     total_duration = sum(s[4] for s in scenes)
     generate_ambient_audio(total_duration, str(audio_path))
-    
-    # 2. 创建视频片段
+
+    # 2. Create video clips
     print("\n[2/3] Composing video...")
     clips = []
-    
+
     for scene_type, title, subtitle, bullets, dur in scenes:
         print(f"  - {scene_type}: {title or '(end card)'}")
-        
+
         if scene_type == "title":
             clip = make_title_card(title, subtitle, dur)
         elif scene_type == "feature":
@@ -340,17 +340,17 @@ def main():
             clip = make_end_card(dur)
         else:
             continue
-        
+
         clips.append(clip)
-    
-    # 3. 拼接并输出
+
+    # 3. Concatenate and output
     print("\n[3/3] Rendering video...")
     final = concatenate_videoclips(clips, method="compose")
-    
+
     if audio_path.exists():
         audio = AudioFileClip(str(audio_path))
         final = final.with_audio(audio)
-    
+
     print(f"\nWriting to {video_path}...")
     final.write_videofile(
         str(video_path),
@@ -361,7 +361,7 @@ def main():
         bitrate='6000k',
         threads=4
     )
-    
+
     print("\n" + "=" * 60)
     print(f"[SUCCESS] Video created: {video_path}")
     print(f"  Duration: {final.duration:.1f}s")

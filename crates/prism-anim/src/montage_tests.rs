@@ -178,14 +178,21 @@ fn a_paused_player_freezes_time_and_notifies_until_resumed() {
         (player.active_time().unwrap() - 0.1).abs() < 1e-5,
         "pause does not advance time"
     );
-    assert!(player.take_notifies().is_empty(), "pause does not emit Notify");
+    assert!(
+        player.take_notifies().is_empty(),
+        "pause does not emit Notify"
+    );
 
     player.set_paused(false);
     assert!(!player.is_paused());
     player.tick(0.1);
     assert!((player.active_time().unwrap() - 0.2).abs() < 1e-5);
     let notifies = player.take_notifies();
-    assert_eq!(notifies.len(), 1, "only after resume do crossed Notifies fire");
+    assert_eq!(
+        notifies.len(),
+        1,
+        "only after resume do crossed Notifies fire"
+    );
     assert_eq!(notifies[0].name, "step");
 }
 
@@ -238,7 +245,10 @@ fn jumping_to_a_section_moves_the_playhead_and_clears_pending_notifies() {
         player.active_section().map(|section| section.name.as_str()),
         Some("Land")
     );
-    assert!(player.take_notifies().is_empty(), "jumping segments should not replay intermediate Notifies");
+    assert!(
+        player.take_notifies().is_empty(),
+        "jumping segments should not replay intermediate Notifies"
+    );
     assert!(!player.jump_to_section("Missing"));
     assert!((player.active_time().unwrap() - 0.8).abs() < 1e-5);
 }
@@ -375,7 +385,10 @@ fn blend_in_ramps_the_weight_and_paused_time_does_not_count() {
     player.set_paused(false);
 
     player.tick(0.25);
-    assert!((player.active_weight() - 0.8).abs() < 1e-5, "baseline weight capped");
+    assert!(
+        (player.active_weight() - 0.8).abs() < 1e-5,
+        "baseline weight capped"
+    );
     player.tick(0.5);
     assert!((player.active_weight() - 0.8).abs() < 1e-5);
 }

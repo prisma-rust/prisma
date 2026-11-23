@@ -220,8 +220,12 @@ mod window_smoke_tests {
         assert_eq!(next_tile(0, 4), 1);
         assert_eq!(next_tile(3, 4), 4);
         assert_eq!(next_tile(4, 4), 0);
-        assert_eq!(next_tile(9, 4), 0, "越界的旧值也回到空");
-        assert_eq!(next_tile(0, 0), 1, "palette 至少为 1");
+        assert_eq!(
+            next_tile(9, 4),
+            0,
+            "Out-of-range old value also returns empty"
+        );
+        assert_eq!(next_tile(0, 0), 1, "Palette at least 1");
 
         let value = serde_json::json!({ "columns": 3, "tiles": [0, 2] });
         assert_eq!(tilemap_columns(&value), 3);
@@ -260,7 +264,7 @@ mod window_smoke_tests {
         assert_eq!(
             AssetSearch::parse("t:材质").kinds,
             vec![AssetKind::Material],
-            "中文标签也认"
+            "Chinese tags also recognized"
         );
         assert_eq!(
             AssetSearch::parse("t:Material").kinds,
@@ -278,7 +282,11 @@ mod window_smoke_tests {
     #[test]
     fn the_grid_wraps_cells_by_the_available_width() {
         assert_eq!(grid_columns(400.0, 92.0), 4);
-        assert_eq!(grid_columns(90.0, 92.0), 1, "窄面板至少一列");
+        assert_eq!(
+            grid_columns(90.0, 92.0),
+            1,
+            "Narrow panel at least one column"
+        );
         assert_eq!(grid_columns(0.0, 92.0), 1);
         assert_eq!(grid_columns(f32::NAN, 92.0), 1);
         assert_eq!(truncate_label("short.png", 14), "short.png");
@@ -314,8 +322,15 @@ mod window_smoke_tests {
 
         ping_asset(&mut workspace, &mut state, "assets/models/probe.gltf");
 
-        assert_eq!(workspace.selection, vec![0], "ping 要选中引用它的实体");
-        assert!(state.asset_selection.is_empty(), "选中实体后退出资产检查器");
+        assert_eq!(
+            workspace.selection,
+            vec![0],
+            "ping should select entity referencing it"
+        );
+        assert!(
+            state.asset_selection.is_empty(),
+            "Exiting asset inspector after selecting entity"
+        );
         assert!(state.status.contains("已定位"), "status: {}", state.status);
 
         workspace.clear_selection();
@@ -391,7 +406,7 @@ mod window_smoke_tests {
         assert_eq!(
             inspector_indices(&workspace, &mut state),
             vec![1],
-            "锁定时忽略新的选择"
+            "Ignore new selection while locked"
         );
 
         toggle_inspector_lock(&workspace, &mut state);
@@ -412,14 +427,14 @@ mod window_smoke_tests {
         assert_eq!(
             hierarchy_indices(&workspace, &mut state),
             vec![1],
-            "外部选择不改变锁定的层级高亮"
+            "External selection does not change locked hierarchy highlight"
         );
 
         sync_hierarchy_lock(&workspace, &mut state);
         assert_eq!(
             hierarchy_indices(&workspace, &mut state),
             vec![0],
-            "层级内部点选会更新锁定快照"
+            "Internal hierarchy click updates locked snapshot"
         );
 
         toggle_hierarchy_lock(&workspace, &mut state);
@@ -437,7 +452,7 @@ mod window_smoke_tests {
         let indices = hierarchy_indices(&workspace, &mut state);
         assert!(
             state.hierarchy_lock.is_none(),
-            "锁住的对象被删掉后要自动解锁"
+            "Auto-unlock when locked object deleted"
         );
         assert_eq!(indices, workspace.selection);
     }
@@ -457,8 +472,14 @@ mod window_smoke_tests {
 
         assert!(state.hierarchy_search.is_empty());
         assert!(state.hierarchy_lock.is_none());
-        assert!(workspace.expanded.contains(&cube_id), "父级要展开");
-        assert!(workspace.expanded.contains(&detail_id), "目标自身也可展开");
+        assert!(
+            workspace.expanded.contains(&cube_id),
+            "Parent should be expanded"
+        );
+        assert!(
+            workspace.expanded.contains(&detail_id),
+            "Target itself also expandable"
+        );
         assert_eq!(state.hierarchy_reveal, Some(detail_id));
     }
 
@@ -475,9 +496,13 @@ mod window_smoke_tests {
         let indices = inspector_indices(&workspace, &mut state);
         assert!(
             state.inspector_lock.is_none(),
-            "锁住的对象被删掉后要自动解锁"
+            "Auto-unlock when locked object deleted"
         );
-        assert_eq!(indices, workspace.selection.clone(), "回落到文档选择");
+        assert_eq!(
+            indices,
+            workspace.selection.clone(),
+            "Fall back to document selection"
+        );
     }
 
     #[test]
@@ -506,9 +531,12 @@ mod window_smoke_tests {
         assert_eq!(
             workspace.document().doc.to_json_string(),
             before,
-            "只是显示提示，不能碰文档"
+            "Only shows hint, must not touch document"
         );
-        assert!(workspace.undo_history().is_empty(), "也不能产生撤销步");
+        assert!(
+            workspace.undo_history().is_empty(),
+            "Must not produce undo steps either"
+        );
 
         workspace.stop();
         assert_eq!(
@@ -587,7 +615,7 @@ mod window_smoke_tests {
         assert_eq!(
             per_pass_budget_ms_with_total(4, 0.0),
             0.0,
-            "非法预算不能产生 NaN/Inf 份额"
+            "Illegal budget must not produce NaN/Inf shares"
         );
         assert_eq!(per_pass_budget_ms_with_total(4, f32::NAN), 0.0);
     }
@@ -764,9 +792,12 @@ mod window_smoke_tests {
         workspace.document_mut().doc.entities[1].transform.position = [1.0, 5.0, 3.0];
         let mixed = mixed_transform_axes(&workspace, &[0, 1]);
         assert!(!mixed[0][0]);
-        assert!(mixed[0][1], "只有 Y 不同");
+        assert!(mixed[0][1], "Only Y differs");
         assert!(!mixed[0][2]);
-        assert!(mixed[2].iter().all(|flag| !flag), "scale 相同时不标记");
+        assert!(
+            mixed[2].iter().all(|flag| !flag),
+            "Not flagged when scale same"
+        );
 
         let single = mixed_transform_axes(&workspace, &[0]);
         assert!(single.iter().all(|row| row.iter().all(|flag| !flag)));

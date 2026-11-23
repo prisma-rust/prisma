@@ -1,24 +1,24 @@
-//! UI Render System —— 收集 UI 绘制命令
+//! UI Render System — collect UI draw commands
 //!
-//! 每帧查询所有 `Node + ComputedLayout` 的实体，生成有序的 `UiDrawList`。
-//! `UiDrawList` 被设置到 `World` Resource 中，供 `GraphRenderer` 的 UI Pass 消费。
+//! Each frame queries all entities with `Node + ComputedLayout`, generates ordered `UiDrawList`.
+//! `UiDrawList` is set into `World` Resource for `GraphRenderer` UI Pass consumption.
 
 use crate::ui::components::*;
 use crate::ui::{is_ui_active, ScreenSize};
 use prism_ecs::World;
 
-// ── 绘制命令 ─────────────────────────────────────────────────
+// ── draw commands ─────────────────────────────────────────────────
 
-/// 一个带背景色的矩形（圆角暂由 shader 处理）。
+/// A rectangle with background color (corner radius handled by shader).
 #[derive(Clone, Copy, Debug)]
 pub struct UiQuad {
-    /// 屏幕空间矩形 `[left, top, width, height]`
+    /// Screen-space rect `[left, top, width, height]`
     pub rect: [f32; 4],
-    /// RGBA 颜色 0..=1，按 **sRGB** 作者值解释（渲染前解码到线性，#592）。
+    /// RGBA color 0..=1, interpreted as **sRGB** author value (decoded to linear before render, #592).
     pub color: [f32; 4],
-    /// 圆角半径（px）
+    /// Corner radius (px)
     pub border_radius: f32,
-    /// 背景图 bindless 槽位（#591）；`None` = 纯色填充。
+    /// Background texture bindless slot (#591); `None` = solid fill.
     pub texture: Option<u32>,
     /// Backdrop blur radius in pixels; `0.0` means the background is not sampled.
     ///
@@ -26,12 +26,12 @@ pub struct UiQuad {
     /// UI shader samples the result. The surface declares this through its material
     /// rather than through a per-widget toggle bit.
     pub backdrop_sigma: f32,
-    /// 绘制层级（z-index）。层级内再按 [`UiQuad::order`] 排。
+    /// Draw layer (z-index). Within layer sorted by [`UiQuad::order`].
     ///
-    /// 普通 UI 节点都是 0；需要「永远压在某层之上」的东西（雨滴粒子、调试
-    /// 叠加）显式写更大的值。
+    /// Normal UI nodes are 0; things needing "always above some layer" (rain particles, debug
+    /// overlay) explicitly write larger value.
     pub layer: i32,
-    /// 层级内的绘制顺序，来自 [`ComputedLayout::order`]。
+    /// Draw order within layer, from [`ComputedLayout::order`].
     pub order: u32,
 }
 
@@ -49,18 +49,18 @@ impl Default for UiQuad {
     }
 }
 
-/// 一个文本绘制命令。
+/// One text draw command.
 #[derive(Clone, Debug, Default)]
 pub struct UiTextCmd {
     pub rect: [f32; 4],
     pub content: String,
     pub font_size: f32,
-    /// RGBA sRGB 作者值（与 [`UiQuad::color`] 相同）。
+    /// RGBA sRGB author value (same as [`UiQuad::color`]).
     pub color: [f32; 4],
     pub alignment: TextAlign,
-    /// 工程自带字体的资产路径；空 = 系统默认字体（#583）。
+    /// Project-bundled font asset path; empty = system default font (#583).
     pub font: String,
-    /// 按矩形宽度换行（#527）；`false` = 单行。
+    /// Wrap by rect width (#527); `false` = single line.
     pub wrap: bool,
     /// Optional SDF outline width in pixels (`0.0` = no outline).
     pub outline_width: f32,
@@ -70,13 +70,13 @@ pub struct UiTextCmd {
     pub shadow_offset: [f32; 2],
     /// Drop-shadow RGBA color (sRGB, alpha `0.0` = no shadow).
     pub shadow_color: [f32; 4],
-    /// 见 [`UiQuad::layer`]。
+    /// See [`UiQuad::layer`].
     pub layer: i32,
-    /// 见 [`UiQuad::order`]。
+    /// See [`UiQuad::order`].
     pub order: u32,
 }
 
-/// 没有层级来源的绘制命令（外部提交的 quad / 粒子）排在所有 UI 实体之后。
+/// Draw commands without layer source (externally submitted quad / particles) sorted after all UI entities.
 pub const EXTERNAL_UI_ORDER: u32 = u32::MAX;
 
 /// Layer for externally submitted commands: above all ECS UI entities (#462).
@@ -85,18 +85,18 @@ pub const EXTERNAL_UI_ORDER: u32 = u32::MAX;
 /// and submission order decides draw order.
 pub const EXTERNAL_LAYER: i32 = 9_500;
 
-/// 一条绘制命令。
+/// One draw command.
 ///
-/// 背景矩形和文本放在**同一个**列表里，按 `(layer, order, 类型)` 排序后交错
-/// 绘制——这正是 UGUI 在 Canvas 里做的事（#462）：文字不再无条件压在所有背景
-/// 之上，后加的全屏遮罩能盖住先前的标题。
+/// Background rect and text in **same** list, sorted by `(layer, order, type)` then submitted
+/// — this is what UGUI does in Canvas (#462): text not unconditionally above all backgrounds,
+/// later full-screen mask can cover earlier title.
 #[derive(Clone, Debug)]
 pub enum UiDrawItem {
     Quad(UiQuad),
     Text(UiTextCmd),
 }
 
-/// UI 绘制命令列表 —— 已按绘制顺序排好，供渲染 Pass 顺序消费。
+/// UI draw command list — already sorted by draw order, for render Pass ordered consumption.
 #[derive(Clone, Debug, Default)]
 pub struct UiDrawList {
     pub items: Vec<UiDrawItem>,
@@ -138,7 +138,7 @@ impl UiDrawList {
     }
 }
 
-/// 外部（宿主 / 项目模块）提交的 UI 四边形。
+/// Externally (host / project module) submitted UI quad.
 ///
 /// Items are [`prism_ui_draw::UiQuad`] so hosts submit the same struct used on the
 /// render side without placeholder layer/order values. `ui_render_system` rebuilds
@@ -147,7 +147,7 @@ impl UiDrawList {
 #[derive(Clone, Debug, Default)]
 pub struct ExternalUiQuads(pub Vec<prism_ui_draw::UiQuad>);
 
-/// 布局节点的 Canvas 缩放（#463）；坏值按 1 处理，避免 NaN 扩散到顶点。
+/// Canvas scale of layout node (#463); bad value treated as 1, avoid NaN spreading to vertices.
 fn layout_scale(layout: &ComputedLayout) -> f32 {
     if layout.scale.is_finite() && layout.scale > 0.0 {
         layout.scale
@@ -156,9 +156,9 @@ fn layout_scale(layout: &ComputedLayout) -> f32 {
     }
 }
 
-/// 每帧更新 `UiDrawList` resource —— 查询所有 UI 实体生成绘制命令。
+/// Update `UiDrawList` resource each frame — query all UI entities generate draw commands.
 pub fn ui_render_system(world: &mut World) {
-    // (layer, order, 类型：0 = 矩形 / 1 = 文本, 序号) —— 序号让排序稳定。
+    // (layer, order, type: 0 = rect / 1 = text, sequence) — sequence makes sort stable.
     let mut pending: Vec<((i32, u32, u8, u32), UiDrawItem)> = Vec::new();
 
     // Merge externally submitted quads first; sorting places them in EXTERNAL_LAYER
@@ -180,7 +180,7 @@ pub fn ui_render_system(world: &mut World) {
         }
     }
 
-    // 收集背景矩形
+    // Collect background rects
     for (entity, layout, style) in world.query2::<ComputedLayout, Style>() {
         if !is_ui_active(world, entity) {
             continue;
@@ -188,8 +188,8 @@ pub fn ui_render_system(world: &mut World) {
         if !style.visible {
             continue;
         }
-        // #528：`Button` 按交互状态换色，没有 `Button` 时继续用
-        // `Style::background`（两者可以共存，按钮优先）。
+        // #528: `Button` changes color by interaction state, without `Button` continue using
+        // `Style::background` (both can coexist, button first).
         let texture = world
             .get::<crate::scene::runtime_components::UiImageRef>(entity)
             .filter(|image| image.generation > 0)
@@ -198,17 +198,17 @@ pub fn ui_render_system(world: &mut World) {
             Some(button) => button.color(world.get::<Interaction>(entity)),
             None => style.background,
         };
-        // #591：有背景图时 `background` 只当作 tint；整掉 alpha 说明作者没写
-        // tint，就按不透明白色显示图片原色。
+        // #591: with background texture `background` only as tint; if alpha 0 means author did not write
+        // tint, display texture original colors as opaque white.
         if texture.is_some() && bg[3] <= 0.0 {
             bg = [1.0, 1.0, 1.0, 1.0];
         }
         if bg[3] <= 0.0 && texture.is_none() {
             continue;
-        } // 完全透明跳过
+        } // fully transparent skip
 
         let seq = pending.len() as u32;
-        // #463：圆角是「设计像素」，按所在 Canvas 的缩放换算到屏幕像素。
+        // #463: corner radius is "design pixels", convert to screen pixels by containing Canvas scale.
         let scale = layout_scale(layout);
         pending.push((
             (0, layout.order, 0, seq),
@@ -224,13 +224,13 @@ pub fn ui_render_system(world: &mut World) {
         ));
     }
 
-    // 收集文本
+    // Collect text
     for (entity, layout, text) in world.query2::<ComputedLayout, Text>() {
         if !is_ui_active(world, entity) {
             continue;
         }
-        // 与上面的 quad 一致：`Style::visible == false` 的实体不产生绘制命令。
-        // 文本实体通常也挂 `Style`（`Node + Style + Text`），没有 `Style` 时按可见处理。
+        // Consistent with quad above: `Style::visible == false` entities produce no draw commands.
+        // Text entities usually also carry `Style` (`Node + Style + Text`), without `Style` treated visible.
         if matches!(world.get::<Style>(entity), Some(style) if !style.visible) {
             continue;
         }
@@ -244,7 +244,7 @@ pub fn ui_render_system(world: &mut World) {
             UiDrawItem::Text(UiTextCmd {
                 rect: layout.rect,
                 content: text.content.clone(),
-                // #463：字号同样按 Canvas 缩放，否则 4K 屏幕上文字只有一半大。
+                // #463: font size likewise by Canvas scale, otherwise text on 4K screen half size.
                 font_size: text.font_size * layout_scale(layout),
                 color: text.color,
                 alignment: text.alignment,
@@ -257,7 +257,7 @@ pub fn ui_render_system(world: &mut World) {
         ));
     }
 
-    // 先层、再层级顺序、最后「同一节点里背景在文本之前」。
+    // First by layer, then layer order, finally "background before text within same node".
     pending.sort_by_key(|(key, _)| *key);
 
     let mut draw_list = UiDrawList {
@@ -270,12 +270,12 @@ pub fn ui_render_system(world: &mut World) {
     world.insert_resource(draw_list);
 }
 
-/// 把调度期间新提交的外部四边形并入已经建好的 [`UiDrawList`]。
+/// Merge externally submitted quads during scheduling into already-built [`UiDrawList`].
 ///
-/// [`ui_render_system`] 在调度中段（`ui::render`）重建列表，而项目 system 通常
-/// 注册在它之后；`Engine::update` 在调度结束后再并一次，静态 Player 里
-/// `GameWorld::draw_quad` 的提交才不会晚一帧（#1048）。编辑器在
-/// `engine.update()` 之前写入，走的是 `ui_render_system` 那一次合并。
+/// [`ui_render_system`] builds list during scheduling (`ui::render`), project systems usually
+/// register after it; `Engine::update` merges once at schedule end, so static Player
+/// `GameWorld::draw_quad` submissions are not one frame late (#1048). Editor writes before
+/// `engine.update()`, goes through that `ui_render_system` merge.
 pub fn merge_external_quads(world: &mut World) {
     let Some(external) = world.remove_resource::<ExternalUiQuads>() else {
         return;
@@ -293,7 +293,7 @@ pub fn merge_external_quads(world: &mut World) {
         layer: EXTERNAL_LAYER,
         order: EXTERNAL_UI_ORDER,
     }));
-    // 列表本来就有序，`sort_by_key` 稳定，所以只把后加的元素插回正确的位置。
+    // List already ordered, `sort_by_key` stable, so just insert later elements at correct position.
     draw_list.items.sort_by_key(|item| match item {
         UiDrawItem::Quad(quad) => (quad.layer, quad.order, 0u8),
         UiDrawItem::Text(text) => (text.layer, text.order, 1u8),
@@ -301,9 +301,9 @@ pub fn merge_external_quads(world: &mut World) {
     world.insert_resource(draw_list);
 }
 
-/// 将引擎的 `UiDrawList`（像素坐标）转换为渲染器的 `UiOverlayInput`（NDC）。
+/// Convert engine `UiDrawList` (pixel coords) to renderer `UiOverlayInput` (NDC).
 ///
-/// 从 world 的 `ScreenSize` resource 读取屏幕尺寸。
+/// Read screen size from world `ScreenSize` resource.
 pub fn convert_ui_draw_list_to_overlay(world: &World) -> prism_ui_draw::UiOverlayInput {
     let mut out = prism_ui_draw::UiOverlayInput::default();
     convert_ui_draw_list_to_overlay_into(world, &mut out);
@@ -338,7 +338,7 @@ pub fn convert_ui_draw_list_to_overlay_into(
         let q = match item {
             UiDrawItem::Quad(quad) => quad,
             UiDrawItem::Text(text) => {
-                // 文本命令按像素坐标原样透传（record 时展开成逐字形四边形）。
+                // Text commands pass through pixel coords as-is (expanded per-glyph quad when recording).
                 out.push_text(prism_ui_draw::UiTextInput {
                     rect: text.rect,
                     content: text.content.clone(),
@@ -360,17 +360,17 @@ pub fn convert_ui_draw_list_to_overlay_into(
             }
         };
         let [px, py, pw, ph] = q.rect; // pixel left, top, width, height
-                                       // NDC: [-1,1] x [-1,1]，origin center。**Vulkan 的 Y 轴朝下**：
-                                       // `y = -1` 是屏幕顶、`+1` 是屏幕底（相机投影里的
-                                       // `p[1][1] = -inv_tan` 正是按这个约定翻的）。
-                                       // 像素坐标 y 也是向下增长，所以这里**不翻**：
-                                       // 再翻一次会把整个 UI 层上下镜像。
+                                       // NDC: [-1,1] x [-1,1], origin center. **Vulkan Y axis points downward**:
+                                       // `y = -1` is screen top, `+1` bottom (camera projection
+                                       // `p[1][1] = -inv_tan` is flipped for this convention).
+                                       // Pixel y also grows downward, so here **no flip**:
+                                       // flipping again would turn whole UI layer upside down.
         let x0 = (px / w) * 2.0 - 1.0;
         let y0 = (py / h) * 2.0 - 1.0;
         let x1 = ((px + pw) / w) * 2.0 - 1.0;
         let y1 = ((py + ph) / h) * 2.0 - 1.0;
-        // NDC border 半径：按 quad 自身尺寸归一化，渲染侧再乘回像素尺寸
-        // 才能得到与作者写法一致的圆角（#634）。
+        // NDC border radius: normalize by quad own size, render side multiplies back by pixel size
+        // to get corner consistent with author writing (#634).
         let br_ndc = if pw.max(ph) > 0.0 {
             q.border_radius / pw.max(ph) * 2.0
         } else {

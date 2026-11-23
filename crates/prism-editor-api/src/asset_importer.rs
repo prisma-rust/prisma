@@ -1,20 +1,20 @@
-//! 资产导入器门面。
+//! Asset importer facade.
 //!
-//! Prisma 的资产是**按扩展名直接决定由谁处理**的（没有 `.meta`、没有导入数据库、
-//! 没有每资产的导入设置）。这一层把「这个文件由哪个导入器负责」投影成类别名，
-//! 供编辑器展示与工具脚本判断。
+//! Prisma assets are **handled directly by extension** (no `.meta`, no import database,
+//! no per-asset import settings). This layer projects "which importer handles this file" into a class alias,
+//! for editor display and tool scripts.
 //!
-//! | 方法 | 这里 |
+//! | method  | here  |
 //! |---|---|
 //! | `get_at_path(path)` | [`get_at_path`] |
 //! | `asset_path` | [`AssetImporter::asset_path`] |
 //! | `user_data` | [`AssetImporter::user_data`] |
 //! | `import_settings_missing` | [`AssetImporter::import_settings_missing`] |
-//! | 图片 / 模型 / 音频 / 文本 … | [`ImporterClass`] |
+//! | texture / model / audio / text … | [`ImporterClass`] |
 //!
-//! 差异（重要，不要当成 bug）：没有导入设置存储，所以 `user_data` 恒为空、
-//! `import_settings_missing` 恒为 `true`；这两个字段存在是为了保持接口形状，
-//! 而不是暗示有 sidecar 文件。真正的导入参数来自 cooker 的 `CookProfile`。
+//! Differences (important, not to be treated as a bug): no import setting storage, so `user_data` always empty,
+//! `import_settings_missing` always `true`; these fields exist to keep interface shape,
+//! not to hint at a sidecar file. Real import parameters come from cooker `CookProfile`.
 
 use std::path::Path;
 
@@ -23,32 +23,32 @@ use serde::{Deserialize, Serialize};
 use crate::asset_ops::normalize_asset_path;
 use crate::assets;
 
-/// 负责某类资产的导入器 = 引擎的具体 `AssetImporter` 子类。
+/// Importer responsible for a class of assets = engine concrete `AssetImporter` subclass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ImporterClass {
-    /// 图片 → `ImageImporter`。
+    /// Texture → `ImageImporter`.
     Texture,
-    /// 模型 → `ModelImporter`。
+    /// Model → `ModelImporter`.
     Model,
-    /// 音频 → `AudioImporter`。
+    /// Audio → `AudioImporter`.
     Audio,
-    /// HDR / EXR 环境贴图 → `ImageImporter`（里也是纹理导入）。
+    /// HDR / EXR environment texture → `ImageImporter` (also texture import here).
     Environment,
-    /// `.scene.json` → `DefaultImporter`（Prisma 的文本场景格式）。
+    /// `.scene.json` → `DefaultImporter` (Prisma text scene format).
     Scene,
-    /// `.prefab.json` → `DefaultImporter`。
+    /// `.prefab.json` → `DefaultImporter`.
     Prefab,
-    /// `.pak` → `DefaultImporter`（打包产物，导入即复制）。
+    /// `.pak` → `DefaultImporter` (packaged output, import = copy).
     Package,
-    /// 文本 / 着色器源码 → `TextImporter`。
+    /// Text / shader source → `TextImporter`.
     Text,
-    /// 其余 → `DefaultImporter`。
+    /// Others → `DefaultImporter`.
     Default,
 }
 
 impl ImporterClass {
-    /// 具体导入器类名。
+    /// Concrete importer class name.
     pub const fn importer_name(self) -> &'static str {
         match self {
             Self::Texture | Self::Environment => "ImageImporter",
@@ -59,8 +59,8 @@ impl ImporterClass {
         }
     }
 
-    /// 按扩展名选导入器（与 [`crate::assets::asset_kind`] 的分类保持一致，
-    /// 但多区分了场景 / 预制体 / 文本源码）。
+    /// Pick importer by extension (consistent with [`crate::assets::asset_kind`] classification,
+    /// but further distinguishes scene / prefab / text source).
     pub fn from_path(path: &str) -> Self {
         let lower = path.to_ascii_lowercase();
         if lower.ends_with(".scene.json") {
@@ -86,33 +86,33 @@ impl ImporterClass {
     }
 }
 
-/// 一个资产的导入器描述 = `AssetImporter.GetAtPath` 的返回值。
+/// One asset importer description = `AssetImporter.GetAtPath` return value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetImporter {
-    /// 相对项目根的路径（`/` 分隔）。
+    /// Path relative to project root (`/` separated).
     pub asset_path: String,
-    /// 导入器类名（如 `ImageImporter`）。
+    /// Importer class name (like `ImageImporter`).
     pub importer: &'static str,
-    /// 主资产类型（粗分类，同 [`crate::assets::asset_kind`]）。
+    /// Main asset type (coarse classification, same as [`crate::assets::asset_kind`]).
     pub main_asset_type: &'static str,
-    /// 用户自定义数据（无 sidecar，恒为空）。
+    /// User custom data (no sidecar, always empty).
     pub user_data: String,
-    /// 是否缺少导入设置（无 `.meta`，恒为 `true`）。
+    /// Whether missing import settings (no `.meta`, always `true`).
     pub import_settings_missing: bool,
 }
 
-/// 查某个资产的导入器 = `AssetImporter.GetAtPath`。
+/// Query an asset importer = `AssetImporter.GetAtPath`.
 ///
-/// 路径不存在或是目录时返回 `Err`（对目录返回 `null`）。
+/// Returns `Err` when path missing or is directory (correct directory returns `null`).
 pub fn get_at_path(project_root: &Path, asset_path: &str) -> Result<AssetImporter, String> {
     let rel = normalize_asset_path(asset_path)?;
     let full = project_root.join(&rel);
     if full.is_dir() {
-        return Err(format!("目录没有导入器：{rel}"));
+        return Err(format!("Directory has no importer: {rel}"));
     }
     if !full.is_file() {
-        return Err(format!("资产不存在：{rel}"));
+        return Err(format!("Asset does not exist: {rel}"));
     }
     Ok(AssetImporter {
         importer: ImporterClass::from_path(&rel).importer_name(),
@@ -123,7 +123,7 @@ pub fn get_at_path(project_root: &Path, asset_path: &str) -> Result<AssetImporte
     })
 }
 
-/// 枚举 `assets/` 下所有资产的导入器（`AssetInfo.importer` 的同源版本）。
+/// Enumerate importers for all assets under `assets/` (same-source version of `AssetInfo.importer`).
 pub fn list_importers(project_root: &Path) -> Result<Vec<AssetImporter>, String> {
     let importers = assets::list_assets(project_root)?
         .into_iter()
@@ -182,7 +182,7 @@ mod tests {
             ImporterClass::from_path("assets/weird.xyz").importer_name(),
             "DefaultImporter"
         );
-        // probe_volume.bin 等二进制数据走 DefaultImporter，避免误当模型
+        // probe_volume.bin etc binary data goes to DefaultImporter, avoid mistaking for model
         assert_eq!(
             ImporterClass::from_path("assets/gi/probe_volume.bin").importer_name(),
             "DefaultImporter"
@@ -199,7 +199,7 @@ mod tests {
             ImporterClass::from_path("assets/prefabs/lamp.prefab.json"),
             ImporterClass::Prefab
         );
-        // 普通 JSON 是文本，不是场景。
+        // Normal JSON is text, not scene.
         assert_eq!(
             ImporterClass::from_path("assets/data/x.json"),
             ImporterClass::Text

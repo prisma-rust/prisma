@@ -2,7 +2,7 @@
 #
 # 用法:
 #   .\rebuild-pak.ps1
-#   或在仓库根目录执行:
+#   or in 仓库根directory execute :
 #   .\projects\sponza\rebuild-pak.ps1
 
 $ErrorActionPreference = "Stop"

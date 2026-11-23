@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 """Generate original placeholder art for `projects/fishing/assets/sprites/`.
 
-## 为什么要有这个脚本
+## Why this script exists
 
-精灵目录是 gitignore 的：仓库里只提交**生成方式**，不提交图。但「生成方式」必须
-和场景数据对得上 —— 湖面图层的文件名由 `assets/data/lake_layers.json` 的 `slug` 决定：
+Sprite directory is gitignored: repo commits only **generation method**, not images. But "generation method" must
+match scene data — lake layer filenames determined by `slug` in `assets/data/lake_layers.json`:
 
-    运行时（`projects/fishing/src/game/world.rs::layer_path`）:
+    Runtime (`projects/fishing/src/game/world.rs::layer_path`):
         sprites/bg/{slug}@{time_of_day}.png
 
-所以这个脚本**从 `data/lake_layers.json` 读 slug 和时段**，不再自己维护一份图层表。
-以前脚本里硬编码的是 `far-mountains` 这种短名，而数据里是 `+70_far-mountains`，
-跑一次生成出来的是 632 张没人引用的图，而且会覆盖掉本来能用的美术。
+So this script **reads slug and time-of-day from `data/lake_layers.json`**, no longer maintains own layer table.
+Previously script hardcoded short names like `far-mountains`, but data has `+70_far-mountains`,
+one generation produced 632 unreferenced images and would overwrite usable art.
 
-## 用法
+## Usage
 
-    python scripts/gen_placeholder_sprites.py              # 生成到工程的 sprites/
-    python scripts/gen_placeholder_sprites.py --out <dir>  # 生成到别处（预览用）
-    python scripts/gen_placeholder_sprites.py --force      # 允许覆盖已有文件
-    python scripts/gen_placeholder_sprites.py --check      # 只检查磁盘上的美术是否齐全
+    python scripts/gen_placeholder_sprites.py              # Generate into project sprites/
+    python scripts/gen_placeholder_sprites.py --out <dir>  # Generate elsewhere (preview)
+    python scripts/gen_placeholder_sprites.py --force      # Allow overwriting existing files
+    python scripts/gen_placeholder_sprites.py --check      # Only check disk art completeness
 
-`--check` 只比较文件名：每个 `data/lake_layers.json` 里的图层 × 每个时段都要有对应
-的 PNG（缺了就是空白图层，退出码 1）；多出来的图只提示，不算错。
+`--check` only compares filenames: each layer in `data/lake_layers.json` × each time-of-day must have
+corresponding PNG (missing = blank layer, exit code 1); extra images only warned, not an error.
 
-已有目录默认**不覆盖**：这是一套手工调过的美术，占位图不该悄悄把它顶掉。
+Existing directory **not overwritten by default**: this is hand-tuned art, placeholder should not silently replace it.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ PROJECT = ROOT / "projects" / "fishing"
 LAYERS = PROJECT / "assets" / "data" / "lake_layers.json"
 OUT = PROJECT / "assets" / "sprites"
 
-# 图层 slug 里的关键词 → 占位图的底色与尺寸（远 → 近由 slug 的顺序决定）。
-# `data/lake_layers.json` 的 slug 形如 `+72_sky` / `+13_+1_front-rocks`，数字是排序权重。
+# Key words in texture layer slug → placeholder image base color and size (far → near determined by slug order).
+# Slugs in `data/lake_layers.json` look like `+72_sky` / `+13_+1_front-rocks`, numbers are sort weights.
 STYLES = [
     ("sky", (150, 176, 196), (1600, 340)),
     ("cloud", (232, 238, 244), (600, 200)),
@@ -58,7 +58,7 @@ STYLES = [
 ]
 DEFAULT_STYLE = ((96, 104, 112), (400, 160))
 
-# 时段染色：和场景里 `time_of_day` 的四个值对齐（未知时段按白天处理）。
+# Time-of-day tinting: aligns with four `time_of_day` values in scene (unknown time treated as daytime).
 TOD_TINT = {
     "dawn": (1.00, 0.86, 0.80),
     "day": (1.00, 1.00, 1.00),
@@ -90,7 +90,7 @@ FISH = [
 
 
 # ---------------------------------------------------------------------------
-# 场景数据 → 需要哪些文件
+# Scene data → which files needed
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +109,7 @@ def style_for(slug: str) -> tuple[tuple[int, int, int], tuple[int, int]]:
 
 
 def expected_files(data: dict) -> list[str]:
-    """`data/lake_layers.json` → 相对 `sprites/` 的完整文件清单。"""
+    """`data/lake_layers.json` → complete file list relative to `sprites/`."""
     tods = data.get("time_of_day") or ["dawn", "day", "dusk", "night"]
     files: list[str] = []
     for layer in data.get("layers", []):
@@ -121,7 +121,7 @@ def expected_files(data: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 画图
+# Draw images
 # ---------------------------------------------------------------------------
 
 
@@ -190,7 +190,7 @@ def water_tile(size=(512, 256)):
 
 
 # ---------------------------------------------------------------------------
-# 入口
+# Entry point
 # ---------------------------------------------------------------------------
 
 
@@ -271,8 +271,8 @@ def check(out: Path) -> int:
             print(f"  + {name}")
         if len(extra) > 10:
             print(f"  ... {len(extra) - 10} more")
-    # 缺文件 = 失败（图层会渲染成空白）；多出来的图只是没有图层引用它，
-    # 美术包里常有别的时段的备用图，不算错。
+    # Missing file = failure (texture layer renders blank white); extra images just mean no texture layer references it,
+    # art pack often has spare images for other time-of-days, not an error.
     if missing:
         return 1
     if extra:
