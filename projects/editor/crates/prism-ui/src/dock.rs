@@ -890,7 +890,7 @@ impl WindowLayout {
                     .active_window
                     .as_ref()
                     .and_then(|id| self.windows.get(id))
-                    .map_or(true, |m| m.closable);
+                    .is_none_or(|m| m.closable);
                 let item_count = 1 + usize::from(active_closable) + self.windows.len();
                 let est_h = (item_count as f32) * theme.menu_item_height + 24.0;
                 let x = menu
