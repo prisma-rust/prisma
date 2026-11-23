@@ -34,3 +34,9 @@ codegen-units = 1    # Better optimization
 panic = "abort"      # Drop unwind tables
 strip = true         # Strip symbols
 
+# Third-party dependencies don't need debuginfo in dev builds (saves tens of GB of target/).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

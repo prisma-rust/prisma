@@ -133,3 +133,10 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# Third-party dependencies don't need debuginfo in dev builds (saves tens of GB of target/).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
