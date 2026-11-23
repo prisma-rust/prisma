@@ -41,7 +41,6 @@ use crate::render_pass::find_memory_type;
 use crate::shader;
 use crate::shader_bindings;
 
-// Keep the reflected push-constant size and the generated Rust layout in sync.
 const _: () = assert!(
     std::mem::size_of::<shader_bindings::post::PostPush>() as u32
         == shader_bindings::post::PUSH_CONSTANT_SIZE
@@ -53,7 +52,6 @@ const _: () = assert!(
 /// `prevViewProj` projects that point into the previous frame. `resolution`
 /// converts the normalized velocity into pixels for the trail clamp. Laid out
 /// to match `MotionBlurData` in `post.slang`.
-// GPU layout comes from the Slang reflection; never mirror it by hand.
 use crate::shader_bindings::post::MotionBlurData as MotionBlurUniform;
 
 /// Fullscreen-triangle tonemap pass: HDR scene color -> sRGB swapchain.
@@ -184,10 +182,6 @@ impl PostPass {
         }
         .context("PostPass: create depth sampler")?;
 
-        // binding 0 = HDR colour, binding 1 = scene depth for depth of field
-        // (#502 Phase 2), binding 2 = 3D color-grading LUT (#502). All three
-        // bindings are always present so the pipeline layout never changes
-        // between frames, even when no LUT is configured.
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(shader_bindings::post::HDR_TEX_BINDING)
@@ -209,10 +203,6 @@ impl PostPass {
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // Adapted luminance from `AutoExposurePass` (set 0, binding 4).
-            // Bound once by `set_adapted_luminance`; until then it points at a
-            // 1-element zeroed buffer so the descriptor is always valid and the
-            // shader's `auto_exposure()` returns its no-op 1.0.
             vk::DescriptorSetLayoutBinding::default()
                 .binding(shader_bindings::post::ADAPTED_LUMINANCE_BINDING)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -235,7 +225,6 @@ impl PostPass {
                     .pool_sizes(&[
                         vk::DescriptorPoolSize {
                             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                            // One colour + one depth + one LUT per frame-in-flight.
                             descriptor_count: fif * 3,
                         },
                         vk::DescriptorPoolSize {
@@ -263,9 +252,6 @@ impl PostPass {
         .context("PostPass: allocate ds")?;
         let descriptor_sets: Vec<vk::DescriptorSet> = descriptor_sets;
 
-        // Every project gets an identity LUT so the descriptor is valid even
-        // before `[render] lut` is set. 32³ matches the common `.cube` size
-        // and makes `lut_strength = 1` with no file a no-op.
         let identity = Lut3d::identity(32);
         let (lut_image, lut_memory, lut_view) =
             create_lut_image(context, &identity).context("PostPass: create default LUT")?;
@@ -281,8 +267,6 @@ impl PostPass {
                 .image_info(std::slice::from_ref(&info));
             unsafe { device.update_descriptor_sets(&[write], &[]) };
         }
-        // Motion-blur UBO: one host-visible buffer per frame in flight. The
-        // descriptor never changes; `set_motion_blur` only rewrites the bytes.
         let motion_size = std::mem::size_of::<MotionBlurUniform>() as vk::DeviceSize;
         let mut motion_buffers = Vec::with_capacity(fif as usize);
         let mut motion_memories = Vec::with_capacity(fif as usize);
@@ -325,11 +309,6 @@ impl PostPass {
             .collect();
         unsafe { device.update_descriptor_sets(&motion_writes, &[]) };
 
-        // Zeroed stand-in for the adapted-luminance buffer. `AutoExposurePass`
-        // replaces it via `set_adapted_luminance` on the first frame it runs,
-        // but the descriptor must be valid from the start: a null buffer with
-        // PARTIALLY_BOUND unset would trip validation, and a zero reading makes
-        // the shader's `auto_exposure()` return its no-op gain of 1.
         let (luminance_fallback, luminance_fallback_memory) = crate::buffer::create_buffer(
             context,
             4,
@@ -516,7 +495,6 @@ impl PostPass {
         let (image, memory, view) =
             create_lut_image(context, lut).context("PostPass: upload LUT")?;
 
-        // No frame may still reference the old image before it is freed.
         unsafe { device.device_wait_idle() }.context("PostPass: wait before LUT swap")?;
 
         for &set in &self.descriptor_sets {
@@ -689,16 +667,8 @@ impl PostPass {
             .copied()
             .context("PostPass: no descriptor set for frame_index")?;
 
-        // The HDR input COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL
-        // barrier used to live here. It is now inserted automatically by
-        // `RenderGraph::execute` from the `read_usage` edge declared in
-        // `setup`. `hdr_image` is therefore no longer needed in this function
-        // (it was only referenced by the deleted barrier).
         let _ = hdr_image;
 
-        // The swapchain image transitions UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL
-        // via the render  pass `initial_layout` (the external overlay or the caller's
-        // PRESENT_SRC_KHR barrier handles the final transition out).
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
@@ -724,7 +694,6 @@ impl PostPass {
                 std::slice::from_ref(&ds),
                 &[],
             );
-            // #613: internal resolution placed into `dest` by integer multiple / stretch, remaining region filled black by clear color.
             device.cmd_set_viewport(
                 cmd,
                 0,
@@ -745,7 +714,6 @@ impl PostPass {
                 0,
                 bytemuck::bytes_of(push),
             );
-            // Fullscreen triangle (3 verts, no vertex buffer - SV_VertexID).
             device.cmd_draw(cmd, 3, 1, 0, 0);
         }
 
@@ -887,41 +855,24 @@ impl RenderPassNode for PostPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // high dynamic range  input  is published by ForwardPass under FORWARD_COLOR_H; read  in
-        // `execute`. PostPass owns no graph-managed resources of its own.
-        //
-        // Declare the read edge so the render graph inserts the
-        // COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL barrier
-        // automatically before this pass (replacing the hand-rolled
-        // `cmd_pipeline_barrier` that used to live in `execute`).
         graph.read_usage(ResourceUsage {
             handle: FORWARD_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
-        // TAA output (#883) when enabled; declared unconditionally so the
-        // graph knows PostPass may depend on it.
         graph.read_usage(ResourceUsage {
             handle: TAA_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
-        // PT output color (read in path-trace mode). Declare unconditionally
-        // so the graph reserves the barrier slot even when in raster mode.
         graph.read_usage(ResourceUsage {
             handle: PT_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
-        // Debug RT viewer (Tab) can also sample the scene depth (mode 1) and
-        // view-space normal (mode 2). Declare these read edges unconditionally
-        // so the automatic barrier pipeline keeps them in a sampled layout
-        // even when mode 0 doesn't read them (GTAO already transitions depth
-        // and normal to read-only layouts, so this is usually a cache hit and
-        // emits no extra barrier).
         graph.read_usage(ResourceUsage {
             handle: FORWARD_DEPTH_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -979,18 +930,9 @@ impl RenderPassNode for PostPass {
         ctx: &RenderContext,
         resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
-        // Pick the input RT based on the render mode and debug viewer (Tab).
-        // In path-trace mode we read PT_COLOR_H instead of FORWARD_COLOR_H,
-        // unless no usable Camera exists — in that case the PT pass was skipped
-        // so fall back to FORWARD_COLOR_H (the cleared color from ForwardPass).
-        // If PT_COLOR_H was not published (e.g. no RT hardware, pass skipped,
-        // or geometry/materials not yet uploaded), also fall back to FORWARD_COLOR_H
-        // so PostPass can tonemap and transition the swapchain image to PRESENT_SRC_KHR.
-        // Debug modes 1 (depth) and 2 (normal) always read from scene output.
         let is_pt = ctx.frame.render_mode == RenderMode::PathTrace;
         let has_camera = ctx.frame.has_camera;
         let has_pt_view = resources.published_view(PT_COLOR_H).is_some();
-        // ANF super-resolution output highest priority when enabled (#1161)
         let anf_view = if ctx.settings.anf_sr && !is_pt && ctx.frame.debug_rt == 0 {
             resources.published_view(ANF_COLOR_H)
         } else {
@@ -1014,9 +956,6 @@ impl RenderPassNode for PostPass {
         } else {
             None
         };
-        // TAA output (#883) takes precedence when enabled and ANF / DLSS / mobile upscaler is off. In
-        // path-trace mode the temporal resolve consumes the traced image and its
-        // guides, so the resolved image replaces PT_COLOR_H here.
         let taa_view = if ctx.settings.taa
             && ctx.frame.debug_rt == 0
             && anf_view.is_none()
@@ -1065,10 +1004,6 @@ impl RenderPassNode for PostPass {
             .published_image(handle)
             .unwrap_or(vk::Image::null());
 
-        // (Re)build this swapchain image's framebuffer if missing or the
-        // Swapchain changed - mirrors `ForwardPass::ensure_target`. Before PR-1
-        // this was `GraphRenderer`'s job (it called `set_target` every frame);
-        // now the graph drives it so the framebuffer lifecycle is owned here.
         self.set_target(
             ctx.device,
             ctx.frame.swapchain_views,
@@ -1077,12 +1012,6 @@ impl RenderPassNode for PostPass {
         )
         .context("PostPass: set_target")?;
 
-        // Bind the selected input view into this frame's descriptor set. The
-        // cache (`bound_hdrs`) keys on the view handle, so switching modes
-        // (which changes the view) triggers a rewrite automatically.
-        // #613: internal render resolution → target rect and sampling mode.
-        // If already upscaled to window full resolution by ANF or MobileUpscalerPass, PostPass directly full-screen linear samples.
-        // Nearest / Linear empty-space upscale mode samples directly in PostPass with matching hardware sampler stretched to full screen.
         let already_upscaled = anf_view.is_some() || upscaled_view.is_some();
         let spatial_upscale = matches!(
             ctx.settings.mobile_upscaler,
@@ -1114,17 +1043,11 @@ impl RenderPassNode for PostPass {
             nearest,
         );
 
-        // Depth of field (#502 Phase 2) needs the scene depth in a read-only
-        // layout. `setup` already declares the edge; reuse the published view.
         let depth_view = resources.published_view(FORWARD_DEPTH_H);
         if let Some(depth_view) = depth_view {
             self.set_depth_input(ctx.device, ctx.frame_index, depth_view);
         }
 
-        // Camera motion blur (#502 Phase 2). Keep the previous VP up to date
-        // even when the effect is off, so enabling it does not smear a jump
-        // from an arbitrarily old camera. Multi-camera composites and path
-        // tracing have no single valid previous view; they disable the effect.
         let current_view_proj = ctx.frame.view_proj;
         let prev_view_proj = self
             .prev_view_proj
@@ -1153,13 +1076,6 @@ impl RenderPassNode for PostPass {
             0.0
         };
 
-        // The generated PostPush carries tonemapMode (Reinhard / ACES /
-        // passthrough), aaMode (0 = off, 1 = FXAA) and invTexelSize (one texel in
-        // UV units, used by the FXAA taps). debug_rt, proj22/proj32, near/far
-        // etc. are consumed on the Rust side input  bind  selection,
-        // depth linearization) and are NOT part of the GPU push constant.
-        // proj22/proj32/near/far depth linearization values are still computed
-        // here as a reference for future shader extensions.
         let proj22 = ctx.frame.proj22;
         let proj32 = ctx.frame.proj32;
         let near = if (proj22 - 1.0).abs() > 1e-6 {
@@ -1172,9 +1088,6 @@ impl RenderPassNode for PostPass {
         } else {
             100.0
         };
-        // Debug RT views show depth / normals, not the lit scene; blurring
-        // them would make the visualization useless. A missing depth view also
-        // disables the effect instead of sampling an unbound texture.
         let dof_aperture = if ctx.frame.debug_rt == 0 && depth_view.is_some() {
             ctx.frame.grade.dof_aperture
         } else {
@@ -1197,8 +1110,6 @@ impl RenderPassNode for PostPass {
             dof_focus_distance: ctx.frame.grade.dof_focus_distance,
             dof_aperture,
             dof_max_blur: ctx.frame.grade.dof_max_blur,
-            // Debug RT views (depth / normals) must stay readable; a grade LUT
-            // would tint the visualization, so it is disabled there like DOF.
             lut_strength: if ctx.frame.debug_rt == 0 {
                 ctx.frame.grade.lut_strength
             } else {
@@ -1207,8 +1118,6 @@ impl RenderPassNode for PostPass {
             lut_size: self.lut_size as f32,
             motion_blur,
             motion_blur_max_pixels: ctx.frame.grade.motion_blur_max_pixels,
-            // #613: FXAA samples **internal render target**, one texel UV size computed from its
-            // resolution; using swapchain size would make sample step too small when internal resolution downscaled.
             inv_texel_size: [
                 if ctx.render_extent.width > 0 {
                     1.0 / ctx.render_extent.width as f32
@@ -1245,9 +1154,7 @@ impl RenderPassNode for PostPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Post,
-            // high dynamic range  color  comes from ForwardPass via FORWARD_COLOR_H.
             inputs: vec![FORWARD_COLOR_H],
-            // PostPass writes FINAL_COLOR_H (swapchain or offscreen image).
             outputs: vec![FINAL_COLOR_H],
         }
     }
@@ -1318,10 +1225,6 @@ fn create_render_pass(
     Ok(rp)
 }
 
-// Re-export the memory-type finder so this module is self-contained for
-// future HDR-image helpers (currently none - the HDR image is owned by
-// ForwardPass). Kept here as a placeholder import  to avoid an unused warn
-// if no callers use it.
 fn _memory_type_for_hdr(context: &VulkanContext, mem_type_bits: u32) -> anyhow::Result<u32> {
     find_memory_type(
         &context.physical_device_memory_properties,
@@ -1637,7 +1540,6 @@ mod tests {
 
     #[test]
     fn test_select_input_target_path_trace_fallback_when_view_missing() {
-        // PT requested with camera, but PT_COLOR_H was not published -> fall back to FORWARD_COLOR_H
         let (handle, layout) = select_input_target(0, true, true, false);
         assert_eq!(handle, FORWARD_COLOR_H);
         assert_eq!(layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1645,7 +1547,6 @@ mod tests {
 
     #[test]
     fn test_select_input_target_path_trace_no_camera() {
-        // PT requested without camera -> forward color
         let (handle, layout) = select_input_target(0, true, false, false);
         assert_eq!(handle, FORWARD_COLOR_H);
         assert_eq!(layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1655,7 +1556,6 @@ mod tests {
     fn test_effective_aa_mode_is_off_for_debug_views() {
         assert_eq!(effective_aa_mode(0, 0), 0);
         assert_eq!(effective_aa_mode(0, 1), 1);
-        // Depth / view-space normal debug views stay unfiltered on purpose.
         assert_eq!(effective_aa_mode(1, 1), 0);
         assert_eq!(effective_aa_mode(2, 1), 0);
     }
@@ -1666,7 +1566,6 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PostPush, tonemap_mode), 0);
         assert_eq!(std::mem::offset_of!(PostPush, aa_mode), 4);
         assert_eq!(std::mem::offset_of!(PostPush, inv_texel_size), 8);
-        // #502 color grading rides in the same push-constant block.
         assert_eq!(std::mem::offset_of!(PostPush, contrast), 16);
         assert_eq!(std::mem::offset_of!(PostPush, saturation), 20);
         assert_eq!(std::mem::offset_of!(PostPush, vignette), 24);
@@ -1674,19 +1573,15 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PostPush, bloom_threshold), 32);
         assert_eq!(std::mem::offset_of!(PostPush, chromatic_aberration), 36);
         assert_eq!(std::mem::offset_of!(PostPush, film_grain), 40);
-        // #502 white balance rides after the Phase 2 effects.
         assert_eq!(std::mem::offset_of!(PostPush, temperature), 44);
         assert_eq!(std::mem::offset_of!(PostPush, tint), 48);
-        // #502 depth of field: near/far planes plus focus / aperture / radius.
         assert_eq!(std::mem::offset_of!(PostPush, near_plane), 52);
         assert_eq!(std::mem::offset_of!(PostPush, far_plane), 56);
         assert_eq!(std::mem::offset_of!(PostPush, dof_focus_distance), 60);
         assert_eq!(std::mem::offset_of!(PostPush, dof_aperture), 64);
         assert_eq!(std::mem::offset_of!(PostPush, dof_max_blur), 68);
-        // #502 3D LUT: strength plus the edge length used for texel centres.
         assert_eq!(std::mem::offset_of!(PostPush, lut_strength), 72);
         assert_eq!(std::mem::offset_of!(PostPush, lut_size), 76);
-        // #502 camera motion blur: strength then pixel cap.
         assert_eq!(std::mem::offset_of!(PostPush, motion_blur), 80);
         assert_eq!(std::mem::offset_of!(PostPush, motion_blur_max_pixels), 84);
         assert_eq!(std::mem::size_of::<PostPush>(), 88);

@@ -29,10 +29,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Magic identifier: `b"RPAK"`.
 pub const MAGIC: [u8; 4] = *b"RPAK";
 /// Current package format version.
@@ -42,10 +38,6 @@ pub const VERSION: u32 = 1;
 pub const FLAG_COMPRESSED: u32 = 1 << 0;
 /// Flag: asset data is intended for streaming (large, can be loaded in chunks).
 pub const FLAG_STREAMED: u32 = 1 << 1;
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Error)]
 pub enum PackageError {
@@ -80,10 +72,6 @@ pub enum PackageError {
     Io(#[from] io::Error),
 }
 
-// ---------------------------------------------------------------------------
-// Header
-// ---------------------------------------------------------------------------
-
 /// On-disk package header (32 bytes + registry_offset/data_offset metadata).
 ///
 /// Total fixed header size: 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8 = 52 bytes
@@ -110,7 +98,7 @@ pub struct PackageHeader {
 
 impl PackageHeader {
     /// Serialized header size in bytes (magic 4 + version 4 + ... + checksum 8 + padding).
-    pub const SERIALIZED_SIZE: u64 = 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8; // 52
+    pub const SERIALIZED_SIZE: u64 = 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8;
 
     /// Checksum-covered header start: skip `magic` (fixed value, if changed it's not a pak).
     const CHECKSUM_HEADER_START: usize = 4;
@@ -187,10 +175,6 @@ impl PackageHeader {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Runtime Asset Record
-// ---------------------------------------------------------------------------
 
 /// On-disk record for one cooked asset in the package.
 ///
@@ -285,10 +269,6 @@ impl RuntimeAssetRecord {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Package Builder
-// ---------------------------------------------------------------------------
-
 /// A pending asset that will be written into the .pak.
 struct PendingAsset {
     id: AssetId,
@@ -316,7 +296,7 @@ impl PackageBuilder {
     pub fn new() -> Self {
         Self {
             assets: Vec::new(),
-            compression_level: 0, // 0 = no compression
+            compression_level: 0,
         }
     }
 
@@ -376,7 +356,6 @@ impl PackageBuilder {
 
     /// Build the .pak file in memory and return the raw bytes.
     pub fn build(&mut self) -> Result<Vec<u8>, PackageError> {
-        // Compute compressed data if needed.
         let compressed_data: Vec<(Vec<u8>, u64, bool)> = self
             .assets
             .iter()
@@ -394,7 +373,6 @@ impl PackageBuilder {
             })
             .collect::<Result<Vec<_>, PackageError>>()?;
 
-        // Build flat dependency array and record each asset's dependency range.
         let mut dep_array = Vec::<u64>::new();
         let mut records = Vec::<RuntimeAssetRecord>::new();
         let mut dep_start: u32 = 0;
@@ -415,7 +393,7 @@ impl PackageBuilder {
                 id: asset.id.into_raw(),
                 type_id: asset.asset_type.to_u32(),
                 flags,
-                offset: 0, // filled below
+                offset: 0,
                 size: *uncompressed_size,
                 compressed_size: comp_size,
                 dependency_start: dep_start,
@@ -426,7 +404,6 @@ impl PackageBuilder {
 
         let asset_count = records.len() as u32;
 
-        // Calculate offsets.
         let registry_offset = PackageHeader::SERIALIZED_SIZE;
         let registry_size = records.len() as u64 * RuntimeAssetRecord::SERIALIZED_SIZE;
         let deps_offset = registry_offset + registry_size;
@@ -434,18 +411,16 @@ impl PackageBuilder {
         let data_offset = deps_offset + deps_size;
         let data_size: u64 = compressed_data.iter().map(|(d, _, _)| d.len() as u64).sum();
 
-        // Fill in data offsets for each record.
         let mut data_off = data_offset;
         for (i, record) in records.iter_mut().enumerate() {
             record.offset = data_off;
             data_off += if compressed_data[i].2 {
                 compressed_data[i].0.len() as u64
             } else {
-                compressed_data[i].1 // uncompressed size
+                compressed_data[i].1
             };
         }
 
-        // Serialize registry + deps + data.
         let registry_bytes: Vec<u8> = records.iter().flat_map(|r| r.to_bytes()).collect();
         let deps_bytes: Vec<u8> = dep_array.iter().flat_map(|d| d.to_le_bytes()).collect();
         let data_bytes: Vec<u8> = compressed_data
@@ -453,8 +428,6 @@ impl PackageBuilder {
             .flat_map(|(d, _, _)| d.clone())
             .collect();
 
-        // Checksum covers header[4..44] (version, asset_count, offsets/sizes) + registry +
-        // deps + data; `checksum` field itself and fixed `magic` do not participate.
         let hdr = PackageHeader {
             magic: MAGIC,
             version: VERSION,
@@ -463,7 +436,7 @@ impl PackageBuilder {
             registry_size,
             data_offset,
             data_size,
-            checksum: 0, // placeholder
+            checksum: 0,
         };
         let header_bytes = hdr.to_bytes();
         let header_prefix = &header_bytes
@@ -476,12 +449,10 @@ impl PackageBuilder {
             &data_bytes,
         );
 
-        // Write final header with checksum.
         let mut final_hdr = hdr;
         final_hdr.checksum = checksum;
         let final_header_bytes = final_hdr.to_bytes();
 
-        // Assemble final file.
         let mut output = Vec::with_capacity((data_offset + data_size) as usize);
         output.extend_from_slice(&final_header_bytes);
         output.extend_from_slice(&registry_bytes);
@@ -519,10 +490,6 @@ impl PackageBuilder {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Package Reader
-// ---------------------------------------------------------------------------
 
 /// A loaded `.pak` package, ready for asset lookup and extraction.
 ///
@@ -674,7 +641,6 @@ impl PackageReader {
         read_exact_at(&file, &mut head, 0)?;
         let header = PackageHeader::from_bytes(&head)?;
 
-        // Integrity takes precedence over any structural judgment; see `from_owned_bytes` (#89).
         verify_checksum_file(&file, len, &header)?;
 
         Self::parse(
@@ -704,10 +670,6 @@ impl PackageReader {
     fn from_owned_bytes(bytes: Vec<u8>) -> Result<Self, PackageError> {
         let header = PackageHeader::from_bytes(&bytes)?;
 
-        // Integrity takes precedence over any structural judgment: checksum only looks at "header except magic/checksum fields"
-        // fields” + remaining file bytes, does not depend on offsets in header that haven't been verified yet, so tampered
-        // `version` / `asset_count` will become ChecksumMismatch here, instead of letting subsequent
-        // registry parsing continue on erroneous data (#89).
         verify_checksum(&bytes, &header)?;
 
         Self::parse(header, Backing::Bytes(Arc::new(bytes)))
@@ -747,7 +709,6 @@ impl PackageReader {
             )));
         }
 
-        // Dependency array is between registry and data, length must be a multiple of u64.
         let deps_start = reg_end;
         let deps_size = header.data_offset.checked_sub(deps_start).ok_or_else(|| {
             PackageError::Truncated(format!(
@@ -771,7 +732,6 @@ impl PackageReader {
             )));
         }
 
-        // Read registry.
         let reg_len = reg_end - header.registry_offset;
         let reg_bytes = backing.read_range(header.registry_offset, reg_len)?;
         let mut records = Vec::with_capacity(header.asset_count as usize);
@@ -782,7 +742,6 @@ impl PackageReader {
             off += consumed;
         }
 
-        // Read dependency array.
         let deps_bytes = backing.read_range(deps_start, deps_size)?;
         let dep_count = deps_bytes.len() / 8;
         let mut dependency_array = Vec::with_capacity(dep_count);
@@ -790,8 +749,6 @@ impl PackageReader {
             dependency_array.push(u64::from_le_bytes(chunk));
         }
 
-        // dependency range and data range in record also come from file content; if not verified then in
-        // dependencies() / read_asset_record_data out-of-bounds slice panic.
         for rec in &records {
             let dep_end = rec
                 .dependency_start
@@ -1066,7 +1023,6 @@ fn verify_checksum_file(
     let mut hasher = Xxh3::default();
     hasher.update(&prefix[..prefix_len]);
 
-    // From end of header, feed blocks to hasher; do not read offsets in header that haven't been verified yet.
     const CHUNK: usize = 1 << 20;
     let mut buf = vec![0u8; CHUNK];
     let mut offset = PackageHeader::SERIALIZED_SIZE;

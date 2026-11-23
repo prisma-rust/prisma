@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 #[test]
@@ -49,7 +45,6 @@ fn known_extensions_map_correctly() {
 
 #[test]
 fn font_extensions_are_fonts_not_binary() {
-    // #583: fonts must be recognized by cooker/pack, otherwise won't enter `.pak`.
     for extension in ["ttf", "TTF", "otf", "ttc"] {
         assert_eq!(
             AssetType::from_extension(extension),

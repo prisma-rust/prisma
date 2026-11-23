@@ -89,7 +89,6 @@ fn decode_probed(probed: symphonium::ProbedAudioSource) -> Result<AudioData, Aud
     let num_frames = decoded.frames();
     let sample_rate = decoded.sample_rate.get();
 
-    // Convert planar → interleaved (L,R,L,R,...)
     let mut samples = Vec::with_capacity(channels * num_frames);
     samples.extend(
         (0..num_frames).flat_map(|frame| decoded.data.iter().map(move |channel| channel[frame])),

@@ -631,7 +631,6 @@ impl RenderPassNode for MobileUpscalerPass {
         let frame = (ctx.frame_index as usize) % 2;
         let prev = (frame + 1) % 2;
 
-        // Recover unjittered camera view-projection for accurate reprojection.
         let mut view_proj = ctx.frame.view_proj;
         view_proj[3][0] -= ctx.frame.view_proj_jitter[0];
         view_proj[3][1] -= ctx.frame.view_proj_jitter[1];
@@ -1053,8 +1052,6 @@ impl RenderPassNode for MobileUpscalerPass {
             self.device.update_descriptor_sets(&writes, &[]);
         }
 
-        // Ensure prev history image is in SHADER_READ_ONLY_OPTIMAL if never initialized,
-        // and transition current output image to GENERAL for compute write.
         let mut pre_barriers = Vec::with_capacity(2);
         if !self.history_initialized[prev] {
             pre_barriers.push(image_barrier(

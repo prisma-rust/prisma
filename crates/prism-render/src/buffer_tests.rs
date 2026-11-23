@@ -32,7 +32,6 @@ fn baked_mip_layout_matches_texture_format_block_sizes() {
                 Some(format.compressed_byte_len(width, height)),
                 "{format:?} level 0 at {width}x{height}"
             );
-            // Every subsequent level is the same function of the halved extent.
             for level in 1..4 {
                 let level_width = (width >> level).max(1);
                 let level_height = (height >> level).max(1);
@@ -48,30 +47,24 @@ fn baked_mip_layout_matches_texture_format_block_sizes() {
 
 #[test]
 fn mip_chain_is_the_sum_of_its_levels() {
-    // 8x8 RGBA8: 64 + 16 + 4 + 1 texels * 4 bytes.
     let rgba8 = vk::Format::R8G8B8A8_UNORM;
     assert_eq!(mip_level_byte_size(rgba8, 8, 8, 0), Some(256));
     assert_eq!(mip_level_byte_size(rgba8, 8, 8, 1), Some(64));
     assert_eq!(mip_level_byte_size(rgba8, 8, 8, 2), Some(16));
     assert_eq!(mip_level_byte_size(rgba8, 8, 8, 3), Some(4));
     assert_eq!(mip_chain_byte_size(rgba8, 8, 8, 4), Some(340));
-    // A single-level "chain" is just the base level.
     assert_eq!(mip_chain_byte_size(rgba8, 8, 8, 1), Some(256));
 }
 
 #[test]
 fn compressed_levels_are_block_aligned() {
-    // ASTC 6x6 blocks 16 bytes: an 8x8 level needs a 2x2 block grid.
     let astc6 = vk::Format::ASTC_6X6_UNORM_BLOCK;
     assert_eq!(mip_level_byte_size(astc6, 8, 8, 0), Some(64));
-    // 4x4 level still needs one 6x6 block (partial blocks are padded).
     assert_eq!(mip_level_byte_size(astc6, 8, 8, 1), Some(16));
-    // BC4 is 8 bytes per 4x4 block.
     assert_eq!(
         mip_level_byte_size(vk::Format::BC4_UNORM_BLOCK, 4, 4, 0),
         Some(8)
     );
-    // Degenerate extents clamp to 1, not 0.
     assert_eq!(
         mip_level_byte_size(vk::Format::BC7_UNORM_BLOCK, 1, 1, 3),
         Some(16)

@@ -156,11 +156,9 @@ fn cooked_ibl_decode_rejects_corrupt_inputs() {
         brdf_lut: vec![0; 2],
     }
     .encode();
-    // Bump version to 99
     bad_ver[4..8].copy_from_slice(&99u32.to_le_bytes());
     assert!(CookedIbl::decode(&bad_ver).is_err());
 
-    // Truncated payload
     let valid = CookedIbl {
         env_face_size: 1,
         irradiance_face_size: 1,

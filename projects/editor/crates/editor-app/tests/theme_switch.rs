@@ -34,7 +34,6 @@ fn switching_the_preset_changes_the_drawn_colors() {
         dark_bg, light_bg,
         "the light preset must actually change the drawn background"
     );
-    // Light means a bright background; guard against an inverted preset.
     assert!(
         light_bg.r > dark_bg.r && light_bg.g > dark_bg.g && light_bg.b > dark_bg.b,
         "light theme must be brighter: dark={dark_bg:?} light={light_bg:?}"
@@ -48,7 +47,6 @@ fn the_theme_menu_marks_the_active_preset() {
     let viewport = Vec2::new(1280.0, 720.0);
     state.build_and_step(viewport, &UiInput::default(), 0.016);
 
-    // Open View and check the Light entry exists and is not checked yet.
     let trigger = state
         .tree
         .node_by_key(prism_ui::menu::MenuNodeKey::trigger_key("view"))
@@ -72,12 +70,8 @@ fn the_theme_menu_marks_the_active_preset() {
     }
     assert_eq!(state.menu.open(), Some("view"));
 
-    // The dropdown is mounted on the frame *after* the menu opens, so it needs
-    // one more build before its nodes exist.
     state.build_and_step(viewport, &UiInput::default(), 0.016);
 
-    // Theme is a submenu now: its rows only mount once the Theme row is entered,
-    // so assert on the definition rather than on the open panel.
     let view = state
         .menus()
         .into_iter()

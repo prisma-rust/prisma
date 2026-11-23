@@ -13,8 +13,6 @@
 
 use crate::db::AssetRecord;
 use prism_asset::core::{AssetId, AssetType};
-// RTEX format bytes are part of the wire format; the single source of truth
-// lives in `prism-asset::formats` (shared with the runtime decoder).
 use prism_asset::formats::{
     MaterialAlphaMode, RMAT_VERSION, RMES_VERSION, RTEX_FORMAT_ASTC_12X12, RTEX_FORMAT_ASTC_4X4,
     RTEX_FORMAT_ASTC_6X6, RTEX_FORMAT_ASTC_8X8, RTEX_FORMAT_BC1, RTEX_FORMAT_BC3, RTEX_FORMAT_BC5,
@@ -31,10 +29,6 @@ pub mod skinned;
 pub mod state_machine;
 pub mod virtual_geo;
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Error)]
 pub enum CookError {
     #[error("No cooker found for asset type {0:?}")]
@@ -49,10 +43,6 @@ pub enum CookError {
     #[error("Package error: {0}")]
     Package(#[from] prism_asset::package::PackageError),
 }
-
-// ---------------------------------------------------------------------------
-// Cook Context & Result
-// ---------------------------------------------------------------------------
 
 /// Context provided to a cooker.
 pub struct CookContext<'a> {
@@ -90,10 +80,6 @@ impl std::fmt::Debug for CookResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cooker trait
-// ---------------------------------------------------------------------------
-
 /// A pluggable cooker that converts intermediate data into runtime format.
 pub trait Cooker: Send + Sync {
     /// Unique name for this cooker.
@@ -105,10 +91,6 @@ pub trait Cooker: Send + Sync {
     /// Perform the cooking step.
     fn cook(&self, ctx: &CookContext) -> Result<CookResult, CookError>;
 }
-
-// ---------------------------------------------------------------------------
-// Cooker Registry
-// ---------------------------------------------------------------------------
 
 /// Registry of all available cookers, keyed by name.
 pub struct CookerRegistry {
@@ -168,14 +150,6 @@ impl Default for CookerRegistry {
     }
 }
 
-// ===========================================================================
-// Built-in Cookers
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Binary Cooker (pass-through)
-// ---------------------------------------------------------------------------
-
 /// Cooks binary assets by passing data through unchanged.
 pub struct BinaryCooker;
 
@@ -195,10 +169,6 @@ impl Cooker for BinaryCooker {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Animation graph cooker (pass-through)
-// ---------------------------------------------------------------------------
 
 /// Animation graph importer already output RAGP binary, cooker only does format validation and pass-through.
 pub struct AnimGraphCooker;
@@ -225,10 +195,6 @@ impl Cooker for AnimGraphCooker {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Texture Cooker — decodes intermediate RTXI → generates mip chain → RTEX
-// ---------------------------------------------------------------------------
 
 /// RTEX header magic (cooked runtime texture).
 const RTEX_MAGIC: &[u8; 4] = b"RTEX";
@@ -267,7 +233,6 @@ impl TextureCooker {
         }
         let w = u32::from_le_bytes(data[4..8].try_into().ok()?);
         let h = u32::from_le_bytes(data[8..12].try_into().ok()?);
-        // Skip byte 12 (channels) and byte 13 (format).
         let pixels_start = 14usize;
         let expected = w as usize * h as usize * 4;
         if data.len() < pixels_start + expected {
@@ -316,7 +281,6 @@ impl TextureCooker {
             for x in 0..new_w {
                 let x0 = x * width / new_w;
                 let x1 = ((x + 1) * width / new_w).max(x0 + 1).min(width);
-                // Premultiplied R, G, B followed by the plain alpha sum.
                 let mut acc = [0u64; 4];
                 let mut count = 0u64;
                 for sy in y0..y1 {
@@ -353,7 +317,6 @@ impl TextureCooker {
 
             for y in 0..dst_h {
                 for x in 0..dst_w {
-                    // 2×2 box filter in premultiplied space.
                     let mut acc = [0u64; 4];
                     let mut count = 0u64;
 
@@ -361,7 +324,6 @@ impl TextureCooker {
                         for dx in 0..2 {
                             let sx = x * 2 + dx;
                             let sy = y * 2 + dy;
-                            // Guard against source dimensions (not the target).
                             if sx < src_w && sy < src_h {
                                 let idx = ((sy * src_w) + sx) as usize * 4;
                                 let alpha = prev[idx + 3] as u64;
@@ -509,23 +471,20 @@ impl TextureCooker {
 
     fn write_rtex(mips: &[(u32, u32, Vec<u8>)], format: u8) -> Vec<u8> {
         let levels = mips.len() as u32;
-        // Header: magic(4) + version(1) + w(4) + h(4) + levels(4) + format(1) + offsets(levels*4)
         let header_size = 4 + 1 + 4 + 4 + 4 + 1 + (levels as usize * 4);
         let data_size: usize = mips.iter().map(|m| m.2.len()).sum();
         let mut buf = Vec::with_capacity(header_size + data_size);
 
         buf.extend_from_slice(RTEX_MAGIC);
-        buf.push(1); // version
-        buf.extend_from_slice(&mips[0].0.to_le_bytes()); // base width
-        buf.extend_from_slice(&mips[0].1.to_le_bytes()); // base height
+        buf.push(1);
+        buf.extend_from_slice(&mips[0].0.to_le_bytes());
+        buf.extend_from_slice(&mips[0].1.to_le_bytes());
         buf.extend_from_slice(&levels.to_le_bytes());
-        buf.push(format); // 0 = RGBA8
+        buf.push(format);
 
-        // Reserve space for offsets.
         let offset_pos = buf.len();
         buf.resize(offset_pos + levels as usize * 4, 0);
 
-        // Write mip data and record offsets.
         let mut mip_start = header_size as u32;
         for (i, mip) in mips.iter().enumerate() {
             let off = &mut buf[offset_pos + i * 4..offset_pos + (i + 1) * 4];
@@ -556,8 +515,6 @@ impl Cooker for TextureCooker {
             return Err(CookError::CookFailed("Zero-dimension texture".into()));
         }
 
-        // Per-asset import setting (`<asset>.import.json`) can override profile max_size / mips:
-        // First squash longest edge into max_size, then generate mip chain as needed.
         let (w, h, rgba) = Self::clamp_max_size(w, h, rgba, ctx.settings.texture.max_size);
         let mips_rgba = if ctx.settings.texture.generate_mips {
             Self::generate_mips(w, h, &rgba)
@@ -565,9 +522,6 @@ impl Cooker for TextureCooker {
             vec![(w, h, rgba.to_vec())]
         };
 
-        // Format byte: desktop BC1/BC3/BC5/BC7 use pure Rust encoder; mobile ASTC /
-        // ETC2 use vendored astcenc / etcpak. Only BC6H (HDR) has no encoder yet,
-        // Explicit warning then fall back to RGBA8 (not silently masquerade as already compressed, #519).
         let (format, mips, block_compressed) = match ctx.settings.texture.compression {
             profile::TextureCompression::Rgba8 | profile::TextureCompression::None => {
                 (RTEX_FORMAT_RGBA8, mips_rgba, false)
@@ -627,18 +581,12 @@ impl Cooker for TextureCooker {
 
         let cooked_data = Self::write_rtex(&mips, format);
 
-        // Block-compressed mip data already tight enough, adding zstd layer yields little; uncompressed RGBA8
-        // pixels compress well (generally save 30~50% volume), so let it into pak compression stream (#519).
         Ok(CookResult {
             cooked_data,
             compress: !block_compressed,
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// RTEX decoder — cooked runtime texture → structured mip data
-// ---------------------------------------------------------------------------
 
 /// Parsed RTEX cooked texture data.
 #[derive(Debug, Clone)]
@@ -659,7 +607,7 @@ pub fn decode_rtex(data: &[u8]) -> Option<RtexInfo> {
         return None;
     }
     if data[4] != 1 {
-        return None; // unknown version
+        return None;
     }
     let width = u32::from_le_bytes(data[5..9].try_into().ok()?);
     let height = u32::from_le_bytes(data[9..13].try_into().ok()?);
@@ -676,14 +624,12 @@ pub fn decode_rtex(data: &[u8]) -> Option<RtexInfo> {
         return None;
     }
 
-    // Read offset table.
     let mut offsets = Vec::with_capacity(mip_levels as usize);
     for i in 0..mip_levels as usize {
         let off = u32::from_le_bytes(data[offset_table_start + i * 4..][..4].try_into().ok()?);
         offsets.push(off as usize);
     }
 
-    // Extract each mip's data.
     let mut mip_data = Vec::with_capacity(mip_levels as usize);
     for i in 0..mip_levels as usize {
         let start = offsets[i];
@@ -713,10 +659,6 @@ pub fn decode_rtex(data: &[u8]) -> Option<RtexInfo> {
 pub fn parse_rtexi_pixels(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     TextureCooker::parse_intermediate(data).map(|(w, h, px)| (w, h, px.to_vec()))
 }
-
-// ---------------------------------------------------------------------------
-// Mesh Cooker — validates RMXI intermediate → serialises RMES runtime format
-// ---------------------------------------------------------------------------
 
 /// RMES cooked mesh magic.
 const RMES_MAGIC: &[u8; 4] = b"RMES";
@@ -868,7 +810,7 @@ impl MeshCooker {
         let uv_channels = layout.uv_channels;
 
         let nrm_floats: u32 = if layout.has_normals { 3 } else { 0 };
-        let stride = 3 + nrm_floats + uv_channels * 2; // floats per vertex
+        let stride = 3 + nrm_floats + uv_channels * 2;
         let header_size = 33usize;
         let vert_data_size = layout.vert_data_size;
         let idx_data_size = layout.idx_data_size;
@@ -882,7 +824,7 @@ impl MeshCooker {
         buf.extend_from_slice(&vert_count.to_le_bytes());
         buf.extend_from_slice(&idx_count.to_le_bytes());
         buf.extend_from_slice(&uv_channels.to_le_bytes());
-        buf.extend_from_slice(&(stride * 4).to_le_bytes()); // stride in bytes
+        buf.extend_from_slice(&(stride * 4).to_le_bytes());
 
         let pos_off = header_size as u32;
         let nrm_off = if layout.has_normals {
@@ -1055,7 +997,6 @@ impl Cooker for MeshCooker {
             let cooked_data = Self::write_rcld(ctx.imported_data)?;
             return Ok(CookResult {
                 cooked_data,
-                // Keep streamed RCLD pages uncompressed so runtime can pread single pages directly.
                 compress: !ctx.settings.streaming,
             });
         }
@@ -1070,10 +1011,6 @@ impl Cooker for MeshCooker {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// RMES decoder — cooked runtime mesh → structured vertex/index data
-// ---------------------------------------------------------------------------
 
 /// Parsed RMES cooked mesh data.
 #[derive(Debug, Clone)]
@@ -1098,7 +1035,7 @@ pub fn decode_rmes(data: &[u8]) -> Option<RmesInfo> {
     }
     let version = data[4];
     if version != 1 && version != RMES_VERSION {
-        return None; // unknown version
+        return None;
     }
     let vert_count = u32::from_le_bytes(data[5..9].try_into().ok()?);
     let idx_count = u32::from_le_bytes(data[9..13].try_into().ok()?);
@@ -1162,10 +1099,6 @@ pub fn parse_rmxi_info(data: &[u8]) -> Option<RmxiInfo> {
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Material Cooker (RMATI intermediate -> RMAT runtime format)
-// ---------------------------------------------------------------------------
-
 /// RMATI intermediate material magic (from the importer). 5 bytes so it is
 /// distinct from the 4-byte RMAT runtime magic.
 const RMATI_MAGIC: &[u8; 5] = b"RMATI";
@@ -1211,7 +1144,6 @@ impl MaterialCooker {
     ///
     /// Returns `None` on malformed input or a version this build does not write.
     fn parse_intermediate(data: &[u8]) -> Option<IntermediateMaterial> {
-        // Header: magic(5) + version(1) + scalars(72) = 78 bytes minimum.
         const MAGIC_LEN: usize = 5;
         let scalars_end = MAGIC_LEN + 1 + MATERIAL_SCALAR_SIZE;
         if data.len() < scalars_end + 5
@@ -1298,13 +1230,6 @@ impl Cooker for MaterialCooker {
                 CookError::CookFailed("Invalid material intermediate: missing RMATI header".into())
             })?;
 
-        // The importer already resolved texture paths to AssetId dependencies
-        // stored on the record. We walk the path records in slot order and
-        // look each up in the dependency list by matching path -> id via db.
-        // However, dependencies is just Vec<AssetId> without path info, so we
-        // re-resolve paths against the database here (the db is not on
-        // CookContext). Instead, we rely on record.dependencies preserving the
-        // slot order from the importer. Map them positionally.
         let deps = &ctx.record.dependencies;
         let mut tex_ids: [Option<AssetId>; 5] = [None, None, None, None, None];
         let mut dep_idx = 0;
@@ -1332,10 +1257,6 @@ impl Cooker for MaterialCooker {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// RMAT decoder - cooked runtime material -> structured data
-// ---------------------------------------------------------------------------
 
 /// Parsed RMAT cooked material data.
 #[derive(Debug, Clone)]
@@ -1394,10 +1315,6 @@ pub fn decode_rmat(data: &[u8]) -> Option<RmatInfo> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Shader Cooker (RSLI intermediate -> SPIR-V via slangc)
-// ---------------------------------------------------------------------------
-
 /// RSLI intermediate shader magic (from the importer).
 const RSLI_MAGIC: &[u8; 4] = b"RSLI";
 /// SPIR-V magic number (little-endian first word). Used to sanity-check the
@@ -1432,7 +1349,6 @@ pub struct ShaderCooker;
 
 impl ShaderCooker {
     fn parse_intermediate(data: &[u8]) -> Option<RsliInfo> {
-        // Header: magic(4) + version(1) = 5 bytes minimum.
         if data.len() < 5 || &data[..4] != RSLI_MAGIC {
             return None;
         }
@@ -1484,12 +1400,10 @@ impl ShaderCooker {
     /// Invoke slangc on `source` written to a temp file, returning the SPIR-V
     /// bytes on success.
     fn compile(rsli: &RsliInfo) -> Result<Vec<u8>, CookError> {
-        // Write source to a temp file so #include / module resolution works.
         let tmp_dir = std::env::temp_dir();
         let source_path = tmp_dir.join(format!("prisma_shader_cook_{}.slang", std::process::id()));
         let out_path = tmp_dir.join(format!("prisma_shader_cook_{}.spv", std::process::id()));
 
-        // RAII guard: removes temp files on drop, success or error.
         struct TempGuard {
             paths: Vec<std::path::PathBuf>,
         }
@@ -1544,7 +1458,6 @@ impl ShaderCooker {
             ))
         })?;
 
-        // Sanity check: SPIR-V starts with the magic 0x07230203 (LE).
         if spv.len() < 4 {
             return Err(CookError::CookFailed(
                 "slangc produced empty/short SPIR-V".into(),
@@ -1588,15 +1501,10 @@ impl Cooker for ShaderCooker {
 
         Ok(CookResult {
             cooked_data: spv,
-            // SPIR-V doesn't compress well; skip zstd overhead.
             compress: false,
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Default Registry
-// ---------------------------------------------------------------------------
 
 /// Build the default cooker registry with all built-in cookers.
 pub fn default_cooker_registry() -> CookerRegistry {
@@ -1610,10 +1518,6 @@ pub fn default_cooker_registry() -> CookerRegistry {
     reg.register(Box::new(scene::SceneCooker::default()));
     reg
 }
-
-// ---------------------------------------------------------------------------
-// Cook Pipeline
-// ===========================================================================
 
 /// High-level cooking pipeline that processes all assets through cookers and
 /// builds a .pak package.
@@ -1643,7 +1547,6 @@ impl CookPipeline {
     ) -> Result<CookSummary, CookError> {
         let mut summary = CookSummary::default();
 
-        // Collect records in dependency order (topological sort).
         let order = topological_sort(db);
 
         for &id in &order {
@@ -1699,10 +1602,6 @@ pub struct CookSummary {
     pub streamed: u32,
 }
 
-// ===========================================================================
-// Topological Sort
-// ===========================================================================
-
 /// Compute a topological ordering of assets based on their dependencies.
 ///
 /// Returns asset IDs in an order where all dependencies appear before their
@@ -1714,7 +1613,6 @@ pub fn topological_sort(db: &crate::db::AssetDatabase) -> Vec<AssetId> {
         return Vec::new();
     }
 
-    // DFS-based topological sort with cycle detection.
     let mut visited = std::collections::HashSet::new();
     let mut result = Vec::with_capacity(all_ids.len());
     let mut temp_mark = std::collections::HashSet::new();

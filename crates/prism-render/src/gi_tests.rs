@@ -9,22 +9,11 @@ fn approx_eq3(a: [f32; 3], b: [f32; 3]) -> bool {
     approx_eq(a[0], b[0]) && approx_eq(a[1], b[1]) && approx_eq(a[2], b[2])
 }
 
-// ---- Bake-time directional light source (must match engine default ----
-
 #[test]
 fn bake_default_light_dir_matches_runtime_default() {
-    // The runtime inserts DirectionalLight::default() (euler=[45,-45,0],
-    // intensity=3.0, color=white) into the ECS, and render_system derives
-    // the light source  direction via euler_xyz_deg_to_dir. The baker must use the
-    // SAME euler angles + conversion so the baked sun bounce matches the
-    // real-time sun. validate  the conversion produces a unit vector  in the
-    // documented upper-left direction (y>0). Exact components come from
-    // the formula [cp*sy, sp, cp*cy] with p=45deg, y=-45deg.
     let dir = bake_euler_xyz_deg_to_dir(BAKE_DEFAULT_LIGHT_EULER);
     let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
     assert!(approx_eq(len, 1.0), "non-unit dir {dir:?}");
-    // Upward component (y) must be sin(45deg) = 1/√2 (light source is above
-    // the horizon), and horizontal components from cos(45)*sin/cos.
     let inv_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;
     assert!(approx_eq(dir[1], inv_sqrt2), "y component {dir:?}");
     assert!(dir[1] > 0.0, "light must be above horizon: {dir:?}");
@@ -39,11 +28,8 @@ fn bake_euler_is_unit_length() {
     }
 }
 
-// ---- ABI: ProbeVolumeInfo mirrors the Slang std140 layout  ----
-
 #[test]
 fn probe_volume_info_size_is_48() {
-    // std140: three vec4 (origin, spacing, dims) = 48 byte  16-aligned.
     assert_eq!(std::mem::size_of::<ProbeVolumeInfo>(), 48);
 }
 
@@ -54,11 +40,8 @@ fn probe_volume_info_offsets() {
     assert_eq!(std::mem::offset_of!(ProbeVolumeInfo, dims), 32);
 }
 
-// ---- SH basis / evaluation ----
-
 #[test]
 fn sh_basis_dc_is_constant() {
-    // The DC basis value is direction-independent.
     for n in [
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
@@ -71,8 +54,6 @@ fn sh_basis_dc_is_constant() {
 
 #[test]
 fn eval_sh9_dc_only_is_direction_independent() {
-    // A field with only the DC coefficient set  is uniform the reconstructed
-    // Irradiance is sh[0] * Y_0^0 for every normal.
     let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
     sh[0] = [1.0, 2.0, 3.0];
     let expected = [SH_C0, 2.0 * SH_C0, 3.0 * SH_C0];
@@ -88,8 +69,6 @@ fn eval_sh9_dc_only_is_direction_independent() {
 
 #[test]
 fn eval_sh9_linear_x_term_is_odd() {
-    // Coefficient 3 is the x lobe (basis SH_C1 * x). It must flip sign.
-    // between +X and -X and vanish on the Y/Z axes.
     let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
     sh[3] = [1.0, 1.0, 1.0];
     let px = eval_sh9([1.0, 0.0, 0.0], &sh)[0];
@@ -102,9 +81,6 @@ fn eval_sh9_linear_x_term_is_odd() {
 
 #[test]
 fn eval_sh9_irradiance_dc_only_scales_by_pi() {
-    // DC-only radiance SH: irradiance = sh[0] * Y_0 * A_0
-    //                      = sh[0] * SH_C0 * PI
-    // which is PI * eval_sh9 since A_0 = PI.
     let pi = std::f32::consts::PI;
     let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
     sh[0] = [1.0, 2.0, 3.0];
@@ -117,11 +93,8 @@ fn eval_sh9_irradiance_dc_only_scales_by_pi() {
 
 #[test]
 fn eval_sh9_irradiance_band1_scales_by_two_thirds_pi() {
-    // Band-1-only radiance SH: irradiance = sh[1] * (SH_C1 * y) * A_1
-    //                          = sh[1] * (SH_C1 * y) * (2*PI/3)
-    //                          = (2*PI/3) * eval_sh9.
     let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
-    sh[1] = [0.5, 1.0, 1.5]; // Y lobe (y)
+    sh[1] = [0.5, 1.0, 1.5];
     let factor = 2.0 * std::f32::consts::PI / 3.0;
     for n in [[0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.3, 0.95]] {
         let rad = eval_sh9(n, &sh);
@@ -133,29 +106,22 @@ fn eval_sh9_irradiance_band1_scales_by_two_thirds_pi() {
     }
 }
 
-// ---- World -> mesh map ----
-
 #[test]
 fn world_to_probe_coord_maps_origin_and_spacing() {
     let info = ProbeVolumeInfo::new([10.0, 0.0, -5.0], [2.0, 2.0, 2.0], [4, 4, 4]);
-    // Probe (0,0,0) sits at the origin.
     assert!(approx_eq3(
         world_to_probe_coord([10.0, 0.0, -5.0], &info),
         [0.0, 0.0, 0.0]
     ));
-    // One spacing step along +X -> coord x = 1.
     assert!(approx_eq3(
         world_to_probe_coord([12.0, 0.0, -5.0], &info),
         [1.0, 0.0, 0.0]
     ));
-    // Fractional position.
     assert!(approx_eq3(
         world_to_probe_coord([13.0, 4.0, -5.0], &info),
         [1.5, 2.0, 0.0]
     ));
 }
-
-// ---- trilinear weights ----
 
 #[test]
 fn trilinear_weights_sum_to_one() {
@@ -184,7 +150,6 @@ fn trilinear_weights_at_grid_origin() {
 
 #[test]
 fn trilinear_weights_at_far_corner() {
-    // coord == dims-1 -> fully the (1,1,1) corner of the last  cell.
     let (base, w) = trilinear_weights([3.0, 3.0, 3.0], [4, 4, 4]);
     assert_eq!(base, [2, 2, 2]);
     assert!(approx_eq(w[7], 1.0));
@@ -195,7 +160,6 @@ fn trilinear_weights_at_far_corner() {
 
 #[test]
 fn trilinear_weights_at_cell_midpoint() {
-    // Midpoint of cell (0,0,0): all 8 corners weight 1/8.
     let (base, w) = trilinear_weights([0.5, 0.5, 0.5], [4, 4, 4]);
     assert_eq!(base, [0, 0, 0]);
     for weight in &w {
@@ -205,29 +169,22 @@ fn trilinear_weights_at_cell_midpoint() {
 
 #[test]
 fn trilinear_weights_clamp_outside_volume() {
-    // Far beyond the mesh -> snaps to far-corner probe.
     let (base, w) = trilinear_weights([100.0, -50.0, 999.0], [4, 4, 4]);
     assert_eq!(base, [2, 0, 2]);
-    assert!(approx_eq(w[5], 1.0)); // all weight concentrates at the far-corner probe
+    assert!(approx_eq(w[5], 1.0));
     let sum: f32 = w.iter().sum();
     assert!(approx_eq(sum, 1.0));
 }
 
 #[test]
 fn trilinear_weights_single_probe_axis() {
-    // dims == 1 on every axis: a single probe, weight 0 = 1, no panic.
     let (base, w) = trilinear_weights([3.7, -2.0, 0.5], [1, 1, 1]);
     assert_eq!(base, [0, 0, 0]);
     assert!(approx_eq(w[0], 1.0));
 }
 
-// ---- Full pipeline sample_probe_irradiance ----
-
 #[test]
 fn sample_uniform_field_is_position_and_normal_independent() {
-    // Every probe holds the same DC-only coefficient -> a uniform radiance
-    // field. sample_probe_irradiance applies A_0 = PI for the cosine
-    // convolution, giving irradiance = sh[0] * Y_0 * PI.
     let info = ProbeVolumeInfo::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [4, 4, 4]);
     let dc = [0.5, 0.25, 1.0];
     let pi = std::f32::consts::PI;
@@ -251,10 +208,6 @@ fn sample_uniform_field_is_position_and_normal_independent() {
 
 #[test]
 fn sample_linear_field_is_exact() {
-    // Trilinear interpolate  reproduces linear  functions exactly. Make the
-    // DC coefficient vary linearly with the probe's x index  sh[0] = i.
-    // Sampling at fractional coord x = 1.5 yields blended sh[0] = 1.5,
-    // irradiance = 1.5 * Y_0^0 * A_0 = 1.5 * SH_C0 * PI.
     let pi = std::f32::consts::PI;
     let info = ProbeVolumeInfo::new([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [4, 4, 4]);
     let fetch = |i: i32, _j: i32, _k: i32, c: usize| -> [f32; 3] {

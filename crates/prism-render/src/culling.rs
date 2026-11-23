@@ -165,12 +165,12 @@ impl Frustum {
         };
         let (r0, r1, r2, r3) = (row(0), row(1), row(2), row(3));
         let raw = [
-            add4(r3, r0), // left:   w + x >= 0
-            sub4(r3, r0), // right:  w - x >= 0
-            add4(r3, r1), // bottom: w + y >= 0
-            sub4(r3, r1), // top:    w - y >= 0
-            r2,           // near:   z >= 0 (Vulkan depth range [0, 1])
-            sub4(r3, r2), // far:    w - z >= 0
+            add4(r3, r0),
+            sub4(r3, r0),
+            add4(r3, r1),
+            sub4(r3, r1),
+            r2,
+            sub4(r3, r2),
         ];
         let mut planes = [[0.0f32; 4]; 6];
         for (slot, plane) in planes.iter_mut().zip(raw) {
@@ -193,8 +193,6 @@ impl Frustum {
             return true;
         }
         for plane in self.planes {
-            // Take box corner "farthest" along this plane's normal (p-vertex):
-            // if it is on outside side, no visible part inside box.
             let positive = [
                 if plane[0] > 0.0 {
                     aabb.max[0]
@@ -275,7 +273,6 @@ impl DepthTiles {
                 }
             }
         }
-        // Tiles with no finite sample keep clear depth (farthest), no false culling.
         for depth in &mut max_depth {
             if !depth.is_finite() {
                 *depth = 1.0;
@@ -325,7 +322,6 @@ impl DepthTiles {
                 view_proj[0][2] * x + view_proj[1][2] * y + view_proj[2][2] * z + view_proj[3][2],
                 view_proj[0][3] * x + view_proj[1][3] * y + view_proj[2][3] * z + view_proj[3][3],
             ];
-            // Corner on or behind camera plane: no reliable screen projection, conservatively keep.
             if !clip[3].is_finite() || clip[3] <= 1e-6 {
                 return false;
             }
@@ -418,8 +414,6 @@ fn sub4(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 mod tests {
     use super::*;
 
-    // ── hand-written small matrix utils (this crate no glam dependency) ─────────────────────────
-
     fn mul4(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
         let mut out = [[0.0f32; 4]; 4];
         for col in 0..4 {
@@ -459,7 +453,7 @@ mod tests {
         let f = 1.0 / (fov * 0.5).tan();
         let mut m = [[0.0f32; 4]; 4];
         m[0][0] = f;
-        m[1][1] = -f; // Vulkan y-flip
+        m[1][1] = -f;
         m[2][2] = far / (near - far);
         m[2][3] = -1.0;
         m[3][2] = (near * far) / (near - far);
@@ -502,7 +496,6 @@ mod tests {
 
     #[test]
     fn a_box_straddling_the_left_plane_is_kept() {
-        // At z = −5 half image width ≈ 2.07 (45° fov), this box half outside.
         assert!(camera().intersects_aabb(&Aabb::new([-2.5, -0.2, -5.5], [-2.0, 0.2, -4.5],)));
     }
 
@@ -518,7 +511,6 @@ mod tests {
 
     #[test]
     fn a_degenerate_matrix_produces_no_frustum() {
-        // All-zero / zero-length-after-normalize matrix: no usable planes.
         assert!(Frustum::from_view_proj(&[[0.0; 4]; 4]).is_none());
         assert!(Frustum::from_view_proj(&scale(0.0)).is_none());
     }
@@ -536,10 +528,8 @@ mod tests {
 
     #[test]
     fn a_box_spanning_the_camera_plane_is_kept() {
-        // z from +1 to −1: has part behind camera and part outside near plane.
         let straddling = Aabb::new([-0.1, -0.1, -1.0], [0.1, 0.1, 1.0]);
         assert!(camera().intersects_aabb(&straddling));
-        // Same box pushed entirely behind camera (z 1..2) becomes invisible.
         let behind = Aabb::new([-0.1, -0.1, 1.0], [0.1, 0.1, 2.0]);
         assert!(!camera().intersects_aabb(&behind));
     }
@@ -562,7 +552,6 @@ mod tests {
 
     #[test]
     fn a_moved_camera_keeps_its_own_box_visible() {
-        // After camera translated to (0, 0, -10) looking −Z: (0,0,-15) inside frustum, (0,0,-5) behind.
         let view_proj = mul4(&perspective(), &translation(0.0, 0.0, 10.0));
         let frustum = Frustum::from_view_proj(&view_proj).unwrap();
         assert!(frustum.intersects_aabb(&unit_box_at(0.0, 0.0, -15.0)));
@@ -576,7 +565,6 @@ mod tests {
         let merged = left.union(&right).expect("both valid");
         assert_eq!(merged.min, [-1.0, -2.0, -1.0]);
         assert_eq!(merged.max, [2.0, 1.0, 1.0]);
-        // Invalid one ignored; both invalid then no result.
         let broken = Aabb::new([f32::NAN, 0.0, 0.0], [1.0, 1.0, 1.0]);
         assert_eq!(left.union(&broken), Some(left));
         assert_eq!(broken.union(&broken), None);
@@ -588,7 +576,6 @@ mod tests {
 
     #[test]
     fn a_box_behind_a_full_screen_surface_is_occluded() {
-        // Wall depth 0.99 (≈ z = −10), box at z = −50 (depth ≈ 0.999).
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
         assert!(tiles.is_box_occluded(&camera, &unit_box_at(0.0, 0.0, -50.0), 1));
@@ -596,7 +583,6 @@ mod tests {
 
     #[test]
     fn a_box_in_front_of_the_surface_stays_visible() {
-        // Depth at z = −5 ≈ 0.981 < 0.99: box nearer than wall, must not cull.
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(0.0, 0.0, -5.0), 1));
@@ -604,7 +590,6 @@ mod tests {
 
     #[test]
     fn a_background_tile_inside_the_rect_keeps_the_box_visible() {
-        // Right half is background (1.0): if box projection covers it there's no occluder there.
         let mut samples = vec![0.99f32; 128 * 128];
         for y in 0..128 {
             for x in 64..128 {
@@ -613,7 +598,6 @@ mod tests {
         }
         let tiles = DepthTiles::from_samples([128, 128], 4, &samples).unwrap();
         let camera = perspective();
-        // Box at z = −50, x = 6: projection lands in right half.
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(6.0, 0.0, -50.0), 1));
     }
 
@@ -621,14 +605,12 @@ mod tests {
     fn boxes_touching_the_screen_edge_or_camera_plane_stay_visible() {
         let tiles = uniform_tiles(0.99);
         let camera = perspective();
-        // Outside screen (x = 100) and crossing near plane (z from −0.05 to +0.05) both conservatively kept.
         assert!(!tiles.is_box_occluded(&camera, &unit_box_at(100.0, 0.0, -50.0), 1));
         assert!(!tiles.is_box_occluded(
             &camera,
             &Aabb::new([-0.1, -0.1, -0.05], [0.1, 0.1, 0.05]),
             1
         ));
-        // Invalid box likewise not culled.
         assert!(!tiles.is_box_occluded(&camera, &Aabb::new([f32::NAN; 3], [1.0; 3]), 1));
     }
 
@@ -670,7 +652,6 @@ mod tests {
         assert!(!items[0].visible_in_main_pass);
         assert!(items[1].visible_in_main_pass);
         assert!(items[2].visible_in_main_pass);
-        // Shadow still decided by `cast_shadow`, culling doesn't touch it.
         assert!(items[0].cast_shadow);
     }
 
@@ -681,7 +662,6 @@ mod tests {
         assert!(DepthTiles::from_samples([4, 4], 4, &[0.0; 15]).is_none());
         let tiles = DepthTiles::from_samples([5, 3], 4, &[f32::NAN; 15]).unwrap();
         assert_eq!(tiles.tiles(), (2, 1));
-        // Non-finite depth treated as farthest, never cull.
         assert!(!tiles.is_box_occluded(&perspective(), &unit_box_at(0.0, 0.0, -50.0), 0));
     }
 

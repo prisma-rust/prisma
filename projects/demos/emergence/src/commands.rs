@@ -293,7 +293,7 @@ impl Default for CommandWorldState {
 impl CommandWorldState {
     pub fn new() -> Self {
         Self {
-            time_ticks: 6_000, // Noon by default
+            time_ticks: 6_000, 
             weather: WeatherKind::Clear,
             weather_timer_sec: 0.0,
             rules: GameRules::default(),
@@ -385,7 +385,6 @@ impl CommandWorldState {
         }
 
         if self.rules.do_daylight_cycle {
-            // 20 ticks/sec = 20-minute full Minecraft day cycle.
             self.time_accum_sec += dt * 20.0;
             let whole = self.time_accum_sec.floor() as u64;
             if whole > 0 {
@@ -405,7 +404,6 @@ impl CommandWorldState {
             }
         }
 
-        // Apply active weather stimuli (rain wets exposed blocks; thunder occasionally strikes).
         if self.weather != WeatherKind::Clear {
             self.weather_stim_accum_sec += dt;
             if self.weather_stim_accum_sec >= 0.25 {
@@ -431,9 +429,8 @@ impl CommandWorldState {
     }
 
     fn sync_sky_and_sun(&self, world: &mut GameWorld<'_>) {
-        // 0 = sunrise (06:00), 6000 = noon, 12000 = sunset, 18000 = midnight.
         let phase = (self.time_ticks % TICKS_PER_DAY) as f32 / TICKS_PER_DAY as f32;
-        let sun_angle = phase * std::f32::consts::TAU; // 0 = east horizon, PI/2 = zenith, PI = west horizon
+        let sun_angle = phase * std::f32::consts::TAU; 
         let tilt = 22.0_f32.to_radians();
         let sun_vec = [
             sun_angle.cos(),
@@ -458,8 +455,6 @@ impl CommandWorldState {
             WeatherKind::Thunder => 0.22,
         };
 
-        // Primary directional light follows the sun by day and switches to the
-        // moon above the horizon at night so shadows + GI stay active 24h.
         let mut active_dir = if is_night {
             [-sun_dir[0], (-sun_dir[1]).max(0.10), -sun_dir[2]]
         } else {
@@ -473,8 +468,6 @@ impl CommandWorldState {
         active_dir[1] /= active_len;
         active_dir[2] /= active_len;
 
-        // Exact inverse of `prism_engine::euler_xyz_deg_to_dir`:
-        // +X pitch lifts light vector toward +Y (above horizon).
         let pitch_deg = active_dir[1].clamp(-0.99, 0.99).asin().to_degrees();
         let yaw_deg = active_dir[0].atan2(active_dir[2]).to_degrees();
 
@@ -613,25 +606,21 @@ impl CommandWorldState {
             return true;
         }
         if input.key_pressed(keys::OTHER_BASE + 0x24) {
-            // Home
             self.cursor_char = 0;
             self.caret_blink_sec = 0.0;
             return true;
         }
         if input.key_pressed(keys::OTHER_BASE + 0x23) {
-            // End
             self.cursor_char = char_len;
             self.caret_blink_sec = 0.0;
             return true;
         }
         if input.key_pressed(keys::OTHER_BASE + 0x21) {
-            // PageUp
             let max_scroll = self.chat_log.len().saturating_sub(1);
             self.scroll_offset = (self.scroll_offset + 5).min(max_scroll);
             return true;
         }
         if input.key_pressed(keys::OTHER_BASE + 0x22) {
-            // PageDown
             self.scroll_offset = self.scroll_offset.saturating_sub(5);
             return true;
         }
@@ -641,7 +630,6 @@ impl CommandWorldState {
             return true;
         }
 
-        // Backspace (VK_BACK = 0x08) and Delete (VK_DELETE = 0x2E).
         if input.key_pressed(keys::OTHER_BASE + 0x08) {
             self.delete_before_cursor();
             self.caret_blink_sec = 0.0;
@@ -709,7 +697,6 @@ impl CommandWorldState {
         let screen_h = if screen[1] > 1.0 { screen[1] } else { 720.0 };
         let box_w = (screen_w * 0.45).clamp(360.0, 620.0);
 
-        // Gather visible messages newest-at-bottom, oldest-above.
         let mut visible: Vec<(&ChatMessage, f32)> = Vec::new();
         if self.console_open {
             for msg in self
@@ -812,7 +799,6 @@ impl CommandWorldState {
             world.set(row.text, Active(true));
         }
 
-        // Sync input bar and command suggestions when console is open.
         if let (Some(in_bg), Some(in_txt), Some(sug_bg), Some(sug_txt)) = (
             self.chat_ui.input_bg,
             self.chat_ui.input_text,
@@ -1583,7 +1569,6 @@ mod tests {
         let placed = cmd.execute("/setblock 1 2 1 stone", &mut world, &mut sim, &mut player);
         assert!(placed.starts_with("Placed stone"), "unexpected: {placed}");
 
-        // Verify full time-of-day lighting: noon -> high warm sun, midnight -> cool moonlight above horizon.
         cmd.execute("/weather clear", &mut world, &mut sim, &mut player);
         cmd.execute("/time set noon", &mut world, &mut sim, &mut player);
         let noon_light = world.get::<DirectionalLight>(sun).unwrap();
@@ -1632,27 +1617,22 @@ mod tests {
         player.attach_ecs(&mut world, &sim);
         let mut cmd = CommandWorldState::new();
 
-        // F1 no longer opens the command console.
         assert!(!cmd.handle_console_input(&press(keys::F1), &mut world, &mut sim, &mut player));
         assert!(!cmd.console_open);
 
-        // `T` opens console with an empty buffer and does not inject 't'.
         assert!(cmd.handle_console_input(&press(keys::KEY_T), &mut world, &mut sim, &mut player));
         assert!(cmd.console_open);
         assert_eq!(cmd.input_line, "");
 
-        // `Escape` cancels and closes console.
         assert!(cmd.handle_console_input(&press(keys::ESCAPE), &mut world, &mut sim, &mut player));
         assert!(!cmd.console_open);
 
-        // `Enter` when closed opens console empty and does not execute immediately.
         assert!(cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player));
         assert!(cmd.console_open);
         assert_eq!(cmd.input_line, "");
         assert!(cmd.chat_log.is_empty());
         assert!(cmd.handle_console_input(&press(keys::ESCAPE), &mut world, &mut sim, &mut player));
 
-        // `/` opens console prefilled with `/`.
         assert!(cmd.handle_console_input(
             &press(keys::OTHER_BASE + 0xBF),
             &mut world,
@@ -1675,7 +1655,6 @@ mod tests {
         player.attach_ecs(&mut world, &sim);
         let mut cmd = CommandWorldState::new();
 
-        // Open with `T` and type `/ti` + Tab -> `/time`, then ` set day` -> Enter.
         cmd.handle_console_input(&press(keys::KEY_T), &mut world, &mut sim, &mut player);
         for k in [
             press(keys::OTHER_BASE + 0xBF),
@@ -1688,7 +1667,6 @@ mod tests {
         cmd.handle_console_input(&press(keys::TAB), &mut world, &mut sim, &mut player);
         assert_eq!(cmd.input_line, "/time");
 
-        // Cursor navigation + editing: add `x` at start via Home, then Delete it.
         cmd.handle_console_input(
             &press(keys::OTHER_BASE + 0x24),
             &mut world,
@@ -1736,7 +1714,6 @@ mod tests {
         assert_eq!(cmd.history, vec!["/time set day".to_string()]);
         assert_eq!(cmd.chat_log[0].tag, ChatTag::Command);
 
-        // Open with `Enter`, test relative tilde (`Shift + backquote`) + minus + dot, then chat msg.
         cmd.handle_console_input(&press(keys::ENTER), &mut world, &mut sim, &mut player);
         for k in [
             press_shifted(keys::OTHER_BASE + 0xC0),
@@ -1756,7 +1733,6 @@ mod tests {
         assert_eq!(cmd.chat_log[0].tag, ChatTag::Player);
         assert_eq!(cmd.chat_log[0].text, "<Player> ~-5.2");
 
-        // Sync chat UI spawns pooled bottom-left entities and ages out unfocused lines after 10s.
         cmd.sync_chat_ui(&mut world, 0.2);
         assert!(cmd.chat_ui.initialized);
         assert_eq!(
@@ -1775,7 +1751,6 @@ mod tests {
             Some(Active(false))
         );
 
-        // `/clear` clears the chat log.
         cmd.execute("/clear", &mut world, &mut sim, &mut player);
         assert!(cmd.chat_log.is_empty());
     }

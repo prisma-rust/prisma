@@ -763,9 +763,6 @@ pub fn hierarchy(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         action = Some(TreeAction::ClearSelection);
     }
 
-    // Hierarchy keeps a lightweight ghost under the pointer while dragging.
-    // It makes the operation legible even when the pointer is between rows or over
-    // the empty tail of the scroll area.
     if let (Some(from), Some(pointer)) = (
         state.dragging,
         ui.input(|input| input.pointer.interact_pos()),

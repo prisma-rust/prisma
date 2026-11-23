@@ -33,8 +33,6 @@ pub struct DescriptorLayout {
 
 impl DescriptorLayout {
     pub fn new(device: &ash::Device) -> anyhow::Result<Self> {
-        // `UNIFORM_BUFFER_DYNAMIC` so the forward pass can point the same
-        // descriptor set at a different camera slot (#461).
         let bindings = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
@@ -234,10 +232,10 @@ pub const PT_EMISSIVE_MAX: u32 = 1024;
     reason = "field name mirrors the Vulkan `pNext` chain terminology"
 )]
 pub struct ReSTIRReservoir {
-    pub light_idx: u32,  // 0=sun, 1..PT_LIGHT_MAX=analytic
-    pub M: f32,          // effective sample count
-    pub W: f32,          // sum of RIS weights (target_pdf / p_init)
-    pub target_pdf: f32, // π(selected_light) for ReSTIR pdf = W/(M*π(y))
+    pub light_idx: u32,
+    pub M: f32,
+    pub W: f32,
+    pub target_pdf: f32,
 }
 
 /// Emissive triangle (area light) laid out by the Slang `PtEmissiveTri`
@@ -279,7 +277,7 @@ pub struct FrameUBO {
 impl FrameUBO {
     /// Create a UBO buffer and update the descriptor set to point to it.
     pub fn new(context: &VulkanContext, descriptor_set: vk::DescriptorSet) -> anyhow::Result<Self> {
-        let size = std::mem::size_of::<FrameUBOData>() as vk::DeviceSize; // 416
+        let size = std::mem::size_of::<FrameUBOData>() as vk::DeviceSize;
         let alignment = context
             .physical_device_properties
             .limits
@@ -296,7 +294,6 @@ impl FrameUBO {
         )
         .context("create frame UBO buffer")?;
 
-        // Update descriptor set.
         let buffer_info = vk::DescriptorBufferInfo::default()
             .buffer(buffer)
             .offset(0)

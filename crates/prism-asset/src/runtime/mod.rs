@@ -24,19 +24,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use thiserror::Error;
 
-// ---------------------------------------------------------------------------
-// Hot-reload support
-// ---------------------------------------------------------------------------
-
-// Poller depends only on `std`, runtime and build can both use; previously it hid behind `hot-reload` feature,
-// and only build-time `prism-cooker` opened that feature, so runtime never got watcher (#495).
 mod hot_reload;
 
 pub use hot_reload::{HotReloadError, HotReloadEvent, HotReloadWatcher};
-
-// ---------------------------------------------------------------------------
-// Typed asset wrappers (RTEX/RMES/RMAT/SPIR-V/RSCN decoders)
-// ---------------------------------------------------------------------------
 
 pub mod typed;
 
@@ -50,10 +40,6 @@ pub use crate::formats::{
     Anim2DFrame, Anim2DTag, AtlasSpriteEntry, MergedCollisionBox, Ranim2DInfo, RatlInfo, RmatInfo,
     RmesInfo, RtilemapInfo, TilemapLayer, TilemapObject,
 };
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -94,10 +80,6 @@ pub enum RuntimeError {
     PinUnderflow(AssetId),
 }
 
-// ---------------------------------------------------------------------------
-// Slot (internal storage)
-// ---------------------------------------------------------------------------
-
 /// One slot in the runtime slot array.
 #[derive(Clone)]
 struct Slot {
@@ -132,10 +114,6 @@ impl Slot {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Eviction Policy
-// ---------------------------------------------------------------------------
-
 /// The eviction policy when memory budget is exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EvictionPolicy {
@@ -147,10 +125,6 @@ pub enum EvictionPolicy {
     /// Evict oldest-loaded assets first.
     Fifo,
 }
-
-// ---------------------------------------------------------------------------
-// Memory Tracker
-// ---------------------------------------------------------------------------
 
 /// Tracks memory usage and enforces budget via eviction.
 #[derive(Debug, Clone)]
@@ -200,10 +174,6 @@ impl MemoryTracker {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Resource Manager
-// ---------------------------------------------------------------------------
 
 /// Registered `.pak`: keeps source path together.
 ///
@@ -261,15 +231,11 @@ impl ResourceManager {
             id_map: HashMap::new(),
             path_map: HashMap::new(),
             packages: Vec::new(),
-            next_slot: 1, // 0 reserved for null handle
+            next_slot: 1,
             memory: MemoryTracker::new(),
             load_epoch: 0,
         }
     }
-
-    // ------------------------------------------------------------------
-    // Memory budget control
-    // ------------------------------------------------------------------
 
     /// Set the memory budget in bytes (0 = unlimited).
     ///
@@ -314,7 +280,6 @@ impl ResourceManager {
 
         let mut freed: u64 = 0;
 
-        // Build eviction candidate list: (slot, last_access, size, load_epoch)
         let mut candidates: Vec<(u32, Instant, u64, u64)> = self
             .id_map
             .values()
@@ -335,11 +300,9 @@ impl ResourceManager {
 
         match self.memory.policy {
             EvictionPolicy::Lru => {
-                // Sort by access time (oldest first)
                 candidates.sort_by_key(|&(_, time, _, _)| time);
             }
             EvictionPolicy::Fifo => {
-                // FIFO orders by when the data was loaded, not last access.
                 candidates.sort_by_key(|&(_, _, _, epoch)| epoch);
             }
             EvictionPolicy::None => return 0,
@@ -362,10 +325,6 @@ impl ResourceManager {
 
         freed
     }
-
-    // ------------------------------------------------------------------
-    // Package management
-    // ------------------------------------------------------------------
 
     /// Load and register all assets from a `.pak` file.
     pub fn load_package(&mut self, path: impl AsRef<Path>) -> Result<(), RuntimeError> {
@@ -444,7 +403,6 @@ impl ResourceManager {
             let (Some(id_str), Some(path)) = (id_str, path) else {
                 continue;
             };
-            // `id` is a hex string like "0x0000000100000001".
             let raw = if let Some(stripped) = id_str.strip_prefix("0x") {
                 u64::from_str_radix(stripped, 16)
             } else {
@@ -486,7 +444,6 @@ impl ResourceManager {
             self.next_slot += 1;
 
             if index as usize >= self.slots.len() {
-                // Extend the vec to include this index.
                 self.slots.resize(index as usize + 1, Slot::new());
             }
             self.slots[index as usize] = Slot {
@@ -495,7 +452,7 @@ impl ResourceManager {
                 asset_type: AssetType::from_u32(record.type_id),
                 data: None,
                 last_access: Cell::new(Instant::now()),
-                size_bytes: record.size, // track uncompressed size
+                size_bytes: record.size,
                 load_epoch: 0,
                 pin_count: 0,
             };
@@ -509,10 +466,6 @@ impl ResourceManager {
             self.id_map.len()
         );
     }
-
-    // ------------------------------------------------------------------
-    // Asset lookup
-    // ------------------------------------------------------------------
 
     /// Check if an asset is registered (without loading its data).
     pub fn is_registered(&self, id: AssetId) -> bool {
@@ -543,10 +496,6 @@ impl ResourceManager {
             .any(|package| package.reader.is_asset_streamed(id))
     }
 
-    // ------------------------------------------------------------------
-    // Dependency resolution (topological)
-    // ------------------------------------------------------------------
-
     /// Load an asset and all its dependencies recursively.
     ///
     /// Assets are loaded in topological order (dependencies first).
@@ -557,7 +506,6 @@ impl ResourceManager {
     ) -> Result<Handle<T>, RuntimeError> {
         self.load_deps_recursive(id)?;
 
-        // Now load the requested asset itself.
         self.load(id)
     }
 
@@ -573,14 +521,12 @@ impl ResourceManager {
     /// Uses a DFS that tracks the current path for cycle detection.
     /// Returns success when all deps are loaded.
     fn load_deps_recursive(&mut self, id: AssetId) -> Result<(), RuntimeError> {
-        let mut visited: HashMap<AssetId, bool> = HashMap::new(); // false = temp (in-progress)
+        let mut visited: HashMap<AssetId, bool> = HashMap::new();
         let mut load_order: Vec<AssetId> = Vec::new();
 
         self.dfs_deps(id, &mut visited, &mut load_order)?;
 
-        // Load in order (dependencies first).
         for &dep_id in &load_order {
-            // Only load if not already loaded.
             if self.get_raw_bytes(dep_id).is_err() {
                 self.load_raw_bytes(dep_id)?;
             }
@@ -595,18 +541,16 @@ impl ResourceManager {
         load_order: &mut Vec<AssetId>,
     ) -> Result<(), RuntimeError> {
         match visited.get(&id) {
-            Some(&true) => return Ok(()), // already processed
+            Some(&true) => return Ok(()),
             Some(&false) => {
-                // Cycle detected — just warn and skip this branch
                 tracing::warn!("Dependency cycle detected involving {id}");
                 return Ok(());
             }
             None => {}
         }
 
-        visited.insert(id, false); // mark as in-progress
+        visited.insert(id, false);
 
-        // Find the package that contains this asset and get its deps.
         for package in &self.packages {
             let reader = &package.reader;
             if let Some(record) = reader.find_record(id) {
@@ -619,7 +563,7 @@ impl ResourceManager {
             }
         }
 
-        visited.insert(id, true); // mark as done
+        visited.insert(id, true);
         load_order.push(id);
         Ok(())
     }
@@ -629,15 +573,10 @@ impl ResourceManager {
         self.id_map.get(&id).copied()
     }
 
-    // ------------------------------------------------------------------
-    // Synchronous loading
-    // ------------------------------------------------------------------
-
     /// Load raw bytes for an asset without going through `Asset` trait.
     fn load_raw_bytes(&mut self, id: AssetId) -> Result<Vec<u8>, RuntimeError> {
         let slot_index = self.slot_index(id).ok_or(RuntimeError::NotFound(id))?;
 
-        // If already loaded, return a copy.
         {
             let slot = &self.slots[slot_index as usize];
             if let Some(ref data) = slot.data {
@@ -646,15 +585,12 @@ impl ResourceManager {
             }
         }
 
-        // Find and read from a package.
         let data = self.read_from_packages(id)?;
 
-        // Check memory budget before storing.
         let size = data.len() as u64;
         if !self.memory.can_fit(size) {
             if self.memory.policy != EvictionPolicy::None {
-                // Try to evict.
-                let freed = self.evict(size + 1024 * 1024); // free +1MB margin
+                let freed = self.evict(size + 1024 * 1024);
                 if !self.memory.can_fit(size) {
                     return Err(RuntimeError::OutOfMemory {
                         current: self.memory.current,
@@ -672,7 +608,6 @@ impl ResourceManager {
             }
         }
 
-        // Store.
         let epoch = self.load_epoch;
         {
             let slot = &mut self.slots[slot_index as usize];
@@ -704,9 +639,6 @@ impl ResourceManager {
     pub fn load<T: Asset + 'static>(&mut self, id: AssetId) -> Result<Handle<T>, RuntimeError> {
         let slot_index = self.slot_index(id).ok_or(RuntimeError::NotFound(id))?;
 
-        // If data is already loaded, update access time and return handle.
-        // Validate `T` even on the cached path: callers such as
-        // `load_with_deps` may have populated the slot as raw bytes first.
         {
             let slot = &mut self.slots[slot_index as usize];
             if let Some(data) = slot.data.as_ref() {
@@ -719,16 +651,13 @@ impl ResourceManager {
             }
         }
 
-        // Read raw data.
         let data = self.read_from_packages(id)?;
 
-        // Deserialize through the Asset trait.
         let _asset = T::from_bytes(&data).map_err(|_e| RuntimeError::TypeMismatch {
             expected: std::any::type_name::<T>(),
             got: self.slots[slot_index as usize].asset_type,
         })?;
 
-        // Check memory budget.
         let size = data.len() as u64;
         if !self.memory.can_fit(size) {
             if self.memory.policy != EvictionPolicy::None {
@@ -749,7 +678,6 @@ impl ResourceManager {
             }
         }
 
-        // Store data and update metadata.
         let epoch = self.load_epoch;
         {
             let slot = &mut self.slots[slot_index as usize];
@@ -816,10 +744,6 @@ impl ResourceManager {
         Err(RuntimeError::NotFound(id))
     }
 
-    // ------------------------------------------------------------------
-    // Streaming reads
-    // ------------------------------------------------------------------
-
     /// Read an asset's data in chunks (streaming).
     ///
     /// Returns an iterator yielding `Vec<u8>` chunks of at most
@@ -837,11 +761,8 @@ impl ResourceManager {
         id: AssetId,
         chunk_size: usize,
     ) -> Option<impl Iterator<Item = Vec<u8>> + '_> {
-        // A zero chunk size would make `StreamIter` yield empty chunks forever
-        // and make `size_hint` divide by zero; clamp it to a single byte.
         let chunk_size = chunk_size.max(1);
 
-        // 1. If already cached in slot, stream directly from the cached slice without copying.
         if let Some(slot_index) = self.slot_index(id) {
             let slot = &self.slots[slot_index as usize];
             if let Some(data) = slot.data.as_ref() {
@@ -854,9 +775,6 @@ impl ResourceManager {
             }
         }
 
-        // 2. Otherwise stream from the package. A file-backed reader (#509) has no
-        //    slice to borrow, so the stored block is read into memory once and the
-        //    iterator owns it — still bounded by one asset, not by the whole `.pak`.
         for package in &self.packages {
             if let Some(record) = package.reader.find_record(id) {
                 let raw = match package.reader.asset_record_raw_slice(record) {
@@ -897,10 +815,6 @@ impl ResourceManager {
         None
     }
 
-    // ------------------------------------------------------------------
-    // Get typed references
-    // ------------------------------------------------------------------
-
     /// Get a typed reference to already-loaded asset data.
     pub fn get<T: Asset + 'static>(&mut self, handle: Handle<T>) -> Result<T, RuntimeError> {
         let index = handle.index() as usize;
@@ -932,10 +846,6 @@ impl ResourceManager {
     pub fn get_raw(&self, id: AssetId) -> Result<Vec<u8>, RuntimeError> {
         self.get_raw_bytes(id)
     }
-
-    // ------------------------------------------------------------------
-    // Unloading
-    // ------------------------------------------------------------------
 
     /// Unload a specific asset by handle, freeing its data.
     pub fn unload<T: ?Sized>(&mut self, handle: Handle<T>) {
@@ -979,10 +889,6 @@ impl ResourceManager {
         }
         Ok(())
     }
-
-    // ------------------------------------------------------------------
-    // Pinning / lease management
-    // ------------------------------------------------------------------
 
     /// Pin an asset to prevent it from being evicted from memory.
     ///
@@ -1115,10 +1021,6 @@ impl ResourceManager {
         0
     }
 
-    // ------------------------------------------------------------------
-    // Hot-reload
-    // ------------------------------------------------------------------
-
     /// Called by the [`HotReloadWatcher`] when a `.pak` file changes.
     ///
     /// Two things must happen together otherwise hot reload is fake:
@@ -1163,7 +1065,6 @@ impl ResourceManager {
             };
             let slot_index = slot_index as usize;
             if self.slots[slot_index].data.is_none() {
-                // Not loaded / already evicted: do not eagerly load it.
                 continue;
             }
             let Ok(Some(data)) = self.packages[index].reader.read_asset_data(asset_id) else {
@@ -1181,12 +1082,6 @@ impl ResourceManager {
                 }
                 slot.data = Some(data);
                 slot.size_bytes = new_size;
-                // Deliberately **no** `generation` bump: the slot still holds
-                // the same asset, just newer bytes. Bumping it here would make
-                // every `Handle` handed out before the reload fail with
-                // `GenerationMismatch` — a hot reload must refresh content
-                // without invalidating live handles. Generation only moves
-                // when a slot is recycled for a different asset.
                 slot.last_access.set(Instant::now());
                 slot.load_epoch = epoch;
             }
@@ -1202,10 +1097,6 @@ impl ResourceManager {
         );
         Ok(())
     }
-
-    // ------------------------------------------------------------------
-    // Iteration
-    // ------------------------------------------------------------------
 
     /// Iterate all registered asset IDs and their types.
     pub fn assets(&self) -> impl Iterator<Item = (AssetId, AssetType)> + '_ {
@@ -1245,10 +1136,6 @@ impl std::fmt::Debug for ResourceManager {
             .finish()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Streaming iterator
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "streaming")]
 enum StreamIter<'a> {
@@ -1345,10 +1232,6 @@ impl<'a> Iterator for StreamIter<'a> {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Asset trait (for deserialization)
-// ---------------------------------------------------------------------------
 
 /// Trait that asset types must implement to be loadable through the
 /// [`ResourceManager`].

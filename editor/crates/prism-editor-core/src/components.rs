@@ -157,7 +157,6 @@ impl<'de> Deserialize<'de> for ComponentMap {
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-                // serde feeds entries in file order, so author order is naturally restored here.
                 let mut entries = Vec::with_capacity(access.size_hint().unwrap_or(0));
                 while let Some((name, value)) = access.next_entry::<String, Value>()? {
                     entries.push((name, value));
@@ -216,7 +215,6 @@ mod tests {
         assert_eq!(map.order(), vec!["z_camera", "m_renderer", "a_light"]);
         assert!(map.move_by("z_camera", 1));
         assert_eq!(map.order(), vec!["m_renderer", "z_camera", "a_light"]);
-        // At head / tail / nonexistent names all stay put.
         assert!(!map.move_by("m_renderer", -1));
         assert!(!map.move_by("a_light", 1));
         assert!(!map.move_by("nope", 1));

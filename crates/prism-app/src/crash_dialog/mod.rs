@@ -37,10 +37,6 @@ pub enum CrashChoice {
     Exit,
 }
 
-// ---------------------------------------------------------------------------
-// Android app registration (only compiled on Android
-// ---------------------------------------------------------------------------
-
 #[cfg(any(target_os = "android", test))]
 #[derive(Clone, Copy)]
 struct AndroidAppHandles {
@@ -49,9 +45,6 @@ struct AndroidAppHandles {
 }
 
 #[cfg(any(target_os = "android", test))]
-// SAFETY: the handles are raw pointers into the JVM/Activity, which live for
-// the entire process. They are only dereferenced from the main thread (the
-// winit event loop thread), which is also the thread that registered them.
 unsafe impl Send for AndroidAppHandles {}
 #[cfg(any(target_os = "android", test))]
 unsafe impl Sync for AndroidAppHandles {}
@@ -85,10 +78,6 @@ pub fn unregister_android_app() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
 /// Show the native crash dialog with `title` and `message`.
 ///
 /// Blocks the calling thread until the user confirms. Returns the chosen
@@ -96,8 +85,6 @@ pub fn unregister_android_app() {
 /// (macOS/Linux) or JNI (Android), the error text is logged and `Exit` is
 /// returned so the caller still terminates.
 pub fn show_crash_dialog(title: &str, message: &str) -> CrashChoice {
-    // Always log the full error first so it's in the log even if the dialog
-    // backend fails (e.g. zenity not installed).
     log::error!("FATAL: {title}\n{message}");
 
     let choice = show_native(title, message);
@@ -108,10 +95,6 @@ pub fn show_crash_dialog(title: &str, message: &str) -> CrashChoice {
     }
     choice
 }
-
-// ---------------------------------------------------------------------------
-// Platform dispatch
-// ---------------------------------------------------------------------------
 
 #[cfg(windows)]
 #[path = "windows.rs"]
@@ -172,7 +155,6 @@ mod tests {
         let ptr1 = 0x1234 as *mut std::ffi::c_void;
         let ptr2 = 0x5678 as *mut std::ffi::c_void;
 
-        // Register initial handle
         if let Ok(mut guard) = ANDROID_APP.write() {
             *guard = Some(AndroidAppHandles {
                 vm_ptr: ptr1,
@@ -181,7 +163,6 @@ mod tests {
         }
         assert_eq!(ANDROID_APP.read().unwrap().unwrap().activity_ptr, ptr1);
 
-        // Re-entry replaces the previous handle
         if let Ok(mut guard) = ANDROID_APP.write() {
             *guard = Some(AndroidAppHandles {
                 vm_ptr: ptr2,
@@ -190,7 +171,6 @@ mod tests {
         }
         assert_eq!(ANDROID_APP.read().unwrap().unwrap().activity_ptr, ptr2);
 
-        // Exit / unregister clears the reference so it never dangles
         unregister_android_app();
         assert!(ANDROID_APP.read().unwrap().is_none());
     }

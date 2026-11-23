@@ -33,7 +33,6 @@ fn the_first_matching_transition_in_author_order_wins() {
     let machine = idle_run_machine();
     let mut params = AnimParameters::new();
 
-    // Speed 5 satisfies both "> 0.1" and "> 4.0", but idle→walk is written first, so walk is taken first.
     params.set_float("speed", 5.0);
     assert_eq!(
         machine
@@ -41,14 +40,12 @@ fn the_first_matching_transition_in_author_order_wins() {
             .map(|t| t.state),
         Some(1)
     );
-    // From walk only walk→run satisfied.
     assert_eq!(
         machine
             .next_transition(1, &mut params, 0.0, 1.0)
             .map(|t| t.state),
         Some(2)
     );
-    // Run state speed still 5: run→walk condition (< 4) not met.
     assert_eq!(machine.next_transition(2, &mut params, 0.0, 1.0), None);
 }
 
@@ -58,12 +55,10 @@ fn a_slow_character_does_not_leave_idle() {
     let mut params = AnimParameters::new();
     params.set_float("speed", 0.05);
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
-    // Missing parameters also don't transition (data not filled in shouldn't let character move randomly).
     assert_eq!(
         machine.next_transition(0, &mut AnimParameters::new(), 0.0, 1.0),
         None
     );
-    // NaN also doesn't hold.
     params.set_float("speed", f32::NAN);
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
 }
@@ -92,7 +87,6 @@ fn a_trigger_fires_once_and_is_then_consumed() {
     assert!((target.duration - 0.15).abs() < 1e-6);
     assert!(!params.has_trigger("jump"), "trigger should be consumed");
 
-    // Re-evaluation won't retrigger.
     assert_eq!(machine.next_transition(0, &mut params, 0.0, 1.0), None);
 }
 
@@ -113,16 +107,13 @@ fn the_minimum_state_fraction_holds_the_transition_until_the_state_has_played() 
     let mut params = AnimParameters::new();
     params.set_bool("done", true);
 
-    // Played to 40%: condition met but not yet earliest interruption point.
     assert_eq!(machine.next_transition(0, &mut params, 0.4, 1.0), None);
-    // Played to end: transition allowed.
     assert_eq!(
         machine
             .next_transition(0, &mut params, 1.0, 1.0)
             .map(|t| t.state),
         Some(1)
     );
-    // Unknown duration (0 / NaN) treated as "played to end", otherwise single clip gets stuck at end.
     assert_eq!(
         machine
             .next_transition(0, &mut params, 0.0, 0.0)
@@ -145,11 +136,8 @@ fn transitions_from_other_states_and_self_loops_are_ignored() {
             AnimState::new("b", "b.ranim"),
         ],
         vec![
-            // Self-loop: never chosen.
             AnimTransition::new(0, 0),
-            // Only from b: not effective on a.
             AnimTransition::new(1, 0),
-            // Out-of-bounds target: skip.
             AnimTransition::new(0, 99),
         ],
     );
@@ -157,7 +145,6 @@ fn transitions_from_other_states_and_self_loops_are_ignored() {
         machine.next_transition(0, &mut AnimParameters::new(), 0.0, 1.0),
         None
     );
-    // Out-of-bounds source state doesn't panic.
     assert_eq!(
         machine.next_transition(99, &mut AnimParameters::new(), 0.0, 1.0),
         None
@@ -258,7 +245,6 @@ fn a_cooked_machine_becomes_evaluable() {
             },
         ],
         transitions: vec![
-            // Points to non-existent state: cooker wouldn't write such data, but bad assets shouldn't fail the whole machine.
             AnimTransitionInfo {
                 from: None,
                 to: 9,
@@ -297,18 +283,15 @@ fn a_cooked_machine_becomes_evaluable() {
     );
     assert!((machine.states[1].speed - 1.2).abs() < 1e-6);
 
-    // Idle only played 10%: min_state_fraction blocks.
     let mut params = AnimParameters::new();
     params.set_float("speed", 2.0);
     assert!(machine.next_transition(0, &mut params, 0.1, 1.0).is_none());
-    // Played to 30%: transition to Run, 0.2s.
     let target = machine
         .next_transition(0, &mut params, 0.3, 1.0)
         .expect("transitions");
     assert_eq!(target.state, 1);
     assert!((target.duration - 0.2).abs() < 1e-6);
 
-    // In Run press Stop: trigger consumed, direction back to Idle.
     params.set_trigger("Stop");
     let target = machine
         .next_transition(1, &mut params, 0.5, 1.0)

@@ -60,8 +60,6 @@ fn main() -> std::process::ExitCode {
 
     logging::install("warn");
 
-    // Global control channel switch: `--no-control` builds no listener, writes no `control.port`,
-    // instead of rejecting each message after accept --- otherwise agent sees "connected but nothing works".
     if std::env::args().any(|arg| arg == "--no-control") {
         control::set_cli_disabled(true);
     }

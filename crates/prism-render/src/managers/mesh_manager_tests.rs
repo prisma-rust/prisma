@@ -12,7 +12,6 @@ fn build_vertices_pads_missing_attributes() {
     };
     let v = build_vertices(&input);
     assert_eq!(v.len(), 2);
-    // Missing normal/uv/tangent fill with safe defaults.
     assert_eq!(v[0].normal, [0.0, 1.0, 0.0]);
     assert_eq!(v[1].normal, [0.0, 1.0, 0.0]);
     assert_eq!(v[0].uv, [0.5, 0.5]);
@@ -47,9 +46,7 @@ fn mismatched_skin_attributes_are_dropped_instead_of_misread() {
         joints: vec![[0, 0, 0, 0]],
         weights: vec![[1.0, 0.0, 0.0, 0.0]],
     };
-    // 3 vertices, 1 skin entry: dropping the skin is the only safe option.
     assert!(skin_vertices(&skin, 3).is_none());
-    // Empty skin is empty, not "all the same bone".
     assert!(SkinAttributes::default().is_empty());
 }
 

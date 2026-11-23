@@ -216,7 +216,6 @@ mod tests {
         );
         assert_eq!(parsed.draw_calls[1].instances, 4);
         assert!(!parsed.draw_calls[1].visible);
-        // On old report / missing field status is None, panel shows placeholder not empty string.
         assert!(parsed.draw_calls[0]
             .state
             .as_deref()
@@ -236,7 +235,6 @@ mod tests {
 
     #[test]
     fn resource_stats_are_optional_and_have_rows() {
-        // Old report has no stats: whole section hidden, do not fake with 0 values.
         let legacy: RenderGraphReport =
             serde_json::from_str(r#"{"generatedAtMs":1,"frame":1,"passes":[],"resources":[]}"#)
                 .unwrap();

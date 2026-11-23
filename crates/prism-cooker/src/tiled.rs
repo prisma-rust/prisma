@@ -41,10 +41,6 @@ pub struct TiledObjectLayer {
     pub objects: Vec<TilemapObject>,
 }
 
-// ---------------------------------------------------------------------------
-// JSON (.tmj) Schema Deserialization
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct TmjMap {
     width: u32,
@@ -208,7 +204,6 @@ impl TiledMap {
 
         let mut tile_layers = Vec::new();
 
-        // Extract <layer> tags
         let mut cur_search = xml;
         while let Some(start) = cur_search.find("<layer ") {
             let rest = &cur_search[start..];
@@ -219,7 +214,6 @@ impl TiledMap {
             let lw = extract_attr_u32(layer_xml, "layer", "width").unwrap_or(width);
             let lh = extract_attr_u32(layer_xml, "layer", "height").unwrap_or(height);
 
-            // Extract CSV data inside <data> ... </data>
             let mut data = Vec::with_capacity((lw * lh) as usize);
             if let Some(d_start) = layer_xml.find("<data") {
                 if let Some(content_start) = layer_xml[d_start..].find('>') {
@@ -281,10 +275,6 @@ fn extract_attr_u32(xml: &str, tag: &str, attr: &str) -> Option<u32> {
     extract_attr_str(xml, tag, attr)?.parse().ok()
 }
 
-// ---------------------------------------------------------------------------
-// Greedy 2D Box Collision Contour Consolidation
-// ---------------------------------------------------------------------------
-
 /// Consolidate adjacent solid tiles in a 2D grid into the minimum number of
 /// non-overlapping rectangular collision boxes using greedy 2D box merging.
 pub fn merge_tile_collision_boxes(
@@ -308,7 +298,6 @@ pub fn merge_tile_collision_boxes(
                 continue;
             }
 
-            // Expand horizontally to find maximum width
             let mut w = 1;
             while x + w < width {
                 let next_idx = (y * width + (x + w)) as usize;
@@ -319,7 +308,6 @@ pub fn merge_tile_collision_boxes(
                 }
             }
 
-            // Expand vertically row by row while all cells in the span (x..x+w) are solid & unvisited
             let mut h = 1;
             while y + h < height {
                 let mut row_solid = true;
@@ -337,7 +325,6 @@ pub fn merge_tile_collision_boxes(
                 }
             }
 
-            // Mark the rectangular merged region as visited
             for dy in 0..h {
                 for dx in 0..w {
                     let mark_idx = ((y + dy) * width + (x + dx)) as usize;
@@ -381,8 +368,6 @@ pub fn cook_tiled_map(
             tiles: l.data.clone(),
         });
 
-        // If this layer is designated as collision or named "Collision" / "Collisions",
-        // mark its non-zero tiles as solid.
         let is_collision_layer = match collision_layer_name {
             Some(target) => l.name.eq_ignore_ascii_case(target),
             None => {
@@ -408,7 +393,6 @@ pub fn cook_tiled_map(
         }
     }
 
-    // Consolidate adjacent solid tiles into rectangular collision boxes
     let collision_boxes = merge_tile_collision_boxes(
         map.width,
         map.height,
@@ -440,20 +424,12 @@ mod tests {
 
     #[test]
     fn test_greedy_collision_consolidation() {
-        // 4x4 grid:
-        // 1 1 0 0
-        // 1 1 0 0
-        // 1 1 1 1
-        // 0 0 0 0
         let grid = vec![
             true, true, false, false, true, true, false, false, true, true, true, true, false,
             false, false, false,
         ];
 
         let boxes = merge_tile_collision_boxes(4, 4, 16.0, 16.0, &grid);
-        // Should consolidate into 2 boxes:
-        // 1) (0, 0) of size 2x3 (32x48)
-        // 2) (2, 2) of size 2x1 (32x16)
         assert_eq!(boxes.len(), 2, "Adjacent tiles should consolidate greedily");
         assert_eq!(boxes[0].rect, [0.0, 0.0, 32.0, 48.0]);
         assert_eq!(boxes[1].rect, [32.0, 32.0, 32.0, 16.0]);
@@ -511,7 +487,6 @@ mod tests {
         assert_eq!(cooked.layers.len(), 2);
         assert_eq!(cooked.objects.len(), 1);
         assert_eq!(cooked.objects[0].name, "PlayerStart");
-        // Collision layer has 3 consecutive solid tiles: (0, 0), (1, 0), (2, 0)
         assert_eq!(cooked.collision_boxes.len(), 1);
         assert_eq!(cooked.collision_boxes[0].rect, [0.0, 0.0, 48.0, 16.0]);
     }

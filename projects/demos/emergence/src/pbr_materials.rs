@@ -60,12 +60,10 @@ impl BlockPbrMaterial {
 
 /// Per-block PBR materials for all 16 `CATALOG` entries (order matches `CATALOG`).
 pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
-    // 1. Conductive Wire — LabPBR Copper Block (drawn metallic wire).
     BlockPbrMaterial {
         anisotropy: 0.45,
         ..BlockPbrMaterial::opaque("conductive_wire", [0.82, 0.48, 0.25, 1.0], 1.0, 0.24)
     },
-    // 2. Superconductor Coil — Cryo-cooled metallic coil with subtle cyan glow.
     BlockPbrMaterial {
         emissive: [0.10, 0.65, 0.95],
         emissive_strength: 0.45,
@@ -73,7 +71,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         clearcoat_roughness: 0.08,
         ..BlockPbrMaterial::opaque("superconductor", [0.25, 0.80, 0.94, 1.0], 0.92, 0.14)
     },
-    // 3. Water — BSL/Complementary-style refractive liquid (IOR 1.333).
     BlockPbrMaterial {
         transmission: 0.88,
         ior: 1.333,
@@ -82,7 +79,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("water_cell", [0.12, 0.42, 0.82, 0.72], 0.0, 0.03)
     },
-    // 4. Reinforced Glass — LabPBR crown glass (IOR 1.52, crisp specular).
     BlockPbrMaterial {
         transmission: 0.92,
         ior: 1.52,
@@ -91,24 +87,20 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("glass_wall", [0.72, 0.90, 0.96, 0.42], 0.0, 0.04)
     },
-    // 5. Insulated Bulkhead — Composite ceramic-steel bulkhead.
     BlockPbrMaterial {
         porosity: 0.15,
         ..BlockPbrMaterial::opaque("insulated_wall", [0.42, 0.46, 0.52, 1.0], 0.35, 0.68)
     },
-    // 6. Volatile Fuel Drum — Industrial enamel-coated steel drum.
     BlockPbrMaterial {
         clearcoat: 0.45,
         clearcoat_roughness: 0.18,
         ..BlockPbrMaterial::opaque("volatile_fuel", [0.78, 0.22, 0.14, 1.0], 0.65, 0.38)
     },
-    // 7. Absorbent Foam — High-porosity LabPBR sponge (darkens & glosses when wet).
     BlockPbrMaterial {
         translucency: 0.20,
         porosity: 0.95,
         ..BlockPbrMaterial::opaque("absorbent_sponge", [0.86, 0.78, 0.38, 1.0], 0.0, 0.92)
     },
-    // 8. Corrosive Acid — Bioluminescent/caustic refractive pool.
     BlockPbrMaterial {
         emissive: [0.32, 0.95, 0.12],
         emissive_strength: 1.35,
@@ -118,7 +110,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("acid_pool", [0.38, 0.92, 0.18, 0.82], 0.0, 0.08)
     },
-    // 9. Cryo-Spore Specimen — LabPBR packed-ice + subsurface glow lichen.
     BlockPbrMaterial {
         emissive: [0.20, 0.65, 0.95],
         emissive_strength: 0.65,
@@ -128,7 +119,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         clearcoat_roughness: 0.10,
         ..BlockPbrMaterial::opaque("cryo_spore", [0.55, 0.86, 0.98, 1.0], 0.0, 0.22)
     },
-    // 10. Hyper-Neo Mutant — Wet biofilm organic SSS + bioluminescence.
     BlockPbrMaterial {
         emissive: [0.28, 0.95, 0.22],
         emissive_strength: 1.60,
@@ -137,7 +127,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         clearcoat_roughness: 0.14,
         ..BlockPbrMaterial::opaque("hyper_neo_core", [0.36, 0.85, 0.30, 1.0], 0.0, 0.28)
     },
-    // 11. Piezo Crystal Node — LabPBR Amethyst / Quartz (IOR 1.544).
     BlockPbrMaterial {
         emissive: [0.58, 0.28, 0.95],
         emissive_strength: 1.10,
@@ -148,25 +137,21 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("piezo_crystal", [0.72, 0.45, 0.95, 0.92], 0.0, 0.10)
     },
-    // 12. Pressurized Valve Conduit — Brushed brass/steel industrial pipework.
     BlockPbrMaterial {
         anisotropy: 0.30,
         ..BlockPbrMaterial::opaque("valve_conduit", [0.65, 0.58, 0.35, 1.0], 0.90, 0.32)
     },
-    // 13. Overclocked Conveyor — Anisotropic rubber-steel track with amber chevrons.
     BlockPbrMaterial {
         emissive: [0.95, 0.45, 0.08],
         emissive_strength: 0.40,
         anisotropy: 0.65,
         ..BlockPbrMaterial::opaque("conveyor_east", [0.22, 0.24, 0.28, 1.0], 0.45, 0.52)
     },
-    // 14. Radioactive Isotope — Heavy actinide metal with strong Cherenkov glow.
     BlockPbrMaterial {
         emissive: [0.45, 1.00, 0.15],
         emissive_strength: 3.20,
         ..BlockPbrMaterial::opaque("rad_isotope", [0.55, 0.95, 0.20, 1.0], 0.75, 0.35)
     },
-    // 15. Stasis Field Core — LabPBR Beacon/Conduit glass-metal resonator.
     BlockPbrMaterial {
         emissive: [0.22, 0.62, 1.00],
         emissive_strength: 2.20,
@@ -174,7 +159,6 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         clearcoat_roughness: 0.04,
         ..BlockPbrMaterial::opaque("stasis_emitter", [0.30, 0.65, 0.98, 1.0], 0.50, 0.16)
     },
-    // 16. Plasma Arc Cell — High-HDR-bloom plasma containment core.
     BlockPbrMaterial {
         emissive: [0.95, 0.35, 1.00],
         emissive_strength: 4.50,
@@ -182,43 +166,35 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("plasma_arc", [0.95, 0.48, 0.98, 0.95], 0.0, 0.12)
     },
-    // 17. Bedrock — Indestructible basaltic floor (LabPBR rough dark stone).
     BlockPbrMaterial {
         ..BlockPbrMaterial::opaque("bedrock", [0.16, 0.16, 0.19, 1.0], 0.05, 0.90)
     },
-    // 18. Stone — Classic Minecraft matte silicate rock.
     BlockPbrMaterial {
         porosity: 0.20,
         ..BlockPbrMaterial::opaque("stone", [0.50, 0.52, 0.54, 1.0], 0.0, 0.85)
     },
-    // 19. Deepslate — Stratified dark metamorphic slate with subtle anisotropy.
     BlockPbrMaterial {
         anisotropy: 0.25,
         porosity: 0.15,
         ..BlockPbrMaterial::opaque("deepslate", [0.26, 0.27, 0.30, 1.0], 0.05, 0.72)
     },
-    // 20. Dirt — High-porosity earthy soil.
     BlockPbrMaterial {
         porosity: 0.65,
         ..BlockPbrMaterial::opaque("dirt", [0.48, 0.33, 0.22, 1.0], 0.0, 0.94)
     },
-    // 21. Grass Block — LabPBR foliage/grass SSS + damp porosity.
     BlockPbrMaterial {
         translucency: 0.20,
         porosity: 0.50,
         ..BlockPbrMaterial::opaque("grass_block", [0.32, 0.65, 0.24, 1.0], 0.0, 0.82)
     },
-    // 22. Sand — Granular quartz sand (darkens cleanly when wet).
     BlockPbrMaterial {
         porosity: 0.45,
         ..BlockPbrMaterial::opaque("sand", [0.86, 0.79, 0.56, 1.0], 0.0, 0.88)
     },
-    // 23. Sandstone — Compressed desert sedimentary rock.
     BlockPbrMaterial {
         porosity: 0.35,
         ..BlockPbrMaterial::opaque("sandstone", [0.80, 0.72, 0.48, 1.0], 0.0, 0.86)
     },
-    // 24. Glacial Ice — LabPBR refractive ice (IOR 1.31, crisp clearcoat).
     BlockPbrMaterial {
         transmission: 0.72,
         ior: 1.31,
@@ -228,45 +204,37 @@ pub const BLOCK_PBR_MATERIALS: &[BlockPbrMaterial] = &[
         alpha_mode: AlphaMode::Blend,
         ..BlockPbrMaterial::opaque("ice_block", [0.62, 0.84, 0.98, 0.82], 0.0, 0.08)
     },
-    // 25. Snow — Powdery snow with LabPBR subsurface scattering.
     BlockPbrMaterial {
         translucency: 0.45,
         porosity: 0.60,
         ..BlockPbrMaterial::opaque("snow_block", [0.94, 0.96, 1.00, 1.0], 0.0, 0.78)
     },
-    // 26. Magma Lava — Incandescent molten rock (BSL/SEUS-style HDR lava).
     BlockPbrMaterial {
         emissive: [1.00, 0.28, 0.02],
         emissive_strength: 4.00,
         translucency: 0.35,
         ..BlockPbrMaterial::opaque("magma_lava", [1.00, 0.32, 0.05, 1.0], 0.0, 0.35)
     },
-    // 27. Coal Ore — Matte carbon seams embedded in stone.
     BlockPbrMaterial {
         porosity: 0.30,
         ..BlockPbrMaterial::opaque("coal_ore", [0.18, 0.19, 0.21, 1.0], 0.0, 0.90)
     },
-    // 28. Iron Ore — Raw metallic iron veins in silicate host rock.
     BlockPbrMaterial {
         porosity: 0.15,
         ..BlockPbrMaterial::opaque("iron_ore", [0.66, 0.56, 0.49, 1.0], 0.55, 0.58)
     },
-    // 29. Copper Ore — LabPBR copper-malachite mineral veins.
     BlockPbrMaterial {
         porosity: 0.15,
         ..BlockPbrMaterial::opaque("copper_ore", [0.76, 0.44, 0.28, 1.0], 0.60, 0.48)
     },
-    // 30. Gold Ore — High-reflectance LabPBR gold flecks in deep rock.
     BlockPbrMaterial {
         ..BlockPbrMaterial::opaque("gold_ore", [0.95, 0.78, 0.26, 1.0], 0.85, 0.25)
     },
-    // 31. Redstone Ore — Piezoelectric glowing crimson mineral.
     BlockPbrMaterial {
         emissive: [0.95, 0.10, 0.08],
         emissive_strength: 0.85,
         ..BlockPbrMaterial::opaque("redstone_ore", [0.85, 0.16, 0.14, 1.0], 0.10, 0.42)
     },
-    // 32. Diamond Ore — LabPBR high-IOR (2.417) crystalline carbon in deepslate.
     BlockPbrMaterial {
         emissive: [0.15, 0.65, 0.80],
         emissive_strength: 0.35,

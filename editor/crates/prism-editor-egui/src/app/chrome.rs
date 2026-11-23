@@ -101,7 +101,6 @@ impl EditorApp {
         widgets.open.fg_stroke = Stroke::new(1.0_f32, text_strong);
 
         egui::MenuBar::new().ui(ui, |ui| {
-            // ---- File ----
             ui.menu_button(self.t("menu.file"), |ui| {
                 self.menu_item(ui, &self.t("menu.newScene"), "Ctrl+N", Command::NewScene);
                 let scene_templates: Vec<(String, String)> = self
@@ -259,7 +258,6 @@ impl EditorApp {
                 self.menu_do(ui, &self.t("menu.exit"), |app| app.request_quit(&quit_ctx));
             });
 
-            // ---- Edit ----
             ui.menu_button(self.t("menu.edit"), |ui| {
                 self.menu_do(ui, &format!("{} (Ctrl+K)", self.t("menu.search")), |app| {
                     app.palette.open(&app.workspace)
@@ -357,7 +355,6 @@ impl EditorApp {
                 self.menu_item(ui, &self.t("menu.theme"), "", Command::ThemePanel);
             });
 
-            // ---- Assets ----
             ui.menu_button(self.t("menu.assets"), |ui| {
                 ui.menu_button(self.t("menu.create"), |ui| {
                     self.menu_item(ui, &self.t("menu.scene"), "", Command::NewScene);
@@ -482,7 +479,6 @@ impl EditorApp {
                 });
             });
 
-            // ---- GameObject ----
             ui.menu_button(self.t("menu.gameObject"), |ui| {
                 self.menu_do(ui, &self.t("hierarchy.createEmpty"), |app| {
                     app.workspace.add_entity("")
@@ -587,7 +583,6 @@ impl EditorApp {
                 });
             });
 
-            // ---- Component ----
             ui.menu_button(self.t("inspector.components"), |ui| {
                 let attachable: std::collections::HashSet<String> = self
                     .workspace
@@ -627,7 +622,6 @@ impl EditorApp {
                 }
             });
 
-            // ---- Window ----
             ui.menu_button(self.t("menu.window"), |ui| {
                 ui.menu_button(self.t("menu.general"), |ui| {
                     for (label, command) in [
@@ -753,7 +747,6 @@ impl EditorApp {
                 self.menu_item(ui, &self.t("menu.resetLayout"), "", Command::ResetLayout);
             });
 
-            // ---- Help ----
             ui.menu_button(self.t("menu.help"), |ui| {
                 self.menu_item(ui, &self.t("menu.shortcuts"), "", Command::Shortcuts);
                 self.menu_item(ui, &self.t("menu.about"), "", Command::About);
@@ -940,7 +933,6 @@ impl EditorApp {
 
                     ui.separator();
 
-                    // Segmented gizmo tool pill group matching UE5 / Unity 6 tool strips.
                     egui::Frame::new()
                         .fill(sunken)
                         .stroke(Stroke::new(1.0_f32, border))
@@ -1571,7 +1563,6 @@ impl EditorApp {
                     self.state.pending_recovery = 0;
                     self.state.status =
                         self.tf("desktop.status.recovered", &[("count", &count.to_string())]);
-                    // Reload engine from the recovered document on the next sync pass.
                     self.synced_doc_state = None;
                     self.mark_scene_dirty();
                 }

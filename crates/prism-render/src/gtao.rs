@@ -112,13 +112,11 @@ impl GtaoPass {
         full_extent: vk::Extent2D,
     ) -> anyhow::Result<Self> {
         let device = &context.device;
-        // Half resolution, at least 1x1 to avoid zero-sized images.
         let extent = vk::Extent2D {
             width: (full_extent.width / 2).max(1),
             height: (full_extent.height / 2).max(1),
         };
 
-        // ---- Double-buffered R8_UNORM AO images ----
         let mut ao_images = [vk::Image::null(); 2];
         let mut ao_memory = [vk::DeviceMemory::null(); 2];
         let mut ao_views = [vk::ImageView::null(); 2];
@@ -129,7 +127,6 @@ impl GtaoPass {
             ao_views[i] = view;
         }
 
-        // ---- Sampler (linear, clamp-to-edge; AO is low-frequency) ----
         let sampler = unsafe {
             device.create_sampler(
                 &vk::SamplerCreateInfo::default()
@@ -146,9 +143,6 @@ impl GtaoPass {
         }
         .context("GtaoPass: create sampler")?;
 
-        // ---- Descriptor set layout: one SAMPLED_IMAGE (binding 0) + one
-        // SAMPLER (binding 1). The shader declares set 0 (depth) + set 1
-        // (normal), both with this shape, so we reuse the layout 4x.
         let per_set_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(bindings::DEPTH_TEX_BINDING)
@@ -169,9 +163,6 @@ impl GtaoPass {
         }
         .context("GtaoPass: create ds layout")?;
 
-        // Set 2: previous resolved AO + velocity + sampler. This is separate
-        // from the depth/normal layouts because it has two texture bindings
-        // plus one sampler (#883 Phase 3).
         let temporal_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(bindings::HISTORY_TEX_BINDING)
@@ -197,7 +188,6 @@ impl GtaoPass {
         }
         .context("GtaoPass: create temporal ds layout")?;
 
-        // 4 per-frame depth/normal sets + 2 temporal sets.
         let ds_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
@@ -236,8 +226,6 @@ impl GtaoPass {
         let descriptor_sets = [[allocated[0], allocated[1]], [allocated[2], allocated[3]]];
         let temporal_sets = [allocated[4], allocated[5]];
 
-        // Bind the shared sampler to binding 1 of every set (the SAMPLED_IMAGE
-        // at binding 0 is updated per-frame in `set_inputs`).
         for ds in allocated.iter().take(4) {
             let sampler_info = vk::DescriptorImageInfo::default().sampler(sampler);
             let write = vk::WriteDescriptorSet::default()
@@ -257,10 +245,8 @@ impl GtaoPass {
             unsafe { device.update_descriptor_sets(&[write], &[]) };
         }
 
-        // ---- Render pass (1 R8 color attachment, no depth) ----
         let render_pass = create_render_pass(device)?;
 
-        // ---- Framebuffers (one per AO image) ----
         let mut framebuffers = [vk::Framebuffer::null(); 2];
         for i in 0..2 {
             let attachments = [ao_views[i]];
@@ -278,14 +264,6 @@ impl GtaoPass {
             .context("GtaoPass: create framebuffer")?;
         }
 
-        // ---- Transition AO images to SHADER_READ_ONLY_OPTIMAL ----
-        // The AO images are created with no defined initial layout. Before the
-        // GTAO pass first runs (frame 1), the scene shader's AO descriptor may
-        // already be written pointing at one of these views, expecting
-        // SHADER_READ_ONLY_OPTIMAL. Transition them up-front so the descriptor
-        // layout matches even on frame 0. The GTAO render pass uses
-        // `initial_layout = UNDEFINED`, which tolerates any incoming layout
-        // when it transitions back to COLOR_ATTACHMENT_OPTIMAL to write.
         transition_ao_images_to_shader_read(context, command_pool, [ao_images[0], ao_images[1]])?;
 
         Ok(Self {
@@ -409,7 +387,6 @@ impl GtaoPass {
             return Ok(());
         }
 
-        // Destroy old framebuffers + AO images.
         for fb in &self.framebuffers {
             unsafe { device.destroy_framebuffer(*fb, None) };
         }
@@ -427,7 +404,6 @@ impl GtaoPass {
         }
         self.history_valid = [false; 2];
 
-        // Create new AO images + framebuffers.
         for i in 0..2 {
             let (img, mem, view) = create_ao_image(context, new_extent)?;
             self.ao_images[i] = img;
@@ -449,9 +425,6 @@ impl GtaoPass {
         }
         self.extent = new_extent;
 
-        // Transition the new AO images to SHADER_READ_ONLY_OPTIMAL (same
-        // rationale as in `new`: the scene's AO descriptor expects this layout
-        // before GTAO first writes the new images).
         transition_ao_images_to_shader_read(
             context,
             command_pool,
@@ -477,19 +450,8 @@ impl GtaoPass {
         let pipeline = self.pipeline.as_ref().unwrap();
         let fb = self.framebuffers[i];
 
-        // The depth/normal -> READ_ONLY barriers used to live here. They are now
-        // inserted automatically by `RenderGraph::execute` from the `read_usage`
-        // edges declared in `setup` (DEPTH_STENCIL_ATTACHMENT_OPTIMAL ->
-        // DEPTH_STENCIL_READ_ONLY_OPTIMAL for depth, COLOR_ATTACHMENT_OPTIMAL ->
-        // SHADER_READ_ONLY_OPTIMAL for normal). `inputs.depth_image` /
-        // `inputs.normal_image` are now unused for barriers (kept for
-        // descriptor wiring in `set_inputs`, which runs in the trait `execute`).
         let _ = (inputs.depth_image, inputs.normal_image);
 
-        // ---- Begin render pass (writes ao[i]) ----
-        // Clear to white (1.0 = unoccluded) so any pixel the shader doesn't
-        // write (there shouldn't be any - the fullscreen triangle covers the
-        // whole AO target) reads as fully lit.
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [1.0, 1.0, 1.0, 1.0],
@@ -507,7 +469,6 @@ impl GtaoPass {
 
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
-            // set 0: depth + sampler
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -516,7 +477,6 @@ impl GtaoPass {
                 std::slice::from_ref(&self.descriptor_sets[i][0]),
                 &[],
             );
-            // set 1: normal + sampler
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -525,7 +485,6 @@ impl GtaoPass {
                 std::slice::from_ref(&self.descriptor_sets[i][1]),
                 &[],
             );
-            // set  2: previous AO + velocity + temporal sampler.
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -556,7 +515,6 @@ impl GtaoPass {
                 }],
             );
 
-            // Push constants: shader_bindings::gtao::GtaoPush (88 bytes, fragment only)
             device.cmd_push_constants(
                 cmd,
                 pipeline.layout,
@@ -565,20 +523,11 @@ impl GtaoPass {
                 bytemuck::bytes_of(push),
             );
 
-            // Fullscreen triangle (3 verts, no vertex buffer - SV_VertexID).
             device.cmd_draw(cmd, 3, 1, 0, 0);
         }
 
         unsafe { device.cmd_end_render_pass(cmd) };
 
-        // ---- Barrier ao[i] -> SHADER_READ_ONLY_OPTIMAL ----
-        // GRAPH-EDGE exception  this is a cross-frame delayed edge. `ForwardPass`
-        // reads this AO image *next frame* (1-frame latency, wired via
-        // `GraphFrame.ao_view` -> `ForwardPass::set_ao`, NOT via a graph
-        // `read_usage` edge), so the render graph cannot express or schedule
-        // this barrier. It stays manual. SHADER_READ_ONLY_OPTIMAL stays valid
-        // until the GTAO pass writes this slot again (2 frames later), whose
-        // render pass `initial_layout = UNDEFINED` tolerates the incoming layout.
         let ao_barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -644,14 +593,11 @@ impl GtaoPass {
         );
         let shader_stages = [vert_stage, frag_stage];
 
-        // No vertex buffer (fullscreen triangle from SV_VertexID).
         let binding_descs: [vk::VertexInputBindingDescription; 0] = [];
         let attr_descs: [vk::VertexInputAttributeDescription; 0] = [];
 
-        // Sets 0/1 share the depth/normal layout; set 2 is temporal.
         let set_layouts = [self.ds_layout, self.ds_layout, self.temporal_layout];
 
-        // Push constants: shader_bindings::gtao::GtaoPush (88 bytes fragment only).
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -914,14 +860,6 @@ impl RenderPassNode for GtaoPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Inputs (depth/normal views) are published by ForwardPass under the
-        // well-known FORWARD_DEPTH_H / FORWARD_NORMAL_H handles; GTAO reads them
-        // from `resources` in `execute`. No graph-managed resources of its own.
-        //
-        // Declare the read edges so the render graph inserts the
-        // COLOR/DEPTH_ATTACHMENT_OPTIMAL -> *_READ_ONLY / SHADER_READ_ONLY
-        // barriers automatically before this pass (replacing the hand-rolled
-        // `cmd_pipeline_barrier` that used to live in `draw_ao`).
         graph.read_usage(ResourceUsage {
             handle: FORWARD_DEPTH_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -985,9 +923,6 @@ impl RenderPassNode for GtaoPass {
                 return Ok(());
             }
         };
-        // TEMP PROBE: confirm GTAO execute runs and inputs are valid. Throttled
-        // to once per second so the log isn't flooded at frame rate; emitted at
-        // `trace!` level so it stays quiet under the default `info` filter.
         if self.last_probe_log.elapsed().as_secs_f32() >= 1.0 {
             self.last_probe_log = Instant::now();
             log::trace!(
@@ -1001,12 +936,6 @@ impl RenderPassNode for GtaoPass {
                 ctx.frame.debug_flags
             );
         }
-        // The images themselves are needed only for the layout barriers; reuse
-        // The view's image handle via the ForwardPass-published view (vkImageView
-        // carries the image). We pass the same handle for image + view; the
-        // barrier only needs a valid image, and `vk::Image` from a view is not
-        // directly available here, so we use the ForwardPass-published image via
-        // the resource table's image (if present) else fall back to the view.
         let depth_image = resources
             .published_image(FORWARD_DEPTH_H)
             .unwrap_or(vk::Image::null());
@@ -1014,11 +943,6 @@ impl RenderPassNode for GtaoPass {
             .published_image(FORWARD_NORMAL_H)
             .unwrap_or(vk::Image::null());
 
-        // Update the depth + normal descriptor sets for this frame-in-flight.
-        // This used to be called from `GraphRenderer::render` before PR-1; it
-        // MUST happen before `execute` (which binds the descriptor sets and
-        // draws), otherwise validation reports `depthTex` / `normalTex` as
-        // never updated via vkUpdateDescriptorSets.
         self.set_inputs(
             ctx.device,
             ctx.frame_index,
@@ -1041,8 +965,6 @@ impl RenderPassNode for GtaoPass {
             viewport: [gtao_extent.width as f32, gtao_extent.height as f32],
             radius: 0.5,
             mode: 0,
-            // #883 Phase 3: 0.85 keeps most of the history while still
-            // converging within a few frames after disocclusion.
             history_strength: if ctx.frame.freeze_temporal { 0.0 } else { 0.85 },
             valid_history: if ctx.frame.freeze_temporal {
                 0.0
@@ -1064,10 +986,7 @@ impl RenderPassNode for GtaoPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Gtao,
-            // Depth + normal come from ForwardPass via the well-known handles.
             inputs: vec![FORWARD_DEPTH_H, FORWARD_NORMAL_H, FORWARD_VELOCITY_H],
-            // AO is consumed by ForwardPass via `set_ao` (1-frame delay is intentional)
-            // graph edge - surfaced as a note by the viz instead.
             outputs: vec![GTAO_AO_H],
         }
     }

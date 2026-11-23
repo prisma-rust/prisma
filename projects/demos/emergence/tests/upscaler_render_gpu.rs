@@ -51,8 +51,6 @@ fn emergence_seed_2026_renders_with_sgsr2_and_asr() {
         .resize_offscreen(out_w, out_h)
         .expect("resize_offscreen");
 
-    // Bootstrap the real fixed-seed (2026) Emergence world, step once so daylight/sky/chunks sync,
-    // and propagate LocalToWorld matrices via hierarchy_system.
     let mut ecs = World::new();
     let mut runtime = {
         let mut gw = GameWorld::host(&mut ecs);

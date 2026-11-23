@@ -583,8 +583,6 @@ unsafe extern "C" fn host_set_component(
     if !context.world.is_alive(entity) {
         return INVALID_ARGUMENT;
     }
-    // Try runtime components first (the registry would only log an "unknown"
-    // warning and reject them).
     if apply_runtime_component(context.world, entity, object) {
         return SUCCESS;
     }
@@ -613,7 +611,6 @@ fn apply_runtime_component(
     entity: prism_ecs::Entity,
     object: &prism_reflect::Object,
 ) -> bool {
-    // The type name is pinned to the `#[reflect(name = ...)]` value.
     const LOCAL_TRANSFORM: &str = "prism_engine::scene::LocalTransform";
     if object.type_name == LOCAL_TRANSFORM {
         let Ok(transform) =
@@ -1046,7 +1043,6 @@ unsafe fn asset_path_str<'a>(path: *const u8, path_len: usize) -> Option<&'a str
 
 pub struct ProjectModule {
     path: PathBuf,
-    // Kept solely to keep the module loaded while its callbacks are registered.
     _library: Library,
     api: ProjectApi,
 }
@@ -1194,8 +1190,6 @@ impl ProjectSession {
 impl Drop for ProjectSession {
     fn drop(&mut self) {
         unsafe { (self.shutdown)(self.state) };
-        // `module` is deliberately dropped after shutdown so no callback can
-        // point into an unloaded library.
     }
 }
 
@@ -1214,9 +1208,6 @@ unsafe extern "C" fn host_log(
         unsafe { std::slice::from_raw_parts(message, message_len) }
     };
     let text = String::from_utf8_lossy(bytes);
-    // The target is always `project`: the editor Console groups module logs under
-    // the `Game` source by target (`logging::source_for`), keeping them apart from
-    // engine / editor logs.
     match level {
         0 => log::error!(target: "project", "{text}"),
         1 => log::warn!(target: "project", "{text}"),
@@ -1343,8 +1334,6 @@ mod tests {
         let mut plain = WorldCommands::new(&mut world, &registry, 1);
         let api = plain.api();
         assert_eq!(api.capabilities & HOST_CAP_STATE, 0);
-        // The callback itself is always present (the host implements it), but it reports
-        // UNSUPPORTED when nothing was injected.
         let callback = api.save_scene_state.expect("callback");
         assert_eq!(
             unsafe { callback(api.user_data) },
@@ -1365,8 +1354,6 @@ mod tests {
         let mut world = prism_ecs::World::new();
         let registry = registry();
 
-        // Capability not declared: the callback is not exposed, so project code does not
-        // assume the switch took effect.
         let mut plain = WorldCommands::new(&mut world, &registry, 3);
         let api = plain.api();
         assert_eq!(api.capabilities & HOST_CAP_SCENE, 0);
@@ -1393,7 +1380,6 @@ mod tests {
         );
         assert!(wired.take_scene_request().is_none());
 
-        // The additive flag is passed through.
         assert_eq!(
             unsafe { load(api.user_data, path.as_ptr(), path.len(), 1) },
             SUCCESS
@@ -1409,7 +1395,6 @@ mod tests {
         assert_eq!(unsafe { unload(api.user_data) }, SUCCESS);
         assert_eq!(wired.take_scene_request(), Some(SceneRequest::Unload));
 
-        // Empty and non-UTF-8 paths report an error instead of recording a half request.
         assert_eq!(
             unsafe { load(api.user_data, path.as_ptr(), 0, 0) },
             prism_project_api::INVALID_ARGUMENT
@@ -1484,7 +1469,6 @@ mod tests {
         assert_eq!(hit.normal, [0.0, 1.0, 0.0]);
         assert_eq!(hit.is_trigger, 1);
 
-        // A miss returns 0; a null pointer is an argument error.
         assert_eq!(
             unsafe { raycast(api.user_data, &[0.0; 3], &[0.0; 3], 10.0, 0, &mut hit) },
             0
@@ -1722,7 +1706,6 @@ mod tests {
             );
 
             let load = api.load_value.expect("load callback");
-            // Two-pass read: ask for the length, then fetch the bytes.
             let len = unsafe { load(api.user_data, "caught".as_ptr(), 6, std::ptr::null_mut(), 0) };
             assert_eq!(len, 1);
             let mut out = [0u8; 8];
@@ -1730,7 +1713,6 @@ mod tests {
             assert_eq!(got, 1);
             assert_eq!(&out[..1], b"3");
 
-            // A missing key returns a negative code, not a zero length.
             let missing =
                 unsafe { load(api.user_data, "missing".as_ptr(), 7, out.as_mut_ptr(), 8) };
             assert!(missing < 0, "missing key should be negative, got {missing}");
@@ -1958,7 +1940,6 @@ mod tests {
             "round_trip"
         );
 
-        // Query: probe the length first, then fill.
         let query = api.query_entities.expect("component capability");
         let type_name = prism_scene::components::Name::type_desc().name.as_bytes();
         let mut count = 0usize;
@@ -1992,7 +1973,6 @@ mod tests {
         );
         assert_eq!(out[0], handle);
 
-        // Read: the pointer is valid until the next host call, so copy immediately.
         let get = api.get_component.expect("component capability");
         let mut ptr: *const u8 = std::ptr::null();
         let mut len = 0usize;
@@ -2050,7 +2030,6 @@ mod tests {
 
         assert_eq!(unsafe { despawn(api.user_data, handle) }, SUCCESS);
         assert_eq!(unsafe { is_alive(api.user_data, handle) }, 0);
-        // A second despawn must be rejected instead of silently succeeding.
         assert_eq!(unsafe { despawn(api.user_data, handle) }, INVALID_ARGUMENT);
     }
 

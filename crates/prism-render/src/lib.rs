@@ -20,7 +20,6 @@
 //! Vulkan renderer for Prisma — the GPU half of the engine.
 //! Architecture: [`render_graph::RenderGraph`] drives [`RenderPassNode`] exec.
 
-// Crate-level lint enforcement (applies only to this crate, not deps).
 #![deny(warnings)]
 
 pub mod acceleration_structure;
@@ -151,7 +150,6 @@ pub mod voxel_rt_accel;
 pub mod voxel_rt_gi_pass;
 pub(crate) mod vulkan_compat;
 
-// SceneDrawItem is the engine<->renderer exchange type for resolved draws.
 pub use graph_renderer::SceneDrawItem;
 
 #[cfg(feature = "anf")]

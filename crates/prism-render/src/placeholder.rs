@@ -52,8 +52,6 @@ impl SolidImage {
 
 impl Drop for SolidImage {
     fn drop(&mut self) {
-        // Device handle explicitly passed by `GraphRenderer::destroy`; this has no handle available,
-        // can only rely on explicit destruction (consistent with `IblResources` / `GtaoPass` convention).
         debug_assert_eq!(self.image, vk::Image::null());
     }
 }
@@ -77,8 +75,6 @@ pub(crate) fn shadow_map_dummy(
     )?;
 
     one_shot(context, command_pool, queue, |device, cmd| unsafe {
-        // `vkCmdClearDepthStencilImage` only accepts TRANSFER_DST_OPTIMAL / GENERAL layout,
-        // so first transition to TRANSFER_DST, clear to 1.0 then transition to read-only sample layout.
         device.cmd_pipeline_barrier(
             cmd,
             vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -94,7 +90,6 @@ pub(crate) fn shadow_map_dummy(
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .subresource_range(depth_subresource())],
         );
-        // Depth 1.0 = far plane: fragment depth `LESS` 1.0 always true → fully lit.
         device.cmd_clear_depth_stencil_image(
             cmd,
             image.image,
@@ -157,7 +152,6 @@ pub(crate) fn ao_texture_dummy(
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .subresource_range(color_subresource())],
         );
-        // Visibility 1.0 = completely unoccluded (shader uses `1 - ao` to attenuate ambient light).
         device.cmd_clear_color_image(
             cmd,
             image.image,

@@ -5,10 +5,6 @@
 
 use super::Heightmap;
 
-// ---------------------------------------------------------------------------
-// Hash / noise
-// ---------------------------------------------------------------------------
-
 /// SplitMix64 finalizer: integer-only, so every platform produces the same bits.
 #[inline]
 fn mix64(mut x: u64) -> u64 {
@@ -27,7 +23,6 @@ fn hash2(p: [f64; 2], seed: u64) -> f64 {
     let ix = p[0].floor() as i64 as u64;
     let iy = p[1].floor() as i64 as u64;
     let h = mix64(ix ^ mix64(iy ^ mix64(seed)));
-    // Keep the 53 bits an f64 mantissa can represent exactly.
     (h >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)
 }
 
@@ -36,7 +31,6 @@ fn hash2(p: [f64; 2], seed: u64) -> f64 {
 fn noise_2d(p: [f64; 2], seed: u64) -> f64 {
     let i = [p[0].floor(), p[1].floor()];
     let w = [p[0] - i[0], p[1] - i[1]];
-    // Smooth interpolation (3rd-order Hermite).
     let u = [
         w[0] * w[0] * (3.0 - 2.0 * w[0]),
         w[1] * w[1] * (3.0 - 2.0 * w[1]),
@@ -67,10 +61,6 @@ fn fbm(p: [f64; 2], octaves: u32, gain: f64, lacunarity: f64, seed: u64) -> f64 
     total / norm
 }
 
-// ---------------------------------------------------------------------------
-// Terrain synthesis
-// ---------------------------------------------------------------------------
-
 /// Generate [0, 1] relative height initial terrain.
 ///
 /// Frequency calibrated by **physical tile size**: `scale_m` is tile width (meters).
@@ -82,10 +72,8 @@ fn fbm(p: [f64; 2], octaves: u32, gain: f64, lacunarity: f64, seed: u64) -> f64 
 ///
 /// Larger tile means lower frequency, maintaining same physical feature period.
 pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) -> Heightmap {
-    // Frequency scale: 512 m tile → 1.0; 1024 m → 0.5 (same physical period).
     let freq = 512.0 / scale_m.max(1.0);
 
-    // Each layer uses different seed bitwise, avoid all octaves aligning to produce mesh feel.
     let seed_a = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let seed_b = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     let seed_c = seed.wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -95,12 +83,10 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) ->
         let ny = y as f64 / height as f64;
         for x in 0..width {
             let nx = x as f64 / width as f64;
-            // Domain distortion: low frequency noise offsets sample coordinates, ridge direction meanders with it.
             let warp = 0.5 * fbm([nx * 2.0, ny * 2.0], 4, 0.5, 2.0, seed_a);
             let q = [nx + warp, ny + warp];
 
             let base = fbm([q[0] * 1.5 * freq, q[1] * 1.5 * freq], 5, 0.5, 2.0, seed_a);
-            // Ridge noise: |fbm| absolute → f=0 is ridge line (1.0), both sides fall off (0.0).
             let ridge =
                 1.0 - fbm([q[0] * 2.5 * freq, q[1] * 2.5 * freq], 5, 0.5, 2.0, seed_b).abs();
             let detail = fbm(
@@ -111,14 +97,12 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64, scale_m: f64) ->
                 seed_c,
             );
 
-            // base ∈ [−1,1]; ridge ∈ [0,1] → translate/scale back to [−1,1]; detail ∈ [−1,1]
             let e = 0.40 * base + 0.45 * (2.0 * ridge - 1.0) + 0.15 * detail;
             data.push(e);
         }
     }
 
     let mut hm = Heightmap::new(width, height, data);
-    // Normalize to [0, 1], ensure output range consistent for different seeds.
     hm.normalize();
     hm
 }

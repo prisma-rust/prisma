@@ -14,10 +14,6 @@ use prism_render::DrawItem;
 
 use crate::render_system::SceneChanges;
 
-// ---------------------------------------------------------------------------
-// DirtyFlags
-// ---------------------------------------------------------------------------
-
 /// Set of scene fields that changed between consecutive frames.
 ///
 /// Zero latency: computed synchronously in [`DirtyRouter::update`], before any render work starts,
@@ -52,10 +48,6 @@ impl DirtyFlags {
         !self.any()
     }
 }
-
-// ---------------------------------------------------------------------------
-// DirtyRouter
-// ---------------------------------------------------------------------------
 
 /// Per-frame change detector for [`SceneChanges`].
 ///
@@ -99,7 +91,6 @@ impl DirtyRouter {
     /// comparison, so the next frame can diff against the current state.
     pub fn update(&mut self, new: &SceneChanges) -> DirtyFlags {
         let Some(ref prev) = self.prev else {
-            // First frame: everything is dirty.
             self.prev = Some(Box::new(new.clone()));
             return DirtyFlags::all();
         };
@@ -112,13 +103,6 @@ impl DirtyRouter {
                 || prev.inv_projection != new.inv_projection
                 || prev.proj22 != new.proj22
                 || prev.proj32 != new.proj32,
-            // `light_view_proj` is deliberately not compared: the shadow
-            // cascade matrix is derived from the camera eye
-            // (`shadow_cascade_matrices` in `crate::render_system`), so any
-            // camera motion changes it. Treating that as a lighting change
-            // would clear the world-space SHaRC cache whenever the player
-            // walks, while the cache keys on world position and only needs
-            // reprojection when the camera moves (repair spec §8).
             directional_light: prev.light_direction != new.light_direction
                 || prev.light_color != new.light_color,
             point_lights: prev.lights != new.lights || prev.pt_lights.len() != new.pt_lights.len(),
@@ -277,14 +261,9 @@ mod tests {
     fn camera_motion_does_not_dirty_lights() {
         let mut router = DirtyRouter::new();
         let mut changes = SceneChanges::default();
-        // First frame: every flag starts dirty.
         let first = router.update(&changes);
         assert!(first.camera && first.directional_light && first.point_lights);
 
-        // A moving camera also moves the shadow cascade matrix (it is derived
-        // from the camera eye), so `light_view_proj` changes as well. Only the
-        // camera flag may light up: the world-space SHaRC cache keys on world
-        // position and merely reprojects on camera motion.
         changes.eye = glam::Vec3::new(4.0, 1.0, 0.0);
         changes.view_proj = glam::Mat4::from_translation(changes.eye);
         changes.light_view_proj = glam::Mat4::from_translation(changes.eye);

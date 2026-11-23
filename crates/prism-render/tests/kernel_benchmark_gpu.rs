@@ -36,8 +36,6 @@ fn decode_f32(bytes: &[u8], index: usize) -> f32 {
 fn reference(value: f32) -> f32 {
     let mut value = value;
     for _ in 0..REPEAT {
-        // Match the two separate operations in harness_bench.slang so the
-        // reference does not depend on FMA contraction.
         value *= 1.5;
         value += 0.25;
     }
@@ -80,9 +78,6 @@ fn best_of_n_picks_the_fastest_correct_group_count() {
         assert_eq!(output.len(), COUNT * 4);
         for (index, &expected) in expected.iter().enumerate() {
             let actual = decode_f32(output, index);
-            // Relative tolerance: kernel accumulates hundreds-level values, GPU fma/order differs from CPU reference
-            // implementation. Fixed 1e-5 absolute tolerance at success value ~3e2 leaves only ~3e-8 relative precision,
-            // changing driver or slangc version will cause false report (#818).
             let tolerance = 1e-5 * expected.abs().max(1.0);
             assert!(
                 (actual - expected).abs() <= tolerance,

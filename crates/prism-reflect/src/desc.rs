@@ -213,7 +213,7 @@ impl TypeDesc {
         hash_bytes(hash, &(self.fields.len() as u32).to_le_bytes());
         for field in &self.fields {
             hash_bytes(hash, field.name.as_bytes());
-            hash_bytes(hash, &[0xff]); // field separator
+            hash_bytes(hash, &[0xff]);
             hash_field_type(hash, &field.ty, registry, visiting);
         }
     }
@@ -322,7 +322,7 @@ mod tests {
                     name: "tag",
                     offset: 256,
                     ty: FieldType::U32,
-                    read_only: true, // editor flag flipped
+                    read_only: true,
                     enum_variants: None,
                 },
             ],
@@ -423,10 +423,8 @@ mod tests {
             )],
         );
 
-        // Nested struct schema change MUST change the outer struct's schema_hash!
         assert_ne!(outer.schema_hash(&reg_v1), outer.schema_hash(&reg_v2));
 
-        // Also test nested inside List
         let outer_list = desc(
             1,
             vec![field(
@@ -442,7 +440,6 @@ mod tests {
             outer_list.schema_hash(&reg_v2)
         );
 
-        // Also test self-referential / recursive struct termination
         let recursive = Box::leak(Box::new(TypeDesc {
             id: TypeId::from_name("test::Recursive"),
             name: "test::Recursive",
@@ -461,7 +458,6 @@ mod tests {
         let mut reg_rec = TypeRegistry::new();
         reg_rec.register_desc(recursive);
 
-        // Must terminate without stack overflow
         let rec_hash = recursive.schema_hash(&reg_rec);
         assert_ne!(rec_hash, 0);
     }

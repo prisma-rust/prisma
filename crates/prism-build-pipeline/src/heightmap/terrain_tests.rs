@@ -1,13 +1,7 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 #[test]
 fn hash_is_portable_integer_mix() {
-    // Lattice coordinates and the seed are the only inputs; integer mixing
-    // must reproduce the same bits on every platform (a sine hash did not).
     assert_eq!(hash2([0.0, 0.0], 0), 0.138_709_410_145_554_27);
     assert_eq!(hash2([3.0, -2.0], 42), 0.319_982_729_224_393_5);
     assert_eq!(hash2([3.75, -1.25], 42), hash2([3.0, -2.0], 42));
@@ -44,7 +38,6 @@ fn terrain_seed_variation() {
         .zip(b.data.iter())
         .filter(|(x, y)| (**x - **y).abs() < 1e-6)
         .count();
-    // Different seeds must produce clearly different terrain (tolerance: at least 90% pixels different).
     assert!(
         same < a.data.len() / 10,
         "seeds produced nearly identical terrain"

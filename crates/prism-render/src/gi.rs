@@ -43,12 +43,11 @@
 /// `1 + 3 + 5 = 9`.
 pub const SH_COEFF_COUNT: usize = 9;
 
-// Order-2 real SH basis constants (Ramamoorthi & Hanrahan 2001, orthonormal).
-const SH_C0: f32 = 0.282095; // 0.5 * sqrt(1/pi)
-const SH_C1: f32 = 0.488603; // 0.5 * sqrt(3/pi)
-const SH_C2: f32 = 1.092548; // 0.5 * sqrt(15/pi)
-const SH_C3: f32 = 0.315392; // 0.25 * sqrt(5/pi)
-const SH_C4: f32 = 0.546274; // 0.25 * sqrt(15/pi)
+const SH_C0: f32 = 0.282095;
+const SH_C1: f32 = 0.488603;
+const SH_C2: f32 = 1.092548;
+const SH_C3: f32 = 0.315392;
+const SH_C4: f32 = 0.546274;
 
 /// Probe-volume grid metadata.
 ///
@@ -68,26 +67,6 @@ impl ProbeVolumeInfo {
         }
     }
 }
-
-// -------------------------------------------------------------------
-// Bake-time directional light (shared default for baker + runtime)
-// -------------------------------------------------------------------
-//
-// The offline baker lives in `prism-build-pipeline` (`prism-build-pipeline
-// bake-gi`), which links this crate for the probe math but cannot depend on
-// `prism-engine` (the dependency runs engine -> render, so importing
-// `engine::DirectionalLight` would form a cycle). To keep the baked
-// indirect sun in sync with the runtime sun without that cycle, the canonical
-// default light parameters are mirrored here. **These constants MUST stay in
-// lock-step with `prism_engine::render_system::DirectionalLight::default()`**
-// (euler_xyz, intensity, color). The runtime inserts that default into the ECS
-// (`app.rs` `create_default_scene`), so as long as the two match, a bake's
-// direct-sun bounce uses the same direction/color/intensity the player sees.
-//
-// The direction is stored as XYZ Euler angles (degrees) and converted with
-// [`bake_euler_xyz_deg_to_dir`], a byte-identical copy of
-// `prism_engine::render_system::euler_xyz_deg_to_dir` (see that function's
-// docs for the right-handed Rx·Ry·Rz convention, +Y up, base vector +Z).
 
 /// Default directional light Euler angles (degrees), matching
 /// `DirectionalLight::default().euler_xyz` = `[45.0, -45.0, 0.0]`
@@ -110,7 +89,6 @@ pub const BAKE_DEFAULT_LIGHT_COLOR: [f32; 3] = [1.0, 1.0, 1.0];
 pub fn bake_euler_xyz_deg_to_dir(e: [f32; 3]) -> [f32; 3] {
     let p = e[0].to_radians();
     let y = e[1].to_radians();
-    // Roll (e[2]) does not affect a pure +Z base direction; intentionally unused.
     let (sp, cp) = p.sin_cos();
     let (sy, cy) = y.sin_cos();
     let x = cp * sy;
@@ -173,9 +151,6 @@ const A_L2: f32 = std::f32::consts::PI / 4.0;
 pub fn eval_sh9_irradiance(n: [f32; 3], sh: &[[f32; 3]; SH_COEFF_COUNT]) -> [f32; 3] {
     let b = sh_basis(n);
     let mut out = [0.0f32; 3];
-    // Band 0 (l=0, c=0): A_0 = π
-    // Band 1 (l=1, c=1,2,3): A_1 = 2π/3
-    // Band 2 (l=2, c=4..8): A_2 = π/4
     let al = [A_L0, A_L1, A_L1, A_L1, A_L2, A_L2, A_L2, A_L2, A_L2];
     for c in 0..SH_COEFF_COUNT {
         let a = al[c];
@@ -224,8 +199,6 @@ pub fn trilinear_weights(coord: [f32; 3], dims: [u32; 3]) -> ([i32; 3], [f32; 8]
         coord[1].clamp(0.0, max[1]),
         coord[2].clamp(0.0, max[2]),
     ];
-    // Clamp base so base+1 <= dims-1 (i.e. base <= dims-2); the .max(0) keeps
-    // dims==1 axes at base 0.
     let base = [
         (c[0].floor() as i32).clamp(0, (dims[0] as i32 - 2).max(0)),
         (c[1].floor() as i32).clamp(0, (dims[1] as i32 - 2).max(0)),
@@ -273,7 +246,6 @@ where
     let dims = [info.dims[0], info.dims[1], info.dims[2]];
     let (base, w) = trilinear_weights(coord, dims);
 
-    // Trilinear-blend the 9 SH coefficients across the 8 corner probes.
     let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
     for (idx, &weight) in w.iter().enumerate() {
         let di = (idx & 1) as i32;

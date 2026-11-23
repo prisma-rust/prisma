@@ -43,7 +43,6 @@ use crate::shader_bindings;
 /// surface occupied last frame, which is the motion vector TAA/DLSS-RR expects.
 /// `world_to_view` rotates the world-space shading normal into the view space
 /// both DLSS-RR and NRD expect for their normal guides.
-// GPU layout comes from the Slang reflection; never mirror it by hand.
 use crate::shader_bindings::pt_render::PtGuides;
 
 /// GPU push-constant block size for PtPush (std140 rounds to 16-byte boundary).
@@ -71,8 +70,6 @@ const SHARC_FLAG_STRIDE_SHIFT: u32 = 8;
 /// every stride-by-stride block deposits a sample.
 fn pack_sharc_flags(query: bool, update: bool, downscale_factor: u32) -> u32 {
     let stride = downscale_factor.clamp(1, 0xFF);
-    // Deposits are meaningless without queries: the shader reads the buffers
-    // from both paths, so a clear query bit must also clear the update bit.
     let update = query && update;
     (if query { SHARC_FLAG_QUERY } else { 0 })
         | (if update { SHARC_FLAG_UPDATE } else { 0 })
@@ -123,7 +120,6 @@ fn variant_spirv(variant: PtVariant) -> &'static [u8] {
 /// dispatch (repair spec §4 forbids training or resolve recorded outside the
 /// graph) while both still share one accumulation history.
 struct PtInner {
-    // Pipeline
     pipeline: Option<ComputePipeline>,
     train_pipeline: Option<ComputePipeline>,
     variant: PtVariant,
@@ -131,18 +127,12 @@ struct PtInner {
     ds_pool: vk::DescriptorPool,
     ds: vk::DescriptorSet,
 
-    // Bindless texture table (set 1) - shared with the rasterizer. Not owned;
-    // stored so the pipeline layout can reference its layout and the command
-    // recorder can bind its set. Wired via `set_material_resources`.
     bindless_set: vk::DescriptorSet,
     bindless_layout: vk::DescriptorSetLayout,
 
-    // IBL environment cubemap (set 2) - sampled on ray miss for HDR sky.
-    // Wired via `set_ibl_resources`. Not owned.
     ibl_set: vk::DescriptorSet,
     ibl_layout: vk::DescriptorSetLayout,
 
-    // Accumulation buffers (persistent across frames)
     accum_image: vk::Image,
     accum_view: vk::ImageView,
     accum_memory: vk::DeviceMemory,
@@ -150,98 +140,54 @@ struct PtInner {
     sample_count_view: vk::ImageView,
     sample_count_memory: vk::DeviceMemory,
 
-    // PT_COLOR_H output image (sampled+storage, published to graph for PostPass)
     output_image: vk::Image,
     output_view: vk::ImageView,
     output_memory: vk::DeviceMemory,
 
-    // Guide images written by the trace shader (set 0 bindings 15/16) and
-    // published as PT_DEPTH_H / PT_VELOCITY_H. They carry the primary-hit depth
-    // and screen-space motion the temporal resolve needs, which the raster
-    // G-buffer cannot supply in path-trace mode.
     guide_depth_image: vk::Image,
     guide_depth_view: vk::ImageView,
     guide_depth_memory: vk::DeviceMemory,
     guide_velocity_image: vk::Image,
     guide_velocity_view: vk::ImageView,
     guide_velocity_memory: vk::DeviceMemory,
-    // View-space normal.xyz + perceptual roughness.w of the primary hit,
-    // published as PT_NORMAL_ROUGHNESS_H. DLSS-RR's packed normal/roughness
-    // mode and NRD both consume exactly this layout.
     guide_normal_roughness_image: vk::Image,
     guide_normal_roughness_view: vk::ImageView,
     guide_normal_roughness_memory: vk::DeviceMemory,
 
-    // Guide camera state (binding 17) — HOST_VISIBLE constant buffer rewritten
-    // every dispatch with the current and previous frame view-projections.
     guides_buffer: vk::Buffer,
     guides_memory: vk::DeviceMemory,
     guides_mapped: *mut u8,
-    // Previous frame's unjittered view-projection, remembered across frames so
-    // the motion vectors reproject against the camera the history was rendered
-    // with. Reset on resize, like the other accumulation state.
     guide_prev_view_proj: Option<[[f32; 4]; 4]>,
 
-    // Per-instance ray-traceable scene (combined vertex/index buffers,
-    // per-instance BLAS, TLAS, instance_meta SSBO). Built once per scene by
-    // `set_geometry` via `bake_common::build_pt_scene`. Owns its GPU resources.
     pt_scene: Option<crate::bake_common::PtScene>,
 
-    // Materials SSBO (shared `RenderMaterialManager::buffer()`), bound at set 0
-    // binding 7. Wired via `set_material_resources`. The real-time pass does
-    // NOT own this buffer (the material manager does) - it only holds the
-    // handle for descriptor writes.
     materials_buffer: Option<vk::Buffer>,
 
-    // Lights SSBO (binding 8) — HOST_VISIBLE | HOST_COHERENT storage buffer
-    // for PtAnalyticLight[PT_LIGHT_MAX]. Created once, written each frame.
     lights_buffer: vk::Buffer,
     lights_memory: vk::DeviceMemory,
     lights_mapped: *mut u8,
 
-    // Emissive triangle SSBO (binding 9) — device-local storage buffer built
-    // from `set_emissive`. Read-only during PT dispatch; owned directly by
-    // the pass (not through PtScene).
     emissive_buffer: Option<vk::Buffer>,
     emissive_memory: Option<vk::DeviceMemory>,
     emissive_count: u32,
 
-    // ReSTIR DI reservoir ping-pong buffers (bindings 10/11).
-    // Two storage buffers, each sized for (width × height) ReSTIRReservoir
-    // entries. Each frame one serves as prev (read, b10) and the other as
-    // curr (write, b11); they swap roles every frame.
     reservoir_buffers: [vk::Buffer; 2],
     reservoir_memories: [vk::DeviceMemory; 2],
-    reservoir_size: vk::DeviceSize, // current buffer size in bytes
-    reservoir_swap: usize,          // index of curr buffer (0 or 1) for this frame
+    reservoir_size: vk::DeviceSize,
+    reservoir_swap: usize,
 
-    // SHARC cache buffers (bindings 12/13/14). The buffers are owned by
-    // `GraphRenderer` (created lazily when `gi_mode` becomes `Sharc`); this
-    // pass only holds the handles so `update_ds` can bind them. All `None`
-    // when the cache is inactive, in which case `sharc_enabled` stays 0 and
-    // the shader never touches the (unbound) bindings.
     sharc_hash_entries: Option<vk::Buffer>,
     sharc_accumulation: Option<vk::Buffer>,
     sharc_resolved: Option<vk::Buffer>,
     sharc_capacity: u32,
 
-    // State tracking
     img_width: u32,
     img_height: u32,
     frame_counter: u32,
     prev_camera_pos: Option<[f32; 3]>,
     prev_view_proj: Option<[[f32; 4]; 4]>,
-    // Global accumulation-reset flag. Set by either (a) camera motion
-    // (`should_reset`) or (b) an external `request_reset()` call when the app
-    // knows a render parameter changed (max bounces, exposure, light
-    // color/direction, scene reload, ...). Without this, stale samples
-    // accumulated under the old parameters keep dominating the running
-    // average and parameter tweaks look like they do nothing. This keeps the
-    // "what changed?" decision in the caller rather than diffing every PT
-    // input per frame.
     accum_dirty: bool,
 
-    // Device handles
     device: Option<ash::Device>,
 }
 
@@ -249,18 +195,6 @@ impl PtInner {
     fn new(context: &VulkanContext) -> anyhow::Result<Self> {
         let device = &context.device;
 
-        // Set 0 bindings (must match pt_render.slang / path_integrator.slang):
-        // b0: RWTexture2D<float4> accumImage
-        // b1: RWTexture2D<uint>   sampleCount
-        // b2: AccelerationStructure tlas
-        // b3: ByteAddressBuffer vertexData  (combined world-space vertices)
-        // b4: StructuredBuffer<uint> indices (combined index buffer)
-        // b5: RWTexture2D<float4> outputImage
-        // b6: StructuredBuffer<PtInstanceMeta> instance_meta (per-instance
-        //     material slot + vertex/index base offsets, indexed by
-        //     q.CommittedInstanceID())
-        // b7: StructuredBuffer<GpuMaterial> materials (shared SSBO)
-        // Set 1 (bindless, bound separately): globalSamplers[] + bindlessSrvs[]
         let bindings = [
             b(
                 0,
@@ -316,96 +250,87 @@ impl PtInner {
                 10,
                 vk::DescriptorType::STORAGE_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // prevReservoir (read)
+            ),
             b(
                 11,
                 vk::DescriptorType::STORAGE_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // currReservoir (write)
+            ),
             b(
                 12,
                 vk::DescriptorType::STORAGE_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // SHARC hash entries
+            ),
             b(
                 13,
                 vk::DescriptorType::STORAGE_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // SHARC accumulation
+            ),
             b(
                 14,
                 vk::DescriptorType::STORAGE_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // SHARC resolved
+            ),
             b(
                 15,
                 vk::DescriptorType::STORAGE_IMAGE,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // guideDepth (PT_DEPTH_H)
+            ),
             b(
                 16,
                 vk::DescriptorType::STORAGE_IMAGE,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // guideVelocity (PT_VELOCITY_H)
+            ),
             b(
                 17,
                 vk::DescriptorType::UNIFORM_BUFFER,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // guides (PtGuides camera state)
+            ),
             b(
                 18,
                 vk::DescriptorType::STORAGE_IMAGE,
                 vk::ShaderStageFlags::COMPUTE,
-            ), // guideNormalRoughness (PT_NORMAL_ROUGHNESS_H)
+            ),
         ];
 
-        // All bindings get UPDATE_AFTER_BIND + PARTIALLY_BOUND because
-        // update_ds() is called every frame while previous-frame command
-        // buffers may still be in flight. Without these flags Vulkan
-        // validation complains about updating in-use descriptor sets.
         let binding_flags = [
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b0  accumImage
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b1  sampleCount
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b2  TLAS
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b3  vertexData
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b4  indices
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b5  outputImage
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b6  instance_meta
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b7  materials
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b8  ptLights
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b9  ptEmissive
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b10 prevReservoir
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b11 currReservoir
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b12 sharcHashEntries
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b13 sharcAccumulation
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b14 sharcResolved
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b15 guideDepth
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b16 guideVelocity
-            // b17 guides is a persistent host-visible UBO: it is rewritten through
-            // the mapped pointer (not vkUpdateDescriptorSets), so it must NOT carry
-            // UPDATE_AFTER_BIND. Enabling that flag requires the
-            // descriptorBindingUniformBufferUpdateAfterBind device feature, which
-            // this renderer deliberately does not request.
-            vk::DescriptorBindingFlags::empty(), // b17 guides
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            vk::DescriptorBindingFlags::empty(),
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND, // b18 guideNormalRoughness
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
         ];
         let mut flags_info =
             vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
@@ -459,7 +384,6 @@ impl PtInner {
         }
         .context("PathTracePass: allocate ds")?[0];
 
-        // Placeholder images (1×1 — resized on first execution)
         let mem_props = &context.physical_device_memory_properties;
         let (ai, av, am) =
             make_accum_image(device, mem_props, 1, 1).context("PathTracePass: accum image")?;
@@ -474,7 +398,6 @@ impl PtInner {
         let (gnri, gnrv, gnrm) = make_guide_normal_roughness_image(device, mem_props, 1, 1)
             .context("PathTracePass: guide normal roughness")?;
 
-        // Guide camera constant buffer (binding 17), rewritten every dispatch.
         let guides_size = std::mem::size_of::<PtGuides>() as vk::DeviceSize;
         let guides_buffer = unsafe {
             device.create_buffer(
@@ -511,9 +434,6 @@ impl PtInner {
         unsafe {
             ptr::write_bytes(guides_mapped, 0, guides_size as usize);
         }
-        // Bind b17 once. The contents change every dispatch, but the descriptor
-        // itself never does, so it must not be part of the per-frame
-        // `update_ds` writes (see the comment there).
         let guides_binding = vk::DescriptorBufferInfo::default()
             .buffer(guides_buffer)
             .offset(0)
@@ -525,7 +445,6 @@ impl PtInner {
             .buffer_info(std::slice::from_ref(&guides_binding))];
         unsafe { device.update_descriptor_sets(&guides_write, &[]) };
 
-        // Create persistent HOST_VISIBLE lights buffer for PtAnalyticLight[]
         let light_buf_size = (PT_LIGHT_MAX as vk::DeviceSize)
             * std::mem::size_of::<PtAnalyticLight>() as vk::DeviceSize;
         let light_buf_create = vk::BufferCreateInfo::default()
@@ -558,7 +477,6 @@ impl PtInner {
         }
         .context("PathTracePass: map lights memory")? as *mut u8;
 
-        // Write descriptor for the lights SSBO (binding 8, initially zeroed)
         unsafe {
             ptr::write_bytes(lights_mapped, 0, light_buf_size as usize);
         }
@@ -642,14 +560,6 @@ impl PtInner {
             anyhow::bail!("PathTracePass::set_geometry: no instances");
         }
 
-        // The materials SSBO bytes: if `set_material_resources` wired the
-        // shared `RenderMaterialManager` buffer we use an empty slice (the
-        // buffer is bound separately at b7 and never owned by the scene); if
-        // not wired (shouldn't happen for the real-time pass), fall back to a
-        // single neutral material so the build still succeeds.
-        // `build_pt_scene` only allocates its OWN materials buffer from these
-        // bytes; the real-time pass overrides it with the shared manager
-        // buffer in `update_ds`, so we pass a minimal placeholder here.
         let placeholder_material = vec![0u8; std::mem::size_of::<crate::managers::GpuMaterial>()];
         let scene = crate::bake_common::build_pt_scene(
             context,
@@ -659,7 +569,6 @@ impl PtInner {
         )
         .context("PathTracePass: build_pt_scene")?;
 
-        // Drop the previous scene (frees its buffers/BLAS/TLAS via Drop).
         self.pt_scene = Some(scene);
 
         log::info!("PathTracePass: {} instances uploaded", instances.len());
@@ -690,7 +599,6 @@ impl PtInner {
         self.materials_buffer = Some(materials_buffer);
         self.bindless_set = bindless_set;
         self.bindless_layout = bindless_layout;
-        // Force pipeline rebuild so it picks up the 2-set layout.
         self.pipeline = None;
     }
 
@@ -723,7 +631,6 @@ impl PtInner {
         self.ibl_set = ibl_set;
         if self.ibl_layout != ibl_layout {
             self.ibl_layout = ibl_layout;
-            // Force pipeline rebuild only when the set 2 layout actually changed.
             self.pipeline = None;
         }
     }
@@ -741,7 +648,6 @@ impl PtInner {
         materials_bytes: &[u8],
     ) {
         use crate::bake_common::create_emissive_buffer;
-        // Destroy previous buffer.
         let device = &context.device;
         if let Some(eb) = self.emissive_buffer.take() {
             if let Some(em) = self.emissive_memory.take() {
@@ -758,7 +664,6 @@ impl PtInner {
         if count > 0 {
             log::info!("PathTracePass: {} emissive triangles uploaded", count);
         }
-        // Reset accumulation so the new emissive data takes effect immediately.
         self.accum_dirty = true;
     }
 
@@ -777,7 +682,6 @@ impl PtInner {
         if needed <= self.reservoir_size {
             return;
         }
-        // Destroy previous
         for i in 0..2 {
             if self.reservoir_buffers[i] != vk::Buffer::null() {
                 unsafe {
@@ -786,7 +690,6 @@ impl PtInner {
                 }
             }
         }
-        // Create two device-local storage buffers
         let buf_info = vk::BufferCreateInfo::default()
             .size(needed)
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
@@ -813,7 +716,6 @@ impl PtInner {
         }
         self.reservoir_size = needed;
         self.reservoir_swap = 0;
-        // Force pipeline rebuild so it picks up the new buffer handles.
         self.pipeline = None;
         log::info!("ReSTIR reservoir buffers: {} bytes each", needed);
     }
@@ -834,7 +736,6 @@ impl PtInner {
                 self.lights_mapped,
                 count * light_size,
             );
-            // Zero remaining entries
             if count < max_lights {
                 let dst = self.lights_mapped.add(count * light_size);
                 ptr::write_bytes(dst, 0, (max_lights - count) * light_size);
@@ -883,8 +784,6 @@ impl PtInner {
         if w == 0 || h == 0 {
             return Ok(());
         }
-        // Skip if size hasn't changed — avoids unnecessary destroy+recreate
-        // cycles and keeps the graph's resource references valid across frames.
         if self.img_width == w && self.img_height == h {
             return Ok(());
         }
@@ -945,14 +844,9 @@ impl PtInner {
         if self.pipeline.is_some() {
             return Ok(());
         }
-        // All variants share the transport in pt_render.slang; only PT_MODE
-        // differs, so the layouts and push block are identical.
         let spv = variant_spirv(self.variant);
         let mod_ = shader::load_shader_module(device, spv).context("PathTracePass: load spv")?;
         let entry = std::ffi::CString::new("ptMain").unwrap();
-        // Three sets: set 0 = PT-local (accum/output/TLAS/vertex/index/meta/
-        // materials), set 1 = shared bindless texture table (samplers + SRVs),
-        // set 2 = IBL environment cubemap (HDR sky).
         let mut layouts = vec![self.ds_layout, self.bindless_layout];
         if self.ibl_layout != vk::DescriptorSetLayout::null() {
             layouts.push(self.ibl_layout);
@@ -1013,7 +907,6 @@ impl PtInner {
     }
 
     fn clear_accum_images(&self, device: &ash::Device, cmd: vk::CommandBuffer) {
-        // Transition accum to GENERAL
         let b1 = vk::ImageMemoryBarrier::default()
             .image(self.accum_image)
             .old_layout(vk::ImageLayout::UNDEFINED)
@@ -1058,7 +951,6 @@ impl PtInner {
             );
         }
 
-        // Transition sample count to GENERAL
         let b2 = vk::ImageMemoryBarrier::default()
             .image(self.sample_count_image)
             .old_layout(vk::ImageLayout::UNDEFINED)
@@ -1102,8 +994,6 @@ impl PtInner {
         let oi = vk::DescriptorImageInfo::default()
             .image_view(self.output_view)
             .image_layout(vk::ImageLayout::GENERAL);
-        // Guide images (b15/b16) are written as storage images in GENERAL and
-        // sampled later by the temporal resolve.
         let gdi = vk::DescriptorImageInfo::default()
             .image_view(self.guide_depth_view)
             .image_layout(vk::ImageLayout::GENERAL);
@@ -1113,9 +1003,6 @@ impl PtInner {
         let gnri = vk::DescriptorImageInfo::default()
             .image_view(self.guide_normal_roughness_view)
             .image_layout(vk::ImageLayout::GENERAL);
-        // Geometry buffers come from the PtScene (vertex/index/instance_meta).
-        // The materials buffer is the shared RenderMaterialManager SSBO (wired
-        // via set_material_resources), NOT the PtScene's placeholder buffer.
         let (vbuf, ibuf, mbuf) = match self.pt_scene.as_ref() {
             Some(s) => (s.vertex_buffer, s.index_buffer, s.instance_meta_buffer),
             None => (vk::Buffer::null(), vk::Buffer::null(), vk::Buffer::null()),
@@ -1144,12 +1031,6 @@ impl PtInner {
             .buffer(self.emissive_buffer.unwrap_or(self.lights_buffer))
             .offset(0)
             .range(vk::WHOLE_SIZE);
-        // ReSTIR reservoir buffers (ping-pong, b10/b11). Swap roles each frame:
-        // b10 gets the buffer written last frame (prev), b11 gets the buffer to
-        // write this frame (curr). They stay null until the first consumer
-        // dispatch allocates them, and the standalone trainer runs before that,
-        // so the writes are only recorded once the buffers exist. Leaving a
-        // binding unwritten is legal because the layout carries PARTIALLY_BOUND.
         let (prev_buf, curr_buf) = (
             self.reservoir_buffers[1 - self.reservoir_swap],
             self.reservoir_buffers[self.reservoir_swap],
@@ -1168,11 +1049,6 @@ impl PtInner {
         } else {
             None
         };
-        // SHARC cache buffers. The writes are only recorded when the cache is
-        // active: `nullDescriptor` is not enabled, so binding a null handle
-        // would be a validation error. Leaving the binding unwritten is legal
-        // because the set layout carries PARTIALLY_BOUND, and the shader never
-        // dereferences it while `sharc_enabled` is 0.
         let sharc_bi = match (
             self.sharc_hash_entries,
             self.sharc_accumulation,
@@ -1256,12 +1132,6 @@ impl PtInner {
                 .dst_binding(18)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .image_info(std::slice::from_ref(&gnri)),
-            // b17 (guides UBO) is deliberately absent: it is written through the
-            // mapped pointer every dispatch, so the descriptor is bound exactly
-            // once in `new`. Re-writing it here would mark the set "updated while
-            // in flight", which is only legal with UPDATE_AFTER_BIND — and a
-            // UNIFORM_BUFFER binding cannot have that flag without
-            // `descriptorBindingUniformBufferUpdateAfterBind`.
         ];
         let mut writes = writes;
         if let Some((prev_bi, curr_bi)) = reservoir_bi.as_ref() {
@@ -1290,8 +1160,6 @@ impl PtInner {
             device.update_descriptor_sets(&writes, &[]);
         }
 
-        // Acceleration structure write (binding 2) - done as a separate call
-        // because its push_next reference must stay alive for the update call.
         if let Some(handle) = self
             .pt_scene
             .as_ref()
@@ -1337,10 +1205,8 @@ impl PtInner {
             device.destroy_buffer(self.guides_buffer, None);
             device.free_memory(self.guides_memory, None);
         }
-        // PtScene drops its own vertex/index/meta/materials buffers + BLAS + TLAS.
         self.pt_scene = None;
         self.materials_buffer = None;
-        // SHARC buffers are owned by `GraphRenderer`; only drop the handles.
         self.sharc_hash_entries = None;
         self.sharc_accumulation = None;
         self.sharc_resolved = None;
@@ -1352,7 +1218,6 @@ impl PtInner {
             device.destroy_descriptor_set_layout(self.ds_layout, None);
             device.destroy_descriptor_pool(self.ds_pool, None);
         }
-        // Destroy emissive SSBO.
         if let Some(eb) = self.emissive_buffer.take() {
             if let Some(em) = self.emissive_memory.take() {
                 unsafe {
@@ -1361,7 +1226,6 @@ impl PtInner {
                 }
             }
         }
-        // Destroy ReSTIR reservoir buffers.
         for i in 0..2 {
             if self.reservoir_buffers[i] != vk::Buffer::null() {
                 unsafe {
@@ -1370,8 +1234,6 @@ impl PtInner {
                 }
             }
         }
-        // Clear the cached device handle so Drop::drop becomes a no-op
-        // (graph_renderer calls destroy() explicitly after device_wait_idle).
         self.device = None;
     }
 }
@@ -1458,19 +1320,10 @@ impl PtInner {
         let inv_vp = mat_inverse(&ctx.frame.view_proj);
         let params_w = pack_pt_params(frame_counter, reset, ctx.frame.camera_orthographic);
 
-        // Guide camera state. The depth row only needs this frame transform, so
-        // it keeps the jitter; the motion vectors reproject against the previous
-        // frame's unjittered matrix so they measure surface movement instead of
-        // the sub-pixel jitter offset.
         let mut unjittered = ctx.frame.view_proj;
         unjittered[3][0] -= ctx.frame.view_proj_jitter[0];
         unjittered[3][1] -= ctx.frame.view_proj_jitter[1];
         let prev_view_proj = self.guide_prev_view_proj.unwrap_or(unjittered);
-        // `inv_view_rot` is the transpose of the view matrix's upper-left 3x3,
-        // so transposing it back yields the world -> view rotation with the same
-        // memory layout `frame.view` has in the shader. That lets the guide
-        // write use the identical `mul((float3x3)m, worldNormal)` expression
-        // scene_frag.slang uses for SV_Target1.
         let mut world_to_view = [[0.0f32; 4]; 4];
         for (c, column) in world_to_view.iter_mut().enumerate().take(3) {
             for (r, value) in column.iter_mut().enumerate().take(3) {
@@ -1507,12 +1360,8 @@ impl PtInner {
             sharc_scene_scale: ctx.settings.sharc_scene_scale,
             sharc_capacity: self.sharc_capacity,
             sharc_flags: if train {
-                // The dispatch is already downscaled, so no stride is needed;
-                // the training shader forces deposits on and never queries.
                 pack_sharc_flags(false, false, 1)
             } else {
-                // Deposits belong to the training dispatch, so the consumer
-                // only reads the cache.
                 let query = self.sharc_hash_entries.is_some()
                     && ctx.settings.pt_gi == crate::render_graph::PtGiMode::Sharc;
                 pack_sharc_flags(query, false, ctx.settings.sharc_downscale_factor)
@@ -1528,7 +1377,6 @@ impl PtInner {
                 0,
                 bytemuck::bytes_of(&push),
             );
-            // 16x16 threads per group.
             device.cmd_dispatch(cmd, w.div_ceil(16), h.div_ceil(16), 1);
         }
         Ok(())
@@ -1552,17 +1400,8 @@ impl PtInner {
             handle: PT_COLOR_H,
             access: vk::AccessFlags::SHADER_WRITE,
             stage: vk::PipelineStageFlags::COMPUTE_SHADER,
-            // Declared as SHADER_READ_ONLY_OPTIMAL (not GENERAL) so that when this
-            // pass is skipped (e.g. no camera) the state tracker always reads the
-            // same layout that PostPass wants, avoiding a trampoline barrier with a
-            // stale old_layout (the image was never actually transitioned to GENERAL).
-            // The actual post-dispatch GENERAL→SHADER_READ_ONLY_OPTIMAL transition
-            // is emitted manually inside `execute`.
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
-        // Temporal-reprojection guides. Same rationale as PT_COLOR_H: declared
-        // with the layout the consumer (TaaPass) samples them in, so a skipped
-        // pass leaves the tracker consistent.
         graph.create_resource_at(
             PT_DEPTH_H,
             ResourceType::StorageImage {
@@ -1619,28 +1458,18 @@ impl PtInner {
 
         let device = ctx.device;
         let cmd = ctx.cmd;
-        // #613: when internal render resolution enabled, PT also accumulates at internal size.
         let w = ctx.render_extent.width.max(1);
         let h = ctx.render_extent.height.max(1);
 
-        // Resize accumulation buffers if needed
         self.resize_images(device, &ctx.context.physical_device_memory_properties, w, h)?;
-        // Resize ReSTIR reservoir ping-pong buffers if needed
         self.ensure_reservoir_buffers(device, ctx.context, w, h);
 
-        // Camera detection. Compared against the unjittered transform: with TAA
-        // enabled the projection changes every frame by a sub-pixel offset, and
-        // treating that as camera motion would reset the accumulation every frame
-        // and leave the tracer stuck at one sample per pixel.
         let cam_pos = ctx.frame.camera_pos;
         let cam_xyz = [cam_pos[0], cam_pos[1], cam_pos[2]];
         let mut unjittered_vp = ctx.frame.view_proj;
         unjittered_vp[3][0] -= ctx.frame.view_proj_jitter[0];
         unjittered_vp[3][1] -= ctx.frame.view_proj_jitter[1];
         let inv_vp = mat_inverse(&unjittered_vp);
-        // Reset on camera motion, explicit accum-dirty (geometry), or the
-        // directional-light accumulation-dirty flag from the frame (intensity,
-        // color, or direction changed). Cleared after one frame in both cases.
         let reset =
             self.should_reset(cam_xyz, inv_vp) || self.accum_dirty || ctx.frame.pt_accum_dirty;
         self.accum_dirty = false;
@@ -1653,14 +1482,6 @@ impl PtInner {
             self.frame_counter = 0;
         }
 
-        // Barrier: accum → GENERAL (compute write).
-        // On frame 1 (after clear_accum_images) the previous write was a
-        // TRANSFER_WRITE from vkCmdClearColorImage; on subsequent frames it
-        // was a SHADER_WRITE from the previous-frame compute dispatch.
-        // Both access/stage masks must be present to properly order the
-        // dependency regardless of which producer ran last — omitting
-        // SHADER_WRITE would mean frame 2's compute shader reads undefined
-        // garbage from the accumulation images (causing all-white output).
         let accum_to_gen = vk::ImageMemoryBarrier::default()
             .image(self.accum_image)
             .old_layout(vk::ImageLayout::GENERAL)
@@ -1686,8 +1507,6 @@ impl PtInner {
             );
         }
 
-        // Barrier: sampleCount → GENERAL (compute write).
-        // Same dual-src logic as accum above.
         let sc_to_gen = vk::ImageMemoryBarrier::default()
             .image(self.sample_count_image)
             .old_layout(vk::ImageLayout::GENERAL)
@@ -1713,12 +1532,6 @@ impl PtInner {
             );
         }
 
-        // Barrier: PT_COLOR_H → GENERAL (compute write).
-        // Use UNDEFINED as old_layout — this is always valid per the Vulkan
-        // spec regardless of the image's actual layout (SHADER_READ_ONLY_OPTIMAL
-        // from PostPass's read barrier in the previous frame, or UNDEFINED on
-        // the first frame / after resize). The graph does not issue a barrier
-        // for write-only edges, so we must handle this ourselves.
         let out_to_gen = vk::ImageMemoryBarrier::default()
             .image(self.output_image)
             .old_layout(vk::ImageLayout::UNDEFINED)
@@ -1744,9 +1557,6 @@ impl PtInner {
             );
         }
 
-        // Barrier: guides → GENERAL (compute write). All three are written by
-        // the same dispatch, so one barrier array covers them; UNDEFINED as the
-        // old layout is always legal (same reasoning as PT_COLOR_H above).
         let guide_to_gen = [
             vk::ImageMemoryBarrier::default()
                 .image(self.guide_depth_image)
@@ -1802,10 +1612,6 @@ impl PtInner {
 
         self.record_dispatch(ctx, w, h, self.frame_counter, reset, false)?;
 
-        // Post-dispatch barrier: PT_COLOR_H GENERAL → SHADER_READ_ONLY_OPTIMAL
-        // so PostPass can sample it. Must be manual because the write edge
-        // declares SHADER_READ_ONLY_OPTIMAL as the post-pass layout (to avoid
-        // stale-tracker barriers when the pass is skipped).
         let out_to_read = vk::ImageMemoryBarrier::default()
             .image(self.output_image)
             .old_layout(vk::ImageLayout::GENERAL)
@@ -1831,9 +1637,6 @@ impl PtInner {
             );
         }
 
-        // Post-dispatch barrier: guides GENERAL → SHADER_READ_ONLY_OPTIMAL so the
-        // temporal resolve can sample them. Declared as a write edge with that
-        // final layout, so the graph does not need to transition them again.
         let guide_to_read = [
             vk::ImageMemoryBarrier::default()
                 .image(self.guide_depth_image)
@@ -1887,12 +1690,10 @@ impl PtInner {
             );
         }
 
-        // Advance reservoir swap index for next frame
         self.reservoir_swap = (self.reservoir_swap + 1) & 1;
 
         self.frame_counter = self.frame_counter.wrapping_add(1);
 
-        // Publish for PostPass and the temporal resolve
         resources.set_image_view(PT_COLOR_H, self.output_view);
         resources.set_image(PT_COLOR_H, self.output_image);
         resources.set_image_view(PT_DEPTH_H, self.guide_depth_view);
@@ -2108,10 +1909,6 @@ impl RenderPassNode for SharcTrainPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // The three cache buffers are owned by GraphRenderer (it allocates and
-        // clears them), so the graph only carries their handles: declaring the
-        // edges here is what makes the training dispatch an explicit, ordered
-        // graph step instead of a hidden pre-graph call (repair spec §4).
         for handle in [SHARC_HASH_ENTRIES_H, SHARC_ACCUMULATION_H, SHARC_RESOLVED_H] {
             graph.create_resource_at(handle, ResourceType::StorageBuffer { size: 0 });
             graph.write_usage(ResourceUsage {
@@ -2128,15 +1925,9 @@ impl RenderPassNode for SharcTrainPass {
         ctx: &RenderContext,
         _resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
-        // Only the SHaRC configuration trains the cache; the ReSTIR GI variant
-        // runs in raster mode and deposits into the cache itself while tracing
-        // its secondary rays.
         if ctx.settings.pt_gi != PtGiMode::Sharc || ctx.frame.render_mode != RenderMode::PathTrace {
             return Ok(());
         }
-        // Resolve is the only stage that normalises the accumulation counters
-        // (see `crate::sharc::training_enabled`), so training without resolve
-        // would keep adding to counters nothing resets.
         if !(ctx.settings.sharc_enable_update && ctx.settings.sharc_enable_resolve) {
             return Ok(());
         }
@@ -2159,8 +1950,6 @@ impl RenderPassNode for SharcTrainPass {
         }
     }
 }
-
-// ---- helpers ----
 
 fn b(
     binding: u32,
@@ -2267,8 +2056,6 @@ fn make_guide_normal_roughness_image(
     w: u32,
     h: u32,
 ) -> anyhow::Result<(vk::Image, vk::ImageView, vk::DeviceMemory)> {
-    // RGBA16F is one of the formats Vulkan requires storage-image support for,
-    // unlike R32G32_SFLOAT, so the compute write needs no format feature probe.
     make_image(
         device,
         mem_props,
@@ -2384,7 +2171,7 @@ mod mat_inverse_tests {
         proj[2][2] = 100.0 / (0.1 - 100.0);
         proj[2][3] = -1.0;
         proj[3][2] = 0.1 * 100.0 / (0.1 - 100.0);
-        let (s, c) = (0.5_f32, 0.8660254_f32); // ~30° yaw
+        let (s, c) = (0.5_f32, 0.8660254_f32);
         let view = [
             [c, 0.0, -s, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -2416,18 +2203,6 @@ mod mat_inverse_tests {
 
     #[test]
     fn unprojects_near_plane_center_to_camera() {
-        // A clip-space point at depth 0 (near plane) must unproject to a point
-        // ~znear in front of the camera along its viewing direction. With this
-        // identity-rotation view the camera looks down +Z_world toward the
-        // origin (eye = (3,2,6), target ~ (3,2,0)), so the near-plane center is
-        // at world z ≈ eye_z - znear = 5.9... but Vulkan's [0,1] depth maps the
-        // *near* plane to z_ndc=0 only for -z_view rays; here the view basis
-        // points the camera at +Z so the recovered point lands at z ≈ -6.1
-        // (i.e. znear beyond the eye in the look direction). The exact sign is
-        // convention-dependent; what matters is that x/y match the eye and z
-        // is within znear of it - i.e. the ray origin is sane, not garbage.
-        // This guards against the original symptom (nonsense world points ->
-        // all-white path-traced image).
         let mut proj = [[0.0f32; 4]; 4];
         let inv_tan = 1.0_f32 / (std::f32::consts::FRAC_PI_3 * 0.5).tan();
         proj[0][0] = inv_tan / 1.7777;
@@ -2439,7 +2214,7 @@ mod mat_inverse_tests {
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
-            [-3.0, -2.0, 6.0, 1.0], // eye = (3, 2, 6)
+            [-3.0, -2.0, 6.0, 1.0],
         ];
         let vp = mul(&proj, &view);
         let ivp = mat_inverse(&vp);
@@ -2451,12 +2226,8 @@ mod mat_inverse_tests {
             }
         }
         let p = [wp[0] / wp[3], wp[1] / wp[3], wp[2] / wp[3]];
-        // x/y must equal the eye (ray passes through the pixel column/row of
-        // the eye). A broken inverse would scatter these wildly.
         assert!((p[0] - 3.0).abs() < 1e-3, "x = {}", p[0]);
         assert!((p[1] - 2.0).abs() < 1e-3, "y = {}", p[1]);
-        // z is within znear (0.1) of the eye's z magnitude - i.e. the
-        // near-plane point, not a far-away garbage value.
         assert!((p[2].abs() - 6.0).abs() < 0.2, "z = {}", p[2]);
     }
 }

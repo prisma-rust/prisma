@@ -80,7 +80,6 @@ impl ParticleEmitter {
 }
 
 fn seed_from_entity(entity: Entity) -> u32 {
-    // 0 is illegal xorshift state, here force non-zero.
     entity.id().wrapping_mul(2_654_435_761).max(1)
 }
 
@@ -111,7 +110,6 @@ fn sanitize_vec3(v: [f32; 3]) -> glam::Vec3 {
 }
 
 fn random_unit(rng: &mut u32) -> glam::Vec3 {
-    // Rejection sample: normalize random point in sphere; hit rate ~52%, a few retries enough.
     for _ in 0..4 {
         let x = next_unit(rng) * 2.0 - 1.0;
         let y = next_unit(rng) * 2.0 - 1.0;
@@ -152,8 +150,6 @@ fn spawn_local(
             (offset, random_unit(rng))
         }
         ParticleShape::Cone => {
-            // Cone around emitter local +Y: first pick point on sphere surface, then compress
-            // polar angle to [0, cone] by half-angle.
             let cos_max = cone_degrees.clamp(0.0, 180.0).to_radians().cos();
             let z = 1.0 - next_unit(rng) * (1.0 - cos_max);
             let phi = next_unit(rng) * std::f32::consts::TAU;
@@ -204,8 +200,6 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
         .map(|(entity, _)| entity)
         .collect();
 
-    // #501: collision shapes snapshot once per frame; can still accept this overhead even with no emitter collision
-    // (usually scene has only a few colliders).
     let colliders: Vec<WorldShape> = world
         .query::<Collider>()
         .filter_map(|(entity, collider)| {
@@ -214,12 +208,10 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
                 .map(|transform| WorldShape::new(collider, &transform.0))
         })
         .collect();
-    // #501: terrain height field uses same per-frame snapshot; `TerrainData` written by terrain runtime system.
     let terrains = TerrainShape::from_world(world);
 
     let mut alive = 0usize;
     for entity in entities {
-        // Author component may have just been deleted; copy first to avoid borrow conflict.
         let Some(system) = world.get::<ParticleSystem>(entity).cloned() else {
             continue;
         };
@@ -228,7 +220,6 @@ pub fn particle_system(world: &mut World, dt: f32) -> usize {
             .map(|t| t.0)
             .unwrap_or(glam::Mat4::IDENTITY);
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
-        // Invalid matrix (NaN / zero scale) treated as identity transform, don't shoot particles to infinity.
         let rotation = if rotation.is_finite() {
             rotation.normalize()
         } else {
@@ -374,12 +365,9 @@ fn step(
     terrains: &[TerrainShape],
 ) {
     if !system.playing {
-        // Paused: particles stay in place, emission count not accumulated.
         return;
     }
 
-    // 1. Integrate + recycle.
-    //    Drag handled as "decay drag fraction per second": `(1 - drag)^dt`, frame-rate independent.
     let drag = if system.drag.is_finite() {
         system.drag.clamp(0.0, 1.0)
     } else {
@@ -391,8 +379,6 @@ fn step(
         particle.age += dt;
         particle.velocity += gravity * dt;
         particle.velocity *= damping;
-        // Speed curve only changes **displacement**, not writes back `velocity`: otherwise it would stack with gravity / drag,
-        // turning "wind speed" into permanent acceleration.
         let drift = particle_velocity_offset(system, particle);
         particle.position += (particle.velocity + drift) * dt;
         if system.collision && (!colliders.is_empty() || !terrains.is_empty()) {
@@ -401,11 +387,6 @@ fn step(
     }
     emitter.particles.retain(|p| p.age < p.lifetime);
 
-    // 2. Emission window (duration / looping). `duration == 0` = always emit.
-    //
-    // First emit based on window state at "step start", then advance `cycle_time`: this way emitter with
-    // `duration = 0.2` can fill the final small segment, rather than stopping early on the frame
-    // that happens to hit the endpoint.
     let duration = system.emission_duration();
     let emitting = match duration {
         None => true,
@@ -414,7 +395,6 @@ fn step(
 
     let cap = system.particle_cap();
 
-    // 3. Burst: emit all at once at start of each loop.
     if !emitter.emitted_burst {
         let burst = system.burst.min(cap as u32);
         for _ in 0..burst {
@@ -426,7 +406,6 @@ fn step(
         emitter.emitted_burst = true;
     }
 
-    // 4. Continuous emission.
     if emitting {
         emitter.accumulator += system.rate() * dt;
         while emitter.accumulator >= 1.0 {
@@ -445,7 +424,6 @@ fn step(
         emitter.particles.truncate(cap);
     }
 
-    // 5. Advance emission window: loop back to 0 at endpoint (re-count burst) or stop at endpoint.
     if let Some(duration) = duration {
         emitter.cycle_time += dt;
         if emitter.cycle_time >= duration {

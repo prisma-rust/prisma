@@ -74,15 +74,12 @@ fn out_of_reach_target_straightens_the_chain() {
     let solution = solve_two_bone(upper, middle, end, target, Vec3::Z, 1.0).expect("solvable");
     assert!(solution.clamped);
     assert!((solution.reach - (1.0 - 1e-4)).abs() < 1e-3);
-    // Straight down: the knee sits between hip and foot on the same line.
     assert!(solution.middle_position.x.abs() < 0.02);
     assert!(solution.middle_position.z.abs() < 0.02);
 }
 
 #[test]
 fn too_close_target_folds_the_chain() {
-    // Unequal bones so the folded chain still has a non-trivial minimum reach
-    // (0.6 - 0.4 = 0.2); a target inside that radius cannot be reached.
     let upper = Vec3::new(0.0, 1.0, 0.0);
     let middle = Vec3::new(0.0, 0.4, 0.0);
     let end = Vec3::ZERO;
@@ -107,7 +104,6 @@ fn pole_decides_the_bend_plane() {
 #[test]
 fn pole_parallel_to_the_target_falls_back_to_a_stable_axis() {
     let (upper, middle, end) = chain();
-    // Target straight down, pole straight down as well: no bend plane.
     let target = Vec3::new(0.0, 0.4, 0.0);
     let solution = solve_two_bone(upper, middle, end, target, Vec3::NEG_Y, 1.0).expect("solvable");
     assert!(solution.middle_position.is_finite());
@@ -120,7 +116,6 @@ fn weight_blends_between_the_pose_and_the_target() {
     let target = Vec3::new(0.3, 0.4, 0.2);
     let half = solve_two_bone(upper, middle, end, target, Vec3::Z, 0.5).expect("solvable");
     let full = solve_two_bone(upper, middle, end, target, Vec3::Z, 1.0).expect("solvable");
-    // Half way: the end sits between the original position and the target.
     assert!(half.end_position.distance(end) > 0.01);
     assert!(half.end_position.distance(target) > full.end_position.distance(target));
     assert_ne!(half.upper_rotation, Quat::IDENTITY);
@@ -129,15 +124,10 @@ fn weight_blends_between_the_pose_and_the_target() {
 #[test]
 fn degenerate_input_is_rejected() {
     let (upper, middle, end) = chain();
-    // Zero-length upper bone.
     assert!(solve_two_bone(upper, upper, end, Vec3::ZERO, Vec3::Z, 1.0).is_none());
-    // Zero-length lower bone.
     assert!(solve_two_bone(upper, middle, middle, Vec3::ZERO, Vec3::Z, 1.0).is_none());
-    // Target on top of the upper joint.
     assert!(solve_two_bone(upper, middle, end, upper, Vec3::Z, 1.0).is_none());
-    // Non-finite target / pole.
     assert!(solve_two_bone(upper, middle, end, Vec3::NAN, Vec3::Z, 1.0).is_none());
-    // Zero / negative / NaN weight solves nothing.
     assert!(solve_two_bone(upper, middle, end, Vec3::ZERO, Vec3::Z, 0.0).is_none());
     assert!(solve_two_bone(upper, middle, end, Vec3::ZERO, Vec3::Z, -1.0).is_none());
     assert!(solve_two_bone(upper, middle, end, Vec3::ZERO, Vec3::Z, f32::NAN).is_none());
@@ -160,7 +150,6 @@ fn applying_ik_bends_the_pose_onto_the_target() {
     let reached = end_position(&pose, &skeleton);
     assert!((reached - target).length() < 1e-3);
     assert!((solution.end_position - reached).length() < 1e-6);
-    // The hip itself does not move (only rotations are written).
     let hip = skeleton.world_matrices(&pose)[0]
         .to_scale_rotation_translation()
         .2;

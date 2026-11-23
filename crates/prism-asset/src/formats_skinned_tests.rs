@@ -10,11 +10,11 @@ fn minimal_rskin_header() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(RSKN_MAGIC);
     bytes.push(SKINNED_FORMAT_VERSION);
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // vertex_count
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // index_count
-    bytes.extend_from_slice(&2u32.to_le_bytes()); // joint_count
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // submesh_count
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&3u32.to_le_bytes());
+    bytes.extend_from_slice(&3u32.to_le_bytes());
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes
 }
 
@@ -95,7 +95,6 @@ fn bad_magic_version_and_flags_are_rejected() {
     assert!(decode_rskin(&bytes).is_none(), "joint_count = 0");
 
     let mut bytes = minimal_rskin();
-    // Submesh index range out of bounds.
     let submesh_offset = bytes.len() - 40 - 12;
     bytes[submesh_offset + 8..submesh_offset + 12].copy_from_slice(&99u32.to_le_bytes());
     assert!(decode_rskin(&bytes).is_none());
@@ -115,6 +114,5 @@ fn rskel_and_rani_reject_short_or_bad_input() {
     assert!(decode_rskel(b"RSKL\x01").is_none());
     assert!(decode_ranim(b"RANI").is_none());
     assert!(decode_ranim(&[]).is_none());
-    // Valid magic, unknown version.
     assert!(decode_rskel(b"RSKL\x09\x00\x00\x00\x00\x00\x00\x00\x00\x00").is_none());
 }

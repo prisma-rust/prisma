@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use prism_ecs::World;
 use prism_render::managers::MeshHandle;
@@ -33,7 +29,6 @@ fn entity_with_all_components_yields_draw_item() {
             generation: 1,
         },
     );
-    // No active → defaults to true.
 
     let items = scene_render_system(&world);
     assert_eq!(items.len(), 1);
@@ -168,7 +163,6 @@ fn entity_without_mesh_is_skipped() {
         e,
         LocalToWorld(glam::Mat4::from_cols_array_2d(&[[1.0; 4]; 4])),
     );
-    // No MeshRef, no MaterialRef → no draw  item.
 
     let items = scene_render_system(&world);
     assert!(items.is_empty());
@@ -190,8 +184,6 @@ fn mesh_without_material_still_draws_with_default_material() {
             generation: 1,
         },
     );
-    // No `MaterialRef`: `MeshRenderer { material_path: "" }``
-    // mesh-only entity (editor fixtures are this shape).
 
     let items = scene_render_system(&world);
     assert_eq!(
@@ -359,14 +351,12 @@ fn shadows_only_hides_from_the_main_pass() {
 #[test]
 fn render_state_defaults_to_opaque_and_follows_the_component() {
     let mut world = World::new();
-    // No `MeshRenderer`: default opaque, queue 2000, back-face cull, depth write.
     spawn_renderable(&mut world, None);
     let items = scene_render_system(&world);
     assert_eq!(items[0].state, DrawState::default());
     assert_eq!(items[0].state.cull_mode, CullMode::Back);
     assert!(!items[0].state.blends());
 
-    // Material transparency state must pass through to draw item (`CullMode.Off` / queue / blend).
     let mut world = World::new();
     spawn_renderable(
         &mut world,
@@ -398,15 +388,10 @@ fn two_sided_requests_two_sided_shadow_casting() {
     );
 
     let items = scene_render_system(&world);
-    // `ShadowCastingMode::TwoSided`: both forward and shadow pass disable back-face cull.
     assert!(items[0].cast_shadow);
     assert!(items[0].visible_in_main_pass);
     assert!(items[0].cast_shadow_two_sided);
 }
-
-// ---------------------------------------------------------------------------
-// 2D sprite
-// ---------------------------------------------------------------------------
 
 fn spawn_sprite(
     world: &mut World,
@@ -448,7 +433,6 @@ fn sprite_entity_yields_draw_item_with_world_size() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].texture, 7);
     assert_eq!(items[0].uv_rect, [0.0, 0.0, 1.0, 1.0]);
-    // 32 px / 100 ppu = 0.32 world units, centred pivot → no offset.
     assert!((items[0].model[0][0] - 0.32).abs() < 1e-6);
     assert!((items[0].model[1][1] - 0.32).abs() < 1e-6);
     assert!((items[0].model[3][0]).abs() < 1e-6);
@@ -476,7 +460,6 @@ fn sprite_atlas_uv_rect_and_flip_applied() {
     let items = scene_sprite_system(&world);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].texture, 3);
-    // Since flip_x is true, u0 and u1 are swapped: [0.5, 0.2, 0.1, 0.8]
     assert_eq!(items[0].uv_rect, [0.5, 0.2, 0.1, 0.8]);
 }
 
@@ -489,7 +472,7 @@ fn sprite_pivot_offsets_the_quad() {
         SpriteRenderer {
             sprite_path: "a.png".into(),
             pixels_per_unit: 100.0,
-            pivot: [0.0, 0.0], // bottom-left
+            pivot: [0.0, 0.0],
             ..SpriteRenderer::default()
         },
         [100, 100],
@@ -497,8 +480,6 @@ fn sprite_pivot_offsets_the_quad() {
     );
 
     let items = scene_sprite_system(&world);
-    // Pivot at bottom-left: the quad shifts +X and +Y by half a unit so the
-    // entity origin lands on the sprite's bottom-left corner.
     assert!((items[0].model[3][0] - 0.5).abs() < 1e-6);
     assert!((items[0].model[3][1] - 0.5).abs() < 1e-6);
 }
@@ -525,7 +506,6 @@ fn sprite_sheet_frame_selects_horizontal_uv_slice() {
 
 #[test]
 fn sprite_sheet_rows_select_the_vertical_uv_slice() {
-    // #584: 8x4 atlas (128x64 / each frame 32x32), select row 2, column 2 within row.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -547,7 +527,6 @@ fn sprite_sheet_rows_select_the_vertical_uv_slice() {
 
 #[test]
 fn explicit_sheet_columns_override_the_texture_derivation() {
-    // Texture can split into 4 columns at 32px width, but author declares 2 columns: frame_index=2 should enter row 2.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -569,7 +548,6 @@ fn explicit_sheet_columns_override_the_texture_derivation() {
 
 #[test]
 fn sprite_blend_state_reaches_the_draw_item() {
-    // #610: additive glow = SrcAlpha / One, not default alpha blend.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -592,7 +570,6 @@ fn sprite_blend_state_reaches_the_draw_item() {
 
 #[test]
 fn sprite_clip_rect_reaches_the_draw_item() {
-    // #582: reflection only needs single half-plane "below water surface", clip rect passed straight into instance data.
     let mut world = World::new();
     spawn_sprite(
         &mut world,
@@ -629,7 +606,6 @@ fn sprites_without_clipping_pass_the_disabled_rect() {
     );
     let items = scene_sprite_system(&world);
     assert_eq!(items[0].clip, prism_render::NO_CLIP);
-    // Polyline / particle / tile do not participate in authored clipping, all use NO_CLIP.
     assert!(items.iter().all(|item| item.clip == prism_render::NO_CLIP));
 }
 
@@ -665,7 +641,6 @@ fn sprites_sort_by_layer_order_then_z() {
         ..SpriteRenderer::default()
     };
 
-    // Spawned out of order on purpose.
     let near = spawn_sprite(
         &mut world,
         glam::Vec3::new(0.0, 0.0, 1.0),
@@ -700,7 +675,6 @@ fn sprites_sort_by_layer_order_then_z() {
         .iter()
         .map(|i| i.texture)
         .collect();
-    // layer 0 first (order 0 → z ascending, then order 1), then layer 1.
     assert_eq!(textures, vec![2, 1, 4, 3]);
 }
 
@@ -721,10 +695,6 @@ fn unresolved_sprite_is_skipped() {
 
     assert!(scene_sprite_system(&world).is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// 2D polyline (LineRenderer)
-// ---------------------------------------------------------------------------
 
 fn spawn_line(world: &mut World, points: Vec<[f32; 3]>, layer: i32) -> prism_ecs::Entity {
     let e = world.spawn();
@@ -771,8 +741,6 @@ fn line_renders_two_triangles_per_segment() {
         );
     }
 
-    // Miter joint: two segments share one edge at (10, 0) — the two triangles of segment 0 and
-    // the two triangles of segment 1 meet exactly at two vertices (the two ends of the miter edge).
     let points = |first: usize, last: usize| -> Vec<[f32; 3]> {
         let mut out: Vec<[f32; 3]> = Vec::new();
         for item in &items[first..last] {
@@ -804,8 +772,6 @@ fn line_renders_two_triangles_per_segment() {
 
 #[test]
 fn line_geometry_is_not_double_blended_at_bends() {
-    // V-shaped polyline: two segments each length 10, line width 2. Equal-width miter stroke area exactly equals
-    // `width * centerline_length`; sum of triangle areas exceeding it means overlap at joint (#604).
     let mut world = World::new();
     spawn_line(
         &mut world,
@@ -846,7 +812,6 @@ fn bevel_join_fills_the_corner_gap() {
         .iter()
         .map(|item| triangle_area(&item.corners.expect("line triangle")))
         .sum();
-    // Bevel has one fewer outer-corner triangle than miter, but not so few that only line segments remain: area between 0.9x and 1.05x.
     assert!(
         area > 2.0 * 20.0 * 0.9 && area <= 2.0 * 20.0,
         "bevel area {area}"
@@ -902,10 +867,6 @@ fn degenerate_segment_is_skipped() {
     spawn_line(&mut world, vec![[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]], 0);
     assert!(scene_line_system(&world).is_empty());
 }
-
-// ---------------------------------------------------------------------------
-// Sub-pixel line width (#978)
-// ---------------------------------------------------------------------------
 
 /// Orthographic camera (half height 180) + 360-pixel render height => 1 world unit = 1 render pixel.
 fn ortho_line_scale() -> LineScreenScale {
@@ -986,7 +947,6 @@ fn sub_pixel_line_width_is_widened_to_one_render_pixel() {
         .iter()
         .map(|item| triangle_area(&item.corners.expect("line triangle")))
         .sum();
-    // After widening to 1 pixel: area = 1 x centerline length (magnitude of (10,5)).
     let expected = 125f32.sqrt();
     assert!(
         (area - expected).abs() < 0.05,
@@ -1073,13 +1033,10 @@ fn child_of_an_inactive_parent_is_skipped() {
     crate::scene::systems::hierarchy::active_hierarchy_system(&mut world);
     assert!(scene_render_system(&world).is_empty());
 
-    // Parent re-enabled → child returns.
     world.insert(parent, Active(true));
     crate::scene::systems::hierarchy::active_hierarchy_system(&mut world);
     assert_eq!(scene_render_system(&world).len(), 1);
 }
-
-// ── frustum culling (#491) ──────────────────────────────────────────────
 
 /// Frustum of camera at origin looking down −Z (same construction as `prism-render` culling test).
 fn camera_frustum() -> prism_render::culling::Frustum {
@@ -1122,7 +1079,6 @@ fn unit_bounds() -> prism_render::culling::Aabb {
 #[test]
 fn a_mesh_outside_the_camera_frustum_is_culled() {
     let mut world = World::new();
-    // Two entities share same mesh handle: differ only in model matrix.
     let front = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
@@ -1170,7 +1126,6 @@ fn meshes_without_bounds_are_never_culled() {
 
     let frustum = camera_frustum();
     let mut out = Vec::new();
-    // No `MeshBounds`: procedural mesh / not-yet-parsed mesh submitted as before.
     scene_render_system_into_with_frustum(&world, Some(&frustum), &mut out);
     assert_eq!(out.len(), 1);
 }
@@ -1199,7 +1154,6 @@ fn culling_keeps_the_rest_of_the_extraction_rules() {
 #[test]
 fn a_mesh_visible_only_through_a_second_camera_is_kept() {
     let mut world = World::new();
-    // Main camera looks −Z, second camera looks +Z: each entity seen by exactly one.
     let front_entity = spawn_mesh(
         &mut world,
         glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, -5.0)),
@@ -1334,10 +1288,6 @@ fn no_frustum_matches_the_unculled_extraction() {
     assert_eq!(culled.len(), scene_render_system(&world).len());
 }
 
-// ---------------------------------------------------------------------------
-// 2D lighting (Light2D, #611)
-// ---------------------------------------------------------------------------
-
 fn spawn_light(world: &mut World, light: Light2D, position: glam::Vec3) -> prism_ecs::Entity {
     let entity = world.spawn();
     world.insert(entity, LocalToWorld(glam::Mat4::from_translation(position)));
@@ -1411,7 +1361,6 @@ fn ambient_and_directional_lights_2d_map_to_their_shader_kinds() {
         .iter()
         .find(|light| light.color_kind[3] == prism_render::SPRITE_LIGHT_DIRECTIONAL as f32)
         .expect("directional light");
-    // Direction normalized to unit vector, position does not participate.
     assert_eq!(directional.direction[0..2], [1.0, 0.0]);
     assert_eq!(directional.position_range[0..2], [0.0, 0.0]);
 }
@@ -1431,19 +1380,16 @@ fn disabled_or_inactive_light_2d_entries_are_skipped() {
     world.insert(inactive, prism_scene::components::Active(false));
     assert!(sprite_light_entries(&world).is_empty());
 
-    // Disabled parent likewise hides light.
     world.get_mut::<Light2D>(disabled).unwrap().enabled = true;
     let parent = spawn_light(&mut world, Light2D::default(), glam::Vec3::ZERO);
     world.insert(parent, prism_scene::components::Active(false));
     prism_scene::HierarchyHelper::reparent(&mut world, disabled, Some(parent));
-    // Parent switch is derived value propagated via `ActiveInHierarchy`, only computed at end of simulation step.
     super::super::hierarchy::active_hierarchy_system(&mut world);
     assert!(sprite_light_entries(&world).is_empty());
 }
 
 #[test]
 fn only_3d_lights_leave_the_2d_light_table_empty() {
-    // 3D lighting does not participate in 2D: table empty, sprite remains unlit (and prints one hint).
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(

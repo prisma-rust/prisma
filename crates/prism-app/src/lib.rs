@@ -187,10 +187,6 @@ pub fn app() -> App {
     App::with_config(load_config())
 }
 
-// ===========================================================================
-// Android entry helper
-// ===========================================================================
-
 /// Start app on Android (for user project `android_main` call).
 ///
 /// User project passes a closure constructing [`App`], not already-constructed `App`:
@@ -227,14 +223,9 @@ pub fn run_on_android<F>(
 where
     F: FnOnce() -> App,
 {
-    // The engine is filesystem-based; stage the APK asset tree before App
-    // construction so `assets/scenes.pak` etc. resolve exactly like desktop.
-    // This also injects the hub's launch config, which carries `log_level`.
     let data_dir = android_assets::init_android_assets(&android_app)?;
     inject_launch_config(&data_dir);
 
-    // android_logger reads its level once at init; apply the launch override
-    // first (default: Debug, matching the historical behavior).
     let level = prism_engine::launch_config::LaunchConfig::from_env()
         .log_level_filter()
         .unwrap_or(log::LevelFilter::Debug);
@@ -293,7 +284,6 @@ mod launch_config_reentrancy_tests {
 
         let cfg_path = temp_dir.join("launch_config.json");
 
-        // Initial launch with config A
         std::fs::write(&cfg_path, r#"{"scene":"intro","log_level":"debug"}"#).unwrap();
         inject_launch_config(&temp_dir);
         assert_eq!(
@@ -301,7 +291,6 @@ mod launch_config_reentrancy_tests {
             Ok(r#"{"scene":"intro","log_level":"debug"}"#)
         );
 
-        // Re-entry with updated config B
         std::fs::write(&cfg_path, r#"{"scene":"gameplay","log_level":"warn"}"#).unwrap();
         inject_launch_config(&temp_dir);
         assert_eq!(
@@ -309,7 +298,6 @@ mod launch_config_reentrancy_tests {
             Ok(r#"{"scene":"gameplay","log_level":"warn"}"#)
         );
 
-        // Re-entry when launch config is deleted
         std::fs::remove_file(&cfg_path).unwrap();
         inject_launch_config(&temp_dir);
         assert!(std::env::var(prism_engine::launch_config::ENV_KEY).is_err());

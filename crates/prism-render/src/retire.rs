@@ -112,8 +112,6 @@ impl RetireQueue {
     /// Park `resource` until the frame slot that is recording now comes around
     /// again. Call from `execute` / render recording, never from teardown.
     pub(crate) fn retire(&mut self, frame_index: u32, resource: RetiredResource) {
-        // The current frame's slot is the one whose fence guards this
-        // submission, so the object has to outlive exactly that slot.
         let slot = frame_index as usize % FRAMES_IN_FLIGHT;
         self.slots[slot].push(resource);
     }

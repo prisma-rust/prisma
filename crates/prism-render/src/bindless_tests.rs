@@ -25,22 +25,14 @@ fn sampler_type_indices_are_sequential() {
 /// shape-only test of the slot-allocation contract.
 #[test]
 fn register_with_handle_advances_next_pointer() {
-    // Mimic the relevant fields to exercise the bookkeeping logic.
-    // without touching Vulkan
     struct Impl {
         next: u32,
     }
-    // Equivalent of the public method writes a slot and bumps next.
-    // past it.
     let mut s = Impl { next: 0 };
-    // Place slot 0 (the fallback).
     s.next = 1;
-    // The next `register` call must use slot 1, not 0.
     let next_slot = s.next;
     assert_eq!(next_slot, 1, "register_with_handle must advance next");
 }
-
-// --- SlotAllocator (pure slot bookkeeping, no Vulkan device needed) ---
 
 #[test]
 fn slot_allocator_bumps_then_reuses_released_slots_lifo() {
@@ -50,7 +42,6 @@ fn slot_allocator_bumps_then_reuses_released_slots_lifo() {
     assert_eq!(slots.claim().unwrap(), 2);
     assert_eq!(slots.live_len(), 3);
 
-    // Released slots are reused before the bump pointer advances.
     assert!(slots.release(1));
     assert_eq!(slots.live_len(), 2);
     assert_eq!(slots.claim().unwrap(), 1);
@@ -59,7 +50,6 @@ fn slot_allocator_bumps_then_reuses_released_slots_lifo() {
 
     assert!(slots.release(2));
     assert!(slots.release(0));
-    // LIFO: the most recently released slot comes back first.
     assert_eq!(slots.claim().unwrap(), 0);
     assert_eq!(slots.claim().unwrap(), 2);
     assert_eq!(slots.claim().unwrap(), 3);
@@ -72,7 +62,6 @@ fn slot_allocator_reports_released_slots_as_unused() {
     assert!(slots.is_used(slot));
     assert!(slots.release(slot));
     assert!(!slots.is_used(slot));
-    // Never-claimed slots are unused too.
     assert!(!slots.is_used(1));
     assert!(!slots.is_used(99));
 }
@@ -84,7 +73,6 @@ fn slot_allocator_rejects_double_release_and_unclaimed_release() {
     let slot = slots.claim().unwrap();
     assert!(slots.release(slot));
     assert!(!slots.release(slot), "double release must be rejected");
-    // A rejected release must not widen the pool: the slot is handed out once.
     assert_eq!(slots.claim().unwrap(), slot);
     assert_eq!(slots.free_slot_count(), 0);
 }
@@ -94,7 +82,6 @@ fn slot_allocator_claim_at_advances_high_water_mark() {
     let mut slots = SlotAllocator::new(8);
     assert_eq!(slots.claim_at(3).unwrap(), 3);
     assert_eq!(slots.live_len(), 1);
-    // Slots below the high-water mark stay bumpable-to, not reusable.
     assert_eq!(slots.claim().unwrap(), 4);
     assert!(slots.is_used(3));
     assert!(!slots.is_used(0));
@@ -126,7 +113,6 @@ fn slot_allocator_claim_fails_when_capacity_is_exhausted() {
     assert_eq!(slots.claim().unwrap(), 1);
     let err = slots.claim().unwrap_err().to_string();
     assert!(err.contains("table full"), "unexpected error: {err}");
-    // Freeing one slot makes room again.
     assert!(slots.release(0));
     assert_eq!(slots.claim().unwrap(), 0);
     assert!(slots.claim().is_err());

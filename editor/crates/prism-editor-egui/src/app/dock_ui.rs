@@ -139,7 +139,6 @@ pub(super) fn dock_tab(
             closed = true;
         }
         if ui.is_rect_visible(rect) {
-            // Paint background before close hover indicator by deferring close glyph below.
         }
         let _ = close_res;
     }
@@ -166,7 +165,6 @@ pub(super) fn dock_tab(
             theme::border(colors),
         );
         if active {
-            // Top 2px accent bar matches UE5 / Unity 6 active tab chrome.
             paintable.rect_filled(
                 Rect::from_min_max(
                     egui::pos2(rect.left(), rect.top()),

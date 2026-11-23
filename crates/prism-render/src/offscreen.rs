@@ -72,7 +72,6 @@ impl OffscreenTarget {
         let pixel_size = 4u32;
         let buffer_size = (extent.width * extent.height * pixel_size) as u64;
 
-        // ---- device-local image ----
         let image = unsafe {
             context.device.create_image(
                 &vk::ImageCreateInfo::default()
@@ -120,7 +119,6 @@ impl OffscreenTarget {
         }
         .context("create offscreen image view")?;
 
-        // ---- host-visible staging buffer ----
         let buffer = unsafe {
             context.device.create_buffer(
                 &vk::BufferCreateInfo::default()
@@ -152,7 +150,6 @@ impl OffscreenTarget {
         unsafe { context.device.bind_buffer_memory(buffer, buffer_memory, 0) }
             .context("bind readback buffer memory")?;
 
-        // ---- dedicated command pool ----
         let pool_info = vk::CommandPoolCreateInfo::default()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(context.graphics_queue_family);
@@ -182,7 +179,6 @@ impl OffscreenTarget {
     ) -> anyhow::Result<()> {
         let device = &context.device;
 
-        // ---- one-shot command buffer ----
         let alloc_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
@@ -195,7 +191,6 @@ impl OffscreenTarget {
         unsafe { device.begin_command_buffer(cmd, &begin_info) }
             .context("begin offscreen cmd buffer")?;
 
-        // UNDEFINED → TRANSFER_DST_OPTIMAL
         image_barrier(
             device,
             cmd,
@@ -208,7 +203,6 @@ impl OffscreenTarget {
             vk::PipelineStageFlags::TRANSFER,
         );
 
-        // Clear
         let clear_color = vk::ClearColorValue { float32: color };
         let range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -227,7 +221,6 @@ impl OffscreenTarget {
             );
         }
 
-        // TRANSFER_DST_OPTIMAL → TRANSFER_SRC_OPTIMAL (for copy)
         image_barrier(
             device,
             cmd,
@@ -240,7 +233,6 @@ impl OffscreenTarget {
             vk::PipelineStageFlags::TRANSFER,
         );
 
-        // Copy image → buffer
         let copy = vk::BufferImageCopy::default()
             .buffer_offset(0)
             .buffer_row_length(0)
@@ -269,7 +261,6 @@ impl OffscreenTarget {
 
         unsafe { device.end_command_buffer(cmd) }.context("end offscreen cmd buffer")?;
 
-        // Submit + fence
         let fence = unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }
             .context("create offscreen fence")?;
         let submit_cmds = [cmd];
@@ -279,7 +270,6 @@ impl OffscreenTarget {
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
             .context("wait for offscreen fence")?;
 
-        // Cleanup per-submit objects
         unsafe {
             device.destroy_fence(fence, None);
             device.free_command_buffers(self.command_pool, &[cmd]);
@@ -592,10 +582,6 @@ impl OffscreenTarget {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
 fn allocate_device_local_memory(
     context: &VulkanContext,

@@ -111,10 +111,8 @@ fn save_fills_and_refreshes_guids_from_sidecars() {
     assert_eq!(changed, 1);
     let renderer = &doc["entities"][0]["components"]["prism_engine::scene::MeshRenderer"];
     assert_eq!(renderer["mesh_guid"], MESH_GUID);
-    // Unknown path: no GUID to add.
     let audio = &doc["entities"][0]["components"]["prism_engine::scene::AudioSource"];
     assert!(audio.get("sound_guid").is_none());
-    // Invalid GUID with an unresolvable path is left alone rather than guessed.
     let skybox = &doc["entities"][0]["components"]["prism_engine::scene::Skybox"];
     assert_eq!(skybox["hdr_guid"], "ffffffffffffffffffffffffffffffff");
 }

@@ -28,8 +28,6 @@ pub(super) fn engine_touch_phase(
 pub(super) fn apply_key_event(input: &mut InputManager, key: Key, pressed: bool) -> bool {
     use prism_engine::input::ElementState;
 
-    // `Other(u32::MAX)` = platform gave no physical key (winit's `Unidentified`).
-    // Old implementation directly discarded such events, keep consistent here.
     if key == Key::Other(u32::MAX) {
         return false;
     }
@@ -131,10 +129,7 @@ pub(super) fn engine_key_from_native(key: Key) -> prism_engine::input::KeyCode {
         Key::F10 => Eng::F10,
         Key::F11 => Eng::F11,
         Key::F12 => Eng::F12,
-        // Letter key enters engine still as "raw keycode" payload, but takes ASCII value from `Key::Letter`,
-        // backend-independent (both backends give same KeyCode::Other).
         Key::Letter(byte) => Eng::Other(u32::from(byte)),
-        // Unmapped keys keep raw virtual keycode, do not drop key.
         Key::Other(_) => Eng::Other(key.to_vk()),
     }
 }

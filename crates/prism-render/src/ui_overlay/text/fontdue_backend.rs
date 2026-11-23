@@ -21,23 +21,19 @@ use super::{GlyphBitmap, LineMetrics, TextRasterizer};
 /// Prefer fonts with CJK glyphs — intro title is Chinese. If all fail, falls back to "only registered project
 /// fonts usable", with log::warn.
 const FONT_CANDIDATES: &[(&str, u32)] = &[
-    // Windows
-    ("C:/Windows/Fonts/msyh.ttc", 0), // Microsoft YaHei (includes Chinese)
-    ("C:/Windows/Fonts/simhei.ttf", 0), // SimHei (includes Chinese)
+    ("C:/Windows/Fonts/msyh.ttc", 0),
+    ("C:/Windows/Fonts/simhei.ttf", 0),
     ("C:/Windows/Fonts/arial.ttf", 0),
-    // Android
     ("/system/fonts/NotoSansCJK-Regular.ttc", 0),
     ("/system/fonts/NotoSansCJKsc-Regular.otf", 0),
     ("/system/fonts/DroidSansFallback.ttf", 0),
     ("/system/fonts/Roboto-Regular.ttf", 0),
-    // Linux
     ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
     (
         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
         0,
     ),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 0),
-    // macOS
     ("/System/Library/Fonts/PingFang.ttc", 0),
     ("/System/Library/Fonts/Helvetica.ttc", 0),
 ];
@@ -92,8 +88,6 @@ fn load_system_font() -> Option<Font> {
                 log::info!("ui overlay: loaded font {path} (PRISMA_UI_FONT)");
                 return Some(font);
             }
-                        // Explicit font unusable → still search candidates, but must say so clearly, otherwise
-                        // "font not swapped" and "font never loaded" look identical in logs.
             None => log::warn!(
                 "ui overlay: PRISMA_UI_FONT={path} could not be loaded — falling back to system fonts"
             ),
@@ -134,8 +128,6 @@ impl FontdueRasterizer {
         })
         .map(|(_, f)| f);
         if default.is_none() {
-            // Do not just give up: project can register bundled font at runtime (#583). But if no font registered in
-            // whole lifetime, still no text drawn — must keep this line of reasoning.
             log::warn!(
                 "ui overlay: no usable system UI font (tried {} candidates) — text falls back to \
                  project fonts registered via `assets/fonts/`; set PRISMA_UI_FONT to override",
@@ -186,14 +178,12 @@ impl TextRasterizer for FontdueRasterizer {
         let metrics = font.horizontal_line_metrics(font_size)?;
         Some(LineMetrics {
             ascent: metrics.ascent,
-            // fontdue descent is negative number (downward negative), here normalized to "positive distance below baseline".
             descent: -metrics.descent,
             line_height: metrics.new_line_size,
         })
     }
 
     fn rasterize(&mut self, font: Option<&str>, ch: char, font_size: f32) -> Option<GlyphBitmap> {
-        // First parse font then mutably borrow rasterize: `resolve` read-only.
         let found = self.resolve_for_char(font, ch)?;
         let (metrics, pixels) = found.rasterize(ch, font_size);
         Some(GlyphBitmap {
@@ -211,7 +201,6 @@ impl TextRasterizer for FontdueRasterizer {
             Ok(font) => {
                 log::info!("ui overlay: registered project font {name}");
                 self.fonts.insert(name.to_string(), font);
-                // Could previously warn "not registered", now usable so do not report again.
                 self.reported_missing.borrow_mut().remove(name);
                 true
             }
@@ -253,7 +242,6 @@ mod tests {
         };
         assert!(!backend.register_font("assets/fonts/broken.ttf", vec![0, 1, 2, 3]));
         assert!(backend.fonts.is_empty());
-        // Unregistered font + no default font = cannot get glyph, not panic.
         assert!(backend
             .rasterize(Some("assets/fonts/broken.ttf"), 'a', 16.0)
             .is_none());
@@ -264,8 +252,6 @@ mod tests {
 
     #[test]
     fn a_registered_font_replaces_the_previous_bytes() {
-        // Use TTF actually present in repo to validate register path (skip if missing, not tying test to
-        // some system font).
         let Some(bytes) = FONT_CANDIDATES
             .iter()
             .find_map(|(path, _)| std::fs::read(path).ok())
@@ -285,7 +271,6 @@ mod tests {
         assert!(backend
             .rasterize(Some("assets/fonts/hud.ttf"), 'A', 24.0)
             .is_some());
-        // Re-register same path: directly overwrite, no error.
         assert!(backend.register_font("assets/fonts/hud.ttf", bytes));
     }
 }

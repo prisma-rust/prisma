@@ -45,7 +45,6 @@ fn layers_blend_on_top_of_the_accumulated_result() {
     stack.push(BlendLayer::new(pose(&[20.0, 20.0])).with_weight(0.5));
     let mut out = pose(&[]);
     stack.evaluate_into(&mut out);
-    // 0 -> 5 (first 50%) -> 12.5 (second 50% of 5..20)
     assert_eq!(x(&out, 0), 12.5);
     assert_eq!(x(&out, 1), 12.5);
 }
@@ -72,7 +71,6 @@ fn additive_layers_apply_only_the_delta_on_masked_joints() {
     );
     let mut out = pose(&[]);
     stack.evaluate_into(&mut out);
-    // joint 0: 1 + (2 - 0) = 3; joint 1 is masked out.
     assert_eq!(x(&out, 0), 3.0);
     assert_eq!(x(&out, 1), 1.0);
 }
@@ -127,7 +125,6 @@ fn invalid_weights_and_masks_are_clamped_or_ignored() {
     stack.push(BlendLayer::new(pose(&[30.0])).with_weight(5.0));
     let mut out = pose(&[]);
     stack.evaluate_into(&mut out);
-    // The first two are dropped; the last is clamped to 1.
     assert_eq!(x(&out, 0), 30.0);
 }
 
@@ -152,9 +149,7 @@ fn from_names_builds_a_full_length_mask() {
     assert_eq!(mask.weights(), &[0.0, 1.0]);
     assert_eq!(mask.weight(0), 0.0);
     assert_eq!(mask.weight(1), 1.0);
-    // Missing indices default to zero for a partial mask.
     assert_eq!(mask.weight(2), 0.0);
-    // The empty mask means "all bones".
     assert_eq!(BoneMask::all().weight(99), 1.0);
 }
 

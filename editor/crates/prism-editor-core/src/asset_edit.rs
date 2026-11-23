@@ -95,8 +95,6 @@ impl AssetEditHistory {
             return;
         }
         self.redo.clear();
-        // Only single-file edits participate in drag coalescing; a multi-file transaction,
-        // once committed, is an independent step.
         if allow_coalesce && edits.len() == 1 {
             if let Some(last) = self.undo.last_mut() {
                 if last.edits.len() == 1 {

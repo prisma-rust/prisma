@@ -151,7 +151,6 @@ fn depth_ordered_cameras_composite_and_honour_clear_flags() {
         return;
     };
 
-    // Camera 1 is `Nothing`: it must not clear the red background.
     let red = camera([1.0, 0.0, 0.0, 1.0], (true, true));
     let nothing = camera([0.0, 0.0, 1.0, 1.0], (false, false));
     let pixel = render(&mut renderer, &[red, nothing]);
@@ -160,7 +159,6 @@ fn depth_ordered_cameras_composite_and_honour_clear_flags() {
         "`Nothing` must preserve the previous camera's colour, got {pixel:?}"
     );
 
-    // Both cameras clear colour: the later (higher depth) one wins.
     let green = camera([0.0, 1.0, 0.0, 1.0], (true, true));
     let pixel = render(&mut renderer, &[red, green]);
     assert!(
@@ -174,7 +172,6 @@ fn a_single_implicit_camera_still_renders_the_legacy_clear_colour() {
     let Some(mut renderer) = try_create() else {
         return;
     };
-    // Empty camera list = legacy path: `clear_color` from the frame input.
     let pixel = render(&mut renderer, &[]);
     let expected = [128u8, 128, 128];
     for (actual, expected) in pixel.iter().zip(expected.iter()) {

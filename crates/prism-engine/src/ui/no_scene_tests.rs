@@ -21,10 +21,8 @@ fn unknown_window_size_draws_nothing() {
 fn pattern_covers_the_window_and_text_sits_on_top() {
     let list = drawn(1280.0, 720.0, 0.0);
     let quads: Vec<_> = list.quads().collect();
-    // A 1280 pt window with a 48 pt cell needs at least 26 x 15 cells.
     assert!(quads.len() > 26 * 15, "only {} quads", quads.len());
 
-    // Every quad is inside the extended grid and has a positive size.
     for quad in &quads {
         assert!(quad.rect[2] > 0.0 && quad.rect[3] > 0.0);
         assert!(quad.rect[0] < 1280.0 && quad.rect[1] < 720.0);
@@ -33,13 +31,11 @@ fn pattern_covers_the_window_and_text_sits_on_top() {
     let texts: Vec<_> = list.texts().collect();
     assert_eq!(texts.len(), 5);
     assert!(texts[0].content.contains("NO SCENE"));
-    // The hint must be copy-pasteable, not a bare "run build-scenes".
     let hint: Vec<&str> = texts.iter().map(|text| text.content.as_str()).collect();
     assert!(hint.iter().any(|line| line.starts_with("cd ")));
     assert!(hint
         .iter()
         .any(|line| line.contains("prism-build-pipeline") && line.contains("build-scenes")));
-    // Text is centred on the window and drawn above the pattern.
     let top = &texts[0];
     assert!((top.rect[0] + top.rect[2] * 0.5 - 640.0).abs() < 1.0);
     assert!(quads.iter().all(|quad| quad.layer < top.layer));
@@ -60,7 +56,6 @@ fn pattern_scrolls_with_time() {
 
 #[test]
 fn one_full_period_is_seamless() {
-    // The scroll wraps at two cells, so a whole period looks identical again.
     let start = drawn(1280.0, 720.0, 0.0);
     let period = super::cell_size(1280.0) * 2.0 / super::SCROLL_POINTS_PER_SEC;
     let wrapped = drawn(1280.0, 720.0, period);

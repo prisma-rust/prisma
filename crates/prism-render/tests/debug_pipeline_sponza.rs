@@ -59,7 +59,6 @@ fn camera_view_proj(
                 .sqrt();
         [look_dir[0] / len, look_dir[1] / len, look_dir[2] / len]
     };
-    // right = fwd x up
     let right = {
         let rx = fwd[1] * up[2] - fwd[2] * up[1];
         let ry = fwd[2] * up[0] - fwd[0] * up[2];
@@ -67,15 +66,12 @@ fn camera_view_proj(
         let len = (rx * rx + ry * ry + rz * rz).sqrt();
         [rx / len, ry / len, rz / len]
     };
-    // true_up = right x fwd
     let true_up = [
         right[1] * fwd[2] - right[2] * fwd[1],
         right[2] * fwd[0] - right[0] * fwd[2],
         right[0] * fwd[1] - right[1] * fwd[0],
     ];
 
-    // In engine convention, camera looks down -Z:
-    // So camera Z axis = -fwd
     let view = [
         [right[0], true_up[0], -fwd[0], 0.0],
         [right[1], true_up[1], -fwd[1], 0.0],
@@ -95,7 +91,7 @@ fn camera_view_proj(
 
     let mut proj = [[0.0f32; 4]; 4];
     proj[0][0] = f / aspect;
-    proj[1][1] = -f; // Vulkan NDC +Y down
+    proj[1][1] = -f;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = near * far / (near - far);
@@ -104,7 +100,6 @@ fn camera_view_proj(
 }
 
 fn calibration_quad() -> MeshUploadInput {
-    // Quad at X = -5.0, Y in [0, 4], Z in [-2, 2], facing toward -X (normal = [-1, 0, 0])
     let p0 = [-5.0, 0.0, -2.0];
     let p1 = [-5.0, 4.0, -2.0];
     let p2 = [-5.0, 4.0, 2.0];
@@ -124,8 +119,6 @@ fn calibration_quad() -> MeshUploadInput {
 fn load_sponza_primitives(
     path: &Path,
 ) -> anyhow::Result<Vec<(MeshUploadInput, MaterialUploadInput)>> {
-    // Graph resources not fully in library, but this inside only uses geometry and material factors (graph slot left empty),
-    // so bypass `gltf::import` graph decode, read document + buffer directly.
     let bytes = std::fs::read(path)?;
     let gltf = gltf::Gltf::from_slice(&bytes)?;
     let base = path.parent().unwrap_or_else(|| Path::new("."));
@@ -245,7 +238,6 @@ fn test_sponza_pipeline_debug_passes() {
     println!("Device: {}\n", adapter);
 
     let aspect = WIDTH as f32 / HEIGHT as f32;
-    // Camera at [-10.0, 2.0, 0.0] looking along +X towards Sponza colonnade
     let eye = [-10.0, 2.0, 0.0];
     let (view_proj, view) = camera_view_proj(eye, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], aspect);
 
@@ -269,9 +261,6 @@ fn test_sponza_pipeline_debug_passes() {
         ..Default::default()
     };
 
-    // -----------------------------------------------------------------------
-    // Pass 1: Empty Scene (Clear to Dark Slate Blue)
-    // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::Raster;
     renderer.settings_mut().raster_gi = RasterGiMode::BakedProbe;
     renderer.settings_mut().pt_gi = PtGiMode::Off;
@@ -308,9 +297,6 @@ fn test_sponza_pipeline_debug_passes() {
     save_rgba_png(&p1_path, &pixels, WIDTH, HEIGHT).expect("save step 1");
     println!("Step 1 (Clear): Saved to {}", p1_path.display());
 
-    // -----------------------------------------------------------------------
-    // Pass 2: Calibration Quad (Red quad directly in front of camera)
-    // -----------------------------------------------------------------------
     let quad_mesh = renderer
         .register_mesh(&calibration_quad())
         .expect("register quad");
@@ -396,10 +382,6 @@ fn test_sponza_pipeline_debug_passes() {
     save_rgba_png(&p2_path, &pixels, WIDTH, HEIGHT).expect("save step 2");
     println!("Step 2 (Calibration Quad): Saved to {}", p2_path.display());
 
-    // -----------------------------------------------------------------------
-    // Pass 3: Real Crytek Sponza Meshes Loading
-    // -----------------------------------------------------------------------
-    // Resources submitted with repository, parsed by crate position, avoid hardcoding absolute path of a specific machine.
     let sponza_gltf_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../projects/demos/sponza/assets/models/sponza/Sponza.gltf");
     let sponza_prims = load_sponza_primitives(&sponza_gltf_path).expect("load sponza gltf");
@@ -410,7 +392,6 @@ fn test_sponza_pipeline_debug_passes() {
 
     let mut sponza_draws = Vec::new();
 
-    // Scale 0.01 model matrix (transforms cm to meters)
     let sponza_model = [
         [0.01, 0.0, 0.0, 0.0],
         [0.0, 0.01, 0.0, 0.0],
@@ -449,9 +430,6 @@ fn test_sponza_pipeline_debug_passes() {
     renderer.flush_materials().expect("flush sponza materials");
     println!("Registered {} Sponza DrawItems", sponza_draws.len());
 
-    // -----------------------------------------------------------------------
-    // Pass 4: Sponza Forward Raster (Solid Opaque)
-    // -----------------------------------------------------------------------
     renderer
         .render(
             &sponza_draws,
@@ -485,9 +463,6 @@ fn test_sponza_pipeline_debug_passes() {
     save_rgba_png(&p4_path, &pixels, WIDTH, HEIGHT).expect("save step 4");
     println!("Step 4 (Sponza Raster): Saved to {}", p4_path.display());
 
-    // -----------------------------------------------------------------------
-    // Pass 5: Sponza Raster Wireframe
-    // -----------------------------------------------------------------------
     renderer
         .render(
             &sponza_draws,
@@ -508,7 +483,7 @@ fn test_sponza_pipeline_debug_passes() {
             1.0,
             &[],
             PostGrade::default(),
-            true, // wireframe = true
+            true,
             false,
             &[],
         )
@@ -521,9 +496,6 @@ fn test_sponza_pipeline_debug_passes() {
     save_rgba_png(&p5_path, &pixels, WIDTH, HEIGHT).expect("save step 5");
     println!("Step 5 (Sponza Wireframe): Saved to {}", p5_path.display());
 
-    // -----------------------------------------------------------------------
-    // Pass 6: Sponza Depth Buffer (debug_rt = 1)
-    // -----------------------------------------------------------------------
     renderer
         .render(
             &sponza_draws,
@@ -532,7 +504,7 @@ fn test_sponza_pipeline_debug_passes() {
             [[0.0; 4]; 4],
             0,
             1,
-            1, // debug_rt = 1 (Depth)
+            1,
             0,
             view_proj[2][2],
             view_proj[3][2],
@@ -560,9 +532,6 @@ fn test_sponza_pipeline_debug_passes() {
         p6_path.display()
     );
 
-    // -----------------------------------------------------------------------
-    // Pass 7: Sponza View-Space Normals (debug_rt = 2)
-    // -----------------------------------------------------------------------
     renderer
         .render(
             &sponza_draws,
@@ -571,7 +540,7 @@ fn test_sponza_pipeline_debug_passes() {
             [[0.0; 4]; 4],
             0,
             1,
-            2, // debug_rt = 2 (Normals)
+            2,
             0,
             view_proj[2][2],
             view_proj[3][2],
@@ -599,9 +568,6 @@ fn test_sponza_pipeline_debug_passes() {
         p7_path.display()
     );
 
-    // -----------------------------------------------------------------------
-    // Pass 8: Sponza Path Tracing (Direct Lighting, 4 iterations)
-    // -----------------------------------------------------------------------
     println!(
         "Building Path Tracing Scene for Sponza ({} instances)...",
         sponza_draws.len()
@@ -655,9 +621,6 @@ fn test_sponza_pipeline_debug_passes() {
     save_rgba_png(&p8_path, &pixels, WIDTH, HEIGHT).expect("save step 8");
     println!("Step 8 (Sponza PT Direct): Saved to {}", p8_path.display());
 
-    // -----------------------------------------------------------------------
-    // Pass 9: Sponza Path Tracing with RTXGI SHARC (32 iterations)
-    // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
     renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().pt_max_bounces = 4;

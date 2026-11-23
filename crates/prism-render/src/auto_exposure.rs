@@ -119,8 +119,6 @@ impl AutoExposurePass {
         let device = &context.device;
         let buffers = MeteringBuffers::new(context)?;
 
-        // `.Load()` needs no filtering, but the SPIR-V still declares the image
-        // as a sampled image, so a sampler has to be bound.
         let sampler = unsafe {
             device.create_sampler(
                 &vk::SamplerCreateInfo::default()
@@ -191,8 +189,6 @@ impl AutoExposurePass {
         }
         .context("AutoExposurePass: allocate ds")?;
 
-        // The histogram and luminance buffers are frame-independent, so they
-        // are written once here and only the source image is rewritten per frame.
         let histogram_info = [vk::DescriptorBufferInfo {
             buffer: buffers.histogram,
             offset: 0,
@@ -288,10 +284,6 @@ impl AutoExposurePass {
         let device = &ctx.device;
         let set = self.sets[(ctx.image_index as usize) % self.sets.len()];
 
-        // `AutoExposurePass` descriptor bindings do not carry UPDATE_AFTER_BIND
-        // (the metering inputs are stable), so a write to a set the GPU may
-        // still be reading is a validation error. The source view changes only
-        // on resize or a render-mode switch, so skip the write otherwise.
         let slot = (ctx.image_index as usize) % self.sets.len();
         if self.bound_views[slot] != view || self.bound_layouts[slot] != layout {
             self.bound_views[slot] = view;
@@ -327,15 +319,11 @@ impl AutoExposurePass {
             adaptation_speed_up: ADAPTATION_SPEED_UP,
             adaptation_speed_down: ADAPTATION_SPEED_DOWN,
             frame_time,
-            // Frame 0 has no history to adapt from, so snap to the metered
-            // value instead of easing in from an arbitrary exposure.
             reset_adaptation: u32::from(frame_time == 0.0),
             exposure_scale: ctx.frame.exposure,
         };
 
         unsafe {
-            // Clearing the histogram is a transfer operation; the dispatch that
-            // follows accumulates into it.
             device.cmd_fill_buffer(ctx.cmd, self.buffers.histogram, 0, vk::WHOLE_SIZE, 0);
 
             let to_compute = vk::MemoryBarrier::default()
@@ -378,8 +366,6 @@ impl AutoExposurePass {
                 1,
             );
 
-            // The adaptation reads the histogram the histogram dispatch just
-            // filled, and writes the luminance buffer PostPass samples.
             let hist_to_adapt = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
@@ -415,7 +401,6 @@ impl AutoExposurePass {
             );
             device.cmd_dispatch(ctx.cmd, 1, 1, 1);
 
-            // Hand the result to PostPass, which reads it in the fragment stage.
             let to_fragment = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ);
@@ -450,9 +435,6 @@ impl RenderPassNode for AutoExposurePass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Declare every candidate HDR input so the graph inserts the barrier
-        // into SHADER_READ_ONLY_OPTIMAL whichever one `execute` meters. The
-        // same three handles `PostPass` reads, so the layouts are cache hits.
         for handle in [
             FORWARD_COLOR_H,
             crate::render_graph::VOXEL_COLOR_H,
@@ -475,9 +457,6 @@ impl RenderPassNode for AutoExposurePass {
         ctx: &RenderContext,
         resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
-        // Metering is opt-in. Off writes a zero adapted luminance, which the
-        // tonemapper's `auto_exposure()` reads as "no metering" and turns into
-        // a gain of 1.0, so the image matches the pre-auto-exposure pipeline.
         if !ctx.settings.auto_exposure {
             unsafe {
                 ctx.device
@@ -498,10 +477,6 @@ impl RenderPassNode for AutoExposurePass {
             return Ok(());
         }
 
-        // Meter whatever the tonemapper is about to display. Mirror
-        // `PostPass`'s selection so the metered image and the displayed image
-        // are always the same one, including the temporal resolve that now also
-        // runs on the path-traced image.
         let is_pt = ctx.frame.render_mode == crate::render_graph::RenderMode::PathTrace;
         let dlss_view = if ctx.settings.dlss_mode != crate::render_graph::DlssMode::Off
             && ctx.frame.debug_rt == 0
@@ -559,8 +534,6 @@ impl RenderPassNode for AutoExposurePass {
             )
         };
         let Some(view) = resources.published_view(handle) else {
-            // Nothing rendered yet; leave the previous adapted luminance alone
-            // so the tone curve does not jump on a skipped frame.
             return Ok(());
         };
 
@@ -584,8 +557,6 @@ mod tests {
 
     #[test]
     fn push_layout_matches_reflection() {
-        // The struct is generated from the Slang reflection, so this only
-        // guards against a stale binding file after a shader edit.
         assert_eq!(
             std::mem::size_of::<bindings::AutoExposurePush>() as u32,
             bindings::PUSH_CONSTANT_SIZE
@@ -595,16 +566,11 @@ mod tests {
     #[test]
     fn histogram_buffer_holds_every_bin() {
         assert_eq!(HISTOGRAM_BINS, 256);
-        // One u32 per bin, which is what `MeteringBuffers::new` allocates.
         assert_eq!(HISTOGRAM_BINS as vk::DeviceSize * 4, 1024);
     }
 
     #[test]
     fn percentiles_are_ordered() {
-        // `exposureAdaptation` assumes low < high; inverting them makes the
-        // weighted sum zero and freezes the exposure at its previous value.
-        // These are compile-time constants, so the check is a const block
-        // rather than a runtime assertion clippy would flag as constant.
         const _: () = assert!(LOW_PERCENTILE < HIGH_PERCENTILE);
         const _: () = assert!(LOW_PERCENTILE >= 0.0 && LOW_PERCENTILE <= 1.0);
         const _: () = assert!(HIGH_PERCENTILE >= 0.0 && HIGH_PERCENTILE <= 1.0);

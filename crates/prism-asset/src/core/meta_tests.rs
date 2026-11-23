@@ -55,7 +55,6 @@ fn guid_index_scans_sidecars_and_ignores_deleted_assets() {
     let wood_guid = "22222222222222222222222222222222";
     write_meta(root, "models/box.gltf", box_guid, "GltfImporter");
     write_meta(root, "textures/wood.png", wood_guid, "TextureImporter");
-    // Sidecar without the asset file: deleted asset, must not resolve.
     write_meta(
         root,
         "models/gone.gltf",

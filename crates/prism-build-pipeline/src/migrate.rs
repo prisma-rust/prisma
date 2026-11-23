@@ -144,7 +144,6 @@ mod tests {
         assert_eq!(document.get("app", "company"), Some("Acme"));
         assert_eq!(document.get_u32("window", "width"), Some(1280));
         assert_eq!(document.get_bool("window", "vsync"), Some(false));
-        // Old file kept, user can delete after confirming.
         assert!(assets.join("settings.toml").is_file());
         std::fs::remove_dir_all(&assets).ok();
     }
@@ -165,7 +164,6 @@ mod tests {
         assert!(text.contains("\"intro\""), "{text}");
         assert!(text.contains("\"enabled\": false"), "{text}");
 
-        // Second time won't write again (new file already exists).
         let again = migrate_legacy_config(&assets).unwrap();
         assert!(again.is_empty(), "{again:?}");
         std::fs::remove_dir_all(&assets).ok();
@@ -180,7 +178,6 @@ mod tests {
         )
         .unwrap();
 
-        // Old project: only gave default new path.
         let resolved = resolve_scene_manifest(&assets.join("scenes.json")).unwrap();
         assert_eq!(resolved, assets.join("scenes.json"));
         assert!(resolved.is_file());

@@ -96,8 +96,6 @@ pub fn rename_asset(project_root: &Path, from: &str, to: &str) -> Result<AssetMu
     let plan = plan_rewrites(project_root, &renamer, &protected_guids)?;
 
     std::fs::rename(&src, &dst).map_err(|e| format!("Failed to rename {from_rel}: {e}"))?;
-    // #466: asset identity in `<path>.rmeta`, sidecar follows on rename (sidecars inside
-    // directories move with directory, here only handle single file).
     if !is_dir {
         move_asset_sidecar(&src, &dst);
     }
@@ -133,7 +131,6 @@ pub fn asset_reference_documents(
 
     for entry in all_docs(project_root) {
         let path = PathBuf::from(&entry.path);
-        // Documents contained in directory itself also count as "affected", user should see before deleting.
         if is_dir && lexical_abs(project_root, &entry.path).starts_with(&target) {
             out.insert(relative_path_string(project_root, &path));
             continue;
@@ -185,7 +182,6 @@ pub fn delete_asset(
             .map_err(|e| format!("Failed to delete directory {rel}: {e}"))?;
     } else {
         std::fs::remove_file(&path).map_err(|e| format!("Failed to delete {rel}: {e}"))?;
-        // #466: sidecar is not user asset, delete together with file.
         let sidecar = asset_sidecar_path(&path);
         if sidecar.exists() {
             std::fs::remove_file(&sidecar)
@@ -193,8 +189,6 @@ pub fn delete_asset(
         }
     }
 
-    // After deleting scene document / artifact, entries in `scenes.json` pointing to it must also disappear,
-    // otherwise build-scenes fails on dangling entries and runtime scene list keeps invalid items.
     let mut references_updated = 0;
     let target_stem = rel.strip_prefix("assets/").and_then(|asset_rel| {
         if meta.is_dir() {
@@ -233,7 +227,6 @@ fn move_asset_sidecar(src: &Path, dst: &Path) {
         return;
     }
     let to = asset_sidecar_path(dst);
-    // Target file does not yet exist (rename_asset already checked), leftover orphan sidecar simply overwritten.
     let _ = std::fs::remove_file(&to);
     if let Err(error) = std::fs::rename(&from, &to) {
         log::warn!(
@@ -271,10 +264,6 @@ pub(crate) fn collect_asset_guids(
     }
     guids
 }
-
-// ---------------------------------------------------------------------------
-// Path validation
-// ---------------------------------------------------------------------------
 
 /// Normalize to `assets/...` form, reject out-of-bounds / build directories / illegal Windows filenames.
 pub fn normalize_asset_path(raw: &str) -> Result<String, String> {
@@ -356,10 +345,6 @@ fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Reference rewriting
-// ---------------------------------------------------------------------------
-
 struct Renamer {
     old: PathBuf,
     new: PathBuf,
@@ -429,7 +414,6 @@ fn plan_rewrites(
         };
         let old_abs = lexical_abs(project_root, &entry.path);
         let mapped_abs = renamer.map(&old_abs).unwrap_or_else(|| old_abs.clone());
-        // Parse reference using old directory; write paths to document using directory after move (when directory renamed as whole the two differ).
         let old_dir = old_abs.parent().unwrap_or(project_root);
         let write_dir = mapped_abs.parent().unwrap_or(old_dir);
         let changed = rewrite_json(
@@ -810,10 +794,6 @@ fn all_docs(project_root: &Path) -> Vec<crate::scene::SceneEntry> {
     docs
 }
 
-// ---------------------------------------------------------------------------
-// Path utils
-// ---------------------------------------------------------------------------
-
 /// Combine `base` and `value`, fold `.` / `..`, no requirement path already exists.
 fn lexical_abs(base: &Path, value: &str) -> PathBuf {
     let joined = if Path::new(value).is_absolute() {
@@ -1033,7 +1013,6 @@ mod tests {
         );
         assert!(root.join("assets/models/new.gltf.rmeta").is_file());
 
-        // The reader resolves the stale path through the GUID.
         let resolved = crate::scene::read_doc_in_project(&root, &doc_path).unwrap();
         assert_eq!(
             resolved["entities"][0]["components"]["prism_engine::scene::MeshRenderer"]["mesh_path"],
@@ -1231,7 +1210,6 @@ mod tests {
             }
         }
 
-        // Reference fields not ending in `_path` rely on explicit registration, here assert they weren't removed.
         for name in ["env_map", "volume", "prefab", "font"] {
             assert!(is_asset_path_field(name), "{name} must stay registered");
         }
@@ -1333,7 +1311,6 @@ mod tests {
         assert!(root.join("assets/actors/seat.prefab.json").is_file());
         assert!(!root.join("assets/models/chair/seat.prefab.json").exists());
 
-        // In-place rename, move back to default dir, and move from default dir into subdir all allowed.
         rename_asset(
             &root,
             "assets/actors/seat.prefab.json",
@@ -1428,7 +1405,6 @@ mod tests {
             write_doc(&root.join(format!("assets/scenes/{name}.scene.json")), &doc).unwrap();
         }
 
-        // Deleting scene document itself needs no force: manifest entry cleared along with it.
         let result = delete_asset(&root, "assets/scenes/intro.scene.json", true).unwrap();
         assert_eq!(result.references_updated, 1);
         assert!(result

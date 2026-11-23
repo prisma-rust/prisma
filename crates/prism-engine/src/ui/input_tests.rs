@@ -189,7 +189,6 @@ fn enter_activates_the_focused_button() {
         "Enter on focused button equals click"
     );
 
-    // Empty cell also submits.
     idle(&mut world, [500.0, 500.0]);
     world.insert_resource(UiInputState {
         cursor_pos: [500.0, 500.0],
@@ -205,7 +204,6 @@ fn enter_activates_the_focused_button() {
 
 #[test]
 fn a_button_without_an_interaction_component_still_works() {
-    // Author only writes `Button` (no runtime state in scene): input system adds `Interaction`.
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(entity, Node {});
@@ -235,7 +233,6 @@ fn hidden_element_is_not_hittable() {
 #[test]
 fn at_equal_depth_the_smaller_element_wins() {
     let mut world = World::new();
-    // Two same-depth siblings overlapping: smaller area more "specific", treated as upper layer.
     let big = spawn_ui(&mut world, [0.0, 0.0, 400.0, 400.0], true);
     let small = spawn_ui(&mut world, [100.0, 100.0, 50.0, 50.0], true);
 
@@ -253,7 +250,6 @@ fn state_is_cleared_when_the_cursor_leaves() {
     click(&mut world, [20.0, 20.0]);
     assert!(state_of(&world, button).clicked);
 
-    // Next frame cursor moves out: clicked/hovered/pressed must all be cleared.
     idle(&mut world, [500.0, 500.0]);
     let state = state_of(&world, button);
     assert!(!state.hovered);
@@ -266,7 +262,6 @@ fn cyclic_parent_chain_does_not_hang() {
     let mut world = World::new();
     let a = spawn_ui(&mut world, [0.0, 0.0, 100.0, 100.0], true);
     let b = spawn_ui(&mut world, [0.0, 0.0, 100.0, 100.0], true);
-    // Manually create bad data (`HierarchyHelper` rejects cycles): depth calc must fallback itself.
     world.insert(a, Parent(b));
     world.insert(b, Parent(a));
 

@@ -54,8 +54,6 @@ pub(crate) fn create_window(
         (Instant::now() - t_start).as_millis(),
     );
 
-    // winit's `Window` is the window owner itself; the render thread only takes raw
-    // handles, so the `Window` is no longer needed.
     PlatformWindow::from_winit(window)
 }
 
@@ -88,7 +86,6 @@ const LETTER_KEYS: &[(winit::keyboard::KeyCode, u8)] = &[
     (winit::keyboard::KeyCode::KeyZ, b'Z'),
 ];
 
-// Preserve dedicated Key variants (W/A/S/D/Q/E/T) for camera input; map remaining letters to Key::Letter.
 fn winit_to_vk(code: winit::keyboard::KeyCode) -> Key {
     use winit::keyboard::KeyCode as Wk;
 
@@ -102,8 +99,6 @@ fn winit_to_vk(code: winit::keyboard::KeyCode) -> Key {
     {
         return letter;
     }
-    // Map editing, navigation, and punctuation keys to Win32 VK_* codes so
-    // the winit backend emits the exact same Key::Other payload as win32.
     match code {
         Wk::Backspace => Key::Other(0x08),
         Wk::PageUp => Key::Other(0x21),
@@ -228,7 +223,6 @@ pub fn to_platform_event(event: &WindowEvent) -> PlatformEvent {
         },
         WindowEvent::KeyboardInput { event, .. } => PlatformEvent::Key {
             key: match event.physical_key {
-                // Normalize Key::Other to Win32 VK codes to match the Win32 backend.
                 winit::keyboard::PhysicalKey::Code(code) => winit_to_vk(code),
                 winit::keyboard::PhysicalKey::Unidentified(_) => Key::Other(u32::MAX),
             },
@@ -353,7 +347,6 @@ mod tests {
         use winit::event::MouseScrollDelta as W;
         assert_eq!(wheel_lines(W::LineDelta(0.0, 1.0)), 1.0);
         assert_eq!(wheel_lines(W::LineDelta(0.0, -2.0)), -2.0);
-        // A high-precision wheel reports fractional lines, passed through directly.
         assert_eq!(wheel_lines(W::LineDelta(0.0, 0.25)), 0.25);
     }
 
@@ -396,7 +389,6 @@ mod tests {
         ] {
             assert_eq!(Key::from_winit(winit), expected, "{winit:?}");
         }
-        // Unlisted keys must not be dropped: they degrade to the winit discriminant.
         assert_eq!(Key::from_winit(Wk::KeyZ), Key::Other(Wk::KeyZ as u32));
     }
 

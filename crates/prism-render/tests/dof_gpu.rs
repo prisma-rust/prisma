@@ -26,8 +26,6 @@ fn depth_of_field_blurs_geometry_outside_the_focus_plane() {
 
     let blurred = harness.render(FrameOptions {
         grade: PostGrade {
-            // The box sits 3 m from the camera; focusing at 0.2 m puts it far
-            // outside the depth of field.
             dof_focus_distance: 0.2,
             dof_aperture: 1.0,
             dof_max_blur: 12.0,

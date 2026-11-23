@@ -48,9 +48,6 @@ fn fallback_pixels() -> Vec<u8> {
     pixels
 }
 
-// Local handle. The engine layer translates asset texture handles
-// into this when it calls `RenderTextureManager::reserve` so the render
-// crate stays decoupled from the asset pipeline.
 new_key_type! {
     /// Slotmap handle into [`RenderTextureManager`].
     pub struct TextureHandleSlot;
@@ -83,7 +80,6 @@ pub enum TextureFormat {
     /// sRGB->linear conversion on sample, so the shader receives linear values
     /// and must NOT apply a manual `pow(2.2)`. Used for albedo / emissive.
     Rgba8Srgb,
-    // ── Block-compressed formats (DESIGN §7.2): offline encode, upload compressed blocks directly ──
     /// BC1 / DXT1 (RGB, 4×4 block 8 bytes).
     Bc1Unorm,
     Bc1Srgb,
@@ -111,15 +107,14 @@ impl TextureFormat {
     pub const fn bytes_per_pixel(self) -> usize {
         match self {
             TextureFormat::Rgba8 | TextureFormat::Rgba8Srgb => 4,
-            // Block-compressed formats approximate bytes per pixel (only for estimation, exact size uses compressed_byte_len)
-            TextureFormat::Bc1Unorm | TextureFormat::Bc1Srgb => 1, // 0.5B/px, rounded up
+            TextureFormat::Bc1Unorm | TextureFormat::Bc1Srgb => 1,
             TextureFormat::Bc3Unorm | TextureFormat::Bc3Srgb => 1,
-            TextureFormat::Bc7Unorm | TextureFormat::Bc7Srgb => 1, // 4x4 block 16B = 1B/px
+            TextureFormat::Bc7Unorm | TextureFormat::Bc7Srgb => 1,
             TextureFormat::Bc5Unorm => 1,
-            TextureFormat::Bc4Unorm => 1, // actually 0.5B/px, rounded up for lenient validation
+            TextureFormat::Bc4Unorm => 1,
             TextureFormat::Bc6HUfloat => 1,
-            TextureFormat::Astc4x4Unorm | TextureFormat::Astc4x4Srgb => 1, // 8 bpp
-            TextureFormat::Astc6x6Unorm | TextureFormat::Astc6x6Srgb => 1, // ~3.56 bpp
+            TextureFormat::Astc4x4Unorm | TextureFormat::Astc4x4Srgb => 1,
+            TextureFormat::Astc6x6Unorm | TextureFormat::Astc6x6Srgb => 1,
             TextureFormat::Astc8x8Unorm | TextureFormat::Astc8x8Srgb => 1,
             TextureFormat::Astc12x12Unorm | TextureFormat::Astc12x12Srgb => 1,
             TextureFormat::Etc2R8G8B8A8Unorm | TextureFormat::Etc2R8G8B8A8Srgb => 1,
@@ -287,11 +282,6 @@ impl RenderTextureManager {
         let mut bindless = BindlessTextureTable::new(&context.device, total)
             .map_err(|e| anyhow::anyhow!("RenderTextureManager::new: bindless: {e}"))?;
 
-        // Missing-texture fallback: a neutral checkerboard, written into
-        // bindless slot 0. It marks "nothing is bound here" without shouting:
-        // the pattern is recognisable at any scale, and a 1×1 sample of it is
-        // just mid grey, so a surface that samples one texel reads as
-        // untextured rather than as an error.
         let (fb_image, fb_memory, fb_view) = unsafe {
             create_and_upload_image(
                 context,
@@ -309,7 +299,6 @@ impl RenderTextureManager {
             .register_with_handle(0, fb_view)
             .context("RenderTextureManager::new: register fallback in slot 0")?;
         let fallback_srv = TextureHandle(0);
-        // Keep the fallback GPU objects alive for the manager's lifetime.
         let fallback_tex = UploadedTexture {
             srv: fallback_srv,
             width: 1,
@@ -322,9 +311,6 @@ impl RenderTextureManager {
         let fallback_view = fb_view;
 
         let mut textures = SlotMap::with_key();
-        // Store the fallback under a dedicated key so `destroy` frees it.
-        // Its `srv` is fixed at slot 0 (register_with_handle advanced the
-        // table's `next` past 0), so user textures start at slot 1.
         textures.insert(fallback_tex);
 
         Ok(Self {
@@ -364,10 +350,6 @@ impl RenderTextureManager {
         graphics_queue: vk::Queue,
         input: &TextureUploadInput,
     ) -> anyhow::Result<AssetTextureHandle> {
-        // Whether a block-compressed format is sampleable depends on the device
-        // (many mobile GPUs lack BC, desktops lack ASTC). Checking up front
-        // turns a VUID flood plus a failed upload into one explicit error that
-        // the caller degrades to the fallback surface.
         if input.format.is_compressed()
             && !texture_format_supported(
                 &context.instance,
@@ -385,7 +367,6 @@ impl RenderTextureManager {
         } else {
             (input.width as usize) * (input.height as usize) * input.format.bytes_per_pixel()
         };
-        // Compressed formats allow longer mip chain pixels, loose validation: at least base mip size
         let valid = accepts_pixel_len(
             input.format,
             input.mip_levels,
@@ -410,11 +391,9 @@ impl RenderTextureManager {
             );
         }
 
-        // Upload pixels → VkImage + VkImageView (transferDst + SAMPLED).
         let mip_levels = if input.mip_levels != 0 {
             input.mip_levels
         } else if input.format.is_compressed() || input.width <= 1 || input.height <= 1 {
-            // Compressed format mips pre-generated by KTX2; 1x1 has no mip to generate.
             1
         } else {
             (input.width.max(input.height) as f32).log2().floor() as u32 + 1
@@ -433,8 +412,6 @@ impl RenderTextureManager {
         }
         .context("RenderTextureManager::reserve: upload texture")?;
 
-        // Reserve the next bindless SRV slot (slot 0 is the fallback,
-        // already taken, so this returns 1, 2, ...).
         let srv = self
             .bindless
             .register(view)
@@ -544,9 +521,6 @@ impl RenderTextureManager {
     /// `reserve` reuses it.
     pub fn unregister(&mut self, handle: AssetTextureHandle, device: &ash::Device) {
         if let Some(tex) = self.textures.remove(handle) {
-            // Rewrite the descriptor with the fallback view before the
-            // image view is destroyed, so any shader holding the old
-            // handle samples the fallback rather than a freed view.
             self.bindless.write_srv(tex.srv.0, self.fallback_view);
             self.bindless.release_slot(tex.srv);
             unsafe {
@@ -631,9 +605,6 @@ pub fn texture_format_supported(
 ) -> bool {
     let properties =
         unsafe { instance.get_physical_device_format_properties(physical_device, format) };
-    // Vulkan has no "block compressed" feature bit: whether a format can be sampled depends on its own
-    // `optimalTilingFeatures` having `SAMPLED_IMAGE` (desktop generally supports BC, ASTC/ETC2
-    // only on mobile GPUs).
     properties
         .optimal_tiling_features
         .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE)

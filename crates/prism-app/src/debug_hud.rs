@@ -48,9 +48,7 @@ impl DebugHud {
         let mut lines = Vec::with_capacity(5);
         let mut line = format!("{:.1} ms  |  {:.0} FPS", stats.frame_time_ms, stats.fps);
         match stats.gpu_timings.as_ref().filter(|gpu| gpu.supported) {
-            // When full-frame interval exists use full-frame time, otherwise fall back to pass sum: two metrics must be distinguishable.
             Some(gpu) => line.push_str(&format!("  |  GPU {:.1} ms", gpu.frame_or_total_ms())),
-            // Device does not support timestamps: explicitly write n/a, do not fake GPU time with CPU wall clock.
             None => line.push_str("  |  GPU n/a"),
         }
         if settings.render_mode == RenderMode::PathTrace {
@@ -64,7 +62,6 @@ impl DebugHud {
         }
         lines.push(line);
 
-        // Percentiles need a few dozen frames before they mean anything.
         if let Some(cpu) = stats
             .frame_stats
             .cpu
@@ -99,7 +96,6 @@ impl DebugHud {
             pbr_flag_label(settings.debug_flags)
         ));
 
-        // Most expensive 3 passes: same source as render graph panel (last frame readback timestamp results).
         if let Some(gpu) = stats.gpu_timings.as_ref().filter(|gpu| gpu.supported) {
             if !gpu.passes.is_empty() {
                 let mut passes: Vec<_> = gpu.passes.iter().collect();
@@ -110,8 +106,6 @@ impl DebugHud {
                     .map(|pass| format!("{} {:.1}", pass.name, pass.ms))
                     .collect();
                 let suffix = if passes.len() > top.len() { " …" } else { "" };
-                // Part not covered by pass inside full-frame interval: barrier, out-of-graph dispatch, copy, etc.
-                // Only show when really got interval, otherwise 0 would be misread as "no out-of-graph overhead".
                 let gap = if gpu.has_frame_span() && gpu.unmeasured_ms() >= 0.05 {
                     format!(" (+{:.1} unmeasured)", gpu.unmeasured_ms())
                 } else {

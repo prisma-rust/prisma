@@ -122,8 +122,6 @@ impl PendingHdrReadback {
             let mapped =
                 unsafe { device.map_memory(self.memory, 0, bytes, vk::MemoryMapFlags::empty()) }
                     .context("hdr readback: map staging buffer")?;
-            // The staging buffer holds tightly packed `[f32; 4]` texels, so
-            // view it as an array of texels instead of a flat f32 run.
             let texels = unsafe { std::slice::from_raw_parts(mapped as *const [f32; 4], count) };
             let pixels = texels.to_vec();
             unsafe { device.unmap_memory(self.memory) };
@@ -134,7 +132,6 @@ impl PendingHdrReadback {
             })
         })();
 
-        // Free the staging objects regardless of whether the map succeeded.
         unsafe {
             device.destroy_buffer(self.buffer, None);
             device.free_memory(self.memory, None);

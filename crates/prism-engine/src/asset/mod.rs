@@ -22,10 +22,6 @@ use std::marker::PhantomData;
 
 pub use types::{MaterialAsset, MeshAsset};
 
-// ===========================================================================
-// Handle
-// ===========================================================================
-
 /// A generational index into an [`AssetManager`].
 ///
 /// Packed as a single `u64`:
@@ -78,10 +74,6 @@ impl<T> Default for Handle<T> {
     }
 }
 
-// ===========================================================================
-// Slot
-// ===========================================================================
-
 /// One slot in an [`AssetManager`]. A free slot carries no value but keeps the
 /// next generation to hand out; an occupied slot carries the asset value and its
 /// current generation.
@@ -89,10 +81,6 @@ enum Slot<T> {
     Free { next_free: u32, generation: u32 },
     Occupied { value: T, generation: u32 },
 }
-
-// ===========================================================================
-// AssetManager<T>
-// ===========================================================================
 
 /// Typed, generational-indexed pool of CPU-side assets.
 ///
@@ -163,9 +151,6 @@ impl<T> AssetManager<T> {
         let idx = handle.index() as usize;
         match self.slots.get_mut(idx) {
             Some(Slot::Occupied { generation, .. }) if *generation == handle.generation() => {
-                // Bump generation so stale handles are rejected, and keep the
-                // bumped value in the free slot so reuse cannot resurrect the
-                // old handle by resetting to generation 0.
                 let next_generation = generation.wrapping_add(1);
                 let old = std::mem::replace(
                     &mut self.slots[idx],
@@ -207,8 +192,6 @@ impl<T> AssetManager<T> {
         })
     }
 
-    // -- internal helpers ------------------------------------------------
-
     fn try_reclaim(&mut self) -> Option<u32> {
         if self.free_head == u32::MAX {
             None
@@ -237,10 +220,6 @@ impl<T> Default for AssetManager<T> {
         Self::new()
     }
 }
-
-// ===========================================================================
-// Handle type aliases
-// ===========================================================================
 
 /// Handle to a CPU-side mesh asset.
 pub type MeshId = Handle<MeshAsset>;

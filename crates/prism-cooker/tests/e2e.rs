@@ -26,10 +26,6 @@ use prism_cooker::cooker::{
 use prism_cooker::db::{AssetDatabase, ImportCache};
 use prism_cooker::importer::{default_importer_registry, ImportPipeline};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Create a temporary project directory with the given name.
 fn create_project(name: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("create temp dir");
@@ -164,10 +160,6 @@ fn find_id_by_suffix(db: &AssetDatabase, suffix: &str) -> Option<AssetId> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Real asset source paths (Sponza scene)
-// ---------------------------------------------------------------------------
-
 /// Root of the downloaded Sponza scene (configured in `assets/scenes.json`).
 const SPONZA_DIR: &str = "D:/Download/main_sponza/main_sponza";
 
@@ -175,10 +167,6 @@ const SPONZA_DIR: &str = "D:/Download/main_sponza/main_sponza";
 /// the smallest BaseColor texture so the test stays reasonably fast while
 /// still exercising the full production texture pipeline.
 const SPONZA_TEXTURE: &str = "textures/metal_door_01_BaseColor.png";
-
-// ---------------------------------------------------------------------------
-// E2E Test: full pipeline with real Sponza texture
-// ---------------------------------------------------------------------------
 
 /// E2E test: full pipeline with real Sponza texture
 ///
@@ -188,9 +176,6 @@ const SPONZA_TEXTURE: &str = "textures/metal_door_01_BaseColor.png";
 #[test]
 #[ignore = "requires downloaded Sponza scene (see SPONZA_DIR)"]
 fn e2e_full_pipeline() {
-    // ======================================================================
-    // 1. SETUP: create project with real + generated assets
-    // ======================================================================
     let (_dir, root) = create_project("sponza-e2e");
 
     let test_out = root.display().to_string();
@@ -199,7 +184,6 @@ fn e2e_full_pipeline() {
     let assets_dir = root.join("Assets");
     let library_dir = root.join("Library");
 
-    // --- Real Sponza 4 K texture ---
     let sponza_tex_src = Path::new(SPONZA_DIR).join(SPONZA_TEXTURE);
     assert!(
         sponza_tex_src.exists(),
@@ -211,7 +195,6 @@ fn e2e_full_pipeline() {
     let sponza_path =
         copy_external_asset(&root, &sponza_tex_src, "sponza/metal_door_01_BaseColor.png");
 
-    // --- Generated assets ---
     write_asset(&root, "test.json", b"{\"name\": \"test\", \"value\": 42}");
     let glb_bytes = create_minimal_glb_bytes();
     let glb_path = write_asset(&root, "subdir/model.glb", &glb_bytes);
@@ -219,13 +202,6 @@ fn e2e_full_pipeline() {
     let files = collect_files(&assets_dir);
     assert_eq!(files.len(), 3, "should have 3 source files");
 
-    // ======================================================================
-    // 2. IMPORT: run ImportPipeline on all files, capture intermediate data
-    //
-    // NOTE: import_file stores the full absolute path (forward-slash
-    // normalized) in the database, NOT a relative path.  All lookups
-    // below use suffix matching to work around that.
-    // ======================================================================
     let importer_reg = Arc::new(default_importer_registry());
     let import_pipeline = ImportPipeline::new(importer_reg);
 
@@ -233,7 +209,6 @@ fn e2e_full_pipeline() {
     let mut cache = ImportCache::new();
     let mut intermediate_data: HashMap<AssetId, Vec<u8>> = HashMap::new();
 
-    // Import the real Sponza texture.
     let r1 = import_pipeline
         .import_file(&sponza_path, &mut db, &mut cache, None)
         .expect("import Sponza texture");
@@ -247,7 +222,6 @@ fn e2e_full_pipeline() {
         intermediate_data.insert(id, data);
     }
 
-    // Import the JSON file.
     let json_file = assets_dir.join("test.json");
     let r2 = import_pipeline
         .import_file(&json_file, &mut db, &mut cache, None)
@@ -258,7 +232,6 @@ fn e2e_full_pipeline() {
         intermediate_data.insert(id, data);
     }
 
-    // Import the GLB file.
     let r3 = import_pipeline
         .import_file(&glb_path, &mut db, &mut cache, None)
         .expect("import GLB");
@@ -268,11 +241,9 @@ fn e2e_full_pipeline() {
         intermediate_data.insert(id, data);
     }
 
-    // Assert database has 3 records.
     assert_eq!(db.len(), 3, "database should have 3 records after import");
     assert!(!cache.is_empty(), "import cache should have entries");
 
-    // Verify each record has the correct asset type and importer.
     for record in db.records() {
         if record.path.ends_with("metal_door_01_BaseColor.png") {
             assert_eq!(record.asset_type, AssetType::Texture);
@@ -290,14 +261,12 @@ fn e2e_full_pipeline() {
         assert!(record.source_hash != 0, "source hash should be set");
     }
 
-    // Verify we captured intermediate data for all three assets.
     assert_eq!(
         intermediate_data.len(),
         3,
         "should have intermediate data for all assets"
     );
 
-    // Save and reload the database (simulates persistence).
     let db_path = library_dir.join("AssetDatabase.json");
     db.save(&db_path).expect("save database");
     let db_loaded = AssetDatabase::load(&db_path).expect("reload database");
@@ -307,9 +276,6 @@ fn e2e_full_pipeline() {
         "reloaded database should have 3 records"
     );
 
-    // ======================================================================
-    // 3. COOK + BUILD: run CookPipeline with real intermediate data → .pak
-    // ======================================================================
     let cooker_reg = default_cooker_registry();
     let cook_pipeline = CookPipeline::new(cooker_reg);
 
@@ -326,11 +292,9 @@ fn e2e_full_pipeline() {
     let pak_bytes = builder.build().expect("build .pak");
     assert!(pak_bytes.len() > 50, ".pak should be non-trivial size");
 
-    // Save .pak to disk for runtime loading.
     let pak_path = root.join("game.pak");
     std::fs::write(&pak_path, &pak_bytes).expect("write .pak");
 
-    // ── Write a .pak.meta.json alongside the .pak for inspection ──────
     {
         let reader_for_meta =
             PackageReader::from_bytes(&pak_bytes).expect("read back .pak for metadata");
@@ -376,9 +340,6 @@ fn e2e_full_pipeline() {
         eprintln!("   📋  Manifest: {}", meta_path.display());
     }
 
-    // ======================================================================
-    // 4. VALIDATE: verify .pak structure with PackageReader
-    // ======================================================================
     let reader = PackageReader::from_bytes(&pak_bytes).expect("read .pak from bytes");
     assert_eq!(&reader.header().magic, b"RPAK", "magic should be RPAK");
     assert_eq!(reader.header().version, 1, "version should be 1");
@@ -389,7 +350,6 @@ fn e2e_full_pipeline() {
         "should have 3 records in registry"
     );
 
-    // Verify we can read each asset's cooked data back.
     for record in db_loaded.records() {
         let data: Vec<u8> = reader
             .read_asset_data(record.id)
@@ -398,7 +358,6 @@ fn e2e_full_pipeline() {
         assert!(!data.is_empty(), "asset data should not be empty");
     }
 
-    // --- Verify cooked texture format ---
     let tex_id = find_id_by_suffix(&db_loaded, "metal_door_01_BaseColor.png")
         .expect("texture in db after reload");
     let tex_data = reader
@@ -410,12 +369,9 @@ fn e2e_full_pipeline() {
         b"RTEX",
         "cooked texture should have RTEX header"
     );
-    // A real 4 K texture (e.g. 4096×4096) should produce 13 mip levels
-    // (4096→2048→1024→512→256→128→64→32→16→8→4→2→1).
     let tex_width = u32::from_le_bytes(tex_data[5..9].try_into().unwrap());
     let tex_height = u32::from_le_bytes(tex_data[9..13].try_into().unwrap());
     let tex_mips = u32::from_le_bytes(tex_data[13..17].try_into().unwrap());
-    // The Sponza metal_door_01 texture is 4096×4096 → log2(4096) = 12 → 13 mips.
     assert_eq!(tex_width, 4096, "Sponza metal door basecolor should be 4K");
     assert_eq!(tex_height, 4096, "Sponza metal door basecolor should be 4K");
     assert_eq!(
@@ -423,7 +379,6 @@ fn e2e_full_pipeline() {
         "4096×4096 texture should produce 13 mip levels"
     );
 
-    // --- Verify cooked mesh format ---
     let mesh_id =
         find_id_by_suffix(&db_loaded, "subdir/model.glb").expect("mesh in db after reload");
     let mesh_data = reader
@@ -440,8 +395,6 @@ fn e2e_full_pipeline() {
     assert_eq!(verts, 3, "triangle should have 3 vertices");
     assert_eq!(idxs, 3, "triangle should have 3 indices");
 
-    // ── Round-trip: decode cooked data back → compare vs intermediate ──
-    // Texture: RTEX mip0 must match RTXI pixels byte-for-byte.
     {
         let rtxi = intermediate_data
             .get(&tex_id)
@@ -455,15 +408,13 @@ fn e2e_full_pipeline() {
         assert_eq!(rtex.width, rtxi_w);
         assert_eq!(rtex.height, rtxi_h);
         assert_eq!(rtex.mip_levels, 13);
-        assert_eq!(rtex.format, 0); // RGBA8
+        assert_eq!(rtex.format, 0);
 
-        // mip0 must be byte-identical to the import-decoded pixels.
         assert_eq!(
             rtex.mip_data[0], rtxi_pixels,
             "RTEX mip0 must match RTXI pixels (texture cook round-trip)"
         );
 
-        // Optional: save decoded mip0 as PNG for visual inspection.
         let png_path = pak_path.with_extension("decoded.png");
         if let Err(e) = image::save_buffer(
             &png_path,
@@ -478,7 +429,6 @@ fn e2e_full_pipeline() {
         }
     }
 
-    // Mesh: RMES vertex/index data must match RMXI data byte-for-byte.
     {
         let rmxi = intermediate_data
             .get(&mesh_id)
@@ -490,19 +440,16 @@ fn e2e_full_pipeline() {
         assert_eq!(rmes.vert_count, 3);
         assert_eq!(rmes.idx_count, 3);
 
-        // Vertex data (positions + normals + UVs) must match.
         assert_eq!(
             rmes.vertex_data, rmxi_vert,
             "RMES vertex data must match RMXI (mesh cook round-trip)"
         );
-        // Index data must match.
         assert_eq!(
             rmes.index_data, rmxi_idx,
             "RMES index data must match RMXI (mesh cook round-trip)"
         );
     }
 
-    // Binary: cooked data must be identical to intermediate data.
     {
         let bin_id =
             find_id_by_suffix(&db_loaded, "test.json").expect("json asset in db after reload");
@@ -519,17 +466,13 @@ fn e2e_full_pipeline() {
         );
     }
 
-    // ======================================================================
-    // 5. RUNTIME LOAD: use ResourceManager to load the .pak
-    // ======================================================================
     let mut rm = ResourceManager::new();
-    rm.set_memory_budget(200 * 1024 * 1024); // 200 MB (a 4K RGBA8 texture is ~67 MB)
+    rm.set_memory_budget(200 * 1024 * 1024);
     rm.load_package(&pak_path).expect("load .pak into runtime");
 
     assert_eq!(rm.asset_count(), 3, "runtime should have 3 assets");
     assert_eq!(rm.package_count(), 1, "runtime should have 1 package");
 
-    // Load and verify each asset.
     let records: Vec<(AssetId, String)> = db_loaded
         .records()
         .map(|r| (r.id, r.path.clone()))
@@ -544,7 +487,6 @@ fn e2e_full_pipeline() {
         assert!(!data.is_empty(), "loaded data should not be empty");
     }
 
-    // Verify memory tracking.
     assert!(
         rm.memory_usage() > 0,
         "memory usage should be > 0 after loading"
@@ -554,9 +496,6 @@ fn e2e_full_pipeline() {
         "memory usage should be within budget"
     );
 
-    // ======================================================================
-    // 6. UNLOAD + RE-LOAD: verify handle generations
-    // ======================================================================
     let id = records[0].0;
     let handle: Handle<Vec<u8>> = rm.load(id).unwrap();
     rm.unload(handle);
@@ -569,9 +508,6 @@ fn e2e_full_pipeline() {
     let err = rm.get::<Vec<u8>>(handle);
     assert!(err.is_err(), "old handle should fail generation check");
 
-    // ======================================================================
-    // 7. DEPENDENCY LOADING: verify topological load
-    // ======================================================================
     let dep_id = AssetId::from_raw((2u64 << 32) | 1);
     let root_id = AssetId::from_raw((2u64 << 32) | 2);
 
@@ -592,9 +528,6 @@ fn e2e_full_pipeline() {
     let dep_data = rm2.get_raw(dep_id).unwrap();
     assert_eq!(dep_data, b"dep data", "dep data should match");
 
-    // ======================================================================
-    // 8. MEMORY BUDGET / EVICTION
-    // ======================================================================
     let small_id = AssetId::from_raw((3u64 << 32) | 1);
     let mut b3 = PackageBuilder::new();
     b3.add_asset(small_id, AssetType::Binary, vec![0u8; 100], &[]);
@@ -641,9 +574,6 @@ fn e2e_full_pipeline() {
     let err = rm4.get::<Vec<u8>>(h1);
     assert!(err.is_err(), "first asset should be evicted");
 
-    // ======================================================================
-    // 9. STREAMING
-    // ======================================================================
     let stream_id = AssetId::from_raw((4u64 << 32) | 1);
     let mut b4 = PackageBuilder::new();
     let stream_data: Vec<u8> = (0..250).collect();
@@ -662,9 +592,6 @@ fn e2e_full_pipeline() {
     assert_eq!(total, 250, "streaming should reconstruct full data");
     assert_eq!(chunks.len(), 3, "should be 3 chunks (100+100+50)");
 
-    // ======================================================================
-    // 10. HOT-RELOAD (manual trigger)
-    // ======================================================================
     {
         use prism_asset::runtime::HotReloadWatcher;
 
@@ -680,7 +607,6 @@ fn e2e_full_pipeline() {
             "no events before modification"
         );
 
-        // Modify the file.
         let mut b5 = PackageBuilder::new();
         b5.add_asset(
             records[0].0,
@@ -712,10 +638,6 @@ fn e2e_full_pipeline() {
         watcher.stop();
     }
 
-    // ======================================================================
-    // 11. CLI COMMANDS (simulate via library calls)
-    // ======================================================================
-
     let reader2 = PackageReader::open(&pak_path).expect("validate .pak");
     let records2: Vec<_> = reader2.records().iter().collect();
     assert_eq!(records2.len(), 3);
@@ -732,10 +654,6 @@ fn e2e_full_pipeline() {
     println!("✅ E2E pipeline test passed: all 11 phases complete (real Sponza texture)");
 }
 
-// ---------------------------------------------------------------------------
-// E2E Test: incremental import (cache hit)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn e2e_incremental_import() {
     let (_dir, root) = create_project("incremental-import");
@@ -751,29 +669,22 @@ fn e2e_incremental_import() {
 
     let file = assets_dir.join("cached.bin");
 
-    // First import — should run (not cached).
     let r1 = pipeline
         .import_file(&file, &mut db, &mut cache, None)
         .expect("first import");
     assert!(r1.was_imported, "first import should run (not cached)");
 
-    // Second import — should be cached.
     let r2 = pipeline
         .import_file(&file, &mut db, &mut cache, None)
         .expect("second import");
     assert!(!r2.was_imported, "second import should be cached");
 
-    // Modify the file, should re-import.
     std::fs::write(&file, b"modified content").expect("modify file");
     let r3 = pipeline
         .import_file(&file, &mut db, &mut cache, None)
         .expect("third import after modification");
     assert!(r3.was_imported, "modified file should re-import");
 }
-
-// ---------------------------------------------------------------------------
-// E2E Test: empty project
-// ---------------------------------------------------------------------------
 
 #[test]
 fn e2e_empty_project() {
@@ -793,10 +704,6 @@ fn e2e_empty_project() {
     assert_eq!(summary.errors, 0, "no errors");
     assert!(db.is_empty(), "database should be empty");
 }
-
-// ---------------------------------------------------------------------------
-// E2E Test: package corruption detection
-// ---------------------------------------------------------------------------
 
 #[test]
 fn e2e_package_integrity_validation() {

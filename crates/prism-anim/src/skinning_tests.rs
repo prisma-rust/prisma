@@ -32,7 +32,6 @@ fn weights_that_do_not_sum_to_one_are_normalized() {
         Mat4::IDENTITY,
         Mat4::from_translation(Vec3::new(0.0, 10.0, 0.0)),
     ];
-    // 0.25 / 0.25 (sum 0.5) should be equivalent to 0.5 / 0.5.
     let skinned = skin_positions(
         &palette,
         &[[0u16, 1, 0, 0]],
@@ -70,7 +69,6 @@ fn normals_are_rotated_and_normalized() {
         &[[1.0f32, 0.0, 0.0, 0.0]],
         &[[1.0f32, 0.0, 0.0]],
     );
-    // +X rotated 90° around Z → +Y.
     assert!(normals[0][1].abs() > 0.99, "got {normals:?}");
     let length = (normals[0][0].powi(2) + normals[0][1].powi(2) + normals[0][2].powi(2)).sqrt();
     assert!((length - 1.0).abs() < 1e-5);
@@ -78,7 +76,6 @@ fn normals_are_rotated_and_normalized() {
 
 #[test]
 fn a_rotated_bone_matches_a_hand_computed_skinned_vertex() {
-    // Bone rotated 90° around Z, vertex at (1,0,0) → should land at (0,1,0).
     let rotate = Mat4::from_quat(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
     let palette = vec![rotate];
     let skinned = skin_positions(

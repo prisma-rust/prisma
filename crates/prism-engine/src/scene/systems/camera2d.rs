@@ -24,7 +24,6 @@ pub fn resolve_target_pos(world: &World, target_id: u64) -> Option<Vec2> {
     let target = if world.is_alive(candidate) {
         Some(candidate)
     } else {
-        // If generated id is 0 or mismatched, try finding by entity ID
         world
             .query::<LocalTransform>()
             .find_map(|(e, _)| if e.id() == id { Some(e) } else { None })
@@ -133,10 +132,6 @@ pub fn camera_2d_system(world: &mut World, dt: f32) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Name-based virtual camera follow (EchoWell slice).
-// ---------------------------------------------------------------------------
 
 /// Update every configured [`VirtualCamera2D`] after gameplay writes its
 /// target transforms and before render extraction.

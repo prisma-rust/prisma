@@ -148,7 +148,6 @@ impl SceneAudio {
             }
             DecodeResult::Error { request_id, .. } => {
                 if let Some(path) = self.requests.remove(&request_id) {
-                    // Failure not cached: will retry next time (file may appear later).
                     self.pending.remove(&path);
                 }
             }
@@ -212,7 +211,6 @@ impl SceneAudio {
                 continue;
             }
 
-            // Path changed: stop old voice first.
             if let Some(voice) = self.voices.get(&entity) {
                 if voice.path != source.sound_path {
                     let voice = self.voices.remove(&entity).expect("checked above");
@@ -248,7 +246,6 @@ impl SceneAudio {
                     if sink.is_playing(voice.id) {
                         voice.started = true;
                     } else if voice.started {
-                        // Finished playing: loop restarts, otherwise recycle.
                         if !source.looped {
                             let voice = self.voices.remove(&entity).expect("checked above");
                             sink.stop(voice.id);
@@ -296,7 +293,6 @@ impl SceneAudio {
             }
         }
 
-        // Entity destroyed / component removed: stop corresponding voice.
         let stale: Vec<Entity> = self
             .voices
             .keys()
@@ -592,7 +588,7 @@ mod tests {
     #[test]
     fn bus_gains_multiply_the_source_volume_and_master_scales_every_bus() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // Default listener = world origin
+        place(&mut world, [0.0; 3]);
         let speaker = place(&mut world, [0.0; 3]);
         source(
             &mut world,
@@ -615,27 +611,23 @@ mod tests {
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.4).abs() < 1e-6);
 
-        // `Master` multiplies all buses.
         scene.set_bus_volume(AudioBus::Master, 0.5);
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.2).abs() < 1e-6);
 
-        // Other buses do not affect Music.
         scene.set_bus_volume(AudioBus::Sfx, 0.1);
         scene.update(&world, &mut sink, None);
         assert!((sink.volumes()[0] - 0.2).abs() < 1e-6);
 
-        // Illegal values ignored, will not turn bus into NaN.
         scene.set_bus_volume(AudioBus::Music, f32::NAN);
         assert_eq!(scene.bus_volume(AudioBus::Music), 0.5);
-        // When source itself is on `Master`, only multiply once.
         assert_eq!(scene.bus_gain(AudioBus::Master), 0.5);
     }
 
     #[test]
     fn a_clip_plays_once_and_follows_the_distance_volume() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // Default listener = world origin
+        place(&mut world, [0.0; 3]);
         let speaker = place(&mut world, [0.0, 0.0, 5.0]);
         source(
             &mut world,
@@ -661,7 +653,6 @@ mod tests {
             "distance 5/10 -> half volume"
         );
 
-        // Move closer: volume updates, but does not re-play.
         world.insert(
             speaker,
             LocalToWorld(Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.5))),
@@ -678,18 +669,15 @@ mod tests {
             listener_offset([5.0, 0.0, 0.0], [0.0; 3], identity),
             [5.0, 0.0, 0.0]
         );
-        // Listener faces +X: right vector is -Z, so source at +X in world lands dead ahead.
         let facing_x = [[0.0, 0.0, -1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
         assert_eq!(
             listener_offset([5.0, 0.0, 0.0], [0.0; 3], facing_x),
             [0.0, 0.0, 5.0]
         );
-        // Non-finite input does not produce NaN.
         assert_eq!(
             listener_offset([f32::NAN, 0.0, 0.0], [0.0; 3], identity),
             [0.0; 3]
         );
-        // Pan strength: 2D and non-finite are both 0, upper clamped to 1.
         assert_eq!(panning_threshold(0.0), 0.0);
         assert_eq!(panning_threshold(f32::NAN), 0.0);
         assert_eq!(panning_threshold(2.0), 1.0);
@@ -698,7 +686,6 @@ mod tests {
 
     #[test]
     fn a_source_to_the_right_keeps_its_offset_on_x() {
-        // Listener at origin, no rotation (right vector = +X), source at +X: offset should be (5, 0, 0).
         let mut world = World::new();
         let listener_entity = place(&mut world, [0.0; 3]);
         world.insert(listener_entity, Camera::default());
@@ -726,7 +713,7 @@ mod tests {
     #[test]
     fn a_moving_source_updates_the_offset_without_replaying_the_clip() {
         let mut world = World::new();
-        place(&mut world, [0.0; 3]); // Default listener = world origin
+        place(&mut world, [0.0; 3]);
         let speaker = place(&mut world, [5.0, 0.0, 0.0]);
         source(
             &mut world,
@@ -747,7 +734,6 @@ mod tests {
         assert_eq!(sink.played, 1);
         assert_eq!(sink.spatials(), vec![([5.0, 0.0, 0.0], 1.0)]);
 
-        // Move left: same voice only updates spatial params, not re-play.
         world.insert(
             speaker,
             LocalToWorld(Mat4::from_translation(glam::Vec3::new(-5.0, 0.0, 0.0))),
@@ -821,7 +807,6 @@ mod tests {
         assert_eq!(sink.played, 2);
         assert_eq!(scene.active_voices(), 2);
 
-        // Only allowed to judge "finished playing" after audio thread started playing.
         scene.update(&world, &mut sink, None);
         for voice in 1..=2 {
             sink.finish(voice);
@@ -846,7 +831,6 @@ mod tests {
         scene.update(&world, &mut sink, None);
         assert_eq!(scene.active_voices(), 2);
 
-        // One clears path, other directly destroys.
         world.insert(
             a,
             AudioSource {

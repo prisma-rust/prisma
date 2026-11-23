@@ -14,23 +14,23 @@ fn minimal_graph_version(version: u8, with_speeds: bool) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(RAGP_MAGIC);
     out.push(version);
-    out.extend_from_slice(&0u32.to_le_bytes()); // parameters
+    out.extend_from_slice(&0u32.to_le_bytes());
 
-    out.extend_from_slice(&2u32.to_le_bytes()); // nodes
+    out.extend_from_slice(&2u32.to_le_bytes());
     push_string(&mut out, "clip");
     out.push(GraphNodeKind::ClipPlayer.to_u8());
     out.push(RAGP_NODE_LOOPED);
-    out.extend_from_slice(&1.0f32.to_le_bytes()); // speed
-    out.extend_from_slice(&1.0f32.to_le_bytes()); // weight
-    out.extend_from_slice(&1u32.to_le_bytes()); // clips
+    out.extend_from_slice(&1.0f32.to_le_bytes());
+    out.extend_from_slice(&1.0f32.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
     push_string(&mut out, "idle.ranim");
-    out.extend_from_slice(&0u32.to_le_bytes()); // positions
+    out.extend_from_slice(&0u32.to_le_bytes());
     push_string(&mut out, "");
     push_string(&mut out, "");
     push_string(&mut out, "");
-    out.extend_from_slice(&0u32.to_le_bytes()); // inputs
+    out.extend_from_slice(&0u32.to_le_bytes());
     if with_speeds {
-        out.extend_from_slice(&0u32.to_le_bytes()); // sample speeds
+        out.extend_from_slice(&0u32.to_le_bytes());
     }
 
     push_string(&mut out, "out");
@@ -44,14 +44,14 @@ fn minimal_graph_version(version: u8, with_speeds: bool) -> Vec<u8> {
     push_string(&mut out, "");
     push_string(&mut out, "");
     out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // input node
+    out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&1.0f32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // mask
+    out.extend_from_slice(&0u32.to_le_bytes());
     if with_speeds {
-        out.extend_from_slice(&0u32.to_le_bytes()); // sample speeds
+        out.extend_from_slice(&0u32.to_le_bytes());
     }
 
-    out.extend_from_slice(&1u32.to_le_bytes()); // output
+    out.extend_from_slice(&1u32.to_le_bytes());
     out
 }
 
@@ -98,7 +98,6 @@ fn trailing_bytes_and_bad_indices_are_rejected() {
     bad_output[output_offset..].copy_from_slice(&99u32.to_le_bytes());
     assert!(decode_rag(&bad_output).is_none());
 
-    // node 0 kind byte: header(9) + name_len(2) + name(4).
     let mut bad_kind = minimal_graph();
     bad_kind[15] = 0xFF;
     assert!(decode_rag(&bad_kind).is_none());
@@ -107,6 +106,6 @@ fn trailing_bytes_and_bad_indices_are_rejected() {
 #[test]
 fn unknown_flag_bits_are_rejected() {
     let mut flags = minimal_graph();
-    flags[16] = 0b1000_0000; // ClipPlayer flags (byte after kind)
+    flags[16] = 0b1000_0000;
     assert!(decode_rag(&flags).is_none());
 }

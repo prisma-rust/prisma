@@ -5,22 +5,15 @@
 
 use crate::asset::types::{MaterialAsset, MeshAsset};
 
-// ===========================================================================
-// Unit cube (1×1×1 centred at origin)
-// ===========================================================================
-
 /// A unit cube with 24 unique vertices (4 per face × 6 faces), 36 indices.
 /// Normals are face-aligned; UVs span [0,1] per face.
 pub fn make_cube() -> MeshAsset {
-    // Each face has its own set of 4 vertices so face normals are flat.
     type FaceData = ([f32; 3], [f32; 3], [[f32; 3]; 4], [[f32; 2]; 4]);
 
     let (positions, uvs): (Vec<[f32; 3]>, Vec<[f32; 2]>) = {
         let mut p = Vec::with_capacity(24);
         let mut u = Vec::with_capacity(24);
-        // Front (+Z), Back (-Z), Top (+Y), Bottom (-Y), Right (+X), Left (-X)
         let face_data: [FaceData; 6] = [
-            // (normal, tangent, positions, uvs)
             (
                 [0.0, 0.0, 1.0],
                 [1.0, 0.0, 0.0],
@@ -116,7 +109,6 @@ pub fn make_cube() -> MeshAsset {
         n
     };
 
-    // 36 indices (6 faces × 1 quad = 2 triangles × 3 indices)
     let indices: Vec<u32> = {
         let mut idx = Vec::with_capacity(36);
         for base in (0..24).step_by(4) {
@@ -132,10 +124,6 @@ pub fn make_cube() -> MeshAsset {
         indices,
     }
 }
-
-// ===========================================================================
-// Default material
-// ===========================================================================
 
 /// A neutral grey PBR material (metallic 0.0, roughness 0.5).
 pub fn default_material() -> MaterialAsset {

@@ -99,7 +99,6 @@ fn prt_pass_executes_with_dynamic_lights_on_gpu() {
         params: [0.0; 4],
     }];
 
-    // Run 3 frames so 1-frame latency gi_volume is populated and sampled by ForwardPass.
     for _ in 0..3 {
         let ctx = renderer.begin_frame().expect("begin_frame").expect("frame");
         let input = FrameInput {

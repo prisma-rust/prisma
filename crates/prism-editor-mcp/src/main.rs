@@ -98,9 +98,6 @@ impl ServerHandler for PrismEditorServer {
     ) -> Result<CallToolResponse, McpError> {
         let args = Value::Object(request.arguments.unwrap_or_default());
         let name = request.name.to_string();
-        // Tool bodies read and write files and spawn `cargo`/the game binary;
-        // `block_in_place` keeps that off the async scheduler without turning
-        // every tool into an async function.
         let outcome = tokio::task::block_in_place(|| self.dispatch(&name, &args));
         let result = match outcome {
             Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),

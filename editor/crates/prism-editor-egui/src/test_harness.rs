@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Helper surface: key_press/context stay available for future scenarios.
+#![allow(dead_code)] 
 
 //! Headless egui interaction harness.
 //!

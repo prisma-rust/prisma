@@ -29,8 +29,6 @@ fn switching_scenes_unloads_the_previous_scene() {
     let previous_entities: Vec<Entity> = (0..3)
         .map(|_| spawn_scene_entity(&mut world, previous))
         .collect();
-    // Engine-owned entities (e.g. `runtime_initialize` fallback camera) have no `SceneMember`,
-    // must not be mistakenly deleted on scene switch.
     let engine_owned = world.spawn();
     let current_entities: Vec<Entity> = (0..2)
         .map(|_| spawn_scene_entity(&mut world, current))
@@ -91,7 +89,6 @@ fn a_missing_scene_keeps_the_current_scene_loaded() {
     manager.set_environment_bytes(Some(vec![7]));
     let intro_entity = spawn_scene_entity(&mut world, SceneAssetId::generate());
 
-    // Manifest has this scene, but asset pack has no registered corresponding path → load failure.
     let manifest = "\
 [[scenes]]
 name = \"missing\"
@@ -121,10 +118,6 @@ fn unloading_an_empty_world_is_a_no_op() {
     assert_eq!(unload_scene_members(&mut world, Some(keep)), 0);
     assert!(world.is_alive(entity));
 }
-
-// ---------------------------------------------------------------------------
-// Manifest parsing: scenes.json priority, legacy scenes.toml fallback
-// ---------------------------------------------------------------------------
 
 #[test]
 fn parses_the_json_manifest() {
@@ -200,10 +193,6 @@ fn garbage_manifest_is_reported_instead_of_silently_empty() {
     assert!(SceneManifest::parse("{ not json").is_err());
 }
 
-// ---------------------------------------------------------------------------
-// Scene unload (#482)
-// ---------------------------------------------------------------------------
-
 /// `Persistent` entity and its entire child tree survive one scene switch.
 #[test]
 fn unloading_a_scene_keeps_persistent_subtrees() {
@@ -222,7 +211,6 @@ fn unloading_a_scene_keeps_persistent_subtrees() {
     HierarchyHelper::reparent(&mut world, child, Some(persistent_root));
     HierarchyHelper::reparent(&mut world, grandchild, Some(child));
 
-    // A normal intermediate node in scene, to confirm tree structure not wholly preserved.
     assert!(world.get::<Child>(persistent_root).is_some());
 
     let unloaded = manager.unload_scene(&mut world);

@@ -22,15 +22,6 @@ pub(crate) mod text;
 #[cfg(feature = "ui")]
 pub use gpu::UiOverlay;
 
-// ---------------------------------------------------------------------------
-// Text backend feature combinations
-// ---------------------------------------------------------------------------
-//
-// The two backends are mutually exclusive: enabling both leaves fontdue and
-// ttf-parser in the binary while the author believes the switch took effect.
-// Failing the build is better than silently shipping the extra 90 KB.
-
-// `ui-fontdue` and `ui-directwrite` are alternatives, never both.
 #[cfg(all(feature = "ui-fontdue", feature = "ui-directwrite"))]
 compile_error!(
     "features `ui-fontdue` and `ui-directwrite` are mutually exclusive: pick one text 
@@ -38,7 +29,6 @@ compile_error!(
      features = [\"ui\", \"ui-directwrite\"]`; every other platform uses `\"ui-fontdue\"`."
 );
 
-// DirectWrite is a Windows-only backend; other targets have no `windows` bindings.
 #[cfg(all(feature = "ui-directwrite", not(windows)))]
 compile_error!(
     "feature `ui-directwrite` is only available on Windows targets because it links the 

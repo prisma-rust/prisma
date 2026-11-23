@@ -33,10 +33,6 @@ pub struct AuthoredMontage {
     pub warp_windows: Vec<AnimClipWarpWindowInfo>,
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Error)]
 pub enum ImportError {
     #[error("No importer found for: {0}")]
@@ -58,10 +54,6 @@ pub enum ImportError {
     Serde(#[from] serde_json::Error),
 }
 
-// ---------------------------------------------------------------------------
-// Import Context
-// ---------------------------------------------------------------------------
-
 /// Context provided to an importer during the import process.
 pub struct ImportContext {
     /// Absolute path to the source file being imported.
@@ -82,10 +74,6 @@ impl std::fmt::Debug for ImportContext {
             .finish()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Import Result
-// ---------------------------------------------------------------------------
 
 /// The result of a successful import.
 pub struct ImportResult {
@@ -109,10 +97,6 @@ impl std::fmt::Debug for ImportResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Import File Result (returned by ImportPipeline::import_file)
-// ---------------------------------------------------------------------------
-
 /// Result of a single `import_file` call.
 pub struct ImportFileResult {
     /// `true` when the file was actually imported; `false` when cache hit.
@@ -121,10 +105,6 @@ pub struct ImportFileResult {
     /// `None` when the file was cached.
     pub intermediate_data: Option<Vec<u8>>,
 }
-
-// ---------------------------------------------------------------------------
-// Importer trait
-// ---------------------------------------------------------------------------
 
 /// A pluggable importer that converts source files into intermediate data.
 ///
@@ -146,10 +126,6 @@ pub trait Importer: Send + Sync {
     /// This may be called on a background thread / async task.
     fn import(&self, ctx: &ImportContext) -> Result<ImportResult, ImportError>;
 }
-
-// ---------------------------------------------------------------------------
-// Importer Registry
-// ---------------------------------------------------------------------------
 
 /// Registry of all available importers, keyed by name.
 pub struct ImporterRegistry {
@@ -220,10 +196,6 @@ impl std::fmt::Debug for ImporterRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Import Pipeline
-// ---------------------------------------------------------------------------
-
 /// High-level import pipeline that coordinates importers, the database, and
 /// the import cache.
 pub struct ImportPipeline {
@@ -283,13 +255,11 @@ impl ImportPipeline {
         let settings_hash =
             xxhash_rust::xxh3::xxh3_64(serde_json::to_string(&settings)?.as_bytes());
 
-        // Find importer.
         let importer = self
             .registry
             .find_for_path(source_path)
             .ok_or_else(|| ImportError::NoImporter(source_path.to_path_buf()))?;
 
-        // Check cache (unless the caller asked for a forced re-import).
         if !force && cache.is_up_to_date(&normalized, hash, settings_hash, importer.version()) {
             tracing::debug!("  ~ cached: {normalized}");
             return Ok(ImportFileResult {
@@ -298,7 +268,6 @@ impl ImportPipeline {
             });
         }
 
-        // Run import.
         let ctx = ImportContext {
             source_path: source_path.to_path_buf(),
             source_hash: hash,
@@ -308,7 +277,6 @@ impl ImportPipeline {
 
         let result = importer.import(&ctx)?;
 
-        // Update database.
         let id = db
             .id_by_path(&normalized)
             .unwrap_or_else(|| db.generate_id());
@@ -320,7 +288,6 @@ impl ImportPipeline {
         record.version = importer.version();
         db.insert(record)?;
 
-        // Update cache.
         cache.record(&normalized, hash, settings_hash, id, importer.version());
 
         Ok(ImportFileResult {
@@ -362,14 +329,6 @@ pub struct ImportSummary {
     pub errors: u32,
 }
 
-// ===========================================================================
-// Built-in Importers
-// ===========================================================================
-
-// ---------------------------------------------------------------------------
-// Raw / Binary Importer
-// ---------------------------------------------------------------------------
-
 /// Imports any unrecognized file as a raw binary blob.
 pub struct RawImporter;
 
@@ -383,7 +342,7 @@ impl Importer for RawImporter {
     }
 
     fn can_import(&self, _path: &Path) -> bool {
-        true // catch-all
+        true
     }
 
     fn import(&self, ctx: &ImportContext) -> Result<ImportResult, ImportError> {
@@ -396,10 +355,6 @@ impl Importer for RawImporter {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Texture Importer (real decode)
-// ---------------------------------------------------------------------------
 
 /// Import format tag stored in the intermediate binary data.
 const TEXTURE_INTERMEDIATE_MAGIC: &[u8; 4] = b"RTXI";
@@ -441,7 +396,7 @@ impl Importer for TextureImporter {
     }
 
     fn version(&self) -> u32 {
-        2 // switched from raw pass-through to real decode
+        2
     }
 
     fn can_import(&self, path: &Path) -> bool {
@@ -491,10 +446,6 @@ impl Importer for TextureImporter {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// glTF Mesh Importer
-// ---------------------------------------------------------------------------
 
 /// Intermediate mesh format magic: "RMXI" (Resource Mesh Intermediate)
 const MESH_INTERMEDIATE_MAGIC: &[u8; 4] = b"RMXI";
@@ -580,23 +531,24 @@ fn write_mesh_intermediate(
     let idxs = indices.len() as u32;
     let uv_channels: u32 = if uv0.is_some() { 1 } else { 0 };
 
-    // Estimate capacity
     let table_len = if submeshes.is_empty() {
         0
     } else {
         4 + submeshes.len() * 12
     };
-    let cap = 4 + 1 + 4 + 4 + 4
-            + verts as usize * 3 * 4   // positions
-            + normals.map_or(0, |n| n.len() * 3 * 4)
-            + uv0.map_or(0, |u| u.len() * 2 * 4)
-            + idxs as usize * 4
-            + table_len;
+    let cap = 4
+        + 1
+        + 4
+        + 4
+        + 4
+        + verts as usize * 3 * 4
+        + normals.map_or(0, |n| n.len() * 3 * 4)
+        + uv0.map_or(0, |u| u.len() * 2 * 4)
+        + idxs as usize * 4
+        + table_len;
     let mut buf = Vec::with_capacity(cap);
 
     buf.extend_from_slice(MESH_INTERMEDIATE_MAGIC);
-    // V2: index block after appending submesh table (#520). Importers without submesh
-    // (OBJ / hand-made mesh) continue writing v1, cooker accepts both.
     buf.push(if submeshes.is_empty() { 1 } else { 2 });
     buf.extend_from_slice(&verts.to_le_bytes());
     buf.extend_from_slice(&idxs.to_le_bytes());
@@ -650,8 +602,6 @@ impl GltfImporter {
             ..Default::default()
         };
 
-        // Skin bones + animation computed first: vertex stream JOINTS_0 needs "skin local index →
-        // global bone index" heavy map table (#560).
         let skin_result = skinned::read_skinning(&document, &buffers);
         if !skin_result.skinning.is_empty() {
             tracing::info!(
@@ -663,8 +613,6 @@ impl GltfImporter {
         mesh.skinning = skin_result.skinning;
         mesh.clips = skin_result.clips;
 
-        // Material / texture slice first into metadata (#520): many material render and texture asset storage need change
-        // `.scene.json` and DrawItem, this version only keeps source file info fully below.
         mesh.materials = document
             .materials()
             .map(|material| {
@@ -728,8 +676,6 @@ impl GltfImporter {
             })
             .collect();
 
-        // Scene graph: node-level TRS directly baked into vertices, so "one mesh asset" is entire tree
-        // in world space appearance (not just first mesh first primitive again, #520).
         let mut roots: Vec<gltf::Node> = Vec::new();
         match document
             .default_scene()
@@ -737,7 +683,6 @@ impl GltfImporter {
         {
             Some(scene) => roots.extend(scene.nodes()),
             None => {
-                // No scene: treat all nodes without parent node as roots.
                 let mut children = std::collections::HashSet::new();
                 for node in document.nodes() {
                     for child in node.children() {
@@ -757,14 +702,12 @@ impl GltfImporter {
             collect_node(node, &parent, &buffers, &mut mesh);
         }
 
-        // No node but file has mesh: fall back to "has mesh, single identity transform", don't let legal file be read for nothing.
         if mesh.primitive_count == 0 && !roots.is_empty() {
             return Err(ImportError::ImportFailed(
                 "glTF has nodes but no triangle primitives".into(),
             ));
         }
         if mesh.primitive_count == 0 {
-            // Without node info cannot bind skin: vertices keep unskinned (mesh still renderable).
             for gltf_mesh in document.meshes() {
                 for primitive in gltf_mesh.primitives() {
                     push_primitive(&primitive, &Mat4::IDENTITY, &buffers, None, &mut mesh);
@@ -782,8 +725,6 @@ impl GltfImporter {
                 "glTF mesh has no vertices".into(),
             ));
         }
-        // Any primitive missing JOINTS_0/WEIGHTS_0: entire mesh no skinning,
-        // To avoid half-skinned data skewing entire skeleton.
         if !mesh.all_skin_attrs || mesh.joints.len() != mesh.positions.len() {
             mesh.joints.clear();
             mesh.weights.clear();
@@ -1056,7 +997,6 @@ impl GltfImporter {
         let plan = gltf_material_plan(&mesh, mesh_pak_path);
         let mut assets = Vec::new();
 
-        // One RTEX per glTF image. Materials point at these by image index.
         let mut image_paths: Vec<Option<String>> = vec![None; mesh.images.len()];
         for (index, info) in mesh.images.iter().enumerate() {
             let Some(pixels) = mesh.image_pixels.get(index) else {
@@ -1152,16 +1092,12 @@ impl GltfImporter {
                 metallic_roughness_tex: None,
                 emissive_tex: None,
                 occlusion_tex: None,
-                // The implicit glTF default material has no alpha modes: it is
-                // fully opaque and must not be alpha-tested.
                 alpha_mode: Some("Opaque".to_string()),
                 alpha_cutoff: None,
             };
             assets.push(cook_gltf_material(&material, &plan.default_path)?);
         }
 
-        // Skinning / animation (#560): derived like material by "main asset path + suffix",
-        // Guarantee same source file always cooks to same path each time.
         let mut skeleton_path = None;
         let mut skinned_mesh_path = None;
         let mut clip_paths = Vec::new();
@@ -1206,7 +1142,6 @@ impl GltfImporter {
                 );
             }
 
-            // Author event table / sync flag (#560): merged by clip original name, key is glTF animation name.
             let authored = Self::authored_notifies(path)?;
             let mut used_notifies: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
@@ -1272,7 +1207,6 @@ impl GltfImporter {
                     }
                 }
             }
-            // Wrongly named event table should not be silently lost: author thinks it's that clip, actually none merged.
             for name in authored.keys() {
                 if !used_notifies.contains(name) {
                     tracing::warn!(
@@ -1663,7 +1597,6 @@ fn collect_node(
     let local = Mat4::from_cols_array_2d(&node.transform().matrix());
     let world = *parent * local;
     if let Some(mesh) = node.mesh() {
-        // `node.skin()` only applies to this node's own mesh; child nodes each carry their own skin.
         let skin = node.skin();
         for primitive in mesh.primitives() {
             push_primitive(&primitive, &world, buffers, skin.as_ref(), out);
@@ -1681,7 +1614,6 @@ fn push_primitive(
     skin: Option<&gltf::Skin>,
     out: &mut MeshData,
 ) {
-    // Only bake triangles; line/point classes first skipped and counted (not in supported range in this version).
     if primitive.mode() != gltf::mesh::Mode::Triangles {
         tracing::warn!(
             "gltf: skipping a {:?} primitive (only triangles are supported)",
@@ -1744,7 +1676,6 @@ fn push_primitive(
         }
     }
 
-    // JOINTS_0 / WEIGHTS_0 (#560): only retained when entire mesh has skinning.
     if out.all_skin_attrs {
         let remap =
             skin.and_then(|skin| out.skinning.remap(skin.index()).map(|remap| (skin, remap)));
@@ -1756,7 +1687,6 @@ fn push_primitive(
                     out.joints.extend(joints.iter().map(|joint| {
                         let mut mapped = [0u16; 4];
                         for (slot, index) in joint.iter().enumerate() {
-                            // Indices outside skin all clamped to 0: bad data should not invalidate entire mesh.
                             mapped[slot] = remap.get(*index as usize).copied().unwrap_or(0);
                         }
                         mapped
@@ -1787,7 +1717,6 @@ fn push_primitive(
                 .filter(|index| (*index as usize) < positions.len())
                 .map(|index| index + base),
         ),
-        // Non-indexed mesh: add ordered index, not directly reject (legal glTF).
         None => out
             .indices
             .extend((0..positions.len() as u32).map(|index| index + base)),
@@ -1811,8 +1740,6 @@ impl Importer for GltfImporter {
     }
 
     fn version(&self) -> u32 {
-        // V2: metadata adds submeshes / materials / images (#520),
-        // Old import cache needs heavy re-run to get these fields.
         2
     }
 
@@ -1865,10 +1792,6 @@ impl Importer for GltfImporter {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// OBJ mesh  Importer
-// ---------------------------------------------------------------------------
 
 /// Import Wavefront `.obj`.
 ///
@@ -1979,8 +1902,6 @@ impl ObjImporter {
                         materials.insert(name.to_string());
                     }
                 }
-                // `o` / `g` / `s` / `mtllib` / comments etc.: OBJ nodes and material groups
-                // ignored before entering intermediate format, just ignore.
                 _ => {}
             }
         }
@@ -1991,7 +1912,6 @@ impl ObjImporter {
             ));
         }
 
-        // When `all_*` true, each vertex has that property; `unwrap` before length/content guaranteed by construction.
         let out_normals = if all_normals {
             vertex_normals
                 .iter()
@@ -2157,10 +2077,6 @@ impl Importer for ObjImporter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Animation graph importer (*.animgraph.json -> RAGP intermediate)
-// ---------------------------------------------------------------------------
-
 /// Parse author's `*.animgraph.json` into RAGP binary, and record clip / state machine dependencies.
 ///
 /// Graph format itself in `prism_asset::formats_anim_graph`; validation and encode in
@@ -2200,8 +2116,6 @@ impl Importer for AnimGraphImporter {
             ))
         })?;
 
-        // Clip / state machine path is resource dependency; path not found kept as-is (reported at build time),
-        // not rejecting entire graph because asset library not yet scanned.
         let mut dependencies = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for path in graph.nodes.iter().flat_map(|node| node.clips.iter()).chain(
@@ -2235,10 +2149,6 @@ impl Importer for AnimGraphImporter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// JSON Importer
-// ---------------------------------------------------------------------------
-
 /// Imports JSON files, validating syntax, and registers them as Binary assets
 /// with structured metadata.
 pub struct JsonImporter;
@@ -2260,7 +2170,6 @@ impl Importer for JsonImporter {
 
     fn import(&self, ctx: &ImportContext) -> Result<ImportResult, ImportError> {
         let text = std::fs::read_to_string(&ctx.source_path)?;
-        // Validate JSON.
         let parsed: Value = serde_json::from_str(&text)?;
 
         let metadata = serde_json::json!({
@@ -2277,10 +2186,6 @@ impl Importer for JsonImporter {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Material Importer (.mat.json -> RMATI intermediate)
-// ---------------------------------------------------------------------------
 
 /// Intermediate material format magic: "RMATI" (Resource Material Intermediate).
 /// 5 bytes so it is distinct from the 4-byte RMAT runtime magic.
@@ -2393,7 +2298,6 @@ impl MaterialImporter {
         buf.extend_from_slice(MATERIAL_INTERMEDIATE_MAGIC);
         buf.push(crate::cooker::MATERIAL_INTERMEDIATE_VERSION);
 
-        // 16 scalar floats (64 bytes).
         buf.extend_from_slice(&mat.base_color[0].to_le_bytes());
         buf.extend_from_slice(&mat.base_color[1].to_le_bytes());
         buf.extend_from_slice(&mat.base_color[2].to_le_bytes());
@@ -2413,7 +2317,6 @@ impl MaterialImporter {
         buf.extend_from_slice(&mat.clearcoat.to_le_bytes());
         buf.extend_from_slice(&mat.clearcoat_roughness.to_le_bytes());
 
-        // Alpha semantics: mode byte + cutoff float.
         let alpha_mode = mat
             .alpha_mode
             .as_deref()
@@ -2426,17 +2329,16 @@ impl MaterialImporter {
                 .to_le_bytes(),
         );
 
-        // 5 texture path records.
         for slot in tex_paths {
             match slot {
                 Some(path) => {
                     let bytes = path.as_bytes();
-                    buf.push(1); // present
+                    buf.push(1);
                     let len = bytes.len().min(u16::MAX as usize) as u16;
                     buf.extend_from_slice(&len.to_le_bytes());
                     buf.extend_from_slice(&bytes[..len as usize]);
                 }
-                None => buf.push(0), // absent
+                None => buf.push(0),
             }
         }
 
@@ -2454,8 +2356,6 @@ impl Importer for MaterialImporter {
     }
 
     fn can_import(&self, path: &Path) -> bool {
-        // `.mat.json` or `.mat` files. We match `.mat.json` so plain JSON files
-        // still fall through to JsonImporter; bare `.mat` is also accepted.
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -2474,7 +2374,6 @@ impl Importer for MaterialImporter {
         let mat: MaterialJson = serde_json::from_str(&text)
             .map_err(|e| ImportError::ImportFailed(format!("material JSON parse failed: {e}")))?;
 
-        // Collect the 5 texture paths in slot order.
         let raw_paths: [Option<String>; 5] = [
             mat.albedo_tex.clone(),
             mat.normal_tex.clone(),
@@ -2483,7 +2382,6 @@ impl Importer for MaterialImporter {
             mat.occlusion_tex.clone(),
         ];
 
-        // Resolve each path to an AssetId dependency via the database.
         let mut dependencies: Vec<AssetId> = Vec::new();
         let mut resolved_paths: [Option<String>; 5] = [None, None, None, None, None];
         for (i, path_opt) in raw_paths.iter().enumerate() {
@@ -2495,8 +2393,6 @@ impl Importer for MaterialImporter {
                         resolved_paths[i] = Some(normalized);
                     }
                     None => {
-                        // The texture asset isn't registered yet; warn and leave
-                        // the slot empty. The material still imports.
                         tracing::warn!(
                             "material importer: texture '{}' not in DB (slot '{}'); leaving empty",
                             normalized,
@@ -2523,10 +2419,6 @@ impl Importer for MaterialImporter {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Shader Importer (.slang -> RSLI intermediate)
-// ---------------------------------------------------------------------------
 
 /// Intermediate shader format magic: "RSLI" (Resource Slang Intermediate).
 const SHADER_INTERMEDIATE_MAGIC: &[u8; 4] = b"RSLI";
@@ -2558,7 +2450,6 @@ fn infer_entry_stage_from_name(file_stem: &str) -> Option<(&'static str, &'stati
     } else if stem.ends_with("_domain") {
         Some(("domainMain", "domain"))
     } else if stem.starts_with("pt_") {
-        // Path-tracing compute shaders use `ptMain` per compile.sh.
         Some(("ptMain", "compute"))
     } else {
         None
@@ -2606,7 +2497,7 @@ impl ShaderImporter {
             4 + 1 + 2 + entry_b.len() + 2 + stage_b.len() + 2 + profile_b.len() + 4 + source.len();
         let mut buf = Vec::with_capacity(cap);
         buf.extend_from_slice(SHADER_INTERMEDIATE_MAGIC);
-        buf.push(1); // version
+        buf.push(1);
 
         let entry_len = entry_b.len().min(u16::MAX as usize) as u16;
         buf.extend_from_slice(&entry_len.to_le_bytes());
@@ -2650,7 +2541,6 @@ impl Importer for ShaderImporter {
             .and_then(|s| s.to_str())
             .unwrap_or("");
 
-        // Resolve entry / stage / profile.
         let (default_entry, default_stage) =
             infer_entry_stage_from_name(file_stem).unwrap_or(("vertexMain", "vertex"));
         let entry =
@@ -2678,10 +2568,6 @@ impl Importer for ShaderImporter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Default Registry
-// ---------------------------------------------------------------------------
-
 /// Build the default importer registry with all built-in importers.
 pub fn default_importer_registry() -> ImporterRegistry {
     let mut reg = ImporterRegistry::new();
@@ -2692,13 +2578,9 @@ pub fn default_importer_registry() -> ImporterRegistry {
     reg.register(Box::new(ShaderImporter));
     reg.register(Box::new(AnimGraphImporter));
     reg.register(Box::new(JsonImporter));
-    reg.register(Box::new(RawImporter)); // catch-all last
+    reg.register(Box::new(RawImporter));
     reg
 }
-
-// ===========================================================================
-// Helpers
-// ===========================================================================
 
 fn normalize_relative_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")

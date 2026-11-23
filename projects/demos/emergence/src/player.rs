@@ -205,7 +205,7 @@ impl PlayerController {
         Self {
             feet_pos: Vec3::new(6.5, 4.05, 6.5),
             velocity: Vec3::ZERO,
-            yaw: -2.356, // Look northeast from (6.5, 6.5) across water pond toward Research Outpost.
+            yaw: -2.356, 
             pitch: -0.14,
             grounded: true,
             fly_mode: false,
@@ -340,7 +340,6 @@ impl PlayerController {
             if let Some(cam) = Self::resolve_active_camera(world) {
                 self.camera_entity = Some(cam);
                 if let Some(lt) = world.get::<LocalTransform>(cam) {
-                    // Use authored courtyard overlook on initial frame while snapping cleanly above terrain.
                     self.feet_pos = Vec3::new(
                         lt.position[0],
                         (lt.position[1] - PLAYER_EYE_HEIGHT_M).max(4.02),
@@ -367,7 +366,6 @@ impl PlayerController {
                 );
                 self.camera_entity = Some(cam);
             }
-            // Push feet above ground if spawn overlapped solid terrain.
             while sim
                 .aabb_intersects_solid(self.aabb_min(self.feet_pos), self.aabb_max(self.feet_pos))
                 && self.feet_pos.y < 58.0
@@ -391,7 +389,6 @@ impl PlayerController {
     }
 
     fn spawn_hud(&mut self, world: &mut GameWorld<'_>) {
-        // Only the centered crosshair stays permanently visible; status/probe readouts live in F3.
         let ch = world.spawn();
         world.set(ch, Name("hud_crosshair".to_string()));
         world.set(ch, Node::default());
@@ -443,7 +440,6 @@ impl PlayerController {
         if !ui_consumed {
             let has_fly_controller = self.sync_from_camera_if_modified(world);
 
-            // Look via mouse delta while locked, plus drag-look and arrow-key fallback when unlocked.
             let unlocked_drag = !input.pointer_locked
                 && (input.right_held
                     || input.middle_held
@@ -480,7 +476,6 @@ impl PlayerController {
                 }
             }
         } else if let Some(cam) = self.camera_entity {
-            // Keep any attached FlyCameraController locked to the player's heading while UI owns input.
             if let Some(mut ctrl) = world.get::<FlyCameraController>(cam) {
                 ctrl.yaw = self.yaw;
                 ctrl.pitch = self.pitch;
@@ -488,7 +483,6 @@ impl PlayerController {
             }
         }
 
-        // Track unlocked RMB click vs drag-look so dragging does not spuriously trigger placement.
         let mouse_move_px = (input.mouse_delta[0].powi(2) + input.mouse_delta[1].powi(2)).sqrt();
         let unlocked_right_click = if input.pointer_locked || ui_consumed {
             self.was_unlocked_right_held = false;
@@ -510,13 +504,11 @@ impl PlayerController {
         let use_tool =
             !ui_consumed && ((input.pointer_locked && input.right_clicked) || unlocked_right_click);
 
-        // Toggle Walk / Fly with Tab or V.
         if input.key_pressed(keys::TAB) || input.key_pressed(keys::OTHER_BASE + b'V' as usize) {
             self.fly_mode = !self.fly_mode;
             self.velocity = Vec3::ZERO;
         }
 
-        // Switch 3-tier voxel editing granularity: 1 = L1 (1m), 2 = L2 (0.25m), 3 = L3 (0.0625m), press again or T = Auto.
         for (key, target_tier) in [
             (keys::DIGIT_1, VoxelTier::L1),
             (keys::DIGIT_2, VoxelTier::L2),
@@ -531,7 +523,6 @@ impl PlayerController {
             }
         }
 
-        // Smoothly glide camera eye height over stepped ledges without abrupt pops.
         if self.camera_step_offset_y.abs() > 1e-4 {
             self.camera_step_offset_y *= (-dt.clamp(0.0, 0.05) * 18.0).exp();
             if self.camera_step_offset_y.abs() <= 1e-4 {
@@ -539,7 +530,6 @@ impl PlayerController {
             }
         }
 
-        // Hotbar slots via digits 4..=9, 0 or Q / scroll wheel.
         for (slot_idx, key) in [
             (0, keys::DIGIT_4),
             (1, keys::DIGIT_5),
@@ -568,7 +558,6 @@ impl PlayerController {
 
         self.sync_camera_transform(world);
 
-        // Aiming raycast across L1/L2/L3 chunks & cursor wireframe update from live camera basis.
         let eye = self.eye_pos();
         let cam_rot = self.live_camera_rotation(world);
         let fwd = (cam_rot * -Vec3::Z).normalize_or(self.forward_dir());
@@ -608,7 +597,6 @@ impl PlayerController {
             }
         }
 
-        // Interaction: Carve (Left Click), Place / Tool (Right Click), Quick Stimuli (F/E/R/G).
         if let Some(hit) = self.last_hit {
             if !ui_consumed && self.was_pointer_locked && input.left_clicked {
                 sim.carve_at_hit(self.tier, &hit);
@@ -718,8 +706,6 @@ impl PlayerController {
             return;
         }
 
-        // Depenetrate ONLY on the transition from Fly -> Walk so walking into walls
-        // never triggers vertical climbing or floor jitter.
         if self.was_fly_mode {
             self.was_fly_mode = false;
             while sim
@@ -731,7 +717,6 @@ impl PlayerController {
             }
         }
 
-        // Walk mode kinematics with gravity, coyote time, jump buffer, and L2 step-up.
         self.velocity.x = wish_dir.x * speed;
         self.velocity.z = wish_dir.z * speed;
 
@@ -756,7 +741,6 @@ impl PlayerController {
         self.move_axis_with_collision(sim, 2, self.velocity.z * dt, true);
         let step_lift = self.feet_pos.y - pre_step_y;
         if step_lift > 1e-4 {
-            // Compensate camera eye height so stepping up glides smoothly across render frames.
             self.camera_step_offset_y = (self.camera_step_offset_y - step_lift).clamp(-0.6, 0.0);
             self.grounded = true;
             if self.velocity.y < 0.0 {
@@ -775,7 +759,6 @@ impl PlayerController {
             self.grounded = false;
         }
 
-        // Respawn above ground only if player fell below bedrock floor.
         if self.feet_pos.y < 1.0 {
             self.feet_pos.y = 6.0;
             self.velocity.y = 0.0;
@@ -820,7 +803,6 @@ impl PlayerController {
             let mut max_stepped = candidate;
             max_stepped.y += STEP_HEIGHT_M;
             if !sim.aabb_intersects_solid(self.aabb_min(max_stepped), self.aabb_max(max_stepped)) {
-                // Find the minimal vertical clearance so L2/L3 steps never overshoot or bounce.
                 let mut lo = 0.0f32;
                 let mut hi = STEP_HEIGHT_M;
                 for _ in 0..8 {
@@ -844,7 +826,6 @@ impl PlayerController {
                 return false;
             }
         }
-        // Binary refine remaining gap cleanly up to surface face.
         let mut lo = 0.0f32;
         let mut hi = delta;
         for _ in 0..5 {
@@ -1016,7 +997,6 @@ mod tests {
         player.fly_mode = false;
         player.grounded = false;
 
-        // Simulate falling onto the flat spawn courtyard (top at y = 4.0m) using a standalone world.
         let mut ecs = prism_ecs::World::new();
         let mut world = GameWorld::host(&mut ecs);
         for _ in 0..30 {
@@ -1025,9 +1005,8 @@ mod tests {
         assert!(player.grounded, "player should land on y=4.0m floor");
         assert!((player.feet_pos.y - 4.0).abs() < 0.05);
 
-        // Walking into the hand-placed research outpost must stop at its west wall (x = 12.0m).
         player.feet_pos = Vec3::new(10.2, 4.0, 15.0);
-        player.yaw = -std::f32::consts::FRAC_PI_2; // facing +X
+        player.yaw = -std::f32::consts::FRAC_PI_2; 
         let mut input = InputSnapshot::default();
         input.keys[keys::KEY_W / 64] |= 1u64 << (keys::KEY_W % 64);
         world.set_input(input);
@@ -1061,7 +1040,7 @@ mod tests {
             cam,
             LocalTransform {
                 position: Vec3::new(9.5, 5.5, 15.0),
-                rotation: Quat::IDENTITY, // facing -Z
+                rotation: Quat::IDENTITY, 
                 scale: Vec3::ONE,
             },
         );
@@ -1073,7 +1052,6 @@ mod tests {
         player.sync_camera_transform(&mut world);
         assert!((player.forward_dir().z - (-1.0)).abs() < 1e-4);
 
-        // Step W while facing -Z.
         let mut input = InputSnapshot::default();
         press_key(&mut input, keys::KEY_W);
         world.set_input(input);
@@ -1085,7 +1063,6 @@ mod tests {
             "expected -Z movement, got {delta:?}"
         );
 
-        // Rotate right 90 degrees via unlocked RMB drag (e.g. Editor Game View) to face +X.
         let mut look_input = InputSnapshot {
             pointer_locked: false,
             right_held: true,
@@ -1114,7 +1091,6 @@ mod tests {
             "hit should be in +X direction: {hit:?}"
         );
 
-        // Stepping W must now move in +X matching rotated camera angle.
         let before2 = player.feet_pos;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         let delta2 = player.feet_pos - before2;
@@ -1140,7 +1116,7 @@ mod tests {
             cam,
             LocalTransform {
                 position: Vec3::new(9.5, 5.5, 11.5),
-                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, -0.1, 0.0), // -X
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, -0.1, 0.0), 
                 scale: Vec3::ONE,
             },
         );
@@ -1153,7 +1129,6 @@ mod tests {
             "initial facing should inherit -X camera rotation"
         );
 
-        // Externally rotate camera entity to look +Z (yaw = PI).
         let mut lt = world.get::<LocalTransform>(cam).unwrap();
         lt.rotation = Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI, -0.05, 0.0);
         world.set(cam, lt);
@@ -1174,7 +1149,6 @@ mod tests {
             "expected +Z movement after external camera turn, got {delta:?}"
         );
 
-        // Attach FlyCameraController facing +X (yaw = -PI/2) and verify physics & aiming follow it.
         world.set(
             cam,
             FlyCameraController {
@@ -1207,7 +1181,6 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        // Stand on the spawn courtyard aiming straight down at natural L1 COW terrain.
         player.feet_pos = Vec3::new(9.5, 4.0, 15.5);
         player.yaw = -std::f32::consts::FRAC_PI_2;
         player.pitch = -1.5;
@@ -1225,7 +1198,6 @@ mod tests {
         );
         assert_eq!(player.tier, VoxelTier::L1);
 
-        // Press `2` to override cursor to L2 (`0.25m`) sub-cell granularity on the same L1 block.
         let mut key_input = InputSnapshot::default();
         let idx = keys::DIGIT_2;
         key_input.keys[idx / 64] |= 1u64 << (idx % 64);
@@ -1240,12 +1212,10 @@ mod tests {
             "Fixed L2 mode must highlight 0.25m L2 sub-cell"
         );
 
-        // Press `2` again to return to Auto and verify the outpost window mullion draws a 0.0625m L3 outline.
         let mut back_auto = InputSnapshot::default();
         back_auto.keys[idx / 64] |= 1u64 << (idx % 64);
         back_auto.key_edges[idx / 64] |= 1u64 << (idx % 64);
         world.set_input(back_auto);
-        // Stand in front of the hand-placed outpost window grate (L2 `x = 55`, `y = 19..24`, `z = 52`).
         player.feet_pos = Vec3::new(13.79, 4.0, 12.0);
         player.yaw = std::f32::consts::PI;
         player.pitch = -0.5826;
@@ -1268,8 +1238,6 @@ mod tests {
 
         let mut player = PlayerController::new();
         player.attach_ecs(&mut world, &sim);
-        // Build a wide 0.25m L2 step platform ahead (`x in 9.5..12.5, y in 4.0..4.25, z in 10.5..11.5`)
-        // on the clean open courtyard (`y = 4.0`).
         for lz in 42..46 {
             for lx in 38..50 {
                 sim.place_adjacent(
@@ -1290,7 +1258,7 @@ mod tests {
             }
         }
         player.feet_pos = Vec3::new(9.10, 4.0, 11.0);
-        player.yaw = -std::f32::consts::FRAC_PI_2; // +X
+        player.yaw = -std::f32::consts::FRAC_PI_2; 
         player.pitch = 0.0;
         player.grounded = true;
         player.sync_camera_transform(&mut world);
@@ -1350,7 +1318,6 @@ mod tests {
         player.feet_pos = Vec3::new(90.0, 24.0, 90.0);
         sim.stream_around(player.feet_pos, Some(&mut world), 32);
 
-        // Switch back to Walk mode and step physics: position must NOT be clamped to 31.6m.
         player.fly_mode = false;
         player.step_physics(&mut world, &sim, 1.0 / 60.0);
         assert!(

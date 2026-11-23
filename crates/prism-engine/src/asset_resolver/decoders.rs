@@ -33,8 +33,6 @@ pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureF
     match rtex_format {
         RTEX_FORMAT_RGBA8 if srgb => Some(TextureFormat::Rgba8Srgb),
         RTEX_FORMAT_RGBA8 => Some(TextureFormat::Rgba8),
-        // Block-compressed format color space also decided by slot bit (albedo/emissive = sRGB,
-        // normal/MR/AO = linear), consistent with RGBA8 (#519).
         RTEX_FORMAT_BC1 if srgb => Some(TextureFormat::Bc1Srgb),
         RTEX_FORMAT_BC1 => Some(TextureFormat::Bc1Unorm),
         RTEX_FORMAT_BC3 if srgb => Some(TextureFormat::Bc3Srgb),
@@ -43,7 +41,6 @@ pub(super) fn texture_format_for(rtex_format: u8, srgb: bool) -> Option<TextureF
         RTEX_FORMAT_BC7 => Some(TextureFormat::Bc7Unorm),
         RTEX_FORMAT_BC5 => Some(TextureFormat::Bc5Unorm),
         RTEX_FORMAT_BC6H => Some(TextureFormat::Bc6HUfloat),
-        // ASTC / ETC2 also decided by slot bit for color space (#519).
         RTEX_FORMAT_ASTC_4X4 if srgb => Some(TextureFormat::Astc4x4Srgb),
         RTEX_FORMAT_ASTC_4X4 => Some(TextureFormat::Astc4x4Unorm),
         RTEX_FORMAT_ASTC_6X6 if srgb => Some(TextureFormat::Astc6x6Srgb),
@@ -77,10 +74,6 @@ pub(super) fn skinned_submeshes(
 }
 
 impl GpuAssetResolver {
-    // -----------------------------------------------------------------------
-    // Internal CPU load helpers (pure data, no renderer dependency)
-    // -----------------------------------------------------------------------
-
     /// CPU stage: load mesh asset + deinterleave vertex data → `MeshUploadInput` + submesh table.
     /// CPU stage: decode `.rskin` into vertex data + skinning attributes (#560 P0-3b).
     ///
@@ -144,7 +137,6 @@ impl GpuAssetResolver {
     }
 
     pub(super) fn load_mesh_inputs(&mut self, path: &str) -> Option<LoadedMesh> {
-        // Built-in primitive meshes (editor 3D Object presets): no `.pak` read, no cook.
         if prism_render::primitives::is_builtin(path) {
             return prism_render::primitives::builtin(path).map(|input| LoadedMesh {
                 input,
@@ -253,8 +245,6 @@ impl GpuAssetResolver {
         };
 
         let tex_ids = mat.texture_ids();
-        // Color texture is sRGB encoded: let hardware decode on sample. Normal / MR / AO store linear
-        // data, decoding as sRGB would squash 0.5 to ≈0.214 (normal Z negative, lighting totally wrong).
         let albedo = self.load_texture_data(tex_ids[0], true);
         let normal = self.load_texture_data(tex_ids[1], false);
         let mr = self.load_texture_data(tex_ids[2], false);
@@ -262,8 +252,6 @@ impl GpuAssetResolver {
         let occlusion = self.load_texture_data(tex_ids[4], false);
         let textures = [albedo, normal, mr, emissive, occlusion];
 
-        // The renderer keeps its own mirror of the alpha enum (it must not
-        // depend on the asset crate), so map it here at the upload boundary.
         let alpha_mode = match mat.alpha_mode() {
             prism_asset::formats::MaterialAlphaMode::Opaque => {
                 prism_render::managers::MaterialAlphaMode::Opaque
@@ -350,8 +338,6 @@ impl GpuAssetResolver {
             .ok()?;
 
         let mip0 = tex.info.mip_data.first().cloned().unwrap_or_default();
-        // Neutral mid grey: a texture that failed to decode reads as an
-        // untextured surface rather than as a loud error marker.
         let placeholder = || TextureUploadInput {
             width: 1,
             height: 1,
@@ -464,7 +450,6 @@ pub(super) fn deinterleave_rmes(
     let vert_count = info.vert_count as usize;
     let uv_floats = if info.uv_channels >= 1 { 2 } else { 0 };
 
-    // Two legal combos: 3 + uv floats per vertex (no normals), or 6 + uv (with normals).
     let has_normals = if float_stride == 3 + uv_floats {
         false
     } else if float_stride == 6 + uv_floats {
@@ -487,7 +472,6 @@ pub(super) fn deinterleave_rmes(
         return None;
     }
 
-    // Segment header (identity: float).
     let nrm_base = vert_count * 3;
     let uv_base = nrm_base + if has_normals { vert_count * 3 } else { 0 };
 
@@ -508,8 +492,6 @@ pub(super) fn deinterleave_rmes(
             let n = nrm_base + v * 3;
             normals.push([read(n), read(n + 1), read(n + 2)]);
         } else {
-            // Asset without normals has no reliable shading normal; give a fixed direction rather than zero vector,
-            // to avoid lighting degenerating to NaN / full black.
             normals.push([0.0, 0.0, 1.0]);
         }
         if uv_floats == 2 {
@@ -518,7 +500,7 @@ pub(super) fn deinterleave_rmes(
         } else {
             uvs.push([0.0, 0.0]);
         }
-        tangents.push([1.0, 0.0, 0.0, 1.0]); // default tangent
+        tangents.push([1.0, 0.0, 0.0, 1.0]);
     }
 
     let mut indices = Vec::with_capacity(info.idx_count as usize);

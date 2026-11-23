@@ -20,8 +20,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-// ── SlotMap ──────────────────────────────────────────────────────────────
-
 struct SlotMap<T> {
     pub(crate) slots: Vec<Option<T>>,
     pub(crate) free: Vec<u32>,
@@ -64,8 +62,6 @@ impl<T> SlotMap<T> {
     }
 }
 
-// ── type  ─────────────────────────────────────────────────────────────────
-
 type Callback = Box<dyn FnMut() + Send + 'static>;
 
 struct TimerState {
@@ -96,8 +92,6 @@ enum ServiceMsg {
 }
 
 const SLEEP_CHUNK: Duration = Duration::from_millis(50);
-
-// ── Public types ─────────────────────────────────────────────────────────────
 
 /// Timer creation parameters.
 pub struct TimerParams {
@@ -143,8 +137,6 @@ impl TimerClient {
 
     pub fn destroy(&self, id: TimerId) {
         self.state.lock().unwrap().remove(id);
-        // The service owns the callback/params; tell it to drop them too so a
-        // reused slot id cannot dispatch the previous timer's callback.
         let _ = self.reg_tx.send(ServiceMsg::Destroy(id));
     }
 
@@ -224,7 +216,6 @@ impl TimerService {
 
     /// Called every frame on the main thread, dispatches expired callbacks.
     pub fn tick(&mut self) {
-        // 1. Handle register / destroy messages (same mpsc, consumed in send order).
         while let Ok(msg) = self.reg_rx.try_recv() {
             match msg {
                 ServiceMsg::Register(msg) => {
@@ -256,7 +247,6 @@ impl TimerService {
             }
         }
 
-        // 2. Collect expired events
         let mut fired = Vec::new();
         while let Ok(ev) = self.fire_rx.try_recv() {
             let alive = self
@@ -274,7 +264,6 @@ impl TimerService {
             }
         }
 
-        // 3. Dispatch callbacks & reschedule new interval
         for id in fired {
             let ok = self
                 .client
@@ -310,8 +299,6 @@ impl Default for TimerService {
         Self::new()
     }
 }
-
-// ── Background worker ──────────────────────────────────────────────────────────
 
 fn worker_loop(
     cmd_rx: Receiver<WorkerCmd>,
@@ -361,8 +348,6 @@ fn worker_loop(
         });
     }
 }
-
-// ── TimerSet ─────────────────────────────────────────────────────────────
 
 /// TimerClient + auto id cache + Drop auto batch destroy.
 ///
@@ -441,7 +426,7 @@ mod tests {
         let new_fired = Arc::new(AtomicBool::new(false));
 
         let old_id = service.client.create_timer(timer(old_fired.clone(), false));
-        service.tick(); // register params for old_id
+        service.tick();
 
         service.client.destroy(old_id);
         let new_id = service.client.create_timer(timer(new_fired.clone(), true));

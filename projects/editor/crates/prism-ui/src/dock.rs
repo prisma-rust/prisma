@@ -478,7 +478,6 @@ impl WindowLayout {
             new_split_id,
             new_node.clone(),
         ) {
-            // Fallback: replace empty root
             if self.main_root.is_empty() {
                 self.main_root = new_node;
             }
@@ -646,7 +645,6 @@ impl WindowLayout {
             && !consumed_by_context_menu
             && self.open_context_menu.is_none()
         {
-            // 1. Check floating windows from top to bottom (Z-order).
             let mut handled = false;
             for idx in (0..self.floating.len()).rev() {
                 let win = &self.floating[idx];
@@ -674,7 +672,6 @@ impl WindowLayout {
                 }
                 let title_rect = Rect::new(rect.x, rect.y, rect.w, FLOATING_TITLE_HEIGHT);
                 if title_rect.contains(input.pointer_pos) {
-                    // Check if clicking a tab for tear-off/docking
                     if let Some(tab) = self
                         .cached_tabs
                         .iter()
@@ -703,7 +700,6 @@ impl WindowLayout {
                 break;
             }
 
-            // 2. Check docked splitters and tabs.
             if !handled {
                 if let Some(split) = self
                     .cached_splits
@@ -827,7 +823,6 @@ impl WindowLayout {
         let root_node = self.main_root.clone();
         self.mount_node(ctx, theme, &root_node, workspace, false, draw_content);
 
-        // Floating windows mount on the overlay layer in Z-order.
         let floating = self.floating.clone();
         ctx.with_parent(overlay_root, |ctx| {
             for win in &floating {
@@ -1072,8 +1067,6 @@ impl WindowLayout {
                 let area_node = ctx.mount(panel);
                 ctx.with_parent(area_node, |ctx| {
                     if in_floating {
-                        // macOS-style titlebar: traffic lights on the left, centered title
-                        // (or compact pill tabs when multiple panels are grouped), 1px hairline.
                         let active_win = area.active_window().cloned();
                         let close_key = active_win.as_ref().map_or_else(
                             || DockNodeKey::close(&"".into()),
@@ -1170,15 +1163,12 @@ impl WindowLayout {
                                     }
                                 });
                             }
-                            // Right balance spacer matching the 52px traffic-light cluster
-                            // so the center title/pills sit at the true window midpoint.
                             ctx.mount(
                                 ElementBox::default().size(Length::Px(52.0), Length::Px(1.0)),
                             );
                         });
                         ctx.mount(hairline(theme.border_subtle.with_alpha(0.45)));
                     } else {
-                        // Docked Tab bar
                         self.cached_tab_bars.push(CachedTabBarHit {
                             area_id: area.id,
                             active_window: area.active_window().cloned(),
@@ -1258,7 +1248,6 @@ impl WindowLayout {
                         ctx.mount(hairline(theme.border_subtle));
                     }
 
-                    // Active window body
                     if let Some(active) = area.active_window().cloned() {
                         let body = ctx.mount(col().width(Length::Percent(100.0)).grow(1.0));
                         ctx.with_parent(body, |ctx| {

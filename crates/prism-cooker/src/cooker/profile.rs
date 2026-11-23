@@ -17,10 +17,6 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 use thiserror::Error;
 
-// ===========================================================================
-// Errors
-// ===========================================================================
-
 #[derive(Debug, Error)]
 pub enum ProfileError {
     #[error("I/O error: {0}")]
@@ -38,10 +34,6 @@ pub enum ProfileError {
     #[error("Unsupported value: {0}")]
     Unsupported(String),
 }
-
-// ===========================================================================
-// Core Enums
-// ===========================================================================
 
 /// Texture compression format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,18 +93,14 @@ impl Platform {
     }
 }
 
-// ===========================================================================
-// Settings Structs (final merged configuration)
-// ===========================================================================
-
 /// Texture cooking settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextureSettings {
     pub compression: TextureCompression,
     pub generate_mips: bool,
-    pub quality: u8,   // 0–100
-    pub max_size: u32, // 0 = unlimited
+    pub quality: u8,
+    pub max_size: u32,
 }
 
 impl Default for TextureSettings {
@@ -166,7 +154,7 @@ impl Default for ShaderSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CompressionSettings {
-    pub algorithm: String, // "zstd" or "none"
+    pub algorithm: String,
     pub level: i32,
 }
 
@@ -205,15 +193,6 @@ pub const DEFAULT_STREAMING_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
 fn default_streaming_threshold_bytes() -> u64 {
     DEFAULT_STREAMING_THRESHOLD_BYTES
 }
-
-// ===========================================================================
-// Partial overrides (what a profile file actually contains)
-//
-// A profile file only describes the fields it wants to change. Using the
-// fully-materialised `*Settings` structs for that is wrong: `#[serde(default)]`
-// fills every missing field with a default value, so merging cannot tell
-// "absent" from "explicitly set to the default".
-// ===========================================================================
 
 /// Partial [`TextureSettings`] override from a profile file.
 ///
@@ -359,22 +338,18 @@ impl CookSettings {
         keys.sort();
         for key in keys {
             buffer.extend_from_slice(key.as_bytes());
-            buffer.push(0x1f); // unit separator: between key and value
+            buffer.push(0x1f);
             buffer.extend_from_slice(
                 serde_json::to_string(&self.custom[key])
                     .expect("custom values should always serialize")
                     .as_bytes(),
             );
-            buffer.push(0x1e); // record separator: between different entries
+            buffer.push(0x1e);
         }
 
         xxhash_rust::xxh3::xxh3_64(&buffer)
     }
 }
-
-// ===========================================================================
-// Profile Struct (JSON-deserializable, partial)
-// ===========================================================================
 
 /// A single profile file. Every field is optional — only the fields that
 /// should override the base/parent are present.
@@ -431,10 +406,6 @@ pub struct CliOverrides {
     pub custom: HashMap<String, serde_json::Value>,
 }
 
-// ===========================================================================
-// Profile Manager
-// ===========================================================================
-
 /// Loads, resolves inheritance chains, merges, and computes final CookSettings.
 pub struct ProfileManager {
     /// Directory containing profile JSON files.
@@ -456,13 +427,10 @@ impl ProfileManager {
 
     /// Load a single profile file by name (without `.json` suffix).
     pub fn load_profile(&mut self, name: &str) -> Result<CookProfile, ProfileError> {
-        // Check built-in cache FIRST (only built-ins are cached).
         if let Some(cached) = self.loaded.get(name) {
             return Ok(cached.clone());
         }
 
-        // Check for a user file. Not cached to avoid shadowing the built-in
-        // when a user profile inherits via `base: "desktop"`.
         let file_path = self.profiles_dir.join(format!("{name}.json"));
         if file_path.exists() {
             let raw = std::fs::read_to_string(&file_path).map_err(ProfileError::Io)?;
@@ -474,7 +442,6 @@ impl ProfileManager {
             return Ok(profile);
         }
 
-        // Fall back to built-in default.
         if let Some(builtin) = BUILTIN_DEFAULTS.get(name) {
             let profile = (*builtin).clone();
             self.loaded.insert(name.to_owned(), profile.clone());
@@ -508,13 +475,11 @@ impl ProfileManager {
 
         let profile = self.load_profile(name)?;
 
-        // Start from either the parent's resolved settings or the defaults.
         let mut settings = match profile.base {
             Some(ref base_name) => self.resolve_internal(base_name, seen)?,
             None => CookSettings::default(),
         };
 
-        // Overlay only the fields this profile explicitly specifies.
         if let Some(ref p) = profile.platform {
             settings.platform = p.clone();
         }
@@ -602,14 +567,9 @@ impl ProfileManager {
     }
 }
 
-// ===========================================================================
-// Built-in Default Profiles
-// ===========================================================================
-
 static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock::new(|| {
     let mut m = HashMap::new();
 
-    // ── base.json ────────────────────────────────────────────────
     m.insert(
         "base",
         CookProfile {
@@ -639,7 +599,6 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
         },
     );
 
-    // ── desktop.json ─────────────────────────────────────────────
     m.insert(
         "desktop",
         CookProfile {
@@ -663,7 +622,6 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
         },
     );
 
-    // ── android.json ─────────────────────────────────────────────
     m.insert(
         "android",
         CookProfile {
@@ -689,7 +647,6 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
         },
     );
 
-    // ── ios.json ─────────────────────────────────────────────────
     m.insert(
         "ios",
         CookProfile {
@@ -715,7 +672,6 @@ static BUILTIN_DEFAULTS: LazyLock<HashMap<&'static str, CookProfile>> = LazyLock
         },
     );
 
-    // ── embedded.json ────────────────────────────────────────────
     m.insert(
         "embedded",
         CookProfile {

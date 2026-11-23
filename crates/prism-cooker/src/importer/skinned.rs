@@ -72,7 +72,6 @@ pub struct GltfSkinResult {
 /// Parse `document.skins()` + `document.animations()`.
 pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> GltfSkinResult {
     let mut joints: Vec<JointSource> = Vec::new();
-    // Node index → global bone index (same node referenced by multiple skins keeps only one).
     let mut by_node: HashMap<usize, u16> = HashMap::new();
     let mut remaps: HashMap<usize, Vec<u16>> = HashMap::new();
 
@@ -104,7 +103,6 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         return GltfSkinResult::default();
     }
 
-    // Node index → glTF node + parent node table (gltf 1.4 lacks `Node::parent()`, walk tree ourselves).
     let nodes: Vec<gltf::Node<'_>> = document.nodes().collect();
     let position_of_node: HashMap<usize, usize> = nodes
         .iter()
@@ -114,7 +112,6 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
     let parent_of_node = node_parents(document, &nodes);
     let is_joint: HashMap<usize, ()> = joints.iter().map(|joint| (joint.node, ())).collect();
 
-    // Each bone's parent bone = nearest joint node in parent chain.
     let mut parents: Vec<Option<usize>> = Vec::with_capacity(joints.len());
     for joint in &joints {
         let mut parent = None;
@@ -129,10 +126,8 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         parents.push(parent);
     }
 
-    // Topological order: parent must come before child. Cyclic/broken bones fall to root (should not appear in glTF, but won't hang).
     let order = topological_order(&parents);
 
-    // After remap: global index changes, remap table must change too.
     let mut new_index: Vec<u16> = vec![0; joints.len()];
     for (new_slot, old_index) in order.iter().enumerate() {
         new_index[*old_index] = new_slot as u16;
@@ -150,7 +145,6 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
         })
         .collect();
 
-    // Reference pose: inverse_bind comes in as bind pose world matrix.
     let mut world: Vec<Option<Mat4>> = Vec::with_capacity(order.len());
     for old_index in &order {
         world.push(invert_affine(&joints[*old_index].inverse_bind));
@@ -192,10 +186,6 @@ pub fn read_skinning(document: &gltf::Document, buffers: &[gltf::buffer::Data]) 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Animation
-// ---------------------------------------------------------------------------
-
 fn read_animations(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
@@ -211,7 +201,6 @@ fn read_animations(
 
     let mut clips = Vec::new();
     for (clip_index, animation) in document.animations().enumerate() {
-        // Node index → track (same node can have many channels, merged by property into same track).
         let mut tracks: BTreeMap<u16, AnimTrackInfo> = BTreeMap::new();
         let mut duration = 0.0f32;
         let mut skipped_nodes = 0usize;
@@ -296,13 +285,10 @@ fn read_animations(
         clips.push(AnimClipInfo {
             name,
             duration,
-            // glTF does not carry frame rate (key frames are timestamps), here set 30 as editor default preview frame rate.
             fps: 30.0,
             looped: false,
             additive: false,
             tracks,
-            // glTF animation has no event channel (#560 P1 Notify): Notify supplemented by author on engine side,
-            // exported clip event table is empty.
             notifies: Vec::new(),
             sync_markers: Vec::new(),
             sections: Vec::new(),
@@ -355,10 +341,6 @@ fn keys_for<T: Copy>(times: &[f32], values: &[T]) -> Vec<(f32, T)> {
     keys.dedup_by(|a, b| (a.0 - b.0).abs() <= f32::EPSILON);
     keys
 }
-
-// ---------------------------------------------------------------------------
-// Skin mesh
-// ---------------------------------------------------------------------------
 
 /// Pack importer vertex data + per-vertex bone influence into `.rskin` intermediate structure.
 ///
@@ -426,14 +408,9 @@ pub(super) fn skinned_mesh_info(
         weights,
         indices: mesh.indices.clone(),
         submeshes,
-        // glTF vertices already in bind pose, mesh itself need not pose again.
         bind_pose: JointTransform::default(),
     })
 }
-
-// ---------------------------------------------------------------------------
-// Small tools
-// ---------------------------------------------------------------------------
 
 const IDENTITY_4X4: Mat4 = Mat4::IDENTITY;
 
@@ -542,9 +519,6 @@ fn quat_from_basis(basis: Mat3) -> [f32; 4] {
     let quat = Quat::from_mat3(&basis);
     let length = quat.length();
     if length > 1e-8 {
-        // A quaternion and its negation describe the same rotation. Pinning
-        // the sign (`w >= 0`) keeps the baked data stable instead of letting
-        // the extraction branch decide it.
         let signed = if quat.w < 0.0 { -quat } else { quat };
         (signed / length).to_array()
     } else {

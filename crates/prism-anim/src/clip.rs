@@ -248,7 +248,6 @@ impl Clip {
             return Vec::new();
         }
         let mut fired: Vec<&ClipNotify> = Vec::new();
-        // `to < from` can only be loop wrap-around (after `rem_euclid`), scan in two segments.
         let wrapped = to < from;
         for notify in &self.notifies {
             let hit = if wrapped {
@@ -417,7 +416,6 @@ pub fn sample_vec3(keys: &[Vec3Key], time: f32) -> Option<Vec3> {
                 Some(before.value.lerp(after.value, t))
             }
         }
-        // Only one keyframe covers this time point.
         None => Some(keys[0].value),
     }
 }

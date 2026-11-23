@@ -122,8 +122,6 @@ fn collect_assets(
         if name.starts_with('.') || name == "target" || name == "node_modules" {
             continue;
         }
-        // `.rmeta` is asset's sidecar, not importable asset: don't show in asset browser,
-        // and don't generate another `<...>.rmeta.rmeta` layer for it.
         if name.ends_with(crate::asset_meta::META_SUFFIX) {
             continue;
         }
@@ -155,8 +153,6 @@ pub fn asset_kind(path: &str) -> crate::assets::AssetKind {
     if lower.ends_with(".prefab.json") {
         return AssetKind::Prefab;
     }
-    // `.mat.json` is material authoring data (`MaterialDef` / cooker's `.mat.json` schema),
-    // must not fall into `json` branch below to become "data" (#488).
     if lower.ends_with(".mat.json") {
         return AssetKind::Material;
     }
@@ -351,7 +347,6 @@ pub fn write_json_asset(root: &Path, relative: &str, value: &serde_json::Value) 
     let mut text = serde_json::to_string_pretty(value)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     text.push('\n');
-    // Material validator is "any valid JSON", not `SceneDoc` (#488).
     atomic_write_verified(&path, &text, |text| {
         serde_json::from_str::<serde_json::Value>(text)
             .map(|_| ())
@@ -383,7 +378,6 @@ fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
 }
 
 fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
-    // Scene document write must be readable back as-is (rollback on truncation / bad write).
     atomic_write_verified(path, text, |text| {
         serde_json::from_str::<SceneDoc>(text)
             .map(|_| ())
@@ -416,7 +410,6 @@ fn atomic_write_verified(
         }
     }
 
-    // Windows rename can't overwrite existing target, so previous step moved original file away.
     if let Err(error) = fs::rename(&tmp, path) {
         if had_original {
             let _ = fs::rename(&bak, path);
@@ -425,7 +418,6 @@ fn atomic_write_verified(
         return Err(error);
     }
 
-    // Read-back validation: what was written must parse back into `SceneDoc`, otherwise rollback.
     let verified = fs::read_to_string(path)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         .and_then(|text| {
@@ -479,8 +471,6 @@ pub fn rename_path(root: &Path, from: &str, to: &str) -> io::Result<()> {
     let is_file = source.is_file();
     fs::rename(source, target)?;
     if is_file {
-        // #466: Asset identity is in `<path>.rmeta`, sidecar must move along on rename,
-        // otherwise GUID points to nonexistent old file, zero-rewrite references fail to resolve.
         let source_meta = asset_sidecar_path(&root.join(from));
         if source_meta.is_file() {
             let target_meta = asset_sidecar_path(&root.join(to));
@@ -596,7 +586,6 @@ pub fn asset_path_problem(path: &str) -> Option<&'static str> {
     if path.is_empty() {
         return Some("path is empty");
     }
-    // On Windows `assets/C:/x` `C:` is just a regular component, block separately.
     if path.contains(':') {
         return Some("path cannot contain `:`");
     }
@@ -622,7 +611,6 @@ pub fn ensure_document_suffix(kind: DocKind, name: &str) -> String {
     if name.ends_with(suffix) {
         return name.to_string();
     }
-    // Half-written form: strip trailing `.json` and `.scene` / `.prefab`, then complete.
     let short = suffix.trim_end_matches(".json");
     let mut stem = name.strip_suffix(".json").unwrap_or(name);
     stem = stem.strip_suffix(short).unwrap_or(stem);
@@ -655,7 +643,6 @@ mod tests {
 
     #[test]
     fn file_stamp_tracks_length_even_when_mtime_is_coarse() {
-        // #495 item 5: version stamp includes length, same-second overwrites can still be detected.
         let dir = std::env::temp_dir().join(format!("prism-stamp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
@@ -680,7 +667,6 @@ mod tests {
 
     #[test]
     fn file_content_stamp_detects_same_length_rewrites() {
-        // #864: when mtime precision insufficient, same-length overwrites must still be detected via digest.
         let dir = std::env::temp_dir().join(format!("prism-content-stamp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
@@ -739,7 +725,6 @@ mod tests {
         write_json_asset(&temp.root, "assets/materials/wood.mat.json", &value).unwrap();
         let read = read_json_asset(&temp.root, "assets/materials/wood.mat.json").unwrap();
         assert_eq!(read["metallic"], serde_json::json!(0.25));
-        // Unknown fields must be preserved as-is (hand-edited materials must not be swallowed by editor).
         assert_eq!(read["type"], serde_json::json!("material"));
     }
 
@@ -754,7 +739,6 @@ mod tests {
         );
 
         let lonely = std::env::temp_dir().join("no-assets-here");
-        // Only assert "current directory not mistakenly flagged as root" (temp dir itself has no assets/).
         if find_project_root(&lonely).is_none() {
             assert!(true);
         }
@@ -847,7 +831,6 @@ mod tests {
         )
         .is_err());
         assert!(rename_path(&project.root, "assets/none.json", "assets/scenes/x.json").is_err());
-        // target already exists
         fs::write(project.root.join("assets/scenes/c.scene.json"), "{}").unwrap();
         assert!(rename_path(
             &project.root,
@@ -855,7 +838,6 @@ mod tests {
             "assets/scenes/c.scene.json"
         )
         .is_err());
-        // allowed to move to new directory (auto-create).
         assert!(rename_path(
             &project.root,
             "assets/scenes/b.scene.json",
@@ -867,7 +849,7 @@ mod tests {
     #[test]
     fn creates_folders_and_copies_assets() {
         let project = TempProject::new();
-        create_folder(&project.root, "assets/textures/ui").unwrap(); // nested allowed
+        create_folder(&project.root, "assets/textures/ui").unwrap(); 
         assert!(project.root.join("assets/textures/ui").is_dir());
         assert!(create_folder(&project.root, "outside").is_err());
 
@@ -936,7 +918,6 @@ mod tests {
             "assets/prefabs/x.prefab.json"
         );
         assert_eq!(normalize_save_path(DocKind::Scene, "   "), "");
-        // #459: missing suffix (or partial) must still be completed.
         assert_eq!(
             normalize_save_path(DocKind::Scene, "level2"),
             "assets/scenes/level2.scene.json"
@@ -957,7 +938,6 @@ mod tests {
             normalize_save_path(DocKind::Prefab, "box"),
             "assets/prefabs/box.prefab.json"
         );
-        // Path traversal and absolute paths all rejected.
         assert_eq!(normalize_save_path(DocKind::Scene, "../evil"), "");
         assert_eq!(normalize_save_path(DocKind::Scene, "../../evil"), "");
         assert_eq!(normalize_save_path(DocKind::Scene, "assets/../evil"), "");
@@ -974,7 +954,6 @@ mod tests {
         std::fs::create_dir_all(project.root.join("assets/textures")).unwrap();
         std::fs::write(project.root.join("assets/textures/wood.png"), b"png").unwrap();
 
-        // Derived files don't generate sidecar.
         std::fs::write(project.root.join("assets/scenes.pak"), b"pak").unwrap();
         std::fs::write(
             project.root.join("assets/textures/wood.png.import.json"),
@@ -1000,7 +979,6 @@ mod tests {
         let guid = wood.guid.clone().expect("read sidecar guid on scan");
         assert_eq!(guid.len(), 32);
 
-        // second time no rewrite, GUID stable.
         assert_eq!(ensure_asset_metas(&project.root), 0);
         let again = scan_assets(&project.root)
             .into_iter()

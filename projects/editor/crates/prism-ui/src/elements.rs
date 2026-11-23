@@ -720,7 +720,7 @@ where
 /// Tree view composed directly on top of `virtual_list` + indent + expand toggle.
 pub fn tree_view<F>(
     key: impl IntoNodeKey,
-    visible_depths: Vec<(u32, bool, bool)>, // (id, has_children, expanded) with depth encoded via render
+    visible_depths: Vec<(u32, bool, bool)>, 
     depths: Vec<u16>,
     item_height: f32,
     viewport_height: f32,

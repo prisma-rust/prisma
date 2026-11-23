@@ -26,7 +26,6 @@ fn perspective_matches_vulkan_convention() {
     let inv_tan = 1.0 / (45.0_f32.to_radians()).tan();
 
     assert!(approx(p.col(0).x, inv_tan / aspect));
-    // Vulkan y-flip: p[1][1] is negative.
     assert!(approx(p.col(1).y, -inv_tan));
     assert!(approx(p.col(2).z, cam.far / (cam.near - cam.far)));
     assert!(approx(p.col(2).w, -1.0));
@@ -62,9 +61,7 @@ fn orthographic_maps_half_sizes_and_depth() {
     };
     let p = cam.projection_matrix(2.0);
 
-    // half height 2 → NDC 1/2; after y-flip the top edge (y=+2) lands at NDC y = -1.
     assert!(approx(p.col(1).y, -0.5));
-    // half width = half height × aspect = 4.
     assert!(approx(p.col(0).x, 0.25));
 
     let top = p * glam::vec4(0.0, 2.0, -1.0, 1.0);
@@ -129,7 +126,6 @@ fn json_round_trips_new_fields() {
 
 #[test]
 fn older_json_without_new_fields_uses_defaults() {
-    // Document with only old fields (pre-v2 fast-path camera) must still load — new fields use serde defaults.
     let json = r#"{"fov_y_degrees":72.0,"near":0.2,"far":500.0,"exposure":1.5,"aspect":1.0,"enabled":true}"#;
     let cam: Camera = serde_json::from_str(json).unwrap();
     assert!(approx(cam.fov_y_degrees, 72.0));
@@ -158,15 +154,10 @@ fn virtual_camera_json_round_trips_and_fills_defaults() {
     assert_eq!(old.damping, [0.0, 0.0]);
 }
 
-// ---------------------------------------------------------------------------
-// Light
-// ---------------------------------------------------------------------------
-
 #[test]
 fn light_defaults() {
     let light = Light::default();
     assert!(light.enabled);
-    // `new Light()` defaults to point light; cone angles and color temperature use engine defaults.
     assert_eq!(light.light_type, LightType::Point);
     assert_eq!(light.shadows, LightShadows::None);
     assert_eq!(light.render_mode, LightRenderMode::Auto);
@@ -193,7 +184,6 @@ fn light_json_round_trips_and_fills_missing_fields() {
     assert_eq!(back.shadows, LightShadows::Soft);
     assert!(back.use_color_temperature);
 
-    // Document containing only known fields must also serialize correctly (`#[serde(default)]`).
     let partial: Light =
         serde_json::from_str(r#"{"light_type":"Directional","intensity":3.0}"#).unwrap();
     assert_eq!(partial.light_type, LightType::Directional);
@@ -204,7 +194,6 @@ fn light_json_round_trips_and_fills_missing_fields() {
 
 #[test]
 fn light_2d_defaults_and_round_trips() {
-    // #611: 2D lighting uses "artistic units" — intensity 1.0 = original color.
     let light = Light2D::default();
     assert_eq!(light.kind, Light2DKind::Point);
     assert_eq!(light.color, [1.0, 1.0, 1.0]);
@@ -287,7 +276,6 @@ fn light_2d_kind_exposes_reflect_variants() {
 
 #[test]
 fn sprites_stay_unlit_unless_receive_lights_is_enabled() {
-    // #611: default does not participate in lighting, old scenes' palette unchanged.
     let legacy: SpriteRenderer = serde_json::from_str(r#"{"sprite_path":"a.png"}"#).unwrap();
     assert!(!legacy.receive_lights);
 
@@ -308,12 +296,10 @@ fn light_effective_color_applies_temperature_only_when_enabled() {
         color_temperature: 2000.0,
         ..Light::default()
     };
-    // Color temperature disabled: return as-is.
     assert_eq!(light.effective_color(), light.color);
 
     light.use_color_temperature = true;
     let tinted = light.effective_color();
-    // 2000 K is warm: red component kept, blue visibly reduced.
     assert!(approx(tinted.x, light.color.x));
     assert!(
         tinted.z < light.color.z,
@@ -325,7 +311,6 @@ fn light_effective_color_applies_temperature_only_when_enabled() {
 fn light_cone_half_angles_are_derived_from_full_angles() {
     let light = Light {
         light_type: LightType::Spot,
-        // Engine's 60° full cone = 30° half cone.
         spot_angle: 60.0,
         inner_spot_angle: 20.0,
         ..Light::default()
@@ -334,7 +319,6 @@ fn light_cone_half_angles_are_derived_from_full_angles() {
     assert!(approx(outer, 30.0_f32.to_radians()));
     assert!(approx(inner, 10.0_f32.to_radians()));
 
-    // When inner cone larger than outer cone, clamp to outer cone, no negative cosine interval.
     let broken = Light {
         spot_angle: 20.0,
         inner_spot_angle: 90.0,
@@ -358,10 +342,6 @@ fn light_shadow_caster_requires_enabled_and_shadow_mode() {
     };
     assert!(!disabled.is_shadow_caster());
 }
-
-// ---------------------------------------------------------------------------
-// SpriteRenderer (2D sprite)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn sprite_defaults() {
@@ -418,7 +398,6 @@ fn sprite_json_round_trips_and_fills_missing_fields() {
     assert_eq!(back.clip_rect, [-4.0, -2.0, 4.0, 2.0]);
     assert!(back.receive_lights);
 
-    // Old document with only path: remaining fields use serde defaults.
     let legacy: SpriteRenderer = serde_json::from_str(r#"{"sprite_path":"a.png"}"#).unwrap();
     assert_eq!(legacy.sprite_path, "a.png");
     assert!(approx(legacy.pixels_per_unit, 100.0));
@@ -434,7 +413,6 @@ fn sprite_json_round_trips_and_fills_missing_fields() {
         "Old document defaults to alpha blending"
     );
 
-    // #582: clipping disabled by default, old documents not suddenly clipped.
     assert!(!legacy.clip_enabled);
     assert_eq!(legacy.clip_rect, [0.0; 4]);
 }
@@ -455,7 +433,6 @@ fn sprite_clip_rect_round_trips() {
 
 #[test]
 fn tilemap_json_defaults_and_round_trips() {
-    // #529: old documents have no Tilemap, new fields all use serde defaults.
     let map: Tilemap = serde_json::from_str(
         r#"{"tileset_path":"sprites/tiles.png","columns":2,"tiles":[0,3,0,1]}"#,
     )
@@ -486,20 +463,16 @@ fn tilemap_grid_and_uv_follow_the_tileset_layout() {
         tile_size: [16, 16],
         ..Tilemap::default()
     };
-    // 2 columns → 3 rows (last row has only one cell).
     assert_eq!(map.grid(), (2, 3));
 
     map.columns = 0;
     assert_eq!(map.grid(), (5, 1), "columns=0 arranged in one row");
 
-    // tileset 64x32 + 16x16 tile = 4 columns 2 rows.
     assert_eq!(map.tileset_grid([64, 32]), (4, 2));
     assert_eq!(map.tile_uv(0, [64, 32]), [0.0, 0.0, 0.25, 0.5]);
     assert_eq!(map.tile_uv(5, [64, 32]), [0.25, 0.5, 0.5, 1.0]);
-    // Index beyond tileset clamped to last tile.
     assert_eq!(map.tile_uv(99, [64, 32]), [0.75, 0.5, 1.0, 1.0]);
 
-    // Row 0 at top: larger row number means smaller y.
     assert_eq!(map.cell_center(0, 0, 2), [0.5, 1.5]);
     assert_eq!(map.cell_center(1, 1, 2), [1.5, 0.5]);
 }
@@ -517,14 +490,12 @@ fn tilemap_rejects_invalid_cell_sizes() {
 
 #[test]
 fn sprite_world_size_uses_frame_or_texture_and_ppu() {
-    // Entire texture 64x32, PPU 16 -> 4x2 world units.
     let whole = SpriteRenderer {
         pixels_per_unit: 16.0,
         ..SpriteRenderer::default()
     };
     assert_eq!(whole.world_size([64, 32]), [4.0, 2.0]);
 
-    // sprite sheet single frame takes priority over texture size.
     let sheet = SpriteRenderer {
         frame_size: [32, 32],
         pixels_per_unit: 32.0,
@@ -533,7 +504,6 @@ fn sprite_world_size_uses_frame_or_texture_and_ppu() {
     assert_eq!(sheet.frame_size_or([256, 32]), [32, 32]);
     assert_eq!(sheet.world_size([256, 32]), [1.0, 1.0]);
 
-    // Invalid PPU falls back to 100, no NaN/Inf.
     let broken = SpriteRenderer {
         pixels_per_unit: 0.0,
         ..SpriteRenderer::default()
@@ -602,7 +572,6 @@ fn collider_bounds_accept_a_composed_parent_world_matrix() {
 
 #[test]
 fn mesh_renderer_state_defaults_and_round_trips() {
-    // Old document with only mesh/material: all new fields must fall back to engine's opaque default.
     let legacy: MeshRenderer =
         serde_json::from_str(r#"{"mesh_path":"m.mesh","material_path":"m.mat"}"#)
             .expect("Old JSON missing render state fields is still readable");
@@ -613,7 +582,6 @@ fn mesh_renderer_state_defaults_and_round_trips() {
     assert_eq!(legacy.src_blend, BlendMode::One);
     assert_eq!(legacy.dst_blend, BlendMode::Zero);
     assert_eq!(legacy.blend_op, BlendOp::Add);
-    // One / Zero / Add = opaque.
     assert!(!legacy.blends());
     assert!(legacy.material_paths.is_empty());
     assert_eq!(
@@ -622,8 +590,6 @@ fn mesh_renderer_state_defaults_and_round_trips() {
         "Fall back to singular field when material_paths missing"
     );
 
-    // Author format uses variant names (consistent with `CameraClearFlags` / `TextAlign`),
-    // queue is numeric (`Material.renderQueue` int form).
     let json = serde_json::to_value(MeshRenderer {
         mesh_path: "m.mesh".into(),
         material_path: "m.mat".into(),
@@ -649,7 +615,6 @@ fn mesh_renderer_state_defaults_and_round_trips() {
     assert_eq!(back.render_queue.value(), RenderQueue::TRANSPARENT);
     assert!(!back.z_write);
     assert_eq!(back.dst_blend, BlendMode::OneMinusSrcAlpha);
-    // Standard alpha blend = transparent.
     assert!(back.blends());
 }
 
@@ -665,23 +630,19 @@ fn mesh_renderer_resolves_material_paths_per_submesh() {
         ..MeshRenderer::default()
     };
 
-    // One-to-one correspondence uses submesh lower bound.
     assert_eq!(
         renderer.material_path_for_submesh(0, 3, Some(2)),
         Some("materials/skin.mat")
     );
-    // Empty string does not masquerade as material, continue matching by glTF material index.
     assert_eq!(
         renderer.material_path_for_submesh(1, 3, Some(2)),
         Some("materials/metal.mat")
     );
-    // When not found fall back to singular field.
     assert_eq!(
         renderer.material_path_for_submesh(1, 3, None),
         Some("materials/fallback.mat")
     );
 
-    // When length is not submesh count, match by source material index (Unity shared-material usage).
     let shared = MeshRenderer {
         material_paths: vec!["materials/a.mat".into(), "materials/b.mat".into()],
         ..MeshRenderer::default()
@@ -705,7 +666,6 @@ fn particle_system_round_trips_with_variant_names() {
         ..ParticleSystem::default()
     };
 
-    // Author format uses variant names (consistent with `CameraClearFlags` / `TextAlign`).
     let json = serde_json::to_value(&system).unwrap();
     assert_eq!(json["shape"], serde_json::json!("Sphere"));
     assert_eq!(json["emission_rate"], serde_json::json!(12.0));
@@ -718,7 +678,6 @@ fn particle_system_round_trips_with_variant_names() {
 
 #[test]
 fn a_particle_system_without_fields_falls_back_to_the_defaults() {
-    // Missing fields keep defaults (cross-version compatibility).
     let system: ParticleSystem = serde_json::from_str("{}").unwrap();
     assert_eq!(system.shape, ParticleShape::Cone);
     assert!(system.playing);
@@ -760,7 +719,6 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
     assert_eq!(source.volume_at(1_000.0), 0.0);
     assert_eq!(source.volume_at(f32::NAN), 0.0);
 
-    // Pure 2D: distance has no effect.
     let flat = AudioSource {
         spatial_blend: 0.0,
         ..source.clone()
@@ -768,14 +726,12 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
     assert_eq!(flat.volume_at(0.0), 0.8);
     assert_eq!(flat.volume_at(9_999.0), 0.8);
 
-    // Half blend: falloff only applies halfway.
     let half = AudioSource {
         spatial_blend: 0.5,
         ..source.clone()
     };
     assert!((half.volume_at(6.0) - 0.6).abs() < 1e-6);
 
-    // Degenerate range / out-of-range volume will not produce >1 or NaN.
     let broken = AudioSource {
         volume: 4.0,
         min_distance: 5.0,
@@ -789,7 +745,6 @@ fn audio_sources_decay_with_distance_and_blend_toward_2d() {
 
 #[test]
 fn line_json_defaults_to_miter_join_and_butt_caps() {
-    // #604: old document has only points / width, new fields must be serde defaults.
     let line: LineRenderer =
         serde_json::from_str(r#"{"points":[[0,0,0],[1,0,0]],"width":2}"#).unwrap();
     assert_eq!(line.join, LineJoin::Miter);
@@ -828,7 +783,6 @@ fn particle_emitter_2d_json_round_trips_and_defaults() {
     assert_eq!(back.shape_size, [4.0, 0.5]);
     assert_eq!(back.sorting_layer, 7);
 
-    // Old document / only one field written: rest use serde defaults.
     let legacy: ParticleEmitter2D = serde_json::from_str(r#"{"emission_rate": 5.0}"#).unwrap();
     assert!(approx(legacy.emission_rate, 5.0));
     assert_eq!(legacy.shape, ParticleShape2D::Point);
@@ -836,7 +790,6 @@ fn particle_emitter_2d_json_round_trips_and_defaults() {
     assert!(approx(legacy.direction[1], -1.0), "Default emits downward");
     assert_eq!(legacy.particle_cap(), 256, "0 = built-in cap");
 
-    // Degenerate direction / non-finite value falls back to downward, not NaN velocity.
     let broken = ParticleEmitter2D {
         direction: [0.0, 0.0],
         ..ParticleEmitter2D::default()

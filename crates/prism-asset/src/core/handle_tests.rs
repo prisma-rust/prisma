@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 struct TestAsset;
@@ -47,15 +43,13 @@ fn anyhandle_conversion() {
 #[test]
 fn handle_copy_semantics() {
     let a = Handle::<TestAsset>::new(7, 3);
-    let b = a; // Copy
+    let b = a;
     assert_eq!(a, b);
 }
 
 #[test]
 fn handle_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    // Even a !Send/!Sync payload must not leak into the handle's auto traits:
-    // the handle is an index, not an owned reference.
     assert_send_sync::<Handle<std::rc::Rc<()>>>();
 }
 

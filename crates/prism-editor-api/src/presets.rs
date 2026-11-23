@@ -46,9 +46,6 @@ pub fn entity_presets() -> Vec<EntityPreset> {
             position,
         };
 
-    // Sun: `Light` default type is Point, so directional must override `light_type`;
-    // direction = `Quat::from_rotation_arc(+Z, (−0.5, √½, 0.5))`,
-    // corresponds to old `DirectionalLight.euler_xyz = (45, −45, 0)` lighting direction.
     let sun = |mut p: EntityPreset| {
         p.components = vec!["prism_engine::scene::Light".to_string()];
         p.overrides.insert(
@@ -59,7 +56,6 @@ pub fn entity_presets() -> Vec<EntityPreset> {
                 "shadows": "Soft",
             }),
         );
-        // Axis (−√½, −0.5, 0) / |axis|, angle 60°, exact constants avoid transcription error.
         let sqrt3 = 3.0_f32.sqrt();
         p.rotation = [
             -std::f32::consts::FRAC_1_SQRT_2 / sqrt3,
@@ -70,7 +66,6 @@ pub fn entity_presets() -> Vec<EntityPreset> {
         p
     };
 
-    // Spot default direction should point down (+Z → −Y): +90° around X.
     let spot = |mut p: EntityPreset| {
         p.components = vec!["prism_engine::scene::Light".to_string()];
         p.overrides.insert(
@@ -93,8 +88,6 @@ pub fn entity_presets() -> Vec<EntityPreset> {
         p
     };
 
-    // Equivalent of `GameObject → 3D Object`: `mesh_path` points to built-in procedural mesh
-    // (`prism_render::primitives`), no `.pak` read, no cook.
     let primitive = |id: &str, label: &str, name: &str, mesh: &str, position: [f32; 3]| {
         let mut p = preset(
             id,
@@ -207,7 +200,6 @@ mod tests {
             }
         }
 
-        // Camera preset must genuinely carry camera component.
         let camera = entity_presets()
             .into_iter()
             .find(|p| p.id == "camera")
@@ -263,7 +255,6 @@ mod light_preset_tests {
         };
         assert_eq!(light_type("sun").as_deref(), Some("Directional"));
         assert_eq!(light_type("spot_light").as_deref(), Some("Spot"));
-        // Point light uses `Light` default type: no override needed.
         assert_eq!(light_type("point_light"), None);
     }
 

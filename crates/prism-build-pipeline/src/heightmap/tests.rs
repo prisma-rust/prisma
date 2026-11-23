@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 fn make_test_heightmap(width: usize, height: usize) -> Heightmap {
@@ -22,10 +18,10 @@ fn test_heightmap_new() {
 #[test]
 fn test_heightmap_sample() {
     let mut data = vec![0.0; 16];
-    data[5] = 100.0; // (1,1)
+    data[5] = 100.0;
     let hm = Heightmap::new(4, 4, data);
     let v = hm.sample(1.5, 1.5);
-    assert!((v - 25.0).abs() < 1e-10); // bilinear: (0+100+0+0)/4
+    assert!((v - 25.0).abs() < 1e-10);
 }
 
 #[test]

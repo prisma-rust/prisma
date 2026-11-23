@@ -7,8 +7,6 @@ use crate::ui::components::*;
 use crate::ui::{is_ui_active, ScreenSize};
 use prism_ecs::World;
 
-// ── draw commands ─────────────────────────────────────────────────
-
 /// A rectangle with background color (corner radius handled by shader).
 #[derive(Clone, Copy, Debug)]
 pub struct UiQuad {
@@ -158,11 +156,8 @@ fn layout_scale(layout: &ComputedLayout) -> f32 {
 
 /// Update `UiDrawList` resource each frame — query all UI entities generate draw commands.
 pub fn ui_render_system(world: &mut World) {
-    // (layer, order, type: 0 = rect / 1 = text, sequence) — sequence makes sort stable.
     let mut pending: Vec<((i32, u32, u8, u32), UiDrawItem)> = Vec::new();
 
-    // Merge externally submitted quads first; sorting places them in EXTERNAL_LAYER
-    // at EXTERNAL_UI_ORDER after all ECS UI entities, preserving intra-frame seq order.
     if let Some(external) = world.remove_resource::<ExternalUiQuads>() {
         for (seq, quad) in external.0.into_iter().enumerate() {
             pending.push((
@@ -180,7 +175,6 @@ pub fn ui_render_system(world: &mut World) {
         }
     }
 
-    // Collect background rects
     for (entity, layout, style) in world.query2::<ComputedLayout, Style>() {
         if !is_ui_active(world, entity) {
             continue;
@@ -188,8 +182,6 @@ pub fn ui_render_system(world: &mut World) {
         if !style.visible {
             continue;
         }
-        // #528: `Button` changes color by interaction state, without `Button` continue using
-        // `Style::background` (both can coexist, button first).
         let texture = world
             .get::<crate::scene::runtime_components::UiImageRef>(entity)
             .filter(|image| image.generation > 0)
@@ -198,17 +190,14 @@ pub fn ui_render_system(world: &mut World) {
             Some(button) => button.color(world.get::<Interaction>(entity)),
             None => style.background,
         };
-        // #591: with background texture `background` only as tint; if alpha 0 means author did not write
-        // tint, display texture original colors as opaque white.
         if texture.is_some() && bg[3] <= 0.0 {
             bg = [1.0, 1.0, 1.0, 1.0];
         }
         if bg[3] <= 0.0 && texture.is_none() {
             continue;
-        } // fully transparent skip
+        }
 
         let seq = pending.len() as u32;
-        // #463: corner radius is "design pixels", convert to screen pixels by containing Canvas scale.
         let scale = layout_scale(layout);
         pending.push((
             (0, layout.order, 0, seq),
@@ -224,13 +213,10 @@ pub fn ui_render_system(world: &mut World) {
         ));
     }
 
-    // Collect text
     for (entity, layout, text) in world.query2::<ComputedLayout, Text>() {
         if !is_ui_active(world, entity) {
             continue;
         }
-        // Consistent with quad above: `Style::visible == false` entities produce no draw commands.
-        // Text entities usually also carry `Style` (`Node + Style + Text`), without `Style` treated visible.
         if matches!(world.get::<Style>(entity), Some(style) if !style.visible) {
             continue;
         }
@@ -244,7 +230,6 @@ pub fn ui_render_system(world: &mut World) {
             UiDrawItem::Text(UiTextCmd {
                 rect: layout.rect,
                 content: text.content.clone(),
-                // #463: font size likewise by Canvas scale, otherwise text on 4K screen half size.
                 font_size: text.font_size * layout_scale(layout),
                 color: text.color,
                 alignment: text.alignment,
@@ -257,7 +242,6 @@ pub fn ui_render_system(world: &mut World) {
         ));
     }
 
-    // First by layer, then layer order, finally "background before text within same node".
     pending.sort_by_key(|(key, _)| *key);
 
     let mut draw_list = UiDrawList {
@@ -293,7 +277,6 @@ pub fn merge_external_quads(world: &mut World) {
         layer: EXTERNAL_LAYER,
         order: EXTERNAL_UI_ORDER,
     }));
-    // List already ordered, `sort_by_key` stable, so just insert later elements at correct position.
     draw_list.items.sort_by_key(|item| match item {
         UiDrawItem::Quad(quad) => (quad.layer, quad.order, 0u8),
         UiDrawItem::Text(text) => (text.layer, text.order, 1u8),
@@ -338,7 +321,6 @@ pub fn convert_ui_draw_list_to_overlay_into(
         let q = match item {
             UiDrawItem::Quad(quad) => quad,
             UiDrawItem::Text(text) => {
-                // Text commands pass through pixel coords as-is (expanded per-glyph quad when recording).
                 out.push_text(prism_ui_draw::UiTextInput {
                     rect: text.rect,
                     content: text.content.clone(),
@@ -359,25 +341,18 @@ pub fn convert_ui_draw_list_to_overlay_into(
                 continue;
             }
         };
-        let [px, py, pw, ph] = q.rect; // pixel left, top, width, height
-                                       // NDC: [-1,1] x [-1,1], origin center. **Vulkan Y axis points downward**:
-                                       // `y = -1` is screen top, `+1` bottom (camera projection
-                                       // `p[1][1] = -inv_tan` is flipped for this convention).
-                                       // Pixel y also grows downward, so here **no flip**:
-                                       // flipping again would turn whole UI layer upside down.
+        let [px, py, pw, ph] = q.rect;
         let x0 = (px / w) * 2.0 - 1.0;
         let y0 = (py / h) * 2.0 - 1.0;
         let x1 = ((px + pw) / w) * 2.0 - 1.0;
         let y1 = ((py + ph) / h) * 2.0 - 1.0;
-        // NDC border radius: normalize by quad own size, render side multiplies back by pixel size
-        // to get corner consistent with author writing (#634).
         let br_ndc = if pw.max(ph) > 0.0 {
             q.border_radius / pw.max(ph) * 2.0
         } else {
             0.0
         };
         out.push_quad(prism_ui_draw::UiQuad {
-            rect: [x0, y0, x1, y1], // NDC [xmin, ymin, xmax, ymax]
+            rect: [x0, y0, x1, y1],
             color: q.color,
             border_radius: br_ndc,
             texture: q.texture,

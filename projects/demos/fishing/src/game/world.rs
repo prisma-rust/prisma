@@ -132,15 +132,12 @@ impl LakeWorld {
                 SpriteRenderer {
                     sprite_path: path.clone(),
                     pixels_per_unit: PIXELS_PER_UNIT,
-                    // Bottom edge aligned to `y` (pivot convention: (0.5, 0.0) = bottom).
                     pivot: [0.5, 0.0],
                     sorting_layer: def.sorting.unwrap_or(order as i32),
                     receive_lights: true,
                     ..SpriteRenderer::default()
                 },
             );
-            // Water reflection: flip same texture downward, pivot to top center,
-            // position mirrored by tick as `y = 2 * water_line - source.y`.
             let reflection = def.reflect.then(|| {
                 let mirror = world.spawn();
                 world.set(
@@ -159,13 +156,8 @@ impl LakeWorld {
                     SpriteRenderer {
                         sprite_path: path.clone(),
                         pixels_per_unit: PIXELS_PER_UNIT,
-                        // Mirror layer likewise aligns top edge to water mirror line, expands downward.
                         pivot: [0.5, 1.0],
                         flip_y: true,
-                        // The art buries each layer's bottom edge under the water so
-                        // the texture cut is hidden. Flipping that edge makes it
-                        // surface above the water line, so the mirror is clipped at
-                        // the line instead of being moved to sit on it (#1052).
                         clip_enabled: true,
                         clip_rect: [
                             -REFLECTION_CLIP_HALF_WIDTH,
@@ -173,7 +165,6 @@ impl LakeWorld {
                             REFLECTION_CLIP_HALF_WIDTH,
                             water_line,
                         ],
-                        // Mirror must press onto water surface for reflection feel: water at 20, boat at 50.
                         sorting_layer: def.sorting.unwrap_or(order as i32) + 30,
                         color: [0.45, 0.6, 0.85, 0.5],
                         receive_lights: true,
@@ -290,7 +281,6 @@ pub fn tick(state: &mut Option<LakeWorld>, world: &mut GameWorld<'_>, dt: f32) {
         return;
     };
 
-    // #984: On first entry write saved time back to `TimeOfDay` (restart continues day/night).
     if !current.clock_restored {
         current.clock_restored = true;
         if let Some(saved) = world
@@ -310,11 +300,6 @@ pub fn tick(state: &mut Option<LakeWorld>, world: &mut GameWorld<'_>, dt: f32) {
         }
     }
 
-    // --- Day/night rotation -------------------------------------------------------
-    //
-    // #983: time from engine `TimeOfDay` component, project no longer computes own 48-second cycle —
-    // ambient light (`Light2D` on same entity) also advanced by engine system on same clock,
-    // so "background change" and "darkening" always sync.
     if !current.tods.is_empty() {
         if let Some(phase) = lake_phase(world) {
             let tod = current
@@ -332,7 +317,6 @@ pub fn tick(state: &mut Option<LakeWorld>, world: &mut GameWorld<'_>, dt: f32) {
         }
     }
 
-    // --- Save time (every 2 seconds, so quitting does not lose day/night) -----------------------------
     current.clock_save_timer += dt;
     if current.clock_save_timer >= 2.0 {
         current.clock_save_timer = 0.0;
@@ -346,7 +330,6 @@ pub fn tick(state: &mut Option<LakeWorld>, world: &mut GameWorld<'_>, dt: f32) {
         }
     }
 
-    // --- Parallax -----------------------------------------------------------
     let camera_pos = current
         .camera
         .and_then(|camera| world.get::<LocalTransform>(camera))

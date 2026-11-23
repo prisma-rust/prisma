@@ -49,8 +49,6 @@ pub fn blend_joint(a: &JointTransform, b: &JointTransform, t: f32) -> JointTrans
 pub fn blend_into(out: &mut Pose, a: &Pose, b: &Pose, t: f32) -> usize {
     let t = clamp_weight(t);
     let shared = a.len().min(b.len());
-    // `out`, `a`, and `b` are guaranteed to be distinct poses (borrow checker guarantees it),
-    // so we can compute and write in place without an intermediate buffer.
     out.resize_with(a.len(), |index| {
         let from = a.local(index).unwrap_or(JointTransform::IDENTITY);
         match b.local(index).filter(|_| index < shared) {
@@ -104,7 +102,6 @@ pub fn additive_joint(
     if t <= 0.0 {
         return *base;
     }
-    // Inverse of the reference pose: rotation takes conjugate, scale takes reciprocal.
     let rest_rotation = reference.rotation.normalize();
     let delta_rotation = rest_rotation.inverse() * additive.rotation.normalize();
     let rotation =
@@ -317,7 +314,6 @@ pub fn blend_space_weights(positions: &[f32], at: f32) -> Option<(usize, usize, 
     if at >= positions[last] {
         return Some((last, last, 0.0));
     }
-    // Linear scan: the sample count of a blend space is hand-filled by the author (single digits to a few tens), binary search not worth it.
     for index in 0..last {
         let (low, high) = (positions[index], positions[index + 1]);
         if at >= low && at <= high {
@@ -330,7 +326,6 @@ pub fn blend_space_weights(positions: &[f32], at: f32) -> Option<(usize, usize, 
             return Some((index, index + 1, t));
         }
     }
-    // Unsorted / NaN-containing input: clamp to the last sample, instead of returning an out-of-bounds index.
     Some((last, last, 0.0))
 }
 

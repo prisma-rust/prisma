@@ -37,7 +37,6 @@ fn click(state: &mut EditorUiState, key: NodeKey) {
             ..Default::default()
         },
     );
-    // The dialog mounts on the frame after the command is handled.
     step(state, UiInput::default());
 }
 

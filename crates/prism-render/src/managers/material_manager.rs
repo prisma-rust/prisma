@@ -100,7 +100,6 @@ pub struct MaterialUploadInput {
     pub occlusion_tex: Option<u32>,
     pub normal_scale: f32,
     pub occlusion_strength: f32,
-    // Advanced PBR fields
     pub transmission: f32,
     pub ior: f32,
     pub translucency: f32,
@@ -237,8 +236,6 @@ impl RenderMaterialManager {
                 normal_scale: 1.0,
                 occlusion_strength: 1.0,
                 alpha_cutoff: DEFAULT_ALPHA_CUTOFF,
-                // Never treat an empty slot as opaque: a stale free slot must
-                // not be able to make traversal skip an alpha test.
                 alpha_mode: MaterialAlphaMode::Mask.as_shader_u32(),
                 alpha_pad: [0.0; 2],
             };
@@ -328,9 +325,6 @@ impl RenderMaterialManager {
         command_pool: vk::CommandPool,
         graphics_queue: vk::Queue,
     ) -> anyhow::Result<()> {
-        // Use a tiny staging buffer to write the entire SSBO. We don't
-        // bother with the dirty range optimization yet because the
-        // upload size is so small (48KB) that the savings are noise.
         let total_size = self.gpu_data.len() * std::mem::size_of::<GpuMaterial>();
         let bytes: &[u8] = bytemuck::cast_slice(&self.gpu_data);
         unsafe {
@@ -344,7 +338,6 @@ impl RenderMaterialManager {
             )
         }
         .context("RenderMaterialManager::upload")?;
-        // Clear dirty bits; everything is now on the GPU.
         for d in self.dirty_slots.iter_mut() {
             *d = false;
         }
@@ -354,8 +347,6 @@ impl RenderMaterialManager {
     /// Release a material slot back to the free list.
     pub fn unregister(&mut self, handle: MaterialHandle) {
         if let Some(slot) = self.slot_of(handle) {
-            // Reset the GPU data so a future register at this slot
-            // doesn't leak old values.
             self.gpu_data[slot as usize] = GpuMaterial {
                 base_color: [0.0; 4],
                 metallic_roughness_emissive: [0.0; 4],
@@ -370,8 +361,6 @@ impl RenderMaterialManager {
                 normal_scale: 1.0,
                 occlusion_strength: 1.0,
                 alpha_cutoff: DEFAULT_ALPHA_CUTOFF,
-                // Never treat an empty slot as opaque: a stale free slot must
-                // not be able to make traversal skip an alpha test.
                 alpha_mode: MaterialAlphaMode::Mask.as_shader_u32(),
                 alpha_pad: [0.0; 2],
             };
@@ -396,9 +385,7 @@ impl RenderMaterialManager {
 
     /// Release every material. Idempotent.
     pub fn destroy(&mut self, device: &ash::Device) {
-        for (_, _) in self.materials.drain() {
-            // no per-material GPU state to release
-        }
+        for (_, _) in self.materials.drain() {}
         self.slots.iter_mut().for_each(|s| *s = None);
         self.free_list = (0..MATERIAL_SSBO_MAX).rev().collect();
         if !self.buffer.is_null() {

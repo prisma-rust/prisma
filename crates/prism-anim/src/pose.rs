@@ -49,7 +49,6 @@ impl Pose {
     /// avoid per-frame `Vec` allocation.
     pub fn resize_with(&mut self, count: usize, mut fill: impl FnMut(usize) -> JointTransform) {
         self.locals.clear();
-        // `reserve` guarantees `capacity >= len + count` (len is already 0 here); a no-op when capacity suffices.
         self.locals.reserve(count);
         for index in 0..count {
             self.locals.push(fill(index));

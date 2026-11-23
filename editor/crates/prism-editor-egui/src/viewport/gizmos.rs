@@ -899,7 +899,6 @@ impl ViewportState {
         let base = mesh.vertices.len() as u32;
         mesh.colored_vertex(center, eval_color(0.0, 0.0, 1.0));
 
-        // Inner mid-latitude ring (r = 0.58 R) + outer rim ring (r = 1.0 R).
         let r_mid = 0.58_f32;
         let z_mid = (1.0 - r_mid * r_mid).sqrt();
         for (ring_r, nz) in [(r_mid, z_mid), (1.0_f32, 0.08_f32)] {

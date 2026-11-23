@@ -143,8 +143,6 @@ pub fn encode(objects: &[Object], registry: &TypeRegistry) -> Result<Vec<u8>, Rt
     let mut buf = Vec::new();
     buf.extend_from_slice(&MAGIC);
     buf.extend_from_slice(&VERSION.to_le_bytes());
-    // The encoder must mirror the decoder's `MAX_TYPES` check, otherwise it
-    // can write a file the decoder rejects (#87).
     if type_ids.len() > MAX_TYPES {
         return Err(RttiError::LimitExceeded("type"));
     }
@@ -155,7 +153,7 @@ pub fn encode(objects: &[Object], registry: &TypeRegistry) -> Result<Vec<u8>, Rt
             .descriptor(*id)
             .ok_or(RttiError::NotRegistered(*id))?;
         write_u64(&mut buf, id.raw());
-        write_u8(&mut buf, 0); // TypeKind::Struct
+        write_u8(&mut buf, 0);
         write_str(&mut buf, desc.name);
         write_u32(&mut buf, desc.version);
         write_u32(&mut buf, desc.size as u32);
@@ -570,9 +568,6 @@ mod tests {
 
     #[test]
     fn field_limit_matches_its_u16_wire_width() {
-        // `#87`: the limit used to be `1 << 16`, so exactly 65 536 fields
-        // passed the `>` guard and were truncated to 0 by `as u16`. The limit
-        // must equal the carrier width's maximum.
         assert_eq!(MAX_FIELDS, u16::MAX as usize);
     }
 
@@ -587,8 +582,6 @@ mod tests {
 
     #[test]
     fn type_limit_fits_the_u32_count_field() {
-        // The encoder's guard must mirror the decoder's `type_count >
-        // MAX_TYPES` check, and the limit itself must fit in `u32`.
         assert!(MAX_TYPES <= u32::MAX as usize);
     }
 }

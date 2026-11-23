@@ -44,7 +44,6 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
 
     let mut visuals = egui::Visuals::dark();
 
-    // ---- surfaces ----
     visuals.panel_fill = panel;
     visuals.window_fill = panel_raised;
     visuals.extreme_bg_color = sunken;
@@ -54,7 +53,6 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     visuals.window_corner_radius = POPUP_RADIUS;
     visuals.menu_corner_radius = POPUP_RADIUS;
     visuals.window_shadow = egui::Shadow::NONE;
-    // Web `.menu-popup` shadow: 0 6px 18px rgba(0,0,0,.55)
     visuals.popup_shadow = egui::Shadow {
         offset: [0, 6],
         blur: 18,
@@ -72,9 +70,6 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     visuals.selection.stroke = Stroke::NONE;
     visuals.slider_trailing_fill = true;
 
-    // ---- controls ----
-    // Note: egui default `weak_bg_fill` (button / selectable label) is blueish gray,
-    // here all changed to neutral gray in tokens; blue appears only in `active` (pressed / selected).
     let widgets = &mut visuals.widgets;
 
     widgets.noninteractive.bg_fill = panel;
@@ -114,7 +109,6 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
 
     ctx.set_visuals(visuals);
 
-    // ---- metrics ----
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
         (egui::TextStyle::Small, FontId::proportional(10.0)),
@@ -131,7 +125,6 @@ pub fn apply(ctx: &egui::Context, colors: &ThemeColors) {
     style.spacing.interact_size.y = 22.0;
     style.spacing.combo_width = 160.0;
     style.spacing.scroll.floating = false;
-    // Default handle takes `fg_stroke` (text gray) -> scrollbar turns bright white; change to `bg_fill`.
     style.spacing.scroll.foreground_color = false;
     style.spacing.scroll.bar_width = 9.0;
     style.spacing.scroll.bar_inner_margin = 4.0;
@@ -196,13 +189,10 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
 
     const UI_SANS: &[&str] = &[
-        // Windows
         "C:/Windows/Fonts/segoeui.ttf",
-        // Linux (Web editor uses system UI font, pick closest here)
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        // macOS
         "/System/Library/Fonts/Helvetica.ttc",
     ];
     const MONO: &[&str] = &[
@@ -212,17 +202,13 @@ pub fn install_fonts(ctx: &egui::Context) {
         "/System/Library/Fonts/Menlo.ttc",
     ];
     const CJK: &[&str] = &[
-        // Android / Termux
         "/system/fonts/NotoSansCJK-Regular.ttc",
         "/system/fonts/NotoSansCJKsc-Regular.otf",
         "/system/fonts/DroidSansFallback.ttf",
-        // Linux
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        // Windows
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/simhei.ttf",
-        // macOS
         "/System/Library/Fonts/PingFang.ttc",
     ];
 
@@ -234,8 +220,6 @@ pub fn install_fonts(ctx: &egui::Context) {
 
     let mut fonts = egui::FontDefinitions::default();
     let mut loaded = 0;
-    // Phosphor Icons (MIT/Apache-2.0) as icon glyphs, inserted after body UI font,
-    // so constants `PLAY` / `EYE` / `FOLDER` can be drawn directly as text.
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
 
     if let Some((path, bytes)) = first_existing(UI_SANS) {

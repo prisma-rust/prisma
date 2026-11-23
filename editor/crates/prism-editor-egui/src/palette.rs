@@ -43,7 +43,6 @@ impl Palette {
     /// Open and rebuild entry table based on current workspace (entities / assets / documents change).
     pub fn open(&mut self, workspace: &Workspace) {
         self.entries = palette::entries(workspace);
-        // Starts from empty query each open: previous search term usually useless.
         self.query.clear();
         self.order = palette::search("", &self.entries);
         self.selected = 0;

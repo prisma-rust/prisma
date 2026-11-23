@@ -76,7 +76,6 @@ fn bloom_frame_matches_golden() {
 
 #[test]
 fn version_numbers_decode_as_vk_make_version() {
-    // VK_MAKE_VERSION(1, 3, 280) = 1 << 22 | 3 << 12 | 280.
     assert_eq!(
         format_version((1 << 22) | (3 << 12) | 280),
         "1.3.280 (0x00403118)"

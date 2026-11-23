@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 fn make_db() -> AssetDatabase {
@@ -79,7 +75,6 @@ fn tombstone_survives_json_roundtrip() {
 #[test]
 fn roundtrip_json() {
     let mut db = make_db();
-    // Add a record so we have multiple
     let id2 = db.generate_id();
     let r2 = AssetRecord::new(id2, "tex/albedo.png".into(), AssetType::Texture, "img");
     db.insert(r2).unwrap();
@@ -178,7 +173,6 @@ fn save_is_atomic_and_round_trips_exactly() {
     let loaded = AssetDatabase::load(&path).unwrap();
     assert!(loaded.get(id).is_some());
 
-    // A second save replaces the file in place and leaves no staging file.
     db.save(&path).unwrap();
     let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
         .unwrap()
@@ -205,7 +199,6 @@ fn corrupt_database_is_moved_aside() {
     assert!(!path.exists(), "corrupt file must be moved away");
     assert_eq!(std::fs::read(backup).unwrap(), b"{\"records\":[");
 
-    // The next command can rebuild and save to the same path.
     AssetDatabase::new().save(&path).unwrap();
     assert_eq!(AssetDatabase::load(&path).unwrap().len(), 0);
 }

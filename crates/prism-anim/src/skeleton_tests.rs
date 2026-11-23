@@ -61,7 +61,6 @@ fn the_reference_pose_reproduces_the_bind_pose() {
         "child sits 2m along x"
     );
 
-    // The inverse of the bind matrix exactly cancels the world matrix: in the reference pose the palette is the identity matrix.
     let palette = skeleton.bone_palette(&pose);
     assert!(palette[0].abs_diff_eq(Mat4::IDENTITY, 1e-5));
     assert!(palette[1].abs_diff_eq(Mat4::IDENTITY, 1e-5));
@@ -71,7 +70,6 @@ fn the_reference_pose_reproduces_the_bind_pose() {
 fn rotating_the_root_moves_the_child_with_it() {
     let skeleton = two_bone_skeleton();
     let mut pose = skeleton.rest_pose();
-    // The parent bone rotates 90° around Y: the child's world position moves from +X to -Z (right-handed, +Y up).
     pose.set_local(
         0,
         JointTransform::new(
@@ -95,10 +93,8 @@ fn the_palette_tracks_the_pose_offset() {
         JointTransform::new(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY, Vec3::ONE),
     );
     let palette = skeleton.bone_palette(&pose);
-    // The vertex is at the bind pose origin; now it should be lifted to y=5.
     let moved = palette[0].transform_point3(Vec3::ZERO);
     assert!((moved.y - 5.0).abs() < 1e-5, "got {moved:?}");
-    // The child bone also translates 5m along.
     let child = palette[1].transform_point3(Vec3::new(2.0, 0.0, 0.0));
     assert!((child.y - 5.0).abs() < 1e-5, "got {child:?}");
 }
@@ -123,7 +119,6 @@ fn transforms_round_trip_through_the_cooked_layout() {
     assert!(round_trip.rotation.abs_diff_eq(transform.rotation, 1e-6));
     assert!((round_trip.scale - transform.scale).length() < 1e-6);
 
-    // Matrix round-trip.
     let matrix = JointTransform::from_matrix(transform.matrix());
     assert!((matrix.translation - transform.translation).length() < 1e-5);
     assert!((matrix.scale - transform.scale).length() < 1e-5);
@@ -140,7 +135,6 @@ fn lerp_goes_halfway_on_every_channel() {
     let half = a.lerp(b, 0.5);
     assert!((half.translation.x - 1.0).abs() < 1e-6);
     assert!((half.scale.x - 2.0).abs() < 1e-6);
-    // Half of 180° is 90°.
     let rotated = half.rotation * Vec3::X;
     assert!(rotated.z.abs() > 0.99, "got {rotated:?}");
 }

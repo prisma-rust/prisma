@@ -10,7 +10,7 @@ fn headless_emergence_dlss_5pct_and_clean_exit() {
     std::env::set_current_dir(manifest_dir).expect("set cwd to emergence project dir");
 
     emergence_core::commands::set_upscaler_config(5, 0.05, 0.5);
-    emergence_core::commands::set_dlss_pre_upscale(0); // Linear pre-upscale 5% -> DLSS min
+    emergence_core::commands::set_dlss_pre_upscale(0); 
 
     emergence_core::build_app()
         .run_headless(12, 1280, 720)

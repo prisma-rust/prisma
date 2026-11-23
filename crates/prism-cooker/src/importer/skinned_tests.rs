@@ -2,8 +2,6 @@ use super::*;
 
 #[test]
 fn parents_are_always_placed_before_their_children() {
-    // Deliberately place child node before parent face (glTF skin.joints has no order guarantee):
-    // joint2 is root, joint0 attached to joint2, joint1 attached to joint0.
     let parents = [Some(2), Some(0), None];
     let order = topological_order(&parents);
     assert_eq!(order.len(), 3);
@@ -20,7 +18,6 @@ fn parents_are_always_placed_before_their_children() {
 
 #[test]
 fn a_cycle_does_not_hang_the_ordering() {
-    // Cyclic skeleton is bad data, but must not make importer hang.
     let parents = [Some(1), Some(0)];
     let order = topological_order(&parents);
     assert_eq!(order.len(), 2);
@@ -42,11 +39,6 @@ fn a_translation_only_matrix_decomposes_into_a_clean_transform() {
 
 #[test]
 fn roughly_ninety_degrees_land_on_the_quaternion() {
-    // Rotate 90° around +Y:
-    //   [0, 0, -1]
-    //   [0, 1,  0]
-    //   [1, 0,  0]
-    // Columns: x = [0,0,1], y = [0,1,0], z = [-1,0,0].
     let matrix = Mat4::from_cols_array_2d(&[
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -54,7 +46,6 @@ fn roughly_ninety_degrees_land_on_the_quaternion() {
         [0.0, 0.0, 0.0, 1.0],
     ]);
     let transform = decompose(&matrix);
-    // Rotating +X to +Z is −90° around +Y (right-handed), so y component is negative.
     let expected = (
         -std::f32::consts::FRAC_1_SQRT_2,
         std::f32::consts::FRAC_1_SQRT_2,
@@ -117,7 +108,6 @@ fn a_collapsed_matrix_cannot_be_inverted() {
 
 #[test]
 fn cubic_spline_outputs_take_the_middle_value_of_each_triple() {
-    // Sampler output is "in tangent, value, out tangent", time axis has only two sample points.
     let times = [0.0f32, 1.0];
     let values = [
         [0.0f32, 0.0, 0.0],

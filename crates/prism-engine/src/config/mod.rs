@@ -13,20 +13,12 @@ use ini::Ini;
 
 use crate::render_settings::{InternalScaleMode, RenderMode, RenderSettings};
 
-// ---------------------------------------------------------------------------
-// Top-level config
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AppConfig {
     pub app: AppInfo,
     pub window: WindowConfig,
     pub render: RenderConfig,
 }
-
-// ---------------------------------------------------------------------------
-// Render defaults (`[render]` in settings.ini)
-// ---------------------------------------------------------------------------
 
 /// `[render]` section: render / debug / path-tracing defaults at startup.
 ///
@@ -227,7 +219,6 @@ impl RenderConfig {
             settings.occlusion_culling = enabled;
         }
         if let Some(distance) = self.shadow_distance {
-            // Boxes with zero or negative size have no meaning, reject and log.
             if distance.is_finite() && distance > 0.0 {
                 settings.shadow_distance = distance;
             } else {
@@ -255,7 +246,6 @@ impl RenderConfig {
             }
         }
         if let Some(value) = self.contrast {
-            // Negative exposure would flip the image to negative; clamp to 0 here.
             settings.contrast = value.max(0.0);
         }
         if let Some(value) = self.saturation {
@@ -419,10 +409,6 @@ fn parse_internal_resolution(value: &str) -> Option<[u32; 2]> {
     Some([width, height])
 }
 
-// ---------------------------------------------------------------------------
-// App identity (company name, app name — like 's PlayerSettings)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppInfo {
     pub company: String,
@@ -458,10 +444,6 @@ fn default_company() -> String {
 fn default_app_name() -> String {
     "Prisma".to_string()
 }
-
-// ---------------------------------------------------------------------------
-// Window defaults
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowConfig {
@@ -573,10 +555,6 @@ const fn default_vsync() -> bool {
     true
 }
 
-// ---------------------------------------------------------------------------
-// Loading
-// ---------------------------------------------------------------------------
-
 const CONFIG_PATH: &str = "settings.ini";
 const LEGACY_CONFIG_PATH: &str = "settings.toml";
 
@@ -584,10 +562,6 @@ const LEGACY_CONFIG_PATH: &str = "settings.toml";
 /// so when the editor writes `[build]` and other own sections into the same file, engine does not complain.
 const KNOWN_KEYS: &[(&str, &[&str])] = &[
     ("app", &["company", "name"]),
-    // The engine does not read `[build]` (`lib_name` / `output_dir` / `profile` are used by the editor and packaging
-    // pipelines), but it is still a legal project config section. List it as "known but no keys" so
-    // `log_unknown_entries` does not report on every settings.ini read:
-    // "ignoring unknown section [build]" (#985).
     ("build", &[]),
     (
         "window",
@@ -787,7 +761,6 @@ mod tests {
         assert_eq!(settings.tonemap_mode, 1);
         assert_eq!(settings.aa_mode, 1);
         assert!(settings.occlusion_culling);
-        // #502 color grading knobs ride in the same section.
         assert_eq!(settings.contrast, 1.4);
         assert_eq!(settings.saturation, 0.6);
         assert_eq!(settings.vignette, 0.3);
@@ -808,16 +781,13 @@ mod tests {
         assert!(settings.taa);
         assert_eq!(settings.taa_strength, 0.75);
         assert_eq!(settings.pt_max_bounces, 7);
-        // #526: shadow coverage distance and map edge length are both configurable quality knobs.
         assert_eq!(settings.shadow_distance, 120.0);
         assert_eq!(settings.shadow_map_size, 1024);
         assert_eq!(settings.shadow_cascade_count, 2);
         assert!(settings.wireframe);
         assert!(settings.shaded_wireframe);
-        // Unspecified fields keep their defaults.
         assert_eq!(settings.pt_max_iterations, 0);
 
-        // White balance is clamped to the shader's [-1, 1] range.
         let mut clamped = RenderSettings::default();
         cfg.render.apply(&mut clamped);
         let mut extreme = cfg.render.clone();
@@ -870,7 +840,6 @@ mod tests {
     fn internal_resolution_and_scale_mode_come_from_the_render_section() {
         use crate::render_settings::{InternalScaleMode, RenderSettings};
 
-        // #613: `[render] internal_resolution = 640x360` + `internal_scale_mode = integer`
         let cfg = AppConfig::from_ini(
             "[render]\ninternal_resolution = 640x360\ninternal_scale_mode = integer\n",
         );
@@ -879,7 +848,6 @@ mod tests {
         assert_eq!(settings.internal_resolution, [640, 360]);
         assert_eq!(settings.internal_scale_mode, InternalScaleMode::Integer);
 
-        // Other separators and disable spellings are accepted.
         for (value, expected) in [
             ("640,360", [640, 360]),
             ("640*360", [640, 360]),
@@ -893,7 +861,6 @@ mod tests {
             assert_eq!(settings.internal_resolution, expected, "{value}");
         }
 
-        // On parse failure keep defaults (do not invalidate the entire config).
         let mut settings = RenderSettings::default();
         AppConfig::from_ini(
             "[render]\ninternal_resolution = 640x360x2\ninternal_scale_mode = nope\n",

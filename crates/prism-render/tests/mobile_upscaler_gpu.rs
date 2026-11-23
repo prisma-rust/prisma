@@ -152,9 +152,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
     let amber_glow = pack_rgba(255, 138, 36, 255);
     let amber_vis = pack_visual(1 << 11, 30, 255);
 
-    // 1. Enclosed atrium: travertine floor & ceiling (with skylight opening),
-    //    terracotta left wall (bounces warm red GI), jade right wall (bounces cool green GI),
-    //    travertine back wall with recessed dark slate niches.
     for z in 0..dims[2] {
         for y in 0..dims[1] {
             for x in 0..dims[0] {
@@ -165,7 +162,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
                     travertine_b
                 };
 
-                // Floor (y = 0): travertine with central slate inlay.
                 if y == 0 {
                     let in_inlay = (5..=10).contains(&x) && (5..=11).contains(&z);
                     let (c, v) = if in_inlay && (x == 5 || x == 10 || z == 5 || z == 11) {
@@ -177,7 +173,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
                     continue;
                 }
 
-                // Ceiling (y = 9): solid except a 5x4 skylight opening so sun casts crisp shafts + soft GI fill.
                 if y == dims[1] - 1 {
                     let skylight = (6..=10).contains(&x) && (7..=10).contains(&z);
                     if !skylight {
@@ -186,17 +181,14 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
                     continue;
                 }
 
-                // Left wall (x = 0): warm terracotta bounce wall.
                 if x == 0 {
                     l1_cells[l1_idx(x, y, z)] = [u32::MAX, terracotta, terracotta_vis, 0];
                     continue;
                 }
-                // Right wall (x = 15): jade-green bounce wall.
                 if x == dims[0] - 1 {
                     l1_cells[l1_idx(x, y, z)] = [u32::MAX, jade, jade_vis, 0];
                     continue;
                 }
-                // Back wall (z = 15) and front wall behind camera (z = 0).
                 if z == dims[2] - 1 || z == 0 {
                     l1_cells[l1_idx(x, y, z)] = [u32::MAX, stone, travertine_vis, 0];
                 }
@@ -204,7 +196,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
         }
     }
 
-    // 2. Stepped altar & metallic bronze colonnade framing the center.
     for x in 5..=10 {
         l1_cells[l1_idx(x, 1, 12)] = [u32::MAX, slate_dark, slate_vis, 0];
         l1_cells[l1_idx(x, 1, 13)] = [u32::MAX, slate_dark, slate_vis, 0];
@@ -213,13 +204,11 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
     for x in 6..=9 {
         l1_cells[l1_idx(x, 2, 13)] = [u32::MAX, travertine_a, travertine_vis, 0];
     }
-    // Central bronze pedestal + floating cyan crystal core.
     l1_cells[l1_idx(7, 2, 11)] = [u32::MAX, bronze, bronze_vis, 0];
     l1_cells[l1_idx(8, 2, 11)] = [u32::MAX, bronze, bronze_vis, 0];
     l1_cells[l1_idx(7, 1, 11)] = [u32::MAX, slate_dark, slate_vis, 0];
     l1_cells[l1_idx(8, 1, 11)] = [u32::MAX, slate_dark, slate_vis, 0];
 
-    // Carved L3 floating octahedron-like crystal on the central pedestal.
     let crystal_brick = push_l3_brick(&mut brick_occ, &mut brick_cells, |lx, ly, lz| {
         let dx = lx as i32 - 1;
         let dy = ly as i32 - 1;
@@ -232,7 +221,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
     });
     l1_cells[l1_idx(7, 3, 11)] = [crystal_brick, 0, 0, 0];
 
-    // Twin bronze columns with L3 fluted capitals on left & right.
     for &(cx, cz) in &[(4u32, 8u32), (11u32, 8u32), (4u32, 12u32), (11u32, 12u32)] {
         for y in 1..=7 {
             l1_cells[l1_idx(cx, y, cz)] = [u32::MAX, bronze, bronze_vis, 0];
@@ -248,8 +236,6 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
         l1_cells[l1_idx(cx, 8, cz)] = [cap, 0, 0, 0];
     }
 
-    // 3. Recessed emissive GI braziers in the deep shaded side alcoves:
-    //    Left alcove (x=1, z=10): warm amber brazier behind L3 stone grate.
     l1_cells[l1_idx(1, 1, 10)] = [u32::MAX, slate_dark, slate_vis, 0];
     l1_cells[l1_idx(1, 2, 10)] = [u32::MAX, amber_glow, amber_vis, 0];
     l1_cells[l1_idx(1, 2, 9)] = [u32::MAX, amber_glow, amber_vis, 0];
@@ -262,13 +248,11 @@ fn build_test_voxel_scene() -> Arc<VoxelSceneUpload> {
     });
     l1_cells[l1_idx(2, 2, 10)] = [grate_l, 0, 0, 0];
 
-    //    Right alcove (x=14, z=10): cool cyan brazier behind L3 stone grate.
     l1_cells[l1_idx(14, 1, 10)] = [u32::MAX, slate_dark, slate_vis, 0];
     l1_cells[l1_idx(14, 2, 10)] = [u32::MAX, cyan_glow, cyan_vis, 0];
     l1_cells[l1_idx(14, 2, 9)] = [u32::MAX, cyan_glow, cyan_vis, 0];
     l1_cells[l1_idx(13, 2, 10)] = [grate_l, 0, 0, 0];
 
-    // 4. Overhead L3 skylight lattice to cast delicate shadows & showcase upscaler edge reconstruction.
     let lattice = push_l3_brick(&mut brick_occ, &mut brick_cells, |lx, ly, lz| {
         if ly == 0 && (lx == 0 || lz == 0) {
             Some((travertine_b, travertine_vis))

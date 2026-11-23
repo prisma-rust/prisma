@@ -18,7 +18,7 @@ use crate::render_graph::{
     SHARC_HASH_ENTRIES_H, SHARC_RESOLVED_H,
 };
 
-pub const DEFAULT_SHARC_CAPACITY: u32 = 1024 * 1024; // 1M entries (~40MB GPU memory)
+pub const DEFAULT_SHARC_CAPACITY: u32 = 1024 * 1024;
 
 /// Whether the training dispatch should run this frame.
 ///
@@ -81,19 +81,16 @@ impl SharcTargets {
         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let props = vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
-        // Hash entries: 1 entry = uint64_t (8 bytes)
         let hash_size = (capacity as vk::DeviceSize) * 8;
         let (hash_entries_buffer, hash_entries_memory) =
             create_buffer(context, hash_size, usage, props)
                 .context("create sharc hash entries buffer")?;
 
-        // Accumulation: 1 entry = uint4 (16 bytes)
         let accum_size = (capacity as vk::DeviceSize) * 16;
         let (accumulation_buffer, accumulation_memory) =
             create_buffer(context, accum_size, usage, props)
                 .context("create sharc accumulation buffer")?;
 
-        // Resolved: 1 entry = float16_t4 radiance + 2x u32 sampleData (16 bytes)
         let resolved_size = (capacity as vk::DeviceSize) * 16;
         let (resolved_buffer, resolved_memory) =
             create_buffer(context, resolved_size, usage, props)
@@ -162,7 +159,6 @@ impl SharcResolvePass {
     pub fn new(context: &VulkanContext, targets: &SharcTargets) -> anyhow::Result<Self> {
         let device = &context.device;
 
-        // Descriptor set layout: b0 = hash_entries, b1 = accumulation, b2 = resolved
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
@@ -212,7 +208,6 @@ impl SharcResolvePass {
         }
         .context("SharcResolvePass: allocate ds")?[0];
 
-        // Write descriptor set
         let hash_info = [vk::DescriptorBufferInfo {
             buffer: targets.hash_entries_buffer,
             offset: 0,
@@ -250,7 +245,6 @@ impl SharcResolvePass {
             device.update_descriptor_sets(&writes, &[]);
         }
 
-        // Pipeline
         const SPV: &[u8] = prism_render_shaders::SHARC_RESOLVE_COMP_SPV;
         let shader_module = crate::shader::load_shader_module(device, SPV)
             .context("SharcResolvePass: create shader module")?;
@@ -410,9 +404,6 @@ impl RenderPassNode for SharcResolveNode {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // The buffers are owned by GraphRenderer; the handles are declared so
-        // the resolve is an explicit reader/writer of the cache in the graph
-        // and runs after the trainer that wrote it.
         for handle in [SHARC_HASH_ENTRIES_H, SHARC_ACCUMULATION_H, SHARC_RESOLVED_H] {
             graph.create_resource_at(handle, ResourceType::StorageBuffer { size: 0 });
             graph.read_usage(ResourceUsage {
@@ -436,15 +427,9 @@ impl RenderPassNode for SharcResolveNode {
         _resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
         let camera_pos = ctx.frame.camera_pos;
-        // The previous position is what the shader reprojects the cached
-        // radiance with; it has to be the real previous frame, so it is
-        // recorded here rather than reconstructed from the current frame.
         let camera_pos_prev = self.prev_camera_pos.unwrap_or(camera_pos);
         self.prev_camera_pos = Some(camera_pos);
 
-        // The resolve only runs where the cache is actually in use: path-traced
-        // SHaRC, or the raster ReSTIR GI variant that terminates its bounces in
-        // the same cache.
         if !sharc_active(
             ctx.settings.pt_gi,
             ctx.settings.raster_gi,
@@ -463,11 +448,6 @@ impl RenderPassNode for SharcResolveNode {
         let device = ctx.device;
         let cmd = ctx.cmd;
 
-        // This frame's training dispatch just wrote the hash entries and the
-        // accumulation buffer that resolve is about to read, and the two are
-        // separate dispatches. Order them explicitly. With training disabled
-        // the writes may come from an earlier frame, which this barrier also
-        // covers.
         let prior_writes = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
@@ -501,8 +481,6 @@ impl RenderPassNode for SharcResolveNode {
         };
         pass.execute(device, cmd, &push);
 
-        // The consumer reads the resolved cache from a later pass in the same
-        // frame, so make the resolve writes visible to compute and fragment.
         let barrier = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::SHADER_WRITE)
             .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
@@ -597,7 +575,6 @@ mod tests {
         let accum_size = (capacity as u64) * 16;
         let resolved_size = (capacity as u64) * 16;
         let total = hash_size + accum_size + resolved_size;
-        // 1M entries is exactly 40 MB
         assert_eq!(total, 40 * 1024 * 1024);
     }
 }

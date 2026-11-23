@@ -80,12 +80,6 @@ pub fn ui_layout_system(world: &mut World) {
             height: 1080.0,
         });
 
-    // First collect all `Node + Style` entities and Parent.
-    // Layer level only recognizes scene's `Parent` (the one maintained by `HierarchyHelper`), no second
-    // `UiParent` state. `ComputedLayout` is this system's **output**: author does not write it,
-    // missing ones get defaults filled here, otherwise layout / hit test / draw (all query on it)
-    // would silently skip the entity.
-    // Two passes: first root nodes with no Parent, then child nodes
     let layout_queue: Vec<(prism_ecs::Entity, Option<prism_ecs::Entity>)> = world
         .query2::<Node, Style>()
         .map(|(entity, _node, _style)| {
@@ -100,8 +94,6 @@ pub fn ui_layout_system(world: &mut World) {
         }
     }
 
-    // Scale of Canvas each node is in (#463). Nearest Canvas ancestor decides;
-    // without Canvas it is 1.0, behavior same as before Canvas introduced.
     let canvases: std::collections::HashMap<prism_ecs::Entity, Canvas> = world
         .query::<Canvas>()
         .map(|(entity, canvas)| (entity, *canvas))
@@ -117,9 +109,6 @@ pub fn ui_layout_system(world: &mut World) {
         scales.insert(*entity, scale);
     }
 
-    // Parent-child relationship of layout group (#527). Sibling order must match draw order: by scene `id`
-    // (runtime `spawn`ed entities come after), so "first added on left/top" is intuitive,
-    // and fully same source as `assign_draw_order`.
     let layout_entities: std::collections::HashSet<prism_ecs::Entity> =
         layout_queue.iter().map(|(entity, _)| *entity).collect();
     let mut children: std::collections::HashMap<prism_ecs::Entity, Vec<prism_ecs::Entity>> =
@@ -136,7 +125,6 @@ pub fn ui_layout_system(world: &mut World) {
     }
     roots.sort_by_key(|entity| sibling_key(world, *entity));
 
-    // Parent-first child-after traversal order. `seen` also guards against Parent cycles.
     let mut order: Vec<prism_ecs::Entity> = Vec::new();
     let mut seen: std::collections::HashSet<prism_ecs::Entity> = std::collections::HashSet::new();
     let mut stack: Vec<prism_ecs::Entity> = roots.iter().rev().copied().collect();
@@ -161,15 +149,10 @@ pub fn ui_layout_system(world: &mut World) {
         })
         .collect();
 
-    // First pass measure: children first, parents after. Layout group measures own content size from children's sizes,
-    // shrink accordingly when `fit_content` (#527).
     let measured = measure_sizes(&order, &children, &styles);
 
-    // Second pass arrange: parents first, children after. Layout group children positioned by arrangement order, other nodes continue
-    // with original "anchor × parent rect" algorithm.
     let mut resolved: std::collections::HashMap<prism_ecs::Entity, [f32; 4]> =
         std::collections::HashMap::new();
-    // Main-axis cursor of each layout group (virtual coords, relative to content area start).
     let mut cursors: std::collections::HashMap<prism_ecs::Entity, f32> =
         std::collections::HashMap::new();
 
@@ -183,7 +166,6 @@ pub fn ui_layout_system(world: &mut World) {
 
         let parent = parents.get(entity).copied();
         let rect = match parent {
-            // Parent is not a UI entity (no Node + Style): reuse its existing output rect.
             Some(parent) if !layout_entities.contains(&parent) => {
                 let parent_rect = world
                     .get::<ComputedLayout>(parent)
@@ -307,8 +289,6 @@ pub fn assign_draw_order(world: &mut World) {
         list.sort_by_key(|entity| sibling_key(world, *entity));
     }
 
-    // Depth-first pre-order; `depth` only guards Parent cycles (nodes in cycle appear again within own subtree
-    // but no infinite recursion).
     let mut order: u32 = 0;
     let mut stack: Vec<(prism_ecs::Entity, u32)> =
         roots.into_iter().rev().map(|entity| (entity, 0)).collect();
@@ -504,7 +484,6 @@ fn compute_rect(style: &Style, parent: [f32; 4]) -> [f32; 4] {
 fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -> [f32; 4] {
     let (px, py, pw, ph) = (parent[0], parent[1], parent[2], parent[3]);
 
-    // Anchors → four rect edges
     let anchor_left = px + style.anchors.min_x * pw;
     let anchor_right = px + style.anchors.max_x * pw;
     let anchor_top = py + style.anchors.min_y * ph;
@@ -515,7 +494,6 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     let stretched_x = style.anchors.min_x != style.anchors.max_x;
     let stretched_y = style.anchors.min_y != style.anchors.max_y;
 
-    // Fixed size vs anchor stretching; layout group `fit_content` uses caller-provided content size.
     let w = size
         .map(|size| size[0])
         .or(style.width)
@@ -527,9 +505,6 @@ fn compute_rect_sized(style: &Style, parent: [f32; 4], size: Option<[f32; 2]>) -
     let w = w.max(0.0);
     let h = h.max(0.0);
 
-    // Stretch axis: anchors + margins decide origin; point anchor axis: pivot participates.
-    // Point anchors must apply right/bottom margin only when aligned accordingly, otherwise element pinned to bottom-right corner
-    // would hug screen edge (#593).
     let left = if stretched_x {
         anchor_left + margin.left
     } else {

@@ -125,7 +125,6 @@ impl ParticlePass {
 
         let pipeline = self.pipeline.as_ref().expect("pipeline built above");
 
-        // Camera basis vectors: columns 0 / 1 of `inv_view_rot` (w = 0).
         let camera_right = [
             inv_view_rot[0][0],
             inv_view_rot[0][1],
@@ -154,7 +153,6 @@ impl ParticlePass {
                 bytemuck::bytes_of(&push),
             );
             device.cmd_bind_vertex_buffers(cmd, 0, &[self.instance_buffer], &[0]);
-            // 6 vertices = 2 triangles, one instance per particle.
             device.cmd_draw(cmd, 6, items.len() as u32, 0, 0);
         }
 
@@ -194,8 +192,6 @@ impl ParticlePass {
             .offset(0)
             .size(bindings::PUSH_CONSTANT_SIZE)];
 
-        // ForwardPass' render pass has two color attachments (HDR color + view space normal).
-        // Particles only blend to SV_Target0, normal target write mask empty.
         let blend_attachments = [
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -212,7 +208,6 @@ impl ParticlePass {
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // Albedo + roughness (SV_Target3): particles write none.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
@@ -231,7 +226,6 @@ impl ParticlePass {
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
-            // Particle is semi-transparent world-space face patch: test depth (occluded by geometry), no depth write.
             depth_write_enable: Some(false),
             depth_test_enable: Some(true),
             color_attachment_count: None,
@@ -266,7 +260,6 @@ impl ParticlePass {
         if self.instance_buffer != vk::Buffer::null()
             || self.instance_memory != vk::DeviceMemory::null()
         {
-            // A previous frame's command buffer may still read the old buffer.
             self.retire.retire(
                 self.frame_index,
                 crate::retire::RetiredResource::Buffer {
@@ -314,7 +307,6 @@ impl ParticlePass {
     pub fn destroy(&mut self, device: &ash::Device) {
         self.pipeline = None;
         self.built_for_render_pass = None;
-        // Callers wait for the device before `destroy`, so parked buffers can go.
         self.retire.destroy_all(device);
         unsafe {
             if self.instance_buffer != vk::Buffer::null() {

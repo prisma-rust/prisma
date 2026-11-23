@@ -92,11 +92,6 @@ impl SkyboxPass {
         }
         self.device = Some(device.clone());
 
-        // The render pass + color/depth formats are provided at draw time via
-        // `execute_with` because the skybox must render into the *same*
-        // Frame buffer the ForwardPass uses. We can't build a fixed pipeline
-        // here without that render pass, so the pipeline is created lazily
-        // inside `execute_with` (which has the render pass).
         Ok(())
     }
 
@@ -116,13 +111,8 @@ impl SkyboxPass {
     ) -> Result<()> {
         self.ensure_pipeline(device)?;
 
-        // Lazily (re)build the pipeline if the render pass differs (e.g. after
-        // A swapchain recreate that rebuilt ForwardPass' render pass
         let rebuild = self.built_for_render_pass != Some(render_pass);
         if rebuild {
-            // Drop the old pipeline via GraphicsPipeline::Drop (which destroys
-            // the pipeline + layout). Do NOT call destroy_pipeline manually -
-            // that double-frees.
             self.pipeline = None;
 
             const VERT_SPV: &[u8] = prism_render_shaders::SKYBOX_VERT_SPV;
@@ -146,22 +136,14 @@ impl SkyboxPass {
             );
             let shader_stages = [vert_stage, frag_stage];
 
-            // No vertex buffer: positions come from SV_VertexID in the shader.
             let binding_descs: [vk::VertexInputBindingDescription; 0] = [];
             let attr_descs: [vk::VertexInputAttributeDescription; 0] = [];
 
-            // Push constants: SkyboxPush struct, size directly from Slang reflection.
             let push = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(bindings::PUSH_CONSTANT_SIZE)];
 
-            // MRT blend  state  ForwardPass's render  pass now has 2 color
-            // attachments (color + view-normal). Every pipeline bound inside
-            // that render pass must declare a matching attachmentCount, so the
-            // skybox pipeline lists 2 blend states even though it only writes
-            // SV_Target0. attachment 1's write mask is 0 so the normal target
-            // is untouched (the cleared value remains for sky pixels).
             let blend_attachments = [
                 vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -172,7 +154,6 @@ impl SkyboxPass {
                 vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(vk::ColorComponentFlags::empty())
                     .blend_enable(false),
-                // Albedo + roughness (SV_Target3): the skybox shader writes none.
                 vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(vk::ColorComponentFlags::empty())
                     .blend_enable(false),
@@ -191,8 +172,6 @@ impl SkyboxPass {
                 depth_bias_enable: None,
                 depth_bias_constant_factor: None,
                 depth_bias_slope_factor: None,
-                // Disable depth write so the sky never occludes scene geometry;
-                // depth test LEQUAL lets it draw where depth == 1.0 (cleared).
                 depth_write_enable: Some(false),
                 depth_test_enable: None,
                 color_attachment_count: None,
@@ -214,9 +193,6 @@ impl SkyboxPass {
 
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
-            // Bind the IBL set at set 0. The IBL layout has bindings
-            // 0=envCube, 1=irradiance, 2=prefiltered; the skybox shader
-            // only reads binding 0 (envCube).
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -226,8 +202,6 @@ impl SkyboxPass {
                 &[],
             );
 
-            // Push the combined inverse projection/view rotation plus the sky parameters; the block
-            // layout and size come from the Slang reflection.
             let push = bindings::SkyboxPush {
                 inv_view_proj_rot: *inv_view_proj_rot,
                 params: [params.rotation, params.intensity.max(0.0), 0.0, 0.0],
@@ -241,7 +215,6 @@ impl SkyboxPass {
                 bytemuck::bytes_of(&push),
             );
 
-            // 6 vertices = 2 triangles full-screen quad (see skybox.slang).
             device.cmd_draw(cmd, 6, 1, 0, 0);
         }
 
@@ -255,8 +228,6 @@ impl SkyboxPass {
     /// `destroy_pipeline` manually (that double-frees, since `Drop` would then
     /// destroy the same handle again).
     pub fn destroy(&mut self, _device: &ash::Device) {
-        // Dropping `pipeline` runs `GraphicsPipeline::drop`, which calls
-        // `destroy_pipeline` + `destroy_pipeline_layout`.
         self.pipeline = None;
         self.device = None;
     }
@@ -265,10 +236,6 @@ impl SkyboxPass {
 #[cfg(feature = "skybox")]
 impl Drop for SkyboxPass {
     fn drop(&mut self) {
-        // `GraphicsPipeline::drop` handles destroy_pipeline + destroy_layout,
-        // so just drop the Option. We gate on `self.device` so that an
-        // un-initialized `SkyboxPass` (device=None) doesn't drop a pipeline
-        // that was never created.
         if self.device.take().is_some() {
             self.pipeline = None;
         }

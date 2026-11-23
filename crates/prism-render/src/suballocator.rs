@@ -116,7 +116,6 @@ impl MemoryChunk {
             let range_end = range.offset.checked_add(range.size)?;
 
             if end_offset <= range_end {
-                // Hit free range: remove original and insert remaining part after split
                 self.free_ranges.remove(i);
                 let mut insert_idx = i;
                 if aligned_offset > range.offset {
@@ -160,7 +159,6 @@ impl MemoryChunk {
         self.active_allocations = self.active_allocations.saturating_sub(1);
         self.allocated_bytes = self.allocated_bytes.saturating_sub(size);
 
-        // Coalesce adjacent ranges
         let mut i = 0;
         while i + 1 < self.free_ranges.len() {
             let current = self.free_ranges[i];
@@ -218,7 +216,6 @@ impl MemorySuballocator {
         alignment: vk::DeviceSize,
         memory_type_index: u32,
     ) -> Result<Suballocation> {
-        // First try allocating in existing Chunk of same memory type
         for (chunk_id, chunk_opt) in self.chunks.iter_mut().enumerate() {
             if let Some(chunk) = chunk_opt {
                 if chunk.memory_type_index == memory_type_index {
@@ -235,7 +232,6 @@ impl MemorySuballocator {
             }
         }
 
-        // If cannot fit allocate new Chunk
         let chunk_size = self
             .default_chunk_size
             .max(align_up(size, alignment).next_power_of_two());
@@ -315,10 +311,6 @@ impl MemorySuballocator {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Staging Arena
-// ---------------------------------------------------------------------------
-
 /// One Buffer + Memory Chunk for staging uploads.
 pub struct StagingChunk {
     pub buffer: vk::Buffer,
@@ -328,7 +320,6 @@ pub struct StagingChunk {
     pub mapped_ptr: *mut u8,
 }
 
-// Safety: StagingChunk exclusively owns its mapped pointer and Vulkan objects, cross-thread move safe.
 unsafe impl Send for StagingChunk {}
 unsafe impl Sync for StagingChunk {}
 
@@ -451,7 +442,6 @@ impl StagingArena {
             }
         }
 
-        // Current Chunk cannot fit, create new Chunk
         let needed = align_up(size, alignment);
         let chunk_size = self.default_chunk_size.max(needed.next_power_of_two());
         let mut chunk = StagingChunk::new(context, chunk_size)?;
@@ -492,10 +482,6 @@ impl StagingArena {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,30 +510,24 @@ mod tests {
             }
         );
 
-        // Allocation 1: offset 0, size 100
         let a1 = chunk.allocate(100, 16).unwrap();
         assert_eq!(a1, 0);
 
-        // Allocation 2: offset 112 (align 16), size 200
         let a2 = chunk.allocate(200, 16).unwrap();
         assert_eq!(a2, 112);
 
-        // Allocation 3: offset 320 (align 64), size 100
         let a3 = chunk.allocate(100, 64).unwrap();
         assert_eq!(a3, 320);
 
         assert_eq!(chunk.active_allocations, 3);
         assert_eq!(chunk.allocated_bytes, 400);
 
-        // Release a2 (112..312)
         chunk.free(a2, 200);
         assert_eq!(chunk.active_allocations, 2);
 
-        // Release a1 (0..100) -> merges with aligned gap (100..112) and already released a2 (112..312) into 0..320
         chunk.free(a1, 100);
         assert_eq!(chunk.active_allocations, 1);
 
-        // Release a3 (320..420) -> all free ranges merge back to 0..1024
         chunk.free(a3, 100);
         assert_eq!(chunk.active_allocations, 0);
         assert_eq!(chunk.allocated_bytes, 0);

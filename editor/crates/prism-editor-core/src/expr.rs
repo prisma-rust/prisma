@@ -25,7 +25,6 @@ pub fn evaluate(input: &str) -> EvalResult {
     let mut parser = Parser { tokens, pos: 0 };
     let value = parser.expression()?;
     if parser.pos != parser.tokens.len() {
-        // Trailing unconsumed tokens (`1 2`, extra fragment of `(1+2`).
         return None;
     }
     value.is_finite().then_some(value)
@@ -43,9 +42,6 @@ pub fn parse_number_or_expression(input: &str) -> EvalResult {
     evaluate(trimmed)
 }
 
-// ---------------------------------------------------------------------------
-// Lexer
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -105,7 +101,6 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
                 }
                 let text: String = chars[start..index].iter().collect();
                 tokens.push(Token::Number(text.parse().ok()?));
-                // The number already advanced to the end; don't let the trailing `index += 1` consume another character.
                 continue;
             }
             _ if ch.is_alphabetic() || ch == '_' => {
@@ -125,13 +120,6 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
     (!tokens.is_empty()).then_some(tokens)
 }
 
-// ---------------------------------------------------------------------------
-// Grammar: expr := term (('+'|'-') term)*
-//       term := unary (('*'|'/'|'%') unary)*
-//       unary := ('+'|'-') unary | power
-//       power := primary ('^' unary)?      (right-associative: 2^3^2 = 2^9)
-//       primary := number | ident | ident '(' args ')' | '(' expr ')'
-// ---------------------------------------------------------------------------
 
 struct Parser {
     tokens: Vec<Token>,
@@ -240,7 +228,7 @@ impl Parser {
         if !matches!(self.peek(), Some(Token::Open)) {
             return constant(name);
         }
-        self.pos += 1; // '('
+        self.pos += 1; 
         let mut args = Vec::new();
         if matches!(self.peek(), Some(Token::Close)) {
             self.pos += 1;
@@ -339,7 +327,6 @@ mod tests {
         assert_eq!(parse_number_or_expression(" 90/2 "), Some(45.0));
         assert_eq!(parse_number_or_expression(""), None);
         assert_eq!(parse_number_or_expression("abc"), None);
-        // Result must be finite: expressions overflowing to inf are also rejected.
         assert_eq!(evaluate("1e308*10"), None);
     }
 }

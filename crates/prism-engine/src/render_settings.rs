@@ -406,7 +406,6 @@ mod tests {
             let label = pbr_flag_label(1u32 << bit);
             assert_ne!(label, "(custom flags)", "bit {bit} has no name");
         }
-        // Bit 16 is skinning weight stream (#560), not a PBR component; combined value still counts as custom.
         assert_eq!(pbr_flag_label(1 << 15), "SkinWeights");
         assert_eq!(pbr_flag_label((1 << 0) | (1 << 15)), "(custom flags)");
         assert_eq!(pbr_flag_label(0), "(normal render)");
@@ -425,15 +424,12 @@ mod tests {
         settings.internal_resolution = [640, 360];
         assert_eq!(settings.render_height(1920, 1080), 360.0);
 
-        // Only width given: derive height by window ratio (consistent with internal_extent).
         settings.internal_resolution = [640, 0];
         assert_eq!(settings.render_height(1920, 1080), 360.0);
 
-        // Only height given: use directly.
         settings.internal_resolution = [0, 240];
         assert_eq!(settings.render_height(1920, 1080), 240.0);
 
-        // Degenerate input does not produce 0 / NaN.
         settings.internal_resolution = [0, 0];
         assert_eq!(settings.render_height(0, 0), 1.0);
     }
@@ -476,21 +472,17 @@ mod tests {
 
     #[test]
     fn render_aspect_prefers_the_internal_resolution() {
-        // #613: when internal resolution active camera must project by internal ratio, not window ratio.
         let mut settings = RenderSettings::default();
         assert_eq!(settings.internal_resolution, [0, 0]);
         assert_eq!(settings.internal_scale_mode, InternalScaleMode::Stretch);
-        // Without internal resolution use window ratio.
         assert!((settings.render_aspect(21.0 / 9.0) - 21.0 / 9.0).abs() < 1e-6);
 
         settings.internal_resolution = [640, 360];
         assert!((settings.render_aspect(21.0 / 9.0) - 16.0 / 9.0).abs() < 1e-6);
 
-        // When only one dimension given aspect same as window, fall back to window ratio.
         settings.internal_resolution = [640, 0];
         assert!((settings.render_aspect(4.0 / 3.0) - 4.0 / 3.0).abs() < 1e-6);
 
-        // Bad window ratio also has deterministic result, won't pass NaN to projection matrix.
         settings.internal_resolution = [0, 0];
         assert_eq!(settings.render_aspect(f32::NAN), 16.0 / 9.0);
         assert_eq!(settings.render_aspect(0.0), 16.0 / 9.0);

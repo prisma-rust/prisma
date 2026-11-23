@@ -89,7 +89,6 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
     log::info!("  pak:     {}", cfg.pak_path.display());
     log::info!("  rscn:    {}", cfg.rscn_path.display());
 
-    // 1. Load scene into ECS and collect world-space geometry.
     let mut world = World::new();
     let mut rm = ResourceManager::new();
     rm.load_package(&cfg.pak_path)
@@ -112,7 +111,6 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
     let grid_res = 4u32.pow(cfg.leaf_grid.max(1));
     let cell_size = world_extent / grid_res as f32;
 
-    // 2. Identify active candidate leaves near scene geometry.
     let candidates = collect_candidate_leaves(&tris, world_origin, world_extent, grid_res);
     if candidates.is_empty() {
         bail!("no candidate leaves found in scene bounds");
@@ -124,7 +122,6 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
         candidates.len()
     );
 
-    // 3. Stage 1: Ray-traced SH64 transfer sampling.
     let raw_transfers: Vec<PrtCluster> = candidates
         .par_iter()
         .map(|&(cx, cy, cz)| {
@@ -137,7 +134,6 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
         })
         .collect();
 
-    // 4. Stage 2: PCA + k-means clustering.
     let target_k = (candidates.len() as u32).min(cfg.max_clusters) as usize;
     let (assignments, clusters, pca_dims) = cluster_transfers(&raw_transfers, target_k);
     if clusters.len() > LEAF_COUNT_MAX as usize {
@@ -148,7 +144,6 @@ pub fn bake_prt(cfg: &BakePrtConfig) -> Result<BakePrtReport> {
         );
     }
 
-    // 5. Stage 3: Build 64-tree (BFS node table).
     let (nodes, final_clusters) = build_64tree(
         &candidates,
         &assignments,
@@ -447,7 +442,6 @@ pub fn cluster_transfers(
         }
     }
 
-    // Power-iteration PCA for top components (up to 16).
     let max_pcs = 16.min(D).min(n);
     let mut basis = Vec::with_capacity(max_pcs);
     let mut residual = flat.clone();
@@ -490,7 +484,6 @@ pub fn cluster_transfers(
         }
     }
 
-    // Deterministic k-means initialization (strided).
     let mut centroids = vec![0.0f32; k * pca_dims];
     for c in 0..k {
         let src = (c * n) / k;
@@ -537,7 +530,6 @@ pub fn cluster_transfers(
         }
     }
 
-    // Reconstruct full 64-coeff cluster centroids.
     let mut clusters = vec![[[0.0f32; 3]; SH_COEFF_COUNT]; k];
     let mut counts = vec![0usize; k];
     for (i, &c) in assign.iter().enumerate() {
@@ -578,7 +570,6 @@ pub fn build_64tree(
         leaf_cluster.push(idx);
     }
 
-    // Build levels bottom-up: level 0 = root (1x1x1), ..., last = leaves (grid_res).
     let mut depth = 0u32;
     let mut r = grid_res.max(1);
     while r > 1 {
@@ -586,7 +577,6 @@ pub fn build_64tree(
         depth += 1;
     }
 
-    // Store occupied nodes per level: (x, y, z) -> (child_mask, Option<leaf_index>)
     let mut levels: Vec<HashMap<(u32, u32, u32), (u64, u32)>> =
         vec![HashMap::new(); depth as usize + 1];
     for (i, &(x, y, z)) in coords.iter().enumerate() {
@@ -608,7 +598,6 @@ pub fn build_64tree(
         }
     }
 
-    // Flatten into BFS-ordered PrtNode array.
     let mut nodes = Vec::new();
     let mut queue: Vec<(usize, (u32, u32, u32))> = vec![(0, (0, 0, 0))];
     let mut head = 0usize;
@@ -703,7 +692,6 @@ mod tests {
 
     #[test]
     fn synthetic_500m_city_respects_budget() {
-        // Generate a synthetic 500m x 500m city block grid of triangles.
         let mut tris = Vec::new();
         for bx in 0..10 {
             for bz in 0..10 {
@@ -719,7 +707,7 @@ mod tests {
         }
         let (origin, extent) = compute_cube_bounds(&tris);
         assert!(extent >= 450.0);
-        let grid_res = 16u32; // leaf_grid = 2
+        let grid_res = 16u32;
         let candidates = collect_candidate_leaves(&tris, origin, extent, grid_res);
         assert!(!candidates.is_empty());
 

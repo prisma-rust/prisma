@@ -69,7 +69,6 @@ impl SelectionHistory {
         }
         self.position = target as usize;
         let entry = self.entries[self.position].clone();
-        // Navigation itself is not "new selection": next frame `observe` sees same state and returns directly.
         self.last = Some(entry.clone());
         Some(entry)
     }
@@ -145,7 +144,6 @@ mod tests {
         history.observe(snap(0, &[0], Some(0)));
         history.observe(snap(0, &[1], Some(1)));
         let target = history.navigate(-1).unwrap();
-        // Simulate observe at end of next frame (sees exactly navigation target).
         history.observe(target);
         assert_eq!(history.len(), 2);
         assert_eq!(history.position(), 0);
@@ -159,7 +157,6 @@ mod tests {
         }
         assert_eq!(history.len(), SelectionHistory::MAX_ENTRIES);
         assert_eq!(history.position(), SelectionHistory::MAX_ENTRIES - 1);
-        // Oldest 20 dropped, earliest can undo back to index 20.
         let mut oldest = None;
         while let Some(entry) = history.navigate(-1) {
             oldest = Some(entry);

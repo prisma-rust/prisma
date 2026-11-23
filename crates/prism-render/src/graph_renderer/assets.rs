@@ -51,7 +51,6 @@ pub(super) fn make_ibl(
     scope: crate::ibl::IblScope,
     layout: ash::vk::DescriptorSetLayout,
 ) -> anyhow::Result<IblResources> {
-    // No IBL build: ignore environment texture, always use neutral cube.
     let _ = (env, scope);
     IblResources::new_empty(context, command_pool, queue, layout)
 }
@@ -117,16 +116,9 @@ impl GraphRenderer {
         env_bytes: Option<&[u8]>,
         scope: crate::ibl::IblScope,
     ) -> anyhow::Result<()> {
-        // The previous IBL (and its BRDF LUT view) may still be sampled by
-        // frames that are in flight. Finish them before overwriting the
-        // bindless slot or destroying the old images/samplers; otherwise the
-        // GPU can read freed resources (device-lost / validation error).
-        // Environment switches are rare, so an idle wait is acceptable.
         unsafe { self.runtime.context.device.device_wait_idle() }
             .context("wait idle before replacing IBL")?;
 
-        // `None` = no lighting scene (splash / UI): cheap neutral empty IBL (new_empty, no convolution, ≈0ms).
-        // Shared set2 descriptor layout stays stable.
         let new_ibl = make_ibl(
             self.runtime.context.clone(),
             self.runtime.command_pool,
@@ -136,13 +128,11 @@ impl GraphRenderer {
             self.ibl.descriptor_set_layout,
         )
         .context("rebuild IBL resources for scene")?;
-        // Overwrite BRDF LUT at same bindless slot (table does not grow).
         self.texture_manager
             .bindless_mut()
             .register_with_handle(self.brdf_bindless_slot, new_ibl.brdf_image_view())
             .context("overwrite BRDF LUT bindless slot")?;
 
-        // Switch forward pass / skybox set2 (layout shared, no pipeline rebuild).
         if let Some(fp) = self.graph.pass_mut::<ForwardPass>() {
             fp.set_ibl(new_ibl.descriptor_set, self.brdf_bindless_slot);
         }
@@ -151,12 +141,9 @@ impl GraphRenderer {
             pt.set_ibl_resources(new_ibl.descriptor_set, self.ibl.descriptor_set_layout);
         }
 
-        // Destroy old IBL (not shared layout) after taking over new.
         self.ibl.destroy();
         self.ibl = new_ibl;
         self.ibl_has_pbr = env_bytes.is_some() && scope == crate::ibl::IblScope::Full;
-        // Sky / IBL is incident light source for radiance cache training; environment changed, old voxel radiance
-        // no longer belongs to this scene (repair spec §8).
         #[cfg(feature = "sharc")]
         {
             self.sharc_invalidation.sky = true;
@@ -301,8 +288,6 @@ impl GraphRenderer {
             }
         }
         log::debug!("release_assets: freed {freed} GPU resource(s)");
-        // Released meshes/materials mean the geometry (or its shading) that the
-        // world-space cache was trained on no longer exists.
         if freed > 0 {
             #[cfg(feature = "sharc")]
             {
@@ -497,7 +482,6 @@ impl GraphRenderer {
         data: crate::probe_loader::ProbeVolumeData,
         scene_name: Option<&str>,
     ) -> bool {
-        // Scene binding check: reject a volume baked for a different scene.
         if let Some(name) = scene_name {
             if !name.is_empty() && !data.scene_name.is_empty() && data.scene_name != name {
                 log::warn!(
@@ -510,7 +494,6 @@ impl GraphRenderer {
             }
         }
 
-        // All-miss bake check.
         if data.global_hit_ratio >= 0.0 && data.global_hit_ratio < 0.05 {
             log::warn!(
                 "GraphRenderer: baked GI data looks invalid (hit_ratio={:.3} < 0.05, \
@@ -635,8 +618,6 @@ impl GraphRenderer {
                 "post LUT {} could not be applied: {error:#}",
                 path.display()
             );
-            // Remember the failed path so a broken file is not re-read every
-            // frame; editing the path (or reloading the project) retries.
             self.applied_lut = Some(path.to_path_buf());
         }
         Ok(())

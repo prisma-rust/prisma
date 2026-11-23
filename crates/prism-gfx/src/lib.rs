@@ -93,7 +93,6 @@ impl ReflectType for CameraClearFlags {
     }
 
     fn enum_variants() -> Option<&'static [&'static str]> {
-        // Same order as the declaration; these strings are the values used in `.scene.json`.
         Some(&["Skybox", "SolidColor", "Depth", "Nothing"])
     }
 
@@ -847,7 +846,6 @@ pub fn correlated_color_temperature_to_rgb(kelvin: f32) -> glam::Vec3 {
 
     let srgb = |c: f32| {
         let c = c.clamp(0.0, 255.0) / 255.0;
-        // sRGB → linear: the engine's light colors are linear in the renderer.
         if c <= 0.04045 {
             c / 12.92
         } else {
@@ -917,7 +915,6 @@ mod tests {
         assert!(CameraClearFlags::Depth.clears_depth());
         assert!(!CameraClearFlags::Nothing.clears_depth());
 
-        // Only Skybox draws the skybox background (`Camera.clearFlags` semantics).
         assert!(CameraClearFlags::Skybox.draws_skybox());
         assert!(!CameraClearFlags::SolidColor.draws_skybox());
         assert!(!CameraClearFlags::Depth.draws_skybox());
@@ -954,8 +951,6 @@ mod tests {
 
     #[test]
     fn light_type_ordinals() {
-        // Ordinals: Spot=0, Directional=1, Point=2, Rectangle(Area)=3, Disc=4,
-        // Pyramid=5, Box=6, Tube=7.
         assert_eq!(LightType::Spot.ordinal_value(), 0);
         assert_eq!(LightType::Directional.ordinal_value(), 1);
         assert_eq!(LightType::Point.ordinal_value(), 2);
@@ -1033,8 +1028,6 @@ mod tests {
 
     #[test]
     fn light_enums_reflect_round_trip_uses_u8() {
-        // Reflection uses u8 encoding (like `CameraClearFlags`) so no extra
-        // type-table entries are needed.
         for ty in [LightType::Spot, LightType::Directional, LightType::Point] {
             assert_eq!(ty.to_value(), Value::U64(u64::from(ty.ordinal_value())));
             assert_eq!(LightType::from_value(ty.to_value()).unwrap(), ty);
@@ -1068,7 +1061,6 @@ mod tests {
         assert!(ShadowCastingMode::TwoSided.visible_in_main_pass());
         assert!(!ShadowCastingMode::ShadowsOnly.visible_in_main_pass());
 
-        // Only `TwoSided` disables back-face culling in the shadow pass.
         assert!(!ShadowCastingMode::Off.casts_two_sided_shadows());
         assert!(!ShadowCastingMode::On.casts_two_sided_shadows());
         assert!(ShadowCastingMode::TwoSided.casts_two_sided_shadows());
@@ -1089,7 +1081,6 @@ mod tests {
 
     #[test]
     fn color_temperature_goes_warm_to_cool() {
-        // Low temperatures are warm/red, high temperatures cool/blue; 6500 K is near neutral white.
         let warm = correlated_color_temperature_to_rgb(2000.0);
         assert!(warm.x > warm.z, "2000K should be warm: {warm:?}");
 
@@ -1111,14 +1102,12 @@ mod tests {
         assert_eq!(lowest, correlated_color_temperature_to_rgb(1000.0));
         let highest = correlated_color_temperature_to_rgb(1.0e9);
         assert_eq!(highest, correlated_color_temperature_to_rgb(40000.0));
-        // Non-finite input falls back to 6500 K instead of producing NaN.
         let nan = correlated_color_temperature_to_rgb(f32::NAN);
         assert!(nan.is_finite());
     }
 
     #[test]
     fn cull_mode_ordinals() {
-        // Ordinals: Off=0, Front=1, Back=2.
         assert_eq!(CullMode::Off.ordinal_value(), 0);
         assert_eq!(CullMode::Front.ordinal_value(), 1);
         assert_eq!(CullMode::Back.ordinal_value(), 2);
@@ -1145,7 +1134,6 @@ mod tests {
 
     #[test]
     fn compare_function_ordinals() {
-        // Ordinals: Disabled=0 … Always=8.
         let all = [
             (CompareFunction::Disabled, 0),
             (CompareFunction::Never, 1),
@@ -1163,7 +1151,6 @@ mod tests {
             assert_eq!(CompareFunction::from_value(func.to_value()).unwrap(), func);
         }
         assert_eq!(CompareFunction::from_ordinal_value(9), None);
-        // The shader's default `ZTest` value is LessEqual.
         assert_eq!(CompareFunction::default(), CompareFunction::LessEqual);
         assert!(!CompareFunction::Disabled.is_enabled());
         assert!(CompareFunction::LessEqual.is_enabled());
@@ -1205,7 +1192,6 @@ mod tests {
             assert_eq!(BlendMode::from_value(mode.to_value()).unwrap(), mode);
         }
         assert_eq!(BlendMode::from_ordinal_value(11), None);
-        // Opaque blending = One / Zero.
         assert_eq!(BlendMode::default(), BlendMode::One);
         assert_eq!(BlendMode::enum_variants().unwrap().len(), 11);
         assert_eq!(BlendMode::enum_variants().unwrap()[10], "OneMinusSrcAlpha");
@@ -1248,20 +1234,16 @@ mod tests {
         assert_eq!(RenderQueue::default(), RenderQueue::new(2000));
         assert_eq!(RenderQueue::default().value(), 2000);
 
-        // The ranges are bounded by GeometryLast; any value is preserved losslessly.
         assert!(RenderQueue::new(1000).is_opaque());
         assert!(RenderQueue::new(2500).is_opaque());
         assert!(!RenderQueue::new(2501).is_opaque());
         assert!(RenderQueue::new(2501).is_transparent());
         assert!(RenderQueue::new(3000).is_transparent());
-        // Negative values are preserved losslessly but are outside the engine's
-        // opaque range `[0, GeometryLast]`.
         assert!(!RenderQueue::new(-1).is_opaque());
         assert!(!RenderQueue::new(-1).is_transparent());
         assert!(!RenderQueue::new(-1000).is_opaque());
         assert_eq!(RenderQueue::new(4242).value(), 4242);
 
-        // Reflection uses i32 encoding (not a u8 enum) so negative values survive.
         assert_eq!(RenderQueue::field_type(), FieldType::I32);
         for value in [-5, 0, 2000, 4000] {
             let queue = RenderQueue::new(value);

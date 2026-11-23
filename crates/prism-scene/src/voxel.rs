@@ -750,7 +750,6 @@ impl VoxelChunk {
             return None;
         }
 
-        // Convert to chunk-local L1 space (`1 unit = 1 m`).
         let rel_origin = [
             origin[0] - bmin[0],
             origin[1] - bmin[1],
@@ -1140,7 +1139,6 @@ impl VoxelChunk {
             origin[1] + d[1] * t,
             origin[2] + d[2] * t,
         ];
-        // Compute exact inward sub-cell coordinates near surface entry when hitting uniform tier.
         let bmin = self.world_min();
         let nudge = [
             world_pos[0] - normal[0] as f32 * (VOXEL_L3_SIZE_M * 0.25),
@@ -1515,7 +1513,6 @@ mod tests {
         assert_eq!(chunk.l1_brick_ref[l1_idx], L1_UNIFORM_REF);
         assert!(chunk.bricks.is_empty());
 
-        // Carve every single L3 micro-voxel inside L2 (lx=4, ly=8, lz=4).
         let (l2x, l2y, l2z) = (4u32, 8u32, 4u32);
         for mz in 0..4 {
             for my in 0..4 {
@@ -1528,9 +1525,7 @@ mod tests {
                 }
             }
         }
-        // Iron Law 1: clearing all L3 bits clears parent L2 occupancy automatically.
         assert!(chunk.get_l2_cell(l2x, l2y, l2z).is_none());
-        // Adjacent L2 cell inside the split L1 brick remains intact.
         assert!(chunk.get_l2_cell(l2x + 1, l2y, l2z).is_some());
         assert_ne!(chunk.l1_brick_ref[l1_idx], L1_UNIFORM_REF);
         assert_ne!(chunk.l1_brick_ref[l1_idx], 0);
@@ -1543,7 +1538,6 @@ mod tests {
         let vis = pack_visual(VoxelVisualFlags::METALLIC | VoxelVisualFlags::WET, 80, 0);
         chunk.set_l2_cell(4, 4, 4, alloy, vis, u64::MAX);
 
-        // Carve a 2x2 L3 pinhole through the center of this 0.25m L2 cell along Z.
         for mz in 0..4 {
             for my in 1..3 {
                 for mx in 1..3 {
@@ -1552,11 +1546,9 @@ mod tests {
             }
         }
 
-        // Ray straight through the carved L3 hole misses the front face!
         let miss = chunk.raycast([1.125, 1.125, 0.0], [0.0, 0.0, 1.0], 5.0, true);
         assert!(miss.is_none(), "ray should pass cleanly through L3 hole");
 
-        // Offset ray hits solid L3 rim and inherits L2 transient WET|METALLIC flags (Iron Law 2).
         let hit = chunk
             .raycast([1.03, 1.03, 0.0], [0.0, 0.0, 1.0], 5.0, true)
             .expect("should hit solid L3 border");
@@ -1577,11 +1569,9 @@ mod tests {
             0,
         );
         chunk.set_l2_cell(0, 0, 0, water, water_vis, u64::MAX);
-        // Water should not block solid-only player collision.
         assert!(!chunk.aabb_intersects_solid([0.05, 0.05, 0.05], [0.20, 0.20, 0.20], false));
         assert!(chunk.aabb_intersects_solid([0.05, 0.05, 0.05], [0.20, 0.20, 0.20], true));
 
-        // Add one L3 bar at mx=0..4, my=0, mz=0 -> [0.0..0.25, 0.0..0.0625, 0.0..0.0625]
         let wall = pack_rgba(180, 180, 180, 255);
         let wall_vis = pack_visual(VoxelVisualFlags::NONE, 180, 0);
         for mx in 0..4 {
@@ -1602,16 +1592,13 @@ mod tests {
         assert_eq!(index.len(), 4);
 
         let mut out = Vec::new();
-        // Inside the box of key 2 only ([16..24) on X).
         index.aabb_candidates([17.0, 1.0, 1.0], [18.0, 2.0, 2.0], &mut out);
         assert_eq!(out, vec![2]);
 
-        // Straddling the 0/1 boundary returns both neighbours, never the far ones.
         index.aabb_candidates([7.5, 1.0, 1.0], [8.5, 2.0, 2.0], &mut out);
         out.sort_unstable();
         assert_eq!(out, vec![0, 1]);
 
-        // Above the chunks: nothing overlaps on Y.
         index.aabb_candidates([1.0, 40.0, 1.0], [2.0, 41.0, 2.0], &mut out);
         assert!(out.is_empty());
     }
@@ -1625,7 +1612,6 @@ mod tests {
         }
 
         let mut out = Vec::new();
-        // Travelling +X from x = -1 enters key 100 first, then 101, then 102.
         index.ray_candidates([-1.0, 4.0, 4.0], [1.0, 0.0, 0.0], 40.0, &mut out);
         assert_eq!(
             out.iter().map(|&(_, key)| key).collect::<Vec<_>>(),
@@ -1633,14 +1619,12 @@ mod tests {
         );
         assert!(out.windows(2).all(|w| w[0].0 <= w[1].0));
 
-        // A short ray stops before the second chunk: it would only reach x = 7.5.
         index.ray_candidates([-1.0, 4.0, 4.0], [1.0, 0.0, 0.0], 8.5, &mut out);
         assert_eq!(
             out.iter().map(|&(_, key)| key).collect::<Vec<_>>(),
             vec![100]
         );
 
-        // A degenerate direction yields no candidates.
         index.ray_candidates([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 40.0, &mut out);
         assert!(out.is_empty());
     }
@@ -1652,7 +1636,6 @@ mod tests {
             let mut chunk = VoxelChunk::new([i * 4, 0, 0], [4, 4, 4]);
             let stone = pack_rgba(128, 128, 128, 255);
             let vis = pack_visual(VoxelVisualFlags::NONE, 200, 0);
-            // Only the middle chunk holds solid voxels.
             if i == 1 {
                 chunk.set_l2_cell(0, 0, 0, stone, vis, u64::MAX);
             }
@@ -1665,7 +1648,6 @@ mod tests {
         let resolve = |key: u64| chunks.get(key as usize);
 
         let mut aabb_scratch = Vec::new();
-        // Inside chunk 1's solid L2 cell at [4..5) on every axis.
         let min = [4.1, 0.1, 0.1];
         let max = [4.2, 0.2, 0.2];
         assert!(aabb_intersects_solid_indexed(
@@ -1681,7 +1663,6 @@ mod tests {
             .any(|chunk| chunk.aabb_intersects_solid(min, max, false));
         assert!(brute);
 
-        // Empty space above the chunks agrees with the brute-force walk too.
         let min = [4.1, 40.0, 0.1];
         let max = [4.2, 41.0, 0.2];
         assert_eq!(
@@ -1691,7 +1672,6 @@ mod tests {
                 .any(|chunk| chunk.aabb_intersects_solid(min, max, false))
         );
 
-        // A ray down -X from beyond the far chunk hits the middle one first.
         let mut ray_scratch = Vec::new();
         let indexed = raycast_chunks_indexed(
             &index,
@@ -1716,7 +1696,6 @@ mod tests {
     fn chunk_index_insert_replaces_and_remove_drops() {
         let mut index = VoxelChunkIndex::new();
         index.insert(7, &VoxelChunk::new([0, 0, 0], [8, 24, 8]));
-        // Same key, moved box: the entry is replaced, not duplicated.
         index.insert(7, &VoxelChunk::new([64, 0, 0], [8, 24, 8]));
         assert_eq!(index.len(), 1);
 

@@ -139,7 +139,6 @@ impl WorldShape2D {
                     verts.push(pos + rot_mat(Vec2::from_array(v)));
                 }
                 if verts.len() < 3 {
-                    // Degenerate to box
                     let half = Vec2::from_array(collider.half_extents)
                         .abs()
                         .max(Vec2::splat(1e-4));
@@ -311,7 +310,6 @@ impl WorldShape2D {
                 }
             }
             WorldShape2D::Capsule { a, b, radius } => {
-                // Simplified to line-segment intersection then degenerate to circle
                 let seg = *b - *a;
                 let len = seg.length();
                 if len < 1e-6 {
@@ -334,7 +332,6 @@ impl WorldShape2D {
                         }
                     }
                 }
-                // Capsule body segment
                 let n = Vec2::new(-seg.y, seg.x).normalize_or_zero() * *radius;
                 let quad = WorldShape2D::Polygon {
                     vertices: vec![*a + n, *b + n, *b - n, *a - n],
@@ -349,10 +346,6 @@ impl WorldShape2D {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Spatial query API
-// ---------------------------------------------------------------------------
 
 /// 2D raycast finds nearest collider.
 pub fn raycast_2d(
@@ -518,7 +511,6 @@ pub fn shapecast_2d(
     max_distance: f32,
     layer_mask: u32,
 ) -> Option<RayHit2D> {
-    // Advance detection by step sampling
     let dir = Vec2::from_array(direction).normalize_or_zero();
     if dir == Vec2::ZERO || max_distance <= 0.0 {
         return None;
@@ -554,10 +546,6 @@ pub fn shapecast_2d(
 
     None
 }
-
-// ---------------------------------------------------------------------------
-// Collision and contact solver
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct ContactManifold {
@@ -688,7 +676,6 @@ fn collide_shapes(a: &WorldShape2D, b: &WorldShape2D) -> Option<ContactManifold>
                 ..
             },
         ) => {
-            // SAT box-box collision detection
             let d = *c2 - *c1;
             let mut min_overlap = f32::MAX;
             let mut best_axis = Vec2::ZERO;
@@ -719,10 +706,6 @@ fn collide_shapes(a: &WorldShape2D, b: &WorldShape2D) -> Option<ContactManifold>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Physics simulation step system
-// ---------------------------------------------------------------------------
-
 /// Advance 2D physics system one simulation step (recommended called in `fixed_update`).
 ///
 /// Includes:
@@ -738,7 +721,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
 
     let g = Vec2::from_array(gravity);
 
-    // 1. Integrate dynamic rigid body velocities
     for (_, rb) in world.query_mut::<RigidBody2D>() {
         if rb.body_type != RigidBody2DType::Dynamic {
             continue;
@@ -756,7 +738,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         rb.linear_velocity = [vel.x, vel.y];
     }
 
-    // Collect all entities with PhysicsCollider2D
     let mut colliders = Vec::new();
     for (entity, col) in world.query::<PhysicsCollider2D>() {
         let (pos, rot) = extract_2d_transform(world, entity);
@@ -768,7 +749,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
     let mut current_contacts = std::collections::HashSet::new();
     let mut events = Vec::new();
 
-    // 2. Narrow-phase collision detection and solving
     let count = colliders.len();
     for i in 0..count {
         for j in (i + 1)..count {
@@ -792,7 +772,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
                 let is_sensor = col_a.is_sensor || col_b.is_sensor;
 
                 if !is_sensor {
-                    // Solve rigid body impulse
                     let type_a = rb_a
                         .as_ref()
                         .map_or(RigidBody2DType::Static, |r| r.body_type);
@@ -843,7 +822,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
                             }
                         }
 
-                        // Baumgarte penetration correction
                         let slop = 0.005f32;
                         let percent = 0.4f32;
                         let correction =
@@ -868,7 +846,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
         }
     }
 
-    // 3. State transition compare and generate Started / Stopped events
     let prev_contacts = world
         .get_resource::<ActiveContactPairs>()
         .cloned()
@@ -913,7 +890,6 @@ pub fn step_2d(world: &mut World, dt: f32, gravity: [f32; 2]) {
     });
     world.insert_resource(Physics2DEvents { events });
 
-    // 4. Advance dynamic and kinematic rigid body position and rotation
     for (_, tf, rb) in world.query2_mut::<LocalTransform, RigidBody2D>() {
         if rb.body_type == RigidBody2DType::Static {
             continue;

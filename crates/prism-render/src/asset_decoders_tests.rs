@@ -87,7 +87,6 @@ fn rmes_blob(
 
 #[test]
 fn decode_rtex_uses_the_real_cooked_header() {
-    // 2x2 RGBA8 with a 1x1 follow-up mip.
     let mip0 = vec![7u8; 2 * 2 * 4];
     let mip1 = vec![9u8; 4];
     let blob = rtex_blob(2, 2, RTEX_FORMAT_RGBA8, &[mip0.clone(), mip1]);
@@ -99,7 +98,6 @@ fn decode_rtex_uses_the_real_cooked_header() {
     assert_eq!(input.format, TextureFormat::Rgba8Srgb);
     assert_eq!(input.mip_levels, 1, "only the base level is uploaded");
     assert_eq!(input.pixels, mip0, "the mip offset table must be skipped");
-    // The buffer has to satisfy RenderTextureManager's exact-size check.
     assert_eq!(
         input.pixels.len(),
         input.format.compressed_byte_len(input.width, input.height)
@@ -141,7 +139,6 @@ fn decode_rtex_maps_astc_and_etc2_formats() {
 
 #[test]
 fn decode_rtex_accepts_bc1_and_bc3_block_data() {
-    // Block compressed texture can upload directly (#519): BC1 is 8 bytes / block, BC3 is 16 bytes / block.
     let bc1 = rtex_blob(4, 4, RTEX_FORMAT_BC1, &[vec![0u8; 8]]);
     let decoded = decode_rtex(&bc1).expect("BC1 payload decodes");
     assert_eq!(decoded.width, 4);
@@ -166,14 +163,12 @@ fn decode_rtex_rejects_unknown_format_codes() {
 #[test]
 fn decode_rtex_rejects_mip_offsets_inside_the_table() {
     let mut blob = rtex_blob(2, 2, RTEX_FORMAT_RGBA8, &[vec![0u8; 16], vec![0u8; 4]]);
-    // Point the first mip at byte 0: inside the header/offset table.
     blob[RTEX_HEADER_SIZE..RTEX_HEADER_SIZE + 4].copy_from_slice(&0u32.to_le_bytes());
     assert!(decode_rtex(&blob).is_err());
 }
 
 #[test]
 fn decode_rtex_rejects_base_mip_size_mismatch() {
-    // 2x2 RGBA8 needs 16 bytes; hand it 12 so the manager would reject it later.
     let blob = rtex_blob(2, 2, RTEX_FORMAT_RGBA8, &[vec![0u8; 12]]);
     assert!(decode_rtex(&blob).is_err());
 }
@@ -214,7 +209,6 @@ fn decode_rmes_accepts_v2_and_ignores_the_submesh_table() {
     let positions = [[0.0, 0.0, 0.0]];
     let mut blob = rmes_blob(&positions, None, &[], &[0u32]);
     blob[4] = 2;
-    // v2 table: one submesh, covers all indices.
     blob.extend_from_slice(&1u32.to_le_bytes());
     blob.extend_from_slice(&0u32.to_le_bytes());
     blob.extend_from_slice(&1u32.to_le_bytes());

@@ -60,9 +60,6 @@ fn raise_current() -> bool {
         GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
     };
 
-    // SAFETY: `GetCurrentThread` returns a pseudo handle for the calling
-    // thread; `SetThreadPriority` only changes that thread's scheduling
-    // priority.
     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) != 0 }
 }
 
@@ -77,14 +74,11 @@ fn raise_current() -> bool {
     /// `QOS_CLASS_USER_INTERACTIVE` from `<pthread/qos.h>`.
     const QOS_CLASS_USER_INTERACTIVE: c_uint = 0x21;
 
-    // SAFETY: the function only changes the QoS class of the calling thread.
     unsafe { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) == 0 }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn raise_current() -> bool {
-    // Linux and Android keep the default priority: raising it needs
-    // CAP_SYS_NICE or a matching RLIMIT_NICE.
     false
 }
 
@@ -96,10 +90,6 @@ fn lower_current() -> bool {
         fn nice(increment: c_int) -> c_int;
     }
 
-    // A relative increment keeps a thread that is already nicer (for example
-    // because the shell started the process that way) relatively behind,
-    // instead of silently raising it back to an absolute value.
-    // SAFETY: `nice` only adjusts the calling thread's nice value.
     unsafe { nice(10) >= 0 }
 }
 

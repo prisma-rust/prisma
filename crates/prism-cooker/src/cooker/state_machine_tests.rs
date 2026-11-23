@@ -43,10 +43,8 @@ fn the_author_document_becomes_a_decodable_machine() {
     assert_eq!(machine.transitions[1].from, Some(1));
     assert_eq!(machine.transitions[1].to, 2);
     assert!((machine.transitions[1].min_state_fraction - 0.3).abs() < 1e-6);
-    // "*" → any state.
     assert_eq!(machine.transitions[2].from, None);
 
-    // encode → decode must recover field by field (cooked out is what runtime sees).
     let bytes = encode_rasm(&machine).expect("encodes");
     let decoded = decode_rasm(&bytes).expect("decodes");
     assert_eq!(decoded, machine);
@@ -131,29 +129,24 @@ fn broken_documents_report_what_is_wrong() {
 
 #[test]
 fn encoding_rejects_broken_or_oversized_records() {
-    // Target index out of bounds.
     let mut machine = parse_state_machine_json(&document()).expect("parses");
     machine.transitions[0].to = 99;
     assert!(encode_rasm(&machine).is_none());
 
-    // Source state index out of bounds.
     let mut machine = parse_state_machine_json(&document()).expect("parses");
     machine.transitions[0].from = Some(99);
     assert!(encode_rasm(&machine).is_none());
 
-    // Empty clip path.
     let mut machine = parse_state_machine_json(&document()).expect("parses");
     machine.states[0].clip_path.clear();
     assert!(encode_rasm(&machine).is_none());
 
-    // Condition with empty name: writing it out will never match on anyway.
     let mut machine = parse_state_machine_json(&document()).expect("parses");
     machine.transitions[0].conditions = vec![TransitionConditionInfo::Trigger {
         name: String::new(),
     }];
     assert!(encode_rasm(&machine).is_none());
 
-    // Non-limited threshold rejected as well.
     let mut machine = parse_state_machine_json(&document()).expect("parses");
     machine.transitions[0].conditions = vec![TransitionConditionInfo::FloatGreater {
         name: "speed".into(),
@@ -161,7 +154,6 @@ fn encoding_rejects_broken_or_oversized_records() {
     }];
     assert!(encode_rasm(&machine).is_none());
 
-    // No state.
     let empty = StateMachineInfo {
         states: Vec::new(),
         transitions: Vec::new(),
@@ -181,7 +173,6 @@ fn out_of_range_numbers_are_clamped_instead_of_written_raw() {
     machine.transitions[0].min_state_fraction = f32::NAN;
     let bytes = encode_rasm(&machine).expect("encodes");
     let decoded = decode_rasm(&bytes).expect("decodes");
-    // Negative duration = hard cut, ratio beyond range clamped to 1, NaN to 0.
     assert_eq!(decoded.transitions[0].duration, 0.0);
     assert_eq!(decoded.transitions[0].min_state_fraction, 0.0);
 
@@ -194,7 +185,6 @@ fn out_of_range_numbers_are_clamped_instead_of_written_raw() {
     let decoded = decode_rasm(&bytes).expect("decodes");
     assert_eq!(decoded.transitions[0].min_state_fraction, 1.0);
 
-    // Non-limited speed falls back to 1.0, not writing NaN into asset.
     machine.states[0].speed = f32::INFINITY;
     let bytes = encode_rasm(&machine).expect("encodes");
     let decoded = decode_rasm(&bytes).expect("decodes");

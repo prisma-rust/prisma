@@ -198,7 +198,6 @@ impl SceneDoc {
     /// to ids. Consistent with `prism_scene::migrate_scene_doc`'s intent.
     pub fn normalize(&mut self) {
         if self.version < DOC_VERSION {
-            // v1/v2: parent is an index.
             let index_to_id: Vec<u32> = (0..self.entities.len()).map(|i| i as u32 + 1).collect();
             for (index, entity) in self.entities.iter_mut().enumerate() {
                 if entity.id.is_none() {
@@ -225,7 +224,6 @@ impl SceneDoc {
             }
         }
 
-        // Drop parents pointing to nonexistent ids (cycle check is done separately at reparent).
         let ids: HashSet<u32> = self.entities.iter().filter_map(|e| e.id).collect();
         for entity in &mut self.entities {
             if let Some(parent) = entity.parent {
@@ -365,7 +363,6 @@ impl SceneDoc {
             .collect();
         let removed_set: HashSet<usize> = removed.iter().copied().collect();
 
-        // Orphaned children become roots.
         for entity in &mut self.entities {
             if let Some(parent) = entity.parent {
                 if removed_ids.contains(&parent) {
@@ -505,7 +502,6 @@ impl SceneDoc {
             }
         }
 
-        // Moving a whole subtree: root + descendants, keep array order (parent before child).
         let mut moving: Vec<usize> = Vec::new();
         for root in &roots {
             moving.push(*root);
@@ -515,7 +511,6 @@ impl SceneDoc {
         moving.dedup();
         let is_root: Vec<bool> = moving.iter().map(|index| roots.contains(index)).collect();
 
-        // Slots the target shifts forward after removal = number of moved entities before it.
         let shift = moving.iter().filter(|index| **index < target).count();
         let mut insert_at = target - shift;
         if !before {
@@ -558,7 +553,6 @@ impl SceneDoc {
     /// Duplicate a whole subtree (engine's Ctrl+D): internal parent remapped to new ids, root keeps its parent.
     pub fn duplicate_subtree(&mut self, index: usize) -> Option<usize> {
         self.entities.get(index)?;
-        // Collect subtree (root + descendants), keep array order, guarantee parent before child.
         let mut selected = vec![index];
         selected.extend(self.descendants(index));
         selected.sort_unstable();
@@ -694,7 +688,6 @@ impl SceneDoc {
                 .parent
                 .and_then(|parent| id_map.get(&parent).copied())
                 .filter(|_parent| {
-                    // Root entities can't keep a parent pointing to an external parent.
                     old_id.map(|id| !root_set.contains(&id)).unwrap_or(false)
                 });
             let is_root = old_id.map(|id| root_set.contains(&id)).unwrap_or(false);
@@ -1064,7 +1057,6 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
     if text.trim().is_empty() {
         return RewriteOutcome::Unchanged;
     }
-    // Bare file name: compare against the old file's name, and stay a bare file name after rewrite.
     if !text.contains('/') {
         return if text == file_name(from) {
             RewriteOutcome::Rewritten(file_name(to).to_string())
@@ -1073,7 +1065,6 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
         };
     }
     let Some(resolved) = resolve_asset_reference(text, doc_dir) else {
-        // Can't resolve: only worth flagging if "looks like this very file".
         return if file_name(text) == file_name(from) {
             RewriteOutcome::Ambiguous
         } else {
@@ -1083,7 +1074,6 @@ fn rewrite_reference_string(text: &str, doc_dir: &str, from: &str, to: &str) -> 
     if resolved != from {
         return RewriteOutcome::Unchanged;
     }
-    // Write back in the author's original style: `assets/...` stays absolute, `../` stays relative.
     if text.starts_with("assets/") {
         return RewriteOutcome::Rewritten(to.to_string());
     }
@@ -1404,7 +1394,6 @@ mod tests {
         let value = &doc.entities[0].components["test::Comp"];
         assert_eq!(value, &serde_json::json!({ "keep": 3 }));
 
-        // Non-defaults must be retained.
         doc.entities[0].components.insert(
             "test::Comp".to_string(),
             serde_json::json!({ "a": 5.0, "b": 2.0 }),
@@ -1447,13 +1436,11 @@ mod tests {
         let mut doc = doc_with_tree();
         let child_id = doc.entities[1].id.unwrap();
         doc.remove_entities(&[1]);
-        // Grand is Child's child, should be deleted together.
         assert_eq!(doc.entities.len(), 2);
         assert!(!doc.entities.iter().any(|e| e.id == Some(child_id)));
 
         let mut doc = doc_with_tree();
         doc.remove_entities(&[0]);
-        // Root's children Child/Grand deleted together, only Sibling remains.
         assert_eq!(doc.entities.len(), 1);
         assert_eq!(doc.entities[0].display_name(), "Sibling");
     }
@@ -1492,7 +1479,6 @@ mod tests {
             .entities
             .iter()
             .any(|entity| entity.parent == Some(child_id)));
-        // ids are globally unique.
         let ids: HashSet<u32> = doc.entities.iter().filter_map(|e| e.id).collect();
         assert_eq!(ids.len(), doc.entities.len());
     }
@@ -1564,7 +1550,6 @@ mod tests {
         let root = &scene.entities[inserted[0]];
         assert_eq!(root.display_name(), "Root (1)");
         assert_eq!(root.prefab_link(), Some("assets/prefabs/root.prefab.json"));
-        // New ids must not overlap old ones.
         let ids: HashSet<u32> = scene.entities.iter().filter_map(|e| e.id).collect();
         assert_eq!(ids.len(), scene.entities.len());
     }
@@ -1576,11 +1561,8 @@ mod tests {
         assert_eq!(doc.unique_name("Cube", None), "Cube (1)");
         doc.add_named_child(None, "Cube (1)");
         assert_eq!(doc.unique_name("Cube (1)", None), "Cube (2)");
-        // Sibling scope: children can reuse root-level names.
         assert_eq!(doc.unique_name("Cube", doc.id_of_index(root)), "Cube");
-        // Strip the suffix first, then find a free slot.
         assert_eq!(doc.unique_name("Cube (9)", None), "Cube (2)");
-        // Non-numeric suffixes are part of the name itself.
         assert_eq!(doc.unique_name("Cube (left)", None), "Cube (left)");
     }
 
@@ -1711,7 +1693,6 @@ mod tests {
 
     #[test]
     fn renaming_only_touches_asset_path_fields() {
-        // #465: entity names and UI text that happen to read the same path must not be changed along.
         let mut doc = SceneDoc::default();
         let mesh = doc.add_named_child(None, "assets/textures/wood.png");
         doc.add_component(
@@ -1769,7 +1750,6 @@ mod tests {
 
         assert_eq!(rewrite.rewritten, 3);
         let component = &doc.entities[deep].components["prism_engine::scene::MeshRenderer"];
-        // Relative form resolved against **this document's directory**, stays relative.
         assert_eq!(
             component["mesh_path"],
             serde_json::json!("../../../textures/oak.png")

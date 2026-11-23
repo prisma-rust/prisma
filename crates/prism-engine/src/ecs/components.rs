@@ -19,10 +19,6 @@ pub use crate::scene::components::{
 /// Convenience: the engine's standard game-object transform.
 pub type Transform = LocalTransform;
 
-// ---------------------------------------------------------------------------
-// MeshRenderer
-// ---------------------------------------------------------------------------
-
 /// A renderable entity with a mesh and material, referenced by handle.
 ///
 /// This is the high-level authoring component.  At extraction time the

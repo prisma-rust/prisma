@@ -785,7 +785,6 @@ impl Workspace {
         }
         workspace.tree = AssetTree::build(&workspace.assets);
 
-        // Template documents (prefabs + scenes). Replace defaults if fixture supplies any.
         let mut loaded_templates = Vec::new();
         if let Some(template_docs) = value.get("templateDocs").and_then(|v| v.as_object()) {
             if let Some(labels) = value.get("templatesByKind").and_then(|v| v.as_object()) {

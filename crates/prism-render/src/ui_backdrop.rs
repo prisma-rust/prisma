@@ -225,7 +225,6 @@ impl UiBackdropPass {
         self.ensure_pipelines(context)?;
         self.blit_scene_to_mip0(context, cmd, scene_image);
 
-        // Downsample: mip 0 -> mip 1 -> mip 2 -> mip 3.
         for dst_mip in 1..BACKDROP_MIP_LEVELS {
             let src_mip = dst_mip - 1;
             let src_ext = self.pyramid.mip_extents[src_mip];
@@ -263,7 +262,6 @@ impl UiBackdropPass {
             );
         }
 
-        // Upsample: mip 3 -> mip 2 -> mip 1 -> mip 0 (50% tent blend over each mip).
         for dst_mip in (0..BACKDROP_MIP_LEVELS - 1).rev() {
             let src_mip = dst_mip + 1;
             let src_ext = self.pyramid.mip_extents[src_mip];

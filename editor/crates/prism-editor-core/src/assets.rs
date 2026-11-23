@@ -134,7 +134,6 @@ pub fn resolve_reference<'a>(
     if reference.is_empty() {
         return None;
     }
-    // Absolute path / drive letter: not a project asset, don't guess.
     if reference.starts_with('/') || reference.contains(':') {
         return None;
     }
@@ -156,11 +155,9 @@ pub fn resolve_reference<'a>(
         };
         return normalize_segments(&joined).and_then(|path| exact(&path));
     }
-    // Relative to the `assets/` root: `sprites/water.png` / `textures/wood.png`.
     if let Some(hit) = exact(&format!("assets/{reference}")) {
         return Some(hit);
     }
-    // Bare file name: same-named assets must be unique, otherwise don't guess.
     let mut hits = assets
         .iter()
         .filter(|asset| file_name(asset) == reference)
@@ -266,8 +263,6 @@ pub struct AssetTree {
 
 impl AssetTree {
     pub fn build(assets: &[AssetInfo]) -> Self {
-        // path -> child nodes (directories use BTreeMap for stable order: dirs first, then
-        // same category by name).
         #[derive(Default)]
         struct Dir {
             name: String,
@@ -283,7 +278,6 @@ impl AssetTree {
                 .split('/')
                 .filter(|part| !part.is_empty())
                 .collect();
-            // `assets/` is the project asset root, not shown as a collapsible directory.
             if parts.first() == Some(&"assets") {
                 parts.remove(0);
             }
@@ -734,7 +728,6 @@ mod tests {
         let names: Vec<&str> = scenes.child_names();
         assert_eq!(names, vec!["default.scene.json", "rocket.scene.json"]);
 
-        // Root directory files are also in the root node.
         assert!(tree.find("assets/settings.ini").is_some());
     }
 
@@ -877,22 +870,18 @@ mod tests {
     #[test]
     fn references_resolve_in_all_three_writing_styles() {
         let assets = paths();
-        // Relative to project root
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "assets/textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // Relative to document directory (a form allowed by #465)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes/deep", "../../textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // Relative to assets/ root (the most common form in the project)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "textures/wood.png"),
             Some("assets/textures/wood.png")
         );
-        // Bare file name (when unique)
         assert_eq!(
             resolve_reference(&assets, "assets/scenes", "wood.png"),
             Some("assets/textures/wood.png")
@@ -906,11 +895,8 @@ mod tests {
             resolve_reference(&assets, "assets/scenes", "assets/textures/stone.png"),
             None
         );
-        // Can't guess when same-named files aren't unique.
         assert_eq!(resolve_reference(&assets, "assets", "shared.png"), None);
-        // Empty value = not set, not a broken reference.
         assert_eq!(resolve_reference(&assets, "assets", "   "), None);
-        // Relative path runs out of assets/.
         assert_eq!(resolve_reference(&assets, "assets", "../outside.png"), None);
     }
 }

@@ -209,10 +209,6 @@ pub struct InputSnapshot {
     /// Key indices are defined by the host; plugins only look them up.
     pub keys: [u64; 4],
 
-    // These fields were appended in #485: the earlier `left_clicked` /
-    // `left_held` / `keys` covered only "left button held", with no outlet for
-    // the right button, wheel, mouse delta, touch, or key edges. They sit at the
-    // end so ABI differences show up only in `ABI_VERSION`.
     /// Right button pressed this frame.
     pub right_clicked: bool,
     /// Right button held.
@@ -739,7 +735,6 @@ mod input_snapshot_tests {
         assert!(!snapshot.key_released(6));
         assert!(!snapshot.key_pressed(7));
 
-        // Out-of-range indices must not write past the end.
         snapshot.set_key(InputSnapshot::KEY_COUNT, true);
         snapshot.set_key_edge(InputSnapshot::KEY_COUNT, true);
         assert!(!snapshot.key_pressed(InputSnapshot::KEY_COUNT));
@@ -761,16 +756,12 @@ mod input_snapshot_tests {
         assert_eq!(snapshot.touch_slice().len(), 1);
         assert!(snapshot.any_touch());
 
-        // Truncates beyond the fixed array length instead of panicking.
         snapshot.touch_count = u32::MAX;
         assert_eq!(snapshot.touch_slice().len(), InputSnapshot::MAX_TOUCHES);
     }
 
     #[test]
     fn the_snapshot_stays_pod_sized() {
-        // `InputSnapshot` must be able to cross the ABI as a block: its fields
-        // can only be POD, and it must not silently grow until the `#[repr(C)]`
-        // layout depends on the compiler.
         let size = core::mem::size_of::<InputSnapshot>();
         assert!(size <= 512, "InputSnapshot grew to {size} bytes");
         assert!(size >= 4 * 8 + 10 * core::mem::size_of::<TouchSnapshot>());

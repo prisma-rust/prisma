@@ -202,7 +202,6 @@ impl FieldSchema {
             "array" => match self.struct_type.as_deref() {
                 Some("glam::Vec3") => FieldWidget::Vector { len: 3 },
                 Some("glam::Quat") => FieldWidget::Quat,
-                // RGBA / color array uses color block + components.
                 _ => match self.array_len {
                     Some(len @ (3 | 4)) if self.name.contains("color") => {
                         FieldWidget::Color { alpha: len == 4 }
@@ -586,7 +585,6 @@ mod tests {
             Some(Value::from(0.5))
         );
 
-        // Non-existent path does not create node.
         assert!(!set_at_path(&mut value, "nope.deep", Value::Null));
         assert!(value.get("nope").is_none());
     }

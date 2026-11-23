@@ -299,7 +299,6 @@ mod tests {
     }
 
     fn reset() {
-        // Without a logger the trace is off, so the tests force it on.
         TEST_FORCE.store(true, Ordering::Relaxed);
         CLOSED.store(false, Ordering::Relaxed);
         seen()

@@ -295,7 +295,6 @@ pub fn decode_rag(data: &[u8]) -> Option<AnimGraphInfo> {
             });
         }
 
-        // v2: node end appends per-sample velocity table; v1 has no table.
         let mut sample_speeds = Vec::new();
         if version >= 2 {
             let speed_count = reader.u32()? as usize;

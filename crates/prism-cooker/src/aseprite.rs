@@ -129,7 +129,6 @@ impl AsepriteDocument {
                 let chunk_data = &data[chunk_pos + 6..chunk_pos + chunk_size];
 
                 match chunk_type {
-                    // CEL chunk
                     0x2004 => {
                         Self::parse_cel_chunk(
                             chunk_data,
@@ -139,11 +138,9 @@ impl AsepriteDocument {
                             &mut frame_canvas,
                         );
                     }
-                    // TAGS chunk
                     0x2018 => {
                         Self::parse_tags_chunk(chunk_data, &mut tags);
                     }
-                    // SLICE chunk
                     0x2022 => {
                         Self::parse_slice_chunk(chunk_data, &mut slices);
                     }
@@ -188,7 +185,6 @@ impl AsepriteDocument {
         let cel_type = u16::from_le_bytes(chunk_data[7..9].try_into().unwrap());
 
         let (cel_w, cel_h, cel_pixels) = match cel_type {
-            // Raw cel
             0 => {
                 if chunk_data.len() < 20 {
                     return;
@@ -198,7 +194,6 @@ impl AsepriteDocument {
                 let raw = chunk_data[20..].to_vec();
                 (w, h, raw)
             }
-            // Compressed cel (zlib)
             2 => {
                 if chunk_data.len() < 20 {
                     return;
@@ -216,7 +211,6 @@ impl AsepriteDocument {
         };
 
         if color_depth == 32 {
-            // Blit RGBA8 cel onto canvas
             for cy in 0..cel_h {
                 let dst_y = y as i32 + cy as i32;
                 if dst_y < 0 || dst_y >= doc_h as i32 {
@@ -297,8 +291,6 @@ impl AsepriteDocument {
 
         let has_pivot = (flags & 2) != 0;
 
-        // Only the first key is read: the runtime slice format stores a single
-        // rect per slice, so the remaining keys of a multi-key slice are ignored.
         if keys_count > 0 && pos + 20 <= chunk_data.len() {
             let x = i32::from_le_bytes(chunk_data[pos + 4..pos + 8].try_into().unwrap());
             let y = i32::from_le_bytes(chunk_data[pos + 8..pos + 12].try_into().unwrap());
@@ -307,7 +299,6 @@ impl AsepriteDocument {
             pos += 20;
 
             if (flags & 1) != 0 {
-                // Skip 9-slice center (16 bytes)
                 pos += 16;
             }
 

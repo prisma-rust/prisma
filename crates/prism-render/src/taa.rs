@@ -30,7 +30,6 @@ use crate::render_pass::find_memory_type;
 use crate::shader;
 use crate::shader_bindings::taa as bindings;
 
-// GPU layout comes from the Slang reflection; never mirror it by hand.
 use crate::shader_bindings::taa::TaaParams;
 
 pub struct TaaPass {
@@ -348,11 +347,6 @@ impl RenderPassNode for TaaPass {
             stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         });
-        // Path-trace mode resolves the traced image, whose guides come from
-        // the path tracer rather than the raster G-buffer. Declared
-        // unconditionally: the graph skips a read barrier when the tracked
-        // layout already matches, and these handles are only published while the
-        // path tracer actually runs.
         graph.read_usage(ResourceUsage {
             handle: PT_COLOR_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -392,24 +386,17 @@ impl RenderPassNode for TaaPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
-        // Executed every frame: only output at trace level, `RUST_LOG` disabled by default.
         log::trace!(
             "TAA exec taa={} jitter={:?}",
             ctx.settings.taa,
             ctx.frame.view_proj_jitter
         );
         if !ctx.settings.taa || ctx.frame.render_mode == RenderMode::Sprites2D {
-            // Drop history while TAA is off so re-enabling does not blend a
-            // frame from before the pause.
             self.history_valid = [false; 2];
             self.prev_view_proj = None;
             return Ok(());
         }
         self.recreate_target(ctx.context, ctx.render_extent)?;
-        // The path tracer renders its own image and publishes its own depth and
-        // motion guides, so resolve those instead of the raster G-buffer. The
-        // normal texture is only read for its alpha reactive flag, which the
-        // raster G-buffer still supplies in path-trace mode.
         let is_pt = ctx.frame.render_mode == RenderMode::PathTrace;
         let has_voxel = !is_pt
             && ctx.frame.debug_rt == 0
@@ -457,8 +444,6 @@ impl RenderPassNode for TaaPass {
         let frame = (ctx.frame_index as usize) % 2;
         let prev = (frame + 1) % 2;
 
-        // Recover the unjittered camera matrix (GraphRenderer applied
-        // `view_proj_jitter` after building the graph frame).
         let mut view_proj = ctx.frame.view_proj;
         view_proj[3][0] -= ctx.frame.view_proj_jitter[0];
         view_proj[3][1] -= ctx.frame.view_proj_jitter[1];

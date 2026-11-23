@@ -48,7 +48,6 @@ fn spawn_group_with(
         .map(|index| {
             let child = world.spawn();
             world.insert(child, Parent(parent));
-            // Child entity position does not affect level selection: distance measured from parent entity.
             world.insert(
                 child,
                 LocalTransform {
@@ -76,7 +75,6 @@ fn the_nearest_camera_distance_selects_the_level() {
     let camera = spawn_camera(&mut world, glam::Vec3::ZERO);
     let (_parent, children) = spawn_group(&mut world, vec![10.0, 50.0], 3);
 
-    // distance  0 -> LOD0
     lod_system(&mut world);
     assert!(!hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));
@@ -84,7 +82,6 @@ fn the_nearest_camera_distance_selects_the_level() {
     assert!(is_active_in_hierarchy(&world, children[0]));
     assert!(!is_active_in_hierarchy(&world, children[1]));
 
-    // distance  20 -> LOD1
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(
@@ -96,7 +93,6 @@ fn the_nearest_camera_distance_selects_the_level() {
     assert!(!hidden(&world, children[1]));
     assert!(hidden(&world, children[2]));
 
-    // Distance 100 -> beyond all thresholds -> last level.
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(
@@ -129,7 +125,6 @@ fn a_disabled_camera_is_ignored() {
     let (_, children) = spawn_group(&mut world, vec![10.0, 50.0], 2);
 
     lod_system(&mut world);
-    // No enabled camera -> conservatively display LOD0.
     assert!(!hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));
 }
@@ -162,11 +157,9 @@ fn level_for_distance_handles_degenerate_input() {
     assert_eq!(group.level_for_distance(10.1, 3), Some(1));
     assert_eq!(group.level_for_distance(50.0, 3), Some(1));
     assert_eq!(group.level_for_distance(50.1, 3), Some(2));
-    // Non-limited / negative distance treated as 0, not jumping to last level.
     assert_eq!(group.level_for_distance(f32::NAN, 3), Some(0));
     assert_eq!(group.level_for_distance(f32::INFINITY, 3), Some(0));
     assert_eq!(group.level_for_distance(-5.0, 3), Some(0));
-    // No thresholds -> always LOD0.
     assert_eq!(
         LodGroup {
             distances: Vec::new(),
@@ -188,9 +181,7 @@ fn level_for_screen_ratio_uses_descending_thresholds() {
     assert_eq!(group.level_for_screen_ratio(0.49, 3), Some(1));
     assert_eq!(group.level_for_screen_ratio(0.1, 3), Some(1));
     assert_eq!(group.level_for_screen_ratio(0.09, 3), Some(2));
-    // Non-limited ratio treated as 0, not jumping to last level.
     assert_eq!(group.level_for_screen_ratio(f32::NAN, 3), Some(2));
-    // No child entities / no valid threshold returns None, caller falls back to distance mode.
     assert_eq!(group.level_for_screen_ratio(1.0, 0), None);
     assert_eq!(
         LodGroup {
@@ -209,7 +200,6 @@ fn screen_ratio_mode_selects_by_projected_height() {
     let (_, children) = spawn_group_with(
         &mut world,
         LodGroup {
-            // Distance 10m would select LOD2, but screen ratio only reaches LOD1.
             distances: vec![1.0, 2.0],
             screen_ratios: vec![0.5, 0.1],
             bounds_radius: 1.0,
@@ -217,13 +207,11 @@ fn screen_ratio_mode_selects_by_projected_height() {
         3,
     );
 
-    // Default 60° FOV: 1 / tan(30°) ≈ 1.732; ratio = 1 * 1.732 / 10 ≈ 0.173.
     lod_system(&mut world);
     assert!(hidden(&world, children[0]));
     assert!(!hidden(&world, children[1]));
     assert!(hidden(&world, children[2]));
 
-    // Distance 2m -> ratio ≈ 0.866, back to LOD0.
     world.insert(
         camera,
         LocalToWorld(glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 2.0))),
@@ -248,7 +236,6 @@ fn an_invalid_screen_radius_falls_back_to_distance() {
         3,
     );
 
-    // When radius illegal cannot hide whole group by screen ratio, should fall back to distance: 100m -> LOD2.
     lod_system(&mut world);
     assert!(hidden(&world, children[0]));
     assert!(hidden(&world, children[1]));

@@ -223,8 +223,6 @@ impl EditorState {
             "Local" | "local" => crate::viewport_math::GizmoSpace::Local,
             _ => crate::viewport_math::GizmoSpace::World,
         };
-        // Panels may have been deleted (old archive / panel renamed); pointing to a missing tab
-        // would blank the whole dock area, so filter against the current dock once.
         let maximized = self.maximized.clone().filter(|tab| {
             crate::dock::collect_tabs(&workspace.dock)
                 .iter()
@@ -283,7 +281,6 @@ mod tests {
 
     #[test]
     fn component_presets_survive_a_state_round_trip() {
-        // #418: presets live in editor state, reopen editor after and they're still there.
         let mut source = Workspace::sample();
         source.save_component_preset(
             "prism_engine::scene::Camera",
@@ -318,8 +315,6 @@ mod tests {
 
         assert_eq!(target.maximized_tab.as_deref(), Some("sceneView"));
 
-        // Archived panel no longer exists (renamed / layout changed): pointing at it must not
-        // blank out the whole dock area.
         let mut stale = state.clone();
         stale.maximized = Some("no-such-panel".to_string());
         stale.apply(&mut target, &mut prefs);
@@ -401,7 +396,6 @@ mod tests {
         assert!(!target.show_skeleton);
         assert_eq!(target.gizmo_space, crate::viewport_math::GizmoSpace::Local);
 
-        // Old archive without `scene` section: defaults (outline defaults on).
         let old = json!({ "version": 1, "dock": {}, "themePreset": "studio" });
         let old_state = EditorState::from_json(&old);
         assert!(old_state.scene.show_grid);
@@ -412,7 +406,6 @@ mod tests {
         );
         assert_eq!(old_state.scene.gizmo_tool, "Translate");
 
-        // Has `scene` section but missing `showSelectionOutline` (written by old version): default on.
         let partial = json!({
             "version": 1,
             "dock": {},
@@ -463,7 +456,6 @@ mod tests {
         let mut workspace = workspace();
         let mut prefs = Preferences::default();
         state.apply(&mut workspace, &mut prefs);
-        // Unknown panel is dropped, falls back to default layout (at least sceneView present).
         assert!(workspace.dock_tabs().iter().any(|tab| tab == "sceneView"));
         assert_eq!(workspace.i18n.locale(), Locale::ZhCn);
     }

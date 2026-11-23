@@ -106,9 +106,7 @@ mod tests {
         assert!(launch.no_scene);
         assert_eq!(launch.scene, None);
 
-        // The default is still "load the manifest's first resolvable scene".
         assert!(!LaunchConfig::default().no_scene);
-        // Absent fields are not serialized, keeping the historical `{}` shape.
         assert_eq!(LaunchConfig::default().to_json(), "{}");
     }
 

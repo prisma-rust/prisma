@@ -70,7 +70,7 @@ impl RenderRuntime {
             descriptor_layout,
             descriptor_pool,
             frame_ubos,
-            context, // last — dropped last via declaration order
+            context,
         })
     }
 }

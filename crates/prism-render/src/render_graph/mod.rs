@@ -197,15 +197,6 @@ impl ResourceLifecycle {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Read-only snapshots for render-graph visualizers / diagnostics.
-//
-// The engine-side viz must not borrow `RenderGraph` (its passes are private
-// trait objects) nor touch `vk::*` handles inside the UI closure. These
-// plain-data structs are produced by `RenderGraph::snapshot` + each pass's
-// `RenderPassNode::graph_info`, cloned once per frame, and consumed by the UI.
-// ---------------------------------------------------------------------------
-
 /// Coarse classification of a pass for visualization (coloring / iconography).
 /// Kept in sync with the concrete pass structs that override `graph_info`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -522,10 +513,6 @@ pub trait RenderPassNode: std::any::Any {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Resource state tracker — automatic barrier derivation
-// ---------------------------------------------------------------------------
-
 /// Per-resource GPU layout + access + stage snapshot for auto-barrier logic.
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceState {
@@ -669,10 +656,6 @@ impl ResourceStateTracker {
             max_src_stage |= src_stage;
             max_dst_stage |= re.usage.stage;
 
-            // Advance the tracked state to the post-barrier layout, matching
-            // the GPU transition we just recorded. This must happen per-read,
-            // not per-write: a layout change is driven by the read edge here,
-            // and `apply_writes` only runs after the pass executes.
             self.set(
                 handle,
                 image_index,
@@ -807,10 +790,6 @@ fn build_pass_edges(passes_count: usize, edges: &[ResourceEdge]) -> Vec<Vec<Reso
     buckets
 }
 
-// ---------------------------------------------------------------------------
-// Graph builder — collects passes and resource declarations, then compiles.
-// ---------------------------------------------------------------------------
-
 pub struct RenderGraphBuilder {
     passes: Vec<Box<dyn RenderPassNode + 'static>>,
     resources: HashMap<ResourceHandle, GraphResource>,
@@ -928,7 +907,6 @@ impl RenderGraphBuilder {
     /// Mark a pass (by index) as reading a resource.
     /// Tracked for future barrier generation and topological sort.
     pub fn read(&mut self, pass_idx: usize, handle: ResourceHandle) {
-        // Future: push to a dependency list for barrier generation
         let _ = (pass_idx, handle);
     }
 
@@ -984,10 +962,6 @@ impl Default for RenderGraphBuilder {
         Self::new()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Executable graph
-// ---------------------------------------------------------------------------
 
 pub struct RenderGraph {
     passes: Vec<Box<dyn RenderPassNode + 'static>>,
@@ -1126,8 +1100,6 @@ impl RenderGraph {
         for (h, r) in b.resources {
             self.graph_resources.resources.insert(h, r);
         }
-        // Edges were recorded with pass_idx = offset + b.passes.len() == pass_idx
-        // (b is a fresh builder with no passes pushed); sanity-check before merging.
         for mut e in b.edges {
             debug_assert_eq!(e.pass_idx, pass_idx);
             e.pass_idx = pass_idx;
@@ -1154,7 +1126,6 @@ impl RenderGraph {
     /// `GraphRenderer::new` reflects physical dependencies).
     fn validate_edges(&self) {
         use std::collections::HashSet;
-        // Per-handle write-before-read check.
         let mut last_write: HashMap<ResourceHandle, usize> = HashMap::new();
         for e in &self.edges {
             match e.kind {
@@ -1175,7 +1146,6 @@ impl RenderGraph {
                 },
             }
         }
-        // Cycle detection: pass A -> pass B if A writes a handle B reads.
         let n = self.passes.len();
         let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); n];
         for e in &self.edges {
@@ -1187,7 +1157,7 @@ impl RenderGraph {
                 }
             }
         }
-        let mut color = vec![0u8; n]; // 0=white,1=gray,2=black
+        let mut color = vec![0u8; n];
         let mut has_cycle = false;
         fn dfs(u: usize, adj: &[HashSet<usize>], color: &mut [u8], has_cycle: &mut bool) {
             color[u] = 1;
@@ -1243,14 +1213,8 @@ impl RenderGraph {
     ) -> Result<()> {
         self.graph_resources.clear_frame();
 
-        // `PRISMA_PASS_DUMP`: decide once per frame whether to snapshot the
-        // published attachments at the end. A no-op unless the env var is set.
         let capture = self.pass_dump.should_capture();
 
-        // Throttle the BARRIER_PROBE trace lines to once per second so the log
-        // isn't flooded at frame rate. The probe is a debugging aid for the
-        // automatic barrier pipeline; gating it here avoids passing `Instant`
-        // state through the free functions.
         let probe = if self.last_barrier_probe.elapsed().as_secs_f32() >= 1.0 {
             self.last_barrier_probe = Instant::now();
             true
@@ -1281,8 +1245,6 @@ impl RenderGraph {
                 }
             }
 
-            // Build and emit barriers for this pass's read edges, then
-            // update the tracker with write edges after the pass executes.
             let (barriers, src_stage, dst_stage) = self.state_tracker.build_read_barriers(
                 &self.pass_edges[pass_idx],
                 &self.last_writers,
@@ -1376,10 +1338,6 @@ impl RenderGraph {
             self.pass_dump.mark_captured();
         }
 
-        // Linear HDR readback (repair spec §7.2): same slot as the pass dump, so
-        // the copy sees the frame's final image after every pass ran. A frame
-        // without a published `PT_COLOR_H` is not an error - the path tracer is
-        // skipped for raster frames, and the caller can simply ask again.
         if self.hdr_readback_requested {
             self.hdr_readback_requested = false;
             if let Err(err) = self.record_hdr_readback(ctx) {
@@ -1396,7 +1354,6 @@ impl RenderGraph {
     /// Runs after every pass has executed, so each image is in the layout the
     /// state tracker recorded for its last write.
     fn dump_published_images(&mut self, ctx: &RenderContext) {
-        // (handle, name, format, kind)
         let targets = [
             (
                 FORWARD_COLOR_H,
@@ -1513,9 +1470,6 @@ impl RenderGraph {
                         extent,
                         ..
                     } => {
-                        // ForwardPass (and other passes that manage their own textures)
-                        // registers a 1x1 placeholder extent during setup. Fall back
-                        // to the frame render extent when the declared extent is <= 1.
                         let ext = if extent.width > 1 && extent.height > 1 {
                             extent
                         } else {
@@ -1567,8 +1521,6 @@ impl RenderGraph {
             }
         }
 
-        // The shadow atlas is graph-owned (ShadowMapPass does not publish it)
-        // and its extent is the atlas size, not the render extent.
         if let Some(image) = self.graph_resources.image(SHADOW_MAP_H) {
             let atlas_extent = self
                 .graph_resources
@@ -1654,7 +1606,6 @@ impl RenderGraph {
             .src_access_mask(old_access)
             .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
 
-        // Put the image back so the recorded layout still matches reality.
         let restore = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
             .new_layout(old_layout)
@@ -1815,8 +1766,6 @@ impl RenderGraph {
             anyhow::bail!("hdr readback: PT_COLOR_H was not published this frame");
         };
         if self.pending_hdr_readback.is_some() {
-            // Previous frame's buffer was never taken; drop it so the map does
-            // not leak and the newest frame wins.
             self.discard_hdr_readback(ctx.device);
         }
 
@@ -1857,7 +1806,6 @@ impl RenderGraph {
             .subresource_range(range)
             .src_access_mask(old_access)
             .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
-        // Put the image back so the recorded layout still matches reality.
         let restore = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
             .new_layout(old_layout)
@@ -1932,7 +1880,7 @@ impl RenderGraph {
     ) -> Result<()> {
         for res in self.graph_resources.resources.values_mut() {
             if res.image.is_some() {
-                continue; // already allocated
+                continue;
             }
             match &res.res_type {
                 ResourceType::ColorAttachment {
@@ -1991,10 +1939,7 @@ impl RenderGraph {
                     res.image_view = Some(view);
                     res.memory = Some(memory);
                 }
-                ResourceType::StorageBuffer { size: _ } => {
-                    // Buffers allocated on demand by the pass that owns them
-                    // (e.g. SHARC buffers are created in SharcPass::setup).
-                }
+                ResourceType::StorageBuffer { size: _ } => {}
             }
         }
         Ok(())
@@ -2028,17 +1973,8 @@ impl RenderGraph {
 }
 
 impl Drop for RenderGraph {
-    fn drop(&mut self) {
-        // Resources should be destroyed explicitly via destroy().
-        // If not, they leak — we can't call device destroy in Drop without
-        // holding a device reference. This is intentional: the owner of the
-        // graph (Renderer/Engine) must call destroy() before dropping.
-    }
+    fn drop(&mut self) {}
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Pick the image aspect mask for a layout transition barrier: depth/stencil
 /// layouts use the DEPTH aspect (this project uses D32_SFLOAT, no separate
@@ -2091,7 +2027,7 @@ fn create_transient_image(
     usage: vk::ImageUsageFlags,
 ) -> anyhow::Result<(vk::Image, vk::ImageView, vk::DeviceMemory)> {
     let flags = vk::ImageCreateFlags::empty();
-    let _ = flags; // suppress unused warning
+    let _ = flags;
 
     let image_create_info = vk::ImageCreateInfo {
         image_type: vk::ImageType::TYPE_2D,
@@ -2114,7 +2050,6 @@ fn create_transient_image(
     let image = unsafe { device.create_image(&image_create_info, None) }?;
     let req = unsafe { device.get_image_memory_requirements(image) };
 
-    // For real transient attachments, prefer LAZILY_ALLOCATED memory type.
     let lazy = lazy_allocation_allowed(usage);
     debug_assert!(
         !lazy
@@ -2129,7 +2064,6 @@ fn create_transient_image(
             vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
         )
         .or_else(|| {
-            // Fallback to device-local if no lazy type available (non-TBDR GPU)
             find_memory_type(
                 mem_props,
                 req.memory_type_bits,

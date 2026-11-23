@@ -162,14 +162,12 @@ mod win32 {
             bail!("window capture: window has an empty client area");
         }
 
-        // Desktop DC only used to build compatible DC / DIB, DIB itself is device-independent.
         let screen_dc = unsafe { GetDC(0) };
         if screen_dc == 0 {
             bail!("window capture: GetDC(NULL) failed");
         }
         let mem_dc = unsafe { CreateCompatibleDC(screen_dc) };
 
-        // Negative height = top-to-bottom, rows read back are screen order.
         let info = BitmapInfo {
             header: BitmapInfoHeader {
                 size: std::mem::size_of::<BitmapInfoHeader>() as u32,
@@ -196,7 +194,6 @@ mod win32 {
 
         let old = unsafe { SelectObject(mem_dc, dib) };
         let printed = unsafe { PrintWindow(hwnd, mem_dc, PW_CLIENTONLY | PW_RENDERFULLCONTENT) };
-        // PrintWindow is async GDI call, must flush before reading DIB.
         unsafe { GdiFlush() };
 
         let mut pixels = vec![0u8; (width * height * 4) as usize];
@@ -204,7 +201,6 @@ mod win32 {
             unsafe {
                 std::ptr::copy_nonoverlapping(bits as *const u8, pixels.as_mut_ptr(), pixels.len());
             }
-            // DIB is BGRA; PNG needs RGBA.
             prism_render::screenshot::bgra_to_rgba_in_place(&mut pixels);
         }
 

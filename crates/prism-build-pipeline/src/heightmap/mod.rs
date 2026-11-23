@@ -17,10 +17,6 @@ mod thermal;
 pub use terrain::generate_terrain;
 pub use thermal::thermal_erosion;
 
-// ---------------------------------------------------------------------------
-// Heightmap
-// ---------------------------------------------------------------------------
-
 /// Heightgraph, using `f64` to guarantee 20 km height difference precision.
 #[derive(Clone, Debug)]
 pub struct Heightmap {
@@ -155,14 +151,9 @@ impl Heightmap {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ErosionParams
-// ---------------------------------------------------------------------------
-
 /// Erosion parameters, key physical parameters adjustable in real time.
 #[derive(Clone, Debug)]
 pub struct ErosionParams {
-    // ---- Hydraulic parameters ----
     pub inertia: f64,
     pub capacity_factor: f64,
     pub min_slope: f64,
@@ -175,12 +166,10 @@ pub struct ErosionParams {
     /// Deposition capacity hard limit (key parameter).
     pub max_capacity: f64,
 
-    // ---- Thermal parameters ----
     /// Repose angle (degrees).
     pub talus_angle: f64,
     pub thermal_strength: f64,
 
-    // ---- Global controls ----
     pub iterations: usize,
     pub particle_count: usize,
     pub max_steps: usize,
@@ -194,14 +183,12 @@ pub struct ErosionParams {
     /// Sea level erodes at below rate (0.0 ~ 1.0).
     pub sea_erosion_factor: f64,
 
-    // ---- Output controls ----
     pub use_relative_height: bool,
 }
 
 impl Default for ErosionParams {
     fn default() -> Self {
         Self {
-            // Hydraulic
             inertia: 0.05,
             capacity_factor: 4.0,
             min_slope: 0.01,
@@ -211,10 +198,8 @@ impl Default for ErosionParams {
             gravity: 4.0,
             max_velocity: 20.0,
             max_capacity: 10.0,
-            // Thermal
             talus_angle: 35.0,
             thermal_strength: 0.5,
-            // Control
             iterations: 100,
             particle_count: 200_000,
             max_steps: 150,
@@ -223,15 +208,10 @@ impl Default for ErosionParams {
             thermal_interval: 5,
             thermal_pre_iterations: 100,
             sea_erosion_factor: 0.05,
-            // output
             use_relative_height: true,
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Particle
-// ---------------------------------------------------------------------------
 
 /// Hydraulic erosion particle.
 #[derive(Clone, Debug)]
@@ -261,10 +241,6 @@ impl Particle {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// Execute complete erosion pipeline: thermal preprocessing → hydraulic + thermal alternating iteration.
 ///
 /// Return height graph after erosion. If `params.use_relative_height` is true,
@@ -272,20 +248,14 @@ impl Particle {
 pub fn generate_eroded_heightmap(mut hm: Heightmap, params: &ErosionParams) -> Heightmap {
     let saved_min = hm.min_height;
 
-    // Convert to relative height (optional)
     if params.use_relative_height {
         hm.to_relative();
     }
 
-    // First phase: strong thermal preprocessing
     for _ in 0..params.thermal_pre_iterations {
         thermal_erosion(&mut hm, params);
     }
 
-    // Second phase: hydraulic + thermal alternating iteration
-    //
-    // Accumulation buffer (one full graph per thread) reused throughout pipeline: default 100 hydraulic rounds not again
-    // Each round heavy new allocates a "thread count × full graph" `f64` table.
     let mut scratch = hydraulic::ErosionScratch::new();
     for iter in 0..params.iterations {
         let round_seed = params
@@ -297,7 +267,6 @@ pub fn generate_eroded_heightmap(mut hm: Heightmap, params: &ErosionParams) -> H
         }
     }
 
-    // Restore absolute height (optional)
     if !params.use_relative_height {
         hm.from_relative(saved_min);
     }

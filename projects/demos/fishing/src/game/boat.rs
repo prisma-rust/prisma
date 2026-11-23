@@ -51,7 +51,6 @@ pub fn tick(state: &mut Option<BoatState>, world: &mut GameWorld<'_>, dt: f32) {
         if let Some(mut transform) = world.get::<LocalTransform>(boat) {
             transform.position =
                 glam::Vec3::new(BOAT_BASE[0] + drift, BOAT_BASE[1] + bob, BOAT_BASE[2]);
-            // Slight sway so pixel art looks floating on water.
             let angle = (current.elapsed * 1.1).sin() * 0.035;
             transform.rotation = glam::Quat::from_rotation_z(angle);
             world.set(boat, transform);
@@ -60,7 +59,6 @@ pub fn tick(state: &mut Option<BoatState>, world: &mut GameWorld<'_>, dt: f32) {
 
     if let Some(camera) = current.camera {
         if let Some(mut transform) = world.get::<LocalTransform>(camera) {
-            // Camera follows half amplitude of boat, keeping some parallax.
             transform.position = glam::Vec3::new(drift * 0.5, BOAT_BASE[1] + CAMERA_LIFT, CAMERA_Z);
             world.set(camera, transform);
         }

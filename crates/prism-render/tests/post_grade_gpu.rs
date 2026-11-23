@@ -47,27 +47,27 @@ fn render_graded(renderer: &mut GraphRenderer, grade: PostGrade) -> Vec<u8> {
     let frame_data = FrameUBOData::default();
     renderer
         .render(
-            &[], // no draw items
+            &[],
             &frame_data,
-            IDENTITY, // light view-proj
-            IDENTITY, // inverse projection
-            0,        // debug flags
-            2,        // tonemap: passthrough, so only grading changes the pixel
-            0,        // AA off
-            0,        // debug_rt
-            1.0,      // proj22
-            0.0,      // proj32
-            &[],      // no lights
+            IDENTITY,
+            IDENTITY,
+            0,
+            2,
+            0,
+            0,
+            1.0,
+            0.0,
+            &[],
             RenderMode::Raster,
-            0,   // pt bounces
-            0.0, // pt ray distance
-            0,   // pt iterations
-            1.0, // exposure
-            &[], // no PT lights
+            0,
+            0.0,
+            0,
+            1.0,
+            &[],
             grade,
             false,
             false,
-            &[], // bone matrices
+            &[],
         )
         .expect("headless render failed");
     renderer
@@ -120,7 +120,6 @@ fn a_vignette_darkens_the_corners_but_not_the_center() {
     let graded_center = pixel(&graded, SIZE / 2, SIZE / 2);
     let graded_corner = pixel(&graded, 0, 0);
 
-    // Center barely moves (smoothstep starts at 0.35), corners darken noticeably.
     assert!(
         graded_center[0].abs_diff(plain_center[0]) <= 4,
         "center changed too much: {plain_center:?} -> {graded_center:?}"
@@ -136,9 +135,6 @@ fn zero_saturation_flattens_the_channels() {
     let Some(mut renderer) = try_create_headless() else {
         return;
     };
-    // The wrapper clears to a neutral grey, so saturation 0 alone cannot prove
-    // much on its own — but it must at least keep RGB equal (the luma blend is
-    // a no-op on grey and must not introduce a tint).
     let pixels = render_graded(
         &mut renderer,
         PostGrade {
@@ -180,7 +176,6 @@ fn film_grain_is_off_by_default_and_varies_pixels_at_full_strength() {
     let mut min = u8::MAX;
     let mut max = 0u8;
     for px in grained.as_chunks::<4>().0 {
-        // Monochrome grain: all three colour channels move together.
         assert_eq!(px[0], px[1], "grain must be monochrome: {px:?}");
         assert_eq!(px[1], px[2], "grain must be monochrome: {px:?}");
         min = min.min(px[0]);

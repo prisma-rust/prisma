@@ -268,7 +268,6 @@ mod tests {
         let source = skeleton(0.5);
         let target = skeleton(0.5);
         let mut pose = source.rest_pose();
-        // Fold the leg to 80 % of its rest length, as a crouch would.
         pose.set_local(
             1,
             JointTransform::new(
@@ -286,8 +285,6 @@ mod tests {
 
     #[test]
     fn rotations_are_taken_relative_to_both_rest_poses() {
-        // The source rest pose already has the arm out at 90°, the target rest
-        // pose does not, so a rest-pose frame must leave the target at rest.
         let source = Skeleton::new(vec![
             joint("hips", None, Vec3::new(0.0, 1.0, 0.0)),
             Joint {

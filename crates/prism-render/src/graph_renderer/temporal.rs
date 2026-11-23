@@ -50,6 +50,5 @@ fn halton(mut index: u64, base: u64) -> f32 {
 
 /// Subpixel TAA jitter in pixels, centred around zero.
 fn taa_jitter(frame: u64) -> [f32; 2] {
-    // Halton(2,3), shifted by -0.5 so the sequence covers [-0.5, 0.5).
     [halton(frame + 1, 2) - 0.5, halton(frame + 1, 3) - 0.5]
 }

@@ -69,9 +69,6 @@ pub fn migrate_scene_doc(doc: &mut Value) -> Result<(), String> {
         version += 1;
     }
 
-    // Version-independent normalization:
-    // - Missing entity id filled by array order (v3+ `parent` references id);
-    // - Derived components not allowed in author document.
     assign_ids(root);
     normalize_derived_components(root);
 
@@ -213,7 +210,6 @@ fn migrate_v1_to_v2(root: &mut Map<String, Value>) {
             continue;
         };
 
-        // `transform` object in author shape.
         if let Some(transform) = entity.get_mut("transform").and_then(Value::as_object_mut) {
             rename_key(transform, "translation", "position");
         }
@@ -240,7 +236,7 @@ mod tests {
 
     #[test]
     fn version_beyond_u32_is_rejected_instead_of_truncated() {
-        let future = u64::from(u32::MAX) + 2; // would truncate to 1 with `as u32`
+        let future = u64::from(u32::MAX) + 2;
         let doc = json!({ "version": future, "entities": [] });
         assert_eq!(doc_version(&doc), u32::MAX);
 
@@ -362,7 +358,6 @@ mod tests {
         migrate_scene_doc(&mut doc).unwrap();
         assert_eq!(doc["entities"][0]["id"], 1);
         assert_eq!(doc["entities"][1]["id"], 2);
-        // "new_added" at index 2 must NOT receive id 2 (which already belongs to "c")
         assert_eq!(doc["entities"][2]["id"], 3);
     }
 

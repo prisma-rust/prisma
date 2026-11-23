@@ -116,7 +116,6 @@ fn editor_grid_visible(
     settings: &prism_engine::render_settings::RenderSettings,
     view_2d: bool,
 ) -> bool {
-    // In 2D view XZ mesh is a line seen edge-on (XY mesh see #602), don't draw first.
     kind == ViewKind::Scene && settings.show_grid && !view_2d
 }
 
@@ -452,14 +451,9 @@ impl EngineHost {
 
     /// Rebuild world from `.scene.json` (same path as Web editor).
     pub fn load_scene(&mut self, path: &Path) -> Result<usize, String> {
-        // All entity handles of old world invalidated: project module discards cached handles by this generation.
         self.scene_generation = self.scene_generation.wrapping_add(1).max(1);
-        // All entity handles of old world invalidated, helper entities need recreating.
         self.editor_camera = None;
         self.engine = Engine::empty();
-        // Asset parser (with already-resolved `.pak` and uploaded handles) reused across reloads: previously each
-        // edit called `GpuAssetResolver::new()` + re-read pak (#435). Only re-read manifest when pak file
-        // itself was rebuilt.
         let mtime = resource_package_mtime();
         if mtime != self.pak_mtime {
             self.asset_resolver.load_resource_package();
@@ -479,7 +473,6 @@ impl EngineHost {
         self.scene_loaded = true;
         self.prev_view_proj = None;
 
-        // Loader only guarantees root `LocalToWorld`; propagate full hierarchy before first frame.
         prism_engine::scene::systems::hierarchy::hierarchy_system(self.engine.world_mut());
         prism_engine::scene::systems::hierarchy::active_hierarchy_system(self.engine.world_mut());
 
@@ -607,8 +600,6 @@ impl EngineHost {
         let (yaw, pitch, distance) = (orbit.yaw, orbit.pitch, orbit.distance);
         self.view_2d = orbit.orthographic;
         let target = Vec3::from_array(orbit.target);
-        // Keep the rendered camera on the same orbit as `OrbitCamera::eye()`:
-        // yaw is world-Y, while positive pitch raises the eye toward +Y.
         let rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-pitch);
         let eye = target + rotation * Vec3::new(0.0, 0.0, distance.max(0.05));
         let look = rotation;
@@ -628,13 +619,10 @@ impl EngineHost {
         );
         if let Some(camera) = world.get_mut::<Camera>(entity) {
             camera.aspect = self.width as f32 / self.height.max(1) as f32;
-            // 2D view: orthographic half height directly reuses `distance`, wheel zoom feel unchanged (#641).
             camera.orthographic = orbit.orthographic;
             if orbit.orthographic {
                 camera.orthographic_size = orbit.distance.max(0.05);
             }
-            // Editor "View..." settings (#416): FOV and clip planes apply to both render and picking,
-            // otherwise gizmos / point selection on screen won't match image.
             camera.fov_y_degrees = orbit.fov_y_degrees.clamp(10.0, 170.0);
             camera.near = orbit.near;
             camera.far = orbit.far;
@@ -643,7 +631,6 @@ impl EngineHost {
 
     pub fn set_simulate(&mut self, simulate: bool) {
         if self.simulate != simulate {
-            // Animation graph debug snapshot only maintained during Play (#560 editor-runtime bridge).
             if simulate {
                 self.engine.world_mut().insert_resource(
                     prism_engine::scene::systems::animator::AnimGraphDebug::default(),
@@ -658,8 +645,6 @@ impl EngineHost {
             self.paused = false;
             self.step_pending = false;
             if !simulate {
-                // On stopping Play discard transient key / mouse state: otherwise next Play
-                // would inherit previous "just pressed".
                 self.input = InputManager::new();
             }
         }
@@ -689,7 +674,6 @@ impl EngineHost {
         self.height = height;
         self.renderer.resize_offscreen(width, height)?;
         if self.kind == ViewKind::Scene {
-            // After size change editor camera aspect must follow.
             if let Some(entity) = self.editor_camera {
                 if let Some(camera) = self.engine.world_mut().get_mut::<Camera>(entity) {
                     camera.aspect = width as f32 / height as f32;
@@ -826,7 +810,6 @@ impl EngineHost {
 
     /// Advance simulation (Play) or only propagate layer level (edit mode), finish asset upload sync.
     pub fn tick(&mut self) {
-        // ECS UI layout depends on `ScreenSize`; offscreen host has no winit window, writes it itself.
         self.engine
             .world_mut()
             .insert_resource(prism_engine::ui::ScreenSize::new(self.width, self.height));
@@ -840,8 +823,6 @@ impl EngineHost {
         if self.simulate && fixed_tick_requested(self.paused, self.step_pending) {
             const FIXED_STEP: Duration = Duration::from_nanos(16_666_667);
             if self.step_pending {
-                // A paused step advances exactly one simulation tick. Do not
-                // consume wall-clock time accumulated while the editor was idle.
                 self.accumulator = FIXED_STEP;
             } else {
                 self.accumulator += elapsed;
@@ -878,8 +859,6 @@ impl EngineHost {
                 elapsed.as_secs_f32()
             };
             self.step_pending = false;
-            // User project gameplay code runs before engine systems: components it writes
-            // and UI quads seen by hierarchy / ui::render in same frame.
             let mut scene_request = None;
             if let Some(project) = self.project.as_mut() {
                 project.tick(
@@ -891,14 +870,12 @@ impl EngineHost {
                 );
                 scene_request = project.take_scene_request();
             }
-            // Scene change requested by project code executed after world borrow ends (#482).
             if let Some(request) = scene_request {
                 self.apply_scene_request(request);
             }
             self.engine.update(dt, &self.input);
             self.engine.late_update();
         } else {
-            // Edit mode (or paused): don't run game systems, only propagate layer level.
             self.accumulator = Duration::ZERO;
             prism_engine::scene::systems::hierarchy::hierarchy_system(self.engine.world_mut());
             prism_engine::scene::systems::hierarchy::active_hierarchy_system(
@@ -933,7 +910,6 @@ impl EngineHost {
         if mtime == self.pak_mtime {
             return 0;
         }
-        // On open failure (pak being written) wait next round, don't swap reader to half file.
         if let Err(error) = self.asset_resolver.resource_manager.on_pak_changed(&pak) {
             log::warn!(
                 "hot reload: reopening {} failed: {error}; will retry",
@@ -967,21 +943,17 @@ impl EngineHost {
 
     /// Asset parsing: CPU stage → GPU upload → results write back ECS, all synchronous.
     fn pump_assets(&mut self) {
-        // Project-bundled fonts (#583): read bytes from `.pak` hand to UI atlas. Only on new path
-        // read once, same failure-cache strategy as textures / meshes.
         let fonts = self.asset_resolver.prepare_ui_fonts(self.engine.world());
         for (name, bytes) in fonts {
             self.renderer.register_ui_font(name, bytes);
         }
 
-        // Skeletal animation assets (#560 P0-2): idempotent, only new `.rskel` / `.ranim` read from disk.
         self.asset_resolver
             .load_animation_assets(self.engine.world_mut());
 
         let requests = self
             .asset_resolver
             .prepare_requests(self.engine.world_mut());
-        // Invalidated GPU resources released synchronously (editor has no render thread, #495).
         let releases = self.asset_resolver.take_releases();
         if !releases.is_empty() {
             self.renderer.release_assets(&releases);
@@ -998,10 +970,6 @@ impl EngineHost {
     /// Render one frame to offscreen image, transition image to samplable
     /// `SHADER_READ_ONLY_OPTIMAL`. Returns `(image_view, extent)`.
     pub fn render(&mut self) -> anyhow::Result<Option<(ash::vk::ImageView, ash::vk::Extent2D)>> {
-        // Edit mode doesn't run `tick()` (only called during Play), but producing a frame also needs
-        // those two "end of simulation step" steps: layer propagation + asset upload. Otherwise `LocalToWorld` stays at load value,
-        // and `SpriteRef::generation == 0` makes 2D render system filter out all sprites —
-        // edit-mode Scene / Game view would show only clear color (#579).
         self.engine
             .world_mut()
             .insert_resource(prism_engine::ui::ScreenSize::new(self.width, self.height));
@@ -1037,12 +1005,9 @@ impl EngineHost {
                     0.0,
                 );
             }
-            // Edit mode does not run update(); recompute UI layout for Scene anchor handles.
             prism_engine::ui::ui_layout_system(self.engine.world_mut());
         }
         self.pump_assets();
-        // #613: internal render resolution follows same path as game process, pixel ratio seen by
-        // editor Game view is actual device ratio.
         let aspect = self
             .settings
             .render_aspect(self.width as f32 / self.height.max(1) as f32);
@@ -1052,12 +1017,10 @@ impl EngineHost {
             &Mat4::IDENTITY,
             self.settings.shadow_distance,
             self.settings.shadow_cascade_count,
-            // #978: sub-pixel lines widened to 1 pixel by actual render height.
             self.settings.render_height(self.width, self.height),
             &mut self.packet,
         );
         self.packet.settings = self.settings.clone();
-        // Local post-processing volume (#502 Phase 2): shares same parse function with player path.
         self.packet.grade = Some(
             prism_engine::scene::systems::post_process::resolve_post_grade(
                 self.engine.world(),
@@ -1097,7 +1060,6 @@ impl EngineHost {
         };
         self.renderer.apply_taa_jitter(&mut frame_data);
 
-        // #502: LUT strength follows global setting, path resolved under assets/.
         let mut resolved_grade = self
             .packet
             .grade
@@ -1140,7 +1102,6 @@ impl EngineHost {
             pt_max_iterations: self.settings.pt_max_iterations,
             exposure: scene.exposure,
             pt_lights: &scene.pt_lights,
-            // Editor only redraws on "changes", so each render treated as fresh accumulation start.
             pt_accum_dirty: true,
             has_camera: scene.has_camera,
             camera_orthographic: scene.camera_orthographic,
@@ -1169,7 +1130,6 @@ impl EngineHost {
             .prepare(&ctx, &input)
             .and_then(|_| self.renderer.execute(&ctx, &input))
             .inspect_err(|_| {
-                // Keep headless/window fence signaled cleanly when a render pass aborts.
                 let _ = self.renderer.present(&ctx);
                 let _ = self.renderer.end_frame(&ctx, false);
             })
@@ -1180,8 +1140,6 @@ impl EngineHost {
         }
         self.prev_view_proj = Some(current_view_proj);
 
-        // Screenshot must read offscreen image current layout (frame end is `COLOR_ATTACHMENT_OPTIMAL`),
-        // so must do before transitioning to sample layout.
         if let Some(path) = self.capture_path.take() {
             match self.capture_offscreen(&path) {
                 Ok(path) => log::info!("viewport capture: {}", path.display()),
@@ -1189,8 +1147,6 @@ impl EngineHost {
             }
         }
 
-        // COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL: egui sampling descriptor requires
-        // latter, and step happens on same queue, no extra semaphore.
         self.renderer.offscreen_present_for_sampling()?;
 
         Ok(self

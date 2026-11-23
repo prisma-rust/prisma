@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::scene::helpers::HierarchyHelper;
 use prism_ecs::World;
@@ -11,7 +7,7 @@ fn root_gets_identity_world() {
     let mut world = World::new();
     let e = world.spawn();
     world.insert(e, LocalTransform::default());
-    world.insert(e, LocalToWorld(glam::Mat4::ZERO)); // dummy
+    world.insert(e, LocalToWorld(glam::Mat4::ZERO));
 
     hierarchy_system(&mut world);
 
@@ -49,7 +45,6 @@ fn child_world_inherits_parent_translation() {
     hierarchy_system(&mut world);
 
     let cw = world.get::<LocalToWorld>(child).unwrap().0;
-    // Expect translation  = [2, 3, 0]
     assert!(
         (cw.col(3)[0] - 2.0).abs() < 1e-6,
         "child x = {}",
@@ -75,9 +70,9 @@ fn child_world_inherits_parent_translation() {
 #[test]
 fn nested_hierarchy() {
     let mut world = World::new();
-    let gp = world.spawn(); // grandparent
-    let p = world.spawn(); // parent
-    let c = world.spawn(); // child
+    let gp = world.spawn();
+    let p = world.spawn();
+    let c = world.spawn();
 
     world.insert(
         gp,
@@ -108,7 +103,6 @@ fn nested_hierarchy() {
     HierarchyHelper::reparent(&mut world, c, Some(p));
     hierarchy_system(&mut world);
 
-    // gp: [1,0,0], p: [1,2,0], c: [1,2,3]
     let pw = world.get::<LocalToWorld>(p).unwrap().0;
     assert!((pw.col(3)[0] - 1.0).abs() < 1e-6, "p.x = {}", pw.col(3)[0]);
     assert!((pw.col(3)[1] - 2.0).abs() < 1e-6, "p.y = {}", pw.col(3)[1]);
@@ -121,9 +115,6 @@ fn nested_hierarchy() {
 
 #[test]
 fn dead_parent_makes_the_child_a_root() {
-    // Parent entity despawned after child entity's `Parent` still points to dead entity (despawn only deletes own
-    // component). Before such child node neither root nor reachable, `LocalToWorld` will forever freeze in
-    // old value; now promoted to root by unified semantics, equal to its own `LocalTransform`.
     let mut world = World::new();
     let parent = world.spawn();
     let child = world.spawn();
@@ -153,8 +144,6 @@ fn dead_parent_makes_the_child_a_root() {
 
 #[test]
 fn parent_without_child_link_treats_the_child_as_a_root() {
-    // Only has `Parent`, parent's `Child` inside but doesn't list it: tree inconsistent,
-    // cannot let it forever wait for a parent node that will never be traversed.
     let mut world = World::new();
     let parent = world.spawn();
     let child = world.spawn();
@@ -187,8 +176,6 @@ fn parent_without_child_link_treats_the_child_as_a_root() {
 
 #[test]
 fn transformless_intermediate_node_does_not_block_its_subtree() {
-    // root(x=10) → mid(no  LocalTransform) → leaf(x=0)
-    // Mid itself should not get `LocalToWorld`, but leaf must inherit root's translation.
     let mut world = World::new();
     let root = world.spawn();
     let mid = world.spawn();
@@ -227,7 +214,6 @@ fn transformless_intermediate_node_does_not_block_its_subtree() {
 
 #[test]
 fn parent_cycle_does_not_recurse_forever() {
-    // Dirty data forming cycle cannot let DFS recurse infinitely: A is root and lists B, B lists A again.
     let mut world = World::new();
     let a = world.spawn();
     let b = world.spawn();
@@ -247,7 +233,6 @@ fn parent_cycle_does_not_recurse_forever() {
 
     hierarchy_system(&mut world);
 
-    // A is root (no Parent) → [1,0,0]; B is child → [2,0,0].
     assert!((world.get::<LocalToWorld>(a).unwrap().0.w_axis[0] - 1.0).abs() < 1e-6);
     assert!((world.get::<LocalToWorld>(b).unwrap().0.w_axis[0] - 2.0).abs() < 1e-6);
 }
@@ -255,15 +240,13 @@ fn parent_cycle_does_not_recurse_forever() {
 #[test]
 fn no_panics_on_empty_world() {
     let mut world = World::new();
-    hierarchy_system(&mut world); // should not panic
+    hierarchy_system(&mut world);
 }
 
 #[test]
 fn single_entity_no_transform() {
-    // entity  without LocalTransform — should be skipped silently.
     let mut world = World::new();
     let e = world.spawn();
-    // No LocalTransform
     hierarchy_system(&mut world);
     assert!(world.is_alive(e));
 }
@@ -318,10 +301,8 @@ fn deactivating_a_parent_deactivates_the_whole_subtree() {
     assert!(!world.get::<ActiveInHierarchy>(child).unwrap().0);
     assert!(!world.get::<ActiveInHierarchy>(grandchild).unwrap().0);
     assert!(!is_active_in_hierarchy(&world, grandchild));
-    // Own `Active` not changed: checker displays `activeSelf`.
     assert!(world.get::<Active>(child).unwrap().0);
 
-    // Parent heavy new opened, child tree comes back.
     world.insert(parent, Active(true));
     active_hierarchy_system(&mut world);
     assert!(is_active_in_hierarchy(&world, grandchild));
@@ -377,7 +358,6 @@ fn active_hierarchy_survives_a_parent_cycle() {
     let b = world.spawn();
     world.insert(a, Active(true));
     world.insert(b, Active(true));
-    // Bypass `HierarchyHelper` directly write `Parent`, simulate corrupted save.
     world.insert(a, Parent(b));
     world.insert(b, Parent(a));
 

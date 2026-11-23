@@ -267,7 +267,6 @@ pub mod bindings {
 impl BindlessTextureTable {
     /// Create the table with room for `capacity` texture views.
     pub fn new(device: &ash::Device, capacity: u32) -> anyhow::Result<Self> {
-        // --- Create the 4 global samplers ---
         let mut samplers = [vk::Sampler::null(); SamplerType::COUNT as usize];
         for (i, st) in [
             SamplerType::LinearWrap,
@@ -282,12 +281,7 @@ impl BindlessTextureTable {
                 .context("create global sampler")?;
         }
 
-        // --- Descriptor set layout: two bindings ---
-        // Bindings are listed in ascending binding-number order so the binding
-        // flags (which must be in the same order as the bindings array) line up
-        // correctly. The variable-count SRV array is the highest binding.
         let bindings = [
-            // binding 0: global samplers (fixed count)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(bindings::SAMPLERS)
                 .descriptor_type(vk::DescriptorType::SAMPLER)
@@ -297,7 +291,6 @@ impl BindlessTextureTable {
                         | vk::ShaderStageFlags::FRAGMENT
                         | vk::ShaderStageFlags::COMPUTE,
                 ),
-            // binding 1: SRV array (textures without samplers)
             vk::DescriptorSetLayoutBinding::default()
                 .binding(bindings::SRV)
                 .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
@@ -309,9 +302,6 @@ impl BindlessTextureTable {
                 ),
         ];
 
-        // Binding flags: samplers are immutable; the SRV array gets the bindless
-        // flags. VARIABLE_DESCRIPTOR_COUNT must be on the highest-numbered binding
-        // (binding 1 = SRV), which it now is.
         let binding_flags = [
             vk::DescriptorBindingFlags::empty(),
             vk::DescriptorBindingFlags::PARTIALLY_BOUND
@@ -328,7 +318,6 @@ impl BindlessTextureTable {
         let layout = unsafe { device.create_descriptor_set_layout(&layout_info, None) }
             .context("create bindless descriptor set layout")?;
 
-        // --- Pool ---
         let pool_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLED_IMAGE,
@@ -346,7 +335,6 @@ impl BindlessTextureTable {
         let pool = unsafe { device.create_descriptor_pool(&pool_info, None) }
             .context("create bindless descriptor pool")?;
 
-        // --- Allocate the set with variable descriptor count ---
         let counts = [capacity];
         let mut count_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::default()
             .descriptor_counts(&counts);
@@ -358,7 +346,6 @@ impl BindlessTextureTable {
         let set = unsafe { device.allocate_descriptor_sets(&alloc_info) }
             .context("allocate bindless descriptor set")?[0];
 
-        // Write the global samplers into binding 1 immediately (they never change).
         let sampler_infos: Vec<_> = samplers
             .iter()
             .map(|&s| {
@@ -390,7 +377,6 @@ impl BindlessTextureTable {
     ///
     /// The image must already be in `SHADER_READ_ONLY_OPTIMAL` layout.
     pub fn register(&mut self, image_view: vk::ImageView) -> anyhow::Result<TextureHandle> {
-        // Released slots are reused before the bump pointer advances.
         let slot = self.slots.claim()?;
         self.write_srv(slot, image_view);
         Ok(TextureHandle(slot))

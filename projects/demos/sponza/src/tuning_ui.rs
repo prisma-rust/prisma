@@ -52,7 +52,6 @@ pub struct SponzaTuningHook {
     pub show: bool,
     pub selected_index: usize,
 
-    // Parameters matching RTXGI Pathtracer UI
     pub render_mode: RenderMode,
     pub auto_exposure: bool,
     pub raster_gi: RasterGiMode,
@@ -80,7 +79,6 @@ pub struct SponzaTuningHook {
     applied_custom_shader: Option<bool>,
     pub request_reset: bool,
 
-    // ECS UI entities
     canvas_entity: Option<Entity>,
     panel_bg_entity: Option<Entity>,
     panel_text_entity: Option<Entity>,
@@ -161,8 +159,6 @@ impl Default for SponzaTuningHook {
 
 impl SponzaTuningHook {
     fn cycle_render_mode(&mut self) {
-        // Raster <-> Path Trace. Either direction invalidates the path tracing
-        // accumulation.
         self.render_mode = match self.render_mode {
             RenderMode::PathTrace => RenderMode::Raster,
             _ => RenderMode::PathTrace,
@@ -241,7 +237,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             2 => {
-                // Bounces: 1 .. 24
                 if increase {
                     self.bounces = (self.bounces + 1).min(24);
                 } else {
@@ -250,7 +245,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             3 => {
-                // Ray max distance: 100.0 .. 5000.0
                 if increase {
                     self.ray_max_distance = (self.ray_max_distance + 100.0).min(5000.0);
                 } else {
@@ -259,7 +253,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             4 => {
-                // Tonemapper: 0=Reinhard, 1=ACES, 2=Passthrough
                 if increase {
                     self.tonemap_mode = (self.tonemap_mode + 1) % 3;
                 } else {
@@ -275,7 +268,6 @@ impl SponzaTuningHook {
             7 => self.sharc_enable_resolve = !self.sharc_enable_resolve,
             8 => self.sharc_enable_anti_firefly = !self.sharc_enable_anti_firefly,
             9 => {
-                // Scene scale: 5.0 .. 100.0
                 if increase {
                     self.sharc_scene_scale = (self.sharc_scene_scale + 5.0).min(100.0);
                 } else {
@@ -284,7 +276,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             10 => {
-                // Roughness threshold: 0.0 .. 1.0
                 if increase {
                     self.sharc_roughness_threshold =
                         (self.sharc_roughness_threshold + 0.05).min(1.0);
@@ -295,7 +286,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             11 => {
-                // Downscale factor: 1 .. 10
                 if increase {
                     self.sharc_downscale_factor = (self.sharc_downscale_factor + 1).min(10);
                 } else {
@@ -304,7 +294,6 @@ impl SponzaTuningHook {
                 }
             }
             12 => {
-                // Accumulation frames: 1 .. 120
                 if increase {
                     self.sharc_accumulation_frame_num =
                         (self.sharc_accumulation_frame_num + 5).min(120);
@@ -314,7 +303,6 @@ impl SponzaTuningHook {
                 }
             }
             13 => {
-                // Stale frames: 1 .. 120
                 if increase {
                     self.sharc_stale_frame_num = (self.sharc_stale_frame_num + 5).min(120);
                 } else {
@@ -323,8 +311,6 @@ impl SponzaTuningHook {
                 }
             }
             14 => {
-                // Cache capacity: 2^16 .. 2^23 entries (doubles per step).
-                // Resizing rebuilds the buffers, so the cache restarts empty.
                 if increase {
                     self.sharc_capacity = (self.sharc_capacity * 2).min(1 << 23);
                 } else {
@@ -333,7 +319,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
             }
             15 => {
-                // DLSS Mode
                 self.dlss_mode = match self.dlss_mode {
                     DlssMode::Off => {
                         if increase {
@@ -494,13 +479,10 @@ impl SponzaTuningHook {
     /// Panel toggle swallowed by hook, otherwise App Tab (debug target switch) would fire at same time.
     fn on_key_pressed(&mut self, key: Key) -> KeyRoute {
         match key {
-            // Panel toggle: no occlusion key may steal it, else panel opens then cannot close.
             Key::F1 | Key::Tab => {
                 self.show = !self.show;
                 return KeyRoute::Consume;
             }
-            // GI mode is Sponza signature operation, panel should allow it even when hidden (consistent with
-            // top status bar "[1] Ref [2] SHaRC [3] NRC").
             Key::Digit1 => {
                 self.pt_gi = PtGiMode::Off;
                 self.render_mode = RenderMode::PathTrace;
@@ -531,11 +513,6 @@ impl SponzaTuningHook {
                 self.request_reset = true;
                 return KeyRoute::Consume;
             }
-            // M / R / V are panel own function keys, camera never reads them
-            // (`camera_controller_system` only looks at WASD / QE / Space / Ctrl / Shift),
-            // so lock state does not affect key semantics, both states receive.
-            // Previously added `!self.locked` guard for "locked → camera", but window auto-locks on focus,
-            // effectively making these keys unreachable in game — M not responding came from this.
             Key::Letter(b'M') => {
                 self.cycle_render_mode();
                 return KeyRoute::Consume;
@@ -548,23 +525,16 @@ impl SponzaTuningHook {
                 self.vsync = !self.vsync;
                 return KeyRoute::Consume;
             }
-            // Tone map also panel own setting: available even when panel hidden (status bar always shows it).
             Key::KeyT => {
                 self.tonemap_mode = (self.tonemap_mode + 1) % 3;
                 return KeyRoute::Consume;
             }
-            // Next panel full is **menu operation**, only belongs to unlocked state. Locked = camera takes
-            // mouse/keyboard, menu should receive no keys (previously only blocked WASD, arrows / Space / Enter still eaten,
-            // locked pressing empty slot neither fires nor flips menu, pure key swallow).
             _ if self.locked => KeyRoute::Forward,
-            // Unlocked: WASD is menu navigation. If panel manually hidden by F1, re-expand then navigate,
-            // else keys act on invisible list.
             Key::KeyW | Key::KeyA | Key::KeyS | Key::KeyD => {
                 self.show = true;
                 self.navigate_with_wasd(key);
                 KeyRoute::Consume
             }
-            // Panel closed then next panel meaningless: pass back to App as-is.
             _ if !self.show => KeyRoute::Forward,
             Key::ArrowUp => {
                 self.selected_index = if self.selected_index == 0 {
@@ -611,15 +581,10 @@ impl FrameHook for SponzaTuningHook {
         let PlatformEvent::Key { key, pressed } = event else {
             return false;
         };
-        // Lock state ask window directly: `on_tick` cache is previous-frame, while "click screen to lock"
-        // and "Esc unlock" happen between frames, using old value would misroute this key.
         self.locked = window.is_pointer_locked();
         if pressed && self.on_key_pressed(key) == KeyRoute::Consume {
             return true;
         }
-        // false = not consumed: App runs shortcuts as usual and routes key into InputManager (under lock
-        // WASD goes this path: panel ignores, camera moves normally). Note consumption does not block
-        // InputManager — so "unlocked WASD does not move camera" enforced by engine-side pointer lock check.
         false
     }
 
@@ -631,11 +596,8 @@ impl FrameHook for SponzaTuningHook {
         stats: &RenderStats,
         _shared: &RenderShared,
     ) {
-        // Pointer lock = camera takes over keyboard/mouse. Platform layer is only true source (App copy
-        // `InputManager::pointer_locked` not reachable by hook), synced each frame for key routing.
         self.locked = window.is_pointer_locked();
 
-        // Sync runtime settings to engine
         settings.render_mode = self.render_mode;
         settings.auto_exposure = self.auto_exposure;
         settings.raster_gi = self.raster_gi;
@@ -643,14 +605,9 @@ impl FrameHook for SponzaTuningHook {
         settings.pt_max_bounces = self.bounces;
         settings.pt_ray_max_distance = self.ray_max_distance;
         settings.tonemap_mode = self.tonemap_mode;
-        // After lock cursor hidden, UI should not handle hover / click: otherwise when cursor clamped at
-        // window center, pointer over a button would be "held", border glowing pressed during lock.
         if self.locked {
             world.remove_resource::<prism_engine::ui::UiInputState>();
         }
-        // Pointer lock = full-screen view, panel hidden (F1 / Tab can bring back anytime).
-        // Only hide on **just locked** frame: writing `show && !locked` every frame makes F1 useless
-        // — on press hook sets show true, next frame on_tick wipes false, panel never opens.
         self.show = panel_visible_after_lock(self.show, self.locked, self.was_locked);
         self.was_locked = self.locked;
         settings.sharc_enable_clear = self.sharc_enable_clear;
@@ -695,7 +652,6 @@ impl FrameHook for SponzaTuningHook {
             self.applied_custom_shader = Some(self.custom_shader);
         }
 
-        // Initialize UI entities once
         if self.canvas_entity.is_none() {
             let canvas = world.spawn();
             world.insert(canvas, Node::default());
@@ -710,7 +666,6 @@ impl FrameHook for SponzaTuningHook {
             world.insert(canvas, Active(true));
             self.canvas_entity = Some(canvas);
 
-            // Panel background quad
             let bg = world.spawn();
             world.insert(bg, Node::default());
             world.insert(
@@ -734,7 +689,6 @@ impl FrameHook for SponzaTuningHook {
             world.insert(bg, Active(true));
             self.panel_bg_entity = Some(bg);
 
-            // Panel multiline text
             let ptext = world.spawn();
             world.insert(ptext, Node::default());
             world.insert(
@@ -767,7 +721,6 @@ impl FrameHook for SponzaTuningHook {
             world.insert(ptext, Active(true));
             self.panel_text_entity = Some(ptext);
 
-            // Top status banner (visible when panel is closed)
             let stext = world.spawn();
             world.insert(stext, Node::default());
             world.insert(
@@ -801,7 +754,6 @@ impl FrameHook for SponzaTuningHook {
             self.status_text_entity = Some(stext);
         }
 
-        // Format and update text
         let fps = stats.fps;
         let ms = stats.frame_time_ms;
         let samples = stats.pt_frame_count.unwrap_or(0);

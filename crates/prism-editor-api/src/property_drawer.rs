@@ -147,7 +147,6 @@ impl PropertyDrawer {
 
     /// Append one attribute.
     pub fn attribute(mut self, attribute: PropertyAttribute) -> Self {
-        // Duplicate same class attribute keeps only last (only one Range/Tooltip).
         self.attributes.retain(|existing| {
             std::mem::discriminant(existing) != std::mem::discriminant(&attribute)
         });
@@ -459,7 +458,6 @@ mod tests {
     fn text_area_and_multiline_report_line_ranges() {
         assert_eq!(PropertyDrawer::multiline(3).line_range(), Some((3, 3)));
         assert_eq!(PropertyDrawer::text_area(2, 6).line_range(), Some((2, 6)));
-        // min > max normalized to max = min.
         assert_eq!(PropertyDrawer::text_area(4, 1).line_range(), Some((4, 4)));
         assert_eq!(PropertyDrawer::text_area(0, 0).line_range(), Some((1, 1)));
     }
@@ -470,7 +468,6 @@ mod tests {
             .with_tooltip("first")
             .with_tooltip("second");
         assert_eq!(drawer.tooltip(), Some("second"));
-        // Range only one.
         assert_eq!(
             drawer
                 .attributes
@@ -490,10 +487,8 @@ mod tests {
     #[test]
     fn lookup_prefers_field_scope_over_type_scope() {
         let mut registry = PropertyDrawerRegistry::new();
-        // Register type-level drawer for type demo::X (`[CustomPropertyDrawer(typeof(X))]`)
         registry.register_type("demo::X", PropertyDrawer::custom("WholeType"));
 
-        // Host has value field of type demo::X: hits type-level drawer
         assert_eq!(
             registry
                 .drawer_for_field("demo::Host", "x_field", Some("demo::X"))
@@ -501,7 +496,6 @@ mod tests {
             Some(PropertyRenderer::Custom)
         );
 
-        // Register field-level drawer for specific field: overrides type-level
         registry.register("demo::Host", "x_field", PropertyDrawer::range(0.0, 1.0));
         assert_eq!(
             registry
@@ -510,7 +504,6 @@ mod tests {
             Some(PropertyRenderer::Slider)
         );
 
-        // Other same-type fields of same host still use type-level declaration
         assert_eq!(
             registry
                 .drawer_for_field("demo::Host", "other_x", Some("demo::X"))
@@ -518,7 +511,6 @@ mod tests {
             Some("WholeType")
         );
 
-        // Fields of other value types not affected
         assert!(registry
             .drawer_for_field("demo::Host", "y_field", Some("demo::Y"))
             .is_none());
@@ -561,7 +553,6 @@ mod tests {
         assert!(registry
             .drawer_for("prism_engine::scene::Light", "shadow_strength")
             .is_some());
-        // Undeclared field has no drawer.
         assert!(registry.drawer_for(camera, "aspect").is_none());
     }
 

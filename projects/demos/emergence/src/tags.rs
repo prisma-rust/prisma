@@ -615,7 +615,6 @@ impl PhysicalCell {
             {
                 self.transient.insert(TransientFlags::BURNING);
             }
-            // Geological vitrification: sand (`GRANULAR | GLASS`) fuses into solid glass at PlasmaHeat.
             if next_temp >= Temperature::PlasmaHeat
                 && self.material.contains(MaterialFlags::GRANULAR)
                 && self.material.contains(MaterialFlags::GLASS)
@@ -623,7 +622,6 @@ impl PhysicalCell {
                 self.material.0 &= !MaterialFlags::GRANULAR.0;
                 self.topology.insert(TopologyFlags::RIGID_WELD);
             }
-            // Geological melting: snow (`GRANULAR | ABSORBENT`) or un-welded ice (`GLASS`) melts into water.
             if next_temp >= Temperature::Hot
                 && self.env.matter() == MatterState::Solid
                 && !self.topology.contains(TopologyFlags::RIGID_WELD)
@@ -643,7 +641,6 @@ impl PhysicalCell {
             let next_temp = self.env.temperature().step_cooler();
             self.env.set_temperature(next_temp);
             self.transient.remove(TransientFlags::BURNING);
-            // Magma/lava quenching: superheated liquid solidifies into stone/obsidian when cooled.
             if self.env.matter() == MatterState::Liquid
                 && self.material.contains(MaterialFlags::HOT_RESISTANT)
                 && next_temp <= Temperature::Hot
@@ -661,7 +658,6 @@ impl PhysicalCell {
             }
         }
 
-        // Vacuum boiling and overpressure liquefaction enforce macroscopic phase invariants.
         match (
             self.env.matter(),
             self.env.pressure(),
@@ -724,7 +720,6 @@ impl PhysicalCell {
             }
         }
 
-        // Ongoing combustion either extinguishes in wet/anoxic conditions or consumes durability.
         if self.transient.contains(TransientFlags::BURNING) {
             let has_oxidizer = self.env.pressure() >= Pressure::Normal
                 || self.material.contains(MaterialFlags::OXIDIZER);
@@ -741,7 +736,6 @@ impl PhysicalCell {
             }
         }
 
-        // Four-stage Bio-Activity state machine transitions.
         if self.material.contains(MaterialFlags::ORGANIC) {
             if self.env.temperature() <= Temperature::Cryo
                 || self.transient.contains(TransientFlags::FROZEN)
@@ -913,19 +907,16 @@ mod tests {
             ..PhysicalCell::default()
         };
 
-        // Freezing pauses decay and puts vital organic matter into cryptosis.
         cell.step_reaction(true);
         assert_eq!(cell.env.bio_activity(), BioActivity::Cryptosis);
         assert_eq!(cell.clocks.half_life(), 10);
 
-        // Warming back to Ambient while WET revives Cryptosis -> Vital.
         cell.apply_stimulus(StimulusFlags::HEAT);
         cell.step_reaction(true);
         assert_eq!(cell.env.temperature(), Temperature::Ambient);
         assert_eq!(cell.env.bio_activity(), BioActivity::Vital);
         assert_eq!(cell.clocks.half_life(), 9);
 
-        // Radiation drives Vital -> HyperNeo when unshielded.
         cell.apply_stimulus(StimulusFlags::RADIATION);
         cell.step_reaction(false);
         assert_eq!(cell.env.bio_activity(), BioActivity::HyperNeo);

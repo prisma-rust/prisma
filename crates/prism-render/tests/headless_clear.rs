@@ -19,8 +19,6 @@ fn try_create_headless() -> Option<GraphRenderer> {
     match GraphRenderer::headless_new(None) {
         Ok(r) => Some(r),
         Err(e) => {
-            // If the error is "no driver" / "no compatible device",
-            // skip instead of failing.
             let msg = format!("{e:#}");
             if msg.contains("VK_ERROR_INCOMPATIBLE_DRIVER")
                 || msg.contains("Unable to find a Vulkan driver")
@@ -32,7 +30,6 @@ fn try_create_headless() -> Option<GraphRenderer> {
                 eprintln!("[SKIP] no Vulkan driver: {e:#}");
                 return None;
             }
-            // Any other error is unexpected.
             panic!("headless_new failed: {e:#}");
         }
     }
@@ -42,23 +39,18 @@ fn try_create_headless() -> Option<GraphRenderer> {
 fn headless_clear_to_red_and_readback() {
     let mut renderer = match try_create_headless() {
         Some(r) => r,
-        None => return, // graceful skip
+        None => return,
     };
 
-    // Clear the offscreen target to pure red.
     const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
     renderer
         .clear_offscreen(RED)
         .expect("clear_offscreen failed");
 
-    // Read back the pixel data.
     let pixels = renderer.readback_pixels().expect("readback_pixels failed");
 
-    // Offscreen target is 256 × 256 × RGBA8 = 262 144 bytes.
     assert_eq!(pixels.len(), 256 * 256 * 4, "unexpected pixel buffer size");
 
-    // Every pixel should be (255, 0, 0, 255) — pure red.
-    // Sample the four corners + center to confirm uniformity.
     let w = 256usize;
     let stride = 4;
 
@@ -141,7 +133,7 @@ fn headless_render_real_frame_and_readback() {
             prism_render::render_graph::PostGrade::default(),
             false,
             false,
-            &[], // bone matrices
+            &[],
         )
         .expect("headless render failed");
 
@@ -199,7 +191,7 @@ fn headless_wireframe_pipeline_builds_and_renders() {
             prism_render::render_graph::PostGrade::default(),
             true,
             false,
-            &[], // bone matrices
+            &[],
         )
         .expect("wireframe render failed");
 
@@ -222,8 +214,6 @@ fn headless_post_pass_never_ends_in_present_src() {
         .pass_ref::<prism_render::PostPass>()
         .expect("PostPass should be registered in the render graph");
 
-    // A headless context never enables `VK_KHR_swapchain`, so ending the pass in
-    // PRESENT_SRC_KHR is invalid there (VUID-VkAttachmentDescription-finalLayout-parameter).
     assert_eq!(
         post.final_layout(),
         ash::vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,

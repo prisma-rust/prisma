@@ -51,7 +51,6 @@ fn quad_mesh() -> SkinnedMeshInfo {
         uv0: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
         tangents: Vec::new(),
         joints: vec![[0, 1, 0, 0]; 4],
-        // Deliberately not normalized: should be fixed at encode time.
         weights: vec![[2.0, 2.0, 0.0, 0.0]; 4],
         indices: vec![0, 2, 1, 1, 2, 3],
         submeshes: vec![SubmeshInfo {
@@ -76,7 +75,6 @@ fn walk_clip() -> AnimClipInfo {
         warp_windows: Vec::new(),
         tracks: vec![AnimTrackInfo {
             joint: 1,
-            // Deliberately out of order: encoder must sort by time.
             positions: vec![
                 Vec3KeyInfo {
                     time: 0.5,
@@ -89,7 +87,6 @@ fn walk_clip() -> AnimClipInfo {
             ],
             rotations: vec![QuatKeyInfo {
                 time: 0.0,
-                // Non-normalized quaternion: decode side will normalize.
                 value: [0.0, 0.0, 0.0, 2.0],
             }],
             scales: Vec::new(),
@@ -119,7 +116,6 @@ fn a_skeleton_with_an_out_of_order_parent_is_rejected() {
         "Parent index must come before self"
     );
 
-    // Decode side also blocks: manually change root bone parent to 1.
     let mut bytes = encode_rskel(&two_bone_skeleton()).expect("encode");
     bytes[13..17].copy_from_slice(&1i32.to_le_bytes());
     assert!(decode_rskel(&bytes).is_none());
@@ -253,7 +249,6 @@ fn trailing_bytes_are_rejected() {
 fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
     use prism_asset::formats_skinned::{decode_ranim, AnimNotifyInfo};
 
-    // v2: event table written out sorted by time.
     let mut clip = walk_clip();
     clip.notifies = vec![
         AnimNotifyInfo {
@@ -280,9 +275,8 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
     );
     assert!((decoded.notifies[0].time - 0.2).abs() < 1e-6);
 
-    // v4 compat: drop trailing warp window table, write version back to 4.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
-    legacy.truncate(legacy.len() - 4); // warp_window_count
+    legacy.truncate(legacy.len() - 4);
     legacy[4] = RANI_SECTION_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v4");
     assert!(
@@ -290,10 +284,9 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
         "v4 clip has no warp window"
     );
 
-    // v3 compat: again drop section table, write version back to 3, events / flags still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
-    legacy.truncate(legacy.len() - 4); // warp_window_count
-    legacy.truncate(legacy.len() - 4); // section_count
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
     legacy[4] = RANI_SYNC_MARKER_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v3");
     assert!(
@@ -301,11 +294,10 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
         "v3 clip has no Montage segments"
     );
 
-    // v2 compat: again drop sync marker table, write version back to 2, event table still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
-    legacy.truncate(legacy.len() - 4); // warp_window_count
-    legacy.truncate(legacy.len() - 4); // section_count
-    legacy.truncate(legacy.len() - 4); // marker_count
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
     legacy[4] = RANI_NOTIFY_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v2");
     assert!(
@@ -314,12 +306,11 @@ fn ranim_v5_round_trips_notifies_markers_sections_and_reads_older_clips() {
     );
     assert_eq!(decoded.name, "walk");
 
-    // v1 compat: again drop event table from v2 (notify_count = 0, 4 bytes), clip still decodable.
     let mut legacy = encode_ranim(&walk_clip()).expect("encode");
-    legacy.truncate(legacy.len() - 4); // warp_window_count
-    legacy.truncate(legacy.len() - 4); // section_count
-    legacy.truncate(legacy.len() - 4); // marker_count
-    legacy.truncate(legacy.len() - 4); // notify_count (empty)
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
+    legacy.truncate(legacy.len() - 4);
     legacy[4] = SKINNED_FORMAT_VERSION;
     let decoded = decode_ranim(&legacy).expect("decode v1");
     assert!(decoded.notifies.is_empty(), "v1 clip has no events");
@@ -352,7 +343,6 @@ fn ranim_v5_round_trips_normalized_markers_ranges_and_windows() {
             start: 0.3,
             end: 0.8,
         },
-        // Illegal segment: encoder discards, not written into asset.
         AnimClipSectionInfo {
             name: "".into(),
             start: 0.0,
@@ -378,7 +368,6 @@ fn ranim_v5_round_trips_normalized_markers_ranges_and_windows() {
     ];
     let bytes = encode_ranim(&clip).expect("encode");
     let decoded = decode_ranim(&bytes).expect("decode");
-    // Normalize, sort, deduplicate, drop non-limited values.
     assert_eq!(decoded.sync_markers, vec![0.0, 0.5, 0.75]);
     let names: Vec<&str> = decoded
         .sections

@@ -118,7 +118,6 @@ pub fn sample_vec3(keys: &[Vec3Key], time: f32) -> Option<[f32; 3]> {
     if time <= first.time || keys.len() == 1 {
         return Some(first.value);
     }
-    // Last index with `time <= keys[i].time` (`time > keys[0].time` guarantees exists).
     let mut low = 0usize;
     let mut high = keys.len();
     while low < high {
@@ -136,7 +135,6 @@ pub fn sample_vec3(keys: &[Vec3Key], time: f32) -> Option<[f32; 3]> {
     };
     let span = end.time - start.time;
     if span <= f32::EPSILON {
-        // Two keyframes at same moment (or out of order): use first one, avoid division by zero amplification.
         return Some(start.value);
     }
     let t = ((time - start.time) / span).clamp(0.0, 1.0);

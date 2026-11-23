@@ -194,8 +194,6 @@ fn hovering_an_item_marks_it_hovered_for_the_next_frame() {
 
 #[test]
 fn a_hovered_submenu_row_opens_its_panel() {
-    // Multi-level behaviour is covered in `menu_nested_tests`; this keeps the
-    // single-level contract: hovering the row mounts exactly one panel beside it.
     let theme = Theme::dark();
     let viewport = Vec2::new(1280.0, 720.0);
     let mut state = MenuState::default();
@@ -236,7 +234,6 @@ fn a_hovered_submenu_row_opens_its_panel() {
     });
     assert!(tree.is_hovered(row_key), "submenu row must be hovered");
 
-    // Resolve after input, while this frame's nodes still exist.
     state.sync_hover(&tree, |id| {
         menus
             .iter()

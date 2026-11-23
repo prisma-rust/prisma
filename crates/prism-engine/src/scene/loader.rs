@@ -52,27 +52,15 @@ use super::components::*;
 use super::helpers::HierarchyHelper;
 use super::runtime_components::SceneEntityId;
 
-// ---------------------------------------------------------------------------
-// Component flags (must match the cooker's constants)
-// ---------------------------------------------------------------------------
-
 const FLAG_HAS_MESH: u8 = 0b00001;
 const FLAG_HAS_MATERIAL: u8 = 0b00010;
 const FLAG_HAS_LIGHT: u8 = 0b00100;
 const FLAG_HAS_CAMERA: u8 = 0b01000;
 const FLAG_HAS_SKYBOX: u8 = 0b10000;
 
-// ---------------------------------------------------------------------------
-// Light type bytes in the RSCN light record
-// ---------------------------------------------------------------------------
-
 const LIGHT_DIRECTIONAL: u8 = 0;
 const LIGHT_POINT: u8 = 1;
 const LIGHT_SPOT: u8 = 2;
-
-// ---------------------------------------------------------------------------
-// SceneSource — what to load
-// ---------------------------------------------------------------------------
 
 /// Describes where to find scene data.
 pub enum SceneSource {
@@ -84,10 +72,6 @@ pub enum SceneSource {
     JsonFile(PathBuf),
 }
 
-// ---------------------------------------------------------------------------
-// SceneInstance — result of a load
-// ---------------------------------------------------------------------------
-
 /// The result of loading and spawning a scene.
 pub struct SceneInstance {
     /// Generated or provided scene ID.
@@ -97,10 +81,6 @@ pub struct SceneInstance {
     /// Every entity that was spawned, in spawn order.
     pub all_entities: Vec<Entity>,
 }
-
-// ---------------------------------------------------------------------------
-// ParsedRscnEntity — intermediate deserialised from the binary stream
-// ---------------------------------------------------------------------------
 
 /// One entity decoded from a legacy RSCN v1/v2 byte stream, before ECS insertion.
 ///
@@ -163,10 +143,6 @@ impl ParsedEntity {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RSCN parser
-// ---------------------------------------------------------------------------
-
 /// Result of parsing an RSCN binary blob.
 #[derive(Debug)]
 pub struct ParsedRscn {
@@ -196,8 +172,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
     let count = u32::from_le_bytes(data[5..9].try_into().unwrap()) as usize;
     let mut offset = 9usize;
 
-    // v2: skip skybox HDR path in header (used by read_env_path_from_rscn
-    // for the app layer; the per-entity skybox data is parsed below).
     if version >= 2 {
         if offset + 2 > data.len() {
             return Err("unexpected end of RSCN data (env_len)".into());
@@ -239,7 +213,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
         };
         offset += 4;
 
-        // Transform: tx(12) + rot(16) + scale(12) = 40 bytes.
         if offset + 40 > data.len() {
             return Err("unexpected end (transform)".into());
         }
@@ -263,7 +236,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
         ];
         offset += 12;
 
-        // Flags.
         if offset + 1 > data.len() {
             return Err("unexpected end (flags)".into());
         }
@@ -279,7 +251,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
             ..ParsedEntity::empty()
         };
 
-        // Optional components.
         if flags & FLAG_HAS_MESH != 0 {
             if offset + 2 > data.len() {
                 return Err("unexpected end (mesh path_len)".into());
@@ -309,7 +280,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
         }
 
         if flags & FLAG_HAS_LIGHT != 0 {
-            // type(1) + color(12) + intensity(4) + range(4) + inner_cone(4) + outer_cone(4) = 29
             if offset + 29 > data.len() {
                 return Err("unexpected end (light)".into());
             }
@@ -367,10 +337,6 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
 
     Ok(ParsedRscn { entities })
 }
-
-// ---------------------------------------------------------------------------
-// Quaternion -> yaw/pitch conversion (for scene-loaded cameras)
-// ---------------------------------------------------------------------------
 
 /// Convert a scene entity's rotation quaternion `(x, y, z, w)` into the
 /// `(yaw, pitch)` pair used by [`FlyCameraController`].
@@ -431,7 +397,6 @@ fn ensure_sprite_ref(world: &mut World, entity: Entity) {
 
 fn quat_to_yaw_pitch(quat: [f32; 4]) -> (f32, f32) {
     let rotation = glam::Quat::from_array(quat);
-    // Normalize to avoid degenerate input skewing the result.
     if rotation.length() < 1e-6 {
         log::warn!("scene camera quaternion is degenerate (|q|≈0); using identity");
         return (0.0, 0.0);
@@ -441,10 +406,6 @@ fn quat_to_yaw_pitch(quat: [f32; 4]) -> (f32, f32) {
     let yaw = (-forward.x).atan2(-forward.z);
     (yaw, pitch)
 }
-
-// ---------------------------------------------------------------------------
-// Public helpers for env path extraction
-// ---------------------------------------------------------------------------
 
 /// Read the skybox HDR path from cooked RSCN bytes (v4 component or v2 header).
 ///
@@ -464,10 +425,6 @@ pub fn read_env_path_from_rscn(path: &std::path::Path) -> Option<String> {
     let data = std::fs::read(path).ok()?;
     read_env_path_from_rscn_bytes(&data)
 }
-
-// ---------------------------------------------------------------------------
-// SceneLoader
-// ---------------------------------------------------------------------------
 
 /// Loads cooked scenes into the ECS [`World`].
 ///
@@ -566,7 +523,6 @@ impl SceneLoader {
                 registry.apply_object(world, entity, object);
             }
 
-            // Runtime GPU handles are derived from the authoring bundle.
             if let Some(renderer) = world.get::<MeshRenderer>(entity).cloned() {
                 if renderer.has_mesh() {
                     world.insert(
@@ -592,10 +548,6 @@ impl SceneLoader {
 
             ensure_sprite_ref(world, entity);
 
-            // A cooked camera without an explicit controller gets the default
-            // free-fly controller, matching the legacy loader behaviour.
-            // Orthographic cameras are 2D cameras: a fly controller would fight
-            // the game's own camera follow, so they never get one implicitly.
             let camera_is_orthographic = world
                 .get::<Camera>(entity)
                 .map(|camera| camera.orthographic)
@@ -604,8 +556,6 @@ impl SceneLoader {
                 && !camera_is_orthographic
                 && world.get::<FlyCameraController>(entity).is_none()
             {
-                // Orientation follows rotation stored in scene. Only changing translation but leaving rotation gives post-load view unchanged,
-                // but WASD slides along world axes (Sponza scene camera is such hand-written JSON).
                 let (yaw, pitch) = quat_to_yaw_pitch(decoded_entity.rotation);
                 world.insert(
                     entity,
@@ -666,14 +616,9 @@ impl SceneLoader {
         scene_id: SceneAssetId,
         registry: &ComponentRegistry,
     ) -> Result<SceneInstance, String> {
-        // `SceneJson::parse` migrates older authoring documents (v1
-        // `transform.translation`) up to the current schema.
         let mut scene = SceneJson::parse(text)
             .map_err(|e| format!("Scene JSON parse error in {origin}: {e}"))?;
 
-        // #466: dev scenes load the authoring JSON directly. Resolve stable
-        // GUID references here too so a renamed asset keeps working without
-        // waiting for a cook. Packaged scenes already contain resolved paths.
         if let Some((assets_root, doc_rel)) = assets_root_for_origin(origin) {
             let index = GuidIndex::scan(&assets_root);
             let path_for_guid = |guid: &str| index.path_for_guid(guid).map(str::to_string);
@@ -694,7 +639,6 @@ impl SceneLoader {
         let entity_count = scene.entities.len();
         let mut entities: Vec<Entity> = Vec::with_capacity(entity_count);
 
-        // Phase 1: spawn all entities, insert transform + scene components.
         for ej in scene.entities.iter() {
             let entity = world.spawn();
             entities.push(entity);
@@ -702,15 +646,12 @@ impl SceneLoader {
             world.insert(entity, SceneMember(scene_id));
             world.insert(entity, Active(true));
 
-            // Name
             if let Some(name) = &ej.name {
                 world.insert(entity, Name(name.clone()));
             }
 
-            // Stable id: `.scene.json` v3+ `id`, cross-session identity (scene_state / editor sync).
             world.insert(entity, SceneEntityId(ej.id));
 
-            // Transform
             let local = LocalTransform {
                 position: glam::Vec3::from(ej.transform.position),
                 rotation: glam::Quat::from_xyzw(
@@ -724,14 +665,10 @@ impl SceneLoader {
             world.insert(entity, local.clone());
             world.insert(entity, LocalToWorld(local.to_model_matrix()));
 
-            // Components via registry
             for (comp_name, comp_data) in &ej.components {
                 registry.apply(world, entity, comp_name, comp_data);
             }
 
-            // Runtime GPU handles are derived from the authoring bundle for
-            // JSON scenes too. Without this, editor-authored MeshRenderer
-            // entities never enter the draw query because MeshRef is absent.
             if let Some(renderer) = world.get::<MeshRenderer>(entity).cloned() {
                 if renderer.has_mesh() {
                     world.insert(
@@ -756,12 +693,6 @@ impl SceneLoader {
             }
         }
 
-        // Phase 2: hierarchy.
-        //
-        // `.scene.json` v3+ `parent` is **stable entity id**, not array index
-        // (see `prism_scene::json::EntityJson::parent`); id and index only happen to be equal when
-        // `migrate_scene_doc` fills ids for old document by array order.
-        // Taking id directly as index attaches wrong parent after reorder / deletion, even out-of-bounds becomes root.
         let index_of_id = scene.index_of_id();
         for (i, ej) in scene.entities.iter().enumerate() {
             let Some(parent_id) = ej.parent else {
@@ -771,8 +702,6 @@ impl SceneLoader {
                 Some(parent_index) => {
                     HierarchyHelper::reparent(world, entities[i], Some(entities[parent_index]));
                 }
-                // `SceneJson::parse` only validates author writing, does not run `validate()`;
-                // when dev scene has dangling id, keep entity and treat as root node, do not fail whole scene.
                 None => log::warn!(
                     "scene entity {i} references parent id {parent_id} which does not exist; \
                      keeping it as a root"
@@ -804,22 +733,17 @@ impl SceneLoader {
         scene_id: SceneAssetId,
     ) -> Result<SceneInstance, String> {
         let parsed_entities = &parsed.entities;
-        // Phase 1: spawn all entities, insert scene & transform components.
         let mut entities: Vec<Entity> = Vec::with_capacity(parsed_entities.len());
         for pe in parsed_entities {
             let entity = world.spawn();
             entities.push(entity);
 
-            // Always-added components.
             world.insert(entity, SceneMember(scene_id));
             world.insert(entity, Active(true));
-            // Optional human-readable name (empty string -> no Name component,
-            // the inspector falls back to the raw entity id).
             if !pe.name.is_empty() {
                 world.insert(entity, Name(pe.name.clone()));
             }
 
-            // Local transform.
             let local = LocalTransform {
                 position: pe.position.into(),
                 rotation: glam::Quat::from_xyzw(
@@ -832,11 +756,8 @@ impl SceneLoader {
             };
             world.insert(entity, local.clone());
 
-            // Initial world transform = local (will be recomputed by hierarchy system).
             world.insert(entity, LocalToWorld(local.to_model_matrix()));
 
-            // Mesh reference (generation 0 = unresolved; resolved by
-            // resolve_assets_system once the .pak runtime is wired).
             if pe.has_mesh {
                 world.insert(
                     entity,
@@ -848,7 +769,6 @@ impl SceneLoader {
                 );
             }
 
-            // Material reference (unresolved).
             if pe.has_material {
                 world.insert(
                     entity,
@@ -860,8 +780,6 @@ impl SceneLoader {
                 );
             }
 
-            // MeshRenderer bundle — inserted when both mesh and material are
-            // present. Carries the path strings for later resolution.
             if pe.has_mesh && pe.has_material {
                 world.insert(
                     entity,
@@ -875,7 +793,6 @@ impl SceneLoader {
 
             ensure_sprite_ref(world, entity);
 
-            // Light component.
             if pe.has_light {
                 match pe.light_type {
                     LIGHT_DIRECTIONAL => {
@@ -915,11 +832,7 @@ impl SceneLoader {
                 }
             }
 
-            // Camera component.
             if pe.has_camera {
-                // Data component: projection + exposure + runtime aspect cache.
-                // `aspect` is a placeholder; `app.rs` writes the real value on
-                // the first resize / orientation change.
                 world.insert(
                     entity,
                     Camera {
@@ -929,11 +842,6 @@ impl SceneLoader {
                         ..Camera::default()
                     },
                 );
-                // Free-fly input controller. yaw/pitch are derived from the
-                // entity's quaternion so the scene file fully determines the
-                // initial viewpoint; the camera position lives on the sibling
-                // LocalTransform (translation). `move_speed`/`look_sensitivity`
-                // keep their defaults.
                 let (yaw, pitch) = quat_to_yaw_pitch(pe.rotation);
                 world.insert(
                     entity,
@@ -945,8 +853,6 @@ impl SceneLoader {
                 );
             }
 
-            // Skybox component (the skybox entity is a regular entity in the
-            // entities array; its Skybox component is inserted here).
             if pe.has_skybox {
                 world.insert(
                     entity,
@@ -964,8 +870,6 @@ impl SceneLoader {
             }
         }
 
-        // Phase 2: build hierarchy via HierarchyHelper (must happen after all
-        // entities exist so that parent indices resolve).
         for (i, pe) in parsed_entities.iter().enumerate() {
             if let Some(parent_idx) = pe.parent {
                 let parent_idx = parent_idx as usize;
@@ -975,7 +879,6 @@ impl SceneLoader {
             }
         }
 
-        // Collect root entities (no parent).
         let root_entities: Vec<Entity> = entities
             .iter()
             .copied()
@@ -1000,10 +903,6 @@ impl Default for SceneLoader {
 #[path = "loader_tests.rs"]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// ECS-driven scene geometry collection for offline baking
-// ---------------------------------------------------------------------------
-
 /// Collect geometry + material data from the ECS world for offline baking.
 ///
 /// Queries all entities with [`MeshRenderer`] + [`LocalToWorld`] components,
@@ -1026,7 +925,6 @@ pub fn collect_bake_instances(
     let mut gpu_materials: Vec<GpuMaterial> = Vec::new();
 
     for (_entity, mr, wt) in world.query2::<MeshRenderer, LocalToWorld>() {
-        // Resolve material slot.
         let material_slot = if !mr.material_path.is_empty() {
             *mat_cache
                 .entry(mr.material_path.clone())
@@ -1048,7 +946,6 @@ pub fn collect_bake_instances(
             })
         };
 
-        // Get the CPU vertex data for this mesh.
         let Some(mesh_info) = load_mesh_for_bake(rm, &mr.mesh_path) else {
             log::warn!(
                 "collect_bake_instances: skipping entity with missing mesh '{}'",
@@ -1136,8 +1033,6 @@ pub fn collect_bake_instances(
             vertices,
             indices,
             material_slot,
-            // The bake path builds GPU material records above, so the alpha
-            // semantics ride along: mode 0 is Opaque.
             opaque: gpu_materials[material_slot as usize].alpha_mode == 0,
         });
     }
@@ -1146,12 +1041,6 @@ pub fn collect_bake_instances(
 
     Ok((instances, mat_bytes))
 }
-
-// -------------------------------------------------------------------
-// Internal helpers for collect_bake_instances
-// -------------------------------------------------------------------
-
-// (transform_point / transform_normal replaced by glam Mat4 methods)
 
 /// Load a `MeshAsset` from the resource manager given its path.
 fn load_mesh_for_bake(
@@ -1213,8 +1102,6 @@ fn default_gpu_material() -> GpuMaterial {
         occlusion_idx: u32::MAX,
         normal_scale: 1.0,
         occlusion_strength: 1.0,
-        // Conservative: the error material has no alpha data, so never let it
-        // be treated as opaque anywhere.
         alpha_cutoff: prism_asset::formats::DEFAULT_ALPHA_CUTOFF,
         alpha_mode: prism_asset::formats::MaterialAlphaMode::Mask.as_u8() as u32,
         alpha_pad: [0.0; 2],

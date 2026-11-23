@@ -398,11 +398,7 @@ impl GpuTimer {
         let names = &self.names[slot];
         let timed = count.min(names.len());
 
-        // Only read queries already written: unwritten queries (even if reset) have undefined
-        // results without `WITH_AVAILABILITY`.
         let mut pass_data = vec![0u64; timed * 2];
-        // Don't use `WITH_AVAILABILITY`: caller guarantees this slot's fence already waited,
-        // so results definitely written; with avail bit returned value becomes (avail, value) interleaved layout.
         let result = unsafe {
             device.get_query_pool_results(
                 self.pool,
@@ -424,7 +420,6 @@ impl GpuTimer {
         for index in 0..timed {
             let begin = pass_data[index * 2];
             let end = pass_data[index * 2 + 1];
-            // Skip incomplete / out-of-order pairs, don't guess results.
             if end <= begin {
                 continue;
             }
@@ -483,7 +478,6 @@ mod history_tests {
         assert!((timings.unmeasured_ms() - 3.0).abs() < 1e-4);
         assert!(timings.has_frame_span());
 
-        // When no whole-frame span (only passes recorded) fall back, don't fabricate zero out-of-graph overhead.
         timings.frame_ms = 0.0;
         assert_eq!(timings.frame_or_total_ms(), 12.0);
         assert_eq!(timings.unmeasured_ms(), 0.0);
@@ -492,7 +486,6 @@ mod history_tests {
 
     #[test]
     fn unmeasured_gap_never_goes_negative() {
-        // Timestamp quantization may make sum of passes slightly larger than frame span, UI must not show negative numbers.
         let timings = GpuTimings {
             supported: true,
             frame_ms: 10.0,

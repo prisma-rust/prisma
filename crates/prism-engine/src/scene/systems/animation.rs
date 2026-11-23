@@ -77,14 +77,12 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
             state.was_playing = animation.playing;
         }
         if animation.playing {
-            // One-shot / after manual pause replay: start from frame 0.
             if !state.was_playing {
                 state.time = 0.0;
             }
             state.time += dt;
             state.was_playing = true;
         } else {
-            // Paused keeps playhead; next playing=true will reset.
             state.was_playing = false;
         }
 
@@ -103,7 +101,6 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
 
         world.insert(entity, state);
         if let Some(sprite) = world.get_mut::<SpriteRenderer>(entity) {
-            // Absolute frame number within row; clamp to last column in row, avoid wrapping to next row.
             sprite.frame_index = animation
                 .frame_start
                 .saturating_add(index)
@@ -221,7 +218,6 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
     let mut fired: Vec<FiredAnimationEvent> = Vec::new();
 
     for entity in entities {
-        // Sampling borrow block: release `&World` borrow after computing, later can write component.
         let computed = world.get::<KeyframeAnimation>(entity).and_then(|clip| {
             if clip.is_empty() {
                 return None;
@@ -239,8 +235,6 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             };
             if clip.playing && dt.is_finite() {
                 head.time += dt * speed;
-                // One-shot stops at end: playhead no longer crosses `duration - phase`,
-                // otherwise increasing `duration` would resume mysteriously from middle.
                 let last = duration - clip.phase;
                 if !clip.looped && last > 0.0 {
                     head.time = head.time.min(last);
@@ -250,7 +244,6 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             head.finished = duration > 0.0 && !clip.looped && raw >= duration;
             let local = local_time_at(raw, duration, clip.looped);
 
-            // #490: fire events for forward and backward playback; paused no emission.
             let mut events = Vec::new();
             if clip.playing && duration > 0.0 && dt.is_finite() {
                 let previous_raw = previous_head.time + clip.phase;
@@ -258,20 +251,16 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
                 if speed >= 0.0 {
                     let cycles = (raw / duration).floor() - (previous_raw / duration).floor();
                     if clip.looped && cycles >= 1.0 {
-                        // Crossed one (or more) loops: first scan to end of loop, then from 0 to new playhead.
                         collect_events(clip, previous_local, duration, false, &mut events);
                         collect_events(clip, 0.0, local, true, &mut events);
                     } else {
-                        // Include 0-second event at start (otherwise first event always off by one dt).
                         let include_start =
                             previous_head.time == 0.0 && previous_raw <= 0.0 && clip.phase == 0.0;
                         collect_events(clip, previous_local, local, include_start, &mut events);
                     }
                 } else {
-                    // Backward: playhead drops from `previous_local` to `local`, events collected by traversed interval.
                     let cycles = (previous_raw / duration).floor() - (raw / duration).floor();
                     if clip.looped && cycles >= 1.0 {
-                        // From current loop position back to 0, then from end back to new playhead.
                         collect_events(clip, 0.0, previous_local, true, &mut events);
                         collect_events(clip, local, duration, false, &mut events);
                     } else {
@@ -294,7 +283,6 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
             });
         }
         let Some(transform) = world.get_mut::<LocalTransform>(entity) else {
-            // Entities without `LocalTransform` (theoretically should not exist) get no playhead.
             continue;
         };
         if let Some(position) = sample.position {
@@ -310,7 +298,6 @@ pub fn keyframe_animation_system(world: &mut World, dt: f32) {
         world.insert(entity, head);
     }
 
-    // Rewrite each frame: when no animation entities also clears old events.
     world.insert_resource(AnimationEventQueue { events: fired });
 }
 

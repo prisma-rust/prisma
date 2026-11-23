@@ -13,8 +13,6 @@
 //! The harness is intentionally test-only: it owns a bare `World` and has no
 //! wall-clock dependency.
 
-// This module is compiled into several test binaries; each one exercises a
-// different subset, so per-binary dead-code expectations cannot all be met.
 #![allow(dead_code)]
 
 use glam::{Quat, Vec3};
@@ -26,10 +24,6 @@ use prism_engine::scene::systems::animation::{
     keyframe_animation_system, AnimationEventQueue, ClipPlayhead,
 };
 use prism_scene::animation::{AnimationEvent, Vec3Key as SceneVec3Key};
-
-// ---------------------------------------------------------------------------
-// Pose sampling (prism-anim)
-// ---------------------------------------------------------------------------
 
 /// One joint's sampled local TRS.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -196,10 +190,6 @@ pub fn pose_fixture(looped: bool) -> Clip {
         ..Default::default()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Playback + events (engine)
-// ---------------------------------------------------------------------------
 
 /// One engine tick's observable animation state.
 #[derive(Clone, Debug, PartialEq)]

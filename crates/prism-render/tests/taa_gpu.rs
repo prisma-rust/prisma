@@ -25,7 +25,6 @@ fn taa_is_off_by_default_and_can_resolve_a_jittered_frame() {
         return;
     };
 
-    // A rotated box gives diagonal edges, so subpixel jitter changes coverage.
     let mut item = draw_item(harness.mesh_handle());
     let c = std::f32::consts::FRAC_1_SQRT_2;
     let s = c;
@@ -56,7 +55,6 @@ fn taa_is_off_by_default_and_can_resolve_a_jittered_frame() {
         "the jitter sequence should change consecutive TAA frames"
     );
 
-    // A camera move must not crash and must keep producing a frame.
     let moved = harness.render_draws(
         std::slice::from_ref(&item),
         FrameOptions {
@@ -66,7 +64,6 @@ fn taa_is_off_by_default_and_can_resolve_a_jittered_frame() {
     );
     assert_eq!(moved.len(), 256 * 256 * 4);
 
-    // Turning TAA off returns to the legacy path.
     harness.set_taa(false, 0.9);
     let off_c = harness.render_draws(std::slice::from_ref(&item), FrameOptions::default());
     assert_eq!(off_a, off_c, "disabling TAA must restore the legacy path");
@@ -80,18 +77,12 @@ fn taa_handles_object_motion_and_reactive_transparency() {
     harness.set_taa(true, 0.9);
 
     let mut item = draw_item(harness.mesh_handle());
-    // Move the box sideways for several frames. With per-object velocity the
-    // resolve must keep producing a stable frame instead of accumulating the
-    // old silhouette.
     for frame in 0..8 {
         item.model[3][0] = (frame as f32 - 4.0) * 0.12;
         let pixels = harness.render_draws(std::slice::from_ref(&item), FrameOptions::default());
         assert_eq!(pixels.len(), 256 * 256 * 4);
     }
 
-    // Transparent draws set the reactive mask (normal.w), so TAA must trust the
-    // current frame rather than blending in stale history. This mainly guards
-    // the render-pass/pipeline wiring (three MRT attachments + mask flag).
     let mut transparent = item;
     transparent.state.src_blend = prism_gfx::BlendMode::SrcAlpha;
     transparent.state.dst_blend = prism_gfx::BlendMode::OneMinusSrcAlpha;
@@ -116,14 +107,12 @@ fn taa_resolves_the_path_traced_image() {
         ..FrameOptions::default()
     };
 
-    // The tracer accumulates, so let it settle before comparing frames.
     let mut untemporal = Vec::new();
     for _ in 0..8 {
         untemporal = harness.render_draws(std::slice::from_ref(&item), pt_options);
     }
     assert_eq!(untemporal.len(), 256 * 256 * 4);
 
-    // A traced frame must not be a flat clear: the box has to be visible.
     let lit = untemporal
         .as_chunks::<4>()
         .0
@@ -132,9 +121,6 @@ fn taa_resolves_the_path_traced_image() {
         .count();
     assert!(lit > 100, "path tracer should light part of the frame");
 
-    // Turning TAA on in path-trace mode must still produce a full frame. This
-    // is the regression guard for the `!is_pt` gate that used to keep the
-    // temporal resolve out of path-trace mode entirely.
     harness.set_taa(true, 0.9);
     let mut temporal = Vec::new();
     for _ in 0..8 {
@@ -152,7 +138,6 @@ fn taa_resolves_the_path_traced_image() {
         "the resolved path-traced frame should still show the scene"
     );
 
-    // Disabling TAA must fall back to the raw traced image again.
     harness.set_taa(false, 0.9);
     let mut again = Vec::new();
     for _ in 0..8 {

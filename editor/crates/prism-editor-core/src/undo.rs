@@ -225,8 +225,6 @@ impl UndoStack {
             .iter()
             .map(|entry| (entry.label.clone(), false))
             .collect();
-        // The last element of the redo stack is the next step to redo, so reversing the whole
-        // thing places it right after the undo steps in chronological order.
         out.extend(
             self.redo
                 .iter()
@@ -246,8 +244,6 @@ impl UndoStack {
         self.undo.clear();
         self.redo.clear();
         self.current_state = self.allocate_state();
-        // Clearing history must not silently wash the dirty flag: a clean document stays clean
-        // after clearing history, but a dirty document stays dirty just because the history is gone.
         self.saved_state = if was_dirty {
             None
         } else {
@@ -621,7 +617,6 @@ mod tests {
         );
         assert_eq!(stack.history()[0], "Camera · fov_y_degrees");
 
-        // Undo back to the initial 60.
         stack.undo(&mut doc);
         let camera = doc.entities[0]
             .components
@@ -775,7 +770,6 @@ mod tests {
         let before = doc.entities[0].transform;
         let mut stack = UndoStack::new();
 
-        // During interaction: an 800ms+ pause still coalesces into one step.
         stack.begin_interaction();
         let mut step = before;
         step.position[0] = 1.0;
@@ -786,7 +780,6 @@ mod tests {
         assert_eq!(stack.history().len(), 1, "one drag = one step");
         assert!(stack.interaction_active());
 
-        // Release then drag again immediately: must open a new step even though interval < 800ms.
         stack.commit();
         assert!(!stack.interaction_active());
         let mut step3 = step2;
@@ -855,8 +848,6 @@ mod tests {
         stack.undo(&mut doc);
         assert!(!stack.is_dirty());
 
-        // Undoing then making a *different* edit at the same depth: stack length is 1 again,
-        // but content differs from save point.
         stack.push_field(
             &mut doc,
             id,

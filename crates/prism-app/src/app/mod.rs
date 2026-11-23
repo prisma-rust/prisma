@@ -93,10 +93,6 @@ use crate::hook::FrameHook;
 use crate::render_runner::{render_thread_main, OverlayFactory, RenderTarget};
 use crate::render_shared::{FrameImage, RenderShared, RenderStats};
 
-// ===========================================================================
-// Subsystem enum
-// ===========================================================================
-
 /// Engine subsystem, explicitly declared by user project via [`App::with_subsystem`].
 mod hot_reload;
 mod input;
@@ -138,10 +134,6 @@ impl Subsystem {
     }
 }
 
-// ===========================================================================
-// App
-// ===========================================================================
-
 /// Application shell: owns engine, window and render thread.
 /// Who owns the cursor: the app (FPS-style games) or the host (editors, tools).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -157,26 +149,21 @@ pub enum PointerLockPolicy {
 }
 
 pub struct App {
-    // ---------- Startup config ----------
     config: AppConfig,
 
     /// Enabled subsystem bitmask.
     subsystems: u32,
 
-    // ---------- Engine (main thread) ----------
     engine: Option<Engine>,
     asset_resolver: GpuAssetResolver,
 
-    // ---------- Render thread ----------
     render_shared: Option<Arc<RenderShared>>,
     render_running: Option<Arc<AtomicBool>>,
     render_thread: Option<JoinHandle<()>>,
 
-    // ---------- Window context ----------
     /// Window held by main thread (`Arc` shared with render thread). `None` means not yet created.
     platform: Option<PlatformContext>,
 
-    // ---------- Frame hook (injected by editor/host etc) ----------
     frame_hook: Option<Box<dyn FrameHook>>,
     render_settings: RenderSettings,
     /// Runtime diagnostics HUD (F3; no UI framework dependency).
@@ -184,7 +171,6 @@ pub struct App {
     #[cfg(feature = "engine-debug")]
     debug_hud: DebugHud,
 
-    // ---------- Per-frame state ----------
     display_aspect: f32,
     /// Dev-time asset hot reload (#495): polls `.pak` when `PRISMA_HOT_RELOAD` enabled.
     ///
@@ -194,13 +180,11 @@ pub struct App {
     pak_watcher: Option<prism_engine::scene::hot_reload::HotReloadWatcher>,
     surface_rotation: glam::Mat4,
 
-    // ---------- Input (main thread) ----------
     input: InputManager,
     /// Whether the app grabs the pointer on its own (FPS-style games) or leaves
     /// cursor ownership to the host (editors, tools).
     pointer_lock: PointerLockPolicy,
 
-    // ---------- Audio (main thread, `audio` feature) ----------
     #[cfg(feature = "audio")]
     audio: Option<AudioEngine>,
     #[cfg(feature = "audio")]
@@ -219,13 +203,11 @@ pub struct App {
     #[cfg(feature = "audio")]
     one_shot_sounds: std::collections::HashMap<u32, crate::one_shot::OneShotSound>,
 
-    // ---------- Physics (main thread + independent step thread, `physics` feature) ----------
     /// Each fixed step sends ECS `Rigidbody` / `Collider` to rapier, and writes results back to
     /// `LocalTransform` (#522). `None` = not enabled / build without physics feature.
     #[cfg(feature = "physics")]
     physics: Option<crate::physics_runner::PhysicsRuntime>,
 
-    // ---------- Window resize ----------
     needs_resize: bool,
 
     /// Offscreen render size in host (editor) mode.
@@ -247,7 +229,6 @@ pub struct App {
     idle_throttling: bool,
     active_frames_remaining: u8,
 
-    // ---------- lifecycle ----------
     fatal_error: Option<String>,
     /// Background suspend flag: `suspended()` set, `resumed()` cleared. When set,
     /// `about_to_wait` skips `tick_sim`, preventing background idle spinning burning battery (T4).
@@ -259,13 +240,11 @@ pub struct App {
     /// the user reads as a hang.
     pending_show: bool,
 
-    // ---------- timing ----------
     last_frame: Option<Instant>,
     /// Fixed-step accumulator in nanoseconds. Keeping this as an integer
     /// avoids float drift and makes simulation time independent of event rate.
     fixed_accumulator: Duration,
 
-    // ---------- plugins (#1165) ----------
     pub(crate) plugin_registry: crate::plugin::PluginRegistry,
 }
 
@@ -324,8 +303,6 @@ impl App {
     /// [`Self::insert_resource`] to register their own ECS content, finally call
     /// [`Self::run`] (desktop) or [`Self::run_on`] (Android) to start event loop.
     pub fn with_config(config: AppConfig) -> Self {
-        // Bring the logger up before `build`, which mounts the asset packages and
-        // loads the startup scene; their warnings must not be dropped (#1013).
         crate::logging::init_player_logging();
         Self::build(config, true)
     }
@@ -363,32 +340,19 @@ impl App {
         let mut build_span = prism_engine::util::timing::span("app::build");
         let mut engine = Engine::empty();
 
-        // Phase 1 – Subsystem registration
-
-        // Resource loading: ResourceManager held by app layer and injected into engine.
         let mut asset_resolver = GpuAssetResolver::new();
         asset_resolver.load_resource_package();
 
-        // The launch config can declare that this process wants no scene at all
-        // (editor / tool host). Skip manifest resolution entirely: a missing
-        // `assets/scenes.json` would otherwise be recorded as "scene missing" and
-        // `update` would paint the full-window placeholder.
         let launch = prism_engine::launch_config::LaunchConfig::from_env();
         if load_scene && !launch.no_scene {
-            // Scene loading — launch config can specify scene name (editor/launcher preview);
-            // when not specified follows default behavior "manifest first parseable scene".
             engine.init_scene_named(
                 &mut asset_resolver.resource_manager,
                 launch.scene.as_deref(),
             );
         }
 
-        // Save directory follows project `[app] company/name` (AppConfig already read from settings).
-        // Previously `scene_state_path()` used default config, all projects shared one directory (#484).
         let _save_dir_span = prism_engine::util::timing::span("app::open_save_directory");
         if let Some(dir) = prism_engine::config::app_data_dir_for(&config) {
-            // Player save (#984) and scene save same directory: both follow `[app] company/name`.
-            // when `PRISMA_USER_DATA` set use it instead (portable / Android host).
             let player_data = if std::env::var_os(prism_engine::user_data::ENV_OVERRIDE).is_some() {
                 prism_engine::user_data::save_path(&config.app.name)
             } else {
@@ -400,10 +364,8 @@ impl App {
                 .insert_resource(prism_engine::user_data::UserStore::open(player_data));
         }
 
-        // Runtime startup callbacks
         engine.runtime_initialize();
 
-        // Project-level render defaults (`[render]` section).
         let mut render_settings = RenderSettings::default();
         config.render.apply(&mut render_settings);
         build_span.detail(format!(
@@ -465,10 +427,6 @@ impl App {
             plugin_registry: crate::plugin::PluginRegistry::new(),
         }
     }
-
-    // -----------------------------------------------------------------------
-    // ECS integration (user projects)
-    // -----------------------------------------------------------------------
 
     /// Full ECS access — world / schedule / timer etc entry points all via `Engine`.
     /// Current pointer-ownership policy (diagnostics / tests).
@@ -633,19 +591,15 @@ impl App {
     pub fn enable_subsystem(&mut self, subsystem: Subsystem) -> &mut Self {
         let bit = subsystem.bit();
         if self.subsystems & bit != 0 {
-            return self; // already enabled, skip
+            return self;
         }
         self.subsystems |= bit;
 
         match subsystem {
-            Subsystem::Render => {
-                // render conditionally created at resumed()
-            }
+            Subsystem::Render => {}
             Subsystem::Physics => {
                 #[cfg(feature = "physics")]
                 {
-                    // #522: physics thread integrates `Rigidbody` each fixed step, results written back to
-                    // `LocalTransform`; `Collider` continues serving raycast queries.
                     self.physics = Some(crate::physics_runner::PhysicsRuntime::spawn());
                 }
                 #[cfg(not(feature = "physics"))]
@@ -659,7 +613,6 @@ impl App {
                 {
                     match AudioEngine::new(prism_audio::AudioConfig::default()) {
                         Ok(engine) => self.audio = Some(engine),
-                        // do not stay silent when no sound card / device is exclusive: one-shot sounds would all be discarded.
                         Err(error) => log::warn!(
                             "audio subsystem requested but failed to initialize: {error}"
                         ),
@@ -673,7 +626,6 @@ impl App {
                 );
             }
             Subsystem::Scene | Subsystem::Asset | Subsystem::UI | Subsystem::Animation => {
-                // Scene/asset/UI/animation are always-on engine capabilities, no separate switch to flip.
                 log::debug!("{:?} subsystem is always on — nothing to start", subsystem);
             }
         }
@@ -709,10 +661,6 @@ impl App {
         }
         self
     }
-
-    // -----------------------------------------------------------------------
-    // Plugin system (#1165)
-    // -----------------------------------------------------------------------
 
     /// Register an app plugin (customize/replace subsystems, add resources or inject ECS logic).
     pub fn add_plugin<P: crate::plugin::AppPlugin>(&mut self, plugin: P) -> &mut Self {
@@ -760,10 +708,6 @@ impl App {
         self.subsystems & subsystem.bit() != 0
     }
 
-    // -----------------------------------------------------------------------
-    // Host (editor) mode
-    // -----------------------------------------------------------------------
-
     /// Current render surface logical size (pixels).
     ///
     /// Host mode uses [`Self::host_extent`], game mode takes window client area size.
@@ -783,9 +727,6 @@ impl App {
     /// host calls [`Self::host_tick`] at its own pace and takes
     /// [`Self::take_hosted_frame`] returned pixels.
     pub fn start_hosted(&mut self, width: u32, height: u32) {
-        // Every entry point that starts delivering frames must drain the pending
-        // plugin list first, or a host driving the app itself (`start_hosted` +
-        // `host_tick`) silently loses every plugin it registered.
         self.build_plugins();
         let width = width.max(1);
         let height = height.max(1);
@@ -1011,10 +952,6 @@ impl App {
         }));
     }
 
-    // -----------------------------------------------------------------------
-    // Launch config
-    // -----------------------------------------------------------------------
-
     /// Construct window parameters for this launch (shared by both backends).
     fn window_config(&self) -> WindowConfig {
         WindowConfig {
@@ -1043,7 +980,6 @@ impl App {
     #[cfg(feature = "winit-backend")]
     pub fn run(mut self) {
         prism_engine::util::timing::init();
-        // Fallback: construction paths outside `App::hosted` also need logger before event loop (idempotent).
         crate::logging::init_player_logging();
         Self::log_asset_root();
         prism_engine::util::timing::event("app::event_loop_ready", "");
@@ -1146,7 +1082,6 @@ impl App {
 
     /// Run the application headlessly for `frames` ticks without creating a window.
     pub fn run_headless(&mut self, frames: u32, width: u32, height: u32) -> anyhow::Result<()> {
-        // `start_hosted` drains pending plugins itself.
         self.start_hosted(width, height);
         for index in 0..frames.max(1) {
             self.host_tick(true);
@@ -1185,8 +1120,6 @@ impl App {
             if let Some(audio) = self.audio.as_mut() {
                 audio.resume_stream();
             }
-            // `suspended()` shuts the decode thread down; restart it so
-            // playback queued after resume is decoded again.
             self.start_audio_decode_thread();
         }
     }
@@ -1197,9 +1130,6 @@ impl App {
     /// caller should pop fatal error and close window, instead of spinning a blank window.
     fn tick_frame(&mut self) -> Option<String> {
         let _frame_span = prism_engine::util::timing::span("app::tick_frame");
-        // The render thread exclusively owns the Vulkan context. If it exited
-        // (renderer init failure or panic), stop instead of spinning a blank
-        // window at 100% CPU.
         if let Some(handle) = self.render_thread.as_ref() {
             if handle.is_finished() {
                 return Some(
@@ -1238,7 +1168,6 @@ impl App {
             }
         }
 
-        // Frame hook (host UI etc) — main thread. All use field-level borrows (not borrow self as a whole).
         let window = self.platform.as_ref().map(PlatformContext::window_arc);
         if let (Some(hook), Some(shared), Some(engine), Some(window)) = (
             self.frame_hook.as_mut(),
@@ -1256,10 +1185,6 @@ impl App {
             );
         }
 
-        // Reveal the window once the render thread has finished building and
-        // warming up. Everything expensive is behind us at that point, so the
-        // first frame follows within one frame interval and the window never
-        // appears as an empty rectangle.
         if self.pending_show {
             let ready = self
                 .render_shared
@@ -1282,21 +1207,15 @@ impl App {
 
     /// Shutdown order (shared by both backends) — order matters.
     fn shutdown(&mut self) {
-        // 1. Stop audio decode thread
         #[cfg(feature = "audio")]
         self.stop_audio_decode_thread();
-        // 2. Stop render thread
         self.stop_render_thread();
-        // 4. Engine pre-shutdown
         if let Some(ref mut engine) = self.engine {
             engine.pre_shutdown();
         }
-        // 5. Drop audio engine (stop audio stream before platform/engine)
         #[cfg(feature = "audio")]
         self.audio.take();
-        // 6. Drop window (renderer owned by render thread, destroyed with render thread stop)
         self.platform = None;
-        // 7. Engine post-shutdown
         if let Some(ref mut engine) = self.engine {
             engine.post_shutdown();
         }
@@ -1316,7 +1235,6 @@ impl App {
     /// when no window messages; blocking `GetMessageW` freezes static screen.
     #[cfg(all(windows, feature = "win32-native", not(feature = "winit-backend")))]
     fn run_win32(mut self) -> anyhow::Result<()> {
-        // Reset suspend flag + restore subsystems (corresponds to winit `resumed`).
         self.suspended = false;
         self.resume_subsystems();
 
@@ -1339,7 +1257,6 @@ impl App {
         drop(window_span);
 
         self.platform = Some(platform);
-        // Render thread asynchronously builds renderer + starts frame loop (heavy init doesn't block main thread).
         let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
         self.spawn_render_thread();
         drop(spawn_span);
@@ -1358,7 +1275,6 @@ impl App {
 
         let mut exit = false;
         while !exit {
-            // 1. Message pump: convert WM_* to neutral events (including user close button click).
             let events = window.poll_events();
             for event in events {
                 if self.fatal_error.is_some() {
@@ -1366,13 +1282,11 @@ impl App {
                     break;
                 }
 
-                // First send events to frame hook (host UI etc); if consumed skip hotkeys.
                 let consumed = match self.frame_hook.as_mut() {
                     Some(hook) => hook.on_platform_event(&window, event),
                     None => false,
                 };
 
-                // Route to InputManager; `false` = user closed window.
                 if !self.handle_platform_event(&window, event) {
                     exit = true;
                     break;
@@ -1393,14 +1307,12 @@ impl App {
                 break;
             }
 
-            // 2. Simulate + extract + submit render (same as winit `about_to_wait`).
             if let Some(message) = self.tick_frame() {
                 log::error!("{message}");
                 self.fatal_error = Some(message);
                 break;
             }
 
-            // 3. Yield CPU: return immediately if message, otherwise wait at most 1 ms.
             window.wait_events(1);
         }
 
@@ -1413,10 +1325,6 @@ impl App {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // Render thread lifecycle
-    // -----------------------------------------------------------------------
-
     /// Asynchronously build [`GraphRenderer`] and start frame loop on **render thread**.
     ///
     /// Main thread only holds created platform window. This function computes scene lighting,
@@ -1424,13 +1332,9 @@ impl App {
     /// renderer built inside render thread (~few hundred ms), so after `resumed` call can immediately
     /// return, window events (close/move/scale) not blocked throughout.
     fn spawn_render_thread(&mut self) {
-        // Raw handles must be obtained on **window creation thread** before cross-thread transfer (winit's
-        // `window_handle()` fails on other threads); raw HWND is process-level value,
-        // cross-thread used to create Vulkan surface is safe (see `SendWindowHandles`).
         let (handles, extensions) = match self.platform.as_ref().map(PlatformContext::window) {
             Some(window) => (
                 prism_platform::raw_window_handles(window).expect("get raw window handles"),
-                // Vulkan instance extensions (depends on window display handle, cheap).
                 required_vulkan_extensions(window),
             ),
             None => {
@@ -1439,13 +1343,10 @@ impl App {
             }
         };
 
-        // Scene declarative lighting: pure CPU computation, no renderer needed (None → cheap empty IBL).
         let scene_env = self.engine.as_ref().and_then(|engine| {
             engine.current_scene_env_bytes_with_provider(&mut self.asset_resolver.resource_manager)
         });
 
-        // External overlay factory (host UI etc) --- only provide factory, render thread built
-        // renderer then call once to produce overlay (GPU resources lazily created at record time).
         let overlay_factory: Option<OverlayFactory> =
             self.frame_hook.as_ref().and_then(|h| h.overlay());
 
@@ -1496,7 +1397,6 @@ impl App {
     }
 
     fn stop_render_thread(&mut self) {
-        // Notify render thread to stop.
         if let Some(ref running) = self.render_running {
             running.store(false, Ordering::Relaxed);
         }
@@ -1504,7 +1404,6 @@ impl App {
             shared.packet_ready.notify_all();
         }
 
-        // Wait for thread to end
         if let Some(handle) = self.render_thread.take() {
             if handle.join().is_err() {
                 log::error!("render thread panicked");
@@ -1513,10 +1412,6 @@ impl App {
         self.render_running = None;
         self.render_shared = None;
     }
-
-    // -----------------------------------------------------------------------
-    // Audio decode thread lifecycle (`audio` feature)
-    // -----------------------------------------------------------------------
 
     #[cfg(feature = "audio")]
     fn start_audio_decode_thread(&mut self) {
@@ -1551,24 +1446,12 @@ impl App {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Platform context (window + renderer) lifecycle
-    // -----------------------------------------------------------------------
-    // Note: window created by main thread `PlatformContext::create_window` (fast),
-    // renderer by `spawn_render_thread` → render thread internal construction (async, not blocking events).
-
-    // -----------------------------------------------------------------------
-    // Game loop (main thread)
-    // -----------------------------------------------------------------------
-
     /// Single-step simulate + extract + submit render.
     ///
     /// `simulate = false` is editor "edit mode": only propagate hierarchy then directly extract, not run
     /// any game system (camera controller / UI / user logic should not touch scene before clicking Play).
     fn tick_sim(&mut self, simulate: bool) {
         let _sim_span = prism_engine::util::timing::span("app::tick_sim");
-        // Poll mode may call this at any event rate. Time is measured once from
-        // the monotonic clock; input events must never determine simulation speed.
         let now = Instant::now();
         let elapsed = self
             .last_frame
@@ -1577,27 +1460,14 @@ impl App {
             .min(Duration::from_millis(100));
         self.fixed_accumulator += elapsed;
         let dt = elapsed.as_secs_f32();
-        // Advance the frame clock HERE, at the point `elapsed` was measured:
-        // the heavy per-frame work (extract + render submit) happens later in
-        // this same call, so stamping the clock at the end of `about_to_wait`
-        // made `dt` measure only the idle gap between iterations (≈0.5 µs).
-        // That froze time-driven simulation and made its speed depend on how
-        // often winit woke the loop (i.e. on mouse movement).
         self.last_frame = Some(now);
 
-        // --- Engine simulation (independent borrow self.engine, released at block end) ---
-        // Size must be taken before borrowing engine: `surface_size()` borrows entire `&self`.
         let (surface_w, surface_h) = self.surface_size();
         {
             let Some(engine) = self.engine.as_mut() else {
                 return;
             };
 
-            // --- Sync screen size (ECS UI layout depends on ScreenSize resource) ---
-            //
-            // Layout still computed by window pixels; when `internal_resolution` effective UI and scene together
-            // drawn in PostPass target rectangle, so tell engine again "window → layout space"
-            // conversion, pointer hit test won't be off (#988).
             if surface_w > 0 && surface_h > 0 {
                 let mapping = ui_layout_mapping(
                     surface_w,
@@ -1611,20 +1481,14 @@ impl App {
             }
 
             if simulate {
-                // Pointer lock has single truth (platform window), copied into InputManager each frame:
-                // grab rejected by system / Esc unlock / focus loss release all change window state, after alignment here
-                // camera (engine) and panel (project hook) read boolean values won't each say their own thing.
                 if let Some(platform) = self.platform.as_ref() {
                     self.input
                         .sync_pointer_lock(platform.window().is_pointer_locked());
                 }
-                // --- Fixed timestep: integer nanosecond clock, capped catch-up ---
                 const FIXED_STEP: Duration = Duration::from_nanos(16_666_667);
                 engine.begin_frame(&self.input, [surface_w as f32, surface_h as f32]);
                 let mut fixed_steps = 0;
                 while self.fixed_accumulator >= FIXED_STEP && fixed_steps < 8 {
-                    // Physics uses fixed step (#522): result in below `engine.update()` by
-                    // `hierarchy_system` propagated to `LocalToWorld`, render same frame can see it.
                     #[cfg(feature = "physics")]
                     if let Some(physics) = self.physics.as_mut() {
                         physics.step(engine.world_mut());
@@ -1638,13 +1502,10 @@ impl App {
                     self.fixed_accumulator.as_secs_f32() / FIXED_STEP.as_secs_f32(),
                 );
 
-                // --- Variable time step update ---
                 engine.update(dt, &self.input);
 
-                // --- Late update ---
                 engine.late_update();
             } else {
-                // Edit mode: does not consume fixed accumulator, avoids catching up big chunk when switching to Play.
                 self.fixed_accumulator = Duration::ZERO;
                 prism_engine::scene::systems::hierarchy::hierarchy_system(engine.world_mut());
                 prism_engine::scene::systems::hierarchy::active_hierarchy_system(
@@ -1652,15 +1513,12 @@ impl App {
                 );
             }
 
-            // --- Audio update (`audio` feature) ---
             #[cfg(feature = "audio")]
             {
                 if let Some(audio) = self.audio.as_mut() {
                     audio.update();
                 }
 
-                // Process audio decode results: hand to scene audio cache (no longer auto-play,
-                // playback decided by `AudioSource` component).
                 if let Some(rx) = self.audio_decode_rx.as_ref() {
                     while let Ok(result) = rx.try_recv() {
                         if let crate::audio_decode_runner::DecodeResult::Error { message, .. } =
@@ -1672,7 +1530,6 @@ impl App {
                     }
                 }
 
-                // Scene audio: ECS `AudioSource` → mixer (#508).
                 if let Some(audio) = self.audio.as_mut() {
                     let mut sink = (audio, &mut self.audio_voices);
                     self.scene_audio.update(
@@ -1681,7 +1538,6 @@ impl App {
                         self.audio_decode_tx.as_ref(),
                     );
                 }
-                // One-shot sounds (#987): project code queues, here actually play.
                 crate::one_shot::drain(
                     engine.world_mut(),
                     self.audio.as_mut(),
@@ -1689,28 +1545,17 @@ impl App {
                     &mut self.asset_resolver.resource_manager,
                 );
             }
-        } // engine borrow ends here
+        }
 
-        // Window events arrive after the previous tick, so transient input must
-        // be cleared only after this frame's gameplay / UI have read the
-        // snapshot. Otherwise a fresh Space / mouse press edge is dropped
-        // before the ECS sees it. Held state stays valid across frames.
         self.input.begin_frame();
 
-        // --- Dev hot reload (#495): after rebuilding `.pak` no need to exit and re-enter ---
         self.poll_asset_changes();
 
-        // --- Asset resolution: main thread CPU segment prepares request → channel → render thread GPU segment ---
         self.pump_asset_requests();
 
-        // --- Extract frame packet → send to render thread (render enabled only) ---
         if let (Some(shared), Some(engine)) = (self.render_shared.as_ref(), self.engine.as_mut()) {
-            // Reuse data packet returned by render thread last frame (`Vec` capacity retained, #66).
             let mut packet = shared.take_spare_packet().unwrap_or_default();
-            // #613: when internal resolution effective camera projects by **internal** aspect ratio, post-process then integer
-            // upscale to window; otherwise 2D pixels stretched into unequal-width rectangles.
             let aspect = self.render_settings.render_aspect(self.display_aspect);
-            // #978: subpixel polyline converts "1 pixel" world length by scene actual render height.
             let render_height = self.render_settings.render_height(surface_w, surface_h);
             let mut extract_span = prism_engine::util::timing::span("app::extract_frame_packet");
             extract_frame_packet_into_with_shadow_cascades_and_render_height(
@@ -1722,9 +1567,7 @@ impl App {
                 render_height,
                 &mut packet,
             );
-            // Render settings sent to render thread with frame packet (hotkey / project config changes take effect here).
             packet.settings = self.render_settings.clone();
-            // Local post-processing volume (#502 Phase 2): parse this frame PostGrade by main camera position.
             packet.grade = Some(
                 prism_engine::scene::systems::post_process::resolve_post_grade(
                     engine.world(),
@@ -1733,7 +1576,6 @@ impl App {
                 ),
             );
 
-            // Runtime diagnostics HUD: appended to ECS UI overlay (then uniformly drawn by ui_overlay).
             #[cfg(feature = "engine-debug")]
             if self.debug_hud.show {
                 let (width, height) = self.surface_size();
@@ -1774,7 +1616,6 @@ impl App {
             return;
         };
 
-        // Project bundled font (#583): main thread reads bytes, render thread registers it into UI atlas.
         let fonts = self.asset_resolver.prepare_ui_fonts(engine.world());
         for (name, bytes) in fonts {
             shared.send_renderer_message(Box::new(move |renderer| {
@@ -1782,7 +1623,6 @@ impl App {
             }));
         }
 
-        // Upload UI RGBA8 icon textures (e.g. rasterized SVGs) into bindless slots.
         if let Some(mut pending) = engine
             .world_mut()
             .remove_resource::<prism_engine::ui::PendingUiImageUploads>()
@@ -1819,17 +1659,14 @@ impl App {
             }
         }
 
-        // Skeletal animation assets (#560 P0-2): idempotent, only read disk when new `.rskel` / `.ranim` appears.
         self.asset_resolver
             .load_animation_assets(engine.world_mut());
 
-        // CPU segment: scan pending-parse entities and produce upload requests (pure data, not touching renderer).
         let reqs = self.asset_resolver.prepare_requests(engine.world_mut());
         if !reqs.is_empty() {
             shared.enqueue_asset_requests(reqs);
         }
 
-        // Invalid GPU resources (entity destroyed / hot reload / path rewrite) truly released on render thread (#495).
         let releases = self.asset_resolver.take_releases();
         if !releases.is_empty() {
             shared.send_renderer_message(Box::new(move |renderer| {
@@ -1837,7 +1674,6 @@ impl App {
             }));
         }
 
-        // GPU segment result write-back: render thread returns handles, main thread writes into components.
         let results = shared.take_asset_results();
         if !results.is_empty() {
             self.asset_resolver
@@ -1858,7 +1694,6 @@ impl App {
         let Some(watcher) = self.pak_watcher.as_ref() else {
             return;
         };
-        // First drain events then change state: `receiver()` borrows watcher, processing events borrows self.
         let mut changed: Vec<std::path::PathBuf> = Vec::new();
         while let Ok(event) = watcher.receiver().try_recv() {
             match event {
@@ -1898,8 +1733,6 @@ impl App {
                     );
                 }
             }
-            // Also verify build stamp once after repack (#976): when package and document don't match immediately prompt,
-            // instead of waiting for player to find screen wrong.
             self.asset_resolver.check_cook_stamp(pak);
             reloaded += 1;
         }
@@ -1912,10 +1745,6 @@ impl App {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // PBR debug helpers
-    // -----------------------------------------------------------------------
-
     /// Route a neutral platform event to [`InputManager`] and window state.
     ///
     /// Returns `false` meaning app should exit (user closed window). Both window backends share this one,
@@ -1926,7 +1755,6 @@ impl App {
         match event {
             PlatformEvent::CloseRequested => return false,
             PlatformEvent::Focused(focused) => {
-                // A host that owns the cursor gets no grab/release from us.
                 if self.pointer_lock == PointerLockPolicy::Manual {
                     return true;
                 }
@@ -1934,14 +1762,7 @@ impl App {
                     prism_platform::release_pointer(window);
                     self.input.set_locked(false);
                 }
-                // Regaining focus re-grabs: pointer lock is click-to-enter, so
-                // alt-tabbing out and back would otherwise leave the player with
-                // dead movement keys until they click again. Esc stays the only
-                // way out (see `should_release_pointer_lock`).
                 if focused && !self.input.pointer_locked {
-                    // Trust the platform result: if the OS refused the grab, do
-                    // not record "locked", or the cursor stays visible and free
-                    // while the camera keeps eating WASD and mouse deltas.
                     let grabbed = prism_platform::grab_pointer(window);
                     self.input.set_locked(grabbed);
                 }
@@ -1949,16 +1770,11 @@ impl App {
             PlatformEvent::CursorMoved { x, y } => {
                 apply_window_cursor_move(&mut self.input, x, y);
             }
-            // Raw device increments in locked state (winit: `DeviceEvent::MouseMotion`,
-            // Win32: re-center mouse capture offset).
             PlatformEvent::MouseMotion { dx, dy } => {
                 apply_device_mouse_motion(&mut self.input, dx, dy);
             }
             PlatformEvent::MouseWheel { delta } => self.input.handle_scroll(delta),
             PlatformEvent::Touch { id, x, y, phase } => {
-                // Touch does not go through mouse button simulation: multi-touch must retain touch id and phase,
-                // project module via `InputSnapshot::touches` (host fills table, at most
-                // `InputSnapshot::MAX_TOUCHES` points) self-interpreted, instead of being compressed to left button.
                 self.input
                     .handle_touch(id, engine_touch_phase(phase), [x, y]);
             }
@@ -1989,9 +1805,6 @@ impl App {
                 );
             }
             PlatformEvent::Key { key, pressed } => {
-                // Key code conversion + Esc unlock + write to InputManager collected in `apply_key_event`,
-                // only unit tests can cover "platform key → engine key → key_held" entire chain;
-                // only real window-touching release_pointer left outside.
                 if apply_key_event(&mut self.input, key, pressed)
                     && self.pointer_lock == PointerLockPolicy::Auto
                 {
@@ -1999,15 +1812,12 @@ impl App {
                 }
             }
             PlatformEvent::Modifiers(modifiers) => self.modifiers = modifiers,
-            // Size change also updates aspect ratio (render thread reads real size from platform context).
             PlatformEvent::Resized { width, height } => {
                 self.needs_resize = true;
                 if width > 0 && height > 0 {
                     self.display_aspect = width as f32 / height as f32;
                 }
             }
-            // Unmodeled events: keep explicitly listed, avoid `_ => {}` silently swallowing new variants
-            // (`PlatformEvent::Touch` is how entire touch chain was lost).
             PlatformEvent::Other => {}
         }
 
@@ -2018,15 +1828,6 @@ impl App {
     ///
     /// Only called when key **pressed**; returns `true` meaning this key consumed.
     fn handle_shortcut(&mut self, key: Key) -> bool {
-        // Host hook **not called here**: two event loop entries (platform event pump and winit
-        // `window_event`) both already send same key event to hook before calling this function,
-        // if consumed skip this function directly. Converting again here equals same key pressed twice --- project side
-        // of "press once toggle once" will self-cancel (F1 panel never opens).
-        //
-        // Binding lookup and "number key + Shift = another PBR component" both decided by engine's
-        // `KeyBindings` decide; host here only responsible for applying action to `RenderSettings`.
-        // Unbound keys all return false: not consumed, project input available as-is.
-        // When debug layer not compiled table is empty: F3 / Tab / T / number keys all left as-is for project.
         let shift = self.modifiers.shift;
         let key_bindings = if cfg!(feature = "engine-debug") {
             prism_engine::KeyBindings::engine_debug(shift)
@@ -2075,11 +1876,9 @@ impl App {
                 log::info!("debug RT = {} ({})", self.render_settings.debug_rt, name);
             }
             prism_engine::EngineAction::CycleTonemap => {
-                // 0 = Reinhard, 1 = ACES, 2 = passthrough (2D / pixel art).
                 self.render_settings.tonemap_mode = (self.render_settings.tonemap_mode + 1) % 3;
                 log::info!("tonemap mode = {}", self.render_settings.tonemap_mode);
             }
-            // Already handled above, here just writing branches complete.
             prism_engine::EngineAction::IsolatePbrComponent(_) => {}
         }
         true
@@ -2103,19 +1902,11 @@ impl Default for App {
     }
 }
 
-// ===========================================================================
-// ApplicationHandler
-// ===========================================================================
-
 #[cfg(feature = "winit-backend")]
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Drive simulation/extraction continuously. With the default Wait mode
-        // winit only re-enters `about_to_wait` after input/window events, which
-        // freezes animation when the user is idle.
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        // Reset suspend flag (must precede any subsystem gate --- audio resume doesn't depend on Render).
         self.suspended = false;
         self.resume_subsystems();
 
@@ -2127,14 +1918,8 @@ impl ApplicationHandler for App {
         let resumed_entry = crate::render_shared::startup_ms();
 
         if self.platform.is_none() {
-            // Main thread only creates window (fast, ~few ms), then immediately returns --- window events
-            // (close/move/scale) from now can be dispatched by winit, not blocked by any init.
             let window_config = self.window_config();
             let window_span = prism_engine::util::timing::span("app::create_window");
-            // Create hidden: the first frame is hundreds of milliseconds away
-            // (renderer build + pipeline/font warmup), and an empty window in
-            // that gap reads as a hang. `tick_frame` shows it once a frame has
-            // actually been presented.
             let mut hidden_config = window_config.clone();
             hidden_config.visible = false;
             let platform = PlatformContext::create_window(event_loop, &hidden_config);
@@ -2144,12 +1929,10 @@ impl ApplicationHandler for App {
 
             self.platform = Some(platform);
 
-            // Render thread asynchronously builds renderer + starts frame loop (heavy init doesn't block main thread).
             let spawn_span = prism_engine::util::timing::span("app::spawn_render_thread");
             self.spawn_render_thread();
             drop(spawn_span);
 
-            // Record startup milestone: resumed return time = event_loop_free (event loop unlocked).
             let spawned = crate::render_shared::startup_ms();
             if let Some(shared) = self.render_shared.as_ref() {
                 shared.set_mark("resumed_entry", resumed_entry);
@@ -2159,8 +1942,6 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // After Android suspend rebuild surface: this design already stopped render thread at suspended and
-        // dropped window, so here re-walk above "first resume" branch. Reserved log only.
         log::info!("resumed (surface already active)");
     }
 
@@ -2185,8 +1966,6 @@ impl ApplicationHandler for App {
 
         let platform_event = prism_platform::to_platform_event(&event);
 
-        // First forward events to frame hook (host UI etc); if consumed no longer walk app
-        // own hotkey handling (input still routed to InputManager to keep key state consistent).
         let consumed = match (self.frame_hook.as_mut(), self.platform.as_ref()) {
             (Some(hook), Some(platform)) => {
                 let window = platform.window();
@@ -2196,7 +1975,6 @@ impl ApplicationHandler for App {
             _ => false,
         };
 
-        // Route window events → InputManager (always route, including hotkey-unhandled repeat events).
         if let Some(window) = self.platform.as_ref().map(PlatformContext::window_arc) {
             if !self.handle_platform_event(&window, platform_event) {
                 event_loop.exit();
@@ -2208,15 +1986,10 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // Modifier key state only updates with `ModifiersChanged` (route already written), event itself needs no handling.
         if matches!(event, WindowEvent::ModifiersChanged(_)) {
             return;
         }
 
-        // Keyboard hotkeys (triggered on press only). Here directly reuse already computed above
-        // `platform_event`, no longer re-parse keys from `WindowEvent`: two paths each compute once
-        // then each uses different conversion (`Key::from_winit` vs `winit_to_vk`), same key under
-        // "platform event pump" and "winit event" becomes two different `Key`.
         if let PlatformEvent::Key { key, pressed: true } = platform_event {
             self.handle_shortcut(key);
         }
@@ -2228,7 +2001,6 @@ impl ApplicationHandler for App {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        // In pointer lock mode, mouse movement arrives as raw device increments.
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             if self.idle_throttling && self.input.pointer_locked {
                 self.active_frames_remaining = self.active_frames_remaining.max(3);
@@ -2244,9 +2016,6 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // Game loop tick (main thread) --- background suspend pauses simulate and returns early (T4):
-        // not feeding dt → simulate frozen → background process CPU zeroed, and audio decode already
-        // stopped with suspended, no queue idle spin.
         if self.suspended {
             return;
         }
@@ -2299,15 +2068,10 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        // Background no longer needs per-frame polling; `resumed()` will restore `Poll`. Otherwise winit at
-        // Android background still keeps spinning idle, CPU usage stays 100%.
         event_loop.set_control_flow(ControlFlow::Wait);
 
-        // Set suspend flag (must precede any subsystem gate --- audio suspend doesn't depend on Render).
         self.suspended = true;
 
-        // --- Audio subsystem: return audio device (T4). drop cpal stream → stop callback thread;
-        // Firewheel graph and active playback nodes retained, on resume re-registered with pre-suspend config and resume playback. ---
         #[cfg(feature = "audio")]
         if self.has_subsystem(Subsystem::Audio) {
             if let Some(audio) = self.audio.as_mut() {
@@ -2319,11 +2083,9 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // Stop background thread.
         #[cfg(feature = "audio")]
         self.stop_audio_decode_thread();
 
-        // Stop render thread (renderer owned by render thread, stop releases Vulkan surface).
         self.stop_render_thread();
 
         self.platform = None;

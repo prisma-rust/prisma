@@ -315,22 +315,18 @@ mod tests {
             let _ = release_rx.recv();
             1
         }));
-        // The single slot is taken by the running job.
         assert!(pool.is_saturated());
         assert!(!pool.try_submit(0, || 2));
 
         release_tx.send(()).expect("release the blocking job");
         let results = collect(&pool, 1);
         assert_eq!(results, vec![1]);
-        // Capacity is released once the job finishes.
         assert!(!pool.is_saturated());
         assert!(pool.try_submit(0, || 3));
     }
 
     #[test]
     fn runs_lower_priority_values_first() {
-        // One worker plus a gate makes the ordering deterministic: every job
-        // queues while the gate is held, then they pop in priority order.
         let pool: JobPool<u32> = JobPool::with_capacity(1, 8);
         let (gate_tx, gate_rx) = mpsc::channel::<()>();
         let (started_tx, started_rx) = mpsc::channel::<()>();
@@ -376,7 +372,6 @@ mod tests {
                 1
             }));
             gate_tx.send(()).expect("release the blocking job");
-            // Dropping joins the worker, so the running job still completes.
         }
         assert_eq!(
             ran.load(AtomicOrdering::Acquire),

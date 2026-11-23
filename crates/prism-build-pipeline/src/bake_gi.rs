@@ -70,7 +70,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         cfg.max_bounce
     );
 
-    // ---- 1. Load scene into ECS and collect bake instances ----
     let mut world = World::new();
     let mut rm = ResourceManager::new();
     rm.load_package(&cfg.pak_path)
@@ -84,7 +83,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         .load_and_spawn(&mut world, source, &registry)
         .map_err(|e| anyhow::anyhow!("load scene into ECS: {e}"))?;
 
-    // Run hierarchy system to compute LocalToWorld from LocalTransform + Parent.
     hierarchy_system(&mut world);
 
     let (instances, mat_bytes) =
@@ -99,7 +97,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         total_indices / 3
     );
 
-    // Compute AABB from instances.
     let mut aabb_min = [f32::MAX; 3];
     let mut aabb_max = [f32::MIN; 3];
     for inst in &instances {
@@ -112,7 +109,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
     log::info!("  AABB: min {:?} max {:?}", aabb_min, aabb_max);
 
-    // ---- 2. Create headless Vulkan context ----
     let context = Arc::new(VulkanContext::new(&[]).context("create headless VulkanContext")?);
 
     if !context.rt_caps.has_ray_query() {
@@ -125,7 +121,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
     log::info!("  ray query: supported");
 
-    // ---- 3. Command pool ----
     let cmd_pool = unsafe {
         context.device.create_command_pool(
             &vk::CommandPoolCreateInfo::default()
@@ -136,7 +131,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
     .context("create command pool")?;
 
-    // ---- 4. Derive probe grid from the scene AABB ----
     let (origin, spacing, dims) = derive_grid(aabb_min, aabb_max, cfg);
     log::info!(
         "  probe grid: dims {:?} spacing {:?} origin {:?}",
@@ -145,7 +139,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         origin
     );
 
-    // ---- 5. Build per-instance BLAS/TLAS + materials SSBO ----
     let scene = bake_common::build_pt_scene(&context, cmd_pool, &instances, &mat_bytes)
         .context("build PT scene")?;
     log::info!(
@@ -155,7 +148,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     );
     log::info!("  BLAS + TLAS built");
 
-    // ---- 6. Probe volume 3D texture ----
     let tex_w = dims[0];
     let tex_h = dims[1];
     let tex_d = dims[2] * 9;
@@ -217,7 +209,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
     .context("create volume image view")?;
 
-    // ---- 7. ProbeVolumeInfo UBO ----
     let info = prism_render::gi::ProbeVolumeInfo::new(origin, spacing, dims);
     let info_size = std::mem::size_of::<prism_render::gi::ProbeVolumeInfo>() as vk::DeviceSize;
     let (info_buffer, info_memory) = prism_render::buffer::create_buffer(
@@ -241,10 +232,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         context.device.unmap_memory(info_memory);
     }
 
-    // ---- 8. Descriptor set layout + pool + sets ----
-    // Set 0: b0=volume, b1=info UBO, b2=tlas, b3=vertex, b4=index,
-    //        b6=instance_meta, b7=materials
-    // Set 1: bindless (samplers + SRVs)
     let bindings = [
         vk::DescriptorSetLayoutBinding::default()
             .binding(0)
@@ -335,7 +322,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }
     .context("allocate descriptor sets")?;
 
-    // ---- 9. Write descriptors ----
     let vol_img_info = vk::DescriptorImageInfo::default()
         .image_view(volume_view)
         .image_layout(vk::ImageLayout::GENERAL);
@@ -393,7 +379,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         context.device.update_descriptor_sets(&all_writes, &[]);
     }
 
-    // ---- 10. Dummy sampler + bindless writes ----
     let dummy_sampler = unsafe {
         context.device.create_sampler(
             &vk::SamplerCreateInfo::default()
@@ -408,7 +393,7 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     }?;
     let dummy_image_info = vk::DescriptorImageInfo::default()
         .sampler(dummy_sampler)
-        .image_view(volume_view) // dummy view — not actually sampled
+        .image_view(volume_view)
         .image_layout(vk::ImageLayout::GENERAL);
     let bindless_write = vk::WriteDescriptorSet::default()
         .dst_set(ds_set[1])
@@ -421,7 +406,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
             .update_descriptor_sets(&[bindless_write], &[]);
     }
 
-    // ---- 11. Create compute pipeline ----
     const GI_BAKE_SPV: &[u8] = prism_render_shaders::GI_BAKE_COMP_SPV;
     let shader_module = prism_render::shader::load_shader_module(&context.device, GI_BAKE_SPV)
         .context("create gi_bake shader module")?;
@@ -453,7 +437,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     .context("create compute pipeline")?;
     unsafe { context.device.destroy_shader_module(shader_module, None) };
 
-    // Build push constants.
     let light_dir_v =
         prism_render::gi::bake_euler_xyz_deg_to_dir(prism_render::gi::BAKE_DEFAULT_LIGHT_EULER);
     let push_constants = BakePush {
@@ -489,7 +472,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
             .context("begin cmd buf")?;
-        // Transition volume image to GENERAL layout
         let barrier = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
             .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
@@ -523,7 +505,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
             &ds_set,
             &[],
         );
-        // Push constants.
         let pc = push_constants;
         context.device.cmd_push_constants(
             cmd_buf,
@@ -532,11 +513,9 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
             0,
             bytemuck::bytes_of(&pc),
         );
-        // Dispatch in 3D: numthreads is (4, 4, 1) in gi_bake.slang.
         context
             .device
             .cmd_dispatch(cmd_buf, group_x, group_y, group_z);
-        // Barrier to make volume readable.
         let read_barrier = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
             .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
@@ -563,7 +542,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
             .context("end cmd buf")?;
     }
 
-    // ---- 12. Submit + wait ----
     let cmd_bufs = [cmd_buf];
     let submit = vk::SubmitInfo::default().command_buffers(&cmd_bufs);
     unsafe {
@@ -574,7 +552,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     .context("queue submit")?;
     unsafe { context.device.queue_wait_idle(context.graphics_queue) }.context("queue wait idle")?;
 
-    // ---- 13. Read back probe volume ----
     let vol_bytes_actual = (tex_w * tex_h * tex_d) as usize * 16;
     let (staging_buf, staging_mem) = prism_render::buffer::create_buffer(
         &context,
@@ -586,7 +563,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     )
     .context("create staging buffer")?;
 
-    // Copy volume image to staging buffer
     let cmd_buf2 = unsafe {
         context.device.allocate_command_buffers(
             &vk::CommandBufferAllocateInfo::default()
@@ -643,7 +619,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     unsafe { context.device.queue_wait_idle(context.graphics_queue) }
         .context("queue wait idle2")?;
 
-    // Read staging buffer
     let staging_ptr = unsafe {
         context.device.map_memory(
             staging_mem,
@@ -657,7 +632,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         unsafe { std::slice::from_raw_parts(staging_ptr as *const u8, vol_bytes_actual) };
     let (rgb_coeffs, hit_ratios) = unpack_baked_probe_volume(raw, dims);
 
-    // Compute hit ratios and solid counts.
     let probe_count = (dims[0] * dims[1] * dims[2]) as usize;
     let valid_hits: Vec<f32> = hit_ratios.iter().copied().filter(|&h| h >= 0.0).collect();
     let global_hit_ratio = if !valid_hits.is_empty() {
@@ -699,7 +673,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
         probe_count
     );
 
-    // ---- 14. Write .bin ----
     if let Some(parent) = cfg.output_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
@@ -729,7 +702,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
     );
     log::info!("prism-bake-gi: done");
 
-    // ---- Cleanup ----
     unsafe {
         context
             .device
@@ -756,10 +728,6 @@ pub fn bake_gi(cfg: &BakeGiConfig) -> Result<()> {
 
     Ok(())
 }
-
-// -------------------------------------------------------------------
-// Probe grid derivation
-// -------------------------------------------------------------------
 
 fn derive_grid(
     aabb_min: [f32; 3],
@@ -859,11 +827,10 @@ mod tests {
 
     #[test]
     fn unpack_baked_probe_volume_extracts_rgb_and_hit_ratio() {
-        let dims = [2, 1, 1]; // 2 probes: probe 0, probe 1
+        let dims = [2, 1, 1];
         let probe_count = 2;
         let mut raw = vec![0u8; probe_count * 9 * 16];
 
-        // Fill raw data for probe 0 and probe 1 across 9 coefficients
         for c in 0..9 {
             for p in 0..probe_count {
                 let off = (c * probe_count + p) * 16;
@@ -875,7 +842,7 @@ mod tests {
                         0.75
                     } else {
                         -1.0
-                    } // p=0 is valid, p=1 is solid
+                    }
                 } else {
                     0.0
                 };
@@ -892,7 +859,6 @@ mod tests {
         assert_eq!(coeffs.len(), 18);
         assert_eq!(hit_ratios.len(), 2);
 
-        // Check probe 0 coefficients
         for (c, item) in coeffs.iter().take(9).enumerate() {
             let expected_r = (c * 10 + 1) as f32;
             let expected_g = (c * 10 + 2) as f32;
@@ -901,7 +867,6 @@ mod tests {
         }
         assert_eq!(hit_ratios[0], 0.75);
 
-        // Check probe 1 coefficients
         for (c, item) in coeffs.iter().skip(9).take(9).enumerate() {
             let expected_r = (100 + c * 10 + 1) as f32;
             let expected_g = (100 + c * 10 + 2) as f32;
@@ -935,22 +900,14 @@ mod dispatch_tests {
 
     #[test]
     fn gi_bake_dispatch_groups_matches_shader_numthreads() {
-        // [numthreads(4, 4, 1)] with SV_DispatchThreadID:
-        // group_x = (dims[0] + 3) / 4
-        // group_y = (dims[1] + 3) / 4
-        // group_z = dims[2]
-
-        // Exact multiples of 4
         assert_eq!(gi_bake_dispatch_groups([16, 8, 8]), [4, 2, 8]);
         assert_eq!(gi_bake_dispatch_groups([4, 4, 1]), [1, 1, 1]);
 
-        // Non-multiples of 4 rounding up
         assert_eq!(gi_bake_dispatch_groups([1, 1, 1]), [1, 1, 1]);
         assert_eq!(gi_bake_dispatch_groups([5, 1, 3]), [2, 1, 3]);
         assert_eq!(gi_bake_dispatch_groups([7, 9, 12]), [2, 3, 12]);
         assert_eq!(gi_bake_dispatch_groups([10, 14, 5]), [3, 4, 5]);
 
-        // Zero dimensions
         assert_eq!(gi_bake_dispatch_groups([0, 0, 0]), [0, 0, 0]);
     }
 }

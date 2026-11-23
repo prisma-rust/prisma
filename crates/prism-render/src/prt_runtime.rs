@@ -117,7 +117,6 @@ pub fn traverse_64tree(volume: &PrtVolume, world_pos: [f32; 3]) -> Option<u32> {
         if (node.child_mask >> slot) & 1 == 0 {
             return None;
         }
-        // Count set bits below `slot` to find the dense child offset.
         let lower_mask = if slot == 0 { 0 } else { (1u64 << slot) - 1 };
         let child_offset = (node.child_mask & lower_mask).count_ones() as usize;
         node_idx = node.first_child as usize + child_offset;
@@ -153,13 +152,12 @@ pub fn propagate_dynamic_lights_q8_12(
 
     let grid_res = 4u32.pow(volume.leaf_grid.max(1)) as f32;
     let leaf_size = volume.world_extent / grid_res;
-    let leaf_radius = leaf_size * 0.8660254; // sqrt(3)/2
+    let leaf_radius = leaf_size * 0.8660254;
 
     for (leaf_idx, slot) in accum.iter_mut().enumerate() {
         let dc = volume.clusters[leaf_idx][0];
         let transfer_gain = ((dc[0] + dc[1] + dc[2]) / 3.0).clamp(0.0, 2.0);
         for light in lights {
-            // Proxy sphere-vs-cluster-volume culling.
             let max_dist = light.radius + volume.world_extent + leaf_radius;
             let dx = light.position[0] - (volume.world_origin[0] + volume.world_extent * 0.5);
             let dy = light.position[1] - (volume.world_origin[1] + volume.world_extent * 0.5);
@@ -349,7 +347,6 @@ mod tests {
             [0.0; 3]
         );
         let res = resolve_prt_irradiance([1.0, 1.0, 1.0], q[0], true, 1.0);
-        // leak_bias clamped to 0.25, so result > 0.75
         assert!(res[0] > 0.75);
     }
 

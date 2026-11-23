@@ -29,7 +29,6 @@ fn tiny_pak(entries: &[(&str, prism_asset::core::AssetType, &[u8])]) -> (Vec<u8>
 
 #[test]
 fn project_fonts_are_loaded_once_by_path() {
-    // #583: fonts referenced by `Text.font` are read from `.pak` and handed to renderer for registration.
     let (pak, manifest) = tiny_pak(&[(
         "fonts/hud.ttf",
         prism_asset::core::AssetType::Font,
@@ -56,7 +55,6 @@ fn project_fonts_are_loaded_once_by_path() {
     assert_eq!(fonts[0].0, "fonts/hud.ttf");
     assert_eq!(fonts[0].1, b"not-a-real-ttf");
 
-    // Same path not re-read repeatedly; text without a font produces no request.
     assert!(resolver.prepare_ui_fonts(&world).is_empty());
     world
         .get_mut::<crate::ui::components::Text>(entity)
@@ -84,7 +82,6 @@ fn failed_entities_retry_after_an_optional_package_is_mounted() {
         },
     );
 
-    // Simulate the failure before lazy package is mounted.
     resolver.record_failure(entity, AssetSlot::Sprite, "textures/late.png");
     assert_eq!(
         resolver.retry_failed_after_package_change(&mut world),
@@ -146,7 +143,6 @@ fn a_good_upload_does_not_queue_a_release() {
 
 #[test]
 fn re_uploading_to_a_new_slot_releases_the_previous_one() {
-    // Path rewritten → new upload gets new slot, old slot must be returned, otherwise each graph switch leaks a texture.
     let mut world = World::new();
     let mut resolver = GpuAssetResolver::new();
     let entity = resolved_sprite(&mut world, &mut resolver, 9);
@@ -167,7 +163,6 @@ fn re_uploading_to_a_new_slot_releases_the_previous_one() {
     let releases = resolver.take_releases();
     assert_eq!(releases.len(), 1);
     assert_eq!(releases[0].texture_slot, Some(9));
-    // Same slot uploaded again (result reused) does not count as invalidation.
     resolver.apply_results(
         &mut world,
         &[(
@@ -192,19 +187,16 @@ fn despawning_the_entity_releases_its_gpu_handles() {
     let entity = resolved_sprite(&mut world, &mut resolver, 5);
     world.despawn(entity);
 
-    // `prepare_requests` opens with recycling of invalidated resources.
     resolver.prepare_requests(&world);
     let releases = resolver.take_releases();
     assert_eq!(releases.len(), 1, "{releases:?}");
     assert_eq!(releases[0].texture_slot, Some(5));
-    // Release only once.
     resolver.prepare_requests(&world);
     assert!(resolver.take_releases().is_empty());
 }
 
 #[test]
 fn hot_reload_invalidation_releases_every_handle() {
-    // Hot reload clears generation; old graph images / meshes must be returned this frame.
     let mut world = World::new();
     let mut resolver = GpuAssetResolver::new();
     let sprite = resolved_sprite(&mut world, &mut resolver, 7);
@@ -239,7 +231,6 @@ fn hot_reload_invalidation_releases_every_handle() {
     assert!(releases.iter().any(|r| r.texture_slot == Some(7)));
     assert!(releases.iter().any(|r| r.material_slot == Some(4)));
     assert!(releases.iter().any(|r| r.mesh_handle == Some(mesh_handle)));
-    // sprite entity itself remains, next upload will re-account it.
     assert!(world.get::<SpriteRef>(sprite).is_some());
 }
 
@@ -292,7 +283,6 @@ fn sprite_without_ref_is_resolved_and_ref_is_created() {
     let mut resolver = GpuAssetResolver::new();
 
     let first = resolver.prepare_requests(&world);
-    // Resource package empty, so texture load will fail; key is "no `SpriteRef` still enqueues".
     assert_eq!(
         first.len(),
         1,
@@ -319,7 +309,6 @@ fn sprite_without_ref_is_resolved_and_ref_is_created() {
     assert_eq!(sprite.texture_slot, 7);
     assert_eq!(sprite.generation, 1);
 
-    // Already parsed and path unchanged: not re-submitted.
     assert!(resolver.prepare_requests(&world).is_empty());
 }
 
@@ -373,7 +362,6 @@ fn sprite_atlas_subslice_resolves_uv_and_size() {
 
 #[test]
 fn tilemap_tileset_is_staged_once_and_written_back() {
-    // #529: tilemap goes through same texture parse path as sprite, but handle written into `TilemapRef`.
     use crate::scene::components::Tilemap;
     use crate::scene::runtime_components::TilemapRef;
 
@@ -391,7 +379,6 @@ fn tilemap_tileset_is_staged_once_and_written_back() {
 
     let first = resolver.prepare_requests(&world);
     assert_eq!(first.len(), 1, "Parsed once even without TilemapRef");
-    // Resource package empty → failure cache, not retried every frame.
     assert!(resolver.prepare_requests(&world).is_empty());
 
     resolver.apply_results(
@@ -433,7 +420,6 @@ fn ui_background_images_are_staged_and_written_back() {
 
     let first = resolver.prepare_requests(&world);
     assert_eq!(first.len(), 1, "Parsed once even without UiImageRef");
-    // Empty package → failure cache, not retried every frame.
     assert!(resolver.prepare_requests(&world).is_empty());
 
     resolver.apply_results(
@@ -514,7 +500,6 @@ fn mesh_only_renderer_is_enqueued_once() {
         "Empty material path should not produce material parse request"
     );
 
-    // Simulate render thread callback: mesh handle parsed, material result empty.
     world.get_mut::<MeshRef>(entity).unwrap().generation = 1;
     resolver.apply_results(
         &mut world,
@@ -572,7 +557,6 @@ fn failed_material_is_latched_and_the_resolved_mesh_is_not_reuploaded() {
         "Both slots not yet parsed, need one submission"
     );
 
-    // Render thread callback: mesh upload success, material no handle.
     resolver.apply_results(
         &mut world,
         &[(
@@ -672,7 +656,6 @@ fn planar_mesh(
 
 #[test]
 fn planar_rmes_splits_into_channels_instead_of_rows() {
-    // Two vertex counts differ: any "read segments as interleaved" would mix channels.
     let info = planar_mesh(
         &[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
         &[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
@@ -692,7 +675,6 @@ fn planar_rmes_splits_into_channels_instead_of_rows() {
 
 #[test]
 fn planar_rmes_without_normals_keeps_positions_and_uvs() {
-    // Without normals stride is 3 + 2 floats, uv segment tightly follows positions segment.
     let info = planar_mesh(
         &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         &[],
@@ -724,17 +706,16 @@ fn planar_rmes_positions_only_falls_back_to_a_fixed_normal() {
 
 #[test]
 fn rmes_v2_submeshes_reach_the_runtime_component() {
-    // Hand-write an RMES v2: 3 vertices, 6 indices, two submeshes.
     let mut blob = Vec::new();
     blob.extend_from_slice(b"RMES");
     blob.push(2);
     blob.extend_from_slice(&3u32.to_le_bytes());
     blob.extend_from_slice(&6u32.to_le_bytes());
-    blob.extend_from_slice(&0u32.to_le_bytes()); // uv channels
-    blob.extend_from_slice(&12u32.to_le_bytes()); // stride bytes
-    blob.extend_from_slice(&33u32.to_le_bytes()); // positions offset
-    blob.extend_from_slice(&0u32.to_le_bytes()); // normals offset
-    blob.extend_from_slice(&0u32.to_le_bytes()); // uv0 offset
+    blob.extend_from_slice(&0u32.to_le_bytes());
+    blob.extend_from_slice(&12u32.to_le_bytes());
+    blob.extend_from_slice(&33u32.to_le_bytes());
+    blob.extend_from_slice(&0u32.to_le_bytes());
+    blob.extend_from_slice(&0u32.to_le_bytes());
     for position in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
         for value in position {
             blob.extend_from_slice(&value.to_le_bytes());
@@ -799,7 +780,6 @@ fn rtex_compressed_formats_keep_linear_semantics() {
 
 #[test]
 fn bc1_and_bc3_follow_the_slot_colour_space() {
-    // Color texture needs sRGB sampling, normal / MR stay linear (#519).
     assert_eq!(
         texture_format_for(RTEX_FORMAT_BC1, true),
         Some(TextureFormat::Bc1Srgb)
@@ -984,7 +964,6 @@ mod mesh_bounds_tests {
 
     #[test]
     fn the_mesh_bounds_land_in_the_registry_with_the_handle() {
-        // built-in cube needs no `.pak`, but goes through same prepare → upload → writeback path.
         let mut world = World::new();
         let entity = world.spawn();
         world.insert(
@@ -1028,11 +1007,9 @@ mod mesh_bounds_tests {
             .get_resource::<MeshBounds>()
             .expect("bounds registry must be created on the first upload");
         let bounds = registry.get(handle).expect("box bounds must be registered");
-        // Unit cube (edge 1, centered at origin).
         assert!((bounds.min[0] + 0.5).abs() < 1e-5);
         assert!((bounds.max[1] - 0.5).abs() < 1e-5);
 
-        // Another submission will not re-upload: handle already written back (`generation = 1`).
         assert!(resolver.prepare_requests(&world).is_empty());
     }
 }
@@ -1105,8 +1082,6 @@ mod hot_reload_tests {
 
     #[test]
     fn invalidation_clears_the_failure_cache() {
-        // A path not in any package: first prepare fails and enters failure cache,
-        // then not retried. Hot reload must allow one retry (new package may have added it).
         let mut world = World::new();
         let entity = spawn_mesh(&mut world, "assets/new_mesh.rmes", 0);
 
@@ -1114,7 +1089,6 @@ mod hot_reload_tests {
         let first = resolver.prepare_requests(&world);
         assert_eq!(first.len(), 1);
         assert!(first[0].1.mesh.is_none(), "the path is not in any package");
-        // Upload failure also counts as "having a result": clear queued flag, only failure cache blocks retry.
         resolver.apply_results(
             &mut world,
             &[(
@@ -1158,7 +1132,6 @@ mod hot_reload_tests {
                 ..MeshRenderer::default()
             },
         );
-        // mesh already parsed (this frame only fills material), submesh table from runtime cache.
         world.insert(
             entity,
             MeshRef {
@@ -1198,7 +1171,6 @@ mod hot_reload_tests {
             },
         );
 
-        // Both paths not in package, but requests still expanded by unique path (upload phase will fail).
         let mut resolver = GpuAssetResolver::new();
         let requests = resolver.prepare_requests(&world);
         assert_eq!(requests.len(), 1);

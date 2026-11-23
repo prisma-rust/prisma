@@ -57,7 +57,6 @@ fn spawn_interactive(world: &mut World, rect: [f32; 4]) -> Entity {
 
 #[test]
 fn buttons_draw_their_interaction_colors() {
-    // #528: `Button` overrides `Style.background`, changes color with hover / pressed.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [10.0, 10.0, 100.0, 40.0]);
     let button = Button::default();
@@ -99,7 +98,6 @@ fn buttons_draw_their_interaction_colors() {
 
 #[test]
 fn a_style_image_becomes_a_textured_quad_with_the_background_as_tint() {
-    // #591: after `Style.image` resolves to bindless slot, this cell uses texture + `background` tint.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [0.0, 0.0, 64.0, 64.0]);
     world.get_mut::<Style>(entity).unwrap().image = "textures/icon.png".into();
@@ -123,7 +121,6 @@ fn a_style_image_becomes_a_textured_quad_with_the_background_as_tint() {
 
 #[test]
 fn an_image_with_a_transparent_background_draws_in_its_own_colours() {
-    // When author writes only `image` not `background`, alpha 0 treated as opaque white tint.
     let mut world = world_with_screen();
     let entity = spawn_quad(&mut world, [0.0, 0.0, 32.0, 32.0]);
     let style = world.get_mut::<Style>(entity).unwrap();
@@ -183,13 +180,11 @@ fn border_radius_is_normalised_by_the_quad_size() {
     ui_render_system(&mut world);
     let overlay = convert_ui_draw_list_to_overlay(&world);
     let quad = overlay.quads.first().expect("one quad");
-    // 200px wide quad → NDC width 0.5; 20px radius → 20 / 200 * 2 = 0.2.
     assert!((quad.border_radius - 0.2).abs() < 1e-6, "{quad:?}");
 }
 
 #[test]
 fn text_font_path_reaches_the_overlay_input() {
-    // #583: `Text.font` is asset path; empty string means system default font.
     let mut world = world_with_screen();
     let entity = spawn_text(&mut world, [0.0, 0.0, 200.0, 24.0], "HUD");
 
@@ -208,7 +203,6 @@ fn text_font_path_reaches_the_overlay_input() {
 
 #[test]
 fn text_wrap_flag_reaches_the_overlay_input() {
-    // #527: wrapping is author switch, default single line.
     let mut world = world_with_screen();
     spawn_text(&mut world, [0.0, 0.0, 120.0, 40.0], "hello world");
     ui_render_system(&mut world);
@@ -256,12 +250,10 @@ fn inactive_entities_are_skipped_by_drawing() {
     );
     assert_eq!(draw_list.texts().next().expect("text").content, "shown");
 
-    // Hidden entity will not enter on-screen data.
     let overlay = convert_ui_draw_list_to_overlay(&world);
     assert_eq!(overlay.quads.len(), 1);
     assert_eq!(overlay.texts.len(), 1);
 
-    // Active state only a filter condition, not deletion: component still there.
     assert!(world.get::<ComputedLayout>(visible_quad).is_some());
     assert!(world.get::<ComputedLayout>(visible_text).is_some());
 }
@@ -276,7 +268,6 @@ fn deactivating_a_parent_hides_the_whole_subtree() {
     HierarchyHelper::reparent(&mut world, child, Some(parent));
     HierarchyHelper::reparent(&mut world, grandchild, Some(child));
 
-    // Child itself has no + only parent disabled.
     assert!(is_ui_active(&world, grandchild));
     world.insert(parent, Active(false));
     assert!(!is_ui_active(&world, parent));
@@ -330,8 +321,6 @@ fn missing_active_component_counts_as_active() {
 fn inactive_element_does_not_block_hit_testing() {
     let mut world = world_with_screen();
 
-    // Two fully overlapping interactive elements: later traversed (same area → more "top") should win,
-    // but it is Active(false) disabled, cursor should fall to the one below.
     let below = spawn_interactive(&mut world, [0.0, 0.0, 200.0, 100.0]);
     let above = spawn_interactive(&mut world, [0.0, 0.0, 200.0, 100.0]);
     world.insert(above, Active(false));
@@ -343,7 +332,6 @@ fn inactive_element_does_not_block_hit_testing() {
         ..UiInputState::default()
     });
     ui_input_system(&mut world);
-    // #528: click holds on release, add a release frame.
     world.insert_resource(UiInputState {
         cursor_pos: [50.0, 50.0],
         left_released: true,
@@ -370,7 +358,6 @@ fn invisible_text_is_skipped_like_quads() {
     let hidden_text = spawn_text(&mut world, [0.0, 20.0, 100.0, 20.0], "hidden");
     let hidden_quad = spawn_quad(&mut world, [0.0, 40.0, 100.0, 20.0]);
 
-    // Only change `Style::visible` (not `Active`): background quad and glyph should disappear together.
     world.insert(
         hidden_text,
         Style {
@@ -405,13 +392,11 @@ fn invisible_text_is_skipped_like_quads() {
         [0.0, 0.0, 100.0, 20.0]
     );
 
-    // On-screen data likewise only visible text.
     let overlay = convert_ui_draw_list_to_overlay(&world);
     assert!(overlay.quads.is_empty());
     assert_eq!(overlay.texts.len(), 1);
     assert_eq!(overlay.texts[0].content, "shown");
 
-    // `visible` only a filter condition, not deletion: component stays, re-enable resumes drawing.
     assert!(world.get::<Text>(hidden_text).is_some());
     assert!(world.get::<ComputedLayout>(visible_text).is_some());
 
@@ -433,7 +418,6 @@ fn invisible_text_is_skipped_like_quads() {
 
 #[test]
 fn canvas_scale_multiplies_font_size_and_border_radius() {
-    // #463: font and corner radius are "design pixels", convert by containing Canvas scale.
     let mut world = world_with_screen();
     let scaled = ComputedLayout {
         rect: [0.0, 0.0, 200.0, 100.0],
@@ -473,7 +457,6 @@ fn canvas_scale_multiplies_font_size_and_border_radius() {
     let quad = draw_list.quads().next().expect("one quad");
     assert_eq!(quad.border_radius, 16.0);
 
-    // Bad values (0 / NaN) treated as 1, cannot make vertices NaN.
     let broken = ComputedLayout {
         rect: [0.0, 0.0, 10.0, 10.0],
         order: 0,
@@ -520,9 +503,7 @@ fn text_without_style_is_still_drawn() {
 
 #[test]
 fn overlay_ndc_keeps_screen_orientation() {
-    // Vulkan NDC: `y = -1` is screen top. Pixel top-left must land at (-1, -1),
-    // otherwise whole UI layer flipped upside down (intro title displayed upside down was this bug).
-    let mut world = world_with_screen(); // 800x600
+    let mut world = world_with_screen();
     spawn_quad(&mut world, [0.0, 0.0, 400.0, 300.0]);
     ui_render_system(&mut world);
 
@@ -532,7 +513,6 @@ fn overlay_ndc_keeps_screen_orientation() {
     assert_eq!([x0, y0], [-1.0, -1.0], "Top-left pixel → NDC top-left");
     assert_eq!([x1, y1], [0.0, 0.0], "Screen center → NDC origin");
 
-    // Vertical monotonic: lower pixel produces larger NDC y.
     let mut world = world_with_screen();
     spawn_quad(&mut world, [0.0, 100.0, 10.0, 10.0]);
     ui_render_system(&mut world);
@@ -541,8 +521,6 @@ fn overlay_ndc_keeps_screen_orientation() {
     assert!(top < bottom, "NDC top must be smaller than bottom");
     assert!(top > -1.0, "y=100 should already leave screen top");
 }
-
-// ── hierarchy draw order (#462) ─────────────────────────────────────────
 
 fn spawn_node(world: &mut World, bg: Option<[f32; 4]>, text: Option<&str>) -> Entity {
     let entity = world.spawn();
@@ -581,7 +559,6 @@ fn a_later_sibling_covers_the_text_of_an_earlier_one() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    // Text must be drawn before black overlay, otherwise overlay cannot cover it.
     assert_eq!(draw_list.items.len(), 2);
     assert!(
         matches!(&draw_list.items[0], UiDrawItem::Text(t) if t.content == "Intro"),
@@ -610,7 +587,6 @@ fn children_draw_above_their_parent_even_when_created_first() {
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
     assert_eq!(draw_list.items.len(), 2);
-    // Parent drawn first, child after: child panel always on parent background.
     assert!(matches!(&draw_list.items[0], UiDrawItem::Quad(q) if q.color[1] == 0.0));
     assert!(matches!(&draw_list.items[1], UiDrawItem::Quad(q) if q.color[1] == 1.0));
 }
@@ -619,7 +595,6 @@ fn children_draw_above_their_parent_even_when_created_first() {
 fn siblings_follow_the_document_id_not_the_spawn_order() {
     let mut world = world_with_screen();
 
-    // First spawned gets larger id: draw order follows document order.
     let later_in_document = spawn_node(&mut world, Some([0.0, 0.0, 1.0, 1.0]), None);
     let earlier_in_document = spawn_node(&mut world, Some([1.0, 0.0, 0.0, 1.0]), None);
     world.insert(
@@ -635,7 +610,6 @@ fn siblings_follow_the_document_id_not_the_spawn_order() {
     ui_render_system(&mut world);
 
     let draw_list = world.get_resource::<UiDrawList>().expect("draw list");
-    // id 2 (red) is earlier in document, despite spawned later.
     assert!(matches!(&draw_list.items[0], UiDrawItem::Quad(q) if q.color[0] == 1.0));
     assert!(matches!(&draw_list.items[1], UiDrawItem::Quad(q) if q.color[2] == 1.0));
 }
@@ -646,8 +620,6 @@ fn an_external_layer_still_draws_above_the_whole_ui() {
 
     spawn_node(&mut world, Some([1.0, 0.0, 0.0, 1.0]), Some("Intro"));
 
-    // The packet type carries no layer: externals are stamped with
-    // EXTERNAL_UI_ORDER, which sorts past every ECS UI entity.
     world.insert_resource(crate::ui::ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 8.0, 6.0],
         color: [0.5, 0.5, 0.5, 1.0],
@@ -679,7 +651,6 @@ fn quads_submitted_after_the_render_system_are_merged() {
     crate::ui::layout::ui_layout_system(&mut world);
     ui_render_system(&mut world);
 
-    // Project system registers after `ui::render` (static Player, see #1048).
     world.insert_resource(crate::ui::ExternalUiQuads(vec![prism_ui_draw::UiQuad {
         rect: [0.0, 0.0, 4.0, 4.0],
         color: [0.5, 0.5, 0.5, 1.0],

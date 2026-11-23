@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 #[test]
@@ -19,26 +15,19 @@ fn polling_detects_modification() {
     let pak = builder.build().unwrap();
     fs::write(&pak_path, &pak).unwrap();
 
-    // Ensure a clock-tick boundary so the subsequent write has a different
-    // mtime even on filesystems with 1-second granularity (Android/Termux
-    // FUSE, etc.).
     sleep(Duration::from_secs(1));
 
     let mut watcher = HotReloadWatcher::watch_file(&pak_path, Duration::from_millis(100)).unwrap();
     let rx = watcher.receiver();
 
-    // Modify the file.
     let mut builder2 = crate::package::PackageBuilder::new();
     builder2.add_asset(id, crate::core::AssetType::Binary, b"v2".to_vec(), &[]);
     let pak2 = builder2.build().unwrap();
     fs::write(&pak_path, &pak2).unwrap();
 
-    // Wait for poller to detect.
     sleep(Duration::from_millis(500));
 
     let events: Vec<HotReloadEvent> = rx.try_iter().collect();
-    // Best-effort assertion: on fast filesystems this will fire, on
-    // 1-second-granularity filesystems (Android/Termux) it may not.
     if !events.is_empty() {
         let found = events
             .iter()
@@ -52,7 +41,6 @@ fn polling_detects_modification() {
 
 #[test]
 fn a_size_change_counts_even_without_a_newer_mtime() {
-    // #495 ⑤: Rebuild within same second, mtime unchanged, length change still counts as "changed".
     let now = std::time::SystemTime::now();
     let base = Stamp {
         modified: now,
@@ -73,7 +61,6 @@ fn a_size_change_counts_even_without_a_newer_mtime() {
             len: 10
         }
     ));
-    // Jitter within 100ms + unchanged length = treated as unchanged (avoid splitting one write into multiple events).
     assert!(!stamp_changed(
         base,
         Stamp {
@@ -108,7 +95,6 @@ fn a_rebuilt_package_refreshes_loaded_assets() {
 
     let watcher = HotReloadWatcher::watch_file(&pak_path, Duration::from_millis(50)).unwrap();
 
-    // Cross a timestamp boundary, ensure mtime truly advances (consistent with existing tests).
     sleep(Duration::from_secs(1));
     write_pak(b"v2-after-rebuild");
 

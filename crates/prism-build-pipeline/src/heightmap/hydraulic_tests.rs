@@ -8,7 +8,6 @@ fn erode_once(hm: &mut Heightmap, params: &ErosionParams) {
 
 #[test]
 fn test_hydraulic_erosion_on_slope() {
-    // Slope: left below low, right on high
     let mut data = vec![0.0; 256];
     for y in 0..16 {
         for x in 0..16 {
@@ -23,7 +22,6 @@ fn test_hydraulic_erosion_on_slope() {
         ..Default::default()
     };
     erode_once(&mut hm, &params);
-    // should have changes (erosion in bottom, deposition)
     let changed = hm
         .data
         .iter()
@@ -43,7 +41,6 @@ fn test_hydraulic_noop_on_flat() {
         ..Default::default()
     };
     erode_once(&mut hm, &params);
-    // Flat terrain should almost not change
     for &v in &hm.data {
         assert!(
             v.abs() < 1.0,
@@ -66,7 +63,6 @@ fn scratch_reuses_its_buffers_between_rounds() {
     let first_round: Vec<*const f64> = scratch.bufs.iter().map(|buf| buf.as_ptr()).collect();
     scratch.bufs[0][0] = 5.0;
 
-    // Same size again for another round: pointer unchanged (no heavy new allocation), but content cleared to zero.
     scratch.prepare(3, 32, 16);
     let second_round: Vec<*const f64> = scratch.bufs.iter().map(|buf| buf.as_ptr()).collect();
     assert_eq!(
@@ -81,7 +77,6 @@ fn scratch_reuses_its_buffers_between_rounds() {
 
 #[test]
 fn chunk_plan_covers_every_particle() {
-    // 12 lines × 200,000 particles not evenly divisible; old implementation drops tail 8 particles.
     for (particles, threads) in [(200_000, 12), (5, 3), (1, 16), (17, 4), (3, 3), (64, 64)] {
         let (chunk_size, buffers) = chunk_plan(particles, threads);
         assert!(chunk_size > 0);

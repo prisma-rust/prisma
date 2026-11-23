@@ -30,7 +30,6 @@ fn spawn_skinned(world: &mut prism_ecs::World, palette: Option<usize>) -> prism_
             generation: 1,
         },
     );
-    // `MeshBounds` is a World resource (#491), not an entity component.
     if world.get_resource::<MeshBounds>().is_none() {
         let mut bounds = MeshBounds::default();
         bounds.insert(
@@ -74,7 +73,6 @@ fn a_palette_is_appended_and_the_offset_points_at_it() {
     assert_eq!(palette.len(), 5, "Two entities bone matrices concatenated");
     let offsets: Vec<Option<u32>> = items.iter().map(|item| item.bone_offset).collect();
     assert_eq!(offsets, vec![Some(0), Some(2)]);
-    // Second palette actually begins after offset 2.
     assert!((palette[2][3][0] - 0.0).abs() < 1e-6);
     assert!((palette[3][3][0] - 1.0).abs() < 1e-6);
     let _ = (first, second);
@@ -119,7 +117,6 @@ fn the_remaining_budget_shrinks_as_palettes_are_appended() {
 fn a_frustum_culls_the_skinned_draw_item() {
     let mut world = prism_ecs::World::new();
     let entity = spawn_skinned(&mut world, None);
-    // Camera at origin looking −Z, push object to x=1000 (outside screen) → whole box outside frustum.
     world.insert(
         entity,
         LocalToWorld(glam::Mat4::from_translation(glam::vec3(1000.0, 0.0, -5.0))),
@@ -185,7 +182,6 @@ fn submeshes_become_one_draw_item_each() {
     assert_eq!(items[0].index_count, Some(36));
     assert_eq!(items[1].index_start, 36);
     assert_eq!(items[1].index_count, Some(12));
-    // When no `MaterialSlots`, fall back to entity-level material slot.
     assert_eq!(items[0].material, Some(7));
     assert_eq!(items[1].material, Some(7));
 }

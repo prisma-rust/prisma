@@ -28,7 +28,6 @@ impl Default for DrawState {
             cull_mode: prism_gfx::CullMode::Back,
             render_queue: prism_gfx::RenderQueue::GEOMETRY,
             z_write: true,
-            // Engine non-transparent default (consistent with `MeshRenderer::default`).
             src_blend: prism_gfx::BlendMode::One,
             dst_blend: prism_gfx::BlendMode::Zero,
             blend_op: prism_gfx::BlendOp::Add,
@@ -125,7 +124,6 @@ pub fn sort_draw_items(items: &mut [DrawItem], eye: [f32; 3]) {
             .cmp(&b.state.render_queue)
             .then_with(|| {
                 if b.state.render_queue > prism_gfx::RenderQueue::GEOMETRY_LAST {
-                    // Transparent: far drawn first.
                     distance_sq(b)
                         .partial_cmp(&distance_sq(a))
                         .unwrap_or(std::cmp::Ordering::Equal)
@@ -350,9 +348,6 @@ impl CameraView {
     ) -> Self {
         Self {
             view_proj,
-            // The forward pass only reads `view` for its own bookkeeping; the
-            // skybox reads `inv_view`, so the fallback keeps the legacy
-            // rotation-only inverse it already had.
             view: inv_view,
             inv_view,
             eye: [0.0; 3],

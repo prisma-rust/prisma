@@ -297,7 +297,6 @@ mod tests {
     #[test]
     fn timeline_hit_testing_picks_the_nearest_marker_within_the_radius() {
         let phases = [0.25, 0.75];
-        // 0..200px -> 0.25 at 50px, 0.75 at 150px.
         assert_eq!(
             nearest_sync_marker_index(&phases, 52.0, 0.0, 200.0, 8.0),
             Some(0)

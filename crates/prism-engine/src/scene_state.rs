@@ -44,10 +44,6 @@ const SCENE_STATE_VERSION: u32 = 5;
 /// light, so the positional back-fill below only applies to v1 files.
 const LEGACY_INDEPENDENT_LIGHTS_VERSION: u32 = 2;
 
-// ---------------------------------------------------------------------------
-// File path
-// ---------------------------------------------------------------------------
-
 /// Save directory (`World` resource). Host inserts real project config directory at launch.
 ///
 /// Previously `scene_state_path()` used [`crate::config::app_data_dir`] directly, which used
@@ -98,10 +94,6 @@ pub fn scene_state_path_for_slot(world: &World, slot: u32) -> std::path::PathBuf
         Some(slot),
     )
 }
-
-// ---------------------------------------------------------------------------
-// Data structures  (new scene-component types)
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
 pub struct CameraState {
@@ -155,9 +147,6 @@ struct SavedTimeOfDay {
 fn scene_entity_id(world: &World, entity: Entity) -> Option<u32> {
     world.get::<SceneEntityId>(entity).map(|id| id.0)
 }
-// ---------------------------------------------------------------------------
-// Serialisation (hand-rolled JSON — no serde)
-// ---------------------------------------------------------------------------
 
 fn fmt3(a: Vec3) -> String {
     format!("{},{},{}", a.x, a.y, a.z)
@@ -199,7 +188,6 @@ impl CameraState {
     }
 }
 
-// --- DirectionalLight (new scene component; no enabled field) ---
 fn dir_light_to_json(light: &SceneDirLight) -> String {
     format!(
         "{{\"euler_xyz\":[{}],\"intensity\":{},\"color\":[{}],\"ambient\":{}}}",
@@ -300,9 +288,6 @@ impl SavedPointLight {
         })
     }
 }
-// ---------------------------------------------------------------------------
-// Save / load
-// ---------------------------------------------------------------------------
 
 /// Camera entity used for save / restore: **the one actually rendered**.
 ///
@@ -377,17 +362,14 @@ pub fn save_scene_state_to(world: &World, path: &std::path::Path) {
     json.push_str("{\n");
     let _ = writeln!(json, "\"version\":{SCENE_STATE_VERSION},");
 
-    // Camera
     if let Some(cs) = &camera_state {
         let _ = writeln!(json, "\"camera\":{},", cs.to_json());
     }
 
-    // Directional light
     if let Some(dl) = &dir_light {
         let _ = writeln!(json, "\"directionalLight\":{},", dir_light_to_json(dl));
     }
 
-    // Point lights
     json.push_str("\"pointLights\":[\n");
     for (i, pl) in point_lights.iter().enumerate() {
         if i > 0 {
@@ -397,7 +379,6 @@ pub fn save_scene_state_to(world: &World, path: &std::path::Path) {
     }
     json.push_str("],\n");
 
-    // Transforms
     json.push_str("\"transforms\":[\n");
     for (i, t) in transforms.iter().enumerate() {
         if i > 0 {
@@ -407,7 +388,6 @@ pub fn save_scene_state_to(world: &World, path: &std::path::Path) {
     }
     json.push_str("],\n");
 
-    // Clocks
     json.push_str("\"timeOfDay\":[\n");
     for (i, clock) in clocks.iter().enumerate() {
         if i > 0 {
@@ -471,11 +451,8 @@ fn apply_scene_state(world: &mut World, text: &str) {
         .map(|array| parse_transform_array(&array))
         .unwrap_or_default();
 
-    // --- camera (on rendered camera entity, data components, see `state_camera`) ---
     if let Some(cs) = extract_object(text, "camera").and_then(|json| CameraState::from_json(&json))
     {
-        // First parse entity once, subsequent per-component `get_mut` will not conflict with
-        // world borrow of query.
         if let Some(cam_entity) = state_camera(world) {
             if let Some(cam) = world.get_mut::<Camera>(cam_entity) {
                 cam.fov_y_degrees = cs.fov_y.to_degrees();
@@ -494,7 +471,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
         }
     }
 
-    // --- Directional light ---
     if let Some(dl_json) = extract_object(text, "directionalLight") {
         if let Some(dl) = dir_light_from_json(&dl_json) {
             for (_, existing) in world.query_mut::<SceneDirLight>() {
@@ -503,7 +479,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
         }
     }
 
-    // --- Point lights ---
     let old_point_entities: Vec<Entity> = world
         .query::<ScenePtLight>()
         .map(|(entity, _)| entity)
@@ -515,9 +490,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
     if let Some(pl_array) = extract_array(text, "pointLights") {
         let mut parsed = parse_pt_light_array(&pl_array);
 
-        // Version 1 wrote point-light and transform arrays independently. At
-        // startup the point-light transforms occupied the leading slots, so
-        // recover those positions before applying the remaining transforms.
         if version < LEGACY_INDEPENDENT_LIGHTS_VERSION {
             legacy_point_transform_count = parsed.len().min(parsed_transforms.len());
             for (saved, transform) in parsed
@@ -530,8 +502,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
             }
         }
 
-        // Persisted state is authoritative only for existing scene lights.
-        // Never create an entity for an unmatched saved record.
         for entity in old_point_entities.iter().copied() {
             world.remove::<ScenePtLight>(entity);
         }
@@ -544,7 +514,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
             );
         }
 
-        // v4+: match by stable id; old saves without id fall back to "match by order".
         let mut unmatched: Vec<SavedPointLight> = Vec::new();
         let mut remaining: Vec<Entity> = old_point_entities.clone();
         for saved in parsed {
@@ -561,15 +530,11 @@ fn apply_scene_state(world: &mut World, text: &str) {
                 None => unmatched.push(saved),
             }
         }
-        // Records without id (v3 and earlier) still land on remaining lights by pool order.
         for (entity, saved) in remaining.into_iter().zip(unmatched) {
             apply_saved_light(world, entity, saved, &mut reserved_transform_entities);
         }
     }
 
-    // --- Time of day ---
-    // v5 pairs clocks with the scene by stable id; records without an id fall
-    // back to pool order, like every other array in this file.
     if let Some(clock_array) = extract_array(text, "timeOfDay") {
         let parsed = parse_time_of_day_array(&clock_array);
         let parsed_count = parsed.len();
@@ -601,9 +566,6 @@ fn apply_scene_state(world: &mut World, text: &str) {
         }
     }
 
-    // --- Non-light transforms ---
-    // v4+ matches by `.scene.json` stable id, inserting / deleting entities no longer misaligns later poses
-    // (#118); old records without id fall back to order matching.
     let mut matched_transforms: HashSet<Entity> = HashSet::new();
     let mut legacy_transforms: Vec<SavedTransform> = Vec::new();
     for saved in parsed_transforms
@@ -685,11 +647,6 @@ fn apply_saved_light(
     world.insert(entity, Active(saved.active));
     reserved_transform_entities.insert(entity);
 }
-
-// ---------------------------------------------------------------------------
-// Minimal JSON helpers (shared with camera.rs internals; duplicated here to
-// keep scene_state.rs self-contained).
-// ---------------------------------------------------------------------------
 
 /// Find `[a,b,c]` following `key` in a JSON-ish string.
 fn find_array_f32(s: &str, key: &str) -> Option<Vec<f32>> {

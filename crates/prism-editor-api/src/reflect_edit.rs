@@ -139,17 +139,14 @@ pub fn set_component_field(
         parse_path(path)?
     };
 
-    // Whole replace: single normalization validation.
     if segments.is_empty() {
         return registry
             .object_to_json(component, &after_object)
             .ok_or_else(|| format!("'{component}' missing object_to_json converter"));
     }
 
-    // Get target value from "modified" object (already reflection type, enum / single-field correct).
     let new_value = read_at(&Value::Object(after_object), &segments)?;
 
-    // Top-level field name + index / sub-field below it; top-level write goes through set_field (read-only rejected).
     let Segment::Key(field) = &segments[0] else {
         unreachable!("parse_path guarantees starts with Key");
     };
@@ -220,7 +217,6 @@ mod tests {
         let updated = set_component_field(CAMERA, &before, "fov_y_degrees", &after).unwrap();
         assert_eq!(updated["fov_y_degrees"], json!(72.0));
 
-        // Nested struct field.
         let before = component_default(STYLE);
         let mut after = before.clone();
         after["anchors"]["min_x"] = json!(0.25);
@@ -253,20 +249,17 @@ mod tests {
         let mut after = before.clone();
         after["fov_y_degrees"] = json!("not a number");
 
-        // Modified whole value cannot be restored into component → reject.
         assert!(set_component_field(CAMERA, &before, "fov_y_degrees", &after).is_err());
     }
 
     #[test]
     fn handles_serde_shaped_enums_and_newtypes() {
-        // Enum written as serde string shape.
         let before = component_default(TEXT);
         let mut after = before.clone();
         after["alignment"] = json!("Left");
         let updated = set_component_field(TEXT, &before, "alignment", &after).unwrap();
         assert_eq!(updated["alignment"], json!("Left"));
 
-        // Newtype component is bare string.
         let before = json!("old");
         let after = json!("new");
         let updated = set_component_field(NAME, &before, "", &after).unwrap();
@@ -290,8 +283,6 @@ mod tests {
 
     #[test]
     fn field_writes_reuse_one_registry_across_threads() {
-        // Dragging field may write from a different thread pool thread; shared registry must be built once,
-        // and readable concurrently (`ComponentRegistry` callbacks are `Send + Sync`).
         assert!(std::ptr::eq(builtin_registry(), builtin_registry()));
 
         let before = camera_default();

@@ -13,10 +13,6 @@ use prism_ecs::{Entity, World};
 use prism_reflect::{Object, Reflect, ReflectError, TypeDesc, TypeId, TypeRegistry, Value};
 use serde::{de::DeserializeOwned, Serialize};
 
-// ---------------------------------------------------------------------------
-// ComponentRegistry
-// ---------------------------------------------------------------------------
-
 type DeserializerFn = Box<dyn Fn(&mut World, Entity, &serde_json::Value) + Send + Sync>;
 
 type JsonToObjectFn = Box<dyn Fn(&serde_json::Value) -> Option<Object> + Send + Sync>;
@@ -189,12 +185,10 @@ impl ComponentRegistry {
                     .map(|component| <C as Reflect>::to_object(&component))
             }),
         );
-        // Default author JSON for editor "add component": serde shape of `C::default()`.
         self.defaults.insert(
             key.clone(),
             Box::new(|| serde_json::to_value(C::default()).unwrap_or(serde_json::Value::Null)),
         );
-        // Reflection object → author JSON (`Object -> C -> serde JSON`).
         self.object_to_json.insert(
             key,
             Box::new(|object| {
@@ -389,10 +383,6 @@ impl Default for ComponentRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// built-in component register
-// ---------------------------------------------------------------------------
-
 /// The builtin registry, built once per process.
 ///
 /// Authoring JSON, the cook tools, the engine and project modules all need the
@@ -426,10 +416,8 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         Text,
     };
 
-    // ── scene base components ──
     registry.register_reflect_serde::<Active>("prism_engine::scene::Active");
 
-    // Name uses custom JSON shape (string, not {"0": ...}).
     registry.register_with("prism_engine::scene::Name", |world, entity, value| {
         if let Some(s) = value.as_str() {
             world.insert(entity, Name(s.to_string()));
@@ -449,7 +437,6 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
             .map(|name| serde_json::json!(name))
     });
 
-    // ── light source  ──
     #[cfg(feature = "group-3d")]
     {
         registry.register_reflect_serde::<Light>("prism_engine::scene::Light");
@@ -458,7 +445,6 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_serde::<PointLight>("prism_engine::scene::PointLight");
         registry.register_reflect_serde::<SpotLight>("prism_engine::scene::SpotLight");
 
-        // ── declarative lighting (scene-driven IBL / GI, avoid engine startup unconditional load) ──
         registry.register_reflect_serde::<EnvironmentLighting>(
             "prism_engine::scene::EnvironmentLighting",
         );
@@ -466,7 +452,6 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_serde::<ProbeVolume>("prism_engine::scene::ProbeVolume");
     }
 
-    // ── camera  ──
     registry.register_reflect_serde::<Camera>("prism_engine::scene::Camera");
     #[cfg(feature = "group-2d")]
     registry.register_reflect_serde::<VirtualCamera2D>("prism_engine::scene::VirtualCamera2D");
@@ -477,59 +462,39 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         );
     }
 
-    // ── skybox / render bundle ──
     #[cfg(feature = "group-3d")]
     {
         registry.register_reflect_serde::<Skybox>("prism_engine::scene::Skybox");
         registry.register_reflect_serde::<Gizmo>("prism_engine::scene::Gizmo");
         registry.register_reflect_serde::<MeshRenderer>("prism_engine::scene::MeshRenderer");
-        // #491: distance LOD (child entity is LOD level).
         registry.register_reflect_serde::<LodGroup>("prism_engine::scene::LodGroup");
     }
 
-    // ── 2D sprite (author state; GPU handle held by runtime `SpriteRef`) ──
     #[cfg(feature = "group-2d")]
     {
         registry.register_reflect_serde::<SpriteRenderer>("prism_engine::scene::SpriteRenderer");
         registry.register_reflect_serde::<LineRenderer>("prism_engine::scene::LineRenderer");
         registry.register_reflect_serde::<SpriteAnimation>("prism_engine::scene::SpriteAnimation");
         registry.register_reflect_serde::<Tilemap>("prism_engine::scene::Tilemap");
-        // #611: 2D sprite lighting (same group as SpriteRenderer, meaningless without sprite).
         registry.register_reflect_serde::<Light2D>("prism_engine::scene::Light2D");
-        // #983: day-night clock. It only writes color into ambient light of same entity, 2D scenes use it often,
-        // but can also do logical timing in pure 3D projects, so not limiting by `group-2d` is more sensible;
-        // currently registered with Light2D, keeping consistency "no 2D means no day-night appearance".
         registry.register_reflect_serde::<TimeOfDay>("prism_engine::scene::TimeOfDay");
-        // #1160: 2D camera and 2D physics
         registry.register_reflect_serde::<Camera2D>("prism_engine::scene::Camera2D");
         registry.register_reflect_serde::<RigidBody2D>("prism_engine::scene::RigidBody2D");
         registry
             .register_reflect_serde::<PhysicsCollider2D>("prism_engine::scene::PhysicsCollider2D");
     }
 
-    // ── local transform  ──
-    // Register **types only** (RTTIBin type table / editor field descriptions), not as attachable component:
-    // Author only writes `EntityJson::transform`, baked by loader / cooker into
-    // `LocalTransform` + `LocalToWorld` (the non-removable Transform in author state).
-    // If registered as component, `registry.apply` would overwrite `LocalTransform` after
-    // `LocalToWorld` computed, leaving world matrix calculated from old transform.
     registry.register_reflect_type::<LocalTransform>();
     registry.register_reflect_type::<TransformInterpolation2D>();
 
-    // ── keyframe animation ──
-    // Tracks contain nested structs, first register type (RTTIBin type table / editor field descriptions),
-    // then register component itself.
     registry.register_reflect_type::<crate::animation::Vec3Key>();
     registry.register_reflect_type::<crate::animation::AnimationEvent>();
     registry.register_reflect_serde::<KeyframeAnimation>("prism_engine::scene::KeyframeAnimation");
 
-    // ── particle emitter (author state; live particles in runtime `ParticleEmitter`) ──
     registry.register_reflect_serde::<ParticleSystem>("prism_engine::scene::ParticleSystem");
     registry.register_reflect_serde::<ParticleEmitter2D>("prism_engine::scene::ParticleEmitter2D");
-    // Screen-space emitter: simulated in the engine, emitted as UI quads (#1057).
     registry.register_reflect_serde::<UiParticleEmitter>("prism_engine::scene::UiParticleEmitter");
 
-    // ── audio (author state; decode and mixing in host layer `prism-app::scene_audio`) ──
     registry.register_reflect_serde::<AudioSource>("prism_engine::scene::AudioSource");
     registry.register_reflect_serde::<Terrain>("prism_engine::scene::Terrain");
     registry.register_reflect_type::<crate::voxel::VoxelBrick>();
@@ -538,7 +503,6 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         "prism_engine::scene::VoxelCursorHighlight",
     );
     registry.register_reflect_serde::<PostProcessVolume>("prism_engine::scene::PostProcessVolume");
-    // `Animator.layers` is nested struct; only after registering type can RSCN / editor schema parse.
     registry.register_reflect_type::<AnimLayer>();
     registry.register_reflect_serde::<Animator>("prism_engine::scene::Animator");
     registry.register_reflect_serde::<SkeletonRoot>("prism_engine::scene::SkeletonRoot");
@@ -553,27 +517,20 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         .register_reflect_serde::<CharacterController>("prism_engine::scene::CharacterController");
     registry.register_reflect_serde::<AudioListener>("prism_engine::scene::AudioListener");
 
-    // ── prefab instance (editor metadata) ──
     registry.register_reflect_serde::<PrefabInstance>("prism_engine::scene::PrefabInstance");
 
-    // ── UI component  ──
     #[cfg(feature = "group-ui")]
     {
         registry.register_reflect_serde::<Layout>("prism_engine::ui::Layout");
         registry.register_reflect_serde::<Node>("prism_engine::ui::Node");
         registry.register_reflect_serde::<Style>("prism_engine::ui::Style");
-        // `ComputedLayout` is output of layout system (`rect` rewritten every frame),
-        // ensured by `ui::layout`; only register type, don't let author attach.
         registry.register_reflect_type::<ComputedLayout>();
         registry.register_reflect_serde::<Text>("prism_engine::ui::Text");
-        // #528: components of interactive UI must be savable in scene / prefab.
         registry.register_reflect_serde::<Interaction>("prism_engine::ui::Interaction");
         registry.register_reflect_serde::<Button>("prism_engine::ui::Button");
-        // #463: canvas scale (reference resolution → actual screen).
         registry.register_reflect_serde::<Canvas>("prism_engine::ui::Canvas");
     }
 
-    // ── nested types (type table / cook needed) ──
     registry.register_reflect_type::<glam::Vec2>();
     registry.register_reflect_type::<glam::Vec3>();
     registry.register_reflect_type::<glam::Vec4>();
@@ -583,8 +540,6 @@ pub fn register_builtin_components(registry: &mut ComponentRegistry) {
         registry.register_reflect_type::<Anchors>();
         registry.register_reflect_type::<Pivot>();
         registry.register_reflect_type::<Margin>();
-        // Nested type of `Style.layout` (#527 / #709): missing registration makes all scenes with `Style`
-        // fail RSCN encode with `type ... is not registered`.
         registry.register_reflect_type::<Layout>();
     }
 }
@@ -635,7 +590,6 @@ mod tests {
             glam::Vec3::new(1.0, 2.0, 3.0)
         );
 
-        // export goes through same schema.
         let extracted = registry
             .extract_object_by_name(&world, entity, "prism_engine::scene::Camera")
             .unwrap();
@@ -654,8 +608,6 @@ mod tests {
 
     #[test]
     fn builtin_registry_is_shared() {
-        // Project modules and the engine must hash the same schema, so the
-        // registry is built once and handed out by reference.
         assert!(std::ptr::eq(builtin_registry(), builtin_registry()));
         assert_eq!(
             builtin_registry().schema_fingerprint(),
@@ -668,10 +620,8 @@ mod tests {
         let mut registry = ComponentRegistry::new();
         crate::registry::register_builtin_components(&mut registry);
 
-        // Each built-in component has "add component" default value, and can deserialize back to component.
         let names = registry.component_names();
 
-        // schema_fingerprint is deterministic and non-zero
         let fp1 = registry.schema_fingerprint();
         assert_ne!(fp1, 0);
         let fp2 = builtin_schema_fingerprint();
@@ -685,7 +635,6 @@ mod tests {
             let entity = world.spawn();
             registry.apply(&mut world, entity, name, &default);
 
-            // Export via reflection path, shape should match default (Name uses custom converter).
             if let Some(object) = registry.extract_object_by_name(&world, entity, name) {
                 assert_eq!(
                     registry.object_from_json(name, &default),
@@ -695,14 +644,11 @@ mod tests {
             }
         }
 
-        // Name default shape is bare string (custom JSON shape).
         assert_eq!(
             registry.default_json("prism_engine::scene::Name"),
             Some(serde_json::json!("entity"))
         );
 
-        // Types nested in author components must also be registered, otherwise RSCN encode will
-        // fail with `type ... is not registered` (#709 `Style.layout`).
         for nested in [
             "prism_engine::ui::Anchors",
             "prism_engine::ui::Pivot",
@@ -718,7 +664,6 @@ mod tests {
             );
         }
 
-        // Each component can round-trip "author JSON -> reflection object -> author JSON".
         for name in &names {
             let default = registry.default_json(name).unwrap();
             let object = registry

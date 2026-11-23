@@ -99,9 +99,7 @@ impl RunningGame {
             .map_err(|_| "Game process state poisoned".to_string())?;
         if let Some(child) = slot.as_mut() {
             match child.try_wait() {
-                // Still alive: do not launch second one.
                 Ok(None) => return Err("Game is already running".to_string()),
-                // Already exited or query failed: clear handle, allow relaunch.
                 _ => *slot = None,
             }
         }
@@ -121,7 +119,6 @@ impl RunningGame {
         if let Some(config) = config {
             cmd.env("PRISMA_LAUNCH_CONFIG", config);
         }
-        // Do not swallow game output: only connect stdin to null, stdout/stderr inherit launcher console.
         cmd.stdin(Stdio::null());
         let child = cmd
             .spawn()
@@ -164,7 +161,6 @@ mod tests {
     #[test]
     fn dev_layout_finds_the_game_crate_target() {
         let root = scratch("dev");
-        // Repo: <root>/repo/{Cargo.toml, projects/template/Cargo.toml}
         let repo = root.join("repo");
         touch(&repo.join("Cargo.toml"));
         touch(&repo.join(GAME_CRATE_DIR).join("Cargo.toml"));

@@ -448,7 +448,6 @@ mod tests {
         assert_eq!(manifest.scenes[index].path, "scenes/level2.rscn");
         assert!(manifest.add_document("scenes/level2.scene.json").is_none());
 
-        // Same name (different directory) gets a suffix added automatically.
         let other = manifest
             .add_document("scenes/sub/level2.scene.json")
             .unwrap();

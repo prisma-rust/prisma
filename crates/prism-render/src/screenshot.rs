@@ -102,7 +102,6 @@ impl ScreenshotCapture {
         extent: vk::Extent2D,
         mut request: ScreenshotRequest,
     ) -> Result<Self> {
-        // Scale factor parsed here: caller need not know swapchain size first.
         if request.size.is_none() {
             if let Some(scale) = request.scale.filter(|s| *s > 0.0) {
                 let w = ((extent.width as f32) * scale).round().max(1.0) as u32;
@@ -265,7 +264,6 @@ impl ScreenshotCapture {
             context.device.unmap_memory(self.memory);
         }
 
-        // Swapchain common format is B8G8R8A8; PNG needs RGBA.
         let bgra = matches!(
             swapchain_format,
             vk::Format::B8G8R8A8_SRGB | vk::Format::B8G8R8A8_UNORM
@@ -275,7 +273,6 @@ impl ScreenshotCapture {
                 texel.swap(0, 2);
             }
         }
-        // Swapchain may be sRGB storage; PNG stored as sRGB, no need to convert again.
 
         let mut image = image::RgbaImage::from_raw(width as u32, height as u32, pixels)
             .context("screenshot: build image buffer")?;

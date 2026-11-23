@@ -135,7 +135,6 @@ impl Key {
                 10 => Key::F11,
                 _ => Key::F12,
             },
-            // Digit row: the `VK_*` codes are the ASCII codes for `0`-`9`.
             0x30..=0x39 => match vk - 0x30 {
                 0 => Key::Digit0,
                 1 => Key::Digit1,
@@ -413,9 +412,9 @@ mod tests {
     /// Unmodeled keys must not be dropped: they degrade to the backend raw code.
     #[test]
     fn unmapped_virtual_keys_fall_back_to_raw_code() {
-        assert_eq!(Key::from_vk(0x5A), Key::Letter(b'Z')); // 'Z'
-        assert_eq!(Key::from_vk(0x24), Key::Other(0x24)); // VK_HOME
-        assert_eq!(Key::from_vk(0x7C), Key::Other(0x7C)); // VK_F13
+        assert_eq!(Key::from_vk(0x5A), Key::Letter(b'Z'));
+        assert_eq!(Key::from_vk(0x24), Key::Other(0x24));
+        assert_eq!(Key::from_vk(0x7C), Key::Other(0x7C));
     }
 
     /// Regression guard: one wheel notch must reach the engine as 1.0 line in either

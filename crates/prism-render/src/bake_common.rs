@@ -13,10 +13,6 @@ use crate::context::VulkanContext;
 use crate::descriptor::{PtEmissiveTri, PT_EMISSIVE_MAX};
 use crate::mesh::Vertex;
 
-// -------------------------------------------------------------------
-// Per-instance PT geometry types
-// -------------------------------------------------------------------
-
 /// One ray-traceable scene instance: its own world-space vertex/index data
 /// and the material SSBO slot the path tracer looks up via the TLAS
 /// `instanceCustomIndex` at hit time.
@@ -95,10 +91,6 @@ impl Drop for PtScene {
     }
 }
 
-// -------------------------------------------------------------------
-// Emissive triangle extraction
-// -------------------------------------------------------------------
-
 /// Extract emissive triangles from scene instances + materials bytes.
 ///
 /// Iterates over all instances, checks each instance's material for emissive
@@ -113,7 +105,7 @@ pub fn build_emissive_triangles(
     instances: &[PtGeometryInstance],
     materials_bytes: &[u8],
 ) -> Vec<PtEmissiveTri> {
-    const MAT_SIZE: usize = 96; // GpuMaterial is 96 bytes
+    const MAT_SIZE: usize = 96;
     let mut out: Vec<PtEmissiveTri> = Vec::new();
     for inst in instances {
         let mat_offset = (inst.material_slot as usize) * MAT_SIZE;
@@ -190,10 +182,6 @@ pub fn create_emissive_buffer(
     }
 }
 
-// -------------------------------------------------------------------
-// BLAS / TLAS build
-// -------------------------------------------------------------------
-
 /// Build a [`PtScene`] from per-instance geometry + a materials SSBO byte
 /// buffer. Creates a combined vertex/index buffer, one BLAS per instance
 /// (pointing at its slice of the combined buffers), a TLAS whose
@@ -212,7 +200,6 @@ pub fn build_pt_scene(
         anyhow::bail!("build_pt_scene: no instances");
     }
 
-    // ---- 1. Concatenate all instances into one combined vertex/index buffer.
     let mut all_verts: Vec<Vertex> = Vec::new();
     let mut all_indices: Vec<u32> = Vec::new();
     let mut meta: Vec<PtInstanceMeta> = Vec::with_capacity(instances.len());
@@ -250,7 +237,6 @@ pub fn build_pt_scene(
     let (matbuf, matmem) = create_storage_buffer(context, materials_bytes)
         .context("build_pt_scene: materials buffer")?;
 
-    // ---- 2. Build all BLAS in one batch (single submit + wait).
     let index_stride = 4u32 as vk::DeviceAddress;
     let total_verts = all_verts.len() as u32;
 
@@ -315,10 +301,6 @@ pub fn build_pt_scene(
         device: Some(device.clone()),
     })
 }
-
-// -------------------------------------------------------------------
-// Buffer upload helpers
-// -------------------------------------------------------------------
 
 pub fn vertex_bytes(vertices: &[Vertex]) -> &[u8] {
     bytemuck::cast_slice(vertices)

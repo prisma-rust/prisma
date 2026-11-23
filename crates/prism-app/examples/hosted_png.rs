@@ -43,7 +43,6 @@ fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("load scene '{scene}': {error}"))?;
     app.start_hosted(width, height);
 
-    // Render thread is async: per frame request_frame -> wait readback (wait up to 5s/frame).
     let mut frame = None;
     for index in 0..frames.max(1) {
         app.host_tick(true);

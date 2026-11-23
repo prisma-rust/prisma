@@ -114,25 +114,20 @@ fn a_valid_clip_reports_its_tracks() {
 #[test]
 fn a_clip_track_past_the_skeleton_is_reported() {
     let bytes = encode_ranim(&clip()).expect("encode");
-    // Only 1 bone declared, but track points to joint 1.
     let (_, _, problems) = inspect_clip_with_skeleton(&bytes, Some(1));
     assert_eq!(problems.len(), 1);
     assert!(
         problems[0].contains("track targets joint 1"),
         "{problems:?}"
     );
-    // No issue when enough bones.
     assert!(inspect_clip_with_skeleton(&bytes, Some(2)).2.is_empty());
 }
 
 #[test]
 fn a_short_mesh_with_broken_weights_is_flagged() {
-    // Weights 0.2 and 0.8: cooker will normalize, but hand-built bad file must be detected.
     let mut mesh = skinned_mesh();
     mesh.weights = vec![[0.4, 0.4, 0.0, 0.0]; 3];
-    // Bypass encoder normalization directly: first encode valid, then corrupt weight stream.
     let mut bytes = encode_rskin(&skinned_mesh()).expect("encode");
-    // Weight stream begins after joint stream: header(25) + positions(3*12) + joints(3*8).
     let weight_start = 25 + 3 * 12 + 3 * 8;
     for vertex in 0..3 {
         let offset = weight_start + vertex * 16;
@@ -147,7 +142,7 @@ fn a_short_mesh_with_broken_weights_is_flagged() {
             .any(|problem| problem.contains("do not sum to 1")),
         "{problems:?}"
     );
-    let _ = mesh; // only to illustrate original value
+    let _ = mesh;
 }
 
 #[test]
@@ -171,9 +166,7 @@ fn unknown_magic_is_reported_not_panicking() {
     let (kind, _, problems) = inspect_bytes(b"nope");
     assert_eq!(kind, "unknown");
     assert_eq!(problems.len(), 1);
-    // Empty file is also safe.
     assert_eq!(inspect_bytes(b"").0, "unknown");
-    // File with only magic, no content, also does not panic.
     let (kind, _, problems) = inspect_bytes(b"RSKN");
     assert_eq!(kind, "rskin");
     assert!(!problems.is_empty());

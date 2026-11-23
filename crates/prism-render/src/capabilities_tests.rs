@@ -2,9 +2,6 @@ use super::*;
 
 #[test]
 fn collect_extension_names_extracts_names() {
-    // extension_name is [c_char] (= i8 on Windows). Build the byte arrays
-    // and cast so the copy is type-correct on both signed and unsigned
-    // c_char platforms.
     fn make_name(bytes: &[u8]) -> [std::os::raw::c_char; 256] {
         let mut arr = [0; 256];
         for (i, &b) in bytes.iter().enumerate() {
@@ -52,7 +49,6 @@ fn transfer_commands_require_both_extensions() {
 
 #[test]
 fn caps_any_ray_tracing_requires_accel_struct() {
-    // RT pipeline alone (without acceleration structure is not usable.
     let mut caps = RayTracingCaps {
         ray_tracing_pipeline: true,
         ..Default::default()
@@ -60,7 +56,6 @@ fn caps_any_ray_tracing_requires_accel_struct() {
     assert!(!caps.any_ray_tracing());
     assert!(!caps.has_rt_pipeline());
 
-    // With acceleration structure it becomes usable.
     caps.acceleration_structure = true;
     assert!(caps.any_ray_tracing());
     assert!(caps.has_rt_pipeline());
@@ -101,7 +96,6 @@ fn rt_extension_names_full_rt_pipeline() {
         ..Default::default()
     };
     let names = rt_extension_names(&caps);
-    // Vulkan 1.1 also needs the promoted dependency extensions.
     assert_eq!(names.len(), 9);
     assert!(names.contains(&vk::EXT_DESCRIPTOR_INDEXING_NAME));
     assert!(names.contains(&vk::KHR_BUFFER_DEVICE_ADDRESS_NAME));
@@ -128,7 +122,6 @@ fn rt_extension_names_ray_query_only() {
         ..Default::default()
     };
     let names = rt_extension_names(&caps);
-    // accel + deferred + ray_query plus promoted dependencies.
     assert_eq!(names.len(), 5);
     assert!(names.contains(&vk::EXT_DESCRIPTOR_INDEXING_NAME));
     assert!(names.contains(&vk::KHR_BUFFER_DEVICE_ADDRESS_NAME));

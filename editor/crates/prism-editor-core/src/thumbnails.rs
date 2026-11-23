@@ -265,7 +265,6 @@ mod tests {
         );
         assert_eq!(cache.decodes(), 1);
 
-        // Rewriting the file invalidates the entry (different length).
         std::fs::write(root.join("sprite.png"), png_bytes(32, 16, [4, 5, 6, 255])).unwrap();
         assert_eq!(
             cache.get(&root, "sprite.png", 16).map(|t| t.size()),

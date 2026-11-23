@@ -315,7 +315,6 @@ mod tests {
         assert_eq!(cpu.samples, 5);
         assert_eq!(cpu.mean_ms, 3.0);
         assert_eq!(cpu.p50_ms, 3.0);
-        // ceil(0.95 * 5) = 5 -> the largest sample.
         assert_eq!(cpu.p95_ms, 5.0);
         assert_eq!(cpu.p99_ms, 5.0);
         assert_eq!(cpu.p999_ms, 5.0);
@@ -323,14 +322,11 @@ mod tests {
 
     #[test]
     fn low_fps_uses_the_slowest_frames() {
-        // 99 fast frames and one 100 ms hitch.
         let mut samples = vec![1.0f32; 99];
         samples.push(100.0);
         let stats = stats_with(&samples);
         let cpu = stats.summary().cpu.expect("cpu summary");
-        // ceil(0.01 * 100) = 1 -> only the hitch.
         assert!((cpu.low_1pct_fps - 10.0).abs() < 1e-4);
-        // 0.1% of 100 frames still rounds up to one frame.
         assert!((cpu.low_0_1pct_fps - 10.0).abs() < 1e-4);
     }
 
@@ -339,8 +335,6 @@ mod tests {
         let stats = stats_with(&[0.5, 16.0, 16.67, 2000.0]);
         let cpu = stats.summary().cpu.expect("cpu summary");
         assert_eq!(cpu.histogram.iter().sum::<u32>(), 4);
-        // 0.5 -> bucket of edge 1.0 (index 1); 16.0 -> edge 16.67 (index 12);
-        // 16.67 is not < 16.67 -> edge 20 (index 13); 2000 -> overflow.
         assert_eq!(cpu.histogram[1], 1);
         assert_eq!(cpu.histogram[12], 1);
         assert_eq!(cpu.histogram[13], 1);

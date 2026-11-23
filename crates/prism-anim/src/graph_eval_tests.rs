@@ -134,8 +134,6 @@ fn a_clip_player_samples_the_clip_and_advances_its_own_time() {
         .evaluate(&source, &skeleton, 0.0)
         .expect("evaluates");
     assert!((x(&pose) - 2.0).abs() < 1e-5);
-    // A second evaluation on the same frame is cached (no double time advance),
-    // and a new frame still returns the same static clip.
     let pose = evaluator
         .evaluate(&source, &skeleton, 0.5)
         .expect("evaluates");
@@ -552,7 +550,6 @@ fn a_missing_state_machine_is_reported() {
 
 #[test]
 fn every_node_kind_is_covered_by_the_switch() {
-    // Compile-time guarantees exhaustive enum match; at runtime confirm Slots / CachedPose are also transparent pass-through.
     let mut clip = node("clip", GraphNodeKind::ClipPlayer);
     clip.clips.push("a.ranim".into());
     let mut slot = node("slot", GraphNodeKind::Slot);
@@ -710,7 +707,6 @@ fn a_slot_overlays_an_optional_montage_clip_by_weight() {
         .expect("evaluates");
     assert!((x(&pose) - 5.0).abs() < 1e-5, "x={}", x(&pose));
 
-    // Weight 0 keeps the base untouched.
     let mut evaluator = AnimGraphEvaluator::new(graph(
         vec![
             {
@@ -952,15 +948,12 @@ fn blend_space_per_sample_speeds_drive_independent_playheads() {
     ]);
     let skeleton = skeleton();
 
-    // run's playhead speed is 2: after 0.25s it reaches phase 0.5, linear track x = 10.
     let pose = evaluator.evaluate(&source, &skeleton, 0.25).expect("first");
     assert!((x(&pose) - 10.0).abs() < 1e-4, "x={}", x(&pose));
 
-    // another 0.25s exactly back to 0.
     let pose = evaluator.evaluate(&source, &skeleton, 0.25).expect("wrap");
     assert!(x(&pose).abs() < 1e-4, "x={}", x(&pose));
 
-    // back to shared phase after clearing config.
     evaluator.set_blend_space_speeds("locomotion", Vec::new());
     assert!(evaluator.blend_space_speeds("locomotion").is_none());
 }

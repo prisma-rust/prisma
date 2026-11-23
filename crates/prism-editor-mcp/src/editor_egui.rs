@@ -62,8 +62,6 @@ impl EditorHost {
                 _ => *guard = None,
             }
         }
-        // The port file identifies *this* process: delete it first and wait for
-        // it to reappear before considering the editor ready.
         let port_file = port_file(root);
         let _ = std::fs::remove_file(&port_file);
 
@@ -89,10 +87,6 @@ impl EditorHost {
         let deadline = Instant::now() + Duration::from_millis(wait);
         while Instant::now() < deadline {
             if port_file.exists() && control_port(root).is_ok() {
-                // Returning as soon as the port appears would let the first
-                // `editor_ui` see an empty dock (panels are not drawn on the
-                // first frame), so wait until a few frames have actually been
-                // drawn before handing back control.
                 let ready = request(root, json!({ "cmd": "status" }))
                     .ok()
                     .and_then(|status| status.get("frames").and_then(Value::as_u64))
@@ -367,8 +361,6 @@ fn capture(root: &Path, args: &Value) -> Result<String, String> {
 }
 
 fn quit(host: &EditorHost) -> Result<String, String> {
-    // The control channel also works when `--project` cannot find a project
-    // root: use the known port file directly.
     let root = prism_editor_mcp::resolve_root().map_err(|err| err.to_string())?;
     let response = request(&root, json!({ "cmd": "quit" }))?;
     let mut guard = host
@@ -425,8 +417,6 @@ fn request(root: &Path, body: Value) -> Result<Value, String> {
         .map_err(|err| format!("Failed to read control channel: {err}"))?;
     let reply: Value = serde_json::from_str(line.trim())
         .map_err(|err| format!("Control channel reply not JSON: {err}"))?;
-    // Keep the raw reply (including `kind`: bad_request / not_ready / denied /
-    // internal) in the error text so the tool caller can decide whether to retry.
     if reply.get("ok").and_then(Value::as_bool) == Some(false) {
         return Err(reply.to_string());
     }
@@ -447,8 +437,6 @@ fn default_command(root: &Path) -> String {
             return with_exe.display().to_string();
         }
     }
-    // Fall back to cargo if the editor has never been built (it compiles
-    // first: slow but usable).
     format!(
         "cargo run -p prism-editor-egui --manifest-path {}",
         editor_root.join("editor/Cargo.toml").display()

@@ -48,7 +48,7 @@ fn key_held_survives_begin_frame() {
     s.handle_keyboard(key_w(), ElementState::Pressed);
     s.begin_frame();
     assert!(s.key_held(KeyCode::KeyW));
-    assert!(!s.key_just_pressed(KeyCode::KeyW)); // transient cleared
+    assert!(!s.key_just_pressed(KeyCode::KeyW));
 }
 
 #[test]
@@ -65,9 +65,9 @@ fn key_just_released_on_release() {
 fn duplicate_key_press_does_not_double_just_pressed() {
     let mut s = InputManager::new();
     s.handle_keyboard(key_w(), ElementState::Pressed);
-    s.handle_keyboard(key_w(), ElementState::Pressed); // duplicate
+    s.handle_keyboard(key_w(), ElementState::Pressed);
     assert!(s.key_held(KeyCode::KeyW));
-    assert_eq!(s.keys_just_pressed.len(), 1); // only once
+    assert_eq!(s.keys_just_pressed.len(), 1);
 }
 
 #[test]
@@ -78,12 +78,12 @@ fn mouse_delta_accumulates_and_resets() {
     assert_eq!(s.mouse_position(), [100.0, 200.0]);
 
     s.handle_mouse_move([110.0, 195.0]);
-    assert_eq!(s.mouse_delta(), [110.0, 195.0]); // full delta from origin
+    assert_eq!(s.mouse_delta(), [110.0, 195.0]);
     assert_eq!(s.mouse_position(), [110.0, 195.0]);
 
     s.begin_frame();
     assert_eq!(s.mouse_delta(), [0.0, 0.0]);
-    assert_eq!(s.mouse_position(), [110.0, 195.0]); // position persists
+    assert_eq!(s.mouse_position(), [110.0, 195.0]);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn scroll_delta_y() {
     s.handle_scroll(3.0);
     assert!((s.scroll_delta() - 3.0).abs() < 1e-9);
     s.handle_scroll(-1.0);
-    assert!((s.scroll_delta() - 2.0).abs() < 1e-9); // accumulated
+    assert!((s.scroll_delta() - 2.0).abs() < 1e-9);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn mouse_button_held_and_just_pressed() {
 
     s.begin_frame();
     assert!(s.mouse_held(MouseButton::Left));
-    assert_eq!(s.mouse_just_pressed.len(), 0); // transient cleared
+    assert_eq!(s.mouse_just_pressed.len(), 0);
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn begin_frame_clears_all_transient() {
 
     s.begin_frame();
     assert!(!s.key_just_pressed(KeyCode::Space));
-    assert!(s.key_held(KeyCode::Space)); // held persists
+    assert!(s.key_held(KeyCode::Space));
     assert_eq!(s.mouse_delta(), [0.0; 2]);
     assert_eq!(s.scroll_delta(), 0.0);
 }
@@ -176,10 +176,7 @@ fn begin_frame_clears_all_transient() {
 #[test]
 fn snapshot_drops_key_codes_that_do_not_fit_the_bitmap() {
     let mut input = InputManager::new();
-    // 452 previously would fold to 30 + 452 % 226 = 30, looking like another key held.
-    // Bit graph base now is 43 (`KeyT` + `F1..=F12` occupy 30..=42).
     input.handle_keyboard(KeyCode::Other(452), ElementState::Pressed);
-    // A normal, fitting key code also mapped below to confirm other keys unaffected.
     input.handle_keyboard(KeyCode::Other(10), ElementState::Pressed);
 
     let snapshot = input_snapshot(&input, [640.0, 360.0]);
@@ -212,7 +209,6 @@ fn snapshot_carries_cursor_keys_edges_and_scroll() {
     assert!(snapshot.key(keys::SPACE));
     assert!(snapshot.key_pressed(keys::SPACE));
 
-    // Next frame: edges cleared, held keys remain.
     input.begin_frame();
     let next = input_snapshot(&input, [640.0, 360.0]);
     assert!(next.key(keys::SPACE));

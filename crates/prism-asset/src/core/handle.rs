@@ -26,7 +26,6 @@ pub struct Handle<T: ?Sized> {
     _marker: PhantomData<fn() -> T>,
 }
 
-// Manual Clone/Copy to avoid deriving T: Clone/T: Copy bounds.
 impl<T: ?Sized> Clone for Handle<T> {
     fn clone(&self) -> Self {
         *self
@@ -34,7 +33,6 @@ impl<T: ?Sized> Clone for Handle<T> {
 }
 impl<T: ?Sized> Copy for Handle<T> {}
 
-// Manual PartialEq/Eq/Hash to avoid deriving T-bound versions.
 impl<T: ?Sized> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.packed == other.packed
@@ -125,10 +123,6 @@ impl<T: ?Sized> Default for Handle<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Type-erased handle (for heterogeneous storage)
-// ---------------------------------------------------------------------------
-
 /// A type-erased handle. Use this in collections that store handles of mixed
 /// types (e.g. the runtime's asset slot array).
 ///
@@ -203,10 +197,6 @@ impl fmt::Debug for AnyHandle {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type alias for asset handles
-// ---------------------------------------------------------------------------
 
 /// A handle to any asset type (type-erased, stored alongside a type tag).
 pub type AnyAsset = AnyHandle;

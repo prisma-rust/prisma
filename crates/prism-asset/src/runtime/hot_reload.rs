@@ -16,19 +16,11 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Error)]
 pub enum HotReloadError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
 
 /// Events reported by the hot-reload watcher.
 #[derive(Debug, Clone)]
@@ -38,10 +30,6 @@ pub enum HotReloadEvent {
     /// An unexpected watch error occurred.
     WatchError(String),
 }
-
-// ---------------------------------------------------------------------------
-// Hot Reload Watcher
-// ---------------------------------------------------------------------------
 
 /// Polls one or more `.pak` files for changes at a configurable interval.
 ///
@@ -131,7 +119,6 @@ impl HotReloadWatcher {
         let stop = Arc::new(Mutex::new(false));
         let stop_clone = stop.clone();
 
-        // Snapshot of modification times at start.
         let mut mtimes: HashMap<PathBuf, Stamp> = HashMap::new();
         for p in &paths {
             if let Some(stamp) = stamp_of(p) {

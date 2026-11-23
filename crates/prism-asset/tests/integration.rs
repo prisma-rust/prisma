@@ -20,16 +20,11 @@ fn asset_path(file: &str) -> String {
     p
 }
 
-// ---------------------------------------------------------------------------
-// Typetag polymorphic round-trip
-// ---------------------------------------------------------------------------
-
 /// Deserialize each asset type as `Box<dyn AssetData>`, verify type info.
 fn round_trip_as_erased(path: &str) {
     let bytes = std::fs::read(path).expect("read asset file");
     let asset: Box<dyn AssetData> = serde_json::from_slice(&bytes).expect("deserialize as erased");
 
-    // Must have a non-empty display name (set by `impl_asset_data!`).
     let name = asset.display_name();
     assert!(!name.is_empty(), "display_name should not be empty");
 }
@@ -47,10 +42,6 @@ where
     );
     println!("  OK: {asset:?}");
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn material_round_trip_erased() {

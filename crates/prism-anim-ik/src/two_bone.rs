@@ -113,8 +113,6 @@ pub fn solve_two_bone(
     }
     let direction = to_target / target_distance;
 
-    // Keep a sliver of bend at both extremes: a perfectly straight chain has an
-    // undefined bend plane and `from_rotation_arc` would return identity anyway.
     let max_reach = upper_length + lower_length - MIN_LENGTH;
     let min_reach = (upper_length - lower_length).abs() + MIN_LENGTH;
     if min_reach >= max_reach {
@@ -123,9 +121,6 @@ pub fn solve_two_bone(
     let reach = target_distance.clamp(min_reach, max_reach);
     let clamped = (reach - target_distance).abs() > 1e-6;
 
-    // Bend plane: the pole projected perpendicular to the target direction.
-    // A pole parallel to the direction cannot define a plane, so fall back to
-    // the axis least aligned with it (stable and deterministic per target).
     let mut bend = pole - direction * pole.dot(direction);
     if bend.length() < MIN_LENGTH {
         let axis = if direction.x.abs() < 0.9 {
@@ -140,7 +135,6 @@ pub fn solve_two_bone(
     }
     let bend = bend.normalize();
 
-    // Law of cosines at the upper joint.
     let cos_upper = ((upper_length * upper_length + reach * reach - lower_length * lower_length)
         / (2.0 * upper_length * reach))
         .clamp(-1.0, 1.0);
@@ -209,8 +203,6 @@ pub fn apply_two_bone_ik(
         weight,
     )?;
 
-    // Local delta for a bone: `parent_world^-1 * world_delta * parent_world`,
-    // so that `world_delta * parent_world * local` composes correctly.
     let parent_world_rotation = skeleton.joints()[chain.upper]
         .parent
         .map(|parent| world[parent].to_scale_rotation_translation().1)
@@ -226,7 +218,6 @@ pub fn apply_two_bone_ik(
         },
     );
 
-    // The middle bone's parent is the upper bone, whose world rotation changed.
     let upper_world_after = solution.upper_rotation * upper_world_rotation;
     let middle_local = pose.local(chain.middle)?;
     let middle_delta_local =
@@ -239,8 +230,6 @@ pub fn apply_two_bone_ik(
         },
     );
 
-    // Report where the chain actually ended up: slerp on the two rotations is not
-    // the same curve as lerping the positions.
     let posed = skeleton.world_matrices(pose);
     let (_, _, posed_middle) = posed[chain.middle].to_scale_rotation_translation();
     let (_, _, posed_end) = posed[chain.end].to_scale_rotation_translation();

@@ -241,7 +241,6 @@ mod tests {
         assert_eq!(scenes[0].path, "scenes/renamed.rscn");
         assert_eq!(scenes[0].guid.as_deref(), Some(meta.guid.as_str()));
 
-        // Saving a path-only entry adds the sidecar GUID.
         write(
             &root,
             &[SceneListEntry {

@@ -109,7 +109,6 @@ impl Heightfield {
         let right = self.sample_height(u + step, v) * height_scale;
         let down = self.sample_height(u, v - step) * height_scale;
         let up = self.sample_height(u, v + step) * height_scale;
-        // Mesh is equidistant samples over world size, so gradient only needs scaling by cell distance.
         let dx = (right - left) / (2.0 * step).max(1e-6);
         let dz = (up - down) / (2.0 * step).max(1e-6);
         let normal = glam::Vec3::new(-dx, 1.0, -dz).normalize_or_zero();
@@ -281,7 +280,6 @@ impl Heightfield {
 
         let [size_x, size_z] = [size[0].max(0.001), size[1].max(0.001)];
         let last_f = last as f32;
-        // Chunk center position in whole terrain local space; vertices subtract it.
         let center_x = ((x0 + x1) as f32 * 0.5 / last_f - 0.5) * size_x;
         let center_z = ((z0 + z1) as f32 * 0.5 / last_f - 0.5) * size_z;
         let xs = sample_indices(x0, x1, step);
@@ -629,11 +627,9 @@ pub fn terrain_raycast(
 
     let (_, start_height, _) = terrain_sample(world, origin.x, origin.z)?;
     if origin.y < start_height {
-        // Origin already below surface (e.g. camera buried in mountain): no "crossing from inside" hit.
         return None;
     }
 
-    // Coarse sample step: shorter ray finer, longer ray at most 512 samples; then 16 binary steps.
     let step = (max_distance / 512.0).clamp(0.25, 8.0).min(max_distance);
     let samples = ((max_distance / step).ceil() as usize).clamp(1, 4096);
     let mut previous: Option<(f32, f32)> = if origin.y > start_height {
@@ -742,7 +738,6 @@ pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
             return Some(Heightfield::flat(terrain.cells()));
         }
     };
-    // `resolution = 0` = follow file size; otherwise must match exactly, avoid drawing wrong terrain.
     let parsed = if terrain.resolution == 0 {
         Heightfield::from_raw_auto(&bytes)
     } else {
@@ -908,7 +903,6 @@ fn apply_terrain_lod(world: &mut prism_ecs::World) {
             )
         })
         .collect();
-    // Terrain without world matrix yet (just spawned): distance by origin.
     let terrains_without_transform: Vec<(prism_ecs::Entity, Vec<f32>)> = world
         .query::<Terrain>()
         .filter(|(entity, _)| world.get::<LocalToWorld>(*entity).is_none())
@@ -1172,7 +1166,6 @@ fn rebuild_terrain(
     despawn_vegetation(world, entity);
     world.remove::<TerrainSplat>(entity);
 
-    // Old mesh no longer referenced, recycle it too.
     if let Some(previous) = world.get::<TerrainData>(entity) {
         let previous_path = previous.mesh_path.clone();
         if !previous_path.is_empty() {
@@ -1188,7 +1181,6 @@ fn rebuild_terrain(
     let size = terrain.size;
     let height_scale = terrain.height_scale;
     let hash = fnv1a64(&key);
-    // At least one quad per chunk; small mesh (cells = 2) degrades to single chunk.
     let chunks = terrain.chunk_count().min(field.cells() - 1).max(1);
 
     let levels = terrain.lod_level_count();
@@ -1209,7 +1201,6 @@ fn rebuild_terrain(
             meshes.insert(path.clone(), mesh);
         }
 
-        // MeshRenderer is author component: only change path, keep material and shadow settings.
         match world.get_mut::<MeshRenderer>(entity) {
             Some(renderer) => renderer.mesh_path = path.clone(),
             None => {
@@ -1261,8 +1252,6 @@ fn rebuild_terrain(
         return;
     }
 
-    // Multi-chunk / LOD: owner only keeps material / shadow settings, no longer draws directly.
-    // Each LOD level is a set entity, under it all chunks of that level.
     if let Some(renderer) = world.get_mut::<MeshRenderer>(entity) {
         apply_splat_renderer(renderer, &terrain);
     }
@@ -1376,7 +1365,6 @@ fn rebuild_terrain(
         &renderer_template,
     );
 
-    // Owner no longer has MeshRef, so won't be drawn again in main pass.
     world.remove::<MeshRef>(entity);
     if let Some(renderer) = world.get_mut::<MeshRenderer>(entity) {
         renderer.mesh_path.clear();

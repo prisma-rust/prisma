@@ -86,8 +86,6 @@ fn parse_legacy_toml(text: &str) -> Result<SceneManifest, String> {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            // Another table (should not appear): close the current entry and
-            // ignore the keys that follow.
             if let Some(entry) = current.take() {
                 scenes.push(entry);
             }

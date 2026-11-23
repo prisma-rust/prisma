@@ -12,7 +12,6 @@ use std::process::Command;
 use super::CrashChoice;
 
 pub fn show(title: &str, message: &str) -> CrashChoice {
-    // zenity --question: exit 0 = Yes (Copy & Exit), 1 = No (Exit).
     let body = format!(
         "{message}\n\n\
          Yes = copy this text to the clipboard, then exit\n\
@@ -44,7 +43,6 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
 }
 
 pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    // Try xclip first; fall back to xsel.
     if try_clip("xclip", &["-selection", "clipboard"], text).is_ok() {
         return Ok(());
     }

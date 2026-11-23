@@ -15,10 +15,6 @@ use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("I/O error: {0}")]
@@ -45,10 +41,6 @@ pub enum DatabaseError {
     DuplicatePath(PathBuf),
 }
 
-// ---------------------------------------------------------------------------
-// Asset State
-// ---------------------------------------------------------------------------
-
 /// Lifecycle state of an asset in the database.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssetState {
@@ -59,10 +51,6 @@ pub enum AssetState {
     /// Asset was deleted (tombstone).
     Deleted,
 }
-
-// ---------------------------------------------------------------------------
-// Asset Record
-// ---------------------------------------------------------------------------
 
 /// A single entry in the asset database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,10 +92,6 @@ impl AssetRecord {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Import Cache Entry
-// ---------------------------------------------------------------------------
-
 /// One entry in the import cache, keyed by source file path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportCacheEntry {
@@ -120,10 +104,6 @@ pub struct ImportCacheEntry {
     /// Importer version that produced this entry.
     pub importer_version: u32,
 }
-
-// ---------------------------------------------------------------------------
-// Asset Database
-// ---------------------------------------------------------------------------
 
 /// The editor-side asset database.
 ///
@@ -152,10 +132,6 @@ impl AssetDatabase {
             generation: 1,
         }
     }
-
-    // ------------------------------------------------------------------
-    // Accessors
-    // ------------------------------------------------------------------
 
     /// Number of live records (excluding tombstones).
     pub fn len(&self) -> usize {
@@ -212,17 +188,12 @@ impl AssetDatabase {
         self.path_index.get(&normalized).copied()
     }
 
-    // ------------------------------------------------------------------
-    // Mutators
-    // ------------------------------------------------------------------
-
     /// Insert or update an asset record. Returns the assigned ID.
     ///
     /// If a record with the same path already exists, its `id` is reused.
     pub fn insert(&mut self, record: AssetRecord) -> Result<AssetId, DatabaseError> {
         let normalized = normalize_path(&record.path);
 
-        // Check for duplicate path.
         if let Some(existing_id) = self.path_index.get(&normalized) {
             if *existing_id != record.id {
                 return Err(DatabaseError::DuplicatePath(PathBuf::from(&record.path)));
@@ -232,7 +203,6 @@ impl AssetDatabase {
         let id = record.id;
         self.path_index.insert(normalized, id);
 
-        // Replace if exists, else push.
         if let Some(existing) = self.records.iter_mut().find(|r| r.id == id) {
             *existing = record;
         } else {
@@ -270,10 +240,6 @@ impl AssetDatabase {
         self.next_serial
     }
 
-    // ------------------------------------------------------------------
-    // Persistence
-    // ------------------------------------------------------------------
-
     /// Load the database from a JSON file.
     ///
     /// A file that fails to parse is moved to `<name>.corrupt-<unix>` and
@@ -310,10 +276,6 @@ impl AssetDatabase {
         Ok(())
     }
 
-    // ------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------
-
     fn rebuild_index(&mut self) {
         self.path_index.clear();
         for r in &self.records {
@@ -330,10 +292,6 @@ impl Default for AssetDatabase {
         Self::new()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Import Cache
-// ---------------------------------------------------------------------------
 
 /// Incremental import cache.
 ///
@@ -434,10 +392,6 @@ impl ImportCache {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Read and parse a JSON file, moving a corrupt one out of the way first.
 ///
 /// Returns the parse error unchanged when the backup rename itself fails; the
@@ -475,15 +429,12 @@ fn backup_corrupt(path: &Path) -> std::io::Result<PathBuf> {
 /// Normalize a path: `/` separators, no trailing slash, no `./` prefix.
 pub fn normalize_path(path: &str) -> String {
     let mut result: String = path.replace('\\', "/").trim().to_string();
-    // Strip leading `./`
     while result.starts_with("./") {
         result = result[2..].to_string();
     }
-    // Strip leading `/`
     while result.starts_with('/') {
         result = result[1..].to_string();
     }
-    // Strip trailing `/`
     while result.ends_with('/') {
         result = result[..result.len() - 1].to_string();
     }

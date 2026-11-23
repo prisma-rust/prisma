@@ -19,10 +19,6 @@ use crate::formats_skinned::{
 };
 use crate::runtime::{Asset, RuntimeError};
 
-// ---------------------------------------------------------------------------
-// Texture
-// ---------------------------------------------------------------------------
-
 /// Cooked texture asset (RTEX format).
 ///
 /// Holds the decoded [`RtexInfo`] (width, height, mip chain, format byte).
@@ -59,10 +55,6 @@ impl Asset for TextureAsset {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Mesh
-// ---------------------------------------------------------------------------
-
 /// Cooked mesh asset (RMES format).
 ///
 /// Holds the decoded [`RmesInfo`] (vertex/index counts + raw interleaved
@@ -98,10 +90,6 @@ impl Asset for MeshAsset {
         self.raw
     }
 }
-
-// ---------------------------------------------------------------------------
-// Material
-// ---------------------------------------------------------------------------
 
 /// Cooked material asset (RMAT format).
 ///
@@ -160,10 +148,6 @@ impl Asset for MaterialAsset {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Shader
-// ---------------------------------------------------------------------------
-
 /// Cooked shader asset (raw SPIR-V bytecode).
 ///
 /// The cooked data is the SPIR-V itself (no wrapper); the runtime validates
@@ -209,10 +193,6 @@ impl Asset for ShaderAsset {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scene
-// ---------------------------------------------------------------------------
-
 /// Cooked scene asset (RSCN format, raw bytes).
 ///
 /// The runtime holds the RSCN bytes verbatim; the engine's `SceneLoader`
@@ -231,7 +211,6 @@ impl Asset for SceneAsset {
     }
 
     fn from_bytes(data: &[u8]) -> Result<Self, RuntimeError> {
-        // Light validation: RSCN magic check.
         if data.len() < 5 || &data[..4] != b"RSCN" {
             return Err(RuntimeError::DeserializeFailed {
                 asset_type: AssetType::Scene,
@@ -251,10 +230,6 @@ impl Asset for SceneAsset {
 #[cfg(test)]
 #[path = "typed_tests.rs"]
 mod tests;
-
-// ---------------------------------------------------------------------------
-// Skeleton / skin / animation clip (#560 P0)
-// ---------------------------------------------------------------------------
 
 /// Cooked skeleton (RSKL). After decode only pure data: consumed at runtime by `Animator` / skinning shader.
 #[derive(Debug, Clone)]
@@ -400,10 +375,6 @@ impl Asset for AnimClipAsset {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Atlas
-// ---------------------------------------------------------------------------
-
 /// Cooked sprite atlas metadata asset (.ratlas format).
 #[derive(Debug, Clone)]
 pub struct AtlasAsset {
@@ -432,10 +403,6 @@ impl Asset for AtlasAsset {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 2D Animation (.ranim2d)
-// ---------------------------------------------------------------------------
-
 /// Cooked 2D sprite animation asset (.ranim2d format).
 #[derive(Debug, Clone)]
 pub struct Anim2DAsset {
@@ -463,10 +430,6 @@ impl Asset for Anim2DAsset {
         self.raw
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tilemap (.rtilemap)
-// ---------------------------------------------------------------------------
 
 /// Cooked tilemap level asset (.rtilemap format).
 #[derive(Debug, Clone)]

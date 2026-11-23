@@ -425,10 +425,6 @@ impl RenderSettings {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal render resolution (#613)
-// ---------------------------------------------------------------------------
-
 /// How internal render resolution is upscaled to window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InternalScaleMode {

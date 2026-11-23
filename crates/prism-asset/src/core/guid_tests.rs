@@ -38,6 +38,6 @@ fn parse_with_and_without_hyphens() {
 fn display_is_hyphenated() {
     let g = AssetGuid::new();
     let s = format!("{g}");
-    assert_eq!(s.len(), 36); // 8-4-4-4-12
+    assert_eq!(s.len(), 36);
     assert_eq!(s.chars().filter(|c| *c == '-').count(), 4);
 }

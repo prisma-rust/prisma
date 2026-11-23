@@ -414,7 +414,6 @@ mod tests {
         assert_eq!(window.top_spacer, 9.0 * LOG_ROW_HEIGHT);
         assert_eq!(window.bottom_spacer, 80.0 * LOG_ROW_HEIGHT);
 
-        // Out-of-bounds requests past the bottom are clamped.
         let window = buffer.window(1_000.0 * LOG_ROW_HEIGHT, LOG_ROW_HEIGHT, 18.0);
         assert_eq!(window.first, 100);
         assert_eq!(window.last, 100);

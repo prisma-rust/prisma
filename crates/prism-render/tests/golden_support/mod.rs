@@ -17,8 +17,6 @@
 //! tests skip gracefully on hosts without one (same convention as
 //! `headless_clear.rs`).
 
-// This module is compiled into several test binaries; each one exercises a
-// different subset, so per-binary dead-code expectations cannot all be met.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -188,8 +186,6 @@ impl FrameHarness {
         let (view_proj, view) = camera_at(camera_position);
         let frame_data = frame_data(view_proj, view, self.size, camera_position);
 
-        // Path-traced frames resolve materials from the SSBO, so give the draw
-        // list the registered material instead of the raster default.
         let pt_items: Vec<DrawItem> = if options.render_mode == RenderMode::PathTrace {
             items
                 .iter()
@@ -207,9 +203,6 @@ impl FrameHarness {
             pt_items.as_slice()
         };
 
-        // The path tracer does not read the raster shadow/light path; without an
-        // analytic light the traced frame is pure ambient and reads back black.
-        // Mirror the frame's directional light so path-trace frames are lit.
         let pt_lights = [PtAnalyticLight::directional(
             [
                 frame_data.light_direction[0],
@@ -223,11 +216,7 @@ impl FrameHarness {
             ],
         )];
 
-        // The path tracer traces its own acceleration structures, so the draw
-        // list has to be uploaded before the frame that consumes it.
         if options.render_mode == RenderMode::PathTrace {
-            // The tracer reads the bindless material table, which the raster
-            // path fills lazily; flush it before uploading geometry.
             self.renderer.flush_materials().expect("flush materials");
             self.renderer
                 .sync_pt_geometry(items)
@@ -240,17 +229,17 @@ impl FrameHarness {
                 &frame_data,
                 frame_data.light_view_proj,
                 [[0.0; 4]; 4],
-                0, // debug flags
-                1, // ACES tonemap
-                0, // AA off: keep the rasterizer deterministic
-                0, // debug target
+                0,
+                1,
+                0,
+                0,
                 view_proj[2][2],
                 view_proj[3][2],
                 &[],
                 options.render_mode,
-                2,    // pt_max_bounces
-                10.0, // pt_ray_max_distance: the box sits 3 m out
-                0,    // pt_max_iterations: keep accumulating
+                2,
+                10.0,
+                0,
                 1.0,
                 &pt_lights,
                 options.grade,
@@ -282,7 +271,7 @@ fn camera_at(position: [f32; 3]) -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
     let aspect = 1.0_f32;
     let mut proj = [[0.0f32; 4]; 4];
     proj[0][0] = f / aspect;
-    proj[1][1] = -f; // Vulkan NDC +Y points down.
+    proj[1][1] = -f;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = near * far / (near - far);
@@ -369,10 +358,6 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     }
     out
 }
-
-// ---------------------------------------------------------------------------
-// Golden comparison
-// ---------------------------------------------------------------------------
 
 /// Per-machine baseline directory under `target/` (discardable, not committed).
 pub fn golden_dir() -> PathBuf {

@@ -15,7 +15,6 @@ use crate::style::{Color, Edges};
 /// Colours and metrics shared by every composed widget.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
-    // ---- surfaces (back to front) ----
     /// Window background behind every panel.
     pub bg: Color,
     /// Default panel fill.
@@ -31,14 +30,12 @@ pub struct Theme {
     /// Default backdrop blur radius (in pixels) for frosted-glass windows.
     pub glass_blur_sigma: f32,
 
-    // ---- borders ----
     pub border: Color,
     /// Emphasised border (focused input, open menu).
     pub border_strong: Color,
     /// Hairline separators inside panels.
     pub border_subtle: Color,
 
-    // ---- text ----
     pub text: Color,
     /// Emphasised text (open menu label, selected row).
     pub text_strong: Color,
@@ -47,7 +44,6 @@ pub struct Theme {
     /// De-emphasised labels, shortcut hints, placeholders.
     pub muted: Color,
 
-    // ---- interaction ----
     /// Hover fill for list rows and generic buttons.
     pub row_hover: Color,
     /// Hover fill for menu bar triggers and menu items.
@@ -61,7 +57,6 @@ pub struct Theme {
     /// Text drawn on top of [`Self::accent`].
     pub on_accent: Color,
 
-    // ---- metrics: menu bar ----
     pub menu_bar_height: f32,
     pub menu_bar_padding: Edges,
     /// Horizontal gap between menu bar triggers.
@@ -69,7 +64,6 @@ pub struct Theme {
     pub menu_trigger_padding: Edges,
     pub menu_trigger_radius: f32,
 
-    // ---- metrics: menu dropdown ----
     pub menu_dropdown_padding: Edges,
     pub menu_dropdown_radius: f32,
     /// Minimum dropdown width; it grows to fit the longest item.
@@ -86,7 +80,6 @@ pub struct Theme {
     /// Vertical margin around a separator row.
     pub menu_separator_margin: f32,
 
-    // ---- metrics: typography ----
     pub font_size: f32,
     pub font_size_small: f32,
     /// Default drop-shadow offset for text runs (in pixels).
@@ -163,8 +156,6 @@ impl Theme {
             accent: Color::rgb(0.039, 0.518, 1.0),
             on_accent: Color::rgb(1.0, 1.0, 1.0),
 
-            // Metrics are shared with the light preset; only colours differ,
-            // so a preset switch cannot relayout the UI.
             menu_bar_height: 28.0,
             menu_bar_padding: Edges::symmetric(6.0, 0.0),
             menu_bar_gap: 2.0,
@@ -220,8 +211,6 @@ impl Theme {
             accent: Color::rgb(0.0, 0.478, 1.0),
             on_accent: Color::rgb(1.0, 1.0, 1.0),
 
-            // Metrics match the dark preset; generous radii are what make this
-            // theme read as a system surface rather than a tool panel.
             menu_bar_height: 28.0,
             menu_bar_padding: Edges::symmetric(6.0, 0.0),
             menu_bar_gap: 2.0,
@@ -269,7 +258,6 @@ impl Theme {
     pub fn dropdown_shadow(self) -> Color {
         match self.preset() {
             ThemePreset::Dark => Color::rgba(0.0, 0.0, 0.0, 0.38),
-            // A hard shadow reads as a cutout on light surfaces.
             ThemePreset::Light => Color::rgba(0.06, 0.09, 0.16, 0.18),
         }
     }
@@ -288,10 +276,8 @@ mod tests {
     fn dark_and_light_expose_the_same_tokens() {
         let dark = Theme::dark();
         let light = Theme::light();
-        // Surfaces must differ, or switching presets would be invisible.
         assert_ne!(dark.panel, light.panel);
         assert_ne!(dark.text, light.text);
-        // Metrics are shared: a theme switch must not relayout the UI.
         assert_eq!(dark.menu_bar_height, light.menu_bar_height);
         assert_eq!(dark.menu_item_height, light.menu_item_height);
     }

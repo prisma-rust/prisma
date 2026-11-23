@@ -27,8 +27,6 @@ fn start_hosted_builds_pending_plugins() {
     let mut app = App::hosted(prism_engine::config::AppConfig::default());
     app.add_plugin(MarkerPlugin);
 
-    // Whatever the renderer does is irrelevant and async; the plugin drain happens
-    // synchronously before it is asked for work.
     app.start_hosted(64, 64);
 
     assert_eq!(

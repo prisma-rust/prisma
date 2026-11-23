@@ -1,8 +1,3 @@
-// Skinning (#560 P0-3b): hook `SkinnedMeshRenderer` entities into draw items.
-//
-// Separate file instead of stuffing into `render.rs`: static mesh loop already full, this branch
-// also needs to append each entity bone palette into frame pack.
-
 use prism_ecs::{Entity, World};
 use prism_render::culling::{Aabb, Frustum};
 use prism_render::render_graph::DrawItem;
@@ -64,8 +59,6 @@ pub fn append_skinned_draw_items_with_frustums(
         let palette = world
             .get::<BonePalette>(entity)
             .filter(|palette| !palette.matrices.is_empty());
-        // Cull uses **post-skinning** bounding box: bind pose box is off when character in large pose,
-        // using it would cull character still on screen (#560 P0-3c).
         let local_bounds = bounds
             .and_then(|bounds| bounds.get(mr.render_handle))
             .map(|bind| match palette {

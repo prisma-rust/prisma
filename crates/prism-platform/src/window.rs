@@ -34,8 +34,6 @@ pub struct SendWindowHandles {
     pub window: RawWindowHandle,
 }
 
-// Win32 HWND and Android ANativeWindow are process-level handles; the window
-// outlives the render thread.
 unsafe impl Send for SendWindowHandles {}
 
 /// Window context — created at startup and destroyed on shutdown.
@@ -239,11 +237,6 @@ impl PlatformWindow {
                         .set_cursor_grab(winit::window::CursorGrabMode::None)
                         .map_err(|e| anyhow::anyhow!("{e}"));
                 }
-                // FPS pointer lock requires `Locked` (cursor pinned in place, only original delta moves).
-                // `Confined` only clamps cursor within window rectangle; on macOS / X11 can still freely
-                // slide, mouse look follows window edge. System not supporting `Locked` falls back to
-                // `Confined` (Windows Confined + hide cursor also gets clamped to 1px),
-                // both failing counts as not locked.
                 match window.set_cursor_grab(winit::window::CursorGrabMode::Locked) {
                     Ok(()) => Ok(()),
                     Err(locked_err) => window
@@ -281,7 +274,6 @@ impl PlatformWindow {
             Backend::Winit { pointer_locked, .. } => {
                 pointer_locked.store(locked, std::sync::atomic::Ordering::Relaxed);
             }
-            // Win32 backend in `set_pointer_confined` sync maintains `state.grab`, no need to record again.
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(_) => {}
         }

@@ -97,7 +97,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         let mut fresh = FishingState::default();
         fresh.boat = world.find_by_name("boat");
         fresh.bobber = world.find_by_name("bobber");
-        // #984: progress restored from player save (key is `caught`, project-defined schema).
         fresh.caught = world
             .load_data("caught")
             .and_then(|value| value.parse::<u32>().ok())
@@ -117,19 +116,14 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         return;
     };
 
-    // --- input (input snapshot sent down by host each frame) ---
     let input = world.input();
     let clicked = input.left_clicked;
-    // Cast and hook-set are edge-triggered: holding the key counts once, like `left_clicked`.
     let pressed_space = input.key_pressed(keys::SPACE);
-    // `FISHING_AUTOPLAY=1` makes state machine advance itself: for demos and automated screenshots,
-    // normal play does not set this var, fully input-driven.
     let autoplay = std::env::var_os("FISHING_AUTOPLAY").is_some();
     let auto_fire =
         autoplay && matches!(current.phase, Phase::Idle | Phase::Biting) && current.elapsed > 1.0;
     let action = clicked || pressed_space || auto_fire;
 
-    // --- boat anchor ---
     let boat_pos = current
         .boat
         .and_then(|boat| world.get::<LocalTransform>(boat))
@@ -152,7 +146,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         Phase::Casting => {
             let t = (current.elapsed / CAST_SECONDS).clamp(0.0, 1.0);
             let target = [boat_pos[0] + CAST_DISTANCE, WATER_LINE];
-            // Parabola: horizontal linear interpolation, vertical adds an arc.
             let arc = (t * std::f32::consts::PI).sin() * 60.0;
             current.bobber_pos = [
                 current.cast_origin[0] + (target[0] - current.cast_origin[0]) * t,
@@ -177,7 +170,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
             }
         }
         Phase::Biting => {
-            // Bobber sinks and shakes on bite.
             current.bobber_pos = [
                 boat_pos[0] + CAST_DISTANCE,
                 WATER_LINE - 4.0 + (current.elapsed * 18.0).sin() * 2.5,
@@ -197,8 +189,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         Phase::Reeling => {
             let t = (current.elapsed / REEL_SECONDS).clamp(0.0, 1.0);
             let target = [boat_pos[0] + ROD_OFFSET[0], boat_pos[1] + ROD_OFFSET[1]];
-            // Pure function of `t` (smoothstep), so a given elapsed time yields the
-            // same point whatever the frame rate is (see #1059).
             let ease = t * t * (3.0 - 2.0 * t);
             current.bobber_pos = [
                 current.reel_origin[0] + (target[0] - current.reel_origin[0]) * ease,
@@ -209,12 +199,10 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
                 current.phase = Phase::Caught;
                 current.elapsed = 0.0;
                 log::info!("fishing: landed fish #{}", current.caught);
-                // Splash sound on hook (#987): both player and editor Play can hear.
                 match world.play_sound("audio/splash.wav", 0.8, false) {
                     Some(id) => log::info!("fishing: splash sound id {id}"),
                     None => log::warn!("fishing: splash sound unavailable"),
                 }
-                // #984: save immediately on catch, quitting game will not lose progress.
                 let saved = world.save_data("caught", &current.caught.to_string());
                 log::info!("fishing: landed fish #{} (saved: {saved})", current.caught);
             }
@@ -228,9 +216,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- HUD: fish count + current time -------------------------------------------------
-    //
-    // Time from engine `TimeOfDay` (#983), project no longer maintains own timer.
     if let Some(hud) = current.hud {
         if let Some(mut text) = world.get::<Text>(hud) {
             let clock = world
@@ -247,14 +232,12 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- Write back bobber position and appearance ---
     if let Some(bobber) = current.bobber {
         if let Some(mut transform) = world.get::<LocalTransform>(bobber) {
             transform.position = glam::Vec3::new(current.bobber_pos[0], current.bobber_pos[1], 0.0);
             world.set(bobber, transform);
         }
         if let Some(mut sprite) = world.get::<SpriteRenderer>(bobber) {
-            // Flash warm color on bite so player sees window.
             sprite.color = if current.phase == Phase::Biting {
                 [1.0, 0.55, 0.35, 1.0]
             } else {
@@ -269,7 +252,6 @@ pub fn tick(state: &mut Option<FishingState>, world: &mut GameWorld<'_>, dt: f32
         }
     }
 
-    // --- Fishing line: rod tip → bobber (sags slightly in middle) ---
     if let Some(line) = current.line {
         if let Some(mut renderer) = world.get::<LineRenderer>(line) {
             let tip = [boat_pos[0] + ROD_OFFSET[0], boat_pos[1] + ROD_OFFSET[1]];

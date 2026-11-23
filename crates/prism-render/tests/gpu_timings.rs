@@ -42,12 +42,12 @@ fn render_once(renderer: &mut GraphRenderer) {
             &FrameUBOData::default(),
             IDENTITY,
             IDENTITY,
-            0,   // debug flags
-            2,   // tonemap: passthrough
-            0,   // AA off
-            0,   // debug_rt
-            1.0, // proj22
-            0.0, // proj32
+            0,
+            2,
+            0,
+            0,
+            1.0,
+            0.0,
             &[],
             RenderMode::Raster,
             0,
@@ -58,7 +58,7 @@ fn render_once(renderer: &mut GraphRenderer) {
             PostGrade::default(),
             false,
             false,
-            &[], // bone matrices
+            &[],
         )
         .expect("headless render failed");
 }
@@ -70,7 +70,6 @@ fn the_second_frame_reports_the_first_frames_pass_timings() {
     };
 
     render_once(&mut renderer);
-    // First frame results are not yet readable (readback intentionally delayed by one frame).
     render_once(&mut renderer);
 
     let timings = renderer.gpu_timings();
@@ -96,7 +95,6 @@ fn the_second_frame_reports_the_first_frames_pass_timings() {
         timings.passes.iter().any(|pass| pass.ms > 0.0),
         "at least one pass must have taken measurable time"
     );
-    // Full frame interval covers all passes; timestamp quantization allows pass sum to be slightly larger.
     assert!(
         timings.has_frame_span(),
         "a rendered frame must produce a frame span: {timings:?}"

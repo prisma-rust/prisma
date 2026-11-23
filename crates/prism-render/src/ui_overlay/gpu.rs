@@ -46,10 +46,6 @@ const VERTEX_SIZE: vk::DeviceSize = size_of::<UiVertex>() as vk::DeviceSize;
 /// Descriptor slot of the filtered backdrop inside the UI's own set 0.
 const BACKDROP_TEX_BINDING: u32 = 1;
 
-// ---------------------------------------------------------------------------
-// Glyph atlas
-// ---------------------------------------------------------------------------
-
 /// Atlas side length (px). R8 = 4 MB VRAM, enough for thousands of CJK + Latin SDF glyphs.
 const ATLAS_SIZE: u32 = 2048;
 /// Canonical pixel size used when generating TextMeshPro-style SDF glyphs.
@@ -135,7 +131,6 @@ impl GlyphAtlas {
         let view = Self::create_view(&device, image)?;
         let sampler = Self::create_sampler(&device)?;
 
-        // rowPitch of LINEAR tiling decided by driver, may exceed ATLAS_SIZE.
         let subresource = vk::ImageSubresource {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: 0,
@@ -144,7 +139,6 @@ impl GlyphAtlas {
         let row_pitch =
             unsafe { device.get_image_subresource_layout(image, subresource) }.row_pitch as usize;
 
-        // UNDEFINED → GENERAL: host side directly maps and writes (LINEAR tiling).
         let cmd = allocate_temp_command_buffer(&device, command_pool)
             .context("GlyphAtlas: allocate command buffer")?;
         unsafe {
@@ -181,7 +175,6 @@ impl GlyphAtlas {
         }
         submit_and_wait(&device, context.graphics_queue, command_pool, cmd)?;
 
-        // Reserve 2x2 white pixels at (0,0) so linear sampling at uv=(0,0) yields alpha 1.
         let ptr = unsafe {
             device
                 .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
@@ -441,7 +434,6 @@ impl GlyphAtlas {
             return None;
         }
         let rect = [self.x, self.y, w, h];
-        // Copy to host-visible memory.
         let ptr = unsafe {
             self.device
                 .map_memory(self.memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
@@ -456,7 +448,7 @@ impl GlyphAtlas {
             }
             self.device.unmap_memory(self.memory);
         }
-        self.x += w + 1; // 1px gap prevents adjacent glyph bleeding
+        self.x += w + 1;
         self.row_h = self.row_h.max(h);
         self.dirty = true;
         Some(rect)
@@ -473,10 +465,6 @@ impl Drop for GlyphAtlas {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// UiOverlay
-// ---------------------------------------------------------------------------
 
 /// GPU-side UI overlay.
 pub struct UiOverlay {
@@ -612,9 +600,6 @@ impl UiOverlay {
 
         let backdrop_sampler = Self::create_backdrop_sampler(&device)?;
 
-        // Until the renderer supplies a real backdrop, this slot points at the
-        // glyph atlas: it is always alive and already in a sampled layout, and
-        // the shader only reads the slot for quads that ask for a backdrop.
         let (set_layout, descriptor_pool, descriptor_sets) = Self::create_descriptors(
             &device,
             atlas.view,
@@ -710,7 +695,6 @@ impl UiOverlay {
         if self.color_format == color_format {
             return Ok(());
         }
-        // Build new first then tear down old, so on create failure old pass still valid.
         let render_pass = Self::create_render_pass(&self.device, color_format, self.final_layout)?;
         let intermediate_render_pass =
             if self.final_layout == vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL {
@@ -722,8 +706,6 @@ impl UiOverlay {
                     vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 )?)
             };
-        // Pipelines rebuilt on next record with new render pass; here only swap pass. Previously submitted
-        // command buffers may still reference this render pass / pipeline, left to recycle queue for delayed destruction.
         {
             if let Some(pipeline) = self.pipeline.take() {
                 self.retire.retire(
@@ -789,8 +771,6 @@ impl UiOverlay {
         let set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None) }
             .context("UiOverlay: descriptor set layout")?;
 
-        // Two bindings per set, one set per frame-in-flight: the pool has to
-        // hold every descriptor those sets will ever use, not just one set's.
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             descriptor_count: 2 * crate::swapchain::FRAMES_IN_FLIGHT as u32,
@@ -919,7 +899,6 @@ impl UiOverlay {
             ),
         ];
 
-        // set 0 binding 0 — glyph atlas (see GlyphAtlas::create_descriptors).
         let bindings_desc = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(GLYPH_ATLAS_BINDING)
@@ -935,7 +914,6 @@ impl UiOverlay {
         let set_layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings_desc);
         let set_layout = unsafe { device.create_descriptor_set_layout(&set_layout_info, None) }
             .context("UiOverlay: pipeline set layout")?;
-        // set 1 = scene-shared bindless texture table (UI background images, #591).
         let set_layouts = [set_layout, bindless_layout];
         let layout_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts);
         let layout = unsafe { device.create_pipeline_layout(&layout_info, None) }
@@ -1007,7 +985,6 @@ impl UiOverlay {
         let dynamic_state_info =
             vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-        // Pipeline state: no depth, alpha blend.
         let rasterizer = vk::PipelineRasterizationStateCreateInfo::default()
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE)
@@ -1078,9 +1055,6 @@ impl UiOverlay {
             MemoryProperties::HOST_VISIBLE | MemoryProperties::HOST_COHERENT,
         )
         .context("UiOverlay: grow vertex buffer")?;
-        // The previous frames' command buffers may still read the old buffer, and
-        // growth happens mid-frame while the current one is recording. Park it in
-        // the retirement queue instead of stalling the device.
         if self.vertex_buffers[slot] != vk::Buffer::null()
             || self.vertex_memories[slot] != vk::DeviceMemory::null()
         {
@@ -1118,12 +1092,9 @@ impl UiOverlay {
         context: &VulkanContext,
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
-        // Target rect (#988): when `internal_resolution` active UI only draws inside this block,
-        // composited with PostPass-upscaled image, not pressed onto letterbox.
         dest: vk::Rect2D,
         target_view: vk::ImageView,
         input: &UiOverlayInput,
-        // Scene bindless texture table (set 1); UI background images sampled by `UiQuad::texture`.
         bindless_set: vk::DescriptorSet,
         frame_index: u32,
     ) -> Result<()> {
@@ -1159,8 +1130,6 @@ impl UiOverlay {
         frame_index: u32,
         mut on_backdrop: Option<&mut dyn FnMut(vk::CommandBuffer, f32) -> Result<vk::ImageView>>,
     ) -> Result<()> {
-        // The frame slot that just waited its fence is free again: release what
-        // this overlay parked during the previous pass through the queue.
         self.retire.collect(&context.device, frame_index);
         self.frame_index = frame_index;
         if input.is_empty() {
@@ -1170,30 +1139,20 @@ impl UiOverlay {
         self.ensure_pipeline(&context.device, extent)?;
         log_slow_step("ensure_pipeline", pipeline_start.elapsed());
 
-        // The estimate only sizes the reservation: a character writes vertices
-        // only when it has a glyph bitmap (spaces have no rect, and a full atlas
-        // or missing font skips entirely), so the real count is usually lower.
         let estimated_vertices = self.estimate_vertex_count(input);
 
-        // Build vertices (quads + per-glyph expanded texts).
         let mut vertices: Vec<UiVertex> = Vec::with_capacity(estimated_vertices as usize);
         let w = dest.extent.width as f32;
         let h = dest.extent.height as f32;
 
-        // Interleave rects and text by engine-computed layer / order (old path without order degrades to
-        // "all rects first, then all text").
         let push_quad = |vertices: &mut Vec<UiVertex>, quad: &crate::ui_overlay::UiQuad| {
             let [x0, y0, x1, y1] = quad.rect;
             let [r, g, b, a] = quad.color;
-            // NDC rect → pixel size. `UiQuad::border_radius` is already
-            // normalised by the engine (`radius_px / max(w, h) * 2`), so
-            // convert it back to pixels for the SDF.
             let width_px = (x1 - x0).abs() * 0.5 * w;
             let height_px = (y1 - y0).abs() * 0.5 * h;
             let half = [width_px * 0.5, height_px * 0.5];
             let radius = (quad.border_radius * width_px.max(height_px) * 0.5)
                 .clamp(0.0, half[0].min(half[1]));
-            // With background image uv covers 0..1; solid quad samples atlas 1×1 white pixel.
             let (uv0, uv1) = if quad.texture.is_some() {
                 ([0.0, 0.0], [1.0, 1.0])
             } else {
@@ -1243,8 +1202,6 @@ impl UiOverlay {
         }
         let segments = tracker.finish(vertices.len());
 
-        // Upload and draw both use actual vertex count: estimate may exceed `vertices.len()`,
-        // copying that much would read uninitialized memory past Vec (UB, stray triangles on GPU).
         let vert_count =
             u32::try_from(vertices.len()).context("UiOverlay: vertex count exceeds u32")?;
         if vert_count == 0 {
@@ -1255,7 +1212,6 @@ impl UiOverlay {
         self.grow_buffer(context, slot, vert_count)?;
         log_slow_step("grow_buffer", buffer_start.elapsed());
 
-        // Upload vertex data into this frame-in-flight slot's buffer.
         let vert_bytes = vertices.len() * size_of::<UiVertex>();
         unsafe {
             let ptr = context
@@ -1275,7 +1231,6 @@ impl UiOverlay {
             context.device.unmap_memory(self.vertex_memories[slot]);
         }
 
-        // Atlas has new glyphs → HOST_WRITE → FRAGMENT_SHADER barrier (GENERAL layout unchanged).
         if self.atlas.dirty {
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::GENERAL)
@@ -1306,9 +1261,6 @@ impl UiOverlay {
             self.atlas.dirty = false;
         }
 
-        // Reuse the framebuffer for this swapchain image instead of creating
-        // (and retaining) one every frame. Not thread-safe by itself; record
-        // runs on the render thread and swapchain recreation clears the cache.
         let fb = match self.framebuffers.iter().find(|cached| {
             cached.view == target_view
                 && cached.extent.width == extent.width
@@ -1334,8 +1286,6 @@ impl UiOverlay {
             }
         };
 
-        // Record draw segments, capturing and blurring the backdrop before any
-        // segment that introduces frosted-glass surfaces.
         let last_idx = segments.len().saturating_sub(1);
         for (i, seg) in segments.iter().enumerate() {
             if let (Some(sigma), Some(capture_fn)) =
@@ -1389,8 +1339,6 @@ impl UiOverlay {
                     );
                 }
 
-                // Map NDC [-1,1] to `dest`: UI and scene scale together and stay centered
-                // inside `dest`, while scissor clips any out-of-bounds pixels.
                 let vp = vk::Viewport::default()
                     .x(dest.offset.x as f32)
                     .y(dest.offset.y as f32)
@@ -1452,8 +1400,6 @@ impl UiOverlay {
         let font = t.font.as_deref();
         let use_sdf = (t.outline_width > 0.0 && t.outline_color[3] > 0.0) || t.font_size > 24.0;
 
-        // 1. Line breaking (#527): `\n` always breaks; with `wrap` also greedy break by rect width.
-        //    Without `wrap` nor `\n` it's original single line, behavior unchanged.
         let lines = if t.wrap {
             let mut advance = |ch: char| self.advance_of(font, t.font_size, ch, use_sdf);
             wrap_text(&t.content, rect_w, &mut advance)
@@ -1469,12 +1415,10 @@ impl UiOverlay {
 
         for (index, line) in lines.iter().enumerate() {
             let line_top = top + index as f32 * line_height;
-            // Lines beyond rect bottom not drawn (no half-glyph clipping).
             if line_top > top + rect_h {
                 break;
             }
 
-            // 2. Measure this line's width (sum of advances).
             let mut total = 0.0f32;
             for ch in line.chars() {
                 total += self.advance_of(font, t.font_size, ch, use_sdf);
@@ -1483,14 +1427,12 @@ impl UiOverlay {
                 continue;
             }
 
-            // 3. Alignment decides starting x (per-line alignment, not whole paragraph).
             let start_x = match t.alignment {
                 UiTextAlign::Left => left,
                 UiTextAlign::Center => left + (rect_w - total) * 0.5,
                 UiTextAlign::Right => left + rect_w - total,
             };
 
-            // 4. Emit per-glyph quads (shadow pass first, then main face + optional SDF outline).
             let baseline = line_top + self.atlas.baseline_offset(font, t.font_size);
             let scale = t.font_size / SDF_FONT_SIZE;
             let outline_norm = if use_sdf && t.outline_width > 0.0 && t.outline_color[3] > 0.0 {
@@ -1599,8 +1541,6 @@ fn wrap_paragraph(
         return;
     }
 
-    // Byte offset → char index, and cumulative advance per char: line width for any `[from, to)` is
-    // O(1), no need to re-measure for every candidate break point.
     let mut char_offsets: Vec<usize> = paragraph.char_indices().map(|(offset, _)| offset).collect();
     char_offsets.push(paragraph.len());
     let mut prefix = Vec::with_capacity(char_offsets.len());
@@ -1621,7 +1561,6 @@ fn wrap_paragraph(
             pos += 1;
         }
 
-        // Farthest break point from `pos` such that whole line width still fits.
         let mut last_fit: Option<usize> = None;
         for &brk in &breaks[breaks.partition_point(|&brk| brk <= pos)..] {
             if width(pos, brk) > max_width {
@@ -1637,7 +1576,6 @@ fn wrap_paragraph(
                 return;
             }
         } else {
-            // No break point fits: consume at least one char, truncate by char.
             let mut end = pos;
             for ch in paragraph[pos..].chars() {
                 let next = end + ch.len_utf8();
@@ -1743,7 +1681,6 @@ fn emit_quad(
 
 impl Drop for UiOverlay {
     fn drop(&mut self) {
-        // `GraphRenderer::destroy` waits for the device before dropping overlays.
         self.retire.destroy_all(&self.device);
         unsafe {
             if let Some(p) = self.pipeline {
@@ -1771,10 +1708,6 @@ impl Drop for UiOverlay {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// One-off command buffer / memory type helpers (same mode as ibl.rs)
-// ---------------------------------------------------------------------------
 
 fn allocate_temp_command_buffer(
     device: &ash::Device,
@@ -1898,8 +1831,6 @@ fn bitmap_to_sdf(
     let inv_spread = 0.5 / spread.max(1e-3);
     let mut sdf = Vec::with_capacity(n);
     for i in 0..n {
-        // Subtract 0.5 so the 0-contour sits midway between adjacent inside/outside
-        // pixel centers with exact unit slope across the boundary.
         let dist = (inside[i].sqrt() - 0.5).max(0.0) - (outside[i].sqrt() - 0.5).max(0.0);
         let norm = (0.5 + dist * inv_spread).clamp(0.0, 1.0);
         sdf.push((norm * 255.0).round() as u8);
@@ -1914,14 +1845,12 @@ fn edt_2d(grid: &mut [f32], w: usize, h: usize) {
     let mut v = vec![0usize; max_dim];
     let mut z = vec![0.0f32; max_dim + 1];
 
-    // Vertical pass (columns)
     for x in 0..w {
         for y in 0..h {
             f[y] = grid[y * w + x];
         }
         edt_1d(&f[..h], &mut v, &mut z, |y, val| grid[y * w + x] = val);
     }
-    // Horizontal pass (rows)
     for y in 0..h {
         let row = &grid[y * w..(y + 1) * w];
         f[..w].copy_from_slice(row);
@@ -2150,7 +2079,6 @@ mod tests {
 
     #[test]
     fn srgb_ui_colors_are_decoded_to_linear() {
-        // #592: #FF8020 sRGB components are 1.0 / 0.502 / 0.125.
         let linear = srgb_rgba_to_linear([1.0, 0.501_960_8, 0.125, 1.0]);
         assert!((linear[0] - 1.0).abs() < 1e-6);
         assert!((linear[1] - 0.215_860_6).abs() < 1e-4);
@@ -2159,7 +2087,6 @@ mod tests {
             linear[3], 1.0,
             "Alpha does not participate in gamma conversion"
         );
-        // Black / white are fixed points.
         assert_eq!(
             srgb_rgba_to_linear([0.0, 0.0, 0.0, 0.5]),
             [0.0, 0.0, 0.0, 0.5]
@@ -2255,15 +2182,12 @@ mod tests {
         }
         let (sdf, sw, sh) = bitmap_to_sdf(&bmp, 8, 8, 4, 4.0);
         assert_eq!((sw, sh), (16, 16));
-        // Center of the filled 4x4 square should be well inside (> 128).
         assert!(sdf[8 * sw + 8] > 140);
-        // Far corner should be well outside (< 128).
         assert!(sdf[0] < 80);
     }
 
     #[test]
     fn pixel_y_maps_screen_top_to_negative_one() {
-        // Vulkan NDC y downward: pixel top is -1, pixel bottom is +1, center is 0.
         assert_eq!(pixel_y_to_ndc(0.0, 720.0), -1.0);
         assert_eq!(pixel_y_to_ndc(720.0, 720.0), 1.0);
         assert_eq!(pixel_y_to_ndc(360.0, 720.0), 0.0);
@@ -2271,8 +2195,6 @@ mod tests {
 
     #[test]
     fn pixel_y_keeps_vertical_order() {
-        // Monotonically increasing: larger pixel y must land lower (larger NDC y).
-        // This is the property old implementation (`h - py`) violated.
         let ys: Vec<f32> = (0..=10)
             .map(|i| pixel_y_to_ndc(i as f32 * 72.0, 720.0))
             .collect();

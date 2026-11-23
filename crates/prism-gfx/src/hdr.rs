@@ -35,7 +35,6 @@ struct Resolution {
 pub fn load_rgbe(bytes: &[u8]) -> anyhow::Result<(Vec<f32>, u32, u32)> {
     let mut pos = 0usize;
 
-    // --- Header: lines until the resolution line ("±Y <H> ±X <W>"). ---
     let mut resolution = None;
     while pos < bytes.len() {
         let line_end = bytes[pos..]
@@ -53,16 +52,12 @@ pub fn load_rgbe(bytes: &[u8]) -> anyhow::Result<(Vec<f32>, u32, u32)> {
     let resolution = resolution.context("HDR resolution line missing or invalid")?;
     let Resolution { major, minor } = resolution;
 
-    // The scanline count and the pixels-per-scanline can each be either the
-    // image height or width, depending on which axes the file uses.
     let (width, height) = match (major.axis, minor.axis) {
         (Axis::Y, Axis::X) => (minor.len, major.len),
         (Axis::X, Axis::Y) => (major.len, minor.len),
         _ => unreachable!("parse_resolution_line rejects equal axes"),
     };
 
-    // Checked so hostile/corrupt dimensions cannot overflow the allocation
-    // arithmetic before we read a single scanline.
     let pixel_count = (width as usize)
         .checked_mul(height as usize)
         .context("HDR dimensions overflow")?;
@@ -195,8 +190,6 @@ fn read_scanline(
     pixels: usize,
     out: &mut [u8],
 ) -> anyhow::Result<()> {
-    // Detect RLE: a scanline starts with the 2-byte marker 0x02 0x02,
-    // followed by the scanline width (big-endian u16).
     let rle_header = bytes.get(*pos..).and_then(|rest| rest.get(..4));
     let rle = rle_header.is_some_and(|h| h[0] == 0x02 && h[1] == 0x02);
     if rle {
@@ -206,7 +199,6 @@ fn read_scanline(
         if marker_w != pixels {
             bail!("RLE scanline width mismatch: {} != {}", marker_w, pixels);
         }
-        // Each of the 4 channels is RLE-encoded across the whole scanline.
         for ch in 0..4usize {
             let mut x = 0usize;
             while x < pixels {
@@ -243,7 +235,6 @@ fn read_scanline(
             }
         }
     } else {
-        // Uncompressed: 4 bytes per pixel, row-major within the scanline.
         let row_len = pixels.checked_mul(4).context("HDR row size overflow")?;
         let row = bytes
             .get(*pos..)

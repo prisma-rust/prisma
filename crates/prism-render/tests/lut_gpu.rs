@@ -95,7 +95,7 @@ fn render_frame(
         debug_flags: 0,
         wireframe: false,
         shaded_wireframe: false,
-        tonemap_mode: 2, // passthrough: only the clear color + LUT matter
+        tonemap_mode: 2,
         aa_mode: 0,
         debug_rt: 0,
         grade,
@@ -160,8 +160,6 @@ fn identity_lut_at_full_strength_matches_the_ungraded_frame() {
         },
         Some(&path),
     );
-    // One 8-bit step of trilinear/rounding noise is expected; anything larger
-    // means the identity LUT is not being sampled at texel centres.
     assert!(
         channel_diff(center(&plain), center(&graded)) <= 1,
         "identity LUT changed the frame: {:?} -> {:?}",
@@ -192,7 +190,6 @@ fn a_swap_lut_swaps_the_red_and_blue_channels() {
         channel_diff(graded, [plain[2], plain[1], plain[0], plain[3]]) <= 2,
         "expected R/B swap around {plain:?}, got {graded:?}"
     );
-    // And the swap must actually be visible for this non-grey clear color.
     assert!(
         channel_diff(graded, plain) > 10,
         "the swap LUT had no visible effect: {plain:?} -> {graded:?}"

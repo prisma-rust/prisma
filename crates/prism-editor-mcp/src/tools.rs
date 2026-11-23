@@ -199,8 +199,6 @@ fn documents_list(root: &Path, args: &Value) -> Result<String, String> {
     for kind in kinds {
         let entries = scene::list_docs(root, *kind)?;
         for entry in entries {
-            // Always expose project-relative paths so agents do not have to
-            // deal with an absolute prefix when building `path`.
             let root_prefix = root.to_string_lossy();
             let relative = entry
                 .path
@@ -296,9 +294,6 @@ fn field_set(root: &Path, args: &Value) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| format!("Entity '{entity_key}' has no component '{component}'"))?;
 
-    // `set_component_field` reads the new value from the "after" object, so
-    // patch the path first; an invalid type is rejected inside its
-    // `object_from_json`.
     let mut after = before.clone();
     patch_path(&mut after, &field, value)?;
     let updated = set_component_field(&component, &before, &field, &after)?;

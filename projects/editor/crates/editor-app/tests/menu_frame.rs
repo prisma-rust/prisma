@@ -44,7 +44,6 @@ fn opening_a_menu_draws_its_items_on_top() {
     let viewport = Vec2::new(1280.0, 720.0);
     state.build_and_step(viewport, &UiInput::default(), 0.016);
 
-    // Click the "File" trigger.
     let trigger = state
         .tree
         .node_by_key(prism_ui::menu::MenuNodeKey::trigger_key("file"))
@@ -62,7 +61,6 @@ fn opening_a_menu_draws_its_items_on_top() {
         },
         0.016,
     );
-    // A menu opens on click, which needs the release edge.
     state.build_and_step(
         viewport,
         &UiInput {
@@ -75,7 +73,6 @@ fn opening_a_menu_draws_its_items_on_top() {
     let texts = draw_texts(&mut state, viewport);
 
     assert_eq!(state.menu.open(), Some("file"), "File menu must open");
-    // "New" and "Open Recent" are submenu rows; flat entries sit beside them.
     for expected in ["New", "Open Recent", "Save", "Exit"] {
         assert!(
             texts.iter().any(|t| t == expected),

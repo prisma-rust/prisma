@@ -21,8 +21,6 @@ use crate::scene::components::{Camera, Child, LocalToWorld, LodGroup, LodHidden}
 
 /// Write `LodHidden` for each `LodGroup` child entity by distance.
 pub fn lod_system(world: &mut World) {
-    // First clear all previous-frame flags: when `LodGroup` deleted, child moved out of `Child`,
-    // or camera deleted, leftover `true` must not make object disappear forever.
     let marked: Vec<Entity> = world
         .query::<LodHidden>()
         .map(|(entity, _)| entity)
@@ -33,7 +31,6 @@ pub fn lod_system(world: &mut World) {
         }
     }
 
-    // Screen-ratio mode needs each camera projection y scale; correct camera does not shrink with distance.
     let cameras: Vec<(glam::Vec3, f32, bool)> = world
         .query2::<Camera, LocalToWorld>()
         .filter(|(_, camera, _)| camera.enabled)
@@ -56,8 +53,6 @@ pub fn lod_system(world: &mut World) {
         if children.is_empty() {
             continue;
         }
-        // Distance mode uses nearest camera; screen-ratio mode uses max-ratio one, both semantics are
-        // "any camera seeing nearest level displays nearest level".
         let distance = cameras
             .iter()
             .map(|(eye, _, _)| (*eye - position).length())

@@ -64,7 +64,6 @@ fn switching_scenes_unloads_the_previous_one_instead_of_duplicating_it() {
         "scene switch must unload old scene, not keep both"
     );
 
-    // Same scene loaded again does not duplicate; engine is same instance.
     let engine_before = app.engine_mut().scene_generation();
     app.load_scene_json_file(&second).expect("reload second");
     let mut names = named_entities(&mut app);
@@ -89,7 +88,6 @@ fn persistent_entities_survive_a_scene_switch() {
     let mut app = App::hosted(prism_engine::config::AppConfig::default());
     app.load_scene_json_file(&first).expect("load first");
 
-    // Mark first scene entity `Persistent` (game side equivalent `DontDestroyOnLoad`).
     let persistent = {
         let world = app.engine_mut().world_mut();
         let entity = world
@@ -110,7 +108,6 @@ fn persistent_entities_survive_a_scene_switch() {
         vec!["Main Camera", "Scene A", "Scene B"],
         "Persistent entity must survive scene switch"
     );
-    // Same entity handle still valid (engine not rebuilt).
     assert!(
         app.engine_mut()
             .world()

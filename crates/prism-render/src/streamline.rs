@@ -277,7 +277,7 @@ impl Default for DlssgOptions {
             hud_less_buffer_format: 0,
             ui_buffer_format: 0,
             on_error_callback: std::ptr::null(),
-            b_reserved15: 2, // eInvalid
+            b_reserved15: 2,
             _pad_reserved: [0; 3],
             queue_parallelism_mode: 0,
             enable_ui_recomposition: 0,
@@ -306,7 +306,7 @@ pub struct SlPreferences {
     pub engine: u32,
     pub engine_version: *const c_char,
     pub project_id: *const c_char,
-    pub render_api: u32, // 0 = D3D11, 1 = D3D12, 2 = Vulkan
+    pub render_api: u32,
 }
 
 #[repr(C)]
@@ -366,11 +366,11 @@ pub struct SlExtent {
 #[derive(Debug, Clone, Copy)]
 pub struct SlResource {
     pub base: BaseStructure,
-    pub res_type: u32, // 0 = Tex2D
+    pub res_type: u32,
     pub native: *mut c_void,
     pub memory: *mut c_void,
     pub view: *mut c_void,
-    pub state: u32, // VkImageLayout
+    pub state: u32,
     pub width: u32,
     pub height: u32,
     pub native_format: u32,
@@ -389,7 +389,7 @@ pub struct SlResourceTag {
     pub base: BaseStructure,
     pub resource: *mut SlResource,
     pub buffer_type: BufferType,
-    pub lifecycle: u32, // 0 = OnlyValidNow, 1 = ValidUntilPresent, 2 = ValidUntilEvaluate
+    pub lifecycle: u32,
     pub extent: SlExtent,
 }
 
@@ -671,9 +671,7 @@ pub(crate) struct SharedLib {
     handle: *mut c_void,
 }
 
-// SAFETY: Dynamic library handles and resolved entry-point pointers are process-global.
 unsafe impl Send for SharedLib {}
-// SAFETY: Dynamic library handles and resolved entry-point pointers are process-global.
 unsafe impl Sync for SharedLib {}
 
 impl Drop for SharedLib {
@@ -695,7 +693,7 @@ impl SharedLib {
     pub(crate) fn open(path: &str) -> Option<Self> {
         let c_path = std::ffi::CString::new(path).ok()?;
         #[cfg(unix)]
-        let handle = unsafe { dlopen(c_path.as_ptr(), 1) }; // RTLD_LAZY
+        let handle = unsafe { dlopen(c_path.as_ptr(), 1) };
         #[cfg(windows)]
         let handle = unsafe { LoadLibraryA(c_path.as_ptr()) };
         #[cfg(not(any(unix, windows)))]
@@ -763,9 +761,7 @@ pub struct StreamlineBinding {
     pub sl_set_constants: Option<PFunSlSetConstants>,
 }
 
-// SAFETY: Function pointers inside `StreamlineBinding` point to immutable code pages.
 unsafe impl Send for StreamlineBinding {}
-// SAFETY: Function pointers inside `StreamlineBinding` point to immutable code pages.
 unsafe impl Sync for StreamlineBinding {}
 
 impl StreamlineBinding {
@@ -927,14 +923,14 @@ fn call_sl_init(binding: &StreamlineBinding) -> bool {
         allocate_callback: std::ptr::null(),
         release_callback: std::ptr::null(),
         log_message_callback: sl_log_callback as *const c_void,
-        flags: (1 << 0) | (1 << 7), // eDisableCLStateTracking | eUseFrameBasedResourceTagging
+        flags: (1 << 0) | (1 << 7),
         features_to_load: features.as_ptr(),
         num_features_to_load: features.len() as u32,
         application_id: 231_313_132,
         engine: 0,
         engine_version: c"0.1.0".as_ptr(),
         project_id: std::ptr::null(),
-        render_api: 2, // Vulkan
+        render_api: 2,
     };
     let init_res = unsafe { (binding.sl_init)((&raw const prefs).cast(), SL_SDK_VERSION) };
     if init_res != SlResult::Ok {
@@ -965,7 +961,6 @@ impl StreamlineRuntime {
         if !call_sl_init(&binding) {
             return None;
         }
-        // Keep the binding alive inside `sl.interposer` (Entry::load_from also holds a ref).
         std::mem::forget(binding);
         Some(path)
     }

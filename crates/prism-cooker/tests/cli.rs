@@ -10,10 +10,6 @@ use std::process::Command;
 use prism_asset::core::{AssetId, AssetType};
 use prism_asset::package::PackageBuilder;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Locate the compiled prism-cook binary
 ///
 /// `cargo test` places the test executable in `target/debug/deps/`, while the
@@ -27,10 +23,9 @@ fn cli_binary() -> PathBuf {
         }
     }
     let mut path = std::env::current_exe().expect("current exe");
-    // Pop the binary name, then the "deps" directory if present.
-    path.pop(); // binary name
+    path.pop();
     if path.ends_with("deps") {
-        path.pop(); // deps
+        path.pop();
     }
     path.push(if cfg!(windows) {
         "prism-cook.exe"
@@ -38,7 +33,6 @@ fn cli_binary() -> PathBuf {
         "prism-cook"
     });
     if !path.exists() {
-        // Fallback: maybe we're in a workspace target dir.
         path.pop();
         path.push("debug");
         path.push(if cfg!(windows) {
@@ -74,14 +68,9 @@ fn run_cli(args: &[&str]) -> (String, String) {
     (stdout, stderr)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn cli_no_args_shows_help() {
     let (stdout, stderr) = run_cli(&[]);
-    // Should show usage text on stdout.
     assert!(
         stdout.contains("Usage:"),
         "help text should contain Usage:\n{stdout}"
@@ -96,12 +85,10 @@ fn cli_no_args_shows_help() {
 #[test]
 fn cli_nonexistent_pak_reports_error() {
     let (_stdout, stderr) = run_cli(&["C:/this/does/not/exist.pak"]);
-    // The validate command returns an error → should appear on stderr.
     assert!(
         stderr.contains("error") || stderr.contains("Error"),
         "stderr should mention error:\n{stderr}"
     );
-    // The binary should exit non-zero, but we only check output text.
 }
 
 #[test]
@@ -109,7 +96,6 @@ fn cli_validate_with_meta_json_shows_asset_names() {
     let dir = tempfile::tempdir().expect("temp dir");
     let pak_path = build_minimal_pak(dir.path(), "game.pak");
 
-    // Write a .pak.meta.json alongside the .pak.
     let meta = serde_json::json!({
         "pak": "game.pak",
         "format": "RPAK",
@@ -148,18 +134,15 @@ fn cli_validate_with_meta_json_shows_asset_names() {
 fn cli_validate_without_meta_json_shows_fallback() {
     let dir = tempfile::tempdir().expect("temp dir");
     let pak_path = build_minimal_pak(dir.path(), "game.pak");
-    // Intentionally *not* writing a .pak.meta.json.
 
     let (stdout, stderr) = run_cli(&[&pak_path.to_string_lossy()]);
 
     assert!(stderr.is_empty(), "no error expected:\n{stderr}");
     assert!(stdout.contains("RPAK"), "should show magic:\n{stdout}");
-    // Fallback tag should mention binary and asset
     assert!(
         stdout.contains("binary") && stdout.contains("asset"),
         "fallback should mention asset type:\n{stdout}"
     );
-    // Tip about rebuilding should appear.
     assert!(
         stdout.contains("Tip"),
         "should show tip about rebuilding:\n{stdout}"
@@ -197,26 +180,21 @@ fn cli_import_and_build_texture_produces_valid_pak() {
     let root = dir.path();
     let root_str = root.to_string_lossy().to_string();
 
-    // 1. init
     let (stdout, stderr) = run_cli(&["init", &root_str]);
     assert!(stderr.is_empty(), "init error: {stderr}");
     assert!(stdout.contains("initialized"), "init output: {stdout}");
 
-    // 2. create a small PNG texture in Assets/
     let assets_dir = root.join("Assets");
     let img_path = assets_dir.join("test_tex.png");
     let img = image::RgbaImage::new(4, 4);
     img.save(&img_path).expect("save test png");
 
-    // 3. scan
     let (_stdout, stderr) = run_cli(&["scan", "--project", &root_str]);
     assert!(stderr.is_empty(), "scan error: {stderr}");
 
-    // 4. import
     let (_stdout, stderr) = run_cli(&["import", "--project", &root_str]);
     assert!(stderr.is_empty(), "import error: {stderr}");
 
-    // Verify intermediate file was written into Library/Intermediate/
     let inter_dir = root.join("Library").join("Intermediate");
     assert!(inter_dir.exists(), "Library/Intermediate must exist");
     let inter_files: Vec<_> = std::fs::read_dir(&inter_dir)
@@ -225,14 +203,12 @@ fn cli_import_and_build_texture_produces_valid_pak() {
         .collect();
     assert_eq!(inter_files.len(), 1, "should have 1 intermediate file");
 
-    // 5. build
     let out_pak = root.join("out.pak");
     let out_pak_str = out_pak.to_string_lossy().to_string();
     let (_stdout, stderr) = run_cli(&["build", "--project", &root_str, "--output", &out_pak_str]);
     assert!(stderr.is_empty(), "build error: {stderr}");
     assert!(out_pak.exists(), "out.pak must be built");
 
-    // 6. validate built pak
     let (v_stdout, v_stderr) = run_cli(&["validate", &out_pak_str]);
     assert!(v_stderr.is_empty(), "validate error: {v_stderr}");
     assert!(v_stdout.contains("RPAK"), "validate should show magic");
@@ -244,29 +220,24 @@ fn cli_build_without_prior_import_imports_on_demand() {
     let root = dir.path();
     let root_str = root.to_string_lossy().to_string();
 
-    // 1. init
     let (stdout, stderr) = run_cli(&["init", &root_str]);
     assert!(stderr.is_empty(), "init error: {stderr}");
     assert!(stdout.contains("initialized"), "init output: {stdout}");
 
-    // 2. create texture
     let assets_dir = root.join("Assets");
     let img_path = assets_dir.join("test_tex.png");
     let img = image::RgbaImage::new(4, 4);
     img.save(&img_path).expect("save test png");
 
-    // 3. scan
     let (_stdout, stderr) = run_cli(&["scan", "--project", &root_str]);
     assert!(stderr.is_empty(), "scan error: {stderr}");
 
-    // 4. build directly without running import
     let out_pak = root.join("out.pak");
     let out_pak_str = out_pak.to_string_lossy().to_string();
     let (_stdout, stderr) = run_cli(&["build", "--project", &root_str, "--output", &out_pak_str]);
     assert!(stderr.is_empty(), "build error: {stderr}");
     assert!(out_pak.exists(), "out.pak must be built");
 
-    // 5. validate
     let (v_stdout, v_stderr) = run_cli(&["validate", &out_pak_str]);
     assert!(v_stderr.is_empty(), "validate error: {v_stderr}");
     assert!(v_stdout.contains("RPAK"), "validate should show magic");
@@ -291,7 +262,6 @@ fn cli_verify_reports_missing_and_orphan_intermediates() {
     let (_stdout, stderr) = run_cli(&["import", "--project", &root_str]);
     assert!(stderr.is_empty(), "import error: {stderr}");
 
-    // Intermediate names are content addressed instead of per-database serials.
     let inter_dir = root.join("Library").join("Intermediate");
     let names: Vec<String> = std::fs::read_dir(&inter_dir)
         .expect("read Intermediate/")
@@ -312,7 +282,6 @@ fn cli_verify_reports_missing_and_orphan_intermediates() {
         "verify should pass on a fresh library:\n{stdout}"
     );
 
-    // A source that changed without a re-import makes the record outdated.
     image::RgbaImage::new(8, 8)
         .save(&img_path)
         .expect("rewrite test png");
@@ -324,20 +293,16 @@ fn cli_verify_reports_missing_and_orphan_intermediates() {
     );
     assert!(stderr.contains("out of date"), "verify error:\n{stderr}");
 
-    // Re-importing repairs the record and the intermediate.
     let (_stdout, stderr) = run_cli(&["import", "--project", &root_str]);
     assert!(stderr.is_empty(), "re-import error: {stderr}");
     let (stdout, stderr) = run_cli(&["verify", "--project", &root_str]);
     assert!(stderr.is_empty(), "verify error: {stderr}");
     assert!(stdout.contains("verified"), "verify output:\n{stdout}");
-    // The intermediate built from the old source hash is now unreferenced; it
-    // stays on disk until a gc pass exists, and `verify` lists it as an orphan.
     assert!(
         stdout.contains("1 orphan"),
         "stale intermediate should be reported as an orphan:\n{stdout}"
     );
 
-    // A missing intermediate is reported and fails the command.
     for entry in std::fs::read_dir(&inter_dir).expect("read Intermediate/") {
         std::fs::remove_file(entry.expect("intermediate entry").path())
             .expect("remove intermediate");
@@ -346,7 +311,6 @@ fn cli_verify_reports_missing_and_orphan_intermediates() {
     assert!(stdout.contains("missing"), "verify output:\n{stdout}");
     assert!(stderr.contains("missing"), "verify error:\n{stderr}");
 
-    // An intermediate no record points at is reported as an orphan.
     std::fs::write(inter_dir.join("orphan.bin"), b"stale").expect("write orphan");
     let (stdout, _stderr) = run_cli(&["verify", "--project", &root_str]);
     assert!(stdout.contains("orphan.bin"), "verify output:\n{stdout}");

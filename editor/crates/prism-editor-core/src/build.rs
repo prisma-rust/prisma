@@ -143,8 +143,6 @@ fn asset_artifacts(root: &Path, output_dir: &Path) -> Vec<ArtifactCopy> {
         };
         copies.push(ArtifactCopy { from: path, to });
     }
-    // The plan must be reproducible: sort by file name so `read_dir` order doesn't affect the
-    // order of build artifacts.
     copies.sort_by(|a, b| a.from.cmp(&b.from));
     copies
 }
@@ -182,7 +180,6 @@ fn cook_step(root: &Path) -> BuildStep {
         label: "build-scenes (cook scene pak)".into(),
         program: "cargo".into(),
         args,
-        // cwd must be the project root: `build-scenes` finds `assets/scenes.json` by cwd.
         cwd: root.to_path_buf(),
     }
 }
@@ -195,8 +192,6 @@ pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
         "build".to_string(),
         "--manifest-path".to_string(),
         manifest.to_string_lossy().into_owned(),
-        // The editor parses these two outputs into Problems panel entries; `cargo run` without
-        // them would pollute game stdout.
         "--message-format".to_string(),
         "json".to_string(),
     ];
@@ -206,8 +201,6 @@ pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
 
     let output_dir = {
         let configured = PathBuf::from(settings.build.output_dir.trim());
-        // Leaving it empty must not degenerate into "project root" — that would copy assets/
-        // into itself.
         let configured = if configured.as_os_str().is_empty() {
             PathBuf::from("build/player")
         } else {
@@ -225,9 +218,6 @@ pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
         .unwrap_or(root)
         .join("target")
         .join(target_profile(settings));
-    // The artifact layout must let `asset_paths` recognize `assets/`: the executable goes in
-    // `output_dir/`, assets go in `output_dir/assets/` (consistent with the Web editor and the
-    // game directory packing layout).
     let binary = game_binary_name(&manifest);
     let exe = output_dir.join(&binary);
     let mut copies = vec![ArtifactCopy {
@@ -269,7 +259,6 @@ pub fn copy_artifacts(copies: &[ArtifactCopy]) -> io::Result<Vec<String>> {
         if !copy.from.is_file() {
             continue;
         }
-        // Copying onto itself (output_dir points back at project root) errors, just skip it.
         if same_file(&copy.from, &copy.to) {
             continue;
         }
@@ -345,7 +334,6 @@ mod tests {
             .position(|arg| arg == "--manifest-path")
             .expect("when the engine repo is above, --manifest-path should be present");
         assert_eq!(args[index + 1], root.join("Cargo.toml").to_string_lossy());
-        // Cook still runs in the project root, otherwise it would cook the engine repo's own assets/.
         assert_eq!(plan.steps[1].cwd, project);
         assert_eq!(args.last().map(String::as_str), Some("build-scenes"));
     }
@@ -364,7 +352,6 @@ mod tests {
         );
         assert_eq!(plan.steps[0].cwd, root);
         assert_eq!(plan.output_dir, root.join("build/windows"));
-        // The temp dir has no `assets/`, so only one copy item (the exe).
         assert_eq!(plan.copies.len(), 1);
         assert_eq!(
             plan.copies[0].from,
@@ -390,7 +377,6 @@ mod tests {
         ] {
             std::fs::write(assets.join(name), b"x").unwrap();
         }
-        // Authoring documents and loose assets must not be copied into the release directory.
         std::fs::write(assets.join("scenes/lake.scene.json"), b"{}").unwrap();
         std::fs::write(assets.join("boat.png"), b"png").unwrap();
 

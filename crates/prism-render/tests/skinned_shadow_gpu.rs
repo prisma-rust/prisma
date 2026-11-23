@@ -165,7 +165,6 @@ fn a_skinned_caster_reaches_the_shadow_pass() {
         "a skinned caster must go through the skinned depth pipeline, not be skipped"
     );
 
-    // No palette but declares skinning: this caster cannot draw (otherwise garbage outside bind pose).
     let _ = render(&mut renderer, &[caster(static_mesh, Some(0))], &[IDENTITY]);
     let (static_casters, skinned_casters) = shadow_casters(&mut renderer).expect("pass present");
     assert_eq!(
@@ -195,7 +194,6 @@ fn a_moved_palette_keeps_the_caster_in_the_shadow_pass() {
         return;
     };
     if skinned_casters == 0 {
-        // Shadow channel did not run in this build (config outside `ShadowMode::Raster`).
         let _ = render(&mut renderer, &[caster(handle, Some(0))], &[IDENTITY]);
         let Some((_, skinned_casters)) = shadow_casters(&mut renderer) else {
             return;
@@ -206,8 +204,6 @@ fn a_moved_palette_keeps_the_caster_in_the_shadow_pass() {
         }
     }
 
-    // Non-identity palette: no panic, still submitted. Per-pixel correctness cannot be done here — need a
-    // receiver scene sampling shadow texture; skinned vertex blend itself covered by `skinning_gpu.rs`.
     let mut moved = IDENTITY;
     moved[3][0] = 0.75;
     let _ = render(&mut renderer, &[caster(handle, Some(0))], &[moved]);

@@ -13,7 +13,6 @@ pub mod runtime;
 #[cfg(feature = "types")]
 pub mod types;
 
-// Re-exports so macros using `$crate::` resolve correctly
 #[cfg(feature = "asset-data")]
 pub use core::asset_data::{AssetData, AssetHandle, LoadedAsset};
 #[cfg(feature = "core")]

@@ -5,10 +5,6 @@
 //! `RenderMaterialManager`).  The handles pointing here live in
 //! [`MeshRenderer`](crate::ecs::components::MeshRenderer).
 
-// ===========================================================================
-// MeshAsset
-// ===========================================================================
-
 /// CPU-side mesh data (positions, normals, UVs, indices).
 ///
 /// Designed to be cheap to clone if needed; the procedural factory
@@ -37,10 +33,6 @@ impl MeshAsset {
         }
     }
 }
-
-// ===========================================================================
-// MaterialAsset
-// ===========================================================================
 
 /// CPU-side material parameters.
 #[derive(Debug, Clone)]

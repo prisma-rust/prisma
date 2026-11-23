@@ -107,9 +107,6 @@ pub fn build_about_dialog(theme: &Theme, viewport: Vec2) -> ElementBox {
         .width(Length::Px(rect.w))
         .radius(ABOUT_RADIUS)
         .border(1.0, theme.border)
-        // The fill is the glass tint: the shader mixes the blurred backdrop
-        // toward it, so the same colour reads as "how visible is the scene
-        // through this card".
         .bg(glass_tint(theme))
         .material(glass)
         .child(build_about_body(theme))

@@ -38,7 +38,6 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
 }
 
 fn camera() -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
-    // Camera at (0, 0, 3) looking down -Z at a unit cube centred on origin.
     let view = [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -51,7 +50,7 @@ fn camera() -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
     let aspect = 1.0_f32;
     let mut proj = [[0.0f32; 4]; 4];
     proj[0][0] = f / aspect;
-    proj[1][1] = -f; // Vulkan NDC +Y points down.
+    proj[1][1] = -f;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = near * far / (near - far);
@@ -153,7 +152,7 @@ fn render_with(
             PostGrade::default(),
             wireframe,
             shaded_wireframe,
-            &[], // bone matrices
+            &[],
         )
         .expect("headless render failed");
     renderer
@@ -206,7 +205,6 @@ fn shaded_wireframe_keeps_the_fill_and_adds_dark_edges() {
         shaded_dark > plain_dark + 50,
         "expected the fill to stay and dark wire edges to be added: plain={plain_dark}, shaded={shaded_dark}"
     );
-    // Fill still present: wireframe is not the only content.
     assert!(
         shaded_dark < 256 * 256,
         "shaded wireframe must not replace the filled image"

@@ -31,8 +31,6 @@ use crate::shader;
 use crate::shader_bindings::{mesh_vert, scene_frag};
 use crate::skybox_pass::SkyboxPass;
 
-// The reflected push-constant block and the Rust mirror must stay in lockstep;
-// a mismatch would make `cmd_push_constants` write past the pipeline range.
 const _: () = assert!(
     std::mem::size_of::<scene_frag::PbrBindlessPush>() as u32 == scene_frag::PUSH_CONSTANT_SIZE
 );
@@ -68,8 +66,6 @@ fn build_static_batches_with(
         if !item.visible_in_main_pass || item.index_count == Some(0) || !mesh_exists(item.mesh) {
             continue;
         }
-        // Skinned draws need their own bone offset and transparent draws need
-        // their back-to-front order; both stay single-draw batches.
         let groupable = item.bone_offset.is_none()
             && item.splat_tiling == 0.0
             && item.state.render_queue <= prism_gfx::RenderQueue::GEOMETRY_LAST;
@@ -125,8 +121,6 @@ fn prepare_static_batches_with(
         } else if batch.items.len() == 1 {
             out.push(batch);
         } else {
-            // Capacity exhausted: keep correctness by falling back to one draw
-            // per entity instead of truncating the instance range.
             out.extend(batch.items.into_iter().map(|i| StaticBatch {
                 items: vec![i],
                 instance_offset: None,
@@ -330,18 +324,9 @@ pub struct ForwardPass {
 impl ForwardPass {
     pub fn new(_swapchain_color_format: vk::Format) -> Self {
         Self {
-            // HDR intermediate target (linear). PostPass tonemaps this to the
-            // sRGB swapchain. The old `_swapchain_color_format` argument is
-            // kept for API stability; PostPass owns the swapchain-format
-            // pipeline + render pass.
             color_format: vk::Format::R16G16B16A16_SFLOAT,
-            // R16G16B16A16_SFLOAT: signed float so view-space normals (which
-            // can be negative in any axis) store without bias/packing. 4th
-            // channel unused (shader writes 0).
             normal_format: vk::Format::R16G16B16A16_SFLOAT,
             velocity_format: vk::Format::R16G16B16A16_SFLOAT,
-            // RGB = base color, A = perceptual roughness. RGBA16F keeps the
-            // same sampling / format support as the other G-buffer targets.
             albedo_format: vk::Format::R16G16B16A16_SFLOAT,
             brdf_handle: u32::MAX,
             camera_stride: 0,
@@ -482,15 +467,8 @@ impl ForwardPass {
             return Ok(());
         }
 
-        // The render pass must exist before we build a framebuffer against it.
-        // `ensure_render_pass` is idempotent (early-returns once set).
         self.ensure_render_pass(context)?;
 
-        // If the swapchain image count changed (recreate with a different
-        // image count) or the extent changed, tear everything down and resize
-        // the per-image vectors. This is the only place we destroy framebuffers
-        // wholesale; per-frame we only (re)build the single entry for this
-        // `image_index` - so an in-flight frame's framebuffer is never touched.
         let swapchain_changed = self.target_views.len() != image_count || self.extent != extent;
         if swapchain_changed {
             self.drop_target(device);
@@ -504,15 +482,12 @@ impl ForwardPass {
             self.albedo_images = (0..image_count).map(|_| None).collect();
         }
 
-        // Build this image's framebuffer + color + depth + normal if not
-        // already current.
         let already_current = self.framebuffers[idx].is_some();
         if !already_current {
             let rp = self
                 .render_pass
                 .context("ForwardPass: render_pass missing in set_target")?;
 
-            // Replace the HDR color image for this slot.
             let color_image =
                 crate::render_pass::NormalImage::new(context, extent, self.color_format)
                     .context("ForwardPass: create HDR color image")?;
@@ -521,7 +496,6 @@ impl ForwardPass {
             }
             self.color_images[idx] = Some(color_image);
 
-            // Replace the depth image for this slot (create new, destroy old).
             let depth_image = crate::render_pass::DepthImage::new(context, extent)
                 .context("ForwardPass: create depth image")?;
             if let Some(mut old) = self.depth_images[idx].take() {
@@ -529,7 +503,6 @@ impl ForwardPass {
             }
             self.depth_images[idx] = Some(depth_image);
 
-            // Replace the view-space normal MRT image for this slot.
             let normal_image =
                 crate::render_pass::NormalImage::new(context, extent, self.normal_format)
                     .context("ForwardPass: create normal image")?;
@@ -538,7 +511,6 @@ impl ForwardPass {
             }
             self.normal_images[idx] = Some(normal_image);
 
-            // #883 Phase 2: per-pixel motion vectors for TAA.
             let velocity_image =
                 crate::render_pass::NormalImage::new(context, extent, self.velocity_format)
                     .context("ForwardPass: create velocity image")?;
@@ -547,8 +519,6 @@ impl ForwardPass {
             }
             self.velocity_images[idx] = Some(velocity_image);
 
-            // Albedo + perceptual roughness MRT image (SV_Target3), consumed by
-            // the ReSTIR GI pass.
             let albedo_image =
                 crate::render_pass::NormalImage::new(context, extent, self.albedo_format)
                     .context("ForwardPass: create albedo image")?;
@@ -557,9 +527,6 @@ impl ForwardPass {
             }
             self.albedo_images[idx] = Some(albedo_image);
 
-            // Destroy the old framebuffer for this slot BEFORE creating the
-            // new one (order doesn't matter for validation here since both
-            // reference the same slot, but destroy-old-first is tidy).
             if let Some(old_fb) = self.framebuffers[idx].take() {
                 unsafe { device.destroy_framebuffer(old_fb, None) };
             }
@@ -569,7 +536,6 @@ impl ForwardPass {
             let normal = self.normal_images[idx].as_ref().unwrap();
             let velocity = self.velocity_images[idx].as_ref().unwrap();
             let albedo = self.albedo_images[idx].as_ref().unwrap();
-            // render pass attachment order: color depth normal velocity albedo
             let attachments = [
                 color.view,
                 depth.view,
@@ -608,31 +574,25 @@ impl ForwardPass {
     /// are kept (they don't reference swapchain views); `set_target` rebuilds
     /// the framebuffers + depth on the next frame.
     pub fn drop_target(&mut self, device: &ash::Device) {
-        // Framebuffers first (they reference color + depth + normal views).
         for fb in self.framebuffers.drain(..).flatten() {
             unsafe { device.destroy_framebuffer(fb, None) };
         }
-        // Then HDR color images.
         for color in self.color_images.drain(..).flatten() {
             let mut c = color;
             unsafe { c.destroy(device) };
         }
-        // Then depth images (destroys each depth view).
         for depth in self.depth_images.drain(..).flatten() {
             let mut d = depth;
             unsafe { d.destroy(device) };
         }
-        // Then view-space normal MRT images.
         for normal in self.normal_images.drain(..).flatten() {
             let mut n = normal;
             unsafe { n.destroy(device) };
         }
-        // Then motion-vector images (#883 Phase 2).
         for velocity in self.velocity_images.drain(..).flatten() {
             let mut v = velocity;
             unsafe { v.destroy(device) };
         }
-        // Then albedo + roughness MRT images.
         for albedo in self.albedo_images.drain(..).flatten() {
             let mut a = albedo;
             unsafe { a.destroy(device) };
@@ -651,18 +611,14 @@ impl ForwardPass {
     /// ForwardPass is empty  `device_wait_idle` must already have been called by
     /// the caller so no command buffers are in flight.
     pub fn destroy(&mut self, device: &ash::Device) {
-        // Framebuffers + depth images (swapchain-derived).
         self.drop_target(device);
 
-        // Render pass.
         if let Some(rp) = self.render_pass.take() {
             unsafe { device.destroy_render_pass(rp, None) };
         }
-        // Pipelines (three cull variants, frees pipeline + layout via GraphicsPipeline::Drop).
         self.pipelines.clear();
         self.shaded_wireframe_pipeline = None;
 
-        // set 0: frame UBO + materials SSBO layout + pool (sets freed with pool).
         if let Some(layout) = self.frame_set_layout.take() {
             unsafe { device.destroy_descriptor_set_layout(layout, None) };
         }
@@ -671,8 +627,6 @@ impl ForwardPass {
         }
         self.frame_sets.clear();
 
-        // Shadow descriptor set layout + pool (the set itself is freed with
-        // the pool).
         if let Some(layout) = self.shadow_ds_layout.take() {
             unsafe { device.destroy_descriptor_set_layout(layout, None) };
         }
@@ -680,7 +634,6 @@ impl ForwardPass {
             unsafe { device.destroy_descriptor_pool(pool, None) };
         }
         self.shadow_descriptor_set = vk::DescriptorSet::null();
-        // Light SSBO.
         for buf in self.light_buffers.drain(..) {
             if buf != vk::Buffer::null() {
                 unsafe { device.destroy_buffer(buf, None) };
@@ -711,13 +664,10 @@ impl ForwardPass {
                 unsafe { device.free_memory(mem, None) };
             }
         }
-        // Skybox pass (its own pipeline + set-2 layout).
         self.skybox.destroy(device);
-        // Gizmo (its own pipeline + vertex buffer; Drop frees them).
         self.gizmo = None;
         self.ground_grid = None;
 
-        // set 4: AO descriptor set layout + pool + sampler.
         if let Some(layout) = self.ao_ds_layout.take() {
             unsafe { device.destroy_descriptor_set_layout(layout, None) };
         }
@@ -732,7 +682,6 @@ impl ForwardPass {
         self.ao_views.clear();
         self.gi_views.clear();
 
-        // set 5 (GI probe volume) is borrowed from SceneScope — not destroyed here.
         self.gi_descriptor_set = vk::DescriptorSet::null();
         self.gi_layout = vk::DescriptorSetLayout::null();
 
@@ -780,21 +729,9 @@ impl ForwardPass {
         self.camera_stride = camera_stride;
         self.gi_descriptor_set = gi_descriptor_set;
         self.gi_layout = gi_layout;
-        // Skybox reuses the IBL env cubemap descriptor set + layout (set 0).
         self.skybox = SkyboxPass::new(ibl_descriptor_set, ibl_layout);
 
-        // ---- set 0: per-frame UBO (binding 0) + materials SSBO (binding 1)
-        //           + light SSBO (binding 2) ----
-        // One descriptor set per frame-in-flight; each binds its own UBO
-        // buffer at binding 0 and the (shared) materials SSBO at binding 1
-        // and the (shared) light SSBO at binding 2.
-        // Built once here; never rewritten at runtime.
         let frame_set_bindings = [
-            // Binding 0 is DYNAMIC: the pass composites several cameras from
-            // one set by passing `camera_index * stride` as a dynamic offset
-            // (#461). A plain `UNIFORM_BUFFER` here made every
-            // `vkCmdBindDescriptorSets` report
-            // `dynamicOffsetCount-00359` (0 dynamic descriptors, 1 offset).
             vk::DescriptorSetLayoutBinding::default()
                 .binding(scene_frag::FRAME_BINDING)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
@@ -810,15 +747,11 @@ impl ForwardPass {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // binding 3: bone palette (#560 P0-3), read by the vertex stage.
             vk::DescriptorSetLayoutBinding::default()
                 .binding(3)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::VERTEX),
-            // binding 4: previous-frame model matrices (#883 Phase 2), one
-            // entry per draw-list item. Read by the vertex stage to build
-            // object motion vectors.
             vk::DescriptorSetLayoutBinding::default()
                 .binding(4)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -833,7 +766,6 @@ impl ForwardPass {
         }
         .context("ForwardPass: create set0 (frame+materials+lights) layout")?;
 
-        // Tear down any prior set0 layout/pool/sets (e.g. on re-init).
         if let Some(old) = self.frame_set_layout.take() {
             unsafe { device.destroy_descriptor_set_layout(old, None) };
         }
@@ -843,9 +775,6 @@ impl ForwardPass {
         self.frame_sets.clear();
 
         let fif_count = frame_ubo_buffers.len();
-        // Pool needs: UNIFORM_BUFFER_DYNAMIC fif_count (the frame UBO is bound
-        // with a per-camera dynamic offset), plus three STORAGE_BUFFER
-        // bindings per set (materials, point lights, bone palette).
         let frame_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
@@ -876,11 +805,6 @@ impl ForwardPass {
         }
         .context("ForwardPass: allocate set0 sets")?;
 
-        // ---- light source  SSBO (bind  2) ----
-        // create  host-visible, coherent buffer  for up to `LIGHT_MAX` point
-        // lights, one per frame-in-flight to avoid tearing and data races.
-        // The buffer  is zero-initialized here; `ForwardPass::update_lights`
-        // rewrites the contents every frame from the ECS `PointLight` query  (see `render_system`).
         let light_ssbo_size = (crate::descriptor::LIGHT_MAX as vk::DeviceSize)
             * crate::descriptor::GPU_LIGHT_SIZE as vk::DeviceSize;
         let mut new_light_buffers = Vec::with_capacity(fif_count);
@@ -895,8 +819,6 @@ impl ForwardPass {
             )
             .context("ForwardPass: create light SSBO buffer")?;
 
-            // Zero-initialize so the first frame (before any `update_lights` call)
-            // doesn't read  garbage.
             let light_ptr =
                 unsafe { device.map_memory(mem, 0, light_ssbo_size, vk::MemoryMapFlags::empty()) }
                     .context("ForwardPass: map light SSBO memory")?;
@@ -909,10 +831,6 @@ impl ForwardPass {
             new_light_memories.push(mem);
         }
 
-        // ---- Bone palette SSBO (binding 3, #560 P0-3) ----
-        // One host-visible buffer per frame in flight. `BONE_CAPACITY` is the
-        // number of mat4 entries a single frame can address; the engine packs
-        // every skinned draw's palette into it each frame.
         let bone_ssbo_size =
             (Self::BONE_CAPACITY as vk::DeviceSize) * (std::mem::size_of::<[[f32; 4]; 4]>() as u64);
         let mut new_bone_buffers = Vec::with_capacity(fif_count);
@@ -935,10 +853,6 @@ impl ForwardPass {
             new_bone_memories.push(mem);
         }
 
-        // ---- Previous-frame model SSBO (binding 4, #883 Phase 2) ----
-        // One mat4 per draw-list item, uploaded by `GraphRenderer::execute`
-        // before the graph runs. Separate from bones so a frame with both
-        // skinned and moving static draws cannot overwrite either palette.
         let prev_model_ssbo_size = (Self::PREV_MODEL_CAPACITY as vk::DeviceSize)
             * (std::mem::size_of::<[[f32; 4]; 4]>() as u64);
         let mut new_prev_model_buffers = Vec::with_capacity(fif_count);
@@ -962,7 +876,6 @@ impl ForwardPass {
             new_prev_model_memories.push(mem);
         }
 
-        // Destroy old light buffer if any.
         for buf in self.light_buffers.drain(..) {
             if buf != vk::Buffer::null() {
                 unsafe { device.destroy_buffer(buf, None) };
@@ -1000,10 +913,8 @@ impl ForwardPass {
         self.prev_model_buffers = new_prev_model_buffers;
         self.prev_model_memories = new_prev_model_memories;
 
-        // Write each set: binding 0 = this frame's UBO, binding 1 = materials SSBO,
-        // bind  2 = this frame's light source  SSBO.
         let ubo_size = std::mem::size_of::<crate::descriptor::FrameUBOData>() as vk::DeviceSize;
-        let mat_ssbo_size = vk::WHOLE_SIZE; // SSBO: whole buffer is fine.
+        let mat_ssbo_size = vk::WHOLE_SIZE;
         let mat_info = vk::DescriptorBufferInfo::default()
             .buffer(materials_buffer)
             .offset(0)
@@ -1018,8 +929,6 @@ impl ForwardPass {
                     .range(vk::WHOLE_SIZE)
             })
             .collect();
-        // Collect all per-frame UBO infos first so the `writes` slice
-        // references below don't conflict with mutating `ubo_infos`.
         let ubo_infos: Vec<vk::DescriptorBufferInfo> = frame_ubo_buffers
             .iter()
             .map(|buf| {
@@ -1055,7 +964,6 @@ impl ForwardPass {
                 vk::WriteDescriptorSet::default()
                     .dst_set(*set)
                     .dst_binding(scene_frag::FRAME_BINDING)
-                    // must be consistent with DYNAMIC type in layout, otherwise write ignored.
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                     .buffer_info(std::slice::from_ref(&ubo_infos[i])),
             );
@@ -1094,7 +1002,6 @@ impl ForwardPass {
         self.frame_set_pool = Some(frame_pool);
         self.frame_sets = sets;
 
-        // ---- set 3: shadow map (SAMPLED_IMAGE + comparison SAMPLER) ----
         let shadow_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(scene_frag::SHADOW_MAP_BINDING)
@@ -1176,14 +1083,6 @@ impl ForwardPass {
         self.shadow_ds_pool = Some(pool);
         self.shadow_descriptor_set = ds;
 
-        // ---- set 4: previous-frame GTAO R8 visibility (combined image sampler) ----
-        // The AO view is updated every frame by `set_ao` (GraphRenderer passes
-        // the GTAO pass's double-buffered view for the frame the scene reads).
-        // Here we only create the layout + pool + sampler + descriptor set; the
-        // image_info write happens in `set_ao` once a view is available.
-        // Binding 0 is the GTAO visibility texture; binding 1 is the
-        // previous-frame ReSTIR GI signal. Both are written by per-frame
-        // setters (`set_ao` / `set_gi_view`) once the producing pass has run.
         let ao_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(scene_frag::AO_TEX_BINDING)
@@ -1204,7 +1103,6 @@ impl ForwardPass {
         }
         .context("ForwardPass: create set4 (AO) ds layout")?;
 
-        // Tear down any prior set4 layout/pool/sampler (e.g. on re-init).
         if let Some(old) = self.ao_ds_layout.take() {
             unsafe { device.destroy_descriptor_set_layout(old, None) };
         }
@@ -1233,10 +1131,6 @@ impl ForwardPass {
         }
         .context("ForwardPass: create AO sampler")?;
 
-        // One AO descriptor set per frame-in-flight so `set_ao` can update
-        // frame N's set without disturbing frame N-1's still-in-flight set
-        // (VUID-vkUpdateDescriptorSets-None-03047). The frame-in-flight count
-        // matches `frame_ubo_buffers.len()` (== `frame_sets.len()`).
         let ao_fif = frame_ubo_buffers.len() as u32;
         let ao_pool = unsafe {
             device.create_descriptor_pool(
@@ -1268,13 +1162,6 @@ impl ForwardPass {
         self.ao_descriptor_sets = ao_sets;
         self.ao_views = vec![vk::ImageView::null(); ao_fif as usize];
         self.gi_views = vec![vk::ImageView::null(); ao_fif as usize];
-        // The actual image_info write happens in `set_ao` once the GTAO pass
-        // produces its first AO view. Until then the descriptors point at null;
-        // `PBR_FLAG_AO` is off by default so nothing samples it.
-        //
-        // `giTex` is different: it is declared unconditionally in scene_frag.slang,
-        // so a never-written binding is a descriptor-validity error on every draw
-        // even when `gi_mode == 0` never samples it. Seed it with the 1x1 dummy.
         if gi_dummy_view != vk::ImageView::null() {
             self.gi_views.fill(gi_dummy_view);
             for set in &self.ao_descriptor_sets {
@@ -1291,9 +1178,6 @@ impl ForwardPass {
             }
         }
 
-        // set 5 (GI probe volume) is borrowed from SceneScope — already wired
-        // via `gi_descriptor_set` / `gi_layout` parameters above.
-
         Ok(())
     }
 
@@ -1304,9 +1188,6 @@ impl ForwardPass {
     /// frame-in-flight.
     pub fn set_ao(&mut self, device: &ash::Device, frame_index: u32, view: vk::ImageView) {
         let i = (frame_index as usize) % self.ao_descriptor_sets.len();
-        // TEMP PROBE: confirm set_ao runs with valid inputs. Throttled to once
-        // per second so the log isn't flooded at frame rate; emitted at
-        // `trace!` so it stays quiet under the default `info` filter.
         if self.last_probe_log.elapsed().as_secs_f32() >= 1.0 {
             self.last_probe_log = Instant::now();
             log::trace!(
@@ -1324,10 +1205,6 @@ impl ForwardPass {
         }
         self.ao_views[i] = view;
         if view == vk::ImageView::null() {
-            // No AO yet (first frame or GTAO disabled) - leave the descriptor
-            // unbound. The shader's `aoTex.SampleLevel` is only reached when
-            // PBR_FLAG_AO is set, which the app leaves off until the user
-            // toggles it (by which time `view` is non-null).
             return;
         }
         let image_info = vk::DescriptorImageInfo::default()
@@ -1559,8 +1436,6 @@ impl ForwardPass {
             .context("ForwardPass::update_bones: map")?;
         unsafe {
             let dst = ptr as *mut u8;
-            // Clear the tail so a shader that indexes past the live range
-            // reads identity-ish zeros instead of last frame's bones.
             std::ptr::write_bytes(
                 dst.add(count * matrix_size),
                 0,
@@ -1627,8 +1502,6 @@ impl ForwardPass {
         lights: &[crate::descriptor::GpuLight],
     ) -> Result<()> {
         if self.light_memories.is_empty() {
-            // SSBO not allocated yet (set_resources not called). Nothing to do;
-            // the first frame after set_resources will see zeros.
             return Ok(());
         }
         let mem = self.light_memories[(frame_index as usize) % self.light_memories.len()];
@@ -1646,8 +1519,6 @@ impl ForwardPass {
             )
         }
         .context("ForwardPass::update_lights: map")?;
-        // Zero the whole buffer then copy in the active lights up to LIGHT_MAX.
-        // Cheaper than tracking which slots changed, and keeps unused slots well-defined.
         let count = Self::clamped_light_count(lights.len());
         let copy_bytes = count * crate::descriptor::GPU_LIGHT_SIZE;
         unsafe {
@@ -1670,42 +1541,23 @@ impl ForwardPass {
         let device = &context.device;
         self.device = Some(device.clone());
 
-        // attachment 0: swapchain color (HDR lit color, post-tonemap).
         let color_attachment = vk::AttachmentDescription::default()
             .format(self.color_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // #972: `initial_layout` is UNDEFINED (the render  graph emits no
-            // barrier before this pass, see `setup`), and Vulkan forbids
-            // LOAD with an UNDEFINED initial layout — the load would read
-            // undefined texels. Every camera clears explicitly with
-            // `vkCmdClearAttachments` according to `Camera.clearFlags`, and
-            // the "preserve what came before" case (#461) happens **inside**
-            // this single render  pass instance, where DONT_CARE never applies.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
-            // Leave the swapchain image in COLOR_ATTACHMENT_OPTIMAL so a
-            // subsequent external overlay pass can load it and transition it to
-            // PRESENT_SRC_KHR. When the external overlay is disabled the caller
-            // (GraphRenderer::render) records a fallback pipeline barrier to
-            // PRESENT_SRC_KHR after this pass ends.
             .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
         let color_ref = vk::AttachmentReference::default()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // attachment 1: scene depth (D32_SFLOAT). STORE because the GTAO pass
-        // samples it after ForwardPass (it was DONT_CARE before GTAO existed).
-        // Final layout is DEPTH_STENCIL_ATTACHMENT_OPTIMAL; the GTAO pass
-        // transitions it to DEPTH_STENCIL_READ_ONLY_OPTIMAL before sampling.
         let depth_attachment = vk::AttachmentDescription::default()
             .format(vk::Format::D32_SFLOAT)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // Same #972: UNDEFINED starting layout can only use CLEAR / DONT_CARE, depth is
-            // explicitly cleared by each camera's clear flags.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1717,13 +1569,9 @@ impl ForwardPass {
             .attachment(1)
             .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-        // attachment 2: view-space normal MRT (R16G16B16A16_SFLOAT). STORE so
-        // the GTAO pass can sample it. Final COLOR_ATTACHMENT_OPTIMAL; the GTAO
-        // pass transitions it to SHADER_READ_ONLY_OPTIMAL before sampling.
         let normal_attachment = vk::AttachmentDescription::default()
             .format(self.normal_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // Same #972.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1735,9 +1583,6 @@ impl ForwardPass {
             .attachment(2)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // Attachment 3: screen-space motion vectors (#883 Phase 2), RGBA16F (.xy used). Cleared
-        // to zero; every mesh draw overwrites its footprint. Stored so TaaPass
-        // can sample it after the pass.
         let velocity_attachment = vk::AttachmentDescription::default()
             .format(self.velocity_format)
             .samples(vk::SampleCountFlags::TYPE_1)
@@ -1752,12 +1597,9 @@ impl ForwardPass {
             .attachment(3)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // Attachment 4: albedo + perceptual roughness (SV_Target3). Written every frame
-        // by the scene fragment shader; read by the ReSTIR GI pass.
         let albedo_attachment = vk::AttachmentDescription::default()
             .format(self.albedo_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            // Same #972.
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -1808,8 +1650,6 @@ impl ForwardPass {
             .context("ForwardPass: create render pass")?;
         self.render_pass = Some(rp);
 
-        // Lazily build the world-space gizmo pipeline against this render pass
-        // (the gizmo draws inside the same render pass, on top of the scene).
         if self.gizmo.is_none() {
             self.gizmo = Some(Gizmo::new(context, rp).context("ForwardPass: create gizmo")?);
         }
@@ -1849,11 +1689,6 @@ impl ForwardPass {
             .render_pass
             .context("ForwardPass: render_pass not created before pipeline")?;
 
-        // Vertex: reuse mesh_vert.vert.spv (`MeshPush { model }`, 64 bytes). The
-        // pipeline pushes the same `shader_bindings::scene_frag::PbrBindlessPush`
-        // block (120 bytes); the vertex stage only reads the leading `model`, and
-        // Vulkan allows the push range to exceed what a stage actually reads.
-        // Fragment: scene_frag.frag.spv (bindless PBR + shadow) or custom shader.
         const VERT_SPV: &[u8] = prism_render_shaders::MESH_VERT_VERT_SPV;
         const FRAG_SPV: &[u8] = prism_render_shaders::SCENE_FRAG_FRAG_SPV;
         let vert_module =
@@ -1862,10 +1697,6 @@ impl ForwardPass {
         let vert_entry = std::ffi::CString::new(mesh_vert::ENTRY_VERTEX_MAIN).unwrap();
         let frag_entry = std::ffi::CString::new(scene_frag::ENTRY_FRAGMENT_MAIN).unwrap();
 
-        // Skinned variant: same module family, `vertexSkinnedMain` declares the
-        // extra joints/weights inputs from vertex buffer 1 (#560 P0-3). The
-        // reflection JSON only carries the first entry point, so the skinned
-        // entry name stays a literal here.
         const VERT_SKINNED_SPV: &[u8] = prism_render_shaders::MESH_VERT_SKINNED_VERT_SPV;
         let vert_skinned_module = shader::load_shader_module(device, VERT_SKINNED_SPV)
             .context("ForwardPass: load skinned vert")?;
@@ -1897,28 +1728,17 @@ impl ForwardPass {
         let skin_binding_desc = crate::mesh::SkinVertex::binding_description();
         let skin_attr_descs = crate::mesh::SkinVertex::attribute_descriptions();
 
-        // set 0: frame UBO (binding 0) + materials SSBO (binding 1).
         let set0_layout = self
             .frame_set_layout
             .context("ForwardPass: set0 (frame+materials) layout not set (call set_resources)")?;
-        // set 1: bindless texture table (samplers + SRV array).
         let set1_layout = self.bindless_layout;
-        // set 2: IBL resources (3 combined image samplers: env, irradiance, prefiltered).
-        // Use the IBL's own descriptor set layout (set via `set_resources`) so the
-        // stage flags match exactly (`FRAGMENT | COMPUTE` — the path-tracing pass
-        // samples the same IBL cubemap in a compute shader). Creating a separate
-        // layout with mismatched stage flags would trigger VUID-vkCmdBindDescriptorSets-
-        // pDescriptorSets-00358.
         let set2_layout = self.ibl_layout;
-        // set 3: shadow map (SAMPLED_IMAGE + SAMPLER).
         let set3_layout = self
             .shadow_ds_layout
             .context("ForwardPass: shadow ds layout not set")?;
-        // set 4: previous-frame GTAO R8 visibility (combined image sampler).
         let set4_layout = self
             .ao_ds_layout
             .context("ForwardPass: set4 (AO) layout not set (call set_resources)")?;
-        // set 5: probe volume GI (SAMPLED_IMAGE + UBO), borrowed from SceneScope.
         let set5_layout = self.gi_layout;
 
         let set_layouts = [
@@ -1930,9 +1750,6 @@ impl ForwardPass {
             set5_layout,
         ];
 
-        // Push constants: PbrBindlessPush (116 byte  std140, VERTEX|FRAGMENT).
-        // The reflected size is also what `cmd_push_constants` sends, and the
-        // module-level assertion guarantees the Rust mirror matches it.
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -1940,7 +1757,6 @@ impl ForwardPass {
 
         for (shader_handle, state) in missing {
             let frag_module = frag_modules[&shader_handle];
-            // MRT: attachment 0 = color (blend by `DrawState`), attachment 1 = view normal (no blend).
             let blend_attachments = color_blend_attachments(state);
             for skinned in [false, true] {
                 let (variant_stages, variant_bindings) = if skinned {
@@ -2003,7 +1819,6 @@ impl ForwardPass {
                 depth_bias_enable: None,
                 depth_bias_constant_factor: None,
                 depth_bias_slope_factor: None,
-                // transparent objects usually `ZWrite Off` (`_ZWrite`).
                 depth_write_enable: Some(state.z_write),
                 depth_test_enable: None,
                 color_attachment_count: None,
@@ -2030,11 +1845,6 @@ impl ForwardPass {
         for (_, frag_module) in frag_modules {
             unsafe { device.destroy_shader_module(frag_module, None) };
         }
-        // set2_layout (IBL) is borrowed from `IblResources` (set via
-        // `set_resources`) — do NOT destroy it here. `IblResources` owns the
-        // layout lifetime; it outlives all passes.
-        // set0/set1/set3 are owned elsewhere (frame_set_layout /
-        // BindlessTextureTable / shadow_ds_layout).
 
         Ok(())
     }
@@ -2082,7 +1892,6 @@ impl ForwardPass {
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(std::mem::size_of::<OutlinePush>() as u32)];
-        // Attachment 0 writes solid color, no blend; attachment 1 (view normal) not written.
         let blend_attachments = [
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
@@ -2104,7 +1913,6 @@ impl ForwardPass {
             push_constant_ranges: &push,
             render_pass: rp,
             subpass: 0,
-            // Front-face cull: only keep backfaces expanded outward by normal, forming silhouette.
             cull_mode: Some(vk::CullModeFlags::FRONT),
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
@@ -2188,7 +1996,6 @@ impl ForwardPass {
             subpass: 0,
             cull_mode: Some(vk::CullModeFlags::BACK),
             depth_bias_enable: Some(true),
-            // Negative bias pulls lines toward camera; wireframe only covers filled face edges, no depth write.
             depth_bias_constant_factor: Some(-2.0),
             depth_bias_slope_factor: Some(-1.0),
             depth_write_enable: Some(false),
@@ -2212,11 +2019,6 @@ impl RenderPassNode for ForwardPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Declare output handles (well-known, so downstream passes read our
-        // depth / normal / HDR views by handle). The graph does NOT allocate
-        // the underlying images in PR-1 (ForwardPass still owns its
-        // framebuffers); only the handle->view mapping is published in
-        // `execute`.
         graph.create_resource_at(
             FORWARD_DEPTH_H,
             ResourceType::DepthAttachment {
@@ -2277,9 +2079,6 @@ impl RenderPassNode for ForwardPass {
         self.out_velocity_h = FORWARD_VELOCITY_H;
         self.out_albedo_h = FORWARD_ALBEDO_H;
 
-        // Declare read edge for directional shadow map sampled in fragment shader (set 3).
-        // When `shadows` disabled there's no ShadowMapPass in graph, nobody writes this handle,
-        // so shouldn't declare read edge either (forward samples a 1×1 dummy outside graph).
         #[cfg(feature = "shadows")]
         graph.read_usage(ResourceUsage {
             handle: SHADOW_MAP_H,
@@ -2288,14 +2087,6 @@ impl RenderPassNode for ForwardPass {
             layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
         });
 
-        // Declare write edges so the render graph's layout cache records the
-        // layout this pass leaves each attachment in (matching the render pass
-        // `final_layout`). Downstream `GtaoPass` / `PostPass` read edges then
-        // trigger the ATTACHMENT -> READ_ONLY / SHADER_READ_ONLY barriers
-        // automatically, with `src` stage/access taken from these write edges.
-        // No barrier is emitted for the writes themselves: ForwardPass's render
-        // pass performs the UNDEFINED -> ATTACHMENT transitions via
-        // `initial_layout` (see `create_render_pass`).
         graph.write_usage(ResourceUsage {
             handle: FORWARD_DEPTH_H,
             access: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
@@ -2329,22 +2120,12 @@ impl RenderPassNode for ForwardPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
-        // Framebuffer + HDR/depth/normal lifecycle now owned here (driven by
-        // the graph), not by `GraphRenderer::render`. `ensure_target` is
-        // idempotent: (re)builds only the slot for `image_index` when missing
-        // or the swapchain changed. `set_ao` rebinds the previous-frame GTAO
-        // visibility view (1-frame latency); `update_lights` rewrites the
-        // point-light SSBO from the ECS-collected lights for this frame.
-        // #613: when internal render resolution on target smaller than swapchain.
         self.ensure_target(ctx.device, ctx.context, ctx.image_index, ctx.render_extent)?;
         self.set_ao(ctx.device, ctx.frame_index, ctx.frame.ao_view);
         self.set_gi_view(ctx.device, ctx.frame_index, ctx.frame.gi_view);
         self.update_lights(ctx.device, ctx.frame_index, ctx.frame.lights)?;
 
         self.ensure_render_pass(ctx.context)?;
-        // Collect all pipeline states needed this frame before recording commands (opaque default state always needed:
-        // descriptor set binds with its layout).
-        // When device lacks `fillModeNonSolid` silently fall back to fill, no impact on normal render.
         let wireframe = ctx.frame.wireframe && ctx.context.wireframe_supported;
         let shaded_wireframe =
             !wireframe && ctx.frame.shaded_wireframe && ctx.context.wireframe_supported;
@@ -2364,10 +2145,6 @@ impl RenderPassNode for ForwardPass {
         }
 
         let rp = self.render_pass.unwrap();
-        // Pick the per-swapchain-image framebuffer. Indexed by `image_index`
-        // (NOT `frame_index`): with N swapchain images and 2 frames in flight,
-        // several command buffers reference different framebuffers
-        // concurrently, so each swapchain image has its own.
         let idx = ctx.image_index as usize;
         let fb = self
             .framebuffers
@@ -2375,11 +2152,6 @@ impl RenderPassNode for ForwardPass {
             .copied()
             .flatten()
             .context("ForwardPass: no framebuffer for image_index (call set_target first)")?;
-        // Descriptor / push constant layouts fully identical across all state variants, so use default
-        // (opaque, back-face cull) variant's layout bind once; loop only rebinds pipelines as needed.
-        // Copy the Vulkan handles out: `pipeline` borrows `self.pipelines`,
-        // and the per-camera loop below may lazily create the outline pipeline
-        // (`&mut self`). Handles are `Copy`, the borrow is not.
         let (scene_pipeline, scene_layout) = {
             let pipeline = self
                 .pipelines
@@ -2388,21 +2160,12 @@ impl RenderPassNode for ForwardPass {
             (pipeline.pipeline, pipeline.layout)
         };
 
-        // Resolve the per-frame descriptor set now (used after the skybox draw,
-        // when we re-bind the scene pipeline + descriptors).
         let frame_set = self
             .frame_sets
             .get(ctx.frame_index as usize)
             .copied()
             .context("ForwardPass: no set0 descriptor set for frame_index (call set_resources)")?;
 
-        // Clear values indexed by attachment number: 0 = HDR color, 1 = depth,
-        // 2 = view-space normal MRT. Even though attachment 2 is cleared, its
-        // clear value is irrelevant (the fragment shader overwrites every
-        // pixel); use opaque black. The count must be >= the highest cleared
-        // attachment index + 1 (VUID-VkRenderPassBeginInfo-clearValueCount-00902).
-        // Color attachment 0 uses the frame's clear_color (from the app-level
-        // `clear_color` parameter) so the "no camera" fallback shows gray etc.
         let cc = ctx.frame.clear_color;
         let clear_values = [
             vk::ClearValue {
@@ -2421,7 +2184,6 @@ impl RenderPassNode for ForwardPass {
                     float32: [0.0, 0.0, 0.0, 0.0],
                 },
             },
-            // Attachment 3: motion vectors. Zero means "no motion".
             vk::ClearValue {
                 color: vk::ClearColorValue {
                     float32: [0.0, 0.0, 0.0, 0.0],
@@ -2443,9 +2205,6 @@ impl RenderPassNode for ForwardPass {
                 .cmd_begin_render_pass(ctx.cmd, &begin_info, vk::SubpassContents::INLINE)
         };
 
-        // #461: composite every enabled camera, in `Camera.depth` order.
-        // The legacy path (`cameras` empty) synthesises one camera from the
-        // frame UBO so existing callers keep the exact old frame.
         let cameras: Vec<crate::render_graph::CameraView> = if ctx.frame.cameras.is_empty() {
             vec![crate::render_graph::CameraView::legacy(
                 ctx.frame.view_proj,
@@ -2462,13 +2221,8 @@ impl RenderPassNode for ForwardPass {
                 .collect()
         };
 
-        // Count draw calls actually submitted (`ShadowsOnly` skipped). Accumulated with multiple cameras.
         let mut drawn = 0usize;
         for (camera_index, camera) in cameras.iter().enumerate() {
-            // Clear according to `Camera.clearFlags`: `Skybox` / `SolidColor`
-            // clear colour (and the view-normal MRT), everything except
-            // `Nothing` also clears depth. Camera 0 always ends up with a
-            // defined image because the default flags clear both.
             let mut clears: Vec<vk::ClearAttachment> = Vec::new();
             if camera.clear_color_enabled {
                 clears.push(vk::ClearAttachment {
@@ -2517,8 +2271,6 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // Establish the camera viewport before any draw, including the skybox.
-            // The preceding shadow pass uses a different viewport and scissor.
             unsafe {
                 ctx.device.cmd_set_viewport(
                     ctx.cmd,
@@ -2542,9 +2294,6 @@ impl RenderPassNode for ForwardPass {
                 );
             }
 
-            // draw  the skybox first  (background) for cameras whose clear
-            // flags ask for it. It uses its own pipeline + IBL env set and writes
-            // no depth, so scene geometry always occludes it.
             if camera.draw_skybox && camera.has_camera {
                 let mut inv_view_proj_rot = [[0.0_f32; 4]; 4];
                 for (c, column) in inv_view_proj_rot.iter_mut().enumerate() {
@@ -2568,9 +2317,6 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // Re-bind the scene pipeline + all descriptor sets. Required after the
-            // skybox draw (incompatible layout at set 0) and per camera because
-            // set 0 carries a camera-slot dynamic offset (#461).
             let dynamic_offset = camera_index as u32 * self.camera_stride;
             unsafe {
                 ctx.device.cmd_bind_pipeline(
@@ -2578,7 +2324,6 @@ impl RenderPassNode for ForwardPass {
                     vk::PipelineBindPoint::GRAPHICS,
                     scene_pipeline,
                 );
-                // set  0: frame  UBO + materials SSBO + light source  SSBO
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2587,7 +2332,6 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&frame_set),
                     std::slice::from_ref(&dynamic_offset),
                 );
-                // set 1: bindless texture table
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2596,7 +2340,6 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.bindless_set),
                     &[],
                 );
-                // set  2: IBL cubemap
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2605,7 +2348,6 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.ibl_descriptor_set),
                     &[],
                 );
-                // set 3: shadow map table
                 ctx.device.cmd_bind_descriptor_sets(
                     ctx.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -2614,7 +2356,6 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&self.shadow_descriptor_set),
                     &[],
                 );
-                // set 4: previous-frame GTAO visibility (combined image sampler).
                 let ao_set = self
                     .ao_descriptor_sets
                     .get(ctx.frame_index as usize)
@@ -2628,7 +2369,6 @@ impl RenderPassNode for ForwardPass {
                     std::slice::from_ref(&ao_set),
                     &[],
                 );
-                // Set 5: probe volume GI (PRT64 dynamic volume if active, else SceneScope).
                 let set5 = if ctx.frame.render_mode == crate::render_graph::RenderMode::Raster
                     && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
                     && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
@@ -2648,14 +2388,7 @@ impl RenderPassNode for ForwardPass {
             }
 
             unsafe {
-                // Pure 2D mode skips 3D opaque / transparent mesh draws, wireframe overlay and outline
                 if ctx.frame.render_mode != crate::RenderMode::Sprites2D {
-                    // Loop starts with just-bound default (opaque) pipeline; only rebind when encountering other state
-                    // (cull / depth write / blend all pipeline state). Descriptor and push constant layouts
-                    // identical across variants, no need to rebind descriptor sets.
-                    // #491: pack static instance matrices after the live bone
-                    // palette in the same SSBO. Skinned draws keep their existing
-                    // offsets; instanced draws start at `bone_count`.
                     let bone_count = ctx
                         .frame
                         .bone_matrices
@@ -2728,8 +2461,6 @@ impl RenderPassNode for ForwardPass {
                             );
                         }
 
-                        // #491: multi-item batches read their model matrices from
-                        // the bone SSBO; count 0 keeps the old push-model path.
                         let instance_count = batch
                             .instance_offset
                             .map(|_| batch.items.len() as u32)
@@ -2747,8 +2478,6 @@ impl RenderPassNode for ForwardPass {
                             skin_mode: u32::from(item.bone_offset.is_some()),
                             instance_offset,
                             instance_count,
-                            // Draw-list index for the previous-model SSBO and the
-                            // TAA reactive mask (transparent draws drop history).
                             prev_draw_index: batch.items[0] as u32,
                             reactive_mask: u32::from(item.state.blends()),
                             splat_slot0: item.splat_slots[0],
@@ -2756,7 +2485,6 @@ impl RenderPassNode for ForwardPass {
                             splat_slot2: item.splat_slots[2],
                             splat_slot3: item.splat_slots[3],
                             splat_tiling: item.splat_tiling,
-                            // 0 = baked probe volume / IBL, 1 = ReSTIR GI, 2 = PRT64.
                             gi_mode: if ctx.frame.render_mode
                                 == crate::render_graph::RenderMode::Raster
                                 && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
@@ -2814,8 +2542,6 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
 
-                // Fill + wireframe overlay (#431): fill already drawn, draw again with outline shader
-                // `POLYGON_MODE_LINE`; negative depth bias + no depth write keep lines stable on surface.
                 if shaded_wireframe {
                     let overlay = self
                         .shaded_wireframe_pipeline
@@ -2843,8 +2569,6 @@ impl RenderPassNode for ForwardPass {
                         };
                         let pc = OutlinePush {
                             model: item.model,
-                            // Dark lines readable on bright surface; not material-dependent, close to Unity's
-                            // Shaded Wireframe.
                             color: [0.02, 0.02, 0.02, 1.0],
                             thickness: 0.0,
                             _pad: [0.0; 3],
@@ -2882,9 +2606,6 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
 
-                // Selected outline (#487): draw selected mesh again, front-face cull + normal outward expansion.
-                // Placed after opaque meshes, before particles / sprites: parts occluded by other geometry will normally
-                // be discarded by depth test, unlike screen-space wireframe that floats on topmost surface.
                 let outline_requested = ctx.frame.draw_list.iter().any(|item| {
                     item.visible_in_main_pass
                         && ctx.frame.outline_entities.contains(&item.entity_id)
@@ -2918,7 +2639,6 @@ impl RenderPassNode for ForwardPass {
                         let Some(uploaded) = ctx.frame.mesh_manager.get(item.mesh) else {
                             continue;
                         };
-                        // Line width scales with object size, very large objects won't be left with a thin seam.
                         let scale = (0..3)
                             .map(|column| {
                                 let c = &item.model[column];
@@ -2965,8 +2685,6 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // World-space particles: depth test enabled (occluded by foreground geometry), so drawn after opaque meshes
-            // and before 2D sprites; transparent sort done by engine before submission (far to near).
             if !ctx.frame.particle_items.is_empty() {
                 if let Err(e) = self.particles.draw(
                     ctx.device,
@@ -2982,9 +2700,6 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // 2D sprites, drawn after the mesh list so they overlay 3D geometry.
-            // The pass disables depth test/write; ordering comes from the engine's
-            // CPU-side sort (sorting_layer -> order_in_layer -> z).
             if !ctx.frame.sprite_items.is_empty() {
                 if let Err(e) = self.sprites.draw(
                     ctx.device,
@@ -3002,16 +2717,12 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            // Draw ground reference mesh (depth test enabled, occluded by scene entities)
             if ctx.frame.show_grid && ctx.frame.render_mode != RenderMode::Sprites2D {
                 if let Some(grid) = &self.ground_grid {
                     grid.draw(ctx.cmd, &camera.view_proj, ctx.frame.camera_orthographic);
                 }
             }
 
-            // Draw the world-space XYZ gizmo on top of the scene (its pipeline has
-            // depth test disabled so it is never occluded). Uses the same
-            // view-projection the scene was drawn with.
             if let Some(gizmo) = &self.gizmo {
                 gizmo.draw(ctx.cmd, &camera.view_proj, ctx.frame.gizmos);
             }
@@ -3019,8 +2730,6 @@ impl RenderPassNode for ForwardPass {
 
         unsafe { ctx.device.cmd_end_render_pass(ctx.cmd) };
 
-        // #1007: at end of main pass, while depth still DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        // copy to host-visible buffer; after copy resume layout, later GTAO still samples with original layout.
         if let Some(buffer) = self.depth_readback {
             if let Some(depth_image) = self.depth_image(ctx.image_index) {
                 let device = ctx.device;
@@ -3099,9 +2808,6 @@ impl RenderPassNode for ForwardPass {
             }
         }
 
-        // Publish our output views under the handles declared in `setup` so
-        // downstream passes (`GtaoPass`, `PostPass`) read them by handle
-        // instead of `GraphRenderer` reaching into ForwardPass internals.
         let idx = ctx.image_index;
         if let (Some(v), Some(i)) = (self.color_view(idx), self.color_image(idx)) {
             resources.set_image_view(self.out_color_h, v);
@@ -3139,9 +2845,6 @@ impl RenderPassNode for ForwardPass {
             index: usize::MAX,
             name: self.name().to_string(),
             kind: PassKind::Forward,
-            // Shadow view  is declared as an input (SHADOW_MAP_H); IBL and
-            // previous-frame AO are bound via `set_resources` / `set_ao` and
-            // bypass `GraphResources`, so they aren't listed as graph edges.
             #[cfg(feature = "shadows")]
             inputs: vec![SHADOW_MAP_H],
             #[cfg(not(feature = "shadows"))]
@@ -3167,11 +2870,7 @@ impl RenderPassNode for ForwardPass {
 
 impl Drop for ForwardPass {
     fn drop(&mut self) {
-        // Safety net: if `destroy` wasn't called explicitly, tear down using
-        // the cached device handle. `destroy` is the preferred path (it runs
-        // after `device_wait_idle`); this only fires on leaks / early drops.
         if let Some(device) = self.device.take() {
-            // `drop_target` drains framebuffers + depth images.
             for fb in self.framebuffers.drain(..).flatten() {
                 unsafe { device.destroy_framebuffer(fb, None) };
             }
@@ -3182,9 +2881,7 @@ impl Drop for ForwardPass {
             if let Some(rp) = self.render_pass.take() {
                 unsafe { device.destroy_render_pass(rp, None) };
             }
-            // GraphicsPipeline::Drop frees the pipeline + layout.
             self.pipelines.clear();
-            // set 0 (frame UBO + materials SSBO) layout + pool.
             if let Some(layout) = self.frame_set_layout.take() {
                 unsafe { device.destroy_descriptor_set_layout(layout, None) };
             }
@@ -3197,7 +2894,6 @@ impl Drop for ForwardPass {
             if let Some(pool) = self.shadow_ds_pool.take() {
                 unsafe { device.destroy_descriptor_pool(pool, None) };
             }
-            // Light SSBO.
             for buf in self.light_buffers.drain(..) {
                 if buf != vk::Buffer::null() {
                     unsafe { device.destroy_buffer(buf, None) };
@@ -3208,12 +2904,9 @@ impl Drop for ForwardPass {
                     unsafe { device.free_memory(mem, None) };
                 }
             }
-            // Skybox pass (its own pipeline + set-2 layout).
             self.skybox.destroy(&device);
-            // Gizmo (its own pipeline + vertex buffer; Drop frees them).
             self.gizmo = None;
             self.ground_grid = None;
-            // set 5 (GI probe volume) is borrowed from SceneScope — not destroyed here.
         }
     }
 }
@@ -3238,15 +2931,12 @@ fn color_blend_attachments(state: DrawState) -> [vk::PipelineColorBlendAttachmen
     }
     [
         color,
-        // View-space normal + reactive mask (alpha) are never blended.
         vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
             .blend_enable(false),
-        // Motion vectors are per-fragment and overwrite the previous value.
         vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::R | vk::ColorComponentFlags::G)
             .blend_enable(false),
-        // Albedo + roughness: opaque surface properties, never blended.
         vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
             .blend_enable(false),

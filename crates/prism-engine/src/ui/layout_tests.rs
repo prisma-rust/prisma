@@ -30,7 +30,6 @@ fn node_without_computed_layout_is_still_laid_out() {
     let layout = world
         .get::<ComputedLayout>(entity)
         .expect("layout system must insert its output component");
-    // Center anchor + 200x100, parent rect = screen 800x600.
     assert_eq!(layout.rect, [300.0, 250.0, 200.0, 100.0]);
 }
 
@@ -39,11 +38,10 @@ fn stretch_root_fills_the_screen_without_pivot_offset() {
     let mut world = world_with_screen();
     let entity = world.spawn();
     world.insert(entity, Node {});
-    world.insert(entity, Style::default()); // STRETCH anchor + CENTER pivot
+    world.insert(entity, Style::default());
 
     ui_layout_system(&mut world);
 
-    // Pivot only applies with point anchor; stretching origin cannot be pulled negative by pivot.
     assert_eq!(
         world.get::<ComputedLayout>(entity).unwrap().rect,
         [0.0, 0.0, 800.0, 600.0]
@@ -52,13 +50,12 @@ fn stretch_root_fills_the_screen_without_pivot_offset() {
 
 #[test]
 fn a_canvas_scales_its_subtree_to_the_reference_resolution() {
-    // #463: 1920×1080 design scaled to 0.5 on 960×540 screen.
     let mut world = World::new();
     world.insert_resource(ScreenSize::new(960, 540));
 
     let canvas = world.spawn();
     world.insert(canvas, Node {});
-    world.insert(canvas, Style::default()); // STRETCH root node
+    world.insert(canvas, Style::default());
     world.insert(canvas, Canvas::default());
 
     let child = world.spawn();
@@ -72,7 +69,6 @@ fn a_canvas_scales_its_subtree_to_the_reference_resolution() {
     assert_eq!(root_layout.rect, [0.0, 0.0, 960.0, 540.0]);
     assert!((root_layout.scale - 0.5).abs() < 1e-5, "{root_layout:?}");
 
-    // Centered 400×300 in design → virtual (760, 390) → screen (380, 195).
     let child_layout = *world.get::<ComputedLayout>(child).unwrap();
     assert_eq!(child_layout.rect, [380.0, 195.0, 200.0, 150.0]);
     assert!((child_layout.scale - 0.5).abs() < 1e-5);
@@ -101,7 +97,6 @@ fn a_canvas_with_constant_pixels_keeps_the_authored_size() {
 
     ui_layout_system(&mut world);
 
-    // 1 screen pixel = 1 design pixel: behavior fully consistent before Canvas introduced.
     assert_eq!(
         world.get::<ComputedLayout>(child).unwrap().rect,
         [280.0, 120.0, 400.0, 300.0]
@@ -137,12 +132,10 @@ fn nested_nodes_inherit_the_nearest_canvas_scale() {
 
     ui_layout_system(&mut world);
 
-    // 960×540 design upscaled to 1920×1080 = 2×.
     let group_layout = *world.get::<ComputedLayout>(group).unwrap();
     assert_eq!(group_layout.rect, [0.0, 0.0, 1920.0, 1080.0]);
     assert_eq!(group_layout.scale, 2.0);
 
-    // Leaf centered in 960×540 design: (430, 245) → screen (860, 490).
     let leaf_layout = *world.get::<ComputedLayout>(leaf).unwrap();
     assert_eq!(leaf_layout.rect, [860.0, 490.0, 200.0, 100.0]);
     assert_eq!(leaf_layout.scale, 2.0);
@@ -177,7 +170,6 @@ fn child_is_positioned_relative_to_its_parent() {
 
     ui_layout_system(&mut world);
 
-    // Parent = [200, 150, 400, 300]; child centered in parent → center (400, 300), size 100x50.
     assert_eq!(
         world.get::<ComputedLayout>(parent).unwrap().rect,
         [200.0, 150.0, 400.0, 300.0]
@@ -192,12 +184,9 @@ fn child_is_positioned_relative_to_its_parent() {
 fn child_created_before_parent_uses_the_fresh_parent_rect() {
     let mut world = world_with_screen();
 
-    // Deliberately create child first then parent: query order puts child node before parent node.
-    // After pre-inserting `ComputedLayout::default()`, parent component always "exists",
-    // old impl took this as parent ready and positioned child using default rect once.
     let child = world.spawn();
     world.insert(child, Node {});
-    world.insert(child, Style::default()); // stretch to fill parent container
+    world.insert(child, Style::default());
 
     let parent = world.spawn();
     world.insert(parent, Node {});
@@ -207,7 +196,6 @@ fn child_created_before_parent_uses_the_fresh_parent_rect() {
 
     ui_layout_system(&mut world);
 
-    // Parent = [200, 150, 400, 300] (screen centered 400x300), child must use its own rect this frame.
     assert_eq!(
         world.get::<ComputedLayout>(parent).unwrap().rect,
         [200.0, 150.0, 400.0, 300.0]
@@ -222,8 +210,6 @@ fn child_created_before_parent_uses_the_fresh_parent_rect() {
 fn deeper_child_waits_for_the_whole_ancestor_chain() {
     let mut world = world_with_screen();
 
-    // Order likewise "grandchild → child → parent", and parent positioned at screen center (nonzero origin),
-    // so any level using default rect will be caught by assertion.
     let grandchild = world.spawn();
     world.insert(grandchild, Node {});
     world.insert(grandchild, Style::default());
@@ -278,7 +264,6 @@ fn point_anchor_applies_opposite_margins() {
 
     ui_layout_system(&mut world);
 
-    // Bottom-right corner (800,600) - margin(24,20) - size (100,40).
     assert_eq!(
         world.get::<ComputedLayout>(entity).unwrap().rect,
         [676.0, 540.0, 100.0, 40.0]
@@ -295,12 +280,11 @@ fn stretched_child_fills_its_parent() {
 
     let child = world.spawn();
     world.insert(child, Node {});
-    world.insert(child, Style::default()); // stretch to fill parent container
+    world.insert(child, Style::default());
     HierarchyHelper::reparent(&mut world, child, Some(parent));
 
     ui_layout_system(&mut world);
 
-    // Parent = [200, 150, 400, 300] (screen centered 400x300)
     assert_eq!(
         world.get::<ComputedLayout>(child).unwrap().rect,
         [200.0, 150.0, 400.0, 300.0]
@@ -367,7 +351,6 @@ fn a_row_layout_group_stacks_children_with_spacing_and_padding() {
 
     ui_layout_system(&mut world);
 
-    // Centered + 400x200 → root [200,200,...]; content area starts at +padding.
     assert_eq!(rect_of(&world, root), [200.0, 200.0, 400.0, 200.0]);
     assert_eq!(rect_of(&world, first), [205.0, 207.0, 60.0, 20.0]);
     assert_eq!(rect_of(&world, second), [275.0, 207.0, 40.0, 30.0]);
@@ -395,7 +378,6 @@ fn a_column_layout_group_places_children_top_to_bottom() {
 
     ui_layout_system(&mut world);
 
-    // 200x300 centered → [300,150,...].
     assert_eq!(rect_of(&world, root), [300.0, 150.0, 200.0, 300.0]);
     assert_eq!(rect_of(&world, first), [300.0, 150.0, 50.0, 40.0]);
     assert_eq!(rect_of(&world, second), [300.0, 202.0, 70.0, 25.0]);
@@ -425,7 +407,6 @@ fn child_align_places_children_on_the_cross_axis() {
 
     let root_rect = rect_of(&world, root);
     assert_eq!(rect_of(&world, child), [300.0, 290.0, 40.0, 20.0]);
-    // Stretch needs another layout group: first confirm Center cross-axis offset is (300-20)/2.
     assert_eq!(root_rect, [300.0, 150.0, 200.0, 300.0]);
     assert_eq!(rect_of(&world, stretched)[0], 340.0);
 }
@@ -451,7 +432,6 @@ fn child_align_stretch_fills_the_cross_axis() {
 
     ui_layout_system(&mut world);
 
-    // Height stretched to full content area (300), width still own 40.
     assert_eq!(rect_of(&world, child), [300.0, 150.0, 40.0, 300.0]);
 }
 
@@ -474,7 +454,6 @@ fn fit_content_shrinks_a_layout_group_to_its_children() {
         ChildAlign::Start,
         true,
     );
-    // Do not hardcode width/height: fit_content needs something to shrink.
     style.width = None;
     style.height = None;
     style.anchors = Anchors::CENTER;
@@ -486,11 +465,8 @@ fn fit_content_shrinks_a_layout_group_to_its_children() {
 
     ui_layout_system(&mut world);
 
-    // Content width = 60 + 10 + 40 = 110, plus left/right padding 8 → 118;
-    // Content height = max(20,30) = 30, plus top/bottom padding 12 → 42.
     let root_rect = rect_of(&world, root);
     assert_eq!(root_rect[2..], [118.0, 42.0]);
-    // Center anchor + pivot 0.5 → origin = screen center - half size.
     assert_eq!(root_rect[0..2], [400.0 - 59.0, 300.0 - 21.0]);
     assert_eq!(rect_of(&world, first)[0], 400.0 - 59.0 + 4.0);
     assert_eq!(rect_of(&world, second)[0], 400.0 - 59.0 + 4.0 + 60.0 + 10.0);
@@ -513,7 +489,6 @@ fn a_layout_group_overrides_child_anchors_but_not_its_own() {
             false,
         ),
     );
-    // Child element writes "center anchor" itself, but in layout group must be positioned by cursor.
     let mut child_style = Style::fixed(40.0, 20.0);
     child_style.anchors = Anchors::CENTER;
     child_style.pivot = Pivot::CENTER;
@@ -538,7 +513,6 @@ fn children_without_a_layout_group_keep_their_anchors() {
 
     ui_layout_system(&mut world);
 
-    // Default STRETCH anchor + fixed size → centered (legacy behavior).
     let root_rect = rect_of(&world, root);
     assert_eq!(
         rect_of(&world, child),
@@ -549,12 +523,10 @@ fn children_without_a_layout_group_keep_their_anchors() {
 /// #988: when UI drawn into PostPass target rect, pointer must convert back to layout space.
 #[test]
 fn ui_screen_mapping_maps_window_pixels_back_into_layout_space() {
-    // 1600×900 window, 640×360 internal → target rect 1280×720 centered, offset (160, 90).
     let mapping = UiScreenMapping {
         scale: 0.8,
         offset: [160.0, 90.0],
     };
-    // Point `p` in layout drawn at `offset + p * 0.8`, inverse must recover `p`.
     assert_eq!(mapping.window_to_layout([160.0, 90.0]), [0.0, 0.0]);
     assert_eq!(mapping.window_to_layout([800.0, 450.0]), [800.0, 450.0]);
     assert_eq!(mapping.window_to_layout([320.0, 250.0]), [200.0, 200.0]);

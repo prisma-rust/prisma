@@ -1,15 +1,8 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use prism_asset::core::AssetId;
 use prism_scene::rscn;
 
-// ── helpers ───────────────────────────────────────────────────────
-
 fn make_scene_json() -> SceneJson {
-    // Fixtures below are v1 (`transform.translation`); `parse` migrates them.
     SceneJson::parse(SCENE_JSON).unwrap()
 }
 
@@ -30,8 +23,6 @@ fn cook_scene_json(json: &[u8]) -> Result<(SceneCooker, CookResult), CookError> 
     };
     cooker.cook(&ctx).map(|result| (cooker, result))
 }
-
-// ── sample  scene JSON ────────────────────────────────────────────
 
 const SCENE_JSON: &str = r#"{
     "version": 1,
@@ -68,8 +59,6 @@ const SCENE_JSON: &str = r#"{
         }
     ]
 }"#;
-
-// ── tests ─────────────────────────────────────────────────────────
 
 #[test]
 fn scene_cooker_accepts_scene() {
@@ -134,7 +123,7 @@ fn scene_cooker_parent_order() {
     assert_eq!(header.entity_count, 4);
 
     let data = &result.cooked_data;
-    let mut off = 9usize; // magic + version + entity_count
+    let mut off = 9usize;
     let type_count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
     off += 4 + type_count * 16;
     let mut parents = Vec::new();
@@ -145,11 +134,11 @@ fn scene_cooker_parent_order() {
         let parent = i32::from_le_bytes(data[off..off + 4].try_into().unwrap());
         off += 4;
         parents.push(parent);
-        off += 40; // transform
+        off += 40;
         let comp_count = u16::from_le_bytes(data[off..off + 2].try_into().unwrap()) as usize;
         off += 2;
         for _ in 0..comp_count {
-            off += 8; // type_id
+            off += 8;
             let data_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             off += 4 + data_len;
         }
@@ -289,10 +278,7 @@ fn cooks_real_intro_scene_with_ui_components() {
     let json = include_bytes!("../../../../projects/template/assets/scenes/intro.scene.json");
     let (cooker, result) = cook_scene_json(json).unwrap();
     let decoded = rscn::decode_scene(&result.cooked_data, cooker.registry()).unwrap();
-    // 4 UI entities + intro scene's own camera (black fade-in end after cannot reveal clear color, #409).
     assert_eq!(decoded.entities.len(), 5);
-    // Each UI entity carries `Node` + `Style` (`ComputedLayout` is runtime output, not in scene).
-    // Camera entity not counted in UI, so this filters by "has / no Node".
     let (mut nodes, mut styles) = (0, 0);
     for entity in &decoded.entities {
         let names: Vec<String> = entity

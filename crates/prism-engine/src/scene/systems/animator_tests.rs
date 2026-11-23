@@ -352,7 +352,6 @@ fn near_animators_update_every_other_frame_with_double_dt() {
         "Frame after continues, time {time}"
     );
 
-    // Back near: next frame immediately resumes normal dt, no leftover skip flag.
     world.get_mut::<LocalTransform>(camera).unwrap().position = Vec3::new(0.0, 0.0, 30.0);
     animator_system(&mut world, 0.1);
     let time = world.get::<AnimatorPlayhead>(entity).unwrap().time;
@@ -509,11 +508,9 @@ fn the_animator_produces_a_palette_and_advances_time() {
     let palette = world.get::<BonePalette>(entity).unwrap();
     assert_eq!(palette.len(), 2);
 
-    // At 0.5s child rotated 45°: endpoint should leave +X axis.
     animator_system(&mut world, 0.5);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
     assert!((head.time - 0.5).abs() < 1e-5);
-    // (2,1,0) rotated 45° about joint: x = 2 - sin45, y = cos45.
     let tip = child_tip(&world, entity);
     let half_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;
     assert!((tip.x - (2.0 - half_sqrt2)).abs() < 1e-4, "tip {tip:?}");
@@ -542,7 +539,6 @@ fn a_once_clip_stops_at_the_end_and_flags_finished() {
         "One-shot clamped at duration"
     );
     assert!(head.finished);
-    // Final pose: child rotated 90°, (2,1,0) about joint becomes (1,0,0).
     let tip = child_tip(&world, entity);
     assert!((tip.x - 1.0).abs() < 1e-4, "tip {tip:?}");
     assert!(tip.y.abs() < 1e-4, "tip {tip:?}");
@@ -556,7 +552,6 @@ fn a_looping_clip_wraps_the_playhead() {
     animator_system(&mut world, 2.25);
     let head = world.get::<AnimatorPlayhead>(entity).unwrap();
     assert!(!head.finished, "Looping clip never finishes");
-    // 2.25s / 1.0s loop → samples 0.25s (about 22.5°).
     let angle = 0.25 * std::f32::consts::FRAC_PI_2;
     let tip = child_tip(&world, entity);
     assert!((tip.x - (2.0 - angle.sin())).abs() < 1e-3, "tip {tip:?}");
@@ -644,13 +639,11 @@ fn switching_clips_crossfades_instead_of_popping() {
         .get_resource_mut::<SkeletonLibrary>()
         .unwrap()
         .insert_clip("bent90.ranim", bent_90_clip("bent90"));
-    // Start: bend at 0s (child 0°).
     animator_system(&mut world, 0.0);
     let start = child_tip(&world, entity);
     assert!((start.y - 1.0).abs() < 1e-4, "start tip {start:?}");
 
     switch_clip(&mut world, entity, "bent90.ranim", 1.0);
-    // First frame: weight still near 0 → still old pose (this is "no hard cut").
     animator_system(&mut world, 0.0);
     let faded_in = child_tip(&world, entity);
     assert!(
@@ -658,7 +651,6 @@ fn switching_clips_crossfades_instead_of_popping() {
         "Transition start should be old pose, got {faded_in:?}"
     );
 
-    // Halfway: weight 0.5 → about 45°.
     animator_system(&mut world, 0.5);
     let half = child_tip(&world, entity);
     let angle = std::f32::consts::FRAC_PI_4;
@@ -668,7 +660,6 @@ fn switching_clips_crossfades_instead_of_popping() {
     );
     assert!((half.y - angle.cos()).abs() < 1e-3, "half {half:?}");
 
-    // Done: weight 1 → full new clip (90°), source cleared.
     animator_system(&mut world, 0.5);
     let done = child_tip(&world, entity);
     assert!(
@@ -739,8 +730,6 @@ fn a_paused_animator_does_not_advance_the_crossfade() {
 
 #[test]
 fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
-    // Transition source is **pose snapshot**, so removing old clip from library (asset delete / hot reload) doesn't affect fade-out:
-    // previously this hard-cut, now must still finish transition.
     let (mut world, entity) = world_with_animator("");
     world
         .get_resource_mut::<SkeletonLibrary>()
@@ -749,7 +738,6 @@ fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
     animator_system(&mut world, 0.0);
 
     switch_clip(&mut world, entity, "bent90.ranim", 1.0);
-    // Remove old clip from library on same frame transition starts.
     {
         let library = world.get_resource_mut::<SkeletonLibrary>().unwrap();
         library.clear();
@@ -769,7 +757,6 @@ fn losing_the_source_clip_keeps_the_snapshot_and_still_completes() {
         "Transition start still old pose, got {tip:?}"
     );
 
-    // Done: pure new clip, snapshot dropped.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
     assert!(
@@ -906,7 +893,6 @@ fn a_one_dimensional_blend_space_is_sampled_from_the_parameter() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // parameter 0 → pure bend.ranim (0° at 0s).
     use_blend_space(&mut world, entity, 0.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -920,7 +906,6 @@ fn a_one_dimensional_blend_space_is_sampled_from_the_parameter() {
         "Blend space uses its own playback key"
     );
 
-    // parameter 1 → pure bent90 (90°).
     use_blend_space(&mut world, entity, 1.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -929,7 +914,6 @@ fn a_one_dimensional_blend_space_is_sampled_from_the_parameter() {
         "Parameter 1 should be 90°, got {tip:?}"
     );
 
-    // parameter 0.5 → 45°.
     use_blend_space(&mut world, entity, 0.5);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -945,7 +929,6 @@ fn a_blend_space_needs_two_loaded_clips_and_falls_back_to_the_single_one() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // Two paths but one not in library → only one sample, falls back to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths = vec!["bend.ranim".into(), "missing.ranim".into()];
@@ -959,7 +942,6 @@ fn a_blend_space_needs_two_loaded_clips_and_falls_back_to_the_single_one() {
         "Falls back to single clip when missing a sample"
     );
 
-    // Only one path + one position: not a blend space.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths = vec!["bend.ranim".into()];
@@ -998,13 +980,11 @@ fn a_blend_space_clamps_out_of_range_parameters() {
 fn entering_a_blend_space_crossfades_from_the_single_clip() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
-    // First run single clip one frame, establishing playhead on bend.ranim.
     animator_system(&mut world, 0.0);
 
     use_blend_space(&mut world, entity, 1.0);
     world.get_mut::<Animator>(entity).unwrap().playing = true;
     world.get_mut::<Animator>(entity).unwrap().blend_duration = 1.0;
-    // Transition start: weight 0 → still bend pose.
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     assert!(
@@ -1015,7 +995,6 @@ fn entering_a_blend_space_crossfades_from_the_single_clip() {
     assert!(head.previous_pose.is_some(), "Old pose frozen on entry");
     assert_eq!(head.clip_path, BLEND_SPACE_KEY);
 
-    // Transition done: pure blend-space pose (90°), source cleared.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
     assert!(
@@ -1132,15 +1111,12 @@ fn a_notify_fires_once_when_the_playhead_crosses_it() {
         .unwrap()
         .insert_clip("bend.ranim", clip_with_notify(0.5, "Footstep.L"));
 
-    // First frame only establishes playhead: shouldn't fire whole clip events at once.
     animator_system(&mut world, 0.0);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0 → 0.4: not yet.
     animator_system(&mut world, 0.4);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0.4 → 0.8: crosses 0.5, fires once.
     animator_system(&mut world, 0.4);
     let events = world.get_resource::<AnimEvents>().unwrap();
     assert_eq!(events.len(), 1);
@@ -1152,7 +1128,6 @@ fn a_notify_fires_once_when_the_playhead_crosses_it() {
         vec!["Footstep.L"]
     );
 
-    // One more frame (no time point crossed): event table rebuilt empty, won't refire.
     animator_system(&mut world, 0.1);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 }
@@ -1166,10 +1141,9 @@ fn a_notify_at_the_wrap_point_fires_on_the_next_loop() {
         .insert_clip("bend.ranim", clip_with_notify(0.95, "Footstep.R"));
 
     animator_system(&mut world, 0.0);
-    animator_system(&mut world, 0.9); // advance to 0.9
+    animator_system(&mut world, 0.9);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 
-    // 0.9 → 1.0 → wrap to 0.0: this segment crosses 0.95.
     animator_system(&mut world, 0.1);
     let names: Vec<String> = world
         .get_resource::<AnimEvents>()
@@ -1210,15 +1184,12 @@ fn a_reversed_animator_does_not_fire_notifies() {
     animator_system(&mut world, 0.9);
 
     world.get_mut::<Animator>(entity).unwrap().speed = -1.0;
-    // 0.9 → 0.5 crossing 0.5 backwards: reverse playback doesn't fire (prefer missing one over replaying backwards).
     animator_system(&mut world, 0.4);
     assert!(world.get_resource::<AnimEvents>().unwrap().is_empty());
 }
 
 #[test]
 fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
-    // Previously "blend space → single clip" was hard cut (source is placeholder key, no sample in library).
-    // Now transition source is **pose snapshot**, so here must truly fade out.
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
     use_blend_space(&mut world, entity, 0.5);
@@ -1230,7 +1201,6 @@ fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
         "Blend space should be 45°, got {mixed:?}"
     );
 
-    // Switch to single clip (90°), 1 second transition.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_clip_paths.clear();
@@ -1247,7 +1217,6 @@ fn leaving_a_blend_space_crossfades_from_the_frozen_pose() {
         "Transition start still old 45° pose, got {tip:?}"
     );
 
-    // Done: pure 90°.
     animator_system(&mut world, 1.0);
     let tip = child_tip(&world, entity);
     assert!(
@@ -1278,7 +1247,6 @@ fn an_additive_layer_rotates_on_top_of_the_base_clip() {
     let (mut world, entity) = additive_setup();
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
-    // Base 0° + additive 90° = 90°.
     assert!(
         (tip.x - 1.0).abs() < 1e-3 && tip.y.abs() < 1e-3,
         "Additive layer should rotate child to 90°, got {tip:?}"
@@ -1299,7 +1267,6 @@ fn the_additive_weight_scales_the_delta() {
 
 #[test]
 fn a_missing_or_disabled_additive_layer_leaves_the_base_pose_alone() {
-    // Bad path (clip not in library).
     let (mut world, entity) = additive_setup();
     world
         .get_mut::<Animator>(entity)
@@ -1312,7 +1279,6 @@ fn a_missing_or_disabled_additive_layer_leaves_the_base_pose_alone() {
         "Without additive layer stays 0°, got {tip:?}"
     );
 
-    // Weight 0 / NaN.
     let (mut world, entity) = additive_setup();
     world.get_mut::<Animator>(entity).unwrap().additive_weight = 0.0;
     animator_system(&mut world, 0.0);
@@ -1396,13 +1362,11 @@ fn a_state_machine_drives_the_clip_and_writes_the_state_back() {
         animator.playing = false;
     }
 
-    // Parameter 0: stay in idle (bend.ranim 0°).
     animator_system(&mut world, 0.0);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
     let tip = child_tip(&world, entity);
     assert!((tip.y - 1.0).abs() < 1e-4, "Idle should be 0°, got {tip:?}");
 
-    // Parameter past threshold: next frame switch to run (bent90.ranim 90°).
     let mut params = prism_anim::AnimParameters::default();
     params.set_float("speed", 1.0);
     world.insert_resource(params);
@@ -1410,7 +1374,6 @@ fn a_state_machine_drives_the_clip_and_writes_the_state_back() {
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "run");
     let tip = child_tip(&world, entity);
     assert!((tip.x - 1.0).abs() < 1e-3, "Run should be 90°, got {tip:?}");
-    // State change restarts from 0, doesn't continue idle's time.
     assert!(
         world.get::<AnimatorPlayhead>(entity).unwrap().time.abs() < 1e-6,
         "Time should reset after state change"
@@ -1421,7 +1384,6 @@ fn a_state_machine_drives_the_clip_and_writes_the_state_back() {
 fn a_transition_duration_overrides_the_component_blend_duration() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
-    // Transition carries own 2s duration; component set to 0 (hard cut) must defer to transition.
     install_machine(&mut world, speed_machine(2.0, 0.0));
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
@@ -1434,7 +1396,6 @@ fn a_transition_duration_overrides_the_component_blend_duration() {
     params.set_float("speed", 1.0);
     world.insert_resource(params);
 
-    // First frame of transition: weight 0 → still idle 0° pose.
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
     assert!(
@@ -1442,7 +1403,6 @@ fn a_transition_duration_overrides_the_component_blend_duration() {
         "Transition start still old pose, got {tip:?}"
     );
 
-    // After 2 seconds: 90°.
     world.get_mut::<Animator>(entity).unwrap().playing = true;
     animator_system(&mut world, 2.0);
     let tip = child_tip(&world, entity);
@@ -1466,12 +1426,9 @@ fn min_state_fraction_holds_the_transition_until_the_state_has_played() {
     params.set_float("speed", 1.0);
     world.insert_resource(params);
 
-    // Only 0.2s played (<50%): condition true still doesn't transition.
     animator_system(&mut world, 0.2);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
 
-    // Criterion uses **previous frame** playback time (that frame actually reached there), so frame crossing 50% is
-    // still blocked, next frame allows it.
     animator_system(&mut world, 0.5);
     assert_eq!(world.get::<Animator>(entity).unwrap().state, "idle");
 
@@ -1518,7 +1475,6 @@ fn a_two_dimensional_blend_space_interpolates_on_the_parameter_plane() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // Origin sample = bend at 0s (0°).
     use_blend_space_2d(&mut world, entity, 0.0, 0.0);
     animator_system(&mut world, 0.0);
     assert_eq!(
@@ -1532,7 +1488,6 @@ fn a_two_dimensional_blend_space_interpolates_on_the_parameter_plane() {
         "Sample origin should be 0°, got {tip:?}"
     );
 
-    // Midpoint along x axis: 0° and 90° half each → 45°.
     use_blend_space_2d(&mut world, entity, 0.5, 0.0);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -1542,7 +1497,6 @@ fn a_two_dimensional_blend_space_interpolates_on_the_parameter_plane() {
         "X-axis midpoint should be 45°, got {tip:?}"
     );
 
-    // Edge between two 90° samples: still 90°.
     use_blend_space_2d(&mut world, entity, 0.5, 0.5);
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -1557,7 +1511,6 @@ fn a_two_dimensional_blend_space_needs_an_area_and_falls_back() {
     let (mut world, entity) = world_with_animator("");
     install_bent90(&mut world);
 
-    // Only two samples: no triangle, falls back to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_2d_clip_paths = vec!["bend.ranim".into(), "bent90.ranim".into()];
@@ -1570,7 +1523,6 @@ fn a_two_dimensional_blend_space_needs_an_area_and_falls_back() {
         "bend.ranim"
     );
 
-    // Three collinear samples: triangulation fails, same fallback to single clip.
     {
         let animator = world.get_mut::<Animator>(entity).unwrap();
         animator.blend_2d_clip_paths = vec![
@@ -1629,7 +1581,6 @@ fn an_animation_layer_blends_over_the_base_pose() {
         "Full layer 90° should override 0° base pose, got {tip:?}"
     );
 
-    // Weight 0.5: only rotate 45°.
     world.get_mut::<Animator>(entity).unwrap().layers[0].weight = 0.5;
     animator_system(&mut world, 0.0);
     let tip = child_tip(&world, entity);
@@ -1777,7 +1728,6 @@ fn an_animator_uses_its_graph_instead_of_the_clip_path() {
         "tip {tip:?}"
     );
 
-    // Evaluator persists per entity, second half-second continues to 90°.
     animator_system(&mut world, 0.5);
     let tip = child_tip(&world, entity);
     assert!((tip.x - 1.0).abs() < 1e-3, "tip {tip:?}");
@@ -1845,7 +1795,6 @@ fn a_frozen_graph_animator_keeps_its_evaluator_and_resumes() {
         .get::<AnimatorPlayhead>(entity)
         .expect("Evaluation resumed");
     assert_eq!(head.clip_path, ANIM_GRAPH_KEY);
-    // 0.25s during freeze not backfilled: after resume only advances this frame's 0.5s.
     let tip = child_tip(&world, entity);
     assert!(
         (tip.x - (2.0 - std::f32::consts::FRAC_PI_4.sin())).abs() < 1e-3,
@@ -1877,7 +1826,6 @@ fn a_throttled_graph_animator_keeps_its_playback_speed() {
     }
     add_camera(&mut world, Vec3::ZERO);
 
-    // Two frames of 0.1s: first frame 0.2s, second skipped, total still 0.2s.
     animator_system(&mut world, 0.1);
     animator_system(&mut world, 0.1);
     let tip = child_tip(&world, entity);
@@ -1985,7 +1933,6 @@ fn many_graph_entities_evaluate_independently() {
         );
     }
 
-    // Evaluator persists across frames: second frame continues to 90°, parallel get/put didn't lose state.
     assert_eq!(animator_system(&mut world, 0.5), entities.len());
     for entity in &entities {
         let tip = child_tip(&world, *entity);
@@ -2215,7 +2162,6 @@ fn a_montage_request_carries_blend_in_and_blend_out() {
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
     assert!((debug.montages(entity).unwrap()[0].weight - 0.5).abs() < 1e-5);
 
-    // 0.1 → 0.8: fade-in already full, remaining 0.2s / blend_out 0.4s → 0.5 weight.
     animator_system(&mut world, 0.7);
     let debug = world.get_resource::<AnimGraphDebug>().unwrap();
     assert!((debug.montages(entity).unwrap()[0].weight - 0.5).abs() < 1e-5);

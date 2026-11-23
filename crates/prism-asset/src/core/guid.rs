@@ -68,7 +68,6 @@ impl fmt::Debug for AssetGuid {
 
 impl fmt::Display for AssetGuid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Standard UUID hex format: 8-4-4-4-12
         let b = self.0;
         write!(
             f,
@@ -79,16 +78,11 @@ impl fmt::Display for AssetGuid {
     }
 }
 
-// Manual Hash so we don't rely on derive for [u8; 16].
 impl Hash for AssetGuid {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.hash(state);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serde — serialize as a hex UUID string for human readability
-// ---------------------------------------------------------------------------
 
 impl serde::Serialize for AssetGuid {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {

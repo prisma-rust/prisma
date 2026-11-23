@@ -48,10 +48,6 @@ const MAX_COLLECTION: usize = 1 << 24;
 /// of megabytes.
 const MIN_ENCODED_ENTITY_BYTES: usize = 2 + 4 + 12 + 16 + 12 + 2;
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RscnError {
     BadMagic,
@@ -111,10 +107,6 @@ impl From<prism_reflect::ReflectError> for RscnError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Header
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RscnHeader {
     pub version: u8,
@@ -136,10 +128,6 @@ pub fn read_header(data: &[u8]) -> Option<RscnHeader> {
 pub fn is_v4(data: &[u8]) -> bool {
     data.len() >= 5 && data[..4] == MAGIC && data[4] == VERSION
 }
-
-// ---------------------------------------------------------------------------
-// Decoded scene
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct DecodedScene {
@@ -191,7 +179,7 @@ pub fn read_env_path(data: &[u8]) -> Option<String> {
         return None;
     }
     if data[4] < 2 {
-        return None; // v1 has no env path
+        return None;
     }
     let env_len = u16::from_le_bytes(data[9..11].try_into().ok()?) as usize;
     if env_len == 0 || data.len() < 11 + env_len {
@@ -204,10 +192,6 @@ pub fn read_env_path(data: &[u8]) -> Option<String> {
         Some(path)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Encoding
-// ---------------------------------------------------------------------------
 
 struct PendingEntity {
     name: String,
@@ -223,12 +207,10 @@ pub fn encode_scene(scene: &SceneJson, registry: &ComponentRegistry) -> Result<V
     scene.validate().map_err(RscnError::BadValue)?;
 
     let order = scene.topological_order();
-    // Original index → topological order position. Precompute once to avoid scanning `order` linearly for each entity.
     let mut positions = vec![0usize; order.len()];
     for (position, &index) in order.iter().enumerate() {
         positions[index] = position;
     }
-    // `parent` stores entity id; parse into array index here.
     let index_of_id = scene.index_of_id();
     let mut entities = Vec::with_capacity(order.len());
     let mut used_types = BTreeSet::new();
@@ -247,7 +229,6 @@ pub fn encode_scene(scene: &SceneJson, registry: &ComponentRegistry) -> Result<V
             }
         };
 
-        // Sort by name so repeated cooking produces byte-identical output.
         let mut keys: Vec<_> = source.components.iter().collect();
         keys.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -477,10 +458,6 @@ pub fn encode_value(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Decoding
-// ---------------------------------------------------------------------------
-
 pub fn decode_scene(data: &[u8], registry: &ComponentRegistry) -> Result<DecodedScene, RscnError> {
     let mut reader = Reader::new(data);
     if reader.take(4)? != MAGIC {
@@ -521,8 +498,6 @@ pub fn decode_scene(data: &[u8], registry: &ComponentRegistry) -> Result<Decoded
         }
     }
 
-    // `entity_count` is attacker-controlled until the first entity is read.
-    // Clamp the reservation to what the remaining input could actually hold.
     let capacity = entity_count.min(data.len() / MIN_ENCODED_ENTITY_BYTES);
     let mut entities = Vec::with_capacity(capacity);
     for _ in 0..entity_count {
@@ -644,10 +619,6 @@ pub fn decode_value(
         }
     })
 }
-
-// ---------------------------------------------------------------------------
-// Byte helpers
-// ---------------------------------------------------------------------------
 
 fn write_u16(out: &mut Vec<u8>, value: u16) {
     out.extend_from_slice(&value.to_le_bytes());

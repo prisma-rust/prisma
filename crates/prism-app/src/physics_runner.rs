@@ -51,8 +51,6 @@ use flume::{Receiver, Sender};
 /// Opaque entity identifier shared with the ECS world on the main thread.
 pub type EntityId = u64;
 
-// ── Commands (main → physics) ─────────────────────────────────────────
-
 pub struct PhysicsStep {
     pub commands: Vec<PhysicsCommand>,
 }
@@ -235,8 +233,6 @@ struct CharacterMotionState {
     horizontal: [f32; 2],
 }
 
-// ── Results (physics → main) ──────────────────────────────────────────
-
 pub struct PhysicsResult {
     pub transforms: Vec<BodyTransform>,
     /// Started/Stopped reported by rapier this step, mapped to ECS entity.
@@ -252,8 +248,6 @@ pub struct BodyTransform {
     /// Whether rapier put this rigid body to sleep at end of last step (only dynamic rigid body reports).
     pub sleeping: bool,
 }
-
-// ── helpers ───────────────────────────────────────────────────────────
 
 fn array_to_pose(position: [f32; 3], rotation: [f32; 4]) -> Pose {
     Pose::from_parts(
@@ -326,7 +320,6 @@ struct TerrainBodies<'a> {
 impl TerrainBodies<'_> {
     fn remove(&mut self, entity: EntityId) {
         if let Some(handle) = self.bodies.remove(&entity) {
-            // Deleting body also deletes colliders hanging under it.
             self.rigid_bodies.remove(
                 handle,
                 self.islands,
@@ -341,8 +334,6 @@ impl TerrainBodies<'_> {
         }
     }
 }
-
-// ── Thread entry point ────────────────────────────────────────────────
 
 pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<PhysicsResult>) {
     log::info!("Physics thread started");
@@ -359,24 +350,18 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
     let integration_params = IntegrationParameters::default();
     let mut physics_pipeline = PhysicsPipeline::new();
 
-    // Entity → Rapier handle map.
     let mut entity_map: HashMap<EntityId, RigidBodyHandle> = HashMap::new();
     let mut body_colliders: HashMap<EntityId, ColliderHandle> = HashMap::new();
     let mut collider_entities: HashMap<ColliderHandle, Entity> = HashMap::new();
-    // Terrain is fixed heightfield body, does not participate in `entity_map` pose write-back (#517).
     let mut terrain_bodies: HashMap<EntityId, RigidBodyHandle> = HashMap::new();
     let mut terrain_colliders: HashMap<EntityId, ColliderHandle> = HashMap::new();
-    // Character move must wait for `step` after broad phase to be this frame's, so collect first.
     let mut character_requests: Vec<CharacterMoveRequest> = Vec::new();
 
-    // rapier reports Started/Stopped via EventHandler inside `step`; here use official
-    // ChannelEventCollector queues events to channel, map back to entities uniformly after step.
     let (collision_tx, collision_rx) = std::sync::mpsc::channel();
     let (force_tx, _force_rx) = std::sync::mpsc::channel();
     let event_handler = ChannelEventCollector::new(collision_tx, force_tx);
 
     while let Ok(step) = step_rx.recv() {
-        // 1. Apply commands.
         for cmd in step.commands {
             match cmd {
                 PhysicsCommand::SpawnBody {
@@ -395,8 +380,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
                         .gravity_scale(if settings.use_gravity { 1.0 } else { 0.0 })
                         .ccd_enabled(settings.ccd);
                     if body_status == PhysicsBodyStatus::Dynamic {
-                        // Collider density is 0 for dynamic bodies, so the authored
-                        // mass is the whole mass (instead of volume + mass).
                         body_builder = body_builder.additional_mass(settings.mass.max(1.0e-4));
                     }
                     let body = body_builder.build();
@@ -472,7 +455,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
                     cells,
                     size,
                 } => {
-                    // Swapping heightmap / moving terrain first tears down old body, avoid leaving two colliders.
                     TerrainBodies {
                         bodies: &mut terrain_bodies,
                         colliders: &mut terrain_colliders,
@@ -484,9 +466,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
                         multibody_joints: &mut multibody_joint_set,
                     }
                     .remove(entity);
-                    // rapier heightfield row = z, col = x; its `Array2` underlying is
-                    // column-major (`index = row + col * nrows`), while `Heightfield` is row-major
-                    // `(z * cells + x)`, so transpose once here.
                     let mut grid = vec![0.0f32; cells * cells];
                     for z in 0..cells {
                         for x in 0..cells {
@@ -529,7 +508,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
             }
         }
 
-        // 2. Step simulation.
         physics_pipeline.step(
             gravity,
             &integration_params,
@@ -541,11 +519,10 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
             &mut impulse_joint_set,
             &mut multibody_joint_set,
             &mut ccd_solver,
-            &(), // PhysicsHooks
+            &(),
             &event_handler,
         );
 
-        // 2b. Drain collision events and map collider handles back to entities.
         let mut events = Vec::new();
         while let Ok(event) = collision_rx.try_recv() {
             let (kind, handle_a, handle_b, flags) = match event {
@@ -556,7 +533,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
                 collider_entities.get(&handle_a),
                 collider_entities.get(&handle_b),
             ) else {
-                // One side despawned before event arrives: keeping for previous step's consumer meaningless.
                 continue;
             };
             if entity_a == entity_b {
@@ -570,13 +546,12 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
             });
         }
 
-        // 3. Collect dynamic body transforms.
         let transforms: Vec<BodyTransform> = entity_map
             .iter()
             .filter_map(|(entity, handle)| {
                 let body = rigid_body_set.get(*handle)?;
                 if !body.is_dynamic() {
-                    return None; // only send back dynamic body positions
+                    return None;
                 }
                 let pose = body.position();
                 Some(BodyTransform {
@@ -593,9 +568,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
             })
             .collect();
 
-        // 2d. Kinematic character moves (#560 P2). Run after the step so the
-        // broad phase reflects this frame's colliders; each request resolves
-        // against the current pose and writes the corrected position back.
         let mut character_moves = Vec::new();
         for request in character_requests.drain(..) {
             let (Some(handle), Some(collider_handle)) = (
@@ -642,9 +614,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
             let mut new_pose = pose;
             new_pose.translation += movement.translation;
             if let Some(body) = rigid_body_set.get_mut(handle) {
-                // Keep the next kinematic target in sync: a kinematic body is
-                // integrated towards `next_position`, so setting only the
-                // current pose would be undone by the next step.
                 body.set_next_kinematic_position(new_pose);
                 body.set_position(new_pose, false);
             }
@@ -669,8 +638,6 @@ pub fn physics_thread_main(step_rx: Receiver<PhysicsStep>, result_tx: Sender<Phy
 
     log::info!("Physics thread exiting");
 }
-
-// ── Main-thread runtime (App holds) ────────────────────────────────────
 
 /// Main-thread side physics runtime: owns step/result channels, thread handle and entity bookkeeping.
 ///
@@ -839,9 +806,6 @@ impl PhysicsRuntime {
             let horizontal = current + (target - current) * blend;
             state.horizontal = [horizontal.x, horizontal.z];
 
-            // Gravity / jump are not wired yet: the kinematic controller does
-            // not settle onto the floor with small downward steps, so the
-            // vertical axis stays with the caller until that is understood.
             requests.push(CharacterMoveRequest {
                 entity: key,
                 desired: [horizontal.x * FIXED_DT, 0.0, horizontal.z * FIXED_DT],
@@ -860,7 +824,6 @@ impl PhysicsRuntime {
         }
         self.motion.retain(|key, _| seen.contains(key));
 
-        // Keep requests written by gameplay this frame; ours are appended.
         let mut queue = world
             .remove_resource::<CharacterMoveRequests>()
             .unwrap_or_default();
@@ -869,7 +832,6 @@ impl PhysicsRuntime {
     }
 
     fn collect_commands(&mut self, world: &mut World) -> Vec<PhysicsCommand> {
-        // Collect entities first, avoid get component inside query borrow.
         let mut current: HashMap<EntityId, Entity> = HashMap::new();
         for (entity, _) in world.query::<Rigidbody>() {
             current.insert(entity_key(entity), entity);
@@ -880,7 +842,6 @@ impl PhysicsRuntime {
 
         let mut commands = Vec::new();
 
-        // Despawn already-disappeared entities first (including scene-switch unloaded).
         let removed: Vec<EntityId> = self
             .bodies
             .keys()
@@ -904,7 +865,6 @@ impl PhysicsRuntime {
 
             let status = body.map(body_status).unwrap_or(PhysicsBodyStatus::Static);
             let settings = body.map(body_settings).unwrap_or_default();
-            // Parent scale also enters collision shape; without parent equals old `transform.scale`.
             let (world_scale, world_rotation, world_position) =
                 world_matrix.to_scale_rotation_translation();
             let shape = collider
@@ -933,7 +893,6 @@ impl PhysicsRuntime {
                     });
                 }
                 Some(previous) if *previous != desired => {
-                    // rapier does not support in-place shape / type change; despawn + spawn simplest.
                     commands.push(PhysicsCommand::DespawnBody { entity: key });
                     commands.push(PhysicsCommand::SpawnBody {
                         entity: key,
@@ -946,7 +905,6 @@ impl PhysicsRuntime {
                     });
                 }
                 Some(previous) if previous.status == PhysicsBodyStatus::KinematicPosition => {
-                    // Entities moved by animation / code driven by ECS, send new pose each fixed step.
                     commands.push(PhysicsCommand::SetTransform {
                         entity: key,
                         position,
@@ -958,8 +916,6 @@ impl PhysicsRuntime {
             self.bodies.insert(key, desired);
         }
 
-        // Terrain heightfield (#517): `TerrainData` is runtime-system-generated component, no
-        // `Rigidbody` / `Collider`, so separately sync into static heightfield collider.
         let mut current_terrains: HashMap<EntityId, Entity> = HashMap::new();
         for (entity, _) in world.query::<TerrainData>() {
             current_terrains.insert(entity_key(entity), entity);
@@ -1031,8 +987,6 @@ impl PhysicsRuntime {
             self.terrains.insert(key, desired);
         }
 
-        // Character moves are per-step requests (#560 P2): take them out of the
-        // world so a stale request is not replayed on every step.
         if let Some(requests) = world.remove_resource::<CharacterMoveRequests>() {
             for request in requests.requests {
                 commands.push(PhysicsCommand::MoveCharacter { request });
@@ -1045,7 +999,6 @@ impl PhysicsRuntime {
 
 impl Drop for PhysicsRuntime {
     fn drop(&mut self) {
-        // Close step channel -> thread recv loop ends.
         self.step_tx.take();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -1077,7 +1030,6 @@ fn world_matrix(world: &World, entity: Entity) -> Option<glam::Mat4> {
 }
 
 fn apply_result(world: &mut World, result: &PhysicsResult) {
-    // Events kept only when both sides still alive; residual Stopped after scene switch / despawn no longer exposed.
     let events = result
         .events
         .iter()
@@ -1098,8 +1050,6 @@ fn apply_result(world: &mut World, result: &PhysicsResult) {
         let Some(mut local) = world.get::<LocalTransform>(entity).cloned() else {
             continue;
         };
-        // rapier works in world space; entities parented to something else need
-        // the delta rotated (and unscaled) back into parent space.
         let delta = match world.get::<Parent>(entity).map(|parent| parent.0) {
             Some(parent) => {
                 let Some(parent_matrix) = world_matrix(world, parent) else {
@@ -1135,8 +1085,6 @@ fn apply_result(world: &mut World, result: &PhysicsResult) {
             continue;
         }
 
-        // rapier returns world pose; entity with Parent must convert back to parent local space,
-        // otherwise `hierarchy_system` next frame would multiply parent transform again.
         if let Some(parent) = world.get::<Parent>(entity).map(|parent| parent.0) {
             let Some(parent_matrix) = world_matrix(world, parent) else {
                 continue;
@@ -1339,13 +1287,10 @@ mod tests {
             })
             .unwrap();
 
-        // The spawn step answers with its own (empty) result; drain it so every
-        // send below is paired with the result of the same step.
         let _ = result_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 
         let settings = CharacterMoveSettings::default();
         let mut grounded = false;
-        // Fall onto the floor first.
         for _ in 0..30 {
             step_tx
                 .send(PhysicsStep {
@@ -1366,7 +1311,6 @@ mod tests {
         }
         assert!(grounded, "character should end up standing on the floor");
 
-        // Walk into the wall: the allowed translation must stop short.
         step_tx
             .send(PhysicsStep {
                 commands: vec![PhysicsCommand::MoveCharacter {
@@ -1458,7 +1402,6 @@ mod tests {
             "sphere should rest on the raised terrain heightfield (center y≈2.5), got {y}"
         );
 
-        // Terrain destroyed, safe to despawn next step.
         world.despawn(terrain);
         assert!(runtime.step(&mut world));
     }
@@ -1530,7 +1473,6 @@ mod tests {
         assert_eq!(results.moves.len(), 1);
         assert_eq!(results.moves[0].entity, entity_key(character));
 
-        // The request resource was consumed: another step must not move again.
         assert!(runtime.step(&mut world));
         let x_after = world
             .get::<LocalTransform>(character)
@@ -1604,7 +1546,6 @@ mod tests {
         );
         assert!((walked.y - 0.9).abs() < 0.02, "walking must stay grounded");
 
-        // Releasing the input decelerates to a stop instead of sliding forever.
         world.insert_resource(CharacterMoveInput::default());
         for _ in 0..60 {
             assert!(runtime.step(&mut world));
@@ -1655,7 +1596,6 @@ mod tests {
                 ..
             } => {
                 assert_eq!(half_height, 4.5);
-                // Radius follows horizontal scale only, not affected by stretched height.
                 assert_eq!(radius, 8.0);
             }
             other => panic!("expected a capsule, got {other:?}"),
@@ -1689,7 +1629,6 @@ mod tests {
             .y;
         assert!(y < 4.0, "dynamic body should fall through +Y, got y={y}");
 
-        // Delete entity: next step sends DespawnBody, must not panic / hang.
         world.despawn(entity);
         assert!(runtime.step(&mut world));
     }
@@ -1890,8 +1829,6 @@ mod tests {
                 ..Default::default()
             },
         );
-        // `PhysicsRuntime` only syncs entities with LocalTransform; trigger also needs position,
-        // otherwise it would never be spawned, test would false-pass.
         world.insert(trigger, LocalTransform::default());
         let floor = world.spawn();
         world.insert(

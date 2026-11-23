@@ -49,10 +49,6 @@ fn warn_dropped_lights(total: usize, dropped: usize) {
 /// `exposure` afterwards becomes pure luminance multiplier applied to final composited HDR color.
 const LUX_TO_RADIANCE_SCALE: f32 = 1.0 / (10_000.0 * std::f32::consts::PI);
 
-// ---------------------------------------------------------------------------
-// SceneChanges
-// ---------------------------------------------------------------------------
-
 /// Snapshot of all per-frame scene data (camera, lights, derived matrices).
 ///
 /// Produced by [`collect_scene_changes`] and consumed by [`render_system`] to
@@ -119,10 +115,6 @@ pub struct SceneChanges {
     /// Shadow strength copied from `Light.shadow_strength`, clamped to `0..=1`.
     pub shadow_strength: f32,
 }
-
-// ---------------------------------------------------------------------------
-// Extract frame packet (sim phase)
-// ---------------------------------------------------------------------------
 
 /// Run the extract phase: scene changes + draw-item list
 /// producing a [`FramePacket`] for later consumption by [`render_system`].
@@ -242,7 +234,6 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
     render_height: f32,
     packet: &mut FramePacket,
 ) {
-    // 1. Collect per-frame scene state (needs orientation).
     collect_scene_changes_into(
         world,
         display_aspect,
@@ -252,23 +243,14 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         &mut packet.scene,
     );
 
-    // 2. Build the flat draw list and ECS-authored render helpers.
     let scene_view = scene::SceneReadView::new(world);
-    // Frustum cull (#491): under multi-camera composition (#461), submit if **any** enabled camera can see
-    // entity. All cameras at each layer share same draw list, culling only by main camera would miss objects
-    // appearing only in second camera. When all camera matrices degenerate `camera_frustums` empty =
-    // no cull (same as old behavior).
     let camera_frustums: Vec<prism_render::culling::Frustum> = packet
         .scene
         .cameras
         .iter()
         .filter_map(|camera| prism_render::culling::Frustum::from_view_proj(&camera.view_proj))
         .collect();
-    // Engine's `renderQueue` order: opaque group ascending queue, transparent group far to near.
-    // Sort must complete before submitting to renderer (`ForwardPass` draws only in list order).
     scene_view.draw_items_with_frustums_into(&camera_frustums, &mut packet.draw_items);
-    // Skinned entities: static loop skips them, here append draw items and put each bone palette
-    // into same buffer (#560 P0-3b).
     scene::systems::skinned_draw::append_skinned_draw_items_with_frustums(
         world,
         &camera_frustums,
@@ -276,8 +258,6 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         &mut packet.bone_matrices,
     );
     prism_render::sort_draw_items(&mut packet.draw_items, packet.scene.eye.to_array());
-    // Light frustum cull (#526): casters outside shadow box need not enter shadow pass. Must be placed
-    // after main camera cull — objects outside camera neither drawn in main pass nor waste shadow map.
     let light_view_projs = if packet.scene.shadow_cascade_count > 1 {
         [
             packet.scene.light_view_proj.to_cols_array_2d(),
@@ -294,23 +274,16 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         &light_view_projs[..packet.scene.shadow_cascade_count.clamp(1, 2) as usize],
     );
     scene_view.gizmo_instances_into(&mut packet.gizmos);
-    // Only `clearFlags == Skybox` draws skybox: other clear modes (solid color /
-    // depth only / no clear) don't draw even if scene has enabled `Skybox` entity. `ForwardPass`
-    // `None` directly skips skybox draw, so here is its switch.
     packet.skybox = if packet.scene.clear_flags.draws_skybox() {
         scene_view.skybox_settings()
     } else {
         None
     };
-    // 2D also uses camera frustum: tilemap clipped per cell (#529). With multiple cameras no single frustum can
-    // represent all layers, conservatively don't clip 2D (2D rarely mixed with multi-camera 3D).
     let primary_frustum = if camera_frustums.len() == 1 {
         camera_frustums.first()
     } else {
         None
     };
-    // Line pixel ratio (#978): convert "1 pixel" to world units using main camera projection.
-    // Without render height (offline extraction / unit tests) keep pure world-space geometry.
     let line_scale =
         crate::scene::systems::render::LineScreenScale::new(packet.scene.view_proj, render_height);
     scene_view.sprite_items_with_frustum_and_line_scale_into(
@@ -318,19 +291,13 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
         line_scale,
         &mut packet.sprite_items,
     );
-    // 2D lighting (#611): only sprites with `receive_lights` use it, empty when no lights.
     scene_view.sprite_lights_into(&mut packet.sprite_lights);
-    // 3D particles: world-space billboards, sorted far to near by distance to eye (transparent blend).
     scene_view.particle_items_into(packet.scene.eye, &mut packet.particle_items);
 
-    // 3. Build the UI overlay from the ECS world (includes UiQuad/TextCmd).
     crate::ui::convert_ui_draw_list_to_overlay_into(world, &mut packet.ui_overlay);
 
-    // 4. Extract three-tier sparse voxel chunks and cursor highlight with version caching.
     packet.voxel_scene = extract_voxel_scene(world);
 
-    // Render settings overridden by app layer (`App`) before sending; engine defaults ensure independent use
-    // of `extract_frame_packet` still works.
     packet.settings = RenderSettings::default();
 }
 
@@ -413,7 +380,6 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
         world.insert_resource(VoxelExtractCache::default());
     }
 
-    // Encode any dirty or newly spawned chunks into the cache first, without aliasing `world`.
     let mut dirty_updates: Vec<(u64, u64, Arc<prism_render::VoxelChunkUpload>)> = Vec::new();
     {
         let cache = world.get_resource::<VoxelExtractCache>().unwrap();
@@ -479,10 +445,6 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
     }))
 }
 
-// ---------------------------------------------------------------------------
-// FramePacket
-// ---------------------------------------------------------------------------
-
 /// Per-tick extract result: camera/light snapshot + draw items + UI overlay.
 /// Produced by [`extract_frame_packet`], consumed by [`render_system`].
 ///
@@ -522,10 +484,6 @@ pub struct FramePacket {
     /// and fills this, enabling `PostProcessVolume`.
     pub grade: Option<prism_render::PostGrade>,
 }
-
-// ---------------------------------------------------------------------------
-// Scene collection
-// ---------------------------------------------------------------------------
 
 /// Read the ECS [`World`] and the orientation parameters, then produce
 /// a [`SceneChanges`] snapshot for the current frame.
@@ -569,10 +527,7 @@ fn collect_scene_changes_into(
     );
     let fallback_col = Vec4::new(1.0, 1.0, 1.0, 0.0);
 
-    // 1. cameras — main camera (`active_camera`: renderable enabled camera with max `depth`) responsible for
-    //    framing, clearing, shadow framing and aspect writeback; other enabled cameras compose as overlay layers (#461).
     let (view_proj, eye, view, projection, exposure, has_camera, camera_entity) = {
-        // Aspect written to **camera that will be rendered** (active_camera consistent with framing selection below).
         if let Some(cam_entity) = scene::systems::camera::active_camera(world) {
             if let Some(cam) = world.get_mut::<Camera>(cam_entity) {
                 cam.aspect = display_aspect;
@@ -612,12 +567,8 @@ fn collect_scene_changes_into(
     let proj32 = projection.col(3).z;
     let _ = projection;
 
-    // 1.2 multi-camera composition (#461): all enabled cameras each emit a layer in ascending `Camera.depth`.
-    //     Full-screen overlay (no viewport rect), each layer's `clearFlags` decides color / depth clear.
-    //     All cameras use same display aspect: this version has no per-camera viewport.
     let camera_entities = scene::systems::camera::all_cameras(world);
     for entity in &camera_entities {
-        // Only cameras truly able to produce image (have `LocalToWorld`) write back viewport aspect.
         if world
             .get::<crate::scene::components::LocalToWorld>(*entity)
             .is_some()
@@ -630,13 +581,10 @@ fn collect_scene_changes_into(
     let scene_view = scene::SceneReadView::new(world);
     out.cameras = scene_view.cameras(surface_rotation, display_aspect);
 
-    // 1.5 orthographic flag — from **same camera** as framing / clearing. PT main ray decides
-    //     whether shared camera origin (perspective) or per-pixel near-plane origin (orthographic, issue #10).
     let camera_orthographic = camera_entity
         .and_then(|entity| world.get::<Camera>(entity))
         .map(|cam| cam.orthographic)
         .unwrap_or(false);
-    // 2. lights — unify `Light` (shaped) and old three components into `LightSample`.
     let samples = scene_view.light_samples();
     let dir_light = samples
         .iter()
@@ -650,17 +598,9 @@ fn collect_scene_changes_into(
         .map(|l| Vec4::new(l.color.x, l.color.y, l.color.z, l.ambient))
         .unwrap_or(fallback_col);
 
-    // 2.5 shadow switch: directional light's `Light.shadows` / `shadowStrength`.
-    //     Without directional light shadow meaningless (fallback direction just constant), turn off directly.
     let (shadows_enabled, shadow_strength) =
         scene::systems::lights::directional_shadow_state(&samples);
 
-    // 3. local lights (point + spot) into forward SSBO, pick by importance when over LIGHT_MAX.
-    //    `color.w` is type bit (0 = point, 1 = spot), spot carries direction and inner / outer cone cosines.
-    //
-    //    Previously `.take(LIGHT_MAX)`: who's kept depended on ECS iteration order (≈ document order),
-    //    ninth light silently dropped, deleting previous one made it reappear (#468). Now sorted by
-    //    "intensity × range² / camera distance²", near / bright / long-range first.
     let mut locals: Vec<(usize, f32)> = samples
         .iter()
         .enumerate()
@@ -673,14 +613,12 @@ fn collect_scene_changes_into(
         })
         .collect();
     out.local_lights_total = locals.len();
-    // Importance descending; ties by document order, stable across frames.
     locals.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
     locals.truncate(prism_render::LIGHT_MAX as usize);
-    // Back to document order when writing SSBO: same content, only easier to match per-light with editor panel when debugging.
     locals.sort_unstable_by_key(|(index, _)| *index);
     out.local_lights_kept = locals.len();
     out.dropped_light_ids.clear();
@@ -738,7 +676,6 @@ fn collect_scene_changes_into(
     }
     warn_dropped_lights(out.local_lights_total, dropped);
 
-    // 4. path tracing parsed lights: only feed point lights (PT shader has no spot cone branch yet).
     out.pt_lights.clear();
     for sample in samples
         .iter()
@@ -755,13 +692,6 @@ fn collect_scene_changes_into(
         ));
     }
 
-    // 5. Light-space view-projection (shadow map).
-    //
-    // Coverage tightly fits **main camera frustum**: project frustum corners into light space for AABB, rather than
-    // placing fixed-size box in front of camera. Distant scenery camera can't see won't inflate shadow map, near plane keeps one box-height
-    // margin for upstream occluders "able to cast shadow into view", far plane stops at farthest receiver in view.
-    // Near plane depth: perspective projection's `p32 / p22` is near; orthographic projection that ratio is (near+far)/2,
-    // meaningless, use a tiny value (orthographic frustum corners uniquely determined by far plane).
     let camera_near_plane = if camera_orthographic {
         0.001
     } else {
@@ -785,11 +715,9 @@ fn collect_scene_changes_into(
         shadow_cascade_count,
     );
 
-    // 6. clear color — from **same camera** as framing (`Camera.backgroundColor`).
     let clear_color = camera_entity
         .map(|entity| scene::systems::camera::clear_color(world, entity))
         .unwrap_or(scene::systems::camera::DEFAULT_CLEAR_COLOR);
-    // Clear mode also from same camera (`Camera.clearFlags`).
     let clear_flags = camera_entity
         .map(|entity| scene::systems::camera::clear_flags(world, entity))
         .unwrap_or_default();
@@ -816,14 +744,6 @@ fn collect_scene_changes_into(
     out.shadow_strength = shadow_strength;
 }
 
-// ---------------------------------------------------------------------------
-// Render system
-// ---------------------------------------------------------------------------
-
-// Clear color no longer hardcoded in render system: comes from `SceneChanges::clear_color` via active camera
-// (`Camera::background_color`); when no camera use
-// `scene::systems::camera::DEFAULT_CLEAR_COLOR` (neutral gray).
-
 /// Consume a pre-extracted [`FramePacket`] and drive the GPU.
 ///
 /// **Each call is stateless with respect to the ECS world.**  The simulation
@@ -836,7 +756,6 @@ pub fn render_system(
     packet: &FramePacket,
     dirty_router: &mut DirtyRouter,
 ) -> anyhow::Result<()> {
-    // Render settings come with packet from main thread (see `FramePacket::settings`).
     let settings = &packet.settings;
     let FramePacket {
         ref scene,
@@ -853,7 +772,6 @@ pub fn render_system(
         grade,
     } = *packet;
 
-    // 1. Diff against the previous frame via DirtyRouter.
     let dirty_flags = dirty_router.update(scene);
     if dirty_flags.any() {
         log::trace!(
@@ -879,19 +797,14 @@ pub fn render_system(
         exposure,
         has_camera,
         camera_orthographic,
-        // Clear color read directly from `scene` (`scene.clear_color`), not destructured here.
         clear_color: _,
-        // Clear mode only affects skybox switch in extract phase, render system no longer needs.
         clear_flags: _,
         shadows_enabled,
         shadow_strength,
-        // Light budget only used in editor stats (`#468`), render side doesn't need.
         ..
     } = scene;
     let light_count = lights.len() as f32;
 
-    // 2. Build the per-frame UBO.
-    // FrameUBOData is #[repr(C)] GPU data — convert glam → raw arrays at this boundary.
     let frame_data = FrameUBOData {
         view_proj: view_proj.to_cols_array_2d(),
         camera_position: [eye.x, eye.y, eye.z, light_count],
@@ -916,9 +829,6 @@ pub fn render_system(
         ..Default::default()
     };
 
-    // 2.5. Unified dirty-dispatch plan (DESIGN §9 / #1157): a change to the
-    //      draw_items contents (matrix / mesh / material / shadow flags) also
-    //      counts as a dirty scene and converges on DirtyDispatchPlan.
     let draw_items_dirty = dirty_router.draw_items_dirty(draw_items_signature(draw_items));
     if draw_items_dirty {
         log::trace!("dirty: draw_items changed");
@@ -927,13 +837,11 @@ pub fn render_system(
     let dispatch_plan =
         dirty_router.plan_dispatch(scene, draw_items_dirty, pt_bounces_dirty, 0, 0, 0);
 
-    // 3. Drive the render-graph phase API.
     renderer.set_occlusion_culling(settings.occlusion_culling);
     let ctx = match renderer.begin_frame()? {
         Some(c) => c,
         None => return Ok(()),
     };
-    // #1007: occlusion cull clones draw list only when needed this frame; when disabled zero overhead, list passed as-is.
     let mut occlusion_items = Vec::new();
     let main_pass_items: &[prism_render::render_graph::DrawItem] = if settings.occlusion_culling {
         occlusion_items.extend_from_slice(draw_items);
@@ -942,8 +850,6 @@ pub fn render_system(
     } else {
         draw_items
     };
-    // #502: PostProcessVolume can override grading params, but LUT is global resource; strength
-    // always follows global setting, path resolved to assets/ at parse time (renderer keeps previous on failure).
     let mut resolved_grade = grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
     let lut_path = if settings.lut.trim().is_empty() {
@@ -995,7 +901,6 @@ pub fn render_system(
         show_grid: settings.show_grid,
         dispatch_plan: Some(&dispatch_plan),
     };
-    // §8 five phases: prepare phase batch sync (currently dirty-log + future upload points)
     renderer.set_voxel_scene(voxel_scene.clone());
     renderer.prepare(&ctx, &input).inspect_err(|_e| {
         let _ = renderer.present(&ctx);

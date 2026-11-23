@@ -227,8 +227,6 @@ impl<'a> GameWorld<'a> {
 
     pub fn input(&self) -> InputSnapshot {
         match &self.backend {
-            // Static Player: the engine writes this copy into the World resource
-            // each frame (#589).
             #[cfg(feature = "host")]
             Backend::Host(world) => world
                 .get_resource::<InputSnapshot>()
@@ -251,8 +249,6 @@ impl<'a> GameWorld<'a> {
         self.input = input;
         match &mut self.backend {
             Backend::Host(world) => world.insert_resource(input),
-            // The plugin backend reads the input the host hands down every tick
-            // through `HostApi::input`, so there is nothing to write here.
             #[cfg(feature = "plugin")]
             Backend::Plugin(_) => {}
         }
@@ -384,8 +380,6 @@ impl<'a> GameWorld<'a> {
         match &mut self.backend {
             #[cfg(feature = "host")]
             Backend::Host(_) => {
-                // The host backend cannot switch scenes itself; the runtime
-                // host (HOST_CAP_SCENE) executes the request after the tick.
                 let _ = (path, additive);
                 log::warn!(
                     "load_scene({path:?}, additive = {additive}) is only available through the runtime host (HOST_CAP_SCENE)"
@@ -428,7 +422,6 @@ impl<'a> GameWorld<'a> {
         match &mut self.backend {
             #[cfg(feature = "host")]
             Backend::Host(backend) => {
-                // `Engine::empty` inserts this resource; add one for custom hosts.
                 if backend
                     .get_resource::<prism_engine::sound::SoundCommands>()
                     .is_none()
@@ -755,9 +748,6 @@ impl<'a> GameWorld<'a> {
                 let mut external = world
                     .remove_resource::<prism_engine::ui::ExternalUiQuads>()
                     .unwrap_or_default();
-                // Project quads are solid colour only (no bindless texture slot);
-                // layering happens in the merge, which orders externals past all
-                // ECS UI entities.
                 external.0.push(prism_ui_draw::UiQuad {
                     rect: quad.rect,
                     color: quad.color,
@@ -809,8 +799,6 @@ impl log::Log for HostLogger {
         if LOG_SINK.get().is_none() {
             return;
         }
-        // Kept in sync with `prism-runtime-host::host_log`: 0 error / 1 warn /
-        // 2 debug / 3 info.
         let level = match record.level() {
             log::Level::Error => 0,
             log::Level::Warn => 1,
@@ -845,15 +833,12 @@ pub fn install_host_panic_hook() {
     INSTALL.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            // `Backtrace::force_capture` does not depend on `RUST_BACKTRACE`; a stack
-            // is wanted by default while playing.
             let text = format!(
                 "{info}
 {}",
                 std::backtrace::Backtrace::force_capture()
             );
             forward_log(0, &text);
-            // Keep the original behavior (stderr) so terminal debugging still works.
             previous(info);
         }));
     });
@@ -866,8 +851,6 @@ fn forward_log(level: u32, text: &str) {
     let Some(sink) = LOG_SINK.get() else {
         return;
     };
-    // SAFETY: as in `HostLogger::log`; the host log callback does not use
-    // `user_data`, and the string is only valid for this call.
     unsafe {
         (sink.log)(
             sink.user_data as *mut core::ffi::c_void,
@@ -900,8 +883,6 @@ pub fn install_host_logger(host: &HostApi) {
         user_data: host.user_data as usize,
         log,
     };
-    // Install the logger the first time; afterwards just refresh the sink
-    // (`OnceLock::set` failing means it is already there).
     let fresh = LOG_SINK.set(sink).is_ok();
     if fresh {
         INSTALL.call_once(|| {
@@ -974,8 +955,6 @@ impl PluginBackend<'_> {
     fn is_alive(&self, entity: EntityHandle) -> bool {
         match self.api.is_alive {
             Some(is_alive) => unsafe { is_alive(self.api.user_data, entity) == 1 },
-            // Fall back to "handle is non-empty" when the host provides no liveness
-            // query; reads and writes still validate separately.
             None => !entity.is_placeholder(),
         }
     }
@@ -1154,8 +1133,6 @@ impl PluginBackend<'_> {
         if status != SUCCESS || ptr.is_null() {
             return None;
         }
-        // The pointer is only valid until the next host call: copy it out
-        // immediately.
         Some(unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec())
     }
 
@@ -1526,7 +1503,6 @@ mod tests {
         assert_eq!(hit.normal, [0.0, 0.0, 1.0]);
         assert!(!hit.is_trigger);
 
-        // Casting in the opposite direction misses.
         assert!(api
             .raycast([0.0, 0.0, -5.0], [0.0, 0.0, -1.0], 10.0, u32::MAX)
             .is_none());
@@ -1768,7 +1744,6 @@ mod tests {
         assert_eq!(hit.normal, [0.0, 1.0, 0.0]);
         assert!(hit.is_trigger);
 
-        // Do not call the callback when the host did not declare the capability bit.
         let mut plain = prism_runtime_host::WorldCommands::new(&mut world, &components, 1);
         let host = plain.api();
         let api = GameWorld::plugin(&host, components.type_registry());
@@ -1855,8 +1830,6 @@ mod tests {
         api.despawn(stale);
         let fresh = api.spawn();
 
-        // The same slot is reused, but with a different generation: the old handle
-        // must stay invalid.
         assert_eq!(stale.id, fresh.id);
         assert_ne!(stale.generation, fresh.generation);
         assert!(!api.is_alive(stale));
@@ -1871,8 +1844,6 @@ mod tests {
             api.draw_quad(UiQuad::default());
         }
 
-        // The `GameWorld` is gone; the quad survives in the world resource the
-        // engine merges into `UiDrawList` (#1048).
         let external = world
             .remove_resource::<prism_engine::ui::ExternalUiQuads>()
             .expect("quad queued in the world");

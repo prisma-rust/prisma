@@ -86,7 +86,6 @@ fn test_physics2d_circle_circle_collision() {
 
     let rb1 = world.get::<RigidBody2D>(c1).unwrap();
     let rb2 = world.get::<RigidBody2D>(c2).unwrap();
-    // After collision the two balls should bounce off each other or reverse direction.
     assert!(rb1.linear_velocity[0] < 2.0);
     assert!(rb2.linear_velocity[0] > -2.0);
 }
@@ -95,7 +94,6 @@ fn test_physics2d_circle_circle_collision() {
 fn test_physics2d_box_box_collision() {
     let mut world = World::new();
 
-    // Static floor.
     let floor = world.spawn();
     world.insert(
         floor,
@@ -113,7 +111,6 @@ fn test_physics2d_box_box_collision() {
         },
     );
 
-    // Falling dynamic box.
     let box_e = world.spawn();
     world.insert(
         box_e,
@@ -136,7 +133,6 @@ fn test_physics2d_box_box_collision() {
     step_2d(&mut world, 0.02, [0.0, 0.0]);
 
     let rb = world.get::<RigidBody2D>(box_e).unwrap();
-    // After hitting static ground, falling speed blocked or bounced.
     assert!(rb.linear_velocity[1] >= -0.1);
 }
 
@@ -144,7 +140,6 @@ fn test_physics2d_box_box_collision() {
 fn test_physics2d_sensor_events() {
     let mut world = World::new();
 
-    // sensor entity
     let sensor = world.spawn();
     world.insert(
         sensor,
@@ -157,7 +152,6 @@ fn test_physics2d_sensor_events() {
     sensor_col.is_sensor = true;
     world.insert(sensor, sensor_col);
 
-    // Object passing through sensor.
     let walker = world.spawn();
     world.insert(
         walker,
@@ -176,7 +170,6 @@ fn test_physics2d_sensor_events() {
         },
     );
 
-    // Step 1: overlap, triggers Started event.
     step_2d(&mut world, 0.1, [0.0, 0.0]);
     let events = world.get_resource::<Physics2DEvents>().unwrap();
     assert!(events
@@ -184,7 +177,6 @@ fn test_physics2d_sensor_events() {
         .iter()
         .any(|e| e.kind == Physics2DEventKind::Started && e.is_sensor));
 
-    // Step 2: move out of sensor range (x = 1.0 + 10 * 0.5 = 6.0 > 2.5).
     world.get_mut::<LocalTransform>(walker).unwrap().position = glam::vec3(10.0, 0.0, 0.0);
     step_2d(&mut world, 0.1, [0.0, 0.0]);
     let events2 = world.get_resource::<Physics2DEvents>().unwrap();
@@ -208,7 +200,6 @@ fn test_physics2d_raycast_circle() {
     );
     world.insert(circle, PhysicsCollider2D::new_circle(1.0));
 
-    // Cast raycast from origin toward +X.
     let hit =
         raycast_2d(&world, [0.0, 0.0], [1.0, 0.0], 10.0, 0xFFFF_FFFF).expect("should hit circle");
     assert_eq!(hit.entity, circle);
@@ -230,11 +221,9 @@ fn test_physics2d_raycast_box() {
     );
     world.insert(box_e, PhysicsCollider2D::new_box(2.0, 1.0));
 
-    // Cast raycast from below toward +Y.
     let hit = raycast_2d(&world, [0.0, 0.0], [0.0, 1.0], 10.0, 0xFFFF_FFFF)
         .expect("should hit box bottom");
     assert_eq!(hit.entity, box_e);
-    // Box center y=5, half height=1, bottom face y=4.
     assert!((hit.distance - 4.0).abs() < 1e-4);
     assert!((hit.normal[1] - (-1.0)).abs() < 1e-4);
 }

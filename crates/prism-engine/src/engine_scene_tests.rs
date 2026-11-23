@@ -77,7 +77,6 @@ fn unloading_leaves_the_engine_ready_for_the_next_scene() {
     assert_eq!(scene_members(&engine), 0);
     assert_eq!(engine.current_scene_name(), None);
 
-    // After unload then load same scene again: count must still be 2.
     engine.load_scene_json_file(&path).unwrap();
     assert_eq!(scene_members(&engine), 2);
 

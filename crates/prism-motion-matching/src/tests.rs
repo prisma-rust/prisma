@@ -117,8 +117,6 @@ fn a_built_database_describes_the_clip_and_search_finds_the_pose() {
 
     let middle = &database.frames()[2];
     assert!((middle.time - 0.5).abs() < 1e-5);
-    // Root sits at -1.0 m at t = 0.5 and moves 2 m/s towards -Z, so a sample
-    // 0.25 s ahead is at -1.5 m.
     let first = middle.trajectory.points()[0];
     assert!(
         (first.position.z + 1.5).abs() < 1e-4,
@@ -182,8 +180,6 @@ fn the_continuing_frame_is_kept_while_it_is_close_enough() {
     let cold = search(&database, &query, &trajectory, &weights).expect("comparable frames");
     assert_eq!(cold.frame, 0, "frame 0 is 0.01 vs 0.0144");
 
-    // Pretend frame 1 is what is playing right now: a cheap frame change is not
-    // worth a 20% worse match.
     let mut history = SelectionHistory::default();
     history.record(&MotionMatch {
         frame: 1,
@@ -212,7 +208,6 @@ fn the_continuing_frame_is_kept_while_it_is_close_enough() {
         sticky.pose_cost
     );
 
-    // Stiff weights still win: a clearly better frame overrides the bonus.
     let clearly_better = MotionDatabase::from_frames(vec![
         offset_frame(&trajectory, 0.02, 0),
         offset_frame(&trajectory, 0.12, 1),
@@ -246,7 +241,6 @@ fn a_frame_picked_moments_ago_is_penalised() {
     let cold = search(&database, &query, &trajectory, &weights).expect("comparable frames");
     assert_eq!(cold.frame, 0);
 
-    // Frame 0 was picked before, frame 2 is playing now.
     let mut history = SelectionHistory::default();
     for frame in [0, 2] {
         history.record(&MotionMatch {

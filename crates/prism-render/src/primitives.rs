@@ -65,7 +65,6 @@ type BoxFace = ([f32; 3], [f32; 3], [f32; 3], [f32; 3]);
 /// Identity cube (6 faces each with independent vertices, normal / UV matching face direction).
 pub fn box_mesh() -> MeshUploadInput {
     let mut mesh = empty_mesh();
-    // (normal, tangent, in-face u axis, in-face v axis)
     let faces: [BoxFace; 6] = [
         (
             [0.0, 1.0, 0.0],
@@ -149,7 +148,6 @@ pub fn sphere_mesh(radius: f32, rings: usize, segments: usize) -> MeshUploadInpu
             let b = a + stride as u32;
             let c = b + 1;
             let d = a + 1;
-            // Skip degenerate triangles (poles).
             if ring != 0 {
                 mesh.indices.extend_from_slice(&[a, d, b]);
             }
@@ -196,7 +194,6 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: usize) -> MeshUploadInp
         mesh.indices.extend_from_slice(&[a, c, b, b, c, d]);
     }
 
-    // Top / bottom caps (center point + fan), normals ±Y.
     for (y, ny, flip) in [(half, 1.0_f32, false), (-half, -1.0_f32, true)] {
         let center = push_vertex(
             &mut mesh,
@@ -243,7 +240,6 @@ pub fn capsule_mesh(
     let cap_rings = cap_rings.max(2);
     let half = height * 0.5;
 
-    // Top hemisphere (phi: 0 → π/2, from +Y pole down to equator).
     for ring in 0..=cap_rings {
         let v = ring as f32 / cap_rings as f32;
         let phi = v * std::f32::consts::FRAC_PI_2;
@@ -266,7 +262,6 @@ pub fn capsule_mesh(
             );
         }
     }
-    // Bottom hemisphere (phi: π/2 → π).
     for ring in 0..=cap_rings {
         let v = ring as f32 / cap_rings as f32;
         let phi = std::f32::consts::FRAC_PI_2 + v * std::f32::consts::FRAC_PI_2;
@@ -290,8 +285,6 @@ pub fn capsule_mesh(
         }
     }
 
-    // Top + bottom hemispheres each connect to themselves (equatorial ring vertices coincide, normals differ,
-    // same as sphere, just split into two fan triangle segments).
     let stride = segments + 1;
     let top_rings = cap_rings;
     let total_rings = top_rings + cap_rings + 1;
@@ -354,7 +347,6 @@ mod tests {
         }
         for position in &mesh.positions {
             assert!(position.iter().all(|value| value.is_finite()));
-            // Capsule = cylinder 1 + two radius 0.5 hemispheres → total height 2 (consistent with engine default).
             assert!(
                 position.iter().all(|value| value.abs() <= 1.05),
                 "primitive should be unit sized: {position:?}"
@@ -368,7 +360,6 @@ mod tests {
             let mesh = builtin(&format!("__builtin/{name}")).expect(name);
             check(&mesh);
         }
-        // Aliases: cube → box, plane → quad.
         assert!(builtin("__builtin/cube").is_some());
         assert!(builtin("__builtin/plane").is_some());
         assert!(builtin("sphere").is_some());

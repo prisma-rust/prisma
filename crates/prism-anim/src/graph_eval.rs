@@ -639,7 +639,6 @@ impl AnimGraphEvaluator {
             0.0
         };
 
-        // Per-sample speeds: this node maintains independent playheads, phase array in node.clips order.
         let speeds = self
             .blend_space_speeds
             .get(&node.name)
@@ -883,8 +882,6 @@ impl AnimGraphEvaluator {
         };
         let base =
             self.evaluate_node(input.node, source, skeleton, reference, dt, visiting, stack)?;
-        // MontagePlayer takes precedence: segments played/enqueued on the game side override
-        // the static slot clip authored by the author.
         let mut montage_events = Vec::new();
         let mut montage_pose = None;
         if let Some(player) = self.montages.get_mut(&node.name) {

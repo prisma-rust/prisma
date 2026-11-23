@@ -206,8 +206,6 @@ impl GameHost {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("Failed to create directory: {err}"))?;
         }
-        // A stale file would make the wait-for-file loop return immediately;
-        // delete it first.
         let _ = std::fs::remove_file(&target);
 
         let frame = args.get("frame").and_then(Value::as_u64).unwrap_or(120);
@@ -235,8 +233,6 @@ impl GameHost {
         let mut written = false;
         while started.elapsed() < timeout {
             if target.exists() {
-                // The file may have just been created and not fully written;
-                // wait for its size to settle.
                 let first = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
                 std::thread::sleep(Duration::from_millis(200));
                 let second = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);

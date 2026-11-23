@@ -37,8 +37,8 @@ pub fn encode_rskel(skeleton: &SkeletonInfo) -> Option<Vec<u8>> {
     for joint in &skeleton.joints {
         let parent = joint.parent.map_or(-1i32, i32::from);
         out.extend_from_slice(&parent.to_le_bytes());
-        out.push(0); // flags
-        out.extend_from_slice(&[0, 0, 0]); // pad
+        out.push(0);
+        out.extend_from_slice(&[0, 0, 0]);
         for value in joint.reference_local.to_array() {
             out.extend_from_slice(&value.to_le_bytes());
         }
@@ -145,7 +145,6 @@ pub fn encode_rskin(mesh: &SkinnedMeshInfo) -> Option<Vec<u8>> {
         }
     }
 
-    // Joint index and weight are two independent streams (first all joints, then all weights) — decode side reads per stream.
     let mut joint_stream = Vec::with_capacity(verts * 8);
     let mut weight_stream = Vec::with_capacity(verts * 16);
     for index in 0..verts {
@@ -237,8 +236,6 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         }
     }
 
-    // Event table (#560 P1 Notify): written out sorted by time, so same source file always cooks same bytes.
-    // Notify order inside clip has no semantic.
     let mut notifies: Vec<&prism_asset::formats_skinned::AnimNotifyInfo> = clip
         .notifies
         .iter()
@@ -252,8 +249,6 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(notify.name.as_bytes());
     }
 
-    // V3 sync flag (#560): normalize bitwise, ascending, deduplicate, guaranteeing same author data cooks same
-    // out same bytes. Non-limited values directly discarded.
     let mut markers: Vec<f32> = clip
         .sync_markers
         .iter()
@@ -268,8 +263,6 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(&phase.to_le_bytes());
     }
 
-    // V4 Montage segments (#560 P4): written out sorted by start, segments with empty name / illegal time directly
-    // discarded; same author data always gets same bytes each cook.
     let mut sections: Vec<&prism_asset::formats_skinned::AnimClipSectionInfo> = clip
         .sections
         .iter()
@@ -295,7 +288,6 @@ pub fn encode_ranim(clip: &AnimClipInfo) -> Option<Vec<u8>> {
         out.extend_from_slice(section.name.as_bytes());
     }
 
-    // V5 MotionWarping window (#560 P4): same sort / filter rule.
     let mut windows: Vec<&prism_asset::formats_skinned::AnimClipWarpWindowInfo> = clip
         .warp_windows
         .iter()

@@ -193,7 +193,6 @@ impl ProjectAudio {
                 voice.handle = handle;
             }
         }
-        // Release voices that finished and aren't looping, avoid id table growing unbounded.
         self.voices
             .retain(|_, voice| voice.repeat || self.engine.is_playing(&voice.handle));
     }
@@ -248,9 +247,6 @@ impl prism_runtime_host::AudioIo for ProjectAudio {
     }
 }
 
-// Note: `ProjectAudio` must be created when **constructing** driver, cannot create in module tick.
-// `AudioEngine::new` inside tick (opens cpal stream) would freeze editor — world is
-// borrowed by module, once audio callback thread starts UI thread can't get control back. Create once at construction is safest.
 pub struct ProjectModuleDriver {
     manifest: Option<PathBuf>,
     target_dir: Option<PathBuf>,
@@ -418,8 +414,6 @@ impl ProjectModuleDriver {
         if self.building {
             return ModuleState::Compiling;
         }
-        // Source changed but not compiled (when Auto Refresh off hint user press Ctrl+R);
-        // only stable Failed if source hasn't changed again after failure.
         if self.dirty {
             return ModuleState::Pending;
         }
@@ -502,11 +496,9 @@ impl ProjectModuleDriver {
         scene_generation: u64,
         screen: [f32; 2],
     ) {
-        // Module already judged faulty this frame: wait for reload, don't jump into same hole again.
         if self.faulted {
             return;
         }
-        // Field-level borrows: session and components/assets don't overlap.
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -515,20 +507,14 @@ impl ProjectModuleDriver {
             .with_assets(&self.assets)
             .with_scene_switch()
             .with_raycast(engine_raycast);
-        // Project save (#984): Play save under `<project>/target/play-data/`,
-        // separate from player's real save; don't declare feature when no writable dir.
         if let Some(save) = self.save.as_mut() {
             commands = commands.with_save(save);
         }
 
-        // One-shot audio (#987): when no sound card `ProjectAudio::new` returns `None`, feature
-        // not declared, project code gets `play_sound() == None` rather than silent success.
         if let Some(audio) = self.audio.as_mut() {
             audio.update();
             commands = commands.with_audio(audio);
         }
-        // Project code can call `GameWorld::save_scene_state()` (#484); engine is here,
-        // runtime-host only holds function pointer.
         commands = commands.with_scene_state(
             prism_engine::scene_state::save_scene_state,
             prism_engine::scene_state::load_scene_state,
@@ -539,13 +525,10 @@ impl ProjectModuleDriver {
         let host = commands.api();
         let result = session.tick(&host, dt.max(0.000_5));
         let quads = commands.take_quads();
-        // Scene change request can't execute in callback (world borrowed), first store for host (#482).
         self.pending_scene = commands.take_scene_request();
         queue_project_quads(world, quads);
 
         let error = result.err().map(|error| error.to_string());
-        // Stop here after one crash: project panicking each frame would burn stderr and GPU time,
-        // only reloading module (save source / Ctrl+R) makes it try again.
         self.faulted = error.is_some();
         if error != self.last_tick_error {
             match &error {
@@ -620,16 +603,12 @@ impl ProjectModuleDriver {
         self.pending_scene.take()
     }
 
-    // ------------------------------------------------------------------
-    // compile  + load
-    // ------------------------------------------------------------------
 
     fn maybe_compile(&mut self, playing: bool) {
         if self.building || !self.available() {
             return;
         }
 
-        // Prebuilt module preferred: only try once, on failure stay in error state (Ctrl+R won't reinstall).
         if let Some(path) = self.prebuilt.take() {
             match self.install(&path, Vec::new()) {
                 Ok(()) => self.push(
@@ -648,8 +627,6 @@ impl ProjectModuleDriver {
         if !manual && !self.auto_refresh {
             return;
         }
-        // During Play don't auto-swap module: whole reload would drop project state (no script layer to migrate).
-        // Placed before source scan, avoid traversing `src/` every frame.
         if !manual && playing {
             return;
         }
@@ -676,7 +653,6 @@ impl ProjectModuleDriver {
         }
         self.pending_since = None;
 
-        // Record timestamp regardless of outcome: syntax error shouldn't make editor rerun cargo every 350ms.
         self.compiled_stamp = Some(stamp);
         self.building = true;
         self.last_error = None;
@@ -755,7 +731,6 @@ impl ProjectModuleDriver {
             }
         };
 
-        // First swap session then delete old copy: old code pointers must stay valid until new module takes effect.
         let previous = self.session.replace(session);
         drop(previous);
         if let Some(old) = self.staged.replace(staged) {
@@ -764,7 +739,6 @@ impl ProjectModuleDriver {
         self.last_error = None;
         self.last_tick_error = None;
         self.diagnostics = diagnostics;
-        // Make next frame rescan immediately: source changed during compile shouldn't be treated as already compiled.
         self.last_scan = None;
         self.faulted = false;
         Ok(())
@@ -801,9 +775,6 @@ impl ProjectModuleDriver {
     }
 }
 
-// ---------------------------------------------------------------------------
-// input / UI quads
-// ---------------------------------------------------------------------------
 
 /// Pack host input into ABI snapshot.
 ///
@@ -850,7 +821,6 @@ fn queue_project_quads(world: &mut prism_engine::ecs::World, quads: Vec<HostUiQu
             rect: quad.rect,
             color: quad.color,
             border_radius: quad.border_radius,
-            // Quads submitted by project module are solid-color only, no background image (#591).
             texture: None,
             layer: quad.layer,
             order: prism_engine::ui::EXTERNAL_UI_ORDER,
@@ -864,9 +834,6 @@ fn builtin_component_registry() -> ComponentRegistry {
     registry
 }
 
-// ---------------------------------------------------------------------------
-// Loose assets
-// ---------------------------------------------------------------------------
 
 /// Project's own `assets/` (not repo-root engine assets).
 struct ProjectAssets {
@@ -906,9 +873,6 @@ impl AssetIo for ProjectAssets {
     }
 }
 
-// ---------------------------------------------------------------------------
-// compile
-// ---------------------------------------------------------------------------
 
 fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     let mut command = std::process::Command::new("cargo");
@@ -919,7 +883,6 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
         .args(["--no-default-features", "--features", "preview-module"])
         .arg("--target-dir")
         .arg(target_dir)
-        // Structured diagnostics: Problems panel needs file:line:col, not a colored stderr blob.
         .args(["--message-format", "json"]);
     if let Some(dir) = manifest.parent() {
         command.current_dir(dir);
@@ -927,7 +890,7 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command.creation_flags(0x0800_0000); 
     }
 
     let output = match command.output() {
@@ -944,7 +907,6 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // First error is what user needs to fix; only fall back to stderr when no compiler diagnostics (link errors etc).
         let summary = diagnostics
             .iter()
             .find(|diagnostic| diagnostic.level == LogLevel::Error)
@@ -995,10 +957,6 @@ fn stage_module(built: &Path) -> Result<PathBuf, String> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("project");
-    // Uniqueness on **directory**, filename must stay: dbghelp finds symbol file by name recorded in PE
-    // (`fishing.pdb`) in module directory, won't infer from `fishing-<nanos>.dll`.
-    // Renamed dll makes project frame symbols degrade to export names (`prism_project_get_api`),
-    // panic call stack would be wasted.
     let unique = staging.join(format!("{stem}-{nanos}"));
     std::fs::create_dir_all(&unique)
         .map_err(|error| format!("create module staging dir failed: {error}"))?;
@@ -1012,7 +970,6 @@ fn stage_module(built: &Path) -> Result<PathBuf, String> {
     std::fs::copy(built, &staged)
         .map_err(|error| format!("copy project module failed: {error}"))?;
 
-    // Symbol file in same directory as dll: without it project frames only have addresses.
     let pdb = built.with_extension("pdb");
     if pdb.is_file() {
         if let Some(pdb_name) = pdb.file_name() {
@@ -1059,9 +1016,6 @@ fn tail_lines(text: &str, count: usize) -> String {
     lines[start..].join("\n")
 }
 
-// ---------------------------------------------------------------------------
-// Manifest / source mtime
-// ---------------------------------------------------------------------------
 
 fn manifest_declares_preview_module(manifest: &Path) -> bool {
     std::fs::read_to_string(manifest)
@@ -1226,8 +1180,6 @@ mod tests {
     fn held_keys_are_reported_even_after_begin_frame() {
         let mut input = InputManager::new();
         input.handle_keyboard(KeyCode::Space, ElementState::Pressed);
-        // `begin_frame` clears just_pressed, but held state must remain:
-        // fishing uses `input.key(keys::SPACE)` to detect continuous line retrieval.
         input.begin_frame();
         let snapshot = input_snapshot(&input, [1280.0, 720.0]);
         assert!(snapshot.key(KeyCode::Space.bit_index().expect("named key")));
@@ -1275,8 +1227,6 @@ mod tests {
         );
         assert!(!snapshot.key_released(KeyCode::Space.bit_index().expect("named key")));
 
-        // On frame window opens: held bitmap cleared, release edge set.
-        // Host calls `begin_frame` at start of each frame, do same here, else previous frame's press-below edge remains.
         input.begin_frame();
         input.handle_keyboard(KeyCode::Space, ElementState::Released);
         let snapshot = input_snapshot(&input, [1.0, 1.0]);
@@ -1313,7 +1263,6 @@ mod tests {
         assert_eq!(touches[1].phase, prism_runtime_host::TOUCH_PHASE_MOVED);
         assert!(snapshot.any_touch());
 
-        // When fully "ended" don't count as having touch point pressed again.
         input.begin_frame();
         input.handle_touch(7, TouchPhase::Ended, [10.0, 20.0]);
         let snapshot = input_snapshot(&input, [100.0, 100.0]);
@@ -1377,8 +1326,6 @@ mod tests {
                 .expect("project tick should succeed");
             last_quads = commands.take_quads().len();
         }
-        // Intro raindrops submitted via `GameWorld::draw_quad`; able to come back across ABI proves
-        // component read/write and UI quad channel both work.
         assert!(last_quads > 0, "intro should submit UI quads");
     }
 
@@ -1447,7 +1394,6 @@ mod tests {
         assert_eq!(driver.status().state, ModuleState::Pending);
         assert!(driver.status().dirty);
 
-        // Failure also records compile timestamp: source unchanged shouldn't rerun cargo every 350 ms.
         driver.compiled_stamp = driver.source_stamp();
         driver.last_scan = None;
         driver.scan_sources();
@@ -1455,7 +1401,6 @@ mod tests {
         assert_eq!(driver.status().state, ModuleState::Failed);
         assert!(!driver.status().dirty);
 
-        // After changing back source (or manual rebuild), next compile period starts fresh.
         driver.last_error = None;
         assert_eq!(driver.status().state, ModuleState::Ready);
     }

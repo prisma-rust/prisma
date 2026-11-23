@@ -173,7 +173,6 @@ impl NeiHudState {
         self.hovered_catalog = None;
         let mut consumed_cursor = false;
 
-        // Check hotbar slot hover/click.
         for slot in 0..HOTBAR_SLOTS {
             let rect = layout.hotbar_slot_rect(slot);
             if point_in_rect(cursor, rect) {
@@ -185,7 +184,6 @@ impl NeiHudState {
             }
         }
 
-        // Check NEI palette hover/click.
         if self.palette_open && point_in_rect(cursor, layout.palette_panel) {
             consumed_cursor = true;
             if input.left_clicked && point_in_rect(cursor, layout.filter_btn) {
@@ -217,7 +215,6 @@ impl NeiHudState {
             }
         }
 
-        // Map cursor to world grid cell if not hovering UI.
         if !consumed_cursor && cursor[0] >= 0.0 && cursor[1] >= 0.0 {
             let gx = (cursor[0] / cell_px) as usize;
             let gy = (cursor[1] / cell_px) as usize;
@@ -251,7 +248,6 @@ impl NeiHudState {
         let screen = valid_screen(world.screen_size());
         let layout = HudLayout::compute(screen);
 
-        // 1. Aimed-at Inspector (top-left).
         draw_panel(world, layout.inspector_panel, [0.05, 0.07, 0.11, 0.84], 10);
         let inspector_str = if let Some(cat_idx) = self.hovered_catalog {
             let entry = &CATALOG[cat_idx];
@@ -263,7 +259,6 @@ impl NeiHudState {
         };
         set_text(world, self.inspector_entity, inspector_str, true);
 
-        // 2. Bottom 9-slot Hotbar.
         draw_panel(world, layout.hotbar_panel, [0.06, 0.08, 0.12, 0.88], 10);
         for slot in 0..HOTBAR_SLOTS {
             let rect = layout.hotbar_slot_rect(slot);
@@ -286,7 +281,6 @@ impl NeiHudState {
         );
         set_text(world, self.hotbar_label_entity, hotbar_caption, true);
 
-        // 3. Right-side NEI Palette.
         if self.palette_open {
             let filtered = self.filtered_indices();
             let pages = self.page_count(filtered.len());
@@ -662,7 +656,6 @@ fn compact_item_name(id: &str, fallback: &str) -> &'static str {
         "diamond_ore" => "Diamond",
         _ => {
             if fallback.len() <= 7 {
-                // Only `CATALOG` `'static` strings reach here in practice.
                 "Item"
             } else {
                 "Item"
@@ -972,7 +965,6 @@ impl EmergenceNeiHud {
                 if input.left_clicked {
                     player.equip_active_slot(item.as_tool());
                 } else if input.right_clicked {
-                    // Right click equips directly without triggering world placement.
                     player.equip_active_slot(item.as_tool());
                 }
                 return true;
@@ -1150,8 +1142,6 @@ impl EmergenceNeiHud {
         }
         self.attached = true;
 
-        // Spawn in strict painter order:
-        // 1. Top-center tooltip (`border -> bg -> swatch_border -> swatch -> texts`)
         self.tooltip = Some(TooltipUi {
             border: spawn_ui_entity(world, "nei_tip_border"),
             bg: spawn_ui_entity(world, "nei_tip_bg"),
@@ -1162,7 +1152,6 @@ impl EmergenceNeiHud {
             tags: spawn_ui_entity(world, "nei_tip_tags"),
         });
 
-        // 2. Bottom-center hotbar caption & 10 slots
         let caption_bg = spawn_ui_entity(world, "hotbar_caption_bg");
         let caption_text = spawn_ui_entity(world, "hotbar_caption_text");
         let bar_border = spawn_ui_entity(world, "hotbar_border");
@@ -1182,7 +1171,6 @@ impl EmergenceNeiHud {
             slots: h_slots,
         });
 
-        // 3. Bottom-right NEI panel & 16 item slots
         let border = spawn_ui_entity(world, "nei_panel_border");
         let bg = spawn_ui_entity(world, "nei_panel_bg");
         let title = spawn_ui_entity(world, "nei_panel_title");
@@ -1242,7 +1230,6 @@ impl EmergenceNeiHud {
         let screen = world.screen_size();
         let sw = if screen[0] > 1.0 { screen[0] } else { 1280.0 };
 
-        // 1. Top-Center WAILA / NEI Tooltip
         if let Some(tip_ui) = self.tooltip {
             if let Some(info) = self.build_top_tooltip(sim, player) {
                 let title_w = crate::debug_hud::estimate_text_width(&info.title, 14.5);
@@ -1331,7 +1318,6 @@ impl EmergenceNeiHud {
             }
         }
 
-        // 2. Bottom-Center Hotbar
         if let Some(hb_ui) = self.hotbar {
             if console_open {
                 for h in [
@@ -1465,7 +1451,6 @@ impl EmergenceNeiHud {
             }
         }
 
-        // 3. Bottom-Right Toggleable NEI Catalog Panel
         if let Some(panel_ui) = self.panel {
             if !self.open {
                 for h in [
@@ -1856,7 +1841,6 @@ mod tests {
         let mut nei = EmergenceNeiHud::new();
         assert!(nei.open);
 
-        // Aim at world geometry -> top-center tooltip populates from aimed voxel hit.
         let mut sim_mut = sim;
         player.update_look_and_tools(&mut world, &mut sim_mut, 1.0 / 60.0);
         let tip = nei
@@ -1865,7 +1849,6 @@ mod tests {
         assert!(tip.subtitle.contains("emergence:"));
         assert!(tip.subtitle.contains("L3 "));
 
-        // Clicking an NEI slot consumes pointer input and equips active hotbar slot.
         let panel = EmergenceNeiHud::nei_panel_rect([1280.0, 720.0]);
         let slot3 = EmergenceNeiHud::nei_slot_rect(panel, 3);
         let click_slot = InputSnapshot {
@@ -1884,7 +1867,6 @@ mod tests {
             .expect("hovered NEI item populates top-center tooltip");
         assert!(hover_tip.title.contains(CATALOG[3].name));
 
-        // Clicking ENT tab filters items and clicking [>] / [<] paginates cleanly.
         let ent_tab = EmergenceNeiHud::filter_tab_rect(panel, 2);
         let click_ent = InputSnapshot {
             cursor: [ent_tab[0] + 8.0, ent_tab[1] + 6.0],
@@ -1895,7 +1877,6 @@ mod tests {
         assert!(nei.handle_input(&click_ent, [1280.0, 720.0], false, &mut player));
         assert_eq!(nei.filter, CatalogFilter::Entities);
 
-        // Switching [ALL] and clicking page next advances page.
         let all_tab = EmergenceNeiHud::filter_tab_rect(panel, 0);
         let click_all = InputSnapshot {
             cursor: [all_tab[0] + 8.0, all_tab[1] + 6.0],
@@ -1914,7 +1895,6 @@ mod tests {
         nei.handle_input(&click_next, [1280.0, 720.0], false, &mut player);
         assert_eq!(nei.page, 1);
 
-        // Syncing ECS UI activates tooltip, hotbar, and NEI panel without panics.
         nei.sync_ui(&mut world, &sim_mut, &player, false);
         assert_eq!(
             world.get::<Active>(nei.panel.unwrap().bg),
@@ -1925,7 +1905,6 @@ mod tests {
             Some(Active(true))
         );
 
-        // Toggling B hides the NEI panel while keeping hotbar & top tooltip intact.
         let mut press_b = InputSnapshot::default();
         let b_idx = keys::OTHER_BASE + b'B' as usize;
         press_b.keys[b_idx / 64] |= 1u64 << (b_idx % 64);

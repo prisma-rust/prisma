@@ -2,10 +2,6 @@ use crate::types::CubeDef;
 use crate::{impl_asset_data, AssetGuid, AssetHandle};
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// MaterialDef
-// ---------------------------------------------------------------------------
-
 /// PBR material definition — a ScriptableObject-style asset type.
 ///
 /// `MaterialDef` is the **editable source** of a PBR material. It is
@@ -19,13 +15,11 @@ use serde::{Deserialize, Serialize};
 /// data during cooking.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MaterialDef {
-    // --- identity ---
     /// Stable GUID — set once when the asset is first created.
     pub guid: AssetGuid,
     /// Human-readable label (not path-based — survives moves).
     pub label: String,
 
-    // --- PBR parameters ---
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
@@ -33,18 +27,15 @@ pub struct MaterialDef {
     pub normal_scale: f32,
     pub occlusion_strength: f32,
 
-    // --- Texture references ---
     pub albedo_map: Option<AssetHandle<TextureDef>>,
     pub normal_map: Option<AssetHandle<TextureDef>>,
     pub metallic_roughness_map: Option<AssetHandle<TextureDef>>,
     pub emissive_map: Option<AssetHandle<TextureDef>>,
     pub occlusion_map: Option<AssetHandle<TextureDef>>,
 
-    // --- IBL reference ---
     /// Cubemap for IBL environment lighting.
     pub env_map: Option<AssetHandle<CubeDef>>,
 
-    // --- Advanced PBR ---
     pub transmission: f32,
     pub ior: f32,
     pub translucency: f32,
@@ -82,10 +73,6 @@ impl Default for MaterialDef {
 }
 
 impl_asset_data!(MaterialDef, "material", "PBR Material");
-
-// ---------------------------------------------------------------------------
-// TextureDef
-// ---------------------------------------------------------------------------
 
 /// Reference to a texture source asset (imported image awaiting cook).
 #[derive(Serialize, Deserialize, Debug, Clone)]

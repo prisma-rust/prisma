@@ -127,7 +127,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     settle(&mut tree, &mut state, viewport);
     assert!(tree.node_by_key(panel("file")).is_some());
 
-    // Level 2: "New" row spawns a panel whose first item must sit level with it.
     hover_frame(&mut tree, &mut state, viewport, "file", "New");
     let row2 = rect(&tree, submenu_row_key("file", "New"));
     let l2 = rect(&tree, panel("file/New"));
@@ -137,7 +136,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     );
     assert_first_item_on_row(l2, row2);
 
-    // Level 3.
     hover_frame(&mut tree, &mut state, viewport, "file/New", "From Template");
     let row3 = rect(&tree, submenu_row_key("file/New", "From Template"));
     let l3 = rect(&tree, panel("file/New/From Template"));
@@ -147,7 +145,6 @@ fn nested_panels_open_to_the_right_of_their_row() {
     );
     assert_first_item_on_row(l3, row3);
 
-    // Level 4.
     hover_frame(
         &mut tree,
         &mut state,
@@ -203,8 +200,6 @@ fn hovering_a_deeper_item_keeps_the_branch_open() {
     settle(&mut tree, &mut state, viewport);
     hover_frame(&mut tree, &mut state, viewport, "file", "New");
 
-    // The pointer moves onto an item inside the level-2 panel; the branch must
-    // survive or the panel would vanish the moment the pointer left its row.
     hover_item(&mut tree, &mut state, "file/New", "file.new.scene");
     assert_eq!(
         state.submenu_branch(),

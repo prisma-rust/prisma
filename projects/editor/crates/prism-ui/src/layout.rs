@@ -194,7 +194,6 @@ fn arrange_node(nodes: &mut SlotMap<NodeId, UiNode>, id: NodeId, rect: Rect) {
         }
     }
 
-    // 1. Arrange absolute children directly inside parent rect.
     for child_id in abs_children {
         let Some(c) = nodes.get(child_id) else {
             continue;

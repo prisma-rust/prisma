@@ -122,7 +122,6 @@ pub fn generate(
     let mut out = Vec::with_capacity(positions.len());
     for (index, entry) in accum.into_iter().enumerate() {
         let normal = normalize(normals[index]).unwrap_or([0.0, 0.0, 1.0]);
-        // Gram-Schmidt: remove normal direction component so TBN is orthogonal.
         let projected = sub(entry.tangent, scale(normal, dot(normal, entry.tangent)));
         let Some(tangent) = normalize(projected) else {
             out.push(FALLBACK);
@@ -183,7 +182,6 @@ mod tests {
 
     #[test]
     fn tangents_follow_the_uvs_not_the_x_axis() {
-        // U axis along +Y, V axis along −X: tangent should be +Y, not hard-coded +X by import path.
         let uvs = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]];
         let quad = quad(uvs);
         let tangents =
@@ -195,8 +193,6 @@ mod tests {
                 "expected +Y tangent, got {tangent:?}"
             );
         }
-        // Note: this quad has all tangents same direction, so `are_placeholders` still thinks placeholder —
-        // for flat mesh both results agree, re-generation no worse.
     }
 
     #[test]
@@ -213,7 +209,6 @@ mod tests {
 
     #[test]
     fn mirrored_uvs_flip_the_handedness() {
-        // V axis flipped (mirror): tangent still +X but bitangent direction flipped → w = −1.
         let uvs = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
         let quad = quad(uvs);
         let tangents =

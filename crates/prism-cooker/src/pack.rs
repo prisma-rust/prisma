@@ -149,7 +149,6 @@ pub fn pack_directory_split(
         bail!("pack_directory_split needs at least one optional directory");
     }
 
-    // Longer prefix matched first: when `textures` and `textures/4k` given same time, 4k assets only go to latter.
     let mut dirs: Vec<String> = optional_dirs
         .iter()
         .map(|dir| normalize_optional_dir(dir))
@@ -189,8 +188,6 @@ pub fn pack_directory_split(
         .unwrap_or_else(|| Path::new("."))
         .join(OPTIONAL_PAK_DIR);
 
-    // Stable order + first write optional package: base manifest must reference them, write base last to guarantee
-    // manifest will not point to a not-yet-generated / write-failed package.
     groups.sort_by(|a, b| a.0.cmp(&b.0));
     let mut optional = Vec::with_capacity(groups.len());
     let mut manifest_entries = Vec::with_capacity(groups.len());
@@ -221,8 +218,6 @@ pub fn pack_directory_split(
 
     let base_pack = pack_files(base, output, options)?;
 
-    // pack_files already written and read back to verify base package; this inside then merges optional package manifest into same one
-    // manifest. On failure base package still available; next build will heavily rewrite manifest.
     let manifest_path = base_pack.manifest_path.clone();
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -250,8 +245,6 @@ fn pack_files(
     let mut builder = PackageBuilder::new();
     builder.set_compression(compression);
     let mut entries = Vec::with_capacity(files.len());
-    // 32-bit serial ID collision probability small within import-time internals, but once collided it is "two files share one
-    // handle", at runtime will silently read wrong asset — rather report error at build time.
     let mut seen_ids: std::collections::HashMap<AssetId, String> = std::collections::HashMap::new();
     let mut total_bytes = 0u64;
     let mut streamed_assets = 0usize;
@@ -286,10 +279,6 @@ fn pack_files(
     }
 
     let pak = builder.build().context("build .pak")?;
-    // First write temp file in same directory then rename: after #509 at runtime not reading entire `.pak` into memory,
-    // but reads same file by offset; truncate + heavy write in place will let editor/game running read half package.
-    // Same directory rename is atomic, old handle continues pointing to old file (Windows also allows shared-delete of
-    // file being replaced).
     crate::fs_atomic::write_atomic(output, &pak)
         .with_context(|| format!("write {}", output.display()))?;
 
@@ -364,9 +353,6 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> R
 /// Validate + normalize an optional directory prefix (`a\b\` → `a/b`).
 fn normalize_optional_dir(dir: &str) -> Result<String> {
     let normalized = dir.trim().replace('\\', "/");
-    // `/absolute` in Windows not counted as `is_absolute()` (no drive letter), but it is still root path;
-    // `C:` / relative drive letter same — all three must be rejected on each platform, otherwise same parameter
-    // in CI (Linux) rejected, on dev machine accepted.
     let rooted = normalized.starts_with('/')
         || normalized.get(1..2) == Some(":")
         || Path::new(&normalized).is_absolute();
@@ -433,7 +419,6 @@ mod tests {
         pack_directory(&input, &out, 0).unwrap();
         let first = fs::read(&out).unwrap();
 
-        // Overwrite an existing package: the rename must replace it in place.
         fs::write(input.join("a.bin"), b"second generation").unwrap();
         pack_directory(&input, &out, 0).unwrap();
         let second = fs::read(&out).unwrap();
@@ -468,14 +453,12 @@ mod tests {
             "manifest must use the path-derived id: {before}"
         );
 
-        // Add a lexicographically sorted prefix face, will push after original order files.
         fs::write(input.join("000-first.bin"), b"x").unwrap();
         let second = pack_directory(&input, temp.path().join("b.pak"), 0).unwrap();
         let after = fs::read_to_string(temp.path().join("b.pak.meta.json")).unwrap();
         assert!(after.contains(&format!("{:#x}", marble.into_raw())));
         assert_eq!(second.asset_count, first.asset_count + 1);
 
-        // Same input heavily packed still byte-consistent.
         let again = pack_directory(&input, temp.path().join("c.pak"), 0).unwrap();
         assert_eq!(
             fs::read(temp.path().join("b.pak")).unwrap(),
@@ -518,7 +501,6 @@ mod tests {
         assert!(!large_record.is_compressed());
         assert_eq!(large_record.compressed_size, 0);
         assert_eq!(large_record.size, 32);
-        // A streamed asset must still round-trip through the normal read path.
         assert_eq!(
             reader.read_asset_data(large).unwrap().unwrap(),
             vec![7u8; 32]
@@ -612,8 +594,6 @@ mod tests {
         )
         .unwrap();
 
-        // audio/beep and scenes/default stay in base package; `textures/4k` belongs to longest prefix,
-        // will not again fall into `textures` when same.
         assert_eq!(summary.base.asset_count, 2);
         assert_eq!(summary.optional.len(), 3);
         let groups: Vec<_> = summary.optional.iter().map(|o| o.group.as_str()).collect();
@@ -635,14 +615,12 @@ mod tests {
         );
         assert_eq!(big.pack.asset_count, 1);
 
-        // Splitting package does not change asset ID: ID still derived from package-relative path.
         let big_id = AssetId::from_path("textures/4k/big.rtex");
         let base_reader = PackageReader::open(&output).unwrap();
         assert!(base_reader.find_record(big_id).is_none());
         let big_reader = PackageReader::open(&big.pak_path).unwrap();
         assert!(big_reader.find_record(big_id).is_some());
 
-        // Base package manifest lists optional packages, for on-demand mounter to find files by group.
         let manifest: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&summary.base.manifest_path).unwrap())
                 .unwrap();

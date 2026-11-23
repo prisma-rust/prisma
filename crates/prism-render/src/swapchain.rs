@@ -209,8 +209,6 @@ impl Swapchain {
         unsafe { context.device.device_wait_idle() }.context("wait idle during recreate")?;
 
         let old_swapchain = self.swapchain;
-        // Build the new swapchain first, handing off the old one so the
-        // implementation can retire it cleanly (avoids NATIVE_WINDOW_IN_USE).
         let Some(SwapchainOutput {
             format,
             extent,
@@ -229,22 +227,18 @@ impl Swapchain {
             return Ok(false);
         };
 
-        // Old views and per-image render-finished semaphores go with the old
-        // swapchain; build replacements sized to the new image set.
         let sem_info = vk::SemaphoreCreateInfo::default();
         let new_render_finished = (0..images.len())
             .map(|_| unsafe { context.device.create_semaphore(&sem_info, None) })
             .collect::<Result<Vec<_>, _>>()
             .context("recreate render_finished semaphores")?;
 
-        // Commit: destroy old, install new.
         for view in self.views.drain(..) {
             unsafe { context.device.destroy_image_view(view, None) };
         }
         for sem in self.render_finished.drain(..) {
             unsafe { context.device.destroy_semaphore(sem, None) };
         }
-        // The old swapchain was retired by create_swapchain; destroy it now.
         unsafe {
             self.swapchain_ext.destroy_swapchain(old_swapchain, None);
         }
@@ -277,15 +271,9 @@ impl Swapchain {
         let image_available = self.image_available[frame];
         let fence = self.in_flight_fences[frame];
 
-        // Wait for the previous submission using this frame's fence. This ensures
-        // the frame's command buffer is no longer in use and its acquire semaphore
-        // has been consumed by the prior submit.
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
             .context("wait for in_flight fence")?;
 
-        // Reset only after acquire succeeds. `ERROR_OUT_OF_DATE_KHR` returns
-        // without a submit, so a fence reset beforehand would never be
-        // signaled and the next `wait_for_fences(..., u64::MAX)` would hang.
         let (image_index, _sub) = unsafe {
             self.swapchain_ext.acquire_next_image(
                 self.swapchain,
@@ -365,10 +353,6 @@ impl Swapchain {
     }
 }
 
-// ---------------------------------------------------------------------------
-// swapchain creation helpers
-// ---------------------------------------------------------------------------
-
 /// Result of creating or recreating a swapchain.
 struct SwapchainOutput {
     format: vk::SurfaceFormatKHR,
@@ -395,10 +379,6 @@ fn create_swapchain(
     }
     .context("get surface capabilities")?;
 
-    // `set_present_mode` is intentionally a lightweight setter and may be
-    // called before a surface is recreated (or with a mode unsupported by
-    // the current driver). Validate at the Vulkan boundary and fall back to
-    // FIFO, which the spec guarantees for every surface.
     let present_modes = unsafe {
         surface_ext.get_physical_device_surface_present_modes(context.physical_device, surface)
     }
@@ -423,9 +403,6 @@ fn create_swapchain(
     if !extent_is_drawable(extent) {
         return Ok(None);
     }
-    // Honor the presentation engine's current orientation. On a landscape app
-    // running on a portrait-native device this is `ROTATE_90`/`ROTATE_270`, so
-    // the compositor rotates the (portrait) swapchain buffer to landscape.
     let pre_transform = capabilities.current_transform;
     let image_count = capabilities.min_image_count + 1;
     let image_count = if capabilities.max_image_count > 0 {
@@ -434,10 +411,6 @@ fn create_swapchain(
         image_count
     };
 
-    // The backdrop filter copies the composited frame into an offscreen image
-    // before blurring it. That needs the swapchain image as a transfer source,
-    // which a surface may not support; ask only when it does, and let the
-    // filter fall back to an unblurred tint otherwise.
     let mut usage = vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST;
     if capabilities
         .supported_usage_flags
@@ -487,7 +460,6 @@ fn create_swapchain(
 }
 
 fn choose_surface_format(available: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
-    // Prefer sRGB B8G8R8A8 for color accuracy; fall back to the first.
     available
         .iter()
         .cloned()
@@ -544,8 +516,6 @@ fn choose_extent(caps: &vk::SurfaceCapabilitiesKHR) -> vk::Extent2D {
     if caps.current_extent.width != u32::MAX {
         return caps.current_extent;
     }
-    // Fallback for some platforms (e.g. some Android configs) that report
-    // 0xFFFFFFFF; clamp a minimal extent to the allowed range.
     vk::Extent2D {
         width: caps
             .min_image_extent

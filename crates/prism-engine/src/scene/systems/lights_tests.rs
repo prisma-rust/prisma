@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use prism_ecs::World;
 use prism_render::LIGHT_MAX;
@@ -54,7 +50,6 @@ fn spot_lights_collected() {
 
 #[test]
 fn point_lights_are_not_truncated_by_the_legacy_collector() {
-    // #468: limit picked uniformly by `render_system` after knowing camera position, old component query no longer culls.
     let mut world = World::new();
     let extra = LIGHT_MAX + 5;
     for _ in 0..extra {
@@ -117,10 +112,6 @@ fn missing_active_component_defaults_to_visible() {
     assert_eq!(collect_spot_lights(&world).len(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// Unified `Light` (shape) sampling
-// ---------------------------------------------------------------------------
-
 #[test]
 fn unified_point_light_uses_transform_position() {
     let mut world = World::new();
@@ -153,7 +144,6 @@ fn unified_point_light_uses_transform_position() {
 fn unified_directional_light_uses_transform_forward() {
     let mut world = World::new();
     let e = world.spawn();
-    // Rotate 90° around Y: engine forward(+Z) becomes +X.
     world.insert(
         e,
         LocalTransform {
@@ -182,7 +172,6 @@ fn unified_directional_light_uses_transform_forward() {
 fn legacy_directional_light_stores_propagation_direction() {
     let mut world = World::new();
     let e = world.spawn();
-    // Old component `euler_xyz` represented "pointing to light source" direction; sampling stores propagation direction.
     world.insert(
         e,
         DirectionalLight {
@@ -216,7 +205,6 @@ fn unified_spot_light_converts_full_angles_to_cosines() {
 
     let sample = collect_light_samples(&world)[0];
     assert_eq!(sample.kind, LightKind::Spot);
-    // Full cone angle 60° → half angle 30° → cos = √3/2.
     assert!((sample.cos_outer - 30.0_f32.to_radians().cos()).abs() < 1e-5);
     assert!((sample.cos_inner - 10.0_f32.to_radians().cos()).abs() < 1e-5);
     assert!(sample.cos_inner > sample.cos_outer);
@@ -253,7 +241,6 @@ fn disabled_or_unsupported_lights_are_skipped() {
         },
     );
 
-    // Area light source only for schema verification, renderer skips.
     let rect = world.spawn();
     world.insert(
         rect,
@@ -318,7 +305,6 @@ fn local_light_budget_caps_only_point_and_spot() {
         directional, 1,
         "Directional light does not occupy local light budget"
     );
-    // #468: collect phase does not truncate, budget picked by `render_system` by importance.
     assert_eq!(local, (LIGHT_MAX + 4) as usize);
 }
 
@@ -347,20 +333,14 @@ fn nearer_and_brighter_lights_score_higher() {
     dim.intensity = 1.0;
     assert!(local_light_importance(&near, Vec3::ZERO) > local_light_importance(&dim, Vec3::ZERO));
 
-    // Larger range lights reach farther, preferentially kept.
     let mut wide = near;
     wide.range = 100.0;
     assert!(local_light_importance(&wide, Vec3::ZERO) > local_light_importance(&near, Vec3::ZERO));
 
-    // Directional light not counted in local light budget.
     let mut sun = near;
     sun.kind = LightKind::Directional;
     assert_eq!(local_light_importance(&sun, Vec3::ZERO), 0.0);
 }
-
-// ---------------------------------------------------------------------------
-// Directional light shadow state (`Light.shadows` / `shadowStrength`)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn directional_shadow_state_reads_light_fields() {

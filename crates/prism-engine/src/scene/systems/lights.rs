@@ -65,8 +65,6 @@ pub struct LightSample {
 /// Component-level visibility. `World::query` already excludes entities set inactive via `World::set_active`;
 /// this function handles scene `Active` component used by inspector and scene loader.
 pub(crate) fn component_is_active(world: &World, entity: prism_ecs::Entity) -> bool {
-    // `Active` only describes self (Unity `activeSelf`); when ancestor disabled whole child tree excluded,
-    // derived value written each frame by `active_hierarchy_system` (#433).
     crate::scene::systems::hierarchy::is_active_in_hierarchy(world, entity)
 }
 
@@ -97,7 +95,6 @@ fn sample_from_light(
         LightType::Directional => LightKind::Directional,
         LightType::Point => LightKind::Point,
         LightType::Spot => LightKind::Spot,
-        // Area light source / box / tube: schema aligned, renderer temporarily unsupported.
         _ => return None,
     };
     let (inner, outer) = light.cone_half_angles_radians();
@@ -157,7 +154,6 @@ pub fn collect_light_samples(world: &World) -> Vec<LightSample> {
 pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
     out.clear();
 
-    // 1. Shaped `Light`.
     for (entity, light) in world.query::<Light>() {
         if !light.enabled || !component_is_active(world, entity) {
             continue;
@@ -168,7 +164,6 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
         }
     }
 
-    // 2. Legacy components: skip entities already carrying `Light`, avoid double lighting.
     for (entity, light) in world.query::<DirectionalLight>() {
         if world.get::<Light>(entity).is_some() || !component_is_active(world, entity) {
             continue;
@@ -177,8 +172,6 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
             entity,
             kind: LightKind::Directional,
             position: Vec3::ZERO,
-            // `euler_xyz_deg_to_dir` gives "pointing to light source" direction, but `LightSample.direction`
-            // uniformly stores light propagation direction (`transform.forward`), here take negative.
             direction: -euler_xyz_deg_to_dir(light.euler_xyz),
             color: light.color,
             intensity: light.intensity,
@@ -215,7 +208,6 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
             continue;
         }
         let (position, rotation) = entity_transform(world, entity);
-        // Legacy components store **half** cone angle (radians).
         let inner = light.inner_cone_angle.clamp(0.0, light.outer_cone_angle);
         out.push(LightSample {
             entity,
@@ -232,10 +224,6 @@ pub fn collect_light_samples_into(world: &World, out: &mut Vec<LightSample>) {
             shadow_strength: 1.0,
         });
     }
-
-    // Here **no truncation**: local lights wait until `render_system` knows camera position to pick
-    // most important LIGHT_MAX by importance (#468). Previously cutting extras here by ECS order made
-    // which light is ninth dropped entirely depend on document order, with no user notification.
 }
 
 /// Directional light shadow state `(enabled, strength)`.

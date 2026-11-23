@@ -62,7 +62,6 @@ pub struct RenderTexture {
     /// remains occupied (few RTs, acceptable; sampling still holding handle after destroy is use-after-free).
     handle: TextureHandle,
 
-    // ---- CRT update config (owned by resource, read by scheduler) ----
     update_mode: RtUpdateMode,
     /// Update interval for Realtime mode (once every N frames; 0/1 = every frame).
     period: u32,
@@ -71,7 +70,6 @@ pub struct RenderTexture {
     /// Init shader (optional; executes once before update).
     init_shader: Option<RtShader>,
 
-    // ---- Runtime state (maintained by scheduler) ----
     /// Frame count scheduler already ticked.
     frame_counter: u32,
     /// Whether init already executed.
@@ -178,10 +176,6 @@ impl RenderTexture {
         })
     }
 
-    // ------------------------------------------------------------------
-    // CRT config (owned by resource, read by scheduler)
-    // ------------------------------------------------------------------
-
     /// Set update mode (`CustomRenderTextureUpdateMode`).
     pub fn set_update_mode(&mut self, mode: RtUpdateMode) -> &mut Self {
         self.update_mode = mode;
@@ -216,14 +210,10 @@ impl RenderTexture {
         self
     }
 
-    // ------------------------------------------------------------------
-    // Scheduler interface (called by `RenderTextureScheduler` each frame)
-    // ------------------------------------------------------------------
-
     /// Whether need render this frame (init + update judged separately). Does not modify state.
     pub(crate) fn needs_render(&self) -> bool {
         let update_due = match self.update_mode {
-            RtUpdateMode::OnLoad => !self.initialized, // render once on first schedule, then stop
+            RtUpdateMode::OnLoad => !self.initialized,
             RtUpdateMode::Realtime => {
                 self.period == 0 || self.frame_counter.is_multiple_of(self.period)
             }
@@ -269,10 +259,6 @@ impl RenderTexture {
         self.rng_state = x;
         (x >> 16) as u16
     }
-
-    // ------------------------------------------------------------------
-    // Resource access
-    // ------------------------------------------------------------------
 
     pub fn image(&self) -> vk::Image {
         self.image
@@ -379,7 +365,6 @@ impl RenderTexture {
         }
         .context("RenderTexture::resize: create image view")?;
 
-        // Overwrite original slot — handle unchanged, existing consumers stay valid.
         bindless.write_srv(self.handle.0, view);
 
         self.image = image;
@@ -416,7 +401,6 @@ impl RenderTexture {
         let cmd = unsafe { device.allocate_command_buffers(&alloc_info) }
             .context("RenderTexture::readback: allocate cmd")?[0];
 
-        // staging buffer (host-visible)
         let staging = unsafe {
             device.create_buffer(
                 &vk::BufferCreateInfo::default()
@@ -450,7 +434,6 @@ impl RenderTexture {
         unsafe { device.begin_command_buffer(cmd, &begin) }
             .context("RenderTexture::readback: begin")?;
 
-        // any old layout → TRANSFER_SRC_OPTIMAL (contents may be discarded, readback semantics acceptable)
         let barrier = vk::ImageMemoryBarrier2::default()
             .old_layout(vk::ImageLayout::UNDEFINED)
             .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
@@ -468,8 +451,6 @@ impl RenderTexture {
             });
         let barriers = [barrier];
         let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
-        // `vkCmdPipelineBarrier2` (1.3 core) is not exported on a 1.2 instance —
-        // use KHR wrapper like `buffer.rs` does (see `context.rs`).
         let sync2 = crate::vulkan_compat::LegacySync2 {
             device: &context.device,
         };
@@ -509,7 +490,6 @@ impl RenderTexture {
         unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
             .context("RenderTexture::readback: wait")?;
 
-        // map readback
         let data = unsafe {
             let ptr = device
                 .map_memory(staging_mem, 0, buffer_size, vk::MemoryMapFlags::empty())
@@ -533,12 +513,10 @@ impl RenderTexture {
 
 impl Drop for RenderTexture {
     fn drop(&mut self) {
-        // Pure logic test instance (see tests::test_rt) image null, no real resource.
         if self.image == vk::Image::null() {
             return;
         }
         unsafe {
-            // fields are non-empty handles created by new / resize success, destroy directly.
             self.device.destroy_image_view(self.view, None);
             self.device.destroy_image(self.image, None);
             self.device.free_memory(self.memory, None);
@@ -559,9 +537,6 @@ mod tests {
     )]
     fn test_rt(mode: RtUpdateMode, period: u32) -> RenderTexture {
         RenderTexture {
-            // `mem::zeroed` in debug build does invalid_value runtime check and abort;
-            // `MaybeUninit` path has no runtime check, with above allow(invalid_value) compiles.
-            // test never reads device (only state machine fields accessed), Drop returns early on null image.
             device: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
             image: vk::Image::null(),
             memory: vk::DeviceMemory::null(),
@@ -596,9 +571,9 @@ mod tests {
     #[test]
     fn onload_renders_once_then_stops() {
         let mut rt = test_rt(RtUpdateMode::OnLoad, 0);
-        assert!(simulate_frame(&mut rt)); // render on first schedule
+        assert!(simulate_frame(&mut rt));
         for _ in 0..4 {
-            assert!(!simulate_frame(&mut rt)); // stop afterwards
+            assert!(!simulate_frame(&mut rt));
         }
     }
 
@@ -612,43 +587,40 @@ mod tests {
 
     #[test]
     fn realtime_period_2_renders_every_other_frame() {
-        // Regression test: tick previously only advanced on render frame, with period>1 only first frame rendered.
         let mut rt = test_rt(RtUpdateMode::Realtime, 2);
         let rendered: Vec<bool> = (0..8).map(|_| simulate_frame(&mut rt)).collect();
         assert_eq!(
             rendered,
             vec![true, false, true, false, true, false, true, false]
         );
-        assert_eq!(rt.frame_counter, 8); // counter advances every frame
+        assert_eq!(rt.frame_counter, 8);
     }
 
     #[test]
     fn ondemand_requires_request_update() {
         let mut rt = test_rt(RtUpdateMode::OnDemand, 0);
-        assert!(!simulate_frame(&mut rt)); // no render by default
+        assert!(!simulate_frame(&mut rt));
         assert!(!simulate_frame(&mut rt));
         rt.request_update();
-        assert!(simulate_frame(&mut rt)); // render once after flag
-        assert!(!simulate_frame(&mut rt)); // stop after clear
+        assert!(simulate_frame(&mut rt));
+        assert!(!simulate_frame(&mut rt));
     }
 
     #[test]
     fn init_shader_priority_and_active_shader() {
         let mut rt = test_rt(RtUpdateMode::OnLoad, 0);
         assert_eq!(rt.active_shader(), Some(RtShader::BitmapPattern));
-        assert!(!rt.needs_init()); // no init_shader
+        assert!(!rt.needs_init());
         rt.init_shader = Some(RtShader::BitmapPattern);
         assert!(rt.needs_init());
         assert_eq!(rt.active_shader(), Some(RtShader::BitmapPattern));
         rt.mark_rendered();
-        assert!(!rt.needs_init()); // back to update_shader after init
+        assert!(!rt.needs_init());
         assert_eq!(rt.active_shader(), Some(RtShader::BitmapPattern));
     }
 
     #[test]
     fn shaderless_rt_stays_pending_until_shader_bound() {
-        // RT without bound shader: under OnLoad `needs_render` always true,
-        // scheduler attempts render every frame (skips if no shader), binds afterwards and executes next frame immediately.
         let mut rt = test_rt(RtUpdateMode::OnLoad, 0);
         rt.update_shader = None;
         rt.init_shader = None;
@@ -659,17 +631,16 @@ mod tests {
         rt.update_shader = Some(RtShader::BitmapPattern);
         assert_eq!(rt.active_shader(), Some(RtShader::BitmapPattern));
         assert!(simulate_frame(&mut rt));
-        assert!(!simulate_frame(&mut rt)); // stop after one render
+        assert!(!simulate_frame(&mut rt));
     }
 
     #[test]
     fn xorshift_pattern_deterministic_and_varies() {
         let mut a = test_rt(RtUpdateMode::Realtime, 0);
         let mut b = test_rt(RtUpdateMode::Realtime, 0);
-        // Same seed → same sequence (deterministic).
         assert_eq!(a.next_pattern(), b.next_pattern());
         let first = a.next_pattern();
         let second = a.next_pattern();
-        assert_ne!(first, second); // xorshift32 sequence doesn't degenerate immediately
+        assert_ne!(first, second);
     }
 }

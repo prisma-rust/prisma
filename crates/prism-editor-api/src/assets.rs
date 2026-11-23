@@ -96,7 +96,6 @@ fn walk_files(dir: &Path, project_root: &Path, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    // Stable order: sort by filename then recurse.
     let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
     paths.sort();
 
@@ -121,10 +120,6 @@ fn walk_files(dir: &Path, project_root: &Path, out: &mut Vec<String>) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Asset metadata
-// ---------------------------------------------------------------------------
 
 /// Metadata of one asset (for editor "asset manager").
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -165,7 +160,6 @@ pub fn list_assets_info(project_root: &Path) -> Result<Vec<AssetInfo>, String> {
     Ok(paths
         .into_iter()
         .map(|path| {
-            // `path` relative to project root (not relative to `assets/`).
             let size_bytes = std::fs::metadata(project_root.join(&path))
                 .map(|meta| meta.len())
                 .unwrap_or(0);
@@ -178,10 +172,6 @@ pub fn list_assets_info(project_root: &Path) -> Result<Vec<AssetInfo>, String> {
         })
         .collect())
 }
-
-// ---------------------------------------------------------------------------
-// Asset preview
-// ---------------------------------------------------------------------------
 
 /// Preview content of a text asset.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -236,7 +226,6 @@ pub fn read_asset_text(
         .map(|meta| meta.len())
         .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
 
-    // Read one extra byte to determine whether truncated.
     let mut file =
         std::fs::File::open(&path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
     let mut bytes = Vec::new();
@@ -253,8 +242,6 @@ pub fn read_asset_text(
         return Err("File is binary content, cannot preview as text".into());
     }
 
-    // Truncation may land mid multi-byte char; only roll back to nearest char boundary;
-    // if the rest of file is not UTF-8 still report error, do not silently swallow content.
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(err) => {
@@ -276,10 +263,6 @@ pub fn read_asset_text(
         size_bytes: size,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Reference analysis
-// ---------------------------------------------------------------------------
 
 /// One record of "a component field of some scene references this asset".
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -324,7 +307,6 @@ pub fn asset_usage(project_root: &Path, target: &str) -> Result<Vec<AssetRef>, S
         .unwrap_or_default();
     let mut refs = Vec::new();
 
-    // Scenes and prefabs share the same document shape, both need scanning; prefabs under `assets/` are enumerated recursively.
     let mut documents = crate::scene::list_scenes(project_root)?;
     documents.extend(crate::scene::list_docs(
         project_root,
@@ -680,9 +662,9 @@ mod tests {
         assert_eq!(refs.len(), 3, "got {refs:#?}");
 
         let fields: Vec<&str> = refs.iter().map(|r| r.field.as_str()).collect();
-        assert!(fields.contains(&"hdr_path")); // Scene-dir relative: ../valley.hdr
+        assert!(fields.contains(&"hdr_path"));
         assert!(fields.contains(&"env_map"));
-        assert!(fields.contains(&"mesh_path")); // Project-root relative: assets/valley.hdr
+        assert!(fields.contains(&"mesh_path"));
 
         let sky = refs.iter().find(|r| r.field == "hdr_path").unwrap();
         assert_eq!(sky.entity, "Sky");
@@ -690,7 +672,6 @@ mod tests {
         assert_eq!(sky.component, "prism_engine::scene::Skybox");
         assert_eq!(sky.scene, "demo");
 
-        // Unrelated strings do not produce references.
         assert!(asset_usage(&root, "not_an_asset").unwrap().is_empty());
 
         std::fs::remove_dir_all(&root).ok();
@@ -744,7 +725,6 @@ mod tests {
         )
         .unwrap();
 
-        // `.rscn` and its authored document `.scene.json` treated as same scene.
         for target in ["assets/scenes/intro.rscn", "assets/scenes/intro.scene.json"] {
             let refs = asset_usage(&root, target).unwrap();
             assert_eq!(refs.len(), 1, "{target}: {refs:#?}");
@@ -755,7 +735,6 @@ mod tests {
             assert!(refs[0].scene_path.ends_with("scenes.json"));
         }
 
-        // Unregistered asset does not produce manifest reference.
         assert!(asset_usage(&root, "assets/scenes/other.rscn")
             .unwrap()
             .is_empty());
@@ -789,7 +768,6 @@ mod tests {
         assert!(!full.truncated);
         assert_eq!(full.size_bytes, "你好，世界".len() as u64);
 
-        // Truncating to 7 bytes lands inside a multi-byte char; should fall back to 6 bytes (two CJK chars).
         let cut = read_asset_text(&root, "assets/data/a.txt", 7).unwrap();
         assert_eq!(cut.text, "你好");
         assert!(cut.truncated);

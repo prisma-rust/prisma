@@ -184,8 +184,4 @@ fn tool_schema_and_protocol_shape_are_stable() {
             }
         }
     }
-
-    // The wire format itself is `rmcp`'s responsibility now; what this crate
-    // still owns is the tool table, so the schema checks above are the part
-    // that has to keep holding.
 }

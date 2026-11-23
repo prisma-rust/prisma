@@ -87,8 +87,6 @@ fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("load scene '{scene}': {error}"))?;
     app.start_hosted(width, height);
 
-    // `host_tick(false)` skips fixed_update / update / late_update, only runs hierarchy propagation
-    // and frame extraction: camera, lights, transforms all stay at authored values, no simulation drift between frames.
     let mut last_report = 0u32;
     for index in 0..frames.max(1) {
         app.host_tick(false);

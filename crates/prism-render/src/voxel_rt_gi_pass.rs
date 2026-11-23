@@ -165,7 +165,6 @@ impl RenderPassNode for VoxelRtGiPass {
         _ctx: &RenderContext,
         _resources: &mut GraphResources,
     ) -> anyhow::Result<()> {
-        // Ready to bind VoxelDdaPass G-Buffer & TLAS when GraphRenderer schedules RT GI.
         Ok(())
     }
 }

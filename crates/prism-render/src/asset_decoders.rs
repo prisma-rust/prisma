@@ -158,8 +158,6 @@ pub fn decode_rtex(bytes: &[u8]) -> Result<TextureUploadInput> {
         width,
         height,
         format,
-        // The base level is the only level in `pixels`; asking the manager to
-        // derive the chain would misinterpret the count.
         mip_levels: 1,
         pixels,
     })
@@ -167,13 +165,9 @@ pub fn decode_rtex(bytes: &[u8]) -> Result<TextureUploadInput> {
 
 fn rtex_texture_format(code: u8) -> Result<TextureFormat> {
     match code {
-        // The cooked format does not record colour space yet; RGBA8 textures are
-        // treated as sRGB like every other albedo path in the engine.
         RTEX_FORMAT_RGBA8 => Ok(TextureFormat::Rgba8Srgb),
         RTEX_FORMAT_BC5 => Ok(TextureFormat::Bc5Unorm),
         RTEX_FORMAT_BC6H => Ok(TextureFormat::Bc6HUfloat),
-        // BC1 / BC3 without color space info; treated as sRGB same as RGBA8 (albedo / emissive is
-        // primary use. When linear needed, use `texture_format_for` on the layer, it knows slot bit semantics) (#519).
         RTEX_FORMAT_BC1 => Ok(TextureFormat::Bc1Srgb),
         RTEX_FORMAT_BC3 => Ok(TextureFormat::Bc3Srgb),
         RTEX_FORMAT_BC7 => Ok(TextureFormat::Bc7Srgb),
@@ -247,7 +241,6 @@ pub fn decode_rmes(bytes: &[u8]) -> Result<MeshUploadInput> {
     let uvs = if uv0_offset == 0 || uv_channels == 0 {
         Vec::new()
     } else {
-        // Channel 0 of an interleaved uv block: `uv_channels` pairs per vertex.
         let uv_pair_count = vert_count
             .checked_mul(uv_channels)
             .ok_or_else(|| anyhow!("RMES uv channel count overflows"))?;

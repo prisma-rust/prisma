@@ -70,8 +70,6 @@ fn local_transform_edits_reach_children_in_the_same_tick() {
         (parent, child)
     };
 
-    // A user system moving the parent: the child's world matrix must reflect it
-    // as soon as `update` returns, not one frame later.
     engine
         .schedule_mut()
         .add_system("move-parent", move |world, _dt| {
@@ -92,8 +90,6 @@ fn local_transform_edits_reach_children_in_the_same_tick() {
 
 #[test]
 fn transform_written_after_the_schedule_is_propagated_the_same_tick() {
-    // Systems registered after `runtime_initialize` (the normal `App::add_system`
-    // path) run after the built-in UI systems; propagation must still happen last.
     let mut engine = Engine::empty();
     let input = InputManager::new();
 

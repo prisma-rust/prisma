@@ -135,7 +135,6 @@ pub struct SpritePass {
     instance_capacity: u32,
     device: Option<ash::Device>,
 
-    // ---- 2D lighting (#611) ----
     /// set 1 binding 0: `StructuredBuffer<SpriteLight>`.
     light_layout: vk::DescriptorSetLayout,
     light_pool: vk::DescriptorPool,
@@ -204,8 +203,6 @@ impl SpritePass {
         if items.is_empty() || bindless_set == vk::DescriptorSet::null() {
             return Ok(());
         }
-        // Lighting resources lazily created (`SpritePass::new` has no device). Even if this frame
-        // has no lights must be built, else `light_count == 0` branch has no set 1 to bind.
         self.ensure_lights(device, context)?;
         self.upload_lights(device, lights)?;
         if self.built_for_render_pass != Some(render_pass) {
@@ -215,8 +212,6 @@ impl SpritePass {
         self.grow(device, context, items.len() as u32)?;
         self.upload(context, items)?;
 
-        // Keep CPU sort order, only merge adjacent same-blend-state into one draw.
-        // Blend mode not a sort key, so correct exact order preserved.
         let mut start = 0usize;
         while start < items.len() {
             let key = (
@@ -266,7 +261,6 @@ impl SpritePass {
                     bytemuck::bytes_of(&push),
                 );
                 device.cmd_bind_vertex_buffers(cmd, 0, &[self.instance_buffer], &[0]);
-                // 6 vertices = 2 triangles; one instance per sprite.
                 device.cmd_draw(cmd, 6, (end - start) as u32, 0, start as u32);
             }
             start = end;
@@ -309,16 +303,11 @@ impl SpritePass {
         let binding_descs = [SpriteInstance::binding_description()];
         let attr_descs = SpriteInstance::attribute_descriptions();
 
-        // Push constant = `SpritePush` (view-projection + light count). The
-        // fragment stage reads `lightParams`, so both stages see the block.
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(bindings::PUSH_CONSTANT_SIZE)];
 
-        // ForwardPass' render pass has two color attachments (HDR color +
-        // view-space normal). Sprites blend into SV_Target0 and leave the
-        // normal target untouched (write mask empty), mirroring SkyboxPass.
         let (src_blend, dst_blend, blend_op) = blend;
         let alpha_blend = src_blend == BlendMode::SrcAlpha
             && dst_blend == BlendMode::OneMinusSrcAlpha
@@ -330,8 +319,6 @@ impl SpritePass {
                 .src_color_blend_factor(blend_factor(src_blend))
                 .dst_color_blend_factor(blend_factor(dst_blend))
                 .color_blend_op(blend_operation(blend_op))
-                // Alpha channel only accumulates in standard alpha blend; additive / multiply alpha
-                // keeps target value, avoid turning later sprites transparent.
                 .src_alpha_blend_factor(if alpha_blend {
                     vk::BlendFactor::ONE
                 } else {
@@ -349,7 +336,6 @@ impl SpritePass {
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // Albedo + roughness (SV_Target3): sprites write none.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
@@ -368,7 +354,6 @@ impl SpritePass {
             depth_bias_enable: None,
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
-            // 2D order decided by CPU sort: no depth test nor write.
             depth_write_enable: Some(false),
             depth_test_enable: Some(false),
             color_attachment_count: None,
@@ -393,8 +378,6 @@ impl SpritePass {
             return Ok(());
         }
         let capacity = needed.next_power_of_two().max(INITIAL_CAPACITY);
-        // First allocation happens here (capacity == 0), so there is no old
-        // buffer to release yet.
         let (buffer, memory) = create_buffer(
             context,
             capacity as vk::DeviceSize * size_of::<SpriteInstance>() as vk::DeviceSize,
@@ -405,7 +388,6 @@ impl SpritePass {
         if self.instance_buffer != vk::Buffer::null()
             || self.instance_memory != vk::DeviceMemory::null()
         {
-            // A previous frame's command buffer may still read the old buffer.
             self.retire.retire(
                 self.frame_index,
                 crate::retire::RetiredResource::Buffer {
@@ -460,7 +442,6 @@ impl SpritePass {
     pub fn destroy(&mut self, device: &ash::Device) {
         self.pipelines.clear();
         self.built_for_render_pass = None;
-        // Callers wait for the device before `destroy`, so parked buffers can go.
         self.retire.destroy_all(device);
         unsafe {
             if self.instance_buffer != vk::Buffer::null() {
@@ -589,7 +570,6 @@ impl Drop for SpritePass {
                 if self.instance_memory != vk::DeviceMemory::null() {
                     device.free_memory(self.instance_memory, None);
                 }
-                // 2D lighting resources (#611).
                 if self.light_buffer != vk::Buffer::null() {
                     device.destroy_buffer(self.light_buffer, None);
                 }

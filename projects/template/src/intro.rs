@@ -30,9 +30,6 @@ const ENTITY_TITLE: &str = "intro_title";
 const ENTITY_SUBTITLE: &str = "intro_subtitle";
 const ENTITY_PROMPT: &str = "intro_prompt";
 
-// ---------------------------------------------------------------------------
-// Rain (project-bundled minimal 2D particle)
-// ---------------------------------------------------------------------------
 
 const MAX_DROPS: usize = 192;
 const SPAWN_PER_SECOND: f32 = 140.0;
@@ -116,9 +113,6 @@ impl Rain {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Animation state
-// ---------------------------------------------------------------------------
 
 /// Intro animation state — **project-private**, not entering engine or editor.
 pub struct IntroState {
@@ -235,7 +229,6 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         *state = None;
     }
 
-    // 1. Lazy init: find entities by Name on first frame.
     if state.is_none() {
         match initialize_intro(world) {
             Some(created) => *state = Some(created),
@@ -243,10 +236,8 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         }
     }
 
-    // 2. Skip detection (input snapshot sent down by engine each frame).
     let skip = should_skip(&world.input());
 
-    // 3. Advance animation, extract this-frame values to write back and controlled entities.
     let (
         overlay_alpha,
         title_alpha,
@@ -279,14 +270,12 @@ pub fn tick(state: &mut Option<IntroState>, world: &mut GameWorld<'_>, dt: f32) 
         )
     };
 
-    // 4. Splash rain: intensity follows title fade in/out, submitted as UI quads.
     let screen = world.screen_size();
     if let Some(current) = state.as_mut() {
         current.rain.update(dt, screen, title_alpha);
         current.rain.draw(world, title_alpha);
     }
 
-    // 5. Write back components (read-modify-write: plugin form has no `&mut` borrow below).
     if let Some(mut style) = world.get::<Style>(overlay_e) {
         style.background[3] = overlay_alpha;
         world.set(overlay_e, style);
@@ -367,7 +356,6 @@ mod tests {
         }
         let state = state.expect("intro binds on first tick");
 
-        // Black fades out from full black, title floats up simultaneously: both should already be written to components.
         let overlay = world
             .get::<Style>(Entity::from_raw(
                 state.overlay_entity.id,

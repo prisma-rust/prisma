@@ -78,7 +78,6 @@ pub(crate) fn game_manifest_path(root: &Path) -> PathBuf {
 }
 
 fn pipeline_manifest_path(root: &Path) -> Option<PathBuf> {
-    // Only one implementation (data layer), player build and ScenePack both take from here.
     prism_editor_core::build::pipeline_manifest_path(root)
 }
 
@@ -163,8 +162,6 @@ impl BuildKind {
             Ok(args)
         };
         let pipeline = |extra: &[&str]| pipeline_with(&[], extra);
-        // Player build reuses data layer `BuildPlan` (profile / output_dir / product layout all there),
-        // here only translates its steps to cargo params.
         let player_commands = || -> Result<Vec<Vec<String>>, String> {
             Ok(player_plan(root)
                 .steps
@@ -274,7 +271,6 @@ fn forward_cargo_json(
                 break;
             };
             let Some(diagnostic) = parse_cargo_line(&line, &root) else {
-                // cargo occasionally mixes non-JSON lines; JSON events already covered by diagnostics / summary.
                 if !line.trim_start().starts_with('{') && tx.send(line).is_err() {
                     break;
                 }
@@ -338,12 +334,10 @@ impl BuildJob {
                     }
                 };
 
-                // whether this step is structured diagnostic mode (only `cargo build` has this param).
                 let json = args.iter().any(|arg| arg == "json");
                 if json {
                     worker_diagnostics.lock().unwrap().clear();
                 }
-                // diagnostic span relative to workspace root (parent dir of `--manifest-path`).
                 let span_root = args
                     .iter()
                     .position(|arg| arg == "--manifest-path")
@@ -352,7 +346,6 @@ impl BuildJob {
                     .and_then(|manifest| manifest.parent().map(Path::to_path_buf))
                     .unwrap_or_else(|| root.clone());
 
-                // one read thread each for stdout / stderr, guarantee both outputs do not starve each other.
                 let mut readers = Vec::new();
                 if let Some(stdout) = child.stdout.take() {
                     readers.push(if json {
@@ -373,7 +366,6 @@ impl BuildJob {
                 let mut cancelled = false;
                 loop {
                     if worker_cancel.load(Ordering::Relaxed) {
-                        // kill only sends signal; below wait() reaps, read thread also waits.
                         let _ = child.kill();
                         cancelled = true;
                         break;
@@ -400,7 +392,6 @@ impl BuildJob {
                 }
                 let code = status.and_then(|status| status.code()).unwrap_or(-1);
                 let _ = tx.send(format!("── exit {code} ──"));
-                // if previous step fails, do not run subsequent steps (e.g. cook failure should not package old scene).
                 if !status.map(|status| status.success()).unwrap_or(false) {
                     let _ = tx.send("build stopped: step failed".to_string());
                     worker_failed.store(true, Ordering::Relaxed);
@@ -408,7 +399,6 @@ impl BuildJob {
                 }
             }
 
-            // Player build: place exe / `assets/` into `[build].output_dir`, run product directly when needed.
             if kind.is_player_build() {
                 let plan = player_plan(&root);
                 let _ = tx.send(format!(
@@ -622,7 +612,6 @@ mod tests {
             ),
         )
         .unwrap();
-        // Real project cooked once has these products; product list expands by existence; test also needs this premise.
         for name in ["scenes.pak", "scenes.pak.meta.json", "scenes.json"] {
             std::fs::write(root.join("assets").join(name), b"{}").unwrap();
         }
@@ -667,7 +656,6 @@ mod tests {
     fn player_build_targets_project_root_manifest() {
         let repo = repo_root();
         let root = project_root("manifest", "profile = debug");
-        // User project without `projects/template` falls back to its own manifest.
         assert_eq!(
             BuildKind::Player.commands(&root).unwrap()[0],
             vec![
@@ -692,7 +680,6 @@ mod tests {
             let commands = kind.commands(&root).unwrap();
             assert!(mentions(&commands[0], "json"));
         }
-        // Package step uses real repo root (temp root has no pipeline workspace).
         let pack = BuildKind::ScenePack.commands(&repo_root()).unwrap();
         assert!(!mentions(&pack[0], "json"));
     }

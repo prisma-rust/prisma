@@ -222,7 +222,6 @@ impl TextInput {
         if !word {
             return chars.next().map(|(index, _)| index);
         }
-        // If cursor is at whitespace/punct, skip it first, then skip whole word; otherwise skip only current word.
         let mut result = offset;
         let mut at_word = false;
         if let Some((_, ch)) = chars.clone().next() {
@@ -257,7 +256,6 @@ impl TextInput {
                 .next()
                 .map(|(index, ch)| offset + index + ch.len_utf8());
         }
-        // Finish current word first, then eat following whitespace/punctuation, stop at next word start.
         let mut result = offset;
         let mut in_word = suffix.chars().next().map(is_word_char).unwrap_or(false);
         for (index, ch) in chars {

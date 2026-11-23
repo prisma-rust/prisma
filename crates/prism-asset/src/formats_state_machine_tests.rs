@@ -73,7 +73,6 @@ fn a_well_formed_machine_decodes_with_names_and_indices() {
             threshold: 1.5,
         }]
     );
-    // u32::MAX = any state.
     assert_eq!(machine.transitions[1].from, None);
     assert_eq!(
         machine.transitions[1].conditions,
@@ -126,7 +125,6 @@ fn every_condition_kind_round_trips_its_payload() {
 fn broken_files_are_rejected_instead_of_panicking() {
     let good = build(&[("A", "a.ranim", 1.0, true)], &[]);
 
-    // Too short / wrong magic / wrong version.
     assert!(decode_rasm(&[]).is_none());
     assert!(decode_rasm(&good[..12]).is_none());
     let mut wrong_magic = good.clone();
@@ -136,7 +134,6 @@ fn broken_files_are_rejected_instead_of_panicking() {
     wrong_version[4] = 99;
     assert!(decode_rasm(&wrong_version).is_none());
 
-    // State name truncated, trailing extra bytes, too many states.
     let mut truncated = good.clone();
     truncated.truncate(good.len() - 1);
     assert!(decode_rasm(&truncated).is_none());
@@ -147,7 +144,6 @@ fn broken_files_are_rejected_instead_of_panicking() {
     huge[5..9].copy_from_slice(&(MAX_STATES as u32 + 1).to_le_bytes());
     assert!(decode_rasm(&huge).is_none());
 
-    // Unknown condition kind / unknown state flag.
     let mut unknown_condition = vec![CONDITION_TRIGGER + 9];
     unknown_condition.extend_from_slice(&1u16.to_le_bytes());
     unknown_condition.extend_from_slice(b"x");

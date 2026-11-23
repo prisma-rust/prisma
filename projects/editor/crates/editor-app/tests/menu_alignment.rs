@@ -125,7 +125,6 @@ fn a_nested_panel_puts_its_first_item_level_with_the_row_that_opened_it() {
 
     assert_shared_inset(&state, panel_key("file"), row_key("file", "New"));
 
-    // Level 2: the "New" row inside the File panel.
     hover(&mut state, row_key("file", "New"));
     assert_first_item_on_row(&state, "file/New", row_key("file", "New"), "file.new.scene");
 }

@@ -46,58 +46,19 @@ pub use assets::{
     read_asset_bytes, read_asset_text, AssetInfo, AssetRef, AssetTextPreview, MAX_ASSETS,
     MAX_PREVIEW_BYTES, MAX_TEXT_PREVIEW_BYTES,
 };
-// Shape gates (`delete_asset` / `move_asset` / `rename_asset` /
-// `instantiate_prefab` / `revert_prefab_instance` / `sync_prefab_instances` etc.
-// same names as existing exports, keep module path access, do not re-export again at root).
 pub use presets::{entity_presets, EntityPreset};
 pub use property_drawer::{
     PropertyAttribute, PropertyDrawer, PropertyDrawerRegistry, PropertyRenderer,
 };
 pub use reflect_edit::{normalize_component, set_component_field};
 pub use scene::{
-    // Generic (scene / prefab)
-    delete_doc,
-    delete_entities,
-    // Scene aliases (legacy calls)
-    delete_scene,
-    doc_path,
-    docs_dir,
-    empty_scene_doc,
-    extract_subtree,
-    find_project_root,
-    instantiate_prefab,
-    list_docs,
-    list_scenes,
-    move_entity,
-    prefab_instances,
-    prefab_template_doc,
-    read_doc,
-    read_scene_doc,
-    rename_doc,
-    rename_scene,
-    reparent_doc,
-    revert_prefab_instance,
-    scene_path,
-    scenes_dir,
-    sync_prefab_instances,
-    template_doc,
-    template_scene_doc,
-    templates,
-    templates_for,
-    unlink_prefab_instance,
-    validate_doc,
-    validate_scene_doc,
-    write_doc,
-    write_doc_as,
-    write_doc_in_dir,
-    write_scene_as,
-    write_scene_doc,
-    DocKind,
-    InstantiateResult,
-    MoveResult,
-    PrefabLink,
-    SceneEntry,
-    SceneTemplate,
+    delete_doc, delete_entities, delete_scene, doc_path, docs_dir, empty_scene_doc,
+    extract_subtree, find_project_root, instantiate_prefab, list_docs, list_scenes, move_entity,
+    prefab_instances, prefab_template_doc, read_doc, read_scene_doc, rename_doc, rename_scene,
+    reparent_doc, revert_prefab_instance, scene_path, scenes_dir, sync_prefab_instances,
+    template_doc, template_scene_doc, templates, templates_for, unlink_prefab_instance,
+    validate_doc, validate_scene_doc, write_doc, write_doc_as, write_doc_in_dir, write_scene_as,
+    write_scene_doc, DocKind, InstantiateResult, MoveResult, PrefabLink, SceneEntry, SceneTemplate,
     PREFAB_LINK_COMPONENT,
 };
 pub use schema::{

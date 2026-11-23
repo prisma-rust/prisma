@@ -44,7 +44,6 @@ fn ensure_creates_a_sidecar_and_keeps_it_stable() {
     assert!(first.guid.len() == 32);
     assert_eq!(first.importer, "TextureImporter");
 
-    // Second time, even with a different importer, does not rewrite the existing GUID.
     let second = AssetMeta::ensure(&root, asset, "OtherImporter").unwrap();
     assert_eq!(first.guid, second.guid);
     assert_eq!(second.importer, "TextureImporter");
@@ -68,7 +67,6 @@ fn a_corrupt_sidecar_is_regenerated() {
     assert!(valid_guid(&meta.guid));
     assert_eq!(AssetMeta::read(&root, asset), Some(meta));
 
-    // A GUID with wrong shape is also treated as corrupt.
     std::fs::write(&path, r#"{"guid":"nope","importer":""}"#).unwrap();
     assert_eq!(AssetMeta::read(&root, asset), None);
     std::fs::remove_dir_all(root).ok();

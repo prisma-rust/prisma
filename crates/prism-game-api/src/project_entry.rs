@@ -87,7 +87,6 @@ macro_rules! export_project {
             $(
                 api.fixed_update = Some($fixed_update);
             )?
-            // SAFETY: the host provides a valid writable table pointer.
             unsafe { *out = api };
             $crate::__project_api::SUCCESS
         }
@@ -113,8 +112,6 @@ macro_rules! export_project {
                     return $crate::__project_api::INVALID_ARGUMENT;
                 }
                 *out = Box::into_raw(Box::new(__PrismProjectRuntime::new())).cast();
-                // The module is its own dylib with its own `log` instance and
-                // panic hook; without these the host console sees nothing.
                 $crate::install_host_logger(host);
                 $crate::install_host_panic_hook();
                 log::info!("{}: preview module started", $log_name);

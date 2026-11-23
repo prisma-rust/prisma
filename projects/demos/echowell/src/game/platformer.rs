@@ -14,7 +14,6 @@ use prism_scene::ui::{Anchors, Canvas, CanvasScaleMode, Margin, Node, Pivot, Sty
 use serde::{Deserialize, Serialize};
 
 pub const FIXED_DT: f32 = 1.0 / 60.0;
-// Function keys use the project API's raw virtual-key slots.
 const F1_KEY_INDEX: usize = keys::OTHER_BASE + 0x70;
 const SOLID_LAYER: u32 = 1;
 const HAZARD_LAYER: u32 = 2;
@@ -848,7 +847,6 @@ impl PlayerState {
                     self.jump_buffer_timer = 0.0;
                     self.variable_jump_timer = self.tuning.variable_jump_seconds;
                 } else if input.jump_pressed && self.abilities.contains(AbilityFlags::WALL_JUMP) {
-                    // Allow wall jump at wall; true collision direction determined by this frame horizontal parse.
                     let wall = self.near_wall();
                     if wall != 0.0 {
                         self.velocity = [
@@ -859,7 +857,6 @@ impl PlayerState {
                     }
                 }
 
-                // Jump hold keeps phase with halved gravity; releasing jump immediately cuts upward speed.
                 let holding_jump = input.jump_held && self.velocity[1] > 0.0;
                 if !input.jump_held && self.velocity[1] > 0.0 {
                     self.velocity[1] = self.velocity[1].min(self.tuning.jump_speed * 0.45);
@@ -1002,8 +999,6 @@ fn resolve_enemy_contacts(
                 enemy_defeated = true;
                 world.set(contact.entity, Active(false));
             }
-            // Preserve forward momentum while pushing the player clear of the
-            // hurtbox so one dash cannot repeatedly hit the same enemy.
             let away = if player.position[0] <= enemy.position[0] {
                 -1.0
             } else {
@@ -1095,9 +1090,6 @@ fn spawn_room(
     if let Some(mut sprite) = world.get::<SpriteRenderer>(player) {
         sprite.frame_size = [16, 24];
         sprite.sheet_columns = 4;
-        // Physics stores the player position at the body centre. Keep the
-        // sprite on the same centre and scale the source frame to the body
-        // bounds instead of compensating with a foot pivot.
         sprite.pivot = [0.5, 0.5];
         world.set(player, sprite);
     }
@@ -1221,8 +1213,6 @@ fn spawn_room(
         [0.35, 0.9, 1.0, 1.0],
         15,
     );
-    // The pickup AABB is 16x16 and is centred on `geometry.crystal`.
-    // The source art is 16x20, so fit the quad to the gameplay bounds.
     resize_sprite_from_source(world, crystal, 16.0, 16.0, [16.0, 20.0]);
     set_box_collider(
         world,
@@ -1843,12 +1833,9 @@ impl PlatformerRuntime {
     fn write_back(&mut self, world: &mut GameWorld<'_>, events: StepEvents, _render_alpha: f32) {
         if let Some(player) = self.bindings.player {
             if let Some(mut transform) = world.get::<LocalTransform>(player) {
-                // Keep simulation coordinates on the collision-box centre.
                 transform.position.x = self.player.position[0];
                 transform.position.y = self.player.position[1];
                 transform.position.z = 0.0;
-                // Keep hot-reloaded player dimensions aligned with the
-                // 16x24 source frame used by the sprite sheet.
                 transform.scale.x = (self.player.tuning.player_half_size[0] * 2.0) / 16.0;
                 transform.scale.y = (self.player.tuning.player_half_size[1] * 2.0) / 24.0;
                 world.set(player, transform);
@@ -2266,8 +2253,6 @@ mod tests {
 
     #[test]
     fn shipped_room_platform_solids_have_visible_tiles() {
-        // Platforms are drawn only by the tilemap, so every solid that acts as a
-        // platform (not the floor or the side walls) must have a matching tile.
         let manifest: RoomManifest = serde_json::from_str(include_str!("../../assets/rooms.json"))
             .expect("room manifest should be valid JSON");
         let rooms: Vec<_> = manifest

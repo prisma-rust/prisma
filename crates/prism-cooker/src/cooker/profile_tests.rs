@@ -1,7 +1,3 @@
-// ===========================================================================
-// Tests
-// ===========================================================================
-
 use super::*;
 
 #[test]
@@ -38,8 +34,6 @@ fn settings_hash_ignores_custom_map_insertion_order() {
         forward.custom.insert(key.to_owned(), value);
     }
 
-    // Same key-value pairs, incorrect insert order, plus different HashMap capacity: capacity changes bucket layout,
-    // therefore iteration order definitely differs from forward, able to stably expose "directly serialize HashMap" issue.
     let mut reverse = CookSettings {
         custom: HashMap::with_capacity(64),
         ..Default::default()
@@ -186,7 +180,6 @@ fn streaming_threshold_only_applies_when_streaming_is_enabled() {
         ..Default::default()
     };
 
-    // Desktop/default profiles keep the old all-compressed layout.
     assert!(!disabled.streaming);
     assert!(!disabled.should_stream(usize::MAX));
 
@@ -259,7 +252,6 @@ fn user_profile_overrides_builtin() {
     let dir = std::env::temp_dir().join(&unique);
     std::fs::create_dir_all(&dir).ok();
 
-    // Write a custom  config  that inherits from built-in "desktop".
     let user_profile = serde_json::json!({
         "base": "desktop",
         "texture": {
@@ -273,17 +265,14 @@ fn user_profile_overrides_builtin() {
     let settings = mgr.resolve("high_quality").unwrap();
     assert_eq!(settings.texture.quality, 100);
     assert_eq!(settings.texture.max_size, 8192);
-    // Should still inherit desktop base features.
     assert!(settings.mesh.generate_tangents);
 
-    // Best-effort cleanup.
     let _ = std::fs::remove_file(dir.join("high_quality.json"));
     let _ = std::fs::remove_dir(&dir);
 }
 
 #[test]
 fn profile_priority_chain() {
-    // CLI overrides > resolved config
     let dir = std::env::temp_dir().join("priority_test");
     let mut mgr = ProfileManager::new(&dir);
     let mut settings = mgr.resolve("android").unwrap();
@@ -297,7 +286,6 @@ fn profile_priority_chain() {
     ProfileManager::apply_cli_overrides(&mut settings, &cli).unwrap();
 
     assert_eq!(settings.texture.compression, TextureCompression::Bc7);
-    // Other Android settings preserved.
     assert!(settings.streaming);
     assert_eq!(settings.chunk_size, 32 * 1024);
 }
@@ -358,8 +346,6 @@ fn explicit_default_values_are_honoured() {
     let dir = std::env::temp_dir().join(&unique);
     std::fs::create_dir_all(&dir).unwrap();
 
-    // Every value here equals the built-in default; they must still override
-    // the parent profile instead of being treated as "not specified".
     std::fs::write(
         dir.join("plain.json"),
         serde_json::json!({
@@ -376,7 +362,6 @@ fn explicit_default_values_are_honoured() {
     assert_eq!(settings.texture.compression, TextureCompression::Rgba8);
     assert_eq!(settings.texture.max_size, 0);
     assert!(!settings.texture.generate_mips);
-    // Sections the child does not mention still inherit from `desktop`.
     assert_eq!(settings.texture.quality, 90);
     assert!(settings.mesh.generate_tangents);
 
@@ -389,8 +374,6 @@ fn explicit_false_flag_is_applied() {
     let dir = std::env::temp_dir().join(&unique);
     std::fs::create_dir_all(&dir).unwrap();
 
-    // `optimize` defaults to true, so `false` used to be indistinguishable
-    // from an absent field.
     std::fs::write(
         dir.join("unoptimized.json"),
         serde_json::json!({

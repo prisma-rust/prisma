@@ -62,7 +62,6 @@ impl RenderPass {
 
         let attachments = [color_attachment, depth_attachment];
 
-        // Dependency: wait for acquire semaphore before writing color + depth.
         let dependency = vk::SubpassDependency::default()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
@@ -125,9 +124,6 @@ impl DepthImage {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            // DEPTH_STENCIL_ATTACHMENT for the scene render pass, SAMPLED so
-            // the GTAO pass can read it back as a texture after ForwardPass
-            // stores depth, TRANSFER_SRC so the pass-dump readback can copy it.
             .usage(
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
                     | vk::ImageUsageFlags::SAMPLED

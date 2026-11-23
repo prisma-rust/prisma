@@ -116,7 +116,7 @@ pub fn encode_rtex_rgba8(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(header_size + rgba.len());
 
     buf.extend_from_slice(RTEX_MAGIC);
-    buf.push(1); // version
+    buf.push(1);
     buf.extend_from_slice(&width.to_le_bytes());
     buf.extend_from_slice(&height.to_le_bytes());
     buf.extend_from_slice(&levels.to_le_bytes());
@@ -170,7 +170,6 @@ pub fn trim_transparent_pixels(
     }
 
     if !has_solid {
-        // Completely transparent sprite retains 1x1 placeholder to avoid zero-dimension divisions
         return (1, 1, [0, 0], vec![0, 0, 0, 0]);
     }
 
@@ -191,10 +190,6 @@ pub fn trim_transparent_pixels(
         trimmed_rgba,
     )
 }
-
-// ---------------------------------------------------------------------------
-// MaxRects 2D Bin Packing Algorithm (Best Short Side Fit - BSSF)
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Rect {
@@ -350,10 +345,6 @@ impl MaxRectsBin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Atlas Packing Pipeline
-// ---------------------------------------------------------------------------
-
 struct PreparedSprite {
     name: String,
     original_size: [u32; 2],
@@ -431,7 +422,6 @@ pub fn pack_atlas(
         })
         .collect();
 
-    // Sort descending by height, then width (standard bin packing heuristic)
     prepared.sort_by(|a, b| {
         b.slot_h
             .cmp(&a.slot_h)
@@ -459,7 +449,6 @@ pub fn pack_atlas(
         }
     }
 
-    // Grow the atlas until every slot fits, then keep that placement.
     let placements = loop {
         let mut bin = MaxRectsBin::new(current_w, current_h);
         let mut candidate_placements = Vec::with_capacity(prepared.len());

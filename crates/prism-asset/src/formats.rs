@@ -7,15 +7,6 @@ const RTEX_MAGIC: &[u8; 4] = b"RTEX";
 const RMES_MAGIC: &[u8; 4] = b"RMES";
 const MAX_MIP_LEVELS: u32 = 16;
 
-// ---------------------------------------------------------------------------
-// RTEX `format` byte values
-// ---------------------------------------------------------------------------
-//
-// The cooker writes one of these into the header; runtime consumers use them to
-// interpret the mip payload. RTEX does **not** encode colour space: an RGBA8
-// payload can be sRGB (albedo/emissive) or linear (normal/MR/AO), so the caller
-// picks sRGB-ness per texture slot.
-
 /// Uncompressed RGBA8 (4 bytes per pixel).
 pub const RTEX_FORMAT_RGBA8: u8 = 0;
 /// BC5 (two-channel RG normal map, 16 bytes per 4×4 block).
@@ -279,10 +270,6 @@ pub fn decode_rmat(data: &[u8]) -> Option<RmatInfo> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// RATL (.ratlas 2D Sprite Atlas)
-// ---------------------------------------------------------------------------
-
 pub const RATL_MAGIC: &[u8; 4] = b"RATL";
 pub const RATL_VERSION: u8 = 1;
 
@@ -475,10 +462,6 @@ pub fn decode_ratl(data: &[u8]) -> Option<RatlInfo> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// RANIM2D (.ranim2d 2D Animation Format)
-// ---------------------------------------------------------------------------
-
 pub const RANIM2D_MAGIC: &[u8; 4] = b"RA2D";
 pub const RANIM2D_VERSION: u8 = 1;
 
@@ -562,7 +545,6 @@ pub fn encode_ranim2d(info: &Ranim2DInfo) -> Vec<u8> {
     out.extend_from_slice(&(atlas_bytes.len() as u16).to_le_bytes());
     out.extend_from_slice(atlas_bytes);
 
-    // Frames
     out.extend_from_slice(&(info.frames.len() as u32).to_le_bytes());
     for f in &info.frames {
         let name_bytes = f.sprite_name.as_bytes();
@@ -571,7 +553,6 @@ pub fn encode_ranim2d(info: &Ranim2DInfo) -> Vec<u8> {
         out.extend_from_slice(&f.duration_ms.to_le_bytes());
     }
 
-    // Tags
     out.extend_from_slice(&(info.tags.len() as u32).to_le_bytes());
     for t in &info.tags {
         let name_bytes = t.name.as_bytes();
@@ -583,7 +564,6 @@ pub fn encode_ranim2d(info: &Ranim2DInfo) -> Vec<u8> {
         out.extend_from_slice(&t.repeat.to_le_bytes());
     }
 
-    // Slices
     out.extend_from_slice(&(info.slices.len() as u32).to_le_bytes());
     for s in &info.slices {
         let name_bytes = s.name.as_bytes();
@@ -616,7 +596,6 @@ pub fn decode_ranim2d(data: &[u8]) -> Option<Ranim2DInfo> {
     pos += atlas_len;
     let atlas_path = std::str::from_utf8(atlas_bytes).ok()?.to_string();
 
-    // Frames
     let frames_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut frames = Vec::with_capacity(frames_count);
@@ -634,7 +613,6 @@ pub fn decode_ranim2d(data: &[u8]) -> Option<Ranim2DInfo> {
         });
     }
 
-    // Tags
     let tags_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut tags = Vec::with_capacity(tags_count);
@@ -661,7 +639,6 @@ pub fn decode_ranim2d(data: &[u8]) -> Option<Ranim2DInfo> {
         });
     }
 
-    // Slices
     let slices_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut slices = Vec::with_capacity(slices_count);
@@ -708,10 +685,6 @@ pub fn decode_ranim2d(data: &[u8]) -> Option<Ranim2DInfo> {
         slices,
     })
 }
-
-// ---------------------------------------------------------------------------
-// RTILEMAP (.rtilemap 2D Tilemap Format)
-// ---------------------------------------------------------------------------
 
 pub const RTILEMAP_MAGIC: &[u8; 4] = b"RTMG";
 pub const RTILEMAP_VERSION: u8 = 1;
@@ -776,7 +749,6 @@ pub fn encode_rtilemap(info: &RtilemapInfo) -> Vec<u8> {
     out.extend_from_slice(&(tileset_bytes.len() as u16).to_le_bytes());
     out.extend_from_slice(tileset_bytes);
 
-    // Layers
     out.extend_from_slice(&(info.layers.len() as u32).to_le_bytes());
     for l in &info.layers {
         let name_bytes = l.name.as_bytes();
@@ -794,7 +766,6 @@ pub fn encode_rtilemap(info: &RtilemapInfo) -> Vec<u8> {
         }
     }
 
-    // Objects
     out.extend_from_slice(&(info.objects.len() as u32).to_le_bytes());
     for o in &info.objects {
         out.extend_from_slice(&o.id.to_le_bytes());
@@ -812,7 +783,6 @@ pub fn encode_rtilemap(info: &RtilemapInfo) -> Vec<u8> {
         out.push(if o.visible { 1 } else { 0 });
     }
 
-    // Collision boxes
     out.extend_from_slice(&(info.collision_boxes.len() as u32).to_le_bytes());
     for c in &info.collision_boxes {
         for &val in &c.rect {
@@ -844,7 +814,6 @@ pub fn decode_rtilemap(data: &[u8]) -> Option<RtilemapInfo> {
     pos += tileset_len;
     let tileset_path = std::str::from_utf8(tileset_bytes).ok()?.to_string();
 
-    // Layers
     let layers_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut layers = Vec::with_capacity(layers_count);
@@ -888,7 +857,6 @@ pub fn decode_rtilemap(data: &[u8]) -> Option<RtilemapInfo> {
         });
     }
 
-    // Objects
     let objects_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut objects = Vec::with_capacity(objects_count);
@@ -933,7 +901,6 @@ pub fn decode_rtilemap(data: &[u8]) -> Option<RtilemapInfo> {
         });
     }
 
-    // Collision boxes
     let boxes_count = u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?) as usize;
     pos += 4;
     let mut collision_boxes = Vec::with_capacity(boxes_count);
@@ -977,7 +944,6 @@ mod tests {
         }
         buf.push(alpha_mode);
         buf.extend_from_slice(&alpha_cutoff.to_le_bytes());
-        // No texture in any of the five slots.
         buf.resize(buf.len() + 5, 0);
         buf
     }
@@ -1016,7 +982,6 @@ mod tests {
             MaterialAlphaMode::from_name("Blend"),
             MaterialAlphaMode::Blend
         );
-        // Unknown spellings fall back to the legacy always-test behaviour.
         assert_eq!(
             MaterialAlphaMode::from_name("weird"),
             MaterialAlphaMode::Mask
@@ -1080,7 +1045,7 @@ mod tests {
     fn ratl_decode_rejects_corrupted() {
         assert!(decode_ratl(b"").is_none());
         assert!(decode_ratl(b"GARBAGE").is_none());
-        assert!(decode_ratl(b"RATL\x02").is_none()); // wrong version
+        assert!(decode_ratl(b"RATL\x02").is_none());
     }
 
     #[test]

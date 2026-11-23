@@ -149,8 +149,6 @@ impl GroundGrid {
         let rasterizer = vk::PipelineRasterizationStateCreateInfo::default()
             .depth_clamp_enable(false)
             .rasterizer_discard_enable(false)
-            // The grid is already emitted as LINE_LIST geometry. Wireframe
-            // polygon mode is redundant here and requires fillModeNonSolid.
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
             .cull_mode(vk::CullModeFlags::NONE)
@@ -161,7 +159,6 @@ impl GroundGrid {
             .sample_shading_enable(false)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-        // Depth test enabled, no depth write; lets scene entities naturally occlude mesh.
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(false)
@@ -172,17 +169,12 @@ impl GroundGrid {
             .blend_enable(false);
         let blend_attachments = [
             color_blend_attachment,
-            // Attachment 1 = view-space normal MRT: empty write mask, keep values ForwardPass cleared.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // Attachment 2 = motion vectors (#883): likewise only write slot 0, otherwise
-            // `pColorBlendState->attachmentCount` inconsistent with render pass color attachment count
-            // (#973, VUID-...-renderPass-07609).
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
-            // Attachment 3 = albedo + roughness (ReSTIR GI G-buffer): gizmo does not write.
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::empty())
                 .blend_enable(false),
@@ -286,7 +278,6 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
     let major_color = [0.35, 0.38, 0.44];
     let pos_x_color = [0.85, 0.25, 0.25];
     let neg_x_color = [0.45, 0.18, 0.18];
-    // 3D second axis is Z (blue), 2D is Y (green).
     let (pos_b_color, neg_b_color) = match plane {
         GridPlane::Xz => ([0.25, 0.50, 0.90], [0.18, 0.25, 0.45]),
         GridPlane::Xy => ([0.30, 0.85, 0.35], [0.16, 0.42, 0.18]),
@@ -298,11 +289,9 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
 
     let steps = (extent / step) as i32;
 
-    // 1. Mesh lines parallel to X axis (Z for XZ / Y for XY varies)
     for i in -steps..=steps {
         let b = i as f32 * step;
         if i == 0 {
-            // X axis (red) split into positive and negative halves
             v.push(GridVertex {
                 pos: point(-extent, 0.0),
                 color: neg_x_color,
@@ -333,11 +322,9 @@ fn generate_grid_vertices(plane: GridPlane) -> Vec<GridVertex> {
         }
     }
 
-    // 2. Mesh lines parallel to second axis (X varies)
     for i in -steps..=steps {
         let x = i as f32 * step;
         if i == 0 {
-            // Second axis split into positive and negative halves
             v.push(GridVertex {
                 pos: point(0.0, -extent),
                 color: neg_b_color,
@@ -380,11 +367,8 @@ mod tests {
         let verts = generate_grid_vertices(GridPlane::Xz);
         assert!(!verts.is_empty());
         assert_eq!(verts.len() % 2, 0, "Line list vertex count must be even");
-        // 80 steps, -40 to +40: 81 X lines + 81 Z lines, center axes each split into 2 segments
-        // (80 + 2) * 2 + (80 + 2) * 2 = 164 + 164 = 328
         assert_eq!(verts.len(), 328);
 
-        // Validate axis line colors at origin
         let has_pos_x = verts.iter().any(|v| v.color == [0.85, 0.25, 0.25]);
         let has_pos_z = verts.iter().any(|v| v.color == [0.25, 0.50, 0.90]);
         assert!(has_pos_x, "Grid should include +X red axis line");
@@ -393,7 +377,6 @@ mod tests {
 
     #[test]
     fn the_2d_grid_lies_in_xy_with_a_green_y_axis() {
-        // #602: 2D view camera looks −Z, mesh must lie on XY plane at Z = 0.
         let verts = generate_grid_vertices(GridPlane::Xy);
         assert_eq!(verts.len(), 328);
         assert!(verts.iter().all(|v| v.pos[2] == 0.0));

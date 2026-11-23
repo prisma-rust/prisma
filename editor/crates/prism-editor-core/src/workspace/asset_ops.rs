@@ -96,8 +96,6 @@ pub(super) fn moved_guids(root: &Path, moves: &[(String, String)]) -> BTreeSet<S
         let from_prefix = format!("{from}/");
         let to_prefix = format!("{to}/");
         for asset in &assets {
-            // `rewrite_moved_references` runs after the filesystem move, so the
-            // assets are already under `to`; match both sides for robustness.
             if asset.path == *from
                 || asset.path == *to
                 || asset.path.starts_with(&from_prefix)
@@ -224,10 +222,6 @@ impl Workspace {
             self.clear_selection();
             self.expanded.clear();
         } else if has_project_files {
-            // Every project document failed to parse. Keep an empty scene instead
-            // of the sample fixture: otherwise the hierarchy and the Game view
-            // show the editor's demo scene while the status bar says the project,
-            // which reads as "my project looks like this" (#1020).
             self.docs = vec![Document::new(DocKind::Scene, None, SceneDoc::default())];
             self.active = 0;
             self.clear_selection();

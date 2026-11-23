@@ -125,7 +125,6 @@ impl FootLock {
             let current = world[joint].w_axis.truncate();
             let foot = &mut self.feet[slot];
 
-            // Compute velocity from the un-locked position so locking does not cancel itself.
             let speed = match (foot.last, valid_dt) {
                 (Some(last), true) => (current - last).length() / dt,
                 _ => 0.0,

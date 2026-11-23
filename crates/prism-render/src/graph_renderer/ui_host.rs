@@ -33,8 +33,6 @@ fn transition_backdrop_source(
     image: vk::Image,
     to: vk::ImageLayout,
 ) {
-    // Each direction names the stages that performed the old writes and will
-    // perform the new ones; an access mask outside its stage mask is invalid.
     let (from, src_stage, src_access, dst_stage, dst_access) =
         if to == vk::ImageLayout::TRANSFER_SRC_OPTIMAL {
             (
@@ -226,8 +224,6 @@ impl UiOverlayHost {
         if let Some(gpu) = self.ui_overlay.as_mut() {
             gpu.set_color_format(color_format)
                 .context("ui overlay color format")?;
-            // PostPass leaves the swapchain image in PRESENT; turn it
-            // back into a color attachment for the UI load pass.
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -273,9 +269,6 @@ impl UiOverlayHost {
                     .context("backdrop pass missing after creation")?;
                 pass.resize(context, extent, color_format)?;
                 pass.ensure_readable_layout(context, cmd);
-                // Update the frame slot's descriptor BEFORE any segment binds it
-                // in `cmd`, because updating a bound descriptor set mid-command
-                // buffer invalidates the recording.
                 gpu.set_backdrop(pass.blurred_view(), frame_index);
             }
             let mut capture_backdrop = |cmd: vk::CommandBuffer, sigma: f32| {
@@ -347,8 +340,6 @@ impl UiOverlayHost {
         if let Some(gpu) = self.ui_overlay_offscreen.as_mut() {
             gpu.set_color_format(color_format)
                 .context("offscreen ui overlay color format")?;
-            // The graph already leaves the target in COLOR_ATTACHMENT_OPTIMAL;
-            // this barrier only makes its color writes visible to the UI pass.
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)

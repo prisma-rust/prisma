@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 fn temp_path(name: &str) -> PathBuf {
@@ -38,7 +34,6 @@ fn a_missing_file_is_an_empty_save_not_an_error() {
     let path = temp_path("missing").join("nested").join(FILE_NAME);
     let mut store = UserStore::open(&path);
     assert!(store.get("anything").is_none());
-    // Empty save also allowed to write: parent directory will be created.
     store.set("caught", "1");
     assert!(store.flush().unwrap());
     assert!(path.is_file());
@@ -54,7 +49,6 @@ fn a_newer_save_file_is_never_overwritten() {
     std::fs::write(&path, &newer).unwrap();
 
     let mut store = UserStore::open(&path);
-    // New-version save key unreadable (parse failure), but **file must be preserved as-is**.
     store.set("caught", "0");
     assert!(
         !store.flush().unwrap(),
@@ -103,7 +97,6 @@ fn in_memory_stores_never_touch_the_disk() {
 
 #[test]
 fn save_paths_follow_the_platform_and_the_override() {
-    // Override variable with highest priority, other branches not involved (test cannot depend on local APPDATA).
     let previous = std::env::var_os(ENV_OVERRIDE);
     std::env::set_var(ENV_OVERRIDE, "D:/tmp/prism-user-data-test");
     let path = save_path("my game/v2");

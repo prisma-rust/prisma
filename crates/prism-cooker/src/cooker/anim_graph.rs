@@ -91,7 +91,6 @@ pub fn encode_rag(graph: &AnimGraphInfo) -> Option<Vec<u8>> {
             }
         }
 
-        // V2: per-sample speed table.
         if node.sample_speeds.len() > MAX_GRAPH_CLIPS {
             return None;
         }
@@ -232,7 +231,6 @@ pub fn parse_anim_graph_json(document: &Value) -> Result<AnimGraphInfo, String> 
         });
     }
 
-    // Parse connection name -> index.
     let mut resolved: Vec<GraphNodeInfo> = Vec::with_capacity(nodes.len());
     for node in nodes {
         let mut inputs = Vec::with_capacity(node.inputs.len());

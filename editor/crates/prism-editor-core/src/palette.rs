@@ -152,7 +152,6 @@ fn file_name(path: &str) -> String {
 fn entity_path(doc: &crate::doc::SceneDoc, index: usize) -> String {
     let mut names = Vec::new();
     let mut current = doc.entities.get(index).and_then(|entity| entity.parent);
-    // Parent entity is `id` not index, and may form cycle (corrupted doc), max entities.len() steps.
     let mut guard = doc.entities.len();
     while let Some(id) = current {
         if guard == 0 {
@@ -193,7 +192,6 @@ fn rank(query: &str, entry: &PaletteEntry) -> Option<(u8, usize)> {
     } else {
         return None;
     };
-    // Shorter ranks higher within same level: `Save` before `Save As`.
     Some((start, entry.title.len()))
 }
 
@@ -271,7 +269,6 @@ mod tests {
             ),
             entry(PaletteKind::Asset, "boat.png", "sprites/water/boat.png"),
         ];
-        // Shorter ranks first within same level: `water` before `water_tile.png`.
         let order = search("wat", &entries);
         assert_eq!(order, vec![1, 0, 2, 3]);
     }
@@ -291,7 +288,6 @@ mod tests {
             entry(PaletteKind::Asset, "sprites/boat.png", ""),
             entry(PaletteKind::Asset, "sprites/lake.png", ""),
         ];
-        // b…o…a…t is subsequence of "boat", but not "lake".
         assert_eq!(search("boat", &entries), vec![0]);
     }
 
@@ -303,7 +299,6 @@ mod tests {
             && matches!(entry.action, PaletteAction::RunCommand(Command::Save))));
         assert!(all.iter().any(|entry| entry.kind == PaletteKind::Document));
         assert!(all.iter().any(|entry| entry.kind == PaletteKind::Entity));
-        // sample()'s document has entities, entity entries should carry hierarchy path or component name.
         let entity = all
             .iter()
             .find(|entry| entry.kind == PaletteKind::Entity)

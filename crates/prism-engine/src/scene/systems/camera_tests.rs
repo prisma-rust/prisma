@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::input::{ElementState, KeyCode};
 use prism_ecs::World;
@@ -53,7 +49,6 @@ fn multiple_cameras_returns_first() {
     );
 
     let cam = collect_camera(&world).unwrap();
-    // ECS query order is deterministic - first inserted should be first
     assert_eq!(cam.fov_y_degrees, 60.0);
 }
 
@@ -181,9 +176,7 @@ fn ignored_cameras_lists_everything_but_the_main_camera() {
         },
     );
 
-    // Main camera = max `depth` **enabled** camera.
     assert_eq!(main_camera(&world), Some(main));
-    // Disabled camera is neither main nor in ignored list (it should not participate).
     let ignored = ignored_cameras(&world);
     assert_eq!(ignored.len(), 2);
     assert!(ignored.contains(&low));
@@ -288,7 +281,6 @@ fn fly_input_drives_the_rendered_camera() {
     let mut input = InputManager::new();
     input.handle_keyboard(KeyCode::KeyW, ElementState::Pressed);
 
-    // Shortcut key only returns camera when pointer locked, so here pass `look_active = true`.
     let updated = camera_controller_system(&mut world, &input, 1.0, true);
     assert_eq!(updated, Some(high), "Input should go to rendering camera");
 
@@ -339,10 +331,6 @@ fn wasd_does_not_move_the_camera_while_unlocked() {
         "Unlocked camera should not move by WASD, actual {moved}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Orientation writeback (issue #121)
-// ---------------------------------------------------------------------------
 
 /// `yaw = 0` must look toward −Z (meaning of identity transform in `.scene.json`), not +X.
 #[test]
@@ -400,7 +388,6 @@ fn children_follow_the_controller_orientation() {
     world.insert(cam, LocalTransform::default());
     world.insert(cam, LocalToWorld(Mat4::IDENTITY));
 
-    // An identity child node in front of camera (local −Z)
     let child = world.spawn();
     world.insert(
         child,
@@ -414,7 +401,6 @@ fn children_follow_the_controller_orientation() {
     camera_controller_system(&mut world, &InputManager::new(), 0.0, false);
     crate::scene::systems::hierarchy::hierarchy_system(&mut world);
 
-    // yaw = π/2 → looking −X, so child world position is (−1, 0, 0)
     let world_pos = world
         .get::<LocalToWorld>(child)
         .expect("child world transform")
@@ -445,7 +431,7 @@ fn parented_camera_keeps_world_orientation_and_movement() {
 
     let cam = world.spawn();
     world.insert(cam, Camera::default());
-    world.insert(cam, FlyCameraController::default()); // yaw = 0 → world −Z
+    world.insert(cam, FlyCameraController::default());
     world.insert(
         cam,
         LocalTransform {
@@ -456,7 +442,6 @@ fn parented_camera_keeps_world_orientation_and_movement() {
     world.insert(cam, LocalToWorld(Mat4::IDENTITY));
     crate::scene::helpers::HierarchyHelper::reparent(&mut world, cam, Some(parent));
 
-    // Compute parent world matrix first so controller reads parent rotation.
     crate::scene::systems::hierarchy::hierarchy_system(&mut world);
 
     let child = world.spawn();

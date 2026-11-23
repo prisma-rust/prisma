@@ -34,7 +34,6 @@ pub fn resolve_post_grade(world: &World, eye: Vec3, base: PostGrade) -> PostGrad
         }
         let matrix = transform.0;
         let center = matrix.w_axis.truncate();
-        // Axis lengths as scale; rotation deliberately ignored (box stays axis-aligned).
         let scale = Vec3::new(
             matrix.x_axis.truncate().length(),
             matrix.y_axis.truncate().length(),
@@ -50,7 +49,6 @@ pub fn resolve_post_grade(world: &World, eye: Vec3, base: PostGrade) -> PostGrad
     if volumes.is_empty() {
         return base.sanitized();
     }
-    // Stable order: priority ascending, same priority by entity id, ensures reproducible result.
     volumes.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
     let mut grade = base.sanitized();
@@ -75,7 +73,6 @@ fn volume_weight(volume: &PostProcessVolume, center: Vec3, scale: Vec3, point: V
         finite_abs(half.y * scale.y),
         finite_abs(half.z * scale.z),
     );
-    // Signed distance to box: <= 0 when all axes inside.
     let offset = (point - center).abs() - half;
     let outside = offset.max_element();
     if outside <= 0.0 {
@@ -120,8 +117,6 @@ fn volume_grade(volume: &PostProcessVolume) -> PostGrade {
         dof_focus_distance: volume.dof_focus_distance,
         dof_aperture: volume.dof_aperture,
         dof_max_blur: volume.dof_max_blur,
-        // LUT is global resource; volume only blends on-screen per-pixel parameters, intensity is
-        // `render_system` uniformly overridden after parse to `settings.lut_strength`.
         lut_strength: 0.0,
         motion_blur: volume.motion_blur,
         motion_blur_max_pixels: volume.motion_blur_max_pixels,

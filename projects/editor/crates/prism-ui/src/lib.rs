@@ -107,7 +107,6 @@ mod tests {
         let actions = tree.process_input(&release);
         assert_eq!(actions, vec![UiAction::Clicked("save_btn".into_node_key())]);
 
-        // Test toggle_button
         let play_rect = tree
             .node(tree.node_by_key("play_btn".into_node_key()).unwrap())
             .unwrap()

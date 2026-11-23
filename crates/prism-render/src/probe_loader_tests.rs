@@ -1,7 +1,3 @@
-// -------------------------------------------------------------------
-// Tests
-// -------------------------------------------------------------------
-
 use super::*;
 
 fn make_test_data() -> ProbeVolumeData {
@@ -77,7 +73,7 @@ fn invalid_data_rejected_on_save() {
         origin: [0.0; 3],
         spacing: [1.0; 3],
         dims: [2, 2, 2],
-        coeffs: vec![[0.0; 3]; 10], // wrong length
+        coeffs: vec![[0.0; 3]; 10],
         scene_name: String::new(),
         global_hit_ratio: HIT_RATIO_UNKNOWN,
     };
@@ -94,16 +90,13 @@ fn probe_volume_data_validity() {
 
 #[test]
 fn v1_file_rejected() {
-    // v1 files (48-byte header, no scene_name / hit_ratio) are no longer
-    // supported. Build one by hand from a v2 buffer, rewrite the version
-    // to 1 and place the v2 tail of the header, keeping the body intact.
     let data = make_test_data();
     let v2 = save_probe_volume_to_bytes(&data).unwrap();
     const HEADER_SIZE_V1: usize = 48;
     let body = &v2[HEADER_SIZE..];
     let mut v1 = Vec::with_capacity(HEADER_SIZE_V1 + body.len());
-    v1.extend_from_slice(&v2[..HEADER_SIZE_V1]); // magic..coeff_format
-    v1[4..8].copy_from_slice(&1u32.to_le_bytes()); // patch version to 1
+    v1.extend_from_slice(&v2[..HEADER_SIZE_V1]);
+    v1[4..8].copy_from_slice(&1u32.to_le_bytes());
     v1.extend_from_slice(body);
 
     let err = load_probe_volume_from_bytes(&v1).unwrap_err();
@@ -116,7 +109,6 @@ fn v1_file_rejected() {
 #[test]
 fn scene_name_truncation_roundtrips() {
     let mut data = make_test_data();
-    // A name longer than the 63-byte limit is truncated but still loads.
     data.scene_name = "x".repeat(200);
     let bytes = save_probe_volume_to_bytes(&data).unwrap();
     let loaded = load_probe_volume_from_bytes(&bytes).unwrap();

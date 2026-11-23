@@ -20,7 +20,6 @@ fn a_host_can_take_pointer_ownership_back() {
 
 #[test]
 fn hosted_mode_alone_does_not_change_the_policy() {
-    // Hosted mode is about scenes, not input: an FPS-style host can still use it.
     let app = App::hosted(prism_engine::config::AppConfig::default());
     assert_eq!(app.pointer_lock_policy(), PointerLockPolicy::Auto);
 }

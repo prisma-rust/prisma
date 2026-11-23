@@ -174,7 +174,6 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64) -> GeneratedTerr
         let biome = classify_biome(continental, temp, moisture);
         biomes.push(biome);
 
-        // Compute surface y (smaller y = higher elevation).
         let raw_surface = match biome {
             BiomeKind::Ocean => sea_level as f32 + 3.0 + (0.34 - continental) * 18.0 + detail * 2.0,
             BiomeKind::Plains => sea_level as f32 - 2.0 - (detail - 0.5) * 4.5,
@@ -187,7 +186,6 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64) -> GeneratedTerr
         };
         let surface_y = (raw_surface.round() as isize).clamp(2, (height - 3) as isize) as usize;
 
-        // Fill ocean water above seafloor when surface is below sea_level.
         if biome == BiomeKind::Ocean && surface_y > sea_level {
             for y in sea_level..surface_y {
                 grid.set_cell(x, y, water);
@@ -203,12 +201,10 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64) -> GeneratedTerr
             let depth = y - surface_y;
             let in_deepslate = y >= deepslate_start;
 
-            // Carve caves in deeper stone/deepslate layers (never breach ocean floor).
             let allow_cave = depth >= 3 && y + 2 < height && biome != BiomeKind::Ocean;
             if allow_cave {
                 let cave_n = fbm_2d(fx * 0.13, y as f32 * 0.16, seed ^ 0x5555, 2);
                 if cave_n > 0.67 {
-                    // Deepest caverns occasionally pool magma lava.
                     if y >= height.saturating_sub(4) && cave_n > 0.72 {
                         grid.set_cell(x, y, lava);
                     }
@@ -216,7 +212,6 @@ pub fn generate_terrain(width: usize, height: usize, seed: u64) -> GeneratedTerr
                 }
             }
 
-            // Depth-stratified Minecraft-style ore veins in stone/deepslate layers.
             if depth >= 3 && y + 2 < height {
                 let ore_hash = hash2(x as i64, y as i64, seed ^ 0x6666);
                 let rel_depth = y as f32 / height as f32;

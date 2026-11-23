@@ -106,7 +106,6 @@ impl DirectWriteRasterizer {
         }
 
         let interop = unsafe { factory.GetGdiInterop() }.context("GetGdiInterop")?;
-        // ClearType level 0 = grayscale antialiasing (single-channel coverage, exactly what R8 atlas needs).
         let params = match unsafe {
             factory.CreateCustomRenderingParams(
                 1.8,
@@ -118,8 +117,6 @@ impl DirectWriteRasterizer {
         } {
             Ok(params) => params,
             Err(err) => {
-                // Fall back to system default parameters: may be ClearType (R/B channels have color fringes),
-                // taking R channel as coverage would introduce slight color tint — warn first, don't silently blur.
                 log::warn!(
                     "ui overlay: Failed to create grayscale AA render params ({err}), falling back to system default params\
                      — text may have color fringes"
@@ -155,7 +152,6 @@ impl DirectWriteRasterizer {
                     let target =
                         unsafe { self.interop.CreateBitmapRenderTarget(None, box_px, box_px) }
                             .context("CreateBitmapRenderTarget")?;
-                    // UI coords are pixels: 1 dip = 1 px, system scale handled by window.
                     unsafe { target.SetPixelsPerDip(1.0) }.context("SetPixelsPerDip")?;
                     self.target = Some(target);
                 }
@@ -170,7 +166,6 @@ impl DirectWriteRasterizer {
         if self.readback.as_ref().is_some_and(|rb| rb.box_px == box_px) {
             return Ok(());
         }
-        // First release old one: it may still be held by previous readback.
         self.readback = None;
         self.readback = Some(ReadbackSurface::new(box_px)?);
         Ok(())
@@ -179,7 +174,6 @@ impl DirectWriteRasterizer {
     fn try_rasterize(&mut self, ch: char, font_size: f32) -> Result<GlyphBitmap> {
         let scale = self.scale(font_size);
 
-        // 1. char → glyph index + design units.
         let mut glyph_index = 0u16;
         let codepoint = ch as u32;
         unsafe {
@@ -199,12 +193,9 @@ impl DirectWriteRasterizer {
         .with_context(|| format!("GetDesignGlyphMetrics({ch:?})"))?;
         let advance = design.advanceWidth as f32 * scale;
 
-        // 2. Temporary bitmap: 2em square enough for ink of any single glyph (incl. negative bearing and descenders).
         let em_px = font_size.ceil().max(1.0) as u32;
         let box_px = em_px * 2 + PAD * 2;
         let ascent_px = self.metrics.ascent as f32 * scale;
-        // Integer origin: origin not on half pixels, so clipped xmin/ymin are whole pixels.
-        // In 2em square place pen at 60% from left: negative bearing / descenders / right overflow have margin.
         let origin_x = PAD as f32 + (em_px as f32 * 0.6).round();
         let origin_y = (PAD as f32 + ascent_px.ceil()).min((box_px - 1) as f32);
 
@@ -215,9 +206,7 @@ impl DirectWriteRasterizer {
             .context("bitmap render target unavailable")?;
         let hdc = unsafe { target.GetMemoryDC() };
 
-        // 3. Clear white + transparent background mode + black glyph → coverage = 255 - R.
         unsafe {
-            // Clear failure would leave previous glyph's ink, clipped into new glyph — must handle as error.
             PatBlt(hdc, 0, 0, box_px as i32, box_px as i32, WHITENESS)
                 .ok()
                 .context("PatBlt(WHITENESS) clearing temporary bitmap")?;
@@ -228,7 +217,6 @@ impl DirectWriteRasterizer {
         let advances = [advance];
         let offsets = [DWRITE_GLYPH_OFFSET::default()];
         let mut run = DWRITE_GLYPH_RUN {
-            // `ManuallyDrop`: binding field convention, cloned references must be manually Released after call.
             fontFace: ManuallyDrop::new(Some(self.face.clone())),
             fontEmSize: font_size,
             glyphCount: 1,
@@ -250,11 +238,9 @@ impl DirectWriteRasterizer {
                 Some(&mut black_box),
             )
         };
-        // Pair with clone from above, avoid leaking one AddRef per rasterization.
         unsafe { drop(ManuallyDrop::take(&mut run.fontFace)) };
         drawn.with_context(|| format!("DrawGlyphRun({ch:?})"))?;
 
-        // 4. Read back BGRA (BitBlt into our own top-down DIB, see ReadbackSurface).
         self.ensure_readback(box_px)?;
         let readback = self
             .readback
@@ -264,7 +250,6 @@ impl DirectWriteRasterizer {
         let (glyph, clipped) =
             crop_bgra_coverage(readback.pixels(), box_px, origin_x, origin_y, advance);
         if clipped {
-            // 2em square temp bitmap should not clip normal glyphs; clipping means exceptional oversized glyph.
             log::warn!("ui overlay: DirectWrite glyph {ch:?} @ {font_size}px may be clipped by temporary bitmap");
         }
         Ok(glyph)
@@ -273,8 +258,6 @@ impl DirectWriteRasterizer {
 
 impl TextRasterizer for DirectWriteRasterizer {
     fn line_metrics(&self, _font: Option<&str>, font_size: f32) -> Option<LineMetrics> {
-        // DirectWrite backend has no project font registry (`register_font` uses trait default
-        // returning false), all text uses system fonts (#583).
         let scale = self.scale(font_size);
         let ascent = self.metrics.ascent as f32 * scale;
         let descent = self.metrics.descent as f32 * scale;
@@ -290,7 +273,6 @@ impl TextRasterizer for DirectWriteRasterizer {
         match self.try_rasterize(ch, font_size) {
             Ok(glyph) => Some(glyph),
             Err(err) => {
-                // Each (char, size) reaches here only once (result cached by atlas), no spam.
                 log::warn!("ui overlay: DirectWrite rasterization of {ch:?} @ {font_size}px failed: {err:#}");
                 Some(GlyphBitmap {
                     width: 0,
@@ -328,7 +310,6 @@ impl ReadbackSurface {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: box_px as i32,
-                // negative height = top-down: row 0 of `bits` is the top screen row.
                 biHeight: -(box_px as i32),
                 biPlanes: 1,
                 biBitCount: 32,
@@ -377,7 +358,6 @@ impl ReadbackSurface {
 
     fn pixels(&self) -> &[u8] {
         let len = self.box_px as usize * self.box_px as usize * 4;
-        // Safety: `bits` comes from CreateDIBSection, length is box_px² × 4 bytes BGRA.
         unsafe { std::slice::from_raw_parts(self.bits, len) }
     }
 }

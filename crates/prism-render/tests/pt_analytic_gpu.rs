@@ -78,7 +78,6 @@ fn try_create(env: Option<Vec<u8>>) -> Option<GraphRenderer> {
             panic!("failed to create the offscreen renderer: {message}");
         }
     };
-    // Without ray query there's no `PathTracePass`, whole test suite has nowhere to land.
     if !renderer.context().rt_caps.has_ray_query() {
         eprintln!("[SKIP] no VK_KHR_ray_query support");
         return None;
@@ -181,8 +180,6 @@ fn emissive_box(renderer: &mut GraphRenderer, emission: f32) -> Vec<DrawItem> {
             base_color: [0.0, 0.0, 0.0, 1.0],
             metallic: 0.0,
             roughness: 1.0,
-            // `to_gpu` only sends emissive[0] into SSBO, and in shader
-            // `s.emissive = ei * es`, so this value is expected radiance.
             emissive: [emission, 0.0, 0.0],
             emissive_strength: 1.0,
             alpha_mode: MaterialAlphaMode::Opaque,
@@ -312,15 +309,9 @@ fn render_pt_frame(
         render_mode: RenderMode::PathTrace,
         pt_max_bounces,
         pt_ray_max_distance: 100.0,
-        // Don't freeze: one sample per frame enough — every scene's estimator below is zero variance
-        // (constant environment, constant emissive, single NEE), no convergence noise to store.
         pt_max_iterations: 0,
-        // `result *= push.camera_pos.w`: exposure multiplied at output, parsed value only equals radiance itself when
-        // exposure == 1.
         exposure: 1.0,
         pt_lights: &[],
-        // `reset = true` accumulates from zero, so "one frame == one Monte Carlo sample"; false
-        // lets accumulation converge across frames, for low-variance quantitative comparisons.
         pt_accum_dirty: reset,
         has_camera: true,
         camera_orthographic: false,
@@ -423,7 +414,6 @@ fn assert_uniform(hdr: &HdrReadback, expected: f32, what: &str) {
 
 #[test]
 fn constant_environment_reads_back_linearly() {
-    // White furnace: constant environment 0.25, nothing in scene blocks raycast, every pixel should only see environment.
     let Some(mut renderer) = try_create(Some(constant_environment(0.25))) else {
         return;
     };
@@ -432,16 +422,12 @@ fn constant_environment_reads_back_linearly() {
     let quarter = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert_uniform(&quarter, 0.25, "furnace at 0.25");
 
-    // Same scene with doubled radiance.
     renderer
         .set_environment(Some(constant_environment(0.5)))
         .expect("set_environment");
     let half = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert_uniform(&half, 0.5, "furnace at 0.5");
 
-    // Linearity: doubled radiance, read-back must double. This assertion proves "read back before tonemap" —
-    // post-tonemap 8-bit path compresses 0.25 and 0.5 to about 0.19 and 0.31,
-    // ratio only 1.6x.
     let ratio = half.mean_luminance() / quarter.mean_luminance();
     assert!(
         (ratio - 2.0).abs() < 1e-3,
@@ -451,30 +437,21 @@ fn constant_environment_reads_back_linearly() {
 
 #[test]
 fn two_segment_throughput_matches_the_analytic_value() {
-    // Constant environment 0.375 (mantissa byte 96). Use radiance value different from above, so IBL disk
-    // cache hash differs — two tests running in parallel won't fight for same cache file.
     let Some(mut renderer) = try_create(Some(constant_environment(0.375))) else {
         return;
     };
     let albedo = 0.5;
     let items = diffuse_box(&mut renderer, albedo);
 
-    // Two segments: main raycast → box surface (one scatter) → miss → environment.
     let hdr = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 2);
     assert!(!hdr.has_non_finite(), "two-segment path produced NaN/Inf");
 
-    // Background: zero-segment scatter, result is environment radiance itself (miss propagation).
     let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
     assert!(
         (corner - 0.375).abs() < 1e-4,
         "background {corner} != 0.375"
     );
 
-    // Front face: one diffuse scatter then miss. Per-segment throughput is
-    // (brdf·cos) / pdf; with roughness = 1 pdf always cosine pdf (cos/π), so
-    //   throughput = (albedo/π + specular)·cos / (cos/π) = albedo + π·specular.
-    // With normal incidence D = 1/π, V = 0.25, F = 0.1024, therefore π·specular = 0.1024·0.25
-    // = 0.0256. Expected value of whole path is (albedo + 0.0256) · 0.375.
     let expected = (albedo + 0.0256) * 0.375;
     let face = hdr
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -485,8 +462,6 @@ fn two_segment_throughput_matches_the_analytic_value() {
         "diffuse face read {face}, analytic value {expected} ({relative:.1}% off)"
     );
 
-    // Convex outward cosine sampling can never hit itself, so raising bounce count shouldn't
-    // change any pixel: extra segments are all empty.
     let deep = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 4);
     let deep_face = deep
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -502,16 +477,12 @@ fn two_segment_throughput_matches_the_analytic_value() {
 
 #[test]
 fn pure_emission_matches_the_material() {
-    // Black environment (`new_empty` is 1x1x6 all-zero cube), only light source in whole scene is material's own
-    // emissive term.
     let Some(mut renderer) = try_create(None) else {
         return;
     };
     let emission = 0.6f32;
     let items = emissive_box(&mut renderer, emission);
 
-    // pt_max_bounces = 1: bounce 0 only accumulates emissive, then NEE (sun off,
-    // no glow triangles), loop never entered. Expected value is emissive itself.
     let hdr = trace_frame(&mut renderer, &items, SUN_OFF, WHITE, 1);
     assert!(!hdr.has_non_finite(), "emissive scene produced NaN/Inf");
 
@@ -523,9 +494,6 @@ fn pure_emission_matches_the_material() {
         "emissive face read {} instead of {emission}",
         centre[0]
     );
-    // `GpuMaterial` only packs `emissive[0]` into SSBO (`metallic_roughness_emissive.z`),
-    // then multiplies `emissive_strength` so entire RGB takes effect — glow body is gray body, all three channels
-    // equal same scalar. This assertion pins "gray body" fact onto interface.
     for (channel, value) in [("green", centre[1]), ("blue", centre[2])] {
         assert!(
             (value - emission).abs() < 1e-3,
@@ -533,7 +501,6 @@ fn pure_emission_matches_the_material() {
         );
     }
 
-    // Box ~48% of image height, corner raycast hits black environment, must be strictly 0.
     let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
     assert!(corner.abs() < 1e-6, "background {corner} is not black");
 }
@@ -549,11 +516,6 @@ fn directional_light_is_linear_in_radiance() {
     let one = trace_frame(&mut renderer, &items, sun(1.0), WHITE, 1);
     let two = trace_frame(&mut renderer, &items, sun(2.0), WHITE, 1);
 
-    // Single directional light, pt_max_bounces = 1: only light transport term is bounce 0 NEE.
-    // L_dir same direction as +Z face normal (n_dot_l = 1), L_rad = light_color.rgb · 1,
-    // occlusion raycast cast to outside side of box, necessarily unoccluded, so
-    //   L = (albedo/π + F·D·V) · intensity
-    // where F = 0.1024 (metallic 0), D = 1/π, V = 0.25.
     let brdf = albedo / std::f32::consts::PI + 0.1024 * 0.25 / std::f32::consts::PI;
     let centre = one
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
@@ -564,8 +526,6 @@ fn directional_light_is_linear_in_radiance() {
         "single directional light read {centre}, analytic value {brdf} ({relative:.1}% off)"
     );
 
-    // Linearity: doubled intensity, radiance doubles. This assertion guards "NEE missing or extra 1/pdf
-    // factor" class of errors — uniform sampling one light's 1/pdf is exactly 1.
     let centre_two = two
         .pixel(SIZE as u32 / 2, SIZE as u32 / 2)
         .expect("centre pixel")[0];
@@ -579,10 +539,6 @@ fn directional_light_is_linear_in_radiance() {
 
 #[test]
 fn a_degenerate_sharc_hash_does_not_poison_the_image() {
-    // Last item of §7.2: "NaN/Inf and empty hash". When hash capacity 0 cache table can't be
-    // built, but query bit in push constants still gets set, so shader truly queries a
-    // degenerate table. Image must still be finite and non-negative — one out-of-bounds read or NaN propagation would make
-    // PT_COLOR_H dirty, which downstream tonemap can't hide.
     let Some(mut renderer) = try_create(Some(constant_environment(0.25))) else {
         return;
     };
@@ -598,23 +554,11 @@ fn a_degenerate_sharc_hash_does_not_poison_the_image() {
     );
     let (lo, hi) = value_range(&hdr);
     assert!(lo >= 0.0, "degenerate hash produced negative radiance {lo}");
-    // Only light source is constant environment 0.25; diffuse box only attenuates it, so no pixel should
-    // exceed environment itself (plus one GGX highlight point outside).
     assert!(hi < 0.5, "degenerate hash amplified radiance to {hi}");
 }
 
 #[test]
 fn cache_on_preserves_the_analytic_energy() {
-    // Remaining three items of §7.2 measured together here: on cache hit must copy `cached_radiance` then
-    // directly `break` (`pt_render.slang:771-810`), cannot add another local NEE; training side
-    // judging "this voxel is credible enough" (`SharcUpdateHit` returns false) ends path,
-    // cannot double deposited measurable amount; while main raycast miss sky term completely unrelated to cache. Three share same,
-    // observable consequence: same scene with cache on/off, frame-level amount must match.
-    //
-    // SHaRC is biased (voxel resolution, material demodulation, firefly suppression), so §7.2 only requires
-    // conventional diffuse ROI relative average luminance error ≤5%, and "no stable double counting" — hit
-    // then adding NEE again typical result is doubled indirect term, in this scene showing >30% overall
-    // offset, far from 5% threshold.
     let Some(mut renderer) = try_create(Some(constant_environment(0.625))) else {
         return;
     };
@@ -626,8 +570,6 @@ fn cache_on_preserves_the_analytic_energy() {
     renderer.settings_mut().pt_gi = PtGiMode::Off;
     let uncached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);
 
-    // Reverse check: turning off gi_mode these two counters must not move. Without this, below
-    // "counter > 0" assertion can't exclude "counter always 1" bad case.
     #[cfg(feature = "sharc")]
     assert_eq!(
         (
@@ -638,20 +580,11 @@ fn cache_on_preserves_the_analytic_energy() {
         "gi_mode = Off must not train or resolve the SHaRC cache"
     );
 
-    // Voxel edge length is `2^level / sharc_scene_scale`, and `level` determined by distance from hit point to camera
-    // (in this scene 2–6 m → level 1–2). With sceneScale = 5 voxels are 0.4–0.8 m,
-    // same order as line segment length between two boxes, so `valid_hit`'s two geometry thresholds pass;
-    // factory value 50 gives 4 cm voxels, hits sparse to only a few pixels.
     renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_capacity = 1 << 14;
     renderer.settings_mut().sharc_scene_scale = 5.0;
     let cached = accumulate(&mut renderer, &items, SUN_OFF, WHITE, bounces, samples);
 
-    // Cache truly ran, otherwise below quantitative comparison is empty talk. Timers showing
-    // "SharcTrain" / "SharcResolve" only means those two GPU ranges were opened
-    // (`GraphRenderer::execute` unconditional `begin_pass`), inside range
-    // `dispatch_training` may still silently early-return via guard; renderer's own recorded real dispatch
-    // count is evidence.
     #[cfg(feature = "sharc")]
     {
         let trained = renderer.sharc_train_dispatches();
@@ -675,8 +608,6 @@ fn cache_on_preserves_the_analytic_energy() {
         let (lo, _) = value_range(hdr);
         assert!(lo >= 0.0, "{name}: negative radiance {lo}");
 
-        // Miss propagation: main raycast from image top-left corner grazes past two boxes, only sees constant sky.
-        // Cache must not participate here — no matter how long it trained.
         let corner = hdr.pixel(0, 0).expect("corner pixel")[0];
         assert!(
             (corner - 0.625).abs() < 1e-4,
@@ -684,9 +615,6 @@ fn cache_on_preserves_the_analytic_energy() {
         );
     }
 
-    // Training and parsing truly dispatched is only necessary condition — training runs but no voxel
-    // falls into queried position, image still won't change. Real evidence is image: cache hit copies
-    // `cached_radiance` and ends path directly, same pixel's estimate must differ from pure path tracing.
     let mut changed = 0usize;
     for y in 0..SIZE as u32 {
         for x in 0..SIZE as u32 {

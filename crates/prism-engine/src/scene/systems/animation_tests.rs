@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::scene::components::SceneAssetId;
 use prism_ecs::World;
@@ -43,7 +39,7 @@ fn frame_index_advances_with_time() {
 
     sprite_animation_system(&mut world, 0.05);
     assert_eq!(frame_of(&world, entity), 0);
-    sprite_animation_system(&mut world, 0.1); // t = 0.15s -> frame 1
+    sprite_animation_system(&mut world, 0.1);
     assert_eq!(frame_of(&world, entity), 1);
 }
 
@@ -61,12 +57,11 @@ fn looping_wraps_back_to_the_first_frame() {
         [64, 16],
     );
 
-    // 0.4s = exactly one cycle.
     sprite_animation_system(&mut world, 0.4);
     assert_eq!(frame_of(&world, entity), 0);
     sprite_animation_system(&mut world, 0.05);
     assert_eq!(frame_of(&world, entity), 0);
-    sprite_animation_system(&mut world, 0.05); // 0.5s -> frame 1
+    sprite_animation_system(&mut world, 0.05);
     assert_eq!(frame_of(&world, entity), 1);
 }
 
@@ -109,7 +104,6 @@ fn paused_animation_keeps_its_frame() {
 #[test]
 fn frame_count_is_derived_from_the_texture_width() {
     let mut world = World::new();
-    // 96 px wide sheet with 16 px frames -> 6 frames.
     let entity = spawn(
         &mut world,
         SpriteAnimation {
@@ -120,9 +114,9 @@ fn frame_count_is_derived_from_the_texture_width() {
         [96, 16],
     );
 
-    sprite_animation_system(&mut world, 0.55); // frame 5
+    sprite_animation_system(&mut world, 0.55);
     assert_eq!(frame_of(&world, entity), 5);
-    sprite_animation_system(&mut world, 0.1); // 0.65 -> wraps to 0
+    sprite_animation_system(&mut world, 0.1);
     assert_eq!(frame_of(&world, entity), 0);
 }
 
@@ -164,7 +158,6 @@ fn one_shot_restarts_when_playing_is_re_enabled() {
 
 #[test]
 fn frame_start_offsets_the_written_frame_within_the_row() {
-    // #584: same row columns 2..3 as independent action, plays 2 frames and loops.
     let mut world = World::new();
     let entity = spawn(
         &mut world,
@@ -179,9 +172,9 @@ fn frame_start_offsets_the_written_frame_within_the_row() {
 
     sprite_animation_system(&mut world, 0.0);
     assert_eq!(frame_of(&world, entity), 2);
-    sprite_animation_system(&mut world, 0.15); // t = 0.15 -> frame 2
+    sprite_animation_system(&mut world, 0.15);
     assert_eq!(frame_of(&world, entity), 3);
-    sprite_animation_system(&mut world, 0.1); // t = 0.25 -> loop back to frame_start
+    sprite_animation_system(&mut world, 0.1);
     assert_eq!(frame_of(&world, entity), 2);
 }
 
@@ -199,7 +192,6 @@ fn derived_frames_stop_at_the_selected_rows_end() {
         [64, 16],
     );
 
-    // 4 columns, starting from column 2 -> only 2 frames left.
     sprite_animation_system(&mut world, 0.05);
     assert_eq!(frame_of(&world, entity), 2);
     sprite_animation_system(&mut world, 0.1);
@@ -222,7 +214,6 @@ fn phase_offsets_the_start_frame() {
         [64, 16],
     );
 
-    // phase 0.2s at 10 fps -> frame 2 immediately.
     sprite_animation_system(&mut world, 0.0);
     assert_eq!(frame_of(&world, entity), 2);
 }

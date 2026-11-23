@@ -172,11 +172,8 @@ impl<'a> BatchUploader<'a> {
         unsafe { device.bind_image_memory(image, memory, 0) }
             .context("BatchUploader: bind image memory")?;
 
-        // Staging buffer for the base mip — suballocated from the staging arena
-        // using 256-byte alignment (matching optimalBufferCopyOffsetAlignment).
         let (staging, staging_offset) = self.staging_arena.stage(self.context, pixels, 256)?;
 
-        // UNDEFINED -> TRANSFER_DST_OPTIMAL (all mip levels).
         barrier2(
             &self.sync2,
             self.cmd,
@@ -192,7 +189,6 @@ impl<'a> BatchUploader<'a> {
             },
         );
 
-        // Copy staging -> mip 0.
         let copy = vk::BufferImageCopy::default()
             .buffer_offset(staging_offset)
             .image_subresource(
@@ -213,11 +209,6 @@ impl<'a> BatchUploader<'a> {
             );
         }
 
-        // Generate mip chain (mirrors buffer.rs but uses the shared cmd).
-        //
-        // When `pixels` carries a fully baked chain (KTX2), upload the remaining
-        // levels straight from staging — baked compressed blocks survive and no
-        // blit feature is required. Level 0 was copied above.
         let has_all_mips = mip_levels > 1
             && mip_chain_byte_size(format, width, height, mip_levels)
                 .is_some_and(|total| pixels.len() >= total);
@@ -264,9 +255,6 @@ impl<'a> BatchUploader<'a> {
                 },
             );
         } else if mip_levels > 1 {
-            // Blitting is a format feature, not a given: BC7/ASTC/ETC2 often
-            // lack BLIT_SRC/BLIT_DST (notably on mobile), so fail loudly rather
-            // than record a command the driver rejects.
             anyhow::ensure!(
                 crate::buffer::format_supports_blit(self.context, format),
                 "BatchUploader: {format:?} cannot be blitted on this device to generate mips; \
@@ -333,7 +321,6 @@ impl<'a> BatchUploader<'a> {
                             .filter(vk::Filter::LINEAR),
                     );
                 }
-                // src level done -> shader read
                 barrier2(
                     &self.sync2,
                     self.cmd,
@@ -365,7 +352,6 @@ impl<'a> BatchUploader<'a> {
                     );
                 }
             }
-            // final level -> shader read
             barrier2(
                 &self.sync2,
                 self.cmd,
@@ -381,8 +367,6 @@ impl<'a> BatchUploader<'a> {
                 },
             );
         } else if mip_levels == 1 {
-            // single mip: dst -> shader  read  (the baked-chain path above already
-            // transitioned every level, so it must not fall through to here)
             barrier2(
                 &self.sync2,
                 self.cmd,
@@ -427,9 +411,6 @@ impl<'a> BatchUploader<'a> {
             .context("BatchUploader: end command buffer")?;
         self.started = false;
 
-        // Unmap all staging chunks BEFORE queue submission.
-        // Critical for software rasterizers (llvmpipe) to ensure host writes
-        // are properly synchronized before vkCmdCopyBuffer / vkCmdCopyBufferToImage execute.
         self.staging_arena.unmap_all(device);
 
         let fence = unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }
@@ -443,7 +424,6 @@ impl<'a> BatchUploader<'a> {
         unsafe { device.destroy_fence(fence, None) };
         unsafe { device.free_command_buffers(self.command_pool, &[self.cmd]) };
 
-        // Clean up all staging chunks now that GPU transfer is complete.
         self.staging_arena.destroy(device);
         Ok(())
     }
@@ -451,10 +431,6 @@ impl<'a> BatchUploader<'a> {
 
 impl<'a> Drop for BatchUploader<'a> {
     fn drop(&mut self) {
-        // Safety: if `finish` was called, `started` is false and the command
-        // buffer has already been freed. If the uploader was dropped without
-        // finishing (early return on error), we must release the command
-        // buffer + staging resources ourselves so nothing leaks.
         let device = &self.context.device;
         if self.started {
             unsafe {

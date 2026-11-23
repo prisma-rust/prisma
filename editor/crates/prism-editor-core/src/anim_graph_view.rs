@@ -3118,7 +3118,6 @@ mod state_tests {
         rename_state(&mut doc, 1, " Sprint ").expect("renames");
         assert_eq!(doc["states"][1]["name"], "Sprint");
         assert_eq!(doc["transitions"][0]["to"], "Sprint");
-        // Any state (`*`) is not affected, nor does it mistakenly hurt other states.
         assert_eq!(doc["transitions"][1]["from"], "*");
         assert_eq!(doc["transitions"][1]["to"], "Idle");
     }
@@ -3522,7 +3521,6 @@ mod weight_tests {
         set_graph_input_bone_mask(&mut doc, "stack", 1, &[]).expect("clears");
         assert!(doc["nodes"][2]["inputs"][1].get("bone_mask").is_none());
         assert_eq!(doc["nodes"][2]["inputs"][1]["weight"], 0.5);
-        // String connections never had a mask, clearing is a no-op.
         set_graph_input_bone_mask(&mut doc, "stack", 0, &[]).expect("no-op");
         assert_eq!(doc["nodes"][2]["inputs"][0], json!("a"));
     }

@@ -128,8 +128,6 @@ fn moving_from_a_row_into_its_submenu_keeps_the_branch_open() {
     hover(&mut state, row);
     assert_eq!(state.menu.submenu_branch(), ["Panels"].as_slice());
 
-    // Walk in one-pixel steps from the row across the panel's padding into the
-    // panel's first item. No frame may drop the branch on the way.
     let row_rect = rect(&state, row);
     let item = rect(
         &state,

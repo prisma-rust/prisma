@@ -1,12 +1,6 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use glam::Quat;
 use prism_ecs::World;
-
-// ── helpers ───────────────────────────────────────────────────────
 
 /// Build RSCN bytes (v2 format from a simple description
 ///
@@ -17,23 +11,19 @@ use prism_ecs::World;
 fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RSCN");
-    buf.push(2); // version 2 (v2 = skybox support in header + per-entity)
+    buf.push(2);
     buf.extend_from_slice(&(entities.len() as u32).to_le_bytes());
 
-    // v2 header: env_len(2) + env_path empty  = no skybox at header level).
     buf.extend_from_slice(&0u16.to_le_bytes());
 
     for e in entities {
-        // Name.
         let name_bytes = e.name.as_bytes();
         buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
         buf.extend_from_slice(name_bytes);
 
-        // Parent.
         let parent: i32 = e.parent.map(|p| p as i32).unwrap_or(-1);
         buf.extend_from_slice(&parent.to_le_bytes());
 
-        // Transform.
         for &v in &e.position {
             buf.extend_from_slice(&v.to_le_bytes());
         }
@@ -44,7 +34,6 @@ fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
             buf.extend_from_slice(&v.to_le_bytes());
         }
 
-        // Flags.
         let mut flags: u8 = 0;
         if e.has_mesh {
             flags |= FLAG_HAS_MESH;
@@ -63,21 +52,18 @@ fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
         }
         buf.push(flags);
 
-        // Mesh path.
         if e.has_mesh {
             let path_bytes = e.mesh_path.as_bytes();
             buf.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
             buf.extend_from_slice(path_bytes);
         }
 
-        // Material path.
         if e.has_material {
             let path_bytes = e.material_path.as_bytes();
             buf.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
             buf.extend_from_slice(path_bytes);
         }
 
-        // Light.
         if e.has_light {
             buf.push(e.light_type);
             for &v in &e.light_color {
@@ -89,14 +75,12 @@ fn make_rscn(entities: &[RscnEntity]) -> Vec<u8> {
             buf.extend_from_slice(&e.light_outer_cone.to_le_bytes());
         }
 
-        // Camera.
         if e.has_camera {
             buf.extend_from_slice(&e.camera_fov.to_le_bytes());
             buf.extend_from_slice(&e.camera_near.to_le_bytes());
             buf.extend_from_slice(&e.camera_far.to_le_bytes());
         }
 
-        // Skybox.
         if e.has_skybox {
             let path_bytes = e.skybox_hdr_path.as_bytes();
             buf.extend_from_slice(&(path_bytes.len() as u16).to_le_bytes());
@@ -162,8 +146,6 @@ fn simple_entity(name: &'static str, parent: Option<u32>) -> RscnEntity {
     }
 }
 
-// ── parse_rscn tests ────────────────────────────────────────────
-
 #[test]
 fn parse_single_root() {
     let e = simple_entity("Root", None);
@@ -223,7 +205,7 @@ fn parse_with_mesh_and_material() {
 fn parse_with_light() {
     let e = RscnEntity {
         has_light: true,
-        light_type: 0, // directional
+        light_type: 0,
         light_color: [1.0, 0.95, 0.9],
         light_intensity: 3.0,
         ..simple_entity("Sun", None)
@@ -279,8 +261,6 @@ fn parse_rejects_bad_version() {
     assert!(parse_rscn(&data).is_err());
 }
 
-// ── spawn_from_parsed tests ─────────────────────────────────────
-
 #[test]
 fn spawn_single_root_entity() {
     let e = simple_entity("Root", None);
@@ -311,7 +291,6 @@ fn spawn_parent_child_hierarchy() {
     assert_eq!(inst.all_entities.len(), 2);
     assert_eq!(inst.root_entities.len(), 1);
 
-    // Check hierarchy.
     let child_entity = inst.all_entities[1];
     assert!(world.get::<Parent>(child_entity).is_some());
     assert_eq!(
@@ -367,7 +346,6 @@ fn spawn_has_world_transform() {
     let inst = loader.spawn_from_parsed(&mut world, &parsed, sid).unwrap();
 
     let wt = world.get::<LocalToWorld>(inst.all_entities[0]).unwrap();
-    // Identity model  matrix
     assert_eq!(wt.0.col(0)[0], 1.0);
     assert_eq!(wt.0.col(3)[3], 1.0);
 }
@@ -414,7 +392,7 @@ fn spawn_with_material_component() {
 fn spawn_with_directional_light() {
     let e = RscnEntity {
         has_light: true,
-        light_type: 0, // directional
+        light_type: 0,
         light_color: [1.0, 1.0, 1.0],
         light_intensity: 3.0,
         ..simple_entity("Sun", None)
@@ -436,7 +414,7 @@ fn spawn_with_directional_light() {
 fn spawn_with_point_light() {
     let e = RscnEntity {
         has_light: true,
-        light_type: 1, // point
+        light_type: 1,
         light_color: [1.0, 0.0, 0.0],
         light_intensity: 500.0,
         light_range: 30.0,
@@ -459,7 +437,7 @@ fn spawn_with_point_light() {
 fn spawn_with_spot_light() {
     let e = RscnEntity {
         has_light: true,
-        light_type: 2, // spot
+        light_type: 2,
         light_color: [0.9, 0.9, 1.0],
         light_intensity: 200.0,
         light_range: 50.0,
@@ -520,8 +498,6 @@ fn spawn_multiple_roots() {
 
 #[test]
 fn spawn_rejects_dead_parent() {
-    // entity  with parent index  beyond the entity  array
-    // This is a malformed scene — the loader checks bounds.
     let child = RscnEntity {
         parent: Some(999),
         ..simple_entity("Orphan", None)
@@ -534,16 +510,13 @@ fn spawn_rejects_dead_parent() {
     let sid = SceneAssetId::generate();
     let inst = loader.spawn_from_parsed(&mut world, &parsed, sid).unwrap();
 
-    // The orphan entity should exist but have no Parent component
     assert_eq!(inst.all_entities.len(), 1);
     assert!(world.get::<Parent>(inst.all_entities[0]).is_none());
-    // It should be counted as a root since it has no Parent.
     assert_eq!(inst.root_entities.len(), 1);
 }
 
 #[test]
 fn spawn_camera_emits_renderer_and_data_components() {
-    // Camera at [1,2,3], identity rotation (looks down −Z), 60° field of view
     let e = RscnEntity {
         position: [1.0, 2.0, 3.0],
         has_camera: true,
@@ -562,7 +535,6 @@ fn spawn_camera_emits_renderer_and_data_components() {
 
     let entity = inst.all_entities[0];
 
-    // Data component read by scene::systems::camera::collect_camera).
     let data = world
         .get::<Camera>(entity)
         .expect("scene::components::Camera should be present");
@@ -570,16 +542,12 @@ fn spawn_camera_emits_renderer_and_data_components() {
     assert_eq!(data.near, 0.1);
     assert_eq!(data.far, 1000.0);
 
-    // Free-fly controller (yaw/pitch derived from entity quaternion
-    // Position lives on the sibling LocalTransform, not on the controller.
     let ctrl = world
         .get::<FlyCameraController>(entity)
         .expect("FlyCameraController should be present");
-    // Identity quaternion -> forward (0,0,-1) -> yaw=0, pitch=0.
     assert!(ctrl.yaw.abs() < 1e-5, "yaw={}", ctrl.yaw);
     assert!(ctrl.pitch.abs() < 1e-5);
 
-    // Position is the LocalTransform translation
     let lt = world
         .get::<LocalTransform>(entity)
         .expect("LocalTransform should be present");
@@ -588,10 +556,7 @@ fn spawn_camera_emits_renderer_and_data_components() {
 
 #[test]
 fn spawn_camera_yaw_from_quaternion() {
-    // 90° rotation about +Y: quaternion (0, sin45, 0, cos45). A −Z forward
-    // rotated +90° about Y points to −X, which FlyCamera expresses as
-    // yaw=π/2 (forward = [-sin(π/2), 0, -cos(π/2)] = [-1, 0, 0]).
-    let sqrt2_inv = std::f32::consts::FRAC_PI_4.sin(); // sin(45°)
+    let sqrt2_inv = std::f32::consts::FRAC_PI_4.sin();
     let e = RscnEntity {
         rotation: [0.0, sqrt2_inv, 0.0, sqrt2_inv],
         has_camera: true,
@@ -612,7 +577,6 @@ fn spawn_camera_yaw_from_quaternion() {
     let ctrl = world
         .get::<FlyCameraController>(inst.all_entities[0])
         .expect("FlyCameraController should be present");
-    // `atan2` only gives value between ±π; this orientation yaw is π/2.
     assert!(
         (ctrl.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-4,
         "yaw={}",
@@ -620,8 +584,6 @@ fn spawn_camera_yaw_from_quaternion() {
     );
     assert!(ctrl.pitch.abs() < 1e-5);
 }
-
-// ── RSCN v4 ─────────────────────────────────────────────────────
 
 #[test]
 fn load_rscn_v4_applies_components_and_hierarchy() {
@@ -661,7 +623,6 @@ fn load_rscn_v4_applies_components_and_hierarchy() {
                 }
             ]
         }"#;
-    // Go through migration funnel: v1 document has no entity id, directly `from_slice` will by design report wrong.
     let scene = prism_scene::SceneJson::parse(std::str::from_utf8(json).unwrap()).unwrap();
     let mut registry = crate::scene::ComponentRegistry::new();
     crate::scene::register_builtin_components(&mut registry);
@@ -676,8 +637,6 @@ fn load_rscn_v4_applies_components_and_hierarchy() {
     assert_eq!(inst.all_entities.len(), 3);
     assert_eq!(inst.root_entities.len(), 2);
 
-    // RSCN stores entities parent-first, but sibling/root order is not the
-    // authoring order. Resolve by name instead of assuming indices.
     let find = |name: &str| {
         *inst
             .all_entities
@@ -805,8 +764,6 @@ fn load_json_mesh_without_material_derives_mesh_ref() {
     assert_eq!(items[0].material, None);
 }
 
-// ── integration via load_and_spawn ──────────────────────────────
-
 #[test]
 fn load_from_raw_cooked() {
     let e = simple_entity("E", None);
@@ -831,8 +788,6 @@ fn load_from_raw_cooked() {
 #[test]
 #[ignore]
 fn load_committed_default_rscn() {
-    // search  both the repo root and the crate dir so the test works
-    // regardless of which directory `cargo test` was invoked from.
     let candidates = [
         std::path::PathBuf::from("assets/scenes/default.rscn"),
         std::path::PathBuf::from("../../assets/scenes/default.rscn"),
@@ -853,25 +808,18 @@ fn load_committed_default_rscn() {
         .load_and_spawn(&mut world, SceneSource::CookedFile(path), &registry)
         .expect("default.rscn should parse");
 
-    // 6 entities: 1 skybox + 1 camera  + 1 directional light source  + 3 point lights.
     assert_eq!(inst.all_entities.len(), 6);
 
-    // Exactly one camera  entity  with a FlyCameraController + camera  data
-    // Component + LocalTransform (position lives on the transform
     let cameras: Vec<_> = world.query::<Camera>().collect();
     assert_eq!(cameras.len(), 1, "expected exactly one camera");
 
-    // The camera  should be positioned at [0, 2.5, 18] (per default.scene.json).
     let cam_entity = cameras[0].0;
     let lt = world
         .get::<LocalTransform>(cam_entity)
         .expect("camera should have a LocalTransform");
     assert_eq!(lt.position, [0.0, 2.5, 18.0].into());
-    // And it should carry a free-fly controller.
     assert!(world.get::<FlyCameraController>(cam_entity).is_some());
 }
-
-// ── `.scene.json` parent = entity id (not array index) ─────────────
 
 /// Paste `.scene.json` text directly into world, return (real instance, world).
 fn spawn_json_text(json: &str) -> (SceneInstance, World) {
@@ -893,7 +841,6 @@ fn spawn_json_text(json: &str) -> (SceneInstance, World) {
 
 #[test]
 fn json_parent_ids_are_resolved_not_used_as_array_indices() {
-    // Array order is [child, root], but parent reference is id 9 (bit set below marker 1).
     let json = r#"{
         "version": 3,
         "entities": [
@@ -918,7 +865,6 @@ fn json_parent_ids_are_resolved_not_used_as_array_indices() {
 
 #[test]
 fn json_parent_chain_follows_ids_after_reordering() {
-    // root(3) ← mid(7) ← leaf(1): three layers strung by id, not close to array order.
     let json = r#"{
         "version": 3,
         "entities": [

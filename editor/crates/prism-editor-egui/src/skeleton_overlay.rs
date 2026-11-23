@@ -38,7 +38,6 @@ pub fn bone_overlay(
     let entity_world = glam::Mat4::from_cols_array_2d(local_to_world);
     let mut joints = Vec::with_capacity(count);
     for index in 0..count {
-        // world = entity_local_to_world * palette * bind, bind = inverse_bind^-1.
         let bind = glam::Mat4::from_cols_array_2d(&inverse_binds[index]).inverse();
         let world = entity_world * glam::Mat4::from_cols_array_2d(&palette[index]) * bind;
         let position = world.w_axis.truncate();
@@ -85,7 +84,6 @@ mod tests {
     #[test]
     fn a_rest_pose_palette_puts_every_joint_on_its_bind_position() {
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
-        // bind at +1m with identity palette places the joint at (1, 0, 0).
         let overlay = bone_overlay(
             &identity_palette(2),
             &[None, Some(0)],
@@ -123,7 +121,6 @@ mod tests {
     #[test]
     fn mismatched_inputs_and_broken_matrices_are_dropped_instead_of_panicking() {
         let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
-        // Shorter palette clamps to the shortest input length.
         let overlay = bone_overlay(
             &identity_palette(1),
             &[None, Some(0)],
@@ -133,7 +130,6 @@ mod tests {
         assert_eq!(overlay.joints.len(), 1);
         assert!(overlay.segments.is_empty());
 
-        // NaN joints are excluded from bone segments.
         let mut palette = identity_palette(2);
         palette[1][3][1] = f32::NAN;
         let overlay = bone_overlay(

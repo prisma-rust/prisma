@@ -74,19 +74,16 @@ pub fn sync_audio_sources(engine: &mut AudioEngine, world: &mut World) {
         if src.playing {
             if let Some(ref data) = src.data {
                 if src.handle.is_none() {
-                    // Start new playback.
                     let handle = engine.play(data);
                     if handle.is_valid() {
                         engine.set_volume(&handle, src.volume);
                         src.handle = Some(handle);
                     }
                 } else if let Some(ref handle) = src.handle {
-                    // Update volume on the existing playback.
                     engine.set_volume(handle, src.volume);
                 }
             }
         } else if let Some(handle) = src.handle.take() {
-            // Was playing, now stopped.
             engine.stop(&handle);
         }
     }

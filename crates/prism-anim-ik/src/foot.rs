@@ -155,8 +155,6 @@ impl FootPlacement {
             applied: false,
         };
         let joint_count = skeleton.joint_count();
-        // The upper bone of each leg hangs from the pelvis; the pelvis itself is
-        // never rotated here (both legs share it and would be applied twice).
         let legs_hang_from_hips = legs.iter().all(|leg| {
             leg.is_valid_for(joint_count) && skeleton.joints()[leg.upper].parent == Some(hips)
         });
@@ -180,7 +178,6 @@ impl FootPlacement {
         let world = skeleton.world_matrices(pose);
         let hip_position = ankle(&world, hips);
 
-        // 1. Resolve each foot against the ground and smooth its target.
         let mut targets = [Vec3::ZERO; 2];
         for index in 0..2 {
             let current = ankle(&world, legs[index].end);
@@ -196,8 +193,6 @@ impl FootPlacement {
                     up
                 };
                 let height = (hit.point - current).dot(up);
-                // Anything above `max_step_up` is a wall/ceiling, and anything
-                // below `max_step_down` is a hole: both unplant the foot.
                 if height > settings.max_step_up.max(0.0) {
                     return None;
                 }
@@ -225,13 +220,6 @@ impl FootPlacement {
             targets[index] = state.position;
         }
 
-        // 2. Pelvis correction: lower it just enough for the most over-stretched
-        // leg. Raising the pelvis would only put planted feet further out of
-        // reach, so a foot that is above the stance is left to the IK (the knee
-        // simply bends further).
-        // Measure against the un-adjusted pelvis, not the pose we already moved:
-        // otherwise the correction would be recomputed as zero as soon as the
-        // previous frame's drop made the leg reach and the pelvis would bounce.
         let hip_reference = hip_position - up * self.applied_pelvis;
         let mut required_drop = 0.0f32;
         for index in 0..2 {
@@ -259,7 +247,6 @@ impl FootPlacement {
             self.applied_pelvis = pelvis_offset;
         }
 
-        // 3. Bend each leg onto its target.
         for index in 0..2 {
             let weight = self.feet[index].weight;
             if weight <= 0.0 {

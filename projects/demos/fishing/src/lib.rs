@@ -12,30 +12,20 @@
 
 pub mod game;
 
-// ===========================================================================
-// Player form
-// ===========================================================================
 
 /// Build app: engine loads lake scene from `assets/scenes.pak`, this project registers gameplay systems.
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
-    // Audio subsystem (`prism-app/audio`, feature default off, enabled in project `[features] player`
-    // ): one-shot sounds (hook splash) go through `GameWorld::play_sound`, need mixer.
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio);
 
     app.add_game_system::<game::world::LakeWorld, _>("game::world", game::world::tick)
-        // `fishing::tick` reads the boat transform, so the boat must run first. The
-        // preview module calls the same ticks in this order; keep the two in sync.
         .add_game_system::<game::boat::BoatState, _>("game::boat", game::boat::tick)
         .add_game_system::<game::fishing::FishingState, _>("game::fishing", game::fishing::tick);
     app
 }
 
-// ===========================================================================
-// Preview module loaded by editor
-// ===========================================================================
 
 #[cfg(feature = "preview-module")]
 mod preview {
@@ -66,8 +56,6 @@ mod preview {
         game::boat::tick(&mut state.boat, world, dt);
         game::fishing::tick(&mut state.fishing, world, dt);
         if first_tick {
-            // First tick spawns all texture layers from `data/lake_layers.json`:
-            // this log is most direct evidence that "project code actually ran".
             let layers = state
                 .world
                 .as_ref()
@@ -85,9 +73,6 @@ mod preview {
     }
 }
 
-// ===========================================================================
-// Android JNI entry point
-// ===========================================================================
 
 /// Entry called after GameActivity loads this library.
 ///

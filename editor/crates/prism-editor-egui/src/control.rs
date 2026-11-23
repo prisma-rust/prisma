@@ -159,7 +159,6 @@ impl ControlServer {
             .name("editor-control".to_owned())
             .spawn(move || {
                 for stream in listener.incoming() {
-                    // `Drop` sets flag then connects to this port, to wake up blocked accept here.
                     if thread_stop.load(Ordering::Relaxed) {
                         break;
                     }
@@ -193,8 +192,6 @@ impl ControlServer {
 impl Drop for ControlServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Wake up accept thread so listener truly closes (only deleting port file leaves port bound,
-        // bound, reopening old connections queue into unprocessed queue).
         let _ = TcpStream::connect(self.address);
         std::fs::remove_file(&self.port_file).ok();
     }
@@ -254,7 +251,6 @@ fn serve(stream: TcpStream, tx: &Sender<ControlRequest>) {
         if tx.send(request).is_err() {
             return;
         }
-        // UI thread replies within 5s max; timeout means editor stuck / not running UI loop.
         let response = reply_rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap_or_else(|_| failed(Kind::NotReady, "editor did not answer in 5s"));
@@ -385,7 +381,6 @@ mod tests {
         let server = ControlServer::start(&dir).unwrap();
         let address = server.address;
         drop(server);
-        // accept thread exits only after receiving wake connection; give it a short time.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             if TcpStream::connect(address).is_err() {

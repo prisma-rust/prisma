@@ -22,21 +22,17 @@ fn builder_creates_resources() {
 
 #[test]
 fn settings_default_is_high_precision_gbuffer() {
-    // P0 default flipped to `true`: world-space normals from normal
-    // maps need Rgba16F precision in GBuffer A. See Plan §4.3.
     let s = RenderSettings::default();
     assert!(s.gbuffer_high_precision);
     assert!(!s.ray_tracing_enabled);
     assert_eq!(s.ray_query_resolution_scale, 0.5);
     #[cfg(feature = "sharc")]
     assert_eq!(s.sharc_capacity, crate::DEFAULT_SHARC_CAPACITY);
-    // Without the SHARC feature no cache is ever allocated.
     #[cfg(not(feature = "sharc"))]
     assert_eq!(s.sharc_capacity, 0);
 }
 
 fn draw_item(queue: i32, eye_distance_x: f32) -> DrawItem {
-    // Use a model matrix with only translation, `world_position()` reads x-axis position.
     let mut model = [[0.0f32; 4]; 4];
     for (i, column) in model.iter_mut().enumerate() {
         column[i] = 1.0;
@@ -87,9 +83,7 @@ fn draw_state_defaults_to_opaque() {
 fn sort_draw_items_orders_opaque_first_then_transparent_back_to_front() {
     let eye = [0.0, 0.0, 0.0];
     let mut items = vec![
-        // Transparent segment: near drawn first, after sort must become far -> near.
         draw_item(prism_gfx::RenderQueue::TRANSPARENT, 1.0),
-        // Non-transparent but larger queue must be placed after transparent segment.
         draw_item(prism_gfx::RenderQueue::ALPHA_TEST, 0.0),
         draw_item(prism_gfx::RenderQueue::GEOMETRY, 0.0),
         draw_item(prism_gfx::RenderQueue::TRANSPARENT, 9.0),
@@ -108,7 +102,6 @@ fn sort_draw_items_orders_opaque_first_then_transparent_back_to_front() {
             prism_gfx::RenderQueue::TRANSPARENT,
         ]
     );
-    // Transparent segment sorted by distance far to near (x = 9 before x = 1).
     assert_eq!(items[3].world_position()[0], 9.0);
     assert_eq!(items[4].world_position()[0], 1.0);
 }
@@ -121,32 +114,27 @@ fn sort_draw_items_is_stable_for_equal_queues() {
         draw_item(prism_gfx::RenderQueue::GEOMETRY, 1.0),
     ];
     sort_draw_items(&mut items, eye);
-    // Non-transparent segment not re-sorted by distance, keeps submit order.
     assert_eq!(items[0].world_position()[0], 5.0);
     assert_eq!(items[1].world_position()[0], 1.0);
 }
 
 #[test]
 fn lazy_allocation_requires_a_pure_transient_attachment() {
-    // ForwardPass color: also STORAGE, so it can never be lazy.
     assert!(!lazy_allocation_allowed(
         vk::ImageUsageFlags::COLOR_ATTACHMENT
             | vk::ImageUsageFlags::INPUT_ATTACHMENT
             | vk::ImageUsageFlags::STORAGE
     ));
-    // Forward depth + shadow map: SAMPLED by later passes, so never lazy.
     assert!(!lazy_allocation_allowed(
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
             | vk::ImageUsageFlags::INPUT_ATTACHMENT
             | vk::ImageUsageFlags::SAMPLED
     ));
-    // Storage images can not be lazy either.
     assert!(!lazy_allocation_allowed(
         vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED
     ));
-    // A pure transient attachment (write-only, discarded) may be lazy.
     assert!(lazy_allocation_allowed(
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT
     ));
@@ -215,7 +203,6 @@ fn graph_precomputes_and_caches_pass_edges_and_last_writers() {
     builder.add_pass(Box::new(pass1));
     let mut graph = builder.build();
 
-    // Verify pass_edges has precomputed buckets
     assert_eq!(graph.pass_edges.len(), 2);
     assert_eq!(graph.pass_edges[0].len(), 1);
     assert_eq!(graph.pass_edges[0][0].pass_idx, 0);
@@ -230,7 +217,6 @@ fn graph_precomputes_and_caches_pass_edges_and_last_writers() {
     assert_eq!(graph.pass_edges[1][1].kind, EdgeKind::Write);
     assert_eq!(graph.pass_edges[1][1].usage.handle, res_b);
 
-    // Verify last_writers
     assert_eq!(graph.last_writers.len(), 2);
     assert_eq!(
         graph.last_writers.get(&res_a).unwrap().access,
@@ -241,7 +227,6 @@ fn graph_precomputes_and_caches_pass_edges_and_last_writers() {
         vk::AccessFlags::COLOR_ATTACHMENT_WRITE
     );
 
-    // Now test add_pass updates precomputed cache
     let pass2 = Box::new(TestPass {
         name: "Pass2",
         reads: vec![ResourceUsage {
@@ -251,7 +236,7 @@ fn graph_precomputes_and_caches_pass_edges_and_last_writers() {
             layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         }],
         writes: vec![ResourceUsage {
-            handle: res_a, // writes res_a again, updating last_writers
+            handle: res_a,
             access: vk::AccessFlags::TRANSFER_WRITE,
             stage: vk::PipelineStageFlags::TRANSFER,
             layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -264,7 +249,6 @@ fn graph_precomputes_and_caches_pass_edges_and_last_writers() {
     assert_eq!(graph.pass_edges[2][0].pass_idx, 2);
     assert_eq!(graph.pass_edges[2][1].pass_idx, 2);
 
-    // last_writers for res_a should now reflect Pass2
     assert_eq!(
         graph.last_writers.get(&res_a).unwrap().access,
         vk::AccessFlags::TRANSFER_WRITE
@@ -290,7 +274,6 @@ fn graph_resources_clear_frame_preserves_persistent_resources() {
         },
     );
 
-    // Simulate per-frame published data
     resources.set_image_view(handle, vk::ImageView::null());
     resources.set_image(handle, vk::Image::null());
     resources.set_param(handle, 123);
@@ -301,9 +284,7 @@ fn graph_resources_clear_frame_preserves_persistent_resources() {
 
     resources.clear_frame();
 
-    // Persistent resources table must be preserved
     assert!(resources.resources.contains_key(&handle));
-    // Per-frame items must be cleared
     assert!(resources.published_view(handle).is_none());
     assert!(resources.published_image(handle).is_none());
     assert_eq!(resources.param(handle), None);
@@ -311,17 +292,14 @@ fn graph_resources_clear_frame_preserves_persistent_resources() {
 
 #[test]
 fn clip_bounds_normalises_and_disables_degenerate_rects() {
-    // Author can write corners in any order.
     assert_eq!(
         clip_bounds(true, [10.0, 20.0, -5.0, 4.0]),
         [-5.0, 4.0, 10.0, 20.0]
     );
-    // Disabled / non-finite / zero area → no clip (just toggled on before rectangle filled, will not hide sprite).
     assert_eq!(clip_bounds(false, [0.0, 0.0, 8.0, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [0.0, 0.0, f32::NAN, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [4.0, 0.0, 4.0, 8.0]), NO_CLIP);
     assert_eq!(clip_bounds(true, [0.0, 0.0, 0.0, 0.0]), NO_CLIP);
-    // Half-plane style clip (reflection below water surface) remains valid: only `max < min` is wrong.
     let below = clip_bounds(true, [-1.0e4, -1.0e4, 1.0e4, 12.0]);
     assert_eq!(below, [-1.0e4, -1.0e4, 1.0e4, 12.0]);
     assert!(below[2] >= below[0] && below[3] >= below[1]);
@@ -342,7 +320,6 @@ fn internal_extent_derives_and_clamps() {
             height: 360
         })
     );
-    // Only width given: height derived by window ratio (640 / (2000/1125) = 360).
     assert_eq!(
         internal_extent(swapchain, [640, 0]),
         Some(vk::Extent2D {
@@ -350,7 +327,6 @@ fn internal_extent_derives_and_clamps() {
             height: 360
         })
     );
-    // Empty window cannot compute target of size 0.
     let tiny = vk::Extent2D {
         width: 0,
         height: 0,
@@ -377,14 +353,12 @@ fn post_destination_centres_an_integer_upscale() {
     assert_eq!(stretched.extent.width, 2000);
     assert_eq!(stretched.extent.height, 1125);
 
-    // min(2000/640, 1125/360) = min(3.125, 3.125) → 3x, 1920x1080, centered.
     let integer = post_destination(swapchain, internal, InternalScaleMode::Integer);
     assert_eq!(integer.extent.width, 1920);
     assert_eq!(integer.extent.height, 1080);
     assert_eq!(integer.offset.x, 40);
     assert_eq!(integer.offset.y, 22);
 
-    // When internal resolution larger than window, no 0x: degenerates to 1x centered crop.
     let oversized = post_destination(
         swapchain,
         vk::Extent2D {
@@ -455,14 +429,12 @@ fn mobile_upscaler_modes_parse_and_classify_correctly() {
     assert!(MobileUpscaler::Sgsr2.uses_internal_resolution());
     assert!(MobileUpscaler::ArmAsr.uses_internal_resolution());
     assert!(MobileUpscaler::Dlss.uses_internal_resolution());
-    // Fsr placeholder behaves identically to Off.
     assert!(!MobileUpscaler::Off.uses_internal_resolution());
     assert!(!MobileUpscaler::Fsr.uses_internal_resolution());
 }
 
 #[test]
 fn sprite_lights_are_sorted_by_strength_and_truncated() {
-    // #611: 2D light table fixed 16 entries, overflow drops weakest by "intensity × brightness".
     let mut lights: Vec<SpriteLight> = (0..SPRITE_LIGHT_MAX + 4)
         .map(|index| {
             SpriteLight::point(
@@ -473,14 +445,11 @@ fn sprite_lights_are_sorted_by_strength_and_truncated() {
             )
         })
         .collect();
-    // An ambient light darker than all point lights: must not squeeze into top 16.
     lights.push(SpriteLight::ambient([1.0, 1.0, 1.0], 0.01));
     trim_sprite_lights(&mut lights);
 
     assert_eq!(lights.len(), SPRITE_LIGHT_MAX);
-    // Strongest one 20 stays at very front.
     assert_eq!(lights[0].position_range[3], 20.0);
-    // Weakest 0.01 ambient dropped; min point light now is 5.0.
     assert!(lights.iter().all(|light| light.position_range[3] >= 5.0));
 }
 
@@ -507,7 +476,6 @@ fn sprite_light_constructors_pack_the_shader_layout() {
         "Stride is 3 float4s"
     );
 
-    // Direction will be normalized, zero vector falls back to "downward".
     let zero = SpriteLight::directional([0.0, 0.0], [1.0; 3], 1.0);
     assert_eq!(zero.direction[0..2], [0.0, -1.0]);
 }

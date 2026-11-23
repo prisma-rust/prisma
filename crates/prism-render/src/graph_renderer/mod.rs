@@ -173,9 +173,6 @@ pub struct GraphRenderer {
     mesh_manager: RenderMeshManager,
     texture_manager: RenderTextureManager,
     material_manager: RenderMaterialManager,
-    // Owned for RAII; IBL cubemap + descriptor set are consumed via the
-    // Descriptor set handle stored in `forward_pass`. Explicitly destroyed
-    // in `destroy()` so the device handle is valid during cleanup.
     ibl: IblResources,
     /// Fingerprint of the active environment payload (`Some(None)` = empty IBL),
     /// used to skip redundant `device_wait_idle` + IBL rebuilds when switching
@@ -268,7 +265,6 @@ pub struct GraphRenderer {
     /// VRAM sub-allocator (#1030).
     suballocator: crate::suballocator::MemorySuballocator,
 
-    // ── last field ──────────────────────────────────────────────────
     /// Long-lived GPU session (device, command pool, descriptors, UBOs).
     ///
     /// **Must be the last field** — Rust drops struct fields in declaration
@@ -299,8 +295,6 @@ impl GraphRenderer {
         window_extensions: Vec<&str>,
         window: &dyn raw_window_handle::HasDisplayHandle,
         window_handle: &dyn raw_window_handle::HasWindowHandle,
-        // Window mode: IBL driven by scene `EnvironmentLighting` at load via `set_environment`
-        // driven; here ignores startup env_bytes (keeping engine "scene declarative lighting").
         _env_bytes: Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
         Self::new_with_vsync(window_extensions, window, window_handle, _env_bytes, true)
@@ -343,14 +337,8 @@ impl GraphRenderer {
         let swapchain = Swapchain::new_with_vsync(&context, window, window_handle, vsync)?;
         let color_format = swapchain.format.format;
 
-        // Build the GPU runtime: descriptor infrastructure, command pool,
-        // per-frame command buffers, and frame UBOs.  These survive swapchain
-        // recreation; the runtime is independent of scene-level resources.
         let runtime = RenderRuntime::new(context.clone(), swapchain.views.len() as u32)?;
 
-        // IBL: open screen/no lighting scene starts with cheap "in-screen empty IBL" (no CPU pre-convolution, ≈0ms).
-        // True positive IBL pre-convolution heavy built on demand when `set_environment` loads 3D scene with lighting.
-        // Descriptor set layout created once, ensuring pipeline layout stable when scene switches heavy IBL rebuild.
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout")?;
         let ibl = IblResources::new_empty(
@@ -402,13 +390,6 @@ impl GraphRenderer {
             ..Default::default()
         };
 
-        // Build graph with ShadowMapPass. Call setup() on the pass before
-        // adding it so it registers its shadow-map resource, then allocate the
-        // graph's Vulkan resources (the shadow map depth image) and fetch its
-        // Graph texture view for ForwardPass to sample
-        //
-        // `shadows` feature disabled: whole block not compiled; graph starts from empty open, ForwardPass's
-        // set 3 re-binds one 1×1 far depth dummy (descriptor layout unchanged, still able to pass validation layer).
         #[cfg(feature = "shadows")]
         let (mut graph, shadow_view) = {
             let mut shadow_pass = crate::shadow_map_pass::ShadowMapPass::new();
@@ -439,11 +420,6 @@ impl GraphRenderer {
             (graph, placeholders.shadow_view())
         };
 
-        // Create forward_pass and wire its resources: IBL set + shadow map table view +
-        // comparison sampler, bindless texture table, material SSBO, and the
-        // per-frame UBO buffers (one set0 descriptor set per frame-in-flight).
-        // ForwardPass is executed directly by GraphRenderer (it targets the
-        // swapchain, not a graph-managed resource).
         let frame_ubo_buffers: Vec<vk::Buffer> =
             runtime.frame_ubos.iter().map(|u| u.buffer).collect();
         let frame_ubo_stride = runtime
@@ -454,7 +430,6 @@ impl GraphRenderer {
         let bindless = texture_manager.bindless_mut();
         let materials_buffer = material_manager.buffer();
 
-        // Register the BRDF LUT in the bindless texture table.
         let brdf_handle = bindless
             .register(ibl.brdf_image_view())
             .context("register BRDF LUT into bindless table")?;
@@ -464,8 +439,6 @@ impl GraphRenderer {
         );
 
         let mut forward_pass = ForwardPass::new(color_format);
-        // Scene-level global illumination probe volume (SceneScope). Created before ForwardPass
-        // wiring so its descriptor set + layout can be borrowed (set 5).
         let scene_scope = SceneScope::new(context.clone()).context("SceneScope::new")?;
         forward_pass
             .set_resources(
@@ -486,11 +459,6 @@ impl GraphRenderer {
             )
             .context("ForwardPass: set_resources")?;
 
-        // ReSTIR GI pass (raster path, independent of the path tracer). It
-        // builds its own BLAS/TLAS from the draw list and traces secondary
-        // rays with ray queries, so it only exists when the device can do
-        // that; otherwise `gi_mode = Restir` falls back to the baked probe
-        // volume and the warning below says why.
         #[cfg(feature = "restir_gi")]
         let restir_gi_pass = if context.rt_caps.has_ray_query() {
             let mut pass = crate::restir_gi::RestirGiPass::new();
@@ -511,11 +479,6 @@ impl GraphRenderer {
             None
         };
 
-        // GTAO pass half-resolution screen-space ambient occlusion Runs after ForwardPass
-        // every frame and produces a double-buffered R8 AO texture the scene
-        // samples (1-frame latency) to attenuate IBL diffuse + specular.
-        //
-        // `gtao` feature disabled: whole block not compiled; set 4 re-binds 1x1 white (no occlusion) dummy.
         #[cfg(feature = "gtao")]
         let swapchain_extent = swapchain.extent;
         #[cfg(feature = "gtao")]
@@ -528,18 +491,12 @@ impl GraphRenderer {
              need AO please enable prism-render/gtao in project"
         );
 
-        // TAA resolve (#883). Always registered; `execute` is a no-op when
-        // `RenderSettings::taa` is false.
         let taa_pass =
             crate::taa::TaaPass::new(&context, swapchain.extent).context("TaaPass::new")?;
         #[cfg(feature = "anf")]
         let anf_pass = crate::anf::AnfPass::new(&context, swapchain.extent, swapchain.extent)
             .context("AnfPass::new")?;
 
-        // PostPass parameters: one descriptor set per swapchain image. The sets
-        // are picked by `image_index`, so allocating fewer than the swapchain
-        // has would make two images share a set and rewrite a descriptor the
-        // GPU may still be reading.
         let frame_count = swapchain.views.len() as u32;
         let mut post_pass = crate::post::PostPass::new(
             &context,
@@ -549,18 +506,10 @@ impl GraphRenderer {
         )
         .context("PostPass::new")?;
 
-        // AutoExposurePass meters the HDR image PostPass is about to tonemap and
-        // publishes the adapted luminance PostPass divides AUTO_EXPOSURE_KEY by.
-        // Registered ahead of PostPass so the ordering falls out of the graph.
         let auto_exposure = crate::auto_exposure::AutoExposurePass::new(&context, frame_count)
             .context("AutoExposurePass::new")?;
         post_pass.set_adapted_luminance(&context.device, auto_exposure.luminance_buffer());
 
-        // PathTracePass — real-time path tracing compute pass.
-        // Registered when hardware acceleration structures are supported;
-        // checks RenderSettings.render_mode internally to decide whether to
-        // dispatch. Scene geometry is uploaded later via set_geometry.
-        // Omitted entirely when `pathtrace` feature is disabled (building blocks, see DESIGN §12).
         #[cfg(feature = "pathtrace")]
         #[cfg(feature = "pathtrace")]
         let pt_pass = if context.rt_caps.acceleration_structure {
@@ -581,16 +530,9 @@ impl GraphRenderer {
             None
         };
 
-        // CRT debugger: uniformly render registered RenderTexture (engine-style).
         let rt_scheduler = crate::rt_scheduler::RenderTextureScheduler::new(&context);
 
-        // Register all passes into the graph in execution order.
-        // Shadow -> Scene -> GTAO -> RenderTextures -> PathTrace -> Resolve -> Post.
         graph.add_pass(Box::new(forward_pass));
-        // Startup path: sync per-swapchain-image slot bit count. `ForwardPass::execute`'s
-        // `ensure_target` builds framebuffer by `image_count`, `recreate_swapchain`
-        // only covers below one step extend heavy build --- first create must initialize inside here, otherwise `set_target` inside
-        // `idx >= image_count` guard will silently skip, forever cannot build framebuffer.
         if let Some(forward_pass) = graph.pass_mut::<ForwardPass>() {
             forward_pass.set_image_count(swapchain.views.len());
         }
@@ -606,17 +548,11 @@ impl GraphRenderer {
         graph.add_pass(Box::new(gtao_pass));
         #[cfg(feature = "anf")]
         graph.add_pass(Box::new(anf_pass));
-        // ReSTIR GI reads the forward G-buffer this frame and publishes the
-        // signal the forward pass samples on the next one.
         #[cfg(feature = "restir_gi")]
         if let Some(pass) = restir_gi_pass {
             graph.add_pass(Box::new(pass));
         }
         graph.add_pass(Box::new(rt_scheduler));
-        // SHaRC is a graph step, not a frame preamble: the trainer deposits
-        // radiance, the resolve collapses it, and only then does the tracer
-        // query it (repair spec §4 — no invisible training or resolve outside
-        // the graph).
         #[cfg(all(feature = "pathtrace", feature = "sharc"))]
         if let Some(pt) = &pt_pass {
             graph.add_pass(Box::new(pt.trainer()));
@@ -629,9 +565,6 @@ impl GraphRenderer {
         }
         #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
-        // The temporal resolve runs after the path tracer so it can consume the
-        // traced image and its guides in path-trace mode (#883 follow-up). In the
-        // raster path it still resolves the forward pass output.
         #[cfg(feature = "dlss")]
         let streamline =
             crate::streamline::StreamlineRuntime::try_init(&context).map(std::sync::Arc::new);
@@ -650,7 +583,6 @@ impl GraphRenderer {
         graph.add_pass(Box::new(auto_exposure));
         graph.add_pass(Box::new(post_pass));
 
-        // Per-pass GPU timing (#518): when device does not support timestamp is `None` (headless falls back to CPU wall clock).
         let telemetry = RenderTelemetry::new(&context, runtime.command_buffers.len())?;
 
         Ok(Self {
@@ -661,9 +593,6 @@ impl GraphRenderer {
             texture_manager,
             material_manager,
             ibl,
-            // No environment was requested yet. The first explicit
-            // `set_environment` must rebuild and queue the SHARC sky
-            // invalidation, even when it asks for the empty IBL again.
             env_fingerprint: None,
             env_source: None,
             ibl_has_pbr: false,
@@ -708,9 +637,6 @@ impl GraphRenderer {
             ),
         })
     }
-    // -------------------------------------------------------------------
-    // Public API
-    // -------------------------------------------------------------------
 
     pub fn context(&self) -> &VulkanContext {
         &self.runtime.context
@@ -824,8 +750,6 @@ impl GraphRenderer {
         target.transition_to_shader_read(&context, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
     }
 
-    // ── headless mode ──────────────────────────────────────────────
-
     /// Create a headless `GraphRenderer` — no window surface or swapchain.
     /// Useful for CI tests, dedicated servers, and offline asset baking.
     ///
@@ -911,11 +835,8 @@ impl GraphRenderer {
         let headless_fence = unsafe { context.device.create_fence(&fence_info, None) }
             .context("create headless frame fence")?;
 
-        // Runtime with 2 command buffers (minimal for headless ops).
         let runtime = RenderRuntime::new(context.clone(), 2)?;
 
-        // Headless mode still builds the full render graph so the
-        // graph's topology is validated even without a display.
         let resolver = RenderSettings::default().resolve_shadow(&context.rt_caps);
         let settings = RenderSettings {
             shadow_mode: resolver,
@@ -976,7 +897,6 @@ impl GraphRenderer {
             context.graphics_queue,
         )?;
 
-        // Graph: Shadow -> Scene -> GTAO -> PathTrace -> Post.
         #[cfg(feature = "shadows")]
         let (mut graph, shadow_view) = {
             let mut shadow_pass = crate::shadow_map_pass::ShadowMapPass::new();
@@ -1042,8 +962,6 @@ impl GraphRenderer {
             )
             .context("ForwardPass::set_resources (headless)")?;
 
-        // Same ReSTIR GI pass as the windowed path; the offscreen extent is
-        // resolved lazily from `ctx.render_extent` on the first dispatch.
         #[cfg(feature = "restir_gi")]
         let restir_gi_pass = if context.rt_caps.has_ray_query() {
             let mut pass = crate::restir_gi::RestirGiPass::new();
@@ -1061,9 +979,6 @@ impl GraphRenderer {
         };
 
         let frame_count = 2u32;
-        // Headless contexts do not enable `VK_KHR_swapchain`, so the offscreen
-        // image must never end a render pass in `PRESENT_SRC_KHR`; it stays a
-        // color attachment until something explicitly transitions it.
         let mut post_pass = crate::post::PostPass::new(
             &context,
             color_format,
@@ -1072,14 +987,10 @@ impl GraphRenderer {
         )
         .context("PostPass::new (headless)")?;
 
-        // AutoExposurePass meters the HDR image PostPass is about to tonemap and
-        // publishes the adapted luminance PostPass divides AUTO_EXPOSURE_KEY by.
-        // Registered ahead of PostPass so the ordering falls out of the graph.
         let auto_exposure = crate::auto_exposure::AutoExposurePass::new(&context, frame_count)
             .context("AutoExposurePass::new (headless)")?;
         post_pass.set_adapted_luminance(&context.device, auto_exposure.luminance_buffer());
 
-        // `gtao` feature disabled: set 4 degrades to 1x1 white (no occlusion).
         #[cfg(feature = "gtao")]
         let gtao_pass =
             crate::gtao::GtaoPass::new(&context, runtime.command_pool, offscreen.extent())
@@ -1096,7 +1007,6 @@ impl GraphRenderer {
         let anf_pass = crate::anf::AnfPass::new(&context, offscreen.extent(), offscreen.extent())
             .context("AnfPass::new (headless)")?;
 
-        // CRT debugger (headless below similarly connects to graph, supports no-window offscreen RT debugging).
         let rt_scheduler = crate::rt_scheduler::RenderTextureScheduler::new(&context);
 
         #[cfg(feature = "pathtrace")]
@@ -1141,7 +1051,6 @@ impl GraphRenderer {
             graph.add_pass(Box::new(pass));
         }
         graph.add_pass(Box::new(rt_scheduler));
-        // Same order as the windowed path: train, resolve, then consume.
         #[cfg(all(feature = "pathtrace", feature = "sharc"))]
         if let Some(pt) = &pt_pass {
             graph.add_pass(Box::new(pt.trainer()));
@@ -1152,7 +1061,6 @@ impl GraphRenderer {
         if let Some(pt) = pt_pass {
             graph.add_pass(Box::new(pt));
         }
-        // Same ordering as the windowed path: resolve after the tracer.
         #[cfg(feature = "prt")]
         graph.add_pass(Box::new(crate::prt_pass::PrtPass::new(context.clone())));
         #[cfg(feature = "dlss")]
@@ -1385,8 +1293,6 @@ impl GraphRenderer {
     /// doesn't keep counting after the shader stops accumulating.
     /// Returns `None` if the path-trace pass is not in the graph.
     pub fn pt_frame_count(&self) -> Option<u32> {
-        // Do not use `return`: when closing `pathtrace` function body only has this line, `return None;`
-        // will make clippy's `needless_return` directly report wrong (-D warnings below compile failure).
         #[cfg(not(feature = "pathtrace"))]
         {
             None
@@ -1530,9 +1436,6 @@ impl GraphRenderer {
         let device = self.runtime.context.device.clone();
         self.graph.warmup_passes(&device, &self.runtime.context)?;
 
-        // The UI overlay is otherwise built lazily inside the first `record_*`
-        // call, where the system font parse (up to ~200 ms for a CJK
-        // collection) stalls a frame the user is already looking at.
         #[cfg(feature = "ui")]
         {
             let swapchain_format = self.swapchain.as_ref().map(|s| s.format.format);
@@ -1579,8 +1482,6 @@ impl GraphRenderer {
         }
         let swapchain =
             Swapchain::new_with_vsync(&self.runtime.context, window, window_handle, self.vsync)?;
-        // Resume path same as startup path needs to sync ForwardPass per-image slot bit count
-        // (see comments inside `GraphRenderer::new`).
         let image_count = swapchain.views.len();
         self.swapchain = Some(swapchain);
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
@@ -1607,47 +1508,21 @@ impl GraphRenderer {
             );
             return Ok(());
         }
-        // From this point on, any early return must keep frame acquisition
-        // suspended until the swapchain and lazy pass targets are rebuilt.
         self.surface_suspended = true;
-        // Wait for the GPU to finish all in-flight work BEFORE destroying any
-        // framebuffers. The previous frame's command buffer references both
-        // the ForwardPass framebuffers and the external overlay framebuffers; without
-        // this wait, vkDestroyFramebuffer fires while a command buffer is still
-        // executing (VUID-vkDestroyFramebuffer-framebuffer-00892).
         unsafe { self.runtime.context.device.device_wait_idle() }
             .context("recreate_swapchain: device_wait_idle")?;
 
-        // Place ForwardPass frame buffer + depth graph image BEFORE swap chain is
-        // recreated: the framebuffer wraps a swapchain image view, and
-        // `Swapchain::recreate` destroys the old views. Destroying the views
-        // while the framebuffer still references them triggers a validation
-        // error (VUID-vkDestroyImageView-imageView-01026) which cascades into a
-        // device-lost on the next queue submit.
-        //
-        // This is the single entry point for swapchain recreation - the
-        // acquire/present out-of-date paths in `render` also route through
-        // here so the framebuffer is always torn down first.
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
             forward_pass.drop_target(&self.runtime.context.device);
         }
-        // #883 Phase 2: the previous camera/model history refers to the old
-        // extent; clear it so the first frame after a resize does not emit
-        // bogus motion vectors.
         self.temporal.reset_history();
         #[cfg(feature = "sharc")]
         if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
             resolve.reset_history();
         }
-        // PostPass wraps swapchain views too (its framebuffers target the
-        // swapchain directly). Drop them on the same lifecycle.
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.drop_target(&self.runtime.context.device);
         }
-        // ECS UI overlay caches framebuffer per image view; must in `sw.recreate()`
-        // Destroy old image view **before** release, otherwise framebuffer will reference already destroyed
-        // view (VUID -vkDestroyImageView-imageView-01026), can cause validate error /
-        // device lost. Device already idle here.
         self.ui_host.on_swapchain_pre_recreate();
 
         if let Some(sw) = self.swapchain.as_mut() {
@@ -1657,17 +1532,11 @@ impl GraphRenderer {
             }
         }
 
-        // Notify outside overlay layer: per-swapchain framebuffers already heavy built with new views.
         if let Some(sw) = self.swapchain.as_ref() {
             self.ui_host
                 .on_swapchain_post_recreate(&sw.views, sw.extent);
         }
 
-        // Passes depending on swap chain size / image count must be in `sw.recreate()` **after** applying new value
-        // resize: before recreate, `sw.extent` and `sw.views.len()` still from old swap chain,
-        // `GtaoPass::recreate_target` takes old half resolution for early exit (old/2 == old extent),
-        // while `set_image_count` will make `ForwardPass::ensure_target` lack few new graph images correct for
-        // slot bits (`image_index >= image_count` directly returns).
         if let Some((extent, image_count)) = self
             .swapchain
             .as_ref()
@@ -1676,7 +1545,6 @@ impl GraphRenderer {
             if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
                 forward_pass.set_image_count(image_count);
             }
-            // GTAO owns its own AO graph image (not from swap chain), but size is half of swap chain.
             #[cfg(feature = "gtao")]
             if let Some(gtao) = self.graph.pass_mut::<crate::gtao::GtaoPass>() {
                 if let Err(e) =
@@ -1718,7 +1586,6 @@ impl GraphRenderer {
                     }
                 }
             }
-            // CRT debugger RenderTextures follow swap chain size (demo RT full screen).
             if let Some(sched) = self
                 .graph
                 .pass_mut::<crate::rt_scheduler::RenderTextureScheduler>()
@@ -1733,11 +1600,6 @@ impl GraphRenderer {
             }
         }
 
-        // All per-swapchain-image attachments (ForwardPass HDR/depth/normal,
-        // PostPass framebuffer) were just rebuilt, so the render graph's cached
-        // image layouts are stale. Clear them so the first frame after
-        // recreate re-transitions from UNDEFINED instead of trusting a layout
-        // that no longer matches the fresh images.
         self.graph.reset_layouts();
         self.surface_suspended = false;
         Ok(())
@@ -1764,9 +1626,6 @@ impl GraphRenderer {
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
             forward_pass.drop_target(&self.runtime.context.device);
         }
-        // #883 Phase 2: the previous camera/model history refers to the old
-        // extent; clear it so the first frame after a resize does not emit
-        // bogus motion vectors.
         self.temporal.reset_history();
         #[cfg(feature = "sharc")]
         if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
@@ -1775,7 +1634,6 @@ impl GraphRenderer {
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.drop_target(&self.runtime.context.device);
         }
-        // UI overlay caches framebuffer per image view, must first destroy old view then release.
         self.ui_host.on_offscreen_pre_recreate();
 
         let context = self.runtime.context.clone();
@@ -1854,9 +1712,6 @@ impl GraphRenderer {
             voxel.set_scene(scene);
         }
     }
-    // -------------------------------------------------------------------
-    // Frame lifecycle — phase API
-    // -------------------------------------------------------------------
 
     /// Phase 1/3: acquire swapchain image, reset & begin the command buffer.
     ///
@@ -1870,7 +1725,6 @@ impl GraphRenderer {
     pub fn begin_frame(&mut self) -> anyhow::Result<Option<FrameCtx>> {
         let device = self.runtime.context.device.clone();
 
-        // Headless: no acquire, just grab cmd buf[0].
         if self.is_headless {
             if self.headless_fence != vk::Fence::null() {
                 unsafe {
@@ -1894,7 +1748,6 @@ impl GraphRenderer {
                 .context("begin command buffer (headless)")?;
             self.telemetry.begin_frame_span(&device, cmd, 0);
 
-            // Re-use the offscreen target extent as a stand-in.
             let extent = self
                 .offscreen
                 .as_ref()
@@ -1907,7 +1760,6 @@ impl GraphRenderer {
             let render_extent =
                 crate::render_graph::internal_extent(extent, self.settings.internal_resolution)
                     .unwrap_or(extent);
-            // Per-frame depth copy already complete with headless fence, can safely readback.
             self.collect_occlusion_depth(0, render_extent);
             return Ok(Some(FrameCtx {
                 device,
@@ -1938,7 +1790,6 @@ impl GraphRenderer {
 
         let device = self.runtime.context.device.clone();
 
-        // --- Acquire next image ---
         let (image_index, frame, image_available, render_finished, fence) = match self
             .swapchain
             .as_mut()
@@ -1963,12 +1814,9 @@ impl GraphRenderer {
             crate::render_graph::internal_extent(extent, self.settings.internal_resolution)
                 .unwrap_or(extent);
 
-        // Per-frame (same frame slot bit) timestamp results definitely written (acquire already waited for fence).
         self.telemetry.begin_frame_timings(&device, frame as u32);
-        // Depth readback buffer of same graph image also already written, can map.
         self.collect_occlusion_depth(image_index, render_extent);
 
-        // --- Reset & begin command buffer ---
         unsafe { device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty()) }
             .context("reset command buffer")?;
         let begin_info = vk::CommandBufferBeginInfo::default()
@@ -2042,8 +1890,6 @@ impl GraphRenderer {
                     (indices as u64 / 3).max(1)
                 })
                 .unwrap_or(0);
-            // Consistent with `ForwardPass::pipeline_for` cache key: blend / no depth write is
-            // independent pipeline variant, replay can see why pipeline changed.
             let pipeline = if item.state.blends() {
                 "forward/transparent"
             } else if item.state.z_write {
@@ -2158,10 +2004,8 @@ impl GraphRenderer {
     /// Prepare phase: before command recording, batch sync CPU scene state and GPU resources (DESIGN §9 / #1157).
     /// Uniformly consume `DirtyDispatchPlan` and converge execute staged batch uploads and releases.
     pub fn prepare(&mut self, _ctx: &FrameCtx, input: &FrameInput<'_>) -> anyhow::Result<()> {
-        // #502: LUT file only heavy re-reads / uploads when path changes, avoiding per-frame I/O.
         self.ensure_lut(input.lut_path)?;
 
-        // #1157: Consume unified DirtyDispatchPlan and record dispatch
         if let Some(plan) = input.dispatch_plan {
             if plan.pt_accum_dirty {
                 log::trace!("prepare: pt accum dirty (from dispatch plan)");
@@ -2184,7 +2028,6 @@ impl GraphRenderer {
             log::trace!("prepare: no draw_items and no camera — frame will clear only");
         }
 
-        // Uniformly converge and batch execute staged GPU asset operations in prepare phase
         self.flush_staged_assets()?;
 
         if input.render_mode == crate::render_graph::RenderMode::Raster && !self.ibl_has_pbr {
@@ -2206,9 +2049,6 @@ impl GraphRenderer {
                 self.sync_pt_geometry(input.draw_items)?;
             }
         }
-        // The ReSTIR GI pass traces the same world-space scene, but it runs in
-        // raster mode, where nothing else uploads geometry. Build its own copy
-        // of the acceleration structures from the same draw list.
         #[cfg(feature = "restir_gi")]
         if input.render_mode == crate::render_graph::RenderMode::Raster
             && self.settings.raster_gi == crate::render_graph::RasterGiMode::Restir
@@ -2398,9 +2238,6 @@ impl GraphRenderer {
                 };
 
                 let material_slot = item.material.unwrap_or(0);
-                // Only trust the slot's alpha semantics when the draw item
-                // actually names a material: the `0` fallback is just a shading
-                // default and may belong to an unrelated opaque material.
                 let opaque = item
                     .material
                     .is_some_and(|_| self.material_manager.is_opaque_slot(material_slot));
@@ -2473,7 +2310,6 @@ impl GraphRenderer {
     /// must use this, not the GPU timings.
     #[cfg(feature = "sharc")]
     pub fn sharc_train_dispatches(&self) -> u64 {
-        // No trainer node exists without the path tracer, so nothing trained.
         #[cfg(feature = "pathtrace")]
         {
             self.graph
@@ -2581,15 +2417,6 @@ impl GraphRenderer {
         } = input;
         #[cfg(not(feature = "ui"))]
         let _ = ui_overlay;
-        // Fold this frame's dirty plan into the SHaRC world-cache invalidation.
-        //
-        // `instances_dirty` is deliberately *not* consulted: the draw list is
-        // rebuilt every frame after frustum and shadow-caster culling, so its
-        // content (and therefore its signature) changes whenever the camera
-        // moves. The cache keys on world position and only needs reprojection
-        // for that. Genuine geometry changes reach us through
-        // `mesh_releases`/`material_releases` here and through
-        // [`Self::invalidate_pt_geometry`] on scene unload.
         #[cfg(feature = "sharc")]
         if let Some(plan) = dispatch_plan {
             if plan.lights_dirty {
@@ -2604,12 +2431,8 @@ impl GraphRenderer {
         }
         #[cfg(not(feature = "sharc"))]
         let _ = dispatch_plan;
-        // #883 Phase 2: frame_data is copied so we can inject the previous
-        // unjittered view-projection without mutating the caller's value.
         let mut frame_data = **frame_data;
         let prev_vp = if let Some(camera) = cameras.first() {
-            // Explicit camera slots are not TAA-jittered (TAA currently
-            // resolves the implicit single-camera path).
             camera.view_proj
         } else {
             let mut vp = frame_data.view_proj;
@@ -2630,13 +2453,8 @@ impl GraphRenderer {
         let proj22 = *proj22;
         let proj32 = *proj32;
 
-        // Record into a `Result` rather than `?`-propagating: if any step
-        // fails we still must `end_command_buffer` below so the in-flight
-        // fence gets signaled in `present`. Otherwise the next frame's
-        // `wait_for_fences` would hang forever.
         let mut record: anyhow::Result<()> = Ok(());
 
-        // --- update  frame  UBO (#461: one aligned slot per composited camera) ---
         if record.is_ok() {
             let ubo = &self.runtime.frame_ubos[frame];
             if cameras.is_empty() {
@@ -2664,11 +2482,7 @@ impl GraphRenderer {
             }
         }
 
-        // --- Execute render graph (Shadow -> Scene -> GTAO -> Post) ---
         if record.is_ok() {
-            // #1007: At frame end, copy main channel depth to readback buffer. Many camera layers share one
-            // depth graph composite; coarse depth can only correctly apply to one camera, first disable ensures no false culling.
-            // Place before borrowing `swapchain` / `forward`, avoiding borrow conflict with them.
             let capture = if self.occlusion.enabled && cameras.is_empty() {
                 self.ensure_occlusion_target(image_index, render_extent)
             } else {
@@ -2678,8 +2492,6 @@ impl GraphRenderer {
                 forward.set_depth_readback(capture);
             }
             let ao_view = self.ao_view(frame as u32);
-            // Per-frame ReSTIR GI output (1 frame delay). Pass not registered / not dispatched returns null,
-            // Before toward pass `gi_mode` push constant becomes 0, falls back to probe volume.
             let gi_view = self.gi_view();
             let prt_gi_descriptor_set = self.prt_gi_descriptor_set(ctx.frame_index);
             let offscreen_views = self.offscreen.as_ref().map(|o| [o.image_view()]);
@@ -2694,12 +2506,7 @@ impl GraphRenderer {
                 (None, Some(oi)) => oi.as_slice(),
                 (None, None) => &[],
             };
-            // Skinned draws (#560 P0-3): push this frame's palette into the
-            // per-frame bone SSBO before the graph runs.
             if let Some(forward) = self.graph.pass_mut::<ForwardPass>() {
-                // #883 Phase 2: match this frame's draws to last frame's
-                // models by entity id. First-seen entities fall back to their
-                // current model (camera-only motion).
                 let prev_models: Vec<[[f32; 4]; 4]> = draw_items
                     .iter()
                     .map(|item| {
@@ -2728,7 +2535,6 @@ impl GraphRenderer {
                 light_view_proj1,
                 shadow_split,
                 shadow_cascade_count,
-                // If scene has no directional light casting shadow, entire frame skips shadow pass.
                 shadow_mode: if *shadows_enabled {
                     self.settings.shadow_mode
                 } else {
@@ -2783,24 +2589,12 @@ impl GraphRenderer {
                 .map(|item| (item.entity_id, item.model))
                 .collect();
 
-            // SHaRC has two independent consumers now: the path tracer (trains
-            // the cache, then queries it) and the ReSTIR GI pass (deposits and
-            // queries while tracing its secondary rays, no path tracer involved).
-            // Both need the same clear / buffer-handover bookkeeping, so the gate
-            // below covers either mode instead of hard-coding the path-traced one.
-            //
-            // The training and resolve dispatches themselves are graph nodes
-            // (`SharcTrainPass` / `SharcResolveNode`); what stays here is the
-            // cache ownership: allocation, invalidation and the clear.
             #[cfg(feature = "sharc")]
             if crate::sharc::sharc_active(
                 self.settings.pt_gi,
                 self.settings.raster_gi,
                 *render_mode,
             ) {
-                // The hash map is sized when it is allocated, so a capacity
-                // change has to rebuild the buffers. Voxel keys are meaningless
-                // across a resize, so the rebuilt cache starts cleared.
                 let capacity = self.settings.sharc_capacity.max(1);
                 let capacity_changed = self
                     .sharc_targets
@@ -2808,9 +2602,6 @@ impl GraphRenderer {
                     .is_some_and(|targets| targets.capacity != capacity);
                 let mut needs_init_clear = false;
                 if capacity_changed {
-                    // Command buffers from the frames still in flight may
-                    // reference the old buffers. Capacity changes are rare, so
-                    // stalling the device once is the cheap way to be safe.
                     unsafe { device.device_wait_idle() }.ok();
                     if let Some(resolve) = self.graph.pass_mut::<crate::sharc::SharcResolveNode>() {
                         resolve.clear(device);
@@ -2823,9 +2614,6 @@ impl GraphRenderer {
                 if self.sharc_targets.is_none() {
                     match crate::sharc::SharcTargets::new(&self.runtime.context, capacity) {
                         Ok(targets) => {
-                            // The resolve node owns the descriptor set that binds
-                            // the cache buffers, so rebind it whenever the
-                            // buffers are (re)allocated.
                             let rebound = self
                                 .graph
                                 .pass_mut::<crate::sharc::SharcResolveNode>()
@@ -2833,7 +2621,6 @@ impl GraphRenderer {
                                 .unwrap_or(Ok(()));
                             match rebound {
                                 Ok(()) => {
-                                    // Hand the buffers to the trainer/consumer.
                                     #[cfg(feature = "pathtrace")]
                                     if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
                                         pt.set_sharc_buffers(
@@ -2865,10 +2652,6 @@ impl GraphRenderer {
                     }
                 }
 
-                // Consume the recorded lifecycle reasons. A reason that could
-                // not be serviced because SHaRC is idle this frame stays
-                // pending until the cache is used again, which is exactly when
-                // the stale voxels would become visible.
                 let invalidation = std::mem::take(&mut self.sharc_invalidation);
                 if invalidation.any() {
                     log::debug!(
@@ -2878,9 +2661,6 @@ impl GraphRenderer {
                         invalidation.sky
                     );
                 }
-                // A voxel-scale change redefines the hash key for every world
-                // position, so the surviving entries describe the wrong voxels
-                // (repair spec §8: cache format changes clear).
                 let scale = self.settings.sharc_scene_scale;
                 let scale_changed = self
                     .sharc_cache_scene_scale
@@ -2897,7 +2677,6 @@ impl GraphRenderer {
                     if let Some(targets) = &self.sharc_targets {
                         targets.clear(device, cmd);
                         self.sharc_clear_count += 1;
-                        // Pipeline barrier: TRANSFER_WRITE -> SHADER_READ | SHADER_WRITE
                         let barrier = vk::MemoryBarrier::default()
                             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                             .dst_access_mask(
@@ -2918,9 +2697,6 @@ impl GraphRenderer {
                     self.settings.sharc_enable_clear = false;
                 }
             }
-            // Set `gi_mode = Sharc` but didn't compile `sharc`: degrades to pure path tracing, but must clearly
-            // Missing which feature (DESIGN §12.3 rule 3: closing must be diagnosable, not silent degradation).
-            // This branch is hit every frame, so report only once.
             #[cfg(all(feature = "pathtrace", not(feature = "sharc")))]
             if crate::render_graph::PtGiMode::Sharc == self.settings.pt_gi {
                 static SHARC_MISSING_WARNED: std::sync::Once = std::sync::Once::new();
@@ -2934,10 +2710,6 @@ impl GraphRenderer {
                     pt.set_sharc_buffers(None, None, None, 0);
                 }
             }
-            // Resolve is the only stage that normalises the accumulation
-            // counters (see `crate::sharc::training_enabled`). Training with
-            // resolve disabled would keep adding to counters that nothing
-            // resets, so the trainer node skips and the reason is logged once.
             #[cfg(feature = "sharc")]
             if self.settings.sharc_enable_update && !self.settings.sharc_enable_resolve {
                 static TRAIN_WITHOUT_RESOLVE_WARNED: std::sync::Once = std::sync::Once::new();
@@ -3105,7 +2877,6 @@ impl GraphRenderer {
                 .graph
                 .execute_with_timer(&render_ctx, self.telemetry.gpu_timer_mut())
                 .context("graph execute");
-            // Depth copy definitely recorded in command buffer after, before leaving matrix for next frame to configure correctly.
             if record.is_ok() && capture.is_some() {
                 let captured = self
                     .graph
@@ -3123,17 +2894,6 @@ impl GraphRenderer {
             }
         }
 
-        // --- ECS UI overlay (quads + fontdue glyph text) ---
-        //
-        // Recorded between the render  graph  output and the external overlay
-        // (or the explicit PRESENT barrier). For swapchain path its render
-        // pass owns COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC_KHR; for the
-        // offscreen path it stays in COLOR_ATTACHMENT_OPTIMAL so the host can
-        // sample the image after `offscreen_present_for_sampling` (#597).
-        //
-        // Graph final pass (RtPreview) = PRESENT_SRC_KHR, so swapchain
-        // image in graph after already is present layout; UI/overlay render pass expects
-        // COLOR_ATTACHMENT_OPTIMAL initial layout → each record before must explicitly convert back.
         /// Log a slow UI-overlay record, which is where lazy glyph-atlas and pipeline
         /// creation land on the first frame.
         #[cfg(feature = "ui")]
@@ -3148,7 +2908,6 @@ impl GraphRenderer {
         if record.is_ok() {
             let has_ui = ui_overlay.is_some_and(|o| !o.quads.is_empty() || !o.texts.is_empty());
             if has_ui {
-                // UI background images (#591) sample the scene-shared bindless table.
                 let bindless_set = self.texture_manager.bindless().set;
                 let bindless_layout = self.texture_manager.bindless().layout;
 
@@ -3185,7 +2944,6 @@ impl GraphRenderer {
                         )
                     })
                 {
-                    // Offscreen target has no swap chain scale; UI fills entire graph image.
                     let dest = vk::Rect2D {
                         offset: vk::Offset2D { x: 0, y: 0 },
                         extent: target_extent,
@@ -3210,13 +2968,6 @@ impl GraphRenderer {
             }
         }
 
-        // --- Transition swapchain image to PRESENT_SRC_KHR ---
-        //
-        // The external overlay (host UI) records after ECS UI: the image is then
-        // in PRESENT_SRC_KHR (the final layout of RtPreview or ECS UI at the end
-        // of the graph), while the overlay pass expects COLOR_ATTACHMENT_OPTIMAL
-        // as its initial layout, so transition back before recording. No overlay
-        // means no transition at all.
         if record.is_ok() && self.ui_host.has_external_overlay_content() {
             if let Some(sw) = self.swapchain.as_ref() {
                 let image = sw.images[image_index as usize];
@@ -3263,10 +3014,6 @@ impl GraphRenderer {
             }
         }
 
-        // --- Screenshot: swap chain graph image → host-visible buffer ---
-        //
-        // Must place graph image back to PRESENT_SRC_KHR after, before `end_command_buffer`:
-        // Copy itself needs TRANSFER_SRC_OPTIMAL, after recording convert back to present layout.
         if record.is_ok() {
             let target = if let Some(ref sw) = self.swapchain {
                 sw.images
@@ -3288,7 +3035,6 @@ impl GraphRenderer {
             }
         }
 
-        // --- End command buffer (always attempted) ---
         if record.is_ok() {
             self.telemetry.end_frame(device, cmd, ctx.frame_index);
         }
@@ -3311,7 +3057,6 @@ impl GraphRenderer {
     /// Phase 3/3: submit and present.  In headless mode this is a no-op
     /// (the offscreen target owns its own command-submission path).
     pub fn present(&mut self, ctx: &FrameCtx) -> anyhow::Result<bool> {
-        // Headless: just submit with a fence-out but skip present.
         if self.is_headless {
             let cmd_bufs = [ctx.cmd];
             let submit = vk::SubmitInfo::default().command_buffers(&cmd_bufs);
@@ -3369,8 +3114,6 @@ impl GraphRenderer {
 
     /// Frame end phase: advance frame-level state and execute deferred recycling.
     pub fn end_frame(&mut self, _ctx: &FrameCtx, _presented: bool) -> anyhow::Result<()> {
-        // `PRISMA_PASS_DUMP`: the previous `present` waited on the frame
-        // fence, so the readback buffers are safe to map and encode here.
         self.graph.flush_pass_dump(&self.runtime.context.device)?;
         Ok(())
     }
@@ -3412,15 +3155,10 @@ impl GraphRenderer {
             Some(c) => c,
             None => return Ok(false),
         };
-        // The shadow atlas was allocated at construction time; clamp the frame
-        // request so a runtime settings edit cannot make the shader sample a
-        // cascade that was never allocated.
         let mut frame_data = *frame_data;
         frame_data.shadow_cascade_count = frame_data
             .shadow_cascade_count
             .clamp(1, self.settings.shadow_cascade_count.clamp(1, 2));
-        // #883: subpixel jitter for TAA. The graph frame carries the applied
-        // NDC offset so `TaaPass` can recover the unjittered camera matrix.
         self.apply_taa_jitter(&mut frame_data);
         let input = FrameInput {
             draw_items,
@@ -3456,8 +3194,6 @@ impl GraphRenderer {
             pt_lights,
             pt_accum_dirty: false,
             has_camera: true,
-            // The convenience wrapper has no camera entity to inspect and
-            // always drove a perspective projection before, so keep that.
             camera_orthographic: false,
             clear_color: [0.5, 0.5, 0.5, 1.0],
             shadows_enabled: true,
@@ -3468,7 +3204,7 @@ impl GraphRenderer {
         self.prepare(&ctx, &input)?;
         let exec_result = self.execute(&ctx, &input);
         let out_of_date = self.present(&ctx)?;
-        exec_result?; // propagate recording error after fence is safe
+        exec_result?;
         self.end_frame(&ctx, out_of_date)?;
         Ok(out_of_date)
     }
@@ -3539,7 +3275,6 @@ impl GraphRenderer {
         let device = &self.runtime.context.device;
         unsafe { device.device_wait_idle() }.ok();
 
-        // Shut down Streamline while all tagged images, swapchain, and VkDevice are still valid.
         #[cfg(feature = "dlss")]
         {
             if let Some(dlss) = self.graph.pass_mut::<crate::dlss_pass::DlssPass>() {
@@ -3551,50 +3286,34 @@ impl GraphRenderer {
         self.telemetry.destroy(device);
         self.graph.discard_pass_dump(device);
 
-        // Destroy IBL resources (env/irradiance/prefiltered cubes, BRDF LUT).
-        // The shared set2 descriptor layout belongs to GraphRenderer and is
-        // destroyed here (grab the handle before `ibl.destroy()` clears it).
         let ibl_ds_layout = self.ibl.descriptor_set_layout;
         self.ibl.destroy();
         if ibl_ds_layout != vk::DescriptorSetLayout::null() {
             unsafe { device.destroy_descriptor_set_layout(ibl_ds_layout, None) };
         }
 
-        // Destroy scene managers.
         self.material_manager.destroy(device);
         self.texture_manager.destroy();
         self.mesh_manager.destroy(device);
         self.suballocator.destroy(device);
 
-        // Destroy ForwardPass (framebuffers, depth images, render pass
-        // pipeline, shadow descriptor set). Without this, vkDestroyDevice
-        // reports leaked VkImage/VkDeviceMemory/VkImageView/VkRenderPass.
         if let Some(forward_pass) = self.graph.pass_mut::<ForwardPass>() {
             forward_pass.destroy(device);
         }
 
-        // Destroy scene-level GI probe volume (SceneScope). Must happen AFTER
-        // ForwardPass::destroy (ForwardPass borrows the descriptor set
         self.ddgi_pass = None;
         self.scene_scope.destroy();
 
-        // Destroy GTAO pass (AO images, render pass, pipeline, descriptor
-        // sets, sampler).
         #[cfg(feature = "gtao")]
         if let Some(gtao) = self.graph.pass_mut::<crate::gtao::GtaoPass>() {
             gtao.destroy(device);
         }
         self.placeholders.destroy(device);
 
-        // Destroy PostPass (framebuffers, render pass, pipeline, descriptor
-        // set, sampler).
         if let Some(post) = self.graph.pass_mut::<crate::post::PostPass>() {
             post.destroy(device);
         }
 
-        // Destroy AutoExposurePass (histogram/luminance buffers, descriptor
-        // pool, sampler). Must run before `self.graph.destroy`, which drops the
-        // pass objects themselves.
         if let Some(auto_exposure) = self
             .graph
             .pass_mut::<crate::auto_exposure::AutoExposurePass>()
@@ -3602,8 +3321,6 @@ impl GraphRenderer {
             auto_exposure.destroy(device);
         }
 
-        // Destroy PathTracePass (accumulation images, geometry buffers,
-        // BLAS/TLAS, descriptor set, layout, pool).
         #[cfg(feature = "pathtrace")]
         if let Some(pt) = self.graph.pass_mut::<PathTracePass>() {
             pt.destroy(device);
@@ -3619,12 +3336,6 @@ impl GraphRenderer {
             }
         }
 
-        // Destroy ShadowMapPass (framebuffer, render pass, pipeline/layout).
-        // This MUST happen BEFORE scene_scope/graph destruction (which owns
-        // the Arc<VulkanContext>) because Rust field-drop order drops the
-        // context-holders (runtime/ibl/scene_scope) *before* the graph — if
-        // ShadowMapPass relied on its Drop alone, the device handle would be
-        // stale by the time it ran, causing leaked resources + access violation.
         #[cfg(feature = "shadows")]
         if let Some(shadow) = self
             .graph
@@ -3633,24 +3344,18 @@ impl GraphRenderer {
             shadow.destroy(device);
         }
 
-        // Destroy outside overlay layer (render pass/framebuffers/renderer).
         self.ui_host.destroy();
 
-        // Destroy shadow sampler.
         unsafe { device.destroy_sampler(self.shadow_sampler, None) };
 
-        // Destroy graph resources (shadow map images, etc.).
         self.graph.destroy(device);
 
-        // Destroy command pool.
         unsafe { device.destroy_command_pool(self.runtime.command_pool, None) };
 
-        // Destroy swapchain.
         if let Some(mut sw) = self.swapchain.take() {
             unsafe { sw.destroy(device) };
         }
 
-        // Destroy offscreen target (headless mode).
         if let Some(mut target) = self.offscreen.take() {
             unsafe { target.destroy(device) };
         }
@@ -3662,12 +3367,6 @@ impl GraphRenderer {
     }
 }
 
-// Thread-safe UI state already moved out of render thread (main thread holds),
-// render thread remaining fields only hold ash/Vulkan handles
-// (vk::*, ash::Device → u64 wrappers Send+Sync), Arc<VulkanContext> (Send+Sync
-// because all inner fields are vulkan handles), or container types whose
-// elements are Send.  These fields are accessed exclusively from the render
-// thread, so there is no concurrent &mut mutation.
 unsafe impl Send for GraphRenderer {}
 
 /// Transpose of `view`'s upper-left 3x3 (for `GraphFrame::inv_view_rot`).

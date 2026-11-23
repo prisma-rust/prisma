@@ -24,7 +24,6 @@ fn try_create() -> Option<GraphRenderer> {
                 eprintln!("[SKIP] no VK_KHR_ray_query support");
                 return None;
             }
-            // Small capacity + default scene scale: cache fits, VRAM use controlled.
             renderer.settings_mut().pt_gi = PtGiMode::Sharc;
             renderer.settings_mut().sharc_capacity = 1 << 14;
             renderer.settings_mut().sharc_scene_scale = 50.0;
@@ -194,7 +193,6 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
     };
     let items = box_items(&mut renderer);
 
-    // First frame creates cache and clears once (initial allocation).
     render_frame(
         &mut renderer,
         &items,
@@ -205,7 +203,6 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
     let after_init = renderer.sharc_clear_count();
     assert_eq!(after_init, 1, "cache allocation clears exactly once");
 
-    // Static camera: world cache has no reason to invalidate.
     render_frame(
         &mut renderer,
         &items,
@@ -219,8 +216,6 @@ fn resize_reprojects_the_world_cache_instead_of_clearing_it() {
         "a steady frame must not touch the world cache"
     );
 
-    // Resize only invalidates screen history (motion vector / accumulation); world cache stores radiance by world position,
-    // resolution change only needs reprojection.
     renderer
         .resize_offscreen(192, 160)
         .expect("resize_offscreen");
@@ -253,8 +248,6 @@ fn light_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // Draw list rebuilt each frame, signature changes with camera / cull; it cannot count as geometry invalidate, otherwise camera
-    // moving slightly would clear world cache.
     let instances_only = DirtyDispatchPlan {
         instances_dirty: true,
         emissive_table_dirty: true,
@@ -273,7 +266,6 @@ fn light_change_clears_the_cache() {
         "instances_dirty alone must not clear the world cache"
     );
 
-    // Light changed: radiance in old voxels came from no-longer-present incident light, hard clear per §8.
     let lights = DirtyDispatchPlan {
         lights_dirty: true,
         pt_accum_dirty: true,
@@ -292,7 +284,6 @@ fn light_change_clears_the_cache() {
         "a lighting change must clear the world cache"
     );
 
-    // Invalidate reason is one-shot: not cleared again next frame.
     render_frame(
         &mut renderer,
         &items,
@@ -319,7 +310,6 @@ fn sky_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // Changing environment = changing training incident light; radiance in old voxels no longer belongs to this scene.
     renderer.set_environment(None).expect("set_environment");
     assert!(
         renderer.sharc_invalidation_pending(),
@@ -354,7 +344,6 @@ fn invalidation_stays_pending_while_the_cache_is_idle() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // Scene unload happens in raster frame: no SHaRC to clear, reason must persist across frames.
     renderer.invalidate_pt_geometry();
     assert!(renderer.sharc_invalidation_pending());
     render_frame(
@@ -374,7 +363,6 @@ fn invalidation_stays_pending_while_the_cache_is_idle() {
         "the reason must survive an idle frame"
     );
 
-    // First frame back to SHaRC consumes it — also the frame old voxels become visible.
     render_frame(
         &mut renderer,
         &items,
@@ -401,7 +389,6 @@ fn voxel_scale_change_clears_the_cache() {
     );
     let after_init = renderer.sharc_clear_count();
 
-    // Run one more frame with same scale: no format change, cache kept.
     render_frame(
         &mut renderer,
         &items,
@@ -411,8 +398,6 @@ fn voxel_scale_change_clears_the_cache() {
     );
     assert_eq!(renderer.sharc_clear_count(), after_init);
 
-    // Changing voxel scale equals changing hash key: old entries stay but now describe other
-    // voxels (§8 "cache format change clears").
     renderer.settings_mut().sharc_scene_scale = 25.0;
     render_frame(
         &mut renderer,
@@ -427,7 +412,6 @@ fn voxel_scale_change_clears_the_cache() {
         "a voxel-format change must clear the cache"
     );
 
-    // One-shot: continuing with same scale does not clear again.
     render_frame(
         &mut renderer,
         &items,

@@ -132,71 +132,48 @@ impl GraphicsPipeline {
         let push_constant_ranges = desc.push_constant_ranges;
         let render_pass = desc.render_pass;
         let subpass = desc.subpass;
-        // --- Pipeline layout ---
         let layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(descriptor_set_layouts)
             .push_constant_ranges(push_constant_ranges);
         let layout = unsafe { device.create_pipeline_layout(&layout_info, None) }
             .context("create pipeline layout")?;
 
-        // --- Vertex input ---
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(vertex_binding_desc)
             .vertex_attribute_descriptions(vertex_attr_descs);
 
-        // --- Input assembly ---
         let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
 
-        // --- Viewport & scissor (dynamic) ---
-        // State is set dynamically via cmd_set_viewport/cmd_set_scissor so the
-        // pipeline does not need recreation when the window is resized.
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state =
             vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-        // Dummy viewport state (required by the API, but overridden by dynamic).
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .viewport_count(1)
             .scissor_count(1);
 
-        // --- Rasterizer ---
-        // `cull_mode` and `depth_bias_*` are optional overrides so shadow-map
-        // pipelines can flip culling and apply slope/constant depth bias to
-        // avoid self-shadow acne. Legacy callers pass `None` -> default BACK /
-        // no bias.
         let rasterizer = vk::PipelineRasterizationStateCreateInfo::default()
             .depth_clamp_enable(false)
             .rasterizer_discard_enable(false)
             .polygon_mode(desc.polygon_mode.unwrap_or(vk::PolygonMode::FILL))
             .line_width(1.0)
             .cull_mode(desc.cull_mode.unwrap_or(vk::CullModeFlags::BACK))
-            // View matrix is now a proper rotation (det +1); the projection's
-            // y-flip (Vulkan NDC) is the single remaining reflection, so front
-            // faces wind counter-clockwise in clip space.
             .front_face(desc.front_face.unwrap_or(vk::FrontFace::COUNTER_CLOCKWISE))
             .depth_bias_enable(desc.depth_bias_enable.unwrap_or(false))
             .depth_bias_constant_factor(desc.depth_bias_constant_factor.unwrap_or(0.0))
             .depth_bias_slope_factor(desc.depth_bias_slope_factor.unwrap_or(0.0));
 
-        // --- Multisampling (none) ---
         let multisampling = vk::PipelineMultisampleStateCreateInfo::default()
             .sample_shading_enable(false)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-        // --- Depth/stencil ---
-        // `depth_write_enable` is an optional override; shadow-map pipelines
-        // may disable color writes but keep depth writes, so it defaults true.
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(desc.depth_test_enable.unwrap_or(true))
             .depth_write_enable(desc.depth_write_enable.unwrap_or(true))
             .depth_compare_op(vk::CompareOp::LESS);
 
-        // --- Color blend ---
-        // `color_blend_attachments` (when provided) drives the full MRT blend
-        // state; otherwise `color_attachment_count` selects 0 (depth-only) or 1
-        // (single attachment with the legacy alpha-blend config below).
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)
             .blend_enable(true)
@@ -224,7 +201,6 @@ impl GraphicsPipeline {
             }
         };
 
-        // --- Pipeline create ---
         let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
             .stages(shader_stages)
             .vertex_input_state(&vertex_input_info)
@@ -268,13 +244,11 @@ mod tests {
 
     #[test]
     fn cull_mode_maps_to_vulkan_and_defaults_to_back() {
-        // Default consistent with existing Prisma pipeline (back-face cull).
         assert_eq!(CullMode::default(), CullMode::Back);
         assert_eq!(cull_flags(CullMode::Off), vk::CullModeFlags::NONE);
         assert_eq!(cull_flags(CullMode::Front), vk::CullModeFlags::FRONT);
         assert_eq!(cull_flags(CullMode::Back), vk::CullModeFlags::BACK);
 
-        // Pipeline cache keyed by `CullMode`, three values must be distinct.
         let mut modes = [CullMode::Off, CullMode::Front, CullMode::Back];
         modes.sort_by_key(|m| cull_flags(*m).as_raw());
         let mut uniq = modes.to_vec();
@@ -284,8 +258,6 @@ mod tests {
 
     #[test]
     fn blend_factors_follow_semantics_not_numeric_order() {
-        // Engine value order differs from Vulkan: Zero/One both 0/1, but engine
-        // DstColor=2 corresponds to Vulkan DST_COLOR, SrcColor=3 to SRC_COLOR.
         assert_eq!(blend_factor(BlendMode::Zero), vk::BlendFactor::ZERO);
         assert_eq!(blend_factor(BlendMode::One), vk::BlendFactor::ONE);
         assert_eq!(

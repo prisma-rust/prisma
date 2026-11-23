@@ -108,7 +108,6 @@ pub struct UploadedUiImages {
 /// otherwise "hidden" only affects editor panel visibility icons, rendering and clicks unaffected.
 pub(crate) fn is_ui_active(world: &prism_ecs::World, entity: prism_ecs::Entity) -> bool {
     let mut current = entity;
-    // Max 64 levels up on cyclic dirty data (consistent with depth limit in `ui::input`).
     for _ in 0..64 {
         if matches!(
             world.get::<prism_scene::components::Active>(current),
@@ -116,8 +115,6 @@ pub(crate) fn is_ui_active(world: &prism_ecs::World, entity: prism_ecs::Entity) 
         ) {
             return false;
         }
-        // Scene view speech-level hide (#417) also must block UI draw and hit test; at runtime
-        // This component absent, so game process unaffected by editor visibility.
         if world
             .get::<crate::scene::runtime_components::Hidden>(current)
             .is_some_and(|hidden| hidden.0)

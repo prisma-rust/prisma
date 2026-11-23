@@ -22,7 +22,6 @@ use jni::JavaVM;
 use super::{CrashChoice, ANDROID_APP};
 
 pub fn show(title: &str, message: &str) -> CrashChoice {
-    // Full error already logged by `show_crash_dialog`; also surface title.
     log::error!("Crash dialog: {title}");
 
     let handles = match ANDROID_APP.read() {
@@ -39,26 +38,10 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
         }
     };
 
-    // SAFETY: the pointers were obtained from `AndroidApp::vm_as_ptr()` and
-    // `activity_as_ptr()` and remain valid for the process lifetime. We only
-    // touch them from the main thread, which is the thread that registered.
     let vm = unsafe { JavaVM::from_raw(handles.vm_ptr as *mut _) };
 
-    // Synchronization: block this thread until the dialog's OK button fires.
     let done: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
     let done_clone = Arc::clone(&done);
-
-    // The dialog must be created + shown on the UI thread. We call
-    // `Activity.runOnUiThread(Runnable)`. Building the Runnable requires
-    // implementing `java.lang.Runnable.run()`; we can't easily do that from
-    // JNI without a registered native class. Instead, use the simpler approach
-    // of `AlertDialog` via the `android.app.AlertDialog.Builder` class, shown
-    // directly from the current thread — Android permits calling
-    // `Builder.create().show()` from any thread that has a Looper, but the
-    // main thread is the one with a Looper. The winit event loop on Android
-    // runs on the main thread, so this is fine.
-    //
-    // We catch any exception and fall back to plain exit.
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         vm.attach_current_thread(|env| {
@@ -80,7 +63,6 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
         }
     }
 
-    // Block until the dialog is dismissed and signals `done`.
     let (lock, cvar) = &*done;
     let mut guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     while !*guard {
@@ -100,21 +82,6 @@ fn show_alert_dialog(
     message: &JString,
     done: &Arc<(Mutex<bool>, Condvar)>,
 ) -> jni::errors::Result<()> {
-    // We need a way for the OK button click to signal Rust. The cleanest
-    // approach without registering a native method on a Java class is to
-    // subclass `OnClickListener` — but JNI can't subclass Java classes
-    // directly. Instead we use `android.content.DialogInterface.OnClickListener`
-    // via a dynamic proxy built with `java.lang.reflect.Proxy`.
-    //
-    // That requires a class loader + InvocationHandler, which is also heavy.
-    // Given the goal (show the error, then exit), we instead show the dialog
-    // and *don't* block on the button: the user reads the message, taps OK,
-    // and the OS terminates the process when the Activity finishes. We set
-    // `done` immediately so the caller proceeds to exit the event loop.
-    //
-    // This keeps the implementation robust on every Android version without
-    // fragile reflection.
-
     let builder_class = env.find_class(jni_str!("android/app/AlertDialog$Builder"))?;
     let builder = env.new_object(
         builder_class,
@@ -122,21 +89,18 @@ fn show_alert_dialog(
         &[JValue::Object(activity)],
     )?;
 
-    // setTitle(title)
     env.call_method(
         &builder,
         jni_str!("setTitle"),
         jni_sig!("(Ljava/lang/CharSequence;)Landroid/app/AlertDialog$Builder;"),
         &[JValue::Object(title)],
     )?;
-    // setMessage(message)
     env.call_method(
         &builder,
         jni_str!("setMessage"),
         jni_sig!("(Ljava/lang/CharSequence;)Landroid/app/AlertDialog$Builder;"),
         &[JValue::Object(message)],
     )?;
-    // setCancelable(false)
     env.call_method(
         &builder,
         jni_str!("setCancelable"),
@@ -144,9 +108,6 @@ fn show_alert_dialog(
         &[JValue::Bool(false)],
     )?;
 
-    // Build a positive ("OK") button. We pass a null listener — tapping the
-    // button will auto-dismiss the dialog; we don't need a callback because
-    // we exit the process regardless.
     let null_listener = JObject::null();
     let ok_label = env.new_string("OK")?;
     env.call_method(
@@ -156,7 +117,6 @@ fn show_alert_dialog(
         &[JValue::Object(&ok_label), JValue::Object(&null_listener)],
     )?;
 
-    // create() -> AlertDialog
     let dialog = env.call_method(
         &builder,
         jni_str!("create"),
@@ -165,13 +125,10 @@ fn show_alert_dialog(
     )?;
     let dialog_obj = dialog.l()?;
 
-    // show()
     env.call_method(&dialog_obj, jni_str!("show"), jni_sig!("()V"), &[])?;
 
-    // Keep a global ref so the dialog isn't GC'd before the user dismisses it.
     let global_dialog = env.new_global_ref(dialog_obj)?;
 
-    // Poll until the dialog is dismissed (e.g. user tapped OK) or the activity finishes.
     loop {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let is_showing = env
@@ -195,7 +152,6 @@ fn show_alert_dialog(
     *guard = true;
     cvar.notify_one();
 
-    // Suppress "unused" — the JNI return code of show() is void.
     let _: jint = JNI_OK;
     Ok(())
 }

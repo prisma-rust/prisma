@@ -104,7 +104,6 @@ fn cycle_is_rejected() {
     HierarchyHelper::reparent(&mut world, b, Some(a));
     HierarchyHelper::reparent(&mut world, c, Some(b));
 
-    // a -> b -> c, so making a a child of c would close a cycle.
     HierarchyHelper::reparent(&mut world, a, Some(c));
 
     assert!(world.get::<Parent>(a).is_none());

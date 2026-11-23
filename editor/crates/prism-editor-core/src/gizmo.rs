@@ -25,7 +25,6 @@ const COMPONENT_COLLIDER_2D: &str = "prism_engine::scene::Collider2D";
 const COMPONENT_AUDIO_SOURCE: &str = "prism_engine::scene::AudioSource";
 const COMPONENT_GI_CONFIG: &str = "prism_engine::scene::GiConfig";
 
-// Ramamoorthi & Hanrahan order-2 real SH constants (must match `prism-render/src/gi.rs`).
 const SH_C0: f32 = 0.282095;
 const SH_C1: f32 = 0.488603;
 const SH_C2: f32 = 1.092548;
@@ -649,9 +648,6 @@ impl GizmoRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Built-in component gizmo drawers
-// ---------------------------------------------------------------------------
 
 fn component_rgb_with_alpha(entity: &EntityJson, component: &str, alpha: u8) -> [u8; 4] {
     let default = [255, 224, 150, alpha];
@@ -1105,9 +1101,6 @@ impl ComponentGizmoDrawer for GiVolumeGizmoDrawer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PRT Probe Volume (PRPV) parsing, SH9 evaluation & Scene View visualization
-// ---------------------------------------------------------------------------
 
 /// Visualization style for PRT probe volume gizmos in Scene View.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1390,7 +1383,6 @@ impl PrtProbeVolume {
     /// Extract the dominant incoming light direction and anisotropy magnitude `[0..]` from L1 SH.
     pub fn dominant_direction(sh: &[[f32; 3]; 9]) -> ([f32; 3], f32) {
         let luma = |rgb: [f32; 3]| rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-        // L1 basis order in PRPV: idx 1 = Y_1^-1 (y), idx 2 = Y_1^0 (z), idx 3 = Y_1^1 (x).
         let dir = [luma(sh[3]), luma(sh[1]), luma(sh[2])];
         let mag = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
         if mag < 1e-6 {
@@ -1522,7 +1514,6 @@ pub fn emit_prt_probe_gizmos(
         gizmos.draw_wire_box(center, half, [0.0, 0.0, 0.0, 1.0], [78, 200, 228, 175], 1.2);
     }
 
-    // Draw the active Y-slice horizontal highlight rectangle if slicing by layer.
     if let Some(layer) = settings.slice_y {
         let y_idx = layer.min(volume.dims[1].saturating_sub(1));
         let y_world = volume.origin[1] + y_idx as f32 * volume.spacing[1];
@@ -1554,7 +1545,6 @@ pub fn emit_prt_probe_gizmos(
         None => 0..=volume.dims[1].saturating_sub(1),
     };
 
-    // Collect (dist_sq_from_camera, probe_idx, pos) so far probes render before near probes.
     let mut selected_probes: Vec<(f32, usize, [f32; 3])> = Vec::new();
     for y in y_range {
         let y_step_ok = settings.slice_y.is_some() || y % stride[1] == 0 || y + 1 == volume.dims[1];
@@ -1621,7 +1611,6 @@ pub fn emit_prt_probe_gizmos(
         }
     }
 
-    // Trilinear tethers connecting the focused/selected world position to its 8 probes.
     if settings.show_trilinear_tethers {
         if let (Some(target), Some((corners, blended_sh))) = (focus_world, trilinear) {
             for (_, probe_pos, weight) in corners {
@@ -1697,7 +1686,6 @@ mod tests {
     #[test]
     fn prpv_binary_roundtrip_and_sh_irradiance() {
         let mut sh0 = [[0.0f32; 3]; 9];
-        // Pure isotropic irradiance E = [PI, PI*0.5, 0] requires c0 = E / (SH_C0 * PI) = 1 / SH_C0.
         sh0[0] = [1.0 / SH_C0, 0.5 / SH_C0, 0.0];
         let mut sh1 = sh0;
         sh1[2] = [0.5 / SH_C1, 0.5 / SH_C1, 0.5 / SH_C1];
@@ -1744,8 +1732,8 @@ mod tests {
         let mut c1 = [[0.0f32; 3]; 9];
         c1[0] = [0.0, 1.0, 0.0];
         let mut coeffs = vec![[[0.0f32; 3]; 9]; 8];
-        coeffs[0] = c0; // (0,0,0)
-        coeffs[1] = c1; // (1,0,0)
+        coeffs[0] = c0; 
+        coeffs[1] = c1; 
         let raw = make_test_prpv(
             [0.0, 0.0, 0.0],
             [2.0, 2.0, 2.0],

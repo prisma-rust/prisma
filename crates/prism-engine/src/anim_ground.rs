@@ -137,7 +137,6 @@ mod tests {
         let origin = glam::Vec3::new(0.0, 0.3, 0.0);
         let plain = SceneGroundQuery::new(&world, u32::MAX);
         let without_caster = SceneGroundQuery::new(&world, u32::MAX).excluding(character);
-        // The probe starts inside the capsule, so the caster is the first hit.
         let self_hit = plain
             .cast(origin, glam::Vec3::NEG_Y, 2.0)
             .expect("the caster is hit");

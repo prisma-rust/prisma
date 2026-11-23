@@ -33,17 +33,14 @@ fn view_proj() -> [[f32; 4]; 4] {
     let fov = std::f32::consts::FRAC_PI_4;
     let (near, far) = (0.1f32, 10.0f32);
     let inv_tan = 1.0 / (fov * 0.5).tan();
-    // projection (column-major, [col][row])
     let mut proj = [[0.0f32; 4]; 4];
-    proj[0][0] = inv_tan; // aspect = 1
-    proj[1][1] = -inv_tan; // Vulkan y-flip
+    proj[0][0] = inv_tan;
+    proj[1][1] = -inv_tan;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = (far * near) / (near - far);
-    // camera sits at z = +3, so view = translate(0, 0, -3)
     let mut view = IDENTITY;
     view[3][2] = -3.0;
-    // view_proj = proj * view  (column-major multiply)
     let mut m = [[0.0f32; 4]; 4];
     for col in 0..4 {
         for row in 0..4 {
@@ -145,8 +142,8 @@ fn render(renderer: &mut GraphRenderer, items: &[DrawItem], bones: &[[[f32; 4]; 
             1.0,
             &[],
             PostGrade::default(),
-            false, // wireframe
-            false, // shaded wireframe
+            false,
+            false,
             bones,
         )
         .expect("headless render failed");
@@ -157,8 +154,6 @@ fn render(renderer: &mut GraphRenderer, items: &[DrawItem], bones: &[[[f32; 4]; 
 }
 
 fn non_background(pixels: &[u8]) -> usize {
-    // The clear colour is a flat value; anything that differs from the corner
-    // pixel is geometry.
     let corner = &pixels[0..4];
     pixels
         .as_chunks::<4>()
@@ -183,7 +178,6 @@ fn an_identity_bone_palette_matches_the_static_path() {
         "the cube must cover some pixels, otherwise the comparison proves nothing ({drawn})"
     );
 
-    // Every vertex fully weighted to joint 0, whose matrix is the identity.
     let skin = SkinAttributes {
         joints: vec![[0, 0, 0, 0]; cube.positions.len()],
         weights: vec![[1.0, 0.0, 0.0, 0.0]; cube.positions.len()],
@@ -233,7 +227,6 @@ fn a_translated_bone_palette_moves_the_mesh() {
         "cube must be visible"
     );
 
-    // Slide the bone 0.6 units along +X: the silhouette has to move.
     let mut moved = IDENTITY;
     moved[3][0] = 0.6;
     let moved_pixels = render(&mut renderer, &[draw_item(handle, Some(0))], &[moved]);

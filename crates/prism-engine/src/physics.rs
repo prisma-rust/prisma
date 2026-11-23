@@ -181,7 +181,6 @@ impl WorldShape {
                 radius: (collider.radius * abs_scale.max_element()).max(0.0),
             },
             ColliderShape::Capsule => {
-                // Cylinder segment + two end hemispheres: covered by "box + capsule radius" OBB, enough for query.
                 let half = glam::Vec3::new(
                     collider.radius * abs_scale.x,
                     (collider.half_height + collider.radius) * abs_scale.y,
@@ -257,7 +256,6 @@ impl WorldShape {
                     return Some((closest + normal * radius, normal));
                 }
 
-                // Inside box: pushed out along most shallow penetration axis.
                 let mut best_penetration = f32::INFINITY;
                 let mut normal = glam::Vec3::Y;
                 let mut face = center;
@@ -292,7 +290,6 @@ impl WorldShape {
     ) -> Option<(f32, glam::Vec3)> {
         match *self {
             Self::Box { center, axes } => {
-                // Slab method: transform raycast into box's local coordinate system (axis vectors can carry scale, first normalize to take lengths).
                 let lengths = [axes[0].length(), axes[1].length(), axes[2].length()];
                 if lengths.iter().any(|l| !l.is_finite() || *l <= 1e-6) {
                     return None;
@@ -330,7 +327,6 @@ impl WorldShape {
                     let inv = 1.0 / d;
                     let mut t1 = (-1.0 - o) * inv;
                     let mut t2 = (1.0 - o) * inv;
-                    // Record entering face: first plane entered is the hit face.
                     let mut near_sign = -1.0;
                     if t1 > t2 {
                         std::mem::swap(&mut t1, &mut t2);
@@ -363,7 +359,6 @@ impl WorldShape {
                 let sqrt = discriminant.sqrt();
                 let mut t = -b - sqrt;
                 if t < 0.0 {
-                    // Origin inside sphere: shoot from inside, use far intersection point.
                     t = -b + sqrt;
                 }
                 if t < 0.0 || t > max_distance {

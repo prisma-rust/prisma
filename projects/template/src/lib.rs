@@ -12,25 +12,17 @@
 
 pub mod intro;
 
-// ===========================================================================
-// static  Player
-// ===========================================================================
 
 /// Build app: engine loads intro scene entities from path manifest in `assets/scenes.pak`
 /// (cooked from `assets/scenes/intro.scene.json`), this project only registers
 /// `intro::tick_system` to drive animation.
 #[cfg(feature = "player-core")]
 pub fn build_app() -> prism_app::App {
-    // Audio subsystem (`prism-app/audio`, default off) not enabled here: this project has no AudioSource,
-    // enabling would only create an empty engine + decode thread. To play sounds, enable feature and this line together.
     let mut app = prism_app::app().with_subsystem(prism_app::Subsystem::Render);
     app.add_game_system::<intro::IntroState, _>("intro::tick", intro::tick);
     app
 }
 
-// ===========================================================================
-// Preview module loaded by editor
-// ===========================================================================
 
 #[cfg(feature = "preview-module")]
 mod preview {
@@ -60,9 +52,6 @@ mod preview {
     }
 }
 
-// ===========================================================================
-// Android JNI entry point
-// ===========================================================================
 
 /// Entry called after GameActivity loads this library.
 ///
@@ -71,7 +60,5 @@ mod preview {
 #[cfg(all(target_os = "android", feature = "player-core"))]
 #[no_mangle]
 pub extern "C" fn android_main(android_app: prism_app::AndroidApp) {
-    // `run_on_android` stages APK assets and the launch config before calling
-    // `build_app`, so the engine can use the same `assets/...` paths as desktop.
     prism_app::run_on_android(build_app, android_app).expect("fatal application error");
 }

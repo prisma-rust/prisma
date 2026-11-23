@@ -218,8 +218,6 @@ mod tests {
     fn flatten_blends_towards_the_center_height() {
         let mut heights = vec![0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0];
         sculpt_heights(3, &mut heights, 0.5, 0.5, 1.0, 1.0, SculptMode::Flatten);
-        // Center keeps its height; the edge gets (1 - 0.25)² = 0.5625 of it and
-        // the corner (1 - 0.5)² = 0.25 — the brush never overshoots the target.
         assert_eq!(heights[4], 10.0);
         assert!((heights[1] - 5.625).abs() < 1e-4, "{:?}", heights);
         assert!((heights[0] - 2.5).abs() < 1e-4, "{:?}", heights);

@@ -144,7 +144,6 @@ impl CellGrid {
         if self.height < 2 {
             return;
         }
-        // Bottom-up 2-phase parity sweep avoids double-moving a cell in one pass.
         for parity in 0..2 {
             let mut y = parity;
             while y + 1 < self.height {

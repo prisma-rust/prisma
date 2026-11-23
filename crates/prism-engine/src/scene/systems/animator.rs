@@ -364,7 +364,6 @@ fn evaluate_graph_poses(
             continue;
         };
         graph_entities.insert(entity);
-        // Frozen / frame-skipped entities keep evaluators (state machine / Montage progress comes back and continues), this frame does not advance.
         let Some(&entity_dt) = plans.get(&entity) else {
             continue;
         };
@@ -372,7 +371,6 @@ fn evaluate_graph_poses(
         if let Some(requests) = montage_requests.remove(&entity) {
             apply_montage_requests(evaluator, requests, &library.clips);
         }
-        // Project-side written float / bool / trigger synced into graph evaluator.
         for parameter in evaluator.graph().parameters.clone() {
             match parameter.kind {
                 prism_asset::formats_anim_graph::GraphParameterKind::Float => {
@@ -927,7 +925,6 @@ fn animation_frame_plans(
         }
         if distance > near {
             if throttle.skipped.remove(&entity) {
-                // Updated on a frame, this frame skips and clears flag.
                 continue;
             }
             throttle.skipped.insert(entity);
@@ -961,19 +958,14 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
     let mut graph_runtimes = world
         .remove_resource::<AnimGraphRuntimes>()
         .unwrap_or_default();
-    // debug fast path only maintained when caller actively inserts resource (see `AnimGraphDebug`).
     let mut graph_debug = world.remove_resource::<AnimGraphDebug>();
     let mut graph_entities: HashSet<Entity> = HashSet::new();
-    // State machine parameters (project-side written, engine reads every frame). Clone a copy: `take_trigger` needs `&mut`,
-    // cannot continue borrowing World while iterating entities.
     let mut params = world
         .get_resource::<AnimParameters>()
         .cloned()
         .unwrap_or_default();
     let mut state_updates: Vec<(Entity, String)> = Vec::new();
-    // Root motion consumption (#560 P2): subtract this frame's root translation from pose inside, hand to entity's
     let mut root_motion_moves: Vec<(Entity, glam::Vec3)> = Vec::new();
-    // Project-side requests live only one frame; grouped by entity, consumed when driving graph.
     let mut montage_requests: HashMap<Entity, Vec<MontageRequest>> = HashMap::new();
     if let Some(resource) = world.get_resource_mut::<AnimMontageRequests>() {
         for request in resource.take() {
@@ -984,8 +976,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
     }
 
-    // Foot IK (#560 P4) smoothing state: engine-owned, loaded like the runtime map
-    // above and written back after the pass.
     let mut foot_ik_states: HashMap<Entity, super::foot_ik::FootIkState> = world
         .query::<super::foot_ik::FootIkState>()
         .map(|(entity, state)| (entity, state.clone()))
@@ -993,14 +983,12 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
 
     let mut updates: Vec<(Entity, BonePalette, AnimatorPlayhead)> = Vec::new();
     let mut events: Vec<AnimEvent> = Vec::new();
-    // Animation LOD (#560 P6): far entities frozen, near entities evaluated every other frame; graph run retains state to resume later.
     let mut throttle = world
         .remove_resource::<AnimLodThrottle>()
         .unwrap_or_default();
     let (plans, root_only_entities) =
         animation_frame_plans(world, camera_eye(world), dt, &mut throttle);
     world.insert_resource(throttle);
-    // Graph evaluation first runs in parallel by entity (#560 P6); the loop below only orders World reads/writes.
     let mut graph_results = evaluate_graph_poses(
         world,
         &library,
@@ -1022,8 +1010,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         };
         let dt = entity_dt;
 
-        // Animation graph (#560 P1): when path non-empty and graph already loaded, takes priority over state machine / blend space / single clip.
-        // Evaluator persisted per entity (state machine nodes need cross-frame state); rebuilding heavily when graph path changes.
         if !animator.anim_graph_path.trim().is_empty() {
             match graph_results.remove(&entity) {
                 Some(Ok((pose, graph_events))) => {
@@ -1077,10 +1063,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             animator.clip_path.clone()
         };
 
-        // State machine (#560 P1): first check whether this frame will transition, then use (possibly already swapped-out) state to decide what to play.
-        //
-        // Transition criterion uses **this frame** playback time vs current state's clip duration: that frame confirms real playback reached
-        // this position, closer to author's correct `min_state_fraction` expectation than using "time after this frame advances".
         let machine = if animator.state_machine_path.trim().is_empty() {
             None
         } else {
@@ -1113,8 +1095,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 state_switched = true;
             }
             if let Some(state) = machine.state(index) {
-                // Empty / unknown state names also become true real names: editor and save see "current state",
-                // not an empty string.
                 state_name = state.name.clone();
                 state_speed = state.speed;
                 state_looped = state.looped;
@@ -1126,7 +1106,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 state_updates.push((entity, state_name.clone()));
             }
         }
-        // State machine owns speed / loop semantics; when no state machine attached, fall back to reading component.
         let speed = if machine.is_some() {
             animator.speed * state_speed
         } else {
@@ -1138,8 +1117,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             animator.looped
         };
 
-        // 2D blend space priority (#560 P1): at least three samples and able to triangulate to take effect; coordinates
-        // not limited / collinear fall back to 1D or single clip -- a few degrees of freedom is always better than entity not moving.
         let mut space_2d: Option<BlendSpace2D> = None;
         if animator.uses_blend_space_2d() {
             let samples: Vec<BlendSample2D> = animator
@@ -1160,8 +1137,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         let blend_space_2d = space_2d.is_some();
 
-        // 1D blend space (#560 P1): listed clips inside need at least two truly loaded,
-        // otherwise fall back to single clip. When 2D active, do not rebuild 1D samples to avoid wasted work.
         let mut samples: Vec<BlendSample> = Vec::new();
         if !blend_space_2d && animator.uses_blend_space() {
             samples = animator
@@ -1193,13 +1168,9 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             single_path.clone()
         };
 
-        // Playhead: switching clips starts from author-provided start time, otherwise continues on this frame.
         let mut playhead = match world.get::<AnimatorPlayhead>(entity) {
             Some(head) if head.clip_path == playback_key => head.clone(),
             Some(head) => AnimatorPlayhead {
-                // Switch clip: freeze old clip's pose at the moment it stopped as fade-out source (#560 P1).
-                // Old clip already not in library (asset deleted / this frame is blend space), fall back to already-held fast snapshot --
-                // switching twice in a row will not lose the positive fade-out portion.
                 clip_path: playback_key.clone(),
                 time: if state_switched {
                     0.0
@@ -1232,7 +1203,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 smoothed_blend: None,
             },
         };
-        // Blend space has no length of its own: take the longest clip, shorter ones naturally loop to catch up.
         let duration = match &clip {
             Some(clip) => clip.duration.max(0.0),
             None => {
@@ -1249,8 +1219,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 longest.max(0.0)
             }
         };
-        // Local time already in this playback content this frame: only triggers notify if it exists --
-        // just created / just switched clip's first frame should not blast out all clip events at once.
         let previous_local = match world.get::<AnimatorPlayhead>(entity) {
             Some(head) if head.clip_path == playback_key => {
                 Some(local_time(duration, looped, head.time))
@@ -1266,13 +1234,8 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         playhead.finished = !looped && duration > 0.0 && playhead.time >= duration;
 
-        // Whether looped: state machine state takes priority, otherwise `Animator` component decides (clip's internal
-        // `looped` is only an import default value).
         let local = local_time(duration, looped, playhead.time);
 
-        // Close key frame events: only trigger before playback, and only when really in this clip this frame.
-        // Reverse playback (`speed < 0`) needs incorrect reverse scanning interval, temporarily not triggered -- better to miss a footstep once
-        // than play all events backwards during reverse playback.
         if let (Some(previous), Some(clip)) = (previous_local, clip.as_ref()) {
             if animator.playing && dt.is_finite() && speed > 0.0 {
                 for notify in clip.notifies_between(previous, local) {
@@ -1284,8 +1247,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
                 }
             }
         }
-        // Animation LOD subset: keep this frame's pose, only advance time + sample root joint (and `lod_bones`).
-        // When no name list, it means "root bone only"; first entry fully evaluates one frame to avoid T-pose pop.
         if root_only_entities.contains(&entity)
             && playhead.pose.len() == skeleton.joints().len()
             && !playhead.pose.is_empty()
@@ -1345,17 +1306,11 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // Cross-fade: old clip frozen at transition open moment, blended into new pose by weight.
-        //
-        // First advance then take weight: on clip-switch frame `dt` is "distance from real time since last frame",
-        // transition should start timing from that moment, otherwise most frames never reach weight 1.
         let blend_duration = playhead
             .blend_total
             .map(sanitize_blend_duration)
             .unwrap_or_else(|| sanitize_blend_duration(animator.blend_duration));
         if blend_duration <= 0.0 {
-            // No blend duration = hard cut: drop fast snapshot, otherwise the first frame when duration is adjusted back
-            // will suddenly fade in an already-expired pose.
             playhead.previous_pose = None;
             playhead.blend_elapsed = 0.0;
             playhead.blend_total = None;
@@ -1364,12 +1319,10 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
         }
         if let Some(weight) = playhead.blend_weight(blend_duration) {
             if let Some(fading) = playhead.previous_pose.as_ref() {
-                // `fading` is old pose, `pose` is new pose: `t = weight` 0 -> old, 1 -> new.
                 let mut blended = skeleton.rest_pose();
                 prism_anim::blend_into(&mut blended, fading, &pose, weight);
                 pose = blended;
             }
-            // Weight already reached 1: new pose is the full new clip, fast snapshot can be dropped.
             if weight >= 1.0 {
                 playhead.previous_pose = None;
                 playhead.blend_elapsed = 0.0;
@@ -1377,8 +1330,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // Additive layer (#560 P1): incremental relative (bind) pose, weighted into final pose.
-        // Placed after cross-fade -- additive layer should not participate in "transition between two base clips".
         let additive_weight = if animator.additive_weight.is_finite() {
             animator.additive_weight.clamp(0.0, 1.0)
         } else {
@@ -1393,10 +1344,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             }
         }
 
-        // Animation graph layer (#560 P1): after base clip + cross-fade + single additive layer,
-        // stack `Animator::layers` in author order. Each layer samples on same time axis,
-        // per-bone mask lets only listed bones participate; BlendStack handles order, weight and
-        // additive semantics; missing clip / 0 weight layers are skipped.
         if !animator.layers.is_empty() {
             let reference = skeleton.rest_pose();
             let mut stack = BlendStack::new(pose, reference.clone());
@@ -1427,8 +1374,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             pose = stacked;
         }
 
-        // Root motion (#560 P0): record root joint relative increment this frame; when consumption open, hand translation
-        // to entity Transform, and subtract from pose inside (#560 P2).
         playhead.record_root_motion(&pose);
         consume_root_translation(
             animator,
@@ -1438,7 +1383,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             &mut root_motion_moves,
         );
         foot_ik_pass(world, entity, &skeleton, &mut pose, &mut foot_ik_states, dt);
-        // This pose is the fade-out source for the next transition (no need to clone: `pose` already used up on this face).
         playhead.pose = pose;
         let palette = BonePalette::from_matrices(&skeleton.bone_palette(&playhead.pose));
         updates.push((entity, palette, playhead));
@@ -1468,7 +1412,6 @@ pub fn animator_system(world: &mut World, dt: f32) -> usize {
             world.insert(entity, state);
         }
     }
-    // State written back to component by engine: editor / save see current state, not asking playhead again.
     for (entity, state) in state_updates {
         if let Some(animator) = world.get_mut::<Animator>(entity) {
             animator.state = state;

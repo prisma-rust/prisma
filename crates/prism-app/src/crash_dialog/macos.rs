@@ -10,15 +10,10 @@ use std::process::Command;
 use super::CrashChoice;
 
 pub fn show(title: &str, message: &str) -> CrashChoice {
-    // Escape double-quotes and backslashes for the AppleScript string literal.
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let title_e = esc(title);
-    // Replace literal newlines with AppleScript newline concatenation so the
-    // dialog shows real line breaks instead of a single run-on line.
     let msg_e = esc(message).replace('\n', "\" & return & \"");
 
-    // "Copy & Exit" is the default (first button). `giving up after 0` means
-    // "no timeout" here is not used; we let it block.
     let script = format!(
         "display dialog \"{msg_e}\" with title \"{title_e}\" \
          buttons {{\"Copy & Exit\", \"Exit\"}} default button \"Copy & Exit\" \
@@ -27,7 +22,6 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
 
     match run_osascript(&script) {
         Ok(output) => {
-            // `osascript` prints `button returned:Copy & Exit` to stdout.
             if output.contains("Copy & Exit") {
                 CrashChoice::CopyAndExit
             } else {

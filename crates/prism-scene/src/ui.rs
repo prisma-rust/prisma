@@ -8,16 +8,12 @@
 use prism_reflect::{FieldType, Reflect, ReflectError, ReflectType, Value};
 use serde::{Deserialize, Serialize};
 
-// ── flag component  ─────────────────────────────────────────────────
-
 /// **Flag**: this Entity is a UI element. Layout System only queries entities with this component.
 ///
 /// Defined as empty-brace struct (not unit struct) so scene JSON can deserialize with `{}`.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Node")]
 pub struct Node {}
-
-// ── anchor system ─────────────────────────────────────────────────
 
 /// Anchor corners — define child edge position relative to parent edges (0..=1 normalized).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
@@ -103,8 +99,6 @@ pub struct Margin {
     pub top: f32,
     pub bottom: f32,
 }
-
-// ── layout group (#527) ──────────────────────────────────────────────
 
 /// Arrangement direction of layout group.
 ///
@@ -227,8 +221,6 @@ pub struct Layout {
     pub fit_content: bool,
 }
 
-// ── Style ─────────────────────────────────────────────────────
-
 /// Visual and layout properties of a UI element.
 #[derive(Clone, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::Style")]
@@ -314,8 +306,6 @@ impl Style {
     }
 }
 
-// ── ComputedLayout ────────────────────────────────────────────
-
 /// **Layout System output**: final screen-space rect (pixels).
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 #[reflect(name = "prism_engine::ui::ComputedLayout")]
@@ -366,8 +356,6 @@ impl ComputedLayout {
         self.rect[3]
     }
 }
-
-// ── Text ──────────────────────────────────────────────────────
 
 /// Text content.
 ///
@@ -442,8 +430,6 @@ impl ReflectType for TextAlign {
         }
     }
 }
-
-// ── Canvas / scale  ─────────────────────────────────────────────
 
 /// Canvas scale mode (corresponds to Unity `CanvasScaler` three Screen Match Modes).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -562,8 +548,6 @@ fn finite_positive(value: f32, fallback: f32) -> f32 {
     }
 }
 
-// ── Interaction ───────────────────────────────────────────────
-
 /// Interaction state (updated each frame by Input System).
 ///
 /// Since #528 can also attach in scene: state rewritten each frame but component serializable,
@@ -579,8 +563,6 @@ pub struct Interaction {
     /// One-frame valid: set when pressed inside element and released inside (or keyboard activated).
     pub clicked: bool,
 }
-
-// ── Button ───────────────────────────────────────────────────
 
 /// Clickable button's **appearance** state colors (#528).
 ///
@@ -699,7 +681,6 @@ mod tests {
 
     #[test]
     fn text_font_defaults_to_the_system_font_and_round_trips() {
-        // #583: legacy document without `font` → empty string = system default font.
         let text: Text = serde_json::from_str(r#"{"content":"hi","font_size":20}"#).unwrap();
         assert!(text.font.is_empty());
 
@@ -715,18 +696,15 @@ mod tests {
 
     #[test]
     fn canvas_scales_the_reference_resolution_to_the_screen() {
-        // #463: 1920×1080 design at 960×540 should be 0.5.
         let canvas = Canvas::default();
         assert_eq!(canvas.scale_mode, CanvasScaleMode::ScaleWithScreenSize);
         assert!((canvas.scale_factor((960.0, 540.0)) - 0.5).abs() < 1e-5);
         assert!((canvas.scale_factor((1920.0, 1080.0)) - 1.0).abs() < 1e-5);
         assert!((canvas.scale_factor((3840.0, 2160.0)) - 2.0).abs() < 1e-5);
 
-        // When aspect differs, match interpolates in log space: 960×1080 width ratio 0.5, height ratio 1.0.
         let skewed = canvas.scale_factor((960.0, 1080.0));
         assert!((skewed - 0.5f32.sqrt()).abs() < 1e-4, "{skewed}");
 
-        // When matching one side only, take that side directly.
         let width_only = Canvas {
             scale_mode: CanvasScaleMode::MatchWidthOrHeight,
             match_width_or_height: 0.0,
@@ -740,7 +718,6 @@ mod tests {
         };
         assert!((height_only.scale_factor((960.0, 1080.0)) - 1.0).abs() < 1e-5);
 
-        // ConstantPixelSize = 1, degenerate input also returns 1 not NaN/0.
         let pixels = Canvas {
             scale_mode: CanvasScaleMode::ConstantPixelSize,
             ..Canvas::default()
@@ -761,7 +738,6 @@ mod tests {
         assert_eq!(back.reference_resolution, [1280.0, 720.0]);
         assert_eq!(back.scale_mode, CanvasScaleMode::MatchWidthOrHeight);
 
-        // Old `.scene.json` has no `scale` field: treat as 1, font size not shrunk.
         let layout: ComputedLayout =
             serde_json::from_str(r#"{"rect":[0,0,100,50],"order":3}"#).unwrap();
         assert_eq!(layout.scale, 1.0);
@@ -798,7 +774,6 @@ mod tests {
 
     #[test]
     fn layout_defaults_to_no_grouping_and_round_trips() {
-        // #527: legacy document without `layout` → direction = None, children positioned by anchors.
         let legacy: Style = serde_json::from_str(r#"{"width":100}"#).unwrap();
         assert_eq!(legacy.layout.direction, LayoutDirection::None);
         assert!(!legacy.layout.fit_content);
@@ -844,7 +819,6 @@ mod tests {
 
     #[test]
     fn text_wrap_defaults_to_off_and_round_trips() {
-        // #527: when `wrap` not written keep single line; only wrap when written.
         let text: Text = serde_json::from_str(r#"{"content":"a b"}"#).unwrap();
         assert!(!text.wrap);
         let authored: Text = serde_json::from_str(r#"{"content":"a b","wrap":true}"#).unwrap();

@@ -388,7 +388,6 @@ impl EguiRenderer {
         unsafe { self.device.wait_for_fences(&[fence], true, u64::MAX) }
             .context("wait for egui frame fence")?;
 
-        // Free retired resources from the previous use of this frame slot.
         for tex in self.frames[slot].retired_textures.drain(..) {
             tex.destroy(&self.device, &self.allocator, self.descriptor_pool);
         }
@@ -444,10 +443,8 @@ impl EguiRenderer {
         }
         .context("begin egui command buffer")?;
 
-        // Upload texture deltas before starting the render pass.
         self.apply_texture_deltas(slot, cmd, &textures_delta)?;
 
-        // Prepare merged vertex and index buffers for all clipped meshes.
         let mut vertices: Vec<egui::epaint::Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         for clipped in &clipped_primitives {
@@ -629,8 +626,6 @@ impl EguiRenderer {
             Err(err) => return Err(err).context("present egui swapchain image"),
         }
 
-        // Retire freed textures to the current frame slot so they are destroyed
-        // only after `fence` signals on the next cycle.
         for id in &textures_delta.free {
             if let Some(tex) = self.managed_textures.remove(id) {
                 self.frames[slot].retired_textures.push(tex);
@@ -645,7 +640,6 @@ impl EguiRenderer {
         let mut inner = self.registry.inner.lock().expect("image registry poisoned");
         let unregister: Vec<vk::DescriptorSet> = inner.pending_unregister.drain(..).collect();
         if !unregister.is_empty() {
-            // Defer freeing until this frame slot's fence completes so in-flight draws stay valid.
             self.frames[slot].retired_descriptor_sets.extend(unregister);
         }
         let register: Vec<(u64, vk::ImageView, vk::Sampler)> =

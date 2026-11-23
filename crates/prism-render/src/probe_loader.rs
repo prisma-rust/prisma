@@ -102,7 +102,6 @@ pub fn load_probe_volume_from_bytes(bytes: &[u8]) -> io::Result<ProbeVolumeData>
         ));
     }
 
-    // Magic check.
     if &bytes[0..4] != MAGIC {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -149,13 +148,12 @@ pub fn load_probe_volume_from_bytes(bytes: &[u8]) -> io::Result<ProbeVolumeData>
         ));
     }
 
-    // Scene name (64 null-padded bytes) + global hit ratio.
     let scene_name = read_scene_name(&bytes[48..48 + SCENE_NAME_LEN]);
     let global_hit_ratio = read_f32(&bytes[112..116]);
 
     let probe_count = dims[0] as usize * dims[1] as usize * dims[2] as usize;
     let coeff_count = probe_count * 9;
-    let expected_body = coeff_count * 3 * 4; // 3 floats per coeff, 4 bytes each
+    let expected_body = coeff_count * 3 * 4;
 
     if bytes.len() < HEADER_SIZE + expected_body {
         return Err(io::Error::new(
@@ -170,7 +168,6 @@ pub fn load_probe_volume_from_bytes(bytes: &[u8]) -> io::Result<ProbeVolumeData>
         ));
     }
 
-    // Parse coefficient body.
     let body = &bytes[HEADER_SIZE..HEADER_SIZE + expected_body];
     let mut coeffs = Vec::with_capacity(coeff_count);
     for i in 0..coeff_count {
@@ -215,7 +212,6 @@ pub fn save_probe_volume_to_bytes(data: &ProbeVolumeData) -> io::Result<Vec<u8>>
     let body_size = coeff_count * 3 * 4;
     let mut buf = Vec::with_capacity(HEADER_SIZE + body_size);
 
-    // Header.
     buf.extend_from_slice(MAGIC);
     write_u32(&mut buf, VERSION);
     write_f32(&mut buf, data.origin[0]);
@@ -228,11 +224,9 @@ pub fn save_probe_volume_to_bytes(data: &ProbeVolumeData) -> io::Result<Vec<u8>>
     write_u32(&mut buf, data.dims[1]);
     write_u32(&mut buf, data.dims[2]);
     write_u32(&mut buf, FORMAT_F32);
-    // Scene name (64 null-padded bytes) + global hit ratio.
     write_scene_name(&mut buf, &data.scene_name);
     write_f32(&mut buf, data.global_hit_ratio);
 
-    // Body: RGB triplets per coefficient.
     for c in &data.coeffs {
         write_f32(&mut buf, c[0]);
         write_f32(&mut buf, c[1]);
@@ -241,10 +235,6 @@ pub fn save_probe_volume_to_bytes(data: &ProbeVolumeData) -> io::Result<Vec<u8>>
 
     Ok(buf)
 }
-
-// -------------------------------------------------------------------
-// Little-endian read/write helpers
-// -------------------------------------------------------------------
 
 fn read_u32(b: &[u8]) -> u32 {
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -272,7 +262,6 @@ fn read_scene_name(bytes: &[u8]) -> String {
 /// bytes so at least one trailing NUL remains).
 fn write_scene_name(buf: &mut Vec<u8>, name: &str) {
     let mut name_bytes = name.as_bytes();
-    // Keep at most SCENE_NAME_LEN - 1 bytes so the field is always NUL-terminated.
     if name_bytes.len() >= SCENE_NAME_LEN {
         name_bytes = &name_bytes[..SCENE_NAME_LEN - 1];
     }

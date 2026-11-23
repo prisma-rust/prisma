@@ -11,10 +11,6 @@ use prism_scene::{register_builtin_components, ComponentRegistry};
 
 use crate::cooker::{CookContext, CookError, CookResult, Cooker};
 
-// ---------------------------------------------------------------------------
-// SceneCooker
-// ---------------------------------------------------------------------------
-
 /// Cooks a `.scene.json` intermediate into RSCN v4.
 pub struct SceneCooker {
     registry: ComponentRegistry,
@@ -45,8 +41,6 @@ impl SceneCooker {
     }
 
     fn parse_intermediate(data: &[u8]) -> Result<SceneJson, CookError> {
-        // `SceneJson::parse` migrates older authoring documents (e.g. v1
-        // `transform.translation`) up to the current schema before decoding.
         let text = std::str::from_utf8(data)
             .map_err(|e| CookError::CookFailed(format!("Scene JSON is not UTF-8: {e}")))?;
         let scene = SceneJson::parse(text)
@@ -80,10 +74,6 @@ impl Cooker for SceneCooker {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// RSCN header helpers
-// ---------------------------------------------------------------------------
 
 /// Minimal header info parsed from a cooked RSCN v4 blob.
 #[derive(Debug, Clone)]

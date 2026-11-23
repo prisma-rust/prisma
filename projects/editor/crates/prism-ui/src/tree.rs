@@ -223,7 +223,6 @@ pub struct UiTree {
     pub(crate) nodes: SlotMap<NodeId, UiNode>,
     pub(crate) root: Option<NodeId>,
     pub(crate) key_to_id: HashMap<NodeKey, NodeId>,
-    // Orthogonal behavior tables (zero Rc<RefCell<T>>, zero inheritance)
     pub interactables: SecondaryMap<NodeId, Interactable>,
     pub focusables: SecondaryMap<NodeId, Focusable>,
     pub draggables: SecondaryMap<NodeId, DraggableValue>,
@@ -239,7 +238,6 @@ pub struct UiTree {
     /// Root of the popup layer: drawn last and hit-tested first, so dropdowns
     /// and tooltips are never covered by the panels they belong to.
     overlay_root: Option<NodeId>,
-    // Retained cross-frame interaction state
     hovered_key: Option<NodeKey>,
     active_pointer_key: Option<NodeKey>,
     focused_key: Option<NodeKey>,
@@ -342,9 +340,6 @@ impl UiTree {
             node.layout.top = crate::style::Length::Px(0.0);
             node.layout.width = crate::style::Length::Px(viewport.x);
             node.layout.height = crate::style::Length::Px(viewport.y);
-            // Popups size to their content. The default cross-axis alignment
-            // stretches children to the container, which would make every
-            // dropdown as tall as the window.
             node.layout.align_items = crate::style::Align::Start;
             node.layout.justify_content = crate::style::Justify::Start;
             node.is_overlay = true;
@@ -423,11 +418,6 @@ impl UiTree {
             .iter()
             .map(|(id, anchor)| (id, *anchor))
             .collect();
-        // Resolve in dependency order. Popup panels are siblings on the popup
-        // layer, so tree depth cannot order them; what matters is that a panel
-        // anchored to a row *inside another panel* is resolved after that other
-        // panel. Sorting by the anchor target's depth is not enough — measure the
-        // dependency chain explicitly.
         let mut entries = entries;
         let mut ordered: Vec<(NodeId, Anchor, usize)> = entries
             .drain(..)
@@ -461,8 +451,6 @@ impl UiTree {
                 }
                 PopupSide::Right => (
                     target_rect.x + target_rect.w,
-                    // Align the panel's first row with the row that opened it,
-                    // which is what makes a chain of menus readable.
                     match anchor.align {
                         PopupAlign::Start => target_rect.y,
                         PopupAlign::End => target_rect.y + target_rect.h - own.h,
@@ -471,19 +459,11 @@ impl UiTree {
             };
             x += anchor.offset.x;
             y += anchor.offset.y;
-            // Flip a side panel that would leave the viewport: a nested menu
-            // opening off the right edge is unreachable, so open it leftwards
-            // instead of clamping it over its parent.
             if anchor.side == PopupSide::Right && x + own.w > viewport.x {
                 x = target_rect.x - own.w + anchor.offset.x;
             }
-            // Keep the popup on screen; a dropdown that runs off an edge is
-            // unusable, so clamp rather than clip it.
             let x = x.clamp(0.0, (viewport.x - own.w).max(0.0));
             let y = y.clamp(0.0, (viewport.y - own.h).max(0.0));
-            // Translate the whole subtree: children were arranged relative to the
-            // node's provisional position, so moving only the parent would leave
-            // the items behind.
             self.translate_subtree(id, x - own.x, y - own.y);
         }
     }
@@ -502,7 +482,6 @@ impl UiTree {
             if guard > 64 {
                 break;
             }
-            // Walk up until we find an ancestor that is itself anchored.
             let mut cursor = self.nodes.get(id).and_then(|node| node.parent);
             let mut found = None;
             while let Some(parent) = cursor {
@@ -516,7 +495,6 @@ impl UiTree {
                 break;
             };
             level += 1;
-            // Continue from the outer panel's own anchor target.
             target = self
                 .anchors
                 .get(outer)
@@ -646,7 +624,6 @@ impl UiTree {
 
     /// Hit-test from front to back (overlays first, reverse child order).
     pub fn hit_test(&self, pos: Vec2) -> Option<NodeId> {
-        // The popup layer wins over everything below it, mirroring draw order.
         if let Some(overlay) = self.overlay_root {
             if let Some(hit) = self.hit_test_node(overlay, pos, None) {
                 return Some(hit);
@@ -669,7 +646,6 @@ impl UiTree {
                 return None;
             }
         }
-        // Overlays first, then normal children in reverse draw order.
         for &cid in node.children.iter().rev() {
             if self.nodes.get(cid).is_some_and(|n| n.is_overlay) {
                 if let Some(hit) = self.hit_test_node(cid, pos, effective_clip) {
@@ -771,7 +747,6 @@ impl UiTree {
             }
         }
 
-        // Active pointer drag (e.g. DraggableValue scrub).
         if input.primary_down {
             if let Some(active_key) = self.active_pointer_key {
                 if let Some(id) = self.key_to_id.get(&active_key).copied() {
@@ -835,7 +810,6 @@ impl UiTree {
             }
         }
 
-        // Scroll routing: bubble from hit node up to nearest Scrollable ancestor.
         if input.scroll_delta.length_squared() > 0.0 {
             let mut cursor = hit;
             while let Some(cid) = cursor {
@@ -853,7 +827,6 @@ impl UiTree {
             }
         }
 
-        // Keyboard / text routing to focused node.
         if let Some(focused_key) = self.focused_key {
             if let Some(fid) = self.key_to_id.get(&focused_key).copied() {
                 if let Some(edit) = self.text_editables.get_mut(fid) {
@@ -880,7 +853,6 @@ impl UiTree {
             }
         }
 
-        // Refresh node interaction flags so draw list reflects latest state.
         for (id, node) in &mut self.nodes {
             node.state.hovered = self.hovered_key == Some(node.key);
             node.state.pressed = self.active_pointer_key == Some(node.key);
@@ -896,7 +868,6 @@ impl UiTree {
         if let Some(root) = self.root {
             self.emit_node_draw(root, out);
         }
-        // Popups draw last so they sit above every panel.
         if let Some(overlay) = self.overlay_root {
             for &cid in &self.nodes[overlay].children {
                 self.emit_node_draw(cid, out);
@@ -927,8 +898,6 @@ impl UiTree {
             }
             let bg = style.bg.unwrap_or(Color::TRANSPARENT);
             let bc = style.border_color.unwrap_or(Color::TRANSPARENT);
-            // A material owns the surface, so it draws even when the fill is
-            // clear: a frosted panel with no flat colour still has to composite.
             if bg.a > 0.0 || (bc.a > 0.0 && style.border_width > 0.0) || style.material.is_some() {
                 out.push(UiDrawCommand::Quad {
                     rect,
@@ -1001,7 +970,6 @@ impl UiTree {
             out.push(UiDrawCommand::PushClip(rect));
         }
 
-        // Normal children first, overlays last.
         for &cid in &node.children {
             if self.nodes.get(cid).is_some_and(|n| !n.is_overlay) {
                 self.emit_node_draw(cid, out);

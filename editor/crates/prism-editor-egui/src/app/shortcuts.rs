@@ -119,7 +119,6 @@ impl EditorApp {
         let was_playing = self.workspace.playing;
         let was_paused = self.workspace.paused;
         let pre_command_doc = self.doc_sync_key();
-        // Console Clear on Play runs before Play starts so initial runtime logs stay visible.
         if command == Command::Play && !was_playing && self.state.log_clear_on_play {
             self.workspace.log.clear();
         }
@@ -129,7 +128,6 @@ impl EditorApp {
             self.playing = true;
             self.paused = false;
             self.play_start_doc_state = Some(pre_command_doc);
-            // Write current preview snapshot so Game view starts from clean disk state.
             self.write_preview_scene();
             self.ensure_view(ViewKind::Game);
             let mut play_note = None;
@@ -188,7 +186,6 @@ impl EditorApp {
         if command == Command::Stop && was_playing {
             self.playing = false;
             self.paused = false;
-            // Play edits were discarded by `workspace.stop()`; flush snapshot before reloading.
             let discarded = self
                 .play_start_doc_state
                 .take()
@@ -197,7 +194,6 @@ impl EditorApp {
             if discarded {
                 self.state.status = self.t("desktop.status.stoppedPlayDiscarded");
             }
-            // Stop must clear the live runtime immediately; do not wait for sync_document.
             if let Some(view) = self.game_view.as_mut() {
                 if let Err(error) = view.host.load_scene(&self.preview_scene) {
                     view.error = Some(format!("{error}"));
@@ -435,8 +431,6 @@ impl EditorApp {
                     frames: self.frame_count,
                     fps: self.game_view.as_ref().map(|view| view.fps).unwrap_or(0.0),
                     gizmo_tool: self.scene_view.as_ref().map(|view| view.tool.label()),
-                    // Keep the control protocol locale-independent. The toolbar may use
-                    // localized labels, but MCP clients need stable enum-like values.
                     gizmo_space: match self.workspace.gizmo_space {
                         prism_editor_core::viewport_math::GizmoSpace::World => "World",
                         prism_editor_core::viewport_math::GizmoSpace::Local => "Local",

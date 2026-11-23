@@ -32,7 +32,6 @@ macro_rules! impl_glam_reflect {
                     fields: vec![
                         $(FieldDesc {
                             name: stringify!($field),
-                            // A SIMD newtype has no usable field offsets; use scalar-array layout.
                             offset: $index * core::mem::size_of::<f32>(),
                             ty: FieldType::F32,
                             read_only: false,

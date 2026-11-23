@@ -21,35 +21,30 @@ pub struct IblResources {
     device: ash::Device,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_set: vk::DescriptorSet,
-    // env cube
     image: vk::Image,
     image_view: vk::ImageView,
     sampler: vk::Sampler,
     memory: vk::DeviceMemory,
     staging: vk::Buffer,
     staging_memory: vk::DeviceMemory,
-    // irradiance cube
     irradiance_image: vk::Image,
     irradiance_image_view: vk::ImageView,
     irradiance_sampler: vk::Sampler,
     irradiance_memory: vk::DeviceMemory,
     irradiance_staging: vk::Buffer,
     irradiance_staging_memory: vk::DeviceMemory,
-    // prefiltered cube
     prefiltered_image: vk::Image,
     prefiltered_image_view: vk::ImageView,
     prefiltered_sampler: vk::Sampler,
     prefiltered_memory: vk::DeviceMemory,
     prefiltered_staging: vk::Buffer,
     prefiltered_staging_memory: vk::DeviceMemory,
-    // brdf LUT
     brdf_image: vk::Image,
     brdf_image_view: vk::ImageView,
     brdf_sampler: vk::Sampler,
     brdf_memory: vk::DeviceMemory,
     brdf_staging: vk::Buffer,
     brdf_staging_memory: vk::DeviceMemory,
-    // descriptor pool
     descriptor_pool: vk::DescriptorPool,
 }
 
@@ -141,7 +136,6 @@ impl IblResources {
         scope: IblScope,
         ds_layout: vk::DescriptorSetLayout,
     ) -> anyhow::Result<Self> {
-        // Fast path: pre-baked `PIBL` payload from `.pak` — zero convolution.
         if let Some(bytes) = env_bytes.as_deref() {
             if prism_gfx::ibl::CookedIbl::is_cooked(bytes) {
                 let t = std::time::Instant::now();
@@ -160,8 +154,6 @@ impl IblResources {
             }
         }
 
-        // Runtime `.hdr` or procedural sky: decode equirect on CPU, then run GPU
-        // compute shaders (`ibl_bake.slang`) for cubemap & IBL convolutions.
         Self::new_from_equirect_gpu(
             context,
             command_pool,
@@ -190,8 +182,6 @@ impl IblResources {
         let brdf_lut_size = cooked.brdf_size;
         let mip_levels = (face_size as f32).log2().floor() as u32 + 1;
 
-        // 2. Create all images and fill staging buffers directly from `f16` slices.
-        // 2a. Environment cubemap.
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R16G16B16A16_SFLOAT,
@@ -221,7 +211,6 @@ impl IblResources {
         let (staging, staging_memory) = create_staging_buffer(&device, mem_props, staging_size)?;
         upload_u16_to_staging(&device, staging_memory, staging_size, &cooked.env_cube)?;
 
-        // 2b. Irradiance cubemap.
         let irradiance_image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R16G16B16A16_SFLOAT,
@@ -254,7 +243,6 @@ impl IblResources {
             &cooked.irradiance_cube,
         )?;
 
-        // 2c. Prefiltered cubemap.
         let prefiltered_staging_size: u64 = cooked
             .prefiltered_mips
             .iter()
@@ -310,7 +298,6 @@ impl IblResources {
         let prefiltered_memory = allocate_device_memory(&device, mem_props, prefiltered_mem_req)?;
         unsafe { device.bind_image_memory(prefiltered_image, prefiltered_memory, 0) }?;
 
-        // 2d. BRDF LUT (RG16_SFLOAT, 1 layer).
         let brdf_staging_size = (cooked.brdf_lut.len() * 2) as u64;
         let (brdf_staging, brdf_staging_memory) =
             create_staging_buffer(&device, mem_props, brdf_staging_size)?;
@@ -343,11 +330,9 @@ impl IblResources {
         let brdf_memory = allocate_device_memory(&device, mem_props, brdf_mem_req)?;
         unsafe { device.bind_image_memory(brdf_image, brdf_memory, 0) }?;
 
-        // 3. One-shot command buffer: upload all resources.
         let cmd = allocate_temp_command_buffer(&device, command_pool)?;
         unsafe { device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default())? };
 
-        // 3a. Env cube: transition all mips, copy mip0, generate mip chain.
         transition_image(
             &device,
             cmd,
@@ -384,7 +369,6 @@ impl IblResources {
             )
         };
 
-        // Generate mip chain for env cube.
         if mip_levels > 1 {
             transition_image(
                 &device,
@@ -474,7 +458,6 @@ impl IblResources {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        // 3b. Upload irradiance cube.
         transition_image_single(
             &device,
             cmd,
@@ -518,7 +501,6 @@ impl IblResources {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        // 3c. Upload prefiltered cube (per-mip copies).
         transition_image_single(
             &device,
             cmd,
@@ -567,7 +549,6 @@ impl IblResources {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        // 3d. Upload BRDF LUT.
         transition_image_single(
             &device,
             cmd,
@@ -623,9 +604,7 @@ impl IblResources {
         log::info!("  IBL phase: upload + submit + wait: {}ms", upload_ms);
 
         let t_views = std::time::Instant::now();
-        // 4. Create image views + samplers.
 
-        // 4a. Env cube view + sampler.
         let image_view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo {
@@ -663,7 +642,6 @@ impl IblResources {
             )
         }?;
 
-        // 4b. Irradiance cube view + sampler.
         let irradiance_image_view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo {
@@ -701,7 +679,6 @@ impl IblResources {
             )
         }?;
 
-        // 4c. Prefiltered cube view + sampler.
         let prefiltered_image_view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo {
@@ -739,7 +716,6 @@ impl IblResources {
             )
         }?;
 
-        // 4d. BRDF LUT view + sampler.
         let brdf_image_view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo {
@@ -777,9 +753,6 @@ impl IblResources {
             )
         }?;
 
-        // 5. Descriptor set (set 2): 3 bindings envCube/irradianceCube/prefilteredCube.
-        // Layout shared and passed by caller (ds_layout), ensuring forward pass / skybox pipeline
-        // layouts stay stable when scene rebuilds IBL. brdfLUT registered separately to bindless table.
         let descriptor_pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
@@ -899,7 +872,6 @@ impl IblResources {
         let device = context.device.clone();
         let mem_props = &context.physical_device_memory_properties;
 
-        // 1. Decode equirect HDR on CPU (or synthesize procedural sky) -> f16.
         let (rgba_f32, eq_w, eq_h) = match env_bytes {
             Some(bytes) => {
                 prism_gfx::hdr::load_rgbe(bytes).context("failed to decode environment .hdr")?
@@ -960,7 +932,6 @@ impl IblResources {
             )
         }?;
 
-        // 2. Create output GPU images.
         let face_size = ENV_FACE_SIZE;
         let mip_levels = (face_size as f32).log2().floor() as u32 + 1;
         let image_info = vk::ImageCreateInfo {
@@ -1059,7 +1030,6 @@ impl IblResources {
         })?;
         unsafe { device.bind_image_memory(brdf_image, brdf_memory, 0) }?;
 
-        // 3. Temporary storage views & compute pipelines.
         let make_array_storage_view = |img: vk::Image, mip: u32| -> anyhow::Result<vk::ImageView> {
             Ok(unsafe {
                 device.create_image_view(
@@ -1175,7 +1145,6 @@ impl IblResources {
             )?
         };
 
-        // Dummy 2D/array bindings for unused storage slot in shared set 0.
         let (dummy_cube_img, dummy_cube_mem) = if scope == IblScope::EnvOnly {
             make_cube_image(1, 1, vk::ImageUsageFlags::STORAGE)?
         } else {
@@ -1268,7 +1237,6 @@ impl IblResources {
 
         write_comp_set(comp_sets[0], env_storage_view, dummy_brdf_view);
 
-        // Prepare PBR pipelines & descriptor sets when Full.
         let pbr_pipes = if scope == IblScope::Full {
             const IRR_SPV: &[u8] = prism_render_shaders::IBL_IRRADIANCE_COMP_SPV;
             const PRE_SPV: &[u8] = prism_render_shaders::IBL_PREFILTER_COMP_SPV;
@@ -1297,7 +1265,6 @@ impl IblResources {
             None
         };
 
-        // For EnvOnly, upload 1x1 neutral dummies for the unused PBR slots.
         let mut neutral_staging: Vec<(vk::Buffer, vk::DeviceMemory)> = Vec::new();
         if scope == IblScope::EnvOnly {
             let cube_bytes = (6 * 4 * 2) as u64;
@@ -1313,11 +1280,9 @@ impl IblResources {
             neutral_staging.extend([(s_irr, m_irr), (s_pre, m_pre), (s_brdf, m_brdf)]);
         }
 
-        // 4. Record command buffer: upload equirect -> dispatch compute shaders -> mipmap blit.
         let cmd = allocate_temp_command_buffer(&device, command_pool)?;
         unsafe { device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default())? };
 
-        // 4a. Upload equirect texture.
         transition_image_single(
             &device,
             cmd,
@@ -1361,7 +1326,6 @@ impl IblResources {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        // 4b. Transition envCube to GENERAL for compute write, dispatch equirectToCubeMain.
         transition_image_compute(
             &device,
             cmd,
@@ -1399,7 +1363,6 @@ impl IblResources {
             device.cmd_dispatch(cmd, g, g, 6);
         }
 
-        // Generate mip chain for envCube.
         if mip_levels > 1 {
             transition_image_single(
                 &device,
@@ -1505,7 +1468,6 @@ impl IblResources {
             );
         }
 
-        // 4c. Dispatch PBR compute shaders (Full) or upload 1x1 neutral dummies (EnvOnly).
         if let Some((p_irr, p_pre, p_brdf)) = pbr_pipes {
             transition_image_compute(
                 &device,
@@ -1532,7 +1494,6 @@ impl IblResources {
                 vk::ImageLayout::GENERAL,
             );
 
-            // Irradiance
             unsafe {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, p_irr);
                 device.cmd_bind_descriptor_sets(
@@ -1553,7 +1514,6 @@ impl IblResources {
                 device.cmd_dispatch(cmd, g, g, 6);
             }
 
-            // Prefiltered mips
             unsafe {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, p_pre);
             }
@@ -1585,7 +1545,6 @@ impl IblResources {
                 }
             }
 
-            // BRDF LUT
             unsafe {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, p_brdf);
                 device.cmd_bind_descriptor_sets(
@@ -1683,7 +1642,6 @@ impl IblResources {
         unsafe { device.end_command_buffer(cmd) }?;
         submit_and_wait(&device, queue, command_pool, cmd).context("IBL GPU bake submit")?;
 
-        // 5. Destroy all temporary equirect & compute objects.
         unsafe {
             for p in temp_pipes {
                 device.destroy_pipeline(p, None);
@@ -1714,7 +1672,6 @@ impl IblResources {
             device.free_memory(eq_staging_memory, None);
         }
 
-        // 6. Final image views, samplers & set 2 descriptor set.
         let mk_cube_view = |img: vk::Image, mips: u32| -> anyhow::Result<vk::ImageView> {
             Ok(unsafe {
                 device.create_image_view(
@@ -1875,7 +1832,6 @@ impl IblResources {
         let mem_props = &context.physical_device_memory_properties;
         const F: u32 = 1u32;
 
-        // env / irradiance / prefiltered cube (1x1x6, 1 mip) — neutral gray (splash screen no geometry, not sampled)
         let (image, memory, staging, staging_memory) = alloc_neutral_cube(&device, mem_props, F)?;
         let (irradiance_image, irradiance_memory, irradiance_staging, irradiance_staging_memory) =
             alloc_neutral_cube(&device, mem_props, F)?;
@@ -1915,7 +1871,6 @@ impl IblResources {
             device.unmap_memory(prefiltered_staging_memory);
         }
 
-        // BRDF LUT (1x1, RG16) — neutral (1,1) fallback.
         let brdf_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(vk::Format::R16G16_SFLOAT)
@@ -1953,7 +1908,6 @@ impl IblResources {
             }
         }
 
-        // One-shot upload of 4 images.
         let cmd = allocate_temp_command_buffer(&device, command_pool)?;
         unsafe { device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default())? };
         let upload_cube = |img: vk::Image, stg: vk::Buffer| {
@@ -2050,7 +2004,6 @@ impl IblResources {
         unsafe { device.end_command_buffer(cmd) }?;
         submit_and_wait(&device, queue, command_pool, cmd).context("empty IBL upload submit")?;
 
-        // views + samplers (max_lod 1, since only 1 mip)
         let mk_sampler = || unsafe {
             device
                 .create_sampler(
@@ -2153,7 +2106,6 @@ impl IblResources {
         };
         let brdf_sampler = mk_sampler();
 
-        // Descriptor set (set2) — reuse shared layout ds_layout.
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(
@@ -2272,7 +2224,6 @@ impl IblResources {
     /// the rest of the renderer — `GraphRenderer::destroy` calls this so the
     /// device handle is valid regardless of struct field-drop ordering.
     pub fn destroy(&mut self) {
-        // Guard: zero out handles so re-entrant Drop (if any) is safe.
         if self.descriptor_set_layout == vk::DescriptorSetLayout::null() {
             return;
         }
@@ -2285,37 +2236,31 @@ impl IblResources {
                     self.device.free_memory(m, None);
                 }
             };
-            // env cube
             self.device.destroy_image_view(self.image_view, None);
             self.device.destroy_image(self.image, None);
             self.device.free_memory(self.memory, None);
             free_buf(self.staging, self.staging_memory);
             self.device.destroy_sampler(self.sampler, None);
-            // irradiance
             self.device
                 .destroy_image_view(self.irradiance_image_view, None);
             self.device.destroy_image(self.irradiance_image, None);
             self.device.free_memory(self.irradiance_memory, None);
             free_buf(self.irradiance_staging, self.irradiance_staging_memory);
             self.device.destroy_sampler(self.irradiance_sampler, None);
-            // prefiltered
             self.device
                 .destroy_image_view(self.prefiltered_image_view, None);
             self.device.destroy_image(self.prefiltered_image, None);
             self.device.free_memory(self.prefiltered_memory, None);
             free_buf(self.prefiltered_staging, self.prefiltered_staging_memory);
             self.device.destroy_sampler(self.prefiltered_sampler, None);
-            // brdf LUT
             self.device.destroy_image_view(self.brdf_image_view, None);
             self.device.destroy_image(self.brdf_image, None);
             self.device.free_memory(self.brdf_memory, None);
             free_buf(self.brdf_staging, self.brdf_staging_memory);
             self.device.destroy_sampler(self.brdf_sampler, None);
-            // Descriptor pool (set layout shared and held by GraphRenderer, not destroyed here)
             self.device
                 .destroy_descriptor_pool(self.descriptor_pool, None);
         }
-        // Null out handles so re-entrant Drop is safe.
         self.descriptor_set_layout = vk::DescriptorSetLayout::null();
         self.image = vk::Image::null();
         self.image_view = vk::ImageView::null();

@@ -176,8 +176,6 @@ fn casters_outside_the_light_frustum_are_not_submitted() {
 
     let mut outside = caster(mesh);
     outside.entity_id = 2;
-    // Completely outside identity box; when light matrix degenerates it will still be submitted, so this assertion can distinguish
-    // "cull works" from "matrix cannot build frustum".
     outside.world_bounds = Some(Aabb::new([10.0, -0.5, 0.1], [11.0, 0.5, 0.9]));
 
     let mut data = frame_data();

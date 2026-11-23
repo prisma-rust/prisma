@@ -110,7 +110,6 @@ fn set_rejects_unknown_and_read_only() {
         value.set_field("id", Value::U64(1)),
         Err(ReflectError::ReadOnly("id".into()))
     );
-    // The deserialization path ignores read_only.
     value.set_field_force("id", Value::U64(99)).unwrap();
     assert_eq!(value.id, 99);
 }
@@ -124,10 +123,9 @@ fn from_object_keeps_defaults_for_missing_and_skips_unknown() {
         .insert("not_in_schema".into(), Value::Bool(true));
 
     let restored = Outer::from_object(&object).unwrap();
-    assert_eq!(restored.name, ""); // Default kept
+    assert_eq!(restored.name, "");
     assert_eq!(restored.pos, glam::Vec3::new(1.0, 2.0, 3.0));
-    assert_eq!(restored.id, 7); // read_only field restored via the force path
-                                // skip fields are never restored from the object.
+    assert_eq!(restored.id, 7);
     assert_eq!(restored.runtime_only, 0);
 }
 
@@ -158,7 +156,6 @@ fn registry_restores_without_static_type() {
     let restored = any.downcast_ref::<Outer>().expect("downcast Outer");
     assert_eq!(restored, &sample());
 
-    // Reverse direction: Any -> Object.
     let any: Box<dyn std::any::Any> = Box::new(sample());
     let object2 = registry.to_object(any.as_ref()).expect("registered");
     assert_eq!(object, object2);
@@ -200,7 +197,6 @@ fn registry_accepts_the_same_type_twice() {
     assert_eq!(registry.register::<Outer>(), Some(Outer::type_desc().id));
     assert_eq!(registry.len(), 1);
 
-    // Re-registering must not break the restore path.
     let any = registry.from_object(&sample().to_object()).unwrap();
     assert_eq!(any.downcast_ref::<Outer>().unwrap(), &sample());
 }
@@ -213,13 +209,12 @@ fn rtti_bin_round_trip_and_determinism() {
     let bytes = rtti_bin::encode_one(&object, &registry).unwrap();
     assert_eq!(&bytes[..4], &rtti_bin::MAGIC);
 
-    // Encoding the same input twice must produce identical bytes.
     let bytes2 = rtti_bin::encode_one(&object, &registry).unwrap();
     assert_eq!(bytes, bytes2);
 
     let decoded = rtti_bin::decode(&bytes).unwrap();
     assert_eq!(decoded.objects, vec![object.clone()]);
-    assert_eq!(decoded.type_table.len(), 3); // Outer + Inner + glam::Vec3
+    assert_eq!(decoded.type_table.len(), 3);
     assert_eq!(
         decoded
             .type_table
@@ -229,11 +224,9 @@ fn rtti_bin_round_trip_and_determinism() {
         3
     );
 
-    // Restore the decoded result to a concrete type via the registry.
     let any = registry.from_object(&decoded.objects[0]).unwrap();
     assert_eq!(any.downcast_ref::<Outer>().unwrap(), &sample());
 
-    // Nested objects are present in the type table.
     assert!(decoded.type_table.get(Inner::type_desc().id).is_some());
 }
 
@@ -269,7 +262,6 @@ fn rtti_bin_rejects_bad_input() {
         rtti_bin::RttiError::TrailingBytes
     );
 
-    // Truncated input.
     let bytes = rtti_bin::encode_one(&sample().to_object(), &registry).unwrap();
     let truncated = &bytes[..bytes.len() / 2];
     assert!(rtti_bin::decode(truncated).is_err());
@@ -328,8 +320,6 @@ fn containers_forward_enum_variants() {
     assert_eq!(Option::<Flag>::enum_variants(), expected);
     assert_eq!(<[Flag; 4]>::enum_variants(), expected);
 
-    // Non-enum fields are still None (an absent enum must not be confused with
-    // an empty variant list).
     assert_eq!(u8::enum_variants(), None);
     assert_eq!(Vec::<u8>::enum_variants(), None);
     assert_eq!(Option::<String>::enum_variants(), None);

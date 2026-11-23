@@ -44,11 +44,9 @@ pub fn push_no_scene_screen(list: &mut UiDrawList, width: f32, height: f32, time
     }
     push_checkerboard(list, width, height, time);
     if width < 160.0 || height < 120.0 {
-        // Too small for a readable panel; the pattern alone is already unmistakable.
         return;
     }
 
-    // The panel keeps the text readable over the pattern at any scroll offset.
     let panel_width = (width * 0.72).min(width - 24.0).max(1.0);
     let panel_height = (height * 0.32).clamp(160.0, 280.0);
     let panel_left = (width - panel_width) * 0.5;
@@ -90,8 +88,6 @@ pub fn push_no_scene_screen(list: &mut UiDrawList, width: f32, height: f32, time
         body_size,
         BODY,
     );
-    // Tip with full command: if you only write "run build-scenes", the reader still has to guess
-    // `cargo run build-scenes` style incorrect usage.
     let steps = match crate::asset_paths::asset_dir() {
         Some(dir) => crate::asset_paths::build_scenes_steps(&dir),
         None => [
@@ -119,10 +115,8 @@ pub fn push_no_scene_screen(list: &mut UiDrawList, width: f32, height: f32, time
 fn push_checkerboard(list: &mut UiDrawList, width: f32, height: f32, time: f32) {
     let cell = cell_size(width);
     let period = cell * 2.0;
-    // Wrapping at one full period keeps the pattern seamless: the grid shifts by
-    // exactly two cells, which has the same parity.
     let shift = (time * SCROLL_POINTS_PER_SEC).rem_euclid(period);
-    let step = cell + 1.0; // one point of overlap, so no seam shows between cells
+    let step = cell + 1.0;
     let mut row = 0;
     let mut top = -shift;
     while top < height {

@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Command {
-    // File
     NewScene,
     NewPrefab,
     OpenDocument,
@@ -16,7 +15,6 @@ pub enum Command {
     RenameDocument,
     DeleteDocument,
     ReloadDocument,
-    // Edit
     Undo,
     Redo,
     DuplicateEntity,
@@ -30,16 +28,13 @@ pub enum Command {
     Preferences,
     ProjectSettings,
     ThemePanel,
-    // Build
     BuildProject,
     CookScenes,
     OfflineTools,
-    // Run
     Play,
     Pause,
     Stop,
     Step,
-    // Window
     ToggleSceneView,
     ToggleGameView,
     ToggleDocs,
@@ -52,10 +47,8 @@ pub enum Command {
     ToggleTools,
     ToggleHistory,
     ResetLayout,
-    // Help
     Shortcuts,
     About,
-    // Viewport
     FrameAll,
     FrameSelection,
     ResetSceneCamera,
@@ -332,7 +325,6 @@ pub const SHORTCUTS: &[ShortcutEntry] = &[
         command: Command::ResetSceneCamera,
         keys: "Ctrl+0",
     },
-    // Panel switching (engine's Ctrl+1..5).
     ShortcutEntry {
         command: Command::ToggleSceneView,
         keys: "Ctrl+1",
@@ -589,7 +581,6 @@ mod tests {
 
     #[test]
     fn overrides_replace_default_keys_and_drop_the_old_alias() {
-        // #421: After rebinding old key no longer valid; alias should not trigger same command either.
         let mut overrides = BTreeMap::new();
         overrides.insert(Command::Play.id().to_string(), "Ctrl+Shift+P".to_string());
         assert_eq!(
@@ -627,10 +618,8 @@ mod tests {
             conflicting_command(&overrides, Command::Play, &save),
             Some(Command::Save)
         );
-        // Binding back to own original key is not a conflict.
         assert_eq!(conflicting_command(&overrides, Command::Save, &save), None);
 
-        // Override table participates in judgment: after Play changed to Ctrl+Shift+P, other commands can't take it.
         let mut overrides = BTreeMap::new();
         overrides.insert(Command::Play.id().to_string(), "Ctrl+Shift+P".to_string());
         let chord = KeyChord::parse("Ctrl+Shift+P").unwrap();
@@ -646,7 +635,6 @@ mod tests {
             let chord = KeyChord::parse(entry.keys).unwrap_or_else(|| panic!("bad {}", entry.keys));
             assert_eq!(chord.display(), entry.keys.replace("Del", "Del"));
         }
-        // Same chord cannot bind two commands.
         for (index, first) in SHORTCUTS.iter().enumerate() {
             let first_chord = KeyChord::parse(first.keys).unwrap();
             for second in &SHORTCUTS[index + 1..] {

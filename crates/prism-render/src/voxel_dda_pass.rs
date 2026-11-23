@@ -837,7 +837,6 @@ impl FrameSlot {
         scratch.flat_occ.clear();
         scratch.flat_cells.clear();
 
-        // Sort uploaded chunks nearest-to-camera first so `trace_world` tightens `best.t` early.
         for (idx, chunk) in scene.chunks.iter().enumerate() {
             let cx = chunk.origin_l1[0] as f32 + chunk.dims_l1[0] as f32 * 0.5;
             let cy = chunk.origin_l1[1] as f32 + chunk.dims_l1[1] as f32 * 0.5;
@@ -1133,7 +1132,6 @@ impl VoxelDdaPass {
         }
         .context("VoxelDdaPass: create descriptor layout")?;
 
-        // 2 slots * 6 descriptor sets per slot = 12 sets.
         const TOTAL_SETS: u32 = 12;
         let pool_sizes = [
             vk::DescriptorPoolSize {
@@ -1669,9 +1667,6 @@ impl RenderPassNode for VoxelDdaPass {
         } else {
             sun_dir = [0.408, 0.816, 0.408];
         }
-        // Sun radiance and IBL ambient pass through verbatim: with no directional
-        // light the engine writes zero intensity, and it must stay zero here. Any
-        // non-zero floor turns a night scene back into daylight.
         let (sun_rad, sun_col) = (ctx.frame.light_dir[3].max(0.0), ctx.frame.light_color);
         let cursor = scene.cursor.unwrap_or(VoxelCursorUpload {
             active: false,
@@ -1743,7 +1738,6 @@ impl RenderPassNode for VoxelDdaPass {
 
         let target = slot.target.as_mut().unwrap();
 
-        // Transition one-time dummy images if needed.
         if !self.dummies.initialized {
             let dummy_barriers = [
                 image_barrier(
@@ -1803,7 +1797,6 @@ impl RenderPassNode for VoxelDdaPass {
             self.dummies.initialized = true;
         }
 
-        // Update all 5 descriptor sets for this slot cleanly.
         write_full_descriptor_set(
             ctx.device,
             ds_primary,
@@ -1908,7 +1901,6 @@ impl RenderPassNode for VoxelDdaPass {
         let gx = extent.width.div_ceil(8);
         let gy = extent.height.div_ceil(8);
 
-        // 1. Transition all target images to GENERAL for writing.
         let init_old = if target.initialized {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
         } else {
@@ -1946,7 +1938,6 @@ impl RenderPassNode for VoxelDdaPass {
         }
         target.initialized = true;
 
-        // 2. Pass 1: Primary DDA + 2-bounce GI + Emissive NEE + Temporal accumulation.
         unsafe {
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
@@ -1964,7 +1955,6 @@ impl RenderPassNode for VoxelDdaPass {
             ctx.device.cmd_dispatch(ctx.cmd, gx, gy, 1);
         }
 
-        // Transition primary G-buffer outputs to SHADER_READ_ONLY_OPTIMAL before GI + denoise + composite.
         let after_primary = [
             image_barrier(
                 target.direct.image,
@@ -2014,7 +2004,6 @@ impl RenderPassNode for VoxelDdaPass {
             );
         }
 
-        // 2b. Pass 1b: Demodulated 2-bounce voxel GI + emissive NEE + temporal accumulation.
         unsafe {
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
@@ -2051,7 +2040,6 @@ impl RenderPassNode for VoxelDdaPass {
             );
         }
 
-        // 3. Pass 2: 4-iteration À-Trous edge-aware bilateral denoise (`step = 1, 2, 4, 8`).
         unsafe {
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
@@ -2152,7 +2140,6 @@ impl RenderPassNode for VoxelDdaPass {
                     }
                 }
             } else {
-                // Final denoise pass: transition denoise_b -> SHADER_READ_ONLY_OPTIMAL for composite.
                 let b_final = image_barrier(
                     out_img,
                     vk::ImageLayout::GENERAL,
@@ -2174,7 +2161,6 @@ impl RenderPassNode for VoxelDdaPass {
             }
         }
 
-        // 4. Pass 3: Composite denoised GI + direct + glass + cursor into VOXEL_COLOR_H & VOXEL_DEPTH_H.
         unsafe {
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,

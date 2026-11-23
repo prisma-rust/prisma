@@ -199,9 +199,6 @@ impl BlasEntry {
                 std::slice::from_ref(&build_info),
                 &[&ranges],
             );
-            // Make the built BLAS visible to subsequent acceleration-structure
-            // reads (the TLAS build references it). Without this barrier the
-            // TLAS build can read a stale/empty BLAS and every ray misses.
             device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
@@ -282,7 +279,6 @@ impl BlasEntry {
             return Ok(Vec::new());
         }
 
-        // ---- 1. Get build sizes for every BLAS, find max scratch. ----
         let mut as_sizes = Vec::with_capacity(params.len());
         let mut max_scratch: vk::DeviceSize = 0;
         for p in params {
@@ -307,7 +303,6 @@ impl BlasEntry {
             }
         }
 
-        // ---- 2. Allocate one scratch buffer (max size across all chunks). ----
         let (scratch_buffer, scratch_memory) = buffer::create_buffer(
             context,
             max_scratch,
@@ -320,7 +315,6 @@ impl BlasEntry {
             )
         };
 
-        // ---- 3. Allocate AS buffers and create BLAS handles for ALL at once. ----
         let mut entries: Vec<Self> = Vec::with_capacity(params.len());
         for size_info in &as_sizes {
             let (as_buffer, as_memory) = buffer::create_buffer(
@@ -344,8 +338,6 @@ impl BlasEntry {
             let device_address =
                 unsafe { as_fn.get_acceleration_structure_device_address(&addr_info) };
 
-            // Temporary placeholder — we'll fix up handle/address after building.
-            // (The handle is already valid; we just need the struct for the build.)
             entries.push(Self {
                 handle,
                 device_address,
@@ -356,7 +348,6 @@ impl BlasEntry {
             });
         }
 
-        // ---- 4. Submit in chunks (each chunk < TDR timeout). ----
         let mut chunk_start = 0;
         while chunk_start < params.len() {
             let chunk_end = (chunk_start + Self::CHUNK_SIZE).min(params.len());
@@ -435,7 +426,6 @@ impl BlasEntry {
             chunk_start = chunk_end;
         }
 
-        // ---- 5. Clean up scratch. ----
         unsafe {
             device.destroy_buffer(scratch_buffer, None);
             device.free_memory(scratch_memory, None);
@@ -520,13 +510,6 @@ impl Tlas {
             MemoryProperties::HOST_VISIBLE | MemoryProperties::HOST_COHERENT,
         )?;
 
-        // Pair each instance with its BLAS address by array position. We do NOT
-        // use `inst.custom_index` to index `blas_addresses` - that field is
-        // reserved for shader-visible per-instance data (e.g. a material slot),
-        // so it must stay decoupled from the BLAS-address array position.
-        // Callers must pass `blas_addresses.len() == instances.len()`; a
-        // missing entry falls back to address 0 (produces no hits for that
-        // instance - safe, just invisible).
         anyhow::ensure!(
             blas_addresses.len() == instances.len(),
             "Tlas::build: blas_addresses.len() ({}) != instances.len() ({})",
@@ -662,9 +645,6 @@ impl Tlas {
                 std::slice::from_ref(&build_info),
                 &[&ranges],
             );
-            // Make the built TLAS visible to subsequent ray-query traces
-            // (compute shader). The dst stage covers both further AS builds
-            // and the compute stage that issues OpRayQueryInitializeKHR.
             device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
@@ -702,7 +682,6 @@ impl Tlas {
 
 impl Drop for Tlas {
     fn drop(&mut self) {
-        // `Default`-constructed (null) TLAS instances are safe to drop.
         if self.handle == vk::AccelerationStructureKHR::null() {
             return;
         }

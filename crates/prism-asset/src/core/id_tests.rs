@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 
 #[test]
@@ -87,11 +83,9 @@ fn display_and_debug_dont_panic() {
 
 #[test]
 fn path_ids_are_stable_and_order_independent() {
-    // #530: packer derives ID from path, texture IDs baked in material won't misalign due to an extra file.
     let a = AssetId::from_path("textures/marble.png");
     assert_eq!(a, AssetId::from_path("textures/marble.png"));
     assert_ne!(a, AssetId::from_path("textures/brick.png"));
-    // Windows-style input normalized to same ID.
     assert_eq!(a, AssetId::from_path("textures\\marble.png"));
     assert_eq!(a.generation(), 1, "build-time ID uses generation 1");
     assert_ne!(a.serial(), 0, "serial 0 reserved for unallocated");
@@ -99,7 +93,6 @@ fn path_ids_are_stable_and_order_independent() {
 
 #[test]
 fn path_ids_do_not_collide_for_the_common_extensions() {
-    // Different cook forms of same image are different paths, must get different IDs.
     let paths = [
         "textures/a.png",
         "textures/a.rtex",

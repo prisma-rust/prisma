@@ -13,6 +13,5 @@
 #![deny(warnings)]
 
 fn main() {
-    // Build app (complete engine init), register intro scene then launch.
     template_core::build_app().run();
 }

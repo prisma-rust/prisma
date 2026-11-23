@@ -44,10 +44,6 @@ pub fn startup_ms() -> u64 {
 /// `&mut GraphRenderer` (e.g. `set_environment` rebuilds IBL on demand on scene switch).
 pub type RendererMessage = Box<dyn FnOnce(&mut GraphRenderer) + Send>;
 
-// ---------------------------------------------------------------------------
-// FrameImage --- render thread -> host (editor)
-// ---------------------------------------------------------------------------
-
 /// One frame offscreen render result (RGBA8, row-major, top-left origin).
 ///
 /// Only produced in windowless (`GraphRenderer::offscreen_new`) mode: after host requests a frame,
@@ -58,10 +54,6 @@ pub struct FrameImage {
     pub height: u32,
     pub pixels: Vec<u8>,
 }
-
-// ---------------------------------------------------------------------------
-// FrameStats --- render thread -> main thread
-// ---------------------------------------------------------------------------
 
 /// Per-frame render metrics produced by render thread, consumed by main thread to show editor HUD.
 #[derive(Clone, Debug, Default)]
@@ -80,10 +72,6 @@ pub struct RenderStats {
     /// per second, not every frame.
     pub frame_stats: FrameStatsSummary,
 }
-
-// ---------------------------------------------------------------------------
-// RenderShared
-// ---------------------------------------------------------------------------
 
 /// Shared state between main thread (writer) and render thread (reader).
 pub struct RenderShared {
@@ -163,10 +151,6 @@ impl RenderShared {
         (shared, running)
     }
 
-    // -------------------------------------------------------------------
-    // Packet (main → render)
-    // -------------------------------------------------------------------
-
     /// Submit the latest frame packet (main thread → render thread).
     pub fn send_packet(&self, packet: FramePacket) {
         *self.packet.lock().unwrap() = Some(packet);
@@ -205,10 +189,6 @@ impl RenderShared {
         std::mem::take(&mut *self.overlay_messages.lock().unwrap())
     }
 
-    // -------------------------------------------------------------------
-    // Offscreen frame readback (host mode)
-    // -------------------------------------------------------------------
-
     /// Request render thread read back tonemap result to CPU next frame (main thread -> render thread).
     ///
     /// One-shot flag: render thread consumes when **frame available**; host re-requests every tick,
@@ -228,10 +208,6 @@ impl RenderShared {
         self.frame.lock().unwrap().take()
     }
 
-    // -------------------------------------------------------------------
-    // Renderer messages (main -> render thread)
-    // -------------------------------------------------------------------
-
     /// Enqueue one renderer command (main thread -> render thread). Render thread takes out at each frame start and
     /// applies to `&mut GraphRenderer`. Used to trigger `set_environment` etc across threads.
     pub fn send_renderer_message(&self, msg: RendererMessage) {
@@ -243,10 +219,6 @@ impl RenderShared {
     pub fn take_renderer_messages(&self) -> Vec<RendererMessage> {
         std::mem::take(&mut *self.renderer_messages.lock().unwrap())
     }
-
-    // -------------------------------------------------------------------
-    // Asset parsing (main thread CPU side <-> render thread GPU side)
-    // -------------------------------------------------------------------
 
     /// Enqueue a batch of asset upload requests (main thread -> render thread).
     pub fn enqueue_asset_requests(&self, reqs: Vec<(Entity, AssetResolveRequest)>) {
@@ -273,10 +245,6 @@ impl RenderShared {
     pub fn take_asset_results(&self) -> Vec<(Entity, AssetResolveResult)> {
         std::mem::take(&mut *self.asset_results.lock().unwrap())
     }
-
-    // -------------------------------------------------------------------
-    // Startup timing (main thread + render thread shared)
-    // -------------------------------------------------------------------
 
     /// Record a startup milestone (milliseconds relative to process start).
     pub fn mark(&self, key: &'static str) {
@@ -318,10 +286,6 @@ impl RenderShared {
         );
     }
 
-    // -------------------------------------------------------------------
-    // RenderStats (render → main)
-    // -------------------------------------------------------------------
-
     /// Write latest render stats (render thread).
     pub fn set_render_stats(&self, stats: RenderStats) {
         *self.render_stats.lock().unwrap() = stats;
@@ -332,10 +296,6 @@ impl RenderShared {
         self.render_stats.lock().unwrap().clone()
     }
 
-    // -------------------------------------------------------------------
-    // PT reset (main → render)
-    // -------------------------------------------------------------------
-
     /// Request PT accumulation reset (main thread).
     pub fn request_pt_reset(&self) {
         self.pt_reset_requested.store(true, Ordering::Relaxed);
@@ -345,10 +305,6 @@ impl RenderShared {
     pub fn take_pt_reset(&self) -> bool {
         self.pt_reset_requested.swap(false, Ordering::Relaxed)
     }
-
-    // -------------------------------------------------------------------
-    // Render-thread failure (render -> main)
-    // -------------------------------------------------------------------
 
     /// Record a fatal render-thread error so the main thread can surface it.
     pub fn fail_render(&self, message: String) {

@@ -215,7 +215,6 @@ fn inspect_clip(
                     }
                 }
             }
-            // Keyframe events (#560 P1 Notify): time must fall within clip range, name must not be empty.
             for (index, notify) in clip.notifies.iter().enumerate() {
                 if notify.name.trim().is_empty() {
                     problems.push(format!("notify {index} has an empty name"));

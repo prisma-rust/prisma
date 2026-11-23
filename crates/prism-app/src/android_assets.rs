@@ -150,7 +150,6 @@ mod tests {
         assert!(force_refresh("game/settings.ini"));
         assert!(force_refresh("game/nested/settings.ini"));
         assert!(force_refresh("game\\settings.ini"));
-        // Old project settings.toml still distributed with package, overwritten each time too.
         assert!(force_refresh("settings.toml"));
         assert!(force_refresh("game/settings.toml"));
         assert!(force_refresh("scenes.pak"));

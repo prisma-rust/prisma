@@ -379,7 +379,6 @@ fn f16_to_f32(bits: u16) -> f32 {
     let mantissa = bits & 0x3ff;
 
     let magnitude = if exponent == 0 {
-        // Subnormal (or zero).
         mantissa as f32 * 2.0f32.powi(-24)
     } else if exponent == 0x1f {
         if mantissa == 0 {
@@ -532,7 +531,6 @@ mod tests {
         assert_eq!(f16_to_f32(0x3555), 0.333_251_95);
         assert!(f16_to_f32(0x7c00).is_infinite());
         assert!(f16_to_f32(0x7e00).is_nan());
-        // Smallest positive subnormal.
         assert_eq!(f16_to_f32(0x0001), 2.0f32.powi(-24));
     }
 
@@ -542,7 +540,6 @@ mod tests {
             width: 2,
             height: 1,
         };
-        // Two RGBA16F texels: (0, 0, 0, 1) and (1, 1, 1, 1).
         let mut raw = Vec::new();
         for value in [0u16, 0, 0, 0x3c00, 0x3c00, 0x3c00, 0x3c00, 0x3c00] {
             raw.extend_from_slice(&value.to_le_bytes());
@@ -565,8 +562,8 @@ mod tests {
             height: 1,
         };
         let mut raw = Vec::new();
-        raw.extend_from_slice(&1.0f32.to_le_bytes()); // cleared
-        raw.extend_from_slice(&0.0f32.to_le_bytes()); // at the near plane
+        raw.extend_from_slice(&1.0f32.to_le_bytes());
+        raw.extend_from_slice(&0.0f32.to_le_bytes());
         let rgba = decode_to_rgba(&raw, extent, vk::Format::D32_SFLOAT, DumpKind::Depth);
         assert_eq!(rgba[0], 0);
         assert_eq!(rgba[4], 255);
@@ -590,7 +587,6 @@ mod tests {
             width: 1,
             height: 1,
         };
-        // RGBA16F with zero dx, dy
         let raw = vec![0u8; 8];
         let rgba = decode_to_rgba(
             &raw,
@@ -598,10 +594,9 @@ mod tests {
             vk::Format::R16G16B16A16_SFLOAT,
             DumpKind::Velocity,
         );
-        // (0.0 * 4.0 + 0.5) * 255 = 127.5 -> 128
         assert_eq!(rgba[0], 128);
         assert_eq!(rgba[1], 128);
-        assert_eq!(rgba[2], 0); // magnitude zero
+        assert_eq!(rgba[2], 0);
         assert_eq!(rgba[3], 255);
     }
 

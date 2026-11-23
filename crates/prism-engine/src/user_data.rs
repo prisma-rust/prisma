@@ -92,7 +92,6 @@ impl UserData {
     }
 
     pub fn to_json(&self) -> String {
-        // Save human-readable and hand-editable; only two fields, no worry about field order changes.
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
 }
@@ -181,7 +180,6 @@ impl UserStore {
             Ok(text) => match UserData::parse(&text) {
                 Ok(data) => store.data = data,
                 Err(error) => {
-                    // Parse failure: keep original file (may be from newer version), read-only this time.
                     log::warn!(
                         "player data {}: {error}; keeping the file untouched",
                         path.display()

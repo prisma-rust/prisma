@@ -31,7 +31,6 @@ fn to_wide(s: &str) -> Vec<u16> {
 pub fn show(title: &str, message: &str) -> CrashChoice {
     let title_w = to_wide(title);
 
-    // Build a combined body: the message + a hint about the buttons.
     let body = format!(
         "{message}\n\n\
          \u{2014}\u{2014}\u{2014}\n\
@@ -41,7 +40,6 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
     let body_w = to_wide(&body);
 
     let flags = MB_YESNO | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND | MB_DEFBUTTON2;
-    // HWND owner = null (no parent window; render window might be in bad state)
     let ret = unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
@@ -53,22 +51,17 @@ pub fn show(title: &str, message: &str) -> CrashChoice {
 
     match ret {
         IDYES => CrashChoice::CopyAndExit,
-        // IDNO or any error/cancel path falls through to plain Exit.
         _ => CrashChoice::Exit,
     }
 }
 
 pub fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    // Win32 clipboard wants a NUL-terminated UTF-16 buffer in a global alloc.
-    // We go through the Rust allocator + raw HGLOBAL via `GlobalAlloc` is the
-    // textbook approach, but `SetClipboardData` can also receive a HANDLE we
-    // allocate ourselves. Use the standard `GlobalAlloc` flow.
     use windows_sys::Win32::System::Memory::{
         GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
     };
 
     let mut wide: Vec<u16> = OsStr::new(text).encode_wide().collect();
-    wide.push(0); // NUL terminator
+    wide.push(0);
     let byte_len = wide.len() * 2;
 
     unsafe {

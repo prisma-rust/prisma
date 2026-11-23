@@ -101,14 +101,12 @@ mod cases {
             [640, 360],
             prism_render::InternalScaleMode::Integer,
         );
-        // Integer floor down: 2x -> 1280x720, centered leaves 160/90 black borders.
         assert!(
             (mapping.scale - 0.8).abs() < 1e-6,
             "scale {}",
             mapping.scale
         );
         assert_eq!(mapping.offset, [160.0, 90.0]);
-        // Window center is layout center (screen center), click where you select.
         assert_eq!(mapping.window_to_layout([800.0, 450.0]), [800.0, 450.0]);
     }
 
@@ -151,7 +149,6 @@ mod cases {
     fn raw_device_motion_is_the_only_delta_while_locked() {
         let mut input = InputManager::new();
         input.set_locked(true);
-        // Clamped cursor position arrives first (previously delta was accumulated first).
         apply_window_cursor_move(&mut input, 640.0, 360.0);
         apply_device_mouse_motion(&mut input, 3.0, -4.0);
         assert_eq!(input.mouse_delta(), [3.0, -4.0]);
@@ -213,7 +210,6 @@ mod cases {
             (K::Digit3, 12),
             (K::Digit4, 13),
             (K::Digit5, 14),
-            // Shift+6 is skin weight heatmap (#560), not PBR component, but also debug bit 15.
             (K::Digit6, 15),
         ] {
             assert_eq!(
@@ -222,7 +218,6 @@ mod cases {
                 "{key:?} with Shift"
             );
         }
-        // 15 debug bits already used; Shift+7..0 with normal letters should not grab hotkeys.
         for key in [K::Digit7, K::Digit8, K::Digit9, K::Digit0, K::KeyA] {
             assert_eq!(
                 bindings.action_for(prism_engine::key_code_from_vk(key.to_vk())),
@@ -269,7 +264,6 @@ mod cases {
         ] {
             assert_eq!(engine_key_from_native(key), expected, "{key:?}");
         }
-        // Unlisted keys cannot be dropped: degrade to raw code (winit discriminant / Win32 VK).
         assert_eq!(engine_key_from_native(K::Other(0x5A)), Eng::Other(0x5A));
     }
 
@@ -298,7 +292,6 @@ mod cases {
                 "{key:?} still in key_held after release"
             );
         }
-        // Keys only covered by `LETTER_KEYS` fallback also cannot be dropped.
         assert!(!apply_key_event(&mut input, K::Letter(b'R'), true));
         assert!(input.key_held(KeyCode::Other(u32::from(b'R'))));
     }
@@ -319,7 +312,6 @@ mod cases {
             input.key_held(KeyCode::Escape),
             "unlock does not affect Esc itself being dispatched"
         );
-        // Pressing Esc again when already unlocked does not re-trigger.
         assert!(!apply_key_event(&mut input, K::Escape, true));
     }
 

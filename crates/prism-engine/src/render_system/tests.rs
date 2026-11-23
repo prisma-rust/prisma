@@ -48,11 +48,9 @@ fn every_enabled_camera_becomes_a_composited_layer_in_depth_order() {
     collect_scene_changes_into(&mut world, 16.0 / 9.0, &Mat4::IDENTITY, 60.0, 1, &mut out);
 
     assert_eq!(out.cameras.len(), 2, "both cameras must be composited");
-    // Depth: clear depth only, keep whatever the previous layer drew.
     assert!(!out.cameras[0].clear_color_enabled);
     assert!(out.cameras[0].clear_depth);
     assert!(!out.cameras[0].draw_skybox);
-    // SolidColor: clear colour (and depth), no skybox.
     assert!(out.cameras[1].clear_color_enabled);
     assert!(out.cameras[1].clear_depth);
     assert_eq!(out.cameras[1].clear_color, [0.0, 1.0, 0.0, 1.0]);
@@ -103,7 +101,6 @@ fn extraction_keeps_objects_visible_only_through_a_second_camera() {
     );
     world.insert(secondary, LocalToWorld(Mat4::from_quat(rotation)));
 
-    // Main camera looks −Z, so object at +Z only visible in second (rotation 180°) camera.
     let mesh = world.spawn();
     world.insert(
         mesh,
@@ -176,13 +173,10 @@ fn the_shadow_box_fits_the_camera_frustum() {
             && clip.x.abs() <= clip.w
             && clip.y.abs() <= clip.w
     };
-    // A point in the middle of the visible slab is inside the map.
     assert!(
         inside(Vec3::new(0.0, 0.0, -30.0)),
         "visible slab must be covered"
     );
-    // Scenery the camera cannot see must not be inside the map either: a
-    // point far off to the side and a point past the shadow distance are out.
     assert!(
         !inside(Vec3::new(500.0, 0.0, -30.0)),
         "a point outside the camera frustum must not be covered"
@@ -200,8 +194,6 @@ fn the_shadow_box_fits_the_camera_frustum() {
 fn a_longer_shadow_distance_covers_more_world() {
     let dir = Vec4::new(0.0, -1.0, 0.0, 0.0);
     let (_v, _p, inv, proj22, proj32) = test_camera(Vec3::ZERO, 60.0, 16.0 / 9.0, 0.1, 500.0);
-    // The x scale is 1/half, so the box half-extent is the reciprocal of the
-    // clip-space width of one world unit.
     let half_extent = |distance: f32| {
         let corners = camera_frustum_corners(&inv, proj22, proj32, false, 0.1, distance);
         let m = shadow_matrix_fitting(&dir, &corners, 2048);
@@ -458,7 +450,6 @@ fn orthographic_flag_comes_from_the_rendered_camera() {
         "Orthographic flag should follow actually rendered camera (one with LocalToWorld)"
     );
 
-    // With no renderable camera falls back to fallback perspective camera.
     let mut empty = World::new();
     let fallback = collect_scene_changes(&mut empty, 16.0 / 9.0, &Mat4::IDENTITY);
     assert!(!fallback.has_camera);

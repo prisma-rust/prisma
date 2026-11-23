@@ -131,9 +131,6 @@ impl<'a> SceneReadView<'a> {
     }
 
     pub fn environment_asset_path(&self) -> Option<String> {
-        // Skybox is the authoritative source. A scene with a disabled Skybox
-        // deliberately opts out of IBL, so do not fall back to the legacy
-        // EnvironmentLighting component in that case.
         let mut has_skybox = false;
         for (_, skybox) in self.world.query::<super::components::Skybox>() {
             has_skybox = true;
@@ -145,8 +142,6 @@ impl<'a> SceneReadView<'a> {
             return None;
         }
 
-        // Legacy compatibility for scenes authored before Skybox owned the
-        // environment map.
         self.world
             .query::<super::components::EnvironmentLighting>()
             .next()
@@ -377,8 +372,6 @@ impl SceneManager {
             return 0;
         }
         let unloaded = unload_scene_members(world, Some(inst.scene_id));
-        // Author format has no manifest name: clear last manifest scene identity,
-        // otherwise `current_scene_name()` points to an already unloaded scene.
         self.current_scene_name = None;
         self.current_scene_path = None;
         self.environment_bytes = None;
@@ -523,11 +516,9 @@ impl SceneManager {
                         }
                         Err(e) => {
                             log::warn!("env map {} not readable: {e}", hdr_path.display())
-                            // Component declares env_map but file missing: treat as no IBL.
                         }
                     }
                 }
-                // Found EnvironmentLighting component but no env_map (or file missing) → don't build IBL.
                 return None;
             }
         }
@@ -549,10 +540,6 @@ impl SceneManager {
         }
         None
     }
-
-    // -----------------------------------------------------------------------
-    // internal: manifest-driven loading
-    // -----------------------------------------------------------------------
 
     /// Resolve and load scenes one by one from manifest; `scene_name = None` means first loadable scene.
     fn load_from_manifest(
@@ -622,9 +609,6 @@ impl SceneManager {
                     continue;
                 }
             }
-            // Scene content always loaded by AssetId from asset package: scenes.json `path` only
-            // lookup key in path manifest (.pak.meta.json), first parsed as AssetId, then
-            // ResourceManager reads RSCN bytes — no disk file fallback.
             let Some(id) = rm.id_by_path(&entry.path) else {
                 log::warn!(
                     "scene '{}' -> '{}' not registered in resource package; skipping",
@@ -635,8 +619,6 @@ impl SceneManager {
             };
             match load_scene_by_id(rm, world, id, registry) {
                 Ok(inst) => {
-                    // Only unload old scene after new scene spawned successfully: on failure keep current
-                    // scene unchanged (see `load_named_from_manifest` convention).
                     let unloaded = self.adopt_scene(world, &entry.name, &entry.path, &inst);
                     log::info!(
                         "scene '{}' loaded: {} entities ({} roots), unloaded {unloaded} entity(ies) from the previous scene",
@@ -684,8 +666,6 @@ impl SceneManager {
         self.current_scene_name = Some(name.to_owned());
         self.missing_scene = false;
         self.current_scene_path = Some(path.to_owned());
-        // IBL resolved per scene: after switching can't keep reusing previous scene's injected bytes,
-        // otherwise old HDR covers new scene's skybox.
         self.environment_bytes = None;
         self.bump_generation();
         unloaded
@@ -728,10 +708,6 @@ pub fn load_env_bytes_from_manifest() -> Option<Vec<u8>> {
     log::info!("no environment map in scene manifest; using procedural fallback");
     None
 }
-
-// ---------------------------------------------------------------------------
-// Manifest helpers (migrated from old engine.rs) — scene system internal implementation
-// ---------------------------------------------------------------------------
 
 pub use prism_scene::{SceneManifest, SceneManifestEntry};
 

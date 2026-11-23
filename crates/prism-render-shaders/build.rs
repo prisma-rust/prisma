@@ -101,8 +101,6 @@ fn main() {
 
     let missing = missing_of(&runtime);
     if !missing.is_empty() {
-        // Nothing goes to stdout on failure: cargo prints build-script stdout above the
-        // error, and a watch list there would bury the message we want the reader to see.
         fail(&repo, &shaders, &missing, note.as_deref());
     }
 
@@ -245,7 +243,6 @@ fn spv_literals(source: &str) -> Vec<&str> {
         let after = &rest[open + 1..];
         let Some(close) = after.find('"') else { break };
         let literal = &after[..close];
-        // `tests/support/mod.rs` documents the pattern with an ellipsis placeholder.
         if literal.ends_with(".spv") && !literal.contains("...") {
             out.push(literal);
         }

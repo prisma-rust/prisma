@@ -14,8 +14,6 @@
 use flume::{Receiver, Sender};
 use prism_audio::AudioData;
 
-// ── Messages ──────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub enum DecodeRequest {
     DecodeFile { path: String, request_id: u64 },
@@ -47,8 +45,6 @@ impl std::fmt::Debug for DecodeResult {
         }
     }
 }
-
-// ── Thread entry point ────────────────────────────────────────────────
 
 /// Run the audio decode event loop. Blocks on `rx` until
 /// [`DecodeRequest::Shutdown`] or channel close.

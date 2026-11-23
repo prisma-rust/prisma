@@ -70,7 +70,7 @@ fn a_graph_round_trips_through_json_and_ragp() {
     assert_eq!(graph.nodes[0].positions, [[0.0, 0.0], [5.0, 0.0]]);
     assert_eq!(graph.nodes[0].sample_speeds, [1.0, 2.0]);
     assert_eq!(graph.nodes[4].clips, ["montage.ranim"]);
-    assert_eq!(graph.nodes[5].inputs[0].node, 4); // cached -> slot
+    assert_eq!(graph.nodes[5].inputs[0].node, 4);
     assert_eq!(graph.nodes[6].inputs[1].bone_mask, ["spine_02"]);
 
     let bytes = encode_rag(&graph).expect("encodes");
@@ -104,7 +104,6 @@ fn duplicate_and_unknown_node_names_are_errors() {
 #[test]
 fn a_cycle_is_rejected() {
     let mut document = document();
-    // slot -> cached -> slot
     document["nodes"][3]["input"] = json!("cached");
     let error = parse_anim_graph_json(&document).expect_err("must fail");
     assert!(error.contains("cycle"), "{error}");

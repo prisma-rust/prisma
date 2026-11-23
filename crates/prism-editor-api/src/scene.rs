@@ -219,8 +219,6 @@ pub fn list_scenes(project_root: &Path) -> Result<Vec<SceneEntry>, String> {
 pub fn read_doc(path: &Path) -> Result<serde_json::Value, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
-    // `SceneJson::parse` first migrates old document to current schema (e.g. v1's
-    // `transform.translation` → `position`), then normalized round-trip.
     let scene = SceneJson::parse(&text)
         .map_err(|e| format!("{} JSON parse failed: {e}", path.display()))?;
     serde_json::to_value(&scene).map_err(|e| e.to_string())
@@ -292,8 +290,6 @@ pub fn sync_doc_for_save(
     path: &Path,
     doc: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    // Run the same migration/normalisation as `write_doc` so GUID syncing sees
-    // the final entity/component shape.
     let normalized = prism_scene::normalize_scene_doc(doc)?;
     Ok(sync_doc_with_project(
         project_root,
@@ -315,7 +311,6 @@ pub fn write_doc_in_project(
 
 /// Validate authoring document: shape + structural invariants (parent index out of bounds / self-parent / empty document).
 pub fn validate_doc(doc: &serde_json::Value) -> Result<(), String> {
-    // Migrate first then validate, so v1 documents can also pass.
     let scene = SceneJson::from_value(doc.clone())
         .map_err(|e| format!("Not a valid authoring document structure: {e}"))?;
     scene.validate()
@@ -346,10 +341,6 @@ pub fn write_doc(path: &Path, doc: &serde_json::Value) -> Result<(), String> {
 pub fn write_scene_doc(path: &Path, doc: &serde_json::Value) -> Result<(), String> {
     write_doc(path, doc)
 }
-
-// ---------------------------------------------------------------------------
-// Document name / path
-// ---------------------------------------------------------------------------
 
 /// Validate logical name and construct full path under a kind of document directory.
 pub fn doc_path(root: &Path, kind: DocKind, name: &str) -> Result<PathBuf, String> {
@@ -450,10 +441,6 @@ pub fn delete_doc(path: &Path) -> Result<(), String> {
 pub fn delete_scene(path: &Path) -> Result<(), String> {
     delete_doc(path)
 }
-
-// ---------------------------------------------------------------------------
-// Scene templates
-// ---------------------------------------------------------------------------
 
 /// A built-in scene template.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -563,7 +550,6 @@ pub fn template_scene_doc(id: &str) -> serde_json::Value {
                 }),
             ),
         ],
-        // "camera" and unknown id
         _ => vec![entity(
             "Camera",
             None,
@@ -627,7 +613,6 @@ fn entity(
 pub fn templates_for(kind: DocKind) -> Vec<SceneTemplate> {
     match kind {
         DocKind::Scene => templates(),
-        // Prefab template = single entity preset.
         DocKind::Prefab => crate::presets::entity_presets()
             .into_iter()
             .map(|preset| SceneTemplate {
@@ -672,10 +657,6 @@ pub fn prefab_template_doc(preset_id: &str) -> serde_json::Value {
         ],
     }))
 }
-
-// ---------------------------------------------------------------------------
-// Prefab: extract from subtree / instantiate
-// ---------------------------------------------------------------------------
 
 /// Prefab instantiation result.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -748,7 +729,7 @@ fn is_descendant(entities: &[serde_json::Value], node: usize, ancestor: usize) -
         }
         guard += 1;
         if guard > entities.len() {
-            return false; // Cycle exists in data, conservatively give up
+            return false;
         }
         current = index_of_id(entities, parent_id).and_then(|index| parent_of(&entities[index]));
     }
@@ -808,7 +789,6 @@ pub fn move_entity(
         }
     }
 
-    // First extract child, then insert at target position.
     let mut order: Vec<usize> = (0..count).collect();
     order.remove(child);
     let target = if insert_at > child {
@@ -818,7 +798,6 @@ pub fn move_entity(
     };
     order.insert(target.min(order.len()), child);
 
-    // Only change moved entity's `parent`: id and array position decoupled, other entities completely untouched.
     let new_parent_id = parent.map(|index| id_of(&entities[index]));
     let new_index = target.min(order.len() - 1);
 
@@ -875,7 +854,6 @@ pub fn delete_entities(
             continue;
         }
         let mut entity = entity.clone();
-        // Deleted parent → becomes root; remaining parents are ids, unaffected by array shrink.
         let new_parent = parent_of(&entity).filter(|parent| !removed_ids.contains(parent));
         entity["parent"] = match new_parent {
             Some(parent) => serde_json::json!(parent),
@@ -933,7 +911,6 @@ pub fn extract_subtree(
     }
 
     let order = subtree_indices(entities, root);
-    // Prefab file has own id space: subtree ids renumbered 0..k, internal parent-child references changed accordingly.
     let mapping: std::collections::HashMap<u32, u32> = order
         .iter()
         .enumerate()
@@ -944,7 +921,6 @@ pub fn extract_subtree(
     for old_index in &order {
         let mut entity = entities[*old_index].clone();
         let parent = parent_of(&entity);
-        // Parent not in subtree (including root entity's original parent) → null.
         let new_parent = parent.and_then(|parent| mapping.get(&parent).copied());
         entity["id"] = serde_json::json!(mapping[&id_of(&entity)]);
         entity["parent"] = match new_parent {
@@ -954,7 +930,6 @@ pub fn extract_subtree(
         extracted.push(entity);
     }
 
-    // Strip instance link from root.
     if let Some(first) = extracted.first_mut() {
         if let Some(components) = first
             .get_mut("components")
@@ -1005,7 +980,6 @@ pub fn instantiate_prefab(
         .get("version")
         .cloned()
         .unwrap_or(serde_json::json!(prism_scene::SCENE_DOC_VERSION));
-    // Prefab has own id space: allocate a new id block, remember old id → new id.
     let id_base = next_entity_id(&scene_entities);
     let id_map: std::collections::HashMap<u32, u32> = prefab_entities
         .iter()
@@ -1051,7 +1025,6 @@ pub fn instantiate_prefab(
             None => serde_json::json!(null),
         };
 
-        // Prefab root entity records source (for editor reverse link).
         if prefab_parent.is_none() {
             if let Some(path) = link {
                 if let Some(components) = entity
@@ -1122,17 +1095,11 @@ pub fn revert_prefab_instance(
         .and_then(|value| value.as_str())
         .map(|name| name.to_string());
     let subtree = subtree_indices(entities, root);
-    // `parent` is id, deleting subtree does not invalidate it (exactly the effect v3 wants);
-    // `instantiate_prefab` input is **index**, and must be **trimmed document's** index:
-    // array order unrelated to hierarchy (see `SceneJson::topological_order`), deleted entities may completely
-    // be before parent entity, deleting will shift parent entity forward. Using original array index directly will attach wrong parent (or
-    // error in bounds check).
     let parent = parent_of(&entities[root])
         .map(|id| {
             let index = index_of_id(entities, id)
                 .ok_or_else(|| format!("Parent entity id {id} does not exist"))?;
             if subtree.contains(&index) {
-                // Only happens when hierarchy cycles (`validate` only rejects self-parent).
                 return Err(format!(
                     "Parent entity id {id} is in pending-deleted subtree (hierarchy cycle)"
                 ));
@@ -1140,7 +1107,6 @@ pub fn revert_prefab_instance(
             Ok(index_after_removal(index, &subtree) as u32)
         })
         .transpose()?;
-    // Root position in trimmed array: entities before it minus those also in this subtree.
     let insert_at = index_after_removal(root, &subtree);
 
     let trimmed = delete_entities(scene, &subtree)?;
@@ -1273,7 +1239,6 @@ mod tests {
         let doc = read_scene_doc(&path).unwrap();
         validate_scene_doc(&doc).unwrap();
 
-        // Writing back illegal document must be rejected, not persisted to disk.
         let bad = json!({ "version": prism_scene::SCENE_DOC_VERSION, "entities": [] });
         assert!(write_scene_doc(&path, &bad).is_err());
         assert_eq!(read_scene_doc(&path).unwrap(), doc);
@@ -1292,20 +1257,17 @@ mod tests {
             let doc = template_scene_doc(&id);
             validate_scene_doc(&doc).unwrap_or_else(|e| panic!("template '{id}' invalid: {e}"));
 
-            // Every entity must have complete transform / components shape.
             for entity in doc["entities"].as_array().unwrap() {
                 assert!(entity["transform"].is_object());
                 assert!(entity["components"].is_object());
             }
 
-            // Should remain unchanged after SceneJson normalization (template already in normalized shape).
             let normalized: serde_json::Value =
                 serde_json::to_value(serde_json::from_value::<SceneJson>(doc.clone()).unwrap())
                     .unwrap();
             assert_eq!(normalized, doc, "template '{id}' is not normalized");
         }
 
-        // Unknown id falls back to camera.
         assert_eq!(template_scene_doc("nope"), template_scene_doc("camera"));
     }
 
@@ -1332,9 +1294,7 @@ mod tests {
             validate_doc(&doc).unwrap_or_else(|e| panic!("prefab template '{}': {e}", template.id));
             assert_eq!(doc["entities"].as_array().unwrap().len(), 1);
         }
-        // Unknown id falls back to empty entity.
         assert!(validate_doc(&template_doc(DocKind::Prefab, "nope")).is_ok());
-        // Prefab has its own directory.
         assert!(docs_dir(Path::new("/x"), DocKind::Prefab).ends_with("assets/prefabs"));
     }
 
@@ -1357,11 +1317,11 @@ mod tests {
         let entities = prefab["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 3);
         assert_eq!(entities[0]["name"], "root");
-        assert_eq!(entities[0]["parent"], serde_json::Value::Null); // Extracted root disconnects parent
+        assert_eq!(entities[0]["parent"], serde_json::Value::Null);
         assert_eq!(entities[1]["name"], "child");
-        assert_eq!(entities[1]["parent"], 0); // Parent is root (new index 0)
+        assert_eq!(entities[1]["parent"], 0);
         assert_eq!(entities[2]["name"], "grandchild");
-        assert_eq!(entities[2]["parent"], 1); // Parent is child (new index 1)
+        assert_eq!(entities[2]["parent"], 1);
 
         assert!(extract_subtree(&scene, 99).is_err());
     }
@@ -1389,14 +1349,10 @@ mod tests {
 
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 4);
-        // Name deduplicated with existing entities.
         assert_eq!(entities[2]["name"], "Camera_2");
-        // Prefab root attached to specified parent entity.
         assert_eq!(entities[2]["parent"], 0);
-        // Internal parent indices shifted.
         assert_eq!(entities[3]["parent"], 2);
 
-        // Out-of-bounds parent entity rejected.
         assert!(instantiate_prefab(&scene, &prefab, Some(9), None).is_err());
     }
 
@@ -1436,13 +1392,11 @@ mod tests {
             }]
         );
 
-        // Strip link when extracting subtree (prefab should not record where it comes from).
         let extracted = extract_subtree(&result.doc, 1).unwrap();
         assert!(extracted["entities"][0]["components"]
             .get(PREFAB_LINK_COMPONENT)
             .is_none());
 
-        // Break link.
         let unlinked = unlink_prefab_instance(&result.doc, 1).unwrap();
         assert!(prefab_instances(&unlinked).is_empty());
     }
@@ -1454,7 +1408,6 @@ mod tests {
         let path = "assets/prefabs/door.prefab.json";
 
         let instantiated = instantiate_prefab(&scene, &prefab, Some(0), Some(path)).unwrap();
-        // Corrupt instance content (change name + remove component).
         let mut broken = instantiated.doc.clone();
         broken["entities"][1]["name"] = serde_json::json!("Broken");
         broken["entities"][1]["components"] = serde_json::json!({});
@@ -1464,14 +1417,12 @@ mod tests {
 
         let entities = reverted.doc["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 3);
-        // Name and parent retained, content from prefab.
         assert_eq!(entities[reverted.index]["name"], "Broken");
         assert_eq!(entities[reverted.index]["parent"], 0);
         assert_eq!(
             entities[reverted.index]["components"]["prism_engine::scene::Active"],
             serde_json::json!(true)
         );
-        // Link still present, and only this one instance.
         assert_eq!(prefab_instances(&reverted.doc).len(), 1);
     }
 
@@ -1499,7 +1450,6 @@ mod tests {
         let reverted = revert_prefab_instance(&scene, 2, &demo_prefab(), Some(path)).unwrap();
         validate_doc(&reverted.doc).unwrap();
 
-        // Rebuilt subtree returns to original position (not appended to end), name uses instance's original name.
         assert_eq!(reverted.index, 2);
         let names: Vec<&str> = reverted.doc["entities"]
             .as_array()
@@ -1529,7 +1479,6 @@ mod tests {
             "components": {}
         });
         door["components"][PREFAB_LINK_COMPONENT] = serde_json::json!({ "prefab": path });
-        // In v3 document `parent` is id; here id and index deliberately different (10/30/40).
         let scene = serde_json::json!({
             "version": prism_scene::SCENE_DOC_VERSION,
             "entities": [
@@ -1545,7 +1494,6 @@ mod tests {
         let entities = reverted.doc["entities"].as_array().unwrap();
         assert_eq!(reverted.index, 1);
         assert_eq!(entities.len(), 3);
-        // Parent still is id (10), not same-value index.
         assert_eq!(entities[1]["parent"], 10);
         let ids: Vec<u64> = entities
             .iter()
@@ -1565,11 +1513,6 @@ mod tests {
             "components": {}
         });
         door["components"][PREFAB_LINK_COMPONENT] = serde_json::json!({ "prefab": path });
-        // Array order deliberately opposite to hierarchy order:
-        //   idx0 `grandchild` (id 9) before its parent `Door`, also in Door's subtree;
-        //   idx1 `host` (id 0) is Door's parent, but sorted after subtree.
-        // After deleting subtree host moves from index 1 to 0: if using original array index (1), instance will be attached
-        // to `tail` (silently attach wrong parent).
         let scene = serde_json::json!({
             "version": prism_scene::SCENE_DOC_VERSION,
             "entities": [
@@ -1589,7 +1532,6 @@ mod tests {
             .map(|entity| entity["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["host", "Door", "Handle", "tail"]);
-        // Instance root re-attached to host (id 0 / trimmed index 0), not pre-trim index 1 pointing to tail.
         assert_eq!(entities[reverted.index]["parent"], 0);
         assert_eq!(reverted.index, 1);
         assert_eq!(prefab_instances(&reverted.doc).len(), 1);
@@ -1598,7 +1540,6 @@ mod tests {
     #[test]
     fn revert_rejects_a_parent_that_is_inside_the_subtree() {
         let path = "assets/prefabs/door.prefab.json";
-        // Hierarchy cycle (`validate` only rejects self-parent): Door(id 1)'s parent is its descendant grandchild(id 9).
         let mut door = serde_json::json!({
             "id": 1,
             "name": "Door",
@@ -1631,7 +1572,6 @@ mod tests {
         let once = instantiate_prefab(&demo_scene_with_host(), &prefab, None, Some(path)).unwrap();
         let twice = instantiate_prefab(&once.doc, &prefab, None, Some(path)).unwrap();
 
-        // Insert a normal entity between two instances, check after sync it and both instances stay in place.
         let mut broken = twice.doc.clone();
         broken["entities"].as_array_mut().unwrap().insert(
             3,
@@ -1677,7 +1617,6 @@ mod tests {
         let twice = instantiate_prefab(&once.doc, &prefab, None, Some(path)).unwrap();
         assert_eq!(prefab_instances(&twice.doc).len(), 2);
 
-        // Corrupt two instances' content (but keep link component).
         let mut broken = twice.doc.clone();
         for entity in broken["entities"]
             .as_array_mut()
@@ -1694,7 +1633,7 @@ mod tests {
         let synced = sync_prefab_instances(&broken, path, &prefab).unwrap();
         validate_doc(&synced).unwrap();
         let entities = synced["entities"].as_array().unwrap();
-        assert_eq!(entities.len(), 5); // host + 2×(Door + Handle)
+        assert_eq!(entities.len(), 5);
         for entity in entities.iter().skip(1) {
             if entity["name"].as_str().unwrap_or("").starts_with("Door") {
                 assert!(
@@ -1725,21 +1664,17 @@ mod tests {
     fn reparent_moves_a_subtree_and_rejects_cycles() {
         let doc = hierarchy_doc();
 
-        // Attach c under d (keep c's subtree).
         let out = reparent_doc(&doc, 2, Some(3)).unwrap();
         let entities = out["entities"].as_array().unwrap();
         assert_eq!(entities[2]["name"], "c");
         assert_eq!(entities[2]["parent"], 3);
 
-        // Become root.
         let out = reparent_doc(&doc, 1, None).unwrap();
         assert_eq!(out["entities"][1]["parent"], serde_json::Value::Null);
-        // b's subtree unchanged (c still points to b).
         assert_eq!(out["entities"][2]["parent"], 1);
 
-        // Reject: self-parent / attach to descendant / out of bounds.
         assert!(reparent_doc(&doc, 1, Some(1)).is_err());
-        assert!(reparent_doc(&doc, 0, Some(2)).is_err()); // c is a's descendant
+        assert!(reparent_doc(&doc, 0, Some(2)).is_err());
         assert!(reparent_doc(&doc, 9, Some(0)).is_err());
     }
 
@@ -1748,36 +1683,32 @@ mod tests {
         let doc = hierarchy_doc();
         validate_doc(&doc).unwrap();
 
-        // Move a(id 0) to end: order b,c,d,a, but parent refs are ids, unaffected by position.
         let result = move_entity(&doc, 0, 4, None).unwrap();
         validate_doc(&result.doc).unwrap();
         assert_eq!(result.index, 3);
 
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities[0]["name"], "b");
-        assert_eq!(entities[0]["parent"], 0); // still points to a (id 0, position-independent)
+        assert_eq!(entities[0]["parent"], 0);
         assert_eq!(entities[1]["name"], "c");
-        assert_eq!(entities[1]["parent"], 1); // still points to b (id 1)
+        assert_eq!(entities[1]["parent"], 1);
         assert_eq!(entities[3]["name"], "a");
         assert_eq!(entities[3]["parent"], serde_json::Value::Null);
 
-        // Insert before b, and attach under d.
         let result = move_entity(&doc, 2, 1, Some(3)).unwrap();
         validate_doc(&result.doc).unwrap();
         let entities = result.doc["entities"].as_array().unwrap();
         assert_eq!(entities[1]["name"], "c");
         assert_eq!(result.index, 1);
-        // c's parent becomes d's id (3), independent of moved entity position.
         assert_eq!(entities[1]["parent"], 3);
 
-        assert!(move_entity(&doc, 0, 0, Some(2)).is_err()); // cycle
+        assert!(move_entity(&doc, 0, 0, Some(2)).is_err());
     }
 
     #[test]
     fn delete_entities_roots_orphans_without_rewriting_ids() {
         let doc = hierarchy_doc();
 
-        // Delete b: c becomes root.
         let out = delete_entities(&doc, &[1]).unwrap();
         validate_doc(&out).unwrap();
         let entities = out["entities"].as_array().unwrap();
@@ -1785,14 +1716,13 @@ mod tests {
         assert_eq!(entities[1]["name"], "c");
         assert_eq!(entities[1]["parent"], serde_json::Value::Null);
 
-        // Delete a and d simultaneously: b's parent a deleted → becomes root.
         let out = delete_entities(&doc, &[0, 3]).unwrap();
         validate_doc(&out).unwrap();
         let entities = out["entities"].as_array().unwrap();
         assert_eq!(entities.len(), 2);
         assert_eq!(entities[0]["name"], "b");
         assert_eq!(entities[0]["parent"], serde_json::Value::Null);
-        assert_eq!(entities[1]["parent"], 1); // c still points to b (id 1, unchanged by deletion)
+        assert_eq!(entities[1]["parent"], 1);
 
         assert!(delete_entities(&doc, &[0, 1, 2, 3]).is_err());
         assert!(delete_entities(&doc, &[9]).is_err());
@@ -1804,7 +1734,6 @@ mod tests {
 
         let path = write_scene_as(&root, "alpha", &empty_scene_doc()).unwrap();
         assert!(path.exists());
-        // Same name does not overwrite.
         assert!(write_scene_as(&root, "alpha", &empty_scene_doc()).is_err());
 
         let renamed = rename_scene(&path, "beta").unwrap();
@@ -1855,7 +1784,6 @@ mod tests {
             "../models/box.gltf"
         );
 
-        // Saving the resolved document keeps both fields.
         let saved = sync_doc_for_save(&root, &path, &opened).unwrap();
         write_doc(&path, &saved).unwrap();
         let raw = read_doc(&path).unwrap();
@@ -1863,7 +1791,6 @@ mod tests {
         assert_eq!(renderer["mesh_path"], "../models/box.gltf");
         assert_eq!(renderer["mesh_guid"], meta.guid);
 
-        // Saving a path-only document adds the sidecar GUID.
         let path_only = json!({
             "version": prism_scene::SCENE_DOC_VERSION,
             "entities": [{

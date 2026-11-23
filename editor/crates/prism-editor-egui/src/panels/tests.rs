@@ -62,16 +62,12 @@ mod interaction_tests {
         )
         .contains(&1));
 
-        // Isolate appears before the lock/find buttons, so re-read their rects
-        // after every state-changing click.
         let isolate = scene.borrow().toolbar().isolate.rect;
         harness.click(isolate.center(), &mut draw);
         assert!(
             scene.borrow().workspace.isolate,
             "isolate button toggles the workspace"
         );
-        // The new Show All button shifts the following controls; lay out one
-        // more frame before reading their rects.
         harness.frame(&mut draw);
 
         let lock = scene.borrow().toolbar().lock.rect;
@@ -107,7 +103,6 @@ mod interaction_tests {
         harness.frame(&mut draw);
         let mode = scene.borrow().toolbar().mode.rect;
         harness.click(mode.center(), &mut draw);
-        // The popup opens below the combo: Name first, Type second.
         harness.click(egui::pos2(mode.center().x, mode.bottom() + 33.0), &mut draw);
         assert_eq!(
             scene.borrow().state.hierarchy_search_mode,
@@ -119,7 +114,6 @@ mod interaction_tests {
     fn shift_click_uses_visible_rows_and_lock_keeps_the_snapshot() {
         let mut workspace = Workspace::sample();
         let mut state = UiState::new();
-        // Tree order is camera, cube, cube/Detail, light.
         let visible = vec![0, 1, 3, 2];
 
         apply_hierarchy_select(&mut workspace, &mut state, 1, false, &visible);
@@ -139,11 +133,9 @@ mod interaction_tests {
         toggle_hierarchy_lock(&workspace, &mut state);
         assert_eq!(state.hierarchy_lock, Some(locked_ids));
 
-        // A Scene/Project selection change must not move the locked highlight.
         workspace.select(0, false);
         assert_eq!(hierarchy_indices(&workspace, &mut state), vec![1, 2, 3]);
 
-        // Clicking inside the hierarchy re-syncs the lock to the new selection.
         apply_hierarchy_select(&mut workspace, &mut state, 0, false, &visible);
         sync_hierarchy_lock(&workspace, &mut state);
         let camera_id = workspace.document().doc.id_of_index(0).expect("camera id");
@@ -824,7 +816,6 @@ mod window_smoke_tests {
         let mut state = UiState::new();
         let ctx = egui::Context::default();
 
-        // Frame 1: pointer press inside inspector panel initiates interaction bracketing.
         let mut frame1 = egui::RawInput::default();
         frame1
             .events
@@ -841,7 +832,6 @@ mod window_smoke_tests {
         assert!(workspace.document().undo.interaction_active());
         workspace.set_transform_axis(id, "position", 0, 1.5);
 
-        // Frame 2: held drag keeps interaction open across edits (even outside panel rect).
         let mut frame2 = egui::RawInput::default();
         frame2
             .events
@@ -853,7 +843,6 @@ mod window_smoke_tests {
         workspace.set_transform_axis(id, "position", 0, 3.0);
         assert_eq!(workspace.undo_history().len(), 1);
 
-        // Frame 3: pointer release commits interaction so the next edit is a distinct step.
         let mut frame3 = egui::RawInput::default();
         frame3.events.push(egui::Event::PointerButton {
             pos: egui::pos2(900.0, 80.0),

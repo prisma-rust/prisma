@@ -101,28 +101,21 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
         None => return,
     };
 
-    // Build a 4x4x4 L1 chunk centered around (2, 2, 2):
-    // - L1 (0, 1, 2): uniform COW orange slab (`0xFFFFFFFF`).
-    // - L1 (2, 1, 2): split L2 brick containing one L2 wall at local (0, 2, 0) [x:2.0..2.25, y:1.5..1.75, z:2.0..2.25]
-    //   with its center 2x2 L3 tunnel along Z carved out (`mask` omits center mx in 1..3, my in 1..3).
     let dims = [4u32, 4u32, 4u32];
     let count = (dims[0] * dims[1] * dims[2]) as usize;
     let mut l1_cells = vec![[0u32; 4]; count];
 
     let l1_idx = |x: u32, y: u32, z: u32| -> usize { (x + dims[0] * (y + dims[1] * z)) as usize };
-    // L1 uniform orange/copper block at (1, 1, 2) -> x=[1..2], y=[1..2], z=[2..3].
     let orange_rgba = 220 | (95 << 8) | (35 << 16) | (255 << 24);
     let solid_vis = 180u32 << 16;
     l1_cells[l1_idx(1, 1, 2)] = [u32::MAX, orange_rgba, solid_vis, 0];
 
-    // L1 split brick at (2, 1, 2) -> brick index 0 (`ref = 1`).
     l1_cells[l1_idx(2, 1, 2)] = [1, 0, 0, 0];
-    let sub = 8; // local L2 (0, 2, 0) -> world [2.0..2.25, 1.5..1.75, 2.0..2.25]
+    let sub = 8;
     let occ_lo = if sub < 32 { 1u32 << sub } else { 0 };
     let occ_hi = if sub >= 32 { 1u32 << (sub - 32) } else { 0 };
     let mut brick_cells = vec![[0u32; 4]; 64];
 
-    // Build 64-bit mask missing the center 2x2 tunnel along Z (mx in 1..3, my in 1..3).
     let mut mask = 0u64;
     for mz in 0..4u32 {
         for my in 0..4u32 {
@@ -135,7 +128,6 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
         }
     }
     let cyan_alloy = 60 | (185 << 8) | (220 << 16) | (255 << 24);
-    // Transient WET flag (`1 << 0`) + METALLIC (`1 << 12`).
     let metal_vis = (1u32 | (1u32 << 12)) | (70u32 << 16);
     brick_cells[sub] = [cyan_alloy, metal_vis, mask as u32, (mask >> 32) as u32];
 
@@ -219,11 +211,8 @@ fn voxel_dda_renders_l1_l2_and_carved_l3_window() {
         ]
     };
 
-    // Center pixel looks through the carved 2x2 L3 hole (dark clear color ~ [85, 85, 85, 255]).
     let hole = px(128, 128);
-    // Offset pixel (-28 px from center) hits the solid cyan-metallic L3 frame.
     let rim = px(100, 128);
-    // Right-side pixel (+82 px -> x ≈ 1.84 in [1..2]) hits the uniform COW L1 orange slab at (1, 1, 2).
     let cow = px(210, 128);
     assert!(
         rim[2] > rim[0] + 15,
@@ -270,7 +259,6 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
             }
         }
         if let Some(cell) = emitter_cell {
-            // Place off-camera inside the enclosed dark room to the right of view frustum.
             cells[l1_idx(4, 1, 3)] = cell;
         }
         cells
@@ -381,7 +369,6 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
     let dark_pixels = render_room(&mut renderer, 10, build_room_l1(None));
     let (dark_rgb, _, _) = stats_patch(&dark_pixels);
 
-    // Test transient BURNING flag (emissive byte == 0) contributing colored indirect GI.
     let burning_vis = pack_visual(VIS_BURNING, 180, 0);
     let burning_rgba = pack_rgba(255, 110, 35, 255);
     let lit_pixels = render_room(
@@ -393,10 +380,6 @@ fn emissive_voxel_contributes_smooth_gi_without_sunlight() {
 
     let dark_luma = (dark_rgb[0] + dark_rgb[1] + dark_rgb[2]) / 3.0;
     let lit_luma = (lit_rgb[0] + lit_rgb[1] + lit_rgb[2]) / 3.0;
-    // With no sun and no sky light the baseline is exactly zero, so the emissive
-    // voxel is the only light source: the shaded wall averages ~5.3/255. A 3.0
-    // threshold leaves room for driver/hardware variation while still catching an
-    // NEE regression (falls back to 0) or a denoiser flattening the GI away.
     assert!(
         lit_luma > dark_luma + 3.0,
         "emissive BURNING voxel must bounce noticeable GI onto shaded wall: dark={dark_rgb:?}, lit={lit_rgb:?}"

@@ -48,7 +48,6 @@ fn saved_transform_keeps_the_full_quaternion() {
 
     let parsed = parse_transform_array(&format!("[{saved}]"));
     assert_eq!(parsed.len(), 1, "{saved}");
-    // Quaternion q and -q represent same rotation, compare absolute dot product.
     assert_eq!(parsed[0].id, Some(7), "id must survive the round trip");
     assert!(
         parsed[0].transform.rotation.dot(rotation).abs() > 0.999_999,
@@ -59,7 +58,6 @@ fn saved_transform_keeps_the_full_quaternion() {
 
 #[test]
 fn legacy_three_component_rotation_loads_as_identity() {
-    // Old file (v1-v3) only wrote x,y,z; on read falls back to identity quaternion, no panic.
     let mut world = World::new();
     let entity = world.spawn();
     world.insert(entity, LocalTransform::default());
@@ -182,10 +180,6 @@ fn saved_point_light_does_not_create_an_entity() {
     assert!(world.query::<Active>().next().is_none());
 }
 
-// ---------------------------------------------------------------------------
-// #45 — save / restore must use "camera being rendered", not first camera in insert order
-// ---------------------------------------------------------------------------
-
 /// Generate a complete camera (`Camera` + `FlyCameraController` + `LocalTransform`).
 /// `with_world_matrix` decides whether to additionally add layer-level system computed `LocalToWorld`
 /// (`active_camera` requires it present; early load may not yet have it).
@@ -229,7 +223,6 @@ fn saved_camera_state_uses_the_rendered_camera() {
     let snapshot = snapshot_camera_state(&world).expect("world has cameras");
     assert_eq!(snapshot.position, Vec3::new(2.0, 3.0, 4.0));
 
-    // Save uses same selector: highest `depth` **enabled** camera, not first in insert order.
     assert_eq!(state_camera(&world), Some(rendered));
     assert_ne!(state_camera(&world), Some(behind));
     assert_ne!(state_camera(&world), Some(disabled));
@@ -267,7 +260,6 @@ fn restored_camera_state_writes_the_rendered_camera_only() {
         1.0_f32.to_degrees()
     );
 
-    // Lower `depth` camera stays unchanged.
     let behind_transform = world.get::<LocalTransform>(behind).unwrap();
     assert_eq!(behind_transform.position, Vec3::new(1.0, 1.0, 1.0));
     assert_eq!(world.get::<FlyCameraController>(behind).unwrap().yaw, 0.0);
@@ -275,8 +267,6 @@ fn restored_camera_state_writes_the_rendered_camera_only() {
 
 #[test]
 fn camera_choice_falls_back_to_main_camera_before_hierarchy_runs() {
-    // When loading scene state, layer-level propagation may not have run: without `LocalToWorld`,
-    // `active_camera` returns `None`, falls back to `main_camera` (highest depth enabled camera).
     let mut world = World::new();
     let _first = spawn_camera(&mut world, 0.0, [1.0, 0.0, 0.0], true, false);
     let main = spawn_camera(&mut world, 2.0, [2.0, 0.0, 0.0], true, false);
@@ -370,7 +360,6 @@ fn the_save_path_follows_the_host_directory_and_slot() {
         scene_state_path_in(Some(base), Some(3)),
         std::path::PathBuf::from("C:/games/save/scene_state-3.json")
     );
-    // With no directory at all, fall back to current directory (no panic).
     let bare = scene_state_path_in(None, None);
     assert!(bare.to_string_lossy().ends_with("scene_state.json"));
 }
@@ -406,7 +395,6 @@ fn slots_round_trip_through_the_save_directory() {
         Vec3::new(1.0, 2.0, 3.0)
     );
 
-    // Missing slot bit = no save, must not silently succeed.
     assert!(!load_scene_state_slot(&mut world, 7));
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -467,7 +455,6 @@ fn scene_state_round_trips_the_time_of_day() {
     assert!(text.contains("\"version\":5"), "{text}");
     assert!(text.contains("\"timeOfDay\""), "{text}");
 
-    // A fresh world at the authored hour must pick the saved one back up.
     let mut loaded = World::new();
     let restored = loaded.spawn();
     loaded.insert(restored, SceneEntityId(4));

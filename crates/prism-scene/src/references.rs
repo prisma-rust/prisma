@@ -21,27 +21,27 @@ use serde_json::{Map, Value};
 
 /// Component fields whose string value is an asset path.
 pub const ASSET_PATH_FIELDS: &[&str] = &[
-    "mesh_path",           // MeshRenderer
-    "material_path",       // MeshRenderer
-    "material_paths",      // MeshRenderer (Vec<String>, multi-submesh materials)
-    "sprite_path",         // SpriteRenderer
-    "tileset_path",        // Tilemap
-    "hdr_path",            // Skybox
-    "sound_path",          // AudioSource
-    "heightmap",           // Terrain (does not end with _path, must be registered explicitly)
-    "skeleton_path",       // SkeletonRoot
-    "default_clip_path",   // SkeletonRoot
-    "skinned_mesh_path",   // SkinnedMeshRenderer
-    "clip_path",           // Animator
-    "state_machine_path",  // Animator (.rasm)
-    "blend_clip_paths",    // Animator (Vec<String>, 1D blend space)
-    "blend_2d_clip_paths", // Animator (Vec<String>, 2D blend space)
-    "additive_clip_path",  // Animator (additive layer clip)
-    "anim_graph_path",     // Animator (.rag animation graph)
-    "env_map",             // EnvironmentLighting
-    "volume",              // GiConfig
-    "prefab",              // PrefabInstance
-    "font",                // UI Text (project-provided font, #583)
+    "mesh_path",
+    "material_path",
+    "material_paths",
+    "sprite_path",
+    "tileset_path",
+    "hdr_path",
+    "sound_path",
+    "heightmap",
+    "skeleton_path",
+    "default_clip_path",
+    "skinned_mesh_path",
+    "clip_path",
+    "state_machine_path",
+    "blend_clip_paths",
+    "blend_2d_clip_paths",
+    "additive_clip_path",
+    "anim_graph_path",
+    "env_map",
+    "volume",
+    "prefab",
+    "font",
 ];
 
 /// Path field → GUID field. Returns `None` for non-reference strings.
@@ -278,9 +278,6 @@ where
     for index in 0..len {
         let guid = guids[index].as_str();
         if index >= paths.len() {
-            // A GUID array can outlive a shortened path array. Recover only
-            // slots that actually resolve; unresolved entries must not grow
-            // the path array with empty strings.
             if guid.is_empty() {
                 continue;
             }
@@ -323,7 +320,6 @@ where
     }
 
     if mode == SyncMode::Save {
-        // GUID arrays always mirror the path array's slots.
         guids.truncate(paths.len());
         while guids.len() < paths.len() {
             guids.push(String::new());

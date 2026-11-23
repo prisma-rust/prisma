@@ -38,7 +38,6 @@ fn blending_at_the_middle_interpolates_translation_and_scale() {
 
 #[test]
 fn rotations_take_the_shortest_path() {
-    // 170° → 190° (= −170°) differ by only 20°, slerp must take the 20° path, not the 340° detour.
     let from = JointTransform::new(
         Vec3::ZERO,
         Quat::from_rotation_y(170f32.to_radians()),
@@ -50,7 +49,6 @@ fn rotations_take_the_shortest_path() {
         Vec3::ONE,
     );
     let middle = blend_joint(&from, &to, 0.5);
-    // Midpoint of the shortest path = 180° (around Y).
     let expected = Quat::from_rotation_y(180f32.to_radians());
     assert!(
         middle.rotation.dot(expected).abs() > 0.999,
@@ -124,7 +122,6 @@ fn blend_space_weights_reject_empty_and_non_finite_queries() {
     assert_eq!(blend_space_weights(&[], 1.0), None);
     assert_eq!(blend_space_weights(&[0.0, 1.0], f32::NAN), None);
     assert_eq!(blend_space_weights(&[0.0, 1.0], f32::INFINITY), None);
-    // Single sample: both left and right point to itself.
     assert_eq!(blend_space_weights(&[3.0], 0.0), Some((0, 0, 0.0)));
 }
 
@@ -160,7 +157,6 @@ fn reference() -> Pose {
 fn blend_space() -> BlendSpace1D {
     BlendSpace1D::new(
         vec![
-            // Intentionally out of order: the author's fill order shouldn't affect the result.
             BlendSample {
                 position: 300.0,
                 clip: clip("run", 2.0, Vec3::new(6.0, 0.0, 0.0)),
@@ -203,7 +199,6 @@ fn a_blend_space_evaluates_the_exact_sample_at_a_sample_position() {
 fn a_blend_space_blends_the_two_neighbours_in_between() {
     let mut space = blend_space();
     let mut out = Pose::from_locals(Vec::new());
-    // 75 = midpoint of idle(0) and walk(150).
     assert!(space.evaluate_into(75.0, 0.0, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.5).abs() < 1e-5, "expected 1.5, got {x}");
@@ -221,7 +216,6 @@ fn a_blend_space_clamps_outside_its_range() {
 
 #[test]
 fn the_phase_is_normalised_so_clips_of_different_lengths_stay_aligned() {
-    // The two clips have different durations (1s / 2s); at the same normalized phase each samples its own keyframe.
     let mut space = BlendSpace1D::new(
         vec![
             BlendSample {
@@ -278,7 +272,6 @@ fn the_phase_is_normalised_so_clips_of_different_lengths_stay_aligned() {
         reference(),
     );
     let mut out = Pose::from_locals(Vec::new());
-    // Phase 0.5: short samples 0.5s (x=0.5), long samples 1.0s (x=1.5), blended at position 0.5 → x=1.0.
     assert!(space.evaluate_into(0.5, 0.5, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.0).abs() < 1e-4, "expected 1.0, got {x}");
@@ -349,7 +342,6 @@ fn a_zero_weight_additive_layer_leaves_the_base_untouched() {
 
 #[test]
 fn additive_rotation_and_translation_are_applied_on_top_of_the_base() {
-    // Reference pose is 0°, overlay sampled to 90° → increment is 90°; then rotate another 90° on top of base pose 30°.
     let mut base = pose(vec![rotated(30.0), t(Vec3::ZERO)]);
     let layer = pose(vec![rotated(90.0), t(Vec3::new(2.0, 0.0, 0.0))]);
     let reference = pose(vec![rotated(0.0), t(Vec3::ZERO)]);
@@ -363,7 +355,6 @@ fn additive_rotation_and_translation_are_applied_on_top_of_the_base() {
         "30° + 90° = 120°, got {:?}",
         joint.rotation
     );
-    // Translation is the difference relative to the reference pose: reference is at origin, so just add the overlay's displacement directly.
     assert!((base.local(1).unwrap().translation.x - 2.0).abs() < 1e-6);
 }
 
@@ -375,7 +366,6 @@ fn half_weight_additive_halves_the_delta() {
 
     apply_additive(&mut base, &layer, &reference, 0.5);
 
-    // Increment = 90° − 30° = 60°, half = 30°.
     let joint = base.local(0).expect("joint 0");
     let expected = Quat::from_rotation_y((30.0f32).to_radians());
     assert!(
@@ -397,7 +387,6 @@ fn additive_scale_is_multiplicative_and_ignores_a_zero_reference() {
         Quat::IDENTITY,
         Vec3::new(3.0, 4.0, 8.0),
     )]);
-    // When reference scale is 0 (bad data), treat as 1 instead of dividing to inf.
     let reference = pose(vec![JointTransform::new(
         Vec3::ZERO,
         Quat::IDENTITY,
@@ -407,7 +396,6 @@ fn additive_scale_is_multiplicative_and_ignores_a_zero_reference() {
     apply_additive(&mut base, &layer, &reference, 1.0);
 
     let scale = base.local(0).unwrap().scale;
-    // Reference scale 0 → increment treated as 1 (unchanged), not divided to inf / collapsed to 0.
     assert!(
         (scale.x - 2.0).abs() < 1e-5,
         "reference 0 keeps 2, got {scale:?}"
@@ -471,14 +459,11 @@ fn blend_space_sync_markers_remap_each_samples_phase() {
         ],
         reference.clone(),
     );
-    // At 0.25, A is the leading clip: B's phase is mapped from A to 0.5; A itself stays at 0.25.
-    // A = 2.5, B = 10, blend weight 0.75 / 0.25.
     let mut out = Pose::default();
     assert!(space.evaluate_into(0.25, 0.25, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 4.375).abs() < 1e-4, "x={x}");
 
-    // After the parameter moves to B's end, leader becomes B; B's phase is no longer mapped (0.25), x = 5.
     assert!(space.evaluate_into(1.0, 0.25, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 5.0).abs() < 1e-4, "x={x}");

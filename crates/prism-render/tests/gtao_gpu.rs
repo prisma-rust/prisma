@@ -24,8 +24,6 @@ fn gtao_temporal_history_survives_object_motion() {
         assert_eq!(pixels.len(), 256 * 256 * 4);
     }
 
-    // A camera move changes the velocity field; the temporal descriptor set
-    // must follow it without validation errors or a dropped frame.
     let moved = harness.render_draws(
         std::slice::from_ref(&item),
         FrameOptions {

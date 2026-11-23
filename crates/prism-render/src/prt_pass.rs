@@ -248,7 +248,6 @@ struct GpuState {
     forward_set5_layout: vk::DescriptorSetLayout,
     forward_pool: vk::DescriptorPool,
     targets: [GiVolumeTarget; 2],
-    // SceneScope-like PRT volume buffers (rebuilt on volume change).
     nodes_buf: Option<BufferAlloc>,
     clusters_buf: Option<BufferAlloc>,
     valid_buf: Option<BufferAlloc>,
@@ -390,7 +389,6 @@ impl GpuState {
         let propagate_pipe = propagate_pipe?;
         let resolve_pipe = resolve_pipe?;
 
-        // ForwardPass-compatible set 5 layout (SAMPLED_IMAGE + UNIFORM_BUFFER).
         let fwd_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(crate::shader_bindings::scene_frag::PROBE_VOLUME_BINDING)
@@ -511,7 +509,6 @@ impl GpuState {
             })
             .collect();
 
-        // Pack 64 coeffs * 3 f16 = 192 u16 -> 96 u32 words per cluster.
         let mut cluster_words = Vec::with_capacity(volume.clusters.len() * 96);
         for cluster in &volume.clusters {
             let mut halves = [0u16; SH_COEFF_COUNT * 3];
@@ -585,7 +582,6 @@ impl GpuState {
         self.cluster_radiance_buf = Some(cluster_radiance_buf);
         self.dyn_accum_buf = Some(dyn_accum_buf);
 
-        // Update ProbeVolumeInfo UBOs for both ping-pong targets.
         let spacing = volume.world_extent / (PRT_VOLUME_DIM.saturating_sub(1).max(1) as f32);
         let probe_info = ProbeVolumeInfo {
             origin: [
@@ -602,7 +598,6 @@ impl GpuState {
                 .write_bytes(device, bytemuck::bytes_of(&probe_info))?;
         }
 
-        // Bind descriptors for both compute sets (targeting targets[0] and targets[1]).
         for (idx, &ds) in self.descriptor_sets.iter().enumerate() {
             let n_info = vk::DescriptorBufferInfo::default()
                 .buffer(self.nodes_buf.as_ref().unwrap().buffer)
@@ -940,8 +935,6 @@ impl RenderPassNode for PrtPass {
             return Ok(());
         }
 
-        // Stream newly resident / evicted cluster slices within the frame budget
-        // (zero mid-frame vkFreeMemory; pre-allocated cluster buffer).
         if let Some(mgr) = &mut self.streaming {
             let (_stats, uploaded, evicted) = mgr.step_frame_deltas();
             if let (Some(cbuf), Some(vbuf)) = (&gpu.clusters_buf, &gpu.valid_buf) {
@@ -971,7 +964,6 @@ impl RenderPassNode for PrtPass {
             }
         }
 
-        // Check overflow flag from previous frame (explicit error on >64 lights).
         if self.has_written_once && gpu.overflow_flag_buf.read_u32(ctx.device)? != 0 {
             log::error!(
                 "PrtPass: dynamic light count exceeded {} per cluster; dynamic propagation aborted",
@@ -979,7 +971,6 @@ impl RenderPassNode for PrtPass {
             );
         }
 
-        // Update sky/sun SH64 buffer from the directional light + ambient sky.
         let sun_dir = ctx.frame.light_dir;
         let sun_col = ctx.frame.light_color;
         let sun_sh = eval_sh64([sun_dir[0], sun_dir[1], sun_dir[2]]);
@@ -988,7 +979,6 @@ impl RenderPassNode for PrtPass {
             let w = sun_sh[i];
             sky_sh64[i] = [sun_col[0] * w, sun_col[1] * w, sun_col[2] * w, 0.0];
         }
-        // Baseline sky fill from ambient term in light_color.w.
         let amb = sun_col[3].max(0.05);
         sky_sh64[0][0] += amb * 3.544908;
         sky_sh64[0][1] += amb * 3.544908;
@@ -996,7 +986,6 @@ impl RenderPassNode for PrtPass {
         gpu.sky_sh64_buf
             .write_bytes(ctx.device, bytemuck::cast_slice(&sky_sh64))?;
 
-        // Update dynamic lights buffer (point/spot lights).
         let mut dyn_lights = Vec::with_capacity(ctx.frame.lights.len().min(MAX_DYN_LIGHTS));
         for l in ctx.frame.lights.iter().take(MAX_DYN_LIGHTS) {
             let intensity = l.color[3];
@@ -1050,7 +1039,6 @@ impl RenderPassNode for PrtPass {
         let ds = gpu.descriptor_sets[cur];
         let target = &mut gpu.targets[cur];
 
-        // Transition gi_volume target to GENERAL on first use.
         if !target.initialized {
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::UNDEFINED)
@@ -1084,7 +1072,6 @@ impl RenderPassNode for PrtPass {
             .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE);
 
         unsafe {
-            // Pass 1: ClusterEval
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -1110,7 +1097,6 @@ impl RenderPassNode for PrtPass {
                 &[],
             );
 
-            // Pass 2: Propagate dynamic lights (Q8.12 InterlockedAdd)
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -1128,7 +1114,6 @@ impl RenderPassNode for PrtPass {
                 &[],
             );
 
-            // Pass 3: ResolveVolume into 64^3 order-2 SH texture
             ctx.device.cmd_bind_pipeline(
                 ctx.cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -1137,7 +1122,6 @@ impl RenderPassNode for PrtPass {
             let wg = PRT_VOLUME_DIM / 4;
             ctx.device.cmd_dispatch(ctx.cmd, wg, wg, wg);
 
-            // Make gi_volume writes visible to next frame's ForwardPass fragment reads.
             let frag_barrier = vk::MemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::SHADER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ);

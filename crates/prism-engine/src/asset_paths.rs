@@ -74,8 +74,6 @@ pub fn search_roots() -> Vec<PathBuf> {
 pub fn asset_root() -> Option<PathBuf> {
     let root = find_asset_root(&search_roots());
     match &root {
-        // Every asset query will come here (tens of calls in one session), so resident log stays at
-        // `trace`; at startup `prism-app` prints a separate `asset root:` line.
         Some(root) => log::trace!("asset root: {}", root.display()),
         None => {
             if !WARNED_MISSING_ROOT.swap(true, Ordering::Relaxed) {
@@ -160,10 +158,6 @@ fn repo_root_for(project: &Path) -> Option<PathBuf> {
     None
 }
 
-// ---------------------------------------------------------------------------
-// Internals (pure functions, easy to unit test)
-// ---------------------------------------------------------------------------
-
 fn collect_search_roots(
     env_root: Option<&Path>,
     cwd: Option<&Path>,
@@ -175,8 +169,6 @@ fn collect_search_roots(
         push_unique(&mut roots, root.to_path_buf());
     }
 
-    // cwd first, exe directory second: in development (cargo run / editor) cwd better matches user intent,
-    // after deployment cwd is often just "start position when double-clicked", exe directory is the reliable one.
     for start in [cwd, exe_dir].into_iter().flatten() {
         let mut current = Some(start);
         while let Some(dir) = current {
@@ -285,10 +277,6 @@ pub fn read_asset_text(relative: impl AsRef<Path>) -> std::io::Result<String> {
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
-// ---------------------------------------------------------------------------
-// Packaged asset fallback (#1049)
-// ---------------------------------------------------------------------------
-
 /// Cache entry for already-open `.pak` reader.
 ///
 /// `PackageReader::open` validates whole-package checksum, cannot reopen on every query;
@@ -345,7 +333,6 @@ fn refresh_pak_cache(cache: &mut Vec<CachedPak>) {
                 stamp,
                 reader: std::sync::Arc::new(reader),
             }),
-            // Package may be mid-write during hot reload; next query will retry.
             Err(error) => log::debug!(
                 "cannot open {} for packaged-asset lookup: {error}",
                 path.display()

@@ -280,7 +280,6 @@ pub(crate) fn resolve_project_root_from(
         return root.to_path_buf();
     }
 
-    // Walk up from executable and working directory looking specifically for the `emergence` crate root.
     for start in [exe_dir, cwd].into_iter().flatten() {
         let mut cur = Some(start);
         while let Some(dir) = cur {
@@ -295,7 +294,6 @@ pub(crate) fn resolve_project_root_from(
         }
     }
 
-    // Fallback for standalone packaged builds with `<dir>/assets` next to the binary.
     for start in [cwd, exe_dir].into_iter().flatten() {
         let mut cur = Some(start);
         while let Some(dir) = cur {
@@ -381,7 +379,6 @@ impl CalendarStamp {
                 second: 0,
                 _milliseconds: 0,
             };
-            // SAFETY: Valid mutable pointer to initialized repr(C) `SYSTEMTIME`.
             unsafe { GetLocalTime(&mut st) };
             Self {
                 year: st.year,
@@ -411,7 +408,6 @@ impl CalendarStamp {
         let minute = ((rem % 3_600) / 60) as u8;
         let second = (rem % 60) as u8;
 
-        // Howard Hinnant civil-from-days algorithm in Z >= 0 domain.
         let z = days + 719_468;
         let era = z.div_euclid(146_097);
         let doe = z.rem_euclid(146_097);
@@ -785,7 +781,6 @@ pub struct EmergencePerfRecorder {
     first_frame_ms: Option<f32>,
     warmup_max_ms: f32,
 
-    // World & display metadata
     world_seed: u64,
     gamemode_end: String,
     weather_end: String,
@@ -801,7 +796,6 @@ pub struct EmergencePerfRecorder {
     logical_size: [f32; 2],
     scale_factor: f64,
 
-    // Statistics accumulators
     overall: FrameDistributionAcc,
     post_warmup: FrameDistributionAcc,
     sim_step_ms: SeriesAccumulator,
@@ -907,14 +901,11 @@ impl EmergencePerfRecorder {
         self.last_frame_instant = Some(now);
         let elapsed_sec = now.duration_since(self.started_instant).as_secs_f64();
 
-        // Main-loop frame cadence is measured from wall clock between frame ticks (matching `timeline.frames`),
-        // never mixed with the render thread's fence-inclusive `frame_time_ms`.
         let main_ms = wall_interval_ms
             .filter(|&ms| ms > 0.0)
             .unwrap_or_else(|| (input.dt.max(1e-4) * 1000.0).min(1000.0))
             .max(input.logic_tick_ms);
 
-        // Deduplicate render-thread & Vulkan GPU timings strictly per completed `render_seq`.
         let new_render =
             host.filter(|h| h.render_seq > 0 && Some(h.render_seq) != self.last_render_seq);
         if let Some(h) = new_render {
@@ -977,7 +968,6 @@ impl EmergencePerfRecorder {
             self.logical_size = input.screen_logical;
         }
 
-        // World telemetry updates
         if self.start_time_ticks.is_none() {
             self.start_time_ticks = Some(input.world_time_ticks);
         }
@@ -1011,7 +1001,6 @@ impl EmergencePerfRecorder {
             self.mem_allocated_mib.push(m.allocated_mib as f64);
         }
 
-        // Maintain top-N slowest frames across the session.
         self.push_worst_frame(WorstFrameEntry {
             frame: frame_idx,
             render_seq,
@@ -1034,7 +1023,6 @@ impl EmergencePerfRecorder {
             top_gpu_pass,
         });
 
-        // Aggregate 1-second timeline bucket (capped to keep output compact).
         let sec = elapsed_sec.floor().max(0.0) as u64;
         if self.timeline.len() < MAX_TIMELINE_BUCKETS {
             if self.timeline.last().is_none_or(|b| b.second != sec) {
@@ -1234,7 +1222,6 @@ impl EmergencePerfRecorder {
         }
         self.flushed = true;
 
-        // Pull one final render stats snapshot if exit occurred before the next tick read it back.
         if let Some(host) = read_host_render_stats() {
             if self.physical_size == (0, 0) && host.physical_size.0 > 0 {
                 self.physical_size = host.physical_size;
@@ -1569,11 +1556,9 @@ mod tests {
         )
         .unwrap();
 
-        // Launched from repo root (`cargo run --manifest-path projects/demos/emergence/Cargo.toml`).
         let from_repo = resolve_project_root_from(None, Some(&tmp), Some(&exe_dir));
         assert_eq!(from_repo, proj);
 
-        // Launched directly from target/debug even with an unrelated cwd.
         let other = tmp.join("unrelated");
         fs::create_dir_all(&other).unwrap();
         let from_exe = resolve_project_root_from(None, Some(&other), Some(&exe_dir));
@@ -1612,8 +1597,6 @@ mod tests {
             rec.record_fixed_step(2.50);
 
             for i in 0..6u32 {
-                // Intentionally emit duplicate `render_seq` values (only 3 distinct GPU frames across 6 main ticks)
-                // to verify render-thread & GPU pass metrics are deduplicated strictly per completed Vulkan frame.
                 let render_seq = match i {
                     0 => 1,
                     1 | 2 => 2,

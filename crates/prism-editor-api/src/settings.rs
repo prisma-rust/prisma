@@ -151,10 +151,6 @@ pub fn write_render_settings(root: &Path, data: &RenderSettingsData) -> Result<(
     write_document(root, &document)
 }
 
-// ---------------------------------------------------------------------------
-// Project settings (`[app]` / `[window]` / `[build]`)
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsData {
@@ -251,18 +247,6 @@ impl ProjectSettingsData {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Only write fields **actually changed**
-// ---------------------------------------------------------------------------
-//
-// Multiple panels in editor edit the same settings file at once (project settings panel handles
-// `[app]`/`[window]`/`[build]`/`[render]`, build panel also edits `[build]`). Each panel reads a
-// snapshot on open, writes whole section back on save, so one panel overwrites sections (and fields
-// within same section) that another panel **never touched** with old values.
-//
-// Here frontend sends both "snapshot before open" and "current values after" together, only writing
-// changed leaves to disk current settings: untouched fields always defer to disk.
-
 /// Merge **changed leaves** between `before` → `after` onto `current`.
 fn merge_changed_values(
     current: serde_json::Value,
@@ -283,7 +267,6 @@ fn merge_changed_values(
     };
 
     for (key, after_value) in after {
-        // Panel did not change this key (or it was not in snapshot) → keep disk value.
         if before.get(key) == Some(after_value) {
             continue;
         }
@@ -517,15 +500,12 @@ mod tests {
         let dir = temp_dir("prism-editor-api-project-settings-diff-panels");
         write_project_settings(&dir, &ProjectSettingsData::default()).unwrap();
 
-        // Build panel snapshot on open.
         let before = read_project_settings(&dir).unwrap();
 
-        // Project settings panel changed [app] meanwhile and already wrote disk.
         let mut other = read_project_settings(&dir).unwrap();
         other.app.name = "Renamed".into();
         write_project_settings(&dir, &other).unwrap();
 
-        // Build panel only changed [build].output_dir then saved.
         let mut after = before.clone();
         after.build.output_dir = "build/out".into();
         write_project_settings_diff(&dir, &before, &after).unwrap();
@@ -544,12 +524,10 @@ mod tests {
         write_project_settings(&dir, &ProjectSettingsData::default()).unwrap();
         let before = read_project_settings(&dir).unwrap();
 
-        // Another field in same section changed elsewhere.
         let mut other = read_project_settings(&dir).unwrap();
         other.build.profile = "debug".into();
         write_project_settings(&dir, &other).unwrap();
 
-        // Panel only changed window width (build.profile in snapshot still release, but untouched).
         let mut after = before.clone();
         after.window.width = 1280;
         write_project_settings_diff(&dir, &before, &after).unwrap();
@@ -565,7 +543,6 @@ mod tests {
     #[test]
     fn project_settings_diff_does_not_rewrite_unchanged_snapshots() {
         let dir = temp_dir("prism-editor-api-project-settings-diff-noop");
-        // Hand-written file (writeback drops comments) proves "no change does not write file".
         std::fs::write(settings_path(&dir), "# keep me\n[app]\nname = \"Demo\"\n").unwrap();
 
         let snapshot = read_project_settings(&dir).unwrap();
@@ -584,12 +561,10 @@ mod tests {
         write_render_settings(&dir, &RenderSettingsData::default()).unwrap();
         let before = read_render_settings(&dir).unwrap();
 
-        // Elsewhere changed tone map.
         let mut other = read_render_settings(&dir).unwrap();
         other.tonemap_mode = 1;
         write_render_settings(&dir, &other).unwrap();
 
-        // Panel only changed max bounce count.
         let mut after = before.clone();
         after.pt_max_bounces = 7;
         write_render_settings_diff(&dir, &before, &after).unwrap();

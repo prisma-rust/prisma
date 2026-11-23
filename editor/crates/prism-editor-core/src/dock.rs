@@ -210,8 +210,6 @@ pub fn split_side_length(usable: f32, ratio: f32, min: f32) -> f32 {
     let min = if min.is_finite() { min.max(0.0) } else { 0.0 };
     let ratio = if ratio.is_finite() { ratio } else { 0.5 };
     if usable <= 2.0 * min {
-        // Neither side fits the minimum: don't force it, split in half (at least no panic, and
-        // the splitter isn't drawn outside the frame).
         usable * 0.5
     } else {
         (usable * ratio).clamp(min, usable - min)
@@ -514,7 +512,6 @@ fn replace_leaf(node: &DockNode, leaf_id: &str, replacement: DockNode) -> DockNo
 
 /// Place a panel into a region of the target leaf.
 /// - center: becomes a tab of the target leaf (supports reordering tabs within the same leaf);
-// - left / right / top / bottom: open a new leaf next to the target.
 pub fn insert_panel(
     root: &DockNode,
     target_leaf_id: &str,
@@ -534,7 +531,6 @@ pub fn insert_panel(
         };
 
         if let Some(current_index) = tabs.iter().position(|t| t == tab) {
-            // Reorder tabs within the same leaf.
             let filtered: Vec<String> = tabs.iter().filter(|t| *t != tab).cloned().collect();
             let insert_at = match target_index {
                 Some(index) => {
@@ -562,7 +558,6 @@ pub fn insert_panel(
 
         let detached = remove_panel(root, tab).unwrap_or_else(|| root.clone());
         let Some(next_target) = find_leaf_by_id(&detached, target_leaf_id) else {
-            // The target leaf disappeared because we dragged away its only panel; put it back in place.
             return detached;
         };
         let (id, mut next_tabs) = match next_target {
@@ -582,9 +577,6 @@ pub fn insert_panel(
         );
     }
 
-    // First remove the tab from its old position; if the target leaf disappears as a result,
-    // we're dragging the target leaf's own only tab — edge-splitting onto itself would just
-    // duplicate it, so do nothing.
     let Some(next) = remove_panel(root, tab) else {
         return root.clone();
     };
@@ -1129,7 +1121,6 @@ mod tests {
         let after = activate_tab(&dock, &leaf_id, "b");
         assert_eq!(first_leaf(&after).active_tab(), Some("b"));
 
-        // Unknown tab / unknown leaf doesn't change anything.
         assert_eq!(activate_tab(&dock, &leaf_id, "zzz"), dock);
         assert_eq!(activate_tab(&dock, "nope", "b"), dock);
     }
@@ -1142,7 +1133,6 @@ mod tests {
         };
         let left_id = a.id().to_string();
 
-        // Drag c to the far left (index 0).
         let after = insert_panel(&dock, &left_id, "c", DockZone::Center, 0.5, Some(0));
         let DockNode::Split { a, .. } = &after else {
             panic!()
@@ -1153,7 +1143,6 @@ mod tests {
         assert_eq!(tabs, &vec!["c".to_string(), "a".into(), "b".into()]);
         assert_eq!(active, "c");
 
-        // Drag from right leaf to left leaf: right leaf becomes empty, pruned, split collapses.
         let after = insert_panel(&dock, &left_id, "d", DockZone::Center, 0.5, None);
         assert!(
             after.is_leaf(),
@@ -1194,22 +1183,18 @@ mod tests {
         assert!((ratio - 0.25).abs() < 1e-6);
         assert_eq!(collect_tabs(a), vec!["b"]);
         assert_eq!(after.id().is_empty(), false);
-        // The remaining subtree still keeps a.
         assert!(collect_tabs(&after).iter().any(|t| t == "a"));
     }
 
     #[test]
     fn split_side_length_keeps_the_ratio_inside_both_minimums() {
-        // Normal width: a ratio split with a floor.
         assert!((split_side_length(1000.0, 0.3, 60.0) - 300.0).abs() < 1e-4);
-        // Ratio at the extreme: stops at the minimum, not squeezed to 0.
         assert!((split_side_length(1000.0, 0.0, 60.0) - 60.0).abs() < 1e-4);
         assert!((split_side_length(1000.0, 1.0, 60.0) - 940.0).abs() < 1e-4);
     }
 
     #[test]
     fn a_squeezed_nested_split_falls_back_to_half_instead_of_panicking() {
-        // #498: `2by3` dragging the middle column to ~95px wide, inner Row wants `clamp(60.0, 30.0)`.
         assert!((split_side_length(95.0, 0.88, 60.0) - 47.5).abs() < 1e-4);
         assert!((split_side_length(107.0, 0.5, 50.0) - 53.5).abs() < 1e-4);
     }
@@ -1228,8 +1213,6 @@ mod tests {
                 }
             }
         }
-        // Negative / non-finite available space (parent split already flattened) must not
-        // produce weird values.
         assert_eq!(split_side_length(-20.0, 0.5, 60.0), 0.0);
         assert_eq!(split_side_length(f32::NAN, 0.5, 60.0), 0.0);
     }
@@ -1263,7 +1246,6 @@ mod tests {
             1
         );
 
-        // Utility windows default to joining the inspector leaf, not opening a new column.
         let with_settings = show_panel(&dock, "preferences");
         let inspector_leaf = find_leaf(&with_settings, "inspector").expect("inspector");
         let DockNode::Leaf { tabs, .. } = inspector_leaf else {
@@ -1347,12 +1329,10 @@ mod tests {
         assert_eq!(wider.width, 500.0);
         assert_eq!(wider.x, 200.0);
 
-        // Dragging left beyond the minimum width clamps width to the minimum, and x follows the anchor.
         let squeezed = resize_float_rect(rect, ResizeDirection::W, 500.0, 0.0, 1280.0, 800.0);
         assert_eq!(squeezed.width, MIN_FLOAT_WIDTH);
         assert_eq!(squeezed.x, 600.0 - MIN_FLOAT_WIDTH);
 
-        // The top edge cannot cross the toolbar.
         let up = resize_float_rect(rect, ResizeDirection::N, 0.0, -500.0, 1280.0, 800.0);
         assert_eq!(up.y, TOOLBAR_HEIGHT);
         assert_eq!(up.height, 500.0 - TOOLBAR_HEIGHT);
@@ -1373,14 +1353,12 @@ mod tests {
             height: 100.0,
         };
         let result = snap_float_position(panel, &[other], 1600.0, 900.0, SNAP_THRESHOLD);
-        // Right edge sticks to the viewport edge: x + width = 1600 - 8.
         assert!((result.x + panel.width - (1600.0 - VIEWPORT_MARGIN)).abs() < 1e-3);
         assert!(result
             .snap_lines
             .iter()
             .any(|l| l.axis == SnapAxis::Vertical));
 
-        // Aligns with the other panel's top edge.
         let aligned = FloatRect {
             x: 300.0,
             y: 203.0,

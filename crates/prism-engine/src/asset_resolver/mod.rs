@@ -36,10 +36,6 @@ mod decoders;
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// GpuAssetResolver
-// ---------------------------------------------------------------------------
-
 /// Asset slot bit, used as key for "failure cache".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum AssetSlot {
@@ -346,7 +342,6 @@ impl GpuAssetResolver {
                 self.releases.push(release);
             }
         }
-        // Entity destroyed after, registration of "graph belongs to which slot bit" not yet returned is useless.
         self.pending_texture_slot.retain(|entity, _| {
             self.resolved.keys().any(|(e, _)| e == entity)
                 || world.get::<SpriteRenderer>(*entity).is_some()
@@ -406,10 +401,6 @@ impl GpuAssetResolver {
         self.failed.insert((entity, slot), path.to_string());
     }
 
-    // -----------------------------------------------------------------------
-    // Package loading
-    // -----------------------------------------------------------------------
-
     /// Attempt to load the `.pak` resource package and its path manifest.
     ///
     /// Both files are optional — when absent (no CLI `build` run yet) the
@@ -424,9 +415,6 @@ impl GpuAssetResolver {
             log::warn!("resource package unavailable: no `assets/` directory found");
             return;
         };
-        // #530: Mount `assets/` below **all** `.pak`, not hardcoded `scenes.pak`.
-        // Build can split packages by content (scene / model graph / subsequent streaming packages), runtime does not need
-        // to know how many few packages split into.
         let paks = crate::asset_paths::pak_files_in(&asset_dir);
         if paks.is_empty() {
             log::warn!(
@@ -475,7 +463,6 @@ impl GpuAssetResolver {
 
         let loaded = self.mount_packages(&paks);
         let count = loaded.len();
-        // Only record true positive load success packages; failure packages will heavy retry on next call.
         self.mounted_optional.extend(loaded);
         log::info!(
             "optional resource packages loaded from {}: {count} package(s), {} assets registered",
@@ -530,7 +517,6 @@ impl GpuAssetResolver {
                 self.mounted_paks.push(pak_path.clone());
             }
 
-            // Each package beside has `<name>.pak.meta.json` (path list) loaded together.
             let manifest_path = pak_path.with_extension("pak.meta.json");
             if manifest_path.is_file() {
                 let mut manifest_span = crate::util::timing::span("asset::load_path_manifest");
@@ -590,8 +576,6 @@ impl GpuAssetResolver {
             .id_by_path(stamp_mod::COOK_STAMP_NAME)
             .and_then(|id| self.resource_manager.load_with_deps_raw(id).ok())
             .and_then(|bytes| stamp_mod::CookStamp::parse(&String::from_utf8_lossy(&bytes)));
-        // Release builds ship no `assets/scenes/*.scene.json`, so the newest source
-        // timestamp is 0 and only the schema fingerprint is compared.
         let newest = {
             let mut walk_span = crate::util::timing::span("asset::newest_source_mtime");
             let newest = pak_path
@@ -650,10 +634,6 @@ impl GpuAssetResolver {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // Main thread: CPU segment --- collect pending-parse entities and produce upload requests
-    // -----------------------------------------------------------------------
-
     /// Query ECS world pending [`MeshRenderer`] entities, load `.pak` + deinterleave,
     /// Produce World-fully-decoupled [`AssetResolveRequest`] (pure data, Send).
     ///
@@ -670,22 +650,12 @@ impl GpuAssetResolver {
     /// path is tried exactly once until someone rewrites it.
     pub fn prepare_requests(&mut self, world: &World) -> Vec<(Entity, AssetResolveRequest)> {
         let mut span = crate::util::timing::span("asset::prepare_requests");
-        // #976: build stamp validated only at **first** resource access. Package mounting at startup occurs in
-        // `App::build`, at that time `env_logger` not initialized, any warn/error will be dropped
-        // --- this positive "old package silently draws wrong" is one reason it can long exist.
         self.check_cook_stamps_once();
-        // First recycle GPU resources already invalidated this frame (#495): entity gone, component deleted, or
-        // `generation` zeroed (hot reload), slot bit returned to renderer, again heavy re-upload.
         self.release_stale_assets(world);
-        // Mesh generated at runtime (terrain, #517): path with `__proc/` prefix, taken directly from world inside
-        // table, not through `.pak`.
         let procedural = world.get_resource::<crate::scene::systems::terrain::ProceduralMeshes>();
-        // Collect pending entities (first), avoid borrowing world & self at same time.
         let pending: Vec<PendingRequest> = {
-            // Failure cache only meaningful for entities still present; entity deleted afterward cleaned up incidentally.
             self.sprite_paths
                 .retain(|entity, _| world.get::<SpriteRenderer>(*entity).is_some());
-            // Entity deleted while upload in progress, bounding box also should not remain in table.
             self.pending_bounds
                 .retain(|entity, _| world.get::<MeshRef>(*entity).is_some());
             self.failed.retain(|(entity, _), _| {
@@ -712,14 +682,6 @@ impl GpuAssetResolver {
 
             let mut out = Vec::new();
             for (entity, mr) in world.query::<MeshRenderer>() {
-                // Only counts as pending when "has path" and "handle not yet parsed":
-                // - path empty = author did not provide resource, nothing to load (e.g. mesh with no material,
-                //   renderer falls back to default material slot);
-                // - component missing at runtime = result has nowhere to write back, submitted will heavy re-enqueue every frame;
-                // - failure cache hit = same bad path will not heavy retry again.
-                // Skinned entity (#560 P0-4) `MeshRenderer.mesh_path` is only "source glTF path"
-                // --- packer relies on it to stage resources. True positive draws `.rskin`, so inside do not again upload
-                // a static RMES (wastes VRAM, static draw will also be skipped by `skinned_draw`).
                 let skinned = world
                     .get::<crate::scene::components::SkinnedMeshRenderer>(entity)
                     .is_some();
@@ -729,8 +691,6 @@ impl GpuAssetResolver {
                         .get::<MeshRef>(entity)
                         .is_some_and(|r| r.generation == 0)
                     && !self.failed_before(entity, AssetSlot::Mesh, &mr.mesh_path);
-                // many materials (#520): as long as there are paths not yet failed, continue trying. Failure cache by
-                // path recorded, so some submesh's bad material will not drag down other materials.
                 let material_unresolved = world
                     .get::<MaterialRef>(entity)
                     .is_some_and(|r| r.generation == 0);
@@ -768,8 +728,6 @@ impl GpuAssetResolver {
                     self.enqueued.insert(entity);
                 }
             }
-            // 1b. Skinned mesh (#560 P0-3b): `.rskin` comes with vertices + skin weights, takes dedicated decode;
-            // Material parsing shares same set as static mesh (`renderer` equivalent MeshRenderer).
             for (entity, skinned) in world.query::<prism_scene::components::SkinnedMeshRenderer>() {
                 let path = &skinned.skinned_mesh_path;
                 let wants_mesh = !path.is_empty()
@@ -817,7 +775,6 @@ impl GpuAssetResolver {
                     self.enqueued.insert(entity);
                 }
             }
-            // 2D sprite: only has graph one resource, `SpriteRef.generation == 0` means pending parse.
             for (entity, sprite) in world.query::<SpriteRenderer>() {
                 if !sprite.has_sprite() {
                     continue;
@@ -826,7 +783,6 @@ impl GpuAssetResolver {
                     .get::<SpriteRef>(entity)
                     .map(|r| r.generation == 0)
                     .unwrap_or(true);
-                // No `SpriteRef` (runtime newly generated sprite) or path rewritten counts as pending parse.
                 let path_changed = self
                     .sprite_paths
                     .get(&entity)
@@ -850,7 +806,6 @@ impl GpuAssetResolver {
                     self.sprite_paths.insert(entity, sprite.sprite_path.clone());
                 }
             }
-            // Tile map graph: same only has tileset one graph (#529).
             for (entity, tilemap) in world.query::<Tilemap>() {
                 if tilemap.tileset_path.is_empty() {
                     continue;
@@ -883,7 +838,6 @@ impl GpuAssetResolver {
                         .insert(entity, tilemap.tileset_path.clone());
                 }
             }
-            // UI background graph (#591): same as sprite only needs one graph, result written to `UiImageRef`.
             for (entity, style) in world.query::<crate::ui::components::Style>() {
                 if style.image.is_empty() {
                     continue;
@@ -940,7 +894,6 @@ impl GpuAssetResolver {
                 }
                 None => None,
             };
-            // Skinned mesh (#560 P0-3b): vertices + skin weights uploaded together, rest of stream same as static mesh.
             let mut skin = None;
             let loaded = match item.skinned_path.as_deref() {
                 Some(path) => {
@@ -960,7 +913,6 @@ impl GpuAssetResolver {
             };
             let (mesh, submeshes) = match loaded {
                 Some(loaded) => (Some(loaded.input), loaded.submeshes),
-                // Mesh already parsed, this frame only supplements material: use submesh table cached at runtime.
                 None => (
                     None,
                     world
@@ -974,8 +926,6 @@ impl GpuAssetResolver {
                     .insert(item.entity, submeshes.clone());
             }
 
-            // Material expanded by submesh (#520): same path uploaded only once, returned after by
-            // `pending_material_map` copied to each submesh.
             let mut materials: Vec<Option<MaterialResolveData>> = Vec::new();
             if item.wants_material {
                 let submesh_count = if submeshes.is_empty() {
@@ -1047,8 +997,6 @@ impl GpuAssetResolver {
                 };
                 self.pending_texture_slot.insert(item.entity, slot);
             }
-            // Bounding box calculated when upload request sent: GPU upload after handle returns, while CPU segment
-            // has already resolved vertex positions (#491).
             if let Some(bounds) = mesh.as_ref().and_then(MeshUploadInput::bounds) {
                 self.pending_bounds.insert(item.entity, bounds);
             }
@@ -1196,8 +1144,6 @@ impl GpuAssetResolver {
                         );
                     }
                 }
-                // No old-style results / single material path through `prepare_requests`: keep
-                // Old behavior, only writes back first slot bit.
                 None => {
                     if let Some(slot) = result.material_slot {
                         if let Some(mr) = world.get_mut::<MaterialRef>(*entity) {
@@ -1270,7 +1216,6 @@ impl GpuAssetResolver {
                 }
                 world.insert(*entity, sprite);
 
-                // Tile map graph tileset takes same upload result (#529).
                 if world.get::<Tilemap>(*entity).is_some() {
                     let tilemap = world
                         .get::<TilemapRef>(*entity)
@@ -1291,7 +1236,6 @@ impl GpuAssetResolver {
                         },
                     );
                 }
-                // UI background graph takes same upload result (#591).
                 if world
                     .get::<crate::ui::components::Style>(*entity)
                     .is_some_and(|style| !style.image.is_empty())
@@ -1320,10 +1264,6 @@ impl GpuAssetResolver {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Hot reload: let already parsed assets heavy re-run once
-    // -----------------------------------------------------------------------
-
     /// Invalidate parse results of **all** `MeshRenderer` / `SpriteRenderer` (`.pak` heavy rebuild after call).
     ///
     /// Only clears state on entity side (`MeshRef` / `MaterialRef` / `SpriteRef`'s
@@ -1348,7 +1288,6 @@ impl GpuAssetResolver {
                 entities.push(entity);
             }
         }
-        // UI background graph (#591) also takes same graph upload path, hot reload must invalidate together.
         for (entity, _) in world.query::<crate::scene::runtime_components::UiImageRef>() {
             if !entities.contains(&entity) {
                 entities.push(entity);
@@ -1435,7 +1374,6 @@ impl GpuAssetResolver {
                 changed = true;
             }
         }
-        // Failure cache (same bad path will not heavy retry again) and queue flag will block heavy re-parse.
         self.enqueued.remove(&entity);
         self.pending_bounds.remove(&entity);
         self.pending_submeshes.remove(&entity);
@@ -1446,10 +1384,6 @@ impl GpuAssetResolver {
         changed
     }
 
-    // -----------------------------------------------------------------------
-    // Skeletal animation assets (#560 P0-2)
-    // -----------------------------------------------------------------------
-
     /// Read the `.rskel` / `.ranim` files a scene references into [`SkeletonLibrary`].
     ///
     /// Takes `&mut World` because it writes resources, so it is not a scheduled
@@ -1459,8 +1393,6 @@ impl GpuAssetResolver {
         let _span = crate::util::timing::span("asset::load_animation_assets");
         use crate::scene::systems::animator::SkeletonLibrary;
 
-        // Skinned entity does not necessarily have `MeshRef` / `MaterialRef` (loader only for `MeshRenderer`
-        // insert), without them `prepare_requests` will not schedule upload (#560 P0-3b).
         let mut missing_refs = Vec::new();
         for (entity, renderer) in world.query::<prism_scene::components::SkinnedMeshRenderer>() {
             if renderer.skinned_mesh_path.trim().is_empty() {
@@ -1509,11 +1441,9 @@ impl GpuAssetResolver {
                 if !clip.trim().is_empty() {
                     requested.push(clip);
                 }
-                // State machine (#560 P1): machine's own clip, after it loads, again supplement request.
                 if !animator.state_machine_path.trim().is_empty() {
                     requested.push(animator.state_machine_path.clone());
                 }
-                // Animation graph (#560 P1): graph's own clip / state machine, after it loads, again supplement request.
                 if !animator.anim_graph_path.trim().is_empty() {
                     requested.push(animator.anim_graph_path.clone());
                 }
@@ -1540,8 +1470,6 @@ impl GpuAssetResolver {
         {
             world.insert_resource(crate::scene::systems::animator::AnimGraphLibrary::new());
         }
-        // Parameter table (project side writes `speed` / `grounded` / trigger each frame). Engine does not guess value, only guarantees
-        // Resource present: without it `animator_system` will become empty table (all parameter conditions constantly false).
         if world.get_resource::<prism_anim::AnimParameters>().is_none() {
             world.insert_resource(prism_anim::AnimParameters::default());
         }
@@ -1564,7 +1492,6 @@ impl GpuAssetResolver {
                 report_missing_reference(&path, "animation");
                 continue;
             };
-            // Skeleton and clip types differ, distinguished by extension (paths written by cook end carry `.rskel` / `.ranim`).
             if path.ends_with(".rskel") {
                 let Ok(handle) = self
                     .resource_manager
@@ -1638,7 +1565,6 @@ impl GpuAssetResolver {
             }
         }
 
-        // Second round: graph reference state machine. Must first load machine, third round can supplement machine state clip together.
         let mut graph_machines: Vec<String> = Vec::new();
         if let Some(library) =
             world.get_resource::<crate::scene::systems::animator::AnimGraphLibrary>()
@@ -1683,7 +1609,6 @@ impl GpuAssetResolver {
             }
         }
 
-        // Second round: state machine reference clip. Only after machine just loaded knows who they are, so can only after this supplement.
         let mut state_clips: Vec<String> = Vec::new();
         if let Some(library) =
             world.get_resource::<crate::scene::systems::animator::StateMachineLibrary>()

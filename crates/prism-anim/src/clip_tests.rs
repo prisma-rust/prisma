@@ -33,11 +33,9 @@ fn three_keys_pick_the_right_segment() {
         v3(1.0, Vec3::new(2.0, 0.0, 0.0)),
         v3(2.0, Vec3::new(0.0, 4.0, 0.0)),
     ];
-    // 1.5 falls in the middle of the second segment ((2,0,0) → (0,4,0)).
     let mid = sample_vec3(&keys, 1.5).unwrap();
     assert!((mid.x - 1.0).abs() < 1e-6, "got {mid:?}");
     assert!((mid.y - 2.0).abs() < 1e-6, "got {mid:?}");
-    // First segment.
     let first = sample_vec3(&keys, 0.25).unwrap();
     assert!((first.x - 0.5).abs() < 1e-6, "got {first:?}");
 }
@@ -54,7 +52,6 @@ fn rotations_slerp_the_short_way() {
         rotated.z.abs() > 0.99,
         "half of 180° is 90°, got {rotated:?}"
     );
-    // Endpoints hold.
     assert!(sample_quat(&keys, -1.0)
         .unwrap()
         .abs_diff_eq(Quat::IDENTITY, 1e-6));
@@ -108,7 +105,6 @@ fn sampling_writes_only_the_channels_that_have_keys() {
         ..Default::default()
     };
     assert!(clip.sample_into(0.0, &mut pose));
-    // Position was not written (the clip doesn't move the position channel).
     assert_eq!(pose.local(1).unwrap().translation, Vec3::new(2.0, 0.0, 0.0));
     clip.sample_into(1.0, &mut pose);
     let rotated = pose.local(1).unwrap().rotation * Vec3::X;
@@ -197,7 +193,6 @@ fn key_times_merge_every_track_and_drop_duplicates() {
         ],
         ..Default::default()
     };
-    // 0.0 / 1.0 each appear twice → keep one each; NaN dropped.
     assert_eq!(clip.key_times(), vec![0.0, 0.5, 1.0]);
 }
 
@@ -247,11 +242,8 @@ fn fired(clip: &Clip, from: f32, to: f32) -> Vec<&str> {
 fn notifies_fire_in_a_half_open_interval() {
     let clip = notified_clip(2.0, false, &[(0.5, "a"), (1.5, "b")]);
     assert_eq!(fired(&clip, 0.4, 0.6), vec!["a"]);
-    // Start is an open interval: 0.5 already fired that frame, paused on it shouldn't replay.
     assert!(fired(&clip, 0.5, 0.6).is_empty());
-    // One frame crossing two doesn't miss either.
     assert_eq!(fired(&clip, 0.0, 2.0), vec!["a", "b"]);
-    // No events / non-finite / zero duration are all safe.
     assert!(fired(&notified_clip(2.0, false, &[]), 0.0, 2.0).is_empty());
     assert!(fired(&clip, f32::NAN, 1.0).is_empty());
     assert!(fired(&notified_clip(0.0, false, &[(0.5, "a")]), 0.0, 1.0).is_empty());
@@ -260,11 +252,8 @@ fn notifies_fire_in_a_half_open_interval() {
 #[test]
 fn a_looped_clip_fires_notifies_on_both_sides_of_the_wrap() {
     let clip = notified_clip(1.0, true, &[(0.05, "start"), (0.95, "end")]);
-    // 0.9 → 1.0 → 0.1: each segment hits one.
     assert_eq!(fired(&clip, 0.9, 0.1), vec!["start", "end"]);
-    // Only cross the end.
     assert_eq!(fired(&clip, 0.9, 0.98), vec!["end"]);
-    // Only cross the start (point 0 itself must also be able to trigger).
     assert_eq!(fired(&clip, 0.98, 0.05), vec!["start"]);
 }
 

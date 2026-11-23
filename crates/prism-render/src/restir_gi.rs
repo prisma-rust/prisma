@@ -367,8 +367,6 @@ impl RestirGiPass {
         if instances.is_empty() {
             return Ok(());
         }
-        // The real material table lives in the shared manager SSBO bound to
-        // b7; only the per-instance vertex/index data comes from here.
         let materials = vec![0u8; std::mem::size_of::<crate::managers::GpuMaterial>()];
         let scene = build_pt_scene(context, command_pool, instances, &materials)
             .context("RestirGiPass: build ray-tracing scene")?;
@@ -392,8 +390,6 @@ impl RestirGiPass {
         if !changed && self.images[0].is_some() {
             return Ok(());
         }
-        // A command buffer submitted last frame may still sample the old images and
-        // reservoirs, so hand them to the retirement queue instead of stalling.
         for slot in self.images.iter_mut() {
             if let Some(image) = slot.take() {
                 self.retire.retire(
@@ -780,7 +776,6 @@ impl RestirGiPass {
         let frame = ctx.frame;
         let reset = self.reset_pending || self.last_written == vk::ImageView::null();
 
-        // ---- Frame constants -------------------------------------------
         let sharc_enabled = self.sharc_hash.is_some()
             && self.sharc_accumulation.is_some()
             && self.sharc_resolved.is_some();
@@ -827,15 +822,12 @@ impl RestirGiPass {
                 },
                 ctx.settings.sharc_roughness_threshold,
             ],
-            // The cache is keyed off the camera that produced the samples, so
-            // the sharc camera position mirrors the current one.
             sharc_camera_pos: camera_pos,
             prev_view_proj: self.prev_view_proj,
             prev_camera_pos: self.prev_camera_pos,
         };
         frame_constants.upload(&constants);
 
-        // ---- First-use layout transitions for the ping-pong images -----
         let mut initial_barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
         for (image, initialized) in [
             (write_img, write_initialized),
@@ -875,7 +867,6 @@ impl RestirGiPass {
                 image.initialized = true;
             }
         }
-        // ---- Clear the reservoirs when the history was dropped ----------
         if self.reservoirs_dirty || reset {
             for buffer in reservoirs.buffers.iter() {
                 unsafe { device.cmd_fill_buffer(cmd, *buffer, 0, vk::WHOLE_SIZE, 0) };
@@ -897,7 +888,6 @@ impl RestirGiPass {
             self.reservoirs_dirty = false;
         }
 
-        // ---- Descriptor updates (set 0) --------------------------------
         let output_info = [vk::DescriptorImageInfo::default()
             .image_view(write_view)
             .image_layout(vk::ImageLayout::GENERAL)];
@@ -995,7 +985,6 @@ impl RestirGiPass {
         }
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 
-        // ---- Descriptor updates (set 3, G-buffer + history) ------------
         let gb_slot = (ctx.frame_index as usize) % self.gb_sets.len();
         let gb_views = [
             resources
@@ -1020,7 +1009,6 @@ impl RestirGiPass {
                 bindings::GB_VELOCITY_BINDING,
                 bindings::GI_HISTORY_BINDING,
             ];
-            // Build every image info up front: the write descriptors borrow them.
             let mut gb_infos: Vec<[vk::DescriptorImageInfo; 1]> =
                 Vec::with_capacity(bindings_list.len() + 1);
             for (i, _binding) in bindings_list.iter().enumerate() {
@@ -1057,7 +1045,6 @@ impl RestirGiPass {
             self.gb_views[gb_slot] = gb_views;
         }
 
-        // ---- Dispatch --------------------------------------------------
         let Some(pipeline) = self.pipeline.as_ref() else {
             return Ok(());
         };
@@ -1084,7 +1071,6 @@ impl RestirGiPass {
             );
         }
 
-        // ---- Make the result visible to the next frame's forward pass ---
         let write_to_read = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::GENERAL)
             .new_layout(vk::ImageLayout::GENERAL)
@@ -1106,7 +1092,6 @@ impl RestirGiPass {
             )
         };
 
-        // Publish for the visualiser and hand the forward pass its input.
         resources.set_image_view(RESTIR_GI_COLOR_H, write_view);
         resources.set_image(RESTIR_GI_COLOR_H, write_img);
         self.last_written = write_view;
@@ -1125,8 +1110,6 @@ impl RenderPassNode for RestirGiPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Placeholder extent: the pass owns its own ping-pong images, so the
-        // graph resource only exists to make the edge visible to the viz.
         graph.create_resource_at(
             RESTIR_GI_COLOR_H,
             ResourceType::StorageImage {
@@ -1163,13 +1146,9 @@ impl RenderPassNode for RestirGiPass {
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
         self.retire.collect(ctx.device, ctx.frame_index);
         self.slot_index = ctx.frame_index;
-        // Raster path only: the path tracer owns GI when it runs.
         if ctx.frame.render_mode != RenderMode::Raster {
             return Ok(());
         }
-        // `gi_mode` selects the producer; the forward pass falls back to the
-        // baked probe volume when this pass is idle, so nothing runs unless the
-        // caller asked for it.
         if ctx.frame.render_mode != RenderMode::Raster
             || ctx.settings.raster_gi != RasterGiMode::Restir
         {

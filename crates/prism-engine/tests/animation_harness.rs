@@ -62,11 +62,9 @@ fn pose_samples_are_deterministic_and_multi_track() {
         .map(|time| sample_clip(&clip, *time, &base))
         .collect();
     for (actual, expected) in first.iter().zip(&second) {
-        // Re-sampling the same time must be bit-stable in this pure path.
         assert_pose_close(actual, expected, 0.0);
     }
 
-    // Before the first key: endpoint hold.
     assert_pose_close(
         &first[0],
         &pose(vec![
@@ -76,8 +74,6 @@ fn pose_samples_are_deterministic_and_multi_track() {
         1e-6,
     );
 
-    // Halfway through joint 0's translation (0→4 over 1s), rotation (0→90°
-    // over 2s) and scale (1→2 over 2s); joint 1's scale peaks at 1s.
     assert_pose_close(
         &first[2],
         &pose(vec![
@@ -91,7 +87,6 @@ fn pose_samples_are_deterministic_and_multi_track() {
         1e-6,
     );
 
-    // Second key boundary: every channel has an explicit value.
     assert_pose_close(
         &first[3],
         &pose(vec![
@@ -105,7 +100,6 @@ fn pose_samples_are_deterministic_and_multi_track() {
         1e-6,
     );
 
-    // Between the two 1s keys on joint 1's scale: interpolate back down.
     assert_pose_close(
         &first[4],
         &pose(vec![
@@ -119,7 +113,6 @@ fn pose_samples_are_deterministic_and_multi_track() {
         1e-6,
     );
 
-    // Endpoint hold after the clip and before it are the same sample.
     let end = pose(vec![
         joint(
             [4.0, 2.0, 0.0],
@@ -141,17 +134,14 @@ fn looped_sampling_handles_the_boundary_just_before_and_after() {
     assert_vec3(before.joint(0).translation, [4.0, 1.998, 0.0], 1e-4);
     assert_vec3(before.joint(1).translation, [0.0, 2.999, 0.0], 1e-4);
 
-    // Exactly at duration wraps to the first key...
     let boundary = sample_clip(&clip, 2.0, &base);
     let start = sample_clip(&clip, 0.0, &base);
     assert_pose_close(&boundary, &start, 1e-6);
 
-    // ...and just after the boundary is just after the first key.
     let after = sample_clip(&clip, 2.001, &base);
     assert_vec3(after.joint(0).translation, [0.004, 0.0, 0.0], 1e-4);
     assert_vec3(after.joint(1).translation, [0.0, 1.001, 0.0], 1e-4);
 
-    // Multiple wraps stay deterministic.
     let wrapped = sample_clip(&clip, 2.5, &base);
     let half = sample_clip(&clip, 0.5, &base);
     assert_pose_close(&wrapped, &half, 1e-5);
@@ -172,14 +162,12 @@ fn forward_playback_fires_events_in_order_and_samples_the_pose() {
         ]
     );
 
-    // Step 5 reached 0.5s: position 5, euler 45°, scale 1.5.
     let half = &ticks[4];
     assert_vec3(half.position, [5.0, 0.0, 0.0], 1e-4);
     assert_vec3(half.scale, [1.5, 1.5, 1.5], 1e-4);
     assert_quat(half.rotation, Quat::from_rotation_y(FRAC_PI_4), 1e-5);
     assert!(!half.finished);
 
-    // A one-shot clip holds the last key and reports finished thereafter.
     let last = &ticks[11];
     assert_eq!(last.playhead_time, 1.0);
     assert!(last.finished);
@@ -187,7 +175,6 @@ fn forward_playback_fires_events_in_order_and_samples_the_pose() {
     assert_vec3(last.scale, [2.0, 2.0, 2.0], 1e-4);
     assert_quat(last.rotation, Quat::from_rotation_y(FRAC_PI_2), 1e-5);
 
-    // Holding the endpoint must not replay the last event.
     let after = harness.run(5);
     assert_eq!(harness.event_names().len(), 4);
     for tick in after {
@@ -199,8 +186,6 @@ fn forward_playback_fires_events_in_order_and_samples_the_pose() {
 
 #[test]
 fn reverse_playback_fires_events_backwards() {
-    // Times sit away from exact tick boundaries so f32 accumulation cannot
-    // move the crossing into a neighbouring step.
     let events = vec![
         AnimationEvent::new(0.22, "quarter"),
         AnimationEvent::new(0.48, "half"),
@@ -219,7 +204,6 @@ fn reverse_playback_fires_events_backwards() {
         ]
     );
 
-    // Step 6 is at 0.4s: position 4, euler 36°, scale 1.4.
     let tick = &ticks[5];
     assert_vec3(tick.position, [4.0, 0.0, 0.0], 1e-4);
     assert_vec3(tick.scale, [1.4, 1.4, 1.4], 1e-4);
@@ -229,7 +213,6 @@ fn reverse_playback_fires_events_backwards() {
         1e-4,
     );
 
-    // The playhead reaches 0 without claiming the one-shot clip finished.
     assert!(harness.last().playhead_time.abs() < 1e-5);
     assert!(!harness.last().finished);
 }
@@ -271,10 +254,8 @@ fn looped_playback_fires_events_once_per_cycle() {
         ]
     );
 
-    // Step 10 is exactly the wrap: local time 0, so the pose is back at start.
     assert!((ticks[9].playhead_time - 1.0).abs() < 1e-4);
     assert_vec3(ticks[9].position, [0.0, 0.0, 0.0], 1e-5);
-    // Step 11 is 0.1s into the second cycle.
     assert_vec3(ticks[10].position, [1.0, 0.0, 0.0], 1e-4);
     assert!(!ticks[10].finished);
 }
@@ -285,7 +266,6 @@ fn one_shot_event_at_the_end_is_not_repeated() {
     let mut harness = AnimationHarness::new(engine_clip(false, 1.0, events), 0.25);
     let ticks = harness.run(8);
 
-    // The playhead reaches 1.0 on step 4 and is clamped there afterwards.
     assert_eq!(harness.event_names(), vec![(4, "done".to_string())]);
     assert!(ticks[3].finished);
     assert_eq!(ticks[3].playhead_time, 1.0);

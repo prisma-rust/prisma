@@ -74,8 +74,6 @@ pub fn ui_input_system(world: &mut World) {
         None => return,
     };
 
-    // Step zero: `Button` is authorable interactive element, scene need not explicitly attach
-    // `Interaction` (that is runtime state); fill it here so author only writes `Button`.
     let buttons: Vec<Entity> = world.query::<Button>().map(|(entity, _)| entity).collect();
     for entity in buttons {
         if world.get::<Interaction>(entity).is_none() {
@@ -83,7 +81,6 @@ pub fn ui_input_system(world: &mut World) {
         }
     }
 
-    // Step one: clear all previous-frame state.
     for (_, interaction) in world.query_mut::<Interaction>() {
         interaction.clicked = false;
         interaction.hovered = false;
@@ -94,7 +91,6 @@ pub fn ui_input_system(world: &mut World) {
     let mut press = world.remove_resource::<UiPressState>().unwrap_or_default();
     let mut focus = world.remove_resource::<UiFocus>().unwrap_or_default();
 
-    // Step two: record target on press; click = release on same target.
     if state.left_clicked {
         press.entity = hit;
         if hit.and_then(|entity| world.get::<Button>(entity)).is_some() {
@@ -102,7 +98,6 @@ pub fn ui_input_system(world: &mut World) {
         }
     }
 
-    // Step three: write state only to topmost element.
     if let Some(entity) = hit {
         let interactable = world
             .get::<Button>(entity)
@@ -118,7 +113,6 @@ pub fn ui_input_system(world: &mut World) {
         }
     }
 
-    // Step four: keyboard activation. Focused element need not be under cursor (cursor may have moved away).
     let activate = state.pressed_keys.iter().any(|key| {
         matches!(
             key,
@@ -139,7 +133,6 @@ pub fn ui_input_system(world: &mut World) {
         }
     }
 
-    // After release invalidate press target (regardless of release inside / outside element).
     if state.left_released {
         press.entity = None;
     }
@@ -152,11 +145,9 @@ fn topmost_hit(world: &World, cursor: [f32; 2]) -> Option<Entity> {
     let mut best: Option<(Entity, u32, f32)> = None;
 
     for (entity, _node, _interaction) in world.query2::<Node, Interaction>() {
-        // Elements disabled by `Active(false)` (including parent disable) do not participate.
         if !is_ui_active(world, entity) {
             continue;
         }
-        // Invisible elements neither drawn nor clickable.
         if !world
             .get::<Style>(entity)
             .map(|style| style.visible)
@@ -174,8 +165,6 @@ fn topmost_hit(world: &World, cursor: [f32; 2]) -> Option<Entity> {
 
         let depth = ui_depth(world, entity);
         let area = layout.rect[2].max(0.0) * layout.rect[3].max(0.0);
-        // Larger depth first; same depth smaller area first; fully equal keep later traversed
-        // (later into draw list = drawn on top).
         let better = best.is_none_or(|(_, best_depth, best_area)| {
             depth > best_depth || (depth == best_depth && area <= best_area)
         });

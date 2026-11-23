@@ -5,17 +5,12 @@ pub mod tuning_ui;
 #[cfg(feature = "player")]
 pub use tuning_ui::SponzaTuningHook;
 
-// ===========================================================================
-// Player form (Standalone Player)
-// ===========================================================================
 
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
     use prism_engine::render_settings::{PtGiMode, RasterGiMode, RenderMode, RenderSettings};
 
     prism_app::app()
-        // Previously no child systems registered, `App` thinks rendering is off → takes headless branch:
-        // No window created, no render thread started, keyboard events unhandled (all shortcuts invalidated).
         .with_subsystem(prism_app::Subsystem::Render)
         .with_render_settings(|settings: &mut RenderSettings| {
             let mut auto_exposure = true;
@@ -23,7 +18,6 @@ pub fn build_app() -> prism_app::App {
                 if mode.eq_ignore_ascii_case("raster") {
                     settings.render_mode = RenderMode::Raster;
                     settings.raster_gi = RasterGiMode::BakedProbe;
-                    // Disable tonemap curve compression in raster mode: passthrough to exposure only.
                     settings.tonemap_mode = 2;
                     auto_exposure = false;
                 } else if mode.eq_ignore_ascii_case("pt_off") {
@@ -49,11 +43,7 @@ pub fn build_app() -> prism_app::App {
             settings.pt_max_iterations = 0;
             settings.pt_ray_max_distance = 1000.0;
             settings.auto_exposure = auto_exposure;
-            // The tuning hook owns its input stream; do not let engine PBR
-            // isolation shortcuts silently replace the render debug flags.
             settings.debug_flags = 0;
-            // PBR component isolator, same masks the Digit1..0 / Shift+Digit
-            // shortcuts set. Bit order matches `PBR_FLAG_NAMES`.
             if let Ok(flags) = std::env::var("SPONZA_DEBUG_FLAGS") {
                 match flags.parse::<u32>() {
                     Ok(flags) => settings.debug_flags = flags,
@@ -64,9 +54,6 @@ pub fn build_app() -> prism_app::App {
         .with_frame_hook(SponzaTuningHook::default())
 }
 
-// ===========================================================================
-// Editor preview module (Editor Play Dynamic Module)
-// ===========================================================================
 
 #[cfg(feature = "preview-module")]
 mod preview {
@@ -88,9 +75,6 @@ mod preview {
     }
 }
 
-// ===========================================================================
-// Android JNI entry point
-// ===========================================================================
 
 #[cfg(all(target_os = "android", feature = "player"))]
 #[no_mangle]

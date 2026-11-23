@@ -39,8 +39,6 @@ pub(crate) fn apply_launch_log_level() {
 /// before it mounts anything.
 pub(crate) fn init_player_logging() {
     apply_launch_log_level();
-    // Android installs `android_logger` in `run_on_android` before the App is
-    // built; `env_logger` there would only fight it.
     #[cfg(not(target_os = "android"))]
     let _ = env_logger::try_init();
     INITIALIZED.store(true, Ordering::Relaxed);

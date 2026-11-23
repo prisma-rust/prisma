@@ -37,8 +37,6 @@
 
 use crate::scene::components::{UiParticleEmitter, UiParticleKind};
 
-// ── single particle ───────────────────────────────────────────────────
-
 /// One screen-space particle (pixel coords, y downward).
 #[derive(Clone, Copy, Debug)]
 pub struct Particle2D {
@@ -62,8 +60,6 @@ pub struct Particle2D {
     pub alpha: f32,
 }
 
-// ── emission shape ───────────────────────────────────────────────────
-
 /// Particle emission shape — affects initial velocity and trail orientation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SpawnKind {
@@ -75,8 +71,6 @@ pub enum SpawnKind {
     /// Sparks: random scatter + gravity, no trail.
     Spark,
 }
-
-// ── particle system ───────────────────────────────────────────────────
 
 /// One 2D screen-space particle system (stored as ECS resource).
 ///
@@ -252,7 +246,6 @@ impl ParticleSystem2D {
             finite_or(emitter.color[2], 0.0).clamp(0.0, 1.0),
         ];
         self.layer = emitter.layer;
-        // Snow is the only preset that sways; the component has no knob for it.
         self.sway = if self.kind == SpawnKind::Snow {
             40.0
         } else {
@@ -265,7 +258,6 @@ impl ParticleSystem2D {
 
     /// Advance simulation `dt` seconds each frame: emit new particles by `intensity`, integrate motion and recycle.
     pub fn update(&mut self, dt: f32) {
-        // 1. Emission (modulated by intensity; 0 means no emission, existing particles die naturally).
         self.spawn_accum += self.spawn_rate * self.intensity * dt;
         let mut to_spawn = self.spawn_accum.floor() as i32;
         self.spawn_accum -= to_spawn as f32;
@@ -274,9 +266,6 @@ impl ParticleSystem2D {
             to_spawn -= 1;
         }
 
-        // 2. Integrate motion + recycle (off-screen or expired).
-        //    Hoist scalars used below into locals, avoid closure capturing whole `self`
-        //    (which conflicts with mutable borrow of `self.particles`).
         let h = self.height;
         let w = self.width;
         let gravity = self.gravity;
@@ -285,7 +274,6 @@ impl ParticleSystem2D {
         self.particles.retain_mut(|p| {
             p.vy += gravity * dt;
             if kind == SpawnKind::Snow {
-                // Sine sway driven by sway amplitude + phase (using age).
                 p.vx = (p.age * 2.2).sin() * sway;
             }
             p.x += p.vx * dt;
@@ -339,9 +327,7 @@ impl ParticleSystem2D {
         let h = self.height;
         let mut quads = Vec::with_capacity(self.particles.len());
         for p in &self.particles {
-            // Spawn fade-in (first 0.18s) avoid appearing out of nowhere.
             let fade_in = (p.age / 0.18).min(1.0);
-            // Fade out near bottom, avoid hard cut off screen.
             let bottom_fade = if p.y > h - 50.0 {
                 ((h + 50.0 - p.y) / 100.0).clamp(0.0, 1.0)
             } else {
@@ -351,7 +337,6 @@ impl ParticleSystem2D {
             if a <= 0.002 {
                 continue;
             }
-            // Trail extends upward (y downward, so top = y - len).
             let rect = [
                 p.x - p.width * 0.5,
                 p.y - p.len,
@@ -361,7 +346,7 @@ impl ParticleSystem2D {
             quads.push(prism_ui_draw::UiQuad {
                 rect,
                 color: [self.color[0], self.color[1], self.color[2], a],
-                border_radius: p.width * 0.5, // capsule-shaped ends
+                border_radius: p.width * 0.5,
                 texture: None,
                 backdrop_sigma: 0.0,
             });

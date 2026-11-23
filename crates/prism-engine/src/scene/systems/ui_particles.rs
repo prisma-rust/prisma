@@ -86,7 +86,6 @@ pub fn ui_particle_emitter_system(world: &mut World, dt: f32) -> usize {
 
         state.system.apply_emitter(&emitter_def);
         state.system.set_bounds(width, height);
-        // `playing = false` only stops spawning; live particles still finish.
         state.system.intensity = if emitter_def.playing {
             emitter_def.clamped_intensity()
         } else {

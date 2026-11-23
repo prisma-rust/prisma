@@ -56,11 +56,9 @@ fn emission_follows_the_rate_and_is_deterministic() {
     let mut world = World::new();
     let entity = spawn_emitter(&mut world, fire(), [0.0, 0.0, 0.0]);
 
-    // 10 / seconds × 0.5 seconds = 5 particles.
     run(&mut world, 0.5);
     assert_eq!(particles_of(&world, entity).len(), 5);
 
-    // Same seed in another world gives same positions.
     let mut other = World::new();
     let other_entity = spawn_emitter(&mut other, fire(), [0.0, 0.0, 0.0]);
     run(&mut other, 0.5);
@@ -84,7 +82,6 @@ fn particles_die_after_their_lifetime() {
         [0.0; 3],
     );
 
-    // Emit 0.5 seconds = 2 particles, then run to end of lifetime with no new emission.
     run(&mut world, 0.5);
     assert_eq!(particles_of(&world, entity).len(), 2);
 
@@ -144,11 +141,9 @@ fn gravity_and_drag_change_the_velocity() {
         [0.0; 3],
     );
 
-    // First 0.1 seconds only spawn (spawn after integration), second 0.1 seconds starts falling.
     run(&mut world, 0.2);
     let particles = particles_of(&world, entity);
     assert_eq!(particles.len(), 1);
-    // Semi-implicit integration: first add v then move position → v = g * t = -1, displacement ≈ -0.1.
     assert!((particles[0].velocity.y + 1.0).abs() < 1e-4);
     assert!(particles[0].position.y < 0.0);
 }
@@ -307,7 +302,6 @@ fn extraction_sorts_particles_back_to_front() {
     let mut out = Vec::new();
     scene_particles_into(&world, glam::Vec3::ZERO, &mut out);
     assert_eq!(out.len(), 2);
-    // Camera at origin looking −Z: z = −9 farther, drawn first.
     assert_eq!(out[0].center[2], -9.0);
     assert_eq!(out[1].center[2], 1.0);
 }
@@ -351,11 +345,9 @@ fn a_huge_dt_is_clamped_to_the_maximum_step() {
         [0.0; 3],
     );
 
-    // dt of 10 seconds clamped to 0.1 seconds → only 1 particle emitted (not 100).
     particle_system(&mut world, 10.0);
     let particles = particles_of(&world, entity);
     assert_eq!(particles.len(), 1);
-    // New particle spawned after integration, so age this frame still 0.
     assert_eq!(particles[0].age, 0.0);
 }
 
@@ -380,13 +372,11 @@ fn gradient_samples_every_stop_uniformly() {
     assert_eq!(sample_gradient(&stops, 0.5), Some([0.0, 1.0, 0.0, 1.0]));
     assert_eq!(sample_gradient(&stops, 1.0), Some([0.0, 0.0, 1.0, 1.0]));
 
-    // Linear interpolation between two stops: t = 0.25 → scaled 0.5 → half red half green.
     let quarter = sample_gradient(&stops, 0.25).unwrap();
     for (actual, expected) in quarter.iter().zip([0.5, 0.5, 0.0, 1.0]) {
         assert!((actual - expected).abs() < 1e-5, "{quarter:?}");
     }
 
-    // Beyond range clamps to endpoint; non-finite value treated as dead.
     assert_eq!(sample_gradient(&stops, -2.0), Some(stops[0]));
     assert_eq!(sample_gradient(&stops, 9.0), Some(stops[2]));
     assert_eq!(sample_gradient(&stops, f32::NAN), Some(stops[2]));
@@ -443,7 +433,6 @@ fn size_over_lifetime_scales_the_birth_size() {
     assert!((particle_size(&grow, &particle_at(0.0, 1.0, 0.5)) - 0.25).abs() < 1e-5);
     assert!((particle_size(&grow, &particle_at(1.0, 1.0, 0.5)) - 1.0).abs() < 1e-5);
 
-    // Non-finite multiplier as 1; negative multiplier clamped to 0, never produces negative size / NaN.
     let broken = ParticleSystem {
         size_over_lifetime: [f32::NAN, f32::INFINITY],
         ..fire()
@@ -480,7 +469,6 @@ fn velocity_over_lifetime_adds_a_linear_drift_without_touching_velocity() {
         },
     );
 
-    // t=0.1: offset = 1 + (3-1)*0.1 = 1.2 → x += 0.12
     particle_system(&mut world, 0.1);
     let first = particles_of(&world, entity)[0].position.x;
     assert!((first - 0.12).abs() < 1e-5, "{first}");
@@ -490,7 +478,6 @@ fn velocity_over_lifetime_adds_a_linear_drift_without_touching_velocity() {
         "Speed curve only adds displacement, does not write back speed"
     );
 
-    // t=0.2: offset = 1.4 → x += 0.14
     particle_system(&mut world, 0.1);
     let second = particles_of(&world, entity)[0].position.x;
     assert!((second - 0.26).abs() < 1e-5, "{second}");
@@ -505,7 +492,6 @@ fn velocity_offset_lerps_and_sanitizes_non_finite_components() {
     let offset = particle_velocity_offset(&system, &particle_at(0.5, 1.0, 0.5));
     assert_eq!(offset, glam::Vec3::new(0.0, 3.0, 0.0));
 
-    // Default curve = no change.
     let default = ParticleSystem::default().velocity_over_lifetime;
     assert_eq!(default, [[0.0; 3]; 2]);
     assert_eq!(

@@ -130,7 +130,6 @@ impl SimWorld {
         let pcx = center_world.x.div_euclid(chunk_span_x) as i32;
         let pcz = center_world.z.div_euclid(chunk_span_z) as i32;
 
-        // 1. Unload distant chunks beyond `STREAM_RADIUS_CHUNKS + 1`.
         let unload_radius = STREAM_RADIUS_CHUNKS + 1;
         let mut idx = 0;
         while idx < self.chunks.len() {
@@ -142,7 +141,6 @@ impl SimWorld {
             }
         }
 
-        // 2. Collect missing chunks within `STREAM_RADIUS_CHUNKS`, sorted closest-first.
         let mut missing = Vec::new();
         for dz in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
             for dx in -STREAM_RADIUS_CHUNKS..=STREAM_RADIUS_CHUNKS {
@@ -193,7 +191,6 @@ impl SimWorld {
             });
         }
 
-        // O(1) unload drops the chunk's HashMap and frees its bucket allocation immediately.
         self.chunk_cells.swap_remove(idx);
         self.chunks.swap_remove(idx);
         self.chunk_coords.swap_remove(idx);
@@ -363,7 +360,6 @@ impl SimWorld {
         let Some((c_idx, local_l2)) = self.chunk_coords_for_l2(l2) else {
             return;
         };
-        // Iron Law 1: shattered glass/depleted cells with zero durability turn into empty void.
         let shattered = cell.durability == 0 && cell.transient.contains(TransientFlags::BROKEN);
         let (rgba, visual) = if shattered || id == mat_id::AIR {
             (0, 0)
@@ -425,7 +421,6 @@ impl SimWorld {
                 any
             }
             VoxelTier::L2 => {
-                // Brittle / Glass cells shatter neighbors when kinetically struck.
                 if let Some((id, cell, _)) = self.inspect_l2(hit.world_l2) {
                     if cell.material.contains(MaterialFlags::GLASS) || id == mat_id::GLASS {
                         for d in ORTHO_DIRS {
@@ -463,7 +458,6 @@ impl SimWorld {
                 ) else {
                     return false;
                 };
-                // Iron Law 1: clearing the final L3 bit inside an L2 cell clears its L2 physics cell.
                 if parent_empty {
                     self.chunk_cells[c_idx].remove(&l2);
                 }
@@ -710,14 +704,12 @@ impl SimWorld {
                     .union(TransientFlags::WARNING),
             ) || cell.clocks.half_life() > 0;
 
-            // Power generators continually recharge adjacent conductive paths.
             if id == mat_id::ISOTOPE {
                 cell.transient.insert(TransientFlags::CHARGED);
                 cell.env.set_temperature(Temperature::Hot);
                 keep_awake = true;
             }
 
-            // Thermal combustion / ignition / structural burnout.
             if cell.transient.contains(TransientFlags::BURNING) {
                 keep_awake = true;
                 if cell.transient.contains(TransientFlags::WET) {
@@ -747,7 +739,6 @@ impl SimWorld {
                 }
             }
 
-            // Conductive electrical pulse propagation through wires, alloy, and WET paths.
             if cell.transient.contains(TransientFlags::CHARGED)
                 && !cell.transient.contains(TransientFlags::BROKEN)
             {
@@ -769,14 +760,12 @@ impl SimWorld {
                     }
                 }
                 if id != mat_id::ISOTOPE {
-                    // Transient discharge decays slowly unless driven by an active power source.
                     if (self.next_rand() & 7) == 0 {
                         cell.transient.remove(TransientFlags::CHARGED);
                     }
                 }
             }
 
-            // Acid corrosion onto adjacent organic / metallic materials.
             if cell.transient.contains(TransientFlags::CORROSIVE)
                 || cell.transient.contains(TransientFlags::CORRODED)
             {
@@ -799,7 +788,6 @@ impl SimWorld {
                 }
             }
 
-            // Cryo chilling spreads cold and freezes adjacent liquids.
             if cell.env.temperature() <= Temperature::Cryo {
                 for d in HORIZ_DIRS {
                     let n = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
@@ -816,7 +804,6 @@ impl SimWorld {
                 }
             }
 
-            // Gravity & horizontal fluid spread for unfrozen liquids.
             if cell.env.matter() == MatterState::Liquid
                 && !cell.transient.contains(TransientFlags::FROZEN)
             {
@@ -840,7 +827,6 @@ impl SimWorld {
                         wake_list.push(below);
                         continue;
                     }
-                    // Lateral trickle when resting on a solid or liquid floor (avoid infinite flood).
                     if (self.next_rand() & 3) == 0 && self.active_set.len() < 1200 {
                         let start = (self.next_rand() as usize) % HORIZ_DIRS.len();
                         for off in 0..HORIZ_DIRS.len() {
@@ -893,7 +879,6 @@ impl SimWorld {
             self.wake_cell_and_neighbors(w, false);
         }
 
-        // Resolve any volatile tank / isotope explosions.
         let blasts = std::mem::take(&mut self.pending_blasts);
         for center in blasts {
             self.detonate(center, 5);
@@ -986,7 +971,6 @@ mod tests {
         let gen = generate_world(&mats, 42);
         let mut sim = SimWorld::new(mats, gen.chunks, gen.cells, gen.active);
 
-        // Place a dedicated alloy L2 cell and carve all 64 L3 micro-voxels.
         let l2 = [20, 22, 20];
         let (c_idx, local_l2) = sim.chunk_coords_for_l2(l2).unwrap();
         let alloy_cell = sim.materials.spawn_cell(mat_id::ALLOY);
@@ -1077,7 +1061,6 @@ mod tests {
         let mut world = GameWorld::host(&mut ecs);
         sim.attach_ecs(&mut world);
 
-        // Move far away to `(160m, 4m, 160m)` -> chunk `(10, 10)` and stream in real time.
         sim.stream_around(glam::Vec3::new(160.0, 4.0, 160.0), Some(&mut world), 32);
         assert!(
             sim.chunk_lookup.contains_key(&[10, 10]),

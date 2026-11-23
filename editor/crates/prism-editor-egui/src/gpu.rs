@@ -52,8 +52,6 @@ impl SharedVulkan {
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
-        // Temporary surface: only for "physical device / queue family can present". egui-ash builds
-        // surface + swapchain per viewport window itself; used then destroyed here.
         let window = cc.main_window;
         let window_handle = window
             .window_handle()
@@ -75,7 +73,6 @@ impl SharedVulkan {
         let physical_device = match pick_host_physical_device(&instance, &surface_loader, surface) {
             Ok(device) => device,
             Err(error) => {
-                // reclaim temporary surface first to avoid leak then return error.
                 unsafe { surface_loader.destroy_surface(surface, None) };
                 return Err(error);
             }
@@ -98,7 +95,6 @@ impl SharedVulkan {
             &device_extensions,
         )?);
 
-        // handle already obtained, temporary surface no longer needed.
         unsafe { surface_loader.destroy_surface(surface, None) };
 
         let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -106,8 +102,6 @@ impl SharedVulkan {
             device: context.device.clone(),
             physical_device,
             debug_settings: Default::default(),
-            // Consistent with features enabled by `VulkanContext::from_host`: device address only
-            // declared when actually enabled, otherwise gpu-allocator requests unenabled feature.
             buffer_device_address: context.rt_caps.buffer_device_address,
             allocation_sizes: Default::default(),
         })

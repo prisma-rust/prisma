@@ -28,10 +28,6 @@ use crate::render_enums::{
 };
 use prism_physics2d::Aabb2;
 
-// ---------------------------------------------------------------------------
-// SceneAssetId
-// ---------------------------------------------------------------------------
-
 /// 64-bit asset identifier used by scene schema.
 ///
 /// Consistent with `prism_asset::core::AssetId` binary representation, but kept as a local type,
@@ -65,10 +61,6 @@ impl SceneAssetId {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hierarchy
-// ---------------------------------------------------------------------------
-
 /// Reference to parent entity. Corresponds to data-oriented `.Transforms.Parent` (`.0` ≡ `.Value`).
 ///
 /// An entity without `Parent` component is a **root node** in scene hierarchy. Use
@@ -101,10 +93,6 @@ impl Child {
         &mut self.0
     }
 }
-
-// ---------------------------------------------------------------------------
-// Transform
-// ---------------------------------------------------------------------------
 
 /// Local transform relative to parent entity (world space for root nodes).
 ///
@@ -189,10 +177,6 @@ impl TransformInterpolation2D {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Render references
-// ---------------------------------------------------------------------------
-
 /// Active state — whether the entity participates in rendering.
 ///
 /// Defaults to `true`.  Set to `false` to hide an entity without despawning it
@@ -230,10 +214,6 @@ impl Default for ActiveInHierarchy {
         Self(true)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Authoring-time helpers
-// ---------------------------------------------------------------------------
 
 /// Authoring-time bundle marker for a renderable entity.
 ///
@@ -294,7 +274,6 @@ impl Default for MeshRenderer {
             cull_mode: CullMode::default(),
             render_queue: RenderQueue::default(),
             z_write: true,
-            // Engine opaque default: One / Zero / Add (see `blends`).
             src_blend: BlendMode::One,
             dst_blend: BlendMode::Zero,
             blend_op: BlendOp::Add,
@@ -361,10 +340,6 @@ impl MeshRenderer {
             || self.blend_op != BlendOp::Add
     }
 }
-
-// ---------------------------------------------------------------------------
-// Distance LOD
-// ---------------------------------------------------------------------------
 
 /// Distance-based LOD (#491).
 ///
@@ -473,10 +448,6 @@ impl LodGroup {
         Some(index.min(child_count - 1))
     }
 }
-
-// ---------------------------------------------------------------------------
-// 2D Sprite
-// ---------------------------------------------------------------------------
 
 /// 2D sprite renderer = `SpriteRenderer` (rendering subset).
 ///
@@ -1097,10 +1068,6 @@ impl LineRenderer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Particles
-// ---------------------------------------------------------------------------
-
 /// Emitter shape = `ParticleSystemShape`.
 ///
 /// Only affects particle birth offset and initial velocity direction; Phase 1 has no collision/trail.
@@ -1123,7 +1090,6 @@ impl ReflectType for ParticleShape {
     }
 
     fn enum_variants() -> Option<&'static [&'static str]> {
-        // Order consistent with declaration; these strings are values in `.scene.json`.
         Some(&["Point", "Sphere", "Box", "Cone"])
     }
 
@@ -1615,10 +1581,6 @@ impl UiParticleEmitter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Lighting
-// ---------------------------------------------------------------------------
-
 /// 2D light type (#611).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Light2DKind {
@@ -1863,7 +1825,6 @@ impl TimeOfDay {
         let twilight = self.twilight_hours.max(0.0);
         let sunrise = self.sunrise_hour.rem_euclid(24.0);
         let sunset = self.sunset_hour.rem_euclid(24.0);
-        // 0 = night, 1 = day; sunrise / sunset each have half transition.
         let daylight = if twilight <= 0.0 {
             if day_side(h, sunrise, sunset) {
                 1.0
@@ -1986,8 +1947,8 @@ impl Default for SpotLight {
             color: glam::Vec3::ONE,
             intensity: 100.0,
             range: 20.0,
-            inner_cone_angle: 0.436, // ~25°
-            outer_cone_angle: 0.873, // ~50°
+            inner_cone_angle: 0.436,
+            outer_cone_angle: 0.873,
         }
     }
 }
@@ -2039,7 +2000,6 @@ impl Default for Light {
     fn default() -> Self {
         Self {
             enabled: true,
-            // Engine `new Light()` defaults to point light source.
             light_type: LightType::Point,
             color: glam::Vec3::ONE,
             intensity: 100.0,
@@ -2186,10 +2146,6 @@ impl Default for ProbeVolume {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Camera
-// ---------------------------------------------------------------------------
 
 /// Perspective camera parameters (data component).
 ///
@@ -2501,10 +2457,6 @@ impl Default for FlyCameraController {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Prefab instances (editor metadata)
-// ---------------------------------------------------------------------------
-
 /// **Editor metadata**: which prefab this entity (subtree root) was instantiated from.
 ///
 /// Engine runtime has no behavior for it (no system queries it), but it is a normal scene component,
@@ -2518,10 +2470,6 @@ pub struct PrefabInstance {
     pub prefab: String,
 }
 
-// ---------------------------------------------------------------------------
-// Identification
-// ---------------------------------------------------------------------------
-
 /// Human-readable entity name (data component).
 ///
 /// Optional: entities without a `Name` are displayed in the inspector by their
@@ -2530,10 +2478,6 @@ pub struct PrefabInstance {
 #[derive(Debug, Clone, Default, Reflect)]
 #[reflect(name = "prism_engine::scene::Name")]
 pub struct Name(pub String);
-
-// ---------------------------------------------------------------------------
-// Skybox
-// ---------------------------------------------------------------------------
 
 /// Skybox / environment map component.
 ///
@@ -2636,10 +2580,6 @@ impl Default for Gizmo {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Physics
-// ---------------------------------------------------------------------------
 
 /// Collider shape = `ColliderShape`.
 ///
@@ -2844,10 +2784,6 @@ impl Default for Rigidbody {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// 2D Physics
-// ---------------------------------------------------------------------------
 
 /// 2D rigidbody type = `RigidBody2DType**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -3081,10 +3017,6 @@ pub type BoxCollider2D = PhysicsCollider2D;
 pub type CircleCollider2D = PhysicsCollider2D;
 pub type PolygonCollider2D = PhysicsCollider2D;
 
-// ---------------------------------------------------------------------------
-// Skinning
-// ---------------------------------------------------------------------------
-
 /// Skeleton root (#560): points to a `.rskel`, skeleton shared by all
 /// [`SkinnedMeshRenderer`] bones + reference pose.
 ///
@@ -3148,10 +3080,6 @@ impl SkinnedMeshRenderer {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Skinning Animation
-// ---------------------------------------------------------------------------
 
 /// One animation layer over base animation (#560 P1 Layer / Avatar Mask).
 ///
@@ -3358,7 +3286,6 @@ impl Default for Animator {
             blend_parameter_y: 0.0,
             additive_clip_path: String::new(),
             additive_weight: 1.0,
-            // 0.2s ≈ UE default blend time: short enough not to drag, covers most pose differences.
             blend_duration: 0.2,
             layers: Vec::new(),
             lod_enabled: false,
@@ -3388,10 +3315,6 @@ impl Animator {
         self.blend_2d_clip_paths.len() >= 3 && self.blend_2d_positions.len() >= 3
     }
 }
-
-// ---------------------------------------------------------------------------
-// Terrain
-// ---------------------------------------------------------------------------
 
 /// Heightfield terrain (#517 Phase 1).
 ///
@@ -3500,10 +3423,6 @@ impl Terrain {
         (1 + self.lod_distances.len()).min(3)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Audio
-// ---------------------------------------------------------------------------
 
 /// Audio bus = grouped volume (#508).
 ///
@@ -3656,10 +3575,6 @@ impl Default for AudioListener {
         Self { gain: 1.0 }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Scene management
-// ---------------------------------------------------------------------------
 
 /// Marks an entity as belonging to a specific scene.
 ///

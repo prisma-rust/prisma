@@ -108,7 +108,6 @@ pub fn ring_screen_radius_oriented(
     width: f32,
     height: f32,
 ) -> Option<(f32, f32, f32)> {
-    // Ring lies in plane perpendicular to axis; radius approximated by average of two orthogonal radius screen lengths.
     let (u, v) = match axis {
         0 => (basis[1], basis[2]),
         1 => (basis[0], basis[2]),
@@ -373,7 +372,6 @@ pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
     if length < 1e-8 {
         return [0.0; 3];
     }
-    // Rotation matrix taken by column: `m[c][r]` consistent with below `m00..m22` row-major indexing.
     let m = Mat3::from_quat(q / length);
     let (m00, m10, m20) = (m.x_axis.x, m.x_axis.y, m.x_axis.z);
     let (m21, m22) = (m.y_axis.z, m.z_axis.z);
@@ -381,7 +379,6 @@ pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
 
     let sin_y = (-m20).clamp(-1.0, 1.0);
     let ey = sin_y.asin();
-    // Gimbal lock: when Y near ±90° X/Z couple, move roll to Z (Unity also takes 0).
     let (ex, ez) = if sin_y.abs() < 0.999_99 {
         (m21.atan2(m22), m10.atan2(m00))
     } else {
@@ -392,7 +389,6 @@ pub fn quat_to_euler_degrees(q: [f32; 4]) -> [f32; 3] {
 
 /// XYZ Euler angles (degrees) -> Quaternion, inverse of [`quat_to_euler_degrees`].
 pub fn euler_degrees_to_quat(euler: [f32; 3]) -> [f32; 4] {
-    // `R = Rz * Ry * Rx`: rotate X first, then Y, then Z (fixed axes).
     quat_array(
         Quat::from_rotation_z(euler[2].to_radians())
             * Quat::from_rotation_y(euler[1].to_radians())
@@ -620,8 +616,6 @@ pub fn world_bounds_with(
         {
             continue;
         }
-        // Use real local AABB if available: unit cube differs from 2D sprite by a whole
-        // "texture pixel size", framing sticks to face (#991).
         let local = bounds_for(*index);
         let half = match &local {
             Some(bounds) => {
@@ -638,7 +632,6 @@ pub fn world_bounds_with(
                 scale[2].abs() * 0.5,
             ],
         };
-        // When local center non-zero (sprite pivot / collider center) first carried to world by rotation-scale.
         let offset = local
             .as_ref()
             .map(|bounds| {
@@ -679,8 +672,6 @@ pub fn world_bounds_with(
         (min[1] + max[1]) * 0.5,
         (min[2] + max[2]) * 0.5,
     ];
-    // Radius takes "center to farthest corner" not AABB half-diagonal: latter grows with rotation,
-    // same object turns and framing distance changes.
     let radius = points
         .iter()
         .map(|point| {
@@ -734,7 +725,6 @@ pub fn pick_orientation_axis(
     for axis in 0..3 {
         for sign in [1.0_f32, -1.0] {
             let direction = orientation_axis_direction(frame, axis, sign);
-            // Axis projected length is 0 when facing camera, cannot click.
             if (direction[0] * direction[0] + direction[1] * direction[1]).sqrt() < 0.2 {
                 continue;
             }
@@ -767,7 +757,6 @@ pub struct CameraFrame {
 
 pub fn camera_frame(camera: &OrbitCamera) -> CameraFrame {
     let eye = Vec3::from(camera.eye());
-    // Derive orthonormal basis directly from yaw/pitch to avoid gimbal collapse at +-90 deg.
     let rotation = Quat::from_rotation_y(camera.yaw) * Quat::from_rotation_x(-camera.pitch);
     let right = (rotation * Vec3::X).normalize();
     let up = (rotation * Vec3::Y).normalize();
@@ -830,7 +819,6 @@ pub fn project(
     }
     let aspect = (width / height.max(1.0)).max(0.2);
     let (ndc_x, ndc_y) = match frame.ortho_half_height {
-        // Orthographic: screen position independent of depth, half-height is world units.
         Some(half_h) => {
             let half_h = half_h.max(1e-4);
             (
@@ -871,7 +859,6 @@ pub fn ray_from_screen(
     let up = Vec3::from(frame.up);
     let forward = Vec3::from(frame.forward);
     if let Some(half_h) = frame.ortho_half_height {
-        // Orthographic: all rays same direction, origin spread on near plane by half-width / half-height.
         let half_h = half_h.max(1e-4);
         let offset = right * (ndc_x * half_h * aspect) + up * (ndc_y * half_h);
         return ((eye + offset).to_array(), forward.to_array());
@@ -1339,20 +1326,19 @@ pub fn projected_box_edges(
         let (x, y, _) = project(*corner, frame, width, height)?;
         screen[slot] = (x, y);
     }
-    // Corner index arranged as "dx/dy/dz each one bit": z changes fastest.
     const EDGES: [(usize, usize); 12] = [
         (0, 1),
         (2, 3),
         (4, 5),
-        (6, 7), // along z
+        (6, 7), 
         (0, 2),
         (1, 3),
         (4, 6),
-        (5, 7), // along y
+        (5, 7), 
         (0, 4),
         (1, 5),
         (2, 6),
-        (3, 7), // along x
+        (3, 7), 
     ];
     let mut out = [((0.0f32, 0.0f32), (0.0f32, 0.0f32)); 12];
     for (slot, (a, b)) in EDGES.iter().enumerate() {
@@ -1677,8 +1663,6 @@ mod tests {
         let far = project([1.0, 0.5, -6.0], &frame, 800.0, 600.0).unwrap();
         assert!((near.0 - far.0).abs() < 1e-4);
         assert!((near.1 - far.1).abs() < 1e-4);
-        // half-height = distance = 10 -> 30px per world unit in 600px-high viewport:
-        // +1 X right moves 30px, +0.5 Y lifts 15px.
         assert!((near.0 - 430.0).abs() < 1e-3);
         assert!((near.1 - 285.0).abs() < 1e-3);
     }
@@ -1700,8 +1684,6 @@ mod tests {
             "screen right -> origin translates +X"
         );
         assert!(o_side[1] > o_center[1], "screen up -> origin translates +Y");
-        // Center ray hits box; the one shifted horizontally 10 world units misses directly
-        // (orthographic no near-large-far-small, does not hit just because "closer to camera").
         assert!(ray_box(o_center, d_center, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_some());
         assert!(ray_box(o_side, d_side, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_none());
     }
@@ -1719,7 +1701,6 @@ mod tests {
     fn sprite_rect_uses_size_and_pivot() {
         let camera = camera_2d();
         let frame = camera_frame(&camera);
-        // half-height 10 -> 30px per world unit in 600px-high viewport.
         let centered = rect_transform([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         let edges =
             projected_rect_edges(&centered, [2.0, 1.0], [0.5, 0.5], &frame, 800.0, 600.0).unwrap();
@@ -1730,12 +1711,10 @@ mod tests {
         assert!((ys.iter().cloned().fold(f32::MIN, f32::max) - 315.0).abs() < 1e-3);
         assert!((ys.iter().cloned().fold(f32::MAX, f32::min) - 285.0).abs() < 1e-3);
 
-        // bottom-edge pivot `[0.5, 0.0]`: rect overall above entity by half height.
         let bottom =
             projected_rect_edges(&centered, [2.0, 1.0], [0.5, 0.0], &frame, 800.0, 600.0).unwrap();
         let min_y = bottom.iter().map(|(a, _)| a.1).fold(f32::MAX, f32::min);
         let max_y = bottom.iter().map(|(a, _)| a.1).fold(f32::MIN, f32::max);
-        // screen y down: lifting half world unit = screen y decreases 15px.
         assert!((max_y - 300.0).abs() < 1e-3);
         assert!((min_y - 270.0).abs() < 1e-3);
     }
@@ -1764,7 +1743,6 @@ mod tests {
     /// #646: Drag-drop landing point --- 3D hits ground y = 0, 2D hits z = 0.
     #[test]
     fn drop_point_uses_the_authoring_plane_per_view() {
-        // 2D: front-facing XY, 30px/world unit, screen (430, 285) = world (+1, +0.5).
         let mut camera = camera_2d();
         let frame = camera_frame(&camera);
         let ray = ray_from_screen(430.0, 285.0, &frame, 800.0, 600.0);
@@ -1776,7 +1754,6 @@ mod tests {
         assert!((point[0] - 1.0).abs() < 1e-3);
         assert!((point[1] - 0.5).abs() < 1e-3);
 
-        // 3D: top-down center ray lands on ground at origin (target).
         camera.set_2d(false);
         camera.pitch = 0.6;
         let frame = camera_frame(&camera);
@@ -1790,10 +1767,8 @@ mod tests {
     fn drop_point_rejects_rays_parallel_to_the_plane() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // Default camera looks horizontally at −Z, parallel to y = 0 -> no landing point.
         let ray = ray_from_screen(400.0, 300.0, &frame, 800.0, 600.0);
         assert!(drop_point(&camera, ray).is_none());
-        // Parallel rays / rays flying away from plane all rejected; vertically downward ray normally projects to ground.
         assert!(drop_point(&camera, ([0.0, 5.0, 0.0], [1.0, 0.0, 0.0])).is_none());
         assert!(drop_point(&camera, ([0.0, 5.0, 0.0], [0.0, 1.0, 0.0])).is_none());
         let point = drop_point(&camera, ([1.0, 5.0, 2.0], [0.0, -1.0, 0.0])).unwrap();
@@ -1823,7 +1798,6 @@ mod tests {
     fn points_behind_the_camera_are_rejected() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // eye at +Z 10; further forward is +Z 20 (behind camera).
         assert!(project([0.0, 0.0, 20.0], &frame, 800.0, 600.0).is_none());
     }
 
@@ -1835,7 +1809,6 @@ mod tests {
         let distance = ray_box(origin, direction, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).unwrap();
         assert!((distance - 9.5).abs() < 0.2, "distance = {distance}");
 
-        // Offset to screen corner does not hit.
         let (origin, direction) = ray_from_screen(10.0, 10.0, &frame, 800.0, 600.0);
         assert!(ray_box(origin, direction, [0.0, 0.0, 0.0], [0.5, 0.5, 0.5]).is_none());
     }
@@ -1863,7 +1836,6 @@ mod tests {
         let picked = pick_entity((400.0, 300.0), &frame, 800.0, 600.0, &entities);
         assert_eq!(picked, Some(0));
 
-        // Right shift hits second one.
         let (x, _, _) = project([3.0, 0.0, 0.0], &frame, 800.0, 600.0).unwrap();
         let picked = pick_entity((x, 300.0), &frame, 800.0, 600.0, &entities);
         assert_eq!(picked, Some(1));
@@ -1871,7 +1843,6 @@ mod tests {
 
     #[test]
     fn projection_follows_the_configured_fov() {
-        // #416: narrow FOV pushes same world offset closer to screen edge.
         let mut camera = camera();
         let frame = camera_frame(&camera);
         let (wide_x, _, _) = project([1.0, 0.0, 0.0], &frame, 800.0, 600.0).unwrap();
@@ -1884,7 +1855,6 @@ mod tests {
             narrow_offset > wide_offset * 1.5,
             "30° offset {narrow_offset} should be clearly larger than 60° offset {wide_offset}"
         );
-        // Picking ray and projection are inverses: same screen point ray direction consistent.
         let frame = camera_frame(&camera);
         let (origin, direction) = ray_from_screen(narrow_x, 300.0, &frame, 800.0, 600.0);
         assert!(origin.iter().all(|value| value.is_finite()));
@@ -1893,7 +1863,6 @@ mod tests {
 
     #[test]
     fn overlapping_hits_are_returned_near_to_far() {
-        // #416: candidate set sorted by distance, first click picks nearest.
         let camera = camera();
         let frame = camera_frame(&camera);
         let entities = vec![
@@ -1949,19 +1918,16 @@ mod tests {
 
     #[test]
     fn picking_uses_the_rotated_box_not_its_axis_aligned_bounds() {
-        // Thin plate 2 × 0.1 × 2 rotated 45° around Z: visually slanted, axis-aligned box still upright.
         let plate = TransformJson {
             position: [0.0, 0.0, 0.0],
             rotation: quat_axis_angle(2, std::f32::consts::FRAC_PI_4),
             scale: [2.0, 0.1, 2.0],
         };
         let (origin, direction) = ([0.9f32, 0.0, 5.0], [0.0f32, 0.0, -1.0]);
-        // Empty point in axis-aligned box (old impl would mis-select) now must miss.
         assert!(
             ray_obb(origin, direction, &plate).is_none(),
             "empty AABB corner should not hit rotated thin plate"
         );
-        // Real end of thin plate (old impl instead missed it).
         assert!(
             ray_obb([0.636, 0.636, 5.0], direction, &plate).is_some(),
             "rotated thin plate body should be clickable"
@@ -1972,7 +1938,6 @@ mod tests {
     fn box_select_matches_a_wall_that_fills_the_viewport() {
         let camera = camera();
         let frame = camera_frame(&camera);
-        // One 40 × 40 wall, projected covers whole viewport, but four corners all outside viewport.
         let wall = TransformJson {
             position: [0.0, 0.0, 0.0],
             rotation: [0.0, 0.0, 0.0, 1.0],
@@ -1992,7 +1957,6 @@ mod tests {
             "large object intersecting screen rect should be box-selected"
         );
 
-        // Box far from wall still selects nothing.
         let misses = box_select(
             (4000.0, 4000.0, 4100.0, 4100.0),
             &frame,
@@ -2039,14 +2003,11 @@ mod tests {
 
     #[test]
     fn euler_conversion_handles_the_gimbal_pole_and_degenerate_quat() {
-        // Y = 90° is gimbal lock: only guarantees overall rotation consistent, not component consistent.
         let quat = euler_degrees_to_quat([20.0, 90.0, 0.0]);
         let back = quat_to_euler_degrees(quat);
         assert!((back[1] - 90.0).abs() < 1e-3, "{back:?}");
         assert_eq!(back[2], 0.0);
-        // Degenerate quaternion must not produce NaN.
         assert_eq!(quat_to_euler_degrees([0.0; 4]), [0.0; 3]);
-        // Non-normalized input normalized first.
         let long = euler_degrees_to_quat([0.0, 90.0, 0.0]).map(|value| value * 3.0);
         let back = quat_to_euler_degrees(long);
         assert!((back[1] - 90.0).abs() < 1e-4, "{back:?}");
@@ -2057,7 +2018,6 @@ mod tests {
         let camera = camera();
         let short = gizmo_world_length(&camera, 600.0);
         let tall = gizmo_world_length(&camera, 1200.0);
-        // Screen pixel length fixed; taller viewport means same pixel corresponds to smaller world length.
         assert!((short - tall * 2.0).abs() < 1e-4);
         assert!(
             gizmo_world_length(&camera, 0.0).is_finite(),
@@ -2078,7 +2038,6 @@ mod tests {
         let (axis, _, _) = hit.expect("X axis hit");
         assert_eq!(axis, 0, "horizontal direction closest to X axis");
 
-        // Away from all axes -> no hit.
         assert!(
             pick_gizmo_axis((10.0, 590.0), &frame, [0.0, 0.0, 0.0], length, 800.0, 600.0).is_none()
         );
@@ -2092,7 +2051,6 @@ mod tests {
         assert!((rotated[1]).abs() < 1e-4);
         assert!((rotated[2] - 1.0).abs() < 1e-4, "+Y → +Z");
 
-        // Composition: rotate X 90° then Y 90°.
         let qx = quat_axis_angle(0, std::f32::consts::FRAC_PI_2);
         let qy = quat_axis_angle(1, std::f32::consts::FRAC_PI_2);
         let combined = quat_normalize(quat_mul(qy, qx));
@@ -2148,7 +2106,6 @@ mod tests {
     #[test]
     fn basis_from_quat_rotates_axes() {
         let basis = basis_from_quat(quat_axis_angle(1, std::f32::consts::FRAC_PI_2));
-        // Rotate Y 90°: X -> −Z, Y unchanged, Z -> X.
         assert!((basis[0][2] + 1.0).abs() < 1e-4);
         assert!((basis[1][1] - 1.0).abs() < 1e-4);
         assert!((basis[2][0] - 1.0).abs() < 1e-4);
@@ -2218,7 +2175,6 @@ mod tests {
 
     #[test]
     fn box_select_starts_where_the_drag_started_not_at_the_viewport_origin() {
-        // Viewport left has hierarchy panel origin non-zero (#422): screen coordinates must subtract it first.
         let origin = (300.0, 120.0);
         assert_eq!(
             local_box((700.0, 500.0), (720.0, 520.0), origin),
@@ -2233,13 +2189,11 @@ mod tests {
         let transform = TransformJson::default();
         let edges = projected_box_edges(&transform, &frame, 800.0, 600.0).expect("in front");
         assert_eq!(edges.len(), 12);
-        // Unit cube at origin, camera backed off along +Z by 10: center should fall near screen center.
         let center_x: f32 = edges.iter().map(|(a, b)| (a.0 + b.0) * 0.5).sum::<f32>() / 12.0;
         let center_y: f32 = edges.iter().map(|(a, b)| (a.1 + b.1) * 0.5).sum::<f32>() / 12.0;
         assert!((center_x - 400.0).abs() < 1.0, "{center_x}");
         assert!((center_y - 300.0).abs() < 1.0, "{center_y}");
 
-        // Box behind camera not drawn (otherwise draws lines penetrating screen).
         let behind = TransformJson {
             position: [0.0, 0.0, 50.0],
             ..TransformJson::default()
@@ -2281,7 +2235,6 @@ mod tests {
         doc.entities[parent].transform.position = [100.0, 0.0, 0.0];
         let child = doc.add_named_child(Some(parent), "Child");
 
-        // Unit cube: half-diagonal = sqrt(3)/2 ≈ 0.866.
         let (center, radius) = world_bounds(&doc, &[child]).expect("bounds");
         assert!(
             (center[0] - 100.0).abs() < 1e-4,
@@ -2289,7 +2242,6 @@ mod tests {
         );
         assert!((radius - 0.866_025).abs() < 1e-3, "radius {radius}");
 
-        // Parent scale enlarges bounding box.
         doc.entities[parent].transform.scale = [10.0, 1.0, 1.0];
         let (_, scaled_radius) = world_bounds(&doc, &[child]).expect("bounds");
         assert!(
@@ -2297,7 +2249,6 @@ mod tests {
             "radius after scale should grow: {scaled_radius}"
         );
 
-        // Rotation does not change cube bounding sphere radius (only changes orientation).
         doc.entities[parent].transform.scale = [1.0; 3];
         doc.entities[parent].transform.rotation = euler_degrees_to_quat([30.0, 45.0, 10.0]);
         let (_, rotated_radius) = world_bounds(&doc, &[child]).expect("bounds");
@@ -2322,14 +2273,12 @@ mod tests {
             }),
         );
         let (_, radius) = world_bounds(&doc, &[entity]).expect("bounds");
-        // 64×16 texture @1 ppu -> 32×8 half size, then add ±0.05 thickness.
         let expected = (32.0f32 * 32.0 + 8.0 * 8.0 + 0.05 * 0.05).sqrt();
         assert!(
             (radius - expected).abs() < 1e-2,
             "radius should come from texture size {expected}, actual {radius}"
         );
 
-        // Falls back to unit cube when `frame_size` not written (only engine knows whole texture size).
         doc.entities[entity].components.insert(
             "prism_engine::scene::SpriteRenderer".to_string(),
             serde_json::json!({
@@ -2425,8 +2374,6 @@ mod tests {
 
     #[test]
     fn scaled_boxes_report_world_space_distance() {
-        // Regression #403: old Tauri impl divided slab param again by |M⁻¹·dir|,
-        // causing returned distance proportional to entity scale (scale 4 -> distance ×4).
         let origin = [0.0f32, 0.0, 5.0];
         let direction = [0.0f32, 0.0, -1.0];
         for scale in [1.0f32, 2.0, 4.0] {
@@ -2446,8 +2393,6 @@ mod tests {
 
     #[test]
     fn pick_prefers_a_near_scaled_box_over_a_far_unit_box() {
-        // Two boxes overlapping at same screen point: near large box (scale 4, front surface z = 2)
-        // must beat far small box (scale 1, front surface z = -9.5).
         let camera = camera();
         let frame = camera_frame(&camera);
         let entities = vec![
@@ -2517,7 +2462,6 @@ mod tests {
     fn near_plane_clipping_keeps_partial_segments() {
         let cam = camera();
         let frame = camera_frame(&cam);
-        // Camera is at z = +10 looking down -Z; point z = +12 is behind camera, z = 0 is in front.
         let seg = project_clipped_segment([0.0, 0.0, 12.0], [2.0, 0.0, 0.0], &frame, 800.0, 600.0);
         assert!(seg.is_some());
         let behind =

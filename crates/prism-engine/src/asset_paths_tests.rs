@@ -75,8 +75,6 @@ fn env_override_wins_over_the_working_directory() {
 fn executable_directory_is_searched_after_the_working_directory() {
     let tree = TempTree::new("exe");
     let exe_root = tree.with_assets("install");
-    // cwd has no assets/ at all: the previous implementation failed here, which
-    // is exactly the "launch the exe from somewhere else" case.
     let cwd = tree.dir("unrelated");
     let exe_dir = exe_root.join("bin");
     std::fs::create_dir_all(&exe_dir).unwrap();
@@ -84,7 +82,6 @@ fn executable_directory_is_searched_after_the_working_directory() {
     let roots = collect_search_roots(None, Some(&cwd), Some(&exe_dir));
     assert_eq!(find_asset_root(&roots), Some(exe_root.clone()));
 
-    // …and cwd still wins when both are usable.
     let cwd_root = tree.with_assets("unrelated");
     let roots = collect_search_roots(None, Some(&cwd_root), Some(&exe_dir));
     assert_eq!(find_asset_root(&roots), Some(cwd_root));
@@ -105,8 +102,6 @@ fn asset_path_joins_under_the_assets_directory() {
     let assets = root.join("assets");
     std::fs::write(assets.join("scenes.pak"), b"pak").unwrap();
 
-    // Exercise the same joining rule as `asset_path` without touching the
-    // process-global env/cwd that the public helper reads.
     let resolved = find_asset_root(&collect_search_roots(None, Some(&root), None))
         .map(|found| found.join(ASSET_DIR_NAME).join("scenes.pak"));
     assert_eq!(resolved, Some(assets.join("scenes.pak")));
@@ -127,7 +122,6 @@ fn pak_files_lists_every_package_sorted() {
         .iter()
         .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    // Sort stable; only files, only `.pak` extension.
     assert_eq!(found, vec!["assets.pak", "scenes.pak"]);
 }
 
@@ -215,10 +209,8 @@ fn packaged_assets_are_visible_without_loose_files() {
         String::from_utf8_lossy(layers)
     );
     assert!(read_asset_text("data/missing.json").is_err());
-    // Incorrect slashes and leading `./` normalize to same package-internal path.
     assert!(asset_exists("./data\\lake_layers.json"));
 
-    // Cache after rebuild must switch to new content (both mtime and length changed).
     write_pak(&assets, &[("data/lake_layers.json", b"v2")]);
     assert_eq!(
         read_asset_text("data/lake_layers.json").unwrap(),
@@ -229,7 +221,6 @@ fn packaged_assets_are_visible_without_loose_files() {
 #[test]
 fn build_scenes_steps_use_the_project_dir_and_workspace_manifest() {
     let tree = TempTree::new("build-scenes-steps");
-    // <repo>/crates/prism-build-pipeline + <repo>/projects/demo/assets
     std::fs::create_dir_all(tree.path.join("crates/prism-build-pipeline")).unwrap();
     std::fs::write(tree.path.join("Cargo.toml"), "[workspace]\n").unwrap();
     let assets = tree.path.join("projects/demo/assets");
@@ -237,8 +228,6 @@ fn build_scenes_steps_use_the_project_dir_and_workspace_manifest() {
 
     let steps = build_scenes_steps(&assets);
     assert!(steps[0].starts_with("cd "), "{}", steps[0]);
-    // `canonicalize` returns a verbatim `\\?\C:\...` path on Windows, so compare
-    // path components instead of the raw string's separators.
     let cd_dir = steps[0].trim_start_matches("cd ");
     assert!(
         std::path::Path::new(cd_dir).ends_with("projects/demo"),
@@ -250,7 +239,6 @@ fn build_scenes_steps_use_the_project_dir_and_workspace_manifest() {
         "cargo run -q --manifest-path ../../Cargo.toml -p prism-build-pipeline -- build-scenes"
     );
 
-    // The log form is the two steps joined, never a bare "build-scenes".
     let command = build_scenes_command(&assets);
     assert!(command.contains(" && cargo run -q --manifest-path"));
     assert!(command.contains("prism-build-pipeline -- build-scenes"));
@@ -263,8 +251,6 @@ fn build_scenes_steps_fall_back_without_a_workspace_manifest() {
     std::fs::create_dir_all(&assets).unwrap();
     std::fs::write(tree.path.join("Cargo.toml"), "[workspace]\n").unwrap();
 
-    // No `crates/prism-build-pipeline` next to the manifest: the fallback keeps
-    // the package name explicit instead of inventing a manifest path.
     let steps = build_scenes_steps(&assets);
     assert!(steps[0].starts_with("cd "));
     assert_eq!(

@@ -41,10 +41,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Format a byte count for human-readable display.
 fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
@@ -86,10 +82,6 @@ fn kv(key_en: &str, key_cn: &str, value: &str, key_en_width: usize) {
     let label = format!("{} / {}", pad_display(key_en, key_en_width), key_cn);
     println!("  {}  {}", label, value);
 }
-
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
 
 #[derive(Parser)]
 #[command(name = "prism-cook", about = "Prisma Resource Pipeline CLI")]
@@ -173,10 +165,6 @@ enum Commands {
         id: String,
     },
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 #[expect(
     clippy::disallowed_methods,
@@ -264,10 +252,6 @@ fn resolve_build_settings(
     Ok((name, settings))
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
 fn cmd_init(dir: &Path) -> anyhow::Result<()> {
     let assets = assets_dir(dir);
     let library = library_dir(dir);
@@ -305,7 +289,6 @@ fn cmd_scan(root: &Path, _cli: &Cli) -> anyhow::Result<()> {
             .to_string_lossy()
             .to_string();
 
-        // Skip if already known.
         if db.get_by_path(&relative).is_some() {
             return;
         }
@@ -336,7 +319,6 @@ fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
     let registry = Arc::new(default_importer_registry());
     let pipeline = ImportPipeline::new(registry);
 
-    // First, register all source files in the DB so we have records.
     walk_directory(&assets, &mut |path| {
         let relative = path
             .strip_prefix(&assets)
@@ -352,7 +334,6 @@ fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
         }
     });
 
-    // Now import each file.
     let count = db.len();
     let mut imported = 0u32;
     let mut cached = 0u32;
@@ -360,7 +341,6 @@ fn cmd_import(root: &Path, force: bool, _cli: &Cli) -> anyhow::Result<()> {
     let inter_dir = intermediate_dir(root);
     std::fs::create_dir_all(&inter_dir)?;
 
-    // Collect records as vec since import_file borrows db mutably.
     let paths: Vec<String> = db.records().map(|r| r.path.clone()).collect();
 
     for relative in &paths {
@@ -428,9 +408,6 @@ fn cmd_build(
         anyhow::bail!("No assets to build. Run 'prism-cook scan' first.");
     }
 
-    // Resolve the platform/profile settings *before* cooking: the texture and
-    // mesh settings used by the cookers come from here, not from hardcoded
-    // defaults.
     let (resolved_profile, settings) = resolve_build_settings(
         root,
         platform.as_deref(),
@@ -443,9 +420,6 @@ fn cmd_build(
         resolved_profile, settings.platform, settings.compression.level
     );
 
-    // Load imported data: read import-time data from Library/Intermediate/;
-    // If not yet imported, execute importer on demand to generate import-time data, avoid directly passing original files (like PNG)
-    // to cooker expecting RTXI/RMXI.
     let assets = assets_dir(root);
     let inter_dir = intermediate_dir(root);
     std::fs::create_dir_all(&inter_dir)?;
@@ -485,8 +459,6 @@ fn cmd_build(
             Ok(r) => {
                 dirty = true;
                 if let Some(data) = r.intermediate_data {
-                    // The record may have picked up new hashes while importing,
-                    // so write to the name derived from the updated record.
                     let path = db_mut
                         .get(record.id)
                         .map(|updated| intermediate_path(root, updated))
@@ -525,12 +497,6 @@ fn cmd_build(
     let pak = builder.build()?;
     std::fs::write(output, &pak)?;
 
-    // ── Write a human-readable .meta.json alongside the .pak ──────────
-    //
-    // This file is purely for inspection (validate / pak-info).  It
-    // pairs the AssetDatabase records (which have paths, types,
-    // importer names) with the per-asset sizes from the actual .pak.
-    // The runtime never reads this file.
     let meta_path = output.with_extension("pak.meta.json");
     if let Ok(reader) = prism_asset::package::PackageReader::from_bytes(&pak) {
         let mut assets = Vec::new();
@@ -615,7 +581,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     );
     kv("✅  Checksum", "OK", "PASS", 12);
 
-    // Optionally enrich with the .pak.meta.json if it exists alongside.
     let meta_path = pak_path.with_extension("pak.meta.json");
     let meta_assets: std::collections::HashMap<String, serde_json::Value> = (|| {
         let text = std::fs::read_to_string(&meta_path).ok()?;
@@ -634,13 +599,11 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
     println!();
     println!("   Assets / Asset manifest:");
     println!();
-    // Column widths in display columns.
     const COL_ID: usize = 12;
     const COL_TYPE: usize = 12;
     const COL_SIZE: usize = 12;
     const COL_CSIZE: usize = 12;
     const COL_RATIO: usize = 12;
-    // Header line — bilingual, EN padded to 5 so `/` aligns.
     let hdr =
         |en: &str, cn: &str, w: usize| pad_display(&format!("{} / {}", pad_display(en, 5), cn), w);
     println!(
@@ -651,7 +614,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
         hdr("Comp", "Comp", COL_CSIZE),
         hdr("Ratio", "Ratio", COL_RATIO),
     );
-    // Separator — all columns same width.
     println!(
         "  {}  {}  {}  {}  {}  {}",
         "-".repeat(COL_ID),
@@ -665,7 +627,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
         let id_hex = format!("{:#x}", record.id);
         let meta = meta_assets.get(&id_hex);
 
-        // Best-effort label from metadata, or fall back to type name + raw ID.
         let label: String = meta
             .and_then(|m| m.get("path").and_then(|p| p.as_str()))
             .map(|p| {
@@ -686,7 +647,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
         let ratio_str = if record.compressed_size > 0 && record.size > 0 {
             let ratio = record.compressed_size as f64 / record.size as f64;
             let pct = (ratio * 100.0).round();
-            // Only show compression ratio when it actually saved space (< 95%).
             if pct < 95.0 {
                 format!("{pct:.0}%")
             } else {
@@ -703,7 +663,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
             "-".to_owned()
         };
 
-        // All columns left-aligned using Unicode-aware padding.
         println!(
             "  {}  {}  {}  {}  {}  {}",
             pad_display(&id_hex, COL_ID),
@@ -714,7 +673,6 @@ fn cmd_validate(pak_path: &Path) -> anyhow::Result<()> {
             label,
         );
     }
-    // Hint about metadata when the .meta.json was absent.
     if meta_assets.is_empty() {
         println!();
         println!("💡  Tip:");
@@ -748,9 +706,6 @@ fn cmd_verify(root: &Path) -> anyhow::Result<()> {
             missing.push((record.path.as_str(), path));
         }
 
-        // The file name only stays correct while the database record matches
-        // the source on disk; a stale record would point at an intermediate
-        // built from different bytes.
         match std::fs::read(assets.join(&record.path)) {
             Ok(bytes) => {
                 if xxhash_rust::xxh3::xxh3_64(&bytes) != record.source_hash {
@@ -830,7 +785,6 @@ fn cmd_inspect(root: &Path, id_or_path: &str) -> anyhow::Result<()> {
 
     let db = AssetDatabase::load(db_path(root))?;
 
-    // Try to parse as numeric ID first.
     let record = if let Ok(num) = id_or_path.parse::<u64>() {
         db.get(prism_asset::core::AssetId::from_raw(num))
     } else {
@@ -866,10 +820,6 @@ fn cmd_inspect(root: &Path, id_or_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Entrypoint
-// ---------------------------------------------------------------------------
-
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
@@ -903,7 +853,6 @@ fn main() -> anyhow::Result<()> {
             if let Some(pak) = &cli.pak {
                 cmd_validate(pak)
             } else {
-                // No subcommand and no .pak → show help.
                 use clap::CommandFactory;
                 Cli::command().print_help()?;
                 println!();
@@ -912,10 +861,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn walk_directory(dir: &Path, cb: &mut impl FnMut(PathBuf)) {
     if !dir.is_dir() {
@@ -966,13 +911,10 @@ mod tests {
             "intermediate name must encode source hash, settings hash and importer version"
         );
 
-        // The database serial must not influence the name: two projects that
-        // imported the same source end up with the same intermediate file.
         let mut other_serial = record.clone();
         other_serial.id = prism_asset::core::AssetId::from_raw(999);
         assert_eq!(intermediate_path(&root, &other_serial), path);
 
-        // Changing any of the three keys changes the name.
         assert_ne!(
             intermediate_path(&root, &record_with_hashes(0xabd, 0xdef, 3)),
             path
@@ -989,8 +931,6 @@ mod tests {
 
     #[test]
     fn build_uses_the_platform_profile() {
-        // Regression for #81: `build --platform android` used to cook with
-        // `CookSettings::default()` (i.e. desktop values).
         let (name, settings) = resolve_build_settings(
             &temp_root("build-android"),
             Some("android"),
@@ -1037,7 +977,6 @@ mod tests {
 
         assert_eq!(name, "desktop");
         assert_eq!(settings.texture.max_size, 4096);
-        // The platform flag is still authoritative for the recorded platform.
         assert_eq!(settings.platform, "android");
     }
 

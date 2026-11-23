@@ -114,7 +114,6 @@ mod tests {
         assert_eq!(profile.texture.max_size, 512);
         assert!(!profile.texture.generate_mips);
 
-        // Default fields don't override profile.
         ImportSettings::default().apply(&mut profile);
         assert_eq!(profile.texture.max_size, 512);
 

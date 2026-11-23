@@ -119,7 +119,6 @@ pub fn component_card_with_assets(
                             {
                                 actions.push(CardAction::Remove(component.name.clone()));
                             }
-                            // Component order is part of document (#512): these two arrows take one undo step.
                             if ui
                                 .small_button(icons::CARET_DOWN)
                                 .on_hover_text(i18n.t1("inspector.moveDown"))
@@ -141,8 +140,6 @@ pub fn component_card_with_assets(
                             {
                                 actions.push(CardAction::Copy(component.name.clone()));
                             }
-                            // `…` menu (#418): Copy / Paste Values / order / Reset / Remove.
-                            // Paste enabled state judged by caller at apply time (clipboard may not be this type).
                             ui.menu_button(icons::DOTS_THREE, |ui| {
                                 if ui.button(i18n.t1("inspector.copyComponent")).clicked() {
                                     actions.push(CardAction::Copy(component.name.clone()));
@@ -162,7 +159,6 @@ pub fn component_card_with_assets(
                                     ui.close();
                                 }
                                 ui.separator();
-                                // Reset writes back schema defaultJson (whole component = one undo step).
                                 let default = component.default_json.clone();
                                 if ui
                                     .add_enabled(
@@ -177,7 +173,6 @@ pub fn component_card_with_assets(
                                     ui.close();
                                 }
                                 ui.separator();
-                                // Component preset (#418): save current value / apply existing preset.
                                 ui.menu_button(i18n.t1("inspector.presets"), |ui| {
                                     ui.menu_button(i18n.t1("inspector.savePreset"), |ui| {
                                         let id =
@@ -263,7 +258,6 @@ pub fn component_card_with_assets(
 /// Asset field extension filter (engine object field lists only acceptable types).
 fn asset_filter(name: &str) -> Option<&'static [&'static str]> {
     if name == "font" || name.ends_with("_font") {
-        // #583: UI text can use project bundled font.
         Some(&["ttf", "otf", "ttc"])
     } else if name.contains("mesh") {
         Some(&["obj", "gltf", "glb", "fbx", "mesh"])
@@ -295,7 +289,6 @@ mod tests {
 
     #[test]
     fn text_fields_commit_on_enter_or_focus_loss_only() {
-        // Editing: every keystroke does not touch document.
         assert_eq!(
             text_commit_decision(true, false, false, false, false),
             TextCommit::Keep
@@ -304,17 +297,14 @@ mod tests {
             text_commit_decision(true, false, true, false, false),
             TextCommit::Commit
         );
-        // Lose focus = submit (click elsewhere case).
         assert_eq!(
             text_commit_decision(false, true, false, false, false),
             TextCommit::Commit
         );
-        // Esc discards, even if Enter pressed same frame.
         assert_eq!(
             text_commit_decision(true, false, true, true, false),
             TextCommit::Cancel
         );
-        // Enter in multi-line box is newline, only blur submit.
         assert_eq!(
             text_commit_decision(true, false, true, false, true),
             TextCommit::Keep
@@ -337,7 +327,6 @@ mod tests {
             (1.0, 1.0, 1.0, 1.0)
         );
 
-        // Stretch changes only one axis, other axis keeps current center.
         assert_eq!(
             AnchorPreset::StretchHorizontal.anchors(current),
             (0.0, 0.8, 1.0, 0.8)
@@ -348,13 +337,11 @@ mod tests {
         );
         assert_eq!(AnchorPreset::Stretch.anchors(current), (0.0, 0.0, 1.0, 1.0));
 
-        // Highlight judgment: horizontal stretch cannot count "full stretch" as itself.
         let horizontal = AnchorPreset::StretchHorizontal.anchors(current);
         assert!(AnchorPreset::StretchHorizontal.is_active(horizontal));
         assert!(!AnchorPreset::Stretch.is_active(horizontal));
         assert!(AnchorPreset::Stretch.is_active((0.0, 0.0, 1.0, 1.0)));
 
-        // Keys written back to JSON must be snake_case in schema.
         let value = anchors_value((0.0, 0.5, 1.0, 0.5));
         assert_eq!(value["min_x"], serde_json::json!(0.0));
         assert_eq!(value["min_y"], serde_json::json!(0.5));
@@ -452,7 +439,6 @@ mod tests {
 
     #[test]
     fn field_paste_requires_the_same_json_shape() {
-        // #418: pasted value does not type-cast, button stays disabled when shape inconsistent.
         assert!(values_compatible(
             &serde_json::json!([0.0, 0.0, 0.0]),
             &serde_json::json!([1.0, 2.0, 3.0])
@@ -485,7 +471,6 @@ mod tests {
 
     #[test]
     fn list_elements_default_from_the_schema() {
-        // #418: `+ Add` default value comes from element schema, does not guess JSON.
         let schema = list_schema();
         let line = schema.component("test::Line").unwrap();
         let points = line
@@ -508,7 +493,6 @@ mod tests {
             serde_json::json!({"x": 0.0, "y": 0.0})
         );
 
-        // Recursion has limit, corrupted schema will not stack overflow.
         assert_eq!(
             default_value_for(&schema, nodes.inner.as_deref().unwrap(), 99),
             Value::Null
@@ -524,7 +508,6 @@ mod tests {
         assert!(list_move(&mut items, 0, 2));
         assert_eq!(items[0], Value::from(3));
         assert_eq!(items[2], Value::from(1));
-        // Out-of-bounds / in-place move does not move array.
         assert!(!list_move(&mut items, 3, 9));
         assert!(!list_move(&mut items, 1, 1));
 
@@ -748,7 +731,6 @@ pub(crate) fn text_commit_decision(
     if focused && escape {
         return TextCommit::Cancel;
     }
-    // Multi-line text Enter is newline, only blur submit.
     if (focused && enter && !multiline) || lost_focus {
         return TextCommit::Commit;
     }
@@ -791,7 +773,6 @@ fn delayed_text_edit(
                 committed = Some(buffer.clone());
             }
         }
-        // Not editing (or focus moved after a handled commit): mirror the document value.
         TextCommit::Keep => {
             if !focused {
                 buffer = value.to_string();
@@ -1119,9 +1100,6 @@ fn field_row_at(
                 ui, registry, field, value, prefix, set, assets, doc_dir, i18n,
             );
         }
-        // `Option<T>`: a checkbox says whether the value exists, then the inner
-        // scalar is edited in place. Authors used to have to hand-edit JSON to
-        // set `Style.width` / `Style.height`.
         FieldWidget::Option => {
             let inner = field.inner.as_deref();
             let mut enabled = !value.is_null();
@@ -1148,10 +1126,7 @@ fn field_row_at(
                 }
             }
         }
-        // Nested struct (`Style.anchors`, `Style.pivot`, `Margin` …): recurse
-        // through the registry so every leaf keeps its real widget and path.
         FieldWidget::Struct => {
-            // UI anchor: add Unity `RectTransform` style preset grid above numeric field (#429).
             if field.struct_type.as_deref() == Some("prism_engine::ui::Anchors") {
                 anchor_preset_grid(ui, &name, value, set);
             }
@@ -1284,7 +1259,6 @@ impl AnchorPreset {
                     && close(current.2, max_x)
                     && close(current.3, max_y)
             }
-            // Stretch preset only guarantees "other axis is point anchor", center value changes with current value.
             Self::StretchHorizontal => {
                 close(current.0, 0.0) && close(current.2, 1.0) && close(current.1, current.3)
             }
@@ -1455,7 +1429,6 @@ fn default_value_for(registry: &Schema, field: &FieldSchema, depth: usize) -> Va
             }
             Value::Object(map)
         }
-        // List defaults empty; `Option` defaults absent.
         FieldWidget::List => Value::Array(Vec::new()),
         FieldWidget::Option => Value::Null,
         FieldWidget::Enum { variants } => variants
@@ -1521,8 +1494,6 @@ fn list_row(
             for (index, item) in items.iter().enumerate() {
                 let mut element = inner.clone();
                 if let Some(element) = element.as_mut() {
-                    // element path = `field[i]`; struct subfields again by `field_row_at`
-                    // Concatenate into `field[i].child`.
                     element.name = format!("[{index}]");
                 }
                 ui.horizontal(|ui| {

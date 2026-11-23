@@ -42,12 +42,6 @@ pub fn create_buffer(
         .allocation_size(mem_reqs.size)
         .memory_type_index(mem_type);
 
-    // Buffers created with SHADER_DEVICE_ADDRESS require the backing memory to
-    // be allocated with VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT (chained via
-    // VkMemoryAllocateFlagsInfo). The validation layer rejects the bind
-    // otherwise (VUID-vkBindBufferMemory-bufferDeviceAddress-03339). We chain
-    // the flags struct only when the usage requests device addressing, since
-    // the flag also forces allocation from a device-address-capable heap.
     let mut flags_info = vk::MemoryAllocateFlagsInfo::default();
     if usage.contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS) {
         flags_info = flags_info.flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
@@ -102,7 +96,6 @@ pub unsafe fn upload_to_buffer(
     size: vk::DeviceSize,
     data: &[u8],
 ) -> anyhow::Result<()> {
-    // Create staging buffer (host-visible, host-coherent).
     let (staging_buffer, staging_memory) = create_buffer(
         context,
         size,
@@ -111,7 +104,6 @@ pub unsafe fn upload_to_buffer(
     )
     .context("create staging buffer")?;
 
-    // Map and copy data.
     let ptr = unsafe {
         context
             .device
@@ -121,7 +113,6 @@ pub unsafe fn upload_to_buffer(
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len()) };
     unsafe { context.device.unmap_memory(staging_memory) };
 
-    // One-shot command buffer to copy staging -> destination.
     let alloc_info = vk::CommandBufferAllocateInfo::default()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
@@ -146,8 +137,6 @@ pub unsafe fn upload_to_buffer(
     let cmd_bufs = [cmd_buf];
     let submit_info = vk::SubmitInfo::default().command_buffers(&cmd_bufs);
 
-    // Submit with a dedicated fence so we only block on THIS transfer, not the
-    // entire graphics queue (queue_wait_idle would stall unrelated work).
     let fence = unsafe {
         context
             .device
@@ -161,7 +150,6 @@ pub unsafe fn upload_to_buffer(
     }
     .context("submit staging copy")?;
 
-    // Wait only for this submission to finish before cleaning up.
     unsafe { context.device.wait_for_fences(&[fence], true, u64::MAX) }
         .context("wait for upload fence")?;
     unsafe { context.device.destroy_fence(fence, None) };
@@ -171,7 +159,6 @@ pub unsafe fn upload_to_buffer(
             .free_command_buffers(command_pool, &[cmd_buf])
     };
 
-    // Clean up staging resources.
     unsafe { context.device.destroy_buffer(staging_buffer, None) };
     unsafe { context.device.free_memory(staging_memory, None) };
 
@@ -216,13 +203,7 @@ pub unsafe fn create_and_upload_image(
     format: vk::Format,
 ) -> anyhow::Result<(vk::Image, vk::DeviceMemory, vk::ImageView)> {
     let device = &context.device;
-    // `cmd_pipeline_barrier2` lives in VK_KHR_synchronization2. On a Vulkan 1.2
-    // device the core `vkCmdPipelineBarrier2` symbol is not exposed, only the
-    // `...KHR` variant. `ash`'s `Device` wrapper only loads the core symbol, so
-    // we use the KHR extension wrapper, which resolves the KHR entry point.
     let sync2 = LegacySync2 { device };
-    // `cmd_blit_image2` (mip generation) comes from VK_KHR_copy_commands2 on a
-    // 1.2 device; same reason as `sync2` above, use the KHR wrapper.
     let copy2 = LegacyCopy2 { device };
     let extent = vk::Extent3D {
         width,
@@ -238,7 +219,6 @@ pub unsafe fn create_and_upload_image(
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::OPTIMAL)
-        // TRANSFER_SRC is needed to blit each mip level from the previous one.
         .usage(
             vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::TRANSFER_SRC
@@ -266,9 +246,6 @@ pub unsafe fn create_and_upload_image(
         .bind_image_memory(image, memory, 0)
         .context("bind texture memory")?;
 
-    // Stage the pixels and copy them into the image.
-    // `pixels` may hold a whole pre-baked mip chain (KTX2), so the staging
-    // buffer is sized by what the caller provided, not by the base level.
     let size = pixels.len() as vk::DeviceSize;
     let (staging, staging_memory) = create_buffer(
         context,
@@ -338,11 +315,6 @@ pub unsafe fn create_and_upload_image(
         &[copy],
     );
 
-    // A KTX2 texture ships a fully baked mip chain; `pixels` then holds every
-    // level back to back. Upload those levels straight from staging instead of
-    // blitting: the baked blocks survive and compressed formats never need
-    // BLIT_SRC/BLIT_DST. Level 0 was copied above, so this copies 1.. and then
-    // moves the whole chain to shader-readable in one barrier.
     let has_all_mips = mip_levels > 1
         && mip_chain_byte_size(format, width, height, mip_levels)
             .is_some_and(|total| pixels.len() >= total);
@@ -393,22 +365,12 @@ pub unsafe fn create_and_upload_image(
         );
     }
 
-    // Only level 0 exists: generate the lower levels by blitting each one
-    // from the previous level. Algorithm mirrors ibl.rs but uses the
-    // synchronization2 barrier API to match the rest of this function Levels
-    // 1..mip_levels are still UNDEFINED (transitioned to TRANSFER_DST above).
-    //
-    // Blitting is a format feature, not a given: BC7/ASTC/ETC2 often lack
-    // BLIT_SRC/BLIT_DST (notably on mobile), so refuse instead of recording a
-    // command the driver will reject.
     if mip_levels > 1 && !has_all_mips {
         anyhow::ensure!(
             format_supports_blit(context, format),
             "upload texture: {format:?} cannot be blitted on this device to generate mips; \
              provide the full mip chain (KTX2) or upload level 0 only"
         );
-        // Level 0 is now TRANSFER_DST; promote it to TRANSFER_SRC so we can
-        // blit from it into level 1.
         let promote_mip0 = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
             .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
@@ -476,7 +438,6 @@ pub unsafe fn create_and_upload_image(
                     .filter(vk::Filter::LINEAR),
             );
 
-            // Source level is done being read; move it to shader-readable.
             let src_done = vk::ImageMemoryBarrier2::default()
                 .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                 .src_access_mask(vk::AccessFlags2::TRANSFER_READ)
@@ -497,8 +458,6 @@ pub unsafe fn create_and_upload_image(
                 &vk::DependencyInfo::default()
                     .image_memory_barriers(std::slice::from_ref(&src_done)),
             );
-            // Prepare this destination level as the next source (unless it is
-            // the last level, which stays TRANSFER_DST for the final barrier).
             if mip + 1 < mip_levels {
                 let promote = vk::ImageMemoryBarrier2::default()
                     .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
@@ -522,8 +481,6 @@ pub unsafe fn create_and_upload_image(
                 );
             }
         }
-        // Final level (mip_levels - 1) is still TRANSFER_DST_OPTIMAL; move it
-        // to shader-readable.
         let dst_to_read = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
             .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
@@ -545,9 +502,6 @@ pub unsafe fn create_and_upload_image(
                 .image_memory_barriers(std::slice::from_ref(&dst_to_read)),
         );
     } else if mip_levels == 1 {
-        // mip_levels == 1: no blits, just transition the single level to
-        // shader-readable. (The `has_all_mips` path above already moved the
-        // whole chain, so it must not fall through to here.)
         let dst_to_read = vk::ImageMemoryBarrier2::default()
             .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
             .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)

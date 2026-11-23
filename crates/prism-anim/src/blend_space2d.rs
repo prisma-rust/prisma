@@ -135,7 +135,6 @@ impl BlendSpace2D {
             return false;
         };
 
-        // Sample all three sample poses into scratch, then blend by weight.
         let leader_slot = weights
             .iter()
             .enumerate()
@@ -287,7 +286,6 @@ fn to_f64(point: [f32; 2]) -> [f64; 2] {
 /// because `blend_into` cannot use the same pose as both input and output.
 fn blend_weighted_into(out: &mut Pose, scratch: &mut [Pose; 4], weights: &[f32; 3]) {
     let mut order = [0usize, 1, 2];
-    // Weights in descending order: put the largest first, so `t = w / total` does not start from 0.
     order.sort_by(|a, b| weights[*b].total_cmp(&weights[*a]));
     let first = order[0];
     out.copy_from(&scratch[first]);
@@ -344,10 +342,8 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
     }
     let span = (max[0] - min[0]).max(max[1] - min[1]).max(1.0);
     let mid = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
-    // Super triangle: cover the entire bounding box, then delete triangles referencing it later.
     let super_start = points.len();
     let mut all = points.to_vec();
-    // Counter-clockwise order: the circumcircle test depends on triangle orientation.
     all.push([mid[0] - 32.0 * span, mid[1] - span]);
     all.push([mid[0] + 32.0 * span, mid[1] - span]);
     all.push([mid[0], mid[1] + 32.0 * span]);
@@ -368,8 +364,6 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
                     (triangle[1], triangle[2]),
                     (triangle[2], triangle[0]),
                 ] {
-                    // Shared edges appear in the opposite direction in adjacent triangles and cancel out;
-                    // the remainder is the boundary of the new triangle.
                     if let Some(position) = edges
                         .iter()
                         .position(|candidate| *candidate == (edge.1, edge.0))
@@ -392,7 +386,6 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
         }
         triangles = kept;
     }
-    // Delete the super triangle's vertices and keep a deterministic order (sort by smallest index + the other two).
     let mut result: Vec<[usize; 3]> = triangles
         .into_iter()
         .filter(|triangle| triangle.iter().all(|index| *index < super_start))
@@ -413,14 +406,11 @@ fn triangulate(points: &[[f64; 2]]) -> Vec<[usize; 3]> {
 
 /// Whether the point is strictly inside the triangle's circumcircle (triangle must be counter-clockwise).
 fn in_circumcircle(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
-    // Translate to p to avoid loss of precision from subtracting large coordinates.
     let (ax, ay) = (a[0] - p[0], a[1] - p[1]);
     let (bx, by) = (b[0] - p[0], b[1] - p[1]);
     let (cx, cy) = (c[0] - p[0], c[1] - p[1]);
     let det = (ax * ax + ay * ay) * (bx * cy - by * cx) - (bx * bx + by * by) * (ax * cy - ay * cx)
         + (cx * cx + cy * cy) * (ax * by - ay * bx);
-    // For counter-clockwise triangles, a positive determinant means inside the circumcircle;
-    // co-circular (≈0) doesn't count, to avoid infinite recursion.
     det > 1e-12
 }
 

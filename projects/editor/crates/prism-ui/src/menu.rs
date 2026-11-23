@@ -89,10 +89,6 @@ impl MenuState {
         tree: &crate::tree::UiTree,
         entries_of: impl Fn(&str) -> Option<Vec<MenuEntry>>,
     ) -> bool {
-        // While a menu is open, hovering a different trigger switches to it —
-        // that is what makes the bar feel like one control rather than a set of
-        // independent buttons. Hover alone never opens a closed menu; that stays
-        // a click, so passing over the bar does not leave menus behind.
         if self.open.is_some() {
             if let Some(MenuNodeKey::Trigger(hovered_id)) =
                 tree.hovered().and_then(MenuNodeKey::parse)
@@ -113,9 +109,6 @@ impl MenuState {
             return false;
         };
         let mut branch = resolve_branch(tree, &menu_id, &entries);
-        // Crossing from a row into the panel it opened passes over panel space
-        // that enters nothing, so an empty resolution means "in transit", not
-        // "left the branch". Only a real target ends the branch.
         if branch.is_empty() && self.pointer_in_branch(tree, &menu_id) {
             branch = self.submenu_branch.clone();
         }
@@ -195,8 +188,6 @@ impl MenuState {
                     }
                 }
                 MenuNodeKey::Item { menu, command } => {
-                    // Items of a closed menu cannot be clicked: the popup is not
-                    // laid out, so a stale hit would be a layout bug, not intent.
                     if !self.is_open(&menu) {
                         continue;
                     }
@@ -213,8 +204,6 @@ impl MenuState {
                     out.push(MenuAction::OpenChanged(None));
                 }
                 MenuNodeKey::Submenu { .. } => {
-                    // Submenu rows open on hover; a click is intentionally inert
-                    // so the menu stays open while the pointer crosses the row.
                 }
                 MenuNodeKey::Dismiss => {
                     if self.close() {
@@ -468,25 +457,13 @@ impl MenuBar {
 
         ctx.mount(bar);
 
-        // Popups are mounted on the popup layer so they escape the bar's clip
-        // and stacking order.
         let Some(open_menu) = self.menus.iter().find(|menu| state.is_open(&menu.id)) else {
             return;
         };
         let overlay = ctx.tree.overlay_root(viewport);
         let trigger = MenuNodeKey::trigger_key(&open_menu.id);
-        // The branch was resolved last frame, after input, while the previous
-        // frame's nodes still existed; re-resolving here would query a tree that
-        // `begin_frame` has already cleared.
         let branch = state.submenu_branch().to_vec();
         ctx.with_parent(overlay, |ctx| {
-            // A full-viewport backdrop under the popups: clicking anywhere the
-            // popups do not cover closes the menu. It is mounted first so the
-            // dropdowns hit-test above it.
-            // It starts below the bar on purpose: the popup layer hit-tests
-            // before everything else, so a backdrop covering the bar would
-            // swallow the triggers and hover-switching between menus would stop
-            // working.
             let dismiss = MenuNodeKey::dismiss_key();
             register(dismiss, MenuNodeKey::Dismiss);
             ctx.mount(
@@ -510,8 +487,6 @@ impl MenuBar {
                 false,
             ));
 
-            // Each open submenu level is anchored to its row in the parent
-            // panel. Depth comes from the menu definition, never from input.
             let mut entries: &[MenuEntry] = &open_menu.entries;
             let mut scope = open_menu.id.clone();
             for label in &branch {
@@ -546,13 +521,6 @@ impl MenuBar {
 /// onto a plain row closes the whole branch. That is what makes a menu feel like
 /// a menu rather than a sticky tree.
 fn resolve_branch(tree: &crate::tree::UiTree, menu_id: &str, entries: &[MenuEntry]) -> Vec<String> {
-    // A submenu row is open when the pointer is on the row itself, or inside the
-    // panel it spawned, or on any row below it. Those three cases collapse into
-    // one question — "is the pointer in this row's subtree?" — so the branch is
-    // simply the ancestor path of the deepest entered row.
-    //
-    // Panels are siblings of rows on the popup layer, so subtree containment is
-    // decided by scope rather than by the node tree.
     /// Whether the pointer is on any row reachable below `scope`.
     ///
     /// Used to keep an ancestor open while the pointer is further out along the
@@ -597,8 +565,6 @@ fn resolve_branch(tree: &crate::tree::UiTree, menu_id: &str, entries: &[MenuEntr
             let panel = ("menu", "dropdown", child_scope.as_str()).into_node_key();
             let on_row = tree.is_hovered(submenu_row_key(scope, label));
             let in_panel = tree.is_hovered_within(panel);
-            // A deeper row of this same submenu also counts as "entered", which
-            // is what keeps the ancestors alive as the pointer moves outward.
             let deeper = enters_subtree(tree, &child_scope, children);
             if on_row || in_panel || deeper {
                 best = Some((label.clone(), child_scope, children));
@@ -609,9 +575,6 @@ fn resolve_branch(tree: &crate::tree::UiTree, menu_id: &str, entries: &[MenuEntr
             return false;
         };
         trail.push(label);
-        // Descend so a deeper entered row extends the same path. The recursion's
-        // result is deliberately ignored: once this level is entered, the trail
-        // keeps it even when nothing deeper is hovered.
         let _ = deepest(tree, &child_scope, children, trail);
         true
     }
@@ -681,15 +644,9 @@ fn dropdown(
         )
         .border(1.0, theme.border.with_alpha(0.75))
         .radius(theme.menu_dropdown_radius)
-        // The panel's padding and the gaps between its rows are part of the
-        // panel, not holes: without this, crossing one of them reports "no
-        // hover" for a frame and collapses the branch the pointer is entering.
         .hoverable();
 
     panel = if nested {
-        // The pointer lands on the first item, not on the frame, so the item is
-        // lifted onto the row's top edge; the frame then starts one inset above
-        // the row. The inset itself is unchanged.
         panel.anchored_beside(
             trigger,
             Vec2::new(0.0, -theme.menu_dropdown_padding.top),
@@ -711,8 +668,6 @@ fn dropdown(
 
 fn entry_row(theme: &Theme, icons: &IconSet, menu_id: &str, entry: &MenuEntry) -> ElementBox {
     match entry {
-        // Width stays Auto so the rule stretches to the panel's inner width; a
-        // Percent would resolve against the viewport and blow the panel open.
         MenuEntry::Separator => ElementBox::default()
             .height(Length::Px(1.0))
             .margin_vertical(theme.menu_separator_margin)
@@ -776,8 +731,6 @@ fn entry_row(theme: &Theme, icons: &IconSet, menu_id: &str, entry: &MenuEntry) -
             label: text_label,
             entries,
         } => {
-            // Submenu rows are hover targets, not click targets: hovering opens
-            // the child panel and moving away closes it.
             let key = submenu_row_key(menu_id, text_label);
             register(
                 key,

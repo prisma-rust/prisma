@@ -136,7 +136,6 @@ fn capsule_shape_rests_on_the_floor() {
     let mut harness = PhysicsHarness::new(scenario);
     harness.run(300);
 
-    // Capsule total half-height = half_height + radius = 1.0.
     harness.assert_y_between("Capsule", 0.9, 1.1);
 }
 

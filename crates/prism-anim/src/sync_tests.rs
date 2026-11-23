@@ -41,7 +41,6 @@ fn a_marker_offset_shifts_the_follower_segment() {
 
 #[test]
 fn phases_before_the_first_marker_use_the_wrapped_segment() {
-    // Leader segment: 0.75 -> 1.25 (i.e. 0.25); phase 0.1 is at 70% of this segment.
     let group = group(&[0.25, 0.75], &[0.1, 0.6]);
     let mapped = group.map_phase(0, 1, 0.1);
     assert!(close(mapped, 0.95), "mapped {mapped}");

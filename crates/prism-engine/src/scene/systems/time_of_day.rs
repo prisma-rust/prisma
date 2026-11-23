@@ -21,7 +21,6 @@ use prism_scene::components::{Light2D, Light2DKind, TimeOfDay};
 
 /// Advance day/night and refresh ambient light.
 pub fn time_of_day_system(world: &mut World, dt: f32) {
-    // Collect first, avoid borrowing `TimeOfDay` and `Light2D` at same time.
     let mut ambient: Vec<(crate::ecs::Entity, [f32; 3], f32)> = Vec::new();
     for (entity, clock) in world.query_mut::<TimeOfDay>() {
         clock.advance(dt);
@@ -33,7 +32,6 @@ pub fn time_of_day_system(world: &mut World, dt: f32) {
         let Some(light) = world.get_mut::<Light2D>(entity) else {
             continue;
         };
-        // Point lights controlled by author, only ambient light follows time.
         if light.kind != Light2DKind::Ambient {
             continue;
         }

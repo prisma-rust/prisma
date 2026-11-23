@@ -127,8 +127,6 @@ impl ActiveMontage {
         } else {
             1.0
         };
-        // Looped Montages return to the end every cycle; fading out by remaining time would
-        // flash periodically, so blend-out is applied only on single-shot Montages.
         let fade_out = if !self.montage.looped && self.montage.blend_out > 0.0 {
             let local = local_time(self.montage.clip.duration, self.montage.looped, self.time);
             let remaining = (self.montage.clip.duration - local).max(0.0);
@@ -325,8 +323,6 @@ impl MontagePlayer {
         );
         let speed = sanitize_speed(active.montage.speed);
         active.time += dt * speed;
-        // blend-in is wall-clock duration, not scaled by playback speed; paused tick returns early
-        // so it stays frozen.
         active.elapsed += dt;
         let local = local_time(
             active.montage.clip.duration,
@@ -355,8 +351,6 @@ impl MontagePlayer {
             }
         }
         if let Some(start) = branch_target {
-            // BranchIn is an explicit segment jump: no longer loop-wrapping, and not scanning
-            // Notify in the target segment within the same frame.
             active.time = start;
         } else if active.montage.looped {
             active.time = local;

@@ -27,7 +27,6 @@ fn spawns_quads_on_the_component_layer() {
     let mut world = World::new();
     screen(&mut world, 800, 600);
     let entity = world.spawn();
-    // Rain keeps its configured trail length; the spark preset ignores it.
     world.insert(
         entity,
         UiParticleEmitter {
@@ -58,7 +57,6 @@ fn step_is_capped_by_the_screen_bounds() {
     let entity = world.spawn();
     world.insert(entity, spark_emitter(1));
 
-    // Spawn positions stay above the top edge so particles fade in on screen.
     for _ in 0..3 {
         ui_particle_emitter_system(&mut world, 0.1);
         let queued = world.get_resource::<ExternalUiQuads>().expect("quads");

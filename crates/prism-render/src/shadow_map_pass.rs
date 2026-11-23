@@ -177,7 +177,7 @@ pub struct ShadowMapPass {
 /// for pass internal use; engine side should use the one without feature gate.
 pub use crate::SHADOW_MAP_SIZE;
 /// CSM cascade count reserved (DESIGN plan): currently single orthographic shadow, next step extend to multi-cascades
-pub const SHADOW_CASCADE_COUNT: u32 = 1; // CSM: expand to 3-4 cascades and slice by camera frustum
+pub const SHADOW_CASCADE_COUNT: u32 = 1;
 
 impl ShadowMapPass {
     pub fn new() -> Self {
@@ -262,13 +262,6 @@ impl ShadowMapPass {
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            // `UNDEFINED` + LOAD_OP_CLEAR is the Vulkan-idiomatic way to say
-            // "discard incoming contents, I'll clear": the render pass performs
-            // the implicit `any -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL` transition.
-            // This removes the need for the hand-rolled `UNDEFINED -> ATTACHMENT`
-            // `cmd_pipeline_barrier` that used to precede `cmd_begin_render_pass`
-            // (the image is graph-managed and re-cleared every frame, so there
-            // is nothing to preserve between frames).
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
@@ -280,8 +273,6 @@ impl ShadowMapPass {
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .depth_stencil_attachment(&depth_ref);
 
-        // Wait for prior shadow-map fragment shader sampling to finish reading
-        // before writing depth again.
         let dependency_from_external = vk::SubpassDependency::default()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
@@ -290,8 +281,6 @@ impl ShadowMapPass {
             .src_access_mask(vk::AccessFlags::SHADER_READ)
             .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
 
-        // Ensure depth writes in subpass 0 are complete and visible before
-        // subsequent fragment shaders sample the shadow map.
         let dependency_to_external = vk::SubpassDependency::default()
             .src_subpass(0)
             .dst_subpass(vk::SUBPASS_EXTERNAL)
@@ -374,7 +363,6 @@ impl ShadowMapPass {
             .offset(0)
             .size(bindings::PUSH_CONSTANT_SIZE)];
 
-        // Depth-only pipeline + depth bias; cull mode decided by caller.
         let set_layouts: Vec<vk::DescriptorSetLayout> = bone_layout.into_iter().collect();
         let pipeline = GraphicsPipeline::new(&PipelineDesc {
             device,
@@ -426,8 +414,6 @@ impl ShadowMapPass {
         let frag_module =
             shader::load_shader_module(device, FRAG_SPV).context("load skinned shadow frag")?;
 
-        // Reflection JSON only carries first entry point, bindgen therefore has no skinned constant;
-        // keep consistent with `ForwardPass` style (same literal).
         let vert_entry = std::ffi::CString::new("vertexSkinnedMain").unwrap();
         let frag_entry = std::ffi::CString::new(bindings::ENTRY_FRAGMENT_MAIN).unwrap();
         let vert_stage = shader::shader_stage(
@@ -532,8 +518,6 @@ impl ShadowMapPass {
                 .context("create two-sided skinned shadow pipeline")?,
             );
         }
-        // #491: the static entry point now reads the bone/instance SSBO when an
-        // instance count is present, so every static pipeline carries set 0.
         if self.pipeline.is_none() {
             self.pipeline = Some(
                 Self::create_pipeline(
@@ -649,7 +633,6 @@ impl ShadowMapPass {
             .context("ShadowMapPass::update_bones: map")?;
         unsafe {
             let dst = ptr as *mut u8;
-            // Clear tail: out-of-bounds read gets zero matrix, not previous frame's bones.
             std::ptr::write_bytes(
                 dst.add(count * matrix_size),
                 0,
@@ -680,8 +663,6 @@ impl RenderPassNode for ShadowMapPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, settings: &RenderSettings) {
-        // #526: size from RenderSettings (written when GraphRenderer constructed), clamped to safe
-        // range; changing field at runtime won't rebuild already allocated image.
         self.shadow_size = settings
             .shadow_map_size
             .clamp(crate::MIN_SHADOW_MAP_SIZE, crate::MAX_SHADOW_MAP_SIZE);
@@ -692,8 +673,6 @@ impl RenderPassNode for ShadowMapPass {
         graph.create_resource_at(
             SHADOW_MAP_H,
             ResourceType::DepthAttachment {
-                // #526 CSM: one square tile per cascade. With one cascade the
-                // atlas is just the legacy square map; with two it is 2×1.
                 extent: vk::Extent2D {
                     width: self.shadow_atlas_width,
                     height: size,
@@ -710,9 +689,6 @@ impl RenderPassNode for ShadowMapPass {
     }
 
     fn execute(&mut self, ctx: &RenderContext, resources: &mut GraphResources) -> Result<()> {
-        // Only render when the rasterized shadow path is active and not in Sprites2D mode.
-        // The graph builder adds this pass only for `ShadowMode::Raster`, but guard
-        // anyway so a misconfigured graph can't waste a depth pass.
         if ctx.frame.render_mode == crate::RenderMode::Sprites2D
             || ctx.frame.shadow_mode != ShadowMode::Raster
         {
@@ -759,22 +735,16 @@ impl RenderPassNode for ShadowMapPass {
             }
         };
 
-        // Lazy-init pipeline + render pass + framebuffer.  If warmup already
-        // created pipeline + render_pass, only the framebuffer still needs to
-        // be created (it depends on `shadow_view` from the graph resources,
-        // which are only available during execute).
         if self.framebuffer.is_none() {
             let device = ctx.device;
             self.device = Some(device.clone());
 
-            // Render pass — shared between warmup and execute.
             if self.render_pass.is_none() {
                 let render_pass = Self::create_render_pass(device, vk::Format::D32_SFLOAT)?;
                 self.render_pass = Some(render_pass);
             }
             let rp = self.render_pass.unwrap();
 
-            // Framebuffer — always needs the per-execute shadow_view.
             let framebuffer = unsafe {
                 device.create_framebuffer(
                     &vk::FramebufferCreateInfo::default()
@@ -788,17 +758,14 @@ impl RenderPassNode for ShadowMapPass {
             }
             .context("create shadow framebuffer")?;
             self.framebuffer = Some(framebuffer);
-        } // if self.framebuffer.is_none()
+        }
 
-        // Skinned casters' pipeline + user buffers (#560 P0-3c).
         {
             let render_pass = self.render_pass.unwrap_or_default();
             self.ensure_skinned(ctx.context, render_pass)?;
             self.update_bones(ctx.device, ctx.frame_index, ctx.frame.bone_matrices)?;
         }
 
-        // #491: static casters are batched by mesh / culling mode / submesh.
-        // Instance matrices ride after the live bone palette in the same SSBO.
         let bone_count = ctx.frame.bone_matrices.len().min(SHADOW_BONE_CAPACITY);
         let capacity = SHADOW_BONE_CAPACITY.saturating_sub(bone_count);
         let (batches, instance_matrices) =
@@ -822,12 +789,6 @@ impl RenderPassNode for ShadowMapPass {
         let render_pass = self.render_pass.unwrap();
         let framebuffer = self.framebuffer.unwrap();
 
-        // The shadow map's `UNDEFINED -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL`
-        // transition used to live here as a hand-rolled `cmd_pipeline_barrier`.
-        // It is now handled implicitly by the render pass: the attachment
-        // `initial_layout = UNDEFINED` + `LOAD_OP_CLEAR` lets Vulkan perform
-        // the transition inside `cmd_begin_render_pass` (see `create_render_pass`).
-        // `shadow_img` is therefore no longer needed in this function body.
         let _ = resources.image(self.shadow_map).unwrap_or_default();
 
         let clear = vk::ClearValue {
@@ -852,21 +813,15 @@ impl RenderPassNode for ShadowMapPass {
                 .cmd_begin_render_pass(ctx.cmd, &begin, vk::SubpassContents::INLINE)
         };
 
-        // Count casters actually written into shadow map (`ShadowCastingMode::Off` skipped).
-        // With two cascades same batch of casters drawn twice, here only count first pass.
         let allocated_cascades = (self.shadow_atlas_width / size).clamp(1, 2);
         let cascade_count = ctx.frame.shadow_cascade_count.clamp(1, allocated_cascades);
         let mut casters = 0usize;
-        // Among them how many took skinned pipeline (#560 P0-3c).
         let mut skinned_casters = 0u32;
-        // Casters culled by light source frustum only count first cascade (#491).
         self.last_culled_casters = 0;
         self.last_shadow_draw_calls = 0;
 
         unsafe {
             for cascade in 0..cascade_count {
-                // Each cascade fixed occupies one square tile of atlas; single cascade uses only left half,
-                // so PCF texel size fully consistent with old 2048² shadow map.
                 let viewport_x = (cascade * size) as f32;
                 let viewport_width = size as f32;
                 let light_view_proj = if cascade == 0 {
@@ -874,9 +829,6 @@ impl RenderPassNode for ShadowMapPass {
                 } else {
                     ctx.frame.light_view_proj1
                 };
-                // Light source frustum (#491): shadow map only covers small area near main camera,
-                // casters kept by main camera in extraction phase not necessarily inside here. Matrix degenerate
-                // `from_view_proj` returns `None`, below conservatively submits all.
                 let light_frustum = Frustum::from_view_proj(&light_view_proj);
                 ctx.device.cmd_set_viewport(
                     ctx.cmd,
@@ -905,12 +857,8 @@ impl RenderPassNode for ShadowMapPass {
                     }],
                 );
 
-                // Select pipeline by (skinned, double-sided), only rebind on switch.
                 let mut bound_pipeline: Option<(bool, bool)> = None;
                 for batch in &batches {
-                    // Culling stays per logical caster so the diagnostics stay
-                    // exact. If at least one member survives, the whole batch is
-                    // submitted; clipped instances cost vertex work only.
                     let mut survives = 0u32;
                     for &index in &batch.items {
                         let item = &ctx.frame.draw_list[index];
@@ -933,8 +881,6 @@ impl RenderPassNode for ShadowMapPass {
                         None => continue,
                     };
 
-                    // Skinned casters are always singleton batches; static
-                    // casters can carry a shared instance range.
                     let skinned = item.bone_offset.is_some();
                     let skin_buffer = if skinned {
                         match ctx.frame.mesh_manager.get(item.mesh) {
@@ -1076,12 +1022,9 @@ impl RenderPassNode for ShadowMapPass {
         }
         self.device = Some(device.clone());
 
-        // Render pass — same layout as `execute` uses.
         let render_pass = Self::create_render_pass(device, vk::Format::D32_SFLOAT)?;
         self.render_pass = Some(render_pass);
 
-        // Static pipelines are created by `ensure_skinned` once the bone /
-        // instance descriptor layout exists (#491).
         Ok(())
     }
 
@@ -1117,12 +1060,10 @@ impl ShadowMapPass {
         if let Some(rp) = self.render_pass.take() {
             unsafe { device.destroy_render_pass(rp, None) };
         }
-        // GraphicsPipeline::Drop frees the pipeline + layout.
         self.pipeline = None;
         self.pipeline_two_sided = None;
         self.skinned = None;
         self.skinned_two_sided = None;
-        // Descriptor set released together with pool.
         self.bone_sets.clear();
         if let Some(pool) = self.bone_pool.take() {
             unsafe { device.destroy_descriptor_pool(pool, None) };
@@ -1154,7 +1095,6 @@ impl Drop for ShadowMapPass {
             if let Some(rp) = self.render_pass.take() {
                 unsafe { device.destroy_render_pass(rp, None) };
             }
-            // GraphicsPipeline's own Drop frees the pipeline + layout.
         }
     }
 }
@@ -1176,7 +1116,6 @@ mod tests {
 
     #[test]
     fn two_sided_shadow_casting_disables_backface_culling() {
-        // `ShadowCastingMode::TwoSided`: disable back-face cull in shadow render.
         assert_eq!(
             ShadowMapPass::shadow_cull_mode(false),
             vk::CullModeFlags::BACK
@@ -1189,7 +1128,6 @@ mod tests {
 
     #[test]
     fn shadow_pass_uses_clockwise_front_face() {
-        // Under no-Y-flip orthographic lighting projection, front face winding is CLOCKWISE
         assert_eq!(ShadowMapPass::SHADOW_FRONT_FACE, vk::FrontFace::CLOCKWISE);
     }
 
@@ -1292,19 +1230,16 @@ mod tests {
             Some(&outside),
             Some(&frustum)
         ));
-        // Partial overlap also kept (conservative cull, don't cut objects).
         assert!(caster_survives_light_frustum(
             Some(&straddling),
             Some(&frustum)
         ));
-        // No bounding box / no usable frustum: keep old behavior, no cull.
         assert!(caster_survives_light_frustum(None, Some(&frustum)));
         assert!(caster_survives_light_frustum(Some(&outside), None));
     }
 
     #[test]
     fn degenerate_light_matrix_keeps_every_caster() {
-        // All-zero matrix has no extractable planes; any cull would be blind clipping.
         let degenerate = [[0.0f32; 4]; 4];
         assert!(Frustum::from_view_proj(&degenerate).is_none());
         let bounds = Aabb::new([10.0, 10.0, 10.0], [11.0, 11.0, 11.0]);

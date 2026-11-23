@@ -71,7 +71,6 @@ impl ParticleEmitter2DState {
 }
 
 fn seed_from_entity(entity: Entity) -> u32 {
-    // 0 is illegal xorshift state, here force non-zero.
     entity.id().wrapping_mul(2_654_435_761).max(1)
 }
 
@@ -136,12 +135,10 @@ fn spawn_local(
         ),
         ParticleShape2D::Circle => {
             let angle = next_unit(rng) * std::f32::consts::TAU;
-            // sqrt gives uniform distribution in disc, not clustered at center.
             glam::Vec2::new(angle.cos(), angle.sin()) * radius * next_unit(rng).sqrt()
         }
     };
 
-    // 2D cone: base direction rotated around Z by `[-spread, +spread]`.
     let half_angle = if spread_degrees.is_finite() {
         spread_degrees.clamp(0.0, 180.0).to_radians()
     } else {
@@ -211,7 +208,6 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
 
     let mut alive = 0usize;
     for entity in entities {
-        // Author component may have just been deleted; copy first to avoid borrow conflict.
         let Some(emitter_def) = world.get::<ParticleEmitter2D>(entity).cloned() else {
             continue;
         };
@@ -220,7 +216,6 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
             .map(|t| t.0)
             .unwrap_or(glam::Mat4::IDENTITY);
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
-        // 2D only cares about Z rotation; invalid matrix treated as identity transform.
         let rotation = if rotation.is_finite() {
             rotation.to_euler(glam::EulerRot::XYZ).2
         } else {
@@ -250,7 +245,6 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
         world.insert(entity, state);
     }
 
-    // After author deletes component, runtime state must go too, no invisible orphan particles.
     let orphans: Vec<Entity> = world
         .query::<ParticleEmitter2DState>()
         .filter(|(entity, _)| world.get::<ParticleEmitter2D>(*entity).is_none())
@@ -272,11 +266,9 @@ fn step(
     dt: f32,
 ) {
     if !emitter_def.playing {
-        // Paused: particles stay in place, emission count not accumulated.
         return;
     }
 
-    // 1. Integrate + recycle. Drag as "decay drag fraction per second", frame-rate independent.
     let drag = if emitter_def.drag.is_finite() {
         emitter_def.drag.clamp(0.0, 1.0)
     } else {
@@ -303,7 +295,6 @@ fn step(
     }
     state.particles.retain(|p| p.age < p.lifetime);
 
-    // 2. Emission window (duration / looping). `duration == 0` = always emit.
     let duration = emitter_def.emission_duration();
     let emitting = match duration {
         None => true,
@@ -312,7 +303,6 @@ fn step(
 
     let cap = emitter_def.particle_cap();
 
-    // 3. Burst: emit all at start of each loop.
     if !state.emitted_burst {
         let burst = emitter_def.burst.min(cap as u32);
         for _ in 0..burst {
@@ -324,7 +314,6 @@ fn step(
         state.emitted_burst = true;
     }
 
-    // 4. Continuous emission.
     if emitting {
         state.accumulator += emitter_def.rate() * dt;
         while state.accumulator >= 1.0 {
@@ -343,7 +332,6 @@ fn step(
         state.particles.truncate(cap);
     }
 
-    // 5. Advance emission window: loop back to 0 at endpoint (re-count burst) or stop at endpoint.
     if let Some(duration) = duration {
         state.cycle_time += dt;
         if state.cycle_time >= duration {
@@ -418,7 +406,6 @@ pub(crate) fn particle_entries_2d(
                     uv_rect: [0.0, 0.0, 1.0, 1.0],
                     color: particle_2d_color(emitter_def, particle),
                     texture: crate::scene::systems::render::SOLID_TEXTURE,
-                    // Solid-color quad: standard alpha blend, same as polyline.
                     src_blend: prism_scene::render_enums::BlendMode::SrcAlpha,
                     dst_blend: prism_scene::render_enums::BlendMode::OneMinusSrcAlpha,
                     blend_op: prism_scene::render_enums::BlendOp::Add,

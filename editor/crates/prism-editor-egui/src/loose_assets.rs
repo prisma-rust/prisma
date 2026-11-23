@@ -41,7 +41,6 @@ fn is_watched(path: &Path) -> bool {
     {
         return false;
     }
-    // Hidden files / temp files (vim, VSCode atomic save, system thumbnail cache).
     if name.starts_with('.') || name.ends_with('~') || name.ends_with(".swp") {
         return false;
     }
@@ -194,22 +193,18 @@ mod tests {
         let mut watcher = LooseAssetWatcher::new(&root);
         let start = Instant::now();
 
-        // No change: never trigger.
         assert!(!watcher.poll(&root, start));
         assert!(!watcher.poll(&root, start + DEBOUNCE * 2));
 
-        // File changed -> only record pending, do not trigger immediately.
         touch(&root.join("assets/sprites/boat.png"), b"v2-longer");
         assert!(!watcher.poll(&root, start));
         assert!(watcher.is_pending());
         assert!(!watcher.poll(&root, start + DEBOUNCE / 2));
 
-        // Quiet for DEBOUNCE -> trigger once, then return to idle.
         assert!(watcher.poll(&root, start + DEBOUNCE + Duration::from_millis(1)));
         assert!(!watcher.is_pending());
         assert!(!watcher.poll(&root, start + DEBOUNCE * 3));
 
-        // Continuous writes re-time debounce.
         touch(&root.join("assets/sprites/boat.png"), b"v3-a");
         assert!(!watcher.poll(&root, start));
         touch(&root.join("assets/sprites/boat.png"), b"v4-longer");
@@ -217,7 +212,6 @@ mod tests {
         assert!(!watcher.poll(&root, start + DEBOUNCE));
         assert!(watcher.poll(&root, start + Duration::from_millis(600) + DEBOUNCE));
 
-        // New file / deletion also counts as change.
         touch(&root.join("assets/models/new.gltf"), b"x");
         assert!(!watcher.poll(&root, start));
         assert!(watcher.poll(&root, start + DEBOUNCE + Duration::from_millis(2)));

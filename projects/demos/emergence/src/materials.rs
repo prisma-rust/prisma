@@ -205,7 +205,6 @@ impl MaterialTable {
             flags |= VoxelVisualFlags::EMISSIVE;
         }
 
-        // Dynamic TransientFlags visual projection (Iron Law 2 source of truth on parent L2 cell).
         if cell.transient.contains(TransientFlags::WET) {
             flags |= VoxelVisualFlags::WET;
         }

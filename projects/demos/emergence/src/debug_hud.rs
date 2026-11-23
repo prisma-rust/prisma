@@ -181,7 +181,6 @@ pub(crate) fn read_process_memory() -> Option<ProcessMemoryStats> {
         peak_pagefile_usage: 0,
     };
 
-    // SAFETY: Both structs have their exact byte-size headers initialized and valid writable pointers.
     let ok_sys = unsafe { GlobalMemoryStatusEx(&mut mem_status) } != 0;
     let ok_proc =
         unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } != 0;

@@ -254,7 +254,6 @@ mod tests {
 
     #[test]
     fn timeline_coordinates_map_to_clamped_centisecond_times() {
-        // 100px for 2 seconds: midpoint 1 second, both ends clamped.
         assert_eq!(notify_time_at(50.0, 0.0, 100.0, 2.0), 1.0);
         assert_eq!(notify_time_at(-40.0, 0.0, 100.0, 2.0), 0.0);
         assert_eq!(notify_time_at(400.0, 0.0, 100.0, 2.0), 2.0);
@@ -302,7 +301,6 @@ mod tests {
                 name: "B".to_string(),
             },
         ];
-        // 0..200px for 2 seconds → A at 50px, B at 150px.
         assert_eq!(
             nearest_notify_index(&entries, 52.0, 0.0, 200.0, 2.0, 8.0),
             Some(0)

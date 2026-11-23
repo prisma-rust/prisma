@@ -15,7 +15,6 @@
 //! world.insert(e, Camera::default());
 //! ```
 
-// Re-export the ECS core so consumers only need `crate::ecs::*`.
 pub use prism_ecs::{Component, Entity, World};
 
 pub mod components;

@@ -108,10 +108,10 @@ impl DdgiAtlasLayout {
             nz * DDGI_DISTANCE_TILE_TEXELS,
         ];
         let irr_bytes =
-            (irradiance_extent[0] as u64) * (irradiance_extent[1] as u64) * (ny as u64) * 8; // R16G16B16A16_SFLOAT
+            (irradiance_extent[0] as u64) * (irradiance_extent[1] as u64) * (ny as u64) * 8;
         let dist_bytes =
-            (distance_extent[0] as u64) * (distance_extent[1] as u64) * (ny as u64) * 4; // R16G16_SFLOAT
-        let metadata_bytes = (nx as u64) * (ny as u64) * (nz as u64) * 8; // RGBA16F relocation/state
+            (distance_extent[0] as u64) * (distance_extent[1] as u64) * (ny as u64) * 4;
+        let metadata_bytes = (nx as u64) * (ny as u64) * (nz as u64) * 8;
         Self {
             irradiance_extent,
             distance_extent,

@@ -59,10 +59,6 @@ pub enum LoadSceneMode {
     Additive,
 }
 
-// ===========================================================================
-// Engine
-// ===========================================================================
-
 /// Simulation engine — owns ECS world and exposes game logic phases.
 ///
 /// All render-related concerns (asset upload, draw list building, GPU submission)
@@ -86,10 +82,6 @@ pub struct Engine {
 }
 
 impl Engine {
-    // ======================================================================
-    // Construction
-    // ======================================================================
-
     /// Create `Engine` and run all boundary init phases (convenience constructor).
     ///
     /// Loads resources from the given [`ResourceManager`] then loads the scene.
@@ -104,7 +96,6 @@ impl Engine {
     pub fn empty() -> Self {
         let _span = crate::util::timing::span("engine::empty");
         let mut world = World::new();
-        // One-shot audio queue (#987): project code queues, host takes each frame.
         world.insert_resource(crate::sound::SoundCommands::default());
         Self {
             world,
@@ -119,10 +110,6 @@ impl Engine {
             no_scene_time: 0.0,
         }
     }
-
-    // ======================================================================
-    // Init
-    // ======================================================================
 
     /// Scene load (default loads first loadable scene in manifest).
     ///
@@ -147,8 +134,6 @@ impl Engine {
         rm: &mut prism_asset::runtime::ResourceManager,
         scene_name: Option<&str>,
     ) {
-        // Runtime prefers reading manifest from asset package, avoid depending on cwd.
-        // Old packages packed manifest as `scenes.toml` (TOML format before RSCN), still parseable.
         for name in ["scenes.json", "scenes.toml"] {
             let Some(id) = rm.id_by_path(name) else {
                 continue;
@@ -161,7 +146,6 @@ impl Engine {
             }
         }
 
-        // Dev compatibility: when package lacks manifest scene system reads file.
         let mut registry = crate::scene::ComponentRegistry::new();
         crate::scene::register_builtin_components(&mut registry);
         match scene_name {
@@ -236,8 +220,6 @@ impl Engine {
             instance.all_entities.len(),
             path.display()
         );
-        // Return entity list in **document order**: `spawn_from_json_text` spawns in document array order,
-        // host (editor) uses this subscript to match `.scene.json` `entities[i]`.
         Ok(instance.all_entities)
     }
 
@@ -314,15 +296,8 @@ impl Engine {
     /// [`crate::util::camera::spawn_default_camera`].
     pub fn runtime_initialize(&mut self) {
         let _span = crate::util::timing::span("engine::runtime_initialize");
-        // Default systems (UI infrastructure) are **merged** into the existing
-        // schedule rather than replacing it, so systems a user registered before
-        // `runtime_initialize` survive.
         self.schedule.merge_if_absent(default_schedule());
     }
-
-    // ======================================================================
-    // Timer API
-    // ======================================================================
 
     /// Returns TimerClient reference (Cloneable, for panels etc).
     pub fn timer_client(&self) -> &crate::util::timer::TimerClient {
@@ -346,10 +321,6 @@ impl Engine {
     pub fn resume_timer(&self, handle: crate::util::timer::TimerId) {
         self.timer.client.resume(handle);
     }
-
-    // ======================================================================
-    // Frame tick phases
-    // ======================================================================
 
     /// Capture render-frame input before running zero or more fixed steps.
     /// Press/release edges are retained until the next fixed step.
@@ -381,7 +352,6 @@ impl Engine {
         self.pending_fixed_key_edges = [0; 8];
         self.world.insert_resource(input);
         crate::scene::systems::interpolation2d::begin_fixed_step(&mut self.world);
-        // 2D physics step simulation (#1160): default gravity 9.81 m/s² downward (-Y)
         crate::physics2d::step_2d(&mut self.world, fixed_dt, [0.0, -9.81]);
         self.fixed_schedule.run(&mut self.world, fixed_dt.max(0.0));
         crate::scene::systems::interpolation2d::end_fixed_step(&mut self.world);
@@ -423,18 +393,13 @@ impl Engine {
         );
         crate::scene::systems::camera2d::camera_2d_system(&mut self.world, dt);
 
-        // ── fill UI input state ──────────────────────────────────────
         let pos = input_manager.mouse_position();
-        // Window pixels → UI layout space (#988): UI drawn inside PostPass target rect,
-        // without conversion clicks would mismatch visible positions.
         let mapping = self
             .world
             .get_resource::<crate::ui::UiScreenMapping>()
             .copied()
             .unwrap_or_default();
         let cursor = mapping.window_to_layout([pos[0] as f32, pos[1] as f32]);
-        // Wheel and modifiers fold into layout space here too: host UI never sees
-        // platform events, and dropping either deletes an entire interaction path.
         self.world.insert_resource(crate::ui::UiInputState {
             cursor_pos: cursor,
             left_clicked: input_manager.mouse_just_pressed(crate::input::MouseButton::Left),
@@ -449,10 +414,6 @@ impl Engine {
             pressed_keys: input_manager.pressed_keys().to_vec(),
         });
 
-        // ── same input also given to gameplay code (#589) ──────────────────
-        // Static Player's `GameWorld::input()` reads this World resource.
-        // Previously only editor plugin backend could get input, `GameWorld::input()` in release
-        // was always all-zero. Size from `ScreenSize` (host writes before each frame update).
         let screen = self
             .world
             .get_resource::<crate::ui::ScreenSize>()
@@ -462,50 +423,29 @@ impl Engine {
         self.frame_input.interpolation_alpha = self.interpolation_alpha;
         self.world.insert_resource(self.frame_input);
 
-        // Run the ECS system schedule (user‑registered + built‑in systems).
         self.schedule.run(&mut self.world, dt);
 
-        // Quads submitted by user systems via `GameWorld::draw_quad` this tick are
-        // ordered after `ui::render`, merge here once, else static Player is one frame late (#1048).
         crate::ui::merge_external_quads(&mut self.world);
 
-        // "No scene" placeholder image: only appears when startup manifest has no loadable scene (usually
-        // `.pak` not packed). Goes through existing UI channel, no new pass, clear color untouched.
         if self.scene.is_missing_scene() {
             self.no_scene_time += dt.max(0.0);
             crate::ui::push_no_scene_screen_into(&mut self.world, self.no_scene_time);
         }
 
-        // ── world matrix propagation (end of simulation step) ─────────────────────────────
-        // Entities spawned by user systems this tick / modified `LocalTransform` must
-        // become `LocalToWorld` before update returns, otherwise consumers below see previous-frame
-        // or even missing world matrices:
-        // - later in same tick (next frame) game logic / physics / camera;
-        // - render extract (`extract_frame_packet` now read-only, no longer computes);
-        // - scene state save (`save_scene_state` reads `LocalToWorld`).
-        // Placed after schedule rather than inside a system because user systems can register
-        // after `runtime_initialize` (App::add_system), can't rely on registration order.
         crate::scene::systems::hierarchy::hierarchy_system(&mut self.world);
-        // `Active` propagates along parent-child (`activeInHierarchy`), render / lighting read derived value.
         crate::scene::systems::hierarchy::active_hierarchy_system(&mut self.world);
         crate::scene::systems::interpolation2d::apply_render_interpolation(
             &mut self.world,
             self.interpolation_alpha,
         );
-        // 2D virtual cameras follow the frame-interpolated target before the
-        // render packet is extracted. Recompute the camera world transform
-        // after writing its local position.
         crate::scene::systems::camera2d::virtual_camera2d_system(&mut self.world, dt);
         crate::scene::systems::hierarchy::hierarchy_system(&mut self.world);
         crate::scene::systems::interpolation2d::apply_render_interpolation(
             &mut self.world,
             self.interpolation_alpha,
         );
-        // Distance LOD (#491): select level by this frame's world matrix, write runtime `LodHidden`.
-        // Must be after `hierarchy_system` so extract sees current-frame distance.
         crate::scene::systems::lod::lod_system(&mut self.world);
 
-        // Tick the main‑thread timer (dispatch expired callbacks).
         self.timer.tick();
         self.frame_input_prepared = false;
     }
@@ -514,10 +454,6 @@ impl Engine {
     ///
     /// `LateUpdate()`.
     pub fn late_update(&mut self) {}
-
-    // ======================================================================
-    // Shutdown
-    // ======================================================================
 
     /// Pre‑shutdown: save state, flush pending work.
     ///
@@ -528,19 +464,11 @@ impl Engine {
     /// Final cleanup after shutdown.
     pub fn post_shutdown(&mut self) {}
 
-    // ======================================================================
-    // Suspend / resume (platform lifecycle)
-    // ======================================================================
-
     /// Called when the platform surface is suspended (e.g. Android onPause).
     pub fn on_suspend(&mut self) {}
 
     /// Called when the platform surface is resumed (e.g. Android onResume).
     pub fn on_resume(&mut self) {}
-
-    // ======================================================================
-    // Accessors
-    // ======================================================================
 
     pub fn world(&self) -> &World {
         &self.world
@@ -622,72 +550,44 @@ fn default_schedule() -> Schedule {
 
     let mut s = Schedule::new();
 
-    // ── sprite animation ────────────────────────────────────────────
-    // Advance `SpriteAnimation` → `SpriteRenderer.frame_index`; before render extract.
     s.add_system("sprite::animation", |world, dt| {
         crate::scene::systems::animation::sprite_animation_system(world, dt)
     });
 
-    // ── keyframe animation ──────────────────────────────────────────
-    // Sample `KeyframeAnimation` → `LocalTransform`. `Engine::update` runs `hierarchy_system`
-    // after schedule, so same frame's world matrix is post-animation pose.
     s.add_system("clip::animation", |world, dt| {
         crate::scene::systems::animation::keyframe_animation_system(world, dt)
     });
 
-    // ── skeletal animation ────────────────────────────────────────────
-    // Sample `Animator` → bone matrices. P0-2 only computes CPU-side palette (GPU skinning in P0-3).
     s.add_system("animator::pose", |world, dt| {
         crate::scene::systems::animator::animator_system(world, dt);
     });
 
-    // ── terrain ────────────────────────────────────────────────
-    // `Terrain` is data only: here generate mesh from heightmap and register into `ProceduralMeshes`,
-    // asset parser can pick it up in next frame's upload phase (#517 Phase 1).
     s.add_system("terrain::mesh", |world, _dt| {
         crate::scene::systems::terrain::terrain_system(world)
     });
 
-    // ── particle simulation ──────────────────────────────────────────
-    // CPU particle integration + emission (#501 Phase 1). Also before `hierarchy_system`,
-    // extract sees already-advanced particles this frame.
     s.add_system("fx::particles", |world, dt| {
         crate::scene::systems::particles::particle_system(world, dt);
     });
 
-    // ── 2D particle simulation ─────────────────────────────────
-    // CPU particles in world XY plane (#594). Parallel to 3D particles for same reason: consistent with ECS /
-    // scene format, extract sees already-advanced particles this frame.
     s.add_system("fx::particles2d", |world, dt| {
         crate::scene::systems::particles2d::particle_emitter_2d_system(world, dt);
     });
 
-    // ── screen-space (UI layer) particles (#1057) ────────────────────────
-    // Simulated in pixel space, output merged into `ExternalUiQuads`; must be before this frame's `ui::render`
-    // so quads enter same frame's `UiDrawList`.
     s.add_system("fx::ui_particles", |world, dt| {
         crate::scene::systems::ui_particles::ui_particle_emitter_system(world, dt);
     });
 
-    // ── day-night (#983) ─────────────────────────────────────────
-    // Advance `TimeOfDay` and refresh ambient light. Placed before particles and `hierarchy_system`:
-    // this frame's `sprite_light_entries` must read advanced ambient light, else image is one frame late.
     s.add_system("time::of_day", |world, dt| {
         crate::scene::systems::time_of_day::time_of_day_system(world, dt);
     });
 
-    // ── UI Layout ─────────────────────────────────────────────
-    // Recompute screen-space rects of all UI elements each frame.
     s.add_system("ui::layout", |world, _dt| {
         crate::ui::ui_layout_system(world)
     });
 
-    // ── UI Input ──────────────────────────────────────────────
-    // Hit test, update `Interaction` component (needs after layout).
     s.add_system("ui::input", |world, _dt| crate::ui::ui_input_system(world));
 
-    // ── UI Render ─────────────────────────────────────────────
-    // Collect UI draw commands into UiDrawList resource.
     s.add_system("ui::render", |world, _dt| {
         crate::ui::ui_render_system(world)
     });

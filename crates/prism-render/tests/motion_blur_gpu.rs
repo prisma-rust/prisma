@@ -20,7 +20,6 @@ fn camera_motion_blur_smears_a_moving_view() {
         return;
     };
 
-    // Establish a previous camera matrix for the moving renderer.
     moving.render(FrameOptions::default());
     let blurred = moving.render(FrameOptions {
         camera_position: Some([0.0, 0.0, 3.3]),
@@ -32,7 +31,6 @@ fn camera_motion_blur_smears_a_moving_view() {
         ..FrameOptions::default()
     });
 
-    // Same camera position, effect off. This is the reference frame.
     let reference = sharp.render(FrameOptions {
         camera_position: Some([0.0, 0.0, 3.3]),
         ..FrameOptions::default()

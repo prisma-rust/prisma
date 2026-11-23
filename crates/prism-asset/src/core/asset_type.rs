@@ -109,9 +109,7 @@ impl AssetType {
     /// Infer asset type from a file extension (lowercase, without leading dot).
     pub fn from_extension(ext: &str) -> Self {
         match ext.to_lowercase().as_str() {
-            // Binary
             "bin" | "bytes" => AssetType::Binary,
-            // Already cooked runtime format
             "rscn" => AssetType::Scene,
             "rtex" => AssetType::Texture,
             "rmes" => AssetType::Mesh,
@@ -124,32 +122,20 @@ impl AssetType {
             "ratlas" => AssetType::Atlas,
             "ranim2d" | "ase" | "aseprite" => AssetType::Anim2D,
             "rtilemap" | "tmx" | "tmj" | "tsx" => AssetType::Tilemap,
-            // Textures / images
             "png" | "jpg" | "jpeg" | "tga" | "bmp" | "hdr" | "exr" | "ktx" | "ktx2" | "dds" => {
                 AssetType::Texture
             }
-            // Mesh / geometry
             "gltf" | "glb" | "fbx" | "obj" | "stl" | "ply" => AssetType::Mesh,
-            // Material
             "mat" | "material" => AssetType::Material,
-            // Shader
             "slang" | "hlsl" | "glsl" | "spv" | "wgsl" => AssetType::Shader,
-            // Prefab
             "prefab" => AssetType::Prefab,
-            // Scene
             "scene" => AssetType::Scene,
-            // Audio
             "wav" | "mp3" | "ogg" | "flac" | "aac" | "m4a" => AssetType::Audio,
-            // Font (for UI text; packed as-is, no cook needed)
             "ttf" | "otf" | "ttc" => AssetType::Font,
             _ => AssetType::Unknown,
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// AssetRef – editor-side reference to another asset
-// ---------------------------------------------------------------------------
 
 /// A lightweight editor-side reference to another asset.
 ///

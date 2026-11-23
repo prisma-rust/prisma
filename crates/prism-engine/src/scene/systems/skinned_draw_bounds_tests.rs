@@ -24,8 +24,6 @@ fn an_identity_palette_leaves_the_bind_box_untouched() {
 
 #[test]
 fn a_moving_bone_stretches_the_box_along_its_travel() {
-    // One bone stays in place, another moves +X 4m: skinned vertices fall between these two boxes,
-    // so bounding box must cover both (−0.5..0.5) and (3.5..4.5).
     let bounds =
         skinned_local_bounds(&unit_bind(), &[identity_array(), translated(4.0)]).expect("bounds");
     assert!(
@@ -38,7 +36,6 @@ fn a_moving_bone_stretches_the_box_along_its_travel() {
         "max.x = {}",
         bounds.max[0]
     );
-    // Other axes unchanged.
     assert!((bounds.min[1] + 0.5).abs() < 1e-5);
     assert!((bounds.max[2] - 0.5).abs() < 1e-5);
 }
@@ -51,15 +48,12 @@ fn a_broken_palette_is_ignored_and_an_empty_one_has_no_bounds() {
         skinned_local_bounds(&unit_bind(), &[nan]).is_none(),
         "Non-finite matrix must not produce a fake small box"
     );
-    // Good/bad blend: only take the valid one.
     let bounds = skinned_local_bounds(&unit_bind(), &[nan, translated(2.0)]).expect("bounds");
     assert!((bounds.max[0] - 2.5).abs() < 1e-5);
 }
 
 #[test]
 fn the_cull_uses_the_skinned_box_not_the_bind_pose() {
-    // Camera at origin looking −Z, object at (0,0,-5). Bind box very small near origin — here
-    // place entity off-screen then bone pulls it back to screen: looking only at bind box will miscull.
     let mut world = prism_ecs::World::new();
     let entity = world.spawn();
     world.insert(entity, LocalToWorld(glam::Mat4::IDENTITY));
@@ -85,7 +79,6 @@ fn the_cull_uses_the_skinned_box_not_the_bind_pose() {
     );
     world.insert_resource(bounds);
 
-    // Bind box position far at x = +1000 (off-screen); palette pulls mesh back in front of camera.
     world.insert(
         entity,
         BonePalette::from_matrices(&[glam::Mat4::from_translation(glam::vec3(1000.0, 0.0, 0.0))]),
@@ -101,14 +94,11 @@ fn the_cull_uses_the_skinned_box_not_the_bind_pose() {
     let frustum = prism_render::culling::Frustum::from_view_proj(&projection.to_cols_array_2d())
         .expect("usable frustum");
 
-    // Bind pose box at (0,0,-5) (in frustum), after skinning moves to x=1000 (outside).
-    // With palette cull must disappear; without palette (bind pose) still appears.
     let mut items: Vec<DrawItem> = Vec::new();
     let mut palette: Vec<[[f32; 4]; 4]> = Vec::new();
     let added = append_skinned_draw_items(&world, Some(&frustum), &mut items, &mut palette);
     assert_eq!(added, 0, "Skinned box off-screen must be culled");
 
-    // Return bone to original position: same entity appears in draw list again.
     world.insert(
         entity,
         BonePalette::from_matrices(&[glam::Mat4::from_translation(glam::vec3(0.0, 0.0, -5.0))]),

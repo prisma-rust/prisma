@@ -41,7 +41,6 @@ fn a_submenu_panel_is_not_full_screen() {
     let mut tree = UiTree::new();
     frame(&mut tree, &state, menus(), theme, viewport);
 
-    // Hover the submenu row.
     let row_key = ("menu", "submenu", "file", "Export").into_node_key();
     let row_id = tree.node_by_key(row_key).expect("submenu row exists");
     let row = tree.node(row_id).unwrap().computed_rect;
@@ -51,8 +50,6 @@ fn a_submenu_panel_is_not_full_screen() {
         ..Default::default()
     });
 
-    // Resolve the branch from the hover, then rebuild so the panel mounts. The
-    // host does these two steps on consecutive frames.
     let definitions = menus();
     state.sync_hover(&tree, |id| {
         definitions

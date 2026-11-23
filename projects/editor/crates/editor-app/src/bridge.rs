@@ -63,8 +63,6 @@ fn push_command(out: &mut prism_ui_draw::UiOverlayInput, cmd: &UiDrawCommand) {
             texture,
             material,
         } => {
-            // A surface whose material samples the backdrop asks the renderer
-            // for its filter pass; the tint stays the shader own colour.
             let backdrop_sigma = material
                 .as_ref()
                 .map_or(0.0, |material| material.backdrop_sigma);

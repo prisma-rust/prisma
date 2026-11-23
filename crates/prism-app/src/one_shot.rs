@@ -101,7 +101,6 @@ pub fn drain(
                     continue;
                 }
                 audio.set_volume(&handle, volume);
-                // Same id replay first stops old one, avoid handle leak.
                 if let Some(old) = sounds.remove(&id) {
                     audio.stop(&old.handle);
                 }
@@ -127,7 +126,6 @@ pub fn drain(
         }
     }
 
-    // Looping sound: mixer has no loop flag, replay after finish.
     for sound in sounds.values_mut() {
         if !sound.repeat || audio.is_playing(&sound.handle) {
             continue;
@@ -151,7 +149,6 @@ mod tests {
         let id = commands.play("audio/does-not-exist.ogg", 1.0, false);
         world.insert_resource(commands);
         let mut sounds = HashMap::new();
-        // No mixer: request dropped, queue must be cleared (otherwise retry every frame).
         let mut pack = ResourceManager::new();
         drain(&mut world, None, &mut sounds, &mut pack);
         assert!(sounds.is_empty());

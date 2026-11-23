@@ -19,9 +19,6 @@ use slotmap::{new_key_type, SlotMap};
 use crate::context::VulkanContext;
 use crate::mesh::{Mesh, SkinVertex, Vertex};
 
-// Local handle. The engine layer translates asset mesh handles into
-// this when it calls `RenderMeshManager::register` so the render
-// crate stays decoupled from the asset pipeline.
 new_key_type! {
     /// Slotmap handle into [`RenderMeshManager`].
     pub struct MeshHandle;
@@ -270,7 +267,6 @@ impl RenderMeshManager {
         };
         let mesh = Mesh::new_into(context, uploader, &vertices, indices_opt)
             .context("RenderMeshManager::register_into: Mesh::new_into failed")?;
-        // Skin buffer goes through same shared uploader as vertex buffer (one submit/fence).
         let skin_buffer = match skin {
             Some(skin) if !skin.is_empty() => {
                 upload_skin_vertices_into(context, uploader, skin, vertices.len())?
@@ -337,9 +333,6 @@ impl Drop for RenderMeshManager {
 /// textures).
 fn build_vertices(input: &MeshUploadInput) -> Vec<crate::mesh::Vertex> {
     let n = input.positions.len();
-    // Imported meshes carry no tangent channel (the intermediate format has no
-    // slot for one), so tangents are derived from the UVs here; meshes that do
-    // carry real tangents (primitives, hand-authored) pass through unchanged.
     let generated = if crate::tangents::are_placeholders(&input.tangents, n) {
         crate::tangents::generate(&input.positions, &input.normals, &input.uvs, &input.indices)
     } else {
@@ -503,7 +496,6 @@ mod bounds_tests {
             ],
             normals: vec![[0.0, 0.0, 1.0]; 4],
             colors: Vec::new(),
-            // U axis along +Y, V axis along −X: real tangent is +Y.
             uvs: vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
             tangents: vec![[1.0, 0.0, 0.0, 1.0]; 4],
             indices: vec![0, 1, 2, 0, 2, 3],
@@ -517,7 +509,6 @@ mod bounds_tests {
             );
         }
 
-        // Meshes with own real tangent (not uniform) are not overwritten.
         mesh.tangents = vec![
             [1.0, 0.0, 0.0, 1.0],
             [0.0, 1.0, 0.0, 1.0],

@@ -74,8 +74,8 @@ fn look_at(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
 fn perspective(near: f32, far: f32) -> [[f32; 4]; 4] {
     let inv_tan = 1.0 / (std::f32::consts::FRAC_PI_4 * 0.5).tan();
     let mut proj = [[0.0f32; 4]; 4];
-    proj[0][0] = inv_tan; // aspect = 1
-    proj[1][1] = -inv_tan; // Vulkan y-flip
+    proj[0][0] = inv_tan;
+    proj[1][1] = -inv_tan;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = (far * near) / (near - far);
@@ -298,12 +298,10 @@ fn a_moving_skinned_caster_moves_its_shadow_on_the_receiver() {
 
     let items = [receiver(receiver_handle), caster(caster_handle)];
 
-    // Baseline: no shadows, no shadow on receiver face.
     let baseline = render(&mut renderer, &items, &[placed_at(-1.2)], 0.0);
     let (shadow_count, _) = shadowed_pixels(&baseline, &baseline);
     assert_eq!(shadow_count, 0, "the baseline must not contain a shadow");
 
-    // Enable shadows + place bone at x = -1.2: a shadow appears on receiver face.
     let left = render(&mut renderer, &items, &[placed_at(-1.2)], 1.0);
     let (left_count, left_center) = shadowed_pixels(&baseline, &left);
     assert!(
@@ -311,7 +309,6 @@ fn a_moving_skinned_caster_moves_its_shadow_on_the_receiver() {
         "a skinned caster must darken the receiver ({left_count} pixels changed)"
     );
 
-    // Move bone to x = +1.2: shadow must follow, not stay at original position.
     let right = render(&mut renderer, &items, &[placed_at(1.2)], 1.0);
     let (right_count, right_center) = shadowed_pixels(&baseline, &right);
     assert!(

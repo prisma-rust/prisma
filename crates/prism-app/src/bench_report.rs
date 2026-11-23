@@ -246,7 +246,6 @@ mod tests {
         assert!(json.contains("\"adapter\":\"Test GPU\""), "{json}");
         assert!(json.contains("\"extent\":\"1280x720\""), "{json}");
         assert!(json.contains("\"warmupFrames\":30"), "{json}");
-        // The temporary file is renamed into place, not left behind.
         let leftovers: Vec<_> = std::fs::read_dir(plan.path.parent().expect("parent"))
             .expect("read dir")
             .filter_map(|entry| entry.ok())

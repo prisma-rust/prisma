@@ -4,10 +4,6 @@ use glam::{Mat4, Vec3, Vec4};
 
 use super::DEFAULT_SHADOW_DISTANCE;
 
-// ---------------------------------------------------------------------------
-// Euler angle ↔ direction helpers
-// ---------------------------------------------------------------------------
-
 /// Convert XYZ Euler angles (degrees) to a unit direction vector (direction
 /// TO the light), in world space.
 pub fn euler_xyz_deg_to_dir(e: Vec3) -> Vec3 {
@@ -26,10 +22,6 @@ pub fn dir_to_euler_xyz_deg(d: Vec3) -> Vec3 {
     let n = d.normalize_or_zero();
     Vec3::new(n.y.asin().to_degrees(), n.x.atan2(n.z).to_degrees(), 0.0)
 }
-
-// ---------------------------------------------------------------------------
-// Matrix helpers
-// ---------------------------------------------------------------------------
 
 /// Directional light from "light propagation direction" (`transform.forward`) converted to
 /// `FrameUBO.lightDirection` "pointing to light source" convention (see `common.slang`).
@@ -118,26 +110,19 @@ pub(super) fn shadow_matrix_fitting(light_dir: &Vec4, corners: &[Vec3], texels: 
         return Mat4::IDENTITY;
     }
 
-    // Square off the X/Y extent so texels stay square, then snap the centre to
-    // the texel grid (depth stays continuous so casters are not quantised).
     let mut half = (0.5 * (max_x - min_x)).max(0.5 * (max_y - min_y)).max(1e-3);
     let mut center_x = 0.5 * (min_x + max_x);
     let mut center_y = 0.5 * (min_y + max_y);
     if texels > 1 {
-        // Snapping can move the centre by up to half a texel, so grow the box by
-        // one texel afterwards: coverage must stay conservative.
         let texel = (2.0 * half) / texels as f32;
         center_x = (center_x / texel).round() * texel;
         center_y = (center_y / texel).round() * texel;
         half += texel;
     }
 
-    // Depth: near margin of one box extent covers upstream casters that can
-    // still throw a shadow into view; far stops at the farthest receiver.
     let near_s = min_s - (max_s - min_s);
     let span = (max_s - near_s).max(1e-3);
     let center = right * center_x + true_up * center_y + fwd * (0.5 * (near_s + max_s));
-    // `fwd·eye = near_s` puts view-space z = 0 on the near plane.
     let eye = center + l * (fwd.dot(center) - near_s);
 
     let view = Mat4::from_cols(
@@ -152,7 +137,6 @@ pub(super) fn shadow_matrix_fitting(light_dir: &Vec4, corners: &[Vec3], texels: 
         glam::vec4(0.0, 0.0, -span.recip(), 0.0),
         glam::vec4(0.0, 0.0, 0.0, 1.0),
     );
-    // clip = projection * view * world (column-vector convention).
     projection * view
 }
 
@@ -191,15 +175,11 @@ pub(super) fn shadow_cascade_matrices(
         return (matrix, matrix, distance * 0.5);
     }
 
-    // Two equal slabs along the camera axis: [near, d/2] and [d/2, d]. Each
-    // cascade fits the frustum corners inside its own slab.
     let split = distance * 0.5;
     let near_corners =
         camera_frustum_corners(inv_view_proj, proj22, proj32, orthographic, near, split);
     let far_corners =
         camera_frustum_corners(inv_view_proj, proj22, proj32, orthographic, split, distance);
-    // `view` is only read through the callers' depth split; keep it explicit so a
-    // future change to the split metric cannot silently disagree with the shader.
     let _ = view;
     (
         shadow_matrix_fitting(light_dir, &near_corners, texels),

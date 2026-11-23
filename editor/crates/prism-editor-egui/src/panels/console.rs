@@ -328,7 +328,7 @@ pub(super) fn spawn_detached(program: &str, args: &[&str]) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command.creation_flags(0x0800_0000); 
     }
     command.spawn().is_ok()
 }

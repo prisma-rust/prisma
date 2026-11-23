@@ -168,9 +168,6 @@ impl Mesh {
     ) -> anyhow::Result<Self> {
         let vertex_size = std::mem::size_of_val(vertices) as vk::DeviceSize;
 
-        // Vertex buffer (device-local). On devices that support them, add
-        // device-address + AS-build usages so the same buffer can feed BLAS
-        // builds without reallocation.
         let (vertex_buffer, vertex_memory) = buffer::create_buffer(
             context,
             vertex_size,
@@ -192,7 +189,6 @@ impl Mesh {
         }
         .context("upload vertex data")?;
 
-        // Index buffer (optional).
         let (index_buffer, index_memory, index_count) = if let Some(indices) = indices {
             let index_size = std::mem::size_of_val(indices) as vk::DeviceSize;
             let (buf, mem) = buffer::create_buffer(

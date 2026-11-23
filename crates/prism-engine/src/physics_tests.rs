@@ -50,7 +50,6 @@ fn a_ray_that_misses_returns_nothing() {
     let mut world = World::new();
     entity_with(&mut world, boxed(1.0), glam::Vec3::ZERO, 1.0);
     assert!(raycast(&world, [0.0, 5.0, -5.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).is_none());
-    // Direction too short / distance is 0 also should not hit.
     assert!(raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 0.0], 100.0, u32::MAX).is_none());
     assert!(raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 1.0], 0.0, u32::MAX).is_none());
 }
@@ -108,14 +107,12 @@ fn a_rotated_box_is_hit_on_its_face() {
             glam::Vec3::ZERO,
         )),
     );
-    // Rotate 45° around X axis: box half width along z becomes 1·cos45 + 1·sin45 = √2.
     let hit = raycast(&world, [0.0, 0.0, -5.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).unwrap();
     assert!(
         (hit.distance - (5.0 - 2f32.sqrt())).abs() < 1e-3,
         "got {}",
         hit.distance
     );
-    // Hit face normal is tilted: length 1, and pointing toward raycast direction.
     let normal = glam::Vec3::from_array(hit.normal);
     assert!((normal.length() - 1.0).abs() < 1e-3, "got {normal:?}");
     assert!(normal.z < 0.0, "normal faces the ray: {normal:?}");
@@ -134,7 +131,6 @@ fn a_sphere_uses_its_radius_and_reports_a_radial_normal() {
     let hit = raycast(&world, [0.0, 0.0, -10.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).unwrap();
     assert!((hit.distance - 9.0).abs() < 1e-4, "got {}", hit.distance);
     assert!((hit.normal[2] + 1.0).abs() < 1e-4, "got {:?}", hit.normal);
-    // Grazing raycast does not hit.
     assert!(raycast(&world, [2.5, 0.0, -10.0], [0.0, 0.0, 1.0], 100.0, u32::MAX).is_none());
 }
 
@@ -161,7 +157,6 @@ fn a_capsule_covers_its_radius_and_half_height() {
         ..Default::default()
     };
     entity_with(&mut world, collider, glam::Vec3::ZERO, 1.0);
-    // Shoot vertically from above: hit height = half_height + radius.
     let hit = raycast(&world, [0.0, 10.0, 0.0], [0.0, -1.0, 0.0], 100.0, u32::MAX).unwrap();
     assert!((hit.distance - 8.5).abs() < 1e-3, "got {}", hit.distance);
 }

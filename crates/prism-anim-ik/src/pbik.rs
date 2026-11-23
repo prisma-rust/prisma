@@ -22,7 +22,6 @@ pub fn solve_pbik(joints: &mut [PbikJoint], effectors: &[PbikEffector], iteratio
     if joints.is_empty() || effectors.is_empty() {
         return;
     }
-    // Capture rest bone lengths.
     let rest_lengths: Vec<f32> = joints
         .iter()
         .map(|j| match j.parent {
@@ -32,7 +31,6 @@ pub fn solve_pbik(joints: &mut [PbikJoint], effectors: &[PbikEffector], iteratio
         .collect();
 
     for _ in 0..iterations.max(1) {
-        // 1. Pull effectors toward targets.
         for eff in effectors {
             if let Some(j) = joints.get_mut(eff.joint_index) {
                 let w = eff.weight.clamp(0.0, 1.0);
@@ -42,7 +40,6 @@ pub fn solve_pbik(joints: &mut [PbikJoint], effectors: &[PbikEffector], iteratio
             }
         }
 
-        // 2. Enforce bone-length distance constraints.
         for i in 0..joints.len() {
             let Some(p) = joints[i].parent else {
                 continue;

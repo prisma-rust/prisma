@@ -15,11 +15,6 @@ use tauri::plugin::PluginHandle;
 #[cfg(mobile)]
 use tauri::Manager;
 
-// ==================== Android: custom  Native Plugin ====================
-//
-// Call Android native API via Kotlin:
-//   - toggle_immersive / set_status_bar_color / vibrate / get_device_info
-//   - launch_game: start GameActivity
 
 #[cfg(mobile)]
 const NATIVE_PLUGIN_IDENTIFIER: &str = "com.example.tauriandroidapp";
@@ -74,7 +69,6 @@ fn get_device_info(state: tauri::State<NativeApi>) -> Result<serde_json::Value, 
     state.call("get_device_info", ())
 }
 
-// Desktop stub impl: let commands compile on desktop, return hint when called.
 #[cfg(not(mobile))]
 #[tauri::command]
 fn toggle_immersive() -> Result<bool, String> {

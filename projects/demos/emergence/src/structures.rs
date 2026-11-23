@@ -317,18 +317,14 @@ fn push_box(ops: &mut Vec<StructureOp>, min: [i32; 3], max: [i32; 3], mat: u8, a
 
 fn build_research_outpost() -> StructureTemplate {
     let mut ops = Vec::new();
-    // Base pad & hollow interior (36 x 13 x 32 L2 = 9m x 3.25m x 8m).
     push_box(&mut ops, [0, 0, 0], [36, 1, 32], mat_id::ALLOY, false);
     push_box(&mut ops, [1, 1, 1], [35, 12, 31], mat_id::AIR, false);
-    // Limestone perimeter walls.
     push_box(&mut ops, [0, 1, 0], [36, 12, 1], mat_id::LIMESTONE, false);
     push_box(&mut ops, [0, 1, 31], [36, 12, 32], mat_id::LIMESTONE, false);
     push_box(&mut ops, [0, 1, 0], [1, 12, 32], mat_id::LIMESTONE, false);
     push_box(&mut ops, [35, 1, 0], [36, 12, 32], mat_id::LIMESTONE, false);
-    // Roof + glass skylight.
     push_box(&mut ops, [0, 12, 0], [36, 13, 32], mat_id::ALLOY, false);
     push_box(&mut ops, [8, 12, 8], [28, 13, 24], mat_id::GLASS, false);
-    // Front doorway + L3 steps.
     push_box(&mut ops, [16, 1, 0], [20, 9, 1], mat_id::AIR, false);
     for x in 16..20 {
         ops.push(StructureOp::Micro {
@@ -337,7 +333,6 @@ fn build_research_outpost() -> StructureTemplate {
             l3_mask: micro_steps_l3_mask(),
         });
     }
-    // Front glass window + L3 grate mullion.
     push_box(&mut ops, [3, 3, 0], [14, 9, 1], mat_id::GLASS, false);
     for y in 3..9 {
         ops.push(StructureOp::Micro {
@@ -346,7 +341,6 @@ fn build_research_outpost() -> StructureTemplate {
             l3_mask: grate_l3_mask(),
         });
     }
-    // Interior Isotope reactor & Cryo-Biomass bay along back corners.
     push_box(&mut ops, [6, 1, 20], [10, 3, 24], mat_id::ALLOY, false);
     push_box(&mut ops, [7, 3, 21], [9, 5, 23], mat_id::ISOTOPE, true);
     push_box(&mut ops, [24, 1, 18], [30, 3, 25], mat_id::CRYO, false);
@@ -361,14 +355,12 @@ fn build_research_outpost() -> StructureTemplate {
 
 fn build_watchtower() -> StructureTemplate {
     let mut ops = Vec::new();
-    // 12 x 22 x 12 L2 (3m x 5.5m x 3m).
     push_box(&mut ops, [0, 0, 0], [12, 1, 12], mat_id::LIMESTONE, false);
     push_box(&mut ops, [1, 1, 1], [11, 16, 11], mat_id::AIR, false);
     push_box(&mut ops, [1, 1, 1], [3, 16, 3], mat_id::ALLOY, false);
     push_box(&mut ops, [9, 1, 1], [11, 16, 3], mat_id::ALLOY, false);
     push_box(&mut ops, [1, 1, 9], [3, 16, 11], mat_id::ALLOY, false);
     push_box(&mut ops, [9, 1, 9], [11, 16, 11], mat_id::ALLOY, false);
-    // Observation deck + glass parapet + glowing Isotope beacon.
     push_box(&mut ops, [0, 16, 0], [12, 17, 12], mat_id::ALLOY, false);
     push_box(&mut ops, [0, 17, 0], [12, 20, 1], mat_id::GLASS, false);
     push_box(&mut ops, [0, 17, 11], [12, 20, 12], mat_id::GLASS, false);
@@ -383,7 +375,6 @@ fn build_watchtower() -> StructureTemplate {
 
 fn build_monolith_shrine() -> StructureTemplate {
     let mut ops = Vec::new();
-    // Stepped ancient altar 12 x 14 x 12 L2.
     push_box(&mut ops, [0, 0, 0], [12, 2, 12], mat_id::LIMESTONE, false);
     push_box(&mut ops, [2, 2, 2], [10, 4, 10], mat_id::ALLOY, false);
     push_box(&mut ops, [4, 4, 4], [8, 10, 8], mat_id::CRYO, false);
@@ -405,7 +396,6 @@ fn build_monolith_shrine() -> StructureTemplate {
 
 fn build_timber_cabin() -> StructureTemplate {
     let mut ops = Vec::new();
-    // 14 x 12 x 14 L2 (3.5m x 3m x 3.5m).
     push_box(&mut ops, [0, 0, 0], [14, 1, 14], mat_id::LIMESTONE, false);
     push_box(&mut ops, [1, 1, 1], [13, 9, 13], mat_id::AIR, false);
     push_box(&mut ops, [0, 1, 0], [14, 9, 1], mat_id::TIMBER, false);
@@ -436,7 +426,6 @@ fn build_timber_cabin() -> StructureTemplate {
 
 fn build_oak_tree() -> StructureTemplate {
     let mut ops = Vec::new();
-    // Broadleaf tree 12 x 18 x 12 L2 (3m x 4.5m x 3m) with an L3-trimmed canopy edge.
     push_box(&mut ops, [5, 0, 5], [7, 10, 7], mat_id::TIMBER, false);
     push_box(&mut ops, [2, 9, 2], [10, 14, 10], mat_id::GRASS, false);
     push_box(&mut ops, [3, 14, 3], [9, 17, 9], mat_id::GRASS, false);
@@ -457,7 +446,6 @@ fn build_oak_tree() -> StructureTemplate {
 
 fn build_spruce_pine() -> StructureTemplate {
     let mut ops = Vec::new();
-    // Conifer 10 x 22 x 10 L2 with tiered L3 needle skirts.
     push_box(&mut ops, [4, 0, 4], [6, 16, 6], mat_id::TIMBER, false);
     for tier in 0..5i32 {
         let base_y = 5 + tier * 3;
@@ -490,7 +478,6 @@ fn build_spruce_pine() -> StructureTemplate {
 
 fn build_shrub() -> StructureTemplate {
     let mut ops = Vec::new();
-    // Low 4 x 3 x 4 L2 bush built entirely from L3 micro-voxels.
     for z in 0..4i32 {
         for x in 0..4i32 {
             ops.push(StructureOp::Micro {
@@ -515,7 +502,6 @@ fn build_shrub() -> StructureTemplate {
 
 fn build_water_pier() -> StructureTemplate {
     let mut ops = Vec::new();
-    // 16 x 6 x 8 L2 floating timber dock with alloy pilings.
     push_box(&mut ops, [0, 3, 0], [16, 4, 8], mat_id::TIMBER, false);
     push_box(&mut ops, [1, 0, 1], [3, 4, 3], mat_id::ALLOY, false);
     push_box(&mut ops, [13, 0, 1], [15, 4, 3], mat_id::ALLOY, false);
@@ -643,7 +629,6 @@ pub fn stamp_structure(
                         false,
                     );
                 }
-                // Fill only the gap between the natural surface and the plot level.
                 let mut fy = origin[1] + lowest - 1;
                 while fy >= 4 && !writer.l2_is_solid([origin[0] + dx, fy, origin[2] + dz]) {
                     if !writer.write_l2(
@@ -718,12 +703,10 @@ mod tests {
         };
         stamp_structure(&mut writer, outpost, [8, 16, 8], StructureRot::Rot0);
 
-        // The foundation pad is a full L2 brick, never an L1 COW cell.
         let l1_idx = chunk.l1_index(2, 4, 2).expect("in bounds");
         assert_ne!(chunk.l1_brick_ref[l1_idx], L1_UNIFORM_REF);
         assert_ne!(chunk.l1_brick_ref[l1_idx], 0);
 
-        // The front window mullion is stamped as an L3 micro-voxel mask, not a solid L2 cube.
         let mullion = chunk.get_l2_cell(8 + 7, 16 + 4, 8).expect("mullion cell");
         assert_ne!(mullion.2, u64::MAX, "L3 grate must stay a partial mask");
         assert_ne!(mullion.2, 0);

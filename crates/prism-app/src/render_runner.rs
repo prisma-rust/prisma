@@ -20,8 +20,6 @@ use prism_render::asset_bridge::{AssetResolveRequest, AssetResolveResult};
 use prism_render::frame_stats::{FrameStats, FrameStatsSummary};
 use prism_render::SwapchainOverlay;
 use prism_render::{FrameInput, FrameUBOData, GraphRenderer};
-// Directly use `raw-window-handle` crate (winit's `winit::raw_window_handle` is its
-// re-export): `win32-native` build must not have any `winit::` path.
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
@@ -49,7 +47,6 @@ struct RawHandleBridge<'a> {
 
 impl HasDisplayHandle for RawHandleBridge<'_> {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        // Raw handle guaranteed valid by main thread; here only re-borrow.
         Ok(unsafe { DisplayHandle::borrow_raw(*self.display) })
     }
 }
@@ -115,10 +112,6 @@ pub fn render_thread_main(
     log::info!("Render thread started");
     prism_engine::util::timing::event("render::thread_started", "");
 
-    // -------------------------------------------------------------------
-    // Async build renderer (~hundreds ms, but runs on render thread, does not block window events)
-    // -------------------------------------------------------------------
-    // Raw handle wrapped into Has*Handle---raw handle is process-level, cross-thread safe.
     let create_span = prism_engine::util::timing::span("render::create_renderer");
     let created = match &target {
         RenderTarget::Surface {
@@ -198,8 +191,6 @@ pub fn render_thread_main(
         shared.mark("warmup_done");
     }
 
-    // Build IBL per "scene declarative lighting": only runs CPU pre-convolution when scene carries EnvironmentLighting/env_map
-    // (or `.rscn` carries env texture); otherwise rely on cheap empty IBL at startup.
     if let Some(bytes) = scene_env {
         log::info!("scene lighting: building IBL environment (with convolve)");
         let env_span = prism_engine::util::timing::span("render::set_environment_ibl");
@@ -211,16 +202,12 @@ pub fn render_thread_main(
         log::info!("scene lighting: no IBL environment — cheap empty IBL (no convolve)");
     }
 
-    // Install external overlay (host UI etc); GPU resource lazily created at record.
     if let Some(factory) = overlay_factory {
         renderer.set_external_overlay(factory());
     }
 
-    // Frame timing
     let mut smoothed_fps = 0.0f32;
     let mut frame_count: u64 = 0;
-    // ~2 minutes at 60 fps; the summary is sorted, so it is refreshed a few
-    // times per second instead of every frame (#1002).
     let mut frame_stats = FrameStats::new(8192);
     let mut frame_stats_summary = FrameStatsSummary::default();
     let mut first_frame_presented = false;
@@ -233,12 +220,10 @@ pub fn render_thread_main(
     let mut bench_report_written = false;
 
     while shared.running.load(std::sync::atomic::Ordering::Relaxed) {
-        // Check PT reset request from main thread
         if shared.take_pt_reset() {
             renderer.request_pt_reset();
         }
 
-        // ---- Asset upload request (main thread CPU side -> render thread GPU side) ----
         let requests = shared.take_asset_requests();
         if !requests.is_empty() {
             let (entities, stripped): (Vec<Entity>, Vec<AssetResolveRequest>) =
@@ -250,19 +235,16 @@ pub fn render_thread_main(
         }
 
         let packet = shared.take_packet();
-        // Apply overlay messages delivered by main thread (e.g. "new host UI frame").
         let overlay_messages = shared.take_overlay_messages();
         for msg in overlay_messages {
             renderer.apply_overlay_message(msg);
         }
 
-        // Apply renderer commands delivered by main thread (e.g. set_environment rebuild IBL).
         let renderer_messages = shared.take_renderer_messages();
         for msg in renderer_messages {
             msg(&mut renderer);
         }
 
-        // The host drives this loop. Do not add a frame-rate sleep here.
         let packet = match packet {
             Some(packet) => {
                 if !first_packet_received {
@@ -327,9 +309,6 @@ pub fn render_thread_main(
             Err(e) => {
                 consecutive_errors += 1;
                 let text = format!("{e:#}");
-                // Device-lost / surface failure is terminal: retrying only spins
-                // the CPU and floods the log (observed: >1M lines). Report it to
-                // the host so the viewport can stop and surface the reason.
                 let fatal = text.contains("device has been lost")
                     || text.contains("DEVICE_LOST")
                     || text.contains("surface has been lost")
@@ -360,10 +339,6 @@ pub fn render_thread_main(
                 },
             );
             shared.mark("first_frame");
-            // The first frame is on the surface: reveal the window now.
-            // Signalling after warmup instead would still leave a visible gap,
-            // because the render thread only picks up the queued packet after
-            // the warmup finishes.
             shared
                 .renderer_ready
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -388,7 +363,6 @@ pub fn render_thread_main(
             }
         }
 
-        // Compute render stats.
         let elapsed = frame_start.elapsed();
         let frame_time_ms = elapsed.as_secs_f32() * 1000.0;
 
@@ -413,8 +387,6 @@ pub fn render_thread_main(
             frame_stats_summary = frame_stats.summary();
         }
 
-        // Benchmark report (#1002): warm-up frames only count down, and the file
-        // is written once on the frame that completes the sample set.
         if let Some(collector) = bench.as_mut() {
             let complete = collector.sample(
                 frame_time_ms,
@@ -444,7 +416,6 @@ pub fn render_thread_main(
             }
         }
 
-        // Render graph report (Web editor visualization): first frame + low-frequency refresh.
         if graph_report.is_enabled() {
             graph_report.maybe_write_with_timings(
                 &renderer.graph().snapshot(),
@@ -466,12 +437,10 @@ pub fn render_thread_main(
             frame_time_ms,
             fps: smoothed_fps,
             pt_frame_count: pt_count,
-            // Device not supporting timestamps keeps None; HUD explicitly shows "n/a" instead of faking GPU time with CPU wall clock.
             gpu_timings: gpu_timings.supported.then_some(gpu_timings),
             frame_stats: frame_stats_summary.clone(),
         });
 
-        // ---- Host (editor) frame readback: only read back PostPass tonemapped offscreen image ----
         if renderer.is_headless() {
             match renderer.offscreen_extent() {
                 Some(extent) => {
@@ -495,7 +464,6 @@ pub fn render_thread_main(
             }
         }
 
-        // Return packet: main thread next frame clear() + refill, skip Vec re-allocation each frame (#66).
         shared.recycle_packet(packet);
     }
 
@@ -563,7 +531,6 @@ fn render_one_frame(
     };
     renderer.apply_taa_jitter(&mut frame_data);
 
-    // #502: global LUT intensity + .cube path under assets/ (volume tone mapping does not cover LUT).
     let mut resolved_grade = packet.grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
     let lut_path = if settings.lut.trim().is_empty() {
@@ -571,19 +538,9 @@ fn render_one_frame(
     } else {
         prism_engine::asset_paths::asset_path(settings.lut.trim())
     };
-    // #613: internal resolution must take effect before `begin_frame`---`begin_frame` uses it to decide
-    // HDR intermediate target size, `execute` uses it again for PostPass target rect.
     renderer.set_internal_resolution(settings.internal_resolution, settings.internal_scale_mode);
     renderer.set_occlusion_culling(settings.occlusion_culling);
 
-    // GI / SHARC knobs: the renderer owns its own copy of these (they decide
-    // whether the SHARC passes run at all), so forward them each frame.
-    // `render_mode` and the PT knobs travel through `FrameInput` instead.
-    //
-    // `sharc_enable_clear` is deliberately not copied: it is a one-shot latch
-    // that the renderer consumes and resets, so copying it every frame would
-    // wipe the cache every frame. Callers that need a reset set it through
-    // `GraphRenderer::settings_mut()`.
     {
         let renderer_settings = renderer.settings_mut();
         renderer_settings.auto_exposure = settings.auto_exposure;
@@ -619,7 +576,6 @@ fn render_one_frame(
         None => return Ok(false),
     };
     drop(begin_span);
-    // #1007: last frame coarse depth read back in `begin_frame`, so filtering placed after it.
     let mut occlusion_items = Vec::new();
     let main_pass_items: &[prism_render::render_graph::DrawItem] = if settings.occlusion_culling {
         occlusion_items.extend_from_slice(draw_items);
@@ -683,9 +639,6 @@ fn render_one_frame(
         let _ = renderer.present(&ctx);
         let _ = renderer.end_frame(&ctx, false);
     })?;
-    // `GraphRenderer::present` returns whether the swapchain was out of date,
-    // not whether queue submission/present succeeded. Reaching this point
-    // means the frame was submitted to the native surface.
     let present_span = prism_engine::util::timing::span("render::present");
     let out_of_date = renderer.present(&ctx)?;
     drop(present_span);

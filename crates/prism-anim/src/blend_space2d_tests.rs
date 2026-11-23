@@ -66,8 +66,6 @@ fn a_square_produces_two_triangles() {
 
 #[test]
 fn the_centre_sits_on_the_shared_diagonal_of_both_triangles() {
-    // Square split along diagonal a-c into two triangles; centre lies on this shared edge, both triangles yield
-    // the same result: a(0) and c(20) each half.
     let mut space = square();
     let mut out = Pose::from_locals(Vec::new());
     assert!(space.evaluate_into([5.0, 5.0], 0.0, &mut out));
@@ -96,7 +94,6 @@ fn a_point_on_an_edge_weights_only_its_two_endpoints() {
 fn a_point_outside_the_hull_clamps_to_the_boundary() {
     let mut space = square();
     let mut out = Pose::from_locals(Vec::new());
-    // Pull out from centre toward +x: should stop at x = 10 edge, still blend by y = 5.
     assert!(space.evaluate_into([100.0, 5.0], 0.0, &mut out));
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 15.0).abs() < 1e-3, "expected 15, got {x}");
@@ -211,7 +208,6 @@ fn non_finite_queries_are_rejected() {
 
 #[test]
 fn phase_is_normalised_per_clip() {
-    // Two clips have different durations; same normalized phase each samples its own time point.
     let short = Arc::new(Clip {
         name: "short".into(),
         duration: 1.0,
@@ -275,7 +271,6 @@ fn phase_is_normalised_per_clip() {
     );
     let mut out = Pose::from_locals(Vec::new());
     assert!(space.evaluate_into([5.0, 0.0], 0.5, &mut out));
-    // Both segments reach midpoint of their own duration: 1 * 0.5 and 3 * 0.5, mixed to 1.0.
     let x = out.local(0).unwrap().translation.x;
     assert!((x - 1.0).abs() < 1e-4, "expected 1.0, got {x}");
 }

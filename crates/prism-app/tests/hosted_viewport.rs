@@ -40,7 +40,6 @@ fn hosted_viewport_renders_a_frame_from_a_loose_scene_json() {
 
     app.start_hosted(320, 180);
 
-    // Renderer asynchronously created in render thread (hundreds of ms), frames only after.
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut frame = None;
     while Instant::now() < deadline {
@@ -68,7 +67,6 @@ fn hosted_viewport_renders_a_frame_from_a_loose_scene_json() {
         320 * 180 * 4,
         "frame must be packed RGBA8"
     );
-    // All black usually means PostPass did not really write to offscreen target.
     let lit = frame
         .pixels
         .as_chunks::<4>()
@@ -77,7 +75,6 @@ fn hosted_viewport_renders_a_frame_from_a_loose_scene_json() {
         .any(|px| px[0] > 0 || px[1] > 0 || px[2] > 0);
     assert!(lit, "rendered frame is all black");
 
-    // Scaling should not break: run `resize_offscreen` then take a frame.
     app.host_resize(160, 90);
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut resized = None;

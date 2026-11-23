@@ -99,12 +99,11 @@ fn to_gpu_packs_textures_as_invalid_when_none() {
     assert_eq!(gpu.base_color, [1.0, 0.5, 0.2, 1.0]);
     assert_eq!(gpu.metallic_roughness_emissive[0], 0.8);
     assert_eq!(gpu.metallic_roughness_emissive[1], 0.3);
-    assert_eq!(gpu.metallic_roughness_emissive[3], 1.0); // emissive_strength
+    assert_eq!(gpu.metallic_roughness_emissive[3], 1.0);
     assert_eq!(gpu.albedo_idx, u32::MAX);
     assert_eq!(gpu.normal_idx, u32::MAX);
     assert_eq!(gpu.metallic_roughness_idx, u32::MAX);
     assert_eq!(gpu.emissive_idx, u32::MAX);
-    // Advanced fields
     assert_eq!(gpu.transmission_factor[0], 0.0);
     assert_eq!(gpu.transmission_factor[1], 1.5);
     assert_eq!(gpu.transmission_factor[2], 0.0);

@@ -20,7 +20,7 @@ fn test_is_qualcomm_adreno_by_vendor_id() {
 #[test]
 fn test_is_qualcomm_adreno_by_device_name() {
     let mut props = vk::PhysicalDeviceProperties {
-        vendor_id: 0x10DE, // NVIDIA vendor ID
+        vendor_id: 0x10DE,
         ..Default::default()
     };
     let name = b"Adreno (TM) 850\0";
@@ -37,7 +37,7 @@ fn test_is_qualcomm_adreno_by_device_name() {
 #[test]
 fn test_non_adreno_device() {
     let mut props = vk::PhysicalDeviceProperties {
-        vendor_id: 0x8086, // Intel
+        vendor_id: 0x8086,
         ..Default::default()
     };
     let name = b"Intel(R) UHD Graphics\0";

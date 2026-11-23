@@ -39,7 +39,6 @@ pub fn all_cameras(world: &World) -> Vec<prism_ecs::Entity> {
         .filter(|(_, cam)| cam.enabled)
         .map(|(entity, cam)| (cam.depth, entity))
         .collect();
-    // `total_cmp` gives NaN a total order, avoiding unwrap risk from `partial_cmp`.
     cameras.sort_by(|a, b| a.0.total_cmp(&b.0));
     cameras.into_iter().map(|(_, entity)| entity).collect()
 }
@@ -56,7 +55,7 @@ pub fn main_camera(world: &World) -> Option<prism_ecs::Entity> {
 /// tools needing "non-main camera" list (stats, debug UI), no longer means "ignored".
 pub fn ignored_cameras(world: &World) -> Vec<prism_ecs::Entity> {
     let mut cameras = all_cameras(world);
-    cameras.pop(); // Main camera (max `depth`) will be drawn
+    cameras.pop();
     cameras
 }
 
@@ -123,15 +122,12 @@ pub struct CameraOutput {
 /// a 75° FOV, 16:9 aspect, and exposure 1.0.
 pub fn fallback_camera_output(surface_rotation: &Mat4, aspect: f32) -> CameraOutput {
     let eye = Vec3::new(0.0, 0.0, 5.0);
-    // Simple look-at: eye at (0,0,5), target at origin, +Y up.
-    // Right-handed, camera looks down -Z per engine convention.
     let view = Mat4::from_cols_array_2d(&[
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, -5.0, 1.0],
     ]);
-    // Standard perspective: 75° FOV, 16:9-ish aspect, near=0.01, far=500.
     let fov_y = 75.0_f32.to_radians();
     let inv_tan = 1.0 / (fov_y * 0.5).tan();
     let near = 0.01;
@@ -183,16 +179,11 @@ pub fn compute_camera_output_for(
     let cam = world.get::<Camera>(entity)?;
     let world_tf = world.get::<LocalToWorld>(entity)?;
 
-    // Eye position = world-space translation (column 3, rows 0..3 of the
-    // column-major matrix). For a root camera this equals LocalTransform
-    // translation; for a nested camera the hierarchy system already baked the
-    // parent transform in.
     let col3 = world_tf.0.col(3);
     let eye = Vec3::new(col3.x, col3.y, col3.z);
 
     let view = match world.get::<FlyCameraController>(entity) {
         Some(ctrl) => fly_view(eye, ctrl.yaw, ctrl.pitch),
-        // Identity transform → camera looks down −Z (project convention); any rotation carried by LocalToWorld.
         None => world_tf.0.inverse(),
     };
     let proj = perspective(cam);
@@ -226,28 +217,18 @@ pub fn camera_controller_system(
 ) -> Option<prism_ecs::Entity> {
     use crate::input::KeyCode;
 
-    // Input must drive the camera **actually being rendered**, else in multi-camera scenes WASD/mouse will move another one.
-    // First get entity id so &self borrow ends here, then can take &mut components.
     let cam_entity = active_camera(world)?;
 
     let ctrl = world.get_mut::<FlyCameraController>(cam_entity)?;
     let move_speed;
     {
-        // Scope the &mut borrow of ctrl so we can later borrow LocalTransform.
-        // Pointer lock state is the only switch for camera input: when unlocked keyboard and mouse belong to project UI, camera
-        // neither rotates nor moves (previously right-drag could still rotate view, i.e. one boolean governed only half).
         if look_active {
             let d = input.mouse_delta();
             ctrl.yaw -= d[0] as f32 * ctrl.look_sensitivity;
             ctrl.pitch -= d[1] as f32 * ctrl.look_sensitivity;
-            // Clamp just shy of straight up/down. The yaw-based `right()` keeps
-            // the basis well-defined at any pitch, and ~89° reads as "looking
-            // straight up" while avoiding pole-crossing roll.
             let lim = std::f32::consts::FRAC_PI_2 - 0.02;
             ctrl.pitch = ctrl.pitch.clamp(-lim, lim);
 
-            // Mouse wheel adjusts base move speed. In unlocked state wheel belongs to project UI,
-            // so scrolling the menu does not accidentally change camera speed.
             let scroll = input.scroll_delta() as f32;
             if scroll.abs() > 0.0 {
                 ctrl.move_speed *= 1.0 - scroll * 0.1;
@@ -257,10 +238,6 @@ pub fn camera_controller_system(
         move_speed = ctrl.move_speed;
     }
 
-    // Translation: WASD/QE/Space/Ctrl relative to the yaw/pitch basis. Position
-    // lives on the sibling LocalTransform (roots) - nested cameras use the
-    // LocalToWorld derived by the hierarchy system  and shouldn't be moved by
-    // input directly, so we only write to LocalTransform.
     let boost = if input.key_held(KeyCode::ShiftLeft) || input.key_held(KeyCode::ShiftRight) {
         4.0
     } else {
@@ -276,8 +253,6 @@ pub fn camera_controller_system(
     let r = right(yaw);
     let up = Vec3::Y;
     let mut movev = Vec3::ZERO;
-    // Movement keys only go to camera in pointer lock state: unlocked keyboard belongs to project UI (menus often use WASD
-    // navigation), one keypress must never flip menu and move camera at same time.
     if look_active && input.key_held(KeyCode::KeyW) {
         movev += f;
     }
@@ -297,13 +272,6 @@ pub fn camera_controller_system(
         movev -= up;
     }
 
-    // Orientation must also be written back: `hierarchy_system` derives child node
-    // (billboard / weapon / spot light) `LocalToWorld` only from `LocalTransform.rotation`, writing only yaw/pitch
-    // would leave them stuck at old orientation.
-    //
-    // `yaw`/`pitch` (and WASD basis vectors) are in **world** space, while `LocalTransform` is relative to parent:
-    // under a rotated parent must first subtract parent's world rotation, otherwise child orientation
-    // gets rotated twice by parent, and WASD would add world axes directly to local coordinates.
     let world_rot = fly_rotation(yaw, pitch);
     let parent_rot = parent_world_rotation(world, cam_entity);
     let local_rot = match parent_rot {
@@ -329,8 +297,6 @@ pub fn camera_controller_system(
 
     Some(cam_entity)
 }
-
-// --- fly-camera math (ported from the deleted `FlyCamera`) ---------------
 
 /// Unit forward vector from yaw/pitch.
 ///

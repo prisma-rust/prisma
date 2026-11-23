@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use prism_scene::components::{Light2D, Light2DKind, TimeOfDay, TimeOfDayPhase};
 
@@ -50,7 +46,6 @@ fn paused_or_zero_length_clocks_do_not_move() {
 fn clock_text_pads_hours_and_minutes() {
     assert_eq!(clock(6.5).clock_text(), "06:30");
     assert_eq!(clock(0.0).clock_text(), "00:00");
-    // Author writing -3 / 30 also readable, normalized then reformatted.
     assert_eq!(clock(-3.0).clock_text(), "21:00");
     assert_eq!(clock(30.0).clock_text(), "06:00");
 }
@@ -59,7 +54,6 @@ fn clock_text_pads_hours_and_minutes() {
 fn phases_follow_sunrise_and_sunset() {
     assert_eq!(clock(12.0).phase(), TimeOfDayPhase::Day);
     assert_eq!(clock(2.0).phase(), TimeOfDayPhase::Night);
-    // Sunrise / sunset themselves lie within transition interval.
     assert_eq!(clock(6.0).phase(), TimeOfDayPhase::Dawn);
     assert_eq!(clock(18.0).phase(), TimeOfDayPhase::Dusk);
 }
@@ -76,12 +70,10 @@ fn ambient_light_is_bright_at_day_and_dark_at_night() {
     assert_eq!(color, night.night_color);
     assert_eq!(intensity, night.night_intensity);
 
-    // Sunrise midpoint should be exactly half day/night (smoothstep midpoint is 0.5).
     let dawn = clock(6.0).ambient();
     assert!(dawn.0[0] < day.day_color[0] && dawn.0[0] > night.night_color[0]);
     assert!((dawn.0[0] - (day.day_color[0] + night.night_color[0]) * 0.5).abs() < 1e-3);
 
-    // Default intensity is 1.0 for both day and night; need "night darker" config to see interpolation.
     let mut dimmer = TimeOfDay {
         hours: 6.0,
         night_intensity: 0.35,
@@ -125,12 +117,10 @@ fn the_system_writes_the_ambient_light_and_leaves_point_lights_alone() {
     time_of_day_system(&mut world, 1.0);
 
     let sun_light = world.get::<Light2D>(sun).expect("sun light");
-    // Midnight: ambient light takes night color.
     assert_eq!(sun_light.color, clock(0.0).night_color);
     assert_eq!(sun_light.intensity, clock(0.0).night_intensity);
     assert!(sun_light.enabled);
 
-    // Point light unaffected (lantern bright at night, relies on ambient light darkening).
     let lamp_light = world.get::<Light2D>(lamp).expect("lamp light");
     assert_eq!(lamp_light.intensity, 3.0);
     assert_eq!(lamp_light.color, [1.0, 0.6, 0.2]);

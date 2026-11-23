@@ -53,7 +53,6 @@ impl log::Log for Tee {
         if self.inner.enabled(record.metadata()) {
             self.inner.log(record);
         }
-        // Only send levels "editor itself cares about" to panel, Trace would flood window.
         let level = match record.level() {
             log::Level::Error => LogLevel::Error,
             log::Level::Warn => LogLevel::Warn,
@@ -83,7 +82,6 @@ pub fn install(default_filter: &str) {
     if SINK.get().is_some() {
         return;
     }
-    // Placeholder first, avoid recursive initialization.
     sink();
     let inner =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
@@ -111,7 +109,6 @@ fn install_panic_hook() {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info: &PanicHookInfo<'_>| {
             push_panic(info);
-            // Keep original behavior (stderr / RUST_BACKTRACE), terminal troubleshooting still usable.
             previous(info);
         }));
     });
@@ -135,7 +132,6 @@ fn push_panic(info: &PanicHookInfo<'_>) {
             )
         })
         .unwrap_or_else(|| "<unknown location>".to_owned());
-    // Capture stack in hook: unwind not started yet, frames complete (including project module frames).
     let backtrace = std::backtrace::Backtrace::force_capture();
     if let Ok(mut queue) = sink().lock() {
         if queue.len() >= CAPACITY {

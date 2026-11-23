@@ -112,7 +112,6 @@ pub fn parse_cube(text: &str) -> Result<Lut3d, LutParseError> {
 
     for (index, raw) in text.lines().enumerate() {
         let line_no = index + 1;
-        // Strip comments, including the `#` that some exporters put inline.
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -144,7 +143,6 @@ pub fn parse_cube(text: &str) -> Result<Lut3d, LutParseError> {
                     return Err(LutParseError::UnsupportedDomain);
                 }
             }
-            // Everything else must be a data row.
             _ => {
                 let mut values = [0.0f32; 3];
                 let mut count = 0;
@@ -211,9 +209,7 @@ DOMAIN_MAX 1 1 1
         assert_eq!(lut.size, 2);
         assert_eq!(lut.data.len(), 8);
         assert_eq!(lut.data, Lut3d::identity(2).data);
-        // index 1 is r=1, g=0, b=0 (red changes fastest)
         assert_eq!(lut.data[1], [1.0, 0.0, 0.0]);
-        // index 4 is r=0, g=0, b=1 (blue changes slowest)
         assert_eq!(lut.data[4], [0.0, 0.0, 1.0]);
     }
 

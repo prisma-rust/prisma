@@ -182,7 +182,6 @@ mod tests {
             ImporterClass::from_path("assets/weird.xyz").importer_name(),
             "DefaultImporter"
         );
-        // probe_volume.bin etc binary data goes to DefaultImporter, avoid mistaking for model
         assert_eq!(
             ImporterClass::from_path("assets/gi/probe_volume.bin").importer_name(),
             "DefaultImporter"
@@ -199,7 +198,6 @@ mod tests {
             ImporterClass::from_path("assets/prefabs/lamp.prefab.json"),
             ImporterClass::Prefab
         );
-        // Normal JSON is text, not scene.
         assert_eq!(
             ImporterClass::from_path("assets/data/x.json"),
             ImporterClass::Text

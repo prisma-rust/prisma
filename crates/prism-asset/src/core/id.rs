@@ -1,16 +1,8 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// ---------------------------------------------------------------------------
-// Global atomic counter used by AssetId::generate()
-// ---------------------------------------------------------------------------
-
 /// Process-wide serial counter used by [`AssetId::generate`].
 static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
-
-// ---------------------------------------------------------------------------
-// AssetId — globally unique u64-based identifier
-// ---------------------------------------------------------------------------
 
 /// A globally unique 64-bit asset identifier.
 ///
@@ -27,10 +19,6 @@ impl AssetId {
     const SERIAL_MASK: u64 = 0x0000_0000_FFFF_FFFF;
     /// Shift for the generation field.
     const GENERATION_SHIFT: u64 = 32;
-
-    // ------------------------------------------------------------------
-    // Construction
-    // ------------------------------------------------------------------
 
     /// Create a new `AssetId` from its raw u64 representation.
     pub const fn from_raw(raw: u64) -> Self {
@@ -99,10 +87,6 @@ impl AssetId {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Display / Debug
-// ---------------------------------------------------------------------------
-
 impl fmt::Display for AssetId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AssetId({:016x})", self.0)
@@ -121,10 +105,6 @@ impl fmt::Debug for AssetId {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Serde
-// ---------------------------------------------------------------------------
-
 impl serde::Serialize for AssetId {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(s)
@@ -136,10 +116,6 @@ impl<'de> serde::Deserialize<'de> for AssetId {
         u64::deserialize(d).map(Self)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Persistent ID generator (editor)
-// ---------------------------------------------------------------------------
 
 /// A persisted asset-ID generator that tracks the next serial in a file.
 pub struct AssetIdGenerator {

@@ -73,8 +73,6 @@ impl Ini {
     /// defaults.
     pub fn parse(text: &str) -> Self {
         let mut ini = Self::default();
-        // Index of the current section; `None` means no `[section]` seen yet,
-        // so keys before the first header are dropped.
         let mut current: Option<usize> = None;
 
         for raw in text.lines() {
@@ -88,7 +86,6 @@ impl Ini {
                     log::debug!("ini: empty section header on {raw:?}; ignored");
                     continue;
                 }
-                // A repeated section is merged: keep writing into the first one.
                 current = Some(match ini.sections.iter().position(|s| s.name == name) {
                     Some(index) => index,
                     None => {
@@ -248,7 +245,6 @@ pub fn parse_value(raw: &str) -> String {
                 Some((_, '"')) => out.push('"'),
                 Some((_, '\\')) => out.push('\\'),
                 Some((_, other)) => {
-                    // Unknown escape: keep it, so `C:\temp` does not lose a char.
                     out.push('\\');
                     out.push(other);
                 }
@@ -338,7 +334,6 @@ mod tests {
             "# a comment\n   ; indented comment\n\n[build]\noutput_dir = \"a#b;c\" # not a comment\n",
         );
         assert_eq!(ini.sections().len(), 1);
-        // No inline comments: `#` / `;` inside quotes survive verbatim.
         assert_eq!(ini.get("build", "output_dir"), Some("a#b;c"));
     }
 
@@ -398,8 +393,6 @@ mod tests {
     #[test]
     fn malformed_lines_are_skipped_without_losing_the_rest() {
         let ini = Ini::parse("stray = 1\n[window\nwidth = 640\n= 3\n[t]\nok = 1\n");
-        // `[window` never closes, so it is a malformed line and `width` stays
-        // before any section.
         assert_eq!(ini.get("t", "ok"), Some("1"));
         assert_eq!(ini.get("window", "width"), None);
     }
@@ -431,7 +424,6 @@ mod tests {
 
     #[test]
     fn unknown_sections_survive_a_round_trip() {
-        // The editor writes only a few sections and must keep the rest.
         let mut ini = Ini::parse("[app]\ncompany = \"Acme\"\n[render]\nvsync = true\n");
         ini.set("app", "company", "Acme Labs");
         let reparsed = Ini::parse(&ini.render());

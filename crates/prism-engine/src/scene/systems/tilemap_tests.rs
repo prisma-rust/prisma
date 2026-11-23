@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests: tile map → SpriteDrawItem (#529)
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::scene::components::{SceneAssetId, SpriteRenderer};
 use prism_ecs::Entity;
@@ -51,7 +47,6 @@ fn center_of(item: &SpriteDrawItem) -> [f32; 3] {
 #[test]
 fn each_non_empty_cell_becomes_one_quad() {
     let mut world = World::new();
-    // 2x2, only upper-left and lower-right cells have tiles.
     spawn_tilemap(
         &mut world,
         map(vec![1, 0, 0, 2], 2, [1.0, 1.0]),
@@ -65,7 +60,6 @@ fn each_non_empty_cell_becomes_one_quad() {
     assert_eq!(items.len(), 2, "Empty cells produce no draw items");
     assert_eq!(items[0].1.texture, 5);
     assert_eq!(items[1].1.texture, 5);
-    // Row-major: upper-left drawn first.
     assert_eq!(center_of(&items[0].1), [0.5, 1.5, 0.0]);
     assert_eq!(center_of(&items[1].1), [1.5, 0.5, 0.0]);
 }
@@ -73,7 +67,6 @@ fn each_non_empty_cell_becomes_one_quad() {
 #[test]
 fn tile_uv_maps_the_index_into_the_tileset_grid() {
     let mut world = World::new();
-    // Tileset 64x32 + 16x16 tiles = 4 cols 2 rows; index 5 (6th block) in row 2 col 2.
     spawn_tilemap(
         &mut world,
         map(vec![6], 1, [1.0, 1.0]),
@@ -91,7 +84,6 @@ fn tile_uv_maps_the_index_into_the_tileset_grid() {
 #[test]
 fn tile_index_is_clamped_to_the_tileset() {
     let mut world = World::new();
-    // Index 99 exceeds 4x2 tileset: clamp to last block, cannot sample outside image.
     spawn_tilemap(
         &mut world,
         map(vec![100], 1, [1.0, 1.0]),
@@ -108,7 +100,6 @@ fn tile_index_is_clamped_to_the_tileset() {
 #[test]
 fn cells_are_placed_top_down_with_the_authored_cell_size() {
     let mut world = World::new();
-    // 2 cols x 2 rows, cells 2x1: row 0 is upper (larger y), larger row number goes lower.
     spawn_tilemap(
         &mut world,
         map(vec![1, 1, 1, 1], 2, [2.0, 1.0]),
@@ -164,14 +155,12 @@ fn the_entity_transform_moves_the_whole_grid() {
 
     let items = tilemap_entries(&world, None);
     assert_eq!(center_of(&items[0].1), [10.5, 20.5, -3.0]);
-    // z participates in sort key (camera looks −Z, larger z is closer).
     assert_eq!(items[0].0 .2, -3.0);
 }
 
 #[test]
 fn unresolved_or_empty_tilemaps_draw_nothing() {
     let mut world = World::new();
-    // generation = 0: tileset not yet uploaded.
     spawn_tilemap(
         &mut world,
         map(vec![1], 1, [1.0, 1.0]),
@@ -182,7 +171,6 @@ fn unresolved_or_empty_tilemaps_draw_nothing() {
     );
     assert!(tilemap_entries(&world, None).is_empty());
 
-    // Empty path / fully empty cells / illegal cell size do not draw.
     let mut world = World::new();
     spawn_tilemap(
         &mut world,
@@ -244,7 +232,6 @@ fn inactive_tilemaps_are_skipped() {
 #[test]
 fn the_camera_frustum_culls_off_screen_cells() {
     let mut world = World::new();
-    // 8x1 horizontal map, cell width 10; frustum only sees x ∈ [-5, 5].
     spawn_tilemap(
         &mut world,
         map(vec![1; 8], 8, [10.0, 10.0]),
@@ -254,7 +241,6 @@ fn the_camera_frustum_culls_off_screen_cells() {
         1,
     );
 
-    // Use engine own projection (Vulkan depth + y-flip), no need to write another formula.
     let camera = prism_scene::Camera {
         orthographic: true,
         orthographic_size: 5.0,
@@ -279,7 +265,6 @@ fn the_camera_frustum_culls_off_screen_cells() {
 #[test]
 fn tilemaps_sort_against_sprites_by_layer() {
     let mut world = World::new();
-    // Background tile layer -1 (far), sprite layer 0 (near).
     let mut tilemap = map(vec![1], 1, [1.0, 1.0]);
     tilemap.sorting_layer = -1;
     spawn_tilemap(&mut world, tilemap, glam::Vec3::ZERO, [16, 16], 4, 1);

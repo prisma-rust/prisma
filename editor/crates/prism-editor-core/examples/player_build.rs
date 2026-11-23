@@ -64,7 +64,6 @@ fn main() -> ExitCode {
         }
     }
 
-    // `required` is the **executable in the release directory**, only present after copy.
     for required in &plan.required {
         if !required.is_file() {
             eprintln!("missing build output: {}", required.display());

@@ -146,7 +146,6 @@ fn start_time_looping_and_invalid_values_are_sanitized() {
             .with_weight(5.0),
     );
     assert_eq!(player.active_weight(), 1.0);
-    // start time wraps to 0.75; sampling the constant track still gives 1.
     assert!((sample(&player) - 1.0).abs() < 1e-5);
     player.tick(0.5);
     assert!(player.is_playing());
@@ -216,7 +215,6 @@ fn a_montage_can_start_at_a_named_section() {
         Some("Vault")
     );
 
-    // Falls back to start_time when the segment name doesn't exist, instead of getting stuck at 0 or panicking.
     player.play_now(
         Montage::new(sectioned_clip())
             .with_start_section("Missing")
@@ -424,7 +422,6 @@ fn blend_out_only_applies_to_one_shot_montages() {
     player.tick(0.15);
     assert!((player.active_weight() - 0.125).abs() < 1e-5);
 
-    // Looped Montages don't flash at the end of every cycle.
     let mut looping = MontagePlayer::new();
     looping.play_now(Montage::new(clip("loop", 0.0, None)).with_blend_out(0.4));
     looping.tick(0.9);

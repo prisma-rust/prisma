@@ -54,7 +54,7 @@ fn rmat_blob() -> Vec<u8> {
     for i in 0..MATERIAL_SCALAR_COUNT {
         blob.extend_from_slice(&(i as f32).to_le_bytes());
     }
-    blob.push(1); // Mask
+    blob.push(1);
     blob.extend_from_slice(&crate::formats::DEFAULT_ALPHA_CUTOFF.to_le_bytes());
     blob.push(1);
     blob.extend_from_slice(&7u64.to_le_bytes());
@@ -90,8 +90,6 @@ fn mesh_into_bytes_keeps_the_header_offsets_it_did_not_decode() {
         "into_bytes must not silently return nothing"
     );
     assert_eq!(bytes, blob);
-    // The three sub-buffer offsets are not part of `RmesInfo`; they survive
-    // only because the original bytes are kept.
     assert_eq!(&bytes[25..29], &0xDEAD_BEEFu32.to_le_bytes());
     assert_eq!(&bytes[29..33], &0xFEED_FACEu32.to_le_bytes());
 }

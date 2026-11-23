@@ -124,10 +124,6 @@ impl RenderTextureScheduler {
         Ok(())
     }
 
-    // ------------------------------------------------------------------
-    // Internal: GPU infrastructure (lazily created)
-    // ------------------------------------------------------------------
-
     /// Generic offscreen render pass: shared by all RTs. final_layout =
     /// SHADER_READ_ONLY_OPTIMAL for downstream sampling.
     fn ensure_render_pass(&mut self, device: &ash::Device) -> anyhow::Result<()> {
@@ -186,7 +182,6 @@ impl RenderTextureScheduler {
             shader_stage(vk::ShaderStageFlags::FRAGMENT, frag_module, &frag_entry),
         ];
 
-        // RtRenderPush = { uint pattern } (4 bytes, no std140 tail padding).
         let push = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -278,9 +273,6 @@ impl RenderPassNode for RenderTextureScheduler {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Each RT declares a write edge: after render layout = SHADER_READ_ONLY_OPTIMAL
-        // (render pass final_layout), for downstream read-edge barrier derivation. RTs are external
-        // persistent resources, graph does not allocate, no create_resource_at.
         for i in 0..self.rts.len() {
             graph.write_usage(ResourceUsage {
                 handle: ResourceHandle(RT_OUTPUT_H.0 + i as u32),
@@ -306,16 +298,12 @@ impl RenderPassNode for RenderTextureScheduler {
         let rp = self.render_pass.context("render pass missing")?;
         let mut rendered = vec![false; self.rts.len()];
 
-        // First phase: snapshot each RT render decision (shader + whether need render).
-        // Next step extends execution phase needing both `&mut self` (pipeline / framebuffer creation) and
-        // `&mut self.rts[i]` (pattern generation), snapshot first avoids borrow conflict.
         let plan: Vec<(Option<RtShader>, bool)> = self
             .rts
             .iter()
             .map(|rt| (rt.active_shader(), rt.needs_render()))
             .collect();
 
-        // Second phase: execute blits by snapshot.
         for (i, &(shader, needs)) in plan.iter().enumerate() {
             if let Some(shader) = shader {
                 if needs {
@@ -327,8 +315,6 @@ impl RenderPassNode for RenderTextureScheduler {
                         (rt.image(), rt.extent())
                     };
 
-                    // Any old layout → COLOR_ATTACHMENT_OPTIMAL. Full-screen repaint,
-                    // no content preservation needed (discard-style update, same as Realtime default).
                     let barrier = vk::ImageMemoryBarrier2::default()
                         .old_layout(vk::ImageLayout::UNDEFINED)
                         .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -346,8 +332,6 @@ impl RenderPassNode for RenderTextureScheduler {
                         });
                     let barriers = [barrier];
                     let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
-                    // `vkCmdPipelineBarrier2` (1.3 core) is not exported on a 1.2
-                    // Instance — use the KHR wrapper like `buffer.rs` does.
                     let sync2 = crate::vulkan_compat::LegacySync2 {
                         device: &ctx.context.device,
                     };
@@ -388,7 +372,6 @@ impl RenderPassNode for RenderTextureScheduler {
                 }
             }
 
-            // Publish RT (image + view + bindless slot) for downstream sampling.
             let rt = &self.rts[i];
             resources.set_image(ResourceHandle(RT_OUTPUT_H.0 + i as u32), rt.image());
             resources.set_image_view(ResourceHandle(RT_OUTPUT_H.0 + i as u32), rt.view());
@@ -398,8 +381,6 @@ impl RenderPassNode for RenderTextureScheduler {
             );
         }
 
-        // End-of-frame state advance: initialize render frame flag / clear pending, all RTs tick unconditionally
-        // (counter must advance every frame, otherwise Realtime+period decision freezes).
         for (i, rt) in self.rts.iter_mut().enumerate() {
             if rendered[i] {
                 rt.mark_rendered();
@@ -431,7 +412,6 @@ impl Drop for RenderTextureScheduler {
             if let Some(rp) = self.render_pass.take() {
                 unsafe { device.destroy_render_pass(rp, None) };
             }
-            // Pipelines released by GraphicsPipeline RAII; rts each Drop.
         }
     }
 }

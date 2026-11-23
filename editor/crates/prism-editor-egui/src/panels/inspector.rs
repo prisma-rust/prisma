@@ -3450,7 +3450,6 @@ mod sprite_preview_tests {
 
     #[test]
     fn a_single_row_sheet_derives_its_columns_from_the_texture() {
-        // 960×16 sheet with 64×16 frames = 15 cells in one row.
         assert_eq!(sprite_frame_grid([960, 16], [64, 16], 0), Some((15, 1)));
     }
 
@@ -3471,7 +3470,6 @@ mod sprite_preview_tests {
 
     #[test]
     fn a_frame_size_that_does_not_tile_the_sheet_is_rejected() {
-        // 100 is not a multiple of 30, so the last column would be clipped.
         assert_eq!(sprite_frame_grid([100, 50], [30, 25], 0), None);
         assert_eq!(sprite_frame_grid([100, 50], [25, 25], 0), Some((4, 2)));
     }

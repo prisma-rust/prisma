@@ -233,9 +233,7 @@ pub struct NrdBinding {
     pub destroy_instance: PFunNrdDestroyInstance,
 }
 
-// SAFETY: Resolved NRD entry points point to immutable code pages.
 unsafe impl Send for NrdBinding {}
-// SAFETY: Resolved NRD entry points point to immutable code pages.
 unsafe impl Sync for NrdBinding {}
 
 impl NrdBinding {
@@ -303,9 +301,7 @@ pub struct NrdRuntime {
     version: (u8, u8, u8),
 }
 
-// SAFETY: `NrdRuntime` owns its NRD instance exclusively and is only mutated on the render thread.
 unsafe impl Send for NrdRuntime {}
-// SAFETY: `NrdRuntime` is synchronized by `GraphRenderer` on the render thread.
 unsafe impl Sync for NrdRuntime {}
 
 impl NrdRuntime {
@@ -321,7 +317,7 @@ impl NrdRuntime {
         };
         let denoiser = NrdDenoiserDesc {
             identifier: 0,
-            denoiser: 0, // REBLUR_DIFFUSE_SPECULAR
+            denoiser: 0,
         };
         let create_desc = NrdInstanceCreationDesc {
             allocation_callbacks: NrdAllocationCallbacks {

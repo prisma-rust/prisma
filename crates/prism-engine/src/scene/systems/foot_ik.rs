@@ -332,7 +332,6 @@ mod tests {
         let skeleton = skeleton();
         let mut world = World::new();
         floor(&mut world);
-        // Lifting the character by 5 m puts the ground far below the ankles.
         let entity = character(&mut world, Vec3::new(0.0, 5.0, 0.0));
         let mut pose = skeleton.rest_pose();
         let before = pose.clone();

@@ -58,7 +58,6 @@ fn draw_item(
     model: [[f32; 4]; 4],
     entity_id: u32,
 ) -> DrawItem {
-    // Box mesh is identity cube, model matrix only translation + uniform scale.
     let scale = model[0][0].abs() * 0.5;
     let x = model[3][0];
     let y = model[3][1];
@@ -188,17 +187,14 @@ fn a_fully_covered_box_is_culled_without_changing_the_image() {
         .register_mesh(&prism_render::primitives::builtin("box").expect("builtin box"))
         .expect("register box");
 
-    // 4 identity large boxes at z = −5, nearly covering the screen; another box at z = −30 fully hidden behind.
     let mut items = vec![
         draw_item(box_mesh, translation_scale(0.0, 0.0, -5.0, 4.0), 1),
         draw_item(box_mesh, translation_scale(0.0, 0.0, -30.0, 1.0), 2),
     ];
 
-    // First frame has no previous-frame depth: nothing culled.
     let (first, culled) = render(&mut renderer, &mut items, true);
     assert_eq!(culled, 0, "the first frame has no depth to test against");
 
-    // Second frame: near boxes write depth that fully covers far box.
     let (second, culled) = render(&mut renderer, &mut items, true);
     assert_eq!(culled, 1, "the hidden box must be culled");
     assert_eq!(first, second, "culling must not change the visible image");

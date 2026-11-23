@@ -92,7 +92,6 @@ pub fn probe_virtual_geometry_caps(
 /// hardware.
 #[derive(Debug, Clone, Default)]
 pub struct RayTracingCaps {
-    // -- Layer 1: Vulkan 1.2 promoted features (foundation for RT) --
     /// Physical device supports Vulkan 1.2 API (`api_version >= 1.2`).
     pub vulkan_1_2: bool,
     /// `bufferDeviceAddress` available (required by acceleration structures).
@@ -120,21 +119,17 @@ pub struct RayTracingCaps {
     /// buffers, and Vulkan 1.1 wants both feature bits enabled to match.
     pub uniform_and_storage_buffer_16bit_access: bool,
 
-    // -- Layer 2: acceleration structures (prerequisite for any RT) --
     /// `VK_KHR_acceleration_structure` extension + feature available.
     pub acceleration_structure: bool,
     /// `VK_KHR_deferred_host_operations` available (AS build dependency).
     pub deferred_host_operations: bool,
 
-    // -- Layer 3: RT-core pipeline --
     /// `VK_KHR_ray_tracing_pipeline` extension + feature available.
     pub ray_tracing_pipeline: bool,
 
-    // -- Layer 4: inline ray queries --
     /// `VK_KHR_ray_query` extension + feature available.
     pub ray_query: bool,
 
-    // -- RT pipeline properties (only meaningful when ray_tracing_pipeline) --
     pub max_recursion_depth: u32,
     pub shader_group_handle_size: u32,
     pub max_shader_group_stride: u32,
@@ -230,15 +225,12 @@ pub fn has_extension(available: &HashSet<String>, name: &str) -> bool {
 pub fn rt_extension_names(caps: &RayTracingCaps) -> Vec<&'static CStr> {
     let mut names = Vec::new();
     if caps.acceleration_structure {
-        // The instance targets Vulkan 1.1, so promoted Vulkan 1.2
-        // dependencies must still be enabled by their extension names.
         names.push(vk::EXT_DESCRIPTOR_INDEXING_NAME);
         names.push(vk::KHR_BUFFER_DEVICE_ADDRESS_NAME);
         names.push(vk::KHR_ACCELERATION_STRUCTURE_NAME);
         names.push(vk::KHR_DEFERRED_HOST_OPERATIONS_NAME);
     }
     if caps.ray_tracing_pipeline {
-        // Ray-tracing pipeline and ray-query both require SPIR-V 1.4.
         names.push(vk::KHR_SPIRV_1_4_NAME);
         names.push(vk::KHR_SHADER_FLOAT_CONTROLS_NAME);
         names.push(vk::KHR_RAY_TRACING_PIPELINE_NAME);
@@ -260,12 +252,10 @@ pub unsafe fn probe(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
 ) -> RayTracingCaps {
-    // --- api version ---
     let props = unsafe { instance.get_physical_device_properties(physical_device) };
     let vulkan_1_2 = props.api_version >= vk::API_VERSION_1_2;
     let vulkan_1_3 = props.api_version >= vk::API_VERSION_1_3;
 
-    // --- advertised extensions ---
     let ext_props = unsafe {
         instance
             .enumerate_device_extension_properties(physical_device)
@@ -300,9 +290,6 @@ pub unsafe fn probe(
         vk::KHR_SHADER_FLOAT_CONTROLS_NAME.to_str().unwrap(),
     );
 
-    // --- feature chain: query what the driver actually supports ---
-    // We chain Vulkan12Features + the three RT feature structs (when their
-    // extensions are advertised) and read back the support bools.
     let mut vk11 = vk::PhysicalDeviceVulkan11Features::default();
     let mut vk12 = vk::PhysicalDeviceVulkan12Features::default();
     let mut accel_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
@@ -325,7 +312,6 @@ pub unsafe fn probe(
 
     unsafe { instance.get_physical_device_features2(physical_device, &mut features2) };
 
-    // Layer 1: Vulkan 1.2 promoted features.
     let buffer_device_address = vk12.buffer_device_address == vk::TRUE;
     let descriptor_indexing = vk12.descriptor_indexing == vk::TRUE;
     let timeline_semaphore = vk12.timeline_semaphore == vk::TRUE;
@@ -334,12 +320,9 @@ pub unsafe fn probe(
     let storage_buffer_16bit_access = vk11.storage_buffer16_bit_access == vk::TRUE;
     let uniform_and_storage_buffer_16bit_access =
         vk11.uniform_and_storage_buffer16_bit_access == vk::TRUE;
-    // `shaderInt64` lives in the legacy `VkPhysicalDeviceFeatures`, not in the
-    // Vulkan12 struct, so it needs its own query.
     let legacy_features = unsafe { instance.get_physical_device_features(physical_device) };
     let shader_int64 = legacy_features.shader_int64 == vk::TRUE;
 
-    // Layer 2: acceleration structure (real only when ext + feature agree).
     let acceleration_structure = has_accel_ext
         && has_deferred_ext
         && has_descriptor_indexing_ext
@@ -347,7 +330,6 @@ pub unsafe fn probe(
         && accel_features.acceleration_structure == vk::TRUE;
     let deferred_host_operations = has_deferred_ext;
 
-    // Layer 3/4: RT pipeline / ray query (independent of each other).
     let ray_tracing_pipeline = has_rt_pipeline_ext
         && has_spirv_1_4_ext
         && has_shader_float_controls_ext

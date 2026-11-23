@@ -87,10 +87,6 @@ impl PluginRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Standard Default Plugins
-// ---------------------------------------------------------------------------
-
 /// Default plugin for rendering and window management.
 pub struct DefaultRenderPlugin;
 

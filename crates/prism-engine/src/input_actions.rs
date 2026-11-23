@@ -101,8 +101,6 @@ impl KeyBindings {
             key: KeyCode::KeyT,
             action: EngineAction::CycleTonemap,
         });
-        // Without Shift: `1..=9` are components 0..=8, `0` is component 9 (consistent with keyboard number layout
-        // and engine historical PBR isolation shortcuts).
         for (key, bit) in digit_bindings(false) {
             bindings.push(KeyBinding {
                 key,

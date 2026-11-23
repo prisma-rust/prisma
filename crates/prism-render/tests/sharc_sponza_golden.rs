@@ -24,7 +24,6 @@ use std::fs;
 const SIZE: usize = 512;
 
 fn build_quad_mesh(p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3]) -> MeshUploadInput {
-    // Normal from winding
     let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
     let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
     let mut nx = e1[1] * e2[2] - e1[2] * e2[1];
@@ -59,7 +58,6 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
 }
 
 fn camera_sponza(eye: [f32; 3]) -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
-    // Looking down -Z towards [0, 1.5, 0]
     let view = [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
@@ -72,7 +70,7 @@ fn camera_sponza(eye: [f32; 3]) -> ([[f32; 4]; 4], [[f32; 4]; 4]) {
     let aspect = 1.0_f32;
     let mut proj = [[0.0f32; 4]; 4];
     proj[0][0] = f / aspect;
-    proj[1][1] = -f; // Vulkan NDC +Y down
+    proj[1][1] = -f;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = near * far / (near - far);
@@ -144,7 +142,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         )
     };
 
-    // 1. Create Sponza atrium architecture:
     let floor_mesh = renderer
         .register_mesh(&build_quad_mesh(
             [-6.0, 0.0, 10.0],
@@ -202,7 +199,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         .register_mesh(&prism_render::primitives::builtin("box").expect("center box"))
         .expect("register center box");
 
-    // Register Materials
     let stone_mat = renderer
         .register_material(simple_material([0.85, 0.82, 0.78, 1.0], 0.8, 0.0))
         .expect("stone mat");
@@ -226,10 +222,8 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let green_slot = renderer.material_slot(green_mat);
     let gold_slot = renderer.material_slot(gold_mat);
 
-    // Build DrawItems
     let mut draw_items = Vec::new();
 
-    // Floor & Ceiling
     draw_items.push(make_draw(
         floor_mesh,
         stone_slot,
@@ -243,7 +237,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         [1.0, 1.0, 1.0],
     ));
 
-    // Walls
     draw_items.push(make_draw(
         back_wall_mesh,
         red_slot,
@@ -263,7 +256,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         [1.0, 1.0, 1.0],
     ));
 
-    // Sponza-like colonnade rows
     for z in [-6.0, -2.0, 2.0, 6.0] {
         draw_items.push(make_draw(
             pillar_mesh,
@@ -279,7 +271,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         ));
     }
 
-    // Center pedestal
     draw_items.push(make_draw(
         center_box,
         gold_slot,
@@ -312,9 +303,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let out_dir = artifact_dir();
     fs::create_dir_all(&out_dir).expect("create golden-frames dir");
 
-    // -----------------------------------------------------------------------
-    // Pass 1: Standard Rasterization
-    // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::Raster;
     renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer
@@ -347,14 +335,10 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let raster_path = out_dir.join("sponza_raster.actual.png");
     save_png(&raster_path, &raster_pixels, SIZE).expect("save raster png");
 
-    // -----------------------------------------------------------------------
-    // Pass 2: Path Tracing without SHARC (gi_mode = Off)
-    // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
     renderer.settings_mut().pt_gi = PtGiMode::Off;
     renderer.settings_mut().pt_max_bounces = 3;
 
-    // Run 4 accumulation iterations
     for _ in 0..4 {
         renderer
             .render(
@@ -389,17 +373,13 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let pt_cache_off_path = out_dir.join("sponza_pt_cache_off.actual.png");
     save_png(&pt_cache_off_path, &pt_cache_off_pixels, SIZE).expect("save pt cache off png");
 
-    // -----------------------------------------------------------------------
-    // Pass 3: Path Tracing with RTXGI SHARC (gi_mode = Sharc)
-    // -----------------------------------------------------------------------
     renderer.settings_mut().render_mode = RenderMode::PathTrace;
     renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.settings_mut().sharc_scene_scale = 50.0;
-    renderer.settings_mut().sharc_enable_clear = true; // reset accumulation
+    renderer.settings_mut().sharc_enable_clear = true;
     renderer.settings_mut().sharc_enable_resolve = true;
     renderer.settings_mut().sharc_enable_anti_firefly = true;
 
-    // Run 4 accumulation iterations with SHARC active
     for _ in 0..4 {
         renderer
             .render(
@@ -434,13 +414,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let pt_sharc_on_path = out_dir.join("sponza_pt_sharc_on.actual.png");
     save_png(&pt_sharc_on_path, &pt_sharc_on_pixels, SIZE).expect("save pt sharc on png");
 
-    // Training and resolve are their own stages: each must show up as a GPU
-    // interval of its own, separate from the consumer pass. An open interval
-    // alone proves nothing though -- `dispatch_training` returns early when one
-    // of its preconditions is missing and the "SharcTrain" interval stays open
-    // either way -- so the renderer's own dispatch counters are what actually
-    // pins the work down. The SHaRC graph work is behind the `sharc` feature,
-    // so this only applies to builds that enable it.
     #[cfg(feature = "sharc")]
     {
         assert!(
@@ -465,9 +438,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Pass 4: cache-free reference variant (no cache, no ReSTIR, no clamp)
-    // -----------------------------------------------------------------------
     renderer.set_pt_variant(prism_render::PtVariant::Reference);
     assert_eq!(
         renderer.pt_variant(),
@@ -513,8 +483,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
     let reference_mean = mean_u8(&pt_reference_pixels);
     let consumer_mean = mean_u8(&pt_cache_off_pixels);
     assert!(reference_mean > 0.5, "reference render is not black");
-    // The reference only differs by the disabled firefly clamp in this
-    // sun-only scene, so its mean must track the consumer closely.
     let relative_gap = (reference_mean - consumer_mean).abs() / consumer_mean.max(1e-6);
     assert!(
         relative_gap < 0.2,
@@ -522,10 +490,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
         relative_gap * 100.0
     );
 
-    // -----------------------------------------------------------------------
-    // Pass 5: standalone SHaRC trainer. It deposits radiance and writes no
-    // screen output, so the only assertion is that the dispatch runs clean.
-    // -----------------------------------------------------------------------
     renderer.settings_mut().pt_gi = PtGiMode::Sharc;
     renderer.set_pt_variant(prism_render::PtVariant::Train);
     assert_eq!(renderer.pt_variant(), Some(prism_render::PtVariant::Train));
@@ -558,9 +522,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
     }
     renderer.set_pt_variant(prism_render::PtVariant::Consume);
 
-    // -----------------------------------------------------------------------
-    // Golden Frame Comparison & Metrics
-    // -----------------------------------------------------------------------
     let sharc_diff = compare(&pt_cache_off_pixels, &pt_sharc_on_pixels);
     let _ = write_mismatch_artifacts(
         "sponza_sharc_diff",
@@ -639,7 +600,6 @@ fn test_sponza_sharc_real_render_and_comparison() {
 
     eprintln!("\n{report_text}");
 
-    // Sanity checks: Non-empty, non-black renders
     assert!(
         raster_pixels.iter().any(|&b| b > 20),
         "Raster render produced all-black image!"

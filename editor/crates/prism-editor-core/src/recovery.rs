@@ -49,7 +49,6 @@ pub fn write(root: &Path, documents: &[RecoveredDocument]) -> io::Result<usize> 
     {
         let mut file = fs::File::create(&tmp)?;
         file.write_all(text.as_bytes())?;
-        // Snapshot is the last insurance, must really flush to disk before rename.
         file.sync_all()?;
     }
     fs::rename(&tmp, &path)?;
@@ -75,7 +74,6 @@ pub fn clear(root: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    // Directory may contain user / other process files, delete only when empty.
     let _ = fs::remove_dir(root.join(RECOVERY_DIR));
     Ok(())
 }

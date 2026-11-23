@@ -38,7 +38,6 @@ pub fn hierarchy_system(world: &mut World) {
         if !visited.insert(root) {
             continue;
         }
-        // Root without `LocalTransform` (only `Child`) propagates downward with identity matrix.
         let world_mat = match world.get::<LocalTransform>(root).cloned() {
             Some(local) => {
                 let matrix = local.to_model_matrix();
@@ -80,10 +79,6 @@ fn visit_children(
     parent_world: glam::Mat4,
     visited: &mut HashSet<Entity>,
 ) {
-    // Index into the parent's child list instead of cloning it: the recursive
-    // calls mutate components, so the `&Child` borrow cannot be held across
-    // them, but re-reading one element per child is still allocation-free
-    // (#66 — this used to clone the whole list for every node, per frame).
     let child_count = world
         .get::<Child>(parent)
         .map_or(0usize, |children| children.0.len());
@@ -95,7 +90,6 @@ fn visit_children(
         else {
             break;
         };
-        // `visited` also catches cycles in dirty data (A.Child=[B], B.Child=[A]).
         if !world.is_alive(child) || !visited.insert(child) {
             continue;
         }
@@ -105,8 +99,6 @@ fn visit_children(
                 world.insert(child, LocalToWorld(matrix));
                 matrix
             }
-            // No-transform intermediate node: does not write `LocalToWorld` itself, but passes parent matrix as-is
-            // to descendants (missing Transform equivalent to identity transform).
             None => parent_world,
         };
         visit_children(world, child, child_world, visited);
@@ -129,7 +121,6 @@ pub fn active_hierarchy_system(world: &mut World) {
     entities.sort_unstable_by_key(|entity| entity.id());
     entities.dedup();
 
-    // Multiply along parent chain, reuse already-computed ancestor (deep tree also O(n)).
     let mut resolved: std::collections::HashMap<Entity, bool> = std::collections::HashMap::new();
     for entity in entities {
         let mut chain: Vec<Entity> = Vec::new();
@@ -140,7 +131,6 @@ pub fn active_hierarchy_system(world: &mut World) {
                 effective &= *done;
                 break;
             }
-            // Dirty data can cycle (A→B→A): finish with already accumulated result, avoid infinite loop.
             if chain.contains(&current) {
                 break;
             }
@@ -173,8 +163,6 @@ pub fn is_active_in_hierarchy(world: &World, entity: Entity) -> bool {
     if world.get::<Hidden>(entity).is_some_and(|hidden| hidden.0) {
         return false;
     }
-    // Distance LOD (#491): runtime system selects level then marks others hidden. It is separate from editor
-    // own `Hidden`, to avoid LOD overriding author / editor visibility choice.
     if world
         .get::<LodHidden>(entity)
         .is_some_and(|hidden| hidden.0)

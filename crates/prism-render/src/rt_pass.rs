@@ -71,7 +71,6 @@ impl RtPreviewPass {
 
     fn ensure_render_pass(&mut self, device: &ash::Device) -> anyhow::Result<()> {
         if self.render_pass.is_none() {
-            // Full-screen coverage: CLEAR yields independent image (RT content is whole screen).
             let color_attachment = vk::AttachmentDescription::default()
                 .format(self.color_format)
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -113,7 +112,6 @@ impl RtPreviewPass {
                 shader_stage(vk::ShaderStageFlags::FRAGMENT, frag_module, &frag_entry),
             ];
 
-            // RtPreviewPush = { uint textureHandle }.
             let push = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
@@ -196,9 +194,6 @@ impl RenderPassNode for RtPreviewPass {
     }
 
     fn setup(&mut self, graph: &mut RenderGraphBuilder, _settings: &RenderSettings) {
-        // Read edge: topological order ensures after RenderTextureScheduler; barrier automatically
-        // derived by graph (writer leaves SHADER_READ_ONLY_OPTIMAL == this pass expected layout
-        // → no-op).
         graph.read_usage(ResourceUsage {
             handle: RT_OUTPUT_H,
             access: vk::AccessFlags::SHADER_READ,
@@ -229,7 +224,6 @@ impl RenderPassNode for RtPreviewPass {
             .context("RtPreviewPass: no framebuffer for image index")?;
         let pipeline = self.pipeline.as_ref().context("pipeline missing")?;
 
-        // RT bindless slot (published by RenderTextureScheduler).
         let slot = resources.param(RT_OUTPUT_H).unwrap_or(0);
 
         let clear = vk::ClearValue {
@@ -252,7 +246,6 @@ impl RenderPassNode for RtPreviewPass {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline)
         };
-        // set 0 = bindless table (rt_preview.slang BINDLESS_SRVS).
         let bindless_set = self
             .bindless_set
             .context("RtPreviewPass: set_bindless_set not called")?;

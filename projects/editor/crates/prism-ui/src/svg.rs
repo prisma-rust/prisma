@@ -25,7 +25,6 @@ pub fn rasterize_lucide_svg(svg: &str, size: u32) -> Vec<u8> {
     let mut out = vec![0u8; (size * size * 4) as usize];
     let scale = VIEWBOX_SIZE / size as f32;
     let half_stroke = DEFAULT_STROKE_WIDTH * 0.5;
-    // 1-pixel antialiasing feather in viewBox units.
     let feather = scale.max(0.25);
 
     for py in 0..size {

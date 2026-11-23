@@ -152,11 +152,9 @@ mod tests {
         assert_eq!(ev.surface, SurfaceMaterialKind::Metal);
         assert!(ev.gain > 0.35);
 
-        // Suppressed within cooldown window.
         assert!(dispatcher
             .try_dispatch("Footstep.L", SurfaceMaterialKind::Metal, 4.5, 1.05)
             .is_none());
-        // Allowed once cooldown expires; opposite foot is independent.
         assert!(dispatcher
             .try_dispatch("Footstep.R", SurfaceMaterialKind::Metal, 4.5, 1.05)
             .is_some());

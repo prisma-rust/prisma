@@ -14,14 +14,12 @@ fn temp_asset_root(tag: &str) -> PathBuf {
 
 #[test]
 fn player_entry_installs_the_logger_before_mounting_packages() {
-    // Precondition: nothing has installed a logger in this process yet.
     assert_eq!(
         log::max_level(),
         log::LevelFilter::Off,
         "the test binary must start without a logger"
     );
 
-    // Keep the app away from the real assets and the user's save directory.
     let root = temp_asset_root("startup-log");
     std::env::set_var("PRISMA_ASSET_ROOT", &root);
     std::env::set_var(prism_engine::user_data::ENV_OVERRIDE, root.join("user"));

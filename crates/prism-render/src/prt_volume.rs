@@ -454,7 +454,6 @@ pub fn f32_to_f16(value: f32) -> u16 {
     let mant = bits & 0x007F_FFFF;
 
     if exp == 0xFF {
-        // Infinity keeps its exponent; NaN keeps enough mantissa to stay quiet.
         let payload = if mant == 0 { 0 } else { 0x0200 };
         return sign | 0x7C00 | payload;
     }
@@ -464,11 +463,8 @@ pub fn f32_to_f16(value: f32) -> u16 {
         return sign | 0x7C00;
     }
     if unbiased < -14 {
-        // Subnormal half: the value is M * 2^-24 with 24-bit M, so shift the
-        // implicit-bit mantissa right by -(unbiased + 1) to land on M.
         let drop = (-unbiased - 1) as u32;
         if drop > 25 {
-            // Below half the smallest subnormal: rounds to zero.
             return sign;
         }
         let mant = mant | 0x0080_0000;
@@ -478,8 +474,6 @@ pub fn f32_to_f16(value: f32) -> u16 {
         if rem > halfway || (rem == halfway && half_mant & 1 == 1) {
             half_mant += 1;
         }
-        // 0x0400 is the smallest normal half, which is the correct encoding when
-        // the subnormal mantissa rounds all the way up.
         return sign | half_mant;
     }
 
@@ -509,8 +503,7 @@ pub fn f16_to_f32(bits: u16) -> f32 {
         if mant == 0 {
             sign
         } else {
-            // Normalize the subnormal into an f32 normal.
-            let mut e: u32 = 113; // 127 - 14
+            let mut e: u32 = 113;
             let mut m = mant;
             while m & 0x0400 == 0 {
                 m <<= 1;

@@ -268,7 +268,6 @@ impl SandboxState {
             }
         }
 
-        // Draw probe selection outline.
         world.draw_quad(UiQuad {
             rect: [
                 self.probe_x as f32 * CELL_PX,
@@ -443,72 +442,71 @@ fn cell_color(cell: &PhysicalCell) -> [f32; 4] {
     if cell.transient.contains(TransientFlags::BROKEN) {
         return [0.35, 0.25, 0.25, 0.85];
     }
-    // Distinct geological & ore palette for terrain and biome slices.
     if cell.topology.contains(TopologyFlags::SEALED)
         && cell.env.pressure() == Pressure::GigaPressure
     {
-        return [0.16, 0.16, 0.19, 1.0]; // bedrock
+        return [0.16, 0.16, 0.19, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::GLASS)
         && cell.material.contains(MaterialFlags::PRESSURE_RATED)
         && cell.env.pressure() == Pressure::GigaPressure
     {
-        return [0.35, 0.88, 0.95, 1.0]; // diamond_ore
+        return [0.35, 0.88, 0.95, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::PIEZOELECTRIC)
         && cell.material.contains(MaterialFlags::CONDUCTIVE)
     {
-        return [0.85, 0.16, 0.14, 1.0]; // redstone_ore
+        return [0.85, 0.16, 0.14, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::METALLIC)
         && cell.material.contains(MaterialFlags::HOT_RESISTANT)
     {
-        return [0.95, 0.78, 0.26, 1.0]; // gold_ore
+        return [0.95, 0.78, 0.26, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::FLAMMABLE)
         && cell.topology.contains(TopologyFlags::RIGID_WELD)
     {
-        return [0.18, 0.19, 0.21, 1.0]; // coal_ore
+        return [0.18, 0.19, 0.21, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::METALLIC)
         && cell.material.contains(MaterialFlags::CONDUCTIVE)
         && cell.topology.contains(TopologyFlags::RIGID_WELD)
     {
-        return [0.66, 0.56, 0.49, 1.0]; // iron/copper ore
+        return [0.66, 0.56, 0.49, 1.0]; 
     }
     if cell.env.matter() == MatterState::Liquid && cell.env.temperature() >= Temperature::PlasmaHeat
     {
-        return [1.0, 0.32, 0.05, 1.0]; // magma_lava
+        return [1.0, 0.32, 0.05, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::GRANULAR) {
         if cell.material.contains(MaterialFlags::GLASS) {
-            return [0.86, 0.79, 0.56, 1.0]; // sand
+            return [0.86, 0.79, 0.56, 1.0]; 
         }
         if cell.env.temperature() <= Temperature::Cryo {
-            return [0.94, 0.96, 1.0, 1.0]; // snow_block
+            return [0.94, 0.96, 1.0, 1.0]; 
         }
     }
     if cell.material.contains(MaterialFlags::ORGANIC)
         && cell.env.bio_activity() == BioActivity::Vital
     {
-        return [0.32, 0.65, 0.24, 1.0]; // grass_block
+        return [0.32, 0.65, 0.24, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::GLASS) && cell.env.temperature() <= Temperature::Cryo {
-        return [0.62, 0.84, 0.98, 0.85]; // ice_block
+        return [0.62, 0.84, 0.98, 0.85]; 
     }
     if cell.material.contains(MaterialFlags::ABSORBENT) && cell.env.matter() == MatterState::Solid {
-        return [0.48, 0.33, 0.22, 1.0]; // dirt
+        return [0.48, 0.33, 0.22, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::HOT_RESISTANT)
         && cell.material.contains(MaterialFlags::PRESSURE_RATED)
         && cell.env.matter() == MatterState::Solid
     {
-        return [0.26, 0.27, 0.30, 1.0]; // deepslate
+        return [0.26, 0.27, 0.30, 1.0]; 
     }
     if cell.material.contains(MaterialFlags::HOT_RESISTANT)
         && cell.env.matter() == MatterState::Solid
     {
-        return [0.50, 0.52, 0.54, 1.0]; // stone
+        return [0.50, 0.52, 0.54, 1.0]; 
     }
     match cell.env.matter() {
         MatterState::Solid => [0.55, 0.6, 0.68, 1.0],
@@ -716,7 +714,6 @@ mod runtime_tests {
         let mut world = GameWorld::host(&mut ecs);
         let mut state: Option<EmergenceRuntime> = None;
 
-        // Bootstrap starts with F3 overlay and chat console hidden.
         world.set_input(InputSnapshot::default());
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         {
@@ -726,7 +723,6 @@ mod runtime_tests {
             assert_eq!(rt.player.tier_mode, TierMode::Auto);
         }
 
-        // Pressing `T` opens chat console and does not flip player TierMode.
         world.set_input(press_key_snapshot(keys::KEY_T));
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         {
@@ -735,12 +731,10 @@ mod runtime_tests {
             assert_eq!(rt.player.tier_mode, TierMode::Auto);
         }
 
-        // Pressing `F3` while typing in chat must not toggle the debug overlay.
         world.set_input(press_key_snapshot(keys::F3));
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         assert!(!state.as_ref().unwrap().debug_hud.open);
 
-        // Close chat with `Escape`, then press `F3` to toggle overlay on and back off.
         world.set_input(press_key_snapshot(keys::ESCAPE));
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         assert!(!state.as_ref().unwrap().commands.console_open);
@@ -753,7 +747,6 @@ mod runtime_tests {
         emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         assert!(!state.as_ref().unwrap().debug_hud.open);
 
-        // Top-center tooltip activates when aiming at blocks and [B] toggles NEI only when chat is closed.
         {
             let rt = state.as_ref().unwrap();
             assert!(rt.nei.open);
@@ -791,10 +784,8 @@ mod runtime_tests {
             world.set_input(InputSnapshot::default());
             emergence_frame_tick(&mut state, &mut world, 1.0 / 60.0);
         }
-        // Close NEI if open by default so only the command console controls gating.
         state.as_mut().unwrap().nei.open = false;
 
-        // Open command console with `T`.
         {
             let mut world = GameWorld::host(&mut ecs);
             world.set_input(press_key_snapshot(keys::KEY_T));
@@ -806,7 +797,6 @@ mod runtime_tests {
             .is_some_and(|g| g.suppressed));
 
         let pos_before = state.as_ref().unwrap().player.feet_pos;
-        // Hold `W` and `SPACE` while console is open — player must not move horizontally or jump.
         let mut move_input = press_key_snapshot(keys::KEY_W);
         move_input.keys[keys::SPACE / 64] |= 1u64 << (keys::SPACE % 64);
         move_input.key_edges[keys::SPACE / 64] |= 1u64 << (keys::SPACE % 64);
@@ -823,7 +813,6 @@ mod runtime_tests {
             "horizontal movement must be blocked while command console is open: before={pos_before:?} after={pos_after:?}"
         );
 
-        // Close console with `Escape` -> next frame camera input gate should lift.
         {
             let mut world = GameWorld::host(&mut ecs);
             world.set_input(press_key_snapshot(keys::ESCAPE));

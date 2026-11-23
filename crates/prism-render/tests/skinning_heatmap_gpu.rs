@@ -35,8 +35,8 @@ fn view_proj() -> [[f32; 4]; 4] {
     let (near, far) = (0.1f32, 10.0f32);
     let inv_tan = 1.0 / (fov * 0.5).tan();
     let mut proj = [[0.0f32; 4]; 4];
-    proj[0][0] = inv_tan; // aspect = 1
-    proj[1][1] = -inv_tan; // Vulkan y-flip
+    proj[0][0] = inv_tan;
+    proj[1][1] = -inv_tan;
     proj[2][2] = far / (near - far);
     proj[2][3] = -1.0;
     proj[3][2] = (far * near) / (near - far);
@@ -148,8 +148,8 @@ fn render(
             1.0,
             &[],
             PostGrade::default(),
-            false, // wireframe
-            false, // shaded wireframe
+            false,
+            false,
             bones,
         )
         .expect("headless render failed");
@@ -186,8 +186,6 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         return;
     };
     let cube = prism_render::primitives::builtin("__builtin/cube").expect("builtin cube");
-    // Half vertices attached to joint 0, half to joint 1, weights all 1 — both joint matrices are identity,
-    // so geometry is completely identical, any color difference can only come from heatmap shading.
     let count = cube.positions.len();
     let sk = SkinAttributes {
         joints: (0..count)
@@ -199,7 +197,6 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         .register_mesh_skinned(&cube, &sk)
         .expect("register skinned cube");
 
-    // Normal shading: default material is linear color, no obvious color cast.
     let shaded = render(
         &mut renderer,
         &[draw_item(handle)],
@@ -212,8 +209,6 @@ fn the_heatmap_colours_vertices_by_their_dominant_joint() {
         "the lit view must not already look like a heatmap ({shaded_tinted} tinted pixels)"
     );
 
-    // Heatmap: hue = joint × golden angle. joint 0 → red (1, .15, .15),
-    // joint 1 (0.618 turn) → blue (.15, .4, 1).
     let heat = render(
         &mut renderer,
         &[draw_item(handle)],
@@ -242,7 +237,6 @@ fn an_unweighted_vertex_stays_grey_in_the_heatmap() {
         return;
     };
     let cube = prism_render::primitives::builtin("__builtin/cube").expect("builtin cube");
-    // Weight all 0 = bad import / static data: cannot paint it as some bone color.
     let sk = SkinAttributes {
         joints: vec![[0, 0, 0, 0]; cube.positions.len()],
         weights: vec![[0.0; 4]; cube.positions.len()],

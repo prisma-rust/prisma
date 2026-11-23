@@ -19,8 +19,6 @@ impl PanelBase {
         }
     }
 
-    // ── Timer forwarding ─────────────────────────────────────────
-
     /// Create timer (auto-caches id, auto-cleaned when panel drops).
     pub fn create_timer(&mut self, params: TimerParams) -> TimerId {
         self.timers.create_timer(params)

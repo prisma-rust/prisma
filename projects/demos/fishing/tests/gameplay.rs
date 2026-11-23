@@ -89,24 +89,20 @@ fn fishing_state_machine_runs_cast_to_catch() {
     let mut api = GameWorld::host(&mut world);
     let mut state = None;
 
-    // First tick finds boat/bobber and creates fishing line.
     api.set_input(InputSnapshot::default());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     let state_ref = state.as_ref().expect("state created");
     assert_eq!(state_ref.phase(), Phase::Idle);
     assert_eq!(state_ref.caught(), 0);
 
-    // Click = cast.
     api.set_input(click());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Casting);
 
-    // Bobber splashes (CAST_SECONDS = 0.55).
     api.set_input(InputSnapshot::default());
     fishing::game::fishing::tick(&mut state, &mut api, 0.6);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Waiting);
 
-    // Wait for bite (`bite_at` between 1.4~3.6s).
     let mut phase = Phase::Waiting;
     for _ in 0..300 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
@@ -117,12 +113,10 @@ fn fishing_state_machine_runs_cast_to_catch() {
     }
     assert_eq!(phase, Phase::Biting, "bite should arrive within ~5s");
 
-    // Click again within bite window = hook.
     api.set_input(click());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Reeling);
 
-    // Reel (REEL_SECONDS = 0.9).
     api.set_input(InputSnapshot::default());
     for _ in 0..120 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
@@ -159,7 +153,6 @@ fn holding_space_does_not_repeat_the_cast_or_set_the_hook() {
     let mut state = None;
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
 
-    // Held without a new press edge: no cast.
     api.set_input(space_held());
     for _ in 0..10 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
@@ -170,12 +163,10 @@ fn holding_space_does_not_repeat_the_cast_or_set_the_hook() {
         "a held Space must not start a cast"
     );
 
-    // A real press edge this frame: cast once.
     api.set_input(space_pressed());
     fishing::game::fishing::tick(&mut state, &mut api, 0.016);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Casting);
 
-    // Keep holding (no new edge): the bobber lands and waits for a bite.
     api.set_input(space_held());
     fishing::game::fishing::tick(&mut state, &mut api, 0.6);
     assert_eq!(state.as_ref().unwrap().phase(), Phase::Waiting);
@@ -190,7 +181,6 @@ fn holding_space_does_not_repeat_the_cast_or_set_the_hook() {
     }
     assert_eq!(phase, Phase::Biting, "bite should arrive within ~5s");
 
-    // Still only held during the bite window: the bite is missed instead of auto-hooked.
     for _ in 0..200 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
         phase = state.as_ref().unwrap().phase();
@@ -205,7 +195,6 @@ fn holding_space_does_not_repeat_the_cast_or_set_the_hook() {
         "missed bite should return to Waiting"
     );
 
-    // Wait for the next bite and hook it with a real press edge.
     for _ in 0..300 {
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
         if state.as_ref().unwrap().phase() == Phase::Biting {
@@ -270,7 +259,6 @@ fn reel_position_does_not_depend_on_the_frame_rate() {
         let mut api = GameWorld::host(&mut world);
         let mut state = None;
 
-        // Identical lead-in for both frame rates: same ticks, same inputs.
         api.set_input(InputSnapshot::default());
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
         api.set_input(click());
@@ -285,7 +273,6 @@ fn reel_position_does_not_depend_on_the_frame_rate() {
         }
         assert_eq!(state.as_ref().unwrap().phase(), Phase::Biting);
 
-        // Hook set, then reel for `steps` frames.
         api.set_input(click());
         fishing::game::fishing::tick(&mut state, &mut api, 0.016);
         assert_eq!(state.as_ref().unwrap().phase(), Phase::Reeling);
@@ -307,7 +294,6 @@ fn reel_position_does_not_depend_on_the_frame_rate() {
         [position.x, position.y]
     }
 
-    // 0.5 s of reeling: 15 frames at 30 FPS, 30 frames at 60 FPS.
     let slow = bobber_after_reeling(1.0 / 30.0, 15);
     let fast = bobber_after_reeling(1.0 / 60.0, 30);
 

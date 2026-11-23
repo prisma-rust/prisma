@@ -52,10 +52,6 @@ impl AnfCaps {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Native ANF FFI definitions
-// ---------------------------------------------------------------------------
-
 pub type AnfContext = *mut c_void;
 pub type AnfSR = *mut c_void;
 pub type AnfResult = i32;
@@ -116,7 +112,7 @@ impl AnfBinding {
     #[cfg(target_os = "android")]
     pub fn try_load() -> Option<Self> {
         let lib_name = b"libanf.so\0";
-        let handle = unsafe { dlopen(lib_name.as_ptr() as *const _, 1) }; // RTLD_LAZY
+        let handle = unsafe { dlopen(lib_name.as_ptr() as *const _, 1) };
         if handle.is_null() {
             log::info!("ANF: libanf.so not found; neural fusion pass disabled");
             return None;
@@ -162,10 +158,6 @@ extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const std::os::raw::c_char) -> *mut c_void;
     fn dlclose(handle: *mut c_void) -> std::os::raw::c_int;
 }
-
-// ---------------------------------------------------------------------------
-// AnfPass — RenderGraph node
-// ---------------------------------------------------------------------------
 
 /// Pass responsible for upscaling low-res render output to full-screen swapchain size via ANF supersampling.
 pub struct AnfPass {
@@ -264,7 +256,6 @@ impl AnfPass {
         self.output_extent = output_extent;
         self.input_extent = input_extent;
 
-        // Rebuild SR instance.
         if let (Some(b), Some(ctx)) = (&self.binding, self.context) {
             if let Some(sr) = self.sr_instance.take() {
                 unsafe { (b.destroy_sr)(ctx, sr) };
@@ -403,7 +394,6 @@ impl RenderPassNode for AnfPass {
                 (b.dispatch_sr)(ctx_anf, sr, ctx.cmd, &dispatch);
             }
 
-            // Convert output image to SHADER_READ_ONLY_OPTIMAL for next PostPass sampling.
             let barrier = vk::ImageMemoryBarrier::default()
                 .old_layout(vk::ImageLayout::GENERAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)

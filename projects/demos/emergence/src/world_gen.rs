@@ -213,8 +213,6 @@ pub fn terrain_height_m(wx: f32, wz: f32, seed: u64) -> f32 {
     let basin_dip = ((0.38 - continental).max(0.0) / 0.38) * 3.6;
     let mut h = 4.6 + (continental - 0.45) * 6.0 + detail + mountain_boost - basin_dip;
 
-    // Gentle starter courtyard plateau at 4.0 m covering the whole spawn plot, so the player, the
-    // camera and every hand-placed blueprint sit on one flat L1 surface.
     let center_x = (COURTYARD_MIN_M[0] + COURTYARD_MAX_M[0]) * 0.5;
     let center_z = (COURTYARD_MIN_M[1] + COURTYARD_MAX_M[1]) * 0.5;
     let half_x = (COURTYARD_MAX_M[0] - COURTYARD_MIN_M[0]) * 0.5;
@@ -257,7 +255,6 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
     let l1_z_dim = CHUNK_DIMS_L1[2] as i32;
     let sea_l2y = (SEA_LEVEL_M * 4.0).round() as i32;
 
-    // 1. Copy-On-Write L1 bedrock & deep limestone basement (`y in 0..2m`).
     for lz in 0..CHUNK_DIMS_L1[2] {
         for lx in 0..CHUNK_DIMS_L1[0] {
             builder.set_l1_cow([lx, 0, lz], mat_id::BEDROCK);
@@ -265,7 +262,6 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
         }
     }
 
-    // 2. Sculpt terrain, water bodies, snow peaks, and underground caves (`y >= 2.0m`).
     for local_l1z in 0..l1_z_dim {
         for local_l1x in 0..l1_x_dim {
             let l1x = builder.l1_origin_x + local_l1x;
@@ -292,7 +288,6 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
             let max_l1y = ((max_top_l2y + 3) / 4).min(l1_y_dim);
             for l1y in 2..max_l1y {
                 let block_top_l2y = (l1y + 1) * 4;
-                // Flat 1 m surface block (`top_l2y == block_top_l2y` across all 16 columns): emit pure L1 COW.
                 if min_top_l2y == max_top_l2y
                     && min_top_l2y == block_top_l2y
                     && min_h >= SEA_LEVEL_M
@@ -411,9 +406,7 @@ pub fn generate_chunk(materials: &MaterialTable, seed: u64, cx: i32, cz: i32) ->
         }
     }
 
-    // 3. Spawn courtyard: flatten, carve the pond, then hand-place one of every blueprint.
     stamp_spawn_courtyard(&mut builder);
-    // 4. Scatter natural vegetation (trees, pines, shrubs) over untouched ground.
     stamp_natural_vegetation(&mut builder, seed, cx, cz);
 
     builder.finish()
@@ -449,7 +442,6 @@ fn stamp_spawn_courtyard(builder: &mut ChunkBuilder<'_>) {
     }
     {
         let mut writer = chunk_writer(builder);
-        // Clear the courtyard volume above the 4.0 m plateau so buildings and the pond read cleanly.
         let x0 = COURTYARD_MIN_M[0] as i32;
         let z0 = COURTYARD_MIN_M[1] as i32;
         let x1 = COURTYARD_MAX_M[0] as i32;
@@ -461,7 +453,6 @@ fn stamp_spawn_courtyard(builder: &mut ChunkBuilder<'_>) {
                 }
             }
         }
-        // Carve the pond basin and fill it with water up to sea level.
         for l1z in POND_MIN_M[1]..POND_MAX_M[1] {
             for l1x in POND_MIN_M[0]..POND_MAX_M[0] {
                 for l1y in POND_FLOOR_L1..4 {
@@ -584,11 +575,9 @@ mod tests {
             "natural terrain must stay L1 Copy-On-Write (got {cow_count})"
         );
 
-        // Negative chunk coordinates stream seamlessly for infinite worlds.
         let neg = generate_chunk(&mats, 2026, -3, -4);
         assert_eq!(neg.chunk.origin_l1, [-48, 0, -64]);
 
-        // Mountains and water basins exist across a 256 m x 256 m sample.
         let mut min_h = f32::MAX;
         let mut max_h = f32::MIN;
         for z in 0..256 {

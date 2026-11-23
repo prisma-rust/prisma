@@ -535,7 +535,6 @@ mod tests {
         cache.settings.app.name = "edited".into();
         assert!(cache.is_dirty());
 
-        // Same-length / same-second overwrites also need detecting (compare content, not mtime).
         let mut other = ProjectSettings::default();
         other.app.name = "external".into();
         other.write(&temp.root).unwrap();
@@ -655,7 +654,6 @@ title = "Old"
         assert_eq!(settings.app.company, "Legacy");
         assert_eq!(settings.window.width, 800);
 
-        // Write side only outputs settings.ini.
         settings.write(&temp.root).unwrap();
         assert!(ProjectSettings::path(&temp.root).is_file());
         assert!(ProjectSettings::legacy_path(&temp.root).is_file());

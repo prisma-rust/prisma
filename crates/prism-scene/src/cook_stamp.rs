@@ -176,7 +176,6 @@ mod tests {
     fn unknown_or_broken_stamps_parse_to_none() {
         assert!(CookStamp::parse("").is_none());
         assert!(CookStamp::parse("{").is_none());
-        // Future-version stamp: do not guess semantics, leave to "no stamp" branch.
         assert!(CookStamp::parse(r#"{"version": 99, "schema": 1, "sources_mtime": 2}"#).is_none());
         assert!(CookStamp::parse(r#"{"version": 1}"#).is_none());
     }
@@ -210,7 +209,6 @@ mod tests {
                 newest: 200
             }
         );
-        // mtime second-level granularity / network drive clock rollback: within 2 seconds not stale.
         assert_eq!(check(Some(stamp), 7, 102), StampCheck::Fresh);
     }
 
@@ -222,7 +220,6 @@ mod tests {
 
     #[test]
     fn shipped_builds_skip_the_source_check() {
-        // Release pack has no `.scene.json`, scan returns 0, only schema compared.
         let stamp = CookStamp::new(7, 1_700_000_000);
         assert_eq!(check(Some(stamp), 7, 0), StampCheck::Fresh);
     }
@@ -243,7 +240,6 @@ mod tests {
         let newest = newest_source_mtime(&dir);
         assert!(newest > 0, "Document should be scanned");
 
-        // After deleting documents only pak remains, returns 0 (release form).
         std::fs::remove_dir_all(dir.join("scenes")).unwrap();
         std::fs::remove_file(dir.join("settings.ini")).unwrap();
         assert_eq!(newest_source_mtime(&dir), 0);

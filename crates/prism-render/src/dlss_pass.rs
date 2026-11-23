@@ -736,7 +736,7 @@ impl RenderPassNode for DlssPass {
                 base: BaseStructure::new(RESOURCE_TAG_GUID, 1),
                 resource: &raw mut *res,
                 buffer_type: t.buffer_type,
-                lifecycle: 2, // ValidUntilEvaluate
+                lifecycle: 2,
                 extent: SlExtent {
                     top: 0,
                     left: 0,

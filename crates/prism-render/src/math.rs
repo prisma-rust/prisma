@@ -100,7 +100,6 @@ mod inverse_tests {
     /// Reference inverse via Gauss-Jordan on the row-major expansion, so the
     /// test does not depend on `mat_inverse`'s own formula.
     fn reference_inverse(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
-        // rows[r][c]
         let mut a = [[0.0f64; 8]; 4];
         for r in 0..4 {
             for c in 0..4 {
@@ -141,9 +140,6 @@ mod inverse_tests {
 
     #[test]
     fn mat_inverse_matches_gauss_jordan() {
-        // Vulkan-style y-flipped perspective (fov 65 deg, aspect 16:9, near
-        // 0.05, far 1000) times a view looking down +X from eye (-10, 2, 0),
-        // column-major [col][row] exactly as the engine stores it.
         let vp = [
             [0.0, 0.0, 1.00005, 1.0],
             [0.0, -1.5696856, 0.0, 0.0],
@@ -152,9 +148,6 @@ mod inverse_tests {
         ];
         let ours = mat_inverse(&vp);
         let theirs = reference_inverse(&vp);
-        // The inverse of this matrix reaches ~200 in the near/far terms, so
-        // compare with a relative tolerance; f32 cannot hold 1e-3 absolute
-        // there. Verified against the f64 Gauss-Jordan reference above.
         for c in 0..4 {
             for r in 0..4 {
                 let scale = ours[c][r].abs().max(theirs[c][r].abs()).max(1.0);

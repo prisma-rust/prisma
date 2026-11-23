@@ -73,13 +73,11 @@ fn test_camera_2d_deadzone() {
         },
     );
 
-    // Target inside deadzone (1.0 <= 2.0), camera stays still
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
     assert_eq!(cam_tf.position.x, 0.0);
     assert_eq!(cam_tf.position.y, 0.0);
 
-    // Target moved out of deadzone (5.0 > 2.0), camera follows move 5.0 - 2.0 = 3.0
     world.get_mut::<LocalTransform>(target).unwrap().position = glam::vec3(5.0, 0.0, 0.0);
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
@@ -127,8 +125,6 @@ fn test_camera_2d_confiner() {
         },
     );
 
-    // Viewport half width = 5.0 * 2.0 = 10.0, half height = 5.0
-    // Boundary limit: X range [-20 + 10, 20 - 10] = [-10, 10], Y range [-10 + 5, 10 - 5] = [-5, 5]
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
     assert!((cam_tf.position.x - 10.0).abs() < 1e-4);
@@ -169,8 +165,6 @@ fn test_camera_2d_pixel_snapping() {
 
     camera_2d_system(&mut world, 0.016);
     let cam_tf = world.get::<LocalTransform>(camera).unwrap();
-    // 1.033 * 16 = 16.528 -> 17 / 16 = 1.0625
-    // 2.088 * 16 = 33.408 -> 33 / 16 = 2.0625
     assert!((cam_tf.position.x - 1.0625).abs() < 1e-4);
     assert!((cam_tf.position.y - 2.0625).abs() < 1e-4);
 }

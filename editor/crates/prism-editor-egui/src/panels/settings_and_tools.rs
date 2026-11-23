@@ -380,7 +380,6 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         }
     }
 
-    // ---- Add scenes that exist on disk but are missing from the manifest ----
     let available = workspace.available_scene_documents();
     ui.horizontal(|ui| {
         ui.label(RichText::new(workspace.t("desktop.buildPanel.add")).size(11.0));
@@ -404,7 +403,6 @@ pub fn build(ui: &mut Ui, workspace: &mut Workspace, state: &mut UiState) {
         });
     });
 
-    // ---- The active document may not be part of the build yet ----
     if let Some(path) = workspace.document().path.clone() {
         let relative = path.trim_start_matches("assets/").to_string();
         if relative.ends_with(".scene.json")

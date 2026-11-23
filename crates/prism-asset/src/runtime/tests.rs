@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::core::AssetId;
 use crate::package::PackageBuilder;
@@ -67,12 +63,10 @@ fn load_with_dependencies() {
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // Load with deps should load  dependency first  then root.
     let handle: Handle<Vec<u8>> = rm.load_with_deps(root_id).unwrap();
     let data: Vec<u8> = rm.get(handle).unwrap();
     assert_eq!(data, b"root data");
 
-    // Dependency should also be loaded.
     let dep_data = rm.get_raw(dep_id).unwrap();
     assert_eq!(dep_data, b"dependency data");
 }
@@ -89,8 +83,6 @@ fn load_with_deps_validates_root_type_even_when_preloaded() {
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // load_with_deps loads the root as raw bytes first; the typed path must
-    // still validate T instead of returning a mismatched handle.
     let err: Result<Handle<TextureAsset>, RuntimeError> = rm.load_with_deps(id);
     assert!(matches!(err, Err(RuntimeError::TypeMismatch { .. })));
 
@@ -121,7 +113,6 @@ fn raw_reads_refresh_lru_recency() {
     let _: Handle<Vec<u8>> = rm.load(ids[1]).unwrap();
     let _: Handle<Vec<u8>> = rm.load(ids[2]).unwrap();
 
-    // Raw reads must count as accesses: ids[0] is now hotter than ids[1].
     rm.get_raw(ids[0]).unwrap();
     rm.evict(1);
 
@@ -152,7 +143,6 @@ fn fifo_evicts_in_load_order_not_access_order() {
     let h1: Handle<Vec<u8>> = rm.load(ids[0]).unwrap();
     let _: Handle<Vec<u8>> = rm.load(ids[1]).unwrap();
     let _: Handle<Vec<u8>> = rm.load(ids[2]).unwrap();
-    // Touch the first asset; FIFO must still evict it because it was loaded first.
     rm.get(h1).unwrap();
     rm.evict(1);
 
@@ -175,20 +165,15 @@ fn memory_budget_eviction_lru() {
     let mut rm = ResourceManager::new();
     rm.load_package(&path).unwrap();
 
-    // Budget too small for both assets together.
     rm.set_memory_budget(250);
     rm.set_eviction_policy(EvictionPolicy::Lru);
     std::fs::remove_file(&path).ok();
 
-    // Load first  (100 byte  should fit.
     let _: Handle<Vec<u8>> = rm.load(id1).unwrap();
     assert_eq!(rm.memory_usage(), 100);
 
-    // Load seconds (200 bytes — total would be 300, budget is 250).
-    // With LRU, should evict first  to make room.
     let _: Handle<Vec<u8>> = rm.load(id2).unwrap();
     assert!(rm.memory_usage() <= 250);
-    // id2 should be loaded
     assert!(rm.get_raw(id2).is_ok());
 }
 
@@ -203,10 +188,9 @@ fn memory_budget_out_of_memory_error() {
     let mut rm = ResourceManager::new();
     rm.load_package(&path).unwrap();
     rm.set_memory_budget(100);
-    rm.set_eviction_policy(EvictionPolicy::None); // no eviction
+    rm.set_eviction_policy(EvictionPolicy::None);
     std::fs::remove_file(&path).ok();
 
-    // Budget is 100, asset is 500, no eviction → out of memory.
     let err: Result<Handle<Vec<u8>>, RuntimeError> = rm.load(id);
     assert!(matches!(err, Err(RuntimeError::OutOfMemory { .. })));
 }
@@ -322,12 +306,10 @@ fn generation_mismatch_detected() {
     std::fs::remove_file(&path).ok();
 
     let handle: Handle<Vec<u8>> = rm.load(id).unwrap();
-    // unload + reload changes generation
     rm.unload(handle);
     let handle2: Handle<Vec<u8>> = rm.load(id).unwrap();
     assert_ne!(handle.generation(), handle2.generation());
 
-    // Old handle should fail now
     let err = rm.get(handle);
     assert!(err.is_err());
 }
@@ -340,17 +322,14 @@ fn streaming_reads_basic() {
     b.add_asset(id, AssetType::Binary, big_data.clone(), &[]);
     let pak = b.build().unwrap();
 
-    // Simulate: write  to temp file and load  into ResourceManager.
     let path = write_pak(&pak, "test_stream.pak");
 
     let mut rm = ResourceManager::new();
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // Stream without caching first
     let chunks: Vec<Vec<u8>> = rm.read_stream(id, 30).unwrap().collect();
     assert!(chunks.len() >= 3);
-    // Verify all data accounted for.
     let total: usize = chunks.iter().map(|c| c.len()).sum();
     assert_eq!(total, 100);
 }
@@ -368,7 +347,6 @@ fn streaming_zero_chunk_size_terminates() {
     rm.load_package(&path).unwrap();
     std::fs::remove_file(&path).ok();
 
-    // A zero chunk size is clamped to one byte instead of looping forever.
     let mut stream = rm.read_stream(id, 0).unwrap();
     assert_eq!(stream.size_hint(), (40, Some(40)));
     let chunks: Vec<Vec<u8>> = stream.by_ref().collect();
@@ -380,9 +358,6 @@ fn streaming_zero_chunk_size_terminates() {
 
 #[test]
 fn a_file_backed_pak_keeps_serving_when_it_is_replaced() {
-    // #509: the reader holds the `.pak` open instead of slurping it. Replacing
-    // the file (what `build-scenes` and the hot-reload poller do) must not
-    // disturb the live reader; the next `on_pak_changed` then sees the new one.
     let id = AssetId::from_raw((9u64 << 32) | 1);
     let old_data = b"first generation".to_vec();
     let new_data = b"second generation, longer".to_vec();
@@ -400,8 +375,6 @@ fn a_file_backed_pak_keeps_serving_when_it_is_replaced() {
     rm.load_package(&path).unwrap();
     assert_eq!(rm.load_with_deps_raw(id).unwrap(), old_data);
 
-    // Simulate a rebuild: `pack_directory` writes a temp file and renames it over
-    // the old one, so the live reader keeps the generation it opened.
     let staged = path.with_file_name("test_file_backed_replaced.pak.new");
     std::fs::write(&staged, &second).unwrap();
     std::fs::rename(&staged, &path).unwrap();
@@ -440,28 +413,23 @@ fn streaming_compressed_and_streamed_assets() {
     assert!(rm.is_streamed(id_stream));
     assert!(!rm.is_streamed(AssetId::from_raw(999999)));
 
-    // 1. Stream compressed asset from package in 128-byte chunks without caching
     let comp_chunks: Vec<Vec<u8>> = rm.read_stream(id_comp, 128).unwrap().collect();
     let reassembled_comp: Vec<u8> = comp_chunks.into_iter().flatten().collect();
     assert_eq!(reassembled_comp, data_comp);
 
-    // Asset was streamed directly and not cached in slot
     assert_eq!(rm.memory_usage(), 0);
 
-    // 2. Stream uncompressed/streamed asset from package in 256-byte chunks
     let stream_chunks: Vec<Vec<u8>> = rm.read_stream(id_stream, 256).unwrap().collect();
     let reassembled_stream: Vec<u8> = stream_chunks.into_iter().flatten().collect();
     assert_eq!(reassembled_stream, data_stream);
     assert_eq!(rm.memory_usage(), 0);
 
-    // 3. Stream already loaded/cached asset
     let _: Handle<Vec<u8>> = rm.load(id_comp).unwrap();
     assert!(rm.memory_usage() > 0);
     let cached_chunks: Vec<Vec<u8>> = rm.read_stream(id_comp, 64).unwrap().collect();
     let reassembled_cached: Vec<u8> = cached_chunks.into_iter().flatten().collect();
     assert_eq!(reassembled_cached, data_comp);
 
-    // 4. Unknown asset returns None
     assert!(rm
         .read_stream(AssetId::from_raw(0xDEAD_BEEF), 100)
         .is_none());
@@ -486,14 +454,8 @@ fn unload_id_by_asset_id() {
     assert_eq!(rm.memory_usage(), 0);
 }
 
-// -------------------------------------------------------------------
-// Typed asset decoders (TextureAsset / MeshAsset / MaterialAsset /
-// ShaderAsset / SceneAsset)
-// -------------------------------------------------------------------
-
 #[test]
 fn shader_asset_validates_spirv_magic() {
-    // Build a minimal SPIR-V buffer with magic + padding.
     let mut spv = Vec::new();
     spv.extend_from_slice(&0x0723_0203u32.to_le_bytes());
     spv.extend_from_slice(&[0u8; 16]);
@@ -526,12 +488,11 @@ fn shader_asset_into_bytes_roundtrips() {
 
 #[test]
 fn scene_asset_validates_rscn_magic() {
-    // Minimal RSCN: magic + version 2 + entity_count 0 + env_len 0.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"RSCN");
-    bytes.push(2); // version
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // entity_count
-    bytes.extend_from_slice(&0u16.to_le_bytes()); // env_len
+    bytes.push(2);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
 
     let asset = SceneAsset::from_bytes(&bytes).unwrap();
     assert_eq!(asset.bytes, bytes);
@@ -541,30 +502,23 @@ fn scene_asset_validates_rscn_magic() {
 #[test]
 fn scene_asset_rejects_bad_magic() {
     assert!(SceneAsset::from_bytes(b"XXXX").is_err());
-    assert!(SceneAsset::from_bytes(b"RSC").is_err()); // too short
+    assert!(SceneAsset::from_bytes(b"RSC").is_err());
 }
 
 #[test]
 fn material_asset_decodes_cooked_rmat() {
-    // build  an RMAT blob by hand: magic + version + 18 scalars + alpha block
-    // + 5 absent slots.
     let mut buf = Vec::new();
     buf.extend_from_slice(b"RMAT");
     buf.push(crate::formats::RMAT_VERSION);
     let scalars: [f32; crate::formats::MATERIAL_SCALAR_COUNT] = [
-        0.8, 0.8, 0.8, 1.0, // base_color
-        0.2, 0.5, // metallic, roughness
-        0.0, 0.0, 0.0, // emissive
-        1.0, 1.0, 1.0, // emissive_strength, normal_scale, occlusion_strength
-        0.0, 1.5, 0.0, 0.0, // transmission, ior, translucency, anisotropy
-        0.0, 0.0, // clearcoat, clearcoat_roughness
+        0.8, 0.8, 0.8, 1.0, 0.2, 0.5, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0,
     ];
     for s in scalars {
         buf.extend_from_slice(&s.to_le_bytes());
     }
-    buf.push(1); // Mask
+    buf.push(1);
     buf.extend_from_slice(&crate::formats::DEFAULT_ALPHA_CUTOFF.to_le_bytes());
-    buf.extend(std::iter::repeat_n(0, 5)); // absent
+    buf.extend(std::iter::repeat_n(0, 5));
 
     let asset = MaterialAsset::from_bytes(&buf).unwrap();
     assert_eq!(asset.scalars(), &scalars);
@@ -597,14 +551,9 @@ fn typed_asset_types_match_asset_type() {
     assert_eq!(SceneAsset::asset_type(), AssetType::Scene);
 }
 
-// -------------------------------------------------------------------
-// Path manifest -> id_by_path lookup
-// -------------------------------------------------------------------
-
 #[test]
 fn path_manifest_resolves_paths_to_ids() {
     let mut rm = ResourceManager::new();
-    // No manifest -> always None.
     assert!(rm.id_by_path("meshes/cube.gltf").is_none());
 
     let manifest = r#"{
@@ -624,7 +573,6 @@ fn path_manifest_resolves_paths_to_ids() {
     assert_eq!(mesh_id, AssetId::from_raw(0x0000_0001_0000_0001));
     let mat_id = rm.id_by_path("materials/red.mat.json").unwrap();
     assert_eq!(mat_id, AssetId::from_raw(0x0000_0001_0000_0002));
-    // Unknown path -> None.
     assert!(rm.id_by_path("nonexistent.png").is_none());
 }
 
@@ -644,13 +592,8 @@ fn path_manifest_handles_id_without_0x_prefix() {
 fn path_manifest_rejects_bad_json() {
     let mut rm = ResourceManager::new();
     assert!(rm.load_path_manifest_from_str("not json").is_err());
-    // Missing 'assets' arg.
     assert!(rm.load_path_manifest_from_str(r#"{"foo": 1}"#).is_err());
 }
-
-// ---------------------------------------------------------------------------
-// Hot reload (`--features hot-reload`)
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "hot-reload")]
 fn hot_reload_ids() -> (AssetId, AssetId) {
@@ -687,12 +630,8 @@ fn hot_reload_replaces_package_reader() {
     std::fs::write(&path, two_asset_pak(b"new-x-longer", b"new-y-longer")).unwrap();
     rm.on_pak_changed(&path).unwrap();
 
-    // In-memory assets refreshed in place, and **old handle still valid** (generation unchanged) —
-    // hot reload should not invalidate handles held by callers.
     assert_eq!(rm.get(handle).unwrap(), b"new-x-longer");
 
-    // Unload then reload only goes through reader held by manager: old impl keeps opened bytes,
-    // so this will read back `old-x`.
     rm.unload_all();
     let handle: Handle<Vec<u8>> = rm.load(x_id).unwrap();
     assert_eq!(rm.get(handle).unwrap(), b"new-x-longer");
@@ -763,73 +702,58 @@ fn eviction_skips_pinned_slots_and_evicts_after_unpin() {
     let mut rm = ResourceManager::new();
     rm.load_package(&path).unwrap();
 
-    // Budget fits 250 bytes. Both assets together would be 300 bytes.
     rm.set_memory_budget(250);
     rm.set_eviction_policy(EvictionPolicy::Lru);
     std::fs::remove_file(&path).ok();
 
-    // 1. Load asset 1.
     let h1: Handle<Vec<u8>> = rm.load(id1).unwrap();
     assert_eq!(rm.memory_usage(), 100);
     assert_eq!(rm.pin_count(h1), 0);
     assert!(!rm.is_pinned(h1));
 
-    // 2. Pin asset 1.
     assert_eq!(rm.pin(h1).unwrap(), 1);
     assert_eq!(rm.pin_count(h1), 1);
     assert!(rm.is_pinned(h1));
     assert!(rm.is_id_pinned(id1));
     assert_eq!(rm.id_pin_count(id1), 1);
 
-    // Pinning again increments count.
     assert_eq!(rm.pin(h1).unwrap(), 2);
     assert_eq!(rm.pin_count(h1), 2);
 
-    // Unpin once.
     assert_eq!(rm.unpin(h1).unwrap(), 1);
     assert_eq!(rm.pin_count(h1), 1);
     assert!(rm.is_pinned(h1));
 
-    // 3. Try to load asset 2 (200 bytes).
-    // Total would be 300 > 250. Eviction tries to free space, but asset 1 is pinned!
-    // Eviction cannot evict asset 1, so load(id2) must fail with OutOfMemory.
     let err = rm.load::<Vec<u8>>(id2).unwrap_err();
     assert!(
         matches!(err, RuntimeError::OutOfMemory { .. }),
         "expected OutOfMemory, got: {err:?}"
     );
 
-    // Asset 1 must still be loaded and intact.
     assert!(rm.get_raw(id1).is_ok());
     assert_eq!(rm.get(h1).unwrap(), vec![1u8; 100]);
 
-    // Direct evict call also refuses to evict pinned slot.
     assert_eq!(rm.evict(100), 0);
     assert!(rm.get_raw(id1).is_ok());
 
-    // 4. Unpin asset 1 completely.
     assert_eq!(rm.unpin(h1).unwrap(), 0);
     assert!(!rm.is_pinned(h1));
     assert_eq!(rm.pin_count(h1), 0);
 
-    // Unpinning when count is 0 returns PinUnderflow.
     assert!(matches!(
         rm.unpin(h1).unwrap_err(),
         RuntimeError::PinUnderflow(id) if id == id1
     ));
 
-    // 5. Now that asset 1 is unpinned, loading asset 2 succeeds by evicting asset 1.
     let h2: Handle<Vec<u8>> = rm.load(id2).unwrap();
     assert!(rm.memory_usage() <= 250);
     assert_eq!(rm.get(h2).unwrap(), vec![2u8; 200]);
 
-    // Asset 1 was evicted.
     assert!(matches!(
         rm.get(h1).unwrap_err(),
         RuntimeError::NotLoaded(id) if id == id1
     ));
 
-    // Pinning an evicted asset returns NotLoaded.
     assert!(matches!(
         rm.pin(h1).unwrap_err(),
         RuntimeError::NotLoaded(id) if id == id1
@@ -852,7 +776,6 @@ fn handle_pin_generation_mismatch_and_unload_resets_pin() {
     rm.pin(h1).unwrap();
     assert!(rm.is_pinned(h1));
 
-    // AnyHandle pinning
     let any_h = AnyHandle::from(h1);
     assert!(rm.is_any_pinned(any_h));
     assert_eq!(rm.any_pin_count(any_h), 1);
@@ -861,7 +784,6 @@ fn handle_pin_generation_mismatch_and_unload_resets_pin() {
     rm.unpin_any(any_h).unwrap();
     assert_eq!(rm.any_pin_count(any_h), 1);
 
-    // Stale generation handle should fail to pin / unpin.
     let (idx, gen) = h1.into_raw_parts();
     let stale_h = Handle::<Vec<u8>>::new(idx, gen + 1);
     assert!(matches!(
@@ -873,7 +795,6 @@ fn handle_pin_generation_mismatch_and_unload_resets_pin() {
         RuntimeError::GenerationMismatch { .. }
     ));
 
-    // Explicit unload resets pin count and frees data.
     rm.unload(h1);
     assert_eq!(rm.pin_count(h1), 0);
     assert!(!rm.is_pinned(h1));

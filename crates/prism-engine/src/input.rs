@@ -101,10 +101,6 @@ impl KeyCode {
             Self::F10 => 40,
             Self::F11 => 41,
             Self::F12 => 42,
-            // Bit graph 43..=255 has 213 slots, only fits raw key codes vk <= 212.
-            //
-            // Out-of-range key codes must be **discarded**, not modulo: modulo would make vk 226 and vk 452 land on
-            // same bit, player presses an obscure key but sees another held, harder to debug than dropping key.
             Self::Other(code) if code <= 212 => 43 + code as usize,
             Self::Other(_) => return None,
         })
@@ -163,12 +159,10 @@ pub struct TouchEvent {
 ///    update logic.
 #[derive(Default, Clone)]
 pub struct InputManager {
-    // Persistent (accumulated across frames)
     keys_held: rustc_hash::FxHashSet<KeyCode>,
     mouse_buttons_held: rustc_hash::FxHashSet<MouseButton>,
     mouse_position: [f64; 2],
 
-    // Transient (cleared each frame by begin_frame)
     keys_just_pressed: Vec<KeyCode>,
     keys_just_released: Vec<KeyCode>,
     mouse_just_pressed: Vec<MouseButton>,
@@ -177,7 +171,6 @@ pub struct InputManager {
     scroll_delta: f64,
     touches: Vec<TouchEvent>,
 
-    // Pointer-lock state
     /// Whether the cursor is hidden + grabbed for FPS-style look.
     pub pointer_locked: bool,
 }
@@ -197,8 +190,6 @@ impl InputManager {
         self.scroll_delta = 0.0;
         self.touches.clear();
     }
-
-    // --- Query helpers ---
 
     pub fn key_held(&self, key: KeyCode) -> bool {
         self.keys_held.contains(&key)
@@ -257,8 +248,6 @@ impl InputManager {
     pub fn touches(&self) -> &[TouchEvent] {
         &self.touches
     }
-
-    // --- Low-level event handlers (insert raw data) ---
 
     pub fn handle_keyboard(&mut self, key: KeyCode, state: ElementState) {
         match state {
@@ -345,10 +334,6 @@ impl InputManager {
 #[path = "input_tests.rs"]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Cross-ABI input snapshot (#589)
-// ---------------------------------------------------------------------------
-
 /// Fold engine [`InputManager`] into one [`InputSnapshot`].
 ///
 /// `screen` is drawing area size (pixels, same coordinate system as `cursor`). Static Player
@@ -371,7 +356,6 @@ pub fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> prism_project_a
     snapshot.scroll = input.scroll_delta() as f32;
     snapshot.pointer_locked = input.pointer_locked;
 
-    // Key codes not fitting bit graph must be dropped cleanly: rather miss a key than let it masquerade as another.
     let mut dropped: Option<u32> = None;
     for key in input.held_keys() {
         match key.bit_index() {
@@ -413,7 +397,6 @@ pub fn input_snapshot(input: &InputManager, screen: [f32; 2]) -> prism_project_a
             _reserved: 0,
         };
     }
-    // `keys` bit graph and `KeyCode::bit_index` use same numbering (see ABI comment above).
     snapshot
 }
 
@@ -460,9 +443,6 @@ mod abi_key_tests {
         assert_eq!(KeyCode::ArrowLeft.bit_index(), Some(keys::ARROW_LEFT));
         assert_eq!(KeyCode::ArrowRight.bit_index(), Some(keys::ARROW_RIGHT));
         assert_eq!(KeyCode::Digit0.bit_index(), Some(keys::DIGIT_0));
-        // `KeyT` / `F1..=F12` sit before `Other`, so every previously assigned
-        // key keeps its bit; `Other`'s base moved 30 -> 43 (an ABI shift that
-        // `keys` documents).
         assert_eq!(KeyCode::KeyT.bit_index(), Some(keys::KEY_T));
         assert_eq!(KeyCode::F1.bit_index(), Some(keys::F1));
         assert_eq!(KeyCode::F12.bit_index(), Some(keys::F12));

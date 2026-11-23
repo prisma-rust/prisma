@@ -131,7 +131,6 @@ pub fn build_schema_with(registry: &ComponentRegistry, drawers: &PropertyDrawerR
         })
         .collect();
 
-    // Components first, then nested types; within same group sort by name, keep UI order stable.
     types.sort_by(|a, b| {
         b.is_component
             .cmp(&a.is_component)
@@ -255,7 +254,6 @@ mod tests {
     fn schema_exposes_enum_variants_for_dropdowns() {
         let schema = build_schema();
 
-        // `Camera.clear_flags` is `CameraClearFlags`: u8 encoding + variant names.
         let camera = schema
             .type_by_name("prism_engine::scene::Camera")
             .expect("Camera schema");
@@ -277,7 +275,6 @@ mod tests {
             )
         );
 
-        // `Text.alignment` uses same mechanism (proves no special-case for Camera).
         let text = schema
             .type_by_name("prism_engine::ui::Text")
             .expect("Text schema");
@@ -297,7 +294,6 @@ mod tests {
             )
         );
 
-        // Normal numeric fields have no variants.
         let exposure = camera.fields.iter().find(|f| f.name == "exposure").unwrap();
         assert!(exposure.variants.is_none());
     }
@@ -306,7 +302,6 @@ mod tests {
     fn schema_exposes_components_and_nested_types() {
         let schema = build_schema();
 
-        // Components sorted first, and each component carries default value.
         let first_non_component = schema
             .types
             .iter()
@@ -325,7 +320,6 @@ mod tests {
         assert!(camera.is_component);
         assert!(camera.default_json.is_some());
 
-        // `aspect` is read-only field, `enabled` is not.
         assert!(
             camera
                 .fields
@@ -343,7 +337,6 @@ mod tests {
                 .read_only
         );
 
-        // Nested type `glam::Vec3` appears in table, and Style.anchors points to struct.
         assert!(schema.type_by_name("glam::Vec3").is_some());
         assert!(schema.type_by_name("prism_engine::ui::Anchors").is_some());
 
@@ -358,7 +351,6 @@ mod tests {
         assert_eq!(width.kind, "option");
         assert_eq!(width.inner.as_ref().unwrap().kind, "f32");
 
-        // Non-component types have no default value.
         let vec3 = schema.type_by_name("glam::Vec3").unwrap();
         assert!(!vec3.is_component);
         assert!(vec3.default_json.is_none());
@@ -377,8 +369,6 @@ mod tests {
         assert_eq!(rect.inner.as_ref().unwrap().kind, "f32");
     }
 
-    // —— field drawers (`PropertyDrawer` / `PropertyAttribute`) ——
-
     #[test]
     fn builtin_drawers_reach_editor_fields() {
         use crate::property_drawer::PropertyRenderer;
@@ -396,33 +386,27 @@ mod tests {
                 .clone()
         };
 
-        // `[Range]` → slider + upper/lower bounds.
         let exposure = field("prism_engine::scene::Camera", "exposure").expect("Camera.exposure");
         assert_eq!(exposure.renderer, PropertyRenderer::Slider);
         assert_eq!(exposure.range_bounds(), Some((0.0, 5.0)));
         assert!(exposure.tooltip().is_some());
 
-        // `[ColorUsage]` → color picker.
         let background =
             field("prism_engine::scene::Camera", "background_color").expect("background_color");
         assert_eq!(background.renderer, PropertyRenderer::Color);
         assert_eq!(background.color_usage_flags(), Some((true, false)));
 
-        // `[TextArea]` → multi-line text box.
         let content = field("prism_engine::ui::Text", "content").expect("Text.content");
         assert_eq!(content.renderer, PropertyRenderer::TextArea);
         assert_eq!(content.line_range(), Some((2, 6)));
 
-        // Fields without declarations carry no drawer (frontend falls back to default control).
         assert!(field("prism_engine::scene::Camera", "aspect").is_none());
     }
 
     #[test]
     fn builtin_registry_is_shared_and_matches_a_fresh_one() {
-        // Same process builds only once (field write is input event hot path).
         assert!(std::ptr::eq(builtin_registry(), builtin_registry()));
 
-        // Cache content must match manually registered result, avoid initializing wrong.
         let mut fresh = ComponentRegistry::new();
         register_builtin_components(&mut fresh);
         assert_eq!(
@@ -430,7 +414,6 @@ mod tests {
             fresh.component_names()
         );
 
-        // `build_schema()` goes through this shared registry.
         assert_eq!(
             build_schema().component_names(),
             builtin_registry().component_names()
@@ -471,7 +454,6 @@ mod tests {
         assert_eq!(background.renderer, PropertyRenderer::Custom);
         assert_eq!(background.custom.as_deref(), Some("LinearColorEditor"));
 
-        // Later registration for same field overrides built-in `[Range(1,179)]`.
         let fov = camera
             .fields
             .iter()
@@ -482,7 +464,6 @@ mod tests {
             .expect("fov drawer");
         assert_eq!(fov.range_bounds(), Some((10.0, 120.0)));
 
-        // Un-overridden built-in declarations remain.
         let exposure = camera
             .fields
             .iter()
@@ -493,8 +474,6 @@ mod tests {
             .expect("exposure drawer");
         assert_eq!(exposure.range_bounds(), Some((0.0, 5.0)));
 
-        // Type-level drawer (`[CustomPropertyDrawer(typeof(Anchors))]`):
-        // any field whose value type is `prism_engine::ui::Anchors` (like `Style.anchors`) gets this drawer.
         drawers.register_type(
             "prism_engine::ui::Anchors",
             PropertyDrawer::custom("AnchorGizmo"),
@@ -515,7 +494,6 @@ mod tests {
         assert_eq!(anchors_drawer.renderer, PropertyRenderer::Custom);
         assert_eq!(anchors_drawer.custom.as_deref(), Some("AnchorGizmo"));
 
-        // Host registry is local override: default schema still has built-in `[ColorUsage]`.
         let builtin_schema = build_schema();
         let builtin_background = builtin_schema
             .type_by_name("prism_engine::scene::Camera")
@@ -525,7 +503,6 @@ mod tests {
         assert_eq!(builtin_background.renderer, PropertyRenderer::Color);
     }
 
-    // —— enums inside containers: `Vec<Enum>` / `Option<Enum>` / `[Enum; N]` ——
     use prism_reflect::{FieldType, Reflect, ReflectError, ReflectType, Value};
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -576,7 +553,6 @@ mod tests {
         let field = |name: &str| ty.fields.iter().find(|f| f.name == name).unwrap();
         let expected = || Some(vec!["Left".to_string(), "Center".to_string()]);
 
-        // Container itself carries no variants, variants live on innermost scalar leaf.
         for (name, kind) in [("flags", "list"), ("maybe", "option"), ("fixed", "array")] {
             let schema = field(name);
             assert_eq!(schema.kind, kind, "{name} kind");

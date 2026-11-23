@@ -750,7 +750,6 @@ impl ViewportState {
             }
         }
 
-        // 3) gizmo / selection overlays.
         let mut document_changed = false;
         let frame = vm::camera_frame(&workspace.camera);
         let alt = ui.input(|input| input.modifiers.alt);
@@ -906,7 +905,6 @@ impl ViewportState {
             if !right_held || alt || workspace.camera.orthographic {
                 self.flying_camera = false;
             } else if right_pressed && response.hovered() {
-                // Latch fly mode when RMB starts inside viewport so cursor exits stay active.
                 self.flying_camera = true;
             }
             if self.flying_camera {
@@ -1193,7 +1191,7 @@ mod tests {
         let mut workspace = Workspace::sample();
         let before = proxies(&workspace, None).len();
 
-        workspace.set_entity_hidden(1, true); // Cube + Cube/Detail
+        workspace.set_entity_hidden(1, true); 
 
         let after = proxies(&workspace, None).len();
         assert_eq!(
@@ -1586,7 +1584,6 @@ mod interaction_tests {
         let mut harness = EguiHarness::with_size(500.0, 300.0);
         let mut draw = |ctx: &egui::Context| scene.borrow_mut().draw(ctx);
 
-        // Point handle at (200, 100) → drag to (250, 125).
         harness.drag(
             egui::pos2(200.0, 100.0),
             egui::pos2(250.0, 125.0),
@@ -1596,7 +1593,6 @@ mod interaction_tests {
         assert_eq!(scene.borrow().anchors, [0.75, 0.75, 0.75, 0.75]);
         assert_style(&scene.borrow().workspace, [0.75, 0.75, 0.75, 0.75]);
 
-        // Stretch rectangle: right-edge handle at (300, 100) → (250, 100).
         {
             let mut scene = scene.borrow_mut();
             scene.anchors = [0.0, 0.0, 1.0, 1.0];

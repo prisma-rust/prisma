@@ -76,10 +76,8 @@ fn a_camera_inside_the_box_gets_the_full_volume() {
             volume.blend_distance = 0.0;
         },
     );
-    // Inside box (near center).
     let inside = resolve_post_grade(&world, Vec3::new(12.0, 1.0, 0.0), base());
     assert!((inside.contrast - 2.0).abs() < 1e-6);
-    // Outside box and blend_distance = 0 → completely not involved.
     let outside = resolve_post_grade(&world, Vec3::new(16.0, 0.0, 0.0), base());
     assert!((outside.contrast - 1.0).abs() < 1e-6);
 }
@@ -92,10 +90,8 @@ fn blend_distance_fades_out_linearly() {
         volume.blend_distance = 4.0;
         volume.contrast = 3.0;
     });
-    // Outside box 2 meters = half fade-out → contrast 1 + (3 - 1) * 0.5 = 2.
     let half = resolve_post_grade(&world, Vec3::new(3.0, 0.0, 0.0), base());
     assert!((half.contrast - 2.0).abs() < 1e-6, "got {}", half.contrast);
-    // Beyond 4 meters → fully out.
     let far = resolve_post_grade(&world, Vec3::new(6.0, 0.0, 0.0), base());
     assert!((far.contrast - 1.0).abs() < 1e-6);
 }
@@ -162,10 +158,8 @@ fn the_box_is_scaled_by_the_entity_transform() {
             volume.contrast = 2.0;
         },
     );
-    // Box half-size 1 * scale 2 = 2; x = 1.5 inside box.
     let inside = resolve_post_grade(&world, Vec3::new(1.5, 0.0, 0.0), base());
     assert!((inside.contrast - 2.0).abs() < 1e-6);
-    // x = 2.5 outside box.
     let outside = resolve_post_grade(&world, Vec3::new(2.5, 0.0, 0.0), base());
     assert!((outside.contrast - 1.0).abs() < 1e-6);
 }
@@ -182,7 +176,6 @@ fn non_finite_parameters_are_sanitized() {
         volume.vignette = 9.0;
     });
     let grade = resolve_post_grade(&world, Vec3::ZERO, base());
-    // Non-limited value falls back to default inside PostGrade::sanitized.
     assert!((grade.contrast - 1.0).abs() < 1e-6);
     assert!((grade.vignette - 1.0).abs() < 1e-6);
 }

@@ -8,8 +8,6 @@
 //! advances exactly `step` seconds. Randomness is opt-in through
 //! [`SimHarness::install_random_walker`], which uses a seeded SplitMix64 stream.
 
-// This module is compiled into several test binaries; each one exercises a
-// different subset, so per-binary dead-code expectations cannot all be met.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -613,7 +611,6 @@ fn numbers_match(left: f64, right: f64, tolerance: f32) -> bool {
 }
 
 fn unit_from_bits(bits: u64) -> f32 {
-    // 24 high-quality random bits mapped to [-0.5, 0.5).
     ((bits >> 40) as f32 / (1u32 << 24) as f32) - 0.5
 }
 

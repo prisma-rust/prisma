@@ -7,7 +7,6 @@ fn ramp(cells: usize) -> Heightfield {
             heights.push(x as f32 / (cells - 1) as f32 + y as f32 / (cells - 1) as f32);
         }
     }
-    // Go directly through from_raw, avoid opening a test-only constructor.
     let bytes: Vec<u8> = heights
         .iter()
         .flat_map(|value| (value * 0.5).to_le_bytes())
@@ -57,7 +56,6 @@ fn terrain_raycast_hits_a_flat_field_from_above() {
 
 #[test]
 fn terrain_raycast_refines_a_slope() {
-    // 2×2 slope: center interpolates to 0.5, normal should be tilted.
     let (world, _) = terrain_world(ramp(2), [10.0, 10.0], glam::Vec3::ZERO);
     let hit = terrain_raycast(&world, [0.0, 5.0, 0.0], [0.0, -1.0, 0.0], 20.0).expect("hit slope");
     assert!((hit.point[1] - 0.5).abs() < 0.02, "hit y {}", hit.point[1]);
@@ -116,20 +114,16 @@ fn a_heightmap_needs_exactly_one_float_per_cell() {
 #[test]
 fn sampling_is_bilinear_and_clamped() {
     let field = ramp(3);
-    // Corner is original value.
     assert!((field.sample_height(0.0, 0.0) - 0.0).abs() < 1e-6);
     assert!((field.sample_height(1.0, 1.0) - 1.0).abs() < 1e-6);
-    // Center interpolates.
     let middle = field.sample_height(0.5, 0.5);
     assert!((middle - 0.5).abs() < 1e-6, "got {middle}");
-    // Out-of-bounds clamped to boundary.
     assert!((field.sample_height(-1.0, 0.0) - 0.0).abs() < 1e-6);
     assert!((field.sample_height(2.0, 1.0) - 1.0).abs() < 1e-6);
 }
 
 #[test]
 fn heights_keep_the_units_the_cli_writes() {
-    // heightmap CLI writes meters (can be negative), must not be clamped to [0, 1].
     let mut bytes = Vec::new();
     for value in [-11000.0f32, 250.0, 0.0, 8850.0] {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -161,7 +155,6 @@ fn the_mesh_covers_the_requested_size() {
     assert!((xs.iter().cloned().fold(f32::INFINITY, f32::min) + 10.0).abs() < 1e-5);
     assert!((xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max) - 10.0).abs() < 1e-5);
     assert!((zs.iter().cloned().fold(f32::INFINITY, f32::min) + 5.0).abs() < 1e-5);
-    // Fully flat ground: normals all +Y, height is 0.
     assert!(mesh.normals.iter().all(|n| (n[1] - 1.0).abs() < 1e-5));
     assert!(mesh.positions.iter().all(|p| p[1].abs() < 1e-6));
     assert_eq!(mesh.uvs.len(), 16);
@@ -179,7 +172,6 @@ fn splat_colours_follow_height_and_can_be_disabled() {
     let splat = field.build_mesh_with_splat([10.0, 10.0], 1.0, true);
     assert_eq!(splat.colors.len(), splat.positions.len());
     assert_ne!(splat.colors[0], splat.colors[splat.colors.len() - 1]);
-    // Endpoint color of pure-height band (flat normal).
     let low = terrain_splat_color(0.0, 0.0, 1.0, [0.0, 1.0, 0.0]);
     let high = terrain_splat_color(1.0, 0.0, 1.0, [0.0, 1.0, 0.0]);
     assert!((low[0] - SPLAT_SAND[0]).abs() < 1e-5);
@@ -187,7 +179,6 @@ fn splat_colours_follow_height_and_can_be_disabled() {
     assert!((high[0] - SPLAT_SNOW[0]).abs() < 1e-5);
     assert!((high[2] - SPLAT_SNOW[2]).abs() < 1e-5);
 
-    // LOD mesh also carries color, count matches vertex.
     let half = field.build_chunk_mesh_lod_with_splat([10.0, 10.0], 1.0, 0, 4, 0, 4, 2, true);
     assert_eq!(half.colors.len(), half.positions.len());
 }
@@ -286,7 +277,6 @@ fn vegetation_scatter_follows_the_heightfield_and_shares_one_mesh() {
         assert!(world.get::<MeshRef>(*plant_entity).is_some());
     }
 
-    // Param change: rebuild, count follows density, old instance recycled.
     world.get_mut::<Terrain>(entity).unwrap().vegetation_density = 50.0;
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainVegetation>().count(), 50);
@@ -442,12 +432,10 @@ fn the_terrain_system_builds_a_mesh_and_points_the_renderer_at_it() {
         "Must be queued for upload"
     );
 
-    // Param unchanged: second run does not rebuild (path unchanged, ref still there).
     let path = data.mesh_path.clone();
     terrain_system(&mut world);
     assert_eq!(world.get::<TerrainData>(entity).unwrap().mesh_path, path);
 
-    // Param changed: new path, old mesh recycled.
     world.get_mut::<Terrain>(entity).unwrap().height_scale = 42.0;
     terrain_system(&mut world);
     let new_path = world.get::<TerrainData>(entity).unwrap().mesh_path.clone();
@@ -473,10 +461,8 @@ fn the_terrain_height_follows_the_entity_placement() {
     );
     terrain_system(&mut world);
 
-    // Default terrain is flat: everywhere 2.0 (entity height).
     let height = terrain_height(&world, 10.0, -5.0).expect("covered");
     assert!((height - 2.0).abs() < 1e-4);
-    // Outside range has no terrain.
     assert!(terrain_height(&world, 1000.0, -5.0).is_none());
 }
 
@@ -539,8 +525,6 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
             let mesh = meshes.get(&chunk.mesh_path).expect("chunk mesh");
             assert!(!mesh.positions.is_empty());
         }
-        // 32 samples / 2 chunks: seam row stored twice by both sides, so vertex total is (16+17)²;
-        // triangles still cover only 31×31 quads.
         let total_vertices: usize = chunks
             .iter()
             .map(|(_, chunk)| meshes.get(&chunk.mesh_path).unwrap().positions.len())
@@ -557,11 +541,9 @@ fn the_terrain_system_splits_large_terrains_into_cullable_chunks() {
         assert_eq!(total_indices, 31 * 31 * 6);
     }
 
-    // Param unchanged: no rebuild.
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainChunk>().count(), 4);
 
-    // Switch back to single chunk: child entities and old mesh recycled, owner re-enters upload queue.
     world.get_mut::<Terrain>(entity).unwrap().chunks = 1;
     terrain_system(&mut world);
     assert_eq!(world.query::<TerrainChunk>().count(), 0);
@@ -588,7 +570,6 @@ fn adjacent_chunks_share_the_seam_and_keep_global_uvs() {
     assert_eq!(left.positions.len(), 9);
     assert_eq!(right.positions.len(), 9);
 
-    // Left chunk right edge at local x=+2.5, right chunk left edge at local x=-2.5; after adding center offset both land at world x=0.
     let left_edge: Vec<_> = left
         .positions
         .iter()
@@ -606,7 +587,6 @@ fn adjacent_chunks_share_the_seam_and_keep_global_uvs() {
         assert!((left[2] - right[2]).abs() < 1e-5, "seam z differs");
     }
 
-    // UV uses whole terrain [0,1], both sides of seam are u=0.5.
     let seam_u = 2.0 / 4.0;
     assert!(left.uvs.iter().any(|uv| (uv[0] - seam_u).abs() < 1e-5));
     assert!(right.uvs.iter().any(|uv| (uv[0] - seam_u).abs() < 1e-5));
@@ -673,7 +653,6 @@ fn lod_meshes_reduce_resolution_but_keep_the_boundary() {
     assert_eq!(half.positions.len(), 5 * 5);
     assert_eq!(quarter.positions.len(), 3 * 3);
 
-    // Four corners must be fully consistent, otherwise adjacent chunks / level switches reveal cracks.
     for mesh in [&half, &quarter] {
         let side = (mesh.positions.len() as f64).sqrt() as usize;
         for (full_index, lod_index) in [

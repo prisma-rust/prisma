@@ -102,8 +102,6 @@ impl SyncGroup {
             return phase;
         }
 
-        // Find the segment of the leader clip containing `phase`; `phase` before the first marker belongs
-        // to the last segment (phase + 1 compared with the wrap-around segment).
         let (segment, local) = if phase < leader[0] {
             let start = leader[count - 1];
             let end = leader[0] + 1.0;

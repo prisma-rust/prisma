@@ -119,7 +119,6 @@ impl HierarchyHelper {
             }
         }
 
-        // 1. Remove from old parent's Child list
         if let Some(old_parent) = world.get::<Parent>(entity).map(|p| p.0) {
             if let Some(children) = world.get_mut::<Child>(old_parent) {
                 children.0.retain(|e| *e != entity);

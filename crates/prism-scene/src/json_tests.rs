@@ -28,8 +28,6 @@ fn scene_with(components: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn legacy_local_transform_component_is_normalized_on_read() {
-    // Historical doc wrote transform as a component. On read should bake into `transform` not keep component,
-    // otherwise loader overwrites `LocalTransform` again after `LocalToWorld` computed.
     let scene = SceneJson::from_value(serde_json::json!({
         "entities": [{
             "components": {
@@ -55,7 +53,6 @@ fn hand_built_derived_component_is_rejected_by_validate() {
         .expect_err("validate must reject derived component");
     assert!(error.contains("LocalTransform"), "{error}");
 
-    // cook goes through same `validate`, so it also fails before encode.
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     assert!(crate::encode_scene(&scene, &registry).is_err());
@@ -107,7 +104,6 @@ fn derived_components_are_types_not_mountable_components() {
         );
     }
 
-    // Still must stay in type table: RTTIBin type table / editor field descriptions depend on it.
     let id = <LocalTransform as Reflect>::type_desc().id;
     assert!(
         registry.type_registry().descriptor(id).is_some(),
@@ -139,7 +135,6 @@ fn chain_scene(n: usize) -> SceneJson {
 
 #[test]
 fn topological_order_is_parent_first_for_deep_chains() {
-    // Old impl scanned full table per node (O(n²)), 20k nodes would do 400M comparisons.
     let n = 20_000;
     let order = chain_scene(n).topological_order();
     assert_eq!(order, (0..n).collect::<Vec<_>>());
@@ -253,7 +248,6 @@ fn self_parent_is_checked_by_id_not_position() {
 
 #[test]
 fn v2_documents_get_identity_ids_on_migration() {
-    // v2: `parent` is array index, no id.
     let scene = SceneJson::from_value(serde_json::json!({
         "version": 2,
         "entities": [
@@ -268,7 +262,6 @@ fn v2_documents_get_identity_ids_on_migration() {
     assert_eq!(scene.entities[0].id, 0);
     assert_eq!(scene.entities[1].id, 1);
     assert_eq!(scene.entities[2].id, 2);
-    // Identity map: old parent index value directly becomes id, level unchanged.
     assert_eq!(scene.entities[1].parent, Some(0));
     assert_eq!(scene.entities[2].parent, Some(1));
     scene.validate().unwrap();
@@ -285,7 +278,6 @@ fn next_id_is_monotonic_and_never_reuses() {
         ],
     }))
     .unwrap();
-    // Deleting id 9 does not make next id fall back to 9.
     assert_eq!(scene.next_id(), 10);
 }
 
@@ -302,13 +294,11 @@ fn topological_order_resolves_non_contiguous_ids() {
     .unwrap();
 
     let order = scene.topological_order();
-    // Index not id: 40 → 0, 12 → 1, 3 → 2.
     assert_eq!(order, vec![0, 1, 2]);
 }
 
 #[test]
 fn keyframe_animation_tracks_cook_and_decode() {
-    // Track is "struct list", most likely to lose data in RSCN positional encoding (#490).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -363,8 +353,6 @@ fn keyframe_animation_tracks_cook_and_decode() {
 
 #[test]
 fn a_particle_system_survives_cook_and_decode() {
-    // Emitter has an enum field (`shape`): RSCN writes enum as small integer, restores on decode,
-    // most likely to lose value in positional encoding (#501).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -428,8 +416,6 @@ fn a_particle_system_survives_cook_and_decode() {
 
 #[test]
 fn an_audio_source_survives_cook_and_decode() {
-    // Audio component only a string path + scalars; RSCN positional encoding most likely to lose
-    // string (`sound_path`) and boolean (#508).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -484,8 +470,6 @@ fn an_audio_source_survives_cook_and_decode() {
 
 #[test]
 fn physics_components_survive_cook_and_decode() {
-    // Physics component two enums (ColliderShape / BodyType) use hand-written ReflectType with "JSON variant name, RSCN small integer"
-    // most likely to go wrong in round trip (#522).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -614,7 +598,6 @@ fn an_animator_survives_cook_and_decode() {
 
 #[test]
 fn an_animator_without_a_blend_duration_falls_back_to_the_default() {
-    // New fields must tolerate old document: missing `blend_duration` uses 0.2s, not 0 (hard cut).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -644,8 +627,6 @@ fn an_animator_without_a_blend_duration_falls_back_to_the_default() {
 
 #[test]
 fn a_terrain_survives_cook_and_decode() {
-    // Terrain component is "path + scalars", RSCN positional encoding most likely to lose string (heightmap)
-    // and `[f32; 2]` (size) (#517).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -686,7 +667,6 @@ fn a_terrain_survives_cook_and_decode() {
 
 #[test]
 fn a_lod_group_survives_cook_and_decode() {
-    // Distance LOD only one `Vec<f32>` field (#491).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -725,7 +705,6 @@ fn a_lod_group_survives_cook_and_decode() {
 
 #[test]
 fn a_lod_group_without_screen_fields_uses_defaults() {
-    // Old scene only wrote `distances`; new fields must stay compatible via serde default.
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(
@@ -761,7 +740,6 @@ fn a_lod_group_without_screen_fields_uses_defaults() {
 
 #[test]
 fn skinned_components_survive_cook_and_decode() {
-    // Skeleton and skin renderer only have path + one `Vec<String>` (#560).
     let mut registry = ComponentRegistry::new();
     register_builtin_components(&mut registry);
     let scene = SceneJson::parse(

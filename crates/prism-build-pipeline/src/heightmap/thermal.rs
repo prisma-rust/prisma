@@ -19,14 +19,11 @@ pub fn thermal_erosion(hm: &mut Heightmap, params: &ErosionParams) {
 
     let mut dst = clone_data(&hm.data);
 
-    // Double buffering: src = hm.data (read-only), dst = write.
-    // Each pixel independent net change calculation (stream out + stream in), rayon parallel no race.
     dst.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
         for (x, cell) in row.iter_mut().enumerate() {
             let src_h = hm.data[y * w + x];
             let mut net_change: f64 = 0.0;
 
-            // Its own stream out amount: current pixel higher than neighbor and exceeds repose angle threshold
             for &(dx, dy) in &NEIGHBORS_4 {
                 let nx = x as isize + dx;
                 let ny = y as isize + dy;
@@ -44,7 +41,6 @@ pub fn thermal_erosion(hm: &mut Heightmap, params: &ErosionParams) {
                 }
             }
 
-            // Neighbor stream into current pixel amount: neighbor higher than current pixel and exceeds repose angle threshold
             for &(dx, dy) in &NEIGHBORS_4 {
                 let nx = x as isize + dx;
                 let ny = y as isize + dy;
@@ -68,7 +64,6 @@ pub fn thermal_erosion(hm: &mut Heightmap, params: &ErosionParams) {
 
     hm.data = dst;
 
-    // Update min/max
     hm.min_height = hm.data.iter().cloned().fold(f64::INFINITY, f64::min);
     hm.max_height = hm.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 }

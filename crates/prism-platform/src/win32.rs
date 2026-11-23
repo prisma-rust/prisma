@@ -177,8 +177,6 @@ unsafe fn key_down(vk: u16) -> bool {
 }
 
 fn lock(state: &Mutex<WindowState>) -> MutexGuard<'_, WindowState> {
-    // No logic in `WndProc` can panic; even if the mutex is poisoned, keep going
-    // (losing the window is worse).
     state.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -211,8 +209,6 @@ unsafe fn state_of(hwnd: HWND) -> Option<&'static Mutex<WindowState>> {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    // Creation: store `CreateWindowExW`'s `lpCreateParams` (a raw pointer to the Arc)
-    // in USERDATA.
     if msg == WM_NCCREATE {
         let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize) };
@@ -243,14 +239,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
             }
             WM_PAINT => {
-                // Vulkan presents directly; GDI only needs to mark the dirty region
-                // valid.
                 unsafe { ValidateRect(hwnd, std::ptr::null()) };
             }
-            WM_ERASEBKGND => {
-                // Handled (equivalent to returning 1): do not paint the background,
-                // avoiding a white flash.
-            }
+            WM_ERASEBKGND => {}
             WM_SETFOCUS => st.push(PlatformEvent::Focused(true)),
             WM_KILLFOCUS => st.push(PlatformEvent::Focused(false)),
             WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
@@ -266,19 +257,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let y = signed_y(lparam);
                 match st.grab {
                     Some(grab) => {
-                        // Locked: the cursor is pinned to the client-area center, so
-                        // the offset is the raw delta (both are client-area coords).
                         let (dx, dy) = (x - grab.client.x, y - grab.client.y);
                         if dx != 0 || dy != 0 {
                             st.push(PlatformEvent::MouseMotion {
                                 dx: dx as f64,
                                 dy: dy as f64,
                             });
-                            // Recentring must happen after the state lock is released:
-                            // `SetCursorPos` may dispatch a new mouse message, and
-                            // re-entering `WndProc` on the same thread would lock the
-                            // mutex again. (The recenter itself emits another move with
-                            // dx = dy = 0, which the check above swallows.)
                             post = Some(PostAction::Recenter(grab.screen));
                         }
                     }
@@ -313,7 +297,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 post = Some(PostAction::ReleaseCapture);
             }
             WM_XBUTTONDOWN | WM_XBUTTONUP => {
-                // XBUTTON1 = back button, XBUTTON2 = forward button.
                 let button = if hiword(wparam) == 1 { 3 } else { 4 };
                 st.push(PlatformEvent::MouseButton {
                     button,
@@ -322,15 +305,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 post = Some(PostAction::Capture);
             }
             WM_MOUSEWHEEL => {
-                // HIWORD(wParam) is a signed multiple of 120 per notch.
                 let notches = hiword(wparam) as i16 as f32 / WHEEL_DELTA;
                 st.push(PlatformEvent::MouseWheel {
                     delta: notches as f64,
                 });
             }
             WM_SETCURSOR => {
-                // While the cursor is hidden, do not let the DC paint the class cursor
-                // back (return 1 = handled).
                 if !st.cursor_hidden {
                     handled = false;
                 }
@@ -348,8 +328,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             WM_DPICHANGED => {
                 st.dpi = hiword(wparam) as u32;
-                // Follow the system-suggested rectangle (no content scaling; see the
-                // module docs).
                 post = Some(PostAction::ApplyDpiRect(unsafe {
                     *(lparam as *const RECT)
                 }));
@@ -386,8 +364,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         None => {}
     }
 
-    // The return value of `WM_SETCURSOR` / `WM_ERASEBKGND` is a convention: 1 =
-    // handled.
     if msg == WM_SETCURSOR || msg == WM_ERASEBKGND {
         1
     } else {
@@ -424,8 +400,6 @@ pub(crate) struct Win32Window {
     state_ptr: *mut Mutex<WindowState>,
 }
 
-// HWND is a process-level handle; this type is used only on the main thread that
-// created it (only `SendWindowHandles` crosses threads).
 unsafe impl Send for Win32Window {}
 unsafe impl Sync for Win32Window {}
 
@@ -433,8 +407,6 @@ impl Drop for Win32Window {
     fn drop(&mut self) {
         unsafe {
             if !self.hwnd.is_null() {
-                // Destroy the window first (`WndProc` still touches the state), then
-                // reclaim the Arc.
                 DestroyWindow(self.hwnd);
             }
             drop(Arc::from_raw(self.state_ptr));
@@ -443,8 +415,6 @@ impl Drop for Win32Window {
 }
 
 fn window_styles(cfg: &WindowConfig) -> (u32, u32) {
-    // Borderless / fullscreen: title bar and resizing do not apply, so use a popup
-    // directly.
     if cfg.fullscreen || !cfg.decorations {
         return (WS_POPUP | WS_VISIBLE, 0);
     }
@@ -458,9 +428,6 @@ fn window_styles(cfg: &WindowConfig) -> (u32, u32) {
 /// Creates a window with the Win32 API (bypassing winit).
 pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow> {
     unsafe {
-        // Per-Monitor-V2: without this declaration the process is treated as
-        // DPI-unaware and Windows stretches the whole frame bitmap (blurry). Setting
-        // it twice fails, which is fine to ignore.
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         let hinstance = GetModuleHandleW(std::ptr::null());
@@ -476,8 +443,6 @@ pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow
             hInstance: hinstance,
             hIcon: std::ptr::null_mut(),
             hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-            // No background: Vulkan presents the whole frame, and a GDI repaint would
-            // only flicker.
             hbrBackground: std::ptr::null_mut(),
             lpszMenuName: std::ptr::null(),
             lpszClassName: class_name.as_ptr(),
@@ -486,14 +451,9 @@ pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow
         let atom = RegisterClassExW(&class);
         if atom == 0 {
             let error = GetLastError();
-            // ERROR_CLASS_ALREADY_EXISTS = 1410: a second window in the same process
-            // is normal.
             anyhow::ensure!(error == 1410, "RegisterClassExW failed ({error})");
         }
 
-        // The configured width/height follow winit's `LogicalSize` semantics (logical
-        // pixels); here they are scaled by the system DPI into client-area physical
-        // pixels so both backends open a window of the same size.
         let scale = GetDpiForSystem() as f32 / 96.0;
         let client_w = ((cfg.width.max(1) as f32) * scale).round() as i32;
         let client_h = ((cfg.height.max(1) as f32) * scale).round() as i32;
@@ -506,8 +466,6 @@ pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow
             bottom: client_h,
         };
         if cfg.fullscreen {
-            // Borderless fullscreen: fill the primary monitor directly (no exclusive
-            // fullscreen).
             rect.right = GetSystemMetrics(SM_CXSCREEN);
             rect.bottom = GetSystemMetrics(SM_CYSCREEN);
         } else {
@@ -538,8 +496,6 @@ pub(crate) fn create_window(cfg: &WindowConfig) -> anyhow::Result<PlatformWindow
             state_ptr as *const c_void,
         );
         if hwnd.is_null() {
-            // Window creation failed: reclaim the Arc reference handed out, avoiding a
-            // leak.
             drop(Arc::from_raw(state_ptr));
             anyhow::bail!("CreateWindowExW failed ({})", GetLastError());
         }
@@ -605,9 +561,6 @@ impl Win32Window {
         let mut handle = Win32WindowHandle::new(
             NonZeroIsize::new(self.hwnd as isize).expect("HWND must be non-zero"),
         );
-        // `hinstance` must be set: without it `create_surface` returns
-        // `ERROR_INITIALIZATION_FAILED` (a pitfall hit by the editor's native
-        // viewport).
         handle.hinstance = NonZeroIsize::new(self.hinstance as isize);
         RawWindowHandle::Win32(handle)
     }
@@ -617,9 +570,6 @@ impl Win32Window {
     }
 
     pub(crate) fn set_cursor_visible(&self, visible: bool) {
-        // `ShowCursor` is a counter: call it once per state flip. The call is made
-        // after releasing the state lock (it may trigger `WM_SETCURSOR`, and
-        // re-entering on the same thread would lock the mutex again).
         let flip = {
             let mut st = lock(&self.state);
             let hidden = st.cursor_hidden;
@@ -694,7 +644,6 @@ impl Win32Window {
             if has == 0 {
                 break;
             }
-            // WM_QUIT does not go through `DispatchMessageW`.
             if msg.message == WM_QUIT {
                 lock(&self.state).close_requested = true;
                 break;
@@ -733,10 +682,8 @@ mod tests {
         assert_eq!(hiword(0x0001_0002), 1);
         assert_eq!(signed_x(0x0000_0002), 2);
         assert_eq!(signed_y(0x0001_0002), 1);
-        // Negative coordinates (mouse moved outside the client area's top-left).
         assert_eq!(signed_x(0x0000_FFFE), -2);
         assert_eq!(signed_y(0xFFFF_0000u64 as isize), -1);
-        // One wheel notch = 1.0 line.
         assert_eq!(hiword(120usize) as i16 as f32 / WHEEL_DELTA, 1.0);
         assert_eq!(
             hiword((-120i16 as u16) as usize) as i16 as f32 / WHEEL_DELTA,

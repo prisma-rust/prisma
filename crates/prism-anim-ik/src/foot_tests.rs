@@ -289,7 +289,5 @@ fn a_zero_dt_frame_keeps_the_previous_state() {
     let before = placement.foot(0).copied().expect("two feet");
     placement.update(&skeleton, &mut pose, 0, LEGS, &settings, &EmptyGround, 0.0);
     let after = placement.foot(0).copied().expect("two feet");
-    // dt = 0 snaps the smoothing but the foot is still resolved against the
-    // empty ground, so it unplants while keeping the last target position.
     assert_eq!(after.position, before.position);
 }

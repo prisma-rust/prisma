@@ -1,7 +1,3 @@
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 use super::*;
 use crate::core::AssetId;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -14,7 +10,6 @@ fn sample_asset_id(serial: u64) -> AssetId {
 fn roundtrip_empty() {
     let mut builder = PackageBuilder::new();
     let bytes = builder.build().unwrap();
-    // An empty package is still a valid package: header only, no 0-byte file.
     assert_eq!(bytes.len() as u64, PackageHeader::SERIALIZED_SIZE);
     let reader = PackageReader::from_bytes(&bytes).unwrap();
     assert_eq!(reader.asset_count(), 0);
@@ -123,9 +118,8 @@ fn checksum_mismatch_detected() {
     builder.add_asset(id, AssetType::Binary, vec![0; 64], &[]);
     let mut pak = builder.build().unwrap();
 
-    // Corrupt one byte in the data section.
-    let data_start = 52 + 48; // header + one record
-    let data_off = data_start + 48 + 8; // skip registry and deps too... let's just find it
+    let data_start = 52 + 48;
+    let data_off = data_start + 48 + 8;
     if data_off < pak.len() {
         pak[data_off] ^= 0xFF;
     }
@@ -152,7 +146,7 @@ fn checksum_covers_version_field() {
     assert!(verify_checksum(&pak, &header).is_ok());
 
     let mut tampered = pak.clone();
-    tampered[4] ^= 0xFF; // version
+    tampered[4] ^= 0xFF;
     let tampered_header = PackageHeader {
         version: header.version ^ 0xFF,
         ..header
@@ -183,7 +177,6 @@ fn checksum_covers_asset_count() {
         "asset_count = 0 should trigger checksum failure, got {err}"
     );
 
-    // Change asset_count + registry_size together to self-consistent 2 assets, still can't escape.
     let mut tampered = pak.clone();
     tampered[8..12].copy_from_slice(&2u32.to_le_bytes());
     let with_two = (RuntimeAssetRecord::SERIALIZED_SIZE * 2).to_le_bytes();
@@ -249,13 +242,11 @@ fn streamed_asset_sets_flag_and_bypasses_compression() {
     assert_eq!(rec_stream.compressed_size, 0);
     assert_eq!(rec_stream.size, 2048);
 
-    // Streamed asset slice in package matches uncompressed data directly.
     let raw_stream_slice = reader
         .asset_record_raw_slice(rec_stream)
         .expect("raw slice");
     assert_eq!(raw_stream_slice, &data_stream);
 
-    // Both read back correctly through read_asset_data.
     assert_eq!(
         reader.read_asset_data(id_normal).unwrap().unwrap(),
         data_normal
@@ -274,9 +265,6 @@ fn temp_pak_path() -> std::path::PathBuf {
 
 #[test]
 fn open_keeps_the_file_on_disk() {
-    // #509: `open` used to `std::fs::read` the whole archive, so a 1 GB `.pak`
-    // was 1 GB of resident memory from startup. It now keeps the handle and
-    // reads payloads on demand.
     let id = sample_asset_id(7);
     let data = vec![0xABu8; 2048];
     let mut builder = PackageBuilder::new();
@@ -293,7 +281,6 @@ fn open_keeps_the_file_on_disk() {
         "a file-backed reader must not hold the whole archive in memory"
     );
     assert_eq!(reader.backing.len(), pak.len() as u64);
-    // The file is read lazily, so it must still be usable after `open`.
     assert_eq!(reader.read_asset_data(id).unwrap().unwrap(), data);
     reader.verify_integrity().expect("integrity");
 
@@ -326,7 +313,6 @@ fn a_file_backed_reader_rejects_a_corrupt_payload() {
     let mut builder = PackageBuilder::new();
     builder.add_asset(id, AssetType::Binary, vec![7u8; 512], &[]);
     let mut pak = builder.build().unwrap();
-    // Flip a byte inside the data chunk (last byte of the file).
     let last = pak.len() - 1;
     pak[last] ^= 0xFF;
 
@@ -368,7 +354,6 @@ fn from_owned_bytes_moves_the_buffer() {
 
     let reader = PackageReader::from_owned_bytes(pak).unwrap();
 
-    // The in-memory backing is the buffer we handed over, not a copy of it.
     let bytes = reader.backing.bytes().expect("in-memory backing");
     assert_eq!(
         bytes.as_ptr(),
@@ -389,11 +374,6 @@ fn invalid_magic_rejected() {
     assert!(matches!(err, PackageError::InvalidMagic(_)));
 }
 
-// ---------------------------------------------------------------------------
-// Malformed header (regression #60): these inputs previously caused integer overflow panic in debug,
-// release wraps around to huge offset then slice panic, never reaches checksum check.
-// ---------------------------------------------------------------------------
-
 fn malformed_pak(
     asset_count: u32,
     registry_offset: u64,
@@ -410,9 +390,8 @@ fn malformed_pak(
     buf.extend_from_slice(&registry_size.to_le_bytes());
     buf.extend_from_slice(&data_offset.to_le_bytes());
     buf.extend_from_slice(&data_size.to_le_bytes());
-    buf.extend_from_slice(&0u64.to_le_bytes()); // checksum, filled in below
+    buf.extend_from_slice(&0u64.to_le_bytes());
     buf.extend_from_slice(payload);
-    // Structural checksum test cases must have **valid** checksum, otherwise will hit ChecksumMismatch first (#89).
     let tail = buf[PackageHeader::SERIALIZED_SIZE as usize..].to_vec();
     let checksum = PackageHeader::compute_checksum(&buf[4..44], &[], &[], &tail);
     buf[44..52].copy_from_slice(&checksum.to_le_bytes());
@@ -430,7 +409,6 @@ fn expect_truncated(bytes: &[u8]) -> PackageError {
 
 #[test]
 fn data_offset_before_registry_end_is_rejected() {
-    // Reproduce issue with 100-byte construction: registry covers 52..100, but data_offset is still 52.
     let bytes = malformed_pak(
         1,
         PackageHeader::SERIALIZED_SIZE,
@@ -490,7 +468,6 @@ fn truncated_header_is_rejected() {
 
 #[test]
 fn record_data_outside_the_chunk_is_rejected() {
-    // Legal-shaped 100-byte package, but record claims data at offset 0 (data chunk starts at 100).
     let bytes = malformed_pak(
         1,
         PackageHeader::SERIALIZED_SIZE,
@@ -505,7 +482,6 @@ fn record_data_outside_the_chunk_is_rejected() {
 #[test]
 fn record_dependencies_outside_the_array_are_rejected() {
     let mut record = vec![0u8; RuntimeAssetRecord::SERIALIZED_SIZE as usize];
-    // dependency_start = 1, dependency_count = 1, but dependency array is empty.
     record[40..44].copy_from_slice(&1u32.to_le_bytes());
     record[44..48].copy_from_slice(&1u32.to_le_bytes());
     let bytes = malformed_pak(
