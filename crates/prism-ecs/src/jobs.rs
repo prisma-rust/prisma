@@ -2,14 +2,14 @@
 //!
 //! Batch systems (per-character animation evaluation, for example) need to
 //! split a slice into disjoint mutable chunks and process them on worker
-//! threads. [`scoped_parallel_chunks`] gives each chunk exclusive access, so no
+//! threads. `scoped_parallel_chunks` gives each chunk exclusive access, so no
 //! `Arc<Mutex<_>>` or atomics are needed and two threads can never touch the
 //! same element.
 //!
 //! The workers are created once per process and reused (#1031): spawning
 //! `min(cores, jobs)` threads per frame put thread creation and teardown on the
 //! frame budget exactly when an animated character needed them. Callers still
-//! see scoped semantics — [`scoped_parallel_chunks`] returns only after every
+//! see scoped semantics — `scoped_parallel_chunks` returns only after every
 //! chunk has been processed.
 
 use std::any::Any;
@@ -107,7 +107,7 @@ struct Queued {
     job: Job,
 }
 
-/// Worker pool shared by every [`scoped_parallel_chunks`] call.
+/// Worker pool shared by every `scoped_parallel_chunks` call.
 struct Pool {
     jobs: Mutex<VecDeque<Queued>>,
     work_available: Condvar,
@@ -120,6 +120,10 @@ struct Pool {
 static POOL_SPAWNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl Pool {
+    /// Creates a pool with up to `threads` workers.
+    ///
+    /// A partial pool is still correct: if spawning fails, the workers that did
+    /// start plus the calling threads drain the queue.
     fn new(threads: usize) -> Arc<Self> {
         let pool = Arc::new(Self {
             jobs: Mutex::new(VecDeque::new()),
@@ -138,8 +142,6 @@ impl Pool {
                     drop(handle);
                 }
                 Err(_) => {
-                    // A partial pool is still correct: the remaining workers plus
-                    // the calling threads drain the queue.
                     break;
                 }
             }
@@ -172,6 +174,11 @@ impl Pool {
 
     /// Runs `jobs`, helping from the calling thread, and re-raises the first
     /// panic among them. Returns only once every job has been dropped.
+    ///
+    /// The calling thread drains its own jobs instead of idling: nested calls or
+    /// a pool that failed to spawn workers would otherwise deadlock. Jobs are
+    /// selected by owner, so a waiting caller never runs or reports another
+    /// call's panic.
     fn run_all(&self, jobs: Vec<Job>) {
         let call = Arc::new(Call::new(jobs.len()));
         let owner = self.next_call.fetch_add(1, Ordering::Relaxed);
@@ -189,10 +196,6 @@ impl Pool {
         self.lock().extend(jobs);
         self.work_available.notify_all();
 
-        // Help instead of idling: a nested `scoped_parallel_chunks` call (or a
-        // pool that failed to spawn its workers) would otherwise deadlock. Only
-        // this call's jobs are taken, so a waiting caller never runs (and never
-        // reports the panic of) a chunk that belongs to another call.
         loop {
             let job = {
                 let mut jobs = self.lock();
@@ -239,10 +242,11 @@ fn pool_spawn_count() -> usize {
 /// The job must run (or be dropped) before the data it borrowed goes away.
 /// [`Pool::run_all`] waits for the call's `pending` count to reach zero before
 /// returning, and every job decrements it after the closure is consumed, so the
-/// borrow never escapes [`scoped_parallel_chunks`].
+/// borrow never escapes `scoped_parallel_chunks`.
+///
+/// Both trait objects are `FnOnce` boxes with the same vtable; only the
+/// borrow-checker lifetime is widened.
 unsafe fn erase_job_lifetime<'a>(job: Box<dyn FnOnce() + Send + 'a>) -> Job {
-    // SAFETY: both trait objects are `FnOnce` boxes with the same vtable; only
-    // the borrow-checker lifetime is widened.
     unsafe { std::mem::transmute(job) }
 }
 
@@ -283,8 +287,6 @@ where
                     work(item);
                 }
             });
-            // SAFETY: `run_all` below returns only after every job ran or was
-            // dropped, so `group` never outlives this call.
             unsafe { erase_job_lifetime(job) }
         })
         .collect();

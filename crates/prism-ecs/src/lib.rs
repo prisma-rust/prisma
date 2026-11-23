@@ -49,7 +49,6 @@ impl Entity {
 /// they can be stored in type-erased pools and safely sent across threads.
 pub trait Component: 'static + Send + Sync {}
 
-// Blanket impl: any plain `'static + Send + Sync` data is a component.
 impl<T: 'static + Send + Sync> Component for T {}
 
 /// Central storage for all entities and their components.
@@ -98,11 +97,11 @@ impl World {
     }
 
     /// Allocate a fresh entity handle (starts active).
+    ///
+    /// A recycled slot reuses the stored next generation, so the recycled
+    /// handle is distinguishable from the stale handle that was just freed.
     pub fn spawn(&mut self) -> Entity {
         if let Some(id) = self.free.pop() {
-            // Recycle a freed slot: the stored generation is already the next
-            // one (old + 1), so a recycled handle is distinguishable from the
-            // stale handle that was just freed.
             let generation = self.entities[id as usize];
             self.alive[id as usize] = true;
             self.active[id as usize] = true;
@@ -118,17 +117,15 @@ impl World {
 
     /// Mark an entity as deleted; its slot becomes recyclable and its
     /// components are dropped.
+    ///
+    /// The stored generation is bumped and the slot is marked dead, so a handle
+    /// forged as `{ id, generation + 1 }` cannot touch it before the recycle
+    /// actually happens.
     pub fn despawn(&mut self, entity: Entity) {
         if self.is_alive(entity) {
-            // Drop all components for this entity from every pool. Each pool
-            // is `dyn ErasedPool`, so this needs no concrete type.
             for pool in self.pools.values_mut() {
                 pool.remove(entity.id);
             }
-            // Store the *next* generation so the slot can be recycled with a
-            // fresh, distinguishable handle, and mark the slot dead so a handle
-            // forged as `{ id, generation + 1 }` cannot touch it before the
-            // recycle actually happens.
             self.entities[entity.id as usize] = entity.generation + 1;
             self.alive[entity.id as usize] = false;
             self.free.push(entity.id);
@@ -237,6 +234,9 @@ impl World {
 
     /// Iterate over all `(Entity, &mut T)` pairs for a single component type.
     /// Inactive entities are skipped.
+    ///
+    /// `active` and `pools` are disjoint fields, so the shared read of `active`
+    /// stays valid while the pool borrow is alive.
     pub fn query_mut<T: Component>(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
         let entities = &self.entities;
         let active = &self.active;
@@ -245,8 +245,6 @@ impl World {
             .flat_map(move |p| pool_downcast_mut::<T>(p.as_mut()).iter_mut())
             .filter_map(move |(id, value)| {
                 let generation = *entities.get(id as usize)?;
-                // `active` and `pools` are disjoint fields, so the shared read
-                // stays valid while the pool borrow is alive.
                 if !active.get(id as usize).copied().unwrap_or(true) {
                     return None;
                 }
@@ -339,7 +337,6 @@ impl World {
     ) -> Box<dyn Iterator<Item = (Entity, &mut A, &B)> + '_> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
-        // `get_disjoint_mut` panics for duplicate keys.
         if type_a == type_b {
             return Box::new(std::iter::empty());
         }
@@ -362,8 +359,6 @@ impl World {
             Some((Entity { id, generation }, av, bv))
         }))
     }
-
-    // Component-type enumeration (for editor auto-recognition).
 
     /// Iterate over every component type currently stored in the world,
     /// yielding `(TypeId, type_name)`. This is the foundation of the editor's
@@ -391,8 +386,6 @@ impl World {
             .get(&type_id)
             .is_some_and(|pool| pool.contains(entity.id))
     }
-
-    // Resources: global singleton data not tied to an entity.
 
     /// Insert a global resource, replacing any existing one of the same type.
     /// Resources are singletons keyed by type: camera, `RenderState`, etc.
@@ -477,7 +470,6 @@ impl<T: 'static> ComponentPool<T> {
         }
         let idx = self.sparse[id as usize] as usize;
         if idx < self.dense.len() {
-            // Already present: overwrite in place (no reordering).
             self.dense[idx] = value;
         } else {
             self.sparse[id as usize] = self.dense.len() as u32;
@@ -547,7 +539,7 @@ impl<T: 'static> ComponentPool<T> {
 
 impl<T: 'static + Send + Sync> ErasedPool for ComponentPool<T> {
     fn remove(&mut self, id: u32) {
-        self.remove(id); // drops the value
+        self.remove(id);
     }
 
     fn contains(&self, id: u32) -> bool {

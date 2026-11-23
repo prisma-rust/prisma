@@ -45,10 +45,10 @@ fn generation_bumps_on_recycle() {
     let mut world = World::new();
     let e0 = world.spawn();
     world.despawn(e0);
-    let e1 = world.spawn(); // reuses e0's slot
+    let e1 = world.spawn();
     assert_eq!(e0.id, e1.id);
     assert_ne!(e0.generation, e1.generation);
-    assert!(!world.is_alive(e0)); // stale handle invalidated
+    assert!(!world.is_alive(e0));
     assert!(world.is_alive(e1));
 }
 
@@ -58,7 +58,6 @@ fn ghost_next_generation_handle_is_not_alive() {
     let e = world.spawn();
     world.despawn(e);
 
-    // A freed slot stores `generation + 1`, but that handle was never spawned.
     let ghost = Entity::from_raw(e.id(), e.generation() + 1);
     assert!(!world.is_alive(ghost));
     assert!(!world.is_active(ghost));
@@ -67,7 +66,6 @@ fn ghost_next_generation_handle_is_not_alive() {
     let recycled = world.spawn();
     assert_eq!(recycled.id(), e.id());
     assert_ne!(recycled.generation(), e.generation());
-    // The rejected write must not leak into the recycled entity.
     assert_eq!(world.get::<Position>(recycled), None);
 }
 
@@ -78,7 +76,7 @@ fn despawn_ghost_does_not_double_free() {
     world.despawn(e);
 
     let ghost = Entity::from_raw(e.id(), e.generation() + 1);
-    world.despawn(ghost); // must be a no-op
+    world.despawn(ghost);
 
     let a = world.spawn();
     let b = world.spawn();
@@ -95,11 +93,9 @@ fn query_visits_all_with_component() {
     let _c = world.spawn();
     world.insert(a, Position(1.0, 0.0));
     world.insert(b, Position(2.0, 0.0));
-    // c has no Position
     let count = world.query::<Position>().count();
     assert_eq!(count, 2);
 
-    // query_mut can mutate
     for (_e, pos) in world.query_mut::<Position>() {
         pos.1 = 5.0;
     }
@@ -113,7 +109,6 @@ fn insert_on_dead_entity_is_noop() {
     let e = world.spawn();
     world.despawn(e);
     world.insert(e, Position(0.0, 0.0));
-    // A recycled slot should not receive the stale insert.
     let e2 = world.spawn();
     assert_eq!(world.get::<Position>(e2), None);
 }
@@ -134,7 +129,6 @@ fn query2_joins_two_components() {
     world.insert(a, Position(1.0, 0.0));
     world.insert(a, Velocity(0.5, 0.0));
     world.insert(b, Position(2.0, 0.0));
-    // `b` has no `Velocity`; `_c` has neither.
     world.insert(_c, Position(3.0, 0.0));
 
     let results: Vec<_> = world.query2::<Position, Velocity>().collect();
@@ -153,7 +147,6 @@ fn query3_joins_three_components() {
     world.insert(a, Position(1.0, 0.0));
     world.insert(a, Velocity(0.5, 0.0));
     world.insert(a, Health(100));
-    // `b` is missing `Health`.
     world.insert(b, Position(2.0, 0.0));
     world.insert(b, Velocity(1.0, 0.0));
 
@@ -187,9 +180,6 @@ fn query2_mut_yields_disjoint_mutable_borrows() {
     world.insert(b, Position(2.0, 2.0));
     world.insert(b, Velocity(3.0, 4.0));
 
-    // Hold every `&mut Position` at the same time: the two component pools are
-    // borrowed mutably side by side, so an overlapping (aliasing) split would
-    // be rejected here. `Velocity` stays readable throughout.
     let mut rows: Vec<(Entity, &mut Position, (f32, f32))> = Vec::new();
     for (entity, position, velocity) in world.query2_mut::<Position, Velocity>() {
         rows.push((entity, position, (velocity.0, velocity.1)));
@@ -203,7 +193,6 @@ fn query2_mut_yields_disjoint_mutable_borrows() {
 
     assert_eq!(world.get::<Position>(a), Some(&Position(1.5, 1.25)));
     assert_eq!(world.get::<Position>(b), Some(&Position(5.0, 6.0)));
-    // The read-only pool was not modified.
     assert_eq!(world.get::<Velocity>(a), Some(&Velocity(0.5, 0.25)));
 }
 
@@ -213,8 +202,6 @@ fn query2_mut_rejects_the_same_type_in_both_slots() {
     let e = world.spawn();
     world.insert(e, Position(1.0, 2.0));
 
-    // `get_disjoint_mut` panics on duplicate keys, so the same-type query must
-    // short-circuit to an empty iterator instead of reaching the pool map.
     assert!(world.query2_mut::<Position, Position>().next().is_none());
     assert_eq!(world.get::<Position>(e), Some(&Position(1.0, 2.0)));
 }
@@ -246,7 +233,6 @@ fn query2_empty_when_one_pool_missing() {
     let mut world = World::new();
     let a = world.spawn();
     world.insert(a, Position(0.0, 0.0));
-    // No entity has `Velocity` at all.
     assert!(world.query2::<Position, Velocity>().next().is_none());
 }
 
@@ -270,6 +256,6 @@ fn resources_insert_get_mut_remove() {
 fn resources_are_type_keyed_singletons() {
     let mut world = World::new();
     world.insert_resource(Health(100));
-    world.insert_resource(Health(200)); // replaces
+    world.insert_resource(Health(200));
     assert_eq!(world.get_resource::<Health>(), Some(&Health(200)));
 }
