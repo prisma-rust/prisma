@@ -107,10 +107,6 @@ pub const RANI_LOOPED: u16 = 1 << 0;
 /// RANI flag: additive clip.
 pub const RANI_ADDITIVE: u16 = 1 << 1;
 
-// ---------------------------------------------------------------------------
-// Reader
-// ---------------------------------------------------------------------------
-
 /// Forward-only byte reader: every read does bounds check, out-of-bounds returns `None`.
 /// Fixed/variable-length record reader (also used by `formats_state_machine`).
 pub(crate) struct Reader<'a> {
@@ -196,10 +192,6 @@ impl<'a> Reader<'a> {
         self.data.len().saturating_sub(self.pos)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Skeleton
-// ---------------------------------------------------------------------------
 
 /// Bone local TRS (translation / rotation quaternion xyzw / scale).
 ///
@@ -341,10 +333,6 @@ pub fn decode_rskel(data: &[u8]) -> Option<SkeletonInfo> {
     skeleton.is_topologically_sorted().then_some(skeleton)
 }
 
-// ---------------------------------------------------------------------------
-// Skinned mesh
-// ---------------------------------------------------------------------------
-
 /// One submesh: material slot + index range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubmeshInfo {
@@ -398,10 +386,10 @@ impl SkinnedMeshInfo {
 
     /// All joint indices are within `joint_count` range.
     pub fn joint_indices_are_in_range(&self) -> bool {
-        self.joints.iter().flatten().all(|joint| {
-            // Zero-weight slots allow any index (cooker writes unused slots as 0).
-            (*joint as u32) < self.joint_count
-        })
+        self.joints
+            .iter()
+            .flatten()
+            .all(|joint| (*joint as u32) < self.joint_count)
     }
 }
 
@@ -523,10 +511,6 @@ pub fn decode_rskin(data: &[u8]) -> Option<SkinnedMeshInfo> {
         bind_pose: JointTransform::from_array(bind_pose),
     })
 }
-
-// ---------------------------------------------------------------------------
-// Animation clip
-// ---------------------------------------------------------------------------
 
 /// One vec3 keyframe.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -709,8 +693,6 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         });
     }
 
-    // v1 has no event table: version number itself declares "no events". v2+ every clip has table (may be empty),
-    // so future fields can just keep appending.
     let mut notifies = Vec::new();
     if version >= RANI_NOTIFY_VERSION {
         let notify_count = reader.u32()? as usize;
@@ -726,7 +708,6 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         }
     }
 
-    // v3 appends sync marker table; v1/v2 don't have.
     let mut sync_markers = Vec::new();
     if version >= RANI_SYNC_MARKER_VERSION {
         let marker_count = reader.u32()? as usize;
@@ -743,7 +724,6 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         }
     }
 
-    // v4 appends Montage segment table; v1-v3 don't have.
     let mut sections = Vec::new();
     if version >= RANI_SECTION_VERSION {
         let section_count = reader.u32()? as usize;
@@ -773,7 +753,6 @@ pub fn decode_ranim(data: &[u8]) -> Option<AnimClipInfo> {
         });
     }
 
-    // v5 appends MotionWarping window table; v1-v4 don't have.
     let mut warp_windows = Vec::new();
     if version >= RANI_WARP_WINDOW_VERSION {
         let window_count = reader.u32()? as usize;

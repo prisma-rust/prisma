@@ -22,18 +22,15 @@ use crate::shader_bindings::scene_frag;
 pub struct SceneScope {
     device: ash::Device,
     context: Arc<VulkanContext>,
-    // ---- set 5 descriptor resources ----
     /// Descriptor set layout (binding 0: SAMPLED_IMAGE, binding 1: UBO).
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     /// The single descriptor set written with the probe volume + info UBO.
     pub descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
-    // ---- probe volume 3D texture ----
     volume_image: vk::Image,
     volume_view: vk::ImageView,
     volume_memory: vk::DeviceMemory,
     volume_dims: [u32; 3],
-    // ---- ProbeVolumeInfo UBO (48 bytes) ----
     info_buffer: vk::Buffer,
     info_memory: vk::DeviceMemory,
 }
@@ -45,15 +42,12 @@ impl SceneScope {
     pub fn new(context: Arc<VulkanContext>) -> Result<Self> {
         let device = context.device.clone();
 
-        // ---- Descriptor set layout (set 5) ----
         let gi_bindings = [
-            // binding 0: probe volume 3D texture (SAMPLED_IMAGE, no sampler).
             vk::DescriptorSetLayoutBinding::default()
                 .binding(scene_frag::PROBE_VOLUME_BINDING)
                 .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
-            // binding 1: ProbeVolumeInfo UBO (48 bytes).
             vk::DescriptorSetLayoutBinding::default()
                 .binding(scene_frag::PROBE_INFO_BINDING)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
@@ -110,7 +104,6 @@ impl SceneScope {
             info_memory: vk::DeviceMemory::null(),
         };
 
-        // Populate with synthetic sky SH field (Phase A default).
         scope.upload_synthetic_probe_volume()?;
 
         Ok(scope)
@@ -222,7 +215,7 @@ impl SceneScope {
                         pixels[base] = c[0];
                         pixels[base + 1] = c[1];
                         pixels[base + 2] = c[2];
-                        pixels[base + 3] = 0.0; // alpha unused
+                        pixels[base + 3] = 0.0;
                     }
                 }
             }
@@ -230,17 +223,9 @@ impl SceneScope {
         pixels
     }
 
-    // -------------------------------------------------------------------
-    // Internal: upload helpers
-    // -------------------------------------------------------------------
-
     /// Upload synthetic analytical sky-hemisphere SH field (Phase A).
     fn upload_synthetic_probe_volume(&mut self) -> Result<()> {
-        let info = crate::gi::ProbeVolumeInfo::new(
-            [-6.0, 0.0, -6.0], // origin
-            [3.0, 3.0, 3.0],   // spacing
-            [5, 4, 5],         // dims
-        );
+        let info = crate::gi::ProbeVolumeInfo::new([-6.0, 0.0, -6.0], [3.0, 3.0, 3.0], [5, 4, 5]);
         let dims = [5u32, 4, 5];
         let pixels = Self::generate_synthetic_sh_field([5, 4, 5]);
         self.upload_probe_volume(&info, dims, &pixels)
@@ -258,9 +243,8 @@ impl SceneScope {
 
         let tex_w = dims[0];
         let tex_h = dims[1];
-        let tex_d = dims[2] * 9; // 9 coefficient layers
+        let tex_d = dims[2] * 9;
 
-        // ---- Create 3D image (RGBA32SFLOAT, device-local) ----
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_3D)
             .format(vk::Format::R32G32B32A32_SFLOAT)
@@ -301,7 +285,6 @@ impl SceneScope {
         unsafe { device.bind_image_memory(volume_image, volume_memory, 0) }
             .context("SceneScope: bind GI volume memory")?;
 
-        // ---- Upload via staging buffer ----
         let data_bytes: &[u8] = bytemuck::cast_slice(pixels);
         let staging_size = data_bytes.len() as vk::DeviceSize;
         let (staging_buf, staging_mem) = crate::buffer::create_buffer(
@@ -320,7 +303,6 @@ impl SceneScope {
             device.unmap_memory(staging_mem);
         }
 
-        // One-shot command buffer: layout transition + copy.
         let cmd_pool = unsafe {
             device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -344,7 +326,6 @@ impl SceneScope {
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )?;
-            // UNDEFINED -> TRANSFER_DST_OPTIMAL
             device.cmd_pipeline_barrier(
                 cmd_buf,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -366,7 +347,6 @@ impl SceneScope {
                         layer_count: 1,
                     })],
             );
-            // Copy staging -> 3D image.
             device.cmd_copy_buffer_to_image(
                 cmd_buf,
                 staging_buf,
@@ -389,7 +369,6 @@ impl SceneScope {
                         depth: tex_d,
                     })],
             );
-            // TRANSFER_DST -> SHADER_READ_ONLY_OPTIMAL
             device.cmd_pipeline_barrier(
                 cmd_buf,
                 vk::PipelineStageFlags::TRANSFER,
@@ -435,7 +414,6 @@ impl SceneScope {
             device.free_memory(staging_mem, None);
         }
 
-        // ---- Image view (3D, single mip/layer) ----
         let volume_view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo::default()
@@ -454,7 +432,6 @@ impl SceneScope {
         }
         .context("SceneScope: create GI volume image view")?;
 
-        // ---- ProbeVolumeInfo UBO (48 bytes, host-visible) ----
         let info_size = std::mem::size_of::<crate::gi::ProbeVolumeInfo>() as vk::DeviceSize;
         let (info_buffer, info_memory) = crate::buffer::create_buffer(
             context,
@@ -476,7 +453,6 @@ impl SceneScope {
             device.unmap_memory(info_memory);
         }
 
-        // ---- Write descriptor set ----
         let img_info = vk::DescriptorImageInfo::default()
             .image_view(volume_view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -521,29 +497,23 @@ impl SceneScope {
     /// to validate the sampling pipeline before real baked data is available.
     fn generate_synthetic_sh_field(dims: [usize; 3]) -> Vec<f32> {
         use crate::gi::{sh_basis, SH_COEFF_COUNT};
-        const N: usize = 64; // samples per probe (uniform sphere)
+        const N: usize = 64;
         let total_probes = dims[0] * dims[1] * dims[2];
-        // RGBA pixels: (dims[0]) x (dims[1]) x (dims[2]*9)
         let mut pixels = vec![0.0f32; dims[0] * dims[1] * (dims[2] * 9) * 4];
 
-        // Precompute SH projection of a sky hemisphere (same for all probes).
         let mut sh = [[0.0f32; 3]; SH_COEFF_COUNT];
         for si in 0..N {
-            // Fibonacci sphere for uniform direction distribution.
             let y = 1.0 - 2.0 * (si as f32 + 0.5) / N as f32;
             let r = (1.0 - y * y).max(0.0).sqrt();
-            let phi = si as f32 * 2.399963; // golden angle
+            let phi = si as f32 * 2.399963;
             let d = [r * phi.cos(), y, r * phi.sin()];
-            // Radiance: sky (upper hemisphere) + ground (lower).
             let radiance = if d[1] > 0.0 {
-                [0.35f32, 0.55, 0.95] // sky blue
+                [0.35f32, 0.55, 0.95]
             } else {
-                [0.12f32, 0.10, 0.08] // ground brown
+                [0.12f32, 0.10, 0.08]
             };
             let basis = sh_basis(d);
-            // Monte Carlo SH projection with cosine weighting:
-            //   c_l = (4*pi/N) * sum_i L(d_i) * max(d_i.y, 0) * B_l(d_i)
-            let cos_w = d[1].max(0.0); // surface normal = up
+            let cos_w = d[1].max(0.0);
             let w = 4.0 * std::f32::consts::PI / N as f32 * cos_w;
             for c in 0..SH_COEFF_COUNT {
                 sh[c][0] += radiance[0] * basis[c] * w;
@@ -552,7 +522,6 @@ impl SceneScope {
             }
         }
 
-        // Fill all probes with the same SH (position-independent).
         let dz = dims[2];
         for probe_idx in 0..total_probes {
             let pi = probe_idx % dims[0];
@@ -565,15 +534,11 @@ impl SceneScope {
                 pixels[base] = shc[0];
                 pixels[base + 1] = shc[1];
                 pixels[base + 2] = shc[2];
-                pixels[base + 3] = 0.0; // alpha unused
+                pixels[base + 3] = 0.0;
             }
         }
         pixels
     }
-
-    // -------------------------------------------------------------------
-    // Teardown
-    // -------------------------------------------------------------------
 
     /// Destroy only the volume + UBO resources (not the descriptor layout/pool).
     /// Called before re-uploading a new probe volume.

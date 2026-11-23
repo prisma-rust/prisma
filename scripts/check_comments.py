@@ -175,6 +175,21 @@ def is_separator(body: str) -> bool:
     return len(compact) >= 4 and bool(SEPARATOR_RE.fullmatch(compact))
 
 
+def separator_free_lines(body: str, inside_fence: bool = False) -> tuple[list[str], bool]:
+    """Doc lines outside fenced code blocks; diagrams inside fences are not separators.
+
+    Each `//!` line is its own token, so callers carry `inside_fence` across tokens.
+    """
+    lines: list[str] = []
+    for line in body.splitlines():
+        if line.strip().startswith("```"):
+            inside_fence = not inside_fence
+            continue
+        if not inside_fence:
+            lines.append(line)
+    return lines, inside_fence
+
+
 def first_line(body: str, limit: int = 100) -> str:
     line = body.strip().splitlines()[0] if body.strip() else ""
     return line if len(line) <= limit else line[: limit - 1] + "…"
@@ -248,6 +263,7 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
         source = path.read_text(encoding="utf-8", errors="replace")
 
     issues: list[tuple[str, int, str]] = []
+    doc_fence = False
     for token in lex(source):
         if not token.is_comment:
             continue
@@ -266,7 +282,8 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
         body = comment_body(token)
         if CJK_RE.search(body):
             issues.append(("cjk", token.line, f"rustdoc must be English: {first_line(body)}"))
-        if is_separator(body):
+        outside_fence, doc_fence = separator_free_lines(body, doc_fence)
+        if any(is_separator(line) for line in outside_fence):
             issues.append(("separator", token.line, "decorative separator"))
         if TODO_RE.search(body):
             issues.append(("todo", token.line, "TODO/FIXME is banned in code; track it in an issue"))

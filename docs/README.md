@@ -98,7 +98,8 @@ docs/
   │
   ├── ai-workflow.md                      # [L3 Collaboration workflow] AI collaboration workflow and five hard rules (concise quick reference)
   ├── ai-workflow-details.md              # [L3 Collaboration workflow] Multi-Agent collaboration and test harness details
-  ├── code-style.md                       # [L3 Coding standard] English code comment standard and redundancy cleanup guide
+  ├── code-style.md                       # [L3 Coding standard] Zero inline comments, rustdoc-only standard
+  ├── comment-migration-report.md         # [L3 Migration record] Inline comments removed in the repository-wide sweep
   ├── naming-and-abstraction-guide.md     # [L3 Coding standard] Code and shader naming and content abstraction specification
   ├── versioning.md                       # [L3 Version governance] SemVer rules, zero-compatibility logic before 1.0 and releases
   ├── integrations.md                     # [L3 Engineering governance] CI/CD, Discord bot and Agent claiming contract
@@ -147,7 +148,8 @@ docs/
 | | [`slang-bindless-migration.md`](slang-bindless-migration.md) | Slang compilation, binding code generation, Bindless texture table | `assets/shaders/`, `xtask` |
 | **Collaboration norms** | [`ai-workflow.md`](ai-workflow.md) | Five hard rules, atomic commit, self-check gate, quick commands | Entire repository |
 | | [`ai-workflow-details.md`](ai-workflow-details.md) | Multi-Agent collaboration, document layering, test harness details | Entire repository |
-| | [`code-style.md`](code-style.md) | Pure English comments, delete code repetition, delete old-version compatibility shims | Entire repository `.rs` source |
+| | [`code-style.md`](code-style.md) | Zero inline comments, rustdoc-only invariants, delete redundant code and old-version shims | Entire repository source |
+| | [`comment-migration-report.md`](comment-migration-report.md) | Recovery record of every inline comment removed by the full sweep | Comment migration |
 | | [`naming-and-abstraction-guide.md`](naming-and-abstraction-guide.md) | Code and shader naming and content abstraction specification (disambiguation, de-colloquialization, zero compatibility) | Entire repository source and shaders |
 | | [`versioning.md`](versioning.md) | 0.1 evolution strategy, single version source, format version upgrade | `Cargo.toml`, `scripts/version.py` |
 | | [`integrations.md`](integrations.md) | CI/CD tag gate, Issue automation claiming | `.github/workflows/` |

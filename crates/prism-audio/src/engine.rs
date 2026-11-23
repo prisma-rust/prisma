@@ -280,7 +280,6 @@ impl AudioEngine {
             );
         }
 
-        // Convert interleaved samples to planar layout for DecodedAudioF32.
         let planar = deinterleave(&audio.samples, channels);
 
         let sample_rate = match NonZeroU32::new(audio.sample_rate) {
@@ -291,12 +290,10 @@ impl AudioEngine {
             }
         };
 
-        // Build the sample resource as an ArcGc<dyn SampleResource>.
         let decoded_f32 = symphonium::DecodedAudioF32::new(planar, sample_rate, sample_rate);
         let decoded: symphonium::DecodedAudio = decoded_f32.into();
         let resource = firewheel::dyn_symphonium_resource(decoded);
 
-        // Create the sampler node with its initial state.
         let sampler = SamplerNode {
             volume: Volume::from_percent(self.master_volume * 100.0),
             play: Notify::new(true),
@@ -320,9 +317,6 @@ impl AudioEngine {
             }
         };
 
-        // The sampler node registers its `SamplerState` as node state — the
-        // only channel for observing playback completion, since Firewheel
-        // emits no playback-finished event.
         let Some(state) = self.ctx.node_state::<SamplerState>(node_id).cloned() else {
             ::log::error!(
                 "Sampler node {node_id:?} exposes no SamplerState; cannot track playback"
@@ -334,17 +328,12 @@ impl AudioEngine {
         self.ctx
             .queue_event_for(node_id, SamplerNode::set_dyn_sample_event(resource));
 
-        // Insert a real-time spatial node on stereo outputs (#508, #1034);
-        // mono devices keep the direct chain.
         let spatial_node = if self.channels >= 2 {
             let node = SpatialBasicNode {
-                // `prism-app` owns the distance curve, so the node must not
-                // attenuate on its own (a non-positive factor disables it).
                 distance_attenuation: DistanceAttenuation {
                     distance_gain_factor: 0.0,
                     ..Default::default()
                 },
-                // Centered until the host sends the first offset.
                 panning_threshold: 0.0,
                 ..Default::default()
             };
@@ -360,18 +349,13 @@ impl AudioEngine {
             None
         };
 
-        // Connect to the graph output. Mono connects (0, 0); stereo connects
-        // the stereo pair.
         let out = self.ctx.graph_out_node_id();
         let res = match spatial_node {
-            Some(spatial_id) => {
-                // The sampler is always configured as STEREO on stereo devices
-                // (`mono_to_stereo = true`).
-                self.ctx
-                    .connect(node_id, spatial_id, &[(0, 0), (1, 1)], false)
-                    .and_then(|_| self.ctx.connect_stereo(spatial_id, out, false))
-                    .map(|_| ())
-            }
+            Some(spatial_id) => self
+                .ctx
+                .connect(node_id, spatial_id, &[(0, 0), (1, 1)], false)
+                .and_then(|_| self.ctx.connect_stereo(spatial_id, out, false))
+                .map(|_| ()),
             None => self.ctx.connect(node_id, out, &[(0, 0)], false).map(|_| ()),
         };
         if let Err(e) = res {
@@ -459,8 +443,6 @@ impl AudioEngine {
         let Some(spatial_id) = s.spatial_node else {
             return;
         };
-        // `SpatialBasicNode` field order: volume(0), offset(1),
-        // panning_threshold(2), ...
         if offset_changed {
             self.ctx.queue_event_for(
                 spatial_id,
@@ -548,7 +530,6 @@ impl AudioEngine {
 impl Drop for AudioEngine {
     fn drop(&mut self) {
         self.stop_all();
-        // CpalStream must be dropped before FirewheelContext.
         let stream = self._stream.take();
         drop(stream);
     }
@@ -778,10 +759,6 @@ mod tests {
 
     #[test]
     fn update_does_not_panic_and_follows_stream_availability() {
-        // Without an audio device, play() must still create a trackable active
-        // sound; update() can then drop the node that would never play. With a
-        // device available the sound must be kept (the audio thread may not
-        // have processed the first block yet).
         let mut engine = AudioEngine::new(AudioConfig::default()).expect("engine new");
         let handle = engine.play(&dummy_audio(2));
         assert!(handle.is_valid());

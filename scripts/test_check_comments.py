@@ -45,6 +45,19 @@ class CheckCommentsTests(unittest.TestCase):
         issues = self.check("/// 宽度\npub fn f() {}\n")
         self.assertEqual([kind for kind, _, _ in issues], ["cjk"])
 
+    def test_fenced_diagram_separator_is_allowed(self) -> None:
+        issues = self.check(
+            "//! ```text\n"
+            "//! A ---------------- B\n"
+            "//! ```\n"
+            "pub fn f() {}\n"
+        )
+        self.assertEqual(issues, [])
+
+    def test_decorative_separator_in_rustdoc_is_banned(self) -> None:
+        issues = self.check("/// ----------\npub fn f() {}\n")
+        self.assertEqual([kind for kind, _, _ in issues], ["separator"])
+
     def test_suppression_rules(self) -> None:
         allow = self.check("#[allow(dead_code)]\nfn legacy() {}\n")
         expect = self.check(

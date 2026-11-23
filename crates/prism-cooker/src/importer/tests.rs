@@ -1,7 +1,3 @@
-// ===========================================================================
-// Tests
-// ===========================================================================
-
 use super::*;
 use crate::db::AssetDatabase;
 
@@ -59,7 +55,6 @@ fn texture_importer_imports_with_metadata() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_tex.png");
 
-    // Write a real 2×2 PNG via the image crate.
     let img = image::RgbaImage::from_raw(
         2,
         2,
@@ -132,7 +127,6 @@ fn registry_finds_importer_by_path() {
 
     assert!(reg.find_for_path(Path::new("tex.png")).is_some());
     assert!(reg.find_for_path(Path::new("tex.jpg")).is_some());
-    // RawImporter is catch-all
     assert!(reg.find_for_path(Path::new("foo.xyz")).is_some());
 }
 
@@ -156,13 +150,11 @@ fn import_pipeline_skips_cached_files() {
     let mut db = AssetDatabase::new();
     let mut cache = ImportCache::new();
 
-    // first  import
     let r1 = pipeline
         .import_file(&path, &mut db, &mut cache, None)
         .unwrap();
     assert!(r1.was_imported);
 
-    // seconds  import  (cached).
     let r2 = pipeline
         .import_file(&path, &mut db, &mut cache, None)
         .unwrap();
@@ -194,7 +186,6 @@ fn force_import_bypasses_the_cache() {
         .unwrap();
     assert!(!cached.was_imported);
 
-    // The source is unchanged, but `force` must re-run the importer.
     let forced = pipeline
         .import_file_with_key(&path, "scanned.bin", &mut db, &mut cache, None, true)
         .unwrap();
@@ -211,7 +202,6 @@ fn import_pipeline_updates_database() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_db.png");
 
-    // Write a real 1×1 red PNG.
     let img = image::RgbaImage::from_raw(1, 1, vec![255, 0, 0, 255]).unwrap();
     img.save(&path).unwrap();
 
@@ -266,20 +256,17 @@ fn explicit_relative_key_reuses_scanned_record() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// ── Real glTF / GLB import  test ──────────────────────────────────
-
 /// Build a minimal valid GLB file in memory.
 ///
 /// Contains one triangle mesh (3 vertices, 3 unsigned-short indices),
 /// no material  no textures.
 fn create_minimal_glb_bytes() -> Vec<u8> {
-    // Positions: right triangle in XY plane at Z=0.
     let positions: &[f32] = &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let indices: &[u16] = &[0, 1, 2];
 
-    let bin_data_size = positions.len() * 4 + indices.len() * 2; // 36 + 6 = 42
+    let bin_data_size = positions.len() * 4 + indices.len() * 2;
     let bin_padding = (4 - (bin_data_size % 4)) % 4;
-    let bin_chunk_total = 8 + bin_data_size + bin_padding; // includes chunk-header
+    let bin_chunk_total = 8 + bin_data_size + bin_padding;
 
     let json = serde_json::json!({
         "asset": { "version": "2.0", "generator": "prisma-test" },
@@ -295,7 +282,7 @@ fn create_minimal_glb_bytes() -> Vec<u8> {
         "accessors": [
             {
                 "bufferView": 0,
-                "componentType": 5126, // FLOAT
+                "componentType": 5126,
                 "count": 3,
                 "type": "VEC3",
                 "min": [0.0, 0.0, 0.0],
@@ -303,7 +290,7 @@ fn create_minimal_glb_bytes() -> Vec<u8> {
             },
             {
                 "bufferView": 1,
-                "componentType": 5123, // UNSIGNED_SHORT
+                "componentType": 5123,
                 "count": 3,
                 "type": "SCALAR"
             }
@@ -324,18 +311,15 @@ fn create_minimal_glb_bytes() -> Vec<u8> {
 
     let mut glb = Vec::with_capacity(total_len);
 
-    // GLB header
-    glb.extend_from_slice(b"glTF"); // magic
-    glb.extend_from_slice(&2u32.to_le_bytes()); // version
-    glb.extend_from_slice(&(total_len as u32).to_le_bytes()); // length
+    glb.extend_from_slice(b"glTF");
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&(total_len as u32).to_le_bytes());
 
-    // JSON chunk
     glb.extend_from_slice(&((json_bytes.len() + json_padding) as u32).to_le_bytes());
     glb.extend_from_slice(b"JSON");
     glb.extend_from_slice(json_bytes);
-    glb.extend_from_slice(&vec![0x20; json_padding]); // space padding
+    glb.extend_from_slice(&vec![0x20; json_padding]);
 
-    // BIN chunk
     glb.extend_from_slice(&((bin_data_size + bin_padding) as u32).to_le_bytes());
     glb.extend_from_slice(b"BIN\0");
     for &p in positions {
@@ -371,7 +355,6 @@ fn gltf_importer_imports_real_glb() {
         "intermediate should have data"
     );
 
-    // Validate RMXI header in output
     assert_eq!(&result.output_data[..4], b"RMXI");
     let verts = u32::from_le_bytes(result.output_data[5..9].try_into().unwrap());
     let idxs = u32::from_le_bytes(result.output_data[9..13].try_into().unwrap());
@@ -386,10 +369,6 @@ fn gltf_importer_imports_real_glb() {
 
     std::fs::remove_file(&path).ok();
 }
-
-// -------------------------------------------------------------------
-// glTF scene graph (#520)
-// -------------------------------------------------------------------
 
 /// Pack any JSON + binary chunk into GLB (chunk padded to 4 bytes).
 fn pack_glb(json: serde_json::Value, bin: &[u8]) -> Vec<u8> {
@@ -480,7 +459,6 @@ fn accessor(
         "count": count,
         "type": kind,
     });
-    // glTF requires POSITION accessor to have min/max.
     if kind == "VEC3" && component_type == 5126 {
         value["min"] = serde_json::json!([-1000.0, -1000.0, -1000.0]);
         value["max"] = serde_json::json!([1000.0, 1000.0, 1000.0]);
@@ -490,14 +468,12 @@ fn accessor(
 
 #[test]
 fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
-    // One mesh with two primitives referenced by two translated nodes — old implementation only kept below
-    // "first mesh first primitive" at origin (#520).
     let (pos_a, idx_a) = triangle_bytes(1.0);
     let (pos_b, idx_b) = triangle_bytes(2.0);
     let mut bin = Vec::new();
-    bin.extend_from_slice(&pos_a); // 0..36
+    bin.extend_from_slice(&pos_a);
     let idx_a_offset = bin.len();
-    bin.extend_from_slice(&idx_a); // 36..42
+    bin.extend_from_slice(&idx_a);
     let pad = (4 - (bin.len() % 4)) % 4;
     bin.extend(std::iter::repeat_n(0u8, pad));
     let pos_b_offset = bin.len();
@@ -563,7 +539,6 @@ fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
     let meta = result.metadata.unwrap();
     assert_eq!(meta["primitive_count"], 4);
     assert_eq!(meta["node_count"], 2);
-    // Each primitive index range + material must be kept below (#520).
     assert_eq!(meta["submesh_count"], 4);
     assert_eq!(meta["submeshes"][0]["index_start"], 0);
     assert_eq!(meta["submeshes"][0]["index_count"], 3);
@@ -581,10 +556,8 @@ fn gltf_import_bakes_every_node_and_primitive_into_one_mesh() {
     assert_eq!(meta["materials"][1]["double_sided"], true);
     assert_eq!(meta["materials"][1]["alpha_mode"], "Opaque");
 
-    // First node vertices translated +5, second node at z=7.
     let first = rmxi_position(&result.output_data, 0);
     assert!((first[0] - 5.0).abs() < 1e-5, "got {first:?}");
-    // Vertices 7..9 belong to second node (each node mesh has 6 vertices).
     let second_node = rmxi_position(&result.output_data, 6);
     assert!((second_node[0]).abs() < 1e-5, "got {second_node:?}");
     assert!((second_node[2] - 7.0).abs() < 1e-5, "got {second_node:?}");
@@ -604,9 +577,9 @@ fn gltf_import_records_image_metadata_and_material_texture_slots() {
     let (positions, indices) = triangle_bytes(1.0);
     let png = one_pixel_png();
     let mut bin = Vec::new();
-    bin.extend_from_slice(&positions); // 0..36
+    bin.extend_from_slice(&positions);
     let idx_offset = bin.len();
-    bin.extend_from_slice(&indices); // 36..42
+    bin.extend_from_slice(&indices);
     let pad = (4 - (bin.len() % 4)) % 4;
     bin.extend(std::iter::repeat_n(0u8, pad));
     let image_offset = bin.len();
@@ -659,9 +632,9 @@ fn gltf_side_assets_cook_rmat_rtex_and_submesh_paths() {
     let (positions, indices) = triangle_bytes(1.0);
     let png = one_pixel_png();
     let mut bin = Vec::new();
-    bin.extend_from_slice(&positions); // 0..36
+    bin.extend_from_slice(&positions);
     let idx_offset = bin.len();
-    bin.extend_from_slice(&indices); // 36..42
+    bin.extend_from_slice(&indices);
     let pad = (4 - (bin.len() % 4)) % 4;
     bin.extend(std::iter::repeat_n(0u8, pad));
     let image_offset = bin.len();
@@ -794,8 +767,6 @@ fn gltf_import_synthesises_indices_for_non_indexed_primitives() {
 
 #[test]
 fn gltf_import_transforms_normals_with_the_inverse_transpose() {
-    // Node rotates 90° around X, X scaled 4×: normal (0,0,1) should become (0,-1,0),
-    // and must not be stretched or flipped by scale.
     let (positions, indices) = triangle_bytes(1.0);
     let normals: Vec<u8> = [0.0f32, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
         .iter()
@@ -841,7 +812,6 @@ fn gltf_import_transforms_normals_with_the_inverse_transpose() {
     assert_eq!((verts, idxs), (3, 3));
     assert!(result.metadata.unwrap()["has_normals"].as_bool().unwrap());
 
-    // Header 17 bytes + vertex region (3 * 12) + UV (0 channel skipped) = normal region.
     let normal_base = 17 + 3 * 12;
     let read = |offset: usize| {
         f32::from_le_bytes(result.output_data[offset..offset + 4].try_into().unwrap())
@@ -864,9 +834,9 @@ fn gltf_import_drops_normals_when_any_primitive_lacks_them() {
         .flat_map(|value| value.to_le_bytes())
         .collect();
     let mut bin = Vec::new();
-    bin.extend_from_slice(&positions); // 0..36
+    bin.extend_from_slice(&positions);
     let idx_offset = bin.len();
-    bin.extend_from_slice(&indices); // 36..42
+    bin.extend_from_slice(&indices);
     let pad = (4 - (bin.len() % 4)) % 4;
     bin.extend(std::iter::repeat_n(0u8, pad));
     let normal_offset = bin.len();
@@ -907,17 +877,12 @@ fn gltf_import_drops_normals_when_any_primitive_lacks_them() {
     );
 }
 
-// -------------------------------------------------------------------
-// material  Importer
-// -------------------------------------------------------------------
-
 #[test]
 fn material_importer_accepts_mat_extensions() {
     let imp = MaterialImporter;
     assert!(imp.can_import(Path::new("plastic.mat.json")));
     assert!(imp.can_import(Path::new("plastic.mat")));
     assert!(imp.can_import(Path::new("PLASTIC.MAT")));
-    // Plain .json falls through to JsonImporter.
     assert!(!imp.can_import(Path::new("data.json")));
     assert!(!imp.can_import(Path::new("data.txt")));
 }
@@ -928,8 +893,6 @@ fn material_importer_roundtrip_with_textures() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_material.mat.json");
 
-    // Register two texture asset records in the DB so the importer can
-    // parse  their paths to AssetId dependencies.
     let mut db = AssetDatabase::new();
     let albedo_id = db.generate_id();
     let occ_id = db.generate_id();
@@ -973,31 +936,25 @@ fn material_importer_roundtrip_with_textures() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // Two texture  deps resolved.
     assert_eq!(result.dependencies.len(), 2);
     assert_eq!(result.dependencies[0], albedo_id);
     assert_eq!(result.dependencies[1], occ_id);
 
-    // Intermediate must start with RMATI magic.
     assert_eq!(&result.output_data[..5], b"RMATI");
-    // Version 2 adds the alpha-mode byte + cutoff after the scalar block.
     assert_eq!(result.output_data[5], 2);
 
-    // Metadata carries the slot presence flags.
     let meta = result.metadata.unwrap();
     let slots = meta["texture_slots"].as_array().unwrap();
     assert_eq!(slots.len(), 5);
-    assert!(slots[0].as_bool().unwrap()); // albedo
-    assert!(!slots[1].as_bool().unwrap()); // normal
-    assert!(slots[4].as_bool().unwrap()); // occlusion
+    assert!(slots[0].as_bool().unwrap());
+    assert!(!slots[1].as_bool().unwrap());
+    assert!(slots[4].as_bool().unwrap());
 
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn material_importer_handles_unresolved_texture() {
-    // A texture  path not present in the DB should be dropped (warn), not
-    // Abort import; the material still imports with that slot empty
     let imp = MaterialImporter;
     let dir = std::env::temp_dir();
     let path = dir.join("test_material_missing_tex.mat.json");
@@ -1016,7 +973,6 @@ fn material_importer_handles_unresolved_texture() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // Unresolved -> 0 deps, material  still imports.
     assert!(result.dependencies.is_empty());
 
     std::fs::remove_file(&path).ok();
@@ -1028,7 +984,6 @@ fn material_importer_uses_defaults_for_missing_scalars() {
     let dir = std::env::temp_dir();
     let path = dir.join("test_material_defaults.mat.json");
 
-    // Empty texture -> all defaults.
     std::fs::write(&path, "{}").unwrap();
 
     let ctx = ImportContext {
@@ -1039,15 +994,10 @@ fn material_importer_uses_defaults_for_missing_scalars() {
     };
     let result = imp.import(&ctx).unwrap();
     assert_eq!(result.asset_type, AssetType::Material);
-    // 78 byte  min  (5 magic + 1 version + 72 scalars), no textures.
     assert!(result.output_data.len() >= 78);
 
     std::fs::remove_file(&path).ok();
 }
-
-// -------------------------------------------------------------------
-// shader  Importer
-// -------------------------------------------------------------------
 
 #[test]
 fn shader_importer_accepts_slang() {
@@ -1085,7 +1035,6 @@ fn shader_importer_infers_entry_from_filename() {
 
 #[test]
 fn shader_importer_pt_prefix_uses_pt_main() {
-    // pt_* shaders use the `ptMain` entry per compile.sh convention.
     assert_eq!(
         infer_entry_stage_from_name("pt_render"),
         Some(("ptMain", "compute"))
@@ -1127,10 +1076,6 @@ fn shader_importer_respects_settings_overrides() {
 
     std::fs::remove_file(&path).ok();
 }
-
-// -------------------------------------------------------------------
-// OBJ importer (#520)
-// -------------------------------------------------------------------
 
 fn import_obj(name: &str, source: &str) -> Result<ImportResult, ImportError> {
     let path = std::env::temp_dir().join(name);
@@ -1219,7 +1164,6 @@ f 1//1 3//1 4//1
     .unwrap();
 
     let (verts, idxs) = rmxi_counts(&result.output_data);
-    // Four positions each appear once; two triangles share 1 and 3.
     assert_eq!((verts, idxs), (4, 6));
 }
 
@@ -1266,37 +1210,27 @@ fn default_registry_routes_obj_to_the_obj_importer() {
 /// `skin.joints` deliberately `[2, 1]` (child before parent) to verify importer sorts to topological order
 /// and remaps vertex JOINTS_0 accordingly.
 fn skinned_glb() -> Vec<u8> {
-    let positions: Vec<u8> = [
-        0.0f32, 0.0, 0.0, //
-        1.0, 0.0, 0.0, //
-        0.0, 1.0, 0.0,
-    ]
-    .iter()
-    .flat_map(|value| value.to_le_bytes())
-    .collect();
+    let positions: Vec<u8> = [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
     let indices: Vec<u8> = [0u16, 1, 2]
         .iter()
         .flat_map(|value| value.to_le_bytes())
         .collect();
-    // JOINTS_0: vertices 0/1 attached to node1 (local index 1), vertex 2 attached to node2 (local index 0).
     let joints: Vec<u8> = [1u16, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
         .iter()
         .flat_map(|value| value.to_le_bytes())
         .collect();
     let weights: Vec<u8> = [
-        1.0f32, 0.0, 0.0, 0.0, //
-        1.0, 0.0, 0.0, 0.0, //
-        0.5, 0.5, 0.0, 0.0,
+        1.0f32, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0,
     ]
     .iter()
     .flat_map(|value| value.to_le_bytes())
     .collect();
-    // Inverse bind given in `skin.joints` order, i.e. [node2(knee), node1(hip)]:
-    // knee at (0, 1, 0), so its inverse bind translation column is (0, -1, 0).
     let inverse_binds: Vec<u8> = [
-        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0,
-        // hip at origin: identity matrix.
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0, 1.0,
+        0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
     .iter()
     .flat_map(|value| value.to_le_bytes())
@@ -1371,8 +1305,6 @@ fn skinned_glb() -> Vec<u8> {
 
 #[test]
 fn rig_paths_predict_exactly_what_side_assets_cook() {
-    // Packer uses `rig_paths` (read-only glTF) to fill components into scene, `side_assets` truly
-    // encodes and writes to disk — both paths must be byte-identical, otherwise scene points to missing asset (#560 P0-4).
     let glb = skinned_glb();
     let path = std::env::temp_dir().join("prisma_rig_paths.glb");
     std::fs::write(&path, &glb).unwrap();
@@ -1411,7 +1343,6 @@ fn rig_paths_predict_exactly_what_side_assets_cook() {
 fn gltf_side_assets_cook_rskel_rskin_and_ranim() {
     use prism_asset::formats_skinned::{decode_ranim, decode_rskel, decode_rskin};
 
-    // Synthesized skeleton: child before parent, vertices attached to respective joints, one linear animation (#560).
     let glb = skinned_glb();
     let path = std::env::temp_dir().join("prisma_skinned_import.glb");
     std::fs::write(&path, &glb).unwrap();
@@ -1441,16 +1372,12 @@ fn gltf_side_assets_cook_rskel_rskin_and_ranim() {
     let knee = skeleton.joint_index("knee").expect("knee joint");
     assert_eq!(skeleton.joints[hip].parent, None);
     assert_eq!(skeleton.joints[knee].parent, Some(hip as u16));
-    // Reference pose from inverse bind: knee relative to hip is +1m.
     let reference = skeleton.joints[knee].reference_local.translation;
     assert!((reference[1] - 1.0).abs() < 1e-4, "got {reference:?}");
 
     let mesh = decode_rskin(&find(&mesh_path)).expect(".rskin decodes");
     assert_eq!(mesh.vertex_count, 3);
     assert_eq!(mesh.joint_count, 2);
-    // Local indices in JOINTS_0 already remapped to global indices after topological sort:
-    // vertices 0/1 first influence node1(hip) → global 0, vertex 2 is node2(knee) → global 1.
-    // Spare slots with weight 0 also remapped (kept in range, no effect during shading).
     assert_eq!(mesh.joints[0][0], 0);
     assert_eq!(mesh.weights[0], [1.0, 0.0, 0.0, 0.0]);
     assert_eq!(mesh.joints[2][0], 1);
@@ -1512,7 +1439,6 @@ fn an_authored_notify_file_is_merged_into_the_matching_clip() {
     std::fs::create_dir_all(dir.join("hero.glb.skinning")).unwrap();
     let path = dir.join("hero.glb");
     std::fs::write(&path, &glb).unwrap();
-    // Clip name in file matches glTF animation name (`walk`).
     std::fs::write(
         dir.join("hero.glb.skinning/notifies.json"),
         br#"{"clips": {"walk": [
@@ -1540,7 +1466,6 @@ fn an_authored_notify_file_is_merged_into_the_matching_clip() {
         .iter()
         .map(|notify| notify.name.as_str())
         .collect();
-    // Negative times dropped, remaining sorted by time.
     assert_eq!(names, vec!["Footstep.L", "Footstep.R"]);
     assert!((clip.notifies[0].time - 0.25).abs() < 1e-6);
 }
@@ -1594,10 +1519,6 @@ fn a_notify_file_that_names_no_clip_changes_nothing() {
         "Mismatched clip name must not stuff events into another clip"
     );
 }
-
-// -------------------------------------------------------------------
-// Animation graph importer
-// -------------------------------------------------------------------
 
 #[test]
 fn animation_graph_importer_accepts_animgraph_json_only() {
@@ -1848,9 +1769,6 @@ fn a_broken_sync_marker_file_fails_instead_of_silently_dropping_markers() {
 
 #[test]
 fn normal_matrix_undoes_non_uniform_scale() {
-    // Scale x by 4 and y by 0.5. A normal of (1, 1, 0) on that surface must
-    // come out as (1/4, 1/0.5, 0) normalized — the inverse transpose, not the
-    // plain model matrix (which would stretch it the wrong way).
     let world = Mat4::from_scale(Vec3::new(4.0, 0.5, 1.0));
     let normals = normal_matrix(&world);
     let transformed = apply_normal(&normals, [1.0, 1.0, 0.0]);

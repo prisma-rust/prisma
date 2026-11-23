@@ -62,7 +62,6 @@ pub(crate) struct LineMetrics {
 pub(crate) fn baseline_offset(metrics: Option<LineMetrics>, font_size: f32) -> f32 {
     match metrics {
         Some(metrics) if metrics.ascent > 0.0 => metrics.ascent,
-        // Without metrics keep legacy behavior (`emit_text` always uses this approximation).
         _ => font_size * 0.8,
     }
 }
@@ -90,13 +89,11 @@ pub(crate) trait TextRasterizer {
 }
 
 #[cfg(all(windows, feature = "ui-directwrite"))]
+mod coverage;
+#[cfg(all(windows, feature = "ui-directwrite"))]
 mod directwrite;
 #[cfg(feature = "ui-fontdue")]
 mod fontdue_backend;
-// Only the DirectWrite backend reads back BGRA bitmaps, so the module must
-// vanish with it instead of carrying an unused-code suppression.
-#[cfg(all(windows, feature = "ui-directwrite"))]
-mod coverage;
 
 /// Construct backend by compiled-in features; `None` = only draw quads, no text.
 ///
@@ -138,7 +135,6 @@ mod tests {
 
     #[test]
     fn baseline_falls_back_to_legacy_approximation() {
-        // Previously hardcoded `font_size * 0.8`: must keep this value when no metrics.
         assert_eq!(baseline_offset(None, 24.0), 24.0f32 * 0.8);
         let broken = LineMetrics {
             ascent: 0.0,
