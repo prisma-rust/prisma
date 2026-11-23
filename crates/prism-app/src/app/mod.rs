@@ -243,6 +243,9 @@ pub struct App {
     /// (Shift+1..5 = component bit 10..14) can only judge whether Shift is pressed from here,
     /// otherwise those 5 bits are forever unreachable.
     modifiers: Modifiers,
+    last_cursor_icon: prism_platform::CursorIcon,
+    idle_throttling: bool,
+    active_frames_remaining: u8,
 
     // ---------- lifecycle ----------
     fatal_error: Option<String>,
@@ -451,6 +454,9 @@ impl App {
             host_surface: None,
             host_native_surface: false,
             modifiers: Modifiers::empty(),
+            last_cursor_icon: prism_platform::CursorIcon::Default,
+            idle_throttling: false,
+            active_frames_remaining: 4,
             fatal_error: None,
             suspended: false,
             pending_show: false,
@@ -598,6 +604,13 @@ impl App {
     /// engine; it just never calls `grab_pointer` / `release_pointer`.
     pub fn with_pointer_lock_policy(mut self, policy: PointerLockPolicy) -> Self {
         self.pointer_lock = policy;
+        self
+    }
+
+    /// Enable event-driven idle throttling (`ControlFlow::Wait` when idle)
+    /// for editor / tool apps that do not need continuous polling.
+    pub fn with_idle_throttling(mut self, enabled: bool) -> Self {
+        self.idle_throttling = enabled;
         self
     }
 
@@ -1201,6 +1214,29 @@ impl App {
         }
 
         self.tick_sim(true);
+
+        if let (Some(engine), Some(platform)) = (self.engine.as_ref(), self.platform.as_ref()) {
+            use prism_engine::ui::{DesiredUiCursor, UiCursorIcon};
+            let desired = engine
+                .world()
+                .get_resource::<DesiredUiCursor>()
+                .map_or(UiCursorIcon::Default, |c| c.0);
+            let mapped = match desired {
+                UiCursorIcon::Default => prism_platform::CursorIcon::Default,
+                UiCursorIcon::Pointer => prism_platform::CursorIcon::Pointer,
+                UiCursorIcon::Text => prism_platform::CursorIcon::Text,
+                UiCursorIcon::ResizeHorizontal => prism_platform::CursorIcon::ResizeHorizontal,
+                UiCursorIcon::ResizeVertical => prism_platform::CursorIcon::ResizeVertical,
+                UiCursorIcon::ResizeNwSe => prism_platform::CursorIcon::ResizeNwSe,
+                UiCursorIcon::ResizeNeSw => prism_platform::CursorIcon::ResizeNeSw,
+                UiCursorIcon::Grab => prism_platform::CursorIcon::Grab,
+                UiCursorIcon::Grabbing => prism_platform::CursorIcon::Grabbing,
+            };
+            if mapped != self.last_cursor_icon {
+                platform.window().set_cursor_icon(mapped);
+                self.last_cursor_icon = mapped;
+            }
+        }
 
         // Frame hook (host UI etc) — main thread. All use field-level borrows (not borrow self as a whole).
         let window = self.platform.as_ref().map(PlatformContext::window_arc);
@@ -2134,6 +2170,10 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if self.idle_throttling {
+            self.active_frames_remaining = self.active_frames_remaining.max(3);
+            event_loop.set_control_flow(ControlFlow::Poll);
+        }
         if matches!(event, WindowEvent::CloseRequested) {
             event_loop.exit();
             return;
@@ -2184,12 +2224,16 @@ impl ApplicationHandler for App {
 
     fn device_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop,
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
         // In pointer lock mode, mouse movement arrives as raw device increments.
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if self.idle_throttling && self.input.pointer_locked {
+                self.active_frames_remaining = self.active_frames_remaining.max(3);
+                event_loop.set_control_flow(ControlFlow::Poll);
+            }
             apply_device_mouse_motion(&mut self.input, dx, dy);
         }
     }
@@ -2207,10 +2251,50 @@ impl ApplicationHandler for App {
             return;
         }
 
+        let host_active = self
+            .engine
+            .as_ref()
+            .and_then(|e| e.world().get_resource::<prism_engine::ui::HostUiActive>())
+            .is_some_and(|h| h.0);
+        if self.idle_throttling
+            && !self.pending_show
+            && !host_active
+            && self.active_frames_remaining == 0
+        {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+
         if let Some(message) = self.tick_frame() {
             log::error!("{message}");
             self.fatal_error = Some(message);
             self.show_fatal_dialog(event_loop);
+            return;
+        }
+        if self.engine.as_ref().is_some_and(|e| {
+            e.world()
+                .get_resource::<prism_engine::ui::ExitRequested>()
+                .is_some()
+        }) {
+            event_loop.exit();
+            return;
+        }
+
+        if self.idle_throttling {
+            let still_active = self
+                .engine
+                .as_ref()
+                .and_then(|e| e.world().get_resource::<prism_engine::ui::HostUiActive>())
+                .is_some_and(|h| h.0);
+            if still_active || self.pending_show {
+                self.active_frames_remaining = self.active_frames_remaining.max(2);
+                event_loop.set_control_flow(ControlFlow::Poll);
+            } else {
+                self.active_frames_remaining = self.active_frames_remaining.saturating_sub(1);
+                if self.active_frames_remaining == 0 {
+                    event_loop.set_control_flow(ControlFlow::Wait);
+                }
+            }
         }
     }
 

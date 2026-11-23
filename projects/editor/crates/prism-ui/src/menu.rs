@@ -648,13 +648,13 @@ fn trigger_button(theme: &Theme, menu: &Menu, open: bool) -> ElementBox {
 fn menu_bar_glass_tint(theme: &Theme) -> Color {
     theme
         .glass_tint
-        .with_alpha((theme.glass_tint.a + 0.22).min(0.65))
+        .with_alpha((theme.glass_tint.a + 0.08).min(0.88))
 }
 
 fn dropdown_glass_tint(theme: &Theme) -> Color {
     theme
         .glass_tint
-        .with_alpha((theme.glass_tint.a + 0.14).min(0.55))
+        .with_alpha((theme.glass_tint.a + 0.06).min(0.86))
 }
 
 /// The dropdown panel for one menu.

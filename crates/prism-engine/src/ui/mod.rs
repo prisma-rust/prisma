@@ -64,6 +64,35 @@ pub struct PendingUiImageUploads {
     pub items: Vec<PendingUiImageUpload>,
 }
 
+/// Desired mouse cursor shape published by host UI each frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum UiCursorIcon {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    ResizeHorizontal,
+    ResizeVertical,
+    ResizeNwSe,
+    ResizeNeSw,
+    Grab,
+    Grabbing,
+}
+
+/// World resource holding the cursor icon requested by the UI for this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DesiredUiCursor(pub UiCursorIcon);
+
+/// World resource inserted when a hosted UI requests application exit.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExitRequested;
+
+/// World resource published by a hosted UI to tell the app loop whether it
+/// needs continuous polling (e.g. play mode or active animations) or can sleep
+/// in `ControlFlow::Wait` until the next input/window event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostUiActive(pub bool);
+
 /// Bindless SRV slots assigned by the renderer for uploaded UI images.
 #[derive(Clone, Debug, Default)]
 pub struct UploadedUiImages {

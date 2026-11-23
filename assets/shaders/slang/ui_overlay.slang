@@ -44,8 +44,9 @@ SamplerState globalSamplers[];
 [[vk::binding(1, 1)]]
 Texture2D bindlessSrvs[];
 
-// Sampler slot order is fixed by `bindless::SamplerType`: 1 = linear clamp.
+// Sampler slot order is fixed by `bindless::SamplerType`: 1 = linear clamp, 2 = nearest.
 static const uint SAMPLER_LINEAR_CLAMP = 1u;
+static const uint SAMPLER_NEAREST = 2u;
 // Vertex-side sentinel: sample the glyph atlas instead of a bindless SRV.
 static const uint ATLAS_TEXTURE = 0xFFFFFFFFu;
 
@@ -133,8 +134,12 @@ float4 fragmentMain(UiVaryings in) : SV_Target0
     if (in.texture == ATLAS_TEXTURE)
         sampled = float4(1.0, 1.0, 1.0, glyphAtlas.Sample(in.uv).r);
     else
+    {
+        // Slot 0 is the 8x8 fallback checkerboard; sample nearest so its squares stay crisp.
+        uint samplerIdx = (in.texture == 0u) ? SAMPLER_NEAREST : SAMPLER_LINEAR_CLAMP;
         sampled = bindlessSrvs[NonUniformResourceIndex(in.texture)]
-            .SampleLevel(globalSamplers[NonUniformResourceIndex(SAMPLER_LINEAR_CLAMP)], in.uv, 0.0);
+            .SampleLevel(globalSamplers[NonUniformResourceIndex(samplerIdx)], in.uv, 0.0);
+    }
 
     float coverage = sampled.a;
 

@@ -11,13 +11,14 @@ pub mod menus;
 pub mod panels;
 pub mod state;
 pub mod widgets;
+pub mod windows;
 
 use glam::Vec2;
 use prism_app::Subsystem;
 use prism_ui::prelude::*;
 
 use crate::about::{about_default_rect, build_about_body_localized, ABOUT_CLOSE_KEY};
-use crate::commands::{EditorCommand, ReversibleCommand, UndoStack};
+use crate::commands::{EditorCommand, LayoutPreset, ReversibleCommand, UndoStack};
 use crate::i18n::EditorI18n;
 use crate::menus::{build_menus, menu_actions_to_commands};
 use crate::panels::{EditorPanel, EditorPlugin, PanelRegistry, PanelViewCtx};
@@ -48,13 +49,22 @@ pub struct EditorUiState {
     pub i18n: EditorI18n,
     /// Last known viewport size for centring newly opened floating windows.
     last_viewport: Vec2,
+    /// Cursor the UI wants this frame, forwarded to the platform layer.
+    pub desired_cursor: CursorHint,
+    /// Set when the user asks to quit; the host app leaves the event loop.
+    pub exit_requested: bool,
+    /// Input signature of the last processed frame, used to skip idle rebuilds.
+    last_frame_sig: Option<u64>,
+    /// Whether any UI animation is still running.
+    has_active_animations: bool,
 }
 
 impl Default for EditorUiState {
     fn default() -> Self {
         let panels = PanelRegistry::default();
         let i18n = EditorI18n::default();
-        let window_layout = panels.build_default_layout(&i18n, ABOUT_CLOSE_KEY.into_node_key());
+        let window_layout =
+            windows::build_layout(LayoutPreset::Default, &panels, &i18n, ABOUT_CLOSE_KEY.into_node_key());
         Self {
             doc: EditorDocument::default(),
             session: EditorSession::default(),
@@ -69,6 +79,10 @@ impl Default for EditorUiState {
             icons: IconSet::default(),
             i18n,
             last_viewport: Vec2::new(1280.0, 720.0),
+            desired_cursor: CursorHint::Default,
+            exit_requested: false,
+            last_frame_sig: None,
+            has_active_animations: false,
         }
     }
 }
@@ -171,21 +185,53 @@ impl EditorUiState {
                     self.window_layout.close_window(&"about".into());
                     self.about_open = false;
                 }
-                EditorCommand::ResetLayout => {
-                    let icons = self.window_layout.icons.clone();
-                    self.window_layout = self
-                        .panels
-                        .build_default_layout(&self.i18n, ABOUT_CLOSE_KEY.into_node_key());
-                    self.window_layout.icons = icons;
-                    self.sync_all_window_titles();
+                EditorCommand::ResetLayout => self.set_layout(LayoutPreset::Default),
+                EditorCommand::SetLayout(preset) => self.set_layout(preset),
+                EditorCommand::RequestExit => self.exit_requested = true,
+                EditorCommand::SelectAll => {
+                    if let Some(first) = self.doc.entities.first() {
+                        self.doc.selected_entity = first.id;
+                    }
+                }
+                EditorCommand::DuplicateSelected => {
+                    if let Some(src) = self.doc.selected_entity_ref().cloned() {
+                        let mut dup = src;
+                        dup.id = self.doc.next_entity_id();
+                        dup.name = format!("{} (Copy)", dup.name);
+                        self.doc.selected_entity = dup.id;
+                        self.doc.entities.push(dup);
+                        self.doc.dirty = true;
+                    }
+                }
+                EditorCommand::DeleteSelected => {
+                    let id = self.doc.selected_entity;
+                    if id != 1 {
+                        self.doc.entities.retain(|e| e.id != id);
+                        self.doc.selected_entity =
+                            self.doc.entities.first().map_or(0, |e| e.id);
+                        self.doc.dirty = true;
+                    }
                 }
             }
         }
     }
 
+    fn set_layout(&mut self, preset: LayoutPreset) {
+        let icons = self.window_layout.icons.clone();
+        self.window_layout = windows::build_layout(
+            preset,
+            &self.panels,
+            &self.i18n,
+            ABOUT_CLOSE_KEY.into_node_key(),
+        );
+        self.window_layout.icons = icons;
+        self.sync_all_window_titles();
+    }
+
     fn sync_all_window_titles(&mut self) {
         self.panels
             .sync_window_titles(&mut self.window_layout, &self.i18n);
+        windows::sync_tool_window_titles(&mut self.window_layout, &self.i18n);
         if let Some(meta) = self.window_layout.windows.get_mut(&WindowId::from("about")) {
             meta.title = self.i18n.t("window.about").to_string();
         }
@@ -250,12 +296,15 @@ impl EditorUiState {
                         .child(toolbar)
                         .child(divider(false)),
                 );
+                let i18n = &self.i18n;
                 self.window_layout
                     .mount(ui, overlay, &theme, workspace, &mut |win_id, ui| {
                         if win_id.as_str() == "about" {
-                            ui.mount(build_about_body_localized(&theme, &self.i18n));
-                        } else {
-                            self.panels.mount_panel(win_id.as_str(), &view_ctx, ui);
+                            ui.mount(build_about_body_localized(&theme, i18n));
+                        } else if !self.panels.mount_panel(win_id.as_str(), &view_ctx, ui) {
+                            if let Some(body) = windows::build_tool_window(win_id.as_str(), &theme, i18n) {
+                                ui.mount(body);
+                            }
                         }
                     });
             });
@@ -269,8 +318,21 @@ impl EditorUiState {
             let _input = prism_engine::util::timing::span("editor::ui_input");
             self.tree.process_input(input)
         };
-        self.window_layout.step_input(workspace, input, &actions);
+        if self.menu.open().is_none() {
+            self.window_layout.step_input(workspace, input, &actions);
+        }
         self.about_open = self.window_layout.is_window_open(&"about".into());
+        self.desired_cursor =
+            if self.menu.open().is_some() || self.window_layout.has_open_context_menu() {
+                self.tree.desired_cursor()
+            } else {
+                let dock_cursor = self.window_layout.desired_cursor(input.pointer_pos);
+                if dock_cursor != CursorHint::Default {
+                    dock_cursor
+                } else {
+                    self.tree.desired_cursor()
+                }
+            };
 
         {
             let definitions = self.menus();
@@ -309,9 +371,11 @@ impl EditorUiState {
         }
         self.apply_commands(cmds);
 
-        self.tree.step_animations(dt);
+        self.has_active_animations = self.tree.step_animations(dt);
         {
             let mut draw = prism_engine::util::timing::span("editor::ui_draw_list");
+            self.tree.default_text_shadow =
+                Some((theme.text_shadow_offset, theme.text_shadow_color));
             self.tree.build_draw_list(&mut self.draw_list);
             draw.detail(format!("commands={}", self.draw_list.commands.len()));
         }
@@ -337,6 +401,29 @@ fn sync_uploaded_icons(world: &prism_engine::ecs::World, state: &mut EditorUiSta
     }
 }
 
+fn frame_input_signature(screen: Vec2, input: &UiInput, state: &EditorUiState) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    screen.x.to_bits().hash(&mut h);
+    screen.y.to_bits().hash(&mut h);
+    input.pointer_pos.x.to_bits().hash(&mut h);
+    input.pointer_pos.y.to_bits().hash(&mut h);
+    input.primary_down.hash(&mut h);
+    input.primary_just_pressed.hash(&mut h);
+    input.primary_just_released.hash(&mut h);
+    input.secondary_just_pressed.hash(&mut h);
+    input.scroll_delta.x.to_bits().hash(&mut h);
+    input.scroll_delta.y.to_bits().hash(&mut h);
+    input.shift_held.hash(&mut h);
+    input.ctrl_held.hash(&mut h);
+    input.text_committed.hash(&mut h);
+    input.backspace_pressed.hash(&mut h);
+    input.escape_pressed.hash(&mut h);
+    state.session.playing.hash(&mut h);
+    state.icons.get(IconKind::Menu).is_some().hash(&mut h);
+    h.finish()
+}
+
 fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
     let _span = prism_engine::util::timing::span("editor::tick");
     let mut state = world.remove_resource::<EditorUiState>().unwrap_or_default();
@@ -344,8 +431,22 @@ fn editor_system(world: &mut prism_engine::ecs::World, dt: f32) {
     state.session.elapsed_time += dt as f64;
     let screen = bridge::screen_size(world);
     let input = bridge::read_engine_input(world, state.session.elapsed_time);
-    state.build_and_step(screen, &input, dt);
+    let sig = frame_input_signature(screen, &input, &state);
+    let can_skip = state.last_frame_sig == Some(sig)
+        && !state.has_active_animations
+        && !state.draw_list.commands.is_empty();
+    if !can_skip {
+        state.build_and_step(screen, &input, dt);
+        state.last_frame_sig = Some(sig);
+    }
     bridge::submit_draw_list(world, &state.draw_list);
+    bridge::submit_cursor(world, state.desired_cursor);
+    world.insert_resource(prism_engine::ui::HostUiActive(
+        state.session.playing || state.has_active_animations || !can_skip,
+    ));
+    if state.exit_requested {
+        bridge::request_exit(world);
+    }
     world.insert_resource(state);
 }
 
@@ -357,6 +458,7 @@ pub fn build_app() -> prism_app::App {
     let _span = prism_engine::util::timing::span("editor::build_app");
     let mut app = prism_app::App::hosted(prism_app::load_config())
         .with_pointer_lock_policy(prism_app::PointerLockPolicy::Manual)
+        .with_idle_throttling(true)
         .with_subsystem(Subsystem::Render);
     {
         let _state = prism_engine::util::timing::span("editor::state_default");

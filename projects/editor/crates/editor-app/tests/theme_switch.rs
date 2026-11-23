@@ -100,3 +100,46 @@ fn the_theme_menu_marks_the_active_preset() {
         "the Theme submenu must offer the Light preset"
     );
 }
+
+#[test]
+fn all_text_commands_have_neutral_gray_half_pixel_shadow() {
+    let viewport = Vec2::new(1280.0, 720.0);
+    let expected_offset = Vec2::new(0.5, 0.5);
+    let expected_shadow = Color::rgb(0.5, 0.5, 0.5);
+
+    for preset in ThemePreset::ALL {
+        let mut state = EditorUiState::default();
+        state.theme = Theme::from_preset(preset);
+        state.about_open = true;
+        state.build_and_step(viewport, &UiInput::default(), 0.016);
+
+        let text_cmds: Vec<_> = state
+            .draw_list
+            .commands
+            .iter()
+            .filter_map(|cmd| match cmd {
+                UiDrawCommand::Text {
+                    content,
+                    shadow_offset,
+                    shadow_color,
+                    ..
+                } => Some((content.clone(), *shadow_offset, *shadow_color)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !text_cmds.is_empty(),
+            "preset {preset:?} must emit text commands"
+        );
+        for (content, offset, shadow_color) in text_cmds {
+            assert_eq!(
+                offset, expected_offset,
+                "preset {preset:?} text '{content}' shadow_offset mismatch"
+            );
+            assert_eq!(
+                shadow_color, expected_shadow,
+                "preset {preset:?} text '{content}' shadow_color mismatch"
+            );
+        }
+    }
+}

@@ -12,12 +12,12 @@ use std::collections::BTreeMap;
 use glam::Vec2;
 
 use crate::behavior::UiAction;
-use crate::elements::{col, row, text, ElementBox, UiContext};
-use crate::icons::{hairline, macos_traffic_lights, tab_close_icon, IconSet};
+use crate::elements::{col, row, spacer, text, ElementBox, UiContext};
+use crate::icons::{hairline, icon_view, macos_traffic_lights, IconKind, IconSet};
 use crate::material::Material;
 use crate::style::{Align, Color, Edges, Justify, Length, Rect};
 use crate::theme::Theme;
-use crate::tree::{IntoNodeKey, NodeId, NodeKey, UiInput};
+use crate::tree::{CursorHint, IntoNodeKey, NodeId, NodeKey, UiInput};
 use crate::window::{ContainerId, ContainerWindow, EditorWindowMeta, ResizeEdge, WindowId};
 
 const SPLITTER_VISUAL_PX: f32 = 1.0;
@@ -205,6 +205,40 @@ impl DockNodeKey {
     pub fn close(window: &WindowId) -> NodeKey {
         format!("dock:close:{}", window.0).into_node_key()
     }
+
+    pub fn area_menu(area: DockAreaId) -> NodeKey {
+        format!("dock:area_menu:{}", area.0).into_node_key()
+    }
+
+    pub fn context_backdrop() -> NodeKey {
+        "dock:ctx:backdrop".into_node_key()
+    }
+
+    pub fn context_float() -> NodeKey {
+        "dock:ctx:float".into_node_key()
+    }
+
+    pub fn context_close() -> NodeKey {
+        "dock:ctx:close".into_node_key()
+    }
+
+    pub fn context_add(window: &WindowId) -> NodeKey {
+        format!("dock:ctx:add:{}", window.0).into_node_key()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedTabBarHit {
+    area_id: DockAreaId,
+    active_window: Option<WindowId>,
+    rect: Rect,
+}
+
+#[derive(Clone, Debug)]
+struct DockContextMenu {
+    area_id: DockAreaId,
+    active_window: Option<WindowId>,
+    anchor: Vec2,
 }
 
 #[derive(Clone, Debug)]
@@ -275,6 +309,8 @@ pub struct WindowLayout {
     cached_splits: Vec<CachedSplitHit>,
     cached_areas: Vec<CachedAreaHit>,
     cached_tabs: Vec<CachedTabHit>,
+    cached_tab_bars: Vec<CachedTabBarHit>,
+    open_context_menu: Option<DockContextMenu>,
     active_split: Option<ActiveSplitDrag>,
     active_window_drag: Option<ActiveWindowDrag>,
     active_window_resize: Option<ActiveWindowResize>,
@@ -300,6 +336,8 @@ impl WindowLayout {
             cached_splits: Vec::new(),
             cached_areas: Vec::new(),
             cached_tabs: Vec::new(),
+            cached_tab_bars: Vec::new(),
+            open_context_menu: None,
             active_split: None,
             active_window_drag: None,
             active_window_resize: None,
@@ -455,12 +493,128 @@ impl WindowLayout {
         Some(self.show_floating(id, rect, glass))
     }
 
+    /// Cursor shape requested by active or hovered dock splitters and floating window handles.
+    pub fn desired_cursor(&self, pointer_pos: Vec2) -> CursorHint {
+        if let Some(drag) = &self.active_split {
+            return match drag.axis {
+                SplitAxis::Horizontal => CursorHint::ResizeHorizontal,
+                SplitAxis::Vertical => CursorHint::ResizeVertical,
+            };
+        }
+        if let Some(resize) = &self.active_window_resize {
+            return resize_edge_cursor(resize.edge);
+        }
+        if self.active_window_drag.is_some() || self.dock_drag.is_some() {
+            return CursorHint::Grabbing;
+        }
+        for win in self.floating.iter().rev() {
+            let outer = Rect::new(
+                win.rect.x - RESIZE_BORDER_PX,
+                win.rect.y - RESIZE_BORDER_PX,
+                win.rect.w + RESIZE_BORDER_PX * 2.0,
+                win.rect.h + RESIZE_BORDER_PX * 2.0,
+            );
+            if outer.contains(pointer_pos) {
+                if let Some(edge) = hit_resize_edge(win.rect, pointer_pos) {
+                    return resize_edge_cursor(edge);
+                }
+                return CursorHint::Default;
+            }
+        }
+        if let Some(split) = self
+            .cached_splits
+            .iter()
+            .find(|s| s.hit_rect.contains(pointer_pos))
+        {
+            return match split.axis {
+                SplitAxis::Horizontal => CursorHint::ResizeHorizontal,
+                SplitAxis::Vertical => CursorHint::ResizeVertical,
+            };
+        }
+        CursorHint::Default
+    }
+
+    /// Whether the dock context menu is currently open.
+    pub fn has_open_context_menu(&self) -> bool {
+        self.open_context_menu.is_some()
+    }
+
     /// Process pointer input and [`UiAction`]s for splitters, tabs, floating
     /// windows, tear-off, and 5-zone dock targeting.
     pub fn step_input(&mut self, workspace: Rect, input: &UiInput, actions: &[UiAction]) {
         self.last_pointer = input.pointer_pos;
+        if input.escape_pressed {
+            self.open_context_menu = None;
+        }
+        let mut consumed_by_context_menu = false;
         for action in actions {
             if let UiAction::Clicked(key) = action {
+                if *key == DockNodeKey::context_backdrop() {
+                    self.open_context_menu = None;
+                    consumed_by_context_menu = true;
+                    continue;
+                }
+                if *key == DockNodeKey::context_float() {
+                    if let Some(ctx_menu) = self.open_context_menu.take() {
+                        if let Some(win_id) = ctx_menu.active_window {
+                            let rect = Rect::new(
+                                (ctx_menu.anchor.x - 160.0).max(workspace.x + 12.0),
+                                (ctx_menu.anchor.y + 4.0).max(workspace.y + 12.0),
+                                360.0,
+                                280.0,
+                            );
+                            self.show_floating(&win_id, rect, true);
+                        }
+                    }
+                    consumed_by_context_menu = true;
+                    continue;
+                }
+                if *key == DockNodeKey::context_close() {
+                    if let Some(ctx_menu) = self.open_context_menu.take() {
+                        if let Some(win_id) = ctx_menu.active_window {
+                            self.close_window(&win_id);
+                        }
+                    }
+                    consumed_by_context_menu = true;
+                    continue;
+                }
+                let mut matched_add = false;
+                for win_id in self.windows.keys().cloned().collect::<Vec<_>>() {
+                    if *key == DockNodeKey::context_add(&win_id) {
+                        if let Some(ctx_menu) = self.open_context_menu.take() {
+                            self.dock_window(win_id, ctx_menu.area_id, DockPosition::Tab);
+                        }
+                        matched_add = true;
+                        consumed_by_context_menu = true;
+                        break;
+                    }
+                }
+                if matched_add {
+                    continue;
+                }
+
+                for bar in &self.cached_tab_bars.clone() {
+                    if *key == DockNodeKey::area_menu(bar.area_id) {
+                        let toggle_same = self
+                            .open_context_menu
+                            .as_ref()
+                            .is_some_and(|m| m.area_id == bar.area_id);
+                        self.open_context_menu = if toggle_same {
+                            None
+                        } else {
+                            Some(DockContextMenu {
+                                area_id: bar.area_id,
+                                active_window: bar.active_window.clone(),
+                                anchor: Vec2::new(
+                                    bar.rect.x + bar.rect.w - 8.0,
+                                    bar.rect.y + bar.rect.h,
+                                ),
+                            })
+                        };
+                        consumed_by_context_menu = true;
+                        break;
+                    }
+                }
                 for hit in &self.cached_tabs.clone() {
                     if *key == DockNodeKey::tab(hit.area_id, &hit.window_id) {
                         self.focus_window(&hit.window_id);
@@ -471,7 +625,27 @@ impl WindowLayout {
             }
         }
 
-        if input.primary_just_pressed {
+        if input.secondary_just_pressed {
+            if let Some(bar) = self
+                .cached_tab_bars
+                .iter()
+                .find(|b| b.rect.contains(input.pointer_pos))
+                .cloned()
+            {
+                self.open_context_menu = Some(DockContextMenu {
+                    area_id: bar.area_id,
+                    active_window: bar.active_window,
+                    anchor: input.pointer_pos,
+                });
+            } else {
+                self.open_context_menu = None;
+            }
+        }
+
+        if input.primary_just_pressed
+            && !consumed_by_context_menu
+            && self.open_context_menu.is_none()
+        {
             // 1. Check floating windows from top to bottom (Z-order).
             let mut handled = false;
             for idx in (0..self.floating.len()).rev() {
@@ -648,6 +822,7 @@ impl WindowLayout {
         self.cached_splits.clear();
         self.cached_areas.clear();
         self.cached_tabs.clear();
+        self.cached_tab_bars.clear();
 
         let root_node = self.main_root.clone();
         self.mount_node(ctx, theme, &root_node, workspace, false, draw_content);
@@ -699,6 +874,79 @@ impl WindowLayout {
                         mount_dock_compass(ctx, theme, area.rect, pos);
                     }
                 }
+            }
+
+            if let Some(menu) = &self.open_context_menu {
+                ctx.mount(
+                    ElementBox::default()
+                        .key(DockNodeKey::context_backdrop())
+                        .absolute(0.0, 0.0)
+                        .size(Length::Percent(100.0), Length::Percent(100.0))
+                        .bg(Color::TRANSPARENT)
+                        .clickable(),
+                );
+                let menu_w = 196.0;
+                let active_closable = menu
+                    .active_window
+                    .as_ref()
+                    .and_then(|id| self.windows.get(id))
+                    .map_or(true, |m| m.closable);
+                let item_count = 1 + usize::from(active_closable) + self.windows.len();
+                let est_h = (item_count as f32) * theme.menu_item_height + 24.0;
+                let x = menu
+                    .anchor
+                    .x
+                    .min(workspace.x + workspace.w - menu_w - 8.0)
+                    .max(workspace.x + 4.0);
+                let y = menu
+                    .anchor
+                    .y
+                    .min(workspace.y + workspace.h - est_h - 8.0)
+                    .max(workspace.y + 4.0);
+
+                let mut panel = col()
+                    .absolute(x, y)
+                    .width(Length::Px(menu_w))
+                    .padding(theme.menu_dropdown_padding)
+                    .gap(1.0)
+                    .radius(theme.menu_dropdown_radius)
+                    .border(1.0, theme.border_strong)
+                    .bg(theme
+                        .glass_tint
+                        .with_alpha((theme.glass_tint.a + 0.06).min(0.88)))
+                    .material(
+                        Material::frosted_glass(theme.glass_blur_sigma)
+                            .with_radius(theme.menu_dropdown_radius),
+                    );
+
+                if menu.active_window.is_some() {
+                    panel = panel.child(context_menu_row(
+                        DockNodeKey::context_float(),
+                        theme,
+                        "Undock / Float",
+                    ));
+                    if active_closable {
+                        panel = panel.child(context_menu_row(
+                            DockNodeKey::context_close(),
+                            theme,
+                            "Close Tab",
+                        ));
+                    }
+                    panel = panel.child(hairline(theme.border_subtle));
+                }
+
+                for (win_id, meta) in &self.windows {
+                    if win_id.0 == "about" {
+                        continue;
+                    }
+                    panel = panel.child(context_menu_row(
+                        DockNodeKey::context_add(win_id),
+                        theme,
+                        &format!("Add Tab: {}", meta.title),
+                    ));
+                }
+
+                ctx.mount(panel);
             }
         });
     }
@@ -931,6 +1179,11 @@ impl WindowLayout {
                         ctx.mount(hairline(theme.border_subtle.with_alpha(0.45)));
                     } else {
                         // Docked Tab bar
+                        self.cached_tab_bars.push(CachedTabBarHit {
+                            area_id: area.id,
+                            active_window: area.active_window().cloned(),
+                            rect: Rect::new(rect.x, rect.y, rect.w, TAB_BAR_HEIGHT),
+                        });
                         let bar = ctx.mount(
                             row()
                                 .width(Length::Percent(100.0))
@@ -946,10 +1199,7 @@ impl WindowLayout {
                                 let is_active = idx == area.active_tab;
                                 let meta = self.windows.get(win_id);
                                 let title = meta.map_or(win_id.as_str(), |m| m.title.as_str());
-                                let closable = meta.is_none_or(|m| m.closable);
-                                let tab_w = (title.len() as f32 * 7.5
-                                    + if closable { 30.0 } else { 18.0 })
-                                .max(64.0);
+                                let tab_w = (title.len() as f32 * 7.5 + 18.0).max(56.0);
 
                                 self.cached_tabs.push(CachedTabHit {
                                     area_id: area.id,
@@ -973,7 +1223,7 @@ impl WindowLayout {
                                 } else {
                                     theme.muted
                                 };
-                                let tab_row = ctx.mount(
+                                ctx.mount(
                                     row()
                                         .key(DockNodeKey::tab(area.id, win_id))
                                         .height(Length::Px(TAB_BAR_HEIGHT - 6.0))
@@ -985,13 +1235,25 @@ impl WindowLayout {
                                         .bg(tab_bg)
                                         .child(text(text_color, theme.font_size_small, title)),
                                 );
-                                if closable {
-                                    let close_key = self.close_key_for(win_id);
-                                    ctx.with_parent(tab_row, |ctx| {
-                                        ctx.mount(tab_close_icon(&self.icons, close_key, theme));
-                                    });
-                                }
                             }
+                            ctx.mount(spacer());
+                            ctx.mount(
+                                row()
+                                    .key(DockNodeKey::area_menu(area.id))
+                                    .size(Length::Px(22.0), Length::Px(TAB_BAR_HEIGHT - 6.0))
+                                    .radius(5.0)
+                                    .align(Align::Center)
+                                    .justify(Justify::Center)
+                                    .bg(Color::TRANSPARENT)
+                                    .hover_bg(theme.row_hover)
+                                    .clickable()
+                                    .child(icon_view(
+                                        &self.icons,
+                                        IconKind::Menu,
+                                        13.0,
+                                        theme.text_soft,
+                                    )),
+                            );
                         });
                         ctx.mount(hairline(theme.border_subtle));
                     }
@@ -1176,6 +1438,29 @@ fn mount_dock_compass(ctx: &mut UiContext, theme: &Theme, target: Rect, active: 
     }
 }
 
+fn context_menu_row(key: NodeKey, theme: &Theme, label_text: &str) -> ElementBox {
+    row()
+        .key(key)
+        .width(Length::Percent(100.0))
+        .height(Length::Px(theme.menu_item_height))
+        .padding(theme.menu_item_padding)
+        .radius(theme.menu_item_radius)
+        .align(Align::Center)
+        .bg(Color::TRANSPARENT)
+        .hover_bg(theme.menu_hover)
+        .clickable()
+        .child(text(theme.text, theme.font_size, label_text))
+}
+
+fn resize_edge_cursor(edge: ResizeEdge) -> CursorHint {
+    match edge {
+        ResizeEdge::Left | ResizeEdge::Right => CursorHint::ResizeHorizontal,
+        ResizeEdge::Top | ResizeEdge::Bottom => CursorHint::ResizeVertical,
+        ResizeEdge::TopLeft | ResizeEdge::BottomRight => CursorHint::ResizeNwSe,
+        ResizeEdge::TopRight | ResizeEdge::BottomLeft => CursorHint::ResizeNeSw,
+    }
+}
+
 fn hit_resize_edge(rect: Rect, p: Vec2) -> Option<ResizeEdge> {
     let left = (p.x - rect.x).abs() <= RESIZE_BORDER_PX;
     let right = (p.x - (rect.x + rect.w)).abs() <= RESIZE_BORDER_PX;
@@ -1332,5 +1617,73 @@ mod tests {
         } else {
             panic!("expected root split");
         }
+    }
+
+    #[test]
+    fn docked_tabs_have_hamburger_menu_instead_of_close_button() {
+        let (mut layout, left, _center, _right) = sample_layout();
+        let mut tree = UiTree::new();
+        let theme = Theme::dark();
+        let workspace = Rect::new(0.0, 0.0, 1000.0, 600.0);
+
+        tree.begin_frame();
+        {
+            let mut ctx = UiContext::new(&mut tree);
+            let overlay = ctx.tree.overlay_root(Vec2::new(1000.0, 600.0));
+            layout.mount(&mut ctx, overlay, &theme, workspace, &mut |_, _| {});
+        }
+        tree.compute_layout(Vec2::new(1000.0, 600.0));
+
+        assert!(
+            tree.node_by_key(DockNodeKey::close(&"hierarchy".into()))
+                .is_none(),
+            "docked tab must not mount a close button"
+        );
+        assert!(
+            tree.node_by_key(DockNodeKey::area_menu(left)).is_some(),
+            "docked tab bar must mount a hamburger menu button"
+        );
+
+        layout.step_input(
+            workspace,
+            &UiInput::default(),
+            &[UiAction::Clicked(DockNodeKey::area_menu(left))],
+        );
+        assert!(layout.has_open_context_menu());
+    }
+
+    #[test]
+    fn desired_cursor_reports_splitter_and_floating_resize() {
+        let (mut layout, _left, _center, _right) = sample_layout();
+        let mut tree = UiTree::new();
+        let theme = Theme::dark();
+        let workspace = Rect::new(0.0, 0.0, 1000.0, 600.0);
+
+        tree.begin_frame();
+        {
+            let mut ctx = UiContext::new(&mut tree);
+            let overlay = ctx.tree.overlay_root(Vec2::new(1000.0, 600.0));
+            layout.mount(&mut ctx, overlay, &theme, workspace, &mut |_, _| {});
+        }
+
+        let splitter_x = layout.cached_splits[0].hit_rect.x + 3.0;
+        assert_eq!(
+            layout.desired_cursor(Vec2::new(splitter_x, 300.0)),
+            CursorHint::ResizeHorizontal
+        );
+
+        layout.show_floating(
+            &"hierarchy".into(),
+            Rect::new(100.0, 100.0, 300.0, 200.0),
+            true,
+        );
+        assert_eq!(
+            layout.desired_cursor(Vec2::new(400.0, 180.0)),
+            CursorHint::ResizeHorizontal
+        );
+        assert_eq!(
+            layout.desired_cursor(Vec2::new(400.0, 300.0)),
+            CursorHint::ResizeNwSe
+        );
     }
 }

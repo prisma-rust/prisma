@@ -158,6 +158,14 @@ impl UndoStack {
     }
 }
 
+/// Saved docking arrangements offered by the View menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutPreset {
+    Default,
+    Wide,
+    Tall,
+}
+
 /// Unified command enum for all editor interactions.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EditorCommand {
@@ -190,4 +198,9 @@ pub enum EditorCommand {
     OpenAbout,
     CloseAbout,
     ResetLayout,
+    SetLayout(LayoutPreset),
+    RequestExit,
+    SelectAll,
+    DuplicateSelected,
+    DeleteSelected,
 }

@@ -440,6 +440,7 @@ impl Engine {
             left_clicked: input_manager.mouse_just_pressed(crate::input::MouseButton::Left),
             left_held: input_manager.mouse_held(crate::input::MouseButton::Left),
             left_released: input_manager.mouse_just_released(crate::input::MouseButton::Left),
+            right_clicked: input_manager.mouse_just_pressed(crate::input::MouseButton::Right),
             scroll_delta: [0.0, input_manager.scroll_delta() as f32],
             shift_held: input_manager.key_held(crate::input::KeyCode::ShiftLeft)
                 || input_manager.key_held(crate::input::KeyCode::ShiftRight),

@@ -488,9 +488,11 @@ pub struct UiOverlay {
     /// and writing a set that a still-executing command buffer references is
     /// a validation error, so updates rotate through these instead.
     descriptor_sets: [vk::DescriptorSet; crate::swapchain::FRAMES_IN_FLIGHT],
-    vertex_buffer: vk::Buffer,
-    vertex_memory: vk::DeviceMemory,
-    vertex_capacity: u32,
+    /// One host-visible vertex buffer per frame-in-flight so recording frame
+    /// N+1 never overwrites vertices still being read by frame N on the GPU.
+    vertex_buffers: [vk::Buffer; crate::swapchain::FRAMES_IN_FLIGHT],
+    vertex_memories: [vk::DeviceMemory; crate::swapchain::FRAMES_IN_FLIGHT],
+    vertex_capacities: [u32; crate::swapchain::FRAMES_IN_FLIGHT],
     render_pass: vk::RenderPass,
     /// Intermediate render pass used when splitting UI draws around a backdrop
     /// capture: leaves the target in `COLOR_ATTACHMENT_OPTIMAL` instead of
@@ -594,13 +596,19 @@ impl UiOverlay {
 
         let init_vertices = 1024u32;
         let buf_size = VERTEX_SIZE * init_vertices as u64;
-        let (vertex_buffer, vertex_memory) = create_buffer(
-            context,
-            buf_size,
-            BufferUsage::VERTEX_BUFFER,
-            MemoryProperties::HOST_VISIBLE | MemoryProperties::HOST_COHERENT,
-        )
-        .context("UiOverlay: create vertex buffer")?;
+        let mut vertex_buffers = [vk::Buffer::null(); crate::swapchain::FRAMES_IN_FLIGHT];
+        let mut vertex_memories = [vk::DeviceMemory::null(); crate::swapchain::FRAMES_IN_FLIGHT];
+        for slot in 0..crate::swapchain::FRAMES_IN_FLIGHT {
+            let (buf, mem) = create_buffer(
+                context,
+                buf_size,
+                BufferUsage::VERTEX_BUFFER,
+                MemoryProperties::HOST_VISIBLE | MemoryProperties::HOST_COHERENT,
+            )
+            .context("UiOverlay: create vertex buffer")?;
+            vertex_buffers[slot] = buf;
+            vertex_memories[slot] = mem;
+        }
 
         let backdrop_sampler = Self::create_backdrop_sampler(&device)?;
 
@@ -623,9 +631,9 @@ impl UiOverlay {
             set_layout,
             descriptor_pool,
             descriptor_sets,
-            vertex_buffer,
-            vertex_memory,
-            vertex_capacity: init_vertices,
+            vertex_buffers,
+            vertex_memories,
+            vertex_capacities: [init_vertices; crate::swapchain::FRAMES_IN_FLIGHT],
             render_pass,
             intermediate_render_pass,
             color_format,
@@ -858,7 +866,9 @@ impl UiOverlay {
             .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::COLOR_ATTACHMENT_READ,
+            );
 
         let create_info = vk::RenderPassCreateInfo::default()
             .attachments(std::slice::from_ref(&color_attachment))
@@ -1055,8 +1065,8 @@ impl UiOverlay {
         Ok((pipeline, layout))
     }
 
-    fn grow_buffer(&mut self, context: &VulkanContext, needed: u32) -> Result<()> {
-        if needed <= self.vertex_capacity {
+    fn grow_buffer(&mut self, context: &VulkanContext, slot: usize, needed: u32) -> Result<()> {
+        if needed <= self.vertex_capacities[slot] {
             return Ok(());
         }
         let new_cap = needed.next_power_of_two();
@@ -1071,20 +1081,20 @@ impl UiOverlay {
         // The previous frames' command buffers may still read the old buffer, and
         // growth happens mid-frame while the current one is recording. Park it in
         // the retirement queue instead of stalling the device.
-        if self.vertex_buffer != vk::Buffer::null()
-            || self.vertex_memory != vk::DeviceMemory::null()
+        if self.vertex_buffers[slot] != vk::Buffer::null()
+            || self.vertex_memories[slot] != vk::DeviceMemory::null()
         {
             self.retire.retire(
                 self.frame_index,
                 crate::retire::RetiredResource::Buffer {
-                    buffer: self.vertex_buffer,
-                    memory: self.vertex_memory,
+                    buffer: self.vertex_buffers[slot],
+                    memory: self.vertex_memories[slot],
                 },
             );
         }
-        self.vertex_buffer = buf;
-        self.vertex_memory = mem;
-        self.vertex_capacity = new_cap;
+        self.vertex_buffers[slot] = buf;
+        self.vertex_memories[slot] = mem;
+        self.vertex_capacities[slot] = new_cap;
         Ok(())
     }
 
@@ -1240,17 +1250,18 @@ impl UiOverlay {
         if vert_count == 0 {
             return Ok(());
         }
+        let slot = frame_index as usize % crate::swapchain::FRAMES_IN_FLIGHT;
         let buffer_start = std::time::Instant::now();
-        self.grow_buffer(context, vert_count)?;
+        self.grow_buffer(context, slot, vert_count)?;
         log_slow_step("grow_buffer", buffer_start.elapsed());
 
-        // Upload vertex data.
+        // Upload vertex data into this frame-in-flight slot's buffer.
         let vert_bytes = vertices.len() * size_of::<UiVertex>();
         unsafe {
             let ptr = context
                 .device
                 .map_memory(
-                    self.vertex_memory,
+                    self.vertex_memories[slot],
                     0,
                     vert_bytes as u64,
                     vk::MemoryMapFlags::empty(),
@@ -1261,7 +1272,7 @@ impl UiOverlay {
                 ptr as *mut u8,
                 vert_bytes,
             );
-            context.device.unmap_memory(self.vertex_memory);
+            context.device.unmap_memory(self.vertex_memories[slot]);
         }
 
         // Atlas has new glyphs → HOST_WRITE → FRAGMENT_SHADER barrier (GENERAL layout unchanged).
@@ -1395,7 +1406,7 @@ impl UiOverlay {
                     .device
                     .cmd_set_scissor(cmd, 0, std::slice::from_ref(&sc));
 
-                let bufs = [self.vertex_buffer];
+                let bufs = [self.vertex_buffers[slot]];
                 context
                     .device
                     .cmd_bind_vertex_buffers(cmd, 0, &bufs, &[0u64]);
@@ -1752,8 +1763,10 @@ impl Drop for UiOverlay {
             if let Some(rp) = self.intermediate_render_pass {
                 self.device.destroy_render_pass(rp, None);
             }
-            self.device.destroy_buffer(self.vertex_buffer, None);
-            self.device.free_memory(self.vertex_memory, None);
+            for slot in 0..crate::swapchain::FRAMES_IN_FLIGHT {
+                self.device.destroy_buffer(self.vertex_buffers[slot], None);
+                self.device.free_memory(self.vertex_memories[slot], None);
+            }
             self.device.destroy_sampler(self.backdrop_sampler, None);
         }
     }

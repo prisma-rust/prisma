@@ -256,3 +256,29 @@ fn engine_pointer_state_reaches_the_ui_tree() {
         .any(|a| matches!(a, UiAction::Toggled { .. } | UiAction::Clicked(_))));
     assert!(editor.session.playing);
 }
+
+#[test]
+fn menu_actions_switch_theme_language_and_open_tool_windows() {
+    let mut editor = EditorUiState::default();
+    assert_eq!(editor.theme.preset(), ThemePreset::Dark);
+
+    editor.apply_menu_actions(vec![
+        MenuAction::Command("view.theme.light".into()),
+        MenuAction::Command("view.lang.zh-CN".into()),
+        MenuAction::Command("view.grid".into()),
+        MenuAction::Command("window.console".into()),
+        MenuAction::Command("window.profiler".into()),
+    ]);
+
+    assert_eq!(editor.theme.preset(), ThemePreset::Light);
+    assert_eq!(editor.i18n.locale, Locale::ZhCn);
+    assert!(editor.session.show_grid);
+    assert!(editor.window_layout.is_window_open(&"console".into()));
+    assert!(editor.window_layout.is_window_open(&"profiler".into()));
+
+    editor.build_and_step(Vec2::new(1280.0, 720.0), &UiInput::default(), 0.016);
+    assert!(!editor.draw_list.commands.is_empty());
+
+    editor.apply_menu_actions(vec![MenuAction::Command("file.exit".into())]);
+    assert!(editor.exit_requested);
+}

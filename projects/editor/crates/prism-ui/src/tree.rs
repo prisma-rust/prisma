@@ -186,6 +186,21 @@ pub struct Anchor {
     pub side: PopupSide,
 }
 
+/// Semantic cursor shape requested by a UI widget or layout handle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CursorHint {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    ResizeHorizontal,
+    ResizeVertical,
+    ResizeNwSe,
+    ResizeNeSw,
+    Grab,
+    Grabbing,
+}
+
 /// Per-frame platform input snapshot fed into [`UiTree::process_input`].
 #[derive(Clone, Debug, Default)]
 pub struct UiInput {
@@ -193,6 +208,7 @@ pub struct UiInput {
     pub primary_down: bool,
     pub primary_just_pressed: bool,
     pub primary_just_released: bool,
+    pub secondary_just_pressed: bool,
     pub scroll_delta: Vec2,
     pub shift_held: bool,
     pub ctrl_held: bool,
@@ -232,6 +248,8 @@ pub struct UiTree {
     retained_text: HashMap<NodeKey, TextEditable>,
     retained_drag: HashMap<NodeKey, (Option<f64>, f32)>,
     actions: Vec<UiAction>,
+    /// Fallback drop-shadow applied to text nodes without an explicit per-node shadow.
+    pub default_text_shadow: Option<(Vec2, Color)>,
     #[cfg(feature = "ui-tween")]
     pub tweens: crate::tween::TweenStore,
 }
@@ -266,6 +284,7 @@ impl UiTree {
             retained_text: HashMap::new(),
             retained_drag: HashMap::new(),
             actions: Vec::new(),
+            default_text_shadow: None,
             #[cfg(feature = "ui-tween")]
             tweens: crate::tween::TweenStore::default(),
         }
@@ -665,11 +684,50 @@ impl UiTree {
                 }
             }
         }
-        if node.computed_rect.contains(pos) && self.is_interactive(id) {
+        if node.computed_rect.contains(pos) && (self.is_interactive(id) || self.blocks_pointer(id))
+        {
             Some(id)
         } else {
             None
         }
+    }
+
+    fn blocks_pointer(&self, id: NodeId) -> bool {
+        if self.root == Some(id) || self.overlay_root == Some(id) {
+            return false;
+        }
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        node.visual.as_ref().is_some_and(|v| {
+            let s = v.resolve(&node.state);
+            s.bg.is_some_and(|c| c.a > 0.0) || s.material.is_some()
+        })
+    }
+
+    /// Cursor shape requested by the currently hovered or actively dragged node.
+    pub fn desired_cursor(&self) -> CursorHint {
+        if let Some(active_key) = self.active_pointer_key {
+            if let Some(id) = self.key_to_id.get(&active_key).copied() {
+                if self.draggables.contains_key(id) {
+                    return CursorHint::ResizeHorizontal;
+                }
+            }
+        }
+        if let Some(hovered_key) = self.hovered_key {
+            if let Some(id) = self.key_to_id.get(&hovered_key).copied() {
+                if self.draggables.contains_key(id) {
+                    return CursorHint::ResizeHorizontal;
+                }
+                if self.text_editables.contains_key(id) {
+                    return CursorHint::Text;
+                }
+                if self.interactables.contains_key(id) {
+                    return CursorHint::Pointer;
+                }
+            }
+        }
+        CursorHint::Default
     }
 
     fn is_interactive(&self, id: NodeId) -> bool {
@@ -898,6 +956,13 @@ impl UiTree {
                     .as_ref()
                     .map(|v| v.resolve(&node.state).text_effect)
                     .unwrap_or_default();
+                let (shadow_offset, shadow_color) = if text_effect.shadow_color.a > 0.0 {
+                    (text_effect.shadow_offset, text_effect.shadow_color)
+                } else if let Some((offset, color)) = self.default_text_shadow {
+                    (offset, color)
+                } else {
+                    (text_effect.shadow_offset, text_effect.shadow_color)
+                };
                 out.push(UiDrawCommand::Text {
                     rect,
                     content: text.clone(),
@@ -907,8 +972,8 @@ impl UiTree {
                     wrap: *wrap,
                     outline_width: text_effect.outline_width,
                     outline_color: text_effect.outline_color,
-                    shadow_offset: text_effect.shadow_offset,
-                    shadow_color: text_effect.shadow_color,
+                    shadow_offset,
+                    shadow_color,
                 });
             }
             NodeContent::Image { texture, tint } => {
@@ -959,5 +1024,75 @@ impl UiTree {
             .values()
             .map(|n| (n.key, n.debug_label.as_deref(), n.computed_rect, n.state))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::elements::{button, col, numeric_field, ElementBox, UiContext};
+    use crate::style::{Color, Length};
+
+    #[test]
+    fn overlay_surface_blocks_clicks_from_penetrating_underneath() {
+        let mut tree = UiTree::new();
+        tree.begin_frame();
+        let root =
+            {
+                let mut ctx = UiContext::new(&mut tree);
+                ctx.mount(col().size(Length::Px(400.0), Length::Px(300.0)).child(
+                    button("under:btn", "Click Me").size(Length::Px(200.0), Length::Px(80.0)),
+                ))
+            };
+        let overlay = tree.overlay_root(Vec2::new(400.0, 300.0));
+        {
+            let mut ctx = UiContext::new(&mut tree);
+            ctx.with_parent(overlay, |ctx| {
+                ctx.mount(
+                    ElementBox::default()
+                        .key("overlay:card")
+                        .absolute(0.0, 0.0)
+                        .size(Length::Px(250.0), Length::Px(120.0))
+                        .bg(Color::rgba(0.1, 0.1, 0.1, 0.8)),
+                );
+            });
+        }
+        let _ = root;
+        tree.compute_layout(Vec2::new(400.0, 300.0));
+
+        let hit = tree.hit_test(Vec2::new(50.0, 30.0));
+        assert_eq!(
+            hit.and_then(|id| tree.nodes.get(id)).map(|n| n.key),
+            Some("overlay:card".into_node_key()),
+            "non-interactive overlay surface must block hit-testing underneath"
+        );
+    }
+
+    #[test]
+    fn desired_cursor_reflects_hovered_draggable_and_button() {
+        let mut tree = UiTree::new();
+        tree.begin_frame();
+        {
+            let mut ctx = UiContext::new(&mut tree);
+            ctx.mount(
+                col()
+                    .size(Length::Px(400.0), Length::Px(300.0))
+                    .child(numeric_field("num:x", 1.0, -10.0, 10.0, 0.1))
+                    .child(button("btn:ok", "OK").size(Length::Px(100.0), Length::Px(30.0))),
+            );
+        }
+        tree.compute_layout(Vec2::new(400.0, 300.0));
+
+        tree.process_input(&UiInput {
+            pointer_pos: Vec2::new(20.0, 12.0),
+            ..Default::default()
+        });
+        assert_eq!(tree.desired_cursor(), CursorHint::ResizeHorizontal);
+
+        tree.process_input(&UiInput {
+            pointer_pos: Vec2::new(20.0, 35.0),
+            ..Default::default()
+        });
+        assert_eq!(tree.desired_cursor(), CursorHint::Pointer);
     }
 }

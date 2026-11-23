@@ -75,7 +75,7 @@ pub fn build_about_body_localized(theme: &Theme, i18n: &EditorI18n) -> ElementBo
         .gap(14.0)
         .child(
             text(theme.text_strong, theme.font_size + 6.0, "Prisma Editor")
-                .text_shadow(Vec2::new(0.0, 1.0), Color::rgba(0.0, 0.0, 0.0, 0.35)),
+                .text_shadow(theme.text_shadow_offset, theme.text_shadow_color),
         )
         .child(text(
             theme.text_soft,

@@ -16,6 +16,15 @@
     "scene": "场景视口",
     "assets": "资源",
     "inspector": "检查器",
+    "console": "控制台",
+    "game": "游戏视图",
+    "profiler": "性能分析",
+    "lighting": "光照设置",
+    "audio_mixer": "混音器",
+    "animation": "动画",
+    "package_manager": "包管理",
+    "project_settings": "项目设置",
+    "build_settings": "构建设置",
     "about": "关于 Prisma"
   },
   "toolbar": {

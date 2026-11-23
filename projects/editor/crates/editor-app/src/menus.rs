@@ -2,8 +2,9 @@
 
 use prism_ui::prelude::*;
 
-use crate::commands::{EditorCommand, UndoStack};
+use crate::commands::{EditorCommand, LayoutPreset, UndoStack};
 use crate::panels::{PanelRegistry, PanelViewCtx};
+use crate::windows::TOOL_WINDOWS;
 
 /// Build the editor's top-level menu bar from read-only state and registered panels.
 pub fn build_menus(
@@ -26,6 +27,13 @@ pub fn build_menus(
             )
         })
         .collect();
+    for (id, title_key) in TOOL_WINDOWS {
+        panel_entries.push(MenuEntry::checkbox(
+            ctx.i18n.t(title_key),
+            format!("view.panel.{id}"),
+            layout.is_window_open(&WindowId::from(*id)),
+        ));
+    }
     panel_entries.push(MenuEntry::separator());
     panel_entries.push(MenuEntry::submenu(
         "Layouts",
@@ -53,7 +61,41 @@ pub fn build_menus(
             layout.is_window_open(&win_id),
         ));
     }
+    for (id, title_key) in [("console", "window.console"), ("game", "window.game")] {
+        window_menu = window_menu.item(MenuEntry::checkbox(
+            ctx.i18n.t(title_key),
+            format!("window.{id}"),
+            layout.is_window_open(&WindowId::from(id)),
+        ));
+    }
     window_menu = window_menu
+        .item(MenuEntry::separator())
+        .item(MenuEntry::submenu(
+            "Analysis & Rendering",
+            ["profiler", "lighting", "audio_mixer", "animation"]
+                .iter()
+                .map(|id| {
+                    MenuEntry::checkbox(
+                        ctx.i18n.t(&format!("window.{id}")),
+                        format!("window.{id}"),
+                        layout.is_window_open(&WindowId::from(*id)),
+                    )
+                })
+                .collect(),
+        ))
+        .item(MenuEntry::submenu(
+            "Project & Packages",
+            ["package_manager", "project_settings", "build_settings"]
+                .iter()
+                .map(|id| {
+                    MenuEntry::checkbox(
+                        ctx.i18n.t(&format!("window.{id}")),
+                        format!("window.{id}"),
+                        layout.is_window_open(&WindowId::from(*id)),
+                    )
+                })
+                .collect(),
+        ))
         .item(MenuEntry::separator())
         .item(MenuEntry::item(
             ctx.i18n.t("menu.reset_layout"),
@@ -238,9 +280,18 @@ pub fn menu_actions_to_commands(actions: Vec<MenuAction>) -> Vec<EditorCommand> 
         match action {
             MenuAction::Command(command) => match command.as_str() {
                 "help.about" => cmds.push(EditorCommand::OpenAbout),
-                "window.reset_layout" | "view.reset_layout" => {
+                "window.reset_layout" | "view.reset_layout" | "view.layout.default" => {
                     cmds.push(EditorCommand::ResetLayout);
                 }
+                "view.layout.wide" => cmds.push(EditorCommand::SetLayout(LayoutPreset::Wide)),
+                "view.layout.tall" => cmds.push(EditorCommand::SetLayout(LayoutPreset::Tall)),
+                "file.exit" => cmds.push(EditorCommand::RequestExit),
+                "file.build" | "file.build.profiles" => {
+                    cmds.push(EditorCommand::ToggleWindow(WindowId::from("build_settings")));
+                }
+                "edit.select_all" => cmds.push(EditorCommand::SelectAll),
+                "edit.duplicate" => cmds.push(EditorCommand::DuplicateSelected),
+                "edit.delete" => cmds.push(EditorCommand::DeleteSelected),
                 cmd_str if cmd_str.starts_with("window.") => {
                     let id = &cmd_str["window.".len()..];
                     cmds.push(EditorCommand::ToggleWindow(WindowId::from(id)));

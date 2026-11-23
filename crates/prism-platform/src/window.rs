@@ -12,6 +12,21 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::config::WindowConfig;
 
+/// Semantic mouse cursor shapes supported by [`PlatformWindow::set_cursor_icon`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CursorIcon {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    ResizeHorizontal,
+    ResizeVertical,
+    ResizeNwSe,
+    ResizeNeSw,
+    Grab,
+    Grabbing,
+}
+
 /// Raw handles extracted on the window-creation thread for use by the render thread.
 #[derive(Clone, Copy)]
 pub struct SendWindowHandles {
@@ -188,6 +203,30 @@ impl PlatformWindow {
             Backend::Winit { window, .. } => window.set_cursor_visible(visible),
             #[cfg(all(windows, feature = "win32-native"))]
             Backend::Win32(window) => window.set_cursor_visible(visible),
+        }
+    }
+
+    /// Update the window's mouse cursor shape.
+    pub fn set_cursor_icon(&self, icon: CursorIcon) {
+        match &self.backend {
+            #[cfg(feature = "winit-backend")]
+            Backend::Winit { window, .. } => {
+                use winit::window::CursorIcon as WinitCursor;
+                let winit_icon = match icon {
+                    CursorIcon::Default => WinitCursor::Default,
+                    CursorIcon::Pointer => WinitCursor::Pointer,
+                    CursorIcon::Text => WinitCursor::Text,
+                    CursorIcon::ResizeHorizontal => WinitCursor::EwResize,
+                    CursorIcon::ResizeVertical => WinitCursor::NsResize,
+                    CursorIcon::ResizeNwSe => WinitCursor::NwseResize,
+                    CursorIcon::ResizeNeSw => WinitCursor::NeswResize,
+                    CursorIcon::Grab => WinitCursor::Grab,
+                    CursorIcon::Grabbing => WinitCursor::Grabbing,
+                };
+                window.set_cursor(winit_icon);
+            }
+            #[cfg(all(windows, feature = "win32-native"))]
+            Backend::Win32(window) => window.set_cursor_icon(icon),
         }
     }
 

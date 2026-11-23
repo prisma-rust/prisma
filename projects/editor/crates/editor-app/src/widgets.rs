@@ -112,7 +112,7 @@ pub fn toolbar_button_icon(
     theme: &Theme,
     key: impl IntoNodeKey,
     icon: IconKind,
-    text: &str,
+    label_text: &str,
 ) -> ElementBox {
     row()
         .key(key)
@@ -128,7 +128,11 @@ pub fn toolbar_button_icon(
         .focusable(0)
         .clickable()
         .child(icon_view(icons, icon, 13.0, theme.text))
-        .child(label(text))
+        .child(prism_ui::elements::text(
+            theme.text,
+            theme.font_size,
+            label_text,
+        ))
 }
 
 /// Icon + label toggle button styled for the editor top toolbar.
@@ -137,7 +141,7 @@ pub fn toolbar_toggle_icon(
     theme: &Theme,
     key: impl IntoNodeKey,
     icon: IconKind,
-    text: &str,
+    label_text: &str,
     active: bool,
 ) -> ElementBox {
     let base_bg = if active {
@@ -164,7 +168,7 @@ pub fn toolbar_toggle_icon(
         .focusable(0)
         .toggleable(active)
         .child(icon_view(icons, icon, 13.0, fg))
-        .child(label(text))
+        .child(prism_ui::elements::text(fg, theme.font_size, label_text))
 }
 
 /// Build the top editor toolbar (gizmo selectors, play toggle, undo/redo).
@@ -182,7 +186,11 @@ pub fn editor_toolbar(
         .gap(6.0)
         .align(Align::Center)
         .bg(theme.panel)
-        .child(label("Prisma Editor"))
+        .child(prism_ui::elements::text(
+            theme.text_strong,
+            theme.font_size,
+            "Prisma Editor",
+        ))
         .child(divider(true))
         .child(toolbar_toggle_icon(
             icons,

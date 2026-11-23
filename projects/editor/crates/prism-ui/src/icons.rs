@@ -29,10 +29,11 @@ pub enum IconKind {
     Rotate,
     Scale,
     Search,
+    Menu,
 }
 
 impl IconKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Close,
         Self::Minimize,
         Self::Zoom,
@@ -47,6 +48,7 @@ impl IconKind {
         Self::Rotate,
         Self::Scale,
         Self::Search,
+        Self::Menu,
     ];
 
     /// Stable upload key used between `editor-app` and the renderer.
@@ -66,6 +68,7 @@ impl IconKind {
             Self::Rotate => "lucide:rotate-cw",
             Self::Scale => "lucide:maximize-2",
             Self::Search => "lucide:search",
+            Self::Menu => "lucide:menu",
         }
     }
 
@@ -105,6 +108,9 @@ impl IconKind {
             }
             Self::Search => {
                 r#"<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>"#
+            }
+            Self::Menu => {
+                r#"<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>"#
             }
         }
     }

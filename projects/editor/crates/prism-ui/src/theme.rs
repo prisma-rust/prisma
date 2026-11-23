@@ -89,6 +89,10 @@ pub struct Theme {
     // ---- metrics: typography ----
     pub font_size: f32,
     pub font_size_small: f32,
+    /// Default drop-shadow offset for text runs (in pixels).
+    pub text_shadow_offset: Vec2,
+    /// Default drop-shadow colour for text runs.
+    pub text_shadow_color: Color,
 }
 
 /// Built-in colour presets.
@@ -140,17 +144,17 @@ impl Theme {
             panel_alt: Color::rgb(0.129, 0.129, 0.133),
             panel_raised: Color::rgb(0.145, 0.145, 0.149),
             chrome: Color::rgb(0.086, 0.086, 0.090),
-            glass_tint: Color::rgba(0.113, 0.125, 0.149, 0.14),
-            glass_blur_sigma: 14.0,
+            glass_tint: Color::rgba(0.113, 0.125, 0.149, 0.72),
+            glass_blur_sigma: 28.0,
 
             border: Color::rgb(0.196, 0.196, 0.200),
             border_strong: Color::rgb(0.290, 0.290, 0.294),
             border_subtle: Color::rgb(0.153, 0.153, 0.157),
 
-            text: Color::rgb(0.784, 0.784, 0.788),
-            text_strong: Color::rgb(0.941, 0.941, 0.945),
-            text_soft: Color::rgb(0.659, 0.659, 0.663),
-            muted: Color::rgb(0.478, 0.478, 0.482),
+            text: Color::WHITE,
+            text_strong: Color::WHITE,
+            text_soft: Color::WHITE,
+            muted: Color::WHITE,
 
             row_hover: Color::rgb(0.173, 0.173, 0.176),
             menu_hover: Color::rgba(0.24, 0.25, 0.28, 0.65),
@@ -180,6 +184,8 @@ impl Theme {
 
             font_size: 13.0,
             font_size_small: 12.0,
+            text_shadow_offset: Vec2::new(0.5, 0.5),
+            text_shadow_color: Color::rgb(0.5, 0.5, 0.5),
         }
     }
 
@@ -195,17 +201,17 @@ impl Theme {
             panel_alt: Color::rgb(0.910, 0.910, 0.914),
             panel_raised: Color::rgb(0.984, 0.984, 0.988),
             chrome: Color::rgb(0.937, 0.937, 0.941),
-            glass_tint: Color::rgba(0.988, 0.992, 1.0, 0.22),
-            glass_blur_sigma: 14.0,
+            glass_tint: Color::rgba(0.988, 0.992, 1.0, 0.78),
+            glass_blur_sigma: 28.0,
 
             border: Color::rgb(0.831, 0.831, 0.839),
             border_strong: Color::rgb(0.702, 0.702, 0.714),
             border_subtle: Color::rgb(0.882, 0.882, 0.890),
 
-            text: Color::rgb(0.114, 0.114, 0.122),
-            text_strong: Color::rgb(0.0, 0.0, 0.0),
-            text_soft: Color::rgb(0.290, 0.290, 0.306),
-            muted: Color::rgb(0.525, 0.525, 0.545),
+            text: Color::BLACK,
+            text_strong: Color::BLACK,
+            text_soft: Color::BLACK,
+            muted: Color::BLACK,
 
             row_hover: Color::rgb(0.898, 0.898, 0.906),
             menu_hover: Color::rgba(0.0, 0.0, 0.0, 0.08),
@@ -235,6 +241,8 @@ impl Theme {
 
             font_size: 13.0,
             font_size_small: 12.0,
+            text_shadow_offset: Vec2::new(0.5, 0.5),
+            text_shadow_color: Color::rgb(0.5, 0.5, 0.5),
         }
     }
 
@@ -293,5 +301,38 @@ mod tests {
         let theme = Theme::dark();
         assert!(theme.menu_dropdown_min_width > theme.menu_shortcut_width);
         assert!(theme.menu_item_height > theme.font_size);
+    }
+
+    #[test]
+    fn text_colors_and_neutral_gray_shadow_match_presets() {
+        let dark = Theme::dark();
+        let light = Theme::light();
+        let expected_offset = Vec2::new(0.5, 0.5);
+        let expected_shadow = Color::rgb(0.5, 0.5, 0.5);
+
+        assert_eq!(dark.text, Color::WHITE);
+        assert_eq!(dark.text_strong, Color::WHITE);
+        assert_eq!(dark.text_soft, Color::WHITE);
+        assert_eq!(dark.muted, Color::WHITE);
+        assert_eq!(dark.text_shadow_offset, expected_offset);
+        assert_eq!(dark.text_shadow_color, expected_shadow);
+
+        assert_eq!(light.text, Color::BLACK);
+        assert_eq!(light.text_strong, Color::BLACK);
+        assert_eq!(light.text_soft, Color::BLACK);
+        assert_eq!(light.muted, Color::BLACK);
+        assert_eq!(light.text_shadow_offset, expected_offset);
+        assert_eq!(light.text_shadow_color, expected_shadow);
+    }
+
+    #[test]
+    fn macos_aligned_glass_tint_and_blur_preserve_readability() {
+        let dark = Theme::dark();
+        let light = Theme::light();
+
+        assert_eq!(dark.glass_blur_sigma, 28.0);
+        assert_eq!(light.glass_blur_sigma, 28.0);
+        assert!((dark.glass_tint.a - 0.72).abs() < 1e-6);
+        assert!((light.glass_tint.a - 0.78).abs() < 1e-6);
     }
 }

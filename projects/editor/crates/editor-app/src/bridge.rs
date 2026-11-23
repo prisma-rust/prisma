@@ -34,6 +34,7 @@ pub fn read_engine_input(world: &World, time_seconds: f64) -> UiInput {
         primary_down: input.left_held,
         primary_just_pressed: input.left_clicked,
         primary_just_released: input.left_released,
+        secondary_just_pressed: input.right_clicked,
         scroll_delta: Vec2::new(input.scroll_delta[0], input.scroll_delta[1]),
         shift_held: input.shift_held,
         ctrl_held: input.ctrl_held,
@@ -228,4 +229,26 @@ pub fn submit_draw_list(world: &mut World, src: &UiDrawList) {
         }
     }
     world.insert_resource(engine_list);
+}
+
+/// Publish the desired mouse cursor icon into the engine [`World`].
+pub fn submit_cursor(world: &mut World, cursor: CursorHint) {
+    use prism_engine::ui::{DesiredUiCursor, UiCursorIcon};
+    let mapped = match cursor {
+        CursorHint::Default => UiCursorIcon::Default,
+        CursorHint::Pointer => UiCursorIcon::Pointer,
+        CursorHint::Text => UiCursorIcon::Text,
+        CursorHint::ResizeHorizontal => UiCursorIcon::ResizeHorizontal,
+        CursorHint::ResizeVertical => UiCursorIcon::ResizeVertical,
+        CursorHint::ResizeNwSe => UiCursorIcon::ResizeNwSe,
+        CursorHint::ResizeNeSw => UiCursorIcon::ResizeNeSw,
+        CursorHint::Grab => UiCursorIcon::Grab,
+        CursorHint::Grabbing => UiCursorIcon::Grabbing,
+    };
+    world.insert_resource(DesiredUiCursor(mapped));
+}
+
+/// Signal the host application loop to exit cleanly.
+pub fn request_exit(world: &mut World) {
+    world.insert_resource(prism_engine::ui::ExitRequested);
 }

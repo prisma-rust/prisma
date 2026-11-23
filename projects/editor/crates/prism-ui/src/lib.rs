@@ -44,7 +44,9 @@ pub mod prelude {
     };
     pub use crate::svg::rasterize_lucide_svg;
     pub use crate::theme::{Theme, ThemePreset};
-    pub use crate::tree::{Anchor, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree};
+    pub use crate::tree::{
+        Anchor, CursorHint, IntoNodeKey, NodeId, NodeKey, PopupAlign, UiInput, UiTree,
+    };
     #[cfg(feature = "ui-tween")]
     pub use crate::tween::{Ease, TweenProperty, TweenStore};
     pub use crate::window::{

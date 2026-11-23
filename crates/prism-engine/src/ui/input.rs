@@ -33,6 +33,8 @@ pub struct UiInputState {
     pub left_held: bool,
     /// Whether left button released this frame (release edge). Click holds on **release**.
     pub left_released: bool,
+    /// Whether the right mouse button was pressed this frame (press edge).
+    pub right_clicked: bool,
     /// Wheel delta this frame in lines; positive y scrolls up.
     pub scroll_delta: [f32; 2],
     /// Shift held, the fine-grained tier of drag-to-scrub.

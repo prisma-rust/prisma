@@ -16,6 +16,15 @@
     "scene": "Scene",
     "assets": "Assets",
     "inspector": "Inspector",
+    "console": "Console",
+    "game": "Game",
+    "profiler": "Profiler",
+    "lighting": "Lighting",
+    "audio_mixer": "Audio Mixer",
+    "animation": "Animation",
+    "package_manager": "Package Manager",
+    "project_settings": "Project Settings",
+    "build_settings": "Build Settings",
     "about": "About Prisma"
   },
   "toolbar": {

@@ -43,8 +43,8 @@ pub use platform::{current_platform, is_android, is_desktop, is_mobile, TargetPl
 #[cfg(windows)]
 pub use window::raw_win32_window_handles;
 pub use window::{
-    grab_pointer, raw_window_handles, release_pointer, required_vulkan_extensions, PlatformContext,
-    PlatformWindow, SendWindowHandles,
+    grab_pointer, raw_window_handles, release_pointer, required_vulkan_extensions, CursorIcon,
+    PlatformContext, PlatformWindow, SendWindowHandles,
 };
 #[cfg(feature = "winit-backend")]
 pub use winit_backend::to_platform_event;
