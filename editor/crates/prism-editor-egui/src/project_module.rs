@@ -603,7 +603,6 @@ impl ProjectModuleDriver {
         self.pending_scene.take()
     }
 
-
     fn maybe_compile(&mut self, playing: bool) {
         if self.building || !self.available() {
             return;
@@ -775,7 +774,6 @@ impl ProjectModuleDriver {
     }
 }
 
-
 /// Pack host input into ABI snapshot.
 ///
 /// Mapping body in [`prism_engine::input::input_snapshot`]: static Player's
@@ -834,7 +832,6 @@ fn builtin_component_registry() -> ComponentRegistry {
     registry
 }
 
-
 /// Project's own `assets/` (not repo-root engine assets).
 struct ProjectAssets {
     root: PathBuf,
@@ -873,7 +870,6 @@ impl AssetIo for ProjectAssets {
     }
 }
 
-
 fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     let mut command = std::process::Command::new("cargo");
     command
@@ -890,7 +886,7 @@ fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); 
+        command.creation_flags(0x0800_0000);
     }
 
     let output = match command.output() {
@@ -1015,7 +1011,6 @@ fn tail_lines(text: &str, count: usize) -> String {
     let start = lines.len().saturating_sub(count);
     lines[start..].join("\n")
 }
-
 
 fn manifest_declares_preview_module(manifest: &Path) -> bool {
     std::fs::read_to_string(manifest)

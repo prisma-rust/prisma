@@ -648,7 +648,6 @@ impl GizmoRegistry {
     }
 }
 
-
 fn component_rgb_with_alpha(entity: &EntityJson, component: &str, alpha: u8) -> [u8; 4] {
     let default = [255, 224, 150, alpha];
     let Some(color) = entity.component(component).and_then(|c| c.get("color")) else {
@@ -1100,7 +1099,6 @@ impl ComponentGizmoDrawer for GiVolumeGizmoDrawer {
         );
     }
 }
-
 
 /// Visualization style for PRT probe volume gizmos in Scene View.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1732,8 +1730,8 @@ mod tests {
         let mut c1 = [[0.0f32; 3]; 9];
         c1[0] = [0.0, 1.0, 0.0];
         let mut coeffs = vec![[[0.0f32; 3]; 9]; 8];
-        coeffs[0] = c0; 
-        coeffs[1] = c1; 
+        coeffs[0] = c0;
+        coeffs[1] = c1;
         let raw = make_test_prpv(
             [0.0, 0.0, 0.0],
             [2.0, 2.0, 2.0],

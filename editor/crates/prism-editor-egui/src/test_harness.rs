@@ -1,4 +1,7 @@
-#![allow(dead_code)] 
+#![expect(
+    dead_code,
+    reason = "shared headless harness is compiled into several test binaries"
+)]
 
 //! Headless egui interaction harness.
 //!

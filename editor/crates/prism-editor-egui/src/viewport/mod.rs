@@ -1191,7 +1191,7 @@ mod tests {
         let mut workspace = Workspace::sample();
         let before = proxies(&workspace, None).len();
 
-        workspace.set_entity_hidden(1, true); 
+        workspace.set_entity_hidden(1, true);
 
         let after = proxies(&workspace, None).len();
         assert_eq!(

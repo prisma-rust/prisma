@@ -293,7 +293,7 @@ impl Default for CommandWorldState {
 impl CommandWorldState {
     pub fn new() -> Self {
         Self {
-            time_ticks: 6_000, 
+            time_ticks: 6_000,
             weather: WeatherKind::Clear,
             weather_timer_sec: 0.0,
             rules: GameRules::default(),
@@ -430,7 +430,7 @@ impl CommandWorldState {
 
     fn sync_sky_and_sun(&self, world: &mut GameWorld<'_>) {
         let phase = (self.time_ticks % TICKS_PER_DAY) as f32 / TICKS_PER_DAY as f32;
-        let sun_angle = phase * std::f32::consts::TAU; 
+        let sun_angle = phase * std::f32::consts::TAU;
         let tilt = 22.0_f32.to_radians();
         let sun_vec = [
             sun_angle.cos(),

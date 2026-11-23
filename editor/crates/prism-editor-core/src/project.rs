@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn creates_folders_and_copies_assets() {
         let project = TempProject::new();
-        create_folder(&project.root, "assets/textures/ui").unwrap(); 
+        create_folder(&project.root, "assets/textures/ui").unwrap();
         assert!(project.root.join("assets/textures/ui").is_dir());
         assert!(create_folder(&project.root, "outside").is_err());
 

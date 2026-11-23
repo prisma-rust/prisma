@@ -205,7 +205,7 @@ impl PlayerController {
         Self {
             feet_pos: Vec3::new(6.5, 4.05, 6.5),
             velocity: Vec3::ZERO,
-            yaw: -2.356, 
+            yaw: -2.356,
             pitch: -0.14,
             grounded: true,
             fly_mode: false,
@@ -1006,7 +1006,7 @@ mod tests {
         assert!((player.feet_pos.y - 4.0).abs() < 0.05);
 
         player.feet_pos = Vec3::new(10.2, 4.0, 15.0);
-        player.yaw = -std::f32::consts::FRAC_PI_2; 
+        player.yaw = -std::f32::consts::FRAC_PI_2;
         let mut input = InputSnapshot::default();
         input.keys[keys::KEY_W / 64] |= 1u64 << (keys::KEY_W % 64);
         world.set_input(input);
@@ -1040,7 +1040,7 @@ mod tests {
             cam,
             LocalTransform {
                 position: Vec3::new(9.5, 5.5, 15.0),
-                rotation: Quat::IDENTITY, 
+                rotation: Quat::IDENTITY,
                 scale: Vec3::ONE,
             },
         );
@@ -1116,7 +1116,7 @@ mod tests {
             cam,
             LocalTransform {
                 position: Vec3::new(9.5, 5.5, 11.5),
-                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, -0.1, 0.0), 
+                rotation: Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, -0.1, 0.0),
                 scale: Vec3::ONE,
             },
         );
@@ -1258,7 +1258,7 @@ mod tests {
             }
         }
         player.feet_pos = Vec3::new(9.10, 4.0, 11.0);
-        player.yaw = -std::f32::consts::FRAC_PI_2; 
+        player.yaw = -std::f32::consts::FRAC_PI_2;
         player.pitch = 0.0;
         player.grounded = true;
         player.sync_camera_transform(&mut world);

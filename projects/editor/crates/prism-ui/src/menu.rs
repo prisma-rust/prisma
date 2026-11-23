@@ -203,8 +203,7 @@ impl MenuState {
                     self.close();
                     out.push(MenuAction::OpenChanged(None));
                 }
-                MenuNodeKey::Submenu { .. } => {
-                }
+                MenuNodeKey::Submenu { .. } => {}
                 MenuNodeKey::Dismiss => {
                     if self.close() {
                         out.push(MenuAction::OpenChanged(None));

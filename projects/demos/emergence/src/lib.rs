@@ -445,68 +445,68 @@ fn cell_color(cell: &PhysicalCell) -> [f32; 4] {
     if cell.topology.contains(TopologyFlags::SEALED)
         && cell.env.pressure() == Pressure::GigaPressure
     {
-        return [0.16, 0.16, 0.19, 1.0]; 
+        return [0.16, 0.16, 0.19, 1.0];
     }
     if cell.material.contains(MaterialFlags::GLASS)
         && cell.material.contains(MaterialFlags::PRESSURE_RATED)
         && cell.env.pressure() == Pressure::GigaPressure
     {
-        return [0.35, 0.88, 0.95, 1.0]; 
+        return [0.35, 0.88, 0.95, 1.0];
     }
     if cell.material.contains(MaterialFlags::PIEZOELECTRIC)
         && cell.material.contains(MaterialFlags::CONDUCTIVE)
     {
-        return [0.85, 0.16, 0.14, 1.0]; 
+        return [0.85, 0.16, 0.14, 1.0];
     }
     if cell.material.contains(MaterialFlags::METALLIC)
         && cell.material.contains(MaterialFlags::HOT_RESISTANT)
     {
-        return [0.95, 0.78, 0.26, 1.0]; 
+        return [0.95, 0.78, 0.26, 1.0];
     }
     if cell.material.contains(MaterialFlags::FLAMMABLE)
         && cell.topology.contains(TopologyFlags::RIGID_WELD)
     {
-        return [0.18, 0.19, 0.21, 1.0]; 
+        return [0.18, 0.19, 0.21, 1.0];
     }
     if cell.material.contains(MaterialFlags::METALLIC)
         && cell.material.contains(MaterialFlags::CONDUCTIVE)
         && cell.topology.contains(TopologyFlags::RIGID_WELD)
     {
-        return [0.66, 0.56, 0.49, 1.0]; 
+        return [0.66, 0.56, 0.49, 1.0];
     }
     if cell.env.matter() == MatterState::Liquid && cell.env.temperature() >= Temperature::PlasmaHeat
     {
-        return [1.0, 0.32, 0.05, 1.0]; 
+        return [1.0, 0.32, 0.05, 1.0];
     }
     if cell.material.contains(MaterialFlags::GRANULAR) {
         if cell.material.contains(MaterialFlags::GLASS) {
-            return [0.86, 0.79, 0.56, 1.0]; 
+            return [0.86, 0.79, 0.56, 1.0];
         }
         if cell.env.temperature() <= Temperature::Cryo {
-            return [0.94, 0.96, 1.0, 1.0]; 
+            return [0.94, 0.96, 1.0, 1.0];
         }
     }
     if cell.material.contains(MaterialFlags::ORGANIC)
         && cell.env.bio_activity() == BioActivity::Vital
     {
-        return [0.32, 0.65, 0.24, 1.0]; 
+        return [0.32, 0.65, 0.24, 1.0];
     }
     if cell.material.contains(MaterialFlags::GLASS) && cell.env.temperature() <= Temperature::Cryo {
-        return [0.62, 0.84, 0.98, 0.85]; 
+        return [0.62, 0.84, 0.98, 0.85];
     }
     if cell.material.contains(MaterialFlags::ABSORBENT) && cell.env.matter() == MatterState::Solid {
-        return [0.48, 0.33, 0.22, 1.0]; 
+        return [0.48, 0.33, 0.22, 1.0];
     }
     if cell.material.contains(MaterialFlags::HOT_RESISTANT)
         && cell.material.contains(MaterialFlags::PRESSURE_RATED)
         && cell.env.matter() == MatterState::Solid
     {
-        return [0.26, 0.27, 0.30, 1.0]; 
+        return [0.26, 0.27, 0.30, 1.0];
     }
     if cell.material.contains(MaterialFlags::HOT_RESISTANT)
         && cell.env.matter() == MatterState::Solid
     {
-        return [0.50, 0.52, 0.54, 1.0]; 
+        return [0.50, 0.52, 0.54, 1.0];
     }
     match cell.env.matter() {
         MatterState::Solid => [0.55, 0.6, 0.68, 1.0],

@@ -146,11 +146,11 @@ pub fn icon_view(icons: &IconSet, kind: IconKind, size: f32, tint: Color) -> Ele
 }
 
 /// macOS traffic-light palette.
-pub const TRAFFIC_RED: Color = Color::rgba(1.0, 0.373, 0.341, 1.0); 
+pub const TRAFFIC_RED: Color = Color::rgba(1.0, 0.373, 0.341, 1.0);
 pub const TRAFFIC_RED_BORDER: Color = Color::rgba(0.878, 0.267, 0.243, 1.0);
-pub const TRAFFIC_YELLOW: Color = Color::rgba(0.996, 0.737, 0.180, 1.0); 
+pub const TRAFFIC_YELLOW: Color = Color::rgba(0.996, 0.737, 0.180, 1.0);
 pub const TRAFFIC_YELLOW_BORDER: Color = Color::rgba(0.875, 0.631, 0.137, 1.0);
-pub const TRAFFIC_GREEN: Color = Color::rgba(0.157, 0.784, 0.251, 1.0); 
+pub const TRAFFIC_GREEN: Color = Color::rgba(0.157, 0.784, 0.251, 1.0);
 pub const TRAFFIC_GREEN_BORDER: Color = Color::rgba(0.102, 0.671, 0.161, 1.0);
 pub const TRAFFIC_GLYPH_DARK: Color = Color::rgba(0.18, 0.05, 0.04, 0.85);
 

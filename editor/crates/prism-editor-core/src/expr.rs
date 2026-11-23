@@ -42,7 +42,6 @@ pub fn parse_number_or_expression(input: &str) -> EvalResult {
     evaluate(trimmed)
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Number(f64),
@@ -119,7 +118,6 @@ fn tokenize(input: &str) -> Option<Vec<Token>> {
     }
     (!tokens.is_empty()).then_some(tokens)
 }
-
 
 struct Parser {
     tokens: Vec<Token>,
@@ -228,7 +226,7 @@ impl Parser {
         if !matches!(self.peek(), Some(Token::Open)) {
             return constant(name);
         }
-        self.pos += 1; 
+        self.pos += 1;
         let mut args = Vec::new();
         if matches!(self.peek(), Some(Token::Close)) {
             self.pos += 1;

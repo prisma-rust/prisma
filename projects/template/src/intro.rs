@@ -30,7 +30,6 @@ const ENTITY_TITLE: &str = "intro_title";
 const ENTITY_SUBTITLE: &str = "intro_subtitle";
 const ENTITY_PROMPT: &str = "intro_prompt";
 
-
 const MAX_DROPS: usize = 192;
 const SPAWN_PER_SECOND: f32 = 140.0;
 /// Rain draw layer: above UI but below debug overlay.
@@ -112,7 +111,6 @@ impl Rain {
         }
     }
 }
-
 
 /// Intro animation state — **project-private**, not entering engine or editor.
 pub struct IntroState {

@@ -12,7 +12,6 @@
 
 pub mod game;
 
-
 /// Build app: engine loads lake scene from `assets/scenes.pak`, this project registers gameplay systems.
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
@@ -25,7 +24,6 @@ pub fn build_app() -> prism_app::App {
         .add_game_system::<game::fishing::FishingState, _>("game::fishing", game::fishing::tick);
     app
 }
-
 
 #[cfg(feature = "preview-module")]
 mod preview {
@@ -72,7 +70,6 @@ mod preview {
         log_name = "fishing",
     }
 }
-
 
 /// Entry called after GameActivity loads this library.
 ///

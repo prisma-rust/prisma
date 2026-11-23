@@ -2070,12 +2070,12 @@ bloom_intensity = 0.5
         wav.extend_from_slice(&(36 + data_len).to_le_bytes());
         wav.extend_from_slice(b"WAVEfmt ");
         wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes()); 
-        wav.extend_from_slice(&1u16.to_le_bytes()); 
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
         wav.extend_from_slice(&sample_rate.to_le_bytes());
         wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
-        wav.extend_from_slice(&2u16.to_le_bytes()); 
-        wav.extend_from_slice(&16u16.to_le_bytes()); 
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
         wav.extend_from_slice(b"data");
         wav.extend_from_slice(&data_len.to_le_bytes());
         for sample in samples {

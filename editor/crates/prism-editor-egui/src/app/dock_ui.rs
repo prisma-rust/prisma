@@ -138,8 +138,7 @@ pub(super) fn dock_tab(
         if close_res.clicked() {
             closed = true;
         }
-        if ui.is_rect_visible(rect) {
-        }
+        if ui.is_rect_visible(rect) {}
         let _ = close_res;
     }
 

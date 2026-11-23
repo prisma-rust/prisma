@@ -15,7 +15,6 @@ use tauri::plugin::PluginHandle;
 #[cfg(mobile)]
 use tauri::Manager;
 
-
 #[cfg(mobile)]
 const NATIVE_PLUGIN_IDENTIFIER: &str = "com.example.tauriandroidapp";
 

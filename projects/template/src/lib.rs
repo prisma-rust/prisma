@@ -12,7 +12,6 @@
 
 pub mod intro;
 
-
 /// Build app: engine loads intro scene entities from path manifest in `assets/scenes.pak`
 /// (cooked from `assets/scenes/intro.scene.json`), this project only registers
 /// `intro::tick_system` to drive animation.
@@ -22,7 +21,6 @@ pub fn build_app() -> prism_app::App {
     app.add_game_system::<intro::IntroState, _>("intro::tick", intro::tick);
     app
 }
-
 
 #[cfg(feature = "preview-module")]
 mod preview {
@@ -51,7 +49,6 @@ mod preview {
         log_name = "template",
     }
 }
-
 
 /// Entry called after GameActivity loads this library.
 ///

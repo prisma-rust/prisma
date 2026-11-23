@@ -687,9 +687,7 @@ impl SceneDoc {
             entity.parent = entity
                 .parent
                 .and_then(|parent| id_map.get(&parent).copied())
-                .filter(|_parent| {
-                    old_id.map(|id| !root_set.contains(&id)).unwrap_or(false)
-                });
+                .filter(|_parent| old_id.map(|id| !root_set.contains(&id)).unwrap_or(false));
             let is_root = old_id.map(|id| root_set.contains(&id)).unwrap_or(false);
             if strip_root_links && is_root {
                 entity.components.remove(PREFAB_LINK_COMPONENT);

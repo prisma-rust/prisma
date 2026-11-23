@@ -424,11 +424,7 @@ enum BindKind {
 /// (e.g. 2026.13.1) stopped emitting `size` on the parameter binding, so we
 /// keep fallback values here. Struct-level layout is now auto-generated from
 /// the reflection JSON (see `emit_push_struct`).
-const PUSH_SIZE_FALLBACK: &[(&str, u32)] = &[
-    ("overlay", 0),
-    ("lighting", 32),
-    ("sharc_query", 48),
-];
+const PUSH_SIZE_FALLBACK: &[(&str, u32)] = &[("overlay", 0), ("lighting", 32), ("sharc_query", 48)];
 
 fn fallback_push_size(shader: &str) -> u32 {
     PUSH_SIZE_FALLBACK

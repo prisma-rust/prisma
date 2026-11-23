@@ -5,7 +5,6 @@ pub mod tuning_ui;
 #[cfg(feature = "player")]
 pub use tuning_ui::SponzaTuningHook;
 
-
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
     use prism_engine::render_settings::{PtGiMode, RasterGiMode, RenderMode, RenderSettings};
@@ -54,7 +53,6 @@ pub fn build_app() -> prism_app::App {
         .with_frame_hook(SponzaTuningHook::default())
 }
 
-
 #[cfg(feature = "preview-module")]
 mod preview {
     use prism_game_api::GameWorld;
@@ -74,7 +72,6 @@ mod preview {
         log_name = "sponza",
     }
 }
-
 
 #[cfg(all(target_os = "android", feature = "player"))]
 #[no_mangle]
