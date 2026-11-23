@@ -287,7 +287,9 @@ pub fn menu_actions_to_commands(actions: Vec<MenuAction>) -> Vec<EditorCommand> 
                 "view.layout.tall" => cmds.push(EditorCommand::SetLayout(LayoutPreset::Tall)),
                 "file.exit" => cmds.push(EditorCommand::RequestExit),
                 "file.build" | "file.build.profiles" => {
-                    cmds.push(EditorCommand::ToggleWindow(WindowId::from("build_settings")));
+                    cmds.push(EditorCommand::ToggleWindow(WindowId::from(
+                        "build_settings",
+                    )));
                 }
                 "edit.select_all" => cmds.push(EditorCommand::SelectAll),
                 "edit.duplicate" => cmds.push(EditorCommand::DuplicateSelected),

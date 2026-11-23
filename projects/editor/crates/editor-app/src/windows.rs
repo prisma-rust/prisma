@@ -23,9 +23,7 @@ pub const TOOL_WINDOWS: &[(&str, &str)] = &[
 /// Register every tool window's metadata so menus and the dock can address it.
 pub fn register_tool_windows(layout: &mut WindowLayout, i18n: &EditorI18n) {
     for (id, title_key) in TOOL_WINDOWS {
-        layout.register_window(
-            EditorWindowMeta::new(*id, i18n.t(title_key)).with_closable(true),
-        );
+        layout.register_window(EditorWindowMeta::new(*id, i18n.t(title_key)).with_closable(true));
     }
 }
 

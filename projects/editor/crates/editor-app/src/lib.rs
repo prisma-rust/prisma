@@ -63,8 +63,12 @@ impl Default for EditorUiState {
     fn default() -> Self {
         let panels = PanelRegistry::default();
         let i18n = EditorI18n::default();
-        let window_layout =
-            windows::build_layout(LayoutPreset::Default, &panels, &i18n, ABOUT_CLOSE_KEY.into_node_key());
+        let window_layout = windows::build_layout(
+            LayoutPreset::Default,
+            &panels,
+            &i18n,
+            ABOUT_CLOSE_KEY.into_node_key(),
+        );
         Self {
             doc: EditorDocument::default(),
             session: EditorSession::default(),
@@ -207,8 +211,7 @@ impl EditorUiState {
                     let id = self.doc.selected_entity;
                     if id != 1 {
                         self.doc.entities.retain(|e| e.id != id);
-                        self.doc.selected_entity =
-                            self.doc.entities.first().map_or(0, |e| e.id);
+                        self.doc.selected_entity = self.doc.entities.first().map_or(0, |e| e.id);
                         self.doc.dirty = true;
                     }
                 }
@@ -302,7 +305,9 @@ impl EditorUiState {
                         if win_id.as_str() == "about" {
                             ui.mount(build_about_body_localized(&theme, i18n));
                         } else if !self.panels.mount_panel(win_id.as_str(), &view_ctx, ui) {
-                            if let Some(body) = windows::build_tool_window(win_id.as_str(), &theme, i18n) {
+                            if let Some(body) =
+                                windows::build_tool_window(win_id.as_str(), &theme, i18n)
+                            {
                                 ui.mount(body);
                             }
                         }
