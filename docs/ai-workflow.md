@@ -24,6 +24,7 @@
 - **Branches**: `feat/<scope>-<short>`, `fix/<scope>-<short>`, `refactor/<scope>-<short>`, `docs/<short>`, `chore/<short>`, `ci/<short>`.
 - **Commit / PR title**: `<type>(<scope>): <imperative summary>` (`≤ 72` chars, no trailing period). Types: `feat|fix|refactor|perf|docs|test|chore|ci|build`. Add `!` before `:` for breaking changes.
 - **Commit body**: omit if the title suffices; otherwise 1–3 lines explaining *why*. Keep verification dumps in the PR body, not git history.
+- **PR body**: use [`.github/pull_request_template.md`](../.github/pull_request_template.md) as-is — AI attribution on line 1 (§4), then **Intent & State Change**, **Verification Artifacts** (full `pr_ready` Markdown block), **Blast Radius & Risk**. Do not drop sections; mark empty fields explicitly.
 - **Generated artifacts**: commit `.spv` + `reflection/*.json` + `shader_bindings/` together when editing `.slang`; commit `editor/public/demo.json` (`cd editor && pnpm fixture`) when editing scene/UI schemas. Never commit `.pak`, `target/`, `node_modules/`, secrets, or host paths.
 
 ## 4. AI Attribution & Untrusted Input

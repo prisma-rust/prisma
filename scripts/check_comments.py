@@ -7,9 +7,10 @@
     python scripts/check_comments.py crates/prism-ecs/src/lib.rs
 
 What it flags:
-  * CJK characters in comments (comments must be English);
+  * any inline / block comment in Rust (only rustdoc `///` / `//!` is allowed);
+  * CJK characters in rustdoc (documentation must be English);
   * decorative separators such as `// ----------`;
-  * `TODO` / `FIXME` / `XXX` / `HACK` without an issue reference;
+  * any `TODO` / `FIXME` / `XXX` / `HACK` marker in code comments;
   * any `#[allow(...)]` / `#![allow(...)]` (banned outright, see `docs/code-style.md`);
   * `#[expect(...)]` / `#![expect(...)]` without `reason = "..."`.
 
@@ -43,7 +44,6 @@ force_utf8_streams()
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff01-\uff60]")
 SEPARATOR_RE = re.compile(r"^[\s\-=_*#~`^+─━┄┅┈┉…·.]+$")
 TODO_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
-ISSUE_RE = re.compile(r"(#\d+|https?://\S+|issues?/\d+)")
 ATTR_RE = re.compile(r"#!?\[\s*(allow|expect)\s*\(")
 REASON_RE = re.compile(r"\breason\s*=")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -253,15 +253,23 @@ def check_file(rel_path: str, only_lines: set[int] | None = None) -> list[tuple[
             continue
         if only_lines is not None and token.line not in only_lines:
             continue
+        if not token.doc:
+            issues.append(
+                (
+                    "inline",
+                    token.line,
+                    "inline comments are banned; move the fact to rustdoc (/// / //!) or docs/",
+                )
+            )
+            continue
+
         body = comment_body(token)
         if CJK_RE.search(body):
-            issues.append(("cjk", token.line, f"comment must be English: {first_line(body)}"))
+            issues.append(("cjk", token.line, f"rustdoc must be English: {first_line(body)}"))
         if is_separator(body):
             issues.append(("separator", token.line, "decorative separator"))
-        if TODO_RE.search(body) and not ISSUE_RE.search(body):
-            issues.append(
-                ("todo", token.line, "TODO/FIXME without an issue reference (`TODO(#123)`)")
-            )
+        if TODO_RE.search(body):
+            issues.append(("todo", token.line, "TODO/FIXME is banned in code; track it in an issue"))
 
     for line_no, attr, kind in attributes(source):
         if only_lines is not None and line_no not in only_lines:
@@ -293,7 +301,8 @@ def markdown_row(total: int, counts: dict[str, int], warn_only: bool) -> str:
         return "| comment style | ✅ | clean |"
     status = "⚠️" if warn_only else "❌"
     detail = (
-        f"{total} finding(s): cjk {counts.get('cjk', 0)}, "
+        f"{total} finding(s): inline {counts.get('inline', 0)}, "
+        f"cjk {counts.get('cjk', 0)}, "
         f"separator {counts.get('separator', 0)}, "
         f"todo {counts.get('todo', 0)}, "
         f"allow {counts.get('allow', 0)}, "
@@ -390,9 +399,9 @@ def main() -> int:
     if total:
         summary = (
             f"comments: {total} finding(s) in {len(issues_by_file)} file(s) "
-            f"(cjk={counts.get('cjk', 0)}, separator={counts.get('separator', 0)}, "
-            f"todo={counts.get('todo', 0)}, allow={counts.get('allow', 0)}, "
-            f"expect={counts.get('expect', 0)})"
+            f"(inline={counts.get('inline', 0)}, cjk={counts.get('cjk', 0)}, "
+            f"separator={counts.get('separator', 0)}, todo={counts.get('todo', 0)}, "
+            f"allow={counts.get('allow', 0)}, expect={counts.get('expect', 0)})"
         )
         if not args.quiet:
             print(summary, file=sys.stderr if args.markdown else sys.stdout)

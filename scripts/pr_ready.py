@@ -12,7 +12,7 @@ The checks are chosen from the diff against --base (including uncommitted and
 untracked files):
 
   * rustfmt runs on **changed .rs files** only (pre-existing fmt drift is not charged to every PR);
-  * changed .rs files are checked for comment style (warns during migration, see `docs/code-style.md`);
+  * changed .rs lines are checked for comment style (zero inline comments; see `docs/code-style.md`);
   * the root `Cargo.toml` and every standalone workspace must carry one version (`scripts/version.py`);
   * touched root-workspace crates: clippy --all-targets -D warnings + cargo test;
   * `--lint`: clippy the whole workspace (-D warnings), not only the touched crates;

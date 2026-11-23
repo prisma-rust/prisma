@@ -67,8 +67,11 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
   shims, deprecated aliases, or version fallback branches.
 - Preview modules cross the C ABI as plain operations plus RTTIBin bytes. Never pass `Engine`,
   `World`, or trait objects across it.
-- Touch only the code path that produces the bug. No opportunistic refactors, no `git blame` or
-  third-party source dives to confirm what the code already states.
+- Touch only the code path that produces the bug (plus its immediate call site / callee). The only
+  in-place refactors allowed are the minimum needed to replace an inline comment with types/rustdoc
+  or to comply with an invariant; no unrelated files, full-file sweeps or opportunistic refactors
+  (see `docs/code-style.md` §5). No `git blame` or third-party source dives to confirm what the code
+  already states.
 - Subagents are read-only reconnaissance (max 3 concurrent, non-overlapping). All writes and
   commits stay in the main session.
 
@@ -113,6 +116,9 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
   then `--force-with-lease` only.
 - Conventional Commits, short: `<type>(<scope>): <imperative summary>`. Body only when the reason
   is not obvious; verification dumps and per-file narration belong in the PR, not the commit.
+- PR bodies follow the fixed template in `.github/pull_request_template.md` verbatim: AI attribution
+  on line 1, Intent & State Change, Verification Artifacts (with the `pr_ready` Markdown block),
+  Blast Radius & Risk.
 - Declare AI output: tool and model on the first line of PRs and issues, `🤖 Agent:` prefix on
   comments. Never impersonate a human.
 - Stop and ask before changing public APIs, save formats (RSCN / RTTIBin / `.pak`), coordinate
@@ -138,14 +144,8 @@ forward matrix. Deviating from any of this is a bug, not a style choice.
 
 ## 8. Comments and docs
 
-English only. A comment may state an invariant that code cannot express or link an external spec.
-Never restate code, narrate a diff, or leave a `TODO`. `scripts/check_comment_only.py` and
-`docs/code-style.md` are the authority. New docs use kebab-case, carry a domain prefix, and are
-registered in `docs/README.md`.
-
-- **Touch it, clean it.** A file you modify is yours to garden. In the region you touch, delete
-  stale, redundant, self-justifying, or commented-out code, drop decorative separators, and
-  rewrite Chinese comments in English. Do it inside the same edit that changes the code; never
-  leave the slop behind for a later sweep.
-- A repository-wide comment sweep stays a separate comment-only PR; `check_comment_only.py`
-  proves it changed no code. "Touch it, clean it" never licenses an unrelated refactor.
+**Zero inline comments.** `//` / `/* */` markers and `TODO` / `FIXME` are banned in code; invariants,
+safety preconditions and format constraints go into rustdoc (`///` / `//!`) or `docs/`. Rustdoc and
+all docs are English. The full contract — single authority, refactoring boundary (§3), "touch it,
+clean it", comment-only PRs and the lint gate — lives only in [`docs/code-style.md`](docs/code-style.md).
+New docs use kebab-case, carry a domain prefix, and are registered in `docs/README.md`.
