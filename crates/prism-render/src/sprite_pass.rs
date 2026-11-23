@@ -5,7 +5,7 @@
 //! [`crate::skybox_pass::SkyboxPass`], it does not own its own render pass /
 //! framebuffer, just records commands in ForwardPass already-open pass.
 //!
-//! Design points (see `projects/fishing/DESIGN.md`):
+//! Design points (see `projects/demos/fishing/DESIGN.md`):
 //!
 //! - **One draw call**: all sprites share one instance buffer, texture index into bindless table;
 //! - **Disable depth test / write**: 2D front-back order guaranteed by CPU sort

@@ -2,7 +2,7 @@
 # Prisma dev launcher (Linux / macOS) — the bash counterpart of scripts/dev.ps1.
 #
 #   scripts/dev.sh                  # projects/template
-#   scripts/dev.sh sponza           # projects/sponza
+#   scripts/dev.sh sponza           # projects/demos/sponza
 #   scripts/dev.sh sponza --release -- --some-game-arg
 #
 # The runtime loads scenes only from `assets/*.pak` (there is no disk fallback for
@@ -40,10 +40,16 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# `template` / `editor` live directly under `projects/`; the demo games live in
+# `projects/demos/` (one shared cargo workspace). Accept either a bare name or a
+# path relative to the repo root.
 PROJECT_DIR="$ROOT/projects/$PROJECT"
+if [ ! -f "$PROJECT_DIR/Cargo.toml" ] && [ -f "$ROOT/projects/demos/$PROJECT/Cargo.toml" ]; then
+    PROJECT_DIR="$ROOT/projects/demos/$PROJECT"
+fi
 if [ ! -f "$PROJECT_DIR/Cargo.toml" ]; then
     echo "no such project: $PROJECT (looked for $PROJECT_DIR/Cargo.toml)" >&2
-    echo "available: $(ls "$ROOT/projects" | tr '\n' ' ')" >&2
+    echo "available: $(ls "$ROOT/projects" "$ROOT/projects/demos" 2>/dev/null | grep -v ':' | grep -v '^$' | tr '\n' ' ')" >&2
     exit 2
 fi
 

@@ -127,7 +127,7 @@ Game View Play executes **user project's own gameplay code**, not just engine bu
 - Projects without `preview-module` feature (any not-yet-converted user project) only run engine, and
   explains reason in Console; `PRISMA_PROJECT_MODULE=/path/libgame.so` can directly load
   prebuilt module (testing / non-Cargo projects).
-- `projects/template` and `projects/fishing` `preview-module` must explicitly open
+- `projects/template` and `projects/demos/fishing` `preview-module` must explicitly open
   `prism-scene`'s three component groups (3D / 2D / UI): module is independent workspace, doesn't get engine-side
   feature unification; missing one group rejected at `ProjectModule::load` schema fingerprint check.
   (Measured: `default-features = false` `prism-scene` registers only core components,
@@ -150,7 +150,7 @@ Game View Play executes **user project's own gameplay code**, not just engine bu
   `AppConfig.render → RenderSettings`), render settings panel only applies to Scene view —
   otherwise "what editor sees" and "packaged output" are not the same image.
 - **2D pixel art uses `tonemap_mode = 2`**: Reinhard / ACES alters art palette; passthrough
-  only does `saturate`, combined with sRGB swapchain can 1:1 restore source image. `projects/fishing` defaults on.
+  only does `saturate`, combined with sRGB swapchain can 1:1 restore source image. `projects/demos/fishing` defaults on.
   UI color written as sRGB author value, decoded to linear at vertex expansion, finally encoded once by swapchain (#592).
 
 ## 4. Interaction

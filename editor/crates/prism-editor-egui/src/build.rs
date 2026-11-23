@@ -762,7 +762,7 @@ output_dir = build/win",
     #[test]
     fn pipeline_manifest_search_walks_to_repository_root() {
         let repo = repo_root();
-        let root = repo.join("projects/fishing");
+        let root = repo.join("projects/demos/fishing");
         assert_eq!(pipeline_manifest_path(&root), Some(repo.join("Cargo.toml")));
     }
 }

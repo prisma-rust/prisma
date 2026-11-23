@@ -3,7 +3,7 @@
 #
 #   bash scripts/new-android-game.sh fishing
 #   bash scripts/new-android-game.sh fishing --package com.example.fishing --label "Cozy Fishing"
-#   bash scripts/new-android-game.sh fishing --force   # overwrite existing projects/fishing/android
+#   bash scripts/new-android-game.sh fishing --force   # overwrite existing projects/demos/fishing/android
 #
 # Copy Gradle project from `templates/android-game/`, replace three placeholders:
 #   __GAME_NAME__  project lib name (`[lib] name` → `[package] name`, `-` replaced with `_`)

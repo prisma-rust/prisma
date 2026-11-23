@@ -98,7 +98,7 @@ Notes:
   independent workspace: `cd projects/template && cargo run`); editor is `editor/` (Tauri 2 + Vue 3,
   needs `pnpm tauri dev`); `launcher/` is Android launcher shell (independent workspace),
   desktop Hub in independent repo [`Excurs1ons/prisma-hub`](https://github.com/Excurs1ons/prisma-hub).
-- `projects/template/`, `projects/sponza/`, `launcher/`, `editor/`,
+- `projects/template/`, `projects/demos/sponza/`, `launcher/`, `editor/`,
   `crates/xtask` are not in root workspace default coverage —
   root workspace build does not include them, need to `cd` into each and build/clippy separately.
 - First full build takes long (many deps, disk ~2GB+); if `target/` cleaned externally, need to rebuild.

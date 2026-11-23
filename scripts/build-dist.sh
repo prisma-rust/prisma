@@ -2,7 +2,7 @@
 # Release-tier build: nightly `-Z build-std` + immediate-abort, ~9~10% smaller than stable `dist`.
 #
 #   bash scripts/build-dist.sh                        # default projects/template, host target
-#   bash scripts/build-dist.sh projects/fishing       # specified project
+#   bash scripts/build-dist.sh projects/demos/fishing       # specified project
 #   bash scripts/build-dist.sh projects/template aarch64-linux-android
 #   bash scripts/build-dist.sh --size [project] [target]   # extreme size (tiny profile + no inlining)
 #   bash scripts/build-dist.sh --size --pack [project]     # add UPX self-decompress shell (see below)

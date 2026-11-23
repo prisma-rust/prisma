@@ -5,7 +5,7 @@ Author: JasonGu's AI agent (GPT-6.1 Sol / OpenCode).
 
 ## 1. Goals, Scope, and Definition of Done
 
-Using `projects/sponza` as the main regression scene, fix path integration, material hits, and SHaRC contract, establish a credible performance baseline, then optimize ray, texture, and scheduling costs. Results must be reusable across the engine, standalone Player, and editor Game View.
+Using `projects/demos/sponza` as the main regression scene, fix path integration, material hits, and SHaRC contract, establish a credible performance baseline, then optimize ray, texture, and scheduling costs. Results must be reusable across the engine, standalone Player, and editor Game View.
 
 Deliverables in three tiers:
 
@@ -40,7 +40,7 @@ Locations below are relative paths in corresponding repos; line numbers are for 
 | ReSTIR fixed 8 candidates, attempts time with 4-neighbor reuse | `pt_render.slang:34–35,309–349` | Confirmed; candidate evaluation is not equal number of shadow rays |
 | Material texture fixed SampleLevel 0 | `assets/shaders/slang/path_integrator.slang:315–388` | Confirmed; sampling cache and bandwidth impact TBD |
 | Static scene upload bakes vertices into world space, triggered by missing geometry | `crates/prism-render/src/graph_renderer.rs:2700–2759` | Should not be misreported as per-frame rebuild; dynamic updates need audit |
-| Sponza default dev command may run debug | `scripts/dev.sh:25,72–74`, `projects/sponza/Cargo.toml` | Configuration fact; does not prove build user ran |
+| Sponza default dev command may run debug | `scripts/dev.sh:25,72–74`, `projects/demos/sponza/Cargo.toml` | Configuration fact; does not prove build user ran |
 
 Local glTF statistics: 262,267 triangles, 25 materials (22 OPAQUE, 3 MASK); this is source model statistics only; formal report must also record runtime loaded package, submesh, instance, and material counts.
 
@@ -82,7 +82,7 @@ Product effect comparison: allow reconstruction and upscaling, record actual ren
 Sponza Release launch baseline:
 
 ```bash
-cargo run --release --manifest-path projects/sponza/Cargo.toml
+cargo run --release --manifest-path projects/demos/sponza/Cargo.toml
 ```
 
 Before running, build scene package per project assets manifest, confirm actual loaded package paths and summary. `settings.ini` build profile cannot substitute `--release`. Run only one baseline app at a time.
@@ -241,7 +241,7 @@ python scripts/pr_ready.py
 cargo test -p prism-render --features rtxgi
 cargo test -p prism-asset -p prism-cooker
 cargo check -p prism-render --no-default-features
-cargo check --manifest-path projects/sponza/Cargo.toml --release
+cargo check --manifest-path projects/demos/sponza/Cargo.toml --release
 ```
 
 Independent editor / template workspace verified per involved scope; player dependency budget checked with existing repo scripts. Shader modifications must use repo-pinned Slang 2026.21, update `.spv`, if reflection changes generate per `compile.sh --write-reflection` + shader-bindgen formal process, run binding layout / resource budget validation; prohibit hand-editing JSON or push struct.

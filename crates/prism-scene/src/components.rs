@@ -484,7 +484,7 @@ impl LodGroup {
 /// `SpriteRef` (`prism-engine::scene::runtime_components`) held --- same relationship as
 /// `MeshRenderer` → `MeshRef`.
 ///
-/// 2D convention (see `projects/fishing/DESIGN.md`):
+/// 2D convention (see `projects/demos/fishing/DESIGN.md`):
 /// Camera looks **+Z towards −Z**, larger `z` closer to camera; world size =
 /// texture pixel size / [`SpriteRenderer::pixels_per_unit`].
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]

@@ -1163,7 +1163,7 @@ and `serde_json` is already in the tree (`.scene.json` / `.pak.meta.json`), so s
 
 #### Internal resolution / integer scaling (`[render]`, #613)
 
-2D projects draw at a design resolution (`projects/fishing` is 640×360), but windows are often much larger:
+2D projects draw at a design resolution (`projects/demos/fishing` is 640×360), but windows are often much larger:
 rendering directly at window resolution on 2000×1125 and upscaling with nearest-neighbor gives a non-integer 3.125× ratio,
 turning one art pixel into rectangles of varying size. Two keys separate "render resolution" from "output resolution":
 

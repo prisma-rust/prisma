@@ -1,0 +1,48 @@
+# 共享 demo workspace（Prisma sample projects 的一部分）
+#
+# 成员：echowell / emergence / fishing / sponza
+#   * 共用一份 `projects/target/` 与一份 `projects/Cargo.lock`
+#   * 公共依赖（engine crates + 第三方库）只编译一次，不再每个 demo 各编一遍
+#   * 但每个项目仍然是独立 package：各自的 bin（echowell / emergence / …）
+#     和 lib（echowell_core / emergence_core / …）照旧独立产出，互不覆盖
+#
+# 刻意不并入这里：
+#   * `template` —— 项目模板，保持独立 workspace（自带 [workspace] 与 profile），
+#     `cargo new` 出来的新项目也照它的样子独立。
+#   * `editor`   —— 编辑器工具，自带 crates/ 的独立 workspace。
+#
+# 用法（务必用 -p 指定项目）：
+#   cargo build  -p fishing
+#   cargo run    -p echowell
+#   cargo build  -p sponza --release
+#   cargo build  -p emergence --profile dist
+#
+# 注意：
+#   * 不要一次构建多个项目：Cargo 会合并它们的 feature 集合
+#     （ui-fontdue / ui-directwrite 这类互斥后端会直接编不过）。
+#   * 这里统一了 dev profile（opt-level=1 + line-tables-only，依赖不带 debug info），
+#     与引擎根 workspace 保持一致，避免 target/ 膨胀到几十 GB。
+
+[workspace]
+resolver = "2"
+members = [
+    "echowell",
+    "emergence",
+    "fishing",
+    "sponza",
+]
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# 打包用：体积优先（fat LTO + 单 codegen unit + abort + strip）。
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

@@ -72,7 +72,7 @@ PRISMA_MATERIAL_OVERRIDE=shadow \
 PRISMA_BYPASS_PASSES=gtao,taa \
 SPONZA_AUTO_EXPOSURE=0 \
 SPONZA_TONEMAP_MODE=2 \
-cargo run --manifest-path projects/sponza/Cargo.toml
+cargo run --manifest-path projects/demos/sponza/Cargo.toml
 ```
 
 **Shadow exception (e.g. shadow lost when camera moves) troubleshooting decision**:

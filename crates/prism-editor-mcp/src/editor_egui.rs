@@ -491,7 +491,7 @@ mod tests {
         {
             repo = repo.parent().expect("repository root").to_path_buf();
         }
-        let fishing = repo.join("projects/fishing");
+        let fishing = repo.join("projects/demos/fishing");
         assert_eq!(find_editor_root(&fishing), Some(repo));
     }
 }

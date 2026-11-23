@@ -401,7 +401,7 @@ fn test_sponza_pipeline_debug_passes() {
     // -----------------------------------------------------------------------
     // Resources submitted with repository, parsed by crate position, avoid hardcoding absolute path of a specific machine.
     let sponza_gltf_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../projects/sponza/assets/models/sponza/Sponza.gltf");
+        .join("../../projects/demos/sponza/assets/models/sponza/Sponza.gltf");
     let sponza_prims = load_sponza_primitives(&sponza_gltf_path).expect("load sponza gltf");
     println!(
         "Loaded {} primitives from Crytek Sponza glTF",

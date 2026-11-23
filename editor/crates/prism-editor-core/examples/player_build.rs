@@ -3,7 +3,7 @@
 //! Usage (project root is the directory containing `assets/settings.ini`):
 //!
 //! ```text
-//! cargo run -p prism-editor-core --example player_build -- projects/fishing
+//! cargo run -p prism-editor-core --example player_build -- projects/demos/fishing
 //! ```
 //!
 //! Reason for existence: #989-style "artifact manifest missing files" problems are only discovered by actually running a full release layout,

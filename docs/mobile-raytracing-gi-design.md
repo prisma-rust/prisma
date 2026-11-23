@@ -160,7 +160,7 @@ Rust side `TextureHandle` changed to `struct { u32 index }` + `INVALID` constant
 4. **RayQuery shadows**: `RayQueryPass` + `rt/ray_query.slang` (shadows first, most stable) [done]
 5. **RayQuery reflections**: extend `RayQueryPass` (reflections) [done]
 6. **SHARC GI (RTXGI v1.6)**: modular `sharc` feature + `sharc.rs` (1M entries Hash Grid + Resolve Pass) + Vulkan 1.2+ `buffer_device_address` / 64-bit atomic support [done]
-7. **Sponza validation and goldenframe comparison**: `projects/sponza` user project access + tuning UI + offscreen actual rendering and RTXGI official reference image quantitative comparison [done]
+7. **Sponza validation and goldenframe comparison**: `projects/demos/sponza` user project access + tuning UI + offscreen actual rendering and RTXGI official reference image quantitative comparison [done]
 8. **Lighting compositing and denoising extension**: direct(±RT) + IBL + SHARC mix [in progress]
 9. **CI extension**: SHARC/GI shader compilation + drift guard (reuse existing slang workflow) [done]
 
@@ -168,7 +168,7 @@ Rust side `TextureHandle` changed to `struct { u32 index }` + `INVALID` constant
 
 ## 8. Sponza and RTXGI SHARC validation and goldenframe specification
 
-- **Architecture isolation**: rendering pipeline changes and RTXGI integration strictly belong to engine layer (`sharc.rs` and `render_graph` in `crates/prism-render`), user project `projects/sponza` only contains assets and tuning UI (`tuning_ui.rs`), does not overstep into pipeline logic.
+- **Architecture isolation**: rendering pipeline changes and RTXGI integration strictly belong to engine layer (`sharc.rs` and `render_graph` in `crates/prism-render`), user project `projects/demos/sponza` only contains assets and tuning UI (`tuning_ui.rs`), does not overstep into pipeline logic.
 - **Goldenframe specification comparison**:
   - Test suite: `crates/prism-render/tests/sharc_sponza_golden.rs`
   - Differential threshold: channel tolerance 12, 4x gain heatmap generation.

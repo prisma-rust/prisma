@@ -2,7 +2,7 @@
 # Build game-only Android APK (no launcher / no Tauri / no WebView).
 #
 #   bash scripts/build-android-game.sh                      # projects/template, debug
-#   bash scripts/build-android-game.sh fishing              # projects/fishing, debug
+#   bash scripts/build-android-game.sh fishing              # projects/demos/fishing, debug
 #   bash scripts/build-android-game.sh fishing release       # release (unsigned, need apksigner)
 #   bash scripts/build-android-game.sh debug --skip-cargo    # pack only (.so ready)
 #   bash scripts/build-android-game.sh --project fishing --skip-cargo

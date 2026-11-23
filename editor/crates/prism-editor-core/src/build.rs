@@ -62,7 +62,7 @@ pub fn exe_name() -> &'static str {
 
 /// Read `[package] name` from the user project's `Cargo.toml` (fall back to `template` if not found).
 ///
-/// The player crate isn't necessarily named `template` (`projects/fishing` isn't), so artifact
+/// The player crate isn't necessarily named `template` (`projects/demos/fishing` isn't), so artifact
 /// paths follow it.
 pub fn game_binary_name(manifest: &Path) -> String {
     let stem = std::fs::read_to_string(manifest)
@@ -151,7 +151,7 @@ fn asset_artifacts(root: &Path, output_dir: &Path) -> Vec<ArtifactCopy> {
 
 /// Find the workspace root containing `crates/prism-build-pipeline` (walking up from project root).
 ///
-/// User projects are usually **independent workspaces** (`projects/fishing/Cargo.toml` has no
+/// User projects are usually **independent workspaces** (`projects/demos/fishing/Cargo.toml` has no
 /// pipeline crate), so running `cargo run -p prism-build-pipeline` directly in the project root
 /// errors with `package(s) prism-build-pipeline not found in workspace`. Cook must run in the
 /// project root (it finds `assets/` by cwd), so we use `--manifest-path` to point back at the
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn cook_step_points_back_at_the_engine_workspace() {
         let root = temp_dir("cook-standalone");
-        let project = root.join("projects/fishing");
+        let project = root.join("projects/demos/fishing");
         std::fs::create_dir_all(&project).unwrap();
         let plan = plan_build(&project, &settings("debug", "build/windows"));
         assert_eq!(plan.steps[1].cwd, project);

@@ -9,7 +9,7 @@ validation; when visuals are needed, `screenshot` starts a subprocess.
 ## Startup
 
 ```bash
-cargo run -p prism-editor-mcp -- --project projects/fishing
+cargo run -p prism-editor-mcp -- --project projects/demos/fishing
 ```
 
 Project root can also be specified via `PRISMA_PROJECT`; if neither given, walks up from cwd looking for `assets/`.
@@ -25,7 +25,7 @@ Add in `.mcp.json` (example):
       "command": "cargo",
       "args": [
         "run", "--quiet", "-p", "prism-editor-mcp", "--",
-        "--project", "projects/fishing"
+        "--project", "projects/demos/fishing"
       ]
     }
   }

@@ -1030,7 +1030,7 @@ On Vulkan hardware, $\vec{v} \cdot M_{\text{spirv}} = \vec{v} \cdot (M_{\text{ru
 **Actual mishap review and reflection**:
 - **Wrong investigation path**: first `git blame` through commit history, read winit 0.30 `refresh_os_cursor` impl, write PowerShell probe for `GetClipCursor`, run `sponza.exe` background capturing logs, repeatedly compress context. None changed conclusion, just turned a simple conditional-judgment problem into blind cross-crate archaeology.
 - **Correct localization only three steps** (each reads one function, directly look at code through grep-hit call sites):
-  1. `projects/sponza/src/tuning_ui.rs` `on_key_pressed` → `Key::Other(VK_M) if !self.locked`, but window auto-locks on focus, so key never received during gameplay.
+  1. `projects/demos/sponza/src/tuning_ui.rs` `on_key_pressed` → `Key::Other(VK_M) if !self.locked`, but window auto-locks on focus, so key never received during gameplay.
   2. `crates/prism-engine/src/scene/systems/camera.rs` `camera_controller_system` → `look_active` only blocked WASD, mouse look still had `|| right-button` backdoor.
   3. `crates/prism-platform/src/window.rs` `grab_pointer` → grab failure only `log::warn`, still sets `locked` true, so "locked" may be false state.
 - **Single source of truth for state lesson**: pointer lock used to scatter across platform-window atomic, `InputManager::pointer_locked`, project-hook own `self.locked` — three copies, each updated separately inevitably desync. **Key state deciding "who owns input" must have single truth in platform layer, other consumers re-read each frame** (e.g. `InputManager::sync_pointer_lock`).

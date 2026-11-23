@@ -705,8 +705,8 @@ def main() -> int:
     if not args.quick:
         standalone = [
             ("projects/template", "projects/template/"),
-            ("projects/fishing", "projects/fishing/"),
-            ("projects/sponza", "projects/sponza/"),
+            ("projects/demos/fishing", "projects/demos/fishing/"),
+            ("projects/demos/sponza", "projects/demos/sponza/"),
             ("launcher", "launcher/"),
         ]
         for name, prefix in standalone:

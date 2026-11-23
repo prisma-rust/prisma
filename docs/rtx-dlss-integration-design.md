@@ -162,7 +162,7 @@ Each PR independently mergeable and rollbackable, diff controlled within ~500 li
 - Unit: `pt_pass_tests.rs` push / push-constant contract tests must continue passing (PR1 doesn't touch push for this reason).
 - GPU: `cargo test -p prism-render --test taa_gpu` (PR1), `golden_frame` (PT color unchanged).
 - Manual: Sponza `SPONZA_RENDER_MODE` three states (raster / pt_off / default PathTrace + SHaRC) each run one pass, DLSS each level and Off switched one by one, confirm degradation does not black screen.
-- Panel: `projects/sponza/src/tuning_ui.rs` already has a `DLSS Mode` cycle (Off / Quality / Balanced / Performance / UltraPerformance / Dlaa), this line only takes effect after PR4.
+- Panel: `projects/demos/sponza/src/tuning_ui.rs` already has a `DLSS Mode` cycle (Off / Quality / Balanced / Performance / UltraPerformance / Dlaa), this line only takes effect after PR4.
 
 ---
 

@@ -7,7 +7,7 @@ The script's first argument is the **project name** (directory name under `proje
 
 ```bash
 bash scripts/build-android-game.sh                # projects/template
-bash scripts/build-android-game.sh fishing        # projects/fishing
+bash scripts/build-android-game.sh fishing        # projects/demos/fishing
 bash scripts/build-android-game.sh fishing release
 ```
 
@@ -141,7 +141,7 @@ so `build-android.ps1 -Project fishing` will instead call the game-only script (
 bash scripts/new-android-game.sh fishing
 #   --package com.example.fishing   defaults to com.prisma.<project name>
 #   --label "Cozy Fishing"          desktop icon name, defaults to project name
-#   --force                         overwrite existing projects/fishing/android
+#   --force                         overwrite existing projects/demos/fishing/android
 
 bash scripts/build-android-game.sh fishing          # debug APK
 bash scripts/build-android-game.sh fishing release  # unsigned release

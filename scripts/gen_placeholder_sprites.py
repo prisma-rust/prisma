@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generate original placeholder art for `projects/fishing/assets/sprites/`.
+"""Generate original placeholder art for `projects/demos/fishing/assets/sprites/`.
 
 ## Why this script exists
 
 Sprite directory is gitignored: repo commits only **generation method**, not images. But "generation method" must
 match scene data — lake layer filenames determined by `slug` in `assets/data/lake_layers.json`:
 
-    Runtime (`projects/fishing/src/game/world.rs::layer_path`):
+    Runtime (`projects/demos/fishing/src/game/world.rs::layer_path`):
         sprites/bg/{slug}@{time_of_day}.png
 
 So this script **reads slug and time-of-day from `data/lake_layers.json`**, no longer maintains own layer table.

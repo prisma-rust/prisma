@@ -63,17 +63,24 @@ prism_cargo_name() {
     ' "$manifest"
 }
 
-# `projects/<name>` or absolute / relative path → absolute path; must have Cargo.toml.
+# `projects/<name>` (template / editor) or `projects/demos/<name>` (demo games, one
+# shared workspace) or an absolute / relative path → absolute path; must have Cargo.toml.
 prism_project_dir() {
     local root="$1" name="$2"
     local dir
     case "$name" in
         /*) dir="$name" ;;
         */*) dir="$root/$name" ;;
-        *) dir="$root/projects/$name" ;;
+        *)
+            if [ -f "$root/projects/$name/Cargo.toml" ]; then
+                dir="$root/projects/$name"
+            else
+                dir="$root/projects/demos/$name"
+            fi
+            ;;
     esac
     [ -f "$dir/Cargo.toml" ] || {
-                echo "Cannot find project: $dir/Cargo.toml (usage: <project> is a directory name under projects/)" >&2
+                echo "Cannot find project: $dir/Cargo.toml (usage: <project> is a directory name under projects/ or projects/demos/)" >&2
         return 1
     }
     (cd "$dir" && pwd)

@@ -4,7 +4,7 @@
 //! Usage:
 //!
 //! ```text
-//! prism-editor-mcp --project projects/fishing
+//! prism-editor-mcp --project projects/demos/fishing
 //! ```
 //!
 //! The project root can also come from `PRISMA_PROJECT`; when neither is

@@ -3,7 +3,7 @@
 //!
 //! Usage:
 //! ```bash
-//! cd projects/sponza
+//! cd projects/demos/sponza
 //! PRISMA_PASS_DUMP=target/diag/passes \
 //! PRISMA_PASS_DUMP_FRAME=200 \
 //! SPONZA_RENDER_MODE=pt_off \
