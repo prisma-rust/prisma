@@ -8,12 +8,12 @@
 
 ## 1. One-sentence positioning
 
-Prisma is an **experimental high-performance, high-quality rendering pipeline unified across
-platforms**: desktop and mobile share the same RenderGraph; path differences come from build-time
-bricks and runtime capability probing, not platform branches; platform-specific capabilities are
-compiled independently and loaded on demand, degrading wholesale when missing. The pipeline always
-tracks the latest graphics APIs / SDKs and dependency versions on each platform; components with an
-LTS channel use the latest LTS.
+Prisma is an **experimental game engine unified across platforms**. Its rendering pipeline is
+high-performance and high-quality: desktop and mobile share the same RenderGraph; path differences
+come from build-time bricks and runtime capability probing, not platform branches; platform-specific
+capabilities are compiled independently and loaded on demand, degrading wholesale when missing.
+The pipeline always tracks the latest graphics APIs / SDKs and dependency versions on each platform;
+components with an LTS channel use the latest LTS.
 
 ## 2. Seven core design goals
 

@@ -125,7 +125,7 @@ docs/
 
 | Category / domain | Recommended entry | Core focus | Associated code / module |
 |---|---|---|---|
-| **Architecture overview** | [`DESIGN.md`](DESIGN.md) | Multi-end unified, experimental high-performance rendering pipeline, Render Graph topology, platform bricks and hot plugging, zero compatibility baggage; Chinese reference see [`DESIGN.zh-CN.md`](DESIGN.zh-CN.md) | `prism-render`, `prism-engine` |
+| **Architecture overview** | [`DESIGN.md`](DESIGN.md) | Multi-platform experimental game engine with a high-performance, high-quality rendering pipeline: Render Graph topology, platform bricks and hot plugging, zero compatibility baggage; Chinese reference see [`DESIGN.zh-CN.md`](DESIGN.zh-CN.md) | `prism-render`, `prism-engine` |
 | **Reflection and data** | [`REFLECT.md`](REFLECT.md) | `#[derive(Reflect)]`, RTTIBin, RSCN scene serialization | `prism-reflect`, `prism-scene` |
 | **Animation system** | [`anim-graph.md`](anim-graph.md) | State machine, clip mixing, hierarchical mixing nodes | `prism-engine::anim` |
 | | [`anim-ik.md`](anim-ik.md) | Analytical two-bone IK, Foot Placement wiring | `crates/prism-anim-ik` |
