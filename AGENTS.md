@@ -60,6 +60,20 @@ Process: `docs/ai-workflow.md`. Read `docs/DESIGN.md` before touching rendering 
 - The player chain stays UI-free and editor-free:
   `template → prism-app → prism-engine → {scene, ecs, render, asset, physics2d}`.
   `cargo tree | grep -i egui` must be empty; `python scripts/check_deps.py` is the gate.
+- Game projects consume the engine only through its public API (`prism-app`, `prism-engine`,
+  `prism-game-api`, `prism-project-api`). No temporary hacks, workarounds, or privately introduced
+  low-level graphics / window / asset-loading / physics libraries in game code. When a capability is
+  missing or poorly shaped, fix the engine: design a general API in the appropriate engine crate,
+  then call it from the game. Never duplicate the capability in the game layer or bypass the
+  boundary — feed the engine instead of working around it. A new public engine API is a §7
+  stop-and-ask item.
+- Engine crates stay game-agnostic: no game names, gameplay concepts, content paths or one-off
+  special cases. The only permitted game-specific content is gameplay business logic, and it must
+  stay outside the engine in the game layer. A need from one game is the trigger to design a
+  reusable engine mechanism; the game's own rules, content and workflows never enter engine crates.
+- Both rules are "fix on sight": when you encounter a game-layer workaround or game-specific logic
+  in engine code, remove or move it out instead of preserving it. If the repair leaves the
+  touchable region or changes a public API, stop and ask and land it as a separate atomic change.
 - Optional capabilities stay default-off: `prism-app/{physics,audio}`, `prism-asset/async-io`.
 - One implementation per concern: asset paths only via `prism_engine::asset_paths` (no cwd-relative
   paths), `settings.ini` only via `prism-ini`, scene manifests only via the manifest API.

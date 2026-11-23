@@ -83,7 +83,9 @@ one bounded exception:
   current rules and you must call it, wrap it in a compliant helper within the touchable region or
   report the blocker; do not silently expand the diff.
 - This exception does not license opportunistic refactors. "It would be nicer" is not a reason;
-  "the change cannot satisfy the zero-comment / invariant rule without it" is.
+  "the change cannot satisfy the zero-comment / invariant rule without it" is. The boundary
+  violations listed in `AGENTS.md` §3 (game-layer workarounds, game-specific engine hardcoding) are
+  fix-on-sight, but a repair outside the touchable region goes into its own atomic PR.
 
 ## 6. Touch it, clean it
 
