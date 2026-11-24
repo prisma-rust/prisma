@@ -16,15 +16,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def check_c_abi_surface(api_file: Path | None = None) -> list[str]:
-    path = api_file or (ROOT / "crates" / "prism-project-api" / "src" / "lib.rs")
-    if not path.is_file():
-        return []
+    if api_file is not None:
+        paths = [api_file] if api_file.is_file() else []
+    else:
+        src_dir = ROOT / "crates" / "prism-project-api" / "src"
+        paths = sorted(src_dir.rglob("*.rs")) if src_dir.is_dir() else []
     errors: list[str] = []
     forbidden = re.compile(r"\b(Engine|World|dyn\s+[A-Z])\b")
-    for idx, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-        code = line.split("//", 1)[0]
-        if m := forbidden.search(code):
-            errors.append(f"{path}:{idx}: C ABI must not reference `{m.group(1)}` (#1214)")
+    for path in paths:
+        for idx, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            code = line.split("//", 1)[0]
+            if m := forbidden.search(code):
+                errors.append(f"{path}:{idx}: C ABI must not reference `{m.group(1)}` (#1214)")
     return errors
 
 

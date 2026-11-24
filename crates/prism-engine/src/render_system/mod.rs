@@ -304,6 +304,7 @@ pub fn extract_frame_packet_into_with_shadow_cascades_and_render_height(
 struct VoxelExtractCache {
     started_at: Instant,
     chunks: HashMap<u64, (u64, Arc<prism_render::VoxelChunkUpload>)>,
+    atlas: Option<(std::path::PathBuf, Option<Arc<Vec<u32>>>)>,
 }
 
 impl Default for VoxelExtractCache {
@@ -311,6 +312,7 @@ impl Default for VoxelExtractCache {
         Self {
             started_at: Instant::now(),
             chunks: HashMap::new(),
+            atlas: None,
         }
     }
 }
@@ -429,17 +431,21 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
         }
     }
     let elapsed_seconds = cache.started_at.elapsed().as_secs_f32();
-    static SPBR_ATLAS: std::sync::OnceLock<Option<Arc<Vec<u32>>>> = std::sync::OnceLock::new();
-    let atlas = SPBR_ATLAS
-        .get_or_init(|| {
-            if crate::asset_paths::strict_pak_only() {
-                None
-            } else {
-                crate::asset_paths::asset_dir()
-                    .and_then(|dir| prism_render::voxel_dda_pass::load_spbr_atlas_from_assets(&dir))
-            }
-        })
-        .clone();
+    let atlas = if crate::asset_paths::strict_pak_only() {
+        None
+    } else {
+        match crate::asset_paths::asset_dir() {
+            Some(dir) => match &cache.atlas {
+                Some((cached_dir, cached_atlas)) if cached_dir == &dir => cached_atlas.clone(),
+                _ => {
+                    let loaded = prism_render::voxel_dda_pass::load_spbr_atlas_from_assets(&dir);
+                    cache.atlas = Some((dir, loaded.clone()));
+                    loaded
+                }
+            },
+            None => None,
+        }
+    };
     Some(Arc::new(prism_render::VoxelSceneUpload {
         signature,
         elapsed_seconds,

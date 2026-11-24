@@ -531,11 +531,21 @@ impl ForwardPass {
                 unsafe { device.destroy_framebuffer(old_fb, None) };
             }
 
-            let color = self.color_images[idx].as_ref().unwrap();
-            let depth = self.depth_images[idx].as_ref().unwrap();
-            let normal = self.normal_images[idx].as_ref().unwrap();
-            let velocity = self.velocity_images[idx].as_ref().unwrap();
-            let albedo = self.albedo_images[idx].as_ref().unwrap();
+            let color = self.color_images[idx]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("forward color image missing"))?;
+            let depth = self.depth_images[idx]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("forward depth image missing"))?;
+            let normal = self.normal_images[idx]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("forward normal image missing"))?;
+            let velocity = self.velocity_images[idx]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("forward velocity image missing"))?;
+            let albedo = self.albedo_images[idx]
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("forward albedo image missing"))?;
             let attachments = [
                 color.view,
                 depth.view,
@@ -2304,10 +2314,13 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
                 if let Some(skybox) = ctx.frame.skybox {
+                    let rp = self
+                        .render_pass
+                        .ok_or_else(|| anyhow::anyhow!("forward render pass missing"))?;
                     if let Err(e) = self.skybox.draw(
                         ctx.device,
                         ctx.cmd,
-                        self.render_pass.unwrap(),
+                        rp,
                         self.extent,
                         &inv_view_proj_rot,
                         skybox,

@@ -83,8 +83,9 @@ fn stamp_changed(old: Stamp, new: Stamp) -> bool {
 pub struct HotReloadWatcher {
     /// Channel receiver for polling events.
     rx: mpsc::Receiver<HotReloadEvent>,
-    /// Shared stop signal.
-    stop: Arc<Mutex<bool>>,
+    /// Shared stop signal and condition variable to wake the poller immediately.
+    stop: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl HotReloadWatcher {
@@ -116,7 +117,7 @@ impl HotReloadWatcher {
     ) -> Result<Self, HotReloadError> {
         let (tx, rx) = mpsc::channel::<HotReloadEvent>();
         let tx_clone = tx.clone();
-        let stop = Arc::new(Mutex::new(false));
+        let stop = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let stop_clone = stop.clone();
 
         let mut mtimes: HashMap<PathBuf, Stamp> = HashMap::new();
@@ -126,17 +127,27 @@ impl HotReloadWatcher {
             }
         }
 
-        thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("hot-reload-poller".into())
             .spawn(move || {
                 on_thread_start();
+                let (lock, cvar) = &*stop_clone;
                 loop {
-                    if let Ok(flag) = stop_clone.lock() {
-                        if *flag {
-                            return;
-                        }
+                    let guard = match lock.lock() {
+                        Ok(g) => g,
+                        Err(e) => e.into_inner(),
+                    };
+                    if *guard {
+                        return;
                     }
-                    thread::sleep(interval);
+                    let (guard, _) = match cvar.wait_timeout_while(guard, interval, |s| !*s) {
+                        Ok(res) => res,
+                        Err(e) => e.into_inner(),
+                    };
+                    if *guard {
+                        return;
+                    }
+                    drop(guard);
 
                     for p in &paths {
                         match stamp_of(p) {
@@ -162,7 +173,11 @@ impl HotReloadWatcher {
             })
             .map_err(|e| HotReloadError::Io(std::io::Error::other(e)))?;
 
-        Ok(Self { rx, stop })
+        Ok(Self {
+            rx,
+            stop,
+            thread: Some(handle),
+        })
     }
 
     /// Get a reference to the event receiver.
@@ -170,11 +185,22 @@ impl HotReloadWatcher {
         &self.rx
     }
 
-    /// Stop the polling thread. The watcher is no longer usable after this.
+    /// Stop the polling thread and wait for it to exit.
     pub fn stop(&mut self) {
-        if let Ok(mut flag) = self.stop.lock() {
+        let (lock, cvar) = &*self.stop;
+        if let Ok(mut flag) = lock.lock() {
             *flag = true;
         }
+        cvar.notify_all();
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for HotReloadWatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

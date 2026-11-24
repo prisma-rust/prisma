@@ -597,7 +597,7 @@ impl ResourceManager {
         let size = data.len() as u64;
         if !self.memory.can_fit(size) {
             if self.memory.policy != EvictionPolicy::None {
-                let freed = self.evict(size + 1024 * 1024);
+                let freed = self.evict(size);
                 if !self.memory.can_fit(size) {
                     return Err(RuntimeError::OutOfMemory {
                         current: self.memory.current,
@@ -668,7 +668,7 @@ impl ResourceManager {
         let size = data.len() as u64;
         if !self.memory.can_fit(size) {
             if self.memory.policy != EvictionPolicy::None {
-                let _freed = self.evict(size + 1024 * 1024);
+                let _freed = self.evict(size);
                 if !self.memory.can_fit(size) {
                     return Err(RuntimeError::OutOfMemory {
                         current: self.memory.current,
@@ -872,6 +872,7 @@ impl ResourceManager {
 
     /// Unload all assets.
     pub fn unload_all(&mut self) {
+        let freed = self.memory.current;
         for slot in &mut self.slots {
             if slot.data.take().is_some() {
                 self.memory.account_remove(slot.size_bytes);
@@ -879,10 +880,7 @@ impl ResourceManager {
             }
         }
         self.memory.current = 0;
-        tracing::info!(
-            "Unloaded all assets (memory freed: {})",
-            self.memory.current
-        );
+        tracing::info!("Unloaded all assets (memory freed: {freed})");
     }
 
     /// Unload an asset by ID (convenience).

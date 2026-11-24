@@ -419,10 +419,25 @@ impl AutoExposurePass {
     /// Release everything this pass allocated. The pipelines destroy their own
     /// handles on drop, so only the pass-owned objects are torn down here.
     pub fn destroy(&mut self, device: &ash::Device) {
+        if self.sampler == vk::Sampler::null()
+            && self.ds_pool == vk::DescriptorPool::null()
+            && self.ds_layout == vk::DescriptorSetLayout::null()
+        {
+            return;
+        }
         unsafe {
-            device.destroy_sampler(self.sampler, None);
-            device.destroy_descriptor_pool(self.ds_pool, None);
-            device.destroy_descriptor_set_layout(self.ds_layout, None);
+            if self.sampler != vk::Sampler::null() {
+                device.destroy_sampler(self.sampler, None);
+                self.sampler = vk::Sampler::null();
+            }
+            if self.ds_pool != vk::DescriptorPool::null() {
+                device.destroy_descriptor_pool(self.ds_pool, None);
+                self.ds_pool = vk::DescriptorPool::null();
+            }
+            if self.ds_layout != vk::DescriptorSetLayout::null() {
+                device.destroy_descriptor_set_layout(self.ds_layout, None);
+                self.ds_layout = vk::DescriptorSetLayout::null();
+            }
         }
         self.buffers.destroy(device);
         self.devices = None;

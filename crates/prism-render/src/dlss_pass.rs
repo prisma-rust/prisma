@@ -396,7 +396,10 @@ impl RenderPassNode for DlssPass {
                         depth_format,
                     )?);
                 }
-                let pre = self.pre_targets.as_ref().unwrap();
+                let pre = self
+                    .pre_targets
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("dlss pre_targets missing"))?;
                 let pre_c = &pre.color[frame];
                 let pre_d = &pre.depth[frame];
                 let pre_v = &pre.velocity[frame];

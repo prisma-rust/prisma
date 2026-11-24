@@ -1736,7 +1736,10 @@ impl RenderPassNode for VoxelDdaPass {
         let ds_denoise_2 = slot.ds_denoise_2;
         let ds_composite = slot.ds_composite;
 
-        let target = slot.target.as_mut().unwrap();
+        let target = slot
+            .target
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("voxel dda slot target missing"))?;
 
         if !self.dummies.initialized {
             let dummy_barriers = [

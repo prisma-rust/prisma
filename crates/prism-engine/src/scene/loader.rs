@@ -184,6 +184,9 @@ pub fn parse_rscn(data: &[u8]) -> Result<ParsedRscn, String> {
         offset += env_len;
     }
 
+    if count > (data.len() - offset) / 2 {
+        return Err("RSCN entity count exceeds remaining data".into());
+    }
     let mut entities = Vec::with_capacity(count);
 
     for _ in 0..count {

@@ -334,10 +334,7 @@ impl NeiHudState {
         self.inspector_entity = Some(spawn_hud_text(
             world,
             "emergence_inspector",
-            6.0,
-            5.0,
-            300.0,
-            6.0,
+            [6.0, 5.0, 300.0, 6.0],
             Anchors::TOP_LEFT,
             Pivot::TOP_LEFT,
             TextAlign::Left,
@@ -345,10 +342,7 @@ impl NeiHudState {
         self.palette_header_entity = Some(spawn_hud_text(
             world,
             "emergence_nei_header",
-            -6.0,
-            6.0,
-            110.0,
-            5.5,
+            [-6.0, 6.0, 110.0, 5.5],
             Anchors {
                 min_x: 1.0,
                 min_y: 0.0,
@@ -361,10 +355,7 @@ impl NeiHudState {
         self.hotbar_label_entity = Some(spawn_hud_text(
             world,
             "emergence_hotbar_label",
-            0.0,
-            -22.0,
-            260.0,
-            5.5,
+            [0.0, -22.0, 260.0, 5.5],
             Anchors::BOTTOM_CENTER,
             Pivot { x: 0.5, y: 1.0 },
             TextAlign::Center,
@@ -493,18 +484,15 @@ fn draw_panel(world: &mut GameWorld<'_>, rect: [f32; 4], color: [f32; 4], layer:
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn spawn_hud_text(
     world: &mut GameWorld<'_>,
     name: &str,
-    margin_x: f32,
-    margin_y: f32,
-    width: f32,
-    font_size: f32,
+    rect: [f32; 4],
     anchors: Anchors,
     pivot: Pivot,
     alignment: TextAlign,
 ) -> EntityHandle {
+    let [margin_x, margin_y, width, font_size] = rect;
     let entity = world.spawn();
     world.set(entity, Name(name.to_string()));
     world.set(entity, Node::default());

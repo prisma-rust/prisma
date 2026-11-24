@@ -48,21 +48,34 @@ impl PrismEditorServer {
     }
 
     /// Every tool this server exposes, in table order.
-    fn tool_definitions() -> Vec<ToolDef> {
-        let mut defs = tools::definitions();
-        defs.extend(game::definitions());
-        defs.extend(editor_egui::definitions());
-        defs
+    fn tool_definitions() -> &'static [ToolDef] {
+        static ALL_DEFS: std::sync::OnceLock<Vec<ToolDef>> = std::sync::OnceLock::new();
+        ALL_DEFS.get_or_init(|| {
+            let mut defs = tools::definitions();
+            defs.extend(Self::game_defs().iter().cloned());
+            defs.extend(Self::editor_defs().iter().cloned());
+            defs
+        })
+    }
+
+    fn editor_defs() -> &'static [ToolDef] {
+        static DEFS: std::sync::OnceLock<Vec<ToolDef>> = std::sync::OnceLock::new();
+        DEFS.get_or_init(editor_egui::definitions)
+    }
+
+    fn game_defs() -> &'static [ToolDef] {
+        static DEFS: std::sync::OnceLock<Vec<ToolDef>> = std::sync::OnceLock::new();
+        DEFS.get_or_init(game::definitions)
     }
 
     /// Routes a call to the module that owns the tool.
     fn dispatch(&self, name: &str, args: &Value) -> Result<String, String> {
-        if editor_egui::definitions()
+        if Self::editor_defs()
             .iter()
             .any(|definition| definition.name == name)
         {
             self.editor.call(&self.root, name, args)
-        } else if game::definitions()
+        } else if Self::game_defs()
             .iter()
             .any(|definition| definition.name == name)
         {
@@ -156,7 +169,7 @@ mod tests {
         let defs = PrismEditorServer::tool_definitions();
         assert!(!defs.is_empty(), "the server must expose tools");
         let mut seen = std::collections::HashSet::new();
-        for definition in &defs {
+        for definition in defs {
             assert!(!definition.name.is_empty());
             assert!(
                 seen.insert(definition.name),

@@ -199,11 +199,11 @@ fn documents_list(root: &Path, args: &Value) -> Result<String, String> {
     for kind in kinds {
         let entries = scene::list_docs(root, *kind)?;
         for entry in entries {
-            let root_prefix = root.to_string_lossy();
-            let relative = entry
-                .path
-                .strip_prefix(root_prefix.as_ref())
-                .unwrap_or(&entry.path)
+            let entry_path = Path::new(&entry.path);
+            let relative = entry_path
+                .strip_prefix(root)
+                .unwrap_or(entry_path)
+                .to_string_lossy()
                 .trim_start_matches(['\\', '/'])
                 .replace('\\', "/");
             out.push(json!({

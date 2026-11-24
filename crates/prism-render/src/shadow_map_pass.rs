@@ -739,11 +739,14 @@ impl RenderPassNode for ShadowMapPass {
             let device = ctx.device;
             self.device = Some(device.clone());
 
-            if self.render_pass.is_none() {
-                let render_pass = Self::create_render_pass(device, vk::Format::D32_SFLOAT)?;
-                self.render_pass = Some(render_pass);
-            }
-            let rp = self.render_pass.unwrap();
+            let rp = match self.render_pass {
+                Some(rp) => rp,
+                None => {
+                    let render_pass = Self::create_render_pass(device, vk::Format::D32_SFLOAT)?;
+                    self.render_pass = Some(render_pass);
+                    render_pass
+                }
+            };
 
             let framebuffer = unsafe {
                 device.create_framebuffer(
@@ -776,8 +779,14 @@ impl RenderPassNode for ShadowMapPass {
             packed.extend_from_slice(&instance_matrices);
             self.update_bones(ctx.device, ctx.frame_index, &packed)?;
         }
-        let pipeline_culled = self.pipeline.as_ref().unwrap();
-        let pipeline_two_sided = self.pipeline_two_sided.as_ref().unwrap();
+        let pipeline_culled = self
+            .pipeline
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("shadow pipeline missing"))?;
+        let pipeline_two_sided = self
+            .pipeline_two_sided
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("two-sided shadow pipeline missing"))?;
         let skinned_culled = self
             .skinned
             .as_ref()
@@ -786,8 +795,12 @@ impl RenderPassNode for ShadowMapPass {
             .skinned_two_sided
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("two-sided skinned shadow pipeline missing"))?;
-        let render_pass = self.render_pass.unwrap();
-        let framebuffer = self.framebuffer.unwrap();
+        let render_pass = self
+            .render_pass
+            .ok_or_else(|| anyhow::anyhow!("shadow render pass missing"))?;
+        let framebuffer = self
+            .framebuffer
+            .ok_or_else(|| anyhow::anyhow!("shadow framebuffer missing"))?;
 
         let _ = resources.image(self.shadow_map).unwrap_or_default();
 

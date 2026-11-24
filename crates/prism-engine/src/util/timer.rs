@@ -16,7 +16,6 @@ use std::{
         mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -68,20 +67,14 @@ struct TimerState {
     alive: bool,
     paused: bool,
     remaining: Duration,
+    deadline: Option<Instant>,
     group: Option<u32>,
 }
 
-struct WorkerCmd {
-    id: u32,
-    deadline: Instant,
-}
 struct RegMsg {
     id: u32,
     group_id: Option<u32>,
     params: TimerParams,
-}
-struct FireEvent {
-    id: u32,
 }
 
 /// Messages from [`TimerClient`] to the main-thread [`TimerService`].
@@ -90,8 +83,6 @@ enum ServiceMsg {
     Destroy(TimerId),
     DestroyGroup(u32),
 }
-
-const SLEEP_CHUNK: Duration = Duration::from_millis(50);
 
 /// Timer creation parameters.
 pub struct TimerParams {
@@ -108,66 +99,65 @@ pub type TimerId = u32;
 /// Timer client — Cloneable, UI layer holds it directly.
 #[derive(Clone)]
 pub struct TimerClient {
-    cmd_tx: Sender<WorkerCmd>,
     reg_tx: Sender<ServiceMsg>,
     state: Arc<Mutex<SlotMap<TimerState>>>,
 }
 
 impl TimerClient {
     pub fn create_timer(&self, params: TimerParams) -> TimerId {
+        let deadline = Instant::now() + params.delay;
         let id = {
-            let mut s = self.state.lock().unwrap();
+            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
             s.insert(TimerState {
                 alive: true,
                 paused: false,
                 remaining: params.delay,
+                deadline: Some(deadline),
                 group: params.group_id,
             })
         };
-        let deadline = Instant::now() + params.delay;
         let group_id = params.group_id;
         let _ = self.reg_tx.send(ServiceMsg::Register(RegMsg {
             id,
             group_id,
             params,
         }));
-        let _ = self.cmd_tx.send(WorkerCmd { id, deadline });
         id
     }
 
     pub fn destroy(&self, id: TimerId) {
-        self.state.lock().unwrap().remove(id);
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
         let _ = self.reg_tx.send(ServiceMsg::Destroy(id));
     }
 
     pub fn pause(&self, id: TimerId) {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(st) = s.get_mut(id) {
             if st.alive && !st.paused {
+                if let Some(deadline) = st.deadline.take() {
+                    st.remaining = deadline.saturating_duration_since(Instant::now());
+                }
                 st.paused = true;
             }
         }
     }
 
     pub fn resume(&self, id: TimerId) {
-        let remaining = {
-            let mut s = self.state.lock().unwrap();
-            let st = match s.get_mut(id) {
-                Some(st) if st.paused => st,
-                _ => return,
-            };
-            st.paused = false;
-            st.remaining
-        };
-        let _ = self.cmd_tx.send(WorkerCmd {
-            id,
-            deadline: Instant::now() + remaining,
-        });
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(st) = s.get_mut(id) {
+            if st.alive && st.paused {
+                st.paused = false;
+                st.deadline = Some(Instant::now() + st.remaining);
+            }
+        }
     }
 
     pub fn destroy_group(&self, group: u32) {
         {
-            let mut s = self.state.lock().unwrap();
+            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
             for i in 0..s.slots.len() {
                 if let Some(ref st) = s.slots[i] {
                     if st.group == Some(group) {
@@ -184,7 +174,6 @@ impl TimerClient {
 /// Main-thread timer service.
 pub struct TimerService {
     pub client: TimerClient,
-    fire_rx: Receiver<FireEvent>,
     reg_rx: Receiver<ServiceMsg>,
     /// Callback/params keyed by the same slot id as `client.state`.
     params: HashMap<TimerId, TimerParams>,
@@ -193,21 +182,11 @@ pub struct TimerService {
 
 impl TimerService {
     pub fn new() -> Self {
-        let (cmd_tx, cmd_rx): (Sender<WorkerCmd>, Receiver<WorkerCmd>) = mpsc::channel();
-        let (fire_tx, fire_rx): (Sender<FireEvent>, Receiver<FireEvent>) = mpsc::channel();
         let (reg_tx, reg_rx): (Sender<ServiceMsg>, Receiver<ServiceMsg>) = mpsc::channel();
         let state: Arc<Mutex<SlotMap<TimerState>>> = Arc::new(Mutex::new(SlotMap::new()));
 
-        let worker_state = state.clone();
-        thread::spawn(move || worker_loop(cmd_rx, fire_tx, worker_state));
-
         Self {
-            client: TimerClient {
-                cmd_tx,
-                reg_tx,
-                state,
-            },
-            fire_rx,
+            client: TimerClient { reg_tx, state },
             reg_rx,
             params: HashMap::new(),
             groups: HashMap::new(),
@@ -247,30 +226,28 @@ impl TimerService {
             }
         }
 
-        let mut fired = Vec::new();
-        while let Ok(ev) = self.fire_rx.try_recv() {
-            let alive = self
-                .client
-                .state
-                .lock()
-                .map(|s| {
-                    s.get(ev.id)
-                        .map(|st| st.alive && !st.paused)
-                        .unwrap_or(false)
+        let now = Instant::now();
+        let fired: Vec<TimerId> = {
+            let s = self.client.state.lock().unwrap_or_else(|e| e.into_inner());
+            self.params
+                .keys()
+                .copied()
+                .filter(|&id| {
+                    s.get(id).is_some_and(|st| {
+                        st.alive && !st.paused && st.deadline.is_some_and(|d| now >= d)
+                    })
                 })
-                .unwrap_or(false);
-            if alive {
-                fired.push(ev.id);
-            }
-        }
+                .collect()
+        };
 
         for id in fired {
             let ok = self
                 .client
                 .state
                 .lock()
-                .map(|s| s.get(id).map(|st| st.alive && !st.paused).unwrap_or(false))
-                .unwrap_or(false);
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .is_some_and(|st| st.alive && !st.paused);
             if !ok {
                 continue;
             }
@@ -278,15 +255,17 @@ impl TimerService {
             if let Some(p) = self.params.get_mut(&id) {
                 (p.callback)();
                 if let Some(period) = p.interval {
-                    if let Some(st) = self.client.state.lock().unwrap().get_mut(id) {
+                    let mut s = self.client.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(st) = s.get_mut(id) {
                         st.remaining = period;
+                        st.deadline = Some(Instant::now() + period);
                     }
-                    let _ = self.client.cmd_tx.send(WorkerCmd {
-                        id,
-                        deadline: Instant::now() + period,
-                    });
                 } else {
-                    self.client.state.lock().unwrap().remove(id);
+                    self.client
+                        .state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(id);
                     self.params.remove(&id);
                 }
             }
@@ -297,55 +276,6 @@ impl TimerService {
 impl Default for TimerService {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn worker_loop(
-    cmd_rx: Receiver<WorkerCmd>,
-    fire_tx: Sender<FireEvent>,
-    state: Arc<Mutex<SlotMap<TimerState>>>,
-) {
-    for cmd in cmd_rx {
-        let ft = fire_tx.clone();
-        let st = state.clone();
-        thread::spawn(move || {
-            let deadline = cmd.deadline;
-            loop {
-                let now = Instant::now();
-                if now >= deadline {
-                    break;
-                }
-                thread::sleep(std::cmp::min(deadline - now, SLEEP_CHUNK));
-
-                let stop = st
-                    .lock()
-                    .map(|mut s| match s.get_mut(cmd.id) {
-                        Some(ts) if !ts.alive => true,
-                        Some(ts) if ts.paused => {
-                            ts.remaining = deadline.saturating_duration_since(Instant::now());
-                            true
-                        }
-                        Some(_) => false,
-                        None => true,
-                    })
-                    .unwrap_or(true);
-                if stop {
-                    return;
-                }
-            }
-
-            let ok = st
-                .lock()
-                .map(|s| {
-                    s.get(cmd.id)
-                        .map(|ts| ts.alive && !ts.paused)
-                        .unwrap_or(false)
-                })
-                .unwrap_or(false);
-            if ok {
-                let _ = ft.send(FireEvent { id: cmd.id });
-            }
-        });
     }
 }
 

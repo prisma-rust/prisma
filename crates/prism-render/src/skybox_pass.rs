@@ -189,7 +189,10 @@ impl SkyboxPass {
             self.built_for_render_pass = Some(render_pass);
         }
 
-        let pipeline = self.pipeline.as_ref().unwrap();
+        let pipeline = self
+            .pipeline
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("skybox pipeline missing"))?;
 
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);

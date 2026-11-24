@@ -236,10 +236,13 @@ impl UiBackdropPass {
                 dst_mip,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             );
+            let downsample_pipeline = self
+                .downsample_pipeline
+                .ok_or_else(|| anyhow::anyhow!("ui backdrop downsample pipeline missing"))?;
             self.draw(
                 context,
                 cmd,
-                self.downsample_pipeline.unwrap(),
+                downsample_pipeline,
                 self.downsample_render_pass,
                 src_mip,
                 self.pyramid.framebuffers[dst_mip],
@@ -273,10 +276,13 @@ impl UiBackdropPass {
                 dst_mip,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             );
+            let upsample_pipeline = self
+                .upsample_pipeline
+                .ok_or_else(|| anyhow::anyhow!("ui backdrop upsample pipeline missing"))?;
             self.draw(
                 context,
                 cmd,
-                self.upsample_pipeline.unwrap(),
+                upsample_pipeline,
                 self.upsample_render_pass,
                 src_mip,
                 self.pyramid.framebuffers[dst_mip],

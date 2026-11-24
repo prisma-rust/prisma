@@ -33,8 +33,8 @@ pub struct RenderRuntime {
 impl RenderRuntime {
     /// Build the runtime from a pre-created Vulkan context.
     ///
-    /// `cmd_buffer_count` determines how many command buffers to allocate
-    /// (one per swapchain image).
+    /// `cmd_buffer_count` determines how many primary command buffers to allocate
+    /// (aligned with `FRAMES_IN_FLIGHT`).
     pub(crate) fn new(context: Arc<VulkanContext>, cmd_buffer_count: u32) -> anyhow::Result<Self> {
         let descriptor_layout =
             DescriptorLayout::new(&context.device).context("create descriptor layout")?;

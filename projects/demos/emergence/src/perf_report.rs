@@ -400,7 +400,7 @@ impl CalendarStamp {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(not(target_os = "windows"))]
     fn from_unix_utc(unix_secs: u64) -> Self {
         let days = (unix_secs / 86_400) as i64;
         let rem = unix_secs % 86_400;

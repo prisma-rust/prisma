@@ -265,6 +265,9 @@ pub struct GraphRenderer {
     /// VRAM sub-allocator (#1030).
     suballocator: crate::suballocator::MemorySuballocator,
 
+    /// Whether `destroy` has already run, preventing double-free when `Drop` runs.
+    destroyed: bool,
+
     /// Long-lived GPU session (device, command pool, descriptors, UBOs).
     ///
     /// **Must be the last field** — Rust drops struct fields in declaration
@@ -337,7 +340,8 @@ impl GraphRenderer {
         let swapchain = Swapchain::new_with_vsync(&context, window, window_handle, vsync)?;
         let color_format = swapchain.format.format;
 
-        let runtime = RenderRuntime::new(context.clone(), swapchain.views.len() as u32)?;
+        let runtime =
+            RenderRuntime::new(context.clone(), crate::swapchain::FRAMES_IN_FLIGHT as u32)?;
 
         let ibl_ds_layout = crate::ibl::ibl_descriptor_set_layout(&context.device)
             .context("create IBL ds layout")?;
@@ -635,6 +639,7 @@ impl GraphRenderer {
             suballocator: crate::suballocator::MemorySuballocator::new(
                 crate::suballocator::MemorySuballocator::DEFAULT_CHUNK_SIZE,
             ),
+            destroyed: false,
         })
     }
 
@@ -1141,6 +1146,7 @@ impl GraphRenderer {
             suballocator: crate::suballocator::MemorySuballocator::new(
                 crate::suballocator::MemorySuballocator::DEFAULT_CHUNK_SIZE,
             ),
+            destroyed: false,
         })
     }
 
@@ -2004,6 +2010,10 @@ impl GraphRenderer {
     /// Prepare phase: before command recording, batch sync CPU scene state and GPU resources (DESIGN §9 / #1157).
     /// Uniformly consume `DirtyDispatchPlan` and converge execute staged batch uploads and releases.
     pub fn prepare(&mut self, _ctx: &FrameCtx, input: &FrameInput<'_>) -> anyhow::Result<()> {
+        self.prepare_input(input)
+    }
+
+    fn prepare_input(&mut self, input: &FrameInput<'_>) -> anyhow::Result<()> {
         self.ensure_lut(input.lut_path)?;
 
         if let Some(plan) = input.dispatch_plan {
@@ -2906,8 +2916,8 @@ impl GraphRenderer {
 
         #[cfg(feature = "ui")]
         if record.is_ok() {
-            let has_ui = ui_overlay.is_some_and(|o| !o.quads.is_empty() || !o.texts.is_empty());
-            if has_ui {
+            if let Some(overlay) = ui_overlay.filter(|o| !o.quads.is_empty() || !o.texts.is_empty())
+            {
                 let bindless_set = self.texture_manager.bindless().set;
                 let bindless_layout = self.texture_manager.bindless().layout;
 
@@ -2927,7 +2937,7 @@ impl GraphRenderer {
                         sw.views[image_index as usize],
                         extent,
                         dest,
-                        ui_overlay.unwrap(),
+                        overlay,
                         bindless_layout,
                         bindless_set,
                         ctx.frame_index,
@@ -2958,7 +2968,7 @@ impl GraphRenderer {
                         view,
                         target_extent,
                         dest,
-                        ui_overlay.unwrap(),
+                        overlay,
                         bindless_layout,
                         bindless_set,
                         ctx.frame_index,
@@ -3151,10 +3161,6 @@ impl GraphRenderer {
         shaded_wireframe: bool,
         bone_matrices: &[[[f32; 4]; 4]],
     ) -> anyhow::Result<bool> {
-        let ctx = match self.begin_frame()? {
-            Some(c) => c,
-            None => return Ok(false),
-        };
         let mut frame_data = *frame_data;
         frame_data.shadow_cascade_count = frame_data
             .shadow_cascade_count
@@ -3201,7 +3207,11 @@ impl GraphRenderer {
             show_grid: false,
             dispatch_plan: None,
         };
-        self.prepare(&ctx, &input)?;
+        self.prepare_input(&input)?;
+        let ctx = match self.begin_frame()? {
+            Some(c) => c,
+            None => return Ok(false),
+        };
         let exec_result = self.execute(&ctx, &input);
         let out_of_date = self.present(&ctx)?;
         exec_result?;
@@ -3271,6 +3281,10 @@ impl GraphRenderer {
     }
 
     pub fn destroy(&mut self) {
+        if self.destroyed {
+            return;
+        }
+        self.destroyed = true;
         self.destroy_occlusion_targets();
         let device = &self.runtime.context.device;
         unsafe { device.device_wait_idle() }.ok();
@@ -3346,11 +3360,17 @@ impl GraphRenderer {
 
         self.ui_host.destroy();
 
-        unsafe { device.destroy_sampler(self.shadow_sampler, None) };
+        if self.shadow_sampler != vk::Sampler::null() {
+            unsafe { device.destroy_sampler(self.shadow_sampler, None) };
+            self.shadow_sampler = vk::Sampler::null();
+        }
 
         self.graph.destroy(device);
 
-        unsafe { device.destroy_command_pool(self.runtime.command_pool, None) };
+        if self.runtime.command_pool != vk::CommandPool::null() {
+            unsafe { device.destroy_command_pool(self.runtime.command_pool, None) };
+            self.runtime.command_pool = vk::CommandPool::null();
+        }
 
         if let Some(mut sw) = self.swapchain.take() {
             unsafe { sw.destroy(device) };

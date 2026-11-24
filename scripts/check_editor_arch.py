@@ -31,7 +31,7 @@ def check_editor_arch(src_root: Path = EDITOR_SRC) -> list[str]:
 
     panels_dir = src_root / "panels"
     if panels_dir.is_dir():
-        for rs in sorted(panels_dir.glob("*.rs")):
+        for rs in sorted(panels_dir.rglob("*.rs")):
             text = rs.read_text(encoding="utf-8", errors="replace")
             for idx, line in enumerate(text.splitlines(), 1):
                 code = line.split("//", 1)[0]
@@ -40,14 +40,20 @@ def check_editor_arch(src_root: Path = EDITOR_SRC) -> list[str]:
                         f"{rs}:{idx}: panel layer must not reference `{m.group(0)}`"
                     )
 
+    widget_files = []
     widgets_file = src_root / "widgets.rs"
     if widgets_file.is_file():
-        text = widgets_file.read_text(encoding="utf-8", errors="replace")
+        widget_files.append(widgets_file)
+    widgets_dir = src_root / "widgets"
+    if widgets_dir.is_dir():
+        widget_files.extend(sorted(widgets_dir.rglob("*.rs")))
+    for wf in widget_files:
+        text = wf.read_text(encoding="utf-8", errors="replace")
         for idx, line in enumerate(text.splitlines(), 1):
             code = line.split("//", 1)[0]
             if m := FORBIDDEN_IN_WIDGETS.search(code):
                 errors.append(
-                    f"{widgets_file}:{idx}: widgets layer must not reference `{m.group(0)}`"
+                    f"{wf}:{idx}: widgets layer must not reference `{m.group(0)}`"
                 )
 
     for rs in sorted(src_root.rglob("*.rs")):

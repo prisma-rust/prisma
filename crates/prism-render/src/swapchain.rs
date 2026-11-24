@@ -329,7 +329,7 @@ impl Swapchain {
     /// # Safety
     ///
     /// `device` must be the same [`ash::Device`] the swapchain was created
-    /// with, and must already have been destroyed. After this call the
+    /// with, and must still be alive (not yet destroyed). After this call the
     /// swapchain and all its handles are invalid and must not be used.
     pub unsafe fn destroy(&mut self, device: &ash::Device) {
         unsafe { device.device_wait_idle() }.ok();

@@ -597,7 +597,7 @@ impl ResourceStateTracker {
     pub fn build_read_barriers(
         &mut self,
         edges: &[ResourceEdge],
-        last_writers: &HashMap<ResourceHandle, ResourceUsage>,
+        _last_writers: &HashMap<ResourceHandle, ResourceUsage>,
         image_index: u32,
         resources: &GraphResources,
     ) -> (
@@ -627,12 +627,13 @@ impl ResourceStateTracker {
                 None => continue,
             };
 
-            let (src_access, src_stage) = match last_writers.get(&handle) {
-                Some(w) => (w.access, w.stage),
-                None => (
+            let (src_access, src_stage) = if current.layout == vk::ImageLayout::UNDEFINED {
+                (
                     vk::AccessFlags::empty(),
                     vk::PipelineStageFlags::TOP_OF_PIPE,
-                ),
+                )
+            } else {
+                (current.access, current.stage)
             };
 
             let aspect = aspect_mask_for_layout(re.usage.layout);
@@ -1973,7 +1974,14 @@ impl RenderGraph {
 }
 
 impl Drop for RenderGraph {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        if !self.graph_resources.resources.is_empty() {
+            log::warn!(
+                "RenderGraph dropped with {} unfreed graph resources; call RenderGraph::destroy(device) first",
+                self.graph_resources.resources.len()
+            );
+        }
+    }
 }
 
 /// Pick the image aspect mask for a layout transition barrier: depth/stencil

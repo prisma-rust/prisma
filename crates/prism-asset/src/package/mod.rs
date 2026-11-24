@@ -22,6 +22,7 @@
 //!   field through the end of the file (i.e. header[12..] + registry + deps + data).
 
 use crate::core::{AssetId, AssetType};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -507,6 +508,7 @@ impl PackageBuilder {
 pub struct PackageReader {
     header: PackageHeader,
     records: Vec<RuntimeAssetRecord>,
+    record_index: HashMap<u64, usize>,
     dependency_array: Vec<u64>,
     backing: Backing,
 }
@@ -778,9 +780,16 @@ impl PackageReader {
             }
         }
 
+        let record_index = records
+            .iter()
+            .enumerate()
+            .map(|(idx, rec)| (rec.id, idx))
+            .collect();
+
         Ok(Self {
             header,
             records,
+            record_index,
             dependency_array,
             backing,
         })
@@ -803,13 +812,12 @@ impl PackageReader {
 
     /// Find a record by asset ID.
     pub fn find_record(&self, id: AssetId) -> Option<&RuntimeAssetRecord> {
-        let raw = id.into_raw();
-        self.records.iter().find(|r| r.id == raw)
+        self.find_record_by_raw(id.into_raw())
     }
 
     /// Find a record by raw u64 ID.
     pub fn find_record_by_raw(&self, id: u64) -> Option<&RuntimeAssetRecord> {
-        self.records.iter().find(|r| r.id == id)
+        self.record_index.get(&id).map(|&idx| &self.records[idx])
     }
 
     /// Get the dependencies for a record.

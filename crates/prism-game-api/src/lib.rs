@@ -292,7 +292,7 @@ pub struct GameWorld<'a> {
     /// Normally `input()` prefers the `InputSnapshot` resource in the world (written
     /// by the engine each frame); this field is the fallback for when the resource
     /// has not been written yet, and the mirror for `set_input`.
-    #[cfg_attr(not(feature = "host"), allow(dead_code))]
+    #[cfg(feature = "host")]
     input: InputSnapshot,
 }
 
@@ -322,6 +322,7 @@ impl<'a> GameWorld<'a> {
     pub fn plugin(api: &'a HostApi, registry: &'a TypeRegistry) -> Self {
         Self {
             backend: Backend::Plugin(PluginBackend { api, registry }),
+            #[cfg(feature = "host")]
             input: api.input,
         }
     }
@@ -975,7 +976,6 @@ struct PluginBackend<'a> {
 #[cfg(feature = "plugin")]
 #[derive(Clone, Copy)]
 struct LogSink {
-    user_data: usize,
     log: prism_project_api::LogMessage,
 }
 
@@ -1053,12 +1053,7 @@ fn forward_log(level: u32, text: &str) {
         return;
     };
     unsafe {
-        (sink.log)(
-            sink.user_data as *mut core::ffi::c_void,
-            level,
-            text.as_ptr(),
-            text.len(),
-        );
+        (sink.log)(core::ptr::null_mut(), level, text.as_ptr(), text.len());
     }
 }
 
@@ -1070,20 +1065,16 @@ fn forward_log(level: u32, text: &str) {
 /// `log::error!` are sent through the ABI into the editor Console (the same path as
 /// host logs, labeled with source `Game`).
 ///
-/// Repeated calls are a no-op (only the first `log` callback is taken). `user_data`
-/// is refreshed on every call because the host swaps in a new command context each
-/// tick; but the host's logging callback (`prism-runtime-host`) does not depend on
-/// it.
+/// Repeated calls are a no-op (only the first `log` callback is taken). Passes
+/// null as `user_data` because the logger outlives any single tick's
+/// `WorldCommands` context.
 #[cfg(feature = "plugin")]
 pub fn install_host_logger(host: &HostApi) {
     static INSTALL: std::sync::Once = std::sync::Once::new();
     let Some(log) = host.log else {
         return;
     };
-    let sink = LogSink {
-        user_data: host.user_data as usize,
-        log,
-    };
+    let sink = LogSink { log };
     let fresh = LOG_SINK.set(sink).is_ok();
     if fresh {
         INSTALL.call_once(|| {

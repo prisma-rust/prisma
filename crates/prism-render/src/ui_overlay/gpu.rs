@@ -1308,19 +1308,23 @@ impl UiOverlay {
                     offset: vk::Offset2D { x: 0, y: 0 },
                     extent,
                 });
+            let pipeline = self
+                .pipeline
+                .ok_or_else(|| anyhow::anyhow!("ui overlay pipeline missing"))?;
+            let layout = self
+                .layout
+                .ok_or_else(|| anyhow::anyhow!("ui overlay pipeline layout missing"))?;
             unsafe {
                 context
                     .device
                     .cmd_begin_render_pass(cmd, &rp_begin, vk::SubpassContents::INLINE);
-                context.device.cmd_bind_pipeline(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.pipeline.unwrap(),
-                );
+                context
+                    .device
+                    .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 context.device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
-                    self.layout.unwrap(),
+                    layout,
                     0,
                     std::slice::from_ref(
                         &self.descriptor_sets
@@ -1332,7 +1336,7 @@ impl UiOverlay {
                     context.device.cmd_bind_descriptor_sets(
                         cmd,
                         vk::PipelineBindPoint::GRAPHICS,
-                        self.layout.unwrap(),
+                        layout,
                         1,
                         std::slice::from_ref(&bindless_set),
                         &[],

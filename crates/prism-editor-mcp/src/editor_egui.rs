@@ -32,6 +32,17 @@ pub struct EditorHost {
     child: Mutex<Option<Child>>,
 }
 
+impl Drop for EditorHost {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 impl EditorHost {
     pub fn new() -> Self {
         Self::default()
@@ -111,6 +122,8 @@ impl EditorHost {
             }
             std::thread::sleep(Duration::from_millis(200));
         }
+        let _ = child.kill();
+        let _ = child.wait();
         Err(format!("Timed out waiting for control channel ({wait} ms)"))
     }
 }

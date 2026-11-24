@@ -39,11 +39,16 @@ fn parse_path(path: &str) -> Result<Vec<Segment>, String> {
                     segments.push(Segment::Key(std::mem::take(&mut current)));
                 }
                 let mut digits = String::new();
+                let mut closed = false;
                 for d in chars.by_ref() {
                     if d == ']' {
+                        closed = true;
                         break;
                     }
                     digits.push(d);
+                }
+                if !closed {
+                    return Err("Unclosed '[' in field path".into());
                 }
                 let index = digits
                     .parse::<usize>()
