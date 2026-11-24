@@ -6,9 +6,10 @@ use prism_game_api::{keys, GameWorld, InputSnapshot};
 use prism_scene::components::{Camera, LocalTransform, Name, SpriteRenderer};
 use prism_scene::BUILTIN_WHITE_SPRITE;
 use survivors_core::combat;
+use survivors_core::i18n::Language;
 use survivors_core::state::{
-    EquippedWeapon, GamePhase, PickupKind, ShopOffer, ShopOfferKind, SurvivorsState, ARENA_HALF_H,
-    ARENA_HALF_W, MAX_WEAPONS,
+    EquippedWeapon, GamePhase, MenuModal, PickupKind, ShopOffer, ShopOfferKind, StarterLoadout,
+    SurvivorsState, ARENA_HALF_H, ARENA_HALF_W, MAX_WEAPONS, SPLASH_DURATION,
 };
 use survivors_core::{fixed_tick, frame_tick};
 
@@ -53,15 +54,23 @@ fn key_pressed_input(key: usize) -> InputSnapshot {
     input
 }
 
+fn enter_combat_from_boot(state: &mut Option<SurvivorsState>, api: &mut GameWorld<'_>) {
+    api.set_input(default_screen_input());
+    fixed_tick(state, api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::SPACE));
+    frame_tick(state, api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::ENTER));
+    frame_tick(state, api, 1.0 / 60.0);
+    api.set_input(default_screen_input());
+    frame_tick(state, api, 1.0 / 60.0);
+}
+
 #[test]
 fn config_and_world_init_build_arena_and_white_hp_bars() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
-    api.set_input(default_screen_input());
-
     let mut state: Option<SurvivorsState> = None;
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
-    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     let st = state.as_ref().expect("state initialized from data/*.json");
     assert!(st.world_built);
@@ -90,9 +99,7 @@ fn player_eight_way_movement_and_arena_clamping() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
     let mut state: Option<SurvivorsState> = None;
-
-    api.set_input(default_screen_input());
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     api.set_input(key_held_input(&[keys::KEY_D, keys::KEY_W]));
     for _ in 0..30 {
@@ -128,9 +135,7 @@ fn weapons_auto_target_and_kill_enemies_spawning_pickups() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
     let mut state: Option<SurvivorsState> = None;
-
-    api.set_input(default_screen_input());
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     {
         let st = state.as_mut().unwrap();
@@ -171,9 +176,7 @@ fn horde_250_enemies_crowd_separation_runs_cleanly() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
     let mut state: Option<SurvivorsState> = None;
-
-    api.set_input(default_screen_input());
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     {
         let st = state.as_mut().unwrap();
@@ -234,9 +237,7 @@ fn xp_pickup_magnet_triggers_level_up_and_applies_upgrade() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
     let mut state: Option<SurvivorsState> = None;
-
-    api.set_input(default_screen_input());
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     {
         let st = state.as_mut().unwrap();
@@ -273,9 +274,7 @@ fn wave_timer_expiry_sweeps_arena_and_runs_full_shop_loop() {
     let mut ecs = scene_world();
     let mut api = GameWorld::host(&mut ecs);
     let mut state: Option<SurvivorsState> = None;
-
-    api.set_input(default_screen_input());
-    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    enter_combat_from_boot(&mut state, &mut api);
 
     {
         let st = state.as_mut().unwrap();
@@ -400,4 +399,217 @@ fn wave_timer_expiry_sweeps_arena_and_runs_full_shop_loop() {
     let st = state.as_ref().unwrap();
     assert_eq!(st.phase, GamePhase::WaveCombat);
     assert_eq!(st.wave_index, 2);
+}
+
+#[test]
+fn splash_auto_advances_and_early_skip_enters_main_menu() {
+    let mut ecs = scene_world();
+    let mut api = GameWorld::host(&mut ecs);
+    let mut state: Option<SurvivorsState> = None;
+
+    api.set_input(default_screen_input());
+    fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+
+    let st = state.as_ref().unwrap();
+    assert_eq!(st.phase, GamePhase::Splash);
+    assert!(!api.is_entity_active(st.player_hp_bg));
+
+    let steps = ((SPLASH_DURATION + 0.2) * 30.0) as usize;
+    for _ in 0..steps {
+        frame_tick(&mut state, &mut api, 1.0 / 30.0);
+        if state.as_ref().unwrap().phase == GamePhase::MainMenu {
+            break;
+        }
+    }
+    assert_eq!(state.as_ref().unwrap().phase, GamePhase::MainMenu);
+
+    let mut state2: Option<SurvivorsState> = None;
+    api.set_input(default_screen_input());
+    frame_tick(&mut state2, &mut api, 1.0 / 60.0);
+    assert_eq!(state2.as_ref().unwrap().phase, GamePhase::Splash);
+
+    api.set_input(key_pressed_input(keys::SPACE));
+    frame_tick(&mut state2, &mut api, 1.0 / 60.0);
+    assert_eq!(state2.as_ref().unwrap().phase, GamePhase::MainMenu);
+}
+
+#[test]
+fn main_menu_loadout_start_pause_and_return_to_menu() {
+    let mut ecs = scene_world();
+    let mut api = GameWorld::host(&mut ecs);
+    let mut state: Option<SurvivorsState> = None;
+
+    api.set_input(default_screen_input());
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::SPACE));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    assert_eq!(state.as_ref().unwrap().phase, GamePhase::MainMenu);
+
+    api.set_input(key_pressed_input(keys::KEY_D));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    assert_eq!(
+        state.as_ref().unwrap().selected_loadout,
+        StarterLoadout::Gunslinger
+    );
+
+    api.set_input(key_pressed_input(keys::ENTER));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(default_screen_input());
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+
+    let st = state.as_ref().unwrap();
+    assert_eq!(st.phase, GamePhase::WaveCombat);
+    assert_eq!(st.weapons[0].weapon_id, "pistol");
+    assert_eq!(st.weapons[1].weapon_id, "smg");
+    assert!(api.is_entity_active(st.player_hp_bg));
+
+    api.set_input(key_pressed_input(keys::ESCAPE));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    assert_eq!(
+        state.as_ref().unwrap().phase,
+        GamePhase::Paused {
+            from_sweep_tenths: None
+        }
+    );
+
+    let timer_before_pause = state.as_ref().unwrap().wave_timer;
+    api.set_input(default_screen_input());
+    for _ in 0..10 {
+        fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+    }
+    assert_eq!(state.as_ref().unwrap().wave_timer, timer_before_pause);
+
+    api.set_input(key_pressed_input(keys::ESCAPE));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    assert_eq!(state.as_ref().unwrap().phase, GamePhase::WaveCombat);
+
+    api.set_input(key_pressed_input(keys::ESCAPE));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::ARROW_UP));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::ENTER));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    assert_eq!(state.as_ref().unwrap().phase, GamePhase::MainMenu);
+}
+
+#[test]
+fn settings_and_career_records_persist_via_save_data() {
+    let temp_path = std::env::temp_dir().join("prisma_survivors_test_save.json");
+    let _ = std::fs::remove_file(&temp_path);
+
+    {
+        let mut ecs = scene_world();
+        ecs.insert_resource(prism_engine::user_data::UserStore::open(&temp_path));
+        let mut api = GameWorld::host(&mut ecs);
+        let mut state: Option<SurvivorsState> = None;
+        enter_combat_from_boot(&mut state, &mut api);
+
+        let st = state.as_mut().unwrap();
+        st.settings.sfx_volume = 0.4;
+        st.settings.show_api_telemetry = true;
+        assert!(st.settings.save(&mut api));
+
+        st.stats.kills = 42;
+        st.stats.level = 5;
+        st.wave_index = 3;
+        st.phase = GamePhase::Victory;
+        st.record_run_end(true, &mut api);
+    }
+
+    {
+        let mut ecs = scene_world();
+        ecs.insert_resource(prism_engine::user_data::UserStore::open(&temp_path));
+        let mut api = GameWorld::host(&mut ecs);
+        let mut state: Option<SurvivorsState> = None;
+
+        api.set_input(default_screen_input());
+        fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+
+        let st = state.as_ref().unwrap();
+        assert!((st.settings.sfx_volume - 0.4).abs() < 0.001);
+        assert!(st.settings.show_api_telemetry);
+        assert_eq!(st.records.runs_played, 1);
+        assert_eq!(st.records.victories, 1);
+        assert_eq!(st.records.best_wave, 3);
+        assert_eq!(st.records.best_kills, 42);
+        assert_eq!(st.records.best_level, 5);
+        assert_eq!(st.records.total_kills, 42);
+    }
+
+    let _ = std::fs::remove_file(&temp_path);
+}
+
+#[test]
+fn api_diagnostics_verifies_engine_apis() {
+    let temp_path = std::env::temp_dir().join("prisma_survivors_api_probe.json");
+    let _ = std::fs::remove_file(&temp_path);
+
+    let mut ecs = scene_world();
+    ecs.insert_resource(prism_engine::user_data::UserStore::open(&temp_path));
+    let mut api = GameWorld::host(&mut ecs);
+    let mut state: Option<SurvivorsState> = None;
+
+    api.set_input(default_screen_input());
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::SPACE));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+
+    api.set_input(key_pressed_input(keys::ARROW_UP));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+    api.set_input(key_pressed_input(keys::ENTER));
+    frame_tick(&mut state, &mut api, 1.0 / 60.0);
+
+    let st = state.as_ref().unwrap();
+    assert_eq!(st.modal, MenuModal::ApiDiagnostics);
+    let report = st.api_report.as_ref().expect("diagnostic report generated");
+    assert_eq!(report.total_count, 7);
+    assert_eq!(
+        report.passed_count, report.total_count,
+        "all engine API checks should pass: {:?}",
+        report.entries
+    );
+
+    let _ = std::fs::remove_file(&temp_path);
+}
+
+#[test]
+fn language_defaults_to_chinese_and_toggles_with_persistence() {
+    let temp_path = std::env::temp_dir().join("prisma_survivors_lang_test.json");
+    let _ = std::fs::remove_file(&temp_path);
+
+    {
+        let mut ecs = scene_world();
+        ecs.insert_resource(prism_engine::user_data::UserStore::open(&temp_path));
+        let mut api = GameWorld::host(&mut ecs);
+        let mut state: Option<SurvivorsState> = None;
+
+        api.set_input(default_screen_input());
+        fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+
+        let st = state.as_mut().unwrap();
+        assert_eq!(st.settings.language, Language::ZhCn);
+        assert_eq!(st.settings.language.display_name(), "简体中文");
+
+        st.toggle_language(&mut api);
+        assert_eq!(st.settings.language, Language::EnUs);
+        assert_eq!(st.settings.language.display_name(), "English");
+    }
+
+    {
+        let mut ecs = scene_world();
+        ecs.insert_resource(prism_engine::user_data::UserStore::open(&temp_path));
+        let mut api = GameWorld::host(&mut ecs);
+        let mut state: Option<SurvivorsState> = None;
+
+        api.set_input(default_screen_input());
+        fixed_tick(&mut state, &mut api, 1.0 / 60.0);
+
+        let st = state.as_mut().unwrap();
+        assert_eq!(st.settings.language, Language::EnUs);
+        st.toggle_language(&mut api);
+        assert_eq!(st.settings.language, Language::ZhCn);
+    }
+
+    let _ = std::fs::remove_file(&temp_path);
 }

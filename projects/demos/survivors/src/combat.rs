@@ -19,6 +19,7 @@ const ARENA_MARGIN: f32 = 0.85;
 
 /// Perform one-time arena, player, HP bar, and particle emitter setup.
 pub fn ensure_world_initialized(state: &mut SurvivorsState, world: &mut GameWorld<'_>) {
+    state.sync_persistence_and_generation(world);
     if state.world_built {
         return;
     }
@@ -492,6 +493,21 @@ pub fn fixed_step(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32
     }
 
     match state.phase {
+        GamePhase::Splash | GamePhase::MainMenu => {
+            if state.player_entity != EntityHandle::PLACEHOLDER
+                && world.is_alive(state.player_entity)
+            {
+                state.config.apply_sprite(
+                    world,
+                    state.player_entity,
+                    "player_idle",
+                    (10, 0),
+                    [1.0, 1.0, 1.0, 1.0],
+                    false,
+                );
+            }
+        }
+        GamePhase::Paused { .. } => {}
         GamePhase::WaveCombat => step_wave_combat(state, world, dt),
         GamePhase::WaveClearSweep { .. } => step_wave_clear_sweep(state, world, dt),
         GamePhase::LevelUpChoice { .. }
@@ -516,6 +532,7 @@ fn step_wave_combat(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f
     if state.stats.hp <= 0.0 {
         state.stats.hp = 0.0;
         state.phase = GamePhase::GameOver;
+        state.record_run_end(false, world);
         state.set_banner("DEFEATED!", 5.0);
         return;
     }
@@ -572,7 +589,7 @@ fn begin_wave_clear_sweep(state: &mut SurvivorsState, world: &mut GameWorld<'_>)
     state.wave_sweep_timer = 0.9;
     state.phase = GamePhase::WaveClearSweep { timer_tenths: 9 };
     state.set_banner(format!("WAVE {} CLEARED! +{bonus}G", state.wave_index), 1.8);
-    world.play_sound("audio/wave_clear.wav", 0.5, false);
+    state.play_sfx(world, "audio/wave_clear.wav", 0.5, false);
 }
 
 fn step_wave_clear_sweep(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) {
@@ -843,7 +860,7 @@ fn step_weapons(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
                 WeaponKind::Ranged => {
                     fire_ranged_weapon(state, world, &def, anchor, aim, damage, crit_chance);
                     if !fired_ranged_sfx {
-                        world.play_sound("audio/shoot.wav", 0.30, false);
+                        state.play_sfx(world, "audio/shoot.wav", 0.30, false);
                         fired_ranged_sfx = true;
                     }
                 }
@@ -860,11 +877,11 @@ fn step_weapons(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
                         crit_chance,
                     );
                     if !fired_melee_sfx {
-                        world.play_sound("audio/melee_swing.wav", 0.34, false);
+                        state.play_sfx(world, "audio/melee_swing.wav", 0.34, false);
                         fired_melee_sfx = true;
                     }
                     if hit_any && !hit_sfx {
-                        world.play_sound("audio/hit_enemy.wav", 0.30, false);
+                        state.play_sfx(world, "audio/hit_enemy.wav", 0.30, false);
                         hit_sfx = true;
                     }
                 }
@@ -881,11 +898,11 @@ fn step_weapons(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
                         crit_chance,
                     );
                     if !fired_melee_sfx {
-                        world.play_sound("audio/melee_swing.wav", 0.34, false);
+                        state.play_sfx(world, "audio/melee_swing.wav", 0.34, false);
                         fired_melee_sfx = true;
                     }
                     if hit_any && !hit_sfx {
-                        world.play_sound("audio/hit_enemy.wav", 0.30, false);
+                        state.play_sfx(world, "audio/hit_enemy.wav", 0.30, false);
                         hit_sfx = true;
                     }
                 }
@@ -1347,7 +1364,7 @@ fn step_projectiles(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f
                     state.projectiles[i].hit_enemy_uids.push(e_uid);
                     apply_damage_to_enemy(state, world, idx, dmg, crit_c, crit_m, impulse);
                     if !hit_enemy_sfx {
-                        world.play_sound("audio/hit_enemy.wav", 0.25, false);
+                        state.play_sfx(world, "audio/hit_enemy.wav", 0.25, false);
                         hit_enemy_sfx = true;
                     }
 
@@ -1609,7 +1626,7 @@ fn apply_damage_to_player(state: &mut SurvivorsState, world: &mut GameWorld<'_>,
         [0.8, 0.1, 0.1, 0.0],
         10,
     );
-    world.play_sound("audio/player_hurt.wav", 0.50, false);
+    state.play_sfx(world, "audio/player_hurt.wav", 0.50, false);
 }
 
 fn cleanup_dead_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>) {
@@ -1662,7 +1679,7 @@ fn cleanup_dead_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>) {
     }
 
     if any_died {
-        world.play_sound("audio/enemy_die.wav", 0.32, false);
+        state.play_sfx(world, "audio/enemy_die.wav", 0.32, false);
     }
 }
 
@@ -1725,19 +1742,19 @@ fn collect_pickup(
             let gained = state.stats.grant_xp(v);
             state.pending_level_ups = state.pending_level_ups.saturating_add(gained);
             if play_sfx {
-                world.play_sound("audio/pickup_gem.wav", 0.28, false);
+                state.play_sfx(world, "audio/pickup_gem.wav", 0.28, false);
             }
         }
         PickupKind::Gold(v) => {
             state.stats.gold = state.stats.gold.saturating_add(v);
             if play_sfx {
-                world.play_sound("audio/pickup_coin.wav", 0.34, false);
+                state.play_sfx(world, "audio/pickup_coin.wav", 0.34, false);
             }
         }
         PickupKind::Heal(amount) => {
             state.stats.hp = (state.stats.hp + amount).min(state.stats.max_hp);
             if play_sfx {
-                world.play_sound("audio/pickup_gem.wav", 0.32, false);
+                state.play_sfx(world, "audio/pickup_gem.wav", 0.32, false);
             }
         }
     }

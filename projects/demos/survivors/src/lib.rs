@@ -10,6 +10,8 @@
 
 pub mod combat;
 pub mod config;
+pub mod flow_ui;
+pub mod i18n;
 pub mod state;
 pub mod ui_hud;
 
@@ -53,9 +55,20 @@ pub fn frame_tick(slot: &mut Option<SurvivorsState>, world: &mut GameWorld<'_>, 
     }
 }
 
+#[cfg(all(feature = "player", not(debug_assertions)))]
+mod embedded_config {
+    include!(concat!(env!("OUT_DIR"), "/embedded_config.rs"));
+}
+
 /// Construct the standalone runnable application (`player` feature).
 #[cfg(feature = "player")]
 pub fn build_app() -> prism_app::App {
+    #[cfg(not(debug_assertions))]
+    let mut app = prism_app::App::with_config(embedded_config::embedded_app_config())
+        .with_subsystem(prism_app::Subsystem::Render)
+        .with_subsystem(prism_app::Subsystem::Audio)
+        .with_pointer_lock_policy(prism_app::PointerLockPolicy::Manual);
+    #[cfg(debug_assertions)]
     let mut app = prism_app::app()
         .with_subsystem(prism_app::Subsystem::Render)
         .with_subsystem(prism_app::Subsystem::Audio)

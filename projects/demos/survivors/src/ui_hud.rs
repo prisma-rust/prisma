@@ -7,18 +7,44 @@ use prism_game_api::{
 use prism_scene::components::{LocalTransform, SpriteRenderer};
 
 use crate::config::{StatModifiers, WeaponKind};
+use crate::flow_ui;
+use crate::i18n::tr;
 use crate::state::{GamePhase, ShopOfferKind, SurvivorsState};
 
 const HP_BAR_SCALE_X: f32 = 1.28;
 
 /// Variable-timestep presentation update: camera sync, HP bars, damage numbers, HUD, and modals.
 pub fn frame_step(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) {
+    let clamped_dt = dt.clamp(0.0, 0.1);
+    if clamped_dt > 0.0 {
+        state.last_dt = clamped_dt;
+    }
     sync_camera_pos(state, world);
-    sync_world_health_bars(state, world);
-    step_and_draw_damage_numbers(state, world, dt.clamp(0.0, 0.1));
+
+    let in_front_end = matches!(state.phase, GamePhase::Splash | GamePhase::MainMenu);
+    flow_ui::sync_player_hp_visibility(state, world, !in_front_end);
+    world.set_camera_input_suppressed(!matches!(
+        state.phase,
+        GamePhase::WaveCombat | GamePhase::WaveClearSweep { .. }
+    ));
+
+    if !in_front_end {
+        sync_world_health_bars(state, world);
+        step_and_draw_damage_numbers(state, world, clamped_dt);
+    }
 
     let input = world.input();
     match state.phase.clone() {
+        GamePhase::Splash => {
+            flow_ui::handle_and_draw_splash(state, world, &input, clamped_dt);
+        }
+        GamePhase::MainMenu => {
+            flow_ui::handle_and_draw_main_menu(state, world, &input);
+        }
+        GamePhase::Paused { from_sweep_tenths } => {
+            draw_combat_hud(state, world, &input);
+            flow_ui::handle_and_draw_paused(state, world, &input, from_sweep_tenths);
+        }
         GamePhase::LevelUpChoice {
             choices,
             pending_levels,
@@ -35,17 +61,50 @@ pub fn frame_step(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32
             handle_and_draw_shop(state, world, &input, &offers, reroll_cost, reroll_count);
         }
         GamePhase::Victory => {
+            state.record_run_end(true, world);
             draw_combat_hud(state, world, &input);
             handle_and_draw_end_screen(state, world, &input, true);
         }
         GamePhase::GameOver => {
+            state.record_run_end(false, world);
             draw_combat_hud(state, world, &input);
             handle_and_draw_end_screen(state, world, &input, false);
         }
-        GamePhase::WaveCombat | GamePhase::WaveClearSweep { .. } => {
-            draw_combat_hud(state, world, &input);
+        GamePhase::WaveCombat => {
+            if input.key_pressed(keys::ESCAPE) {
+                state.pause_cursor = 0;
+                state.phase = GamePhase::Paused {
+                    from_sweep_tenths: None,
+                };
+                draw_combat_hud(state, world, &input);
+                let idle_input = InputSnapshot {
+                    screen: input.screen,
+                    ..InputSnapshot::default()
+                };
+                flow_ui::handle_and_draw_paused(state, world, &idle_input, None);
+            } else {
+                draw_combat_hud(state, world, &input);
+            }
+        }
+        GamePhase::WaveClearSweep { timer_tenths } => {
+            if input.key_pressed(keys::ESCAPE) {
+                state.pause_cursor = 0;
+                state.phase = GamePhase::Paused {
+                    from_sweep_tenths: Some(timer_tenths),
+                };
+                draw_combat_hud(state, world, &input);
+                let idle_input = InputSnapshot {
+                    screen: input.screen,
+                    ..InputSnapshot::default()
+                };
+                flow_ui::handle_and_draw_paused(state, world, &idle_input, Some(timer_tenths));
+            } else {
+                draw_combat_hud(state, world, &input);
+            }
         }
     }
+
+    flow_ui::draw_api_telemetry_strip(state, world, &input);
 }
 
 fn sync_camera_pos(state: &mut SurvivorsState, world: &GameWorld<'_>) {
@@ -154,7 +213,7 @@ fn step_and_draw_damage_numbers(state: &mut SurvivorsState, world: &mut GameWorl
             continue;
         }
 
-        if can_draw {
+        if can_draw && state.settings.show_damage_numbers {
             let dn = &state.damage_numbers[i];
             let px = world_to_screen_2d(
                 dn.world_pos,
@@ -219,15 +278,26 @@ fn draw_combat_hud(state: &SurvivorsState, world: &mut GameWorld<'_>, input: &In
             2,
         );
     }
-    draw_label(
-        world,
-        [28.0, 29.0, 272.0, 20.0],
-        &format!(
+    let lang = state.settings.language;
+    let hp_text = if lang.is_zh() {
+        format!(
+            "生命  {} / {}  (+{:.1}/秒)",
+            state.stats.hp.ceil() as u32,
+            state.stats.max_hp.round() as u32,
+            state.stats.hp_regen
+        )
+    } else {
+        format!(
             "HP  {} / {}  (+{:.1}/s)",
             state.stats.hp.ceil() as u32,
             state.stats.max_hp.round() as u32,
             state.stats.hp_regen
-        ),
+        )
+    };
+    draw_label(
+        world,
+        [28.0, 29.0, 272.0, 20.0],
+        &hp_text,
         14.0,
         [1.0, 1.0, 1.0, 1.0],
         TextAlign::Center,
@@ -251,47 +321,76 @@ fn draw_combat_hud(state: &SurvivorsState, world: &mut GameWorld<'_>, input: &In
             2,
         );
     }
+    let xp_text = if lang.is_zh() {
+        format!(
+            "等级 {}   经验 {} / {}",
+            state.stats.level, state.stats.xp, state.stats.xp_to_next
+        )
+    } else {
+        format!(
+            "LV {}   XP {} / {}",
+            state.stats.level, state.stats.xp, state.stats.xp_to_next
+        )
+    };
     draw_label(
         world,
         [28.0, 56.0, 272.0, 18.0],
-        &format!(
-            "LV {}   XP {} / {}",
-            state.stats.level, state.stats.xp, state.stats.xp_to_next
-        ),
+        &xp_text,
         13.0,
         [0.95, 0.98, 1.0, 1.0],
         TextAlign::Center,
         3,
     );
 
+    let gold_text = if lang.is_zh() {
+        format!("金币: {}G", state.stats.gold)
+    } else {
+        format!("GOLD: {}G", state.stats.gold)
+    };
     draw_label(
         world,
         [28.0, 82.0, 136.0, 22.0],
-        &format!("GOLD: {}G", state.stats.gold),
+        &gold_text,
         16.0,
         [1.0, 0.84, 0.26, 1.0],
         TextAlign::Left,
         3,
     );
+    let kills_text = if lang.is_zh() {
+        format!("击杀: {}", state.stats.kills)
+    } else {
+        format!("KILLS: {}", state.stats.kills)
+    };
     draw_label(
         world,
         [164.0, 82.0, 136.0, 22.0],
-        &format!("KILLS: {}", state.stats.kills),
+        &kills_text,
         16.0,
         [0.92, 0.94, 0.98, 1.0],
         TextAlign::Right,
         3,
     );
-    draw_label(
-        world,
-        [28.0, 106.0, 272.0, 20.0],
-        &format!(
+    let stats_line = if lang.is_zh() {
+        format!(
+            "伤害 {:+.0}%  攻速 {:+.0}%  暴击 {:.0}%  护甲 {:.0}",
+            state.stats.damage_pct,
+            state.stats.attack_speed_pct,
+            state.stats.crit_chance_pct,
+            state.stats.armor
+        )
+    } else {
+        format!(
             "DMG {:+.0}%  SPD {:+.0}%  CRIT {:.0}%  ARM {:.0}",
             state.stats.damage_pct,
             state.stats.attack_speed_pct,
             state.stats.crit_chance_pct,
             state.stats.armor
-        ),
+        )
+    };
+    draw_label(
+        world,
+        [28.0, 106.0, 272.0, 20.0],
+        &stats_line,
         12.0,
         [0.74, 0.80, 0.88, 0.95],
         TextAlign::Left,
@@ -306,21 +405,45 @@ fn draw_combat_hud(state: &SurvivorsState, world: &mut GameWorld<'_>, input: &In
         10.0,
         1,
     );
+    let wave_text = if lang.is_zh() {
+        format!(
+            "第 {} / {} 波",
+            state.wave_index,
+            state.config.total_waves()
+        )
+    } else {
+        format!("WAVE {} / {}", state.wave_index, state.config.total_waves())
+    };
     draw_label(
         world,
         [cx - 105.0, 20.0, 210.0, 20.0],
-        &format!("WAVE {} / {}", state.wave_index, state.config.total_waves()),
+        &wave_text,
         14.0,
         [0.82, 0.88, 0.96, 1.0],
         TextAlign::Center,
         3,
     );
     let (timer_label, timer_color) = match state.phase {
-        GamePhase::WaveClearSweep { .. } => ("VACUUM!".to_string(), [0.42, 0.92, 1.0, 1.0]),
-        GamePhase::ShopPhase { .. } => ("SHOP OPEN".to_string(), [1.0, 0.84, 0.26, 1.0]),
-        GamePhase::LevelUpChoice { .. } => ("LEVEL UP!".to_string(), [0.42, 0.96, 0.52, 1.0]),
-        GamePhase::Victory => ("VICTORY!".to_string(), [1.0, 0.86, 0.24, 1.0]),
-        GamePhase::GameOver => ("DEFEATED".to_string(), [0.96, 0.28, 0.28, 1.0]),
+        GamePhase::WaveClearSweep { .. } => (
+            tr(lang, "清场吸取!", "VACUUM!").to_string(),
+            [0.42, 0.92, 1.0, 1.0],
+        ),
+        GamePhase::ShopPhase { .. } => (
+            tr(lang, "商店开放", "SHOP OPEN").to_string(),
+            [1.0, 0.84, 0.26, 1.0],
+        ),
+        GamePhase::LevelUpChoice { .. } => (
+            tr(lang, "升级!", "LEVEL UP!").to_string(),
+            [0.42, 0.96, 0.52, 1.0],
+        ),
+        GamePhase::Victory => (
+            tr(lang, "胜利!", "VICTORY!").to_string(),
+            [1.0, 0.86, 0.24, 1.0],
+        ),
+        GamePhase::GameOver => (
+            tr(lang, "失败", "DEFEATED").to_string(),
+            [0.96, 0.28, 0.28, 1.0],
+        ),
         GamePhase::WaveCombat => {
             let secs = state.wave_timer.ceil() as u32;
             let color = if secs <= 5 {
@@ -330,6 +453,9 @@ fn draw_combat_hud(state: &SurvivorsState, world: &mut GameWorld<'_>, input: &In
             };
             (format!("{secs:02}s"), color)
         }
+        GamePhase::Splash => ("SPLASH".to_string(), [1.0, 1.0, 1.0, 1.0]),
+        GamePhase::MainMenu => ("READY".to_string(), [1.0, 1.0, 1.0, 1.0]),
+        GamePhase::Paused { .. } => ("PAUSED".to_string(), [1.0, 0.84, 0.26, 1.0]),
     };
     draw_label(
         world,
@@ -631,19 +757,33 @@ fn handle_and_draw_shop(
         8.0,
         11,
     );
+    let lang = state.settings.language;
+    let shop_title = if lang.is_zh() {
+        format!("波次商店  -  第 {} 波完成", state.wave_index)
+    } else {
+        format!("SHOP  -  AFTER WAVE {}", state.wave_index)
+    };
     draw_label(
         world,
         [margin + 18.0, top_y + 14.0, 380.0, 28.0],
-        &format!("SHOP  -  AFTER WAVE {}", state.wave_index),
+        &shop_title,
         22.0,
         [1.0, 1.0, 1.0, 1.0],
         TextAlign::Left,
         12,
     );
+    let shop_gold = if lang.is_zh() {
+        format!(
+            "金币: {}G   |   等级 {}",
+            state.stats.gold, state.stats.level
+        )
+    } else {
+        format!("GOLD: {}G   |   LV {}", state.stats.gold, state.stats.level)
+    };
     draw_label(
         world,
         [margin + 380.0, top_y + 14.0, 240.0, 28.0],
-        &format!("GOLD: {}G   |   LV {}", state.stats.gold, state.stats.level),
+        &shop_gold,
         20.0,
         [1.0, 0.84, 0.26, 1.0],
         TextAlign::Center,
@@ -656,9 +796,9 @@ fn handle_and_draw_shop(
         world,
         next_btn,
         if state.wave_index >= state.config.total_waves() {
-            "FINISH RUN [SPACE]"
+            tr(lang, "完成挑战 [SPACE]", "FINISH RUN [SPACE]")
         } else {
-            "NEXT WAVE [SPACE]"
+            tr(lang, "下一波 [SPACE]", "NEXT WAVE [SPACE]")
         },
         next_hover,
         true,
@@ -957,7 +1097,11 @@ fn handle_and_draw_end_screen(
     victory: bool,
 ) {
     if input.key_pressed(keys::SPACE) || input.key_pressed(keys::ENTER) {
-        state.reset_run(world);
+        state.start_new_run(world);
+        return;
+    }
+    if input.key_pressed(keys::ESCAPE) {
+        state.enter_main_menu(world);
         return;
     }
 
@@ -967,8 +1111,8 @@ fn handle_and_draw_end_screen(
     }
 
     draw_panel(world, [0.0, 0.0, sw, sh], [0.03, 0.04, 0.07, 0.84], 0.0, 10);
-    let box_w = 460.0;
-    let box_h = 300.0;
+    let box_w = 480.0;
+    let box_h = 312.0;
     let rect = [sw * 0.5 - box_w * 0.5, sh * 0.5 - box_h * 0.5, box_w, box_h];
     let accent = if victory {
         [1.0, 0.84, 0.24, 1.0]
@@ -978,13 +1122,18 @@ fn handle_and_draw_end_screen(
     draw_panel(world, rect, accent, 12.0, 11);
     draw_panel(world, inset(rect, 3.0), [0.08, 0.10, 0.16, 0.96], 10.0, 11);
 
+    let lang = state.settings.language;
     draw_label(
         world,
         [rect[0] + 20.0, rect[1] + 24.0, box_w - 40.0, 34.0],
         if victory {
-            "VICTORY! ALL WAVES CLEARED!"
+            tr(
+                lang,
+                "胜利！全部波次已通关！",
+                "VICTORY! ALL WAVES CLEARED!",
+            )
         } else {
-            "RUN OVER - POTATO DOWN!"
+            tr(lang, "失败 - 土豆倒下了！", "RUN OVER - POTATO DOWN!")
         },
         24.0,
         accent,
@@ -992,17 +1141,31 @@ fn handle_and_draw_end_screen(
         12,
     );
 
-    let summary = [
-        format!(
-            "Wave Reached: {} / {}",
-            state.wave_index,
-            state.config.total_waves()
-        ),
-        format!("Level Achieved: {}", state.stats.level),
-        format!("Enemies Defeated: {}", state.stats.kills),
-        format!("Total Damage Dealt: {}", state.stats.total_damage),
-        format!("Remaining Gold: {}G", state.stats.gold),
-    ];
+    let summary = if lang.is_zh() {
+        [
+            format!(
+                "到达波次: {} / {}",
+                state.wave_index,
+                state.config.total_waves()
+            ),
+            format!("最终等级: {}", state.stats.level),
+            format!("击败敌人: {}", state.stats.kills),
+            format!("累计伤害: {}", state.stats.total_damage),
+            format!("剩余金币: {}G", state.stats.gold),
+        ]
+    } else {
+        [
+            format!(
+                "Wave Reached: {} / {}",
+                state.wave_index,
+                state.config.total_waves()
+            ),
+            format!("Level Achieved: {}", state.stats.level),
+            format!("Enemies Defeated: {}", state.stats.kills),
+            format!("Total Damage Dealt: {}", state.stats.total_damage),
+            format!("Remaining Gold: {}G", state.stats.gold),
+        ]
+    };
     for (idx, line) in summary.iter().enumerate() {
         draw_label(
             world,
@@ -1020,19 +1183,33 @@ fn handle_and_draw_end_screen(
         );
     }
 
-    let retry_btn = [rect[0] + 95.0, rect[1] + box_h - 62.0, box_w - 190.0, 38.0];
+    let lang = state.settings.language;
+    let retry_btn = [rect[0] + 28.0, rect[1] + box_h - 62.0, 214.0, 38.0];
+    let menu_btn = [rect[0] + box_w - 242.0, rect[1] + box_h - 62.0, 214.0, 38.0];
     let hover = point_in_rect(input.cursor, retry_btn);
+    let menu_hover = point_in_rect(input.cursor, menu_btn);
     draw_button(
         world,
         retry_btn,
-        "PLAY AGAIN [SPACE / CLICK]",
+        tr(lang, "再来一局  [SPACE]", "PLAY AGAIN  [SPACE]"),
         hover,
         true,
         [0.20, 0.58, 0.34, 1.0],
         12,
     );
+    draw_button(
+        world,
+        menu_btn,
+        tr(lang, "返回主菜单  [ESC]", "MAIN MENU  [ESC]"),
+        menu_hover,
+        true,
+        [0.26, 0.38, 0.58, 1.0],
+        12,
+    );
     if hover && input.left_clicked {
-        state.reset_run(world);
+        state.start_new_run(world);
+    } else if menu_hover && input.left_clicked {
+        state.enter_main_menu(world);
     }
 }
 
@@ -1153,14 +1330,14 @@ fn tier_numeral(tier: u8) -> &'static str {
     }
 }
 
-fn point_in_rect(pos: [f32; 2], rect: [f32; 4]) -> bool {
+pub(crate) fn point_in_rect(pos: [f32; 2], rect: [f32; 4]) -> bool {
     pos[0] >= rect[0]
         && pos[0] <= rect[0] + rect[2]
         && pos[1] >= rect[1]
         && pos[1] <= rect[1] + rect[3]
 }
 
-fn inset(rect: [f32; 4], amount: f32) -> [f32; 4] {
+pub(crate) fn inset(rect: [f32; 4], amount: f32) -> [f32; 4] {
     [
         rect[0] + amount,
         rect[1] + amount,
@@ -1169,7 +1346,7 @@ fn inset(rect: [f32; 4], amount: f32) -> [f32; 4] {
     ]
 }
 
-fn draw_panel(
+pub(crate) fn draw_panel(
     world: &mut GameWorld<'_>,
     rect: [f32; 4],
     color: [f32; 4],
@@ -1184,7 +1361,7 @@ fn draw_panel(
     });
 }
 
-fn draw_label(
+pub(crate) fn draw_label(
     world: &mut GameWorld<'_>,
     rect: [f32; 4],
     content: &str,
@@ -1206,7 +1383,7 @@ fn draw_label(
     });
 }
 
-fn draw_wrapped_label(
+pub(crate) fn draw_wrapped_label(
     world: &mut GameWorld<'_>,
     rect: [f32; 4],
     content: &str,
@@ -1228,7 +1405,7 @@ fn draw_wrapped_label(
     });
 }
 
-fn draw_button(
+pub(crate) fn draw_button(
     world: &mut GameWorld<'_>,
     rect: [f32; 4],
     label: &str,

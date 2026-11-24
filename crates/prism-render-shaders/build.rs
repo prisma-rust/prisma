@@ -46,10 +46,11 @@ fn main() {
     let runtime = scan(&manifest.join("src"));
     let test_only = scan(&manifest.join("tests"));
 
-    let auto = env_flag("PRISMA_SHADER_AUTOCOMPILE", true);
+    let in_project = built_from_project(&repo);
+    let auto = env_flag("PRISMA_SHADER_AUTOCOMPILE", !in_project);
     let force = env_flag("PRISMA_SHADER_REBUILD", false);
     let missing_now = missing_of(&runtime);
-    let stale = missing_now.is_empty() && !force && inputs_changed(&script, &repo);
+    let stale = auto && missing_now.is_empty() && !force && inputs_changed(&script, &repo);
 
     let want_compile = !missing_now.is_empty() || force || stale;
     let mut note = None;
@@ -277,6 +278,18 @@ fn names(paths: &[PathBuf]) -> String {
         .join(", ")
 }
 
+fn built_from_project(repo: &Path) -> bool {
+    let Some(out_dir) = env::var_os("OUT_DIR") else {
+        return false;
+    };
+    let out = normalize(&PathBuf::from(out_dir));
+    let repo_norm = normalize(repo);
+    out.strip_prefix(&repo_norm)
+        .ok()
+        .and_then(|rel| rel.components().next())
+        .is_some_and(|first| first.as_os_str() == "projects")
+}
+
 fn env_flag(key: &str, default: bool) -> bool {
     match env::var_os(key) {
         Some(value) => matches!(
@@ -294,22 +307,22 @@ fn find_slangc(repo: &Path) -> Option<PathBuf> {
             return Some(path);
         }
     }
+    if let Some(system) = find_in_path(if cfg!(windows) {
+        "slangc.exe"
+    } else {
+        "slangc"
+    }) {
+        return Some(system);
+    }
     let local = repo
         .join(".local")
         .join("tools")
         .join("slang")
         .join("bin")
         .join("slangc");
-    for candidate in [local.clone(), local.with_extension("exe")] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    find_in_path(if cfg!(windows) {
-        "slangc.exe"
-    } else {
-        "slangc"
-    })
+    [local.clone(), local.with_extension("exe")]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
 }
 
 fn find_bash() -> Option<PathBuf> {
