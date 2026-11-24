@@ -352,7 +352,14 @@ impl Engine {
         self.pending_fixed_key_edges = [0; 8];
         self.world.insert_resource(input);
         crate::scene::systems::interpolation2d::begin_fixed_step(&mut self.world);
-        crate::physics2d::step_2d(&mut self.world, fixed_dt, [0.0, -9.81]);
+        let physics2d_settings = self
+            .world
+            .get_resource::<crate::physics2d::Physics2DSettings>()
+            .copied()
+            .unwrap_or_default();
+        if physics2d_settings.enabled {
+            crate::physics2d::step_2d(&mut self.world, fixed_dt, physics2d_settings.gravity);
+        }
         self.fixed_schedule.run(&mut self.world, fixed_dt.max(0.0));
         crate::scene::systems::interpolation2d::end_fixed_step(&mut self.world);
         crate::scene::systems::hierarchy::hierarchy_system(&mut self.world);

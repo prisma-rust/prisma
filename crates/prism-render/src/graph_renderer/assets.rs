@@ -231,6 +231,11 @@ impl GraphRenderer {
         self.texture_manager.get_srv(handle)
     }
 
+    /// Bindless SRV slot of the built-in 1x1 pure-white texture.
+    pub fn white_texture_slot(&self) -> u32 {
+        self.texture_manager.white_srv().0
+    }
+
     pub fn material_slot(&self, handle: MaterialHandle) -> Option<u32> {
         self.material_manager.slot_of(handle)
     }

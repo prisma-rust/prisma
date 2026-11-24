@@ -2899,6 +2899,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 
 [[package]]
+name = "survivors"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "log",
+ "prism-app",
+ "prism-ecs",
+ "prism-engine",
+ "prism-game-api",
+ "prism-project-api",
+ "prism-scene",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "symphonia"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

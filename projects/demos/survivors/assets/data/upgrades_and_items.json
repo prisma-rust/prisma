@@ -1,0 +1,122 @@
+{
+  "level_upgrades": [
+    {
+      "id": "upg_vitality",
+      "name": "Hearty Potato",
+      "description": "+18 Max HP, Heal 18 HP",
+      "modifiers": { "max_hp": 18.0, "heal_now": 18.0 }
+    },
+    {
+      "id": "upg_regen",
+      "name": "Warm Sprouts",
+      "description": "+1.8 HP Regen / sec",
+      "modifiers": { "hp_regen": 1.8 }
+    },
+    {
+      "id": "upg_melee",
+      "name": "Iron Grip",
+      "description": "+4 Melee Damage, +8% Attack Speed",
+      "modifiers": { "melee_damage": 4.0, "attack_speed_pct": 8.0 }
+    },
+    {
+      "id": "upg_ranged",
+      "name": "Eagle Sight",
+      "description": "+4 Ranged Damage, +10% Range",
+      "modifiers": { "ranged_damage": 4.0, "range_bonus": 0.8 }
+    },
+    {
+      "id": "upg_haste",
+      "name": "Trigger Happy",
+      "description": "+16% Attack Speed",
+      "modifiers": { "attack_speed_pct": 16.0 }
+    },
+    {
+      "id": "upg_crit",
+      "name": "Sharpened Edge",
+      "description": "+9% Crit Chance, +10% Damage",
+      "modifiers": { "crit_chance_pct": 9.0, "damage_pct": 10.0 }
+    },
+    {
+      "id": "upg_swift",
+      "name": "Fleet Boots",
+      "description": "+12% Move Speed, +5% Dodge",
+      "modifiers": { "move_speed_pct": 12.0, "dodge_pct": 5.0 }
+    },
+    {
+      "id": "upg_armor",
+      "name": "Bark Plating",
+      "description": "+3 Armor, +8 Max HP",
+      "modifiers": { "armor": 3.0, "max_hp": 8.0 }
+    },
+    {
+      "id": "upg_magnet",
+      "name": "Lodestone",
+      "description": "+2.0 Pickup Magnet Range, +8 Luck",
+      "modifiers": { "pickup_radius": 2.0, "luck": 8.0 }
+    },
+    {
+      "id": "upg_damage",
+      "name": "Raw Power",
+      "description": "+18% All Damage",
+      "modifiers": { "damage_pct": 18.0 }
+    }
+  ],
+  "shop_items": [
+    {
+      "id": "item_cyber_arm",
+      "name": "Cybernetic Arm",
+      "description": "+5 Melee & Ranged Damage, -4% Speed",
+      "price": 24,
+      "modifiers": { "melee_damage": 5.0, "ranged_damage": 5.0, "move_speed_pct": -4.0 }
+    },
+    {
+      "id": "item_clover",
+      "name": "Lucky Clover",
+      "description": "+15 Luck, +6% Crit Chance",
+      "price": 20,
+      "modifiers": { "luck": 15.0, "crit_chance_pct": 6.0 }
+    },
+    {
+      "id": "item_magnet_coil",
+      "name": "Magnet Coil",
+      "description": "+2.5 Pickup Range, +5% Speed",
+      "price": 18,
+      "modifiers": { "pickup_radius": 2.5, "move_speed_pct": 5.0 }
+    },
+    {
+      "id": "item_espresso",
+      "name": "Double Espresso",
+      "description": "+18% Attack Speed, -3 Max HP",
+      "price": 26,
+      "modifiers": { "attack_speed_pct": 18.0, "max_hp": -3.0 }
+    },
+    {
+      "id": "item_heavy_plate",
+      "name": "Heavy Plate",
+      "description": "+4 Armor, +14 Max HP, -5% Speed",
+      "price": 25,
+      "modifiers": { "armor": 4.0, "max_hp": 14.0, "move_speed_pct": -5.0 }
+    },
+    {
+      "id": "item_glass_cannon",
+      "name": "Glass Cannon",
+      "description": "+25% All Damage, -3 Armor",
+      "price": 28,
+      "modifiers": { "damage_pct": 25.0, "armor": -3.0 }
+    },
+    {
+      "id": "item_scope",
+      "name": "Telescopic Scope",
+      "description": "+2.0 Weapon Range, +8% Crit Chance",
+      "price": 22,
+      "modifiers": { "range_bonus": 2.0, "crit_chance_pct": 8.0 }
+    },
+    {
+      "id": "item_vamp_fang",
+      "name": "Vampire Fang",
+      "description": "+2.2 HP Regen / sec, +6% Damage",
+      "price": 24,
+      "modifiers": { "hp_regen": 2.2, "damage_pct": 6.0 }
+    }
+  ]
+}

@@ -1662,6 +1662,9 @@ impl App {
         self.asset_resolver
             .load_animation_assets(engine.world_mut());
 
+        self.asset_resolver
+            .resolve_cached_sprites(engine.world_mut());
+
         let reqs = self.asset_resolver.prepare_requests(engine.world_mut());
         if !reqs.is_empty() {
             shared.enqueue_asset_requests(reqs);

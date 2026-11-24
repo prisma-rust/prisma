@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "entities": [
+    {
+      "id": 0,
+      "name": "camera",
+      "parent": null,
+      "transform": {
+        "position": [0.0, 0.0, 10.0],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": {
+        "prism_engine::scene::Camera": {
+          "background_color": [0.075, 0.085, 0.115, 1.0],
+          "clear_flags": "SolidColor",
+          "enabled": true,
+          "exposure": 1.0,
+          "far": 1000.0,
+          "near": 0.1,
+          "orthographic": true,
+          "orthographic_size": 11.0
+        },
+        "prism_engine::scene::VirtualCamera2D": {
+          "target_name": "player",
+          "damping": [12.0, 12.0],
+          "deadzone": [0.4, 0.25],
+          "confiner": [-24.0, -18.0, 24.0, 18.0],
+          "follow_offset": [0.0, 0.0],
+          "pixel_snap": false,
+          "pixels_per_unit": 16.0
+        }
+      }
+    },
+    {
+      "id": 1,
+      "name": "player",
+      "parent": null,
+      "transform": {
+        "position": [0.0, 0.0, 0.5],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "components": {
+        "prism_engine::scene::SpriteRenderer": {
+          "sprite_path": "sprites/atlas.png",
+          "region_px": [0, 0, 16, 16],
+          "frame_size": [16, 16],
+          "sheet_columns": 4,
+          "pixels_per_unit": 16.0,
+          "pivot": [0.5, 0.5],
+          "sorting_layer": 10,
+          "order_in_layer": 0
+        },
+        "prism_engine::scene::SpriteAnimation": {
+          "frames": 4,
+          "frame_start": 0,
+          "fps": 8.0,
+          "looped": true,
+          "playing": true
+        }
+      }
+    }
+  ]
+}

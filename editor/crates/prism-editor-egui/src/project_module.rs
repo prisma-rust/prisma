@@ -813,17 +813,36 @@ fn queue_project_quads(world: &mut prism_engine::ecs::World, quads: Vec<HostUiQu
     let mut external = world
         .remove_resource::<prism_engine::ui::ExternalUiQuads>()
         .unwrap_or_default();
-    external
-        .0
-        .extend(quads.into_iter().map(|quad| prism_engine::ui::UiQuad {
-            rect: quad.rect,
-            color: quad.color,
-            border_radius: quad.border_radius,
-            texture: None,
-            layer: quad.layer,
-            order: prism_engine::ui::EXTERNAL_UI_ORDER,
-        }));
-    world.insert_resource(external);
+    let mut layered = world
+        .remove_resource::<prism_engine::ui::ExternalUiLayeredQuads>()
+        .unwrap_or_default();
+    for quad in quads {
+        if quad.layer == 0 {
+            external.0.push(prism_render::ui_overlay::UiQuad {
+                rect: quad.rect,
+                color: quad.color,
+                border_radius: quad.border_radius,
+                texture: None,
+                backdrop_sigma: 0.0,
+            });
+        } else {
+            layered.0.push(prism_engine::ui::UiQuad {
+                rect: quad.rect,
+                color: quad.color,
+                border_radius: quad.border_radius,
+                texture: None,
+                backdrop_sigma: 0.0,
+                layer: prism_engine::ui::EXTERNAL_LAYER.saturating_add(quad.layer),
+                order: prism_engine::ui::EXTERNAL_UI_ORDER,
+            });
+        }
+    }
+    if !external.0.is_empty() {
+        world.insert_resource(external);
+    }
+    if !layered.0.is_empty() {
+        world.insert_resource(layered);
+    }
 }
 
 fn builtin_component_registry() -> ComponentRegistry {

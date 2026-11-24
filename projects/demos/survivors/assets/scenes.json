@@ -1,0 +1,9 @@
+{
+  "scenes": [
+    {
+      "name": "arena",
+      "path": "scenes/arena.rscn",
+      "enabled": true
+    }
+  ]
+}

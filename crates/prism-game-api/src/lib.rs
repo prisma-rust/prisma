@@ -33,6 +33,9 @@ pub use prism_project_api::keys;
 pub use prism_project_api::{EntityHandle, InputSnapshot};
 /// Background job pool shared by both static Player and preview-module builds.
 pub mod jobs;
+/// Generic entity pooling built on [`GameWorld`] activation toggles.
+pub mod pool;
+pub use pool::EntityPool;
 
 /// Returns `true` when compiled for Android mobile targets.
 pub const fn is_android() -> bool {
@@ -75,7 +78,8 @@ use prism_reflect::Reflect;
 #[cfg(feature = "host")]
 use prism_scene::components::Collider2D;
 pub use prism_scene::components::VirtualCamera2D;
-use prism_scene::components::{LocalTransform, Name, TransformInterpolation2D};
+use prism_scene::components::{Active, LocalTransform, Name, TransformInterpolation2D};
+pub use prism_scene::ui::TextAlign;
 
 /// The schema layer, re-exported for the `export_project!` macro so projects do
 /// not have to depend on `prism-project-api` directly.
@@ -110,6 +114,103 @@ use prism_reflect::{rtti_bin, TypeRegistry};
 
 /// A 2D UI quad (defined in the ABI crate, re-exported here).
 pub use prism_project_api::UiQuad;
+
+/// Immediate-mode screen-space UI text submission for [`GameWorld::draw_text`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiText {
+    /// Pixel rectangle `[left, top, width, height]`, top-left origin.
+    pub rect: [f32; 4],
+    pub content: String,
+    pub font_size: f32,
+    /// sRGB RGBA color in `0.0..=1.0`.
+    pub color: [f32; 4],
+    pub alignment: TextAlign,
+    /// Optional asset path to a project-bundled font (empty = system default).
+    pub font: String,
+    pub wrap: bool,
+    /// Optional SDF outline width in pixels (`0.0` = disabled).
+    pub outline_width: f32,
+    pub outline_color: [f32; 4],
+    pub shadow_offset: [f32; 2],
+    pub shadow_color: [f32; 4],
+    /// Relative draw layer above the ECS UI (aligned with [`UiQuad::layer`]).
+    pub layer: i32,
+}
+
+impl Default for UiText {
+    fn default() -> Self {
+        Self {
+            rect: [0.0; 4],
+            content: String::new(),
+            font_size: 16.0,
+            color: [1.0; 4],
+            alignment: TextAlign::Center,
+            font: String::new(),
+            wrap: false,
+            outline_width: 0.0,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_offset: [0.0, 0.0],
+            shadow_color: [0.0, 0.0, 0.0, 0.0],
+            layer: 0,
+        }
+    }
+}
+
+/// Convert a 2D world position `(x, y)` into top-left screen pixel coordinates
+/// matching an orthographic 2D [`prism_scene::components::Camera`].
+pub fn world_to_screen_2d(
+    world_pos: [f32; 2],
+    camera_pos: [f32; 2],
+    ortho_half_height: f32,
+    screen_size: [f32; 2],
+) -> [f32; 2] {
+    if !world_pos[0].is_finite()
+        || !world_pos[1].is_finite()
+        || !camera_pos[0].is_finite()
+        || !camera_pos[1].is_finite()
+        || !ortho_half_height.is_finite()
+        || ortho_half_height <= 0.0
+        || !screen_size[0].is_finite()
+        || !screen_size[1].is_finite()
+        || screen_size[0] <= 0.0
+        || screen_size[1] <= 0.0
+    {
+        return [0.0, 0.0];
+    }
+    let ppu = screen_size[1] / (2.0 * ortho_half_height);
+    [
+        screen_size[0] * 0.5 + (world_pos[0] - camera_pos[0]) * ppu,
+        screen_size[1] * 0.5 - (world_pos[1] - camera_pos[1]) * ppu,
+    ]
+}
+
+/// Convert top-left screen pixel coordinates into 2D world `(x, y)` coordinates
+/// matching an orthographic 2D [`prism_scene::components::Camera`].
+pub fn screen_to_world_2d(
+    screen_pos: [f32; 2],
+    camera_pos: [f32; 2],
+    ortho_half_height: f32,
+    screen_size: [f32; 2],
+) -> [f32; 2] {
+    if !screen_pos[0].is_finite()
+        || !screen_pos[1].is_finite()
+        || !camera_pos[0].is_finite()
+        || !camera_pos[1].is_finite()
+        || !ortho_half_height.is_finite()
+        || ortho_half_height <= 0.0
+        || !screen_size[0].is_finite()
+        || !screen_size[1].is_finite()
+        || screen_size[0] <= 0.0
+        || screen_size[1] <= 0.0
+    {
+        return [0.0, 0.0];
+    }
+    let ppu = screen_size[1] / (2.0 * ortho_half_height);
+    [
+        camera_pos[0] + (screen_pos[0] - screen_size[0] * 0.5) / ppu,
+        camera_pos[1] - (screen_pos[1] - screen_size[1] * 0.5) / ppu,
+    ]
+}
 
 /// The result of a single raycast hit (#522).
 ///
@@ -734,6 +835,58 @@ impl<'a> GameWorld<'a> {
         }
     }
 
+    /// Enable or disable an entity across ECS queries, rendering, UI, and 2D physics.
+    pub fn set_entity_active(&mut self, entity: EntityHandle, active: bool) -> bool {
+        match &mut self.backend {
+            #[cfg(feature = "host")]
+            Backend::Host(world) => {
+                let ecs_entity = entity_from_handle(entity);
+                if !world.is_alive(ecs_entity) {
+                    return false;
+                }
+                world.set_active(ecs_entity, active);
+                world.insert(ecs_entity, Active(active));
+                true
+            }
+            #[cfg(feature = "plugin")]
+            Backend::Plugin(_) => self.set(entity, Active(active)),
+        }
+    }
+
+    /// Returns whether `entity` is alive and active.
+    pub fn is_entity_active(&self, entity: EntityHandle) -> bool {
+        if !self.is_alive(entity) {
+            return false;
+        }
+        match &self.backend {
+            #[cfg(feature = "host")]
+            Backend::Host(world) => {
+                let ecs_entity = entity_from_handle(entity);
+                world.is_active(ecs_entity)
+                    && world.get::<Active>(ecs_entity).is_none_or(|flag| flag.0)
+            }
+            #[cfg(feature = "plugin")]
+            Backend::Plugin(_) => self.get::<Active>(entity).is_none_or(|flag| flag.0),
+        }
+    }
+
+    /// Configure the built-in 2D physics simulation step (gravity and enable flag).
+    pub fn set_physics2d_settings(&mut self, gravity: [f32; 2], enabled: bool) {
+        #[cfg(feature = "host")]
+        match &mut self.backend {
+            Backend::Host(world) => {
+                world.insert_resource(prism_engine::physics2d::Physics2DSettings {
+                    gravity,
+                    enabled,
+                });
+            }
+            #[cfg(feature = "plugin")]
+            Backend::Plugin(_) => {}
+        }
+        #[cfg(not(feature = "host"))]
+        let _ = (gravity, enabled);
+    }
+
     /// Submits a UI quad for this frame's UI draw list.
     ///
     /// The host backend queues it in the world's [`ExternalUiQuads`] resource, so the
@@ -745,21 +898,69 @@ impl<'a> GameWorld<'a> {
         match &mut self.backend {
             #[cfg(feature = "host")]
             Backend::Host(world) => {
-                let mut external = world
-                    .remove_resource::<prism_engine::ui::ExternalUiQuads>()
-                    .unwrap_or_default();
-                external.0.push(prism_ui_draw::UiQuad {
-                    rect: quad.rect,
-                    color: quad.color,
-                    border_radius: quad.border_radius,
-                    texture: None,
-                    backdrop_sigma: 0.0,
-                });
-                world.insert_resource(external);
+                if quad.layer == 0 {
+                    let mut external = world
+                        .remove_resource::<prism_engine::ui::ExternalUiQuads>()
+                        .unwrap_or_default();
+                    external.0.push(prism_ui_draw::UiQuad {
+                        rect: quad.rect,
+                        color: quad.color,
+                        border_radius: quad.border_radius,
+                        texture: None,
+                        backdrop_sigma: 0.0,
+                    });
+                    world.insert_resource(external);
+                } else {
+                    let mut layered = world
+                        .remove_resource::<prism_engine::ui::ExternalUiLayeredQuads>()
+                        .unwrap_or_default();
+                    layered.0.push(prism_engine::ui::UiQuad {
+                        rect: quad.rect,
+                        color: quad.color,
+                        border_radius: quad.border_radius,
+                        texture: None,
+                        backdrop_sigma: 0.0,
+                        layer: prism_engine::ui::EXTERNAL_LAYER.saturating_add(quad.layer),
+                        order: prism_engine::ui::EXTERNAL_UI_ORDER,
+                    });
+                    world.insert_resource(layered);
+                }
             }
             #[cfg(feature = "plugin")]
             Backend::Plugin(backend) => backend.draw(quad),
         }
+    }
+
+    /// Submits an immediate-mode UI text command for this frame's UI draw list.
+    pub fn draw_text(&mut self, text: UiText) {
+        #[cfg(feature = "host")]
+        match &mut self.backend {
+            Backend::Host(world) => {
+                let mut texts = world
+                    .remove_resource::<prism_engine::ui::ExternalUiTexts>()
+                    .unwrap_or_default();
+                texts.0.push(prism_engine::ui::UiTextCmd {
+                    rect: text.rect,
+                    content: text.content,
+                    font_size: text.font_size,
+                    color: text.color,
+                    alignment: text.alignment,
+                    font: text.font,
+                    wrap: text.wrap,
+                    outline_width: text.outline_width,
+                    outline_color: text.outline_color,
+                    shadow_offset: text.shadow_offset,
+                    shadow_color: text.shadow_color,
+                    layer: prism_engine::ui::EXTERNAL_LAYER.saturating_add(text.layer),
+                    order: prism_engine::ui::EXTERNAL_UI_ORDER,
+                });
+                world.insert_resource(texts);
+            }
+            #[cfg(feature = "plugin")]
+            Backend::Plugin(_) => {}
+        }
+        #[cfg(not(feature = "host"))]
+        let _ = text;
     }
 }
 
@@ -1911,5 +2112,65 @@ mod tests {
 
         assert_eq!(view.find_by_name("camera"), Some(camera));
         assert_eq!(view.find_by_name("missing"), None);
+    }
+
+    #[test]
+    fn world_and_screen_2d_projections_are_exact_inverses() {
+        let cam = [3.0, -2.5];
+        let half_h = 10.0;
+        let screen = [1280.0, 720.0];
+        let world_pt = [7.5, 2.5];
+        let screen_pt = world_to_screen_2d(world_pt, cam, half_h, screen);
+        assert!((screen_pt[1] - 180.0).abs() < 1e-4);
+        let round_trip = screen_to_world_2d(screen_pt, cam, half_h, screen);
+        assert!((round_trip[0] - world_pt[0]).abs() < 1e-4);
+        assert!((round_trip[1] - world_pt[1]).abs() < 1e-4);
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn entity_pool_reuses_released_entities_and_toggles_active() {
+        let mut world = World::new();
+        let mut api = GameWorld::host(&mut world);
+        let mut pool = EntityPool::new();
+
+        let (e1, spawned1) = pool.acquire(&mut api, 1);
+        assert!(spawned1);
+        assert!(api.is_entity_active(e1));
+        assert!(api.set(e1, Health { value: 42.0 }));
+
+        pool.release(&mut api, 1, e1);
+        assert!(!api.is_entity_active(e1));
+        assert_eq!(pool.idle_count(1), 1);
+
+        let (e2, spawned2) = pool.acquire(&mut api, 1);
+        assert!(!spawned2);
+        assert_eq!(e1, e2);
+        assert!(api.is_entity_active(e2));
+        assert_eq!(api.get::<Health>(e2), Some(Health { value: 42.0 }));
+    }
+
+    #[cfg(feature = "host")]
+    #[test]
+    fn draw_text_queues_into_external_ui_texts() {
+        let mut world = World::new();
+        {
+            let mut api = GameWorld::host(&mut world);
+            api.draw_text(UiText {
+                rect: [10.0, 20.0, 100.0, 30.0],
+                content: "99".into(),
+                font_size: 24.0,
+                outline_width: 2.0,
+                layer: 5,
+                ..Default::default()
+            });
+        }
+        let queued = world
+            .remove_resource::<prism_engine::ui::ExternalUiTexts>()
+            .expect("queued external text");
+        assert_eq!(queued.0.len(), 1);
+        assert_eq!(queued.0[0].content, "99");
+        assert_eq!(queued.0[0].outline_width, 2.0);
+        assert_eq!(queued.0[0].layer, prism_engine::ui::EXTERNAL_LAYER + 5);
     }
 }

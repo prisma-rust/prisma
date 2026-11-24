@@ -1432,3 +1432,46 @@ fn receive_lights_reaches_the_sprite_draw_item() {
     let items = scene_sprite_system(&world);
     assert!(!items[0].receive_lights, "Not lit by default");
 }
+
+#[test]
+fn sprite_region_px_slices_sub_rectangle_and_frames() {
+    let mut world = World::new();
+    spawn_sprite(
+        &mut world,
+        glam::Vec3::ZERO,
+        SpriteRenderer {
+            sprite_path: "atlas.png".into(),
+            region_px: [32, 64, 16, 32],
+            sheet_columns: 4,
+            frame_index: 2,
+            pixels_per_unit: 16.0,
+            ..SpriteRenderer::default()
+        },
+        [256, 128],
+        0,
+    );
+    let items = scene_sprite_system(&world);
+    assert_eq!(items[0].uv_rect, [0.25, 0.5, 0.3125, 0.75]);
+    assert!((items[0].model[0][0] - 1.0).abs() < 1e-6);
+    assert!((items[0].model[1][1] - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn builtin_white_sprite_renders_even_without_sprite_ref() {
+    let mut world = World::new();
+    let entity = world.spawn();
+    world.insert(
+        entity,
+        LocalToWorld(glam::Mat4::from_scale(glam::vec3(4.0, 0.5, 1.0))),
+    );
+    world.insert(entity, SpriteRenderer::white([1.0, 0.0, 0.0, 0.9]));
+
+    let items = scene_sprite_system(&world);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].texture,
+        prism_render::bindless::TextureHandle::WHITE.0
+    );
+    assert_eq!(items[0].color, [1.0, 0.0, 0.0, 0.9]);
+    assert_eq!(items[0].uv_rect, [0.0, 0.0, 1.0, 1.0]);
+}

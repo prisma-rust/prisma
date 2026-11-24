@@ -145,6 +145,14 @@ impl UiDrawList {
 #[derive(Clone, Debug, Default)]
 pub struct ExternalUiQuads(pub Vec<prism_ui_draw::UiQuad>);
 
+/// Externally submitted UI quads that specify an explicit non-zero layer offset above `EXTERNAL_LAYER`.
+#[derive(Clone, Debug, Default)]
+pub struct ExternalUiLayeredQuads(pub Vec<UiQuad>);
+
+/// Externally (host / project module) submitted immediate UI text commands.
+#[derive(Clone, Debug, Default)]
+pub struct ExternalUiTexts(pub Vec<UiTextCmd>);
+
 /// Canvas scale of layout node (#463); bad value treated as 1, avoid NaN spreading to vertices.
 fn layout_scale(layout: &ComputedLayout) -> f32 {
     if layout.scale.is_finite() && layout.scale > 0.0 {
@@ -171,6 +179,24 @@ pub fn ui_render_system(world: &mut World) {
                     layer: EXTERNAL_LAYER,
                     order: EXTERNAL_UI_ORDER,
                 }),
+            ));
+        }
+    }
+    if let Some(layered) = world.remove_resource::<ExternalUiLayeredQuads>() {
+        for (seq, mut quad) in layered.0.into_iter().enumerate() {
+            quad.order = EXTERNAL_UI_ORDER;
+            pending.push((
+                (quad.layer, quad.order, 0, seq as u32),
+                UiDrawItem::Quad(quad),
+            ));
+        }
+    }
+    if let Some(texts) = world.remove_resource::<ExternalUiTexts>() {
+        for (seq, mut text) in texts.0.into_iter().enumerate() {
+            text.order = EXTERNAL_UI_ORDER;
+            pending.push((
+                (text.layer, text.order, 1, seq as u32),
+                UiDrawItem::Text(text),
             ));
         }
     }
@@ -225,19 +251,23 @@ pub fn ui_render_system(world: &mut World) {
         }
 
         let seq = pending.len() as u32;
+        let scale = layout_scale(layout);
         pending.push((
             (0, layout.order, 1, seq),
             UiDrawItem::Text(UiTextCmd {
                 rect: layout.rect,
                 content: text.content.clone(),
-                font_size: text.font_size * layout_scale(layout),
+                font_size: text.font_size * scale,
                 color: text.color,
                 alignment: text.alignment,
                 font: text.font.clone(),
                 wrap: text.wrap,
+                outline_width: text.outline_width * scale,
+                outline_color: text.outline_color,
+                shadow_offset: [text.shadow_offset[0] * scale, text.shadow_offset[1] * scale],
+                shadow_color: text.shadow_color,
                 layer: 0,
                 order: layout.order,
-                ..Default::default()
             }),
         ));
     }
@@ -261,22 +291,39 @@ pub fn ui_render_system(world: &mut World) {
 /// `GameWorld::draw_quad` submissions are not one frame late (#1048). Editor writes before
 /// `engine.update()`, goes through that `ui_render_system` merge.
 pub fn merge_external_quads(world: &mut World) {
-    let Some(external) = world.remove_resource::<ExternalUiQuads>() else {
-        return;
-    };
-    if external.0.is_empty() {
+    let external = world.remove_resource::<ExternalUiQuads>();
+    let layered = world.remove_resource::<ExternalUiLayeredQuads>();
+    let texts = world.remove_resource::<ExternalUiTexts>();
+    let has_quads = external.as_ref().is_some_and(|e| !e.0.is_empty());
+    let has_layered = layered.as_ref().is_some_and(|l| !l.0.is_empty());
+    let has_texts = texts.as_ref().is_some_and(|t| !t.0.is_empty());
+    if !has_quads && !has_layered && !has_texts {
         return;
     }
     let mut draw_list = world.remove_resource::<UiDrawList>().unwrap_or_default();
-    draw_list.extend_quads(external.0.into_iter().map(|quad| UiQuad {
-        rect: quad.rect,
-        color: quad.color,
-        border_radius: quad.border_radius,
-        texture: quad.texture,
-        backdrop_sigma: quad.backdrop_sigma,
-        layer: EXTERNAL_LAYER,
-        order: EXTERNAL_UI_ORDER,
-    }));
+    if let Some(external) = external {
+        draw_list.extend_quads(external.0.into_iter().map(|quad| UiQuad {
+            rect: quad.rect,
+            color: quad.color,
+            border_radius: quad.border_radius,
+            texture: quad.texture,
+            backdrop_sigma: quad.backdrop_sigma,
+            layer: EXTERNAL_LAYER,
+            order: EXTERNAL_UI_ORDER,
+        }));
+    }
+    if let Some(layered) = layered {
+        draw_list.extend_quads(layered.0.into_iter().map(|mut quad| {
+            quad.order = EXTERNAL_UI_ORDER;
+            quad
+        }));
+    }
+    if let Some(texts) = texts {
+        for mut text in texts.0 {
+            text.order = EXTERNAL_UI_ORDER;
+            draw_list.push_text(text);
+        }
+    }
     draw_list.items.sort_by_key(|item| match item {
         UiDrawItem::Quad(quad) => (quad.layer, quad.order, 0u8),
         UiDrawItem::Text(text) => (text.layer, text.order, 1u8),

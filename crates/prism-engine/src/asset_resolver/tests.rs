@@ -1394,4 +1394,101 @@ mod hot_reload_tests {
         assert_eq!(page1[0].material_index, 1);
         assert_eq!(page1[0].dmm_displacements, vec![15, -30, 45]);
     }
+
+    #[test]
+    fn resolve_cached_sprites_binds_builtin_white_immediately_without_upload() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.insert(entity, SpriteRenderer::white([1.0, 0.2, 0.2, 1.0]));
+
+        let mut resolver = GpuAssetResolver::new();
+        assert_eq!(resolver.resolve_cached_sprites(&mut world), 1);
+
+        let sref = world.get::<SpriteRef>(entity).expect("SpriteRef attached");
+        assert_eq!(sref.generation, 1);
+        assert_eq!(
+            sref.texture_slot,
+            prism_render::bindless::TextureHandle::WHITE.0
+        );
+        assert_eq!(sref.size, [1, 1]);
+        assert!(resolver.prepare_requests(&world).is_empty());
+
+        world.despawn(entity);
+        resolver.prepare_requests(&world);
+        assert!(
+            resolver.take_releases().is_empty(),
+            "built-in white texture slot must never be released"
+        );
+    }
+
+    #[test]
+    fn shared_sprite_textures_deduplicate_uploads_and_refcount_releases() {
+        let mip0 = vec![255u8; 4 * 4 * 4];
+        let rtex = make_test_rtex(4, 4, RTEX_FORMAT_RGBA8, &[&mip0]);
+        let (pak, manifest) = tiny_pak(&[(
+            "sprites/atlas.png",
+            prism_asset::core::AssetType::Texture,
+            &rtex,
+        )]);
+
+        let mut resolver = GpuAssetResolver::new();
+        resolver
+            .load_resource_package_bytes(&pak, Some(&manifest))
+            .expect("load pak");
+
+        let mut world = World::new();
+        let e1 = world.spawn();
+        let e2 = world.spawn();
+        for entity in [e1, e2] {
+            world.insert(
+                entity,
+                SpriteRenderer {
+                    sprite_path: "sprites/atlas.png".into(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let reqs = resolver.prepare_requests(&world);
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0].0, e1);
+
+        resolver.apply_results(
+            &mut world,
+            &[(
+                e1,
+                AssetResolveResult {
+                    texture_slot: Some(42),
+                    texture_size: Some([4, 4]),
+                    ..Default::default()
+                },
+            )],
+        );
+
+        assert_eq!(world.get::<SpriteRef>(e1).unwrap().texture_slot, 42);
+        assert_eq!(world.get::<SpriteRef>(e2).unwrap().texture_slot, 42);
+
+        let e3 = world.spawn();
+        world.insert(
+            e3,
+            SpriteRenderer {
+                sprite_path: "sprites/atlas.png".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolver.resolve_cached_sprites(&mut world), 1);
+        assert_eq!(world.get::<SpriteRef>(e3).unwrap().texture_slot, 42);
+        assert!(resolver.prepare_requests(&world).is_empty());
+
+        world.despawn(e1);
+        world.despawn(e2);
+        resolver.prepare_requests(&world);
+        assert!(resolver.take_releases().is_empty());
+
+        world.despawn(e3);
+        resolver.prepare_requests(&world);
+        let releases = resolver.take_releases();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].texture_slot, Some(42));
+    }
 }

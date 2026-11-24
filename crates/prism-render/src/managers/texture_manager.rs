@@ -252,33 +252,32 @@ pub struct RenderTextureManager {
     /// Slot 0 of the bindless table is reserved for the missing-texture
     /// fallback and is never reallocated.
     fallback_srv: TextureHandle,
+    /// Slot 1 of the bindless table is reserved for the built-in 1x1 pure-white
+    /// texture and is never reallocated.
+    white_srv: TextureHandle,
     /// The fallback image view — written into any slot that is released
     /// via `unregister` so a stale handle sampling the freed view hits the
     /// checkerboard instead of a use-after-free.
     fallback_view: vk::ImageView,
     /// Total slots the bindless table can hold. User textures start at
-    /// slot 1 (slot 0 is the fallback). The total is `fallback_capacity +
-    /// user_capacity` to keep the math simple.
+    /// slot 2 (slot 0 is the fallback, slot 1 is 1x1 white).
     user_capacity: u32,
     destroyed: bool,
 }
 
 impl RenderTextureManager {
-    /// Construct a new manager with the checkerboard fallback already in
-    /// slot 0 of the bindless table.
+    /// Construct a new manager with the checkerboard fallback in slot 0 and
+    /// a built-in 1x1 white texture in slot 1 of the bindless table.
     ///
     /// `user_capacity` is the maximum number of user textures the manager
-    /// will accept; the fallback is allocated *in addition* to this.
-    /// The actual Vulkan image + view for the fallback is a real
-    /// 1×1 R8G8B8A8_UNORM image, so a missing-texture shader branch
-    /// still samples a sensible pixel.
+    /// will accept; the two built-in slots are allocated *in addition* to this.
     pub fn new(
         context: &VulkanContext,
         command_pool: vk::CommandPool,
         graphics_queue: vk::Queue,
         user_capacity: u32,
     ) -> anyhow::Result<Self> {
-        let total = user_capacity + 1;
+        let total = user_capacity + 2;
         let mut bindless = BindlessTextureTable::new(&context.device, total)
             .map_err(|e| anyhow::anyhow!("RenderTextureManager::new: bindless: {e}"))?;
 
@@ -296,13 +295,13 @@ impl RenderTextureManager {
         }
         .context("RenderTextureManager::new: create checkerboard fallback")?;
         bindless
-            .register_with_handle(0, fb_view)
+            .register_with_handle(TextureHandle::FALLBACK.0, fb_view)
             .context("RenderTextureManager::new: register fallback in slot 0")?;
-        let fallback_srv = TextureHandle(0);
+        let fallback_srv = TextureHandle::FALLBACK;
         let fallback_tex = UploadedTexture {
             srv: fallback_srv,
-            width: 1,
-            height: 1,
+            width: FALLBACK_EDGE,
+            height: FALLBACK_EDGE,
             mip_levels: 1,
             image: fb_image,
             memory: fb_memory,
@@ -310,13 +309,43 @@ impl RenderTextureManager {
         };
         let fallback_view = fb_view;
 
+        let white_pixels = [255u8, 255, 255, 255];
+        let (white_image, white_memory, white_view) = unsafe {
+            create_and_upload_image(
+                context,
+                command_pool,
+                graphics_queue,
+                1,
+                1,
+                &white_pixels,
+                1,
+                vk::Format::R8G8B8A8_UNORM,
+            )
+        }
+        .context("RenderTextureManager::new: create 1x1 white texture")?;
+        bindless
+            .register_with_handle(TextureHandle::WHITE.0, white_view)
+            .context("RenderTextureManager::new: register 1x1 white texture in slot 1")?;
+        let white_srv = TextureHandle::WHITE;
+        let white_tex = UploadedTexture {
+            srv: white_srv,
+            width: 1,
+            height: 1,
+            mip_levels: 1,
+            image: white_image,
+            memory: white_memory,
+            view: white_view,
+        };
+
         let mut textures = SlotMap::with_key();
         textures.insert(fallback_tex);
+        textures.insert(white_tex);
 
         Ok(Self {
             bindless,
             textures,
             fallback_srv,
+            white_srv,
             fallback_view,
             user_capacity,
             destroyed: false,
@@ -326,6 +355,11 @@ impl RenderTextureManager {
     /// The bindless SRV slot of the missing-texture fallback.
     pub fn fallback_srv(&self) -> TextureHandle {
         self.fallback_srv
+    }
+
+    /// The bindless SRV slot of the built-in 1x1 pure-white texture.
+    pub fn white_srv(&self) -> TextureHandle {
+        self.white_srv
     }
 
     /// Raw bindless table — exposed so the renderer can bind the descriptor
@@ -384,7 +418,7 @@ impl RenderTextureManager {
                 expected
             );
         }
-        if self.textures.len() as u32 > self.user_capacity {
+        if self.textures.len().saturating_sub(2) as u32 >= self.user_capacity {
             anyhow::bail!(
                 "RenderTextureManager: user capacity {} exhausted",
                 self.user_capacity
@@ -461,7 +495,7 @@ impl RenderTextureManager {
                 expected
             );
         }
-        if self.textures.len() as u32 > self.user_capacity {
+        if self.textures.len().saturating_sub(2) as u32 >= self.user_capacity {
             anyhow::bail!(
                 "RenderTextureManager: user capacity {} exhausted",
                 self.user_capacity
@@ -539,6 +573,9 @@ impl RenderTextureManager {
     /// frees the image, memory, view and slot together instead of leaving them
     /// resident.
     pub fn unregister_srv(&mut self, srv: u32, device: &ash::Device) -> bool {
+        if srv == self.fallback_srv.0 || srv == self.white_srv.0 {
+            return false;
+        }
         let Some(handle) = self
             .textures
             .iter()

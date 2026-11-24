@@ -17,6 +17,7 @@ pub mod references;
 pub mod registry;
 pub mod render_enums;
 pub mod rscn;
+pub mod sprite_sheet;
 pub mod terrain;
 pub mod ui;
 pub mod voxel;
@@ -34,6 +35,7 @@ pub use render_enums::{
     LightRenderMode, LightShadows, LightType, RenderQueue, ShadowCastingMode,
 };
 pub use rscn::{decode_scene, encode_scene, DecodedEntity, DecodedScene, RscnError};
+pub use sprite_sheet::{SpriteAtlasConfig, SpriteSliceDef};
 pub use terrain::SculptMode;
 pub use voxel::{
     aabb_intersects_solid_indexed, pack_rgba, pack_visual, raycast_chunks, raycast_chunks_indexed,

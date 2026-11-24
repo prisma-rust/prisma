@@ -30,6 +30,7 @@ members = [
     "emergence",
     "fishing",
     "sponza",
+    "survivors",
 ]
 
 [profile.dev]
