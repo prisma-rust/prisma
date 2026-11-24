@@ -12,11 +12,20 @@
 
 pub mod intro;
 
+#[cfg(all(feature = "player-core", not(debug_assertions)))]
+mod embedded_config {
+    include!(concat!(env!("OUT_DIR"), "/embedded_config.rs"));
+}
+
 /// Build app: engine loads intro scene entities from path manifest in `assets/scenes.pak`
 /// (cooked from `assets/scenes/intro.scene.json`), this project only registers
 /// `intro::tick_system` to drive animation.
 #[cfg(feature = "player-core")]
 pub fn build_app() -> prism_app::App {
+    #[cfg(not(debug_assertions))]
+    let mut app = prism_app::App::with_config(embedded_config::embedded_app_config())
+        .with_subsystem(prism_app::Subsystem::Render);
+    #[cfg(debug_assertions)]
     let mut app = prism_app::app().with_subsystem(prism_app::Subsystem::Render);
     app.add_game_system::<intro::IntroState, _>("intro::tick", intro::tick);
     app

@@ -423,11 +423,18 @@ impl ResourceManager {
 
     /// Resolve a source-relative asset path to its runtime `AssetId`.
     ///
-    /// Returns `None` when no manifest has been loaded or the path isn't
-    /// registered. The lookup is case-sensitive and expects forward-slash
-    /// separators (matching the manifest written by `prism-cook build`
+    /// Returns `None` when the path isn't registered in any mounted package.
+    ///
+    /// Checks the explicit `.pak.meta.json` `path_map` first, then falls back to
+    /// deterministic [`AssetId::from_path`] lookup against mounted package records,
+    /// allowing shipping builds to resolve asset paths without an external
+    /// `.pak.meta.json` file.
     pub fn id_by_path(&self, path: &str) -> Option<AssetId> {
-        self.path_map.get(path).copied()
+        if let Some(&id) = self.path_map.get(path) {
+            return Some(id);
+        }
+        let id = AssetId::from_path(path);
+        self.id_map.contains_key(&id).then_some(id)
     }
 
     /// Register an already-open package reader.

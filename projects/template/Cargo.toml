@@ -12,11 +12,11 @@ description = "Prisma user game project (template) — desktop binary `template`
 # `template_core` — when lib and bin share name they compete for same `template.pdb` (MSVC reports conflict),
 # and sharing target dir would overwrite each other outputs. `android.app.lib_name` (launcher gen/android
 # Manifest) must equal `[build] lib_name` / lib name here.
-# `lib` type for desktop bin to link rlib; `cdylib` has two other uses:
-# Android GameActivity entry, and editor-loaded preview module.
+# `lib` type for desktop bin to link rlib; Android GameActivity entry and editor-loaded
+# preview module pass `--crate-type cdylib` via `cargo rustc` on demand.
 [lib]
 name = "template_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 # Two build forms, mutually exclusive:
 # - `player` (default): static Player / Android, links engine directly.
@@ -111,6 +111,9 @@ prism-project-api = { path = "../../crates/prism-project-api", optional = true }
 prism-scene = { path = "../../crates/prism-scene", default-features = false }
 keyframe = "1.1"
 log = "0.4"
+
+[build-dependencies]
+prism-ini = { path = "../../crates/prism-ini" }
 
 # Player / Android packaging: size priority (fat LTO + single codegen unit + abort + strip).
 # Editor / tools run inside engine process, cannot use this profile.

@@ -479,22 +479,36 @@ impl GpuAssetResolver {
         self.failed.insert((entity, slot), path.to_string());
     }
 
+    fn fatal_pak_error(msg: impl std::fmt::Display) -> ! {
+        log::error!("{msg}");
+        eprintln!("FATAL: {msg}");
+        std::process::exit(1);
+    }
+
     /// Attempt to load the `.pak` resource package and its path manifest.
     ///
-    /// Both files are optional — when absent (no CLI `build` run yet) the
-    /// engine continues with only procedural geometry.
-    ///
-    /// Paths are resolved through [`crate::asset_paths`] instead of the process
-    /// cwd, so launching the executable from any directory still finds the
-    /// package that sits next to it.
+    /// In dev/hosted builds, missing packages warn and continue with procedural geometry.
+    /// Under [`crate::asset_paths::strict_pak_only`] (release / dist player builds),
+    /// missing or invalid `.pak` files immediately report an error and exit without
+    /// touching `.pak.meta.json` or loose files.
     pub fn load_resource_package(&mut self) {
         let mut span = crate::util::timing::span("asset::load_resource_package");
+        let strict = crate::asset_paths::strict_pak_only();
         let Some(asset_dir) = crate::asset_paths::asset_dir() else {
+            if strict {
+                Self::fatal_pak_error("resource package unavailable: no `assets/` directory found");
+            }
             log::warn!("resource package unavailable: no `assets/` directory found");
             return;
         };
         let paks = crate::asset_paths::pak_files_in(&asset_dir);
         if paks.is_empty() {
+            if strict {
+                Self::fatal_pak_error(format!(
+                    "resource package unavailable: no `.pak` found in {}",
+                    asset_dir.display()
+                ));
+            }
             log::warn!(
                 "resource package unavailable: no `.pak` in {}; scene assets cannot load. \
                  Build the package, then restart: {}",
@@ -505,6 +519,12 @@ impl GpuAssetResolver {
         }
 
         let loaded = self.mount_packages(&paks);
+        if strict && loaded.is_empty() {
+            Self::fatal_pak_error(format!(
+                "no resource packages could be mounted from {}",
+                asset_dir.display()
+            ));
+        }
         span.detail(format!(
             "paks={} mounted={} assets={}",
             paks.len(),
@@ -575,14 +595,22 @@ impl GpuAssetResolver {
         retried
     }
 
-    /// Load a list of `.pak` files plus their `<name>.pak.meta.json` manifests.
-    /// Returns the packages that were registered (failed ones are skipped).
+    /// Load a list of `.pak` files plus their `<name>.pak.meta.json` manifests (when not strict pak-only).
+    /// Returns the packages that were registered (in dev mode failed ones are skipped;
+    /// under [`crate::asset_paths::strict_pak_only`] any failure exits immediately).
     fn mount_packages(&mut self, paks: &[PathBuf]) -> Vec<PathBuf> {
+        let strict = crate::asset_paths::strict_pak_only();
         let mut loaded = Vec::new();
         for pak_path in paks {
             let mut pak_span = crate::util::timing::span("asset::mount_package");
             pak_span.detail(pak_path.display().to_string());
             if let Err(e) = self.resource_manager.load_package(pak_path) {
+                if strict {
+                    Self::fatal_pak_error(format!(
+                        "resource package {} failed to load: {e}",
+                        pak_path.display()
+                    ));
+                }
                 log::warn!(
                     "resource package {} could not be loaded: {e}; \
                      assets from it will be missing",
@@ -593,6 +621,10 @@ impl GpuAssetResolver {
             loaded.push(pak_path.clone());
             if !self.mounted_paks.iter().any(|mounted| mounted == pak_path) {
                 self.mounted_paks.push(pak_path.clone());
+            }
+
+            if strict {
+                continue;
             }
 
             let manifest_path = pak_path.with_extension("pak.meta.json");
@@ -654,7 +686,10 @@ impl GpuAssetResolver {
             .id_by_path(stamp_mod::COOK_STAMP_NAME)
             .and_then(|id| self.resource_manager.load_with_deps_raw(id).ok())
             .and_then(|bytes| stamp_mod::CookStamp::parse(&String::from_utf8_lossy(&bytes)));
-        let newest = {
+        let strict = crate::asset_paths::strict_pak_only();
+        let newest = if strict {
+            0
+        } else {
             let mut walk_span = crate::util::timing::span("asset::newest_source_mtime");
             let newest = pak_path
                 .parent()
@@ -680,12 +715,16 @@ impl GpuAssetResolver {
                 );
             }
             stamp_mod::StampCheck::SchemaChanged { cooked, current } => {
-                log::error!(
+                let msg = format!(
                     "resource package {} was cooked with component schema {cooked:#x}, this \
                      engine has {current:#x}: scene data may decode incorrectly. \
                      Rebuild with `prism-build-pipeline build-scenes`",
                     pak_path.display()
                 );
+                if strict {
+                    Self::fatal_pak_error(msg);
+                }
+                log::error!("{msg}");
             }
             stamp_mod::StampCheck::SourcesNewer { cooked, newest } => {
                 log::error!(

@@ -317,6 +317,9 @@ impl SceneAudio {
         let Some(requests) = requests else {
             return;
         };
+        if prism_engine::asset_paths::strict_pak_only() {
+            return;
+        }
         let Some(file) = prism_engine::asset_paths::asset_path(path) else {
             log::warn!("audio clip not found in assets/: {path}");
             return;

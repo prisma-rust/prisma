@@ -314,6 +314,128 @@ fn looks_like_scalar(value: &str) -> bool {
         || value.parse::<f64>().is_ok()
 }
 
+/// Emit Rust source code that constructs `prism_engine::config::AppConfig` from `settings.ini`
+/// without embedding plaintext INI text or parsing INI at runtime.
+pub fn emit_app_config_rs(ini_text: &str) -> String {
+    let ini = Ini::parse(ini_text);
+    let mut out = String::from(
+        "pub fn embedded_app_config() -> prism_engine::config::AppConfig {\n    \
+         let mut cfg = prism_engine::config::AppConfig::default();\n",
+    );
+
+    if let Some(v) = ini.get("app", "company") {
+        let _ = writeln!(out, "    cfg.app.company = {:?}.to_string();", v);
+    }
+    if let Some(v) = ini.get("app", "name") {
+        let _ = writeln!(out, "    cfg.app.name = {:?}.to_string();", v);
+    }
+
+    if let Some(v) = ini.get("window", "title") {
+        let _ = writeln!(out, "    cfg.window.title = {:?}.to_string();", v);
+    }
+    for key in ["width", "height"] {
+        if let Some(v) = ini.get_u32("window", key) {
+            let _ = writeln!(out, "    cfg.window.{key} = {v};");
+        }
+    }
+    for key in ["min_width", "min_height", "max_width", "max_height"] {
+        if let Some(v) = ini.get_u32("window", key) {
+            let _ = writeln!(out, "    cfg.window.{key} = Some({v});");
+        }
+    }
+    for key in ["position_x", "position_y"] {
+        if let Some(v) = ini.get_i32("window", key) {
+            let _ = writeln!(out, "    cfg.window.{key} = Some({v});");
+        }
+    }
+    for key in [
+        "resizable",
+        "fullscreen",
+        "maximized",
+        "visible",
+        "decorations",
+        "vsync",
+    ] {
+        if let Some(v) = ini.get_bool("window", key) {
+            let _ = writeln!(out, "    cfg.window.{key} = {v};");
+        }
+    }
+
+    for key in [
+        "render_mode",
+        "lut",
+        "internal_resolution",
+        "internal_scale_mode",
+        "raster_gi",
+        "pt_gi",
+        "dlss_mode",
+        "dlss_pre_upscale",
+        "dlfg_mode",
+    ] {
+        if let Some(v) = ini.get("render", key) {
+            let _ = writeln!(out, "    cfg.render.{key} = Some({:?}.to_string());", v);
+        }
+    }
+    for key in [
+        "debug_flags",
+        "tonemap_mode",
+        "aa_mode",
+        "shadow_map_size",
+        "shadow_cascade_count",
+        "debug_rt",
+        "pt_max_bounces",
+        "pt_max_iterations",
+        "dlfg_frames",
+    ] {
+        if let Some(v) = ini.get_u32("render", key) {
+            let _ = writeln!(out, "    cfg.render.{key} = Some({v});");
+        }
+    }
+    for key in [
+        "occlusion_culling",
+        "bloom",
+        "taa",
+        "anf_sr",
+        "anf_fg",
+        "wireframe",
+        "shaded_wireframe",
+        "dlss_rr_enabled",
+    ] {
+        if let Some(v) = ini.get_bool("render", key) {
+            let _ = writeln!(out, "    cfg.render.{key} = Some({v});");
+        }
+    }
+    for key in [
+        "contrast",
+        "shadow_distance",
+        "saturation",
+        "vignette",
+        "bloom_intensity",
+        "bloom_threshold",
+        "chromatic_aberration",
+        "film_grain",
+        "temperature",
+        "tint",
+        "dof_focus_distance",
+        "dof_aperture",
+        "dof_max_blur",
+        "lut_strength",
+        "motion_blur",
+        "motion_blur_max_pixels",
+        "taa_strength",
+        "anf_sharpness",
+        "pt_ray_max_distance",
+        "prt_leak_bias",
+    ] {
+        if let Some(v) = ini.get_f32("render", key) {
+            let _ = writeln!(out, "    cfg.render.{key} = Some({v:?}_f32);");
+        }
+    }
+
+    out.push_str("    cfg\n}\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

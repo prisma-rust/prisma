@@ -432,8 +432,12 @@ fn extract_voxel_scene(world: &mut World) -> Option<Arc<prism_render::VoxelScene
     static SPBR_ATLAS: std::sync::OnceLock<Option<Arc<Vec<u32>>>> = std::sync::OnceLock::new();
     let atlas = SPBR_ATLAS
         .get_or_init(|| {
-            crate::asset_paths::asset_dir()
-                .and_then(|dir| prism_render::voxel_dda_pass::load_spbr_atlas_from_assets(&dir))
+            if crate::asset_paths::strict_pak_only() {
+                None
+            } else {
+                crate::asset_paths::asset_dir()
+                    .and_then(|dir| prism_render::voxel_dda_pass::load_spbr_atlas_from_assets(&dir))
+            }
         })
         .clone();
     Some(Arc::new(prism_render::VoxelSceneUpload {
@@ -852,7 +856,7 @@ pub fn render_system(
     };
     let mut resolved_grade = grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
-    let lut_path = if settings.lut.trim().is_empty() {
+    let lut_path = if settings.lut.trim().is_empty() || crate::asset_paths::strict_pak_only() {
         None
     } else {
         crate::asset_paths::asset_path(settings.lut.trim())

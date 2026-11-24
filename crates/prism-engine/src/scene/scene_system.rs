@@ -541,6 +541,24 @@ impl SceneManager {
         None
     }
 
+    fn fatal_scene_pak_error(msg: impl std::fmt::Display) -> ! {
+        log::error!("{msg}");
+        eprintln!("FATAL: {msg}");
+        std::process::exit(1);
+    }
+
+    fn read_packaged_manifest(rm: &mut ResourceManager) -> Result<SceneManifest, String> {
+        let id = rm
+            .id_by_path("scenes.json")
+            .ok_or_else(|| "missing `scenes.json` inside resource package".to_string())?;
+        let bytes = rm
+            .load_with_deps_raw(id)
+            .map_err(|e| format!("failed to read packaged `scenes.json`: {e}"))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|e| format!("packaged `scenes.json` is not valid UTF-8: {e}"))?;
+        SceneManifest::parse(text).map_err(|e| format!("packaged `scenes.json` parse error: {e}"))
+    }
+
     /// Resolve and load scenes one by one from manifest; `scene_name = None` means first loadable scene.
     fn load_from_manifest(
         &mut self,
@@ -549,10 +567,36 @@ impl SceneManager {
         registry: &ComponentRegistry,
         scene_name: Option<&str>,
     ) -> Option<String> {
+        let strict = crate::asset_paths::strict_pak_only();
+        if strict {
+            let manifest = match Self::read_packaged_manifest(rm) {
+                Ok(m) => m,
+                Err(err) => Self::fatal_scene_pak_error(err),
+            };
+            log::info!(
+                "scene manifest (packaged): {} scene(s) listed",
+                manifest.scenes.len()
+            );
+            let loaded = self.load_entries(rm, world, registry, &manifest, scene_name);
+            if loaded.is_none() {
+                Self::fatal_scene_pak_error(
+                    "no loadable enabled scene found in packaged `scenes.json`",
+                );
+            }
+            return loaded;
+        }
+
         let manifest_path = find_manifest_path();
         let manifest_path = match manifest_path {
             Some(p) => p,
             None => {
+                if let Ok(manifest) = Self::read_packaged_manifest(rm) {
+                    log::info!(
+                        "scene manifest (packaged fallback): {} scene(s) listed",
+                        manifest.scenes.len()
+                    );
+                    return self.load_entries(rm, world, registry, &manifest, scene_name);
+                }
                 #[expect(
                     clippy::disallowed_methods,
                     reason = "diagnostic log only when scene manifest is missing"

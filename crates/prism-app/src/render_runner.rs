@@ -172,9 +172,11 @@ pub fn render_thread_main(
             return;
         }
     };
-    if let Some(prt_path) = prism_engine::asset_paths::asset_path("gi/prt_volume.prtbin") {
-        if prt_path.is_file() {
-            renderer.load_prt_volume_file(&prt_path);
+    if !prism_engine::asset_paths::strict_pak_only() {
+        if let Some(prt_path) = prism_engine::asset_paths::asset_path("gi/prt_volume.prtbin") {
+            if prt_path.is_file() {
+                renderer.load_prt_volume_file(&prt_path);
+            }
         }
     }
 
@@ -533,7 +535,8 @@ fn render_one_frame(
 
     let mut resolved_grade = packet.grade.unwrap_or_else(|| settings.post_grade());
     resolved_grade.lut_strength = settings.lut_strength;
-    let lut_path = if settings.lut.trim().is_empty() {
+    let lut_path = if settings.lut.trim().is_empty() || prism_engine::asset_paths::strict_pak_only()
+    {
         None
     } else {
         prism_engine::asset_paths::asset_path(settings.lut.trim())

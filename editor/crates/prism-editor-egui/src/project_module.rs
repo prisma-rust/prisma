@@ -892,7 +892,9 @@ impl AssetIo for ProjectAssets {
 fn build_module(manifest: &Path, target_dir: &Path) -> BuildOutcome {
     let mut command = std::process::Command::new("cargo");
     command
-        .arg("build")
+        .arg("rustc")
+        .arg("--lib")
+        .args(["--crate-type", "cdylib"])
         .arg("--manifest-path")
         .arg(manifest)
         .args(["--no-default-features", "--features", "preview-module"])

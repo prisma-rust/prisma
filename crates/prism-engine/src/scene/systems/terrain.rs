@@ -721,19 +721,12 @@ pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
     if !terrain.has_heightmap() {
         return Some(Heightfield::flat(terrain.cells()));
     }
-    let Some(path) = crate::asset_paths::asset_path(&terrain.heightmap) else {
-        log::warn!(
-            "terrain: cannot resolve asset root for heightmap {}; using a flat field",
-            terrain.heightmap
-        );
-        return Some(Heightfield::flat(terrain.cells()));
-    };
-    let bytes = match std::fs::read(&path) {
+    let bytes = match crate::asset_paths::read_asset_file(&terrain.heightmap) {
         Ok(bytes) => bytes,
         Err(error) => {
             log::warn!(
                 "terrain: cannot read heightmap {} ({error}); using a flat field",
-                path.display()
+                terrain.heightmap
             );
             return Some(Heightfield::flat(terrain.cells()));
         }
@@ -748,7 +741,7 @@ pub fn load_heightfield(terrain: &Terrain) -> Option<Heightfield> {
         None => {
             log::warn!(
                 "terrain: heightmap {} is {} bytes, expected {} ({} cells); using a flat field",
-                path.display(),
+                terrain.heightmap,
                 bytes.len(),
                 terrain.cells() * terrain.cells() * 4,
                 terrain.cells()

@@ -11,7 +11,7 @@ description = "Sponza path-tracing & SHaRC sample project"
 # `sponza.pdb` (Windows link error / PDB conflict). The lib crate is
 # `sponza_core`, the executable stays `sponza`.
 name = "sponza_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "sponza"

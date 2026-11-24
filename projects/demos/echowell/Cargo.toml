@@ -8,7 +8,7 @@ description = "EchoWell - a small 2D precision platformer vertical slice"
 
 [lib]
 name = "echowell_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "echowell"

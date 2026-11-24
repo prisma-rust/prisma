@@ -8,7 +8,7 @@ description = "Cozy Fishing — 2D pixel fishing game (user project)"
 # Independent workspace (same structure as projects/template), not attached to root Prisma workspace.
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "fishing"

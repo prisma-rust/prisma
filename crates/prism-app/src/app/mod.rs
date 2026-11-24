@@ -338,6 +338,9 @@ impl App {
 
     fn build(config: AppConfig, load_scene: bool) -> Self {
         let mut build_span = prism_engine::util::timing::span("app::build");
+        if !load_scene {
+            prism_engine::asset_paths::set_hosted_loose_allowed(true);
+        }
         let mut engine = Engine::empty();
 
         let mut asset_resolver = GpuAssetResolver::new();

@@ -153,6 +153,9 @@ pub use android_assets::init_android_assets;
 /// directory / parent dir / `PRISMA_ASSET_ROOT`), thus launching exe from any directory can read config.
 pub fn load_config() -> AppConfig {
     let _span = prism_engine::util::timing::span("app::load_config");
+    if prism_engine::asset_paths::strict_pak_only() {
+        return AppConfig::default();
+    }
     for (name, legacy) in [("settings.ini", false), ("settings.toml", true)] {
         let Some(path) = prism_engine::asset_paths::asset_path(name) else {
             return AppConfig::default();

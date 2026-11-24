@@ -44,11 +44,17 @@ pub fn game_manifest_path(root: &Path) -> PathBuf {
 }
 
 fn target_profile(settings: &ProjectSettings) -> &'static str {
-    if settings.build.profile.eq_ignore_ascii_case("release") {
+    if settings.build.profile.eq_ignore_ascii_case("dist") {
+        "dist"
+    } else if settings.build.profile.eq_ignore_ascii_case("release") {
         "release"
     } else {
         "debug"
     }
+}
+
+fn is_shipping_profile(settings: &ProjectSettings) -> bool {
+    matches!(target_profile(settings), "release" | "dist")
 }
 
 /// Executable file name: `.exe` on Windows.
@@ -100,20 +106,11 @@ pub fn game_binary_name(manifest: &Path) -> String {
     }
 }
 
-/// `assets/` artifacts needed at runtime: `.pak` package, path list, scene list, `settings.ini`,
-/// plus top-level data files the project reads at runtime (`*.json`).
-///
-/// Project data in subdirectories (`assets/data/`) is packed into `.pak` by `build-scenes` (#1049);
-/// here we only handle top-level loose files.
-///
-/// Only copy **artifacts**, not authoring documents (`*.scene.json` / `*.prefab.json`) or loose
-/// assets: scene content is already in `.pak`, loose assets are decided by cook, copying the
-/// directory would carry off a bunch of source files.
-///
-/// `.pak.meta.json` is the path list the runtime uses to parse `AssetId`; without it all textures
-/// are judged as `broken asset reference`; `scenes.json` is the startup scene list, without it
-/// no scene loads (both are "silent failures", see #989).
-fn asset_artifacts(root: &Path, output_dir: &Path) -> Vec<ArtifactCopy> {
+/// `assets/` artifacts needed at runtime:
+/// - In shipping (`release` / `dist`), only `.pak` packages are staged — no external JSON/INI manifests.
+/// - In `debug`, `.pak.meta.json`, `scenes.json`, `settings.ini`, and top-level data `*.json`
+///   are also staged for dev/diagnostic convenience.
+fn asset_artifacts(root: &Path, output_dir: &Path, shipping: bool) -> Vec<ArtifactCopy> {
     let assets = root.join("assets");
     let Ok(entries) = std::fs::read_dir(&assets) else {
         return Vec::new();
@@ -128,12 +125,16 @@ fn asset_artifacts(root: &Path, output_dir: &Path) -> Vec<ArtifactCopy> {
             continue;
         };
         let name = name.to_ascii_lowercase();
-        let wanted = name.ends_with(".pak")
-            || name.ends_with(".pak.meta.json")
-            || name == "settings.ini"
-            || (name.ends_with(".json")
-                && !name.ends_with(".scene.json")
-                && !name.ends_with(".prefab.json"));
+        let wanted = if shipping {
+            name.ends_with(".pak")
+        } else {
+            name.ends_with(".pak")
+                || name.ends_with(".pak.meta.json")
+                || name == "settings.ini"
+                || (name.ends_with(".json")
+                    && !name.ends_with(".scene.json")
+                    && !name.ends_with(".prefab.json"))
+        };
         if !wanted {
             continue;
         }
@@ -187,7 +188,8 @@ fn cook_step(root: &Path) -> BuildStep {
 /// Generate the build plan from project root + `[build]` settings.
 pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
     let manifest = game_manifest_path(root);
-    let release = target_profile(settings) == "release";
+    let profile = target_profile(settings);
+    let shipping = is_shipping_profile(settings);
     let mut build_args = vec![
         "build".to_string(),
         "--manifest-path".to_string(),
@@ -195,8 +197,11 @@ pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
         "--message-format".to_string(),
         "json".to_string(),
     ];
-    if release {
+    if profile == "release" {
         build_args.push("--release".to_string());
+    } else if profile == "dist" {
+        build_args.push("--profile".to_string());
+        build_args.push("dist".to_string());
     }
 
     let output_dir = {
@@ -224,7 +229,7 @@ pub fn plan_build(root: &Path, settings: &ProjectSettings) -> BuildPlan {
         from: game_target.join(&binary),
         to: exe.clone(),
     }];
-    copies.extend(asset_artifacts(root, &output_dir));
+    copies.extend(asset_artifacts(root, &output_dir, shipping));
 
     BuildPlan {
         steps: vec![
@@ -401,6 +406,36 @@ mod tests {
         }
         assert!(!staged.iter().any(|path| path.ends_with(".scene.json")));
         assert!(!staged.iter().any(|path| path.ends_with(".png")));
+    }
+
+    #[test]
+    fn shipping_builds_stage_only_pak_artifacts() {
+        let root = temp_dir("shipping-layout");
+        let assets = root.join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        for name in [
+            "scenes.pak",
+            "scenes.pak.meta.json",
+            "settings.ini",
+            "scenes.json",
+            "project_data.json",
+        ] {
+            std::fs::write(assets.join(name), b"x").unwrap();
+        }
+
+        for profile in ["release", "dist"] {
+            let plan = plan_build(&root, &settings(profile, "build/shipping"));
+            let out = root.join("build/shipping");
+            let staged: Vec<String> = plan.copies[1..]
+                .iter()
+                .map(|copy| copy.to.display().to_string())
+                .collect();
+            assert_eq!(
+                staged,
+                vec![out.join("assets").join("scenes.pak").display().to_string()],
+                "profile={profile} should only stage .pak files"
+            );
+        }
     }
 
     #[test]

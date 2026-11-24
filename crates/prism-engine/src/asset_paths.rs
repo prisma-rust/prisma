@@ -28,8 +28,27 @@ pub const ASSET_ROOT_ENV: &str = "PRISMA_ASSET_ROOT";
 /// replacement such as environment textures will prefer loose files under `assets/` (for fast iteration after packaging).
 pub const LOOSE_ASSETS_ENV: &str = "PRISMA_LOOSE_ASSETS";
 
+static HOSTED_LOOSE_ALLOWED: AtomicBool = AtomicBool::new(false);
+
+/// Allow loose authoring assets even in release builds (used by `App::hosted` / editor).
+pub fn set_hosted_loose_allowed(allowed: bool) {
+    HOSTED_LOOSE_ALLOWED.store(allowed, Ordering::Relaxed);
+}
+
+/// Whether runtime must strictly load from `.pak` only (no loose files on disk).
+///
+/// Active in release / dist / tiny builds (`not(debug_assertions)`) unless running
+/// in hosted/editor mode.
+pub fn strict_pak_only() -> bool {
+    !cfg!(debug_assertions) && !HOSTED_LOOSE_ALLOWED.load(Ordering::Relaxed)
+}
+
 /// Check whether loose-asset-preference override enabled (`PRISMA_LOOSE_ASSETS`).
+/// Always `false` when [`strict_pak_only`] is active.
 pub fn loose_assets_enabled() -> bool {
+    if strict_pak_only() {
+        return false;
+    }
     let Ok(val) = std::env::var(LOOSE_ASSETS_ENV) else {
         return false;
     };
@@ -244,18 +263,21 @@ pub fn optional_pak_files() -> Vec<PathBuf> {
 /// key-card data packed into package on Android / release is equally visible.
 pub fn asset_exists(relative: impl AsRef<Path>) -> bool {
     let relative = relative.as_ref();
-    if asset_path(relative).is_some_and(|path| path.is_file()) {
+    if !strict_pak_only() && asset_path(relative).is_some_and(|path| path.is_file()) {
         return true;
     }
     packaged_asset_exists(&package_key(relative))
 }
 
 /// Read loose asset raw bytes; fall back to `.pak` when loose file missing (#1049).
+/// Under [`strict_pak_only`], only reads from `.pak` and never touches loose files.
 pub fn read_asset_file(relative: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     let relative = relative.as_ref();
-    if let Some(path) = asset_path(relative) {
-        if path.is_file() {
-            return std::fs::read(&path);
+    if !strict_pak_only() {
+        if let Some(path) = asset_path(relative) {
+            if path.is_file() {
+                return std::fs::read(&path);
+            }
         }
     }
     if let Some(bytes) = packaged_asset_bytes(&package_key(relative)) {
@@ -263,10 +285,14 @@ pub fn read_asset_file(relative: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
-        format!(
-            "asset not found (loose or packaged): {}",
-            relative.display()
-        ),
+        if strict_pak_only() {
+            format!("asset not found in package: {}", relative.display())
+        } else {
+            format!(
+                "asset not found (loose or packaged): {}",
+                relative.display()
+            )
+        },
     ))
 }
 

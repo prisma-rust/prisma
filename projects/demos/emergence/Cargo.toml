@@ -8,7 +8,7 @@ description = "Emergence - a v3.0 tag-driven emergent physics sandbox on Prisma"
 
 [lib]
 name = "emergence_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "emergence"

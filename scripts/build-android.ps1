@@ -190,7 +190,7 @@ cargo ndk `
     -P $apiLevel `
     -t arm64-v8a `
     -o $JniLibsDir `
-    build --profile dist --manifest-path $GameManifest -p $Project
+    rustc --lib --crate-type cdylib --profile dist --manifest-path $GameManifest -p $Project
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "cargo ndk failed"

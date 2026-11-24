@@ -136,8 +136,8 @@ fi
 
 # ---- 1. game .so ----------------------------------------------------------
 if [ "$SKIP_CARGO" -eq 0 ]; then
-    echo "==> cargo build ($MODE) $TARGET"
-    cargo build --manifest-path "$GAME_MANIFEST" --lib --target "$TARGET" \
+    echo "==> cargo rustc ($MODE) $TARGET"
+    cargo rustc --manifest-path "$GAME_MANIFEST" --lib --crate-type cdylib --target "$TARGET" \
         $( [ "$MODE" = release ] && echo --release )
 fi
 SO="$PROJECT_DIR/target/$TARGET/$CARGO_PROFILE_DIR/lib$LIB_NAME.so"

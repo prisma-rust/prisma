@@ -34,15 +34,17 @@ impl OneShotSound {
 /// Release package only has `.pak`, so pak branch is not optional: `build-scenes` will put
 /// entire `assets/audio/**` directory into package (like `sprites/`, since runtime reads by path).
 fn load_clip(relative: &str, pack: &mut ResourceManager) -> Option<AudioData> {
-    if let Some(path) = prism_engine::asset_paths::asset_path(relative) {
-        if path.is_file() {
-            return match prism_audio::decoder::decode_file(&path) {
-                Ok(clip) => Some(clip),
-                Err(error) => {
-                    log::warn!("play_sound: decode '{relative}' failed: {error}");
-                    None
-                }
-            };
+    if !prism_engine::asset_paths::strict_pak_only() {
+        if let Some(path) = prism_engine::asset_paths::asset_path(relative) {
+            if path.is_file() {
+                return match prism_audio::decoder::decode_file(&path) {
+                    Ok(clip) => Some(clip),
+                    Err(error) => {
+                        log::warn!("play_sound: decode '{relative}' failed: {error}");
+                        None
+                    }
+                };
+            }
         }
     }
     let id = pack.id_by_path(relative)?;

@@ -7,7 +7,7 @@ description = "Brotato + Vampire Survivors 2D top-down roguelite on Prisma Engin
 
 [lib]
 name = "survivors_core"
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "survivors"
@@ -39,3 +39,7 @@ serde_json = "1"
 [dev-dependencies]
 prism-ecs = { path = "../../../crates/prism-ecs" }
 prism-game-api = { path = "../../../crates/prism-game-api", features = ["host"] }
+
+[build-dependencies]
+prism-build-pipeline = { path = "../../../crates/prism-build-pipeline" }
+prism-ini = { path = "../../../crates/prism-ini" }

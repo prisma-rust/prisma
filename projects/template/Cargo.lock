@@ -2023,6 +2023,7 @@ dependencies = [
  "prism-app",
  "prism-engine",
  "prism-game-api",
+ "prism-ini",
  "prism-project-api",
  "prism-scene",
 ]
