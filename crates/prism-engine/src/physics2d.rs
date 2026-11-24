@@ -18,6 +18,22 @@ use prism_scene::components::{
     Collider2DShape, LocalToWorld, LocalTransform, PhysicsCollider2D, RigidBody2D, RigidBody2DType,
 };
 
+/// World resource configuring the built-in 2D physics simulation step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Physics2DSettings {
+    pub gravity: [f32; 2],
+    pub enabled: bool,
+}
+
+impl Default for Physics2DSettings {
+    fn default() -> Self {
+        Self {
+            gravity: [0.0, -9.81],
+            enabled: true,
+        }
+    }
+}
+
 /// 2D collision / sensor event type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Physics2DEventKind {

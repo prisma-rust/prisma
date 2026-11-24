@@ -349,6 +349,401 @@ fn finite_aabb(value: Aabb2) -> bool {
         && value.min[1] <= value.max[1]
 }
 
+/// A 2D circle in world space (`+X` right, `+Y` up).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Circle2 {
+    pub center: [f32; 2],
+    pub radius: f32,
+}
+
+impl Circle2 {
+    pub const fn new(center: [f32; 2], radius: f32) -> Self {
+        Self { center, radius }
+    }
+
+    fn effective_radius(self) -> f32 {
+        if self.radius.is_finite() {
+            self.radius.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    pub fn bounds(self) -> Aabb2 {
+        let r = self.effective_radius();
+        Aabb2::from_center_half_extents(self.center, [r, r])
+    }
+
+    pub fn contains_point(self, point: [f32; 2]) -> bool {
+        if !finite2(self.center) || !finite2(point) {
+            return false;
+        }
+        let r = self.effective_radius();
+        let dx = point[0] - self.center[0];
+        let dy = point[1] - self.center[1];
+        dx * dx + dy * dy <= r * r
+    }
+
+    pub fn overlaps_circle(self, other: Self) -> bool {
+        if !finite2(self.center) || !finite2(other.center) {
+            return false;
+        }
+        let r = self.effective_radius() + other.effective_radius();
+        let dx = other.center[0] - self.center[0];
+        let dy = other.center[1] - self.center[1];
+        dx * dx + dy * dy < r * r
+    }
+
+    pub fn overlaps_aabb(self, bounds: Aabb2) -> bool {
+        if !finite2(self.center) || !finite_aabb(bounds) {
+            return false;
+        }
+        let cx = self.center[0].clamp(bounds.min[0], bounds.max[0]);
+        let cy = self.center[1].clamp(bounds.min[1], bounds.max[1]);
+        let dx = self.center[0] - cx;
+        let dy = self.center[1] - cy;
+        let r = self.effective_radius();
+        dx * dx + dy * dy < r * r
+    }
+
+    /// Returns `(normal_from_other_to_self, penetration_depth)` when overlapping.
+    pub fn penetration_circle(self, other: Self) -> Option<([f32; 2], f32)> {
+        if !finite2(self.center) || !finite2(other.center) {
+            return None;
+        }
+        let sum_r = self.effective_radius() + other.effective_radius();
+        let dx = self.center[0] - other.center[0];
+        let dy = self.center[1] - other.center[1];
+        let dist_sq = dx * dx + dy * dy;
+        if dist_sq >= sum_r * sum_r {
+            return None;
+        }
+        let dist = dist_sq.sqrt();
+        if dist > EPSILON {
+            Some(([dx / dist, dy / dist], sum_r - dist))
+        } else {
+            Some(([1.0, 0.0], sum_r))
+        }
+    }
+
+    /// Returns `true` if this circle overlaps a 2D circular sector (`origin`, `dir`, `range`, `half_angle_rad`).
+    pub fn overlaps_sector(
+        self,
+        origin: [f32; 2],
+        dir: [f32; 2],
+        range: f32,
+        half_angle_rad: f32,
+    ) -> bool {
+        if !finite2(self.center)
+            || !finite2(origin)
+            || !finite2(dir)
+            || !range.is_finite()
+            || !half_angle_rad.is_finite()
+            || range <= 0.0
+            || half_angle_rad < 0.0
+        {
+            return false;
+        }
+        let r = self.effective_radius();
+        let dx = self.center[0] - origin[0];
+        let dy = self.center[1] - origin[1];
+        let dist_sq = dx * dx + dy * dy;
+        let max_dist = range + r;
+        if dist_sq > max_dist * max_dist {
+            return false;
+        }
+        if dist_sq <= r * r || half_angle_rad >= std::f32::consts::PI {
+            return true;
+        }
+
+        let dir_len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt();
+        if dir_len <= EPSILON {
+            return false;
+        }
+        let ndx = dir[0] / dir_len;
+        let ndy = dir[1] / dir_len;
+        let dist = dist_sq.sqrt();
+        let cos_angle = (dx * ndx + dy * ndy) / dist;
+        if cos_angle >= half_angle_rad.cos() {
+            return true;
+        }
+
+        let (sin_h, cos_h) = half_angle_rad.sin_cos();
+        let edge_a = [
+            origin[0] + (ndx * cos_h - ndy * sin_h) * range,
+            origin[1] + (ndx * sin_h + ndy * cos_h) * range,
+        ];
+        let edge_b = [
+            origin[0] + (ndx * cos_h + ndy * sin_h) * range,
+            origin[1] + (-ndx * sin_h + ndy * cos_h) * range,
+        ];
+        point_to_segment_dist_sq(self.center, origin, edge_a) <= r * r
+            || point_to_segment_dist_sq(self.center, origin, edge_b) <= r * r
+    }
+
+    /// Returns `true` if this circle overlaps a capsule (line segment `a..=b` expanded by `segment_radius`).
+    pub fn overlaps_segment_radius(self, a: [f32; 2], b: [f32; 2], segment_radius: f32) -> bool {
+        if !finite2(self.center) || !finite2(a) || !finite2(b) || !segment_radius.is_finite() {
+            return false;
+        }
+        let total_r = self.effective_radius() + segment_radius.max(0.0);
+        point_to_segment_dist_sq(self.center, a, b) <= total_r * total_r
+    }
+}
+
+fn point_to_segment_dist_sq(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let abx = b[0] - a[0];
+    let aby = b[1] - a[1];
+    let len_sq = abx * abx + aby * aby;
+    if len_sq <= EPSILON * EPSILON {
+        let dx = p[0] - a[0];
+        let dy = p[1] - a[1];
+        return dx * dx + dy * dy;
+    }
+    let t = (((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len_sq).clamp(0.0, 1.0);
+    let cx = a[0] + abx * t;
+    let cy = a[1] + aby * t;
+    let dx = p[0] - cx;
+    let dy = p[1] - cy;
+    dx * dx + dy * dy
+}
+
+/// Deterministic uniform spatial hash grid for fast 2D broadphase and nearest-neighbor queries.
+#[derive(Debug, Clone)]
+pub struct SpatialGrid2D {
+    inv_cell_size: f32,
+    cell_size: f32,
+    buckets: std::collections::HashMap<(i32, i32), Vec<u32>>,
+}
+
+impl SpatialGrid2D {
+    pub fn new(cell_size: f32) -> Self {
+        let cell_size = if cell_size.is_finite() && cell_size > EPSILON {
+            cell_size
+        } else {
+            1.0
+        };
+        Self {
+            inv_cell_size: 1.0 / cell_size,
+            cell_size,
+            buckets: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn cell_size(&self) -> f32 {
+        self.cell_size
+    }
+
+    /// Clear all entries while retaining allocated bucket vectors for zero-churn reuse.
+    pub fn clear(&mut self) {
+        for bucket in self.buckets.values_mut() {
+            bucket.clear();
+        }
+    }
+
+    fn cell_coords(&self, pos: [f32; 2]) -> (i32, i32) {
+        (
+            (pos[0] * self.inv_cell_size).floor() as i32,
+            (pos[1] * self.inv_cell_size).floor() as i32,
+        )
+    }
+
+    pub fn insert_point(&mut self, id: u32, pos: [f32; 2]) {
+        if !finite2(pos) {
+            return;
+        }
+        let cell = self.cell_coords(pos);
+        self.buckets.entry(cell).or_default().push(id);
+    }
+
+    pub fn insert_circle(&mut self, id: u32, circle: Circle2) {
+        if !finite2(circle.center) {
+            return;
+        }
+        self.insert_aabb(id, circle.bounds());
+    }
+
+    pub fn insert_aabb(&mut self, id: u32, bounds: Aabb2) {
+        if !finite_aabb(bounds) {
+            return;
+        }
+        let (x0, y0) = self.cell_coords(bounds.min);
+        let (x1, y1) = self.cell_coords(bounds.max);
+        for cy in y0..=y1 {
+            for cx in x0..=x1 {
+                self.buckets.entry((cx, cy)).or_default().push(id);
+            }
+        }
+    }
+
+    /// Collect sorted, deduplicated candidate IDs overlapping `bounds`.
+    pub fn query_aabb(&self, bounds: Aabb2, out: &mut Vec<u32>) {
+        out.clear();
+        if !finite_aabb(bounds) {
+            return;
+        }
+        let (x0, y0) = self.cell_coords(bounds.min);
+        let (x1, y1) = self.cell_coords(bounds.max);
+        for cy in y0..=y1 {
+            for cx in x0..=x1 {
+                if let Some(bucket) = self.buckets.get(&(cx, cy)) {
+                    out.extend_from_slice(bucket);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+
+    /// Collect sorted, deduplicated candidate IDs overlapping `circle`'s bounding box.
+    pub fn query_circle(&self, circle: Circle2, out: &mut Vec<u32>) {
+        if !finite2(circle.center) {
+            out.clear();
+            return;
+        }
+        self.query_aabb(circle.bounds(), out);
+    }
+
+    /// Find the closest entity within `max_radius` whose position is supplied by `pos_of`.
+    pub fn find_nearest<F>(
+        &self,
+        origin: [f32; 2],
+        max_radius: f32,
+        pos_of: F,
+    ) -> Option<(u32, [f32; 2], f32)>
+    where
+        F: Fn(u32) -> Option<[f32; 2]>,
+    {
+        if !finite2(origin) || !max_radius.is_finite() || max_radius <= 0.0 {
+            return None;
+        }
+        let bounds = Aabb2::from_center_half_extents(origin, [max_radius, max_radius]);
+        let (x0, y0) = self.cell_coords(bounds.min);
+        let (x1, y1) = self.cell_coords(bounds.max);
+        let max_sq = max_radius * max_radius;
+        let mut best: Option<(u32, [f32; 2], f32)> = None;
+        for cy in y0..=y1 {
+            for cx in x0..=x1 {
+                let Some(bucket) = self.buckets.get(&(cx, cy)) else {
+                    continue;
+                };
+                for &id in bucket {
+                    let Some(pos) = pos_of(id) else {
+                        continue;
+                    };
+                    if !finite2(pos) {
+                        continue;
+                    }
+                    let dx = pos[0] - origin[0];
+                    let dy = pos[1] - origin[1];
+                    let dist_sq = dx * dx + dy * dy;
+                    if dist_sq > max_sq {
+                        continue;
+                    }
+                    let is_better = match best {
+                        None => true,
+                        Some((best_id, _, best_sq)) => {
+                            dist_sq < best_sq || (dist_sq == best_sq && id < best_id)
+                        }
+                    };
+                    if is_better {
+                        best = Some((id, pos, dist_sq));
+                    }
+                }
+            }
+        }
+        best.map(|(id, pos, dist_sq)| (id, pos, dist_sq.sqrt()))
+    }
+}
+
+/// Agent descriptor for [`resolve_crowd_separation`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrowdAgent2D {
+    pub id: u32,
+    pub position: [f32; 2],
+    pub radius: f32,
+    pub weight: f32,
+}
+
+/// Apply soft pairwise crowd separation across 2D circular agents using `grid`,
+/// keeping dense swarms from collapsing onto identical coordinates.
+pub fn resolve_crowd_separation(
+    agents: &mut [CrowdAgent2D],
+    grid: &mut SpatialGrid2D,
+    stiffness: f32,
+    arena_bounds: Option<Aabb2>,
+) {
+    if agents.is_empty() || !stiffness.is_finite() || stiffness <= 0.0 {
+        return;
+    }
+    grid.clear();
+    for (index, agent) in agents.iter().enumerate() {
+        grid.insert_circle(index as u32, Circle2::new(agent.position, agent.radius));
+    }
+
+    let mut deltas = vec![[0.0f32; 2]; agents.len()];
+    let mut neighbors = Vec::with_capacity(32);
+    for (i, a) in agents.iter().enumerate() {
+        let ra = a.radius.max(0.0);
+        grid.query_circle(Circle2::new(a.position, ra), &mut neighbors);
+        let wa = a.weight.max(0.01);
+        for &j_u32 in &neighbors {
+            let j = j_u32 as usize;
+            if j <= i {
+                continue;
+            }
+            let b = &agents[j];
+            let rb = b.radius.max(0.0);
+            let sum_r = ra + rb;
+            let dx = b.position[0] - a.position[0];
+            let dy = b.position[1] - a.position[1];
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq >= sum_r * sum_r {
+                continue;
+            }
+            let dist = dist_sq.sqrt();
+            let (nx, ny) = if dist > EPSILON {
+                (dx / dist, dy / dist)
+            } else {
+                // Deterministic radial tie-breaker when centers coincide.
+                let angle = (i as f32) * 2.399_963_2;
+                (angle.cos(), angle.sin())
+            };
+            let depth = (sum_r - dist) * stiffness;
+            let wb = b.weight.max(0.01);
+            let total_w = wa + wb;
+            let push_a = depth * (wb / total_w);
+            let push_b = depth * (wa / total_w);
+            deltas[i][0] -= nx * push_a;
+            deltas[i][1] -= ny * push_a;
+            deltas[j][0] += nx * push_b;
+            deltas[j][1] += ny * push_b;
+        }
+    }
+
+    for (agent, delta) in agents.iter_mut().zip(deltas) {
+        let max_step = agent.radius.max(0.25);
+        let mag_sq = delta[0] * delta[0] + delta[1] * delta[1];
+        let (dx, dy) = if mag_sq > max_step * max_step {
+            let scale = max_step / mag_sq.sqrt();
+            (delta[0] * scale, delta[1] * scale)
+        } else {
+            (delta[0], delta[1])
+        };
+        agent.position[0] += dx;
+        agent.position[1] += dy;
+        if let Some(bounds) = arena_bounds {
+            let r = agent.radius.max(0.0);
+            let min_x = (bounds.min[0] + r).min(bounds.max[0]);
+            let max_x = (bounds.max[0] - r).max(bounds.min[0]);
+            let min_y = (bounds.min[1] + r).min(bounds.max[1]);
+            let max_y = (bounds.max[1] - r).max(bounds.min[1]);
+            agent.position[0] = agent.position[0].clamp(min_x, max_x);
+            agent.position[1] = agent.position[1].clamp(min_y, max_y);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +861,77 @@ mod tests {
         assert_eq!(hit.distance, 0.0);
         assert_eq!(hit.point, [5.0, 5.0]);
         assert_eq!(hit.normal, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn circle_overlaps_sector_and_capsule_shapes() {
+        let target = Circle2::new([2.0, 1.0], 0.5);
+        assert!(target.overlaps_sector([0.0, 0.0], [1.0, 0.0], 3.0, 0.6));
+        assert!(!target.overlaps_sector([0.0, 0.0], [-1.0, 0.0], 3.0, 0.6));
+        assert!(target.overlaps_segment_radius([0.0, 0.0], [3.0, 1.0], 0.3));
+        assert!(!target.overlaps_segment_radius([0.0, 0.0], [0.0, 5.0], 0.3));
+        assert!(target.overlaps_aabb(Aabb2::new(1.6, 0.6, 4.0, 4.0)));
+    }
+
+    #[test]
+    fn spatial_grid_finds_nearest_and_queries_bounds() {
+        let mut grid = SpatialGrid2D::new(2.0);
+        let positions = vec![
+            (10u32, [5.0, 0.0]),
+            (20u32, [1.5, 0.5]),
+            (30u32, [-10.0, 0.0]),
+        ];
+        for &(id, pos) in &positions {
+            grid.insert_circle(id, Circle2::new(pos, 0.4));
+        }
+
+        let mut hits = Vec::new();
+        grid.query_circle(Circle2::new([1.0, 0.0], 1.5), &mut hits);
+        assert_eq!(hits, vec![20]);
+
+        let nearest = grid
+            .find_nearest([0.0, 0.0], 6.0, |id| {
+                positions
+                    .iter()
+                    .find(|(pid, _)| *pid == id)
+                    .map(|(_, pos)| *pos)
+            })
+            .expect("nearest enemy within range");
+        assert_eq!(nearest.0, 20);
+        assert!((nearest.2 - (1.5f32.hypot(0.5))).abs() < 1e-5);
+    }
+
+    #[test]
+    fn crowd_separation_spreads_overlapping_swarms_cleanly() {
+        let mut agents: Vec<CrowdAgent2D> = (0..200)
+            .map(|i| CrowdAgent2D {
+                id: i,
+                position: [0.0, 0.0],
+                radius: 0.4,
+                weight: 1.0,
+            })
+            .collect();
+        let mut grid = SpatialGrid2D::new(1.0);
+        let bounds = Aabb2::new(-20.0, -20.0, 20.0, 20.0);
+        for _ in 0..24 {
+            resolve_crowd_separation(&mut agents, &mut grid, 0.5, Some(bounds));
+        }
+        assert!(agents
+            .iter()
+            .all(|a| a.position[0].is_finite() && a.position[1].is_finite()));
+        let unique_positions: std::collections::HashSet<(i32, i32)> = agents
+            .iter()
+            .map(|a| {
+                (
+                    (a.position[0] * 100.0).round() as i32,
+                    (a.position[1] * 100.0).round() as i32,
+                )
+            })
+            .collect();
+        assert!(
+            unique_positions.len() > 150,
+            "agents should separate instead of staying stacked: {}",
+            unique_positions.len()
+        );
     }
 }

@@ -12,7 +12,6 @@ use prism_asset::formats_virtual_geo::{
 use prism_asset::runtime::{
     MaterialAsset, MeshAsset, SkinnedMeshAsset, TextureAsset, VirtualGeoAsset,
 };
-use prism_ecs::Entity;
 use prism_render::asset_bridge::MaterialResolveData;
 use prism_render::managers::{MeshUploadInput, SkinAttributes, TextureFormat, TextureUploadInput};
 use prism_render::virtual_geo::{decode_rcld_runtime, VgMeshDesc, VgPageDesc};
@@ -284,13 +283,16 @@ impl GpuAssetResolver {
         })
     }
 
-    /// Load texture input by path (standalone texture or .ratlas#sub_sprite) -> `TextureUploadInput`.
-    pub(super) fn load_texture_by_path(
+    /// Resolve an authoring texture path (`"sprites/foo.png"` or `"atlases/bar.ratlas#baz"`)
+    /// into its backing texture path and optional atlas sub-sprite metadata.
+    pub(super) fn resolve_texture_target(
         &mut self,
-        entity: Entity,
         path: &str,
-    ) -> Option<TextureUploadInput> {
+    ) -> Option<(String, Option<AtlasSpriteMeta>)> {
         if let Some((atlas_path, sprite_name)) = path.split_once('#') {
+            if let Some(cached) = self.atlas_cache.get(path) {
+                return Some((cached.texture_path.clone(), Some(cached.meta)));
+            }
             let atlas_id = self.resource_manager.id_by_path(atlas_path).or_else(|| {
                 report_missing_reference(atlas_path, "atlas");
                 None
@@ -301,31 +303,79 @@ impl GpuAssetResolver {
                 .map_err(|e| log::warn!("load atlas {atlas_path} failed: {e}"))
                 .ok()?;
             let info = prism_asset::formats::decode_ratl(&raw)?;
-            let entry = info.find_sprite(sprite_name)?;
-            self.pending_atlas_sprites.insert(
-                entity,
-                AtlasSpriteMeta {
+            let mut found = None;
+            for entry in &info.sprites {
+                let meta = AtlasSpriteMeta {
                     uv_rect: entry.uv_rect,
                     trimmed_offset: entry.trimmed_offset,
                     original_size: entry.original_size,
                     size: [entry.pixel_rect[2], entry.pixel_rect[3]],
-                },
-            );
-            let tex_id = self
-                .resource_manager
-                .id_by_path(&info.texture_path)
-                .or_else(|| {
-                    report_missing_reference(&info.texture_path, "texture");
-                    None
-                })?;
-            self.load_texture_data(Some(tex_id), true)
-        } else {
-            let id = self.resource_manager.id_by_path(path).or_else(|| {
-                report_missing_reference(path, "texture");
-                None
+                };
+                self.atlas_cache.insert(
+                    format!("{atlas_path}#{}", entry.name),
+                    super::CachedAtlasEntry {
+                        texture_path: info.texture_path.clone(),
+                        meta,
+                    },
+                );
+                if entry.name == sprite_name {
+                    found = Some(meta);
+                }
+            }
+            let meta = found.or_else(|| {
+                let entry = info.find_sprite(sprite_name)?;
+                let meta = AtlasSpriteMeta {
+                    uv_rect: entry.uv_rect,
+                    trimmed_offset: entry.trimmed_offset,
+                    original_size: entry.original_size,
+                    size: [entry.pixel_rect[2], entry.pixel_rect[3]],
+                };
+                self.atlas_cache.insert(
+                    path.to_string(),
+                    super::CachedAtlasEntry {
+                        texture_path: info.texture_path.clone(),
+                        meta,
+                    },
+                );
+                Some(meta)
             })?;
-            self.load_texture_data(Some(id), true)
+            return Some((info.texture_path, Some(meta)));
         }
+        Some((path.to_string(), None))
+    }
+
+    /// Load texture bytes by resolved backing texture path (not an atlas `#` reference).
+    pub(super) fn load_texture_by_resolved_path(
+        &mut self,
+        texture_path: &str,
+    ) -> Option<TextureUploadInput> {
+        if texture_path == prism_scene::BUILTIN_WHITE_SPRITE {
+            return Some(TextureUploadInput {
+                width: 1,
+                height: 1,
+                format: TextureFormat::Rgba8,
+                mip_levels: 1,
+                pixels: vec![255, 255, 255, 255],
+            });
+        }
+        let id = self.resource_manager.id_by_path(texture_path).or_else(|| {
+            report_missing_reference(texture_path, "texture");
+            None
+        })?;
+        self.load_texture_data(Some(id), true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn load_texture_by_path(
+        &mut self,
+        entity: prism_ecs::Entity,
+        path: &str,
+    ) -> Option<TextureUploadInput> {
+        let (texture_path, meta) = self.resolve_texture_target(path)?;
+        if let Some(meta) = meta {
+            self.pending_atlas_sprites.insert(entity, meta);
+        }
+        self.load_texture_by_resolved_path(&texture_path)
     }
 
     /// CPU stage: load single texture dependency → `TextureUploadInput` pixels (or magenta fallback).

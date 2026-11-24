@@ -45,8 +45,8 @@ pub use panel_base::PanelBase;
 pub use particles::{Particle2D, ParticleSystem2D, SpawnKind};
 pub use render::{
     convert_ui_draw_list_to_overlay, convert_ui_draw_list_to_overlay_into, merge_external_quads,
-    ui_render_system, ExternalUiQuads, UiDrawItem, UiDrawList, UiQuad, UiTextCmd, EXTERNAL_LAYER,
-    EXTERNAL_UI_ORDER,
+    ui_render_system, ExternalUiLayeredQuads, ExternalUiQuads, ExternalUiTexts, UiDrawItem,
+    UiDrawList, UiQuad, UiTextCmd, EXTERNAL_LAYER, EXTERNAL_UI_ORDER,
 };
 
 /// One RGBA8 UI image queued for upload into the renderer's bindless table.

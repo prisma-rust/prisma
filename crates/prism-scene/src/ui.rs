@@ -391,6 +391,18 @@ pub struct Text {
     /// Wrap breaks at spaces, by char when a single word exceeds width; `\n` always breaks.
     #[serde(default)]
     pub wrap: bool,
+    /// Optional SDF outline width in pixels (`0.0` = no outline).
+    #[serde(default)]
+    pub outline_width: f32,
+    /// SDF outline RGBA color (sRGB).
+    #[serde(default)]
+    pub outline_color: [f32; 4],
+    /// Optional drop-shadow offset in pixels (`[0.0, 0.0]` = no shadow).
+    #[serde(default)]
+    pub shadow_offset: [f32; 2],
+    /// Drop-shadow RGBA color (sRGB, alpha `0.0` = no shadow).
+    #[serde(default)]
+    pub shadow_color: [f32; 4],
 }
 
 impl Default for Text {
@@ -402,11 +414,15 @@ impl Default for Text {
             alignment: TextAlign::Center,
             font: String::new(),
             wrap: false,
+            outline_width: 0.0,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_offset: [0.0, 0.0],
+            shadow_color: [0.0, 0.0, 0.0, 0.0],
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextAlign {
     #[default]
     Center,

@@ -95,6 +95,25 @@ struct AtlasSpriteMeta {
     size: [u32; 2],
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CachedTextureEntry {
+    texture_slot: u32,
+    size: [u32; 2],
+}
+
+#[derive(Debug, Clone)]
+struct CachedAtlasEntry {
+    texture_path: String,
+    meta: AtlasSpriteMeta,
+}
+
+#[derive(Debug, Clone)]
+struct TextureWaiter {
+    entity: Entity,
+    slot: AssetSlot,
+    atlas_meta: Option<AtlasSpriteMeta>,
+}
+
 /// On-demand asset loader + GPU uploader + cache.
 ///
 /// Call [`prepare_requests`] every frame to collect pending entities and produce upload requests (CPU segment);
@@ -155,6 +174,18 @@ pub struct GpuAssetResolver {
     pending_material_map: HashMap<Entity, Vec<Option<usize>>>,
     /// Staged atlas sub-sprite metadata waiting for texture upload completion (#1158).
     pending_atlas_sprites: HashMap<Entity, AtlasSpriteMeta>,
+    /// Shared GPU texture slot cache keyed by backing texture path.
+    texture_cache: HashMap<String, CachedTextureEntry>,
+    /// Decoded `.ratlas#sprite` metadata cache.
+    atlas_cache: HashMap<String, CachedAtlasEntry>,
+    /// Reference counts per bindless texture slot across `resolved` entries.
+    slot_refcounts: HashMap<u32, usize>,
+    /// Backing texture path for each entity that initiated an async texture upload.
+    pending_texture_path: HashMap<Entity, String>,
+    /// Backing texture paths currently in flight between `prepare_requests` and `apply_results`.
+    inflight_texture_paths: HashSet<String>,
+    /// Additional entities waiting on an already-in-flight backing texture upload.
+    texture_waiters: HashMap<String, Vec<TextureWaiter>>,
     /// `optional_*.pak` already mounted on demand (#509).
     ///
     /// Heavy re-mounting same package only makes `ResourceManager` warn each asset ID as heavy duplicate
@@ -206,6 +237,12 @@ impl GpuAssetResolver {
             pending_submeshes: HashMap::new(),
             pending_material_map: HashMap::new(),
             pending_atlas_sprites: HashMap::new(),
+            texture_cache: HashMap::new(),
+            atlas_cache: HashMap::new(),
+            slot_refcounts: HashMap::new(),
+            pending_texture_path: HashMap::new(),
+            inflight_texture_paths: HashSet::new(),
+            texture_waiters: HashMap::new(),
             mounted_optional: HashSet::new(),
         }
     }
@@ -267,10 +304,51 @@ impl GpuAssetResolver {
         if value.is_empty() {
             return;
         }
+        let white_slot = prism_render::bindless::TextureHandle::WHITE.0;
+        if let Some(new_tex) = value.texture_slot {
+            if new_tex != white_slot {
+                *self.slot_refcounts.entry(new_tex).or_insert(0) += 1;
+            }
+        }
         if let Some(previous) = self.resolved.insert((entity, slot), value.clone()) {
             if previous != value {
-                self.releases.push(previous);
+                self.release_entry(previous);
+            } else if let Some(tex_slot) = value.texture_slot {
+                if tex_slot != white_slot {
+                    if let Some(count) = self.slot_refcounts.get_mut(&tex_slot) {
+                        *count = count.saturating_sub(1);
+                    }
+                }
             }
+        }
+    }
+
+    /// Decrement texture slot refcounts and queue GPU release only when no active owner remains.
+    fn release_entry(&mut self, mut release: AssetRelease) {
+        let white_slot = prism_render::bindless::TextureHandle::WHITE.0;
+        if let Some(tex_slot) = release.texture_slot {
+            let should_release = if tex_slot == white_slot {
+                false
+            } else if let Some(count) = self.slot_refcounts.get_mut(&tex_slot) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    self.slot_refcounts.remove(&tex_slot);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
+            if should_release {
+                self.texture_cache
+                    .retain(|_, cached| cached.texture_slot != tex_slot);
+            } else {
+                release.texture_slot = None;
+            }
+        }
+        if !release.is_empty() {
+            self.releases.push(release);
         }
     }
 
@@ -343,7 +421,7 @@ impl GpuAssetResolver {
             .collect();
         for key in stale {
             if let Some(release) = self.resolved.remove(&key) {
-                self.releases.push(release);
+                self.release_entry(release);
             }
         }
         // Entity destroyed after, registration of "graph belongs to which slot bit" not yet returned is useless.
@@ -668,6 +746,234 @@ impl GpuAssetResolver {
     /// registered fresh GPU resources every frame). A slot that fails to load is
     /// recorded in the failure cache ([`GpuAssetResolver::failed`]), so one bad
     /// path is tried exactly once until someone rewrites it.
+    /// Immediately resolve built-in white sprites and already-cached textures on the main thread
+    /// so newly spawned entities render on the same frame without duplicate GPU uploads.
+    pub fn resolve_cached_sprites(&mut self, world: &mut World) -> usize {
+        enum CacheAction {
+            White {
+                entity: Entity,
+                slot: AssetSlot,
+                path: String,
+            },
+            Cached {
+                entity: Entity,
+                slot: AssetSlot,
+                path: String,
+                tex_slot: u32,
+                size: [u32; 2],
+                atlas_meta: Option<AtlasSpriteMeta>,
+            },
+        }
+
+        let mut pending: Vec<(Entity, AssetSlot, String)> = Vec::new();
+        for (entity, sprite) in world.query::<SpriteRenderer>() {
+            if !sprite.has_sprite() {
+                continue;
+            }
+            let unresolved = world
+                .get::<SpriteRef>(entity)
+                .map(|r| r.generation == 0)
+                .unwrap_or(true);
+            let path_changed = self
+                .sprite_paths
+                .get(&entity)
+                .is_some_and(|last| last != &sprite.sprite_path);
+            if unresolved || path_changed {
+                pending.push((entity, AssetSlot::Sprite, sprite.sprite_path.clone()));
+            }
+        }
+        for (entity, tilemap) in world.query::<Tilemap>() {
+            if tilemap.tileset_path.is_empty() {
+                continue;
+            }
+            let unresolved = world
+                .get::<TilemapRef>(entity)
+                .map(|r| r.generation == 0)
+                .unwrap_or(true);
+            let path_changed = self
+                .tileset_paths
+                .get(&entity)
+                .is_some_and(|last| last != &tilemap.tileset_path);
+            if unresolved || path_changed {
+                pending.push((entity, AssetSlot::Tileset, tilemap.tileset_path.clone()));
+            }
+        }
+        for (entity, style) in world.query::<crate::ui::components::Style>() {
+            if style.image.is_empty() {
+                continue;
+            }
+            let unresolved = world
+                .get::<UiImageRef>(entity)
+                .map(|r| r.generation == 0)
+                .unwrap_or(true);
+            let path_changed = self
+                .ui_image_paths
+                .get(&entity)
+                .is_some_and(|last| last != &style.image);
+            if unresolved || path_changed {
+                pending.push((entity, AssetSlot::UiImage, style.image.clone()));
+            }
+        }
+
+        let mut actions: Vec<CacheAction> = Vec::new();
+        for (entity, slot, path) in pending {
+            if path == prism_scene::BUILTIN_WHITE_SPRITE {
+                actions.push(CacheAction::White { entity, slot, path });
+                continue;
+            }
+            let Some((backing_path, atlas_meta)) = self.resolve_texture_target(&path) else {
+                continue;
+            };
+            if let Some(&cached) = self.texture_cache.get(&backing_path) {
+                actions.push(CacheAction::Cached {
+                    entity,
+                    slot,
+                    path,
+                    tex_slot: cached.texture_slot,
+                    size: cached.size,
+                    atlas_meta,
+                });
+            }
+        }
+
+        let count = actions.len();
+        let white_slot = prism_render::bindless::TextureHandle::WHITE.0;
+        for action in actions {
+            match action {
+                CacheAction::White { entity, slot, path } => {
+                    if let Some(prev) = self.resolved.remove(&(entity, slot)) {
+                        self.release_entry(prev);
+                    }
+                    self.write_texture_refs(world, entity, slot, white_slot, [1, 1], None);
+                    self.record_slot_path(entity, slot, path);
+                    self.enqueued.remove(&entity);
+                    self.failed.remove(&(entity, slot));
+                }
+                CacheAction::Cached {
+                    entity,
+                    slot,
+                    path,
+                    tex_slot,
+                    size,
+                    atlas_meta,
+                } => {
+                    self.record_resolved(
+                        entity,
+                        slot,
+                        AssetRelease {
+                            texture_slot: Some(tex_slot),
+                            ..AssetRelease::default()
+                        },
+                    );
+                    self.write_texture_refs(world, entity, slot, tex_slot, size, atlas_meta);
+                    self.record_slot_path(entity, slot, path);
+                    self.enqueued.remove(&entity);
+                    self.failed.remove(&(entity, slot));
+                }
+            }
+        }
+        count
+    }
+
+    fn record_slot_path(&mut self, entity: Entity, slot: AssetSlot, path: String) {
+        match slot {
+            AssetSlot::Sprite => {
+                self.sprite_paths.insert(entity, path);
+            }
+            AssetSlot::Tileset => {
+                self.tileset_paths.insert(entity, path);
+            }
+            AssetSlot::UiImage => {
+                self.ui_image_paths.insert(entity, path);
+            }
+            AssetSlot::Mesh | AssetSlot::Material | AssetSlot::Shader => {}
+        }
+    }
+
+    fn write_texture_refs(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        slot: AssetSlot,
+        tex_slot: u32,
+        size: [u32; 2],
+        atlas_meta: Option<AtlasSpriteMeta>,
+    ) {
+        if slot == AssetSlot::Sprite || world.get::<SpriteRenderer>(entity).is_some() {
+            let mut sprite = world
+                .get::<SpriteRef>(entity)
+                .cloned()
+                .unwrap_or_else(|| SpriteRef {
+                    asset_id: crate::scene::components::SceneAssetId::generate(),
+                    texture_slot: 0,
+                    size: [0, 0],
+                    generation: 0,
+                    uv_rect: [0.0, 0.0, 1.0, 1.0],
+                    trimmed_offset: [0, 0],
+                    original_size: [0, 0],
+                });
+            sprite.texture_slot = tex_slot;
+            sprite.generation = 1;
+            if let Some(meta) = atlas_meta {
+                sprite.uv_rect = meta.uv_rect;
+                sprite.trimmed_offset = meta.trimmed_offset;
+                sprite.original_size = meta.original_size;
+                sprite.size = meta.size;
+            } else {
+                sprite.size = size;
+                sprite.uv_rect = [0.0, 0.0, 1.0, 1.0];
+                sprite.trimmed_offset = [0, 0];
+                sprite.original_size = size;
+            }
+            world.insert(entity, sprite);
+        }
+
+        if world.get::<Tilemap>(entity).is_some() {
+            let tilemap = world
+                .get::<TilemapRef>(entity)
+                .cloned()
+                .unwrap_or_else(|| TilemapRef {
+                    asset_id: crate::scene::components::SceneAssetId::generate(),
+                    texture_slot: 0,
+                    size: [0, 0],
+                    generation: 0,
+                });
+            world.insert(
+                entity,
+                TilemapRef {
+                    texture_slot: tex_slot,
+                    size,
+                    generation: 1,
+                    ..tilemap
+                },
+            );
+        }
+
+        if world
+            .get::<crate::ui::components::Style>(entity)
+            .is_some_and(|style| !style.image.is_empty())
+        {
+            let image = world
+                .get::<UiImageRef>(entity)
+                .cloned()
+                .unwrap_or_else(|| UiImageRef {
+                    asset_id: crate::scene::components::SceneAssetId::generate(),
+                    texture_slot: 0,
+                    size: [0, 0],
+                    generation: 0,
+                });
+            world.insert(
+                entity,
+                UiImageRef {
+                    texture_slot: tex_slot,
+                    size,
+                    generation: 1,
+                    ..image
+                },
+            );
+        }
+    }
+
     pub fn prepare_requests(&mut self, world: &World) -> Vec<(Entity, AssetResolveRequest)> {
         let mut span = crate::util::timing::span("asset::prepare_requests");
         // #976: build stamp validated only at **first** resource access. Package mounting at startup occurs in
@@ -1020,33 +1326,57 @@ impl GpuAssetResolver {
                 self.pending_material_map.insert(item.entity, material_map);
             }
 
+            let mut queued_texture_waiter = false;
             let texture = match item.sprite_path.as_deref() {
                 Some(path) => {
-                    let loaded = self.load_texture_by_path(item.entity, path);
-                    if loaded.is_none() {
-                        let slot = if item.tileset {
-                            AssetSlot::Tileset
-                        } else if item.ui_image {
-                            AssetSlot::UiImage
+                    let slot = if item.tileset {
+                        AssetSlot::Tileset
+                    } else if item.ui_image {
+                        AssetSlot::UiImage
+                    } else {
+                        AssetSlot::Sprite
+                    };
+                    if path == prism_scene::BUILTIN_WHITE_SPRITE {
+                        let loaded = self.load_texture_by_resolved_path(path);
+                        if loaded.is_some() {
+                            self.pending_texture_slot.insert(item.entity, slot);
+                        }
+                        loaded
+                    } else if let Some((backing_path, atlas_meta)) =
+                        self.resolve_texture_target(path)
+                    {
+                        if self.inflight_texture_paths.contains(&backing_path) {
+                            queued_texture_waiter = true;
+                            self.texture_waiters.entry(backing_path).or_default().push(
+                                TextureWaiter {
+                                    entity: item.entity,
+                                    slot,
+                                    atlas_meta,
+                                },
+                            );
+                            None
                         } else {
-                            AssetSlot::Sprite
-                        };
+                            let loaded = self.load_texture_by_resolved_path(&backing_path);
+                            if loaded.is_some() {
+                                if let Some(meta) = atlas_meta {
+                                    self.pending_atlas_sprites.insert(item.entity, meta);
+                                }
+                                self.pending_texture_slot.insert(item.entity, slot);
+                                self.pending_texture_path
+                                    .insert(item.entity, backing_path.clone());
+                                self.inflight_texture_paths.insert(backing_path);
+                            } else {
+                                self.record_failure(item.entity, slot, path);
+                            }
+                            loaded
+                        }
+                    } else {
                         self.record_failure(item.entity, slot, path);
+                        None
                     }
-                    loaded
                 }
                 None => None,
             };
-            if texture.is_some() {
-                let slot = if item.tileset {
-                    AssetSlot::Tileset
-                } else if item.ui_image {
-                    AssetSlot::UiImage
-                } else {
-                    AssetSlot::Sprite
-                };
-                self.pending_texture_slot.insert(item.entity, slot);
-            }
             // Bounding box calculated when upload request sent: GPU upload after handle returns, while CPU segment
             // has already resolved vertex positions (#491).
             if let Some(bounds) = mesh.as_ref().and_then(MeshUploadInput::bounds) {
@@ -1090,6 +1420,14 @@ impl GpuAssetResolver {
                 }
                 None => None,
             };
+            if queued_texture_waiter
+                && mesh.is_none()
+                && materials.is_empty()
+                && texture.is_none()
+                && shader.is_none()
+            {
+                continue;
+            }
             reqs.push((
                 item.entity,
                 AssetResolveRequest {
@@ -1229,6 +1567,10 @@ impl GpuAssetResolver {
                     );
                 }
             }
+            let pending_path = self.pending_texture_path.remove(entity);
+            if let Some(ref backing_path) = pending_path {
+                self.inflight_texture_paths.remove(backing_path);
+            }
             if let (Some(slot), Some(size)) = (result.texture_slot, result.texture_size) {
                 let texture_slot = self
                     .pending_texture_slot
@@ -1242,78 +1584,50 @@ impl GpuAssetResolver {
                         ..AssetRelease::default()
                     },
                 );
-                let mut sprite =
-                    world
-                        .get::<SpriteRef>(*entity)
-                        .cloned()
-                        .unwrap_or_else(|| SpriteRef {
-                            asset_id: crate::scene::components::SceneAssetId::generate(),
-                            texture_slot: 0,
-                            size: [0, 0],
-                            generation: 0,
-                            uv_rect: [0.0, 0.0, 1.0, 1.0],
-                            trimmed_offset: [0, 0],
-                            original_size: [0, 0],
-                        });
-                sprite.texture_slot = slot;
-                sprite.generation = 1;
-                if let Some(atlas_meta) = self.pending_atlas_sprites.remove(entity) {
-                    sprite.uv_rect = atlas_meta.uv_rect;
-                    sprite.trimmed_offset = atlas_meta.trimmed_offset;
-                    sprite.original_size = atlas_meta.original_size;
-                    sprite.size = atlas_meta.size;
-                } else {
-                    sprite.size = size;
-                    sprite.uv_rect = [0.0, 0.0, 1.0, 1.0];
-                    sprite.trimmed_offset = [0, 0];
-                    sprite.original_size = size;
-                }
-                world.insert(*entity, sprite);
+                let atlas_meta = self.pending_atlas_sprites.remove(entity);
+                self.write_texture_refs(world, *entity, texture_slot, slot, size, atlas_meta);
 
-                // Tile map graph tileset takes same upload result (#529).
-                if world.get::<Tilemap>(*entity).is_some() {
-                    let tilemap = world
-                        .get::<TilemapRef>(*entity)
-                        .cloned()
-                        .unwrap_or_else(|| TilemapRef {
-                            asset_id: crate::scene::components::SceneAssetId::generate(),
-                            texture_slot: 0,
-                            size: [0, 0],
-                            generation: 0,
-                        });
-                    world.insert(
-                        *entity,
-                        TilemapRef {
-                            texture_slot: slot,
-                            size,
-                            generation: 1,
-                            ..tilemap
-                        },
-                    );
+                if let Some(backing_path) = pending_path {
+                    if slot != prism_render::bindless::TextureHandle::WHITE.0 {
+                        self.texture_cache.insert(
+                            backing_path.clone(),
+                            CachedTextureEntry {
+                                texture_slot: slot,
+                                size,
+                            },
+                        );
+                    }
+                    if let Some(waiters) = self.texture_waiters.remove(&backing_path) {
+                        for waiter in waiters {
+                            if world.is_alive(waiter.entity) {
+                                self.record_resolved(
+                                    waiter.entity,
+                                    waiter.slot,
+                                    AssetRelease {
+                                        texture_slot: Some(slot),
+                                        ..AssetRelease::default()
+                                    },
+                                );
+                                self.write_texture_refs(
+                                    world,
+                                    waiter.entity,
+                                    waiter.slot,
+                                    slot,
+                                    size,
+                                    waiter.atlas_meta,
+                                );
+                            }
+                            self.enqueued.remove(&waiter.entity);
+                        }
+                    }
                 }
-                // UI background graph takes same upload result (#591).
-                if world
-                    .get::<crate::ui::components::Style>(*entity)
-                    .is_some_and(|style| !style.image.is_empty())
-                {
-                    let image = world
-                        .get::<UiImageRef>(*entity)
-                        .cloned()
-                        .unwrap_or_else(|| UiImageRef {
-                            asset_id: crate::scene::components::SceneAssetId::generate(),
-                            texture_slot: 0,
-                            size: [0, 0],
-                            generation: 0,
-                        });
-                    world.insert(
-                        *entity,
-                        UiImageRef {
-                            texture_slot: slot,
-                            size,
-                            generation: 1,
-                            ..image
-                        },
-                    );
+            } else if let Some(backing_path) = pending_path {
+                self.pending_texture_slot.remove(entity);
+                self.pending_atlas_sprites.remove(entity);
+                if let Some(waiters) = self.texture_waiters.remove(&backing_path) {
+                    for waiter in waiters {
+                        self.enqueued.remove(&waiter.entity);
+                    }
                 }
             }
             self.enqueued.remove(entity);
@@ -1334,6 +1648,11 @@ impl GpuAssetResolver {
     /// Returns **heavy re-queued** entity count. Old GPU handles temporarily remain in renderer inside (no interface),
     /// frequent hot reload will cause texture/material slots to grow --- already known, see #495 follow-up entry.
     pub fn invalidate_assets(&mut self, world: &mut World) -> usize {
+        self.texture_cache.clear();
+        self.atlas_cache.clear();
+        self.inflight_texture_paths.clear();
+        self.texture_waiters.clear();
+        self.pending_texture_path.clear();
         let mut entities: Vec<Entity> = Vec::new();
         for (entity, _) in world.query::<MeshRenderer>() {
             entities.push(entity);
@@ -1366,6 +1685,15 @@ impl GpuAssetResolver {
     /// `path` consistent with authoring document inside writing (`mesh_path` / `material_path` /
     /// `sprite_path`). Returns number of entities referencing that path; returns 0 if no entity references it.
     pub fn invalidate_path(&mut self, world: &mut World, path: &str) -> usize {
+        self.texture_cache.remove(path);
+        self.atlas_cache.retain(|key, entry| {
+            entry.texture_path != path
+                && key
+                    .split_once('#')
+                    .is_none_or(|(atlas_path, _)| atlas_path != path)
+        });
+        self.inflight_texture_paths.remove(path);
+        self.texture_waiters.remove(path);
         let mut entities: Vec<Entity> = Vec::new();
         for (entity, renderer) in world.query::<MeshRenderer>() {
             if renderer.mesh_path == path
@@ -1440,6 +1768,12 @@ impl GpuAssetResolver {
         self.pending_bounds.remove(&entity);
         self.pending_submeshes.remove(&entity);
         self.pending_material_map.remove(&entity);
+        if let Some(path) = self.pending_texture_path.remove(&entity) {
+            self.inflight_texture_paths.remove(&path);
+        }
+        for waiters in self.texture_waiters.values_mut() {
+            waiters.retain(|waiter| waiter.entity != entity);
+        }
         self.tileset_paths.remove(&entity);
         self.ui_image_paths.remove(&entity);
         self.failed.retain(|(owner, _), _| *owner != entity);

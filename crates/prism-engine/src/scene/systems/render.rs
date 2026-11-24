@@ -489,62 +489,71 @@ pub fn sprite_light_entries(world: &World) -> Vec<prism_render::SpriteLight> {
 }
 
 fn sprite_entries(world: &World) -> Vec<(SortKey, prism_render::SpriteDrawItem)> {
-    world
-        .query3::<LocalToWorld, SpriteRenderer, SpriteRef>()
-        .filter(|(entity, _, sprite, sref)| {
-            let active = crate::scene::systems::hierarchy::is_active_in_hierarchy(world, *entity);
-            active && sprite.has_sprite() && sref.generation > 0
-        })
-        .map(|(entity, world_transform, sprite, sref)| {
-            let size = sprite.world_size(sref.size);
-            // Place the entity origin on the sprite pivot (convention:
-            // (0,0) is the bottom-left corner).
-            let offset = glam::vec3(
-                -(sprite.pivot[0] - 0.5) * size[0],
-                -(sprite.pivot[1] - 0.5) * size[1],
-                0.0,
-            );
-            let local = glam::Mat4::from_scale_rotation_translation(
-                glam::vec3(size[0], size[1], 1.0),
-                glam::Quat::IDENTITY,
-                offset,
-            );
-            let model = world_transform.0 * local;
-            let key: SortKey = (
-                sprite.sorting_layer,
-                sprite.order_in_layer,
-                world_transform.0.w_axis.z,
-                entity.id(),
-            );
-            let uv_rect = if sref.uv_rect != [0.0, 0.0, 1.0, 1.0] {
-                let mut uv = sref.uv_rect;
-                if sprite.flip_x {
-                    uv.swap(0, 2);
-                }
-                if sprite.flip_y {
-                    uv.swap(1, 3);
-                }
-                uv
-            } else {
-                sprite_uv_rect(sprite, sref.size)
-            };
-            (
-                key,
-                prism_render::SpriteDrawItem {
-                    model: model.to_cols_array_2d(),
-                    corners: None,
-                    uv_rect,
-                    color: sprite.color,
-                    texture: sref.texture_slot,
-                    src_blend: sprite.src_blend,
-                    dst_blend: sprite.dst_blend,
-                    blend_op: sprite.blend_op,
-                    clip: prism_render::clip_bounds(sprite.clip_enabled, sprite.clip_rect),
-                    receive_lights: sprite.receive_lights,
-                },
-            )
-        })
-        .collect()
+    let mut out = Vec::new();
+    for (entity, world_transform, sprite) in world.query2::<LocalToWorld, SpriteRenderer>() {
+        if !sprite.has_sprite()
+            || !crate::scene::systems::hierarchy::is_active_in_hierarchy(world, entity)
+        {
+            continue;
+        }
+        let (texture_slot, texture_size, ref_uv_rect) = match world.get::<SpriteRef>(entity) {
+            Some(sref) if sref.generation > 0 => (sref.texture_slot, sref.size, sref.uv_rect),
+            _ if sprite.sprite_path == prism_scene::BUILTIN_WHITE_SPRITE => (
+                prism_render::bindless::TextureHandle::WHITE.0,
+                [1, 1],
+                [0.0, 0.0, 1.0, 1.0],
+            ),
+            _ => continue,
+        };
+        let size = sprite.world_size(texture_size);
+        // Place the entity origin on the sprite pivot (convention:
+        // (0,0) is the bottom-left corner).
+        let offset = glam::vec3(
+            -(sprite.pivot[0] - 0.5) * size[0],
+            -(sprite.pivot[1] - 0.5) * size[1],
+            0.0,
+        );
+        let local = glam::Mat4::from_scale_rotation_translation(
+            glam::vec3(size[0], size[1], 1.0),
+            glam::Quat::IDENTITY,
+            offset,
+        );
+        let model = world_transform.0 * local;
+        let key: SortKey = (
+            sprite.sorting_layer,
+            sprite.order_in_layer,
+            world_transform.0.w_axis.z,
+            entity.id(),
+        );
+        let uv_rect = if ref_uv_rect != [0.0, 0.0, 1.0, 1.0] {
+            let mut uv = ref_uv_rect;
+            if sprite.flip_x {
+                uv.swap(0, 2);
+            }
+            if sprite.flip_y {
+                uv.swap(1, 3);
+            }
+            uv
+        } else {
+            sprite_uv_rect(sprite, texture_size)
+        };
+        out.push((
+            key,
+            prism_render::SpriteDrawItem {
+                model: model.to_cols_array_2d(),
+                corners: None,
+                uv_rect,
+                color: sprite.color,
+                texture: texture_slot,
+                src_blend: sprite.src_blend,
+                dst_blend: sprite.dst_blend,
+                blend_op: sprite.blend_op,
+                clip: prism_render::clip_bounds(sprite.clip_enabled, sprite.clip_rect),
+                receive_lights: sprite.receive_lights,
+            },
+        ));
+    }
+    out
 }
 
 fn line_entries(
@@ -767,6 +776,31 @@ pub(crate) fn tessellate_line(
 fn sprite_uv_rect(sprite: &SpriteRenderer, texture_size: [u32; 2]) -> [f32; 4] {
     let tex_w = texture_size[0].max(1) as f32;
     let tex_h = texture_size[1].max(1) as f32;
+    if sprite.region_px[2] > 0 && sprite.region_px[3] > 0 {
+        let frame_w = sprite.region_px[2] as f32;
+        let frame_h = sprite.region_px[3] as f32;
+        let columns = if sprite.sheet_columns > 0 {
+            sprite.sheet_columns.max(1)
+        } else {
+            ((tex_w - sprite.region_px[0] as f32).max(frame_w) / frame_w) as u32
+        }
+        .max(1);
+        let column = sprite.frame_index % columns;
+        let x0 = sprite.region_px[0] as f32 + column as f32 * frame_w;
+        let y0 = sprite.region_px[1] as f32;
+        let mut u0 = (x0 / tex_w).clamp(0.0, 1.0);
+        let mut u1 = ((x0 + frame_w) / tex_w).clamp(0.0, 1.0);
+        let mut v0 = (y0 / tex_h).clamp(0.0, 1.0);
+        let mut v1 = ((y0 + frame_h) / tex_h).clamp(0.0, 1.0);
+        if sprite.flip_x {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        if sprite.flip_y {
+            std::mem::swap(&mut v0, &mut v1);
+        }
+        return [u0, v0, u1, v1];
+    }
+
     let frame = sprite.frame_size_or(texture_size);
     let frame_w = frame[0].max(1) as f32;
     let frame_h = frame[1].max(1) as f32;

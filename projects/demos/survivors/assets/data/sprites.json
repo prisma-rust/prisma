@@ -1,0 +1,463 @@
+{
+  "sprites": {
+    "player_idle": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        0,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 6.0,
+      "looped": true
+    },
+    "player_run": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        16,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 12.0,
+      "looped": true
+    },
+    "enemy_slime": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        32,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 8.0,
+      "looped": true
+    },
+    "enemy_bat": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        64,
+        32,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 12.0,
+      "looped": true
+    },
+    "enemy_skeleton": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        48,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 8.0,
+      "looped": true
+    },
+    "enemy_goblin": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        64,
+        48,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 8.0,
+      "looped": true
+    },
+    "enemy_orc": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        64,
+        24,
+        24
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 4,
+      "fps": 8.0,
+      "looped": true
+    },
+    "enemy_boss": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        96,
+        32,
+        32
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 14.0,
+      "frames": 4,
+      "fps": 6.0,
+      "looped": true
+    },
+    "weapon_pistol": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        128,
+        16,
+        16
+      ],
+      "pivot": [
+        0.35,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "weapon_smg": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        16,
+        128,
+        16,
+        16
+      ],
+      "pivot": [
+        0.35,
+        0.5
+      ],
+      "pixels_per_unit": 17.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "weapon_shotgun": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        32,
+        128,
+        16,
+        16
+      ],
+      "pivot": [
+        0.3,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "weapon_wand": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        48,
+        128,
+        16,
+        16
+      ],
+      "pivot": [
+        0.3,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "weapon_blade": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        64,
+        128,
+        24,
+        16
+      ],
+      "pivot": [
+        0.2,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "weapon_spear": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        96,
+        128,
+        28,
+        16
+      ],
+      "pivot": [
+        0.18,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "proj_bullet": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        144,
+        8,
+        8
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 20.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "proj_pellet": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        16,
+        144,
+        8,
+        8
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 22.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "proj_orb": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        32,
+        144,
+        12,
+        12
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 20.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "proj_enemy_fire": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        48,
+        144,
+        10,
+        10
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "pickup_xp_small": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        64,
+        144,
+        10,
+        10
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "pickup_xp_large": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        80,
+        144,
+        12,
+        12
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "pickup_coin": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        96,
+        144,
+        10,
+        10
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 2,
+      "fps": 6.0,
+      "looped": true
+    },
+    "pickup_heal": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        128,
+        144,
+        12,
+        12
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 18.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "fx_slash": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        0,
+        160,
+        24,
+        32
+      ],
+      "pivot": [
+        0.15,
+        0.5
+      ],
+      "pixels_per_unit": 12.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": false
+    },
+    "fx_thrust": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        32,
+        160,
+        32,
+        16
+      ],
+      "pivot": [
+        0.1,
+        0.5
+      ],
+      "pixels_per_unit": 10.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": false
+    },
+    "fx_spawn_ring": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        64,
+        160,
+        16,
+        16
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 14.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "arena_tile": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        80,
+        160,
+        32,
+        32
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    },
+    "arena_crate": {
+      "texture": "sprites/atlas.png",
+      "rect_px": [
+        112,
+        160,
+        24,
+        24
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "pixels_per_unit": 16.0,
+      "frames": 1,
+      "fps": 0.0,
+      "looped": true
+    }
+  }
+}

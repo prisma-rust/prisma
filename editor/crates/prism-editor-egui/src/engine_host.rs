@@ -978,6 +978,9 @@ impl EngineHost {
         self.asset_resolver
             .load_animation_assets(self.engine.world_mut());
 
+        self.asset_resolver
+            .resolve_cached_sprites(self.engine.world_mut());
+
         let requests = self
             .asset_resolver
             .prepare_requests(self.engine.world_mut());

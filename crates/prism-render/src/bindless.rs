@@ -37,6 +37,10 @@ use ash::vk::Handle as _;
 pub struct TextureHandle(pub u32);
 
 impl TextureHandle {
+    /// Checkerboard missing-texture fallback slot (always slot 0).
+    pub const FALLBACK: TextureHandle = TextureHandle(0);
+    /// Built-in 1x1 pure-white default texture slot (always slot 1).
+    pub const WHITE: TextureHandle = TextureHandle(1);
     /// Invalid slot — shaders return fallback color when they see this.
     pub const INVALID: TextureHandle = TextureHandle(u32::MAX);
 }

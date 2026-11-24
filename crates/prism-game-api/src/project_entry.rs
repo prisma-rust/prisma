@@ -36,6 +36,13 @@
 #[cfg(feature = "plugin")]
 #[macro_export]
 macro_rules! export_project {
+    (@fixed_ptr $state:ty, $fixed_update:path, $fn_ident:ident) => {{
+        let _: fn(&mut $state, &mut $crate::GameWorld<'_>, f32) = $fixed_update;
+        Some($fn_ident)
+    }};
+    (@fixed_ptr $state:ty, $fn_ident:ident) => {
+        None
+    };
     (
         state = $state:ty,
         init = $init:path,
@@ -75,18 +82,18 @@ macro_rules! export_project {
             if out.is_null() {
                 return $crate::__project_api::INVALID_ARGUMENT;
             }
-            #[expect(unused_mut, reason = "the macro expands to a mutable local only in some configurations")]
-            let mut api = $crate::__project_api::ProjectApi {
+            let api = $crate::__project_api::ProjectApi {
                 abi_version: $crate::__project_api::ABI_VERSION,
                 schema_fingerprint: $crate::builtin_schema_fingerprint(),
                 create: Some(create),
                 tick: Some(tick),
-                fixed_update: None,
+                fixed_update: $crate::export_project!(
+                    @fixed_ptr $state,
+                    $($fixed_update,)?
+                    fixed_update
+                ),
                 shutdown: Some(shutdown),
             };
-            $(
-                api.fixed_update = Some($fixed_update);
-            )?
             // SAFETY: the host provides a valid writable table pointer.
             unsafe { *out = api };
             $crate::__project_api::SUCCESS
@@ -225,6 +232,7 @@ mod tests {
         assert_eq!(api.schema_fingerprint, crate::builtin_schema_fingerprint());
         assert!(api.create.is_some());
         assert!(api.tick.is_some());
+        assert!(api.fixed_update.is_none());
         assert!(api.shutdown.is_some());
     }
 }

@@ -1823,6 +1823,11 @@ impl App {
         self.asset_resolver
             .load_animation_assets(engine.world_mut());
 
+        // Immediately bind built-in white sprites and already-cached textures on the main thread
+        // before scanning for new GPU uploads.
+        self.asset_resolver
+            .resolve_cached_sprites(engine.world_mut());
+
         // CPU segment: scan pending-parse entities and produce upload requests (pure data, not touching renderer).
         let reqs = self.asset_resolver.prepare_requests(engine.world_mut());
         if !reqs.is_empty() {

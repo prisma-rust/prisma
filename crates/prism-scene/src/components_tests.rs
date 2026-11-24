@@ -382,6 +382,7 @@ fn sprite_json_round_trips_and_fills_missing_fields() {
     let sprite = SpriteRenderer {
         sprite_path: "sprites/boat.png".into(),
         frame_size: [32, 16],
+        region_px: [10, 20, 32, 16],
         sheet_columns: 4,
         sheet_row: 1,
         frame_index: 3,
@@ -403,6 +404,7 @@ fn sprite_json_round_trips_and_fills_missing_fields() {
     let back: SpriteRenderer = serde_json::from_str(&json).unwrap();
     assert_eq!(back.sprite_path, "sprites/boat.png");
     assert_eq!(back.frame_size, [32, 16]);
+    assert_eq!(back.region_px, [10, 20, 32, 16]);
     assert_eq!(back.sheet_columns, 4);
     assert_eq!(back.sheet_row, 1);
     assert_eq!(back.frame_index, 3);
@@ -868,4 +870,26 @@ fn particle_shape_2d_exposes_enum_variants_for_the_editor() {
         );
     }
     assert!(ParticleShape2D::from_value(prism_reflect::Value::U64(9)).is_err());
+}
+
+#[test]
+fn sprite_renderer_white_and_region_px_behave_as_documented() {
+    let white = SpriteRenderer::white([0.2, 0.4, 0.6, 0.8]);
+    assert_eq!(white.sprite_path, BUILTIN_WHITE_SPRITE);
+    assert!(white.has_sprite());
+    assert_eq!(white.world_size([1, 1]), [1.0, 1.0]);
+    assert_eq!(white.color, [0.2, 0.4, 0.6, 0.8]);
+
+    let cropped = SpriteRenderer {
+        sprite_path: "sprites/atlas.png".to_string(),
+        region_px: [32, 64, 24, 16],
+        pixels_per_unit: 16.0,
+        ..Default::default()
+    };
+    assert_eq!(cropped.frame_size_or([256, 256]), [24, 16]);
+    assert_eq!(cropped.world_size([256, 256]), [1.5, 1.0]);
+
+    let legacy_json = r#"{"sprite_path":"sprites/hero.png","pixels_per_unit":16.0}"#;
+    let parsed: SpriteRenderer = serde_json::from_str(legacy_json).expect("legacy sprite json");
+    assert_eq!(parsed.region_px, [0, 0, 0, 0]);
 }

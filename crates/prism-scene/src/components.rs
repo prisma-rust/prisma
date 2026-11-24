@@ -478,6 +478,13 @@ impl LodGroup {
 // 2D Sprite
 // ---------------------------------------------------------------------------
 
+/// Built-in 1x1 pure-white sprite texture identifier.
+///
+/// Resolved directly to the renderer's built-in 1x1 white texture without `.pak` lookup.
+/// Combine with `SpriteRenderer::color` and `LocalTransform::scale` to draw solid-color
+/// world-space rectangles through the standard 2D sprite batching pipeline.
+pub const BUILTIN_WHITE_SPRITE: &str = "__builtin/white";
+
 /// 2D sprite renderer = `SpriteRenderer` (rendering subset).
 ///
 /// Only carries **authoring-time** fields: texture path, sprite sheet frames, sorting layer. GPU texture handle at runtime held by
@@ -495,6 +502,12 @@ pub struct SpriteRenderer {
     pub sprite_path: String,
     /// Sprite sheet single frame pixel size; `[0, 0]` means whole texture is one frame.
     pub frame_size: [u32; 2],
+    /// Optional sub-texture pixel rectangle `[x, y, width, height]` inside a sprite atlas.
+    ///
+    /// When `width > 0 && height > 0`, UV coordinates and world size are derived from this
+    /// sub-rectangle (advancing horizontally by `frame_index * width`), taking precedence over
+    /// `frame_size` / `sheet_row`. `[0, 0, 0, 0]` disables custom region cropping.
+    pub region_px: [u32; 4],
     /// Atlas columns per row; `0` = derived from "texture width / single frame width" (#584).
     ///
     /// In multi-row atlas, one row is usually one action / one character.
@@ -548,6 +561,7 @@ impl Default for SpriteRenderer {
         Self {
             sprite_path: String::new(),
             frame_size: [0, 0],
+            region_px: [0, 0, 0, 0],
             sheet_columns: 0,
             sheet_row: 0,
             frame_index: 0,
@@ -569,6 +583,19 @@ impl Default for SpriteRenderer {
 }
 
 impl SpriteRenderer {
+    /// Construct a solid-color sprite backed by [`BUILTIN_WHITE_SPRITE`] (`1x1` white texture).
+    ///
+    /// With `pixels_per_unit = 1.0`, `LocalTransform::scale` specifies the rectangle size directly
+    /// in world units.
+    pub fn white(color: [f32; 4]) -> Self {
+        Self {
+            sprite_path: BUILTIN_WHITE_SPRITE.to_string(),
+            pixels_per_unit: 1.0,
+            color,
+            ..Default::default()
+        }
+    }
+
     /// Whether there is a drawable texture.
     pub fn has_sprite(&self) -> bool {
         !self.sprite_path.is_empty()
@@ -576,7 +603,9 @@ impl SpriteRenderer {
 
     /// Single frame pixel size; when sprite sheet not configured caller falls back to texture size.
     pub fn frame_size_or(&self, texture_size: [u32; 2]) -> [u32; 2] {
-        if self.frame_size[0] > 0 && self.frame_size[1] > 0 {
+        if self.region_px[2] > 0 && self.region_px[3] > 0 {
+            [self.region_px[2], self.region_px[3]]
+        } else if self.frame_size[0] > 0 && self.frame_size[1] > 0 {
             self.frame_size
         } else {
             texture_size

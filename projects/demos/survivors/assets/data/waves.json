@@ -1,0 +1,104 @@
+{
+  "waves": [
+    {
+      "wave": 1,
+      "duration_seconds": 22.0,
+      "spawn_interval": 0.72,
+      "batch_size": 2,
+      "max_active_enemies": 45,
+      "clear_gold_bonus": 12,
+      "enemy_weights": { "slime": 80, "skeleton": 20 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 2,
+      "duration_seconds": 26.0,
+      "spawn_interval": 0.58,
+      "batch_size": 3,
+      "max_active_enemies": 70,
+      "clear_gold_bonus": 16,
+      "enemy_weights": { "slime": 55, "bat_charger": 25, "skeleton": 20 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 3,
+      "duration_seconds": 30.0,
+      "spawn_interval": 0.50,
+      "batch_size": 3,
+      "max_active_enemies": 95,
+      "clear_gold_bonus": 20,
+      "enemy_weights": { "slime": 40, "bat_charger": 30, "skeleton": 20, "goblin_archer": 10 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 4,
+      "duration_seconds": 35.0,
+      "spawn_interval": 0.42,
+      "batch_size": 4,
+      "max_active_enemies": 120,
+      "clear_gold_bonus": 25,
+      "enemy_weights": { "slime": 25, "bat_charger": 30, "skeleton": 25, "goblin_archer": 15, "orc_bruiser": 5 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 5,
+      "duration_seconds": 40.0,
+      "spawn_interval": 0.36,
+      "batch_size": 4,
+      "max_active_enemies": 150,
+      "clear_gold_bonus": 35,
+      "enemy_weights": { "slime": 15, "bat_charger": 28, "skeleton": 30, "goblin_archer": 17, "orc_bruiser": 10 },
+      "boss_spawn": "demon_boss"
+    },
+    {
+      "wave": 6,
+      "duration_seconds": 42.0,
+      "spawn_interval": 0.30,
+      "batch_size": 5,
+      "max_active_enemies": 180,
+      "clear_gold_bonus": 40,
+      "enemy_weights": { "bat_charger": 30, "skeleton": 35, "goblin_archer": 20, "orc_bruiser": 15 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 7,
+      "duration_seconds": 45.0,
+      "spawn_interval": 0.26,
+      "batch_size": 6,
+      "max_active_enemies": 220,
+      "clear_gold_bonus": 45,
+      "enemy_weights": { "bat_charger": 30, "skeleton": 30, "goblin_archer": 22, "orc_bruiser": 18 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 8,
+      "duration_seconds": 50.0,
+      "spawn_interval": 0.22,
+      "batch_size": 6,
+      "max_active_enemies": 260,
+      "clear_gold_bonus": 55,
+      "enemy_weights": { "bat_charger": 28, "skeleton": 30, "goblin_archer": 22, "orc_bruiser": 20 },
+      "boss_spawn": "demon_boss"
+    },
+    {
+      "wave": 9,
+      "duration_seconds": 55.0,
+      "spawn_interval": 0.19,
+      "batch_size": 7,
+      "max_active_enemies": 300,
+      "clear_gold_bonus": 65,
+      "enemy_weights": { "bat_charger": 26, "skeleton": 28, "goblin_archer": 24, "orc_bruiser": 22 },
+      "boss_spawn": null
+    },
+    {
+      "wave": 10,
+      "duration_seconds": 60.0,
+      "spawn_interval": 0.16,
+      "batch_size": 8,
+      "max_active_enemies": 350,
+      "clear_gold_bonus": 100,
+      "enemy_weights": { "bat_charger": 25, "skeleton": 25, "goblin_archer": 25, "orc_bruiser": 25 },
+      "boss_spawn": "demon_boss"
+    }
+  ]
+}
