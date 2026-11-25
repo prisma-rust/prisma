@@ -69,37 +69,40 @@ pub fn sprite_animation_system(world: &mut World, dt: f32) {
             continue;
         }
 
-        let mut state = world
-            .remove::<SpriteAnimationState>(entity)
-            .unwrap_or_default();
-        if !state.initialized {
-            state.initialized = true;
-            state.was_playing = animation.playing;
+        if world.get::<SpriteAnimationState>(entity).is_none() {
+            world.insert(entity, SpriteAnimationState::default());
         }
-        if animation.playing {
-            if !state.was_playing {
-                state.time = 0.0;
+        let Some(index) = world.get_mut::<SpriteAnimationState>(entity).map(|state| {
+            if !state.initialized {
+                state.initialized = true;
+                state.was_playing = animation.playing;
             }
-            state.time += dt;
-            state.was_playing = true;
-        } else {
-            state.was_playing = false;
-        }
+            if animation.playing {
+                if !state.was_playing {
+                    state.time = 0.0;
+                }
+                state.time += dt;
+                state.was_playing = true;
+            } else {
+                state.was_playing = false;
+            }
 
-        let duration = total as f32 / animation.fps;
-        let raw_time = if animation.looped {
-            state.time
-        } else {
-            state.time.min(duration)
-        };
-        let raw = (raw_time + animation.phase).max(0.0) * animation.fps;
-        let index = if animation.looped {
-            raw as u32 % total
-        } else {
-            raw.min((total - 1) as f32) as u32
+            let duration = total as f32 / animation.fps;
+            let raw_time = if animation.looped {
+                state.time
+            } else {
+                state.time.min(duration)
+            };
+            let raw = (raw_time + animation.phase).max(0.0) * animation.fps;
+            if animation.looped {
+                raw as u32 % total
+            } else {
+                raw.min((total - 1) as f32) as u32
+            }
+        }) else {
+            continue;
         };
 
-        world.insert(entity, state);
         if let Some(sprite) = world.get_mut::<SpriteRenderer>(entity) {
             sprite.frame_index = animation
                 .frame_start

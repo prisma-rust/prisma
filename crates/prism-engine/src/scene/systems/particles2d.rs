@@ -236,13 +236,10 @@ pub fn particle_emitter_2d_system(world: &mut World, dt: f32) -> usize {
         if world.get::<ParticleEmitter2DState>(entity).is_none() {
             world.insert(entity, ParticleEmitter2DState::seeded(entity));
         }
-        let Some(mut state) = world.remove::<ParticleEmitter2DState>(entity) else {
-            continue;
-        };
-
-        step(&emitter_def, &mut state, origin, z, rotation, dt);
-        alive += state.particles.len();
-        world.insert(entity, state);
+        if let Some(state) = world.get_mut::<ParticleEmitter2DState>(entity) {
+            step(&emitter_def, state, origin, z, rotation, dt);
+            alive += state.particles.len();
+        }
     }
 
     let orphans: Vec<Entity> = world

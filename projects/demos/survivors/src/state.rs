@@ -17,6 +17,7 @@ pub const POOL_WARNING: u32 = 4;
 pub const POOL_WHITE_BAR: u32 = 5;
 pub const POOL_WEAPON: u32 = 6;
 pub const POOL_MELEE_FX: u32 = 7;
+pub const POOL_HIT_BURST: u32 = 8;
 
 pub const SETTINGS_SAVE_KEY: &str = "survivors.settings";
 pub const RECORDS_SAVE_KEY: &str = "survivors.records";
@@ -305,6 +306,7 @@ pub struct DamageNumber {
     pub amount: u32,
     pub is_crit: bool,
     pub is_player_hit: bool,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -542,10 +544,13 @@ pub struct SurvivorsState {
     pub enemies: Vec<ActiveEnemy>,
     pub spawn_warnings: Vec<SpawnWarning>,
     pub projectiles: Vec<ActiveProjectile>,
+    pub projectile_pool: Vec<ActiveProjectile>,
     pub pickups: Vec<ActivePickup>,
     pub damage_numbers: Vec<DamageNumber>,
-    pub hit_burst_entities: Vec<EntityHandle>,
-    pub hit_burst_cursor: usize,
+    pub damage_number_pool: Vec<DamageNumber>,
+    pub active_hit_bursts: Vec<(EntityHandle, f32)>,
+    pub ready_spawns_scratch: Vec<(usize, [f32; 2])>,
+    pub enemy_shots_scratch: Vec<([f32; 2], [f32; 2], f32)>,
 
     pub wave_index: u32,
     pub wave_timer: f32,
@@ -606,10 +611,13 @@ impl SurvivorsState {
             enemies: Vec::new(),
             spawn_warnings: Vec::new(),
             projectiles: Vec::new(),
+            projectile_pool: Vec::with_capacity(64),
             pickups: Vec::new(),
             damage_numbers: Vec::new(),
-            hit_burst_entities: Vec::new(),
-            hit_burst_cursor: 0,
+            damage_number_pool: Vec::with_capacity(64),
+            active_hit_bursts: Vec::with_capacity(32),
+            ready_spawns_scratch: Vec::with_capacity(16),
+            enemy_shots_scratch: Vec::with_capacity(16),
             wave_index: 1,
             wave_timer: first_wave_dur,
             wave_sweep_timer: 0.0,
@@ -640,6 +648,51 @@ impl SurvivorsState {
 
     pub fn set_banner(&mut self, text: impl Into<String>, duration: f32) {
         self.status_banner = Some((text.into(), duration));
+    }
+
+    /// Acquire a pooled `DamageNumber` (expanding automatically when exhausted) and format its label once.
+    pub fn push_damage_number(
+        &mut self,
+        world_pos: [f32; 2],
+        vel_y: f32,
+        duration: f32,
+        amount: u32,
+        is_crit: bool,
+        is_player_hit: bool,
+    ) {
+        use std::fmt::Write as _;
+
+        let mut dn = self
+            .damage_number_pool
+            .pop()
+            .unwrap_or_else(|| DamageNumber {
+                world_pos: [0.0, 0.0],
+                vel_y: 0.0,
+                age: 0.0,
+                duration: 0.0,
+                amount: 0,
+                is_crit: false,
+                is_player_hit: false,
+                label: String::with_capacity(12),
+            });
+        dn.world_pos = world_pos;
+        dn.vel_y = vel_y;
+        dn.age = 0.0;
+        dn.duration = duration;
+        dn.amount = amount;
+        dn.is_crit = is_crit;
+        dn.is_player_hit = is_player_hit;
+        dn.label.clear();
+        if is_player_hit && amount == 0 {
+            dn.label.push_str("DODGE!");
+        } else if is_player_hit {
+            let _ = write!(dn.label, "-{amount}");
+        } else if is_crit {
+            let _ = write!(dn.label, "{amount}!");
+        } else {
+            let _ = write!(dn.label, "{amount}");
+        }
+        self.damage_numbers.push(dn);
     }
 
     pub fn roll_level_up_choices(&mut self, count: usize) -> Vec<String> {
@@ -1016,6 +1069,10 @@ impl SurvivorsState {
         }
         for proj in self.projectiles.drain(..) {
             self.pool.release(world, POOL_PROJECTILE, proj.entity);
+            self.projectile_pool.push(proj);
+        }
+        for (burst_entity, _) in self.active_hit_bursts.drain(..) {
+            self.pool.release(world, POOL_HIT_BURST, burst_entity);
         }
         for pickup in self.pickups.drain(..) {
             self.pool.release(world, POOL_PICKUP, pickup.entity);
@@ -1028,7 +1085,7 @@ impl SurvivorsState {
                 self.pool.release(world, POOL_MELEE_FX, weapon.fx_entity);
             }
         }
-        self.damage_numbers.clear();
+        self.damage_number_pool.append(&mut self.damage_numbers);
     }
 
     pub fn enter_main_menu(&mut self, world: &mut GameWorld<'_>) {

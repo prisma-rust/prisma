@@ -3,7 +3,7 @@
 //! Entities are deactivated (`Active(false)`) on release instead of despawned so
 //! their resolved GPU component handles (such as `SpriteRef`) remain valid when reacquired.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{EntityHandle, GameWorld};
 
@@ -11,6 +11,7 @@ use crate::{EntityHandle, GameWorld};
 #[derive(Debug, Default)]
 pub struct EntityPool {
     buckets: HashMap<u32, Vec<EntityHandle>>,
+    in_pool: HashSet<EntityHandle>,
 }
 
 impl EntityPool {
@@ -25,6 +26,7 @@ impl EntityPool {
     pub fn acquire(&mut self, world: &mut GameWorld<'_>, kind: u32) -> (EntityHandle, bool) {
         if let Some(bucket) = self.buckets.get_mut(&kind) {
             while let Some(entity) = bucket.pop() {
+                self.in_pool.remove(&entity);
                 if world.is_alive(entity) {
                     world.set_entity_active(entity, true);
                     return (entity, false);
@@ -38,15 +40,11 @@ impl EntityPool {
 
     /// Return `entity` to the `kind` bucket and deactivate it.
     pub fn release(&mut self, world: &mut GameWorld<'_>, kind: u32, entity: EntityHandle) {
-        if !world.is_alive(entity) {
-            return;
-        }
-        let bucket = self.buckets.entry(kind).or_default();
-        if bucket.contains(&entity) {
+        if !world.is_alive(entity) || !self.in_pool.insert(entity) {
             return;
         }
         world.set_entity_active(entity, false);
-        bucket.push(entity);
+        self.buckets.entry(kind).or_default().push(entity);
     }
 
     /// Number of currently idle pooled entities for `kind`.
@@ -57,10 +55,12 @@ impl EntityPool {
     /// Drop all tracked handles (for example after a scene reload invalidated old handles).
     pub fn clear(&mut self) {
         self.buckets.clear();
+        self.in_pool.clear();
     }
 
     /// Despawn every idle entity currently held in the pool.
     pub fn despawn_idle(&mut self, world: &mut GameWorld<'_>) {
+        self.in_pool.clear();
         for (_, bucket) in self.buckets.drain() {
             for entity in bucket {
                 if world.is_alive(entity) {

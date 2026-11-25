@@ -336,7 +336,7 @@ impl LineScreenScale {
 /// Painter's algorithm draws far-to-near, so `z` ascending (camera looks −Z and
 /// sits at +Z: larger `z` is closer).
 pub fn scene_sprite_system(world: &World) -> Vec<prism_render::SpriteDrawItem> {
-    sort_draw_items(sprite_entries(world))
+    sort_draw_items(sprite_entries(world, None))
 }
 
 /// Collect all 2D line draw items (`LineRenderer`) as non-overlapping
@@ -383,7 +383,7 @@ pub fn scene_2d_system_into_with_frustum_and_line_scale(
     line_scale: Option<LineScreenScale>,
     out: &mut Vec<prism_render::SpriteDrawItem>,
 ) {
-    let mut entries = sprite_entries(world);
+    let mut entries = sprite_entries(world, frustum);
     entries.extend(line_entries(world, line_scale));
     entries.extend(super::particles2d::particle_entries_2d(world));
     entries.extend(super::tilemap::tilemap_entries(world, frustum));
@@ -477,7 +477,16 @@ pub fn sprite_light_entries(world: &World) -> Vec<prism_render::SpriteLight> {
     lights
 }
 
-fn sprite_entries(world: &World) -> Vec<(SortKey, prism_render::SpriteDrawItem)> {
+fn sprite_bounds(model: &glam::Mat4) -> Aabb {
+    let center = model.w_axis.truncate();
+    let ex = model.x_axis.truncate().abs() * 0.5 + model.y_axis.truncate().abs() * 0.5;
+    Aabb::new((center - ex).to_array(), (center + ex).to_array())
+}
+
+fn sprite_entries(
+    world: &World,
+    frustum: Option<&Frustum>,
+) -> Vec<(SortKey, prism_render::SpriteDrawItem)> {
     let mut out = Vec::new();
     for (entity, world_transform, sprite) in world.query2::<LocalToWorld, SpriteRenderer>() {
         if !sprite.has_sprite()
@@ -506,6 +515,11 @@ fn sprite_entries(world: &World) -> Vec<(SortKey, prism_render::SpriteDrawItem)>
             offset,
         );
         let model = world_transform.0 * local;
+        if let Some(frustum) = frustum {
+            if model.is_finite() && !frustum.intersects_aabb(&sprite_bounds(&model)) {
+                continue;
+            }
+        }
         let key: SortKey = (
             sprite.sorting_layer,
             sprite.order_in_layer,

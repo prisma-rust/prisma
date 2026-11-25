@@ -145,6 +145,8 @@ pub struct SpritePass {
     retire: crate::retire::RetireQueue,
     /// Frame slot being recorded.
     frame_index: u32,
+    /// Reusable CPU staging vector for instance packing.
+    scratch_instances: Vec<SpriteInstance>,
 }
 
 impl SpritePass {
@@ -166,6 +168,7 @@ impl SpritePass {
             light_memory: vk::DeviceMemory::null(),
             retire: crate::retire::RetireQueue::new(),
             frame_index: 0,
+            scratch_instances: Vec::new(),
         }
     }
 }
@@ -198,6 +201,39 @@ impl SpritePass {
         lights: &[SpriteLight],
         frame_index: u32,
     ) -> Result<()> {
+        self.draw_inner(
+            device,
+            context,
+            cmd,
+            render_pass,
+            bindless_set,
+            bindless_layout,
+            view_proj,
+            items,
+            lights,
+            frame_index,
+            false,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "draw_inner takes the per-frame matrices and descriptor sets the caller owns"
+    )]
+    pub(crate) fn draw_inner(
+        &mut self,
+        device: &ash::Device,
+        context: &VulkanContext,
+        cmd: vk::CommandBuffer,
+        render_pass: vk::RenderPass,
+        bindless_set: vk::DescriptorSet,
+        bindless_layout: vk::DescriptorSetLayout,
+        view_proj: &[[f32; 4]; 4],
+        items: &[SpriteDrawItem],
+        lights: &[SpriteLight],
+        frame_index: u32,
+        single_color_target: bool,
+    ) -> Result<()> {
         self.retire.collect(device, frame_index);
         self.frame_index = frame_index;
         if items.is_empty() || bindless_set == vk::DescriptorSet::null() {
@@ -229,7 +265,13 @@ impl SpritePass {
             {
                 end += 1;
             }
-            self.ensure_pipeline(device, render_pass, bindless_layout, key)?;
+            self.ensure_pipeline(
+                device,
+                render_pass,
+                bindless_layout,
+                key,
+                single_color_target,
+            )?;
             let pipeline = self.pipelines.get(&key).expect("pipeline built above");
             unsafe {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
@@ -275,6 +317,7 @@ impl SpritePass {
         render_pass: vk::RenderPass,
         bindless_layout: vk::DescriptorSetLayout,
         blend: BlendKey,
+        single_color_target: bool,
     ) -> Result<()> {
         if self.pipelines.contains_key(&blend) {
             return Ok(());
@@ -341,6 +384,11 @@ impl SpritePass {
                 .blend_enable(false),
         ];
 
+        let active_attachments = if single_color_target {
+            &blend_attachments[..1]
+        } else {
+            &blend_attachments[..]
+        };
         let pipeline = GraphicsPipeline::new(&PipelineDesc {
             device,
             shader_stages: &shader_stages,
@@ -357,7 +405,7 @@ impl SpritePass {
             depth_write_enable: Some(false),
             depth_test_enable: Some(false),
             color_attachment_count: None,
-            color_blend_attachments: Some(&blend_attachments),
+            color_blend_attachments: Some(active_attachments),
             front_face: None,
             polygon_mode: None,
         })
@@ -402,11 +450,11 @@ impl SpritePass {
         Ok(())
     }
 
-    fn upload(&self, context: &VulkanContext, items: &[SpriteDrawItem]) -> Result<()> {
+    fn upload(&mut self, context: &VulkanContext, items: &[SpriteDrawItem]) -> Result<()> {
         let bytes = items.len() * size_of::<SpriteInstance>();
-        let instances: Vec<SpriteInstance> = items
-            .iter()
-            .map(|item| SpriteInstance {
+        self.scratch_instances.clear();
+        self.scratch_instances.extend(items.iter().map(|item| {
+            SpriteInstance {
                 corners: item
                     .corners
                     .unwrap_or_else(|| corners_from_model(&item.model)),
@@ -416,8 +464,8 @@ impl SpritePass {
                 clip: item.clip,
                 flags: u32::from(item.receive_lights),
                 _pad: [0; 3],
-            })
-            .collect();
+            }
+        }));
         unsafe {
             let ptr = context
                 .device
@@ -429,7 +477,7 @@ impl SpritePass {
                 )
                 .context("SpritePass: map instance memory")?;
             std::ptr::copy_nonoverlapping(
-                bytemuck::cast_slice(&instances).as_ptr(),
+                bytemuck::cast_slice(&self.scratch_instances).as_ptr(),
                 ptr as *mut u8,
                 bytes,
             );

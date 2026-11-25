@@ -181,6 +181,8 @@ pub struct ForwardPass {
     /// VUID-vkDestroyFramebuffer-framebuffer-00892 and cascades into a
     /// device-lost). Indexed by `image_index` from `acquire_next_image`.
     framebuffers: Vec<Option<vk::Framebuffer>>,
+    /// Single-color-attachment framebuffers used when `RenderMode::Sprites2D` is active.
+    framebuffers_2d: Vec<Option<vk::Framebuffer>>,
     /// One high dynamic range color image per swapchain image (the ForwardPass render target
     /// replacing the old direct-to-swapchain path). Reused by PostPass as its
     /// sampled input.
@@ -224,6 +226,7 @@ pub struct ForwardPass {
     out_albedo_h: ResourceHandle,
     extent: vk::Extent2D,
     render_pass: Option<vk::RenderPass>,
+    render_pass_2d: Option<vk::RenderPass>,
     /// Main pass pipeline cache: one per [`DrawState`] (cull / depth write / blend).
     ///
     /// All variants' descriptor set layouts / push constant ranges fully identical, only rasterization and color
@@ -331,6 +334,7 @@ impl ForwardPass {
             brdf_handle: u32::MAX,
             camera_stride: 0,
             framebuffers: Vec::new(),
+            framebuffers_2d: Vec::new(),
             color_images: Vec::new(),
             depth_images: Vec::new(),
             depth_readback: None,
@@ -350,6 +354,7 @@ impl ForwardPass {
                 height: 0,
             },
             render_pass: None,
+            render_pass_2d: None,
             pipelines: std::collections::HashMap::new(),
             custom_shaders: Vec::new(),
             custom_shader_hashes: std::collections::HashMap::new(),
@@ -475,6 +480,7 @@ impl ForwardPass {
             self.target_views = vec![vk::ImageView::null(); image_count];
             self.extent = extent;
             self.framebuffers = (0..image_count).map(|_| None).collect();
+            self.framebuffers_2d = (0..image_count).map(|_| None).collect();
             self.color_images = (0..image_count).map(|_| None).collect();
             self.depth_images = (0..image_count).map(|_| None).collect();
             self.normal_images = (0..image_count).map(|_| None).collect();
@@ -565,6 +571,25 @@ impl ForwardPass {
                 )
             }
             .context("ForwardPass: create framebuffer")?;
+            if let Some(old_fb) = self.framebuffers_2d[idx].take() {
+                unsafe { device.destroy_framebuffer(old_fb, None) };
+            }
+            let rp_2d = self
+                .render_pass_2d
+                .context("ForwardPass: render_pass_2d missing in set_target")?;
+            let fb_2d = unsafe {
+                device.create_framebuffer(
+                    &vk::FramebufferCreateInfo::default()
+                        .render_pass(rp_2d)
+                        .attachments(std::slice::from_ref(&color.view))
+                        .width(extent.width)
+                        .height(extent.height)
+                        .layers(1),
+                    None,
+                )
+            }
+            .context("ForwardPass: create 2D framebuffer")?;
+            self.framebuffers_2d[idx] = Some(fb_2d);
             self.framebuffers[idx] = Some(fb);
         }
         Ok(())
@@ -585,6 +610,9 @@ impl ForwardPass {
     /// the framebuffers + depth on the next frame.
     pub fn drop_target(&mut self, device: &ash::Device) {
         for fb in self.framebuffers.drain(..).flatten() {
+            unsafe { device.destroy_framebuffer(fb, None) };
+        }
+        for fb in self.framebuffers_2d.drain(..).flatten() {
             unsafe { device.destroy_framebuffer(fb, None) };
         }
         for color in self.color_images.drain(..).flatten() {
@@ -1660,6 +1688,24 @@ impl ForwardPass {
             .context("ForwardPass: create render pass")?;
         self.render_pass = Some(rp);
 
+        let subpass_2d = vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(std::slice::from_ref(&color_ref));
+        let dependency_2d = vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        let rp_2d_info = vk::RenderPassCreateInfo::default()
+            .attachments(std::slice::from_ref(&color_attachment))
+            .subpasses(std::slice::from_ref(&subpass_2d))
+            .dependencies(std::slice::from_ref(&dependency_2d));
+        let rp_2d = unsafe { device.create_render_pass(&rp_2d_info, None) }
+            .context("ForwardPass: create 2D render pass")?;
+        self.render_pass_2d = Some(rp_2d);
+
         if self.gizmo.is_none() {
             self.gizmo = Some(Gizmo::new(context, rp).context("ForwardPass: create gizmo")?);
         }
@@ -2136,38 +2182,50 @@ impl RenderPassNode for ForwardPass {
         self.update_lights(ctx.device, ctx.frame_index, ctx.frame.lights)?;
 
         self.ensure_render_pass(ctx.context)?;
-        let wireframe = ctx.frame.wireframe && ctx.context.wireframe_supported;
+        let is_2d = ctx.frame.render_mode == RenderMode::Sprites2D;
+        let wireframe = !is_2d && ctx.frame.wireframe && ctx.context.wireframe_supported;
         let shaded_wireframe =
-            !wireframe && ctx.frame.shaded_wireframe && ctx.context.wireframe_supported;
-        let mut states: Vec<(Option<crate::ShaderHandle>, DrawState)> =
-            vec![(None, DrawState::default())];
-        let mut seen = std::collections::HashSet::new();
-        seen.insert((None, DrawState::default()));
-        for item in ctx.frame.draw_list {
-            let key = (item.shader, item.state);
-            if item.visible_in_main_pass && seen.insert(key) {
-                states.push(key);
+            !is_2d && !wireframe && ctx.frame.shaded_wireframe && ctx.context.wireframe_supported;
+        if !is_2d {
+            let mut states: Vec<(Option<crate::ShaderHandle>, DrawState)> =
+                vec![(None, DrawState::default())];
+            let mut seen = std::collections::HashSet::new();
+            seen.insert((None, DrawState::default()));
+            for item in ctx.frame.draw_list {
+                let key = (item.shader, item.state);
+                if item.visible_in_main_pass && seen.insert(key) {
+                    states.push(key);
+                }
+            }
+            self.ensure_pipelines(ctx.device, &states, wireframe)?;
+            if shaded_wireframe {
+                self.ensure_shaded_wireframe_pipeline(ctx.device)?;
             }
         }
-        self.ensure_pipelines(ctx.device, &states, wireframe)?;
-        if shaded_wireframe {
-            self.ensure_shaded_wireframe_pipeline(ctx.device)?;
-        }
 
-        let rp = self.render_pass.unwrap();
         let idx = ctx.image_index as usize;
-        let fb = self
-            .framebuffers
-            .get(idx)
-            .copied()
-            .flatten()
-            .context("ForwardPass: no framebuffer for image_index (call set_target first)")?;
-        let (scene_pipeline, scene_layout) = {
+        let (rp, fb) = if is_2d {
+            let rp = self.render_pass_2d.unwrap();
+            let fb = self.framebuffers_2d.get(idx).copied().flatten().context(
+                "ForwardPass: no 2D framebuffer for image_index (call set_target first)",
+            )?;
+            (rp, fb)
+        } else {
+            let rp = self.render_pass.unwrap();
+            let fb =
+                self.framebuffers.get(idx).copied().flatten().context(
+                    "ForwardPass: no framebuffer for image_index (call set_target first)",
+                )?;
+            (rp, fb)
+        };
+        let scene_binding = if !is_2d {
             let pipeline = self
                 .pipelines
                 .get(&(None, DrawState::default(), wireframe, false))
                 .context("ForwardPass: default pipeline missing")?;
-            (pipeline.pipeline, pipeline.layout)
+            Some((pipeline.pipeline, pipeline.layout))
+        } else {
+            None
         };
 
         let frame_set = self
@@ -2201,6 +2259,7 @@ impl RenderPassNode for ForwardPass {
             },
         ];
 
+        let clear_len = if is_2d { 1 } else { clear_values.len() };
         let begin_info = vk::RenderPassBeginInfo::default()
             .render_pass(rp)
             .framebuffer(fb)
@@ -2208,7 +2267,7 @@ impl RenderPassNode for ForwardPass {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: self.extent,
             })
-            .clear_values(&clear_values);
+            .clear_values(&clear_values[..clear_len]);
 
         unsafe {
             ctx.device
@@ -2244,17 +2303,19 @@ impl RenderPassNode for ForwardPass {
                         },
                     },
                 });
-                clears.push(vk::ClearAttachment {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    color_attachment: 2,
-                    clear_value: vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [0.0, 0.0, 0.0, 0.0],
+                if !is_2d {
+                    clears.push(vk::ClearAttachment {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        color_attachment: 2,
+                        clear_value: vk::ClearValue {
+                            color: vk::ClearColorValue {
+                                float32: [0.0, 0.0, 0.0, 0.0],
+                            },
                         },
-                    },
-                });
+                    });
+                }
             }
-            if camera.clear_depth {
+            if !is_2d && camera.clear_depth {
                 clears.push(vk::ClearAttachment {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     color_attachment: 1,
@@ -2304,7 +2365,7 @@ impl RenderPassNode for ForwardPass {
                 );
             }
 
-            if camera.draw_skybox && camera.has_camera {
+            if !is_2d && camera.draw_skybox && camera.has_camera {
                 let mut inv_view_proj_rot = [[0.0_f32; 4]; 4];
                 for (c, column) in inv_view_proj_rot.iter_mut().enumerate() {
                     for (r, value) in column.iter_mut().enumerate() {
@@ -2314,9 +2375,6 @@ impl RenderPassNode for ForwardPass {
                     }
                 }
                 if let Some(skybox) = ctx.frame.skybox {
-                    let rp = self
-                        .render_pass
-                        .ok_or_else(|| anyhow::anyhow!("forward render pass missing"))?;
                     if let Err(e) = self.skybox.draw(
                         ctx.device,
                         ctx.cmd,
@@ -2331,73 +2389,77 @@ impl RenderPassNode for ForwardPass {
             }
 
             let dynamic_offset = camera_index as u32 * self.camera_stride;
-            unsafe {
-                ctx.device.cmd_bind_pipeline(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_pipeline,
-                );
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    0,
-                    std::slice::from_ref(&frame_set),
-                    std::slice::from_ref(&dynamic_offset),
-                );
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    1,
-                    std::slice::from_ref(&self.bindless_set),
-                    &[],
-                );
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    2,
-                    std::slice::from_ref(&self.ibl_descriptor_set),
-                    &[],
-                );
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    3,
-                    std::slice::from_ref(&self.shadow_descriptor_set),
-                    &[],
-                );
-                let ao_set = self
-                    .ao_descriptor_sets
-                    .get(ctx.frame_index as usize)
-                    .copied()
-                    .unwrap_or(vk::DescriptorSet::null());
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    4,
-                    std::slice::from_ref(&ao_set),
-                    &[],
-                );
-                let set5 = if ctx.frame.render_mode == crate::render_graph::RenderMode::Raster
-                    && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
-                    && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
-                {
-                    ctx.frame.prt_gi_descriptor_set
-                } else {
-                    self.gi_descriptor_set
-                };
-                ctx.device.cmd_bind_descriptor_sets(
-                    ctx.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    scene_layout,
-                    5,
-                    std::slice::from_ref(&set5),
-                    &[],
-                );
+            let scene_layout =
+                scene_binding.map_or(vk::PipelineLayout::null(), |(_, layout)| layout);
+            if let Some((scene_pipeline, scene_layout)) = scene_binding {
+                unsafe {
+                    ctx.device.cmd_bind_pipeline(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_pipeline,
+                    );
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        0,
+                        std::slice::from_ref(&frame_set),
+                        std::slice::from_ref(&dynamic_offset),
+                    );
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        1,
+                        std::slice::from_ref(&self.bindless_set),
+                        &[],
+                    );
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        2,
+                        std::slice::from_ref(&self.ibl_descriptor_set),
+                        &[],
+                    );
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        3,
+                        std::slice::from_ref(&self.shadow_descriptor_set),
+                        &[],
+                    );
+                    let ao_set = self
+                        .ao_descriptor_sets
+                        .get(ctx.frame_index as usize)
+                        .copied()
+                        .unwrap_or(vk::DescriptorSet::null());
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        4,
+                        std::slice::from_ref(&ao_set),
+                        &[],
+                    );
+                    let set5 = if ctx.frame.render_mode == crate::render_graph::RenderMode::Raster
+                        && ctx.settings.raster_gi == crate::render_graph::RasterGiMode::Prt
+                        && ctx.frame.prt_gi_descriptor_set != vk::DescriptorSet::null()
+                    {
+                        ctx.frame.prt_gi_descriptor_set
+                    } else {
+                        self.gi_descriptor_set
+                    };
+                    ctx.device.cmd_bind_descriptor_sets(
+                        ctx.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene_layout,
+                        5,
+                        std::slice::from_ref(&set5),
+                        &[],
+                    );
+                }
             }
 
             unsafe {
@@ -2698,12 +2760,12 @@ impl RenderPassNode for ForwardPass {
                 }
             }
 
-            if !ctx.frame.particle_items.is_empty() {
+            if !is_2d && !ctx.frame.particle_items.is_empty() {
                 if let Err(e) = self.particles.draw(
                     ctx.device,
                     ctx.context,
                     ctx.cmd,
-                    self.render_pass.unwrap(),
+                    rp,
                     &camera.view_proj,
                     &camera.inv_view,
                     ctx.frame.particle_items,
@@ -2714,110 +2776,115 @@ impl RenderPassNode for ForwardPass {
             }
 
             if !ctx.frame.sprite_items.is_empty() {
-                if let Err(e) = self.sprites.draw(
+                if let Err(e) = self.sprites.draw_inner(
                     ctx.device,
                     ctx.context,
                     ctx.cmd,
-                    self.render_pass.unwrap(),
+                    rp,
                     self.bindless_set,
                     self.bindless_layout,
                     &camera.view_proj,
                     ctx.frame.sprite_items,
                     ctx.frame.sprite_lights,
                     ctx.frame_index,
+                    is_2d,
                 ) {
                     log::warn!("SpritePass draw failed (sprites skipped): {e:#}");
                 }
             }
 
-            if ctx.frame.show_grid && ctx.frame.render_mode != RenderMode::Sprites2D {
+            if ctx.frame.show_grid && !is_2d {
                 if let Some(grid) = &self.ground_grid {
                     grid.draw(ctx.cmd, &camera.view_proj, ctx.frame.camera_orthographic);
                 }
             }
 
-            if let Some(gizmo) = &self.gizmo {
-                gizmo.draw(ctx.cmd, &camera.view_proj, ctx.frame.gizmos);
+            if !is_2d {
+                if let Some(gizmo) = &self.gizmo {
+                    gizmo.draw(ctx.cmd, &camera.view_proj, ctx.frame.gizmos);
+                }
             }
         }
 
         unsafe { ctx.device.cmd_end_render_pass(ctx.cmd) };
 
-        if let Some(buffer) = self.depth_readback {
-            if let Some(depth_image) = self.depth_image(ctx.image_index) {
-                let device = ctx.device;
-                let range = vk::ImageSubresourceRange::default()
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                    .level_count(1)
-                    .layer_count(1);
-                let to_transfer = vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(depth_image)
-                    .subresource_range(range)
-                    .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        ctx.cmd,
-                        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                            | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        std::slice::from_ref(&to_transfer),
-                    );
+        if !is_2d {
+            if let Some(buffer) = self.depth_readback {
+                if let Some(depth_image) = self.depth_image(ctx.image_index) {
+                    let device = ctx.device;
+                    let range = vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .level_count(1)
+                        .layer_count(1);
+                    let to_transfer = vk::ImageMemoryBarrier::default()
+                        .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(depth_image)
+                        .subresource_range(range)
+                        .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+                    unsafe {
+                        device.cmd_pipeline_barrier(
+                            ctx.cmd,
+                            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            std::slice::from_ref(&to_transfer),
+                        );
+                    }
+                    let region = vk::BufferImageCopy::default()
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::default()
+                                .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                                .mip_level(0)
+                                .base_array_layer(0)
+                                .layer_count(1),
+                        )
+                        .image_extent(vk::Extent3D {
+                            width: self.extent.width,
+                            height: self.extent.height,
+                            depth: 1,
+                        });
+                    unsafe {
+                        device.cmd_copy_image_to_buffer(
+                            ctx.cmd,
+                            depth_image,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            buffer,
+                            &[region],
+                        );
+                    }
+                    let to_attachment = vk::ImageMemoryBarrier::default()
+                        .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(depth_image)
+                        .subresource_range(range)
+                        .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                        .dst_access_mask(
+                            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        );
+                    unsafe {
+                        device.cmd_pipeline_barrier(
+                            ctx.cmd,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            std::slice::from_ref(&to_attachment),
+                        );
+                    }
+                    self.depth_capture_frame = Some(ctx.frame_index);
                 }
-                let region = vk::BufferImageCopy::default()
-                    .image_subresource(
-                        vk::ImageSubresourceLayers::default()
-                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                            .mip_level(0)
-                            .base_array_layer(0)
-                            .layer_count(1),
-                    )
-                    .image_extent(vk::Extent3D {
-                        width: self.extent.width,
-                        height: self.extent.height,
-                        depth: 1,
-                    });
-                unsafe {
-                    device.cmd_copy_image_to_buffer(
-                        ctx.cmd,
-                        depth_image,
-                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                        buffer,
-                        &[region],
-                    );
-                }
-                let to_attachment = vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(depth_image)
-                    .subresource_range(range)
-                    .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-                    .dst_access_mask(
-                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    );
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        ctx.cmd,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                            | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        std::slice::from_ref(&to_attachment),
-                    );
-                }
-                self.depth_capture_frame = Some(ctx.frame_index);
             }
         }
 
@@ -2887,11 +2954,17 @@ impl Drop for ForwardPass {
             for fb in self.framebuffers.drain(..).flatten() {
                 unsafe { device.destroy_framebuffer(fb, None) };
             }
+            for fb in self.framebuffers_2d.drain(..).flatten() {
+                unsafe { device.destroy_framebuffer(fb, None) };
+            }
             for depth in self.depth_images.drain(..).flatten() {
                 let mut d = depth;
                 unsafe { d.destroy(&device) };
             }
             if let Some(rp) = self.render_pass.take() {
+                unsafe { device.destroy_render_pass(rp, None) };
+            }
+            if let Some(rp) = self.render_pass_2d.take() {
                 unsafe { device.destroy_render_pass(rp, None) };
             }
             self.pipelines.clear();

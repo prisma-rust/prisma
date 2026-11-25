@@ -11,11 +11,37 @@
 //! - `Parent` pointing to dead entity, or parent `Child` not listing it,
 //!   treated as root (`LocalToWorld = LocalTransform`), not frozen in old value forever.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use prism_ecs::{Entity, World};
 
 use crate::scene::components::*;
+
+#[derive(Default)]
+struct HierarchyScratch {
+    candidates: Vec<Entity>,
+    roots: Vec<Entity>,
+    seen: HashSet<Entity>,
+    visited: HashSet<Entity>,
+    active_entities: Vec<Entity>,
+    resolved: HashMap<Entity, bool>,
+    chain: Vec<Entity>,
+}
+
+thread_local! {
+    static HIERARCHY_SCRATCH: RefCell<HierarchyScratch> = RefCell::new(HierarchyScratch::default());
+}
+
+fn write_local_to_world_if_changed(world: &mut World, entity: Entity, matrix: glam::Mat4) {
+    if world
+        .get::<LocalToWorld>(entity)
+        .is_some_and(|existing| existing.0 == matrix)
+    {
+        return;
+    }
+    world.insert(entity, LocalToWorld(matrix));
+}
 
 /// Recompute [`LocalToWorld`] for every entity  in the hierarchy.
 ///
@@ -28,36 +54,46 @@ use crate::scene::components::*;
 /// This function is intended to be called once per frame, after all local
 /// transform changes have been applied.
 pub fn hierarchy_system(world: &mut World) {
-    let roots: Vec<Entity> = candidate_entities(world)
-        .into_iter()
-        .filter(|entity| !has_live_parent(world, *entity))
-        .collect();
-
-    let mut visited: HashSet<Entity> = HashSet::new();
-    for root in roots {
-        if !visited.insert(root) {
-            continue;
-        }
-        let world_mat = match world.get::<LocalTransform>(root).cloned() {
-            Some(local) => {
-                let matrix = local.to_model_matrix();
-                world.insert(root, LocalToWorld(matrix));
-                matrix
+    HIERARCHY_SCRATCH.with(|cell| {
+        let mut scratch = cell.borrow_mut();
+        let scratch = &mut *scratch;
+        scratch.candidates.clear();
+        scratch.seen.clear();
+        for (entity, _) in world.query::<LocalTransform>() {
+            if scratch.seen.insert(entity) {
+                scratch.candidates.push(entity);
             }
-            None => glam::Mat4::IDENTITY,
-        };
-        visit_children(world, root, world_mat, &mut visited);
-    }
-}
+        }
+        for (entity, _) in world.query::<Child>() {
+            if scratch.seen.insert(entity) {
+                scratch.candidates.push(entity);
+            }
+        }
 
-/// Entities that can participate in propagation: those with `LocalTransform`, and those with `Child`
-/// (latter, even without own transform, must let child tree keep propagating).
-fn candidate_entities(world: &World) -> Vec<Entity> {
-    let mut entities: Vec<Entity> = world.query::<LocalTransform>().map(|(e, _)| e).collect();
-    entities.extend(world.query::<Child>().map(|(e, _)| e));
-    let mut seen: HashSet<Entity> = HashSet::new();
-    entities.retain(|entity| seen.insert(*entity));
-    entities
+        scratch.roots.clear();
+        for &entity in &scratch.candidates {
+            if !has_live_parent(world, entity) {
+                scratch.roots.push(entity);
+            }
+        }
+
+        scratch.visited.clear();
+        for i in 0..scratch.roots.len() {
+            let root = scratch.roots[i];
+            if !scratch.visited.insert(root) {
+                continue;
+            }
+            let world_mat = match world.get::<LocalTransform>(root).cloned() {
+                Some(local) => {
+                    let matrix = local.to_model_matrix();
+                    write_local_to_world_if_changed(world, root, matrix);
+                    matrix
+                }
+                None => glam::Mat4::IDENTITY,
+            };
+            visit_children(world, root, world_mat, &mut scratch.visited);
+        }
+    });
 }
 
 /// Whether entity hangs under a **valid** parent: parent alive, and parent `Child` list
@@ -96,7 +132,7 @@ fn visit_children(
         let child_world = match world.get::<LocalTransform>(child).cloned() {
             Some(local) => {
                 let matrix = parent_world * local.to_model_matrix();
-                world.insert(child, LocalToWorld(matrix));
+                write_local_to_world_if_changed(world, child, matrix);
                 matrix
             }
             None => parent_world,
@@ -116,42 +152,60 @@ fn visit_children(
 /// `hierarchy_system`: matrix propagation only builds tree for entities with `LocalTransform` / `Child`,
 /// while `Active` can be attached to pure logic nodes without transform.
 pub fn active_hierarchy_system(world: &mut World) {
-    let mut entities: Vec<Entity> = world.query::<Active>().map(|(entity, _)| entity).collect();
-    entities.extend(world.query::<Parent>().map(|(entity, _)| entity));
-    entities.sort_unstable_by_key(|entity| entity.id());
-    entities.dedup();
+    HIERARCHY_SCRATCH.with(|cell| {
+        let mut scratch = cell.borrow_mut();
+        let scratch = &mut *scratch;
+        scratch.active_entities.clear();
+        scratch
+            .active_entities
+            .extend(world.query::<Active>().map(|(entity, _)| entity));
+        scratch
+            .active_entities
+            .extend(world.query::<Parent>().map(|(entity, _)| entity));
+        scratch
+            .active_entities
+            .sort_unstable_by_key(|entity| entity.id());
+        scratch.active_entities.dedup();
 
-    let mut resolved: std::collections::HashMap<Entity, bool> = std::collections::HashMap::new();
-    for entity in entities {
-        let mut chain: Vec<Entity> = Vec::new();
-        let mut effective = true;
-        let mut cursor = Some(entity);
-        while let Some(current) = cursor {
-            if let Some(done) = resolved.get(&current) {
-                effective &= *done;
-                break;
+        scratch.resolved.clear();
+        for i in 0..scratch.active_entities.len() {
+            let entity = scratch.active_entities[i];
+            scratch.chain.clear();
+            let mut effective = true;
+            let mut cursor = Some(entity);
+            while let Some(current) = cursor {
+                if let Some(done) = scratch.resolved.get(&current) {
+                    effective &= *done;
+                    break;
+                }
+                if scratch.chain.contains(&current) {
+                    break;
+                }
+                scratch.chain.push(current);
+                effective &= world
+                    .get::<Active>(current)
+                    .map(|active| active.0)
+                    .unwrap_or(true);
+                cursor = world
+                    .get::<Parent>(current)
+                    .map(|parent| parent.0)
+                    .filter(|parent| world.is_alive(*parent));
             }
-            if chain.contains(&current) {
-                break;
+            for &item in &scratch.chain {
+                scratch.resolved.insert(item, effective);
             }
-            chain.push(current);
-            effective &= world
-                .get::<Active>(current)
-                .map(|active| active.0)
-                .unwrap_or(true);
-            cursor = world
-                .get::<Parent>(current)
-                .map(|parent| parent.0)
-                .filter(|parent| world.is_alive(*parent));
         }
-        for item in chain {
-            resolved.insert(item, effective);
-        }
-    }
 
-    for (entity, value) in resolved {
-        world.insert(entity, ActiveInHierarchy(value));
-    }
+        for (&entity, &value) in &scratch.resolved {
+            if world
+                .get::<ActiveInHierarchy>(entity)
+                .is_some_and(|existing| existing.0 == value)
+            {
+                continue;
+            }
+            world.insert(entity, ActiveInHierarchy(value));
+        }
+    });
 }
 
 /// Effective active state used by render / light / UI filters: derived value first, then own [`Active`].

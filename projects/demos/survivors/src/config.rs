@@ -276,7 +276,7 @@ impl GameConfig {
         world.set(entity, renderer);
         if slice.frames > 1 && slice.fps > 0.0 {
             world.set(entity, anim);
-        } else {
+        } else if world.get::<SpriteAnimation>(entity).is_some() {
             world.remove::<SpriteAnimation>(entity);
         }
     }

@@ -9,12 +9,11 @@ use prism_scene::components::{
 
 use crate::config::{EnemyBehavior, WeaponDef, WeaponKind};
 use crate::state::{
-    ActiveEnemy, ActivePickup, ActiveProjectile, DamageNumber, EquippedWeapon, GamePhase,
-    PickupKind, SpawnWarning, SurvivorsState, ARENA_HALF_H, ARENA_HALF_W, POOL_ENEMY,
+    ActiveEnemy, ActivePickup, ActiveProjectile, EquippedWeapon, GamePhase, PickupKind,
+    SpawnWarning, SurvivorsState, ARENA_HALF_H, ARENA_HALF_W, POOL_ENEMY, POOL_HIT_BURST,
     POOL_MELEE_FX, POOL_PICKUP, POOL_PROJECTILE, POOL_WARNING, POOL_WEAPON, POOL_WHITE_BAR,
 };
 
-const HIT_BURST_POOL_LEN: usize = 16;
 const ARENA_MARGIN: f32 = 0.85;
 
 /// Perform one-time arena, player, HP bar, and particle emitter setup.
@@ -109,9 +108,6 @@ pub fn ensure_world_initialized(state: &mut SurvivorsState, world: &mut GameWorl
         },
     );
     state.player_hp_fill = hp_fill;
-
-    state.hit_burst_entities = vec![EntityHandle::PLACEHOLDER; HIT_BURST_POOL_LEN];
-    state.hit_burst_cursor = 0;
     state.world_built = true;
 }
 
@@ -220,7 +216,7 @@ fn build_arena_backdrop(state: &SurvivorsState, world: &mut GameWorld<'_>) {
     }
 }
 
-/// Spawn a pooled one-shot 2D particle burst at `pos`.
+/// Spawn a pooled one-shot 2D particle burst at `pos`, auto-expanding when busy.
 pub fn trigger_hit_burst(
     state: &mut SurvivorsState,
     world: &mut GameWorld<'_>,
@@ -229,18 +225,7 @@ pub fn trigger_hit_burst(
     end_color: [f32; 4],
     count: u32,
 ) {
-    if state.hit_burst_entities.is_empty() {
-        return;
-    }
-    let slot = state.hit_burst_cursor % state.hit_burst_entities.len();
-    state.hit_burst_cursor = slot + 1;
-
-    let prev = state.hit_burst_entities[slot];
-    if prev != EntityHandle::PLACEHOLDER && world.is_alive(prev) {
-        world.despawn(prev);
-    }
-
-    let burst_entity = world.spawn();
+    let (burst_entity, _) = state.pool.acquire(world, POOL_HIT_BURST);
     world.set(
         burst_entity,
         LocalTransform {
@@ -274,7 +259,21 @@ pub fn trigger_hit_burst(
             order_in_layer: 0,
         },
     );
-    state.hit_burst_entities[slot] = burst_entity;
+    state.active_hit_bursts.push((burst_entity, 0.35));
+}
+
+fn step_hit_bursts(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) {
+    let mut i = 0;
+    while i < state.active_hit_bursts.len() {
+        state.active_hit_bursts[i].1 -= dt;
+        if state.active_hit_bursts[i].1 <= 0.0 {
+            let (entity, _) = state.active_hit_bursts.swap_remove(i);
+            world.remove::<ParticleEmitter2D>(entity);
+            state.pool.release(world, POOL_HIT_BURST, entity);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Spawn an active enemy at a specific world coordinate (also used by integration tests).
@@ -445,23 +444,25 @@ pub fn apply_damage_to_enemy(
     enemy.knockback_vel[0] += impulse[0] * inv_weight;
     enemy.knockback_vel[1] += impulse[1] * inv_weight;
 
+    let hit_pos = enemy.pos;
+    let label_pos = [hit_pos[0], hit_pos[1] + enemy.radius * 0.9];
+    let enemy_dead = enemy.hp <= 0.0;
+
     state.stats.total_damage = state
         .stats
         .total_damage
         .saturating_add(final_dmg.round() as u64);
 
-    let hit_pos = enemy.pos;
-    state.damage_numbers.push(DamageNumber {
-        world_pos: [hit_pos[0], hit_pos[1] + enemy.radius * 0.9],
-        vel_y: 1.85,
-        age: 0.0,
-        duration: 0.65,
-        amount: final_dmg.round().max(1.0) as u32,
+    state.push_damage_number(
+        label_pos,
+        1.85,
+        0.65,
+        final_dmg.round().max(1.0) as u32,
         is_crit,
-        is_player_hit: false,
-    });
+        false,
+    );
 
-    if is_crit || enemy.hp <= 0.0 {
+    if is_crit || enemy_dead {
         trigger_hit_burst(
             state,
             world,
@@ -484,6 +485,8 @@ pub fn fixed_step(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32
     if dt <= 0.0 {
         return;
     }
+
+    step_hit_bursts(state, world, dt);
 
     if let Some((_, ttl)) = &mut state.status_banner {
         *ttl -= dt;
@@ -576,6 +579,7 @@ fn begin_wave_clear_sweep(state: &mut SurvivorsState, world: &mut GameWorld<'_>)
     }
     for proj in state.projectiles.drain(..) {
         state.pool.release(world, POOL_PROJECTILE, proj.entity);
+        state.projectile_pool.push(proj);
     }
     for pickup in &mut state.pickups {
         pickup.magnetized = true;
@@ -980,20 +984,36 @@ fn fire_ranged_weapon(
             [1.0, 1.0, 1.0, 1.0],
             false,
         );
-        state.projectiles.push(ActiveProjectile {
-            entity,
-            pos: spawn_pos,
-            vel: [dir[0] * def.projectile_speed, dir[1] * def.projectile_speed],
-            radius: 0.24,
-            damage,
-            knockback: def.knockback,
-            crit_chance,
-            crit_mult: def.crit_multiplier,
-            pierce_left: def.pierce,
-            life: (def.range + 2.0) / def.projectile_speed.max(1.0),
-            from_enemy: false,
-            hit_enemy_uids: Vec::new(),
-        });
+        let mut proj = state
+            .projectile_pool
+            .pop()
+            .unwrap_or_else(|| ActiveProjectile {
+                entity: EntityHandle::PLACEHOLDER,
+                pos: [0.0, 0.0],
+                vel: [0.0, 0.0],
+                radius: 0.0,
+                damage: 0.0,
+                knockback: 0.0,
+                crit_chance: 0.0,
+                crit_mult: 1.0,
+                pierce_left: 0,
+                life: 0.0,
+                from_enemy: false,
+                hit_enemy_uids: Vec::with_capacity(8),
+            });
+        proj.entity = entity;
+        proj.pos = spawn_pos;
+        proj.vel = [dir[0] * def.projectile_speed, dir[1] * def.projectile_speed];
+        proj.radius = 0.24;
+        proj.damage = damage;
+        proj.knockback = def.knockback;
+        proj.crit_chance = crit_chance;
+        proj.crit_mult = def.crit_multiplier;
+        proj.pierce_left = def.pierce;
+        proj.life = (def.range + 2.0) / def.projectile_speed.max(1.0);
+        proj.from_enemy = false;
+        proj.hit_enemy_uids.clear();
+        state.projectiles.push(proj);
     }
 }
 
@@ -1193,7 +1213,7 @@ fn step_spawner_and_warnings(state: &mut SurvivorsState, world: &mut GameWorld<'
         }
     }
 
-    let mut ready_spawns = Vec::new();
+    state.ready_spawns_scratch.clear();
     let mut i = 0;
     while i < state.spawn_warnings.len() {
         state.spawn_warnings[i].timer -= dt;
@@ -1213,13 +1233,14 @@ fn step_spawner_and_warnings(state: &mut SurvivorsState, world: &mut GameWorld<'
         if state.spawn_warnings[i].timer <= 0.0 {
             let w = state.spawn_warnings.swap_remove(i);
             state.pool.release(world, POOL_WARNING, w.entity);
-            ready_spawns.push((w.def_index, w.pos));
+            state.ready_spawns_scratch.push((w.def_index, w.pos));
         } else {
             i += 1;
         }
     }
 
-    for (def_idx, pos) in ready_spawns {
+    for i in 0..state.ready_spawns_scratch.len() {
+        let (def_idx, pos) = state.ready_spawns_scratch[i];
         if let Some(def) = state.config.enemies.get(def_idx) {
             let enemy_id = def.id.clone();
             spawn_enemy_at(state, world, &enemy_id, pos);
@@ -1305,6 +1326,7 @@ fn step_projectiles(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f
         if state.projectiles[i].life <= 0.0 || out_of_bounds {
             let proj = state.projectiles.swap_remove(i);
             state.pool.release(world, POOL_PROJECTILE, proj.entity);
+            state.projectile_pool.push(proj);
             continue;
         }
 
@@ -1381,6 +1403,7 @@ fn step_projectiles(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f
         if remove_proj {
             let proj = state.projectiles.swap_remove(i);
             state.pool.release(world, POOL_PROJECTILE, proj.entity);
+            state.projectile_pool.push(proj);
         } else {
             i += 1;
         }
@@ -1393,7 +1416,7 @@ fn step_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
     }
 
     let player_pos = state.player_pos;
-    let mut enemy_shots: Vec<([f32; 2], [f32; 2], f32)> = Vec::new();
+    state.enemy_shots_scratch.clear();
     let decay = (-9.0 * dt).exp();
 
     for enemy in &mut state.enemies {
@@ -1446,7 +1469,7 @@ fn step_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
                 enemy.action_timer -= dt;
                 if enemy.action_timer <= 0.0 && dist < 11.5 {
                     enemy.action_timer = 2.2;
-                    enemy_shots.push((
+                    state.enemy_shots_scratch.push((
                         enemy.pos,
                         [dir[0] * 7.2, dir[1] * 7.2],
                         enemy.contact_damage,
@@ -1461,7 +1484,7 @@ fn step_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
                     enemy.action_timer = 2.6;
                     for k in 0..8 {
                         let a = (k as f32) * std::f32::consts::TAU / 8.0;
-                        enemy_shots.push((
+                        state.enemy_shots_scratch.push((
                             enemy.pos,
                             [a.cos() * 6.4, a.sin() * 6.4],
                             enemy.contact_damage * 0.85,
@@ -1477,7 +1500,8 @@ fn step_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
         enemy.knockback_vel[1] *= decay;
     }
 
-    for (pos, vel, dmg) in enemy_shots {
+    for i in 0..state.enemy_shots_scratch.len() {
+        let (pos, vel, dmg) = state.enemy_shots_scratch[i];
         spawn_enemy_projectile(state, world, pos, vel, dmg);
     }
 
@@ -1490,7 +1514,6 @@ fn step_enemies(state: &mut SurvivorsState, world: &mut GameWorld<'_>, dt: f32) 
             weight: enemy.weight,
         });
     }
-    rebuild_enemy_grid(state);
     resolve_crowd_separation(&mut state.crowd_buf, &mut state.spatial_grid, 0.85, None);
 
     let mut contact_damage = None;
@@ -1571,20 +1594,36 @@ fn spawn_enemy_projectile(
         [1.0, 1.0, 1.0, 1.0],
         false,
     );
-    state.projectiles.push(ActiveProjectile {
-        entity,
-        pos,
-        vel,
-        radius: 0.25,
-        damage,
-        knockback: 0.0,
-        crit_chance: 0.0,
-        crit_mult: 1.0,
-        pierce_left: 0,
-        life: 2.6,
-        from_enemy: true,
-        hit_enemy_uids: Vec::new(),
-    });
+    let mut proj = state
+        .projectile_pool
+        .pop()
+        .unwrap_or_else(|| ActiveProjectile {
+            entity: EntityHandle::PLACEHOLDER,
+            pos: [0.0, 0.0],
+            vel: [0.0, 0.0],
+            radius: 0.0,
+            damage: 0.0,
+            knockback: 0.0,
+            crit_chance: 0.0,
+            crit_mult: 1.0,
+            pierce_left: 0,
+            life: 0.0,
+            from_enemy: true,
+            hit_enemy_uids: Vec::with_capacity(8),
+        });
+    proj.entity = entity;
+    proj.pos = pos;
+    proj.vel = vel;
+    proj.radius = 0.25;
+    proj.damage = damage;
+    proj.knockback = 0.0;
+    proj.crit_chance = 0.0;
+    proj.crit_mult = 1.0;
+    proj.pierce_left = 0;
+    proj.life = 2.6;
+    proj.from_enemy = true;
+    proj.hit_enemy_uids.clear();
+    state.projectiles.push(proj);
 }
 
 fn apply_damage_to_player(state: &mut SurvivorsState, world: &mut GameWorld<'_>, raw_damage: f32) {
@@ -1593,15 +1632,14 @@ fn apply_damage_to_player(state: &mut SurvivorsState, world: &mut GameWorld<'_>,
     }
     if state.rng.next_f32() * 100.0 < state.stats.dodge_pct {
         state.player_i_frames = 0.28;
-        state.damage_numbers.push(DamageNumber {
-            world_pos: [state.player_pos[0], state.player_pos[1] + 0.9],
-            vel_y: 1.4,
-            age: 0.0,
-            duration: 0.55,
-            amount: 0,
-            is_crit: false,
-            is_player_hit: true,
-        });
+        state.push_damage_number(
+            [state.player_pos[0], state.player_pos[1] + 0.9],
+            1.4,
+            0.55,
+            0,
+            false,
+            true,
+        );
         return;
     }
 
@@ -1609,15 +1647,14 @@ fn apply_damage_to_player(state: &mut SurvivorsState, world: &mut GameWorld<'_>,
     state.stats.hp = (state.stats.hp - reduced).max(0.0);
     state.player_i_frames = 0.50;
     state.player_hit_flash = 0.14;
-    state.damage_numbers.push(DamageNumber {
-        world_pos: [state.player_pos[0], state.player_pos[1] + 0.95],
-        vel_y: 1.7,
-        age: 0.0,
-        duration: 0.70,
-        amount: reduced.round().max(1.0) as u32,
-        is_crit: false,
-        is_player_hit: true,
-    });
+    state.push_damage_number(
+        [state.player_pos[0], state.player_pos[1] + 0.95],
+        1.7,
+        0.70,
+        reduced.round().max(1.0) as u32,
+        false,
+        true,
+    );
     trigger_hit_burst(
         state,
         world,

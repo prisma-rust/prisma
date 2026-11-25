@@ -146,14 +146,19 @@ fn sync_world_health_bars(state: &SurvivorsState, world: &mut GameWorld<'_>) {
             } else {
                 [0.95, 0.24, 0.24, 0.95]
             };
-            world.set(
-                state.player_hp_fill,
-                SpriteRenderer {
-                    sorting_layer: 20,
-                    order_in_layer: 1,
-                    ..SpriteRenderer::white(bar_color)
-                },
-            );
+            if world
+                .get::<SpriteRenderer>(state.player_hp_fill)
+                .is_none_or(|sr| sr.color != bar_color)
+            {
+                world.set(
+                    state.player_hp_fill,
+                    SpriteRenderer {
+                        sorting_layer: 20,
+                        order_in_layer: 1,
+                        ..SpriteRenderer::white(bar_color)
+                    },
+                );
+            }
         }
     }
 
@@ -209,7 +214,8 @@ fn step_and_draw_damage_numbers(state: &mut SurvivorsState, world: &mut GameWorl
         state.damage_numbers[i].vel_y *= (1.0 - 2.2 * dt).max(0.0);
 
         if state.damage_numbers[i].age >= state.damage_numbers[i].duration {
-            state.damage_numbers.swap_remove(i);
+            let recycled = state.damage_numbers.swap_remove(i);
+            state.damage_number_pool.push(recycled);
             continue;
         }
 
@@ -222,18 +228,18 @@ fn step_and_draw_damage_numbers(state: &mut SurvivorsState, world: &mut GameWorl
                 screen,
             );
             let alpha = ((1.0 - dn.age / dn.duration) * 1.4).clamp(0.0, 1.0);
-            let (label, color, size) = if dn.is_player_hit && dn.amount == 0 {
-                ("DODGE!".to_string(), [0.35, 0.92, 1.0, alpha], 18.0)
+            let (color, size) = if dn.is_player_hit && dn.amount == 0 {
+                ([0.35, 0.92, 1.0, alpha], 18.0)
             } else if dn.is_player_hit {
-                (format!("-{}", dn.amount), [1.0, 0.28, 0.28, alpha], 19.0)
+                ([1.0, 0.28, 0.28, alpha], 19.0)
             } else if dn.is_crit {
-                (format!("{}!", dn.amount), [1.0, 0.88, 0.20, alpha], 22.0)
+                ([1.0, 0.88, 0.20, alpha], 22.0)
             } else {
-                (format!("{}", dn.amount), [0.97, 0.97, 0.97, alpha], 16.0)
+                ([0.97, 0.97, 0.97, alpha], 16.0)
             };
             world.draw_text(UiText {
                 rect: [px[0] - 45.0, px[1] - 14.0, 90.0, 28.0],
-                content: label,
+                content: dn.label.clone(),
                 font_size: size,
                 color,
                 alignment: TextAlign::Center,
